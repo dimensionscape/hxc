@@ -1,0 +1,6 @@
+bin/
+out/
+*.GOOD.js
+*.tmp
+.aedifex/
+docs/
