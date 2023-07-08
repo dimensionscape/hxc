@@ -1508,7 +1508,7 @@ class TypeUnification {
 		return tl;
 	}
 
-	static function unify_min_(uctx:UnificationContext, common_types:Array<T>, tl:Array<T>):UnifyMinResult {
+	public static function unify_min_(uctx:UnificationContext, common_types:Array<T>, tl:Array<T>):UnifyMinResult {
 		var first_error:Null<{l:Array<UnifyErrorKind>, p:Int}> = null;
 		function loop(index:Int, common_types:Array<T>, tl:Array<T>):UnifyMinResult {
 			if (tl.length == 0) {
