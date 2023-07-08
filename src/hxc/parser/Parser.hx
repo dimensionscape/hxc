@@ -1045,15 +1045,15 @@ class Parser {
 		switch (peek()) {
 			case DblDot:
 				next();
-				parseComplexType();
-				throw new ParserError(Custom("macro reification not implemented yet (row 5)"), p);
+				var th = parseComplexType();
+				return Reification.reifyComplexType(th.ct, p);
 			case Kwd(KwdClass), Kwd(KwdInterface):
-				parseClassForMacro();
-				throw new ParserError(Custom("macro reification not implemented yet (row 5)"), p);
+				var d = parseClassForMacro();
+				return Reification.reifyTypeDef(d, p);
 			case _:
 		}
-		secureExpr();
-		throw new ParserError(Custom("macro reification not implemented yet (row 5)"), p);
+		var e = secureExpr();
+		return Reification.reifyExpr(e, false);
 	}
 
 	function parseClassForMacro():TypeDecl {
