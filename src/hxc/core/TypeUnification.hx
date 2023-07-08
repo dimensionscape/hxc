@@ -111,6 +111,31 @@ enum UnificationMatrixState {
 	SBottom;
 }
 
+// Unification_matrix (consumed by the typer overload/unifyMin).
+// `dump` is omitted (TPrinting is a later port).
+class UnificationMatrix {
+	final values:Array<UnificationMatrixState>;
+
+	public function new(arity:Int) {
+		values = [for (_ in 0...arity) STop];
+	}
+
+	public function join(t:T, at:Int):Void {
+		switch (values[at]) {
+			case STop: values[at] = SType(t);
+			case SBottom:
+			case SType(t2): if (!TypeUnification.typeIseqDefault(t, t2)) values[at] = SBottom;
+		}
+	}
+
+	public function getType(at:Int):Null<T> {
+		return switch (values[at]) {
+			case SType(t): t;
+			case _: null;
+		}
+	}
+}
+
 class TypeUnification {
 	static var eqStack:RecStack<{a:T, b:T}> = new RecStack();
 	static var unifyStack:RecStack<{a:T, b:T}> = new RecStack();
@@ -726,11 +751,11 @@ class TypeUnification {
 				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TType(t1, tl1), _] if (canFollow(a)):
 				recStack(eqStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
-					function() { typeEq(uctx, TypeFunctions.applyParams(t1.params, tl1, t1.type), b); return null; },
+					function() { TypeFunctions.tryApplyParamsRec(t1.params, tl1, t1.type, function(ax) typeEq(uctx, ax, b)); return null; },
 					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
 			case [_, TType(t2, tl2)] if (canFollow(b)):
 				recStack(eqStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
-					function() { typeEq(uctx, a, TypeFunctions.applyParams(t2.params, tl2, t2.type)); return null; },
+					function() { TypeFunctions.tryApplyParamsRec(t2.params, tl2, t2.type, function(bx) typeEq(uctx, a, bx)); return null; },
 					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
 			case [TEnum(e1, tl1), TEnum(e2, tl2)]:
 				if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) error([cannotUnify(a, b)]);
@@ -836,12 +861,12 @@ class TypeUnification {
 			case [TType(t, tl), _]:
 				recStack(unifyStack, {a: a, b: b},
 					function(p) return fastEqUnboundMono(a, p.a) && fastEq(b, p.b),
-					function() { unify(uctx, TypeFunctions.applyParams(t.params, tl, t.type), b); return null; },
+					function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(ax) unify(uctx, ax, b)); return null; },
 					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
 			case [_, TType(t, tl)]:
 				recStack(unifyStack, {a: a, b: b},
 					function(p) return fastEq(a, p.a) && fastEqUnboundMono(b, p.b),
-					function() { unify(uctx, a, TypeFunctions.applyParams(t.params, tl, t.type)); return null; },
+					function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(bx) unify(uctx, a, bx)); return null; },
 					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
 			case [TEnum(ea, tl1), TEnum(eb, tl2)]:
 				if (ea != eb) error([cannotUnify(a, b)]);

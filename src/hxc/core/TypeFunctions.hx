@@ -84,7 +84,7 @@ class TypeFunctions {
 	public static function allocVar(kind:TVarKind, n:String, t:T, p:Position):TVar {
 		_uid++;
 		var flags = switch (kind) {
-			case VUser(TVOLocalFunction): 1 << intOfVarFlag(VFinal);
+			case VUser(TVOLocalFunction): intOfVarFlag(VFinal); // Stores the raw index here
 			case _: 0;
 		};
 		return new TVar(_uid, n, t, kind, null, [], flags, p);
@@ -438,28 +438,41 @@ class TypeFunctions {
 		};
 	}
 
+	public static var applyParamsStack:Ref<Array<{subject:T, applied:TParams}>> = new Ref([]);
+
+	// Thread the stack so a self-referential
+	// typedef expansion raises ApplyParamsRecursion, which is absorbed here as success.
+	public static function tryApplyParamsRec(cparams:TypeParams, params:TParams, t:T, success:T->Void):Void {
+		var old = applyParamsStack.get();
+		try {
+			success(applyParams(cparams, params, t, applyParamsStack));
+			applyParamsStack.set(old);
+		} catch (e:ApplyParamsRecursion) {
+			applyParamsStack.set(old);
+		} catch (e:haxe.Exception) {
+			applyParamsStack.set(old);
+			throw e;
+		}
+	}
+
 	public static function applyParams(cparams:TypeParams, params:TParams, t:T, ?stack:Ref<Array<{subject:T, applied:TParams}>>):T {
 		if (cparams.length == 0) return t;
 
 		// Build substitutions, forcing lazy parameter types on the cparam side.
 		var subst:Array<{from:T, to:T}> = [];
-		{
-			var i1 = 0, i2 = 0;
-			while (i1 < cparams.length) {
-				var tp = cparams[i1];
-				switch (tp.type) {
-					case TLazy(f):
-						// Replace a lazy parameter at the head and retry it before advancing.
-						cparams[i1] = {name: tp.name, type: lazyType(f), defaultType: tp.defaultType};
-						continue;
-					case other:
-						if (i2 >= params.length) throw "apply_params: arity mismatch";
-						subst.push({from: other, to: params[i2]});
-						i1++;
-						i2++;
+			{
+				var i1 = 0, i2 = 0;
+				while (i1 < cparams.length) {
+					if (i2 >= params.length) throw "apply_params: arity mismatch";
+					var tp = cparams[i1];
+					// A lazy parameter type is forced before it goes into the substitution.
+					var fromT = switch (tp.type) { case TLazy(f): lazyType(f); case other: other; };
+					subst.push({from: fromT, to: params[i2]});
+					i1++;
+					i2++;
 				}
+				if (i2 != params.length) throw "apply_params: arity mismatch"; // Die on unequal lengths
 			}
-		}
 
 		function assq(x:T):Null<{from:T, to:T}> {
 			for (e in subst) if (e.from == x) return e;
@@ -881,7 +894,7 @@ class TypeFunctions {
 			case sup if (sup != null):
 				try {
 					var r = rawClassField(buildType, sup.c, [for (x in sup.params) apply(x)], i);
-					return {c2: r.c2, t: applyParams(c.params, tl, r.t), f: r.f};
+					return {c2: r.c2, t: applyParams(sup.c.params, sup.params, r.t), f: r.f};
 				} catch (e:NotFound) {
 				}
 			case _:
@@ -898,7 +911,7 @@ class TypeFunctions {
 						case TInst(c2, tl2):
 							try {
 								var r = rawClassField(buildType, c2, [for (x in tl2) apply(x)], i);
-								return {c2: r.c2, t: applyParams(c.params, tl, r.t), f: r.f};
+								return {c2: r.c2, t: applyParams(c2.params, tl2, r.t), f: r.f};
 							} catch (e:NotFound) {}
 						case _:
 					}
@@ -910,7 +923,7 @@ class TypeFunctions {
 				for (impl in c.interfaces) {
 					try {
 						var r = rawClassField(buildType, impl.c, [for (x in impl.params) apply(x)], i);
-						return {c2: r.c2, t: applyParams(c.params, tl, r.t), f: r.f};
+						return {c2: r.c2, t: applyParams(impl.c.params, impl.params, r.t), f: r.f};
 					} catch (e:NotFound) {}
 				}
 				throw new NotFound();
