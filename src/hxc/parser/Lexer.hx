@@ -691,6 +691,37 @@ class Lexer {
 		}
 	}
 
+	public function tryReadMarkupLiteral():Null<Array<TokenInfo>> {
+		var save = pos;
+		while (true) {
+			var c = peek();
+			if (c == " ".code || c == "\t".code || c == "\n".code || c == "\r".code)
+				pos++;
+			else
+				break;
+		}
+		var start = pos;
+		if (peek() != "<".code) {
+			pos = save;
+			return null;
+		}
+		var n0 = peek(1);
+		if (n0 != ">".code && !isXmlNameStart(n0)) {
+			pos = save;
+			return null;
+		}
+		var xml = lexXml(); // Scans from '<' through the close; leaves pos after the literal
+		var end = pos;
+		var metaPos = mkPos(start, start + 1);
+		return [
+			new TokenInfo(At, metaPos),
+			new TokenInfo(DblDot, metaPos),
+			new TokenInfo(Const(CIdent("markup")), metaPos),
+			new TokenInfo(Const(CString(xml, SDoubleQuotes)), mkPos(start, end)),
+		];
+	}
+
+	/** Inline `<xml>` markup scan. `pos` must be at the opening `<`. Returns the raw markup string; leaves `pos` after the literal. */
 	public function lexXml():String {
 		var p = pos; // At '<'
 		pos++; // Consume '<'
