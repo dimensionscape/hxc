@@ -278,7 +278,7 @@ class ModuleLoader {
 						restore: function() {}, ops: [], unops: [], impl: null,
 						thisType: TypeFunctions.mkMono(), from: [], fromField: [], to: [],
 						toField: [], array: [], read: null, write: null, call: null,
-						isEnum: hasAbstractFlag(d.dFlags, AbEnum)
+						isEnum: hasAbstractFlag(d.dFlags, AbEnum) || TypeFunctions.hasMeta(":enum", d.dMeta)
 					};
 					decls.push(TAbstractDecl(a));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
@@ -320,7 +320,7 @@ class ModuleLoader {
 		}
 
 		if (statics.length > 0) {
-			var firstPos = statics[statics.length - 1].p;
+			var firstPos = statics[0].p;
 			var fieldsPath = makePath(m.path.name + "_Fields_", true, firstPos);
 			var fields:Array<ClassField> = [
 				for (s in statics) {
@@ -864,7 +864,7 @@ class ModuleLoader {
 			tint: TAbstract(aInt, []),
 			tfloat: TAbstract(aFloat, []),
 			tbool: TAbstract(aBool, []),
-			tnull: function(t:T) return TAbstract(aNull, [t]),
+			tnull: function(t:T) return (TypeFunctions.isNull(t) || TypeFunctions.isExplicitNull(t)) ? t : TAbstract(aNull, [t]),
 			tstring: TInst(cString, []),
 			tarray: function(t:T) return TInst(cArray, [t])
 		};

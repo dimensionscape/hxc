@@ -1072,7 +1072,7 @@ class TypeFunctions {
 			tint: TAbstract(aInt, []),
 			tfloat: TAbstract(aFloat, []),
 			tbool: TAbstract(aBool, []),
-			tnull: function(t:T) return TAbstract(aNull, [t]),
+			tnull: function(t:T) return (isNull(t) || isExplicitNull(t)) ? t : TAbstract(aNull, [t]),
 			tstring: TInst(cString, []),
 			tarray: function(t:T) return TInst(cArray, [t])
 		};

@@ -33,7 +33,7 @@ class PlatformConfig {
 	public static function defaults():PlatformConfig {
 		return {
 			isStatic: true, sys: true, supportsOverload: false, capturePolicy: CPNone,
-			padNulls: false, addFinalReturn: false, canSkipNonNullableArgument: false,
+			padNulls: false, addFinalReturn: false, canSkipNonNullableArgument: true,
 			supportsRestArgs: false, usesUtf16: true, supportsUnicode: true,
 		};
 	}
@@ -41,16 +41,24 @@ class PlatformConfig {
 	public static function js():PlatformConfig {
 		return {
 			isStatic: false, sys: false, supportsOverload: false, capturePolicy: CPLoopVars,
-			padNulls: false, addFinalReturn: false, canSkipNonNullableArgument: false,
+			padNulls: false, addFinalReturn: false, canSkipNonNullableArgument: true,
 			supportsRestArgs: true, usesUtf16: true, supportsUnicode: true,
 		};
 	}
 
 	public static function cpp():PlatformConfig {
 		return {
-			isStatic: true, sys: true, supportsOverload: true, capturePolicy: CPWrapRef,
-			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: false,
-			supportsRestArgs: true, usesUtf16: true, supportsUnicode: true,
+			isStatic: true, sys: true, supportsOverload: false, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: true, canSkipNonNullableArgument: true,
+			supportsRestArgs: false, usesUtf16: true, supportsUnicode: true,
+		};
+	}
+
+	public static function eval():PlatformConfig {
+		return {
+			isStatic: false, sys: true, supportsOverload: false, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: false, usesUtf16: false, supportsUnicode: true,
 		};
 	}
 
@@ -58,7 +66,8 @@ class PlatformConfig {
 		return switch (p) {
 			case Js: js();
 			case Cpp: cpp();
-			// Eval/Cross + the not-yet-targeted platforms use the base config until their backend
+			case Eval: eval();
+			// Cross + the not-yet-targeted platforms use the base config until their backend
 			case _: defaults();
 		}
 	}

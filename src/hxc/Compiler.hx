@@ -31,11 +31,13 @@ class Compiler {
 				case "-D" | "--define":
 					var kv = args[i++];
 					var eq = kv.indexOf("=");
-					if (eq < 0) ctx.defines.rawDefine(kv);
-					else ctx.defines.rawDefineValue(kv.substr(0, eq), kv.substr(eq + 1));
+					// Normalizes '-' to '_' in the define key.
+					if (eq < 0) ctx.defines.rawDefine(StringTools.replace(kv, "-", "_"));
+					else ctx.defines.rawDefineValue(StringTools.replace(kv.substr(0, eq), "-", "_"), kv.substr(eq + 1));
 				case "--interp":
 					platform = Eval;
 					targetDir = "eval";
+					ctx.defines.rawDefine("interp");                                   
 				case "-js" | "--js":
 					platform = Js;
 					targetDir = "js";
@@ -52,8 +54,12 @@ class Compiler {
 			}
 		}
 
-		// User -cp is searched before the std (it stays in front of the per-target overlay)
-		ctx.classPath = [for (p in userCp) Setup.addTrailingSlash(p)].concat(ctx.classPath);
+		// User -cp is searched before the std (it stays in front of the per-target overlay). Prepends
+		// each -cp individually, so the last -cp on the command line ends up first; reverse the
+		// source-order list to reproduce that.
+		var cps = [for (p in userCp) Setup.addTrailingSlash(p)];
+		cps.reverse();
+		ctx.classPath = cps.concat(ctx.classPath);
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 
