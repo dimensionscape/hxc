@@ -190,8 +190,8 @@ class Typer {
 				Operators.typeUnop(ctx, op, flag, e1, withType, p);
 			case ESwitch(_, _, _):
 				throw new TypingError("Switch is not yet ported (unit 6)", p);
-			case EFor(_, _):
-				throw new TypingError("For loops are not yet ported (unit 5)", p);
+			case EFor(it, body):
+				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(_, _):
 				throw new TypingError("new is not yet ported", p);
 			case EFunction(_, _):
