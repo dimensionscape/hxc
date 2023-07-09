@@ -3,6 +3,7 @@ package hxc.core;
 import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
+import hxc.core.Ref;
 
 class Texpr {
 	public static inline function makeInt(basic:BasicTypes, i:Int, p:Position):TExpr {
@@ -27,6 +28,11 @@ class Texpr {
 
 	public static inline function makeLocal(v:TVar, p:Position):TExpr {
 		return TypeFunctions.mk(TLocal(v), v.type, p);
+	}
+
+	public static function makeStaticThis(c:TClass, p:Position):TExpr {
+		var ta = TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics);
+		return TypeFunctions.mk(TTypeExpr(TClassDecl(c)), ta, p);
 	}
 
 	public static function makeConstTexpr(basic:BasicTypes, ct:TConstant, p:Position):TExpr {
