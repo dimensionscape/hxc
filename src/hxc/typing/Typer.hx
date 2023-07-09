@@ -10,6 +10,7 @@ import hxc.core.TypingError;
 import hxc.core.Texpr;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
+import hxc.typing.FieldAccess;
 import hxc.typing.Typeload;
 
 class Typer {
@@ -182,7 +183,7 @@ class Typer {
 			case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
-				throw new TypingError("Field, array, and call access are not yet ported (units 4-5)", p);
+				accGet(ctx, typeAccess(ctx, e.expr, p, mode, withType));
 			case EBinop(op, e1, e2):
 				Operators.typeBinop(ctx, op, e1, e2, false, withType, p);
 			case EUnop(op, flag, e1):
@@ -253,12 +254,33 @@ class Typer {
 		};
 	}
 
-	// This subset of type_ident produces only AKExpr.
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
 		return switch (acc) {
 			case AKExpr(e): e;
+			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
-			case _: throw new TypingError("Field access is not yet ported (fields-dispatch unit)", Position.nullPos);
+			case AKAccessor(_) | AKUsingAccessor(_): throw new TypingError("Property accessor reads are not yet ported (needs call dispatch, unit 5)", Position.nullPos);
+			case AKUsingField(_): throw new TypingError("Static-extension field reads are not yet ported (unit 5)", Position.nullPos);
+			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
+			case AKResolve(_, _): throw new TypingError("@:resolve access is not yet ported", Position.nullPos);
+			case AKSafeNav(_): throw new TypingError("Safe navigation is not yet ported", Position.nullPos);
+		};
+	}
+
+	static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		return switch (edef) {
+			case EConst(CIdent(s)):
+				typeIdent(ctx, s, p, mode, withType);
+			case EField(e1, field, _):
+				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
+				var te = typeExpr(ctx, e1, WithTypeTools.value);
+				Fields.typeField(ctx, te, field, p, mode, withType);
+			case EArray(_, _):
+				throw new TypingError("Array access is not yet ported (unit 5)", p);
+			case ECall(_, _):
+				throw new TypingError("Calls are not yet ported (unit 5)", p);
+			case _:
+				AKExpr(typeExpr(ctx, new Expr(edef, p), withType));
 		};
 	}
 
