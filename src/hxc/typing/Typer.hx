@@ -267,7 +267,7 @@ class Typer {
 		};
 	}
 
-	static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+	public static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		return switch (edef) {
 			case EConst(CIdent(s)):
 				typeIdent(ctx, s, p, mode, withType);
@@ -277,8 +277,8 @@ class Typer {
 				Fields.typeField(ctx, te, field, p, mode, withType);
 			case EArray(_, _):
 				throw new TypingError("Array access is not yet ported (unit 5)", p);
-			case ECall(_, _):
-				throw new TypingError("Calls are not yet ported (unit 5)", p);
+			case ECall(e1, params):
+				AKExpr(Calls.typeCall(ctx, e1, params, withType, p));
 			case _:
 				AKExpr(typeExpr(ctx, new Expr(edef, p), withType));
 		};
