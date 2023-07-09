@@ -246,3 +246,43 @@ class PatternMaker {
 		return c;
 	}
 }
+
+typedef Case = {guard:Null<TExpr>, expr:Null<TExpr>, pos:Position};
+
+class CaseMaker {
+	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
+		try TypeUnification.unifyDefault(a, b) catch (_:UnifyError) throw new TypingError("Cannot unify types", p);
+	}
+
+	public static function make(ctx:TyperContext, t:T, el:Array<Expr>, eg:Null<Expr>, eoAst:Null<Expr>, withType:WithType, postfixMatch:Bool, p:Position):{c:Case, pat:Pattern} {
+		if (el.length == 0) throw new TypingError("case without pattern", p);
+		var e = el[el.length - 1];
+		var i = el.length - 2;
+		while (i >= 0) {
+			e = new Expr(EBinop(OpOr, el[i], e), Position.union(el[i].pos, e.pos));
+			i--;
+		}
+		var save = Typer.saveLocals(ctx);
+		var pctx = new PatternContext(ctx, ctx.locals);
+		pctx.isPostfixMatch = postfixMatch;
+		var pat = PatternMaker.make(pctx, true, t, e);
+		var egT:Null<TExpr> = if (eg == null) null else {
+			var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
+			Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+		};
+		var eoT:Null<TExpr> = switch ([eoAst, withType]) {
+			case [null, WithType(wt, _)]:
+				unify(ctx, ctx.com.basic.tvoid, wt, e.pos);
+				null;
+			case [null, _]:
+				null;
+			case [body, WithType(wt, _)]:
+				var be = Typer.typeExpr(ctx, body, WithTypeTools.withType(wt));
+				Typer.castOrUnify(ctx, wt, be, be.pos);
+			case [body, _]:
+				Typer.typeExpr(ctx, body, withType);
+		};
+		save();
+		return {c: {guard: egT, expr: eoT, pos: p}, pat: pat};
+	}
+}
