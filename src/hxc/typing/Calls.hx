@@ -4,6 +4,8 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
+import hxc.core.TypeUnification.UnifyError;
 import hxc.core.Texpr;
 import hxc.core.TypingError;
 import hxc.core.WithType;
@@ -13,6 +15,22 @@ import hxc.typing.FieldAccess;
 class Calls {
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position):TExpr {
 		return TypeFunctions.mk(TCall(e, params), t, p);
+	}
+
+	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
+		var pt = Typer.spawnMonomorph(ctx, p);
+		var t = ctx.com.basic.tarray(pt);
+		try {
+			TypeUnification.unifyDefault(e1.type, t);
+		} catch (_:UnifyError) {
+			throw new TypingError("Array access is not allowed on this type", e1.pos);
+		}
+		try {
+			TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint);
+		} catch (_:UnifyError) {
+			throw new TypingError("Array index must be of type Int", e2.pos);
+		}
+		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
 	}
 
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {

@@ -275,8 +275,10 @@ class Typer {
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
 				var te = typeExpr(ctx, e1, WithTypeTools.value);
 				Fields.typeField(ctx, te, field, p, mode, withType);
-			case EArray(_, _):
-				throw new TypingError("Array access is not yet ported (unit 5)", p);
+			case EArray(e1, e2):
+				var te1 = typeExpr(ctx, e1, WithTypeTools.value);
+				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
+				Calls.arrayAccess(ctx, te1, te2, mode, p);
 			case ECall(e1, params):
 				AKExpr(Calls.typeCall(ctx, e1, params, withType, p));
 			case _:
