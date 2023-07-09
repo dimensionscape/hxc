@@ -1,9 +1,13 @@
 package hxc.typing;
 
 import hxc.ast.Position;
+import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
+import hxc.core.TypeUnification.UnifyError;
 import hxc.core.Texpr;
+import hxc.core.WithType;
 import hxc.core.Globals;
 import hxc.core.TypingError;
 
