@@ -246,12 +246,21 @@ class Typer {
 		if (ctx.locals.exists(i)) {
 			return AKExpr(Texpr.makeLocal(ctx.locals.get(i), p));
 		}
-		return switch (i) {
-			case "null": AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
-			case "true": AKExpr(Texpr.makeBool(ctx.com.basic, true, p));
-			case "false": AKExpr(Texpr.makeBool(ctx.com.basic, false, p));
-			case _: throw new TypingError("Unknown identifier : " + i, p);
-		};
+		switch (i) {
+			case "null": return AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
+			case "true": return AKExpr(Texpr.makeBool(ctx.com.basic, true, p));
+			case "false": return AKExpr(Texpr.makeBool(ctx.com.basic, false, p));
+			case _:
+		}
+		try {
+			var mt = ctx.com.getType({pack: [], name: i}, p, null);
+			// Hxc resolves field types in a separate pass; resolve the referenced module so its
+			// statics have real types (idempotent via processed).
+			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+			return AKExpr(Texpr.makeTypeExpr(mt, p));
+		} catch (_:hxc.context.Context.ContextError) {
+			throw new TypingError("Unknown identifier : " + i, p);
+		}
 	}
 
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {

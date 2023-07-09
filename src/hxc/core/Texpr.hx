@@ -4,6 +4,7 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.Ref;
+import hxc.core.TypingError;
 
 class Texpr {
 	public static inline function makeInt(basic:BasicTypes, i:Int, p:Position):TExpr {
@@ -38,6 +39,17 @@ class Texpr {
 	public static function makeStaticField(c:TClass, cf:TClassField, p:Position):TExpr {
 		var eThis = makeStaticThis(c, p);
 		return TypeFunctions.mk(TField(eThis, FStatic(c, cf)), cf.type, p);
+	}
+
+	// Anon carrying the right status (Statics / EnumStatics / AbstractStatics).
+	public static function makeTypeExpr(mt:ModuleType, p:Position):TExpr {
+		var t = switch (TypeFunctions.resolveTypedef(mt)) {
+			case TClassDecl(c): TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics);
+			case TEnumDecl(e): TypeFunctions.mkAnon(new Ref(EnumStatics(e)));
+			case TAbstractDecl(a): TypeFunctions.mkAnon(new Ref(AbstractStatics(a)));
+			case _: throw new TypingError("Invalid module type", p);
+		};
+		return TypeFunctions.mk(TTypeExpr(mt), t, p);
 	}
 
 	public static function makeConstTexpr(basic:BasicTypes, ct:TConstant, p:Position):TExpr {
