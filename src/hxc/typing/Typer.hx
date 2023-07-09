@@ -183,10 +183,10 @@ class Typer {
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
 				throw new TypingError("Field, array, and call access are not yet ported (units 4-5)", p);
-			case EBinop(_, _, _):
-				throw new TypingError("Binary operators are not yet ported (unit 3)", p);
-			case EUnop(_, _, _):
-				throw new TypingError("Unary operators are not yet ported (unit 3)", p);
+			case EBinop(op, e1, e2):
+				Operators.typeBinop(ctx, op, e1, e2, false, withType, p);
+			case EUnop(op, flag, e1):
+				Operators.typeUnop(ctx, op, flag, e1, withType, p);
 			case ESwitch(_, _, _):
 				throw new TypingError("Switch is not yet ported (unit 6)", p);
 			case EFor(_, _):
