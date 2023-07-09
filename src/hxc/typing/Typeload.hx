@@ -415,6 +415,7 @@ class Typeload {
 		if (m == null || m.extra.processed >= 1) return;
 		var saved = ctx.currentModule;
 		try {
+			TypeResolve.resolveModule(ctx, m);
 		} catch (_:Dynamic) {}
 		ctx.currentModule = saved;
 	}
