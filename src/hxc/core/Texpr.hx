@@ -35,6 +35,11 @@ class Texpr {
 		return TypeFunctions.mk(TTypeExpr(TClassDecl(c)), ta, p);
 	}
 
+	public static function makeStaticField(c:TClass, cf:TClassField, p:Position):TExpr {
+		var eThis = makeStaticThis(c, p);
+		return TypeFunctions.mk(TField(eThis, FStatic(c, cf)), cf.type, p);
+	}
+
 	public static function makeConstTexpr(basic:BasicTypes, ct:TConstant, p:Position):TExpr {
 		return switch (ct) {
 			case TString(s): TypeFunctions.mk(TConst(TString(s)), basic.tstring, p);
