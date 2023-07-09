@@ -286,3 +286,183 @@ class CaseMaker {
 		return {c: {guard: egT, expr: eoT, pos: p}, pat: pat};
 	}
 }
+
+// The decision-tree node (mutable for goto/texpr memoization).
+class Dt {
+	public var t:DtKind;
+	public var i:Int;
+	public var pos:Position;
+	public var gotoTarget:Bool;
+	public var texpr:Null<TExpr>;
+	public function new(t:DtKind, i:Int, p:Position) {
+		this.t = t;
+		this.i = i;
+		this.pos = p;
+		this.gotoTarget = false;
+		this.texpr = null;
+	}
+}
+
+enum DtKind {
+	Leaf(c:Case);
+	Switch(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>, def:Dt);
+	Bind(bindings:Array<Binding>, dt:Dt);
+	Guard(e:TExpr, dt1:Dt, dt2:Dt);
+	GuardNull(e:TExpr, dt1:Dt, dt2:Dt);
+	Fail;
+}
+
+// A pattern-variable binding produced during compilation: bind v (at p) to the subject e.
+typedef Binding = {v:TVar, p:Position, e:TExpr};
+
+// One row of the pattern matrix during compilation: (case, accumulated bindings, the row patterns).
+typedef MatchCase = {c:Case, bindings:Array<Binding>, patterns:Array<Pattern>};
+
+class MatcherContext {
+	public var ctx:TyperContext;
+	public var matchPos:Position;
+	public var matchDebug:Bool;
+	public var count:Int;
+	public function new(ctx:TyperContext, p:Position) {
+		this.ctx = ctx;
+		this.matchPos = p;
+		this.matchDebug = false;
+		this.count = 0;
+	}
+}
+
+class DtCompile {
+	static function makeList<A>(n:Int, x:A):Array<A> {
+		return [for (_ in 0...n) x];
+	}
+
+	static function mkDt(mctx:MatcherContext, t:DtKind, p:Position):Dt {
+		var d = new Dt(t, mctx.count, p);
+		mctx.count++;
+		return d;
+	}
+
+	public static function leaf(mctx:MatcherContext, c:Case):Dt return mkDt(mctx, Leaf(c), c.pos);
+	public static function fail(mctx:MatcherContext, p:Position):Dt return mkDt(mctx, Fail, p);
+	public static function switchDt(mctx:MatcherContext, subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>, def:Dt):Dt return mkDt(mctx, Switch(subject, cases, def), subject.pos);
+	public static function bind(mctx:MatcherContext, bindings:Array<Binding>, dt:Dt):Dt return mkDt(mctx, Bind(bindings, dt), dt.pos);
+	public static function guard(mctx:MatcherContext, e:TExpr, dt1:Dt, dt2:Dt):Dt return mkDt(mctx, Guard(e, dt1, dt2), Position.union(dt1.pos, dt2.pos));
+	public static function guardNull(mctx:MatcherContext, e:TExpr, dt1:Dt, dt2:Dt):Dt return mkDt(mctx, GuardNull(e, dt1, dt2), Position.union(dt1.pos, dt2.pos));
+
+	public static function specialize(subject:TExpr, con:Con, cases:Array<MatchCase>):Array<MatchCase> {
+		var arity = Constructor.arity(con);
+		var out:Array<MatchCase> = [];
+		for (mc in cases) {
+			var r = specializeRow(subject, con, arity, mc);
+			if (r != null) out.push(r);
+		}
+		return out;
+	}
+
+	static function specializeRow(subject:TExpr, con:Con, arity:Int, mc:MatchCase):Null<MatchCase> {
+		if (mc.patterns.length == 0) return null;
+		var head = mc.patterns[0];
+		var rest = mc.patterns.slice(1);
+		return switch (head.pat) {
+			case PatConstructor(con2, patterns1) if (Constructor.equal(con, con2)):
+				{c: mc.c, bindings: mc.bindings, patterns: patterns1.concat(rest)};
+			case PatVariable(v):
+				{c: mc.c, bindings: [{v: v, p: head.pos, e: subject}].concat(mc.bindings), patterns: makeList(arity, {pat: PatAny, pos: head.pos}).concat(rest)};
+			case PatAny:
+				{c: mc.c, bindings: mc.bindings, patterns: makeList(arity, head).concat(rest)};
+			case PatBind(v, pat1):
+				specializeRow(subject, con, arity, {c: mc.c, bindings: [{v: v, p: head.pos, e: subject}].concat(mc.bindings), patterns: [pat1].concat(rest)});
+			case _:
+				null;
+		};
+	}
+
+	public static function defaultMatrix(subject:TExpr, cases:Array<MatchCase>):Array<MatchCase> {
+		var out:Array<MatchCase> = [];
+		for (mc in cases) {
+			var r = defaultRow(subject, mc);
+			if (r != null) out.push(r);
+		}
+		return out;
+	}
+
+	static function defaultRow(subject:TExpr, mc:MatchCase):Null<MatchCase> {
+		if (mc.patterns.length == 0) return null;
+		var head = mc.patterns[0];
+		var rest = mc.patterns.slice(1);
+		return switch (head.pat) {
+			case PatVariable(v):
+				{c: mc.c, bindings: [{v: v, p: head.pos, e: subject}].concat(mc.bindings), patterns: rest};
+			case PatAny:
+				{c: mc.c, bindings: mc.bindings, patterns: rest};
+			case PatBind(v, pat1):
+				defaultRow(subject, {c: mc.c, bindings: [{v: v, p: head.pos, e: subject}].concat(mc.bindings), patterns: [pat1].concat(rest)});
+			case _:
+				null;
+		};
+	}
+
+	public static function isWildcardPattern(pat:Pattern):Bool {
+		return switch (pat.pat) {
+			case PatVariable(_) | PatAny: true;
+			case PatBind(_, pat1): isWildcardPattern(pat1);
+			case _: false;
+		};
+	}
+
+	// Expand (or-patterns, binds over sub-patterns, tuples).
+	public static function expand(cases:Array<MatchCase>):Array<MatchCase> {
+		var out:Array<MatchCase> = [];
+		for (mc in cases) {
+			for (r in expandRow(function(pat) return pat, mc)) out.push(r);
+		}
+		return out;
+	}
+
+	static function expandRow(f:Pattern->Pattern, mc:MatchCase):Array<MatchCase> {
+		if (mc.patterns.length == 0) return [mc];
+		var head = mc.patterns[0];
+		var rest = mc.patterns.slice(1);
+		return switch (head.pat) {
+			case PatOr(pat1, pat2):
+				expandRow(f, {c: mc.c, bindings: mc.bindings, patterns: [pat1].concat(rest)})
+					.concat(expandRow(f, {c: mc.c, bindings: mc.bindings, patterns: [pat2].concat(rest)}));
+			case PatBind(v, pat1):
+				var p = head.pos;
+				expandRow(function(pat2) return f({pat: PatBind(v, pat2), pos: p}), {c: mc.c, bindings: mc.bindings, patterns: [pat1].concat(rest)});
+			case PatTuple(patterns1):
+				expandRow(f, {c: mc.c, bindings: mc.bindings, patterns: patterns1.concat(rest)});
+			case _:
+				[{c: mc.c, bindings: mc.bindings, patterns: [f(head)].concat(rest)}];
+		};
+	}
+
+	// Move the first column with a real constructor to the front.
+	public static function selectColumn(subjects:Array<TExpr>, cases:Array<MatchCase>):{subjects:Array<TExpr>, cases:Array<MatchCase>} {
+		function findCol(patterns:Array<Pattern>):Int {
+			var i = 0;
+			var ps = patterns;
+			while (true) {
+				if (ps.length == 0) return 0;
+				switch (ps[0].pat) {
+					case PatVariable(_) | PatAny | PatExtractor(_, _, _): i++; ps = ps.slice(1);
+					case PatBind(_, pat1): ps = [pat1].concat(ps.slice(1));
+					case _: return i;
+				}
+			}
+		}
+		var col = cases.length == 0 ? 0 : findCol(cases[0].patterns);
+		if (col == 0) return {subjects: subjects, cases: cases};
+		// Sort: selected column first, then the preceding columns reversed, then the
+		// rest (applied identically to subjects and patterns so they stay aligned).
+		function move<A>(l:Array<A>):Array<A> {
+			var before = l.slice(0, col);
+			before.reverse();
+			return [l[col]].concat(before).concat(l.slice(col + 1));
+		}
+		return {
+			subjects: move(subjects),
+			cases: [for (mc in cases) {c: mc.c, bindings: mc.bindings, patterns: move(mc.patterns)}]
+		};
+	}
+}
