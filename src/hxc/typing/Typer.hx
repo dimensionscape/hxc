@@ -11,6 +11,7 @@ import hxc.core.Texpr;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
+import hxc.typing.Matcher.Match;
 import hxc.typing.Typeload;
 
 class Typer {
@@ -188,8 +189,8 @@ class Typer {
 				Operators.typeBinop(ctx, op, e1, e2, false, withType, p);
 			case EUnop(op, flag, e1):
 				Operators.typeUnop(ctx, op, flag, e1, withType, p);
-			case ESwitch(_, _, _):
-				throw new TypingError("Switch is not yet ported (unit 6)", p);
+			case ESwitch(e1, cases, def):
+				Match.matchExpr(ctx, e1, cases, def, withType, false, p);
 			case EFor(it, body):
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(_, _):

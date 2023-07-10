@@ -465,4 +465,241 @@ class DtCompile {
 			cases: [for (mc in cases) {c: mc.c, bindings: mc.bindings, patterns: move(mc.patterns)}]
 		};
 	}
+
+	// A fresh generated local (unique id from allocVar).
+	static function genLocal(ctx:TyperContext, t:T, p:Position):TVar {
+		return TypeFunctions.allocVar(VGenerated, "_hx_g", t, p);
+	}
+
+	static function isNullConst(con:Con):Bool {
+		return switch (con.kind) { case ConConst(TNull): true; case _: false; };
+	}
+
+	static function getSubSubjects(mctx:MatcherContext, e:TExpr, con:Con, argPositions:Array<Position>):Array<TExpr> {
+		return switch (con.kind) {
+			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];
+			case ConArray(0): [];
+			case ConEnum(_, _) | ConArray(_) | ConFields(_):
+				throw new TypingError("Nested patterns (enum arguments, array, structure) are not yet ported", con.pos);
+		};
+	}
+
+	static function getColumnSigma(subject:TExpr, cases:Array<MatchCase>):{sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}>, nullCases:Array<MatchCase>} {
+		var sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}> = [];
+		var unguarded:Array<Con> = [];
+		var nullCases:Array<MatchCase> = [];
+		function addSigma(con:Con, argPositions:Array<Position>) {
+			for (s in sigma) if (Constructor.equal(s.con, con)) { s.argPositions = argPositions; return; }
+			sigma.push({con: con, unguarded: false, argPositions: argPositions});
+		}
+		function markUnguarded(con:Con) {
+			for (c in unguarded) if (Constructor.equal(c, con)) return;
+			unguarded.push(con);
+		}
+		for (mc in cases) {
+			function loop(bindings:Array<Binding>, pat:Pattern) {
+				switch (pat.pat) {
+					case PatConstructor(con, _) if (isNullConst(con)):
+						nullCases.push({c: mc.c, bindings: bindings, patterns: mc.patterns.slice(1)});
+					case PatConstructor(con, patterns):
+						if (mc.c.guard == null) markUnguarded(con);
+						addSigma(con, [for (pp in patterns) pp.pos]);
+					case PatBind(v, pat1):
+						loop([{v: v, p: pat.pos, e: subject}].concat(bindings), pat1);
+					case PatVariable(_) | PatAny:
+					case PatExtractor(_, _, _):
+						throw new TypingError("Extractor patterns are not yet ported", mc.c.pos);
+					case _:
+						throw new TypingError("Unexpected pattern: " + (switch (pat.pat) { case PatTuple(_): "tuple"; case _: "?"; }), mc.c.pos);
+				}
+			}
+			loop(mc.bindings, mc.patterns[0]);
+		}
+		for (s in sigma) for (c in unguarded) if (Constructor.equal(c, s.con)) { s.unguarded = true; break; }
+		sigma.sort(function(a, b) return a.con.pos.min - b.con.pos.min);
+		return {sigma: sigma, nullCases: nullCases};
+	}
+
+	public static function compile(mctx:MatcherContext, subjects:Array<TExpr>, cases:Array<MatchCase>):Dt {
+		if (cases.length == 0) {
+			return fail(mctx, subjects.length > 0 ? subjects[0].pos : mctx.matchPos);
+		}
+		var first = cases[0];
+		var allWild = true;
+		for (pat in first.patterns) if (!isWildcardPattern(pat)) { allWild = false; break; }
+		if (allWild) {
+			return compileLeaf(mctx, subjects, first, cases.slice(1));
+		}
+		var cs = expand(cases);
+		var sel = selectColumn(subjects, cs);
+		cs = expand(sel.cases);
+		return compileSwitch(mctx, sel.subjects, cs);
+	}
+
+	static function compileLeaf(mctx:MatcherContext, subjects:Array<TExpr>, mc:MatchCase, cases:Array<MatchCase>):Dt {
+		var dt = leaf(mctx, mc.c);
+		dt = switch (mc.c.guard) {
+			case null: dt;
+			case e: guard(mctx, e, dt, compile(mctx, subjects, cases));
+		};
+		// Loop patterns el bindings: pair leftover patterns with subjects to bind vars.
+		var bindings = mc.bindings.copy();
+		var patterns = mc.patterns;
+		var el = subjects;
+		var pi = 0, ei = 0;
+		while (true) {
+			if (patterns.length - pi == 1 && isPatAny(patterns[pi])) break;                       
+			if (pi >= patterns.length && ei >= el.length) break;
+			if (pi >= patterns.length) throw new TypingError("Invalid match: Not enough patterns", el[ei].pos);
+			if (ei >= el.length) throw new TypingError("Invalid match: Too many patterns", patterns[pi].pos);
+			var head = patterns[pi];
+			switch (head.pat) {
+				case PatVariable(v):
+					bindings.unshift({v: v, p: head.pos, e: el[ei]});
+					pi++; ei++;
+				case PatBind(v, pat1):
+					bindings.unshift({v: v, p: head.pos, e: el[ei]});
+					patterns = [pat1].concat(patterns.slice(pi + 1));
+					el = el.slice(ei);
+					pi = 0; ei = 0;
+				case _:
+					pi++; ei++;
+			}
+		}
+		if (bindings.length == 0) return dt;
+		bindings.reverse();
+		return bind(mctx, bindings, dt);
+	}
+
+	static inline function isPatAny(pat:Pattern):Bool return switch (pat.pat) { case PatAny: true; case _: false; };
+
+	static function compileSwitch(mctx:MatcherContext, subjects:Array<TExpr>, cases:Array<MatchCase>):Dt {
+		if (subjects.length == 0) throw new TypingError("Internal match failure", mctx.matchPos);
+		var subject = subjects[0];
+		var rest = subjects.slice(1);
+		var sig = getColumnSigma(subject, cases);
+		var switchCases:Array<{con:Con, unguarded:Bool, dt:Dt}> = [];
+		for (s in sig.sigma) {
+			var subSubjects = getSubSubjects(mctx, subject, s.con, s.argPositions);
+			var bindings:Array<Binding> = [];
+			var subExprs:Array<TExpr> = [];
+			for (sse in subSubjects) {
+				var v = genLocal(mctx.ctx, sse.type, sse.pos);
+				bindings.push({v: v, p: v.pos, e: sse});
+				subExprs.push(Texpr.makeLocal(v, v.pos));
+			}
+			var newSubjects = subExprs.concat(rest);
+			var spec = specialize(subject, s.con, cases);
+			var dt = compile(mctx, newSubjects, spec);
+			dt = bind(mctx, bindings, dt);
+			switchCases.push({con: s.con, unguarded: s.unguarded, dt: dt});
+		}
+		var def = defaultMatrix(subject, cases);
+		var switchDefault = compile(mctx, rest, def);
+		var dt = switchCases.length == 0 ? switchDefault : switchDt(mctx, subject, switchCases, switchDefault);
+		if (sig.nullCases.length == 0) {
+			return TypeFunctions.isExplicitNull(subject.type) ? guardNull(mctx, subject, switchDefault, dt) : dt;
+		}
+		var dtNull = compile(mctx, rest, sig.nullCases.concat(def));
+		return guardNull(mctx, subject, dtNull, dt);
+	}
+
+	// Compile (entry): bind non-trivial subjects to temps, then compile.
+	public static function compileEntry(ctx:TyperContext, matchDebug:Bool, subjects:Array<TExpr>, cases:Array<MatchCase>, p:Position):Dt {
+		var mctx = new MatcherContext(ctx, p);
+		mctx.matchDebug = matchDebug;
+		var subj:Array<TExpr> = [];
+		var vars:Array<Binding> = [];
+		for (e in subjects) {
+			switch (e.expr) {
+				case TConst(_) | TLocal(_): subj.push(e);
+				case _:
+					var v = genLocal(ctx, e.type, e.pos);
+					subj.push(Texpr.makeLocal(v, e.pos));
+					vars.push({v: v, p: e.pos, e: e});
+			}
+		}
+		var dt = if (cases.length == 0 && subj.length > 0) {
+			switchDt(mctx, subj[0], [], fail(mctx, subj[0].pos));
+		} else {
+			compile(mctx, subj, cases);
+		}
+		return vars.length == 0 ? dt : bind(mctx, vars, dt);
+	}
+}
+
+class TexprConverter {
+	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
+		if (dt.texpr != null) return dt.texpr;
+		var basic = ctx.com.basic;
+		var e:Null<TExpr> = switch (dt.t) {
+			case Leaf(c):
+				c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), basic.tvoid, c.pos);
+			case Switch(subject, cases, def):
+				var defE = toTexpr(ctx, tSwitch, withType, def);
+				var swCases:Array<TSwitchCase> = [];
+				for (sc in cases) {
+					var ce = toTexpr(ctx, tSwitch, withType, sc.dt);
+					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
+				}
+				TypeFunctions.mk(TSwitch(subject, swCases, defE), tSwitch, dt.pos);
+			case Guard(e, dt1, dt2):
+				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
+				if (eThen == null) null else {
+					var eElse = toTexpr(ctx, tSwitch, withType, dt2);
+					if (eElse != null) TypeFunctions.mk(TIf(e, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
+					else TypeFunctions.mk(TIf(e, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
+				}
+			case GuardNull(e, dt1, dt2):
+				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
+				var eElse = toTexpr(ctx, tSwitch, withType, dt2);
+				if (eThen == null) eElse else if (eElse == null) eThen else {
+					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
+					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
+					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
+				}
+			case Bind(bl, dt2):
+				var inner = toTexpr(ctx, tSwitch, withType, dt2);
+				if (inner == null) null else {
+					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
+					el.push(inner);
+					TypeFunctions.mk(TBlock(el), inner.type, dt.pos);
+				}
+			case Fail:
+				null;
+		};
+		dt.texpr = e;
+		return e;
+	}
+}
+
+class Match {
+	static function bodyExpr(ctx:TyperContext, c:Case):TExpr {
+		return c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), ctx.com.basic.tvoid, c.pos);
+	}
+
+	static function inferSwitchType(ctx:TyperContext, withType:WithType, cases:Array<MatchCase>):T {
+		return switch (withType) {
+			case NoValue: ctx.com.basic.tvoid;
+			case Value(_): cases.length == 0 ? ctx.com.basic.tvoid : Typer.unifyMin(ctx, [for (mc in cases) bodyExpr(ctx, mc.c)]);
+			case WithType(t, _): t;
+		};
+	}
+
+	public static function matchExpr(ctx:TyperContext, e:Expr, cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>, withType:WithType, postfix:Bool, p:Position):TExpr {
+		var subjectE = Typer.typeExpr(ctx, e, WithTypeTools.value);
+		var t = subjectE.type;
+		var allCases = cases.copy();
+		if (def != null) allCases.push({values: [new Expr(EConst(CIdent("_")), def.pos)], guard: null, expr: def.e, pos: def.pos});
+		var matchCases:Array<MatchCase> = [];
+		for (cas in allCases) {
+			var r = CaseMaker.make(ctx, t, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
+			matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
+		}
+		var tSwitch = inferSwitchType(ctx, withType, matchCases);
+		var dt = DtCompile.compileEntry(ctx, false, [subjectE], matchCases, p);
+		var te = TexprConverter.toTexpr(ctx, tSwitch, withType, dt);
+		if (te == null) throw new TypingError("Unmatched patterns: _", p);
+		return te;
+	}
 }
