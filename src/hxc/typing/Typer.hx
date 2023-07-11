@@ -198,8 +198,17 @@ class Typer {
 				typeNew(ctx, tp, el, withType, p);
 			case EFunction(_, _):
 				throw new TypingError("Local functions are not yet ported", p);
-			case EObjectDecl(_) | EArrayDecl(_):
-				throw new TypingError("Object and array declarations are not yet ported", p);
+			case EArrayDecl(el):
+				switch (el) {
+					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
+						throw new TypingError("Array comprehensions are not yet ported", p);
+					case _:
+						var tl = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
+						var et = tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl);
+						TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
+				}
+			case EObjectDecl(_):
+				throw new TypingError("Object declarations are not yet ported", p);
 			case ETry(_, _):
 				throw new TypingError("try/catch is not yet ported", p);
 			case ECast(_, _):

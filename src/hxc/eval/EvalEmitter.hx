@@ -51,6 +51,13 @@ class EvalEmitter {
 			case TContinue: throw new EvalContinue();
 			case TThrow(e1): EvalExceptions.throwValue(ctx, eval(ctx, e1), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
+			case TArray(e1, e2):
+				switch (eval(ctx, e1)) {
+					case VArray(va):
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						(idx >= 0 && idx < va.alength) ? va.avalues[idx] : VNull;
+					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+				}
 			case TTypeExpr(mt):
 				EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(TypeFunctions.tInfos(mt).path), e.pos).pvalue;
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
@@ -143,6 +150,15 @@ class EvalEmitter {
 				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
 			case TField(e1, fa):
 				EvalField.setField(ctx, eval(ctx, e1), fieldKey(fa), value, lhs.pos);
+			case TArray(e1, e2):
+				switch (eval(ctx, e1)) {
+					case VArray(va):
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						while (va.avalues.length <= idx) va.avalues.push(VNull);
+						va.avalues[idx] = value;
+						if (idx >= va.alength) va.alength = idx + 1;
+					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+				}
 			case _:
 				EvalExceptions.excString(ctx, "Unsupported assignment target");
 		}
