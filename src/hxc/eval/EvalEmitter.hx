@@ -51,6 +51,10 @@ class EvalEmitter {
 			case TContinue: throw new EvalContinue();
 			case TThrow(e1): EvalExceptions.throwValue(ctx, eval(ctx, e1), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
+			case TObjectDecl(fields):
+				var m = new Map<Int, EvalValue>();
+				for (f in fields) m.set(EvalHash.hash(f.key.name), eval(ctx, f.expr));
+				VObject(new VObject([], ODictionary(m)));
 			case TArray(e1, e2):
 				switch (eval(ctx, e1)) {
 					case VArray(va):

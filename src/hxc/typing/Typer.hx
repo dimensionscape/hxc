@@ -207,8 +207,16 @@ class Typer {
 						var et = tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl);
 						TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
 				}
-			case EObjectDecl(_):
-				throw new TypingError("Object declarations are not yet ported", p);
+			case EObjectDecl(fields):
+				var tfields:Array<TObjectField> = [];
+				var anonFields = new haxe.ds.StringMap<TClassField>();
+				for (f in fields) {
+					var te = typeExpr(ctx, f.expr, WithTypeTools.value);
+					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
+					anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
+				}
+				var t = TypeFunctions.mkAnon(new hxc.core.Ref(Closed), anonFields);
+				TypeFunctions.mk(TObjectDecl(tfields), t, p);
 			case ETry(_, _):
 				throw new TypingError("try/catch is not yet ported", p);
 			case ECast(_, _):
