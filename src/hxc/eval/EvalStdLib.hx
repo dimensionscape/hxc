@@ -1,6 +1,7 @@
 package hxc.eval;
 
 import hxc.eval.EvalValue;
+import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
 import hxc.eval.EvalHash;
 
@@ -19,7 +20,32 @@ class EvalStdLib {
 
 	static inline function vfn(f:VFunc):EvalValue return VFunction(f, true);
 
+	// An instance builtin: a non-static function so dispatch wraps it with the receiver.
+	static inline function vmethod(f:VFunc):EvalValue return VFunction(f, false);
+
 	static inline function arg(a:Array<EvalValue>, i:Int):EvalValue return i < a.length ? a[i] : VNull;
+
+	static function toInt(v:EvalValue):Int {
+		return switch (v) {
+			case VInt(i): i;
+			case VFloat(f): Std.int(f);
+			case _: 0;
+		};
+	}
+
+	static function thisString(a:Array<EvalValue>):String {
+		return switch (a[0]) {
+			case VString(s): s.sstring;
+			case _: "";
+		};
+	}
+
+	static function thisArray(a:Array<EvalValue>):VArray {
+		return switch (a[0]) {
+			case VArray(va): va;
+			case _: new VArray([], 0);
+		};
+	}
 
 	static function toFloat(v:EvalValue):Float {
 		return switch (v) {
@@ -62,5 +88,72 @@ class EvalStdLib {
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
+
+		var inst = ctx.builtins.instanceBuiltins;
+
+		reg(inst, "String", "charAt", vmethod(a -> mkStr(thisString(a).charAt(toInt(arg(a, 1))))));
+		reg(inst, "String", "charCodeAt", vmethod(a -> {
+			var str = thisString(a);
+			var i = toInt(arg(a, 1));
+			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
+		}));
+		reg(inst, "String", "indexOf", vmethod(a -> VInt(thisString(a).indexOf(stringOf(arg(a, 1)), a.length > 2 ? toInt(arg(a, 2)) : 0))));
+		reg(inst, "String", "lastIndexOf", vmethod(a -> VInt(thisString(a).lastIndexOf(stringOf(arg(a, 1))))));
+		reg(inst, "String", "toUpperCase", vmethod(a -> mkStr(thisString(a).toUpperCase())));
+		reg(inst, "String", "toLowerCase", vmethod(a -> mkStr(thisString(a).toLowerCase())));
+		reg(inst, "String", "substr", vmethod(a -> {
+			var str = thisString(a);
+			var pos = toInt(arg(a, 1));
+			mkStr(a.length > 2 && arg(a, 2) != VNull ? str.substr(pos, toInt(arg(a, 2))) : str.substr(pos));
+		}));
+		reg(inst, "String", "substring", vmethod(a -> {
+			var str = thisString(a);
+			var start = toInt(arg(a, 1));
+			mkStr(a.length > 2 && arg(a, 2) != VNull ? str.substring(start, toInt(arg(a, 2))) : str.substring(start));
+		}));
+		reg(inst, "String", "split", vmethod(a -> {
+			var parts = thisString(a).split(stringOf(arg(a, 1)));
+			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
+		}));
+		reg(inst, "String", "toString", vmethod(a -> arg(a, 0)));
+
+		reg(inst, "Array", "push", vmethod(a -> {
+			var va = thisArray(a);
+			va.avalues.push(arg(a, 1));
+			va.alength = va.avalues.length;
+			VInt(va.alength);
+		}));
+		reg(inst, "Array", "pop", vmethod(a -> {
+			var va = thisArray(a);
+			if (va.alength == 0) VNull;
+			else {
+				var v = va.avalues.pop();
+				va.alength = va.avalues.length;
+				v;
+			}
+		}));
+		reg(inst, "Array", "concat", vmethod(a -> {
+			var va = thisArray(a);
+			var other = thisArray([arg(a, 1)]);
+			VArray(new VArray(va.avalues.concat(other.avalues), va.alength + other.alength));
+		}));
+		reg(inst, "Array", "join", vmethod(a -> {
+			var va = thisArray(a);
+			mkStr([for (i in 0...va.alength) stringOf(va.avalues[i])].join(stringOf(arg(a, 1))));
+		}));
+		reg(inst, "Array", "indexOf", vmethod(a -> {
+			var va = thisArray(a);
+			var target = arg(a, 1);
+			var idx = -1;
+			for (i in 0...va.alength) if (EvalValueTools.equals(va.avalues[i], target)) {
+				idx = i;
+				break;
+			}
+			VInt(idx);
+		}));
+		reg(inst, "Array", "toString", vmethod(a -> {
+			var va = thisArray(a);
+			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
+		}));
 	}
 }

@@ -21,7 +21,13 @@ class EvalMain {
 		for (mt in types) {
 			switch (mt) {
 				case TClassDecl(c):
-					ctx.instancePrototypes.set(EvalHash.pathHash(c.path), EvalPrototype.buildInstance(ctx, c));
+					var iproto = EvalPrototype.buildInstance(ctx, c);
+					ctx.instancePrototypes.set(EvalHash.pathHash(c.path), iproto);
+					if (c.path.pack.length == 0) switch (c.path.name) {
+						case "String": ctx.stringPrototype = iproto;
+						case "Array": ctx.arrayPrototype = iproto;
+						case _:
+					}
 					var r = EvalPrototype.buildStatic(ctx, c);
 					ctx.staticPrototypes.set(r.proto.ppath, r.proto);
 					for (d in r.delays) delays.push({proto: r.proto, fn: d});
