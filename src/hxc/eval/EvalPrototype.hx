@@ -12,14 +12,25 @@ typedef ProtoDelay = VPrototype->Void;
 // Builds the runtime prototypes for a typed class. Static and instance methods become callables;
 // fields are laid out in offset-indexed arrays addressed by the hashed-name maps.
 class EvalPrototype {
-	static function makeFunction(ctx:EvalContext, tf:TFunc):VFunc {
+	// An instance method or constructor receives the receiver as the first call argument and binds
+	// it as this; a static method binds its arguments directly.
+	static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
+			var offset = isInstance ? 1 : 0;
 			var bound:Array<{vid:Int, value:EvalValue}> = [];
 			for (i in 0...tf.args.length) {
-				bound.push({vid: tf.args[i].v.id, value: i < args.length ? args[i] : VNull});
+				var j = i + offset;
+				bound.push({vid: tf.args[i].v.id, value: j < args.length ? args[j] : VNull});
 			}
-			return EvalEmitter.runBody(ctx, bound, tf.expr);
+			var vthis = isInstance ? (args.length > 0 ? args[0] : VNull) : null;
+			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis);
 		};
+	}
+
+	public static function makeConstructor(ctx:EvalContext, c:TClass):Null<VFunc> {
+		if (c.constructor == null) return null;
+		var tf = asFunction(c.constructor.expr);
+		return tf == null ? null : makeFunction(ctx, tf, true);
 	}
 
 	static inline function asFunction(e:Null<TExpr>):Null<TFunc> {
@@ -47,7 +58,7 @@ class EvalPrototype {
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							pnames.set(EvalHash.hash(cf.name), pfields.length);
-							pfields.push(VFunction(makeFunction(ctx, tf), true));
+							pfields.push(VFunction(makeFunction(ctx, tf, false), true));
 						}
 					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
@@ -96,7 +107,7 @@ class EvalPrototype {
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
-						pfields.push(VFunction(makeFunction(ctx, tf), false));
+						pfields.push(VFunction(makeFunction(ctx, tf, true), false));
 					} else if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
 						pfields.push(VNull);

@@ -24,6 +24,8 @@ class EvalMain {
 					var r = EvalPrototype.buildStatic(ctx, c);
 					ctx.staticPrototypes.set(r.proto.ppath, r.proto);
 					for (d in r.delays) delays.push({proto: r.proto, fn: d});
+					var ctor = EvalPrototype.makeConstructor(ctx, c);
+					if (ctor != null) ctx.constructors.set(EvalHash.pathHash(c.path), ctor);
 				case _:
 			}
 		}

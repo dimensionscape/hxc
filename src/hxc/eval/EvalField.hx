@@ -1,8 +1,10 @@
 package hxc.eval;
 
+import hxc.ast.Position;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools.vresolve;
 import hxc.eval.EvalContext;
+import hxc.eval.EvalExceptions;
 import hxc.eval.EvalHash;
 import hxc.core.NotFound;
 
@@ -71,5 +73,23 @@ class EvalField {
 			case VFunction(f, false): VFieldClosure(v, f);
 			case other: other;
 		};
+	}
+
+	public static function setField(ctx:EvalContext, v:EvalValue, name:Int, value:EvalValue, p:Position):Void {
+		switch (vresolve(v)) {
+			case VInstance(vi):
+				vi.ifields[EvalContext.getInstanceFieldIndex(vi.iproto, name, p)] = value;
+			case VObject(o):
+				switch (o.oproto) {
+					case OProto(proto):
+						var idx = proto.pinstanceNames.get(name);
+						if (idx != null) o.ofields[idx] = value;
+						else EvalExceptions.excString(ctx, "Cannot add field " + EvalHash.revHash(name) + " to this object");
+					case ODictionary(l):
+						l.set(name, value);
+				}
+			case _:
+				EvalExceptions.unexpectedValue(ctx, v, "object");
+		}
 	}
 }

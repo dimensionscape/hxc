@@ -41,6 +41,8 @@ class EvalEnv {
 	public var eval:Eval;
 	// Maps a variable id to its local slot, filled as variables are first seen.
 	public var slots:Map<Int, Int>;
+	// The receiver for an instance method or constructor body.
+	public var vthis:Null<EvalValue>;
 	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval) {
 		this.info = info;
 		this.locals = locals;
@@ -49,6 +51,7 @@ class EvalEnv {
 		this.stackDepth = stackDepth;
 		this.eval = eval;
 		this.slots = new Map();
+		this.vthis = null;
 	}
 }
 
@@ -89,7 +92,7 @@ class EvalContext {
 	public var typeCache:Map<Int, ModuleType>;
 	public var instancePrototypes:Map<Int, VPrototype>;
 	public var staticPrototypes:Map<Int, VPrototype>;
-	public var constructors:Map<Int, Void->EvalValue>;
+	public var constructors:Map<Int, VFunc>;
 	public var arrayPrototype:Null<VPrototype>;
 	public var stringPrototype:Null<VPrototype>;
 	public var vectorPrototype:Null<VPrototype>;
@@ -173,7 +176,7 @@ class EvalContext {
 		return proto;
 	}
 
-	public static function getInstanceConstructorRaise(ctx:EvalContext, path:Int):Void->EvalValue {
+	public static function getInstanceConstructorRaise(ctx:EvalContext, path:Int):VFunc {
 		var c = ctx.constructors.get(path);
 		if (c == null) throw new NotFound();
 		return c;

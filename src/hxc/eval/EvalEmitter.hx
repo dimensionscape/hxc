@@ -28,6 +28,7 @@ class EvalEmitter {
 	public static function eval(ctx:EvalContext, e:TExpr):EvalValue {
 		var env = EvalContext.getEval(ctx).env;
 		return switch (e.expr) {
+			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
 			case TLocal(v): env.locals[slot(env, v.id)];
 			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): eval(ctx, e1);
@@ -54,6 +55,7 @@ class EvalEmitter {
 				EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(TypeFunctions.tInfos(mt).path), e.pos).pvalue;
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
+			case TNew(c, _, newArgs): evalNew(ctx, c, [for (a in newArgs) eval(ctx, a)], e.pos);
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0]);
 		};
 	}
@@ -112,11 +114,24 @@ class EvalEmitter {
 		};
 	}
 
+	static function fieldKey(fa:TFieldAccess):Int {
+		return switch (fa) {
+			case FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf): EvalHash.hash(cf.name);
+			case FEnum(_, ef): EvalHash.hash(ef.name);
+			case FDynamic(s): EvalHash.hash(s);
+		};
+	}
+
 	static function assign(ctx:EvalContext, lhs:TExpr, value:EvalValue):EvalValue {
 		switch (lhs.expr) {
 			case TLocal(v):
 				var env = EvalContext.getEval(ctx).env;
 				env.locals[slot(env, v.id)] = value;
+			case TField(_, FStatic(c, cf)):
+				var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), lhs.pos);
+				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
+			case TField(e1, fa):
+				EvalField.setField(ctx, eval(ctx, e1), fieldKey(fa), value, lhs.pos);
 			case _:
 				EvalExceptions.excString(ctx, "Unsupported assignment target");
 		}
@@ -193,17 +208,25 @@ class EvalEmitter {
 		var args = [for (a in argExprs) eval(ctx, a)];
 		return switch (fn) {
 			case VFunction(f, _): f(args);
-			// Instance method dispatch needs the receiver bound as this; ported with new.
-			case VFieldClosure(_, _): EvalExceptions.excString(ctx, "Instance method calls are not yet evaluated");
+			case VFieldClosure(recv, f): f([recv].concat(args));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
 		};
 	}
 
+	static function evalNew(ctx:EvalContext, c:TClass, args:Array<EvalValue>, p:Position):EvalValue {
+		var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), p);
+		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);
+		var ctor = ctx.constructors.get(EvalHash.pathHash(c.path));
+		if (ctor != null) ctor([VInstance(inst)].concat(args));
+		return VInstance(inst);
+	}
+
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
 	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr):EvalValue {
-		var info:EvalEnvInfo = {isStatic: true, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0};
+	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue):EvalValue {
+		var info:EvalEnvInfo = {isStatic: vthis == null, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0};
 		var env = EvalContext.pushEnvironment(ctx, info);
+		env.vthis = vthis;
 		for (a in args) env.locals[slot(env, a.vid)] = a.value;
 		var ret = try {
 			eval(ctx, body);
