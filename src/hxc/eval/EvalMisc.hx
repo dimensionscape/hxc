@@ -105,7 +105,7 @@ class EvalMisc {
 
 	public static function opMod(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
 		return switch [v1, v2] {
-			case [VInt(a), VInt(b)]: VInt(a % b);
+			case [VInt(a), VInt(b)]: b == 0 ? VFloat(Math.NaN) : VInt(a % b);
 			case [VFloat(a), VFloat(b)]: VFloat(a % b);
 			case [VInt(a), VFloat(b)]: VFloat(a % b);
 			case [VFloat(a), VInt(b)]: VFloat(a % b);
@@ -139,14 +139,14 @@ class EvalMisc {
 	}
 
 	public static function opShl(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a << b); case _: EvalExceptions.excString(ctx, "Invalid operation: <<"); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a << (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: <<"); };
 	}
 
 	public static function opShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >> b); case _: EvalExceptions.excString(ctx, "Invalid operation: >>"); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >> (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: >>"); };
 	}
 
 	public static function opUShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >>> b); case _: EvalExceptions.excString(ctx, "Invalid operation: >>>"); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >>> (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: >>>"); };
 	}
 }

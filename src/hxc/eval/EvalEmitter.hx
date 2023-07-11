@@ -117,7 +117,7 @@ class EvalEmitter {
 
 	static function evalUnop(ctx:EvalContext, op:Unop, flag:UnopFlag, e1:TExpr, p:Position):EvalValue {
 		return switch (op) {
-			case Not: EvalMisc.isTrue(eval(ctx, e1)) ? VFalse : VTrue;
+			case Not: switch (eval(ctx, e1)) { case VNull | VFalse: VTrue; case _: VFalse; };
 			case Neg:
 				switch (eval(ctx, e1)) {
 					case VInt(i): VInt(-i);
