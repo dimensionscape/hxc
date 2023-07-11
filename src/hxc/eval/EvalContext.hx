@@ -39,6 +39,8 @@ class EvalEnv {
 	public var parent:Null<EvalEnv>;
 	public var stackDepth:Int;
 	public var eval:Eval;
+	// Maps a variable id to its local slot, filled as variables are first seen.
+	public var slots:Map<Int, Int>;
 	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval) {
 		this.info = info;
 		this.locals = locals;
@@ -46,6 +48,7 @@ class EvalEnv {
 		this.parent = parent;
 		this.stackDepth = stackDepth;
 		this.eval = eval;
+		this.slots = new Map();
 	}
 }
 
