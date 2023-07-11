@@ -3,8 +3,12 @@ package hxc.eval;
 import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.core.Type;
+import hxc.core.TypeFunctions;
 import hxc.eval.EvalValue;
+import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
+import hxc.eval.EvalField;
+import hxc.eval.EvalHash;
 import hxc.eval.EvalExceptions;
 
 // Direct tree-walk over typed expressions. Locals live in the current frame's slot array,
@@ -46,6 +50,10 @@ class EvalEmitter {
 			case TContinue: throw new EvalContinue();
 			case TThrow(e1): EvalExceptions.throwValue(ctx, eval(ctx, e1), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
+			case TTypeExpr(mt):
+				EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(TypeFunctions.tInfos(mt).path), e.pos).pvalue;
+			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
+			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0]);
 		};
 	}
@@ -163,6 +171,32 @@ class EvalEmitter {
 				}
 		}
 		return VNull;
+	}
+
+	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position):EvalValue {
+		return switch (fa) {
+			case FStatic(c, cf):
+				EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name));
+			case FEnum(en, ef):
+				EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name));
+			case FInstance(_, _, cf) | FClosure(_, cf):
+				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
+			case FAnon(cf):
+				EvalField.field(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
+			case FDynamic(s):
+				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(s));
+		};
+	}
+
+	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
+		var fn = EvalValueTools.vresolve(eval(ctx, callee));
+		var args = [for (a in argExprs) eval(ctx, a)];
+		return switch (fn) {
+			case VFunction(f, _): f(args);
+			// Instance method dispatch needs the receiver bound as this; ported with new.
+			case VFieldClosure(_, _): EvalExceptions.excString(ctx, "Instance method calls are not yet evaluated");
+			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
+		};
 	}
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
