@@ -56,6 +56,17 @@ class EvalEmitter {
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
 			case TNew(c, _, newArgs): evalNew(ctx, c, [for (a in newArgs) eval(ctx, a)], e.pos);
+			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef);
+			case TEnumParameter(e1, _, index):
+				switch (eval(ctx, e1)) {
+					case VEnumValue(ev): ev.eargs[index];
+					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
+				}
+			case TEnumIndex(e1):
+				switch (eval(ctx, e1)) {
+					case VEnumValue(ev): VInt(ev.eindex);
+					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
+				}
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0]);
 		};
 	}
@@ -211,6 +222,16 @@ class EvalEmitter {
 			case VFieldClosure(recv, f): f([recv].concat(args));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
 		};
+	}
+
+	static function evalSwitch(ctx:EvalContext, subject:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):EvalValue {
+		var v = eval(ctx, subject);
+		for (c in cases) {
+			for (cv in c.values) {
+				if (EvalValueTools.equals(v, eval(ctx, cv))) return eval(ctx, c.expr);
+			}
+		}
+		return edef != null ? eval(ctx, edef) : VNull;
 	}
 
 	static function evalNew(ctx:EvalContext, c:TClass, args:Array<EvalValue>, p:Position):EvalValue {
