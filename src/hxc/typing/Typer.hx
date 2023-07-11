@@ -12,6 +12,7 @@ import hxc.core.WithType;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 import hxc.typing.Matcher.Match;
+import hxc.typing.TyperContext.CurrentFun;
 import hxc.typing.Typeload;
 
 class Typer {
@@ -405,12 +406,70 @@ class Typer {
 				return TypeFunctions.mk(TReturn(null), expectVoid ? v : monoOrDynamic(ctx, withType, p), p);
 			case ex:
 				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue : WithTypeTools.withType(ctx.ret);
-				var te = typeExpr(ctx, ex, withExpected);
-				if (isVoid(TypeFunctions.follow(ctx.ret))) {
-					return te;
+				var te = castOrUnify(ctx, ctx.ret, typeExpr(ctx, ex, withExpected), p);
+				if (isVoid(TypeFunctions.follow(te.type))) {
+					switch (te.expr) {
+						case TConst(TNull): throw new TypingError("Cannot return null from Void-function", p);
+						case _:
+					}
+					var t = monoOrDynamic(ctx, withType, p);
+					return TypeFunctions.mk(TBlock([te, TypeFunctions.mk(TReturn(null), t, p)]), t, te.pos);
 				}
-				var te2 = castOrUnify(ctx, ctx.ret, te, p);
-				return TypeFunctions.mk(TReturn(te2), monoOrDynamic(ctx, withType, p), p);
+				return TypeFunctions.mk(TReturn(te), monoOrDynamic(ctx, withType, p), p);
 		}
+	}
+
+	public static function typeFunction(ctx:TyperContext, args:Array<TFuncArg>, ret:T, fmode:CurrentFun, bodyExpr:Null<Expr>, p:Position):TFunc {
+		var oldInFunction = ctx.inFunction;
+		var oldCurfun = ctx.curfun;
+		var oldRet = ctx.ret;
+		var oldLoop = ctx.inLoop;
+		var restore = saveLocals(ctx);
+		ctx.inFunction = true;
+		ctx.curfun = fmode;
+		ctx.ret = ret;
+		ctx.inLoop = false;
+		for (a in args) ctx.locals.set(a.v.name, a.v);
+		function reset() {
+			restore();
+			ctx.inFunction = oldInFunction;
+			ctx.curfun = oldCurfun;
+			ctx.ret = oldRet;
+			ctx.inLoop = oldLoop;
+		}
+		if (bodyExpr == null) {
+			reset();
+			throw new TypingError("Function body required", p);
+		}
+		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:TypingError) {
+			reset();
+			throw e;
+		}
+		// An inferred return type with no value-return settles to Void.
+		switch (TypeFunctions.follow(ret)) {
+			case TMono(_) if (!hasReturn(te)):
+				try TypeUnification.unifyDefault(ctx.com.basic.tvoid, ret) catch (_:UnifyError) {}
+			case _:
+		}
+		reset();
+		return new TFunc(args, ret, te);
+	}
+
+	static function hasReturn(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TReturn(eo): eo != null;
+			case TFunction(_) | TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_): false;
+			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2): hasReturn(e1) || hasReturn(e2);
+			case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1): hasReturn(e1);
+			case TVarExpr(_, eo): eo != null && hasReturn(eo);
+			case TObjectDecl(fields): Lambda.exists(fields, f -> hasReturn(f.expr));
+			case TArrayDecl(el) | TBlock(el): Lambda.exists(el, hasReturn);
+			case TCall(e1, el): hasReturn(e1) || Lambda.exists(el, hasReturn);
+			case TNew(_, _, el): Lambda.exists(el, hasReturn);
+			case TIf(e1, e2, e3): hasReturn(e1) || hasReturn(e2) || (e3 != null && hasReturn(e3));
+			case TWhile(e1, e2, _): hasReturn(e1) || hasReturn(e2);
+			case TSwitch(e1, cases, edef): hasReturn(e1) || Lambda.exists(cases, c -> Lambda.exists(c.values, hasReturn) || hasReturn(c.expr)) || (edef != null && hasReturn(edef));
+			case TTry(e1, catches): hasReturn(e1) || Lambda.exists(catches, c -> hasReturn(c.expr));
+		};
 	}
 }

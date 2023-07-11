@@ -3,6 +3,8 @@ package hxc;
 import hxc.context.Context;
 import hxc.context.Setup;
 import hxc.context.ModuleLoader;
+import hxc.typing.TypeResolve;
+import hxc.typing.TypeFields;
 import hxc.core.Globals;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.Path;
@@ -70,6 +72,8 @@ class Compiler {
 		var path = parseTypePath(mainClass);
 		try {
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			TypeResolve.resolveAll(ctx);
+			TypeFields.typeAllModules(ctx);
 			Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 		} catch (e:Dynamic) {
 			Sys.println("Error: " + e);
