@@ -69,6 +69,20 @@ class EvalStdLib {
 		};
 	}
 
+	static function thisBuffer(a:Array<EvalValue>):StringBuf {
+		return switch (a[0]) {
+			case VInstance(vi): switch (vi.ikind) { case IBuffer(b): b; case _: new StringBuf(); };
+			case _: new StringBuf();
+		};
+	}
+
+	static function thisRegex(a:Array<EvalValue>):EReg {
+		return switch (a[0]) {
+			case VInstance(vi): switch (vi.ikind) { case IRegex(r): r; case _: new EReg("", ""); };
+			case _: new EReg("", "");
+		};
+	}
+
 	static function toFloat(v:EvalValue):Float {
 		return switch (v) {
 			case VInt(i): i;
@@ -224,5 +238,29 @@ class EvalStdLib {
 				}
 			case _: VNull;
 		}));
+
+		var ctors = ctx.builtins.constructorBuiltins;
+		ctors.set(EvalHash.hash("StringBuf"), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("StringBuf"));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
+		});
+		ctors.set(EvalHash.hash("EReg"), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(new EReg(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		});
+
+		reg(inst, "StringBuf", "add", vmethod(a -> {
+			thisBuffer(a).add(stringOf(arg(a, 1)));
+			VNull;
+		}));
+		reg(inst, "StringBuf", "addChar", vmethod(a -> {
+			thisBuffer(a).addChar(toInt(arg(a, 1)));
+			VNull;
+		}));
+		reg(inst, "StringBuf", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
+
+		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
+		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
+		reg(inst, "EReg", "replace", vmethod(a -> mkStr(thisRegex(a).replace(stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
 	}
 }

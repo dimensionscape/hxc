@@ -235,9 +235,12 @@ class EvalEmitter {
 	}
 
 	static function evalNew(ctx:EvalContext, c:TClass, args:Array<EvalValue>, p:Position):EvalValue {
-		var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), p);
+		var key = EvalHash.pathHash(c.path);
+		var special = ctx.builtins.constructorBuiltins.get(key);
+		if (special != null) return special(args);
+		var proto = EvalContext.getInstancePrototype(ctx, key, p);
 		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);
-		var ctor = ctx.constructors.get(EvalHash.pathHash(c.path));
+		var ctor = ctx.constructors.get(key);
 		if (ctor != null) ctor([VInstance(inst)].concat(args));
 		return VInstance(inst);
 	}

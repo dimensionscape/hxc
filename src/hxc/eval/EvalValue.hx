@@ -130,6 +130,8 @@ enum EvalInstanceKind {
 	IPos(p:Position);
 	ITypeDecl(mt:ModuleType);
 	IRef(v:EvalValue);
+	IBuffer(buf:StringBuf);
+	IRegex(re:EReg);
 }
 
 @:structInit
