@@ -217,8 +217,20 @@ class Typer {
 				}
 				var t = TypeFunctions.mkAnon(new hxc.core.Ref(Closed), anonFields);
 				TypeFunctions.mk(TObjectDecl(tfields), t, p);
-			case ETry(_, _):
-				throw new TypingError("try/catch is not yet ported", p);
+			case ETry(e1, catches):
+				var te = typeExpr(ctx, e1, withType);
+				var tcatches:Array<TCatch> = [];
+				var bodies = [te];
+				for (c in catches) {
+					var restore = saveLocals(ctx);
+					var ct = c.type != null ? Typeload.loadComplexType(ctx.com, ctx.typeParams, c.type) : TypeFunctions.tDynamic;
+					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, ct, c.pos);
+					var cbody = typeExpr(ctx, c.expr, withType);
+					restore();
+					tcatches.push({v: v, expr: cbody});
+					bodies.push(cbody);
+				}
+				TypeFunctions.mk(TTry(te, tcatches), unifyMin(ctx, bodies), p);
 			case ECast(_, _):
 				throw new TypingError("cast is not yet ported", p);
 			case EIs(_, _):

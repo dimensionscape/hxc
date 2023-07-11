@@ -55,6 +55,19 @@ class EvalEmitter {
 				var m = new Map<Int, EvalValue>();
 				for (f in fields) m.set(EvalHash.hash(f.key.name), eval(ctx, f.expr));
 				VObject(new VObject([], ODictionary(m)));
+			case TTry(e1, catches):
+				var ev = EvalContext.getEval(ctx);
+				var savedEnv = ev.env;
+				try {
+					eval(ctx, e1);
+				} catch (ex:EvalRunTimeException) {
+					ev.env = savedEnv;
+					if (catches.length == 0) throw ex;
+					// First-catch binding; per-catch type filtering is deferred.
+					var c = catches[0];
+					savedEnv.locals[slot(savedEnv, c.v.id)] = ex.value;
+					eval(ctx, c.expr);
+				}
 			case TArray(e1, e2):
 				switch (eval(ctx, e1)) {
 					case VArray(va):
