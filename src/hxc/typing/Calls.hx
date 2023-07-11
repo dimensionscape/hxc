@@ -67,10 +67,17 @@ class Calls {
 	static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
-			case AKField(fa): callExpr(ctx, FieldAccessTools.getFieldExpr(fa, FCall), el, p);
+			case AKField(fa): callExpr(ctx, monomorphizeParams(ctx, fa.field, FieldAccessTools.getFieldExpr(fa, FCall)), el, p);
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
+	}
+
+	// A generic method's own type parameters become fresh monomorphs for the call.
+	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr):TExpr {
+		if (cf.params.length == 0) return ce;
+		var monos:TParams = [for (_ in cf.params) Typer.spawnMonomorph(ctx, ce.pos)];
+		return TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos);
 	}
 
 	static function callExpr(ctx:TyperContext, ce:TExpr, el:Array<Expr>, p:Position):TExpr {
