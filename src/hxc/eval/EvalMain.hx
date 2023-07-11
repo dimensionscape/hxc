@@ -12,6 +12,7 @@ class EvalMain {
 	public static function create(isMacro:Bool):EvalContext {
 		var ctx = new EvalContext(0, isMacro);
 		EvalContext.setCtx(ctx);
+		EvalStdLib.init(ctx);
 		return ctx;
 	}
 

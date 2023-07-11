@@ -44,6 +44,17 @@ class EvalPrototype {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasClassFieldFlag(cf, CfGeneric);
 	}
 
+	// Install native builtins for a type (extern stdlib classes get their fields from here).
+	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
+		if (list == null) return;
+		for (b in list) {
+			if (!pnames.exists(b.name)) {
+				pnames.set(b.name, pfields.length);
+				pfields.push(b.v);
+			}
+		}
+	}
+
 	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>} {
 		var key = EvalHash.pathHash(c.path);
 		var pparent = c.superClass == null ? null : ctx.staticPrototypes.get(EvalHash.pathHash(c.superClass.c.path));
@@ -85,6 +96,7 @@ class EvalPrototype {
 				}
 			}
 		}
+		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
 		proto.pvalue = VPrototype(proto);
 		return {proto: proto, delays: delays};
@@ -118,6 +130,7 @@ class EvalPrototype {
 				case _:
 			}
 		}
+		addBuiltins(ctx.builtins.instanceBuiltins.get(key), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, pinstFields, pinstNames, pparent, PInstance, VNull);
 		proto.pvalue = VPrototype(proto);
 		return proto;
