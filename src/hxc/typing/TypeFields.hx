@@ -20,6 +20,8 @@ class TypeFields {
 	}
 
 	public static function typeModuleFields(ctx:Context, m:ModuleDef):Void {
+		// A module pulled in while typing another may not have had its signatures resolved yet.
+		TypeResolve.resolveModule(ctx, m);
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m;
 		for (mt in m.types) {

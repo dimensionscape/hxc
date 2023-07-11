@@ -252,6 +252,7 @@ class Typer {
 			case "null": return AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
 			case "true": return AKExpr(Texpr.makeBool(ctx.com.basic, true, p));
 			case "false": return AKExpr(Texpr.makeBool(ctx.com.basic, false, p));
+			case "this": return AKExpr(TypeFunctions.mk(TConst(TThis), ctx.tthis, p));
 			case _:
 		}
 		try {

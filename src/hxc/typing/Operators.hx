@@ -8,6 +8,7 @@ import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TypingError;
 import hxc.core.WithType;
+import hxc.typing.FieldAccess;
 
 enum TypeClass {
 	KInt;
@@ -216,8 +217,10 @@ class Operators {
 
 	public static function typeBinop(ctx:TyperContext, op:Binop, e1:Expr, e2:Expr, isAssignOp:Bool, withType:WithType, p:Position):TExpr {
 		return switch (op) {
-			case OpAssign | OpAssignOp(_):
-				throw new TypingError("Assignment operators are not yet ported (needs lvalue access, unit 4)", p);
+			case OpAssign:
+				typeAssign(ctx, e1, e2, withType, p);
+			case OpAssignOp(sub):
+				typeAssignOp(ctx, sub, e1, e2, withType, p);
 			case _:
 				var te1 = Typer.typeExpr(ctx, e1, WithTypeTools.value);
 				var rhsWt = switch (op) {
@@ -229,12 +232,40 @@ class Operators {
 		};
 	}
 
+	static function assignTo(ctx:TyperContext, te1:TExpr, e2:Expr, p:Position):TExpr {
+		var te2 = Typer.castOrUnify(ctx, te1.type, Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type)), p);
+		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
+	}
+
+	static function typeAssign(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
+		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
+			case AKExpr(te1): assignTo(ctx, te1, e2, p);
+			case AKField(fa): assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
+			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);
+			case _: throw new TypingError("This assignment target is not yet ported", p);
+		};
+	}
+
+	static function typeAssignOp(ctx:TyperContext, sub:Binop, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
+		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
+			case AKExpr(te1):
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+				makeBinop(ctx, sub, te1, te2, true, withType, p);
+				TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
+			case _:
+				throw new TypingError("This compound assignment target is not yet ported", p);
+		};
+	}
+
 	public static function typeUnop(ctx:TyperContext, op:Unop, flag:UnopFlag, e:Expr, withType:WithType, p:Position):TExpr {
 		return switch (op) {
 			case Spread:
 				throw new TypingError("Spread unary operator is only allowed for unpacking the last argument in a call with rest arguments", p);
 			case Increment | Decrement:
-				throw new TypingError("Increment and decrement are not yet ported (needs lvalue access, unit 4)", p);
+				switch (Typer.typeAccess(ctx, e.expr, e.pos, MGet, withType)) {
+					case AKExpr(te): TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+					case _: throw new TypingError("This increment target is not yet ported", p);
+				}
 			case Not | Neg | NegBits:
 				var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
 				makeUnop(ctx, op, flag, te, p);
