@@ -194,8 +194,8 @@ class Typer {
 				Match.matchExpr(ctx, e1, cases, def, withType, false, p);
 			case EFor(it, body):
 				ForLoop.typeForLoop(ctx, it, body, p);
-			case ENew(_, _):
-				throw new TypingError("new is not yet ported", p);
+			case ENew(tp, el):
+				typeNew(ctx, tp, el, withType, p);
 			case EFunction(_, _):
 				throw new TypingError("Local functions are not yet ported", p);
 			case EObjectDecl(_) | EArrayDecl(_):
@@ -453,6 +453,23 @@ class Typer {
 		}
 		reset();
 		return new TFunc(args, ret, te);
+	}
+
+	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		var t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, tp.path.tparams.length == 0);
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, tl):
+				if (c.constructor == null) throw new TypingError(c.path.name + " does not have a constructor", p);
+				var ctorType = TypeFunctions.applyParams(c.params, tl, c.constructor.type);
+				var sig = switch (TypeFunctions.follow(ctorType)) {
+					case TFun(s): s;
+					case _: {args: [], ret: ctx.com.basic.tvoid};
+				};
+				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
+			case _:
+				throw new TypingError("This type cannot be constructed", p);
+		};
 	}
 
 	static function hasReturn(e:TExpr):Bool {
