@@ -1,8 +1,11 @@
 package hxc.eval;
 
+import hxc.ast.Position;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
+import hxc.eval.EvalField;
+import hxc.eval.EvalMisc;
 import hxc.eval.EvalHash;
 
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
@@ -44,6 +47,25 @@ class EvalStdLib {
 		return switch (a[0]) {
 			case VArray(va): va;
 			case _: new VArray([], 0);
+		};
+	}
+
+	static function fieldNames(v:EvalValue):Array<String> {
+		return switch (v) {
+			case VObject(o):
+				switch (o.oproto) {
+					case OProto(proto): [for (k in proto.pinstanceNames.keys()) EvalHash.revHash(k)];
+					case ODictionary(l): [for (k in l.keys()) EvalHash.revHash(k)];
+				};
+			case VInstance(vi): [for (k in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(k)];
+			case _: [];
+		};
+	}
+
+	static function argList(v:EvalValue):Array<EvalValue> {
+		return switch (v) {
+			case VArray(va): va.avalues.slice(0, va.alength);
+			case _: [];
 		};
 	}
 
@@ -154,6 +176,53 @@ class EvalStdLib {
 		reg(inst, "Array", "toString", vmethod(a -> {
 			var va = thisArray(a);
 			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
+		}));
+
+		reg(s, "Reflect", "fields", vfn(a -> {
+			var names = fieldNames(arg(a, 0));
+			VArray(new VArray([for (n in names) mkStr(n)], names.length));
+		}));
+		reg(s, "Reflect", "field", vfn(a -> EvalField.field(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))))));
+		reg(s, "Reflect", "setField", vfn(a -> {
+			EvalField.setField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2), Position.nullPos);
+			VNull;
+		}));
+		reg(s, "Reflect", "hasField", vfn(a -> {
+			var name = stringOf(arg(a, 1));
+			EvalValueTools.vbool(fieldNames(arg(a, 0)).indexOf(name) != -1);
+		}));
+		reg(s, "Reflect", "isFunction", vfn(a -> EvalValueTools.vbool(switch (arg(a, 0)) {
+			case VFunction(_, _) | VFieldClosure(_, _): true;
+			case _: false;
+		})));
+		reg(s, "Reflect", "compare", vfn(a -> VInt(switch (EvalMisc.compare(arg(a, 0), arg(a, 1))) {
+			case CEq: 0;
+			case CInf: -1;
+			case CSup: 1;
+			case CUndef: 0;
+		})));
+
+		reg(s, "Type", "getClass", vfn(a -> switch (arg(a, 0)) {
+			case VInstance(vi):
+				var p = ctx.staticPrototypes.get(vi.iproto.ppath);
+				p == null ? VNull : p.pvalue;
+			case _: VNull;
+		}));
+		reg(s, "Type", "getClassName", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): mkStr(EvalHash.revHash(proto.ppath));
+			case _: VNull;
+		}));
+		reg(s, "Type", "createInstance", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto):
+				var iproto = ctx.instancePrototypes.get(proto.ppath);
+				if (iproto == null) VNull;
+				else {
+					var inst = new VInstance(iproto.pinstanceFields.copy(), iproto, INormal);
+					var ctor = ctx.constructors.get(proto.ppath);
+					if (ctor != null) ctor([VInstance(inst)].concat(argList(arg(a, 1))));
+					VInstance(inst);
+				}
+			case _: VNull;
 		}));
 	}
 }
