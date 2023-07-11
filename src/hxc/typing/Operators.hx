@@ -252,6 +252,11 @@ class Operators {
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 				makeBinop(ctx, sub, te1, te2, true, withType, p);
 				TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
+			case AKField(fa):
+				var te1 = FieldAccessTools.getFieldExpr(fa, FWrite);
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+				makeBinop(ctx, sub, te1, te2, true, withType, p);
+				TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
 		};
@@ -264,6 +269,9 @@ class Operators {
 			case Increment | Decrement:
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MGet, withType)) {
 					case AKExpr(te): TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+					case AKField(fa):
+						var te = FieldAccessTools.getFieldExpr(fa, FWrite);
+						TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:

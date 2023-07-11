@@ -126,6 +126,12 @@ class EvalEmitter {
 						var r = binopValue(ctx, sub, env.locals[s], eval(ctx, e2), p);
 						env.locals[s] = r;
 						r;
+					case TField(fe, fa):
+						var obj = eval(ctx, fe);
+						var name = fieldKey(fa);
+						var r = binopValue(ctx, sub, EvalField.field(ctx, obj, name), eval(ctx, e2), p);
+						EvalField.setField(ctx, obj, name, r, p);
+						r;
 					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target");
 				}
 			case _: binopValue(ctx, op, eval(ctx, e1), eval(ctx, e2), p);
@@ -192,6 +198,18 @@ class EvalEmitter {
 							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
 						};
 						env.locals[s] = next;
+						flag == Prefix ? next : old;
+					case TField(fe, fa):
+						var obj = eval(ctx, fe);
+						var name = fieldKey(fa);
+						var old = EvalField.field(ctx, obj, name);
+						var delta = op == Increment ? 1 : -1;
+						var next = switch (old) {
+							case VInt(i): VInt(i + delta);
+							case VFloat(f): VFloat(f + delta);
+							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+						};
+						EvalField.setField(ctx, obj, name, next, p);
 						flag == Prefix ? next : old;
 					case _: EvalExceptions.excString(ctx, "Unsupported increment target");
 				}
