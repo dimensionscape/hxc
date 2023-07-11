@@ -264,6 +264,18 @@ class Typer {
 			case "this": return AKExpr(TypeFunctions.mk(TConst(TThis), ctx.tthis, p));
 			case _:
 		}
+		if (ctx.curclass != TypeFunctions.nullClass) {
+			var imf = ctx.curclass.fields.get(i);
+			if (imf != null && !ctx.curfun.match(FunStatic)) {
+				var thisExpr = TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
+				return AKField(FieldAccessTools.create(thisExpr, imf, FieldAccessTools.getHost(ctx.curclass, imf), false, p));
+			}
+			var smf = ctx.curclass.statics.get(i);
+			if (smf != null) {
+				var typeExpr = Texpr.makeTypeExpr(TClassDecl(ctx.curclass), p);
+				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
+			}
+		}
 		try {
 			var mt = ctx.com.getType({pack: [], name: i}, p, null);
 			// Hxc resolves field types in a separate pass; resolve the referenced module so its
