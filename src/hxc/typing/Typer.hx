@@ -287,8 +287,10 @@ class Typer {
 				}
 			case CString(_, _):
 				Texpr.typeConstant(basic, c, p);
-			case CRegexp(_, _):
-				throw new TypingError("Regex literals are not yet ported", p);
+			case CRegexp(r, opt):
+				var tp:PlacedTypePath = {path: {tpackage: [], tname: "EReg", tparams: [], tsub: null}, pos: p};
+				var args = [new Expr(EConst(CString(r, SDoubleQuotes)), p), new Expr(EConst(CString(opt, SDoubleQuotes)), p)];
+				typeNew(ctx, tp, args, withType, p);
 		};
 	}
 
