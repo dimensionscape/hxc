@@ -20,6 +20,39 @@ import hxc.eval.EvalHash;
 class EvalMacro {
 	static var macroCtx:Null<EvalContext> = null;
 	static var lastModuleCount:Int = -1;
+	static var curPos:Position = Position.nullPos;
+
+	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
+		var key = EvalHash.hash(typeName);
+		var list = ec.builtins.staticBuiltins.get(key);
+		if (list == null) { list = []; ec.builtins.staticBuiltins.set(key, list); }
+		list.push({name: EvalHash.hash(fieldName), v: VFunction(f, true)});
+	}
+
+	static function registerContext(ec:EvalContext, com:Context):Void {
+		regBuiltin(ec, "haxe.macro.Context", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
+		regBuiltin(ec, "haxe.macro.Context", "currentPos", function(a) return VNull);
+		regBuiltin(ec, "haxe.macro.Context", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		regBuiltin(ec, "haxe.macro.Context", "fatalError", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		regBuiltin(ec, "haxe.macro.Context", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
+		regBuiltin(ec, "haxe.macro.Context", "makeExpr", function(a) return makeExprValue(ec, a[0]));
+	}
+
+	static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
+		var ed = switch (v) {
+			case VInt(i): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CInt", [mkString(Std.string(i)), VNull])]);
+			case VFloat(f): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CFloat", [mkString(Std.string(f)), VNull])]);
+			case VString(s): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CString", [mkString(s.sstring), VNull])]);
+			case VTrue: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("true")])]);
+			case VFalse: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("false")])]);
+			case VNull: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("null")])]);
+			case _: throw new TypingError("Context.makeExpr: unsupported value", curPos);
+		};
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("expr"), ed);
+		fields.set(EvalHash.hash("pos"), VNull);
+		return VObject(new VObject([], ODictionary(fields)));
+	}
 
 	public static function isMacroField(cf:TClassField):Bool {
 		return switch (cf.kind) { case Method(MethMacro): true; case _: false; };
@@ -30,6 +63,7 @@ class EvalMacro {
 			// Type any modules loaded on demand, then build the interpreter over all of them.
 			hxc.typing.TypeFields.typeAllModules(com);
 			var ec = EvalMain.create(true);
+			registerContext(ec, com);
 			EvalMain.addModules(ec, com.modules);
 			macroCtx = ec;
 			lastModuleCount = com.modules.length;
@@ -39,6 +73,7 @@ class EvalMacro {
 	}
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		curPos = p;
 		var ec = getContext(tctx.com);
 		var path = switch (fa.host) {
 			case FHStatic(c): c.path;
