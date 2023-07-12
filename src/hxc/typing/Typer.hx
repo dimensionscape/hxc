@@ -355,6 +355,39 @@ class Typer {
 		return null;
 	}
 
+	static function flattenIdentPath(e:ExprDef):Null<Array<String>> {
+		return switch (e) {
+			case EConst(CIdent(s)): [s];
+			case EField(e1, f, _):
+				var pre = flattenIdentPath(e1.expr);
+				pre == null ? null : pre.concat([f]);
+			case _: null;
+		};
+	}
+
+	// Resolves a dotted ident chain (pack.Type.field...) as a package-qualified type path.
+	static function tryTypePath(ctx:TyperContext, e:ExprDef, p:Position, mode:AccessMode, withType:WithType):Null<AccessKind> {
+		var segs = flattenIdentPath(e);
+		if (segs == null || segs.length < 2) return null;
+		var typeIdx = -1;
+		for (i in 0...segs.length) {
+			var c = segs[i].charCodeAt(0);
+			if (c >= "A".code && c <= "Z".code) { typeIdx = i; break; }
+		}
+		if (typeIdx < 0) return null;
+		var pack = segs.slice(0, typeIdx);
+		var name = segs[typeIdx];
+		var rest = segs.slice(typeIdx + 1);
+		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
+		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+		var acc:AccessKind = AKExpr(Texpr.makeTypeExpr(mt, p));
+		for (i in 0...rest.length) {
+			var isLast = i == rest.length - 1;
+			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], p, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+		}
+		return acc;
+	}
+
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
 		return switch (acc) {
 			case AKExpr(e): e;
@@ -374,8 +407,14 @@ class Typer {
 				typeIdent(ctx, s, p, mode, withType);
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
-				var te = typeExpr(ctx, e1, WithTypeTools.value);
-				Fields.typeField(ctx, te, field, p, mode, withType);
+				try {
+					var te = typeExpr(ctx, e1, WithTypeTools.value);
+					Fields.typeField(ctx, te, field, p, mode, withType);
+				} catch (err:TypingError) {
+					var acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
+					if (acc == null) throw err;
+					acc;
+				}
 			case EArray(e1, e2):
 				var te1 = typeExpr(ctx, e1, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
