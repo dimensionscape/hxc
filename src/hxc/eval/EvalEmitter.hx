@@ -320,6 +320,10 @@ class EvalEmitter {
 		var key = EvalHash.pathHash(c.path);
 		var special = ctx.builtins.constructorBuiltins.get(key);
 		if (special != null) return special(args);
+		return constructClass(ctx, c, key, args, p);
+	}
+
+	public static function constructClass(ctx:EvalContext, c:TClass, key:Int, args:Array<EvalValue>, p:Position):EvalValue {
 		var proto = EvalContext.getInstancePrototype(ctx, key, p);
 		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);
 		var instVal = VInstance(inst);
@@ -327,6 +331,14 @@ class EvalEmitter {
 		var ctor = ctx.constructors.get(key);
 		if (ctor != null) ctor([instVal].concat(args));
 		return instVal;
+	}
+
+	// Construct an instance of a type known only by its path hash (for stdlib builtins).
+	public static function constructPath(ctx:EvalContext, key:Int, args:Array<EvalValue>):EvalValue {
+		return switch (ctx.typeCache.get(key)) {
+			case TClassDecl(c): constructClass(ctx, c, key, args, Position.nullPos);
+			case _: VNull;
+		};
 	}
 
 	// Instance variable initializers run on the new object before the constructor body.

@@ -191,6 +191,7 @@ class EvalStdLib {
 			var va = thisArray(a);
 			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
 		}));
+		reg(inst, "Array", "iterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [a[0]])));
 
 		reg(s, "Reflect", "fields", vfn(a -> {
 			var names = fieldNames(arg(a, 0));

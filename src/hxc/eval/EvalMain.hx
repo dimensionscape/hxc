@@ -21,6 +21,7 @@ class EvalMain {
 		for (mt in types) {
 			switch (mt) {
 				case TClassDecl(c):
+					ctx.typeCache.set(EvalHash.pathHash(c.path), mt);
 					var iproto = EvalPrototype.buildInstance(ctx, c);
 					ctx.instancePrototypes.set(EvalHash.pathHash(c.path), iproto);
 					if (c.path.pack.length == 0) switch (c.path.name) {
