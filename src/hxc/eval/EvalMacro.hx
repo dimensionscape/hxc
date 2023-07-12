@@ -21,6 +21,8 @@ class EvalMacro {
 	static var macroCtx:Null<EvalContext> = null;
 	static var lastModuleCount:Int = -1;
 	static var curPos:Position = Position.nullPos;
+	static var curBuildFields:EvalValue = VNull;
+	static var builtClasses:Map<String, Bool> = new Map();
 
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
@@ -36,6 +38,90 @@ class EvalMacro {
 		regBuiltin(ec, "haxe.macro.Context", "fatalError", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		regBuiltin(ec, "haxe.macro.Context", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
 		regBuiltin(ec, "haxe.macro.Context", "makeExpr", function(a) return makeExprValue(ec, a[0]));
+		regBuiltin(ec, "haxe.macro.Context", "getBuildFields", function(a) return curBuildFields);
+	}
+
+
+	public static function runBuildMacros(com:Context):Void {
+		for (m in com.modules) for (mt in m.types) switch (mt) {
+			case TClassDecl(c): ensureBuilt(com, c);
+			case _:
+		}
+	}
+
+	// Runs a class's @:build macro the first time the class is resolved for use.
+	public static function ensureBuilt(com:Context, c:TClass):Void {
+		var key = c.path.pack.join(".") + "." + c.path.name;
+		if (builtClasses.exists(key)) return;
+		if (findMeta(c.meta, ":build") == null) return;
+		builtClasses.set(key, true);
+		// A build failure must not abort the whole compile; the class keeps its declared fields.
+		try runBuild(com, c) catch (_:haxe.Exception) {}
+	}
+
+	static function findMeta(meta:Metadata, name:String):Null<MetadataEntry> {
+		for (e in meta) if (e.name == name) return e;
+		return null;
+	}
+
+	static function runBuild(com:Context, c:TClass):Void {
+		var declEntry = com.declOfType.get(Context.pathKey(c.path));
+		if (declEntry == null) return;
+		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
+		var entry = findMeta(c.meta, ":build");
+		if (entry == null || entry.params.length == 0) return;
+		var callExpr = entry.params[0];
+		// Load the macro's own module so the interpreter built below includes it.
+		switch (callExpr.expr) {
+			case ECall(callee, _):
+				var t = macroTarget(callee);
+				if (t != null) try hxc.context.ModuleLoader.loadModule(com, {pack: t.pack, name: t.name}, callExpr.pos) catch (_:Dynamic) {}
+			case _:
+		}
+		var ec = getContext(com);
+		curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
+		var result = switch (callExpr.expr) {
+			case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
+			case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
+		};
+		var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
+		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
+		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
+		hxc.context.ModuleLoader.rebuildFields(c, newFields);
+		hxc.typing.TypeResolve.resolveClass(com, c, newDef, declEntry.pos);
+		// Type the freshly added field bodies so their expr is set for the interpreter.
+		hxc.typing.TypeFields.installAndForce(com);
+	}
+
+	static function flattenExprPath(e:Expr):Null<Array<String>> {
+		return switch (e.expr) {
+			case EConst(CIdent(s)): [s];
+			case EField(e1, f, _): var pre = flattenExprPath(e1); pre == null ? null : pre.concat([f]);
+			case _: null;
+		};
+	}
+
+	static function macroTarget(callee:Expr):Null<{pack:Array<String>, name:String, method:String}> {
+		var segs = flattenExprPath(callee);
+		if (segs == null || segs.length < 2) return null;
+		var typeSegs = segs.slice(0, segs.length - 1);
+		var typeIdx = -1;
+		for (i in 0...typeSegs.length) {
+			var ch = typeSegs[i].charCodeAt(0);
+			if (ch >= "A".code && ch <= "Z".code) { typeIdx = i; break; }
+		}
+		if (typeIdx < 0) return null;
+		return {pack: typeSegs.slice(0, typeIdx), name: typeSegs[typeIdx], method: segs[segs.length - 1]};
+	}
+
+	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
+		var t = macroTarget(callee);
+		if (t == null) throw new TypingError("@:build target must be a static call", p);
+		var proto = ec.staticPrototypes.get(EvalHash.pathHash({pack: t.pack, name: t.name}));
+		if (proto == null) throw new TypingError("@:build macro class not loaded: " + t.name, p);
+		var idx = proto.pnames.get(EvalHash.hash(t.method));
+		if (idx == null) throw new TypingError("@:build macro not found: " + t.method, p);
+		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
 	}
 
 	static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
@@ -61,7 +147,7 @@ class EvalMacro {
 	static function getContext(com:Context):EvalContext {
 		if (macroCtx == null || lastModuleCount != com.modules.length) {
 			// Type any modules loaded on demand, then build the interpreter over all of them.
-			hxc.typing.TypeFields.typeAllModules(com);
+			hxc.typing.TypeFields.installAndForce(com);
 			var ec = EvalMain.create(true);
 			registerContext(ec, com);
 			EvalMain.addModules(ec, com.modules);
@@ -171,6 +257,47 @@ class EvalMacro {
 		};
 	}
 
+	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
+		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: dp} : PlacedAccess)];
+		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), dp);
+		return new ClassField({name: name, pos: dp}, null, dp, [], access, kind);
+	}
+
+	static function decodeAccess(ec:EvalContext, v:EvalValue):Access {
+		return switch (ctorName(ec, v)) {
+			case "APublic": APublic; case "APrivate": APrivate; case "AStatic": AStatic; case "AOverride": AOverride;
+			case "ADynamic": ADynamic; case "AInline": AInline; case "AMacro": AMacro; case "AFinal": AFinal;
+			case "AExtern": AExtern; case "AAbstract": AAbstract; case "AOverload": AOverload;
+			case other: throw "macro decode: unhandled Access " + other;
+		};
+	}
+
+	static function decodeFieldKind(ec:EvalContext, v:EvalValue, dp:Position):ClassFieldKind {
+		var a = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "FVar": FVar(null, decodeExprOpt(ec, a.length > 1 ? a[1] : VNull, dp));
+			case "FFun": FFun(decodeFunc(ec, a[0], dp));
+			case "FProp": FProp({name: strOf(a[0]), pos: dp}, {name: strOf(a[1]), pos: dp}, null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
+			case other: throw "macro decode: unhandled FieldType " + other;
+		};
+	}
+
+	static function decodeFunc(ec:EvalContext, v:EvalValue, dp:Position):Func {
+		var args = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) decodeFunctionArg(ec, av, dp)];
+		return {fParams: [], fArgs: args, fType: null, fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+	}
+
+	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
+		return {
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
+			meta: [],
+			type: null,
+			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
+		};
+	}
+
 	static function decodeConstant(ec:EvalContext, v:EvalValue):Constant {
 		var a = eargs(v);
 		return switch (ctorName(ec, v)) {
@@ -261,6 +388,52 @@ class EvalMacro {
 		fields.set(EvalHash.hash("name"), mkString(ev.evName.name));
 		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
 		fields.set(EvalHash.hash("expr"), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(f.cffName.name));
+		fields.set(EvalHash.hash("doc"), VNull);
+		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
+		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
+		fields.set(EvalHash.hash("pos"), VNull);
+		fields.set(EvalHash.hash("meta"), encodeArray([]));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeAccess(ec:EvalContext, a:Access):EvalValue {
+		var name = switch (a) {
+			case APublic: "APublic"; case APrivate: "APrivate"; case AStatic: "AStatic"; case AOverride: "AOverride";
+			case ADynamic: "ADynamic"; case AInline: "AInline"; case AMacro: "AMacro"; case AFinal: "AFinal";
+			case AExtern: "AExtern"; case AAbstract: "AAbstract"; case AOverload: "AOverload";
+		};
+		return mkEnumValue(ec, "Access", name, []);
+	}
+
+	static function encodeFieldKind(ec:EvalContext, k:ClassFieldKind):EvalValue {
+		return switch (k) {
+			case FVar(_, e): mkEnumValue(ec, "FieldType", "FVar", [VNull, e == null ? VNull : encodeExpr(ec, e)]);
+			case FFun(fn): mkEnumValue(ec, "FieldType", "FFun", [encodeFunc(ec, fn)]);
+			case FProp(get, set, _, e): mkEnumValue(ec, "FieldType", "FProp", [mkString(get.name), mkString(set.name), VNull, e == null ? VNull : encodeExpr(ec, e)]);
+		};
+	}
+
+	static function encodeFunc(ec:EvalContext, f:Func):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("args"), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
+		fields.set(EvalHash.hash("ret"), VNull);
+		fields.set(EvalHash.hash("expr"), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
+		fields.set(EvalHash.hash("params"), encodeArray([]));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeFunctionArg(ec:EvalContext, a:FunctionArg):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(a.name.name));
+		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
+		fields.set(EvalHash.hash("type"), VNull);
+		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 

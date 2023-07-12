@@ -241,7 +241,7 @@ class Typer {
 					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 					anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
 				}
-				var t = TypeFunctions.mkAnon(new hxc.core.Ref(Closed), anonFields);
+				var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
 				TypeFunctions.mk(TObjectDecl(tfields), t, p);
 			case ETry(e1, catches):
 				var te = typeExpr(ctx, e1, withType);
@@ -346,6 +346,7 @@ class Typer {
 			// Hxc resolves field types in a separate pass; resolve the referenced module so its
 			// statics have real types (idempotent via processed).
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+			switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 			return AKExpr(Texpr.makeTypeExpr(mt, p));
 		} catch (_:hxc.context.Context.ContextError) {
 			throw new TypingError("Unknown identifier : " + i, p);
@@ -388,6 +389,7 @@ class Typer {
 		var rest = segs.slice(typeIdx + 1);
 		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		var acc:AccessKind = AKExpr(Texpr.makeTypeExpr(mt, p));
 		for (i in 0...rest.length) {
 			var isLast = i == rest.length - 1;

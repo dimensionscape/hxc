@@ -15,6 +15,13 @@ import hxc.typing.TyperContext.CurrentFun;
 // another module can bind it. A final flush forces every remaining field.
 class TypeFields {
 	public static function typeAllModules(ctx:Context):Void {
+		hxc.eval.EvalMacro.runBuildMacros(ctx);
+		installAndForce(ctx);
+	}
+
+	// Install lazy field typers for every loaded module and force them. Separate from the build
+	// pre-pass so the macro interpreter can re-run this without recursing into build macros.
+	public static function installAndForce(ctx:Context):Void {
 		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
