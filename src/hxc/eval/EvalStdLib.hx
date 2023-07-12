@@ -124,6 +124,8 @@ class EvalStdLib {
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
+		reg(s, "Std", "parseInt", vfn(a -> { var r = Std.parseInt(stringOf(arg(a, 0))); r == null ? VNull : VInt(r); }));
+		reg(s, "Std", "parseFloat", vfn(a -> VFloat(Std.parseFloat(stringOf(arg(a, 0))))));
 
 		var inst = ctx.builtins.instanceBuiltins;
 
