@@ -49,14 +49,35 @@ class EvalMacro {
 		}
 	}
 
-	// Runs a class's @:build macro the first time the class is resolved for use.
+	// Runs a class's build macros the first time the class is resolved: its own @:build plus any
+	// @:autoBuild inherited from a superclass or implemented interface.
 	public static function ensureBuilt(com:Context, c:TClass):Void {
 		var key = c.path.pack.join(".") + "." + c.path.name;
 		if (builtClasses.exists(key)) return;
-		if (findMeta(c.meta, ":build") == null) return;
+		var entries = collectBuildEntries(c);
+		if (entries.length == 0) return;
 		builtClasses.set(key, true);
 		// A build failure must not abort the whole compile; the class keeps its declared fields.
-		try runBuild(com, c) catch (_:haxe.Exception) {}
+		for (entry in entries) try runBuild(com, c, entry) catch (_:haxe.Exception) {}
+	}
+
+	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
+		var entries:Array<MetadataEntry> = [];
+		var own = findMeta(c.meta, ":build");
+		if (own != null) entries.push(own);
+		var seen:Map<String, Bool> = new Map();
+		function visit(t:TClass):Void {
+			var k = t.path.pack.join(".") + "." + t.path.name;
+			if (seen.exists(k)) return;
+			seen.set(k, true);
+			var ab = findMeta(t.meta, ":autoBuild");
+			if (ab != null) entries.push(ab);
+			if (t.superClass != null) visit(t.superClass.c);
+			for (i in t.interfaces) visit(i.c);
+		}
+		if (c.superClass != null) visit(c.superClass.c);
+		for (i in c.interfaces) visit(i.c);
+		return entries;
 	}
 
 	static function findMeta(meta:Metadata, name:String):Null<MetadataEntry> {
@@ -64,12 +85,11 @@ class EvalMacro {
 		return null;
 	}
 
-	static function runBuild(com:Context, c:TClass):Void {
+	static function runBuild(com:Context, c:TClass, entry:MetadataEntry):Void {
 		var declEntry = com.declOfType.get(Context.pathKey(c.path));
 		if (declEntry == null) return;
 		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
-		var entry = findMeta(c.meta, ":build");
-		if (entry == null || entry.params.length == 0) return;
+		if (entry.params.length == 0) return;
 		var callExpr = entry.params[0];
 		// Load the macro's own module so the interpreter built below includes it.
 		switch (callExpr.expr) {

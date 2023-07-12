@@ -598,6 +598,7 @@ class Typer {
 		var t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, tp.path.tparams.length == 0);
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
+				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
 				if (c.constructor == null) throw new TypingError(c.path.name + " does not have a constructor", p);
 				var ctorType = TypeFunctions.applyParams(c.params, tl, c.constructor.type);
 				var sig = switch (TypeFunctions.follow(ctorType)) {
