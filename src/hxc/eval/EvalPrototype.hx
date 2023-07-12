@@ -33,6 +33,30 @@ class EvalPrototype {
 		return tf == null ? null : makeFunction(ctx, tf, true);
 	}
 
+	// The static face of an enum: each constructor is a value (no-arg) or a builder (with args).
+	public static function buildEnum(ctx:EvalContext, en:TEnum):VPrototype {
+		var key = EvalHash.pathHash(en.path);
+		var pfields:Array<EvalValue> = [];
+		var pnames:Map<Int, Int> = new Map();
+		var constructors:Array<{name:String, args:Array<Int>}> = [];
+		for (name in en.names) {
+			var ef = en.constrs.get(name);
+			var idx = ef.index;
+			var pos = ef.namePos;
+			var v:EvalValue = switch (TypeFunctions.follow(ef.type)) {
+				case TFun(sig):
+					constructors.push({name: name, args: [for (a in sig.args) EvalHash.hash(a.name)]});
+					VFunction(function(args:Array<EvalValue>):EvalValue return EvalValue.VEnumValue(new VEnumValue(idx, args, key, pos)), false);
+				case _:
+					constructors.push({name: name, args: []});
+					EvalValue.VEnumValue(new VEnumValue(idx, [], key, pos));
+			};
+			pnames.set(EvalHash.hash(name), pfields.length);
+			pfields.push(v);
+		}
+		return new VPrototype(key, pfields, pnames, [], new Map(), null, PEnum(constructors), VNull);
+	}
+
 	static inline function asFunction(e:Null<TExpr>):Null<TFunc> {
 		return e == null ? null : switch (e.expr) {
 			case TFunction(f): f;

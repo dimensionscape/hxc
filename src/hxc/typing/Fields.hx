@@ -85,14 +85,17 @@ class Fields {
 			case TInst(c, tl):
 				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) throw fieldNotFound(e.type, i, pfield);
 			case TAnon(a):
-				var f = a.fields.get(i);
-				if (f != null) {
-					switch (a.status.get()) {
-						case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
-						case EnumStatics(_): throw new TypingError("Enum constructor access is not yet ported", pfield);
-						case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
-					}
-				} else throw fieldNotFound(e.type, i, pfield);
+				switch (a.status.get()) {
+					case EnumStatics(en): enumConstructor(ctx, en, e, i, pfield);
+					case _:
+						var f = a.fields.get(i);
+						if (f != null) {
+							switch (a.status.get()) {
+								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
+								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
+							}
+						} else throw fieldNotFound(e.type, i, pfield);
+				}
 			case TMono(_):
 				throw new TypingError("Field access on an unresolved type is not yet ported", p);
 			case TAbstract(_, _):
@@ -102,5 +105,17 @@ class Fields {
 			case _:
 				throw fieldNotFound(e.type, i, pfield);
 		};
+	}
+
+	public static function enumConstructor(ctx:TyperContext, en:TEnum, e:TExpr, i:String, p:Position):AccessKind {
+		var ef = en.constrs.get(i);
+		if (ef == null) throw fieldNotFound(e.type, i, p);
+		var monos = [for (_ in en.params) TypeFunctions.mkMono()];
+		var t = TypeFunctions.applyParams(en.params, monos, ef.type);
+		if (ef.params.length > 0) {
+			var monos2 = [for (_ in ef.params) TypeFunctions.mkMono()];
+			t = TypeFunctions.applyParams(ef.params, monos2, t);
+		}
+		return AKExpr(TypeFunctions.mk(TField(e, FEnum(en, ef)), t, p));
 	}
 }

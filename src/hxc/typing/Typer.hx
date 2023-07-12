@@ -308,6 +308,11 @@ class Typer {
 				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
 			}
 		}
+		var bareEnum = findBareEnumConstructor(ctx, i);
+		if (bareEnum != null) {
+			var et = Texpr.makeTypeExpr(TEnumDecl(bareEnum), p);
+			return Fields.enumConstructor(ctx, bareEnum, et, i, p);
+		}
 		try {
 			var mt = ctx.com.getType({pack: [], name: i}, p, null);
 			// Hxc resolves field types in a separate pass; resolve the referenced module so its
@@ -317,6 +322,17 @@ class Typer {
 		} catch (_:hxc.context.Context.ContextError) {
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
+	}
+
+	// A bare identifier that names a constructor of an enum declared in the current module.
+	static function findBareEnumConstructor(ctx:TyperContext, i:String):Null<TEnum> {
+		var m = ctx.com.currentModule;
+		if (m == null) return null;
+		for (mt in m.types) switch (mt) {
+			case TEnumDecl(en) if (en.constrs.exists(i)): return en;
+			case _:
+		}
+		return null;
 	}
 
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {

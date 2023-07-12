@@ -34,6 +34,9 @@ class EvalMain {
 					for (d in r.delays) delays.push({proto: r.proto, fn: d});
 					var ctor = EvalPrototype.makeConstructor(ctx, c);
 					if (ctor != null) ctx.constructors.set(EvalHash.pathHash(c.path), ctor);
+				case TEnumDecl(en):
+					ctx.typeCache.set(EvalHash.pathHash(en.path), mt);
+					ctx.staticPrototypes.set(EvalHash.pathHash(en.path), EvalPrototype.buildEnum(ctx, en));
 				case _:
 			}
 		}

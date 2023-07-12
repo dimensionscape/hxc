@@ -231,6 +231,20 @@ class PatternMaker {
 					case _:
 						throw new TypingError("Unrecognized pattern", p);
 				}
+			case ECall(ec, el):
+				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
+				switch (head.expr) {
+					case TField(_, FEnum(en, ef)):
+						switch (TypeFunctions.follow(head.type)) {
+							case TFun(sig):
+								unify(ctx, sig.ret, t, p);
+								if (el.length != sig.args.length) throw new TypingError("Invalid number of arguments in pattern", p);
+								var subs = [for (i in 0...el.length) make(pctx, false, sig.args[i].t, el[i])];
+								PatConstructor(Constructor.make(ConEnum(en, ef), p), subs);
+							case _: throw new TypingError("This pattern is not yet ported", p);
+						}
+					case _: throw new TypingError("This pattern is not yet ported", p);
+				}
 			case _:
 				throw new TypingError("This pattern is not yet ported", p);
 		};
@@ -479,8 +493,17 @@ class DtCompile {
 		return switch (con.kind) {
 			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];
 			case ConArray(0): [];
-			case ConEnum(_, _) | ConArray(_) | ConFields(_):
-				throw new TypingError("Nested patterns (enum arguments, array, structure) are not yet ported", con.pos);
+			case ConEnum(en, ef):
+				var pl = switch (TypeFunctions.follow(e.type)) { case TEnum(_, params): params; case _: []; };
+				switch (TypeFunctions.follow(ef.type)) {
+					case TFun(sig):
+						[for (i in 0...sig.args.length) TypeFunctions.mk(TEnumParameter(e, ef, i),
+							TypeFunctions.applyParams(en.params, pl, sig.args[i].t),
+							i < argPositions.length ? argPositions[i] : con.pos)];
+					case _: [];
+				}
+			case ConArray(_) | ConFields(_):
+				throw new TypingError("Array and structure patterns are not yet ported", con.pos);
 		};
 	}
 
@@ -642,7 +665,10 @@ class TexprConverter {
 					var ce = toTexpr(ctx, tSwitch, withType, sc.dt);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
 				}
-				TypeFunctions.mk(TSwitch(subject, swCases, defE), tSwitch, dt.pos);
+				// An enum switch dispatches on the constructor index.
+				var swSubject = cases.length > 0 && cases[0].con.kind.match(ConEnum(_, _))
+					? TypeFunctions.mk(TEnumIndex(subject), basic.tint, subject.pos) : subject;
+				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
 				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
 				if (eThen == null) null else {
