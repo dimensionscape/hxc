@@ -231,6 +231,9 @@ class PatternMaker {
 					case _:
 						throw new TypingError("Unrecognized pattern", p);
 				}
+			case EArrayDecl(el):
+				var et = switch (TypeFunctions.follow(t)) { case TInst(_, [x]): x; case _: TypeFunctions.tDynamic; };
+				PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
 			case ECall(ec, el):
 				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
 				switch (head.expr) {
@@ -492,7 +495,6 @@ class DtCompile {
 	static function getSubSubjects(mctx:MatcherContext, e:TExpr, con:Con, argPositions:Array<Position>):Array<TExpr> {
 		return switch (con.kind) {
 			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];
-			case ConArray(0): [];
 			case ConEnum(en, ef):
 				var pl = switch (TypeFunctions.follow(e.type)) { case TEnum(_, params): params; case _: []; };
 				switch (TypeFunctions.follow(ef.type)) {
@@ -502,8 +504,11 @@ class DtCompile {
 							i < argPositions.length ? argPositions[i] : con.pos)];
 					case _: [];
 				}
-			case ConArray(_) | ConFields(_):
-				throw new TypingError("Array and structure patterns are not yet ported", con.pos);
+			case ConArray(n):
+				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
+				[for (i in 0...n) TypeFunctions.mk(TArray(e, Texpr.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
+			case ConFields(_):
+				throw new TypingError("Structure patterns are not yet ported", con.pos);
 		};
 	}
 
@@ -652,6 +657,15 @@ class DtCompile {
 }
 
 class TexprConverter {
+	static function arrayLengthExpr(ctx:TyperContext, subject:TExpr):TExpr {
+		return switch (TypeFunctions.follow(subject.type)) {
+			case TInst(c, params):
+				var lengthCf = c.fields.get("length");
+				lengthCf == null ? subject : TypeFunctions.mk(TField(subject, FInstance(c, params, lengthCf)), ctx.com.basic.tint, subject.pos);
+			case _: subject;
+		};
+	}
+
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
@@ -666,8 +680,11 @@ class TexprConverter {
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
 				}
 				// An enum switch dispatches on the constructor index.
-				var swSubject = cases.length > 0 && cases[0].con.kind.match(ConEnum(_, _))
-					? TypeFunctions.mk(TEnumIndex(subject), basic.tint, subject.pos) : subject;
+				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
+					case ConEnum(_, _): TypeFunctions.mk(TEnumIndex(subject), basic.tint, subject.pos);
+					case ConArray(_): arrayLengthExpr(ctx, subject);
+					case _: subject;
+				};
 				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
 				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
