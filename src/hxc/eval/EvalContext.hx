@@ -43,6 +43,8 @@ class EvalEnv {
 	public var slots:Map<Int, Int>;
 	// The receiver for an instance method or constructor body.
 	public var vthis:Null<EvalValue>;
+	// The defining scope for a closure; locals not in this frame are looked up along this chain.
+	public var lexicalParent:Null<EvalEnv>;
 	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval) {
 		this.info = info;
 		this.locals = locals;

@@ -25,12 +25,22 @@ class EvalEmitter {
 		return s;
 	}
 
+	// Find the frame that declares a variable, walking the lexical chain for captured locals.
+	static function findEnv(env:EvalEnv, vid:Int):EvalEnv {
+		var e = env;
+		while (e != null) {
+			if (e.slots.exists(vid)) return e;
+			e = e.lexicalParent;
+		}
+		return env;
+	}
+
 	public static function eval(ctx:EvalContext, e:TExpr):EvalValue {
 		var env = EvalContext.getEval(ctx).env;
 		return switch (e.expr) {
 			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
-			case TLocal(v): env.locals[slot(env, v.id)];
+			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
 			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): eval(ctx, e1);
 			case TBlock(el):
 				var r:EvalValue = VNull;
@@ -77,6 +87,7 @@ class EvalEmitter {
 				}
 			case TTypeExpr(mt):
 				EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(TypeFunctions.tInfos(mt).path), e.pos).pvalue;
+			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), false);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
 			case TNew(c, _, newArgs): evalNew(ctx, c, [for (a in newArgs) eval(ctx, a)], e.pos);
@@ -138,10 +149,10 @@ class EvalEmitter {
 			case OpAssignOp(sub):
 				switch (e1.expr) {
 					case TLocal(v):
-						var env = EvalContext.getEval(ctx).env;
-						var s = slot(env, v.id);
-						var r = binopValue(ctx, sub, env.locals[s], eval(ctx, e2), p);
-						env.locals[s] = r;
+						var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+						var s = slot(fe, v.id);
+						var r = binopValue(ctx, sub, fe.locals[s], eval(ctx, e2), p);
+						fe.locals[s] = r;
 						r;
 					case TField(fe, fa):
 						var obj = eval(ctx, fe);
@@ -166,8 +177,8 @@ class EvalEmitter {
 	static function assign(ctx:EvalContext, lhs:TExpr, value:EvalValue):EvalValue {
 		switch (lhs.expr) {
 			case TLocal(v):
-				var env = EvalContext.getEval(ctx).env;
-				env.locals[slot(env, v.id)] = value;
+				var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+				fe.locals[slot(fe, v.id)] = value;
 			case TField(_, FStatic(c, cf)):
 				var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), lhs.pos);
 				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
@@ -205,16 +216,16 @@ class EvalEmitter {
 			case Increment | Decrement:
 				switch (e1.expr) {
 					case TLocal(v):
-						var env = EvalContext.getEval(ctx).env;
-						var s = slot(env, v.id);
-						var old = env.locals[s];
+						var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+						var s = slot(fe, v.id);
+						var old = fe.locals[s];
 						var delta = op == Increment ? 1 : -1;
 						var next = switch (old) {
 							case VInt(i): VInt(i + delta);
 							case VFloat(f): VFloat(f + delta);
 							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
 						};
-						env.locals[s] = next;
+						fe.locals[s] = next;
 						flag == Prefix ? next : old;
 					case TField(fe, fa):
 						var obj = eval(ctx, fe);
@@ -283,6 +294,26 @@ class EvalEmitter {
 			}
 		}
 		return edef != null ? eval(ctx, edef) : VNull;
+	}
+
+	// A closure captures its defining frame and runs its body in a child frame linked to it.
+	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
+		return function(args:Array<EvalValue>):EvalValue {
+			var env2 = EvalContext.pushEnvironment(ctx, {isStatic: true, file: 0, kind: EKLocalFunction(0), numLocals: 0, numCaptures: 0});
+			env2.lexicalParent = captured;
+			env2.vthis = captured == null ? null : captured.vthis;
+			for (i in 0...tf.args.length) {
+				env2.locals[slot(env2, tf.args[i].v.id)] = i < args.length ? args[i] : VNull;
+			}
+			var r = try {
+				eval(ctx, tf.expr);
+				VNull;
+			} catch (ret:EvalReturn) {
+				ret.value;
+			}
+			EvalContext.popEnvironment(ctx, env2);
+			return r;
+		};
 	}
 
 	static function evalNew(ctx:EvalContext, c:TClass, args:Array<EvalValue>, p:Position):EvalValue {

@@ -196,8 +196,20 @@ class Typer {
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(tp, el):
 				typeNew(ctx, tp, el, withType, p);
-			case EFunction(_, _):
-				throw new TypingError("Local functions are not yet ported", p);
+			case EFunction(kind, f):
+				var args:Array<TFuncArg> = [];
+				for (fa in f.fArgs) {
+					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
+					args.push({v: TypeFunctions.allocVar(VUser(TVOLocalVariable), fa.name.name, at, fa.name.pos), c: null});
+				}
+				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
+				var ft = TFun({args: [for (a in args) {name: a.v.name, opt: false, t: a.v.type}], ret: ret});
+				switch (kind) {
+					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalVariable), n.name, ft, n.pos);
+					case _:
+				}
+				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
+				TypeFunctions.mk(TFunction(tf), ft, p);
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
