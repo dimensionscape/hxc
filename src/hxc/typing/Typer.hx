@@ -249,8 +249,11 @@ class Typer {
 				throw new TypingError("is-expressions are not yet ported", p);
 			case EDisplay(_, _):
 				throw new TypingError("Display is not yet ported", p);
-			case ECheckType(_, _):
-				throw new TypingError("Type checks are not yet ported", p);
+			case ECheckType(e1, th):
+				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
+				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
+				var te2 = castOrUnify(ctx, t, te, p);
+				TypeUnification.typeIseqDefault(te2.type, t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 	}
 
