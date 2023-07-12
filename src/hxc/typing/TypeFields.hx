@@ -2,6 +2,7 @@ package hxc.typing;
 
 import hxc.ast.Ast;
 import hxc.core.Type;
+import hxc.core.Ref;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.WithType;
@@ -9,42 +10,49 @@ import hxc.core.TypingError;
 import hxc.context.Context;
 import hxc.typing.TyperContext.CurrentFun;
 
-// Types class field bodies into expr, once signatures are resolved.
+// Types class field bodies into expr. Field types are installed as TLazy so the first access to a
+// field forces its body to type, resolving an inferred (unannotated) type before any consumer in
+// another module can bind it. A final flush forces every remaining field.
 class TypeFields {
 	public static function typeAllModules(ctx:Context):Void {
+		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
-			typeModuleFields(ctx, ctx.modules[i]);
+			installModuleFields(ctx, ctx.modules[i], pending);
 			i++;
+		}
+		// Force any field not reached on demand, then unwrap the lazy back to its concrete
+		// signature so downstream consumers never see a TLazy.
+		for (cf in pending) {
+			switch (cf.type) {
+				case TLazy(r):
+					try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}
+				case _:
+			}
 		}
 	}
 
-	public static function typeModuleFields(ctx:Context, m:ModuleDef):Void {
-		// A module pulled in while typing another may not have had its signatures resolved yet.
+	static function installModuleFields(ctx:Context, m:ModuleDef, pending:Array<TClassField>):Void {
 		TypeResolve.resolveModule(ctx, m);
-		var savedMod = ctx.currentModule;
-		ctx.currentModule = m;
 		for (mt in m.types) {
 			switch (mt) {
 				case TClassDecl(c):
 					var entry = ctx.declOfType.get(Context.pathKey(c.path));
 					if (entry == null) continue;
 					switch (entry.decl) {
-						case EClass(d): typeClassFields(ctx, c, d);
+						case EClass(d): installClassFields(ctx, c, d, m, pending);
 						case _:
 					}
 				case _:
 			}
 		}
-		ctx.currentModule = savedMod;
 	}
 
-	static function typeClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>):Void {
+	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
 		tctx.typeParams = c.params;
 		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
-		// On an abstract impl class a syntactically non-static field is a static member.
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		for (cff in d.dData) {
 			var isStatic = false;
@@ -53,15 +61,33 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
-			try {
-				initField(tctx, cf, cff, isStatic);
-			} catch (_:haxe.Exception) {
-				ctx.unresolvedFields++;
-			}
+			installField(ctx, tctx, m, cf, cff, isStatic);
+			pending.push(cf);
 		}
 	}
 
-	static function initField(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
+	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
+		var sigType = cf.type;
+		var r = new Ref(LAvailable(sigType));
+		var force = function():T {
+			// Re-entry while typing returns the resolved signature, breaking cycles.
+			r.set(LProcessing(function() return sigType));
+			var savedMod = ctx.currentModule;
+			ctx.currentModule = m;
+			try {
+				typeFieldBody(tctx, cf, cff, isStatic, sigType);
+			} catch (_:haxe.Exception) {
+				ctx.unresolvedFields++;
+			}
+			ctx.currentModule = savedMod;
+			r.set(LAvailable(sigType));
+			return sigType;
+		};
+		r.set(LWait(force));
+		cf.type = TLazy(r);
+	}
+
+	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
 		var restore = Typer.saveLocals(tctx);
 		var oldField = tctx.curfield;
 		var oldFun = tctx.curfun;
@@ -81,15 +107,15 @@ class TypeFields {
 			switch (cff.cffKind) {
 				case FVar(_, eo):
 					if (eo != null) {
-						var te = Typer.castOrUnify(tctx, cf.type, Typer.typeExpr(tctx, eo, WithTypeTools.withType(cf.type)), cff.cffPos);
-						cf.expr = checkCast(te, cf.type);
+						var te = Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), cff.cffPos);
+						cf.expr = checkCast(te, sigType);
 					}
 				case FFun(fd):
-					var sig = switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+					var sig = switch (TypeFunctions.follow(sigType)) { case TFun(s): s; case _: null; };
 					var ret = sig != null ? sig.ret : tctx.t.tvoid;
 					var args = buildArgs(tctx, sig, fd);
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, cff.cffPos);
-					cf.expr = TypeFunctions.mk(TFunction(tf), cf.type, cff.cffPos);
+					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
 				case FProp(_, _, _, _):
 					// Property accessors are typed as their own get_/set_ methods
 			}
