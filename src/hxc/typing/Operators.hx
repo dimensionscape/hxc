@@ -103,10 +103,8 @@ class Operators {
 		var haxeNext = ctx.com.defines.rawDefined("haxe_next");
 
 		function toString(e:TExpr):TExpr {
-			return switch (classify(e.type)) {
-				case KInt | KFloat | KString: e;
-				case _: throw new TypingError("String concatenation with a non-primitive operand is not yet ported", e.pos);
-			};
+			// The operand is concatenated as-is; the runtime stringifies a non-string side.
+			return e;
 		}
 		function mkOp(a:TExpr, b:TExpr, t:T):BinopResult {
 			if (op.match(OpAdd) && (switch (classify(t)) { case KString: true; case _: false; })) {

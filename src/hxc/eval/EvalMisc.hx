@@ -68,7 +68,11 @@ class EvalMisc {
 			case [VFloat(a), VInt(b)]: VFloat(a + b);
 			case [VNativeString(a), VNativeString(b)]: VNativeString(a + b);
 			case [VString(a), VString(b)]: mkString(a.sstring + b.sstring);
-			// Mixed string-with-value concatenation needs value stringification (deferred).
+			// Mixed string-with-value concatenation stringifies the non-string side.
+			case [VString(a), b]: mkString(a.sstring + EvalStdLib.stringOf(b));
+			case [a, VString(b)]: mkString(EvalStdLib.stringOf(a) + b.sstring);
+			case [VNativeString(a), b]: VNativeString(a + EvalStdLib.stringOf(b));
+			case [a, VNativeString(b)]: VNativeString(EvalStdLib.stringOf(a) + b);
 			case _: EvalExceptions.excString(ctx, "Invalid operation: +");
 		};
 	}

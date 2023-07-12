@@ -93,7 +93,7 @@ class EvalStdLib {
 
 	static inline function mkStr(s:String):EvalValue return VString(new VString(s, s.length));
 
-	static function stringOf(v:EvalValue):String {
+	public static function stringOf(v:EvalValue):String {
 		return switch (v) {
 			case VNull: "null";
 			case VTrue: "true";
