@@ -341,16 +341,16 @@ class Typer {
 			var et = Texpr.makeTypeExpr(TEnumDecl(bareEnum), p);
 			return Fields.enumConstructor(ctx, bareEnum, et, i, p);
 		}
-		try {
-			var mt = ctx.com.getType({pack: [], name: i}, p, null);
-			// Hxc resolves field types in a separate pass; resolve the referenced module so its
-			// statics have real types (idempotent via processed).
-			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
-			switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-			return AKExpr(Texpr.makeTypeExpr(mt, p));
-		} catch (_:hxc.context.Context.ContextError) {
-			throw new TypingError("Unknown identifier : " + i, p);
+		var mt = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
+		if (mt == null) {
+			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
 		}
+		if (mt == null) throw new TypingError("Unknown identifier : " + i, p);
+		// Hxc resolves field types in a separate pass; resolve the referenced module so its
+		// statics have real types (idempotent via processed).
+		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
+		return AKExpr(Texpr.makeTypeExpr(mt, p));
 	}
 
 	// A bare identifier that names a constructor of an enum declared in the current module.
