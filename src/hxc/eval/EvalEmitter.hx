@@ -322,9 +322,26 @@ class EvalEmitter {
 		if (special != null) return special(args);
 		var proto = EvalContext.getInstancePrototype(ctx, key, p);
 		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);
+		var instVal = VInstance(inst);
+		applyFieldInits(ctx, c, instVal);
 		var ctor = ctx.constructors.get(key);
-		if (ctor != null) ctor([VInstance(inst)].concat(args));
-		return VInstance(inst);
+		if (ctor != null) ctor([instVal].concat(args));
+		return instVal;
+	}
+
+	// Instance variable initializers run on the new object before the constructor body.
+	static function applyFieldInits(ctx:EvalContext, c:TClass, instVal:EvalValue):Void {
+		for (cf in c.orderedFields) {
+			switch (cf.kind) {
+				case Var(_) if (cf.expr != null):
+					var env = EvalContext.pushEnvironment(ctx, {isStatic: false, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0});
+					env.vthis = instVal;
+					var v = eval(ctx, cf.expr);
+					EvalContext.popEnvironment(ctx, env);
+					EvalField.setField(ctx, instVal, EvalHash.hash(cf.name), v, c.pos);
+				case _:
+			}
+		}
 	}
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
