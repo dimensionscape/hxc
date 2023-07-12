@@ -222,8 +222,14 @@ class Typer {
 			case EObjectDecl(fields):
 				var tfields:Array<TObjectField> = [];
 				var anonFields = new haxe.ds.StringMap<TClassField>();
+				var expected:Null<TAnon> = switch (withType) {
+					case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TAnon(a): a; case _: null; };
+					case _: null;
+				};
 				for (f in fields) {
-					var te = typeExpr(ctx, f.expr, WithTypeTools.value);
+					var fwt = WithTypeTools.value;
+					if (expected != null) { var ef = expected.fields.get(f.name); if (ef != null) fwt = WithTypeTools.withType(ef.type); }
+					var te = typeExpr(ctx, f.expr, fwt);
 					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 					anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
 				}
@@ -310,6 +316,15 @@ class Typer {
 				var typeExpr = Texpr.makeTypeExpr(TClassDecl(ctx.curclass), p);
 				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
 			}
+		}
+		switch (withType) {
+			case WithType(wt, _):
+				switch (TypeFunctions.follow(wt)) {
+					case TEnum(en, _) if (en.constrs.exists(i)):
+						return Fields.enumConstructor(ctx, en, Texpr.makeTypeExpr(TEnumDecl(en), p), i, p);
+					case _:
+				}
+			case _:
 		}
 		var bareEnum = findBareEnumConstructor(ctx, i);
 		if (bareEnum != null) {
