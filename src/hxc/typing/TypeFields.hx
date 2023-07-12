@@ -67,6 +67,10 @@ class TypeFields {
 	}
 
 	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
+		// Idempotent: a field already lazy or already typed is left alone so typeAllModules can
+		// be re-run to pick up modules loaded on demand.
+		switch (cf.type) { case TLazy(_): return; case _: }
+		if (cf.expr != null) return;
 		var sigType = cf.type;
 		var r = new Ref(LAvailable(sigType));
 		var force = function():T {

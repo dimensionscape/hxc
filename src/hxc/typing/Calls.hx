@@ -67,6 +67,8 @@ class Calls {
 	static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
+			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
+				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
 			case AKField(fa): callExpr(ctx, monomorphizeParams(ctx, fa.field, FieldAccessTools.getFieldExpr(fa, FCall)), el, p);
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
