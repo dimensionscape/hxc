@@ -149,6 +149,7 @@ class EvalMacro {
 			case "EIf": EIf(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp), decodeExprOpt(ec, a[2], dp));
 			case "EReturn": EReturn(decodeExprOpt(ec, a[0], dp));
 			case "EBlock": EBlock([for (e in arrOf(a[0])) decodeExpr(ec, e, dp)]);
+			case "EVars": EVars([for (vv in arrOf(a[0])) decodeVar(ec, vv, dp)]);
 			case "EThrow": EThrow(decodeExpr(ec, a[0], dp));
 			case "EMeta": decodeExpr(ec, a[1], dp).expr;
 			case other: throw new TypingError("Macro decode: unhandled ExprDef " + other, dp);
@@ -157,6 +158,17 @@ class EvalMacro {
 
 	static function decodeObjField(ec:EvalContext, v:EvalValue, dp:Position):ObjectField {
 		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: dp, quotes: NoQuotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+	}
+
+	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
+		return {
+			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			evFinal: boolOf(EvalField.field(ec, v, EvalHash.hash("isFinal"))),
+			evStatic: false,
+			evType: null,
+			evExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
+			evMeta: []
+		};
 	}
 
 	static function decodeConstant(ec:EvalContext, v:EvalValue):Constant {
@@ -238,9 +250,18 @@ class EvalMacro {
 			case EIf(c, t, eo): mkEnumValue(ec, "ExprDef", "EIf", [encodeExpr(ec, c), encodeExpr(ec, t), eo == null ? VNull : encodeExpr(ec, eo)]);
 			case EReturn(eo): mkEnumValue(ec, "ExprDef", "EReturn", [eo == null ? VNull : encodeExpr(ec, eo)]);
 			case EBlock(el): mkEnumValue(ec, "ExprDef", "EBlock", [encodeArray([for (e in el) encodeExpr(ec, e)])]);
+			case EVars(vl): mkEnumValue(ec, "ExprDef", "EVars", [encodeArray([for (v in vl) encodeVar(ec, v)])]);
 			case EThrow(e1): mkEnumValue(ec, "ExprDef", "EThrow", [encodeExpr(ec, e1)]);
 			case _: throw "macro encode: unhandled ExprDef";
 		};
+	}
+
+	static function encodeVar(ec:EvalContext, ev:EVar):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(ev.evName.name));
+		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
+		fields.set(EvalHash.hash("expr"), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
+		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeArray(items:Array<EvalValue>):EvalValue {

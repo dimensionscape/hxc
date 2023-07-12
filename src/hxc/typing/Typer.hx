@@ -215,8 +215,16 @@ class Typer {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
 						throw new TypingError("Array comprehensions are not yet ported", p);
 					case _:
-						var tl = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
-						var et = tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl);
+						var expectedEt:Null<T> = switch (withType) {
+							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+								case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"): t;
+								case _: null;
+							};
+							case _: null;
+						};
+						var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
+						var tl = [for (e in el) typeExpr(ctx, e, ewt)];
+						var et = expectedEt != null ? expectedEt : (tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl));
 						TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
 				}
 			case EObjectDecl(fields):
