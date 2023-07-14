@@ -49,10 +49,37 @@ class Typer {
 	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
 		try {
 			TypeUnification.unifyDefault(e.type, t);
-		} catch (_:UnifyError) {
-			throw new TypingError("Cannot unify types", p);
+			return e;
+		} catch (_:UnifyError) {}
+		var casted = tryAbstractCast(ctx, e, t, p);
+		if (casted != null) return casted;
+		throw new TypingError("Cannot unify types", p);
+	}
+
+	static function doesUnify(a:T, b:T):Bool {
+		return try { TypeUnification.unifyDefault(a, b); true; } catch (_:UnifyError) false;
+	}
+
+	// Implicit abstract conversion when plain unification fails: @:from on the target abstract or
+	// @:to on the source abstract calls the corresponding impl method.
+	static function tryAbstractCast(ctx:TyperContext, e:TExpr, t:T, p:Position):Null<TExpr> {
+		switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _) if (a.impl != null):
+				for (fc in a.fromField) if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+			case _:
 		}
-		return e;
+		switch (TypeFunctions.follow(e.type)) {
+			case TAbstract(a, _) if (a.impl != null):
+				for (tc in a.toField) if (doesUnify(tc.t, t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
+			case _:
+		}
+		return null;
+	}
+
+	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		var implExpr = Texpr.makeTypeExpr(TClassDecl(implC), p);
+		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
+		return Calls.makeCall(ctx, staticExpr, [e], t, p);
 	}
 
 	static function isVoid(t:T):Bool {
