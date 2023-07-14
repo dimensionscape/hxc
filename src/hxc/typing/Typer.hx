@@ -442,7 +442,18 @@ class Typer {
 				var getterAcc = Fields.typeField(ctx, fa.on, "get_" + fa.field.name, fa.pos, MCall([]), WithTypeTools.value);
 				Calls.buildCall(ctx, getterAcc, [], WithTypeTools.value, fa.pos);
 			case AKUsingAccessor(_): throw new TypingError("Property accessor reads are not yet ported (needs call dispatch, unit 5)", Position.nullPos);
-			case AKUsingField(_): throw new TypingError("Static-extension field reads are not yet ported (unit 5)", Position.nullPos);
+			case AKUsingField(se):
+				// Reading an abstract/static-extension field: a property calls its impl getter with the
+				// receiver; otherwise read the impl field directly.
+				var fa = se.access;
+				var implC = FieldAccessTools.getHostClassRaise(fa.host);
+				var getterCf = implC.statics.get("get_" + fa.field.name);
+				if (getterCf != null) {
+					var getterFa = FieldAccessTools.create(Texpr.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, FHStatic(implC), false, fa.pos);
+					Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
+				} else {
+					FieldAccessTools.getFieldExpr(fa, FRead);
+				}
 			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
 			case AKResolve(_, _): throw new TypingError("@:resolve access is not yet ported", Position.nullPos);
 			case AKSafeNav(_): throw new TypingError("Safe navigation is not yet ported", Position.nullPos);
