@@ -102,7 +102,7 @@ class Calls {
 		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [v, infos]), p), withType);
 	}
 
-	static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):

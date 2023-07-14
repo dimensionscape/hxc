@@ -426,7 +426,10 @@ class Typer {
 			case AKExpr(e): e;
 			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
-			case AKAccessor(_) | AKUsingAccessor(_): throw new TypingError("Property accessor reads are not yet ported (needs call dispatch, unit 5)", Position.nullPos);
+			case AKAccessor(fa):
+				var getterAcc = Fields.typeField(ctx, fa.on, "get_" + fa.field.name, fa.pos, MCall([]), WithTypeTools.value);
+				Calls.buildCall(ctx, getterAcc, [], WithTypeTools.value, fa.pos);
+			case AKUsingAccessor(_): throw new TypingError("Property accessor reads are not yet ported (needs call dispatch, unit 5)", Position.nullPos);
 			case AKUsingField(_): throw new TypingError("Static-extension field reads are not yet ported (unit 5)", Position.nullPos);
 			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
 			case AKResolve(_, _): throw new TypingError("@:resolve access is not yet ported", Position.nullPos);
