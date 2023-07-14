@@ -260,8 +260,20 @@ class Typer {
 					bodies.push(cbody);
 				}
 				TypeFunctions.mk(TTry(te, tcatches), unifyMin(ctx, bodies), p);
-			case ECast(_, _):
-				throw new TypingError("cast is not yet ported", p);
+			case ECast(e1, ct):
+				var te = typeExpr(ctx, e1, WithTypeTools.value);
+				if (ct == null) {
+					TypeFunctions.mk(TCast(te, null), spawnMonomorph(ctx, p), p);
+				} else {
+					var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, ct);
+					var mt:Null<ModuleType> = switch (TypeFunctions.follow(t)) {
+						case TInst(c, _): TClassDecl(c);
+						case TEnum(en, _): TEnumDecl(en);
+						case TAbstract(a, _): TAbstractDecl(a);
+						case _: null;
+					};
+					TypeFunctions.mk(TCast(te, mt), t, p);
+				}
 			case EIs(_, _):
 				throw new TypingError("is-expressions are not yet ported", p);
 			case EDisplay(_, _):
