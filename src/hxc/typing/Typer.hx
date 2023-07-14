@@ -213,7 +213,10 @@ class Typer {
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
-						throw new TypingError("Array comprehensions are not yet ported", p);
+						var acc = "_hx_comp";
+						var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: new Expr(EArrayDecl([]), p), evMeta: []}]), p);
+						var loop = comprehensionPush(acc, el[0]);
+						return typeExpr(ctx, new Expr(EBlock([decl, loop, new Expr(EConst(CIdent(acc)), p)]), p), withType);
 					case _:
 						var expectedEt:Null<T> = switch (withType) {
 							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
@@ -401,6 +404,21 @@ class Typer {
 			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], p, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
 		}
 		return acc;
+	}
+
+	// Lowers an array comprehension body so each tail expression pushes onto the accumulator.
+	static function comprehensionPush(acc:String, e:Expr):Expr {
+		return switch (e.expr) {
+			case EFor(it, body): new Expr(EFor(it, comprehensionPush(acc, body)), e.pos);
+			case EWhile(c, body, flag): new Expr(EWhile(c, comprehensionPush(acc, body), flag), e.pos);
+			case EIf(c, e1, e2): new Expr(EIf(c, comprehensionPush(acc, e1), e2 == null ? null : comprehensionPush(acc, e2)), e.pos);
+			case EBlock(l) if (l.length > 0):
+				var nl = l.copy();
+				nl[nl.length - 1] = comprehensionPush(acc, nl[nl.length - 1]);
+				new Expr(EBlock(nl), e.pos);
+			case _:
+				new Expr(ECall(new Expr(EField(new Expr(EConst(CIdent(acc)), e.pos), "push", EFNormal), e.pos), [e]), e.pos);
+		};
 	}
 
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
