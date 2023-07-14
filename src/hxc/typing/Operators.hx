@@ -242,6 +242,9 @@ class Operators {
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
 			case AKField(fa): assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
+			case AKAccessor(fa):
+				var setterAcc = hxc.typing.Fields.typeField(ctx, fa.on, "set_" + fa.field.name, fa.pos, MCall([e2]), WithTypeTools.value);
+				hxc.typing.Calls.buildCall(ctx, setterAcc, [e2], WithTypeTools.value, p);
 			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);
 			case _: throw new TypingError("This assignment target is not yet ported", p);
 		};
