@@ -85,7 +85,7 @@ class Setup {
 		var cfg = ctx.platformConfig;
 		var name = Globals.platformName(pf);
 		if (cfg.isStatic) ctx.defines.rawDefine("target.static");
-		if (cfg.sys) ctx.defines.rawDefine("target.sys");
+		if (cfg.sys) { ctx.defines.rawDefine("target.sys"); ctx.defines.rawDefine("sys"); }
 		if (cfg.usesUtf16) ctx.defines.rawDefine("target.utf16");
 		if (cfg.supportsUnicode) ctx.defines.rawDefine("target.unicode");
 		ctx.defines.rawDefineValue("target.name", name);

@@ -60,8 +60,31 @@ class Calls {
 
 	// A call target goes through buildCall (core: plain function value and method call).
 	public static function typeCall(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		switch (callee.expr) {
+			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
+				return typeTrace(ctx, el, withType, p);
+			case _:
+		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
 		return buildCall(ctx, acc, el, withType, p);
+	}
+
+	// `trace(v, ...)` lowers to haxe.Log.trace(v, posInfos) with the call's position info.
+	static function typeTrace(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		function strE(s:String):Expr return new Expr(EConst(CString(s, SDoubleQuotes)), p);
+		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: p};
+		var v = el.length > 0 ? el[0] : strE("");
+		var customParams = el.length > 1 ? new Expr(EArrayDecl(el.slice(1)), p) : new Expr(EConst(CIdent("null")), p);
+		var infos = new Expr(EObjectDecl([
+			fld("fileName", strE(p.file)),
+			fld("lineNumber", new Expr(EConst(CInt("0", null)), p)),
+			fld("className", strE(ctx.curclass.path.name)),
+			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name)),
+			fld("customParams", customParams)
+		]), p);
+		var haxePkg = new Expr(EConst(CIdent("haxe")), p);
+		var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
+		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [v, infos]), p), withType);
 	}
 
 	static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {

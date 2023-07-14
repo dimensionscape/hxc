@@ -341,6 +341,11 @@ class Typer {
 			var et = Texpr.makeTypeExpr(TEnumDecl(bareEnum), p);
 			return Fields.enumConstructor(ctx, bareEnum, et, i, p);
 		}
+		if (i == "trace") {
+			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
+			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
+			return Fields.typeField(ctx, Texpr.makeTypeExpr(logMt, p), "trace", p, mode, withType);
+		}
 		var mt = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
 		if (mt == null) {
 			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
