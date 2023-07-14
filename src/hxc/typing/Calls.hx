@@ -63,10 +63,25 @@ class Calls {
 		switch (callee.expr) {
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
 				return typeTrace(ctx, el, withType, p);
+			case EConst(CIdent("super")):
+				return typeSuperCall(ctx, el, p);
 			case _:
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
 		return buildCall(ctx, acc, el, withType, p);
+	}
+
+	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position):TExpr {
+		var sup = ctx.curclass.superClass;
+		if (sup == null) throw new TypingError("Class does not have a super class", p);
+		var c = sup.c;
+		var sig = if (c.constructor == null) {args: [], ret: ctx.com.basic.tvoid} else switch (TypeFunctions.follow(TypeFunctions.applyParams(c.params, sup.params, c.constructor.type))) {
+			case TFun(s): s;
+			case _: {args: [], ret: ctx.com.basic.tvoid};
+		};
+		var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), p);
+		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
 	}
 
 	// `trace(v, ...)` lowers to haxe.Log.trace(v, posInfos) with the call's position info.

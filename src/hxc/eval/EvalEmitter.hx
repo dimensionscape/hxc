@@ -277,6 +277,19 @@ class EvalEmitter {
 	}
 
 	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
+		switch (callee.expr) {
+			case TConst(TSuper):
+				var args = [for (a in argExprs) eval(ctx, a)];
+				var vthis = EvalContext.getEval(ctx).env.vthis;
+				switch (TypeFunctions.follow(callee.type)) {
+					case TInst(c, _):
+						var ctor = ctx.constructors.get(EvalHash.pathHash(c.path));
+						if (ctor != null) ctor([vthis].concat(args));
+					case _:
+				}
+				return VNull;
+			case _:
+		}
 		var fn = EvalValueTools.vresolve(eval(ctx, callee));
 		var args = [for (a in argExprs) eval(ctx, a)];
 		return switch (fn) {
