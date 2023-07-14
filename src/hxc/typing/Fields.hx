@@ -98,6 +98,10 @@ class Fields {
 				}
 			case TMono(_):
 				throw new TypingError("Field access on an unresolved type is not yet ported", p);
+			case TAbstract(a, params) if (a.impl != null):
+				var cf = a.impl.statics.get(i);
+				if (cf == null) throw fieldNotFound(e.type, i, pfield);
+				AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
 			case TAbstract(_, _):
 				throw new TypingError("Abstract field access is not yet ported", p);
 			case TDynamic(_):

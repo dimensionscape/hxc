@@ -645,6 +645,10 @@ class Typer {
 				};
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
+			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("_new")):
+				// An abstract is constructed by calling its impl's _new static.
+				var implExpr = Texpr.makeTypeExpr(TClassDecl(a.impl), p);
+				Calls.buildCall(ctx, Fields.typeField(ctx, implExpr, "_new", p, MCall(el), withType), el, withType, p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};

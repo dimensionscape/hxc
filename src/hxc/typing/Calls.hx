@@ -108,6 +108,15 @@ class Calls {
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
 			case AKField(fa): callExpr(ctx, monomorphizeParams(ctx, fa.field, FieldAccessTools.getFieldExpr(fa, FCall)), el, p);
+			case AKUsingField(se):
+				// Static-extension / abstract impl call: the receiver is the first argument.
+				var ce = monomorphizeParams(ctx, se.access.field, FieldAccessTools.getFieldExpr(se.access, FCall));
+				switch (TypeFunctions.follow(ce.type)) {
+					case TFun(sig) if (sig.args.length > 0):
+						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
+						makeCall(ctx, ce, [se.thisExpr].concat(r.el), sig.ret, p);
+					case _: throw new TypingError("Static-extension target is not a function", p);
+				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
