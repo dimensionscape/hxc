@@ -115,6 +115,8 @@ class TypeFields {
 		tctx.curfield = cf;
 		tctx.curfun = isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember);
 		if (isStatic && !isAbsImpl) tctx.typeParams = [];
+		// The method's own type parameters are in scope within its body.
+		if (cf.params.length > 0) tctx.typeParams = tctx.typeParams.concat(cf.params);
 		function cleanup() {
 			tctx.curfield = oldField;
 			tctx.curfun = oldFun;
