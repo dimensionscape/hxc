@@ -691,13 +691,29 @@ class Typer {
 		return new TFunc(args, ret, te);
 	}
 
+	// A class without its own constructor inherits the nearest superclass constructor, with the
+	// superclass type arguments substituted along the inheritance chain.
+	static function findConstructorType(ctx:TyperContext, c:TClass, tl:TParams):Null<T> {
+		var cur = c;
+		var curTl = tl;
+		while (cur != null) {
+			if (cur.constructor != null) return TypeFunctions.applyParams(cur.params, curTl, cur.constructor.type);
+			if (cur.superClass == null) return null;
+			hxc.eval.EvalMacro.ensureBuilt(ctx.com, cur.superClass.c);
+			var superTl = [for (sp in cur.superClass.params) TypeFunctions.applyParams(cur.params, curTl, sp)];
+			cur = cur.superClass.c;
+			curTl = superTl;
+		}
+		return null;
+	}
+
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		var t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, tp.path.tparams.length == 0);
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
-				if (c.constructor == null) throw new TypingError(c.path.name + " does not have a constructor", p);
-				var ctorType = TypeFunctions.applyParams(c.params, tl, c.constructor.type);
+				var ctorType = findConstructorType(ctx, c, tl);
+				if (ctorType == null) throw new TypingError(c.path.name + " does not have a constructor", p);
 				var sig = switch (TypeFunctions.follow(ctorType)) {
 					case TFun(s): s;
 					case _: {args: [], ret: ctx.com.basic.tvoid};

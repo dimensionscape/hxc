@@ -342,6 +342,11 @@ class EvalEmitter {
 		var instVal = VInstance(inst);
 		applyFieldInits(ctx, c, instVal);
 		var ctor = ctx.constructors.get(key);
+		var cc = c;
+		while (ctor == null && cc.superClass != null) {
+			cc = cc.superClass.c;
+			ctor = ctx.constructors.get(EvalHash.pathHash(cc.path));
+		}
 		if (ctor != null) ctor([instVal].concat(args));
 		return instVal;
 	}
