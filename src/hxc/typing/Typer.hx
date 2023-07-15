@@ -61,16 +61,25 @@ class Typer {
 	}
 
 	// Implicit abstract conversion when plain unification fails: @:from on the target abstract or
-	// @:to on the source abstract calls the corresponding impl method.
+	// @:to on the source abstract. A field cast calls the impl method; a bare from/to type is a
+	// representation-preserving cast.
 	static function tryAbstractCast(ctx:TyperContext, e:TExpr, t:T, p:Position):Null<TExpr> {
 		switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, _) if (a.impl != null):
-				for (fc in a.fromField) if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+			case TAbstract(a, _):
+				if (a.impl != null) for (fc in a.fromField) if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+				for (ft in a.from) if (doesUnify(e.type, ft)) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
 		}
 		switch (TypeFunctions.follow(e.type)) {
-			case TAbstract(a, _) if (a.impl != null):
-				for (tc in a.toField) if (doesUnify(tc.t, t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
+			case TAbstract(a, _):
+				if (a.impl != null) for (tc in a.toField) {
+					if (tc.cf.params.length > 0) {
+						// A generic @:to (return is a bare type parameter, as in Any) converts to anything.
+						var monos = [for (_ in tc.cf.params) TypeFunctions.mkMono()];
+						if (doesUnify(TypeFunctions.applyParams(tc.cf.params, monos, tc.t), t)) return TypeFunctions.mk(TCast(e, null), t, p);
+					} else if (doesUnify(tc.t, t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
+				}
+				for (tt in a.to) if (doesUnify(tt, t)) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
 		}
 		return null;
