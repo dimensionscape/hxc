@@ -83,7 +83,10 @@ class Fields {
 		var pfield = p;
 		return switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, tl):
-				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) throw fieldNotFound(e.type, i, pfield);
+				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) {
+					var u = tryUsing(ctx, e, i, pfield);
+					if (u != null) u else throw fieldNotFound(e.type, i, pfield);
+				}
 			case TAnon(a):
 				switch (a.status.get()) {
 					case EnumStatics(en): enumConstructor(ctx, en, e, i, pfield);
@@ -100,15 +103,50 @@ class Fields {
 				throw new TypingError("Field access on an unresolved type is not yet ported", p);
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
-				if (cf == null) throw fieldNotFound(e.type, i, pfield);
+				if (cf == null) {
+					var u = tryUsing(ctx, e, i, pfield);
+					if (u != null) return u;
+					throw fieldNotFound(e.type, i, pfield);
+				}
 				AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
 			case TAbstract(_, _):
-				throw new TypingError("Abstract field access is not yet ported", p);
+				var u = tryUsing(ctx, e, i, pfield);
+				if (u != null) u else throw new TypingError("Abstract field access is not yet ported", p);
 			case TDynamic(_):
 				AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 			case _:
 				throw fieldNotFound(e.type, i, pfield);
 		};
+	}
+
+	static function usingDoesUnify(a:T, b:T):Bool {
+		return try { hxc.core.TypeUnification.unifyDefault(a, b); true; } catch (_:hxc.core.TypeUnification.UnifyError) false;
+	}
+
+	// A field not found on its type may be provided by a `using` static extension whose first
+	// argument accepts the receiver.
+	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		var m = ctx.com.currentModule;
+		if (m == null) return null;
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports == null) return null;
+		for (up in imports.usings) {
+			var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
+			if (mt == null) continue;
+			switch (mt) {
+				case TClassDecl(uc):
+					try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+					var cf = uc.statics.get(i);
+					if (cf == null) continue;
+					switch (TypeFunctions.follow(cf.type)) {
+						case TFun(sig) if (sig.args.length > 0 && usingDoesUnify(e.type, sig.args[0].t)):
+							return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
+						case _:
+					}
+				case _:
+			}
+		}
+		return null;
 	}
 
 	public static function enumConstructor(ctx:TyperContext, en:TEnum, e:TExpr, i:String, p:Position):AccessKind {
