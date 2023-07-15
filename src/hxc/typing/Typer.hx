@@ -365,6 +365,12 @@ class Typer {
 			}
 			var smf = ctx.curclass.statics.get(i);
 			if (smf != null) {
+				// Inside an abstract impl method, a bare call to a sibling member method threads `this`.
+				var isAbsImpl = switch (ctx.curclass.kind) { case KAbstractImpl(_): true; case _: false; };
+				if (isAbsImpl && smf.kind.match(Method(_)) && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
+					var thisExpr = Texpr.makeLocal(ctx.locals.get("this"), p);
+					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(ctx.curclass, smf, thisExpr, false, p));
+				}
 				var typeExpr = Texpr.makeTypeExpr(TClassDecl(ctx.curclass), p);
 				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
 			}
