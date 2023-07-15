@@ -114,6 +114,11 @@ class Operators {
 			return BinopNormal(op, a, b, t, isAssignOp, false, p);
 		}
 
+		// Abstract operator overloading dispatches through the abstract @:op methods.
+		if (!op.match(OpAssign) && !op.match(OpAssignOp(_))) {
+			var opCall = tryAbstractOp(ctx, op, e1, e2, p);
+			if (opCall != null) return BinopSpecial(opCall, isAssignOp);
+		}
 		return switch (op) {
 			case OpAdd:
 				var t = switch ([classify(e1.type), classify(e2.type)]) {
@@ -205,7 +210,48 @@ class Operators {
 		};
 	}
 
-	// Primitive operators excluding assignment.
+	// An operand already of the same abstract (by path) is passed through despite a possible
+	// distinct type instance; otherwise an implicit cast is attempted.
+	static function coerceArg(ctx:TyperContext, argT:T, e:TExpr, p:Position):Null<TExpr> {
+		switch [TypeFunctions.follow(argT), TypeFunctions.follow(e.type)] {
+			case [TAbstract(x, _), TAbstract(y, _)] if (x.path.name == y.path.name && x.path.pack.join(".") == y.path.pack.join(".")): return e;
+			case _:
+		}
+		return try Typer.castOrUnify(ctx, argT, e, p) catch (_:TypingError) null;
+	}
+
+	static function sameOp(a:Binop, b:Binop):Bool {
+		return switch [a, b] {
+			case [OpAdd, OpAdd] | [OpSub, OpSub] | [OpMult, OpMult] | [OpDiv, OpDiv] | [OpMod, OpMod]
+				| [OpLt, OpLt] | [OpLte, OpLte] | [OpGt, OpGt] | [OpGte, OpGte] | [OpEq, OpEq] | [OpNotEq, OpNotEq]
+				| [OpAnd, OpAnd] | [OpOr, OpOr] | [OpXor, OpXor] | [OpShl, OpShl] | [OpShr, OpShr] | [OpUShr, OpUShr]
+				| [OpBoolAnd, OpBoolAnd] | [OpBoolOr, OpBoolOr]: true;
+			case _: false;
+		};
+	}
+
+	// The abstract on the left of the operator owns the dispatch; its value is passed as the
+	// impl method receiver and the right operand is coerced to the second parameter.
+	static function tryAbstractOp(ctx:TyperContext, op:Binop, e1:TExpr, e2:TExpr, p:Position):Null<TExpr> {
+		switch (TypeFunctions.follow(e1.type)) {
+			case TAbstract(a, tl) if (a.impl != null):
+				for (aop in a.ops) {
+					if (!sameOp(aop.op, op)) continue;
+					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, aop.cf.type))) {
+						case TFun(sig) if (sig.args.length == 2):
+							var c2 = coerceArg(ctx, sig.args[1].t, e2, p);
+							if (c2 == null) continue;
+							var implExpr = hxc.core.Texpr.makeStaticThis(a.impl, p);
+							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, aop.cf, FHStatic(a.impl), false, p), FCall);
+							return Calls.makeCall(ctx, fieldExpr, [e1, c2], sig.ret, p);
+						case _:
+					}
+				}
+			case _:
+		}
+		return null;
+	}
+
 	static function toTexpr(br:BinopResult):TExpr {
 		return switch (br) {
 			case BinopNormal(op, lhs, rhs, t, _, _, pos): TypeFunctions.mk(TBinop(op, lhs, rhs), t, pos);
