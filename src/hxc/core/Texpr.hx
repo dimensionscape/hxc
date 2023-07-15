@@ -46,7 +46,7 @@ class Texpr {
 		var t = switch (TypeFunctions.resolveTypedef(mt)) {
 			case TClassDecl(c): TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics);
 			case TEnumDecl(e): TypeFunctions.mkAnon(new Ref(EnumStatics(e)));
-			case TAbstractDecl(a): TypeFunctions.mkAnon(new Ref(AbstractStatics(a)));
+			case TAbstractDecl(a): TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null);
 			case _: throw new TypingError("Invalid module type", p);
 		};
 		return TypeFunctions.mk(TTypeExpr(mt), t, p);

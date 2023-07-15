@@ -95,6 +95,7 @@ class Fields {
 						if (f != null) {
 							switch (a.status.get()) {
 								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
+								case AbstractStatics(ab) if (ab.impl != null): fieldAccess(ctx, mode, f, FHStatic(ab.impl), e, pfield);
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
 						} else throw fieldNotFound(e.type, i, pfield);
