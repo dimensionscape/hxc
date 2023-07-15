@@ -508,6 +508,12 @@ class Typer {
 				typeIdent(ctx, s, p, mode, withType);
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
+				switch (e1.expr) {
+					case EConst(CString(s, _)) if (field == "code" && s.length == 1):
+						var code = s.charCodeAt(0);
+						if (code != null) return AKExpr(TypeFunctions.mk(TConst(TInt(code)), ctx.com.basic.tint, p));
+					case _:
+				}
 				try {
 					var te = typeExpr(ctx, e1, WithTypeTools.value);
 					Fields.typeField(ctx, te, field, p, mode, withType);
