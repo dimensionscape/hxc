@@ -85,7 +85,7 @@ class Fields {
 			case TInst(c, tl):
 				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) {
 					var u = tryUsing(ctx, e, i, pfield);
-					if (u != null) u else throw fieldNotFound(e.type, i, pfield);
+					if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
 				}
 			case TAnon(a):
 				switch (a.status.get()) {
@@ -101,7 +101,7 @@ class Fields {
 						} else throw fieldNotFound(e.type, i, pfield);
 				}
 			case TMono(_):
-				throw new TypingError("Field access on an unresolved type is not yet ported", p);
+				if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw new TypingError("Field access on an unresolved type is not yet ported", p);
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
 				if (cf == null) {
@@ -116,7 +116,7 @@ class Fields {
 			case TDynamic(_):
 				AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 			case _:
-				throw fieldNotFound(e.type, i, pfield);
+				if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
 		};
 	}
 

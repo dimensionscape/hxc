@@ -217,7 +217,11 @@ class Typer {
 				var te = typeExpr(ctx, e1, WithTypeTools.value);
 				TypeFunctions.mk(TThrow(te), monoOrDynamic(ctx, withType, p), p);
 			case EUntyped(e1):
-				typeExpr(ctx, e1, withType);
+				var old = ctx.untypedMode;
+				ctx.untypedMode = true;
+				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
+				ctx.untypedMode = old;
+				te;
 			case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
