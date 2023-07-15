@@ -18,6 +18,21 @@ class Calls {
 	}
 
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
+		// Abstract @:arrayAccess read: dispatch to the impl getter taking (this, key).
+		switch (TypeFunctions.follow(e1.type)) {
+			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0 && !mode.match(MSet(_))):
+				for (cf in a.array) {
+					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
+						case TFun(sig) if (sig.args.length == 2):
+							var implExpr = Texpr.makeStaticThis(a.impl, p);
+							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(a.impl), false, p), FCall);
+							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
+							return AKExpr(makeCall(ctx, fieldExpr, [e1, key], sig.ret, p));
+						case _:
+					}
+				}
+			case _:
+		}
 		var pt = Typer.spawnMonomorph(ctx, p);
 		var t = ctx.com.basic.tarray(pt);
 		try {
