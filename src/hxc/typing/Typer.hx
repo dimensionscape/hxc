@@ -788,6 +788,24 @@ class Typer {
 				};
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
+			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
+				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key
+				// type against each @:to cast's key-parameter constraint, then constructs that type.
+				// The expression takes the concrete type so its fields resolve directly.
+				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, atl, p));
+				switch (ct) {
+					case TInst(c, ctl):
+						hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
+						var ctorType = findConstructorType(ctx, c, ctl);
+						var sig = switch (ctorType == null ? ctx.com.basic.tvoid : TypeFunctions.follow(ctorType)) {
+							case TFun(s): s;
+							case _: {args: [], ret: ctx.com.basic.tvoid};
+						};
+						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+						TypeFunctions.mk(TNew(c, ctl, r.el), ct, p);
+					case _:
+						throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
+				}
 			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("_new")):
 				// An abstract is constructed by calling its impl's _new static.
 				var implExpr = Texpr.makeTypeExpr(TClassDecl(a.impl), p);
@@ -795,6 +813,37 @@ class Typer {
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};
+	}
+
+	// Select a @:multiType abstract's concrete implementation: the first @:to cast whose key
+	// type-parameter constraint is satisfied by the actual key type, with the concrete return
+	// type specialized to the actual type parameters.
+	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):T {
+		var key = atl.length > 0 ? atl[0] : ctx.com.basic.tvoid;
+		for (toCast in a.toField) {
+			var cf = toCast.cf;
+			if (cf.params.length == 0) continue;
+			var constraints = multiTypeConstraints(cf.params[0]);
+			if (constraints.length == 0) continue;
+			var ok = true;
+			for (cn in constraints) if (!tryUnifyMulti(key, cn)) { ok = false; break; }
+			if (ok) return TypeFunctions.applyParams(cf.params, atl, toCast.t);
+		}
+		throw new TypingError("Cannot resolve multi-type for " + a.path.name, p);
+	}
+
+	static function multiTypeConstraints(ttp:TypedTypeParam):Array<T> {
+		return switch (TypeFunctions.follow(ttp.type)) {
+			case TInst(c, _): switch (c.kind) { case KTypeParameter(tl): tl; case _: []; };
+			case _: [];
+		};
+	}
+
+	static function tryUnifyMulti(a:T, b:T):Bool {
+		return try {
+			TypeUnification.unifyDefault(a, b);
+			true;
+		} catch (_:UnifyError) false;
 	}
 
 	static function hasReturn(e:TExpr):Bool {
