@@ -132,6 +132,7 @@ enum EvalInstanceKind {
 	IRef(v:EvalValue);
 	IBuffer(buf:StringBuf);
 	IRegex(re:EReg);
+	IMap(m:Map<String, EvalValue>);
 }
 
 @:structInit

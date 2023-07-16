@@ -83,6 +83,22 @@ class EvalStdLib {
 		};
 	}
 
+	static function thisMap(a:Array<EvalValue>):Map<String, EvalValue> {
+		return switch (a[0]) {
+			case VInstance(vi): switch (vi.ikind) { case IMap(m): m; case _: new Map(); };
+			case _: new Map();
+		};
+	}
+
+	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int.
+	static function mapKey(v:EvalValue):String {
+		return switch (v) {
+			case VString(s): s.sstring;
+			case VInt(i): Std.string(i);
+			case _: stringOf(v);
+		};
+	}
+
 	static function toFloat(v:EvalValue):Float {
 		return switch (v) {
 			case VInt(i): i;
@@ -267,5 +283,36 @@ class EvalStdLib {
 		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
 		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
 		reg(inst, "EReg", "replace", vmethod(a -> mkStr(thisRegex(a).replace(stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
+
+		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
+		function iteratorOf(items:Array<EvalValue>):EvalValue
+			return EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [VArray(new VArray(items, items.length))]);
+		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap"]) {
+			ctors.set(EvalHash.hash(mapPath), function(a) {
+				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
+				return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map())));
+			});
+			reg(inst, mapPath, "set", vmethod(a -> { thisMap(a).set(mapKey(arg(a, 1)), arg(a, 2)); VNull; }));
+			reg(inst, mapPath, "get", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); m.exists(k) ? m.get(k) : VNull; }));
+			reg(inst, mapPath, "exists", vmethod(a -> EvalValueTools.vbool(thisMap(a).exists(mapKey(arg(a, 1))))));
+			reg(inst, mapPath, "remove", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); var had = m.exists(k); m.remove(k); EvalValueTools.vbool(had); }));
+			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (v in thisMap(a)) v])));
+			reg(inst, mapPath, "clear", vmethod(a -> { thisMap(a).clear(); VNull; }));
+			reg(inst, mapPath, "copy", vmethod(a -> {
+				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
+				var nm = new Map(); var src = thisMap(a); for (k in src.keys()) nm.set(k, src.get(k));
+				VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(nm)));
+			}));
+		}
+		reg(inst, "haxe.ds.StringMap", "keys", vmethod(a -> iteratorOf([for (k in thisMap(a).keys()) mkStr(k)])));
+		reg(inst, "haxe.ds.IntMap", "keys", vmethod(a -> iteratorOf([for (k in thisMap(a).keys()) { var pk = Std.parseInt(k); VInt(pk == null ? 0 : pk); }])));
+		reg(inst, "haxe.ds.StringMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
+		reg(inst, "haxe.ds.IntMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
+	}
+
+	static function mapToString(m:Map<String, EvalValue>):String {
+		var parts = [];
+		for (k in m.keys()) parts.push(k + " => " + stringOf(m.get(k)));
+		return "[" + parts.join(", ") + "]";
 	}
 }
