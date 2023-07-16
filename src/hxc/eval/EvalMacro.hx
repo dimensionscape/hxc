@@ -39,6 +39,22 @@ class EvalMacro {
 		regBuiltin(ec, "haxe.macro.Context", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
 		regBuiltin(ec, "haxe.macro.Context", "makeExpr", function(a) return makeExprValue(ec, a[0]));
 		regBuiltin(ec, "haxe.macro.Context", "getBuildFields", function(a) return curBuildFields);
+		// makePosition is given {min,max,file}; positions round-trip as that anon here.
+		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) return a[0]);
+		regBuiltin(ec, "haxe.macro.Context", "definedValue", function(a) {
+			var k = strOf(a[0]);
+			if (!com.defines.rawDefined(k)) return VNull;
+			var v = com.defines.rawDefinedValue(k);
+			return VString(new VString(v, v.length));
+		});
+		// The eval target routes haxe.macro.Context.<api>(args) through eval.vm.Context
+		// .callMacroApi("<api>")(args); dispatch by name into the registered Context builtins.
+		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
+			var name = strOf(a[0]);
+			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
+			if (list != null) for (e in list) if (e.name == EvalHash.hash(name)) return e.v;
+			throw new TypingError("Macro API not implemented: " + name, curPos);
+		});
 	}
 
 
