@@ -30,10 +30,35 @@ class ForLoop {
 		return Calls.makeCall(ctx, ce, [], ret, p);
 	}
 
+	// Type_for_loop (general iterator desugar).
+	// `for (k => v in e)` desugars to iterating e.keyValueIterator(), binding k and v from each
+	// pair, then typing the resulting block with the existing machinery.
+	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
+		var tmpIt = "`kvit";
+		var tmpKv = "`kv";
+		inline function ident(n:String):Expr return new Expr(EConst(CIdent(n)), p);
+		inline function decl(n:String, e:Expr):Expr
+			return new Expr(EVars([{evName: {name: n, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: e, evMeta: []}]), p);
+		inline function call0e(recv:Expr, m:String):Expr
+			return new Expr(ECall(new Expr(EField(recv, m, EFNormal), p), []), p);
+		var itDecl = decl(tmpIt, call0e(rhs, "keyValueIterator"));
+		var cond = call0e(ident(tmpIt), "hasNext");
+		var kvDecl = decl(tmpKv, call0e(ident(tmpIt), "next"));
+		var kDecl = decl(ki, new Expr(EField(ident(tmpKv), "key", EFNormal), p));
+		var vDecl = decl(vi, new Expr(EField(ident(tmpKv), "value", EFNormal), p));
+		var innerBody = new Expr(EBlock([kvDecl, kDecl, vDecl, body]), p);
+		var ewhile = new Expr(EWhile(cond, innerBody, NormalWhile), p);
+		var block = new Expr(EBlock([itDecl, ewhile]), p);
+		return Typer.typeExpr(ctx, block, WithTypeTools.noValue);
+	}
+
 	public static function typeForLoop(ctx:TyperContext, it:Expr, e2:Expr, p:Position):TExpr {
 		var vName:String;
 		var e1Expr:Expr;
 		switch (it.expr) {
+			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than `=>`.
+			case EBinop(OpArrow, {expr: EConst(CIdent(ki))}, {expr: EBinop(OpIn, {expr: EConst(CIdent(vi))}, rhs)}):
+				return typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p);
 			case EBinop(OpIn, lhs, rhs):
 				vName = switch (lhs.expr) {
 					case EConst(CIdent(i)): i;
