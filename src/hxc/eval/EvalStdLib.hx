@@ -83,11 +83,22 @@ class EvalStdLib {
 		};
 	}
 
-	static function thisMap(a:Array<EvalValue>):Map<String, EvalValue> {
+	static function thisMap(a:Array<EvalValue>):Map<String, MapEntry> {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IMap(m): m; case _: new Map(); };
 			case _: new Map();
 		};
+	}
+
+	// Stable per-object identity for ObjectMap keys, assigned lazily on first use.
+	static var objIds = new haxe.ds.ObjectMap<{}, Int>();
+	static var objIdNext = 0;
+
+	static function objId(o:{}):Int {
+		if (objIds.exists(o)) return objIds.get(o);
+		var id = objIdNext++;
+		objIds.set(o, id);
+		return id;
 	}
 
 	static function thisDate(a:Array<EvalValue>):Float {
@@ -121,6 +132,8 @@ class EvalStdLib {
 			case VString(s): s.sstring;
 			case VInt(i): Std.string(i);
 			case VEnumValue(ev): "e:" + ev.epath + ":" + ev.eindex + ":" + [for (a in ev.eargs) mapKey(a)].join(",");
+			case VObject(o): "o:" + objId(o);
+			case VInstance(vi): "o:" + objId(vi);
 			case _: stringOf(v);
 		};
 	}
@@ -469,26 +482,25 @@ class EvalStdLib {
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [VArray(new VArray(items, items.length))]);
-		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap"]) {
+		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map())));
 			});
-			reg(inst, mapPath, "set", vmethod(a -> { thisMap(a).set(mapKey(arg(a, 1)), arg(a, 2)); VNull; }));
-			reg(inst, mapPath, "get", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); m.exists(k) ? m.get(k) : VNull; }));
+			reg(inst, mapPath, "set", vmethod(a -> { thisMap(a).set(mapKey(arg(a, 1)), {key: arg(a, 1), value: arg(a, 2)}); VNull; }));
+			reg(inst, mapPath, "get", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); m.exists(k) ? m.get(k).value : VNull; }));
 			reg(inst, mapPath, "exists", vmethod(a -> EvalValueTools.vbool(thisMap(a).exists(mapKey(arg(a, 1))))));
 			reg(inst, mapPath, "remove", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); var had = m.exists(k); m.remove(k); EvalValueTools.vbool(had); }));
-			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (v in thisMap(a)) v])));
+			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.value])));
+			reg(inst, mapPath, "keys", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.key])));
 			reg(inst, mapPath, "clear", vmethod(a -> { thisMap(a).clear(); VNull; }));
 			reg(inst, mapPath, "copy", vmethod(a -> {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				var nm = new Map(); var src = thisMap(a); for (k in src.keys()) nm.set(k, src.get(k));
 				VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(nm)));
 			}));
+			reg(inst, mapPath, "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 		}
-		reg(inst, "haxe.ds.StringMap", "keys", vmethod(a -> iteratorOf([for (k in thisMap(a).keys()) mkStr(k)])));
-		reg(inst, "haxe.ds.IntMap", "keys", vmethod(a -> iteratorOf([for (k in thisMap(a).keys()) { var pk = Std.parseInt(k); VInt(pk == null ? 0 : pk); }])));
-		reg(inst, "haxe.ds.StringMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 		reg(inst, "haxe.ds.IntMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 
 		// Date: a native instance carrying its epoch timestamp.
@@ -522,9 +534,9 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "compare", vmethod(a -> VInt(thisBytes(a).compare(thisBytes([arg(a, 1)])))));
 	}
 
-	static function mapToString(m:Map<String, EvalValue>):String {
+	static function mapToString(m:Map<String, MapEntry>):String {
 		var parts = [];
-		for (k in m.keys()) parts.push(k + " => " + stringOf(m.get(k)));
+		for (e in m) parts.push(stringOf(e.key) + " => " + stringOf(e.value));
 		return "[" + parts.join(", ") + "]";
 	}
 }

@@ -132,8 +132,13 @@ enum EvalInstanceKind {
 	IRef(v:EvalValue);
 	IBuffer(buf:StringBuf);
 	IRegex(re:EReg);
-	IMap(m:Map<String, EvalValue>);
+	IMap(m:Map<String, MapEntry>);
 }
+
+// A native map entry keeps the original key alongside its value, so iteration over keys (and
+// key/value pairs) can recover keys that do not round-trip through the string storage key
+// (enum values, object identities).
+typedef MapEntry = {key:EvalValue, value:EvalValue};
 
 @:structInit
 class VEnumValue {
