@@ -134,6 +134,30 @@ class EvalStdLib {
 		};
 	}
 
+	static function isSubProto(p:VPrototype, targetPath:Int):Bool {
+		var c = p;
+		while (c != null) { if (c.ppath == targetPath) return true; c = c.pparent; }
+		return false;
+	}
+
+	static function stdIsOfType(v:EvalValue, t:EvalValue):Bool {
+		return switch (t) {
+			case VPrototype(proto):
+				switch (EvalHash.revHash(proto.ppath)) {
+					case "Int": switch (v) { case VInt(_): true; case _: false; };
+					case "Float": switch (v) { case VInt(_) | VFloat(_): true; case _: false; };
+					case "Bool": switch (v) { case VTrue | VFalse: true; case _: false; };
+					case "String": switch (v) { case VString(_): true; case _: false; };
+					case _: switch (v) {
+						case VInstance(vi): isSubProto(vi.iproto, proto.ppath);
+						case VEnumValue(ev): ev.epath == proto.ppath;
+						case _: false;
+					};
+				};
+			case _: false;
+		};
+	}
+
 	public static function init(ctx:EvalContext):Void {
 		var s = ctx.builtins.staticBuiltins;
 
@@ -166,6 +190,7 @@ class EvalStdLib {
 		reg(s, "Math", "random", vfn(a -> VFloat(Math.random())));
 		reg(s, "String", "fromCharCode", vfn(a -> mkStr(String.fromCharCode(toInt(arg(a, 0))))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
+		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));

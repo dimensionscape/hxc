@@ -86,7 +86,16 @@ class EvalEmitter {
 					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
 				}
 			case TTypeExpr(mt):
-				EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(TypeFunctions.tInfos(mt).path), e.pos).pvalue;
+				// A type without an eval prototype (e.g. the core-type abstracts Int/Float/Bool) still
+				// needs a value marker carrying its path, for Std.isOfType and reflection.
+				var tpath = EvalHash.pathHash(TypeFunctions.tInfos(mt).path);
+				var tproto = ctx.staticPrototypes.get(tpath);
+				if (tproto == null) {
+					tproto = new VPrototype(tpath, [], new Map(), [], new Map(), null, PClass([]), VNull);
+					tproto.pvalue = VPrototype(tproto);
+					ctx.staticPrototypes.set(tpath, tproto);
+				}
+				tproto.pvalue;
 			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), false);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
