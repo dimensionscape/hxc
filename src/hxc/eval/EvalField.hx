@@ -53,6 +53,7 @@ class EvalField {
 			case VInstance(vi):
 				switch (vi.ikind) {
 					case IBytes(b) if (f == EvalHash.keyLength): VInt(b.length);
+					case IBuffer(buf) if (f == EvalHash.keyLength): VInt(buf.length);
 					case _: try instanceField(vi, f) catch (_:NotFound) protoFieldRaise(vi.iproto, f);
 				}
 			case _: throw new NotFound();

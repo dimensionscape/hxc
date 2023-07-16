@@ -430,6 +430,9 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "StringBuf", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
+		// Length is a (get, never) property whose default getter reads the std's internal buffer; the
+		// native instance keeps its own buffer, so the accessor resolves through the host length.
+		reg(inst, "StringBuf", "get_length", vmethod(a -> VInt(thisBuffer(a).length)));
 
 		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
 		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
