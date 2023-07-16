@@ -114,11 +114,13 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
 	}
 
-	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int.
+	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
+	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
 			case VString(s): s.sstring;
 			case VInt(i): Std.string(i);
+			case VEnumValue(ev): "e:" + ev.epath + ":" + ev.eindex + ":" + [for (a in ev.eargs) mapKey(a)].join(",");
 			case _: stringOf(v);
 		};
 	}
@@ -467,7 +469,7 @@ class EvalStdLib {
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [VArray(new VArray(items, items.length))]);
-		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap"]) {
+		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map())));
