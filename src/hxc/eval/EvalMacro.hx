@@ -31,41 +31,36 @@ class EvalMacro {
 		list.push({name: EvalHash.hash(fieldName), v: VFunction(f, true)});
 	}
 
-	static function snakeToCamel(s:String):String {
-		var parts = s.split("_");
-		var out = parts[0];
-		for (i in 1...parts.length) {
-			var p = parts[i];
-			out += p.length == 0 ? "" : p.charAt(0).toUpperCase() + p.substr(1);
-		}
-		return out;
-	}
-
 	static function registerContext(ec:EvalContext, com:Context):Void {
+		// Builtin keys are the interpreter's internal snake_case ABI the standard haxe.macro.Context bodies
+		// reach them via load("<snake_name>", n) -> callMacroApi below.
 		regBuiltin(ec, "haxe.macro.Context", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
-		regBuiltin(ec, "haxe.macro.Context", "currentPos", function(a) return VNull);
+		regBuiltin(ec, "haxe.macro.Context", "current_pos", function(a) return VNull);
 		regBuiltin(ec, "haxe.macro.Context", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		regBuiltin(ec, "haxe.macro.Context", "fatalError", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		regBuiltin(ec, "haxe.macro.Context", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		regBuiltin(ec, "haxe.macro.Context", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
-		regBuiltin(ec, "haxe.macro.Context", "makeExpr", function(a) return makeExprValue(ec, a[0]));
-		regBuiltin(ec, "haxe.macro.Context", "getBuildFields", function(a) return curBuildFields);
-		// makePosition is given {min,max,file}; positions round-trip as that anon here.
-		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) return a[0]);
-		regBuiltin(ec, "haxe.macro.Context", "definedValue", function(a) {
+		regBuiltin(ec, "haxe.macro.Context", "make_expr", function(a) return makeExprValue(ec, a[0]));
+		regBuiltin(ec, "haxe.macro.Context", "get_build_fields", function(a) return curBuildFields);
+		// make_position(min, max, file) builds a position as a {file, min, max} anonymous object.
+		regBuiltin(ec, "haxe.macro.Context", "make_position", function(a) {
+			var m = new Map<Int, EvalValue>();
+			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
+			m.set(EvalHash.hash("min"), a.length > 0 ? a[0] : VInt(0));
+			m.set(EvalHash.hash("max"), a.length > 1 ? a[1] : VInt(0));
+			return VObject(new VObject([], ODictionary(m)));
+		});
+		regBuiltin(ec, "haxe.macro.Context", "defined_value", function(a) {
 			var k = strOf(a[0]);
 			if (!com.defines.rawDefined(k)) return VNull;
 			var v = com.defines.rawDefinedValue(k);
 			return VString(new VString(v, v.length));
 		});
-		// The eval target routes haxe.macro.Context.<api>(args) through eval.vm.Context
-		// .callMacroApi("<api>")(args); dispatch by name into the registered Context builtins.
+		// eval.vm.Context.callMacroApi("<snake_name>") returns the builtin registered under that key.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
-			var name = strOf(a[0]);
-			// The eval target names macro APIs in snake_case; Context builtins are registered camelCase.
-			var key = EvalHash.hash(snakeToCamel(name));
+			var key = EvalHash.hash(strOf(a[0]));
 			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
 			if (list != null) for (e in list) if (e.name == key) return e.v;
-			throw new TypingError("Macro API not implemented: " + name, curPos);
+			throw new TypingError("Macro API not implemented: " + strOf(a[0]), curPos);
 		});
 	}
 
