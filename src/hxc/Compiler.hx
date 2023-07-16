@@ -64,6 +64,7 @@ class Compiler {
 		ctx.classPath = cps.concat(ctx.classPath);
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
+		ModuleLoader.initBasicTypes(ctx);
 
 		if (mainClass == null) {
 			Sys.println("hxc " + Globals.sVersion + " (" + Globals.platformName(platform) + ", no -main)");
@@ -74,9 +75,19 @@ class Compiler {
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			TypeResolve.resolveAll(ctx);
 			TypeFields.typeAllModules(ctx);
-			Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
+			if (platform == Eval) {
+				// --interp: run the program through the evaluator so its own output (Sys.println,
+				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
+				var ectx = hxc.eval.EvalMain.create(true);
+				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
+				hxc.eval.EvalMain.runMain(ectx, path);
+			} else {
+				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
+			}
 		} catch (e:Dynamic) {
-			Sys.println("Error: " + e);
+			Sys.stderr().writeString("Error: " + Std.string(e) + "
+");
+			Sys.exit(1);
 		}
 	}
 
