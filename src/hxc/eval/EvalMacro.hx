@@ -20,6 +20,7 @@ import hxc.eval.EvalHash;
 class EvalMacro {
 	static var macroCtx:Null<EvalContext> = null;
 	static var lastModuleCount:Int = -1;
+	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
 	static var curBuildFields:EvalValue = VNull;
 	static var builtClasses:Map<String, Bool> = new Map();
@@ -201,14 +202,19 @@ class EvalMacro {
 	}
 
 	static function getContext(com:Context):EvalContext {
-		if (macroCtx == null || lastModuleCount != com.modules.length) {
-			// Type any modules loaded on demand, then build the interpreter over all of them.
-			hxc.typing.TypeFields.installAndForce(com);
-			var ec = EvalMain.create(true);
-			registerContext(ec, com);
-			EvalMain.addModules(ec, com.modules);
-			macroCtx = ec;
-			lastModuleCount = com.modules.length;
+		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
+		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
+		if (!building && (macroCtx == null || lastModuleCount != com.modules.length)) {
+			building = true;
+			try {
+				hxc.typing.TypeFields.installAndForce(com);
+				var ec = EvalMain.create(true);
+				registerContext(ec, com);
+				EvalMain.addModules(ec, com.modules);
+				macroCtx = ec;
+				lastModuleCount = com.modules.length;
+			} catch (e:Dynamic) { building = false; throw e; }
+			building = false;
 		}
 		EvalContext.setCtx(macroCtx);
 		return macroCtx;
