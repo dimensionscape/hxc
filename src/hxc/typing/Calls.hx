@@ -14,6 +14,9 @@ import hxc.typing.FieldAccess;
 
 class Calls {
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position):TExpr {
+		// A call to an inline function expands in place; on any unhandled construct it falls back here.
+		var inlined = Inline.tryInline(ctx, e, params, t, p);
+		if (inlined != null) return inlined;
 		return TypeFunctions.mk(TCall(e, params), t, p);
 	}
 
