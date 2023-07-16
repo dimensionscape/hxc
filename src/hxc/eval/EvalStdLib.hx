@@ -178,6 +178,31 @@ class EvalStdLib {
 		};
 	}
 
+	// Type.typeof builds a ValueType enum value; constructor indices match the std declaration
+	// order (TNull,TInt,TFloat,TBool,TObject,TFunction,TClass,TEnum,TUnknown).
+	static function typeofValue(ctx:EvalContext, v:EvalValue):EvalValue {
+		function classVal(path:Int):EvalValue {
+			var p = ctx.staticPrototypes.get(path);
+			return p == null ? VNull : p.pvalue;
+		}
+		var idx:Int;
+		var args:Array<EvalValue> = [];
+		switch (v) {
+			case VNull: idx = 0;
+			case VInt(_): idx = 1;
+			case VFloat(_): idx = 2;
+			case VTrue | VFalse: idx = 3;
+			case VObject(_): idx = 4;
+			case VFunction(_, _) | VFieldClosure(_, _): idx = 5;
+			case VString(_): idx = 6; args = [classVal(EvalHash.hash("String"))];
+			case VArray(_): idx = 6; args = [classVal(EvalHash.hash("Array"))];
+			case VInstance(vi): idx = 6; args = [classVal(vi.iproto.ppath)];
+			case VEnumValue(ev): idx = 7; args = [classVal(ev.epath)];
+			case _: idx = 8;
+		}
+		return VEnumValue(new VEnumValue(idx, args, EvalHash.hash("ValueType"), null));
+	}
+
 	public static function init(ctx:EvalContext):Void {
 		var s = ctx.builtins.staticBuiltins;
 
@@ -361,6 +386,7 @@ class EvalStdLib {
 				p == null ? VNull : p.pvalue;
 			case _: VNull;
 		}));
+		reg(s, "Type", "typeof", vfn(a -> typeofValue(ctx, arg(a, 0))));
 		reg(s, "Type", "getClassName", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(proto): mkStr(EvalHash.revHash(proto.ppath));
 			case _: VNull;
