@@ -59,6 +59,15 @@ class Operators {
 		};
 	}
 
+	// Ordered comparison treats an abstract over a numeric type as that type (result is Bool, so
+	// there is no result-type imprecision); operands keep their abstract value at runtime.
+	static function cmpClass(t:T):TypeClass {
+		return switch (classify(t)) {
+			case KAbstract(a, _): switch (classify(a.thisType)) { case KInt: KInt; case KFloat: KFloat; case _: KAbstract(a, []); }
+			case k: k;
+		};
+	}
+
 	static function isNumLike(t:T):Bool {
 		return switch (classify(t)) { case KInt | KFloat: true; case _: false; };
 	}
@@ -178,7 +187,7 @@ class Operators {
 				try unify(ctx, e1.type, e2.type, p) catch (_:TypingError) unify(ctx, e2.type, e1.type, p);
 				mkOp(e1, e2, tbool);
 			case OpGt | OpGte | OpLt | OpLte:
-				switch ([classify(e1.type), classify(e2.type)]) {
+				switch ([cmpClass(e1.type), cmpClass(e2.type)]) {
 					case [KInt, KInt] | [KInt, KFloat] | [KFloat, KInt] | [KFloat, KFloat] | [KString, KString]:
 					case [KInt, KUnk]: unifyInt(ctx, e2, KUnk);
 					case [KFloat, KUnk] | [KString, KUnk]: unify(ctx, e2.type, e1.type, e2.pos);
@@ -237,6 +246,9 @@ class Operators {
 			case TAbstract(a, tl) if (a.impl != null):
 				for (aop in a.ops) {
 					if (!sameOp(aop.op, op)) continue;
+					// An extern (bodyless) comparison @:op is a native intrinsic the evaluator cannot call;
+					// fall through so the operands compare via their underlying numeric type.
+					if (aop.cf.expr == null && (switch (op) { case OpLt | OpGt | OpLte | OpGte: true; case _: false; })) continue;
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, aop.cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
 							var c2 = coerceArg(ctx, sig.args[1].t, e2, p);
