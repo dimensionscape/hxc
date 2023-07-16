@@ -326,6 +326,53 @@ class Typer {
 		};
 	}
 
+	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.
+	static function formatString(str:String, p:Position):Expr {
+		function strLit(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), p);
+		function isIdentStart(c:Int):Bool return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
+		function isIdentChar(c:Int):Bool return isIdentStart(c) || (c >= "0".code && c <= "9".code);
+		var parts:Array<Expr> = [];
+		var buf = new StringBuf();
+		function flush() { var t = buf.toString(); if (t.length > 0) { parts.push(strLit(t)); buf = new StringBuf(); } }
+		var i = 0;
+		var n = str.length;
+		while (i < n) {
+			var c = str.charCodeAt(i);
+			if (c == "$".code && i + 1 < n) {
+				var d = str.charCodeAt(i + 1);
+				if (d == "$".code) { buf.addChar("$".code); i += 2; }
+				else if (d == "{".code) {
+					flush();
+					var depth = 1;
+					var j = i + 2;
+					var sb = new StringBuf();
+					while (j < n && depth > 0) {
+						var cj = str.charCodeAt(j);
+						if (cj == "{".code) { depth++; sb.addChar(cj); }
+						else if (cj == "}".code) { depth--; if (depth > 0) sb.addChar(cj); }
+						else sb.addChar(cj);
+						j++;
+					}
+					parts.push(hxc.parser.Parser.parseExprString(sb.toString(), p.file));
+					i = j;
+				} else if (isIdentStart(d)) {
+					flush();
+					var j = i + 1;
+					var sb = new StringBuf();
+					while (j < n && isIdentChar(str.charCodeAt(j))) { sb.addChar(str.charCodeAt(j)); j++; }
+					parts.push(new Expr(EConst(CIdent(sb.toString())), p));
+					i = j;
+				} else { buf.addChar(c); i++; }
+			} else { buf.addChar(c); i++; }
+		}
+		flush();
+		if (parts.length == 0) return strLit("");
+		// Lead with an empty string literal so the whole chain concatenates as String.
+		var acc = strLit("");
+		for (part in parts) acc = new Expr(EBinop(OpAdd, acc, part), p);
+		return acc;
+	}
+
 	static function typeConst(ctx:TyperContext, c:Constant, p:Position, mode:AccessMode, withType:WithType):TExpr {
 		var basic = ctx.com.basic;
 		return switch (c) {
@@ -348,6 +395,8 @@ class Typer {
 					case "f64": Texpr.typeConstant(basic, CFloat(s, null), p);
 					case other: throw new TypingError(other + " is not a valid float suffix", p);
 				}
+			case CString(str, SSingleQuotes) if (str.indexOf("$") >= 0):
+				typeExpr(ctx, formatString(str, p), withType);
 			case CString(_, _):
 				Texpr.typeConstant(basic, c, p);
 			case CRegexp(r, opt):
