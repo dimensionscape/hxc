@@ -78,6 +78,11 @@ class Lexer {
 				pos++;
 				continue;
 			}
+			// A UTF-8 BOM read as bytes is the three-byte sequence EF BB BF.
+			if (peek() == 0xEF && peek(1) == 0xBB && peek(2) == 0xBF) {
+				pos += 3;
+				continue;
+			}
 			if (peek() == "#".code && peek(1) == "!".code) {
 				while (pos < len && peek() != "\n".code && peek() != "\r".code)
 					pos++;
