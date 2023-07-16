@@ -137,6 +137,23 @@ class EvalStdLib {
 		reg(s, "Math", "pow", vfn(a -> VFloat(Math.pow(toFloat(arg(a, 0)), toFloat(arg(a, 1))))));
 		reg(s, "Math", "min", vfn(a -> VFloat(Math.min(toFloat(arg(a, 0)), toFloat(arg(a, 1))))));
 		reg(s, "Math", "max", vfn(a -> VFloat(Math.max(toFloat(arg(a, 0)), toFloat(arg(a, 1))))));
+		reg(s, "Math", "log", vfn(a -> VFloat(Math.log(toFloat(arg(a, 0))))));
+		reg(s, "Math", "exp", vfn(a -> VFloat(Math.exp(toFloat(arg(a, 0))))));
+		reg(s, "Math", "sin", vfn(a -> VFloat(Math.sin(toFloat(arg(a, 0))))));
+		reg(s, "Math", "cos", vfn(a -> VFloat(Math.cos(toFloat(arg(a, 0))))));
+		reg(s, "Math", "tan", vfn(a -> VFloat(Math.tan(toFloat(arg(a, 0))))));
+		reg(s, "Math", "asin", vfn(a -> VFloat(Math.asin(toFloat(arg(a, 0))))));
+		reg(s, "Math", "acos", vfn(a -> VFloat(Math.acos(toFloat(arg(a, 0))))));
+		reg(s, "Math", "atan", vfn(a -> VFloat(Math.atan(toFloat(arg(a, 0))))));
+		reg(s, "Math", "ffloor", vfn(a -> VFloat(Math.ffloor(toFloat(arg(a, 0))))));
+		reg(s, "Math", "fceil", vfn(a -> VFloat(Math.fceil(toFloat(arg(a, 0))))));
+		reg(s, "Math", "fround", vfn(a -> VFloat(Math.fround(toFloat(arg(a, 0))))));
+		reg(s, "Math", "atan2", vfn(a -> VFloat(Math.atan2(toFloat(arg(a, 0)), toFloat(arg(a, 1))))));
+		reg(s, "Math", "isNaN", vfn(a -> EvalValueTools.vbool(Math.isNaN(toFloat(arg(a, 0))))));
+		reg(s, "Math", "isFinite", vfn(a -> EvalValueTools.vbool(Math.isFinite(toFloat(arg(a, 0))))));
+		reg(s, "Math", "random", vfn(a -> VFloat(Math.random())));
+		reg(s, "String", "fromCharCode", vfn(a -> mkStr(String.fromCharCode(toInt(arg(a, 0))))));
+		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
