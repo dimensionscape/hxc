@@ -86,6 +86,14 @@ class EvalMacro {
 	}
 
 	static function runBuild(com:Context, c:TClass, entry:MetadataEntry):Void {
+		// Macro modules compile with `macro` defined so their #if macro sections are present.
+		var hadMacro = com.defines.rawDefined("macro");
+		if (!hadMacro) com.defines.rawDefine("macro");
+		try runBuildInner(com, c, entry) catch (e:haxe.Exception) { if (!hadMacro) com.defines.values.remove("macro"); throw e; }
+		if (!hadMacro) com.defines.values.remove("macro");
+	}
+
+	static function runBuildInner(com:Context, c:TClass, entry:MetadataEntry):Void {
 		var declEntry = com.declOfType.get(Context.pathKey(c.path));
 		if (declEntry == null) return;
 		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
