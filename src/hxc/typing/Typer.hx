@@ -257,6 +257,8 @@ class Typer {
 						var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: new Expr(EArrayDecl([]), p), evMeta: []}]), p);
 						var loop = comprehensionPush(acc, el[0]);
 						return typeExpr(ctx, new Expr(EBlock([decl, loop, new Expr(EConst(CIdent(acc)), p)]), p), withType);
+					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
+						return typeMapDeclaration(ctx, el, withType, p);
 					case _:
 						var expectedEt:Null<T> = switch (withType) {
 							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
@@ -812,6 +814,45 @@ class Typer {
 				Calls.buildCall(ctx, Fields.typeField(ctx, implExpr, "_new", p, MCall(el), withType), el, withType, p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
+		};
+	}
+
+	// A map literal [k => v, ...] desugars to constructing the concrete map implied by the key
+	// type and setting each pair, mirroring the compiler's type_map_declaration.
+	static function typeMapDeclaration(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		var tkey:Null<T> = switch (withType) {
+			case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+				case TAbstract(a, [tk, _]) if (a.path.name == "Map"): tk;
+				case _: null;
+			};
+			case _: null;
+		};
+		if (tkey == null) switch (el[0].expr) {
+			case EBinop(OpArrow, k, _): tkey = typeExpr(ctx, k, WithTypeTools.value).type;
+			case _:
+		}
+		var implName = pickMapImpl(tkey);
+		var tmp = "`map";
+		var tpath:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: implName, tparams: [], tsub: null}, pos: p};
+		var stmts:Array<Expr> = [];
+		stmts.push(new Expr(EVars([{evName: {name: tmp, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: new Expr(ENew(tpath, []), p), evMeta: []}]), p));
+		for (e in el) switch (e.expr) {
+			case EBinop(OpArrow, k, v):
+				var recv = new Expr(EField(new Expr(EConst(CIdent(tmp)), p), "set", EFNormal), p);
+				stmts.push(new Expr(ECall(recv, [k, v]), p));
+			case _:
+				throw new TypingError("Invalid map literal entry", e.pos);
+		}
+		stmts.push(new Expr(EConst(CIdent(tmp)), p));
+		return typeExpr(ctx, new Expr(EBlock(stmts), p), withType);
+	}
+
+	static function pickMapImpl(tkey:Null<T>):String {
+		return tkey == null ? "StringMap" : switch (TypeFunctions.follow(tkey)) {
+			case TInst(c, _) if (c.path.pack.length == 0 && c.path.name == "String"): "StringMap";
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Int"): "IntMap";
+			case TEnum(_, _): "EnumValueMap";
+			case _: "ObjectMap";
 		};
 	}
 
