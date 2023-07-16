@@ -62,6 +62,13 @@ class EvalMain {
 	}
 
 	public static function runMain(ctx:EvalContext, mainPath:Path):EvalValue {
+		// A module-level `function main` has no class named after the module; it lives in the
+		// synthetic <Module>_Fields_ class. Fall back to it when the module type is absent.
+		if (ctx.staticPrototypes.get(EvalHash.pathHash(mainPath)) == null) {
+			var fieldsPath:Path = {pack: mainPath.pack.concat(["_" + mainPath.name]), name: mainPath.name + "_Fields_"};
+			if (ctx.staticPrototypes.get(EvalHash.pathHash(fieldsPath)) != null)
+				return callStaticNoArgs(ctx, fieldsPath, "main");
+		}
 		return callStaticNoArgs(ctx, mainPath, "main");
 	}
 }
