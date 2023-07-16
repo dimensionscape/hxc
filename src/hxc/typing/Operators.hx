@@ -61,11 +61,16 @@ class Operators {
 
 	// Ordered comparison treats an abstract over a numeric type as that type (result is Bool, so
 	// there is no result-type imprecision); operands keep their abstract value at runtime.
-	static function cmpClass(t:T):TypeClass {
+	static function cmpClass(t:T, op:Binop):TypeClass {
 		return switch (classify(t)) {
-			case KAbstract(a, _): switch (classify(a.thisType)) { case KInt: KInt; case KFloat: KFloat; case _: KAbstract(a, []); }
+			case KAbstract(a, _) if (hasDeclaredOp(a, op)): switch (classify(a.thisType)) { case KInt: KInt; case KFloat: KFloat; case _: KAbstract(a, []); }
 			case k: k;
 		};
+	}
+
+	static function hasDeclaredOp(a:TAbstract, op:Binop):Bool {
+		for (aop in a.ops) if (sameOp(aop.op, op)) return true;
+		return false;
 	}
 
 	static function isNumLike(t:T):Bool {
@@ -187,7 +192,7 @@ class Operators {
 				try unify(ctx, e1.type, e2.type, p) catch (_:TypingError) unify(ctx, e2.type, e1.type, p);
 				mkOp(e1, e2, tbool);
 			case OpGt | OpGte | OpLt | OpLte:
-				switch ([cmpClass(e1.type), cmpClass(e2.type)]) {
+				switch ([cmpClass(e1.type, op), cmpClass(e2.type, op)]) {
 					case [KInt, KInt] | [KInt, KFloat] | [KFloat, KInt] | [KFloat, KFloat] | [KString, KString]:
 					case [KInt, KUnk]: unifyInt(ctx, e2, KUnk);
 					case [KFloat, KUnk] | [KString, KUnk]: unify(ctx, e2.type, e1.type, e2.pos);
