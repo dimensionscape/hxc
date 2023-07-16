@@ -4,6 +4,7 @@ import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.typing.TyperContext;
+import hxc.typing.TypeFields;
 
 // Falling back to a normal TCall whenever a construct is outside the handled subset. Exact
 // in result for what it handles, safe otherwise.
@@ -19,13 +20,16 @@ private class InlineBail extends haxe.Exception {
 class Inline {
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
 		var cf:TClassField = null;
+		var c:Null<TClass> = null;
 		var ethis:Null<TExpr> = null;
 		var isStatic = false;
 		switch (e.expr) {
 			case TField(et, fa):
 				switch (fa) {
-					case FStatic(_, f): cf = f; isStatic = true;
-					case FInstance(_, _, f) | FClosure(_, f) | FAnon(f): cf = f; ethis = et;
+					case FStatic(cc, f): c = cc; cf = f; isStatic = true;
+					case FInstance(cc, _, f): c = cc; cf = f; ethis = et;
+					case FClosure(cwp, f): c = cwp == null ? null : cwp.c; cf = f; ethis = et;
+					case FAnon(f): cf = f; ethis = et;
 					case _: return null;
 				}
 			case _:
@@ -36,8 +40,9 @@ class Inline {
 			case _: return null;
 		}
 		if (cf.params.length != 0) return null;
-		// Force the callee's body to be typed first (it may be in a not-yet-processed module), the way
-		// make_call does with `ignore (follow f.type)`. Following the field's lazy type runs its body.
+		// Force the callee's body to be typed first: it may live in a module that has not been
+		// installed yet, so type it on demand from its owning class, then follow the lazy as a backstop.
+		if (c != null) TypeFields.forceFieldBody(ctx.com, c, cf);
 		TypeFunctions.follow(cf.type);
 		var body = cf.expr;
 		if (body == null) return null;

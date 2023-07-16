@@ -105,6 +105,36 @@ class TypeFields {
 		cf.type = TLazy(r);
 	}
 
+	static var _forcing:Array<TClassField> = [];
+
+	// Type a single field body on demand. Inline expansion needs a callee body that may not be
+	// installed yet (its module is processed later, or loaded on demand); the owning class is known
+	// from the call site, so locate the syntactic field and run its body typing here.
+	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
+		if (cf.expr != null) return;
+		for (f in _forcing) if (f == cf) return;
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return;
+		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
+		var cff:ClassField = null;
+		for (f in d.dData) if (f.cffName.name == cf.name) { cff = f; break; }
+		if (cff == null) return;
+		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var isStatic = false;
+		for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
+		if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
+		var tctx = new TyperContext(ctx);
+		tctx.curclass = c;
+		tctx.typeParams = c.params;
+		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		_forcing.push(cf);
+		var savedMod = ctx.currentModule;
+		ctx.currentModule = c.module;
+		try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) {}
+		ctx.currentModule = savedMod;
+		_forcing.remove(cf);
+	}
+
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
 		var restore = Typer.saveLocals(tctx);
 		var oldField = tctx.curfield;
