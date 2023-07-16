@@ -260,6 +260,39 @@ class EvalStdLib {
 			case _: VNull;
 		}));
 
+		reg(s, "Type", "getInstanceFields", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto):
+				var ip = ctx.instancePrototypes.get(proto.ppath);
+				var ns = ip == null ? [] : [for (n in ip.pinstanceNames.keys()) mkStr(EvalHash.revHash(n))];
+				VArray(new VArray(ns, ns.length));
+			case _: VNull;
+		}));
+		reg(s, "Type", "getEnumConstructs", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) { case PEnum(cs): var ns = [for (c in cs) mkStr(c.name)]; VArray(new VArray(ns, ns.length)); case _: VNull; };
+			case _: VNull;
+		}));
+		reg(s, "Type", "createEnum", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto):
+				var f = EvalField.field(ctx, VPrototype(proto), EvalHash.hash(stringOf(arg(a, 1))));
+				switch (f) { case VFunction(fn, _): fn(argList(arg(a, 2))); case v: v; };
+			case _: VNull;
+		}));
+		reg(s, "Type", "enumParameters", vfn(a -> switch (arg(a, 0)) {
+			case VEnumValue(ev): VArray(new VArray(ev.eargs.copy(), ev.eargs.length));
+			case _: VArray(new VArray([], 0));
+		}));
+		reg(s, "Type", "enumIndex", vfn(a -> switch (arg(a, 0)) { case VEnumValue(ev): VInt(ev.eindex); case _: VInt(0); }));
+		reg(s, "Type", "enumConstructor", vfn(a -> switch (arg(a, 0)) {
+			case VEnumValue(ev):
+				var p = ctx.staticPrototypes.get(ev.epath);
+				if (p == null) VNull else switch (p.pkind) { case PEnum(cs): mkStr(cs[ev.eindex].name); case _: VNull; };
+			case _: VNull;
+		}));
+		reg(s, "Reflect", "callMethod", vfn(a -> {
+			var fn = arg(a, 1); var args = argList(arg(a, 2));
+			switch (fn) { case VFunction(f, isStatic): isStatic ? f(args) : f([arg(a, 0)].concat(args)); case VFieldClosure(recv, f): f([recv].concat(args)); case _: VNull; };
+		}));
+
 		var ctors = ctx.builtins.constructorBuiltins;
 		ctors.set(EvalHash.hash("StringBuf"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("StringBuf"));

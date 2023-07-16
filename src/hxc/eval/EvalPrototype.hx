@@ -54,7 +54,10 @@ class EvalPrototype {
 			pnames.set(EvalHash.hash(name), pfields.length);
 			pfields.push(v);
 		}
-		return new VPrototype(key, pfields, pnames, [], new Map(), null, PEnum(constructors), VNull);
+		var proto = new VPrototype(key, pfields, pnames, [], new Map(), null, PEnum(constructors), VNull);
+		// The enum used as a value (Type.getEnumConstructs(E), createEnum) resolves to its prototype.
+		proto.pvalue = VPrototype(proto);
+		return proto;
 	}
 
 	static inline function asFunction(e:Null<TExpr>):Null<TFunc> {
