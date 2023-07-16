@@ -102,6 +102,18 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IDate(ts)));
 	}
 
+	static function thisBytes(a:Array<EvalValue>):haxe.io.Bytes {
+		return switch (a[0]) {
+			case VInstance(vi): switch (vi.ikind) { case IBytes(b): b; case _: haxe.io.Bytes.alloc(0); };
+			case _: haxe.io.Bytes.alloc(0);
+		};
+	}
+
+	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
@@ -465,6 +477,18 @@ class EvalStdLib {
 		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getSeconds())));
 		reg(inst, "Date", "getDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDay())));
 		reg(inst, "Date", "toString", vmethod(a -> mkStr(Date.fromTime(thisDate(a)).toString())));
+
+		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
+		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> mkBytes(ctx, haxe.io.Bytes.alloc(toInt(arg(a, 0))))));
+		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(stringOf(arg(a, 0))))));
+		reg(inst, "haxe.io.Bytes", "get", vmethod(a -> VInt(thisBytes(a).get(toInt(arg(a, 1))))));
+		reg(inst, "haxe.io.Bytes", "set", vmethod(a -> { thisBytes(a).set(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> mkStr(thisBytes(a).getString(toInt(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> mkStr(thisBytes(a).toString())));
+		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> mkBytes(ctx, thisBytes(a).sub(toInt(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(inst, "haxe.io.Bytes", "fill", vmethod(a -> { thisBytes(a).fill(toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "blit", vmethod(a -> { thisBytes(a).blit(toInt(arg(a, 1)), thisBytes([arg(a, 2)]), toInt(arg(a, 3)), toInt(arg(a, 4))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "compare", vmethod(a -> VInt(thisBytes(a).compare(thisBytes([arg(a, 1)])))));
 	}
 
 	static function mapToString(m:Map<String, EvalValue>):String {
