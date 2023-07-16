@@ -251,13 +251,14 @@ class Operators {
 			case TAbstract(a, tl) if (a.impl != null):
 				for (aop in a.ops) {
 					if (!sameOp(aop.op, op)) continue;
-					// An extern (bodyless) comparison @:op is a native intrinsic the evaluator cannot call;
-					// fall through so the operands compare via their underlying numeric type.
-					if (aop.cf.expr == null && (switch (op) { case OpLt | OpGt | OpLte | OpGte: true; case _: false; })) continue;
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, aop.cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
 							var c2 = coerceArg(ctx, sig.args[1].t, e2, p);
 							if (c2 == null) continue;
+							if (aop.cf.expr == null) {
+								// A bodyless (native) @:op is the underlying operation, typed as its declared return.
+								return TypeFunctions.mk(TBinop(op, e1, c2), sig.ret, p);
+							}
 							var implExpr = hxc.core.Texpr.makeStaticThis(a.impl, p);
 							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, aop.cf, FHStatic(a.impl), false, p), FCall);
 							return Calls.makeCall(ctx, fieldExpr, [e1, c2], sig.ret, p);
