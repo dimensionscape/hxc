@@ -472,9 +472,24 @@ class Typer {
 	static function findBareEnumConstructor(ctx:TyperContext, i:String):Null<TEnum> {
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
-		for (mt in m.types) switch (mt) {
-			case TEnumDecl(en) if (en.constrs.exists(i)): return en;
-			case _:
+		function scan(types:Array<ModuleType>):Null<TEnum> {
+			for (mt in types) switch (mt) {
+				case TEnumDecl(en) if (en.constrs.exists(i)): return en;
+				case _:
+			}
+			return null;
+		}
+		var own = scan(m.types);
+		if (own != null) return own;
+		// A module import brings the constructors of that module's enums into scope.
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports != null) {
+			function scanPath(path:hxc.core.Globals.Path):Null<TEnum> {
+				var md = try hxc.context.ModuleLoader.loadModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
+				return md == null ? null : scan(md.types);
+			}
+			for (imp in imports.names) { var r = scanPath(imp.modulePath); if (r != null) return r; }
+			for (w in imports.wildcards) { var r = scanPath(w); if (r != null) return r; }
 		}
 		return null;
 	}
