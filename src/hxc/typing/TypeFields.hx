@@ -112,6 +112,9 @@ class TypeFields {
 	// from the call site, so locate the syntactic field and run its body typing here.
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
+		// Only force at the outermost inline; a deep inline-call chain would otherwise recurse here
+		// (the reference inlines opportunistically and never forces). Nested calls bail to a TCall.
+		if (_forcing.length > 0) return;
 		for (f in _forcing) if (f == cf) return;
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
