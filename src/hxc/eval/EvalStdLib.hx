@@ -90,6 +90,18 @@ class EvalStdLib {
 		};
 	}
 
+	static function thisDate(a:Array<EvalValue>):Float {
+		return switch (a[0]) {
+			case VInstance(vi): switch (vi.ikind) { case IDate(ts): ts; case _: 0.0; };
+			case _: 0.0;
+		};
+	}
+
+	static function mkDate(ctx:EvalContext, ts:Float):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("Date"));
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IDate(ts)));
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
@@ -358,6 +370,24 @@ class EvalStdLib {
 		reg(inst, "haxe.ds.IntMap", "keys", vmethod(a -> iteratorOf([for (k in thisMap(a).keys()) { var pk = Std.parseInt(k); VInt(pk == null ? 0 : pk); }])));
 		reg(inst, "haxe.ds.StringMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 		reg(inst, "haxe.ds.IntMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
+
+		// Date: a native instance carrying its epoch timestamp.
+		ctors.set(EvalHash.hash("Date"), function(a) {
+			var d = new Date(toInt(arg(a, 0)), toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)), toInt(arg(a, 4)), toInt(arg(a, 5)));
+			return mkDate(ctx, d.getTime());
+		});
+		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
+		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
+		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
+		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
+		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getFullYear())));
+		reg(inst, "Date", "getMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMonth())));
+		reg(inst, "Date", "getDate", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDate())));
+		reg(inst, "Date", "getHours", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getHours())));
+		reg(inst, "Date", "getMinutes", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMinutes())));
+		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getSeconds())));
+		reg(inst, "Date", "getDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDay())));
+		reg(inst, "Date", "toString", vmethod(a -> mkStr(Date.fromTime(thisDate(a)).toString())));
 	}
 
 	static function mapToString(m:Map<String, EvalValue>):String {
