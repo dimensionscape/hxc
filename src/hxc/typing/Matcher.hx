@@ -250,6 +250,16 @@ class PatternMaker {
 						}
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
+			case EField(_, _, _):
+				// A qualified value pattern (Type.Const / Type.EnumCtor / static const) matches by value.
+				var te = try Typer.typeExpr(ctx, e, WithTypeTools.withType(t)) catch (_:TypingError) null;
+				if (te == null) throw new TypingError("This pattern is not yet ported", p);
+				switch (te.expr) {
+					case TConst(ct): unifyExpected(te.type); PatConstructor(Constructor.make(ConConst(ct), p), []);
+					case TField(_, FEnum(en, ef)): unifyExpected(te.type); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
+					case TField(_, FStatic(c, cf)): unifyExpected(te.type); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+					case _: throw new TypingError("This pattern is not yet ported", p);
+				}
 			case _:
 				throw new TypingError("This pattern is not yet ported", p);
 		};
