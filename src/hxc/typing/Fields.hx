@@ -139,7 +139,14 @@ class Fields {
 					try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 					var cf = uc.statics.get(i);
 					if (cf == null) continue;
-					switch (TypeFunctions.follow(cf.type)) {
+					// Monomorphize the extension method's own type parameters so a generic first argument
+					// (e.g. Iterable<A>) can accept the receiver.
+					var cft = cf.type;
+					if (cf.params.length > 0) {
+						var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
+						cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
+					}
+					switch (TypeFunctions.follow(cft)) {
 						case TFun(sig) if (sig.args.length > 0 && usingDoesUnify(e.type, sig.args[0].t)):
 							return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
 						case _:
