@@ -158,6 +158,14 @@ class EvalStdLib {
 		};
 	}
 
+	static function applyFn(fn:EvalValue, args:Array<EvalValue>):EvalValue {
+		return switch (fn) {
+			case VFunction(f, _): f(args);
+			case VFieldClosure(recv, f): f([recv].concat(args));
+			case _: VNull;
+		};
+	}
+
 	public static function init(ctx:EvalContext):Void {
 		var s = ctx.builtins.staticBuiltins;
 
@@ -266,6 +274,50 @@ class EvalStdLib {
 			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
 		}));
 		reg(inst, "Array", "iterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [a[0]])));
+		reg(inst, "Array", "slice", vmethod(a -> {
+			var va = thisArray(a);
+			var pos = toInt(arg(a, 1));
+			var sub = (a.length > 2 && arg(a, 2) != VNull) ? va.avalues.slice(pos, toInt(arg(a, 2))) : va.avalues.slice(pos);
+			VArray(new VArray(sub, sub.length));
+		}));
+		reg(inst, "Array", "splice", vmethod(a -> {
+			var va = thisArray(a);
+			var removed = va.avalues.splice(toInt(arg(a, 1)), toInt(arg(a, 2)));
+			va.alength = va.avalues.length;
+			VArray(new VArray(removed, removed.length));
+		}));
+		reg(inst, "Array", "reverse", vmethod(a -> { thisArray(a).avalues.reverse(); VNull; }));
+		reg(inst, "Array", "sort", vmethod(a -> {
+			var va = thisArray(a); var cmp = arg(a, 1);
+			va.avalues.sort((x, y) -> toInt(applyFn(cmp, [x, y])));
+			VNull;
+		}));
+		reg(inst, "Array", "contains", vmethod(a -> {
+			var va = thisArray(a); var t = arg(a, 1); var found = false;
+			for (i in 0...va.alength) if (EvalValueTools.equals(va.avalues[i], t)) { found = true; break; }
+			EvalValueTools.vbool(found);
+		}));
+		reg(inst, "Array", "copy", vmethod(a -> { var va = thisArray(a); VArray(new VArray(va.avalues.copy(), va.alength)); }));
+		reg(inst, "Array", "remove", vmethod(a -> {
+			var va = thisArray(a); var t = arg(a, 1); var idx = -1;
+			for (i in 0...va.alength) if (EvalValueTools.equals(va.avalues[i], t)) { idx = i; break; }
+			if (idx >= 0) { va.avalues.splice(idx, 1); va.alength = va.avalues.length; EvalValueTools.vbool(true); } else EvalValueTools.vbool(false);
+		}));
+		reg(inst, "Array", "insert", vmethod(a -> {
+			var va = thisArray(a); va.avalues.insert(toInt(arg(a, 1)), arg(a, 2)); va.alength = va.avalues.length; VNull;
+		}));
+		reg(inst, "Array", "shift", vmethod(a -> {
+			var va = thisArray(a);
+			if (va.alength == 0) VNull else { var v = va.avalues.shift(); va.alength = va.avalues.length; v; }
+		}));
+		reg(inst, "Array", "unshift", vmethod(a -> {
+			var va = thisArray(a); va.avalues.unshift(arg(a, 1)); va.alength = va.avalues.length; VNull;
+		}));
+		reg(inst, "Array", "lastIndexOf", vmethod(a -> {
+			var va = thisArray(a); var t = arg(a, 1); var idx = -1; var i = va.alength - 1;
+			while (i >= 0) { if (EvalValueTools.equals(va.avalues[i], t)) { idx = i; break; } i--; }
+			VInt(idx);
+		}));
 
 		reg(s, "Reflect", "fields", vfn(a -> {
 			var names = fieldNames(arg(a, 0));
