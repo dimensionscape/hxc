@@ -503,6 +503,9 @@ class EvalStdLib {
 		}
 		reg(inst, "haxe.ds.IntMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 
+		// New Array() builds an empty dynamic array, matching the [] literal.
+		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
+
 		// Date: a native instance carrying its epoch timestamp.
 		ctors.set(EvalHash.hash("Date"), function(a) {
 			var d = new Date(toInt(arg(a, 0)), toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)), toInt(arg(a, 4)), toInt(arg(a, 5)));
