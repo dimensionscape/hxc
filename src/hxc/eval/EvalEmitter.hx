@@ -270,7 +270,13 @@ class EvalEmitter {
 			case FInstance(_, _, cf) | FClosure(_, cf):
 				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
 			case FAnon(cf):
-				EvalField.field(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
+				// On a class instance/builtin viewed structurally an instance method binds its receiver
+				// (e.g. iterator via Iterable); on a plain anonymous object the field is a raw value.
+				var recv = eval(ctx, e1);
+				switch (recv) {
+					case VObject(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+					case _: EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+				}
 			case FDynamic(s):
 				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(s));
 		};
