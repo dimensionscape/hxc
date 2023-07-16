@@ -36,6 +36,9 @@ class Inline {
 			case _: return null;
 		}
 		if (cf.params.length != 0) return null;
+		// Force the callee's body to be typed first (it may be in a not-yet-processed module), the way
+		// make_call does with `ignore (follow f.type)`. Following the field's lazy type runs its body.
+		TypeFunctions.follow(cf.type);
 		var body = cf.expr;
 		if (body == null) return null;
 		var tf = switch (body.expr) {
