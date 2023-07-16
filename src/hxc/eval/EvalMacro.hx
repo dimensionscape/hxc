@@ -32,30 +32,35 @@ class EvalMacro {
 	}
 
 	static function registerContext(ec:EvalContext, com:Context):Void {
-		// Builtin keys are the interpreter's internal snake_case ABI the standard haxe.macro.Context bodies
-		// reach them via load("<snake_name>", n) -> callMacroApi below.
-		regBuiltin(ec, "haxe.macro.Context", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
-		regBuiltin(ec, "haxe.macro.Context", "current_pos", function(a) return VNull);
-		regBuiltin(ec, "haxe.macro.Context", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		regBuiltin(ec, "haxe.macro.Context", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		regBuiltin(ec, "haxe.macro.Context", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
-		regBuiltin(ec, "haxe.macro.Context", "make_expr", function(a) return makeExprValue(ec, a[0]));
-		regBuiltin(ec, "haxe.macro.Context", "get_build_fields", function(a) return curBuildFields);
-		// make_position(min, max, file) builds a position as a {file, min, max} anonymous object.
-		regBuiltin(ec, "haxe.macro.Context", "make_position", function(a) {
+		// Each macro API is registered under both its public camelCase name (for direct calls to the
+		// standard Context method) and its internal underscore-separated ABI name (reached via
+		// load("<snake>") ->
+		// callMacroApi). Same implementation behind both names.
+		function reg2(camel:String, snake:String, f:VFunc):Void {
+			regBuiltin(ec, "haxe.macro.Context", camel, f);
+			if (snake != camel) regBuiltin(ec, "haxe.macro.Context", snake, f);
+		}
+		reg2("defined", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
+		reg2("currentPos", "current_pos", function(a) return VNull);
+		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		reg2("warning", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
+		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
+		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
+		reg2("makePosition", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
 			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
 			m.set(EvalHash.hash("min"), a.length > 0 ? a[0] : VInt(0));
 			m.set(EvalHash.hash("max"), a.length > 1 ? a[1] : VInt(0));
 			return VObject(new VObject([], ODictionary(m)));
 		});
-		regBuiltin(ec, "haxe.macro.Context", "defined_value", function(a) {
+		reg2("definedValue", "defined_value", function(a) {
 			var k = strOf(a[0]);
 			if (!com.defines.rawDefined(k)) return VNull;
 			var v = com.defines.rawDefinedValue(k);
 			return VString(new VString(v, v.length));
 		});
-		// eval.vm.Context.callMacroApi("<snake_name>") returns the builtin registered under that key.
+		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
 			var key = EvalHash.hash(strOf(a[0]));
 			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
