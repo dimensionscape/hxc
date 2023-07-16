@@ -31,6 +31,16 @@ class EvalMacro {
 		list.push({name: EvalHash.hash(fieldName), v: VFunction(f, true)});
 	}
 
+	static function snakeToCamel(s:String):String {
+		var parts = s.split("_");
+		var out = parts[0];
+		for (i in 1...parts.length) {
+			var p = parts[i];
+			out += p.length == 0 ? "" : p.charAt(0).toUpperCase() + p.substr(1);
+		}
+		return out;
+	}
+
 	static function registerContext(ec:EvalContext, com:Context):Void {
 		regBuiltin(ec, "haxe.macro.Context", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
 		regBuiltin(ec, "haxe.macro.Context", "currentPos", function(a) return VNull);
@@ -51,8 +61,10 @@ class EvalMacro {
 		// .callMacroApi("<api>")(args); dispatch by name into the registered Context builtins.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
 			var name = strOf(a[0]);
+			// The eval target names macro APIs in snake_case; Context builtins are registered camelCase.
+			var key = EvalHash.hash(snakeToCamel(name));
 			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
-			if (list != null) for (e in list) if (e.name == EvalHash.hash(name)) return e.v;
+			if (list != null) for (e in list) if (e.name == key) return e.v;
 			throw new TypingError("Macro API not implemented: " + name, curPos);
 		});
 	}
