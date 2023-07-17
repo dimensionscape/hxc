@@ -553,6 +553,19 @@ class EvalMacro {
 			case EBlock(el): mkEnumValue(ec, "ExprDef", "EBlock", [encodeArray([for (e in el) encodeExpr(ec, e)])]);
 			case EVars(vl): mkEnumValue(ec, "ExprDef", "EVars", [encodeArray([for (v in vl) encodeVar(ec, v)])]);
 			case EThrow(e1): mkEnumValue(ec, "ExprDef", "EThrow", [encodeExpr(ec, e1)]);
+			case EObjectDecl(fl): mkEnumValue(ec, "ExprDef", "EObjectDecl", [encodeArray([for (f in fl) encodeObjField(ec, f)])]);
+			case ENew(tp, el): mkEnumValue(ec, "ExprDef", "ENew", [encodeTypePath(ec, tp.path), encodeArray([for (e in el) encodeExpr(ec, e)])]);
+			case EFunction(kind, f): mkEnumValue(ec, "ExprDef", "EFunction", [encodeFunctionKind(ec, kind), encodeFunc(ec, f)]);
+			case EFor(it, e1): mkEnumValue(ec, "ExprDef", "EFor", [encodeExpr(ec, it), encodeExpr(ec, e1)]);
+			case EWhile(c, e1, flag): mkEnumValue(ec, "ExprDef", "EWhile", [encodeExpr(ec, c), encodeExpr(ec, e1), (switch (flag) { case NormalWhile: VTrue; case DoWhile: VFalse; })]);
+			case ESwitch(e1, cases, edef): mkEnumValue(ec, "ExprDef", "ESwitch", [encodeExpr(ec, e1), encodeArray([for (c in cases) encodeCase(ec, c)]), (edef == null || edef.e == null) ? VNull : encodeExpr(ec, edef.e)]);
+			case ETry(e1, catches): mkEnumValue(ec, "ExprDef", "ETry", [encodeExpr(ec, e1), encodeArray([for (c in catches) encodeCatch(ec, c)])]);
+			case EBreak: mkEnumValue(ec, "ExprDef", "EBreak", []);
+			case EContinue: mkEnumValue(ec, "ExprDef", "EContinue", []);
+			case EUntyped(e1): mkEnumValue(ec, "ExprDef", "EUntyped", [encodeExpr(ec, e1)]);
+			case ETernary(c, t, e1): mkEnumValue(ec, "ExprDef", "ETernary", [encodeExpr(ec, c), encodeExpr(ec, t), encodeExpr(ec, e1)]);
+			case EMeta(m, e1): mkEnumValue(ec, "ExprDef", "EMeta", [encodeMetadataEntry(ec, m), encodeExpr(ec, e1)]);
+			case EDisplay(e1, _): encodeExprDef(ec, e1.expr);
 			case _: throw "macro encode: unhandled ExprDef";
 		};
 	}
@@ -643,5 +656,54 @@ class EvalMacro {
 			case Not: "OpNot"; case Neg: "OpNeg"; case NegBits: "OpNegBits"; case Spread: "OpSpread";
 		};
 		return mkEnumValue(ec, "Unop", name, []);
+	}
+
+	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("field"), mkString(f.name));
+		fields.set(EvalHash.hash("expr"), encodeExpr(ec, f.expr));
+		fields.set(EvalHash.hash("quotes"), mkEnumValue(ec, "QuoteStatus", (switch (f.quotes) { case NoQuotes: "Unquoted"; case DoubleQuotes: "Quoted"; }), []));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeTypePath(ec:EvalContext, tp:TypePath):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("pack"), encodeArray([for (s in tp.tpackage) mkString(s)]));
+		fields.set(EvalHash.hash("name"), mkString(tp.tname));
+		fields.set(EvalHash.hash("params"), encodeArray([]));
+		fields.set(EvalHash.hash("sub"), tp.tsub == null ? VNull : mkString(tp.tsub));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeFunctionKind(ec:EvalContext, k:FunctionKind):EvalValue {
+		return switch (k) {
+			case FKAnonymous: mkEnumValue(ec, "FunctionKind", "FAnonymous", []);
+			case FKNamed(n, inl): mkEnumValue(ec, "FunctionKind", "FNamed", [mkString(n.name), inl ? VTrue : VFalse]);
+			case FKArrow: mkEnumValue(ec, "FunctionKind", "FArrow", []);
+		};
+	}
+
+	static function encodeCase(ec:EvalContext, c:SwitchCase):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("values"), encodeArray([for (v in c.values) encodeExpr(ec, v)]));
+		fields.set(EvalHash.hash("guard"), c.guard == null ? VNull : encodeExpr(ec, c.guard));
+		fields.set(EvalHash.hash("expr"), c.expr == null ? VNull : encodeExpr(ec, c.expr));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeCatch(ec:EvalContext, c:Catch):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(c.name.name));
+		fields.set(EvalHash.hash("type"), VNull);
+		fields.set(EvalHash.hash("expr"), encodeExpr(ec, c.expr));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeMetadataEntry(ec:EvalContext, m:MetadataEntry):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(m.name));
+		fields.set(EvalHash.hash("params"), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
+		fields.set(EvalHash.hash("pos"), VNull);
+		return VObject(new VObject([], ODictionary(fields)));
 	}
 }
