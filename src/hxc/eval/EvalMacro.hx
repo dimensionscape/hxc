@@ -220,28 +220,41 @@ class EvalMacro {
 		return macroCtx;
 	}
 
+	static var macroCom:Context = null;
+
+	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
+	// copy into the macro context. The host parses every module without macro, which drops the #if macro
+	// members a macro function's body relies on. reference:
+	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path):Void {
+		if (macroCom == null) {
+			macroCom = host.cloneForMacro();
+			hxc.context.ModuleLoader.attach(macroCom);
+			hxc.context.ModuleLoader.initBasicTypes(macroCom);
+		}
+		try {
+			hxc.context.ModuleLoader.loadModule(macroCom, path, Position.nullPos);
+			hxc.typing.TypeFields.typeAllModules(macroCom);
+		} catch (_:Dynamic) {}
+		if (macroCtx != null) EvalMain.addModules(macroCtx, macroCom.modules);
+	}
+
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		curPos = p;
 		var path = switch (fa.host) {
 			case FHStatic(c): c.path;
 			case _: throw new TypingError("Only static macro functions are supported", p);
 		};
-		// The macro's own module may be macro-only and absent from the main module set; load it (with
-		// `macro` defined) so the macro context includes it, mirroring how @:build loads its target.
-		var hadMacro = tctx.com.defines.rawDefined("macro");
-		if (!hadMacro) tctx.com.defines.rawDefine("macro");
-		try hxc.context.ModuleLoader.loadModule(tctx.com, path, p) catch (_:Dynamic) {}
 		var ec = getContext(tctx.com);
-		if (!hadMacro) tctx.com.defines.values.remove("macro");
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
-		if (proto == null) switch (fa.host) {
-			// getContext may not have rebuilt (the module was already counted); add the macro class
-			// directly from the call site so its prototype is present in the macro context.
-			case FHStatic(c): EvalMain.addTypes(ec, [TClassDecl(c)]); proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
-			case _:
+		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
+		if (proto == null || idx == null) {
+			// The macro field is absent because the host parsed the class without macro defined; load
+			// the class from the macro world so its #if macro members are present.
+			loadMacroClass(tctx.com, path);
+			proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
+			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
-		var idx = proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (idx == null) throw new TypingError("Macro not found: " + fa.field.name, p);
 		var fn = switch (proto.pfields[idx]) {
 			case VFunction(f, _): f;

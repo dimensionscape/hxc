@@ -121,6 +121,16 @@ class Context {
 		};
 	}
 
+	// Clone configuration with separate module tables and macro defines so host modules remain
+	// unchanged.
+	public function cloneForMacro():Context {
+		var c = new Context(this.classPath.copy(), Define.adaptToMacroContext(this.defines));
+		c.stdPath = this.stdPath.copy();
+		c.platform = Eval;
+		c.platformConfig = PlatformConfig.eval();
+		return c;
+	}
+
 	public static function pathKey(path:Path):String {
 		return path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name;
 	}
