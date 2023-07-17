@@ -234,6 +234,16 @@ class PatternMaker {
 			case EArrayDecl(el):
 				var et = switch (TypeFunctions.follow(t)) { case TInst(_, [x]): x; case _: TypeFunctions.tDynamic; };
 				PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
+			case EObjectDecl(fields):
+				// Structure pattern: match named fields against the expected anon type. Field order is
+				// normalized so every structure constructor compares equal regardless of source order.
+				var anonFields = switch (TypeFunctions.follow(t)) { case TAnon(a): a.fields; case _: null; };
+				var pairs = [for (f in fields) {
+					var cf = anonFields == null ? null : anonFields.get(f.name);
+					{name: f.name, sub: make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, f.expr)};
+				}];
+				pairs.sort(function(a2, b2) return a2.name < b2.name ? -1 : (a2.name > b2.name ? 1 : 0));
+				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
 			case ECall(ec, el):
 				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
 				switch (head.expr) {
@@ -549,8 +559,15 @@ class DtCompile {
 			case ConArray(n):
 				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
 				[for (i in 0...n) TypeFunctions.mk(TArray(e, Texpr.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
-			case ConFields(_):
-				throw new TypingError("Structure patterns are not yet ported", con.pos);
+			case ConFields(fields):
+				var anonFields = switch (TypeFunctions.follow(e.type)) { case TAnon(a): a.fields; case _: null; };
+				[for (i in 0...fields.length) {
+					var name = fields[i];
+					var cf = anonFields == null ? null : anonFields.get(name);
+					TypeFunctions.mk(TField(e, cf != null ? FAnon(cf) : FDynamic(name)),
+						cf != null ? cf.type : TypeFunctions.tDynamic,
+						i < argPositions.length ? argPositions[i] : con.pos);
+				}];
 		};
 	}
 
@@ -664,6 +681,10 @@ class DtCompile {
 			dt = bind(mctx, bindings, dt);
 			switchCases.push({con: s.con, unguarded: s.unguarded, dt: dt});
 		}
+		// A structure pattern is irrefutable (every value of the type has the fields): bind the fields
+		// and continue with no switch test, which has no runtime discriminant to emit.
+		if (switchCases.length == 1 && sig.nullCases.length == 0 && (switch (sig.sigma[0].con.kind) { case ConFields(_): true; case _: false; }))
+			return switchCases[0].dt;
 		var def = defaultMatrix(subject, cases);
 		var switchDefault = compile(mctx, rest, def);
 		var dt = switchCases.length == 0 ? switchDefault : switchDt(mctx, subject, switchCases, switchDefault);
