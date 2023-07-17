@@ -234,6 +234,12 @@ class EvalMacro {
 		var ec = getContext(tctx.com);
 		if (!hadMacro) tctx.com.defines.values.remove("macro");
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
+		if (proto == null) switch (fa.host) {
+			// getContext may not have rebuilt (the module was already counted); add the macro class
+			// directly from the call site so its prototype is present in the macro context.
+			case FHStatic(c): EvalMain.addTypes(ec, [TClassDecl(c)]); proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
+			case _:
+		}
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
 		var idx = proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (idx == null) throw new TypingError("Macro not found: " + fa.field.name, p);
