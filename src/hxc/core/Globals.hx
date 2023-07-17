@@ -100,7 +100,8 @@ class Globals {
 		}
 	}
 
-	public static var macroPlatform:Platform = Neko;
+	// Macros run in the eval interpreter, so the macro context compiles for the eval platform.
+	public static var macroPlatform:Platform = Eval;
 
 	public static var returnPartialType:Bool = false;
 
