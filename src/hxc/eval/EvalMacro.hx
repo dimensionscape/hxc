@@ -222,11 +222,17 @@ class EvalMacro {
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		curPos = p;
-		var ec = getContext(tctx.com);
 		var path = switch (fa.host) {
 			case FHStatic(c): c.path;
 			case _: throw new TypingError("Only static macro functions are supported", p);
 		};
+		// The macro's own module may be macro-only and absent from the main module set; load it (with
+		// `macro` defined) so the macro context includes it, mirroring how @:build loads its target.
+		var hadMacro = tctx.com.defines.rawDefined("macro");
+		if (!hadMacro) tctx.com.defines.rawDefine("macro");
+		try hxc.context.ModuleLoader.loadModule(tctx.com, path, p) catch (_:Dynamic) {}
+		var ec = getContext(tctx.com);
+		if (!hadMacro) tctx.com.defines.values.remove("macro");
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
 		var idx = proto.pnames.get(EvalHash.hash(fa.field.name));
