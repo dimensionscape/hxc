@@ -33,4 +33,20 @@ class Define {
 	public inline function rawDefine(k:String):Void {
 		rawDefineValue(k, "1");
 	}
+
+	// Defines for a macro context: the host defines minus target-platform names and no_traces, plus macro
+	// and the macro platform name. Flash version defines are not handled (no flash backend).
+	public static function adaptToMacroContext(src:Define):Define {
+		var toRemove = new Map<String, Bool>();
+		for (p in Globals.platforms)
+			toRemove.set(Globals.platformName(p), true);
+		toRemove.set("no_traces", true);
+		var out = new Define();
+		for (k => v in src.values)
+			if (!toRemove.exists(k))
+				out.values.set(k, v);
+		out.rawDefine("macro");
+		out.rawDefine(Globals.platformName(Globals.macroPlatform));
+		return out;
+	}
 }
