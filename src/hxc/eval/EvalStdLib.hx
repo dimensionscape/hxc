@@ -514,6 +514,18 @@ class EvalStdLib {
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
+
+		// sys.FileSystem / sys.io.File: macros read the source tree at compile time; the interpreter
+		// host has real filesystem access.
+		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(stringOf(arg(a, 0))) ? VTrue : VFalse));
+		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(stringOf(arg(a, 0))) ? VTrue : VFalse));
+		reg(s, "sys.FileSystem", "readDirectory", vfn(a -> {
+			var d = sys.FileSystem.readDirectory(stringOf(arg(a, 0)));
+			VArray(new VArray([for (f in d) mkStr(f)], d.length));
+		}));
+		reg(s, "sys.FileSystem", "fullPath", vfn(a -> mkStr(sys.FileSystem.fullPath(stringOf(arg(a, 0))))));
+		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
+		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
 		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
 		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getFullYear())));
 		reg(inst, "Date", "getMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMonth())));
