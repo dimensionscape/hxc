@@ -47,6 +47,8 @@ class EvalMacro {
 		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		reg2("warning", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
+		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
+		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?")));
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
 		reg2("makePosition", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
