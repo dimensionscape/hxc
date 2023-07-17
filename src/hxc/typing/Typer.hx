@@ -244,12 +244,15 @@ class Typer {
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
 				var ft = TFun({args: [for (a in args) {name: a.v.name, opt: false, t: a.v.type}], ret: ret});
-				switch (kind) {
+				// A named local function binds its name (in scope before the body, so it can recurse)
+				// and evaluates to a TVar assignment; an anonymous one is just the function value.
+				var namedVar:Null<TVar> = switch (kind) {
 					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalVariable), n.name, ft, n.pos);
-					case _:
-				}
+					case _: null;
+				};
 				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
-				TypeFunctions.mk(TFunction(tf), ft, p);
+				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
+				namedVar != null ? TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p) : fnExpr;
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
