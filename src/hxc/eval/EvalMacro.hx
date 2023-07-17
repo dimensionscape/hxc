@@ -276,10 +276,37 @@ class EvalMacro {
 			case VFunction(f, _): f;
 			case _: throw new TypingError("Not a macro function: " + fa.field.name, p);
 		};
-		var args = [for (e in el) encodeExpr(ec, e)];
+		var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
+		var args = [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
 		var result = fn(args);
 		var astExpr = decodeExpr(ec, result, p);
 		return Typer.typeExpr(tctx, astExpr, withType);
+	}
+
+	// An Expr (or ExprOf) macro parameter receives the reified expression; any other parameter type
+	// receives the argument's constant value. Non-constant value arguments fall back to the reified
+	// expression.
+	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>):EvalValue {
+		if (pt != null && !isExprParam(pt)) switch (e.expr) {
+			case EConst(CString(s, _)): return VString(new VString(s, s.length));
+			case EConst(CInt(s, _)): var n = Std.parseInt(s); return VInt(n == null ? 0 : n);
+			case EConst(CFloat(s, _)): return VFloat(Std.parseFloat(s));
+			case EConst(CIdent("true")): return VTrue;
+			case EConst(CIdent("false")): return VFalse;
+			case EConst(CIdent("null")): return VNull;
+			case _:
+		}
+		return encodeExpr(ec, e);
+	}
+
+	static function isExprParam(t:T):Bool {
+		return switch (t) {
+			case TType(d, _): d.path.name == "Expr" || d.path.name == "ExprOf";
+			case TInst(c, _): c.path.name == "Expr";
+			case TAbstract(a, _): a.path.name == "Expr";
+			case TLazy(f): isExprParam(TypeFunctions.lazyType(f));
+			case _: false;
+		};
 	}
 
 
