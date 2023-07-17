@@ -20,12 +20,17 @@ class Parser {
 	var lastIdx:Int;
 	var stall:Int;
 
-	function new(tokens:Array<TokenInfo>, file:String) {
+	// True when parsing under the macro defines: reification then encodes positions via the $__mk_pos__
+	// eval builtin.
+	var inMacro:Bool;
+
+	function new(tokens:Array<TokenInfo>, file:String, inMacro:Bool = false) {
 		this.tokens = tokens;
 		this.idx = 0;
 		this.file = file;
 		this.lastIdx = -1;
 		this.stall = 0;
+		this.inMacro = inMacro;
 	}
 
 	public static function parseExprString(src:String, file:String = "?"):Expr {
@@ -123,7 +128,7 @@ class Parser {
 			var d = defines == null ? new Define() : defines;
 			toks = Preprocess.run(toks, d);
 		}
-		return new Parser(toks, file);
+		return new Parser(toks, file, defines != null && defines.rawDefined("macro"));
 	}
 
 	static function hasSharp(toks:Array<TokenInfo>):Bool {
@@ -1046,14 +1051,14 @@ class Parser {
 			case DblDot:
 				next();
 				var th = parseComplexType();
-				return Reification.reifyComplexType(th.ct, p);
+				return Reification.reifyComplexType(th.ct, p, inMacro);
 			case Kwd(KwdClass), Kwd(KwdInterface):
 				var d = parseClassForMacro();
-				return Reification.reifyTypeDef(d, p);
+				return Reification.reifyTypeDef(d, p, inMacro);
 			case _:
 		}
 		var e = secureExpr();
-		return Reification.reifyExpr(e, false);
+		return Reification.reifyExpr(e, inMacro);
 	}
 
 	function parseClassForMacro():TypeDecl {

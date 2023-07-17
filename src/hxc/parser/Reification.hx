@@ -21,8 +21,8 @@ class Reification {
 		return new Expr(ECheckType(re, ct), e.pos);
 	}
 
-	public static function reifyComplexType(ct:ComplexType, p:Position):Expr {
-		var r = new Reification(false);
+	public static function reifyComplexType(ct:ComplexType, p:Position, inMacro:Bool = false):Expr {
+		var r = new Reification(inMacro);
 		var re = r.toCType(ct, p);
 		var hint:TypeHint = {ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: "ComplexType"}), pos: Position.nullPos};
 		return new Expr(ECheckType(re, hint), p);
@@ -113,6 +113,10 @@ class Reification {
 		var file = new Expr(EConst(CString(p.file, SDoubleQuotes)), p);
 		var pmin = new Expr(EConst(CInt(Std.string(p.min), null)), p);
 		var pmax = new Expr(EConst(CInt(Std.string(p.max), null)), p);
+		// In the macro context the position is built at run time by the $__mk_pos__ eval builtin; the
+		// untyped wrapper lets it pass where a haxe.macro.Position is expected.
+		if (inMacro)
+			return new Expr(EUntyped(new Expr(ECall(new Expr(EConst(CIdent("$__mk_pos__")), p), [file, pmin, pmax]), p)), p);
 		return toObj([{name: "file", e: file}, {name: "min", e: pmin}, {name: "max", e: pmax}], p);
 	}
 
@@ -486,8 +490,8 @@ class Reification {
 		], p);
 	}
 
-	public static function reifyTypeDef(decl:TypeDecl, p:Position):Expr {
-		var r = new Reification(false);
+	public static function reifyTypeDef(decl:TypeDecl, p:Position, inMacro:Bool = false):Expr {
+		var r = new Reification(inMacro);
 		var re = r.toTypeDef(decl);
 		var ct:TypeHint = {ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: "TypeDefinition"}), pos: Position.nullPos};
 		return new Expr(ECheckType(re, ct), p);

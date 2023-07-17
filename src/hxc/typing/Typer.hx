@@ -462,7 +462,12 @@ class Typer {
 		if (mt == null) {
 			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
 		}
-		if (mt == null) throw new TypingError("Unknown identifier : " + i, p);
+		if (mt == null) {
+			// In untyped mode an unresolved identifier becomes a TIdent, letting reification builtins such
+			// as $__mk_pos__ (recognized by the interpreter) pass typing.
+			if (ctx.untypedMode) return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
+			throw new TypingError("Unknown identifier : " + i, p);
+		}
 		// Hxc resolves field types in a separate pass; resolve the referenced module so its
 		// statics have real types (idempotent via processed).
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
