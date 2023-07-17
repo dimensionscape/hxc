@@ -49,6 +49,20 @@ class EvalMacro {
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?")));
+		// Context.defineModule(path, types, imports, usings): build the module from decoded type
+		// definitions and inject it.
+		reg2("defineModule", "define_module", function(a) {
+			var parts = strOf(a[0]).split(".");
+			var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+			if (!com.moduleLut.exists(Context.pathKey(path))) {
+				var dp = Position.nullPos;
+				var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, dp)];
+				var imports = (a.length > 2 && a[2] != VNull) ? [for (iv in arrOf(a[2])) decodeImport(ec, iv, dp)] : [];
+				var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
+				hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp);
+			}
+			return VNull;
+		});
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
 		reg2("makePosition", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
@@ -385,6 +399,50 @@ class EvalMacro {
 			type: null,
 			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
 		};
+	}
+
+	static function decodeTypePath(ec:EvalContext, v:EvalValue):TypePath {
+		var sub = EvalField.field(ec, v, EvalHash.hash("sub"));
+		return {
+			tpackage: [for (s in arrOf(EvalField.field(ec, v, EvalHash.hash("pack")))) strOf(s)],
+			tname: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
+			tparams: [],
+			tsub: sub == VNull ? null : strOf(sub)
+		};
+	}
+
+	static function decodeImport(ec:EvalContext, v:EvalValue, dp:Position):Import {
+		var path = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("path")))) ({name: strOf(EvalField.field(ec, pv, EvalHash.hash("name"))), pos: dp} : PlacedName)];
+		var modeV = EvalField.field(ec, v, EvalHash.hash("mode"));
+		var mode:ImportMode = switch (ctorName(ec, modeV)) {
+			case "IAll": ImportMode.IAll;
+			case "IAsName": ImportMode.IAsName({name: strOf(eargs(modeV)[0]), pos: dp});
+			case _: ImportMode.INormal;
+		};
+		return {path: path, mode: mode};
+	}
+
+	static function decodeClassFlags(ec:EvalContext, kind:EvalValue, dp:Position):Array<ClassFlag> {
+		var flags:Array<ClassFlag> = [];
+		switch (ctorName(ec, kind)) {
+			case "TDClass":
+				var a = eargs(kind);
+				if (a.length > 0 && a[0] != VNull) flags.push(HExtends({path: decodeTypePath(ec, a[0]), pos: dp}));
+				if (a.length > 1 && a[1] != VNull) for (iv in arrOf(a[1])) flags.push(HImplements({path: decodeTypePath(ec, iv), pos: dp}));
+				if (a.length > 2 && boolOf(a[2])) flags.push(HInterface);
+				if (a.length > 3 && boolOf(a[3])) flags.push(HFinal);
+				if (a.length > 4 && boolOf(a[4])) flags.push(HAbstract);
+			case other: throw new TypingError("defineModule supports only TDClass, got " + other, dp);
+		}
+		return flags;
+	}
+
+	static function decodeTypeDefinition(ec:EvalContext, v:EvalValue, dp:Position):TypeDecl {
+		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalHash.hash("fields")))) decodeField(ec, fv, dp)];
+		var flags = decodeClassFlags(ec, EvalField.field(ec, v, EvalHash.hash("kind")), dp);
+		var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: [], dMeta: [], dFlags: flags, dData: fields};
+		return {decl: EClass(def), pos: dp};
 	}
 
 	static function decodeConstant(ec:EvalContext, v:EvalValue):Constant {
