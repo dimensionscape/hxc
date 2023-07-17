@@ -251,10 +251,18 @@ class PatternMaker {
 						switch (TypeFunctions.follow(head.type)) {
 							case TFun(sig):
 								unify(ctx, sig.ret, t, p);
-								if (el.length > sig.args.length) throw new TypingError("Invalid number of arguments in pattern", p);
-								// Trailing optional constructor arguments may be omitted and match anything.
-								for (i in el.length...sig.args.length) if (!sig.args[i].opt) throw new TypingError("Not enough arguments", p);
-								var subs = [for (i in 0...sig.args.length) i < el.length ? make(pctx, false, sig.args[i].t, el[i]) : {pat: PatAny, pos: p}];
+								// A single `_` argument matches every constructor argument; otherwise match
+								// positionally, filling omitted trailing optional args with wildcards.
+								var single = el.length == 1 && (switch (el[0].expr) { case EConst(CIdent("_")): true; case _: false; });
+								var subs:Array<Pattern> = [];
+								var ei = 0;
+								for (ai in 0...sig.args.length) {
+									if (single) subs.push({pat: PatAny, pos: el[0].pos});
+									else if (ei < el.length) { subs.push(make(pctx, false, sig.args[ai].t, el[ei])); ei++; }
+									else if (sig.args[ai].opt) subs.push({pat: PatAny, pos: p});
+									else throw new TypingError("Not enough arguments", p);
+								}
+								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
 								PatConstructor(Constructor.make(ConEnum(en, ef), p), subs);
 							case _: throw new TypingError("This pattern is not yet ported", p);
 						}
