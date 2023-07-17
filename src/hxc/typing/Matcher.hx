@@ -314,6 +314,36 @@ class CaseMaker {
 		save();
 		return {c: {guard: egT, expr: eoT, pos: p}, pat: pat};
 	}
+
+	// A tuple switch (`switch [a, b]`) matches each subject column separately: a `[p1..pn]` case
+	// becomes n element patterns against the n subject types, and a bare `_` becomes n wildcards.
+	public static function makeTuple(ctx:TyperContext, types:Array<T>, el:Array<Expr>, eg:Null<Expr>, eoAst:Null<Expr>, withType:WithType, postfixMatch:Bool, p:Position):{c:Case, pats:Array<Pattern>} {
+		if (el.length == 0) throw new TypingError("case without pattern", p);
+		if (el.length > 1) throw new TypingError("or-patterns over a tuple switch are not yet supported", p);
+		var save = Typer.saveLocals(ctx);
+		var pctx = new PatternContext(ctx, ctx.locals);
+		pctx.isPostfixMatch = postfixMatch;
+		var pats:Array<Pattern> = switch (el[0].expr) {
+			case EArrayDecl(elems) if (elems.length == types.length):
+				[for (i in 0...types.length) PatternMaker.make(pctx, true, types[i], elems[i])];
+			case EConst(CIdent("_")):
+				[for (i in 0...types.length) ({pat: PatAny, pos: el[0].pos} : Pattern)];
+			case _:
+				throw new TypingError("tuple switch case must be a [..] pattern of arity " + types.length, p);
+		};
+		var egT:Null<TExpr> = if (eg == null) null else {
+			var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
+			Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+		};
+		var eoT:Null<TExpr> = switch ([eoAst, withType]) {
+			case [null, WithType(wt, _)]: unify(ctx, ctx.com.basic.tvoid, wt, p); null;
+			case [null, _]: null;
+			case [body, WithType(wt, _)]: var be = Typer.typeExpr(ctx, body, WithTypeTools.withType(wt)); Typer.castOrUnify(ctx, wt, be, be.pos);
+			case [body, _]: Typer.typeExpr(ctx, body, withType);
+		};
+		save();
+		return {c: {guard: egT, expr: eoT, pos: p}, pats: pats};
+	}
 }
 
 // The decision-tree node (mutable for goto/texpr memoization).
@@ -742,17 +772,33 @@ class Match {
 	}
 
 	public static function matchExpr(ctx:TyperContext, e:Expr, cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>, withType:WithType, postfix:Bool, p:Position):TExpr {
-		var subjectE = Typer.typeExpr(ctx, e, WithTypeTools.value);
-		var t = subjectE.type;
+		// `switch [a, b]` (a bracket literal) is a tuple match: each element is its own subject with
+		// its own type, and the case patterns match column by column.
+		var tupleEls:Null<Array<Expr>> = switch (e.expr) { case EArrayDecl(l): l; case _: null; };
+		var subjects:Array<TExpr>;
+		var subjectTypes:Array<T>;
+		if (tupleEls != null) {
+			subjects = [for (se in tupleEls) Typer.typeExpr(ctx, se, WithTypeTools.value)];
+			subjectTypes = [for (s in subjects) s.type];
+		} else {
+			var subjectE = Typer.typeExpr(ctx, e, WithTypeTools.value);
+			subjects = [subjectE];
+			subjectTypes = [subjectE.type];
+		}
 		var allCases = cases.copy();
 		if (def != null) allCases.push({values: [new Expr(EConst(CIdent("_")), def.pos)], guard: null, expr: def.e, pos: def.pos});
 		var matchCases:Array<MatchCase> = [];
 		for (cas in allCases) {
-			var r = CaseMaker.make(ctx, t, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
-			matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
+			if (tupleEls != null) {
+				var r = CaseMaker.makeTuple(ctx, subjectTypes, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
+				matchCases.push({c: r.c, bindings: [], patterns: r.pats});
+			} else {
+				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
+				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
+			}
 		}
 		var tSwitch = inferSwitchType(ctx, withType, matchCases);
-		var dt = DtCompile.compileEntry(ctx, false, [subjectE], matchCases, p);
+		var dt = DtCompile.compileEntry(ctx, false, subjects, matchCases, p);
 		var te = TexprConverter.toTexpr(ctx, tSwitch, withType, dt);
 		if (te == null) throw new TypingError("Unmatched patterns: _", p);
 		return te;
