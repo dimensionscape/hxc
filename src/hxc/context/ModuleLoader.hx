@@ -219,7 +219,7 @@ class ModuleLoader {
 					// KGenericBuild retains syntax fields for getBuildFields; ordinary @:generic classes use
 					// KGeneric.
 					if (TypeFunctions.hasMeta(":genericBuild", c.meta)) {
-						if (ctx.defines.rawDefined("macro"))
+						if (ctx.isMacro)
 							throw new ContextError("@:genericBuild cannot be used in macros", d.dName.pos);
 						c.kind = KGenericBuild(d.dData);
 					} else if (TypeFunctions.hasMeta(":generic", c.meta) && c.params.length > 0)

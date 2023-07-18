@@ -25,6 +25,10 @@ class Context {
 	public var platform:Platform = Cross;
 	public var platformConfig:PlatformConfig = PlatformConfig.defaults();
 
+	// True only in the macro-world context, including when macro is temporarily defined during host
+	// build-macro parsing.
+	public var isMacro:Bool = false;
+
 	public var mainClass:Null<Path>;
 
 	/** Key = `pathKey`. */
@@ -128,6 +132,7 @@ class Context {
 		c.stdPath = this.stdPath.copy();
 		c.platform = Eval;
 		c.platformConfig = PlatformConfig.eval();
+		c.isMacro = true;
 		return c;
 	}
 
