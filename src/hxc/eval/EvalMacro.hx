@@ -30,7 +30,13 @@ class EvalMacro {
 		var key = EvalHash.hash(typeName);
 		var list = ec.builtins.staticBuiltins.get(key);
 		if (list == null) { list = []; ec.builtins.staticBuiltins.set(key, list); }
-		list.push({name: EvalHash.hash(fieldName), v: VFunction(f, true)});
+		// A macro API that fails raises a host typing error; surface it as a catchable eval
+		// exception so macro-level try/catch (e.g. Context.typeof inside a try) can handle it.
+		var wrapped:VFunc = function(a:Array<EvalValue>):EvalValue {
+			try return f(a)
+			catch (te:TypingError) return EvalExceptions.excString(ec, te.message);
+		};
+		list.push({name: EvalHash.hash(fieldName), v: VFunction(wrapped, true)});
 	}
 
 	static function registerContext(ec:EvalContext, com:Context):Void {
