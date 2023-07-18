@@ -486,7 +486,33 @@ class EvalMacro {
 	static function decodeFunc(ec:EvalContext, v:EvalValue, dp:Position):Func {
 		var args = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) decodeFunctionArg(ec, av, dp)];
 		var retV = EvalField.field(ec, v, EvalHash.hash("ret"));
-		return {fParams: [], fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		return {fParams: decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp), fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+	}
+
+	// Type parameters decode as an optional array (null array -> empty).
+	static function decodeTparams(ec:EvalContext, v:EvalValue, dp:Position):Array<TypeParam> {
+		return v == VNull ? [] : [for (x in arrOf(v)) decodeTparamDecl(ec, x, dp)];
+	}
+
+	// A type parameter declaration. constraints: [] -> none, [t] -> single, many -> CTIntersection.
+	static function decodeTparamDecl(ec:EvalContext, v:EvalValue, dp:Position):TypeParam {
+		var vconstraints = EvalField.field(ec, v, EvalHash.hash("constraints"));
+		var vdefault = EvalField.field(ec, v, EvalHash.hash("defaultType"));
+		var constraints:Null<TypeHint> = if (vconstraints == VNull) null else {
+			var arr = arrOf(vconstraints);
+			switch (arr.length) {
+				case 0: null;
+				case 1: decodeTypeHint(ec, arr[0], dp);
+				case _: {ct: CTIntersection([for (t in arr) decodeTypeHint(ec, t, dp)]), pos: Position.nullPos};
+			}
+		};
+		return {
+			tpName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			tpParams: decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp),
+			tpConstraints: constraints,
+			tpDefault: vdefault == VNull ? null : decodeTypeHint(ec, vdefault, dp),
+			tpMeta: []
+		};
 	}
 
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
@@ -694,7 +720,19 @@ class EvalMacro {
 		fields.set(EvalHash.hash("args"), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
 		fields.set(EvalHash.hash("ret"), f.fType == null ? VNull : encodeComplexType(ec, f.fType.ct));
 		fields.set(EvalHash.hash("expr"), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
-		fields.set(EvalHash.hash("params"), encodeArray([]));
+		fields.set(EvalHash.hash("params"), encodeArray([for (tp in f.fParams) encodeTparamDecl(ec, tp)]));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	// Names follow hxc's simplified ABI (plain strings, no name_pos), matching encodeFunctionArg. Meta is
+	// elided like the field/arg encoders.
+	static function encodeTparamDecl(ec:EvalContext, tp:TypeParam):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(tp.tpName.name));
+		fields.set(EvalHash.hash("params"), encodeArray([for (p in tp.tpParams) encodeTparamDecl(ec, p)]));
+		fields.set(EvalHash.hash("constraints"), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints.ct)]));
+		fields.set(EvalHash.hash("defaultType"), tp.tpDefault == null ? VNull : encodeComplexType(ec, tp.tpDefault.ct));
+		fields.set(EvalHash.hash("meta"), encodeArray([]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
