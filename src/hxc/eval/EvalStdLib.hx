@@ -824,6 +824,10 @@ class EvalStdLib {
 			thisBuffer(a).addChar(toInt(arg(a, 1)));
 			VNull;
 		}));
+		reg(inst, "StringBuf", "addSub", vmethod(a -> {
+			thisBuffer(a).add(stringOf(arg(a, 1)).substr(toInt(arg(a, 2)), toInt(arg(a, 3))));
+			VNull;
+		}));
 		reg(inst, "StringBuf", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
 		// Length is a (get, never) property whose default getter reads the std's internal buffer; the
 		// native instance keeps its own buffer, so the accessor resolves through the host length.
