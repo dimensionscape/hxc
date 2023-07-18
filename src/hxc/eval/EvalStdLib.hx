@@ -57,8 +57,187 @@ class EvalStdLib {
 					case OProto(proto): [for (k in proto.pinstanceNames.keys()) EvalHash.revHash(k)];
 					case ODictionary(l): [for (k in l.keys()) EvalHash.revHash(k)];
 				};
-			case VInstance(vi): [for (k in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(k)];
+			case VInstance(vi):
+				[for (k in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(k)];
+			case VPrototype(proto): [for (k in proto.pnames.keys()) EvalHash.revHash(k)];
+			case VString(_) | VArray(_) | VVector(_): ["length"];
 			case _: [];
+		};
+	}
+
+	static function protoFieldNames(proto:VPrototype):Array<EvalValue> {
+		return [for (n in proto.pnames.keys()) mkStr(EvalHash.revHash(n))];
+	}
+
+	static function instanceFieldNames(proto:VPrototype):Array<EvalValue> {
+		var names = new Map<Int, Bool>();
+		function loop(p:VPrototype):Void {
+			if (p.pparent != null) loop(p.pparent);
+			for (n in p.pinstanceNames.keys()) names.set(n, true);
+			for (n in p.pnames.keys()) names.set(n, true);
+		}
+		loop(proto);
+		return [for (n in names.keys()) mkStr(EvalHash.revHash(n))];
+	}
+
+	static function objectFieldMap(o:VObject):Map<Int, EvalValue> {
+		return switch (o.oproto) {
+			case ODictionary(m):
+				var out = new Map();
+				for (k in m.keys()) out.set(k, m.get(k));
+				out;
+			case OProto(proto):
+				var out = new Map();
+				for (k in proto.pinstanceNames.keys()) out.set(k, o.ofields[proto.pinstanceNames.get(k)]);
+				out;
+		};
+	}
+
+	static function setDynamicField(v:EvalValue, name:Int, value:EvalValue):Void {
+		switch (EvalValueTools.vresolve(v)) {
+			case VObject(o):
+				switch (o.oproto) {
+					case ODictionary(m): m.set(name, value);
+					case OProto(proto):
+						var idx = proto.pinstanceNames.get(name);
+						if (idx != null) o.ofields[idx] = value;
+						else {
+							var m = objectFieldMap(o);
+							m.set(name, value);
+							o.oproto = ODictionary(m);
+						}
+				}
+			case VInstance(vi):
+				var idx = vi.iproto.pinstanceNames.get(name);
+				if (idx != null) vi.ifields[idx] = value;
+			case VPrototype(proto):
+				var idx = proto.pnames.get(name);
+				if (idx != null) proto.pfields[idx] = value;
+			case _:
+		}
+	}
+
+	static function deleteDynamicField(v:EvalValue, name:Int):Bool {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VObject(o):
+				var m = objectFieldMap(o);
+				var had = m.exists(name);
+				m.remove(name);
+				o.oproto = ODictionary(m);
+				had;
+			case _:
+				false;
+		};
+	}
+
+	static function copyValue(v:EvalValue):EvalValue {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VNull: VNull;
+			case VObject(o): VObject(new VObject(o.ofields.copy(), o.oproto));
+			case VInstance(vi): VInstance(new VInstance(vi.ifields.copy(), vi.iproto, vi.ikind));
+			case VArray(va): VArray(new VArray(va.avalues.copy(), va.alength));
+			case VVector(vv): VVector(vv.copy());
+			case other: other;
+		};
+	}
+
+	static function hasField(ctx:EvalContext, v:EvalValue, name:Int):Bool {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VObject(o):
+				switch (o.oproto) {
+					case OProto(proto): proto.pinstanceNames.exists(name);
+					case ODictionary(m): m.exists(name);
+				}
+			case VInstance(vi):
+				if (vi.iproto.pinstanceNames.exists(name)) true else {
+					var p = vi.iproto;
+					var found = false;
+					while (p != null && !found) {
+						found = p.pnames.exists(name);
+						p = p.pparent;
+					}
+					found;
+				}
+			case VPrototype(proto):
+				var p = proto;
+				var found = false;
+				while (p != null && !found) {
+					found = p.pnames.exists(name);
+					p = p.pparent;
+				}
+				found;
+			case VString(_): name == EvalHash.keyLength || (ctx.stringPrototype != null && hasProtoField(ctx.stringPrototype, name));
+			case VArray(_): name == EvalHash.keyLength || (ctx.arrayPrototype != null && hasProtoField(ctx.arrayPrototype, name));
+			case VVector(_): name == EvalHash.keyLength || (ctx.vectorPrototype != null && hasProtoField(ctx.vectorPrototype, name));
+			case _: false;
+		};
+	}
+
+	static function hasProtoField(proto:VPrototype, name:Int):Bool {
+		var p = proto;
+		while (p != null) {
+			if (p.pnames.exists(name)) return true;
+			p = p.pparent;
+		}
+		return false;
+	}
+
+	static function callValueOn(recv:EvalValue, fn:EvalValue, args:Array<EvalValue>):EvalValue {
+		return switch (EvalValueTools.vresolve(fn)) {
+			case VFunction(f, isStatic): isStatic ? f(args) : f([recv].concat(args));
+			case VFieldClosure(recv2, f): f([recv2].concat(args));
+			case _: VNull;
+		};
+	}
+
+	static function compareMethodsValue(a:EvalValue, b:EvalValue):Bool {
+		return switch [EvalValueTools.vresolve(a), EvalValueTools.vresolve(b)] {
+			case [VFunction(f1, _), VFunction(f2, _)]: Reflect.compareMethods(f1, f2);
+			case [VFieldClosure(v1, f1), VFieldClosure(v2, f2)]:
+				Reflect.compareMethods(f1, f2) && EvalMisc.compare(v1, v2) == CEq;
+			case _: false;
+		};
+	}
+
+	static function enumEqValue(a:EvalValue, b:EvalValue):Bool {
+		return switch [EvalValueTools.vresolve(a), EvalValueTools.vresolve(b)] {
+			case [VEnumValue(ae), VEnumValue(be)]:
+				if (ae == be) true;
+				else if (ae.eindex != be.eindex || ae.epath != be.epath || ae.eargs.length != be.eargs.length) false;
+				else {
+					var ok = true;
+					for (i in 0...ae.eargs.length) {
+						if (!enumEqValue(ae.eargs[i], be.eargs[i])) {
+							ok = false;
+							break;
+						}
+					}
+					ok;
+				}
+			case [av, bv]: EvalValueTools.equals(av, bv);
+		};
+	}
+
+	static function classValue(ctx:EvalContext, path:Int):EvalValue {
+		var p = ctx.staticPrototypes.get(path);
+		return p == null ? VNull : p.pvalue;
+	}
+
+	static function createEnumByName(ctx:EvalContext, e:EvalValue, name:Int, params:EvalValue):EvalValue {
+		return switch (EvalValueTools.vresolve(e)) {
+			case VPrototype(proto):
+				switch (proto.pkind) {
+					case PEnum(_):
+						var f = EvalField.field(ctx, VPrototype(proto), name);
+						switch (f) {
+							case VFunction(fn, _): fn(argList(params));
+							case VEnumValue(_) if (params == VNull || argList(params).length == 0): f;
+							case VEnumValue(_): f;
+							case _: VNull;
+						}
+					case _: VNull;
+				}
+			case _: VNull;
 		};
 	}
 
@@ -288,7 +467,7 @@ class EvalStdLib {
 			case VInt(_): idx = 1;
 			case VFloat(_): idx = 2;
 			case VTrue | VFalse: idx = 3;
-			case VObject(_): idx = 4;
+			case VObject(_) | VPrototype(_): idx = 4;
 			case VFunction(_, _) | VFieldClosure(_, _): idx = 5;
 			case VString(_): idx = 6; args = [classVal(EvalHash.hash("String"))];
 			case VArray(_): idx = 6; args = [classVal(EvalHash.hash("Array"))];
@@ -461,14 +640,16 @@ class EvalStdLib {
 			var names = fieldNames(arg(a, 0));
 			VArray(new VArray([for (n in names) mkStr(n)], names.length));
 		}));
-		reg(s, "Reflect", "field", vfn(a -> EvalField.field(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))))));
+		reg(s, "Reflect", "field", vfn(a -> {
+			var o = arg(a, 0);
+			if (o == VNull) VNull else EvalField.dynamicField(ctx, o, EvalHash.hash(stringOf(arg(a, 1))));
+		}));
 		reg(s, "Reflect", "setField", vfn(a -> {
-			EvalField.setField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2), Position.nullPos);
+			setDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
 			VNull;
 		}));
 		reg(s, "Reflect", "hasField", vfn(a -> {
-			var name = stringOf(arg(a, 1));
-			EvalValueTools.vbool(fieldNames(arg(a, 0)).indexOf(name) != -1);
+			EvalValueTools.vbool(hasField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1)))));
 		}));
 		reg(s, "Reflect", "isFunction", vfn(a -> EvalValueTools.vbool(switch (arg(a, 0)) {
 			case VFunction(_, _) | VFieldClosure(_, _): true;
@@ -480,36 +661,81 @@ class EvalStdLib {
 			case CSup: 1;
 			case CUndef: 0;
 		})));
+		reg(s, "Reflect", "compareMethods", vfn(a -> EvalValueTools.vbool(compareMethodsValue(arg(a, 0), arg(a, 1)))));
+		reg(s, "Reflect", "copy", vfn(a -> copyValue(arg(a, 0))));
+		reg(s, "Reflect", "deleteField", vfn(a -> EvalValueTools.vbool(deleteDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1)))))));
+		reg(s, "Reflect", "getProperty", vfn(a -> {
+			var o = arg(a, 0);
+			if (o == VNull) VNull else {
+				var name = stringOf(arg(a, 1));
+				var getter = EvalField.field(ctx, o, EvalHash.hash("get_" + name));
+				if (getter != VNull) callValueOn(o, getter, []) else EvalField.dynamicField(ctx, o, EvalHash.hash(name));
+			}
+		}));
+		reg(s, "Reflect", "isEnumValue", vfn(a -> EvalValueTools.vbool(switch (arg(a, 0)) {
+			case VEnumValue(_): true;
+			case _: false;
+		})));
+		reg(s, "Reflect", "isObject", vfn(a -> EvalValueTools.vbool(switch (EvalValueTools.vresolve(arg(a, 0))) {
+			case VObject(_) | VString(_) | VArray(_) | VVector(_) | VInstance(_) | VPrototype(_): true;
+			case _: false;
+		})));
+		reg(s, "Reflect", "makeVarArgs", vfn(a -> {
+			var fn = arg(a, 0);
+			VFunction(function(vl:Array<EvalValue>):EvalValue return callValueOn(VNull, fn, [VArray(new VArray(vl, vl.length))]), true);
+		}));
+		reg(s, "Reflect", "setProperty", vfn(a -> {
+			var o = arg(a, 0);
+			var name = stringOf(arg(a, 1));
+			var setter = EvalField.field(ctx, o, EvalHash.hash("set_" + name));
+			if (setter != VNull) callValueOn(o, setter, [arg(a, 2)]);
+			else {
+				setDynamicField(o, EvalHash.hash(name), arg(a, 2));
+				VNull;
+			}
+		}));
 
 		reg(s, "Type", "getClass", vfn(a -> switch (arg(a, 0)) {
 			case VInstance(vi):
-				var p = ctx.staticPrototypes.get(vi.iproto.ppath);
-				p == null ? VNull : p.pvalue;
+				classValue(ctx, vi.iproto.ppath);
+			case VString(_):
+				classValue(ctx, EvalHash.key_String);
+			case VArray(_):
+				classValue(ctx, EvalHash.key_Array);
+			case VVector(_):
+				classValue(ctx, EvalHash.key_eval_Vector);
 			case _: VNull;
 		}));
 		reg(s, "Type", "typeof", vfn(a -> typeofValue(ctx, arg(a, 0))));
 		reg(s, "Type", "getClassName", vfn(a -> switch (arg(a, 0)) {
-			case VPrototype(proto): mkStr(EvalHash.revHash(proto.ppath));
+			case VPrototype(proto): switch (proto.pkind) { case PClass(_): mkStr(EvalHash.revHash(proto.ppath)); case _: VNull; };
 			case _: VNull;
 		}));
 		reg(s, "Type", "createInstance", vfn(a -> switch (arg(a, 0)) {
-			case VPrototype(proto):
-				var iproto = ctx.instancePrototypes.get(proto.ppath);
-				if (iproto == null) VNull;
-				else {
-					var inst = new VInstance(iproto.pinstanceFields.copy(), iproto, INormal);
-					var ctor = ctx.constructors.get(proto.ppath);
-					if (ctor != null) ctor([VInstance(inst)].concat(argList(arg(a, 1))));
-					VInstance(inst);
-				}
+			case VPrototype(proto): switch (proto.pkind) { case PClass(_): EvalEmitter.constructPath(ctx, proto.ppath, argList(arg(a, 1))); case _: VNull; };
+			case _: VNull;
+		}));
+		reg(s, "Type", "createEmptyInstance", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) {
+				case PClass(_):
+					var iproto = ctx.instancePrototypes.get(proto.ppath);
+					iproto == null ? VNull : VInstance(new VInstance(iproto.pinstanceFields.copy(), iproto, INormal));
+				case _: VNull;
+			};
 			case _: VNull;
 		}));
 
+		reg(s, "Type", "getClassFields", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) { case PClass(_): var ns = protoFieldNames(proto); VArray(new VArray(ns, ns.length)); case _: VNull; };
+			case _: VNull;
+		}));
 		reg(s, "Type", "getInstanceFields", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(proto):
 				var ip = ctx.instancePrototypes.get(proto.ppath);
-				var ns = ip == null ? [] : [for (n in ip.pinstanceNames.keys()) mkStr(EvalHash.revHash(n))];
-				VArray(new VArray(ns, ns.length));
+				if (ip == null) VNull else {
+					var ns = instanceFieldNames(ip);
+					VArray(new VArray(ns, ns.length));
+				}
 			case _: VNull;
 		}));
 		reg(s, "Type", "getEnumConstructs", vfn(a -> switch (arg(a, 0)) {
@@ -517,15 +743,37 @@ class EvalStdLib {
 			case _: VNull;
 		}));
 		reg(s, "Type", "createEnum", vfn(a -> switch (arg(a, 0)) {
-			case VPrototype(proto):
-				var f = EvalField.field(ctx, VPrototype(proto), EvalHash.hash(stringOf(arg(a, 1))));
-				switch (f) { case VFunction(fn, _): fn(argList(arg(a, 2))); case v: v; };
+			case VPrototype(_):
+				createEnumByName(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
+			case _: VNull;
+		}));
+		reg(s, "Type", "createEnumIndex", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) {
+				case PEnum(cs):
+					var idx = toInt(arg(a, 1));
+					if (idx < 0 || idx >= cs.length) VNull else createEnumByName(ctx, arg(a, 0), EvalHash.hash(cs[idx].name), arg(a, 2));
+				case _: VNull;
+			};
+			case _: VNull;
+		}));
+		reg(s, "Type", "allEnums", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) {
+				case PEnum(cs):
+					var values:Array<EvalValue> = [];
+					for (c in cs) {
+						var idx = proto.pnames.get(EvalHash.hash(c.name));
+						if (idx != null) switch (proto.pfields[idx]) { case VEnumValue(_): values.push(proto.pfields[idx]); case _: };
+					}
+					VArray(new VArray(values, values.length));
+				case _: VNull;
+			};
 			case _: VNull;
 		}));
 		reg(s, "Type", "enumParameters", vfn(a -> switch (arg(a, 0)) {
 			case VEnumValue(ev): VArray(new VArray(ev.eargs.copy(), ev.eargs.length));
 			case _: VArray(new VArray([], 0));
 		}));
+		reg(s, "Type", "enumEq", vfn(a -> EvalValueTools.vbool(enumEqValue(arg(a, 0), arg(a, 1)))));
 		reg(s, "Type", "enumIndex", vfn(a -> switch (arg(a, 0)) { case VEnumValue(ev): VInt(ev.eindex); case _: VInt(0); }));
 		reg(s, "Type", "enumConstructor", vfn(a -> switch (arg(a, 0)) {
 			case VEnumValue(ev):
@@ -533,9 +781,29 @@ class EvalStdLib {
 				if (p == null) VNull else switch (p.pkind) { case PEnum(cs): mkStr(cs[ev.eindex].name); case _: VNull; };
 			case _: VNull;
 		}));
+		reg(s, "Type", "getEnum", vfn(a -> switch (arg(a, 0)) {
+			case VEnumValue(ev): classValue(ctx, ev.epath);
+			case _: VNull;
+		}));
+		reg(s, "Type", "getEnumName", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) { case PEnum(_): mkStr(EvalHash.revHash(proto.ppath)); case _: VNull; };
+			case _: VNull;
+		}));
+		reg(s, "Type", "getSuperClass", vfn(a -> switch (arg(a, 0)) {
+			case VPrototype(proto): switch (proto.pkind) { case PClass(_) if (proto.pparent != null): proto.pparent.pvalue; case _: VNull; };
+			case _: VNull;
+		}));
+		reg(s, "Type", "resolveClass", vfn(a -> {
+			var p = ctx.staticPrototypes.get(EvalHash.hash(stringOf(arg(a, 0))));
+			p == null ? VNull : p.pvalue;
+		}));
+		reg(s, "Type", "resolveEnum", vfn(a -> {
+			var p = ctx.staticPrototypes.get(EvalHash.hash(stringOf(arg(a, 0))));
+			if (p == null) VNull else switch (p.pkind) { case PEnum(_): p.pvalue; case _: VNull; };
+		}));
 		reg(s, "Reflect", "callMethod", vfn(a -> {
 			var fn = arg(a, 1); var args = argList(arg(a, 2));
-			switch (fn) { case VFunction(f, isStatic): isStatic ? f(args) : f([arg(a, 0)].concat(args)); case VFieldClosure(recv, f): f([recv].concat(args)); case _: VNull; };
+			callValueOn(arg(a, 0), fn, args);
 		}));
 
 		var ctors = ctx.builtins.constructorBuiltins;
