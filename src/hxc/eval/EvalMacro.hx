@@ -22,6 +22,7 @@ class EvalMacro {
 	static var lastModuleCount:Int = -1;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
+	static var curTctx:Null<TyperContext> = null;
 	static var curBuildFields:EvalValue = VNull;
 	static var builtClasses:Map<String, Bool> = new Map();
 
@@ -49,6 +50,14 @@ class EvalMacro {
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?")));
+		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
+		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
+		reg2("typeof", "typeof", function(a) {
+			if (curTctx == null) throw new TypingError("typeof outside a macro", curPos);
+			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), NoValue);
+			return encodeType(ec, te.type);
+		});
+		reg2("follow", "follow", function(a) return a[0]);
 		// Context.defineModule(path, types, imports, usings): build the module from decoded type
 		// definitions and inject it.
 		reg2("defineModule", "define_module", function(a) {
@@ -278,6 +287,7 @@ class EvalMacro {
 		};
 		var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
 		var args = [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
+		curTctx = tctx;
 		var result = fn(args);
 		var astExpr = decodeExpr(ec, result, p);
 		return Typer.typeExpr(tctx, astExpr, withType);
@@ -721,5 +731,43 @@ class EvalMacro {
 			case CTNamed(n, t): mkEnumValue(ec, "ComplexType", "TNamed", [mkString(n.name), encodeComplexType(ec, t.ct)]);
 			case CTIntersection(tl): mkEnumValue(ec, "ComplexType", "TIntersection", [encodeArray([for (t in tl) encodeComplexType(ec, t.ct)])]);
 		};
+	}
+
+	// Encode a typed type as a haxe.macro.Type value. Bound monomorphs are collapsed to their
+	// bound type (matching a post-typing result), so Context.follow is the identity on these.
+	static function encodeType(ec:EvalContext, t:T):EvalValue {
+		return switch (t) {
+			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeRef(ec, VNull)]);
+			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeRef(ec, encodeBaseType(ec, e.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeRef(ec, encodeBaseType(ec, c.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TFun(sig): mkEnumValue(ec, "Type", "TFun", [encodeArray([for (a in sig.args) encodeTypeFunArg(ec, a)]), encodeType(ec, sig.ret)]);
+			case TAnon(_): mkEnumValue(ec, "Type", "TAnonymous", [encodeRef(ec, VNull)]);
+			case TDynamic(t2): mkEnumValue(ec, "Type", "TDynamic", [t2 == null ? VNull : encodeType(ec, t2)]);
+			case TLazy(f): encodeType(ec, TypeFunctions.lazyType(f));
+			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeRef(ec, encodeBaseType(ec, a.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+		};
+	}
+
+	static function encodeBaseType(ec:EvalContext, path:hxc.core.Globals.Path):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(path.name));
+		fields.set(EvalHash.hash("pack"), encodeArray([for (s in path.pack) mkString(s)]));
+		fields.set(EvalHash.hash("module"), mkString(path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeRef(ec:EvalContext, payload:EvalValue):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload, true));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeTypeFunArg(ec:EvalContext, a:TSignatureArg):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(a.name));
+		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
+		fields.set(EvalHash.hash("t"), encodeType(ec, a.t));
+		return VObject(new VObject([], ODictionary(fields)));
 	}
 }
