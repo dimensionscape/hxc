@@ -485,15 +485,17 @@ class EvalMacro {
 
 	static function decodeFunc(ec:EvalContext, v:EvalValue, dp:Position):Func {
 		var args = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) decodeFunctionArg(ec, av, dp)];
-		return {fParams: [], fArgs: args, fType: null, fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		var retV = EvalField.field(ec, v, EvalHash.hash("ret"));
+		return {fParams: [], fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
 	}
 
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
+		var typeV = EvalField.field(ec, v, EvalHash.hash("type"));
 		return {
 			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
 			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
 			meta: [],
-			type: null,
+			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
 			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
 		};
 	}
@@ -690,7 +692,7 @@ class EvalMacro {
 	static function encodeFunc(ec:EvalContext, f:Func):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("args"), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
-		fields.set(EvalHash.hash("ret"), VNull);
+		fields.set(EvalHash.hash("ret"), f.fType == null ? VNull : encodeComplexType(ec, f.fType.ct));
 		fields.set(EvalHash.hash("expr"), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
 		fields.set(EvalHash.hash("params"), encodeArray([]));
 		return VObject(new VObject([], ODictionary(fields)));
@@ -700,7 +702,7 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(a.name.name));
 		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
-		fields.set(EvalHash.hash("type"), VNull);
+		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type.ct));
 		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
