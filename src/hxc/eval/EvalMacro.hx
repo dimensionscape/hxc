@@ -378,7 +378,67 @@ class EvalMacro {
 			case "EVars": EVars([for (vv in arrOf(a[0])) decodeVar(ec, vv, dp)]);
 			case "EThrow": EThrow(decodeExpr(ec, a[0], dp));
 			case "EMeta": decodeExpr(ec, a[1], dp).expr;
+			case "ENew": ENew({path: decodeTypePath(ec, a[0]), pos: dp}, [for (e in arrOf(a[1])) decodeExpr(ec, e, dp)]);
+			case "EFunction": EFunction(decodeFunctionKind(ec, a[0], dp), decodeFunc(ec, a[1], dp));
+			case "EFor": EFor(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp));
+			case "EWhile": EWhile(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp), boolOf(a[2]) ? NormalWhile : DoWhile);
+			case "ESwitch": ESwitch(decodeExpr(ec, a[0], dp), [for (c in arrOf(a[1])) decodeCase(ec, c, dp)], a[2] == VNull ? null : {e: decodeExpr(ec, a[2], dp), pos: dp});
+			case "ETry": ETry(decodeExpr(ec, a[0], dp), [for (c in arrOf(a[1])) decodeCatch(ec, c, dp)]);
+			case "EBreak": EBreak;
+			case "EContinue": EContinue;
+			case "EUntyped": EUntyped(decodeExpr(ec, a[0], dp));
+			case "ETernary": ETernary(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp), decodeExpr(ec, a[2], dp));
+			case "ECast": ECast(decodeExpr(ec, a[0], dp), a[1] == VNull ? null : decodeTypeHint(ec, a[1], dp));
+			case "EIs": EIs(decodeExpr(ec, a[0], dp), decodeTypeHint(ec, a[1], dp));
+			case "ECheckType": ECheckType(decodeExpr(ec, a[0], dp), decodeTypeHint(ec, a[1], dp));
 			case other: throw new TypingError("Macro decode: unhandled ExprDef " + other, dp);
+		};
+	}
+
+	static function decodeFunctionKind(ec:EvalContext, v:EvalValue, dp:Position):FunctionKind {
+		var a = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "FNamed": FKNamed({name: strOf(a[0]), pos: dp}, a.length > 1 && boolOf(a[1]));
+			case "FArrow": FKArrow;
+			case _: FKAnonymous;
+		};
+	}
+
+	static function decodeCase(ec:EvalContext, v:EvalValue, dp:Position):SwitchCase {
+		return {
+			values: [for (x in arrOf(EvalField.field(ec, v, EvalHash.hash("values")))) decodeExpr(ec, x, dp)],
+			guard: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("guard")), dp),
+			expr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
+			pos: dp
+		};
+	}
+
+	static function decodeCatch(ec:EvalContext, v:EvalValue, dp:Position):Catch {
+		var tv = EvalField.field(ec, v, EvalHash.hash("type"));
+		return {
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			type: tv == VNull ? null : decodeTypeHint(ec, tv, dp),
+			expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
+			pos: dp
+		};
+	}
+
+	static function decodeTypeHint(ec:EvalContext, v:EvalValue, dp:Position):TypeHint {
+		return {ct: decodeComplexType(ec, v, dp), pos: dp};
+	}
+
+	static function decodeComplexType(ec:EvalContext, v:EvalValue, dp:Position):ComplexType {
+		var a = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "TPath": CTPath(decodeTypePath(ec, a[0]));
+			case "TFunction": CTFunction([for (x in arrOf(a[0])) decodeTypeHint(ec, x, dp)], decodeTypeHint(ec, a[1], dp));
+			case "TAnonymous": CTAnonymous([for (f in arrOf(a[0])) decodeField(ec, f, dp)]);
+			case "TParent": CTParent(decodeTypeHint(ec, a[0], dp));
+			case "TOptional": CTOptional(decodeTypeHint(ec, a[0], dp));
+			case "TNamed": CTNamed({name: strOf(a[0]), pos: dp}, decodeTypeHint(ec, a[1], dp));
+			case "TExtend": CTExtend([for (p in arrOf(a[0])) {path: decodeTypePath(ec, p), pos: dp}], [for (f in arrOf(a[1])) decodeField(ec, f, dp)]);
+			case "TIntersection": CTIntersection([for (x in arrOf(a[0])) decodeTypeHint(ec, x, dp)]);
+			case other: throw new TypingError("Macro decode: unhandled ComplexType " + other, dp);
 		};
 	}
 
