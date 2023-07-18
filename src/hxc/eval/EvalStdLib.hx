@@ -431,10 +431,20 @@ class EvalStdLib {
 		return switch (t) {
 			case VPrototype(proto):
 				switch (EvalHash.revHash(proto.ppath)) {
-					case "Int": switch (v) { case VInt(_): true; case _: false; };
+					case "Dynamic": v != VNull;
+					case "Int": switch (v) {
+						case VInt(_): true;
+						case VFloat(f): !Math.isNaN(f) && f >= -2147483648. && f <= 2147483647. && f == Std.int(f);
+						case _: false;
+					};
 					case "Float": switch (v) { case VInt(_) | VFloat(_): true; case _: false; };
 					case "Bool": switch (v) { case VTrue | VFalse: true; case _: false; };
 					case "String": switch (v) { case VString(_): true; case _: false; };
+					case "Array": switch (v) { case VArray(_): true; case _: false; };
+					case "eval.Vector": switch (v) { case VVector(_): true; case _: false; };
+					case "Class": switch (v) { case VPrototype(p): switch (p.pkind) { case PClass(_): true; case _: false; }; case _: false; };
+					case "Enum": switch (v) { case VPrototype(p): switch (p.pkind) { case PEnum(_): true; case _: false; }; case _: false; };
+					case "EnumValue": switch (v) { case VEnumValue(_): true; case _: false; };
 					case _: switch (v) {
 						case VInstance(vi): isSubProto(vi.iproto, proto.ppath);
 						case VEnumValue(ev): ev.epath == proto.ppath;
@@ -442,6 +452,13 @@ class EvalStdLib {
 					};
 				};
 			case _: false;
+		};
+	}
+
+	static function stdDowncast(v:EvalValue, t:EvalValue):EvalValue {
+		return switch (t) {
+			case VPrototype(_): stdIsOfType(v, t) ? v : VNull;
+			case _: VFalse;
 		};
 	}
 
@@ -516,6 +533,9 @@ class EvalStdLib {
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
+		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
+		reg(s, "Std", "downcast", vfn(a -> stdDowncast(arg(a, 0), arg(a, 1))));
+		reg(s, "Std", "instance", vfn(a -> stdDowncast(arg(a, 0), arg(a, 1))));
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
