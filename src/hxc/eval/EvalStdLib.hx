@@ -892,6 +892,14 @@ class EvalStdLib {
 		reg(inst, "Date", "getMinutes", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMinutes())));
 		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getSeconds())));
 		reg(inst, "Date", "getDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDay())));
+		reg(inst, "Date", "getUTCFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCFullYear())));
+		reg(inst, "Date", "getUTCMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCMonth())));
+		reg(inst, "Date", "getUTCDate", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCDate())));
+		reg(inst, "Date", "getUTCHours", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCHours())));
+		reg(inst, "Date", "getUTCMinutes", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCMinutes())));
+		reg(inst, "Date", "getUTCSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCSeconds())));
+		reg(inst, "Date", "getUTCDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCDay())));
+		reg(inst, "Date", "getTimezoneOffset", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getTimezoneOffset())));
 		reg(inst, "Date", "toString", vmethod(a -> mkStr(Date.fromTime(thisDate(a)).toString())));
 
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
