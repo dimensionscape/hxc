@@ -307,8 +307,11 @@ class Typeload {
 					if (fd.fParams.length > 0) params = typeTypeParams(ctx, {pack: [], name: n}, fd.fParams);
 					var localTypeParams = params.length > 0 ? params.concat(typeParams) : typeParams;
 					function ftopt(th:Null<TypeHint>):T {
-						if (th == null) throw new ContextError("Explicit type required for field " + n, p);
-						return loadComplexType(ctx, localTypeParams, th);
+						if (th != null) return loadComplexType(ctx, localTypeParams, th);
+						// An unannotated arg or return on a method with a body is inferred when the body
+						// is typed; only a body-less (extern) field must state its type explicitly.
+						if (fd.fExpr != null) return TypeFunctions.mkMono();
+						throw new ContextError("Explicit type required for field " + n, p);
 					}
 					var fargs:Array<TSignatureArg> = [for (fa in fd.fArgs) {name: fa.name.name, opt: fa.opt, t: ftopt(fa.type)}];
 					t = TFun({args: fargs, ret: ftopt(fd.fType)});
