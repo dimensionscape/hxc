@@ -503,8 +503,16 @@ class EvalMacro {
 		return {
 			tpackage: [for (s in arrOf(EvalField.field(ec, v, EvalHash.hash("pack")))) strOf(s)],
 			tname: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-			tparams: [],
+			tparams: [for (x in arrOf(EvalField.field(ec, v, EvalHash.hash("params")))) decodeTypeParam(ec, x, Position.nullPos)],
 			tsub: sub == VNull ? null : strOf(sub)
+		};
+	}
+
+	static function decodeTypeParam(ec:EvalContext, v:EvalValue, dp:Position):TypeParamOrConst {
+		var a = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "TPExpr": TPExpr(decodeExpr(ec, a[0], dp));
+			case _: TPType(decodeTypeHint(ec, a[0], dp));
 		};
 	}
 
@@ -743,9 +751,16 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("pack"), encodeArray([for (s in tp.tpackage) mkString(s)]));
 		fields.set(EvalHash.hash("name"), mkString(tp.tname));
-		fields.set(EvalHash.hash("params"), encodeArray([]));
+		fields.set(EvalHash.hash("params"), encodeArray([for (tpc in tp.tparams) encodeTypeParam(ec, tpc)]));
 		fields.set(EvalHash.hash("sub"), tp.tsub == null ? VNull : mkString(tp.tsub));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeTypeParam(ec:EvalContext, tpc:TypeParamOrConst):EvalValue {
+		return switch (tpc) {
+			case TPType(th): mkEnumValue(ec, "TypeParam", "TPType", [encodeComplexType(ec, th.ct)]);
+			case TPExpr(e): mkEnumValue(ec, "TypeParam", "TPExpr", [encodeExpr(ec, e)]);
+		};
 	}
 
 	static function encodeFunctionKind(ec:EvalContext, k:FunctionKind):EvalValue {
