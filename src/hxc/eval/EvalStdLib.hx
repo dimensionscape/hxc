@@ -148,6 +148,87 @@ class EvalStdLib {
 
 	static inline function mkStr(s:String):EvalValue return VString(new VString(s, s.length));
 
+	static function stringFastCodeAt(s:String, index:Int):EvalValue {
+		var c = s.charCodeAt(index);
+		return c == null ? VNull : VInt(c);
+	}
+
+	static function stringReplace(s:String, sub:String, by:String):String {
+		if (sub.length == 0) {
+			if (by.length == 0 || s.length == 0) return s;
+			var b = new StringBuf();
+			for (i in 0...s.length) {
+				b.add(s.charAt(i));
+				if (i != s.length - 1) b.add(by);
+			}
+			return b.toString();
+		}
+		return s.split(sub).join(by);
+	}
+
+	static function urlEncode(s:String):String {
+		var bytes = haxe.io.Bytes.ofString(s);
+		var hex = "0123456789ABCDEF";
+		var b = new StringBuf();
+		for (i in 0...bytes.length) {
+			var c = bytes.get(i);
+			if ((c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)
+				|| (c >= "0".code && c <= "9".code) || c == "_".code || c == "-".code || c == ".".code) {
+				b.addChar(c);
+			} else {
+				b.addChar("%".code);
+				b.addChar(hex.charCodeAt(c >> 4));
+				b.addChar(hex.charCodeAt(c & 15));
+			}
+		}
+		return b.toString();
+	}
+
+	static function hexValue(c:Null<Int>):Null<Int> {
+		if (c == null) return null;
+		if (c >= "0".code && c <= "9".code) return c - "0".code;
+		if (c >= "a".code && c <= "f".code) return c - "a".code + 10;
+		if (c >= "A".code && c <= "F".code) return c - "A".code + 10;
+		return null;
+	}
+
+	static function decodeHex(s:String, index:Int):Null<Int> {
+		var c1 = hexValue(s.charCodeAt(index));
+		var c2 = hexValue(s.charCodeAt(index + 1));
+		return c1 == null || c2 == null ? null : ((c1 << 4) | c2);
+	}
+
+	static function urlDecode(s:String):String {
+		var out:Array<Int> = [];
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i);
+			if (c == null) break;
+			if (c == "%".code) {
+				var h = decodeHex(s, i + 1);
+				if (h == null) {
+					i++;
+				} else {
+					out.push(h);
+					i += 3;
+				}
+			} else if (c == "+".code) {
+				out.push(" ".code);
+				i++;
+			} else if (c <= 0x7F) {
+				out.push(c);
+				i++;
+			} else {
+				var bs = haxe.io.Bytes.ofString(s.charAt(i));
+				for (j in 0...bs.length) out.push(bs.get(j));
+				i++;
+			}
+		}
+		var bytes = haxe.io.Bytes.alloc(out.length);
+		for (i in 0...out.length) bytes.set(i, out[i]);
+		return bytes.toString();
+	}
+
 	public static function stringOf(v:EvalValue):String {
 		return switch (v) {
 			case VNull: "null";
@@ -249,6 +330,11 @@ class EvalStdLib {
 		reg(s, "Math", "isFinite", vfn(a -> EvalValueTools.vbool(Math.isFinite(toFloat(arg(a, 0))))));
 		reg(s, "Math", "random", vfn(a -> VFloat(Math.random())));
 		reg(s, "String", "fromCharCode", vfn(a -> mkStr(String.fromCharCode(toInt(arg(a, 0))))));
+		reg(s, "StringTools", "fastCodeAt", vfn(a -> stringFastCodeAt(stringOf(arg(a, 0)), toInt(arg(a, 1)))));
+		reg(s, "StringTools", "unsafeCodeAt", vfn(a -> stringFastCodeAt(stringOf(arg(a, 0)), toInt(arg(a, 1)))));
+		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
+		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
+		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
 

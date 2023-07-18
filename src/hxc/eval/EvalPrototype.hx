@@ -75,9 +75,12 @@ class EvalPrototype {
 	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
 		if (list == null) return;
 		for (b in list) {
-			if (!pnames.exists(b.name)) {
+			var idx = pnames.get(b.name);
+			if (idx == null) {
 				pnames.set(b.name, pfields.length);
 				pfields.push(b.v);
+			} else {
+				pfields[idx] = b.v;
 			}
 		}
 	}
