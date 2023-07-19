@@ -376,6 +376,74 @@ class EvalStdLib {
 		return c == null ? VNull : VInt(c);
 	}
 
+	static function addUtf8Char(buf:StringBuf, c:Int):Void {
+		if (c < 0x80) {
+			buf.addChar(c);
+		} else if (c < 0x800) {
+			buf.addChar(0xC0 | (c >> 6));
+			buf.addChar(0x80 | (c & 0x3F));
+		} else if (c < 0x10000) {
+			buf.addChar(0xE0 | (c >> 12));
+			buf.addChar(0x80 | ((c >> 6) & 0x3F));
+			buf.addChar(0x80 | (c & 0x3F));
+		} else {
+			buf.addChar(0xF0 | (c >> 18));
+			buf.addChar(0x80 | ((c >> 12) & 0x3F));
+			buf.addChar(0x80 | ((c >> 6) & 0x3F));
+			buf.addChar(0x80 | (c & 0x3F));
+		}
+	}
+
+	static function utf8Encode(s:String):String {
+		var buf = new StringBuf();
+		for (i in 0...s.length) addUtf8Char(buf, s.charCodeAt(i));
+		return buf.toString();
+	}
+
+	static function utf8Decode(s:String):String {
+		var buf = new StringBuf();
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			if (c < 0x80) {
+				buf.addChar(c);
+			} else if (c < 0xE0 && i < s.length) {
+				buf.addChar(((c & 0x1F) << 6) | (s.charCodeAt(i++) & 0x3F));
+			} else if (c < 0xF0 && i + 1 < s.length) {
+				var c2 = s.charCodeAt(i++);
+				var c3 = s.charCodeAt(i++);
+				buf.addChar(((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F));
+			} else if (i + 2 < s.length) {
+				var c2 = s.charCodeAt(i++);
+				var c3 = s.charCodeAt(i++);
+				var c4 = s.charCodeAt(i++);
+				buf.addChar(((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F));
+			} else {
+				buf.addChar(c);
+			}
+		}
+		return buf.toString();
+	}
+
+	static function utf8Codes(s:String):Array<Int> {
+		var decoded = utf8Decode(s);
+		return decoded.length < s.length ? [for (i in 0...decoded.length) decoded.charCodeAt(i)] : [for (i in 0...s.length) s.charCodeAt(i)];
+	}
+
+	static function utf8Valid(s:String):Bool {
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			var need = c < 0x80 ? 0 : c < 0xE0 ? 1 : c < 0xF0 ? 2 : c < 0xF8 ? 3 : -1;
+			if (need < 0 || i + need > s.length) return false;
+			for (_ in 0...need) {
+				var c2 = s.charCodeAt(i++);
+				if ((c2 & 0xC0) != 0x80) return false;
+			}
+		}
+		return true;
+	}
+
 	static function stringReplace(s:String, sub:String, by:String):String {
 		if (sub.length == 0) {
 			if (by.length == 0 || s.length == 0) return s;
@@ -954,6 +1022,10 @@ class EvalStdLib {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("StringBuf"));
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
 		});
+		ctors.set(EvalHash.hash("haxe.Utf8"), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Utf8"));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
+		});
 		ctors.set(EvalHash.hash("EReg"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(new EReg(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
@@ -975,6 +1047,32 @@ class EvalStdLib {
 		// Length is a (get, never) property whose default getter reads the std's internal buffer; the
 		// native instance keeps its own buffer, so the accessor resolves through the host length.
 		reg(inst, "StringBuf", "get_length", vmethod(a -> VInt(thisBuffer(a).length)));
+
+		reg(s, "haxe.Utf8", "charCodeAt", vfn(a -> {
+			var codes = utf8Codes(stringOf(arg(a, 0)));
+			var index = toInt(arg(a, 1));
+			index >= 0 && index < codes.length ? VInt(codes[index]) : VNull;
+		}));
+		reg(s, "haxe.Utf8", "compare", vfn(a -> VInt(Reflect.compare(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "haxe.Utf8", "decode", vfn(a -> mkStr(utf8Decode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Utf8", "encode", vfn(a -> mkStr(utf8Encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Utf8", "iter", vfn(a -> {
+			var fn = arg(a, 1);
+			for (c in utf8Codes(stringOf(arg(a, 0)))) applyFn(fn, [VInt(c)]);
+			VNull;
+		}));
+		reg(s, "haxe.Utf8", "length", vfn(a -> VInt(utf8Codes(stringOf(arg(a, 0))).length)));
+		reg(s, "haxe.Utf8", "sub", vfn(a -> {
+			var codes = utf8Codes(stringOf(arg(a, 0)));
+			var pos = toInt(arg(a, 1));
+			var len = toInt(arg(a, 2));
+			var buf = new StringBuf();
+			for (i in pos...Std.int(Math.min(pos + len, codes.length))) addUtf8Char(buf, codes[i]);
+			mkStr(buf.toString());
+		}));
+		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(utf8Valid(stringOf(arg(a, 0))))));
+		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> { addUtf8Char(thisBuffer(a), toInt(arg(a, 1))); VNull; }));
+		reg(inst, "haxe.Utf8", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
 
 		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
 		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
