@@ -147,11 +147,7 @@ class EvalMacro {
 	}
 
 	static function runBuild(com:Context, c:TClass, entry:MetadataEntry):Void {
-		// Macro modules compile with `macro` defined so their #if macro sections are present.
-		var hadMacro = com.defines.rawDefined("macro");
-		if (!hadMacro) com.defines.rawDefine("macro");
-		try runBuildInner(com, c, entry) catch (e:haxe.Exception) { if (!hadMacro) com.defines.values.remove("macro"); throw e; }
-		if (!hadMacro) com.defines.values.remove("macro");
+		runBuildInner(com, c, entry);
 	}
 
 	static function runBuildInner(com:Context, c:TClass, entry:MetadataEntry):Void {
@@ -160,11 +156,11 @@ class EvalMacro {
 		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
 		if (entry.params.length == 0) return;
 		var callExpr = entry.params[0];
-		// Load the macro's own module so the interpreter built below includes it.
+		// Load the macro's own module into the macro world so the interpreter includes it.
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) try hxc.context.ModuleLoader.loadModule(com, {pack: t.pack, name: t.name}, callExpr.pos) catch (_:Dynamic) {}
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name});
 			case _:
 		}
 		var ec = getContext(com);
@@ -236,15 +232,23 @@ class EvalMacro {
 	static function getContext(com:Context):EvalContext {
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
-		if (!building && (macroCtx == null || lastModuleCount != com.modules.length)) {
+		if (macroCom == null) {
+			macroCom = com.cloneForMacro();
+			hxc.context.ModuleLoader.attach(macroCom);
+			hxc.context.ModuleLoader.initBasicTypes(macroCom);
+		}
+		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length)) {
 			building = true;
 			try {
-				hxc.typing.TypeFields.installAndForce(com);
+				// The interpreter runs macro-world code, so build it from the macro context's modules
+				// (macro defined, its own parse cache), never the host com. Context API queries still
+				// target the host com (defines/types reflect the program being compiled).
+				hxc.typing.TypeFields.typeAllModules(macroCom);
 				var ec = EvalMain.create(true);
 				registerContext(ec, com);
-				EvalMain.addModules(ec, com.modules);
+				EvalMain.addModules(ec, macroCom.modules);
 				macroCtx = ec;
-				lastModuleCount = com.modules.length;
+				lastModuleCount = macroCom.modules.length;
 			} catch (e:Dynamic) { building = false; throw e; }
 			building = false;
 		}
