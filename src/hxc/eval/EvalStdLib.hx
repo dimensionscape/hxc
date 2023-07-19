@@ -855,7 +855,30 @@ class EvalStdLib {
 
 		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
 		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
+		reg(inst, "EReg", "matchedLeft", vmethod(a -> mkStr(thisRegex(a).matchedLeft())));
+		reg(inst, "EReg", "matchedRight", vmethod(a -> mkStr(thisRegex(a).matchedRight())));
+		reg(inst, "EReg", "matchedPos", vmethod(a -> {
+			var p = thisRegex(a).matchedPos();
+			var m = new Map();
+			m.set(EvalHash.hash("pos"), VInt(p.pos));
+			m.set(EvalHash.hash("len"), VInt(p.len));
+			VObject(new VObject([], ODictionary(m)));
+		}));
+		reg(inst, "EReg", "matchSub", vmethod(a -> {
+			var len = a.length > 3 && arg(a, 3) != VNull ? toInt(arg(a, 3)) : -1;
+			EvalValueTools.vbool(thisRegex(a).matchSub(stringOf(arg(a, 1)), toInt(arg(a, 2)), len));
+		}));
+		reg(inst, "EReg", "split", vmethod(a -> {
+			var parts = thisRegex(a).split(stringOf(arg(a, 1)));
+			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
+		}));
 		reg(inst, "EReg", "replace", vmethod(a -> mkStr(thisRegex(a).replace(stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
+		reg(inst, "EReg", "map", vmethod(a -> {
+			var recv = arg(a, 0);
+			var fn = arg(a, 2);
+			mkStr(thisRegex(a).map(stringOf(arg(a, 1)), function(_) return stringOf(callValueOn(recv, fn, [recv]))));
+		}));
+		reg(s, "EReg", "escape", vfn(a -> mkStr(EReg.escape(stringOf(arg(a, 0))))));
 
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
