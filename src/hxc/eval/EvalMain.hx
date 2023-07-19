@@ -29,6 +29,8 @@ class EvalMain {
 						case "Array": ctx.arrayPrototype = iproto;
 						case _:
 					}
+					if (c.path.pack.length == 1 && c.path.pack[0] == "eval" && c.path.name == "Vector")
+						ctx.vectorPrototype = iproto;
 					var r = EvalPrototype.buildStatic(ctx, c);
 					ctx.staticPrototypes.set(r.proto.ppath, r.proto);
 					for (d in r.delays) delays.push({proto: r.proto, fn: d});

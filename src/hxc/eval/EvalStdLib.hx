@@ -50,6 +50,13 @@ class EvalStdLib {
 		};
 	}
 
+	static function thisVector(a:Array<EvalValue>):Array<EvalValue> {
+		return switch (a[0]) {
+			case VVector(vv): vv;
+			case _: [];
+		};
+	}
+
 	static function fieldNames(v:EvalValue):Array<String> {
 		return switch (v) {
 			case VObject(o):
@@ -739,6 +746,31 @@ class EvalStdLib {
 			VNull;
 		}));
 
+		reg(s, "eval.Vector", "fromArrayCopy", vfn(a -> {
+			var va = thisArray([arg(a, 0)]);
+			VVector(va.avalues.slice(0, va.alength));
+		}));
+		reg(inst, "eval.Vector", "blit", vmethod(a -> {
+			var src = thisVector([arg(a, 0)]);
+			var srcPos = toInt(arg(a, 1));
+			var dest = thisVector([arg(a, 2)]);
+			var destPos = toInt(arg(a, 3));
+			var len = toInt(arg(a, 4));
+			var tmp = src.slice(srcPos, srcPos + len);
+			for (i in 0...len) dest[destPos + i] = tmp[i];
+			VNull;
+		}));
+		reg(inst, "eval.Vector", "toArray", vmethod(a -> {
+			var vv = thisVector(a);
+			VArray(new VArray(vv.copy(), vv.length));
+		}));
+		reg(inst, "eval.Vector", "copy", vmethod(a -> VVector(thisVector(a).copy())));
+		reg(inst, "eval.Vector", "join", vmethod(a -> mkStr([for (v in thisVector(a)) stringOf(v)].join(stringOf(arg(a, 1))))));
+		reg(inst, "eval.Vector", "map", vmethod(a -> {
+			var fn = arg(a, 1);
+			VVector([for (v in thisVector(a)) applyFn(fn, [v])]);
+		}));
+
 		reg(s, "Reflect", "fields", vfn(a -> {
 			var names = fieldNames(arg(a, 0));
 			VArray(new VArray([for (n in names) mkStr(n)], names.length));
@@ -989,6 +1021,7 @@ class EvalStdLib {
 
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
+		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
 
 		// Date: a native instance carrying its epoch timestamp.
 		ctors.set(EvalHash.hash("Date"), function(a) {
