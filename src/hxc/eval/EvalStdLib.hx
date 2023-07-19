@@ -395,6 +395,14 @@ class EvalStdLib {
 		return VObject(new VObject([], ODictionary(m)));
 	}
 
+	static function objectIterator(items:Array<EvalValue>):EvalValue {
+		var index = 0;
+		return mkObject([
+			{name: "hasNext", value: VFunction(function(_) return EvalValueTools.vbool(index < items.length), true)},
+			{name: "next", value: VFunction(function(_) return index < items.length ? items[index++] : VNull, true)}
+		]);
+	}
+
 	static function mkFileStat(ctx:EvalContext, stat:sys.FileStat):EvalValue {
 		return mkObject([
 			{name: "gid", value: VInt(stat.gid)},
@@ -1206,6 +1214,7 @@ class EvalStdLib {
 			reg(inst, mapPath, "remove", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); var had = m.exists(k); m.remove(k); EvalValueTools.vbool(had); }));
 			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.value])));
 			reg(inst, mapPath, "keys", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.key])));
+			reg(inst, mapPath, "keyValueIterator", vmethod(a -> objectIterator([for (e in thisMap(a)) mkObject([{name: "key", value: e.key}, {name: "value", value: e.value}])])));
 			reg(inst, mapPath, "clear", vmethod(a -> { thisMap(a).clear(); VNull; }));
 			reg(inst, mapPath, "copy", vmethod(a -> {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
