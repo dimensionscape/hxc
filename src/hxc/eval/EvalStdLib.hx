@@ -311,6 +311,14 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
 	}
 
+	static function nativeStringOf(v:EvalValue):String {
+		return switch (v) {
+			case VNativeString(s): s;
+			case VString(s): s.sstring;
+			case _: stringOf(v);
+		};
+	}
+
 	static function mkStringMap(ctx:EvalContext, values:Map<String, String>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
 		var m:Map<String, MapEntry> = new Map();
@@ -1051,6 +1059,22 @@ class EvalStdLib {
 		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
 		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
+		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
+		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "toBytes", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(nativeStringOf(arg(a, 0))))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "toString", vfn(a -> mkStr(nativeStringOf(arg(a, 0)))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "concat", vfn(a -> VNativeString(nativeStringOf(arg(a, 0)) + nativeStringOf(arg(a, 1)))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "char", vfn(a -> mkStr(nativeStringOf(arg(a, 0)).charAt(toInt(arg(a, 1))))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "code", vfn(a -> VInt(nativeStringOf(arg(a, 0)).charCodeAt(toInt(arg(a, 1))))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "get_length", vfn(a -> VInt(nativeStringOf(arg(a, 0)).length)));
+		reg(s, "eval._NativeString.NativeString_Impl_", "sub", vfn(a -> {
+			var str = nativeStringOf(arg(a, 0));
+			var start = toInt(arg(a, 1));
+			var max = str.length - start;
+			var len = arg(a, 2) == VNull ? max : Std.int(Math.min(toInt(arg(a, 2)), max));
+			if (start < 0 || len < 0) throw "Invalid arguments for eval.NativeString.sub";
+			VNativeString(str.substr(start, len));
+		}));
 		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
 		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getFullYear())));
 		reg(inst, "Date", "getMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMonth())));
