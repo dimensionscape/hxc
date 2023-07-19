@@ -326,6 +326,31 @@ class EvalStdLib {
 		return b;
 	}
 
+	static function floatBits(v:Float):Int {
+		return bytesOfFloat(v).getInt32(0);
+	}
+
+	static function doubleBits(v:Float):EvalValue {
+		var b = bytesOfDouble(v);
+		return mkObject([
+			{name: "low", value: VInt(b.getInt32(0))},
+			{name: "high", value: VInt(b.getInt32(4))}
+		]);
+	}
+
+	static function floatOfBits(v:Int):Float {
+		var b = haxe.io.Bytes.alloc(4);
+		b.setInt32(0, v);
+		return b.getFloat(0);
+	}
+
+	static function doubleOfBits(low:Int, high:Int):Float {
+		var b = haxe.io.Bytes.alloc(8);
+		b.setInt32(0, low);
+		b.setInt32(4, high);
+		return b.getDouble(0);
+	}
+
 	static function int64Part(ctx:EvalContext, v:EvalValue, name:Int):Int {
 		var field = EvalField.field(ctx, v, name);
 		if (field == VNull) throw "Int64 field not found";
@@ -1303,6 +1328,10 @@ class EvalStdLib {
 		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.crypto.Sha1", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha1.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.io.FPHelper", "doubleToI64", vfn(a -> doubleBits(toFloat(arg(a, 0)))));
+		reg(s, "haxe.io.FPHelper", "floatToI32", vfn(a -> VInt(floatBits(toFloat(arg(a, 0))))));
+		reg(s, "haxe.io.FPHelper", "i32ToFloat", vfn(a -> VFloat(floatOfBits(toInt(arg(a, 0))))));
+		reg(s, "haxe.io.FPHelper", "i64ToDouble", vfn(a -> VFloat(doubleOfBits(toInt(arg(a, 0)), toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "get", vmethod(a -> VInt(thisBytes(a).get(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "set", vmethod(a -> { thisBytes(a).set(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "getData", vmethod(a -> arg(a, 0)));
