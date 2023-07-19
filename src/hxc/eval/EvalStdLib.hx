@@ -311,6 +311,28 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
+	static function mkObject(fields:Array<{name:String, value:EvalValue}>):EvalValue {
+		var m:Map<Int, EvalValue> = new Map();
+		for (f in fields) m.set(EvalHash.hash(f.name), f.value);
+		return VObject(new VObject([], ODictionary(m)));
+	}
+
+	static function mkFileStat(ctx:EvalContext, stat:sys.FileStat):EvalValue {
+		return mkObject([
+			{name: "gid", value: VInt(stat.gid)},
+			{name: "uid", value: VInt(stat.uid)},
+			{name: "atime", value: mkDate(ctx, stat.atime.getTime())},
+			{name: "mtime", value: mkDate(ctx, stat.mtime.getTime())},
+			{name: "ctime", value: mkDate(ctx, stat.ctime.getTime())},
+			{name: "dev", value: VInt(stat.dev)},
+			{name: "ino", value: VInt(stat.ino)},
+			{name: "nlink", value: VInt(stat.nlink)},
+			{name: "rdev", value: VInt(stat.rdev)},
+			{name: "size", value: VInt(stat.size)},
+			{name: "mode", value: VInt(stat.mode)}
+		]);
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
@@ -985,9 +1007,17 @@ class EvalStdLib {
 			var d = sys.FileSystem.readDirectory(stringOf(arg(a, 0)));
 			VArray(new VArray([for (f in d) mkStr(f)], d.length));
 		}));
+		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> { sys.FileSystem.createDirectory(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> { sys.FileSystem.deleteDirectory(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> { sys.FileSystem.deleteFile(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "sys.FileSystem", "fullPath", vfn(a -> mkStr(sys.FileSystem.fullPath(stringOf(arg(a, 0))))));
 		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
+		reg(s, "sys.FileSystem", "rename", vfn(a -> { sys.FileSystem.rename(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
+		reg(s, "sys.FileSystem", "stat", vfn(a -> mkFileStat(ctx, sys.FileSystem.stat(stringOf(arg(a, 0))))));
+		reg(s, "sys.io.File", "getBytes", vfn(a -> mkBytes(ctx, sys.io.File.getBytes(stringOf(arg(a, 0))))));
 		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
+		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
+		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
 		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
 		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getFullYear())));
 		reg(inst, "Date", "getMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMonth())));
