@@ -304,6 +304,13 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
 	}
 
+	static function mkStringMap(ctx:EvalContext, values:Map<String, String>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var m:Map<String, MapEntry> = new Map();
+		for (k in values.keys()) m.set(k, {key: mkStr(k), value: mkStr(values.get(k))});
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
@@ -543,6 +550,24 @@ class EvalStdLib {
 		reg(s, "Std", "parseFloat", vfn(a -> VFloat(Std.parseFloat(stringOf(arg(a, 0))))));
 		reg(s, "Sys", "println", vfn(a -> { Sys.println(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "print", vfn(a -> { Sys.print(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "Sys", "args", vfn(a -> {
+			var args = [for (s in Sys.args()) mkStr(s)];
+			VArray(new VArray(args, args.length));
+		}));
+		reg(s, "Sys", "_command", vfn(a -> VInt(Sys.command(stringOf(arg(a, 0))))));
+		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
+		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
+		reg(s, "Sys", "getCwd", vfn(a -> mkStr(Sys.getCwd())));
+		reg(s, "Sys", "getEnv", vfn(a -> {
+			var v = Sys.getEnv(stringOf(arg(a, 0)));
+			v == null ? VNull : mkStr(v);
+		}));
+		reg(s, "Sys", "putEnv", vfn(a -> { Sys.putEnv(stringOf(arg(a, 0)), arg(a, 1) == VNull ? null : stringOf(arg(a, 1))); VNull; }));
+		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
+		reg(s, "Sys", "sleep", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
+		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
+		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
 
 		var inst = ctx.builtins.instanceBuiltins;
 
