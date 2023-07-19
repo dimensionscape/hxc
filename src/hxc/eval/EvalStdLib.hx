@@ -276,6 +276,62 @@ class EvalStdLib {
 		};
 	}
 
+	static inline var bytesBufferLengthKey = "__bytes_length";
+
+	static inline function bytesBufferByteKey(index:Int):String return "b:" + index;
+
+	static function bytesBufferLength(buf:Map<String, MapEntry>):Int {
+		var e = buf.get(bytesBufferLengthKey);
+		return e == null ? 0 : toInt(e.value);
+	}
+
+	static function bytesBufferSet(buf:Map<String, MapEntry>, key:String, value:EvalValue):Void {
+		buf.set(key, {key: mkStr(key), value: value});
+	}
+
+	static function bytesBufferSetLength(buf:Map<String, MapEntry>, length:Int):Void {
+		bytesBufferSet(buf, bytesBufferLengthKey, VInt(length));
+	}
+
+	static function bytesBufferAddByte(buf:Map<String, MapEntry>, byte:Int):Void {
+		var length = bytesBufferLength(buf);
+		bytesBufferSet(buf, bytesBufferByteKey(length), VInt(byte & 0xFF));
+		bytesBufferSetLength(buf, length + 1);
+	}
+
+	static function bytesBufferAddBytes(buf:Map<String, MapEntry>, bytes:haxe.io.Bytes, pos:Int, len:Int):Void {
+		if (pos < 0 || len < 0 || pos + len > bytes.length) throw "Outside bounds";
+		for (i in pos...pos + len) bytesBufferAddByte(buf, bytes.get(i));
+	}
+
+	static function bytesBufferToBytes(buf:Map<String, MapEntry>):haxe.io.Bytes {
+		var length = bytesBufferLength(buf);
+		var bytes = haxe.io.Bytes.alloc(length);
+		for (i in 0...length) {
+			var e = buf.get(bytesBufferByteKey(i));
+			bytes.set(i, e == null ? 0 : toInt(e.value));
+		}
+		return bytes;
+	}
+
+	static function bytesOfFloat(v:Float):haxe.io.Bytes {
+		var b = haxe.io.Bytes.alloc(4);
+		b.setFloat(0, v);
+		return b;
+	}
+
+	static function bytesOfDouble(v:Float):haxe.io.Bytes {
+		var b = haxe.io.Bytes.alloc(8);
+		b.setDouble(0, v);
+		return b;
+	}
+
+	static function int64Part(ctx:EvalContext, v:EvalValue, name:Int):Int {
+		var field = EvalField.field(ctx, v, name);
+		if (field == VNull) throw "Int64 field not found";
+		return toInt(field);
+	}
+
 	// Stable per-object identity for ObjectMap keys, assigned lazily on first use.
 	static var objIds = new haxe.ds.ObjectMap<{}, Int>();
 	static var objIdNext = 0;
@@ -309,6 +365,13 @@ class EvalStdLib {
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
+	}
+
+	static function mkBytesBuffer(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesBuffer"));
+		var buf:Map<String, MapEntry> = new Map();
+		bytesBufferSetLength(buf, 0);
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(buf)));
 	}
 
 	static function nativeStringOf(v:EvalValue):String {
@@ -1128,6 +1191,7 @@ class EvalStdLib {
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
+		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 
 		// Date: a native instance carrying its epoch timestamp.
 		ctors.set(EvalHash.hash("Date"), function(a) {
@@ -1220,6 +1284,38 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "setFloat", vmethod(a -> { thisBytes(a).setFloat(toInt(arg(a, 1)), toFloat(arg(a, 2))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "setInt32", vmethod(a -> { thisBytes(a).setInt32(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "setUInt16", vmethod(a -> { thisBytes(a).setUInt16(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "get_length", vmethod(a -> VInt(bytesBufferLength(thisMap(a)))));
+		reg(inst, "haxe.io.BytesBuffer", "addByte", vmethod(a -> { bytesBufferAddByte(thisMap(a), toInt(arg(a, 1))); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "add", vmethod(a -> { var b = thisBytes([arg(a, 1)]); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addString", vmethod(a -> { var b = haxe.io.Bytes.ofString(stringOf(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addInt32", vmethod(a -> {
+			var v = toInt(arg(a, 1));
+			var buf = thisMap(a);
+			bytesBufferAddByte(buf, v);
+			bytesBufferAddByte(buf, v >> 8);
+			bytesBufferAddByte(buf, v >> 16);
+			bytesBufferAddByte(buf, v >>> 24);
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesBuffer", "addInt64", vmethod(a -> {
+			var v = arg(a, 1);
+			var low = int64Part(ctx, v, EvalHash.keyLow);
+			var high = int64Part(ctx, v, EvalHash.keyHigh);
+			var buf = thisMap(a);
+			bytesBufferAddByte(buf, low);
+			bytesBufferAddByte(buf, low >> 8);
+			bytesBufferAddByte(buf, low >> 16);
+			bytesBufferAddByte(buf, low >>> 24);
+			bytesBufferAddByte(buf, high);
+			bytesBufferAddByte(buf, high >> 8);
+			bytesBufferAddByte(buf, high >> 16);
+			bytesBufferAddByte(buf, high >>> 24);
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesBuffer", "addFloat", vmethod(a -> { var b = bytesOfFloat(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addDouble", vmethod(a -> { var b = bytesOfDouble(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addBytes", vmethod(a -> { bytesBufferAddBytes(thisMap(a), thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisMap(a)))));
 	}
 
 	static function mapToString(m:Map<String, MapEntry>):String {
