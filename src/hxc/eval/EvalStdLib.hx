@@ -818,15 +818,33 @@ class EvalStdLib {
 		reg(inst, "Array", "keyValueIterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayKeyValueIterator"), [a[0]])));
 		reg(inst, "Array", "slice", vmethod(a -> {
 			var va = thisArray(a);
+			var length = va.alength;
 			var pos = toInt(arg(a, 1));
-			var sub = (a.length > 2 && arg(a, 2) != VNull) ? va.avalues.slice(pos, toInt(arg(a, 2))) : va.avalues.slice(pos);
+			var end = a.length > 2 && arg(a, 2) != VNull ? toInt(arg(a, 2)) : length;
+			if (end > length) end = length;
+			if (pos < 0) pos = length + pos;
+			if (end < 0) end = length + end;
+			if (pos < 0) pos = 0;
+			if (end < 0) end = 0;
+			var sub = va.avalues.slice(pos, end);
 			VArray(new VArray(sub, sub.length));
 		}));
 		reg(inst, "Array", "splice", vmethod(a -> {
 			var va = thisArray(a);
-			var removed = va.avalues.splice(toInt(arg(a, 1)), toInt(arg(a, 2)));
-			va.alength = va.avalues.length;
-			VArray(new VArray(removed, removed.length));
+			var pos = toInt(arg(a, 1));
+			var len = toInt(arg(a, 2));
+			var length = va.alength;
+			if (len < 0 || pos > length) {
+				VArray(new VArray([], 0));
+			} else {
+				if (pos < 0) pos = length + pos;
+				if (pos < 0) pos = 0;
+				var delta = length - pos;
+				if (len > delta) len = delta;
+				var removed = va.avalues.splice(pos, len);
+				va.alength = va.avalues.length;
+				VArray(new VArray(removed, removed.length));
+			}
 		}));
 		reg(inst, "Array", "reverse", vmethod(a -> { thisArray(a).avalues.reverse(); VNull; }));
 		reg(inst, "Array", "sort", vmethod(a -> {
@@ -859,7 +877,17 @@ class EvalStdLib {
 			if (idx >= 0) { va.avalues.splice(idx, 1); va.alength = va.avalues.length; EvalValueTools.vbool(true); } else EvalValueTools.vbool(false);
 		}));
 		reg(inst, "Array", "insert", vmethod(a -> {
-			var va = thisArray(a); va.avalues.insert(toInt(arg(a, 1)), arg(a, 2)); va.alength = va.avalues.length; VNull;
+			var va = thisArray(a);
+			var pos = toInt(arg(a, 1));
+			if (pos >= va.alength) {
+				va.avalues.push(arg(a, 2));
+			} else {
+				if (pos < 0) pos = va.alength + pos;
+				if (pos < 0) pos = 0;
+				va.avalues.insert(pos, arg(a, 2));
+			}
+			va.alength = va.avalues.length;
+			VNull;
 		}));
 		reg(inst, "Array", "shift", vmethod(a -> {
 			var va = thisArray(a);
