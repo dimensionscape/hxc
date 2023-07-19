@@ -1197,6 +1197,11 @@ class EvalStdLib {
 		reg(s, "haxe.io.Bytes", "ofHex", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofHex(stringOf(arg(a, 0))))));
 		reg(s, "haxe.io.Bytes", "ofData", vfn(a -> arg(a, 0)));
 		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> VInt(thisBytes([arg(a, 0)]).get(toInt(arg(a, 1))))));
+		reg(s, "haxe.crypto.Crc32", "make", vfn(a -> VInt(haxe.crypto.Crc32.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Md5", "encode", vfn(a -> mkStr(haxe.crypto.Md5.encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.crypto.Sha1", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha1.make(thisBytes([arg(a, 0)])))));
 		reg(inst, "haxe.io.Bytes", "get", vmethod(a -> VInt(thisBytes(a).get(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "set", vmethod(a -> { thisBytes(a).set(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "getData", vmethod(a -> arg(a, 0)));
