@@ -552,8 +552,16 @@ class EvalStdLib {
 			var i = toInt(arg(a, 1));
 			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
 		}));
+		reg(inst, "String", "cca", vmethod(a -> {
+			var str = thisString(a);
+			var i = toInt(arg(a, 1));
+			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
+		}));
 		reg(inst, "String", "indexOf", vmethod(a -> VInt(thisString(a).indexOf(stringOf(arg(a, 1)), a.length > 2 ? toInt(arg(a, 2)) : 0))));
-		reg(inst, "String", "lastIndexOf", vmethod(a -> VInt(thisString(a).lastIndexOf(stringOf(arg(a, 1))))));
+		reg(inst, "String", "lastIndexOf", vmethod(a -> {
+			var str = thisString(a);
+			VInt(a.length > 2 && arg(a, 2) != VNull ? str.lastIndexOf(stringOf(arg(a, 1)), toInt(arg(a, 2))) : str.lastIndexOf(stringOf(arg(a, 1))));
+		}));
 		reg(inst, "String", "toUpperCase", vmethod(a -> mkStr(thisString(a).toUpperCase())));
 		reg(inst, "String", "toLowerCase", vmethod(a -> mkStr(thisString(a).toLowerCase())));
 		reg(inst, "String", "substr", vmethod(a -> {
