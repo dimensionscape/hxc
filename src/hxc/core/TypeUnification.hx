@@ -215,7 +215,7 @@ class TypeUnification {
 		}
 	}
 
-	static function addDownConstraint(m:TMono, constr:TMonoConstraint):Void {
+	public static function addDownConstraint(m:TMono, constr:TMonoConstraint):Void {
 		m.downConstraints = [constr].concat(m.downConstraints);
 		switch (constr) {
 			case MMono(m2, s):

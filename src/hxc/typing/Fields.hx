@@ -3,6 +3,7 @@ package hxc.typing;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
 import hxc.core.NotFound;
 import hxc.core.TypingError;
 import hxc.core.WithType;
@@ -100,8 +101,55 @@ class Fields {
 							}
 						} else throw fieldNotFound(e.type, i, pfield);
 				}
-			case TMono(_):
-				if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw new TypingError("Field access on an unresolved type is not yet ported", p);
+			case TMono(r):
+				// A field access on a monomorph adds a structural down-constraint (the receiver becomes an
+				// open anon with this field) unless its constraints already pin a concrete type or
+				// structure.
+				var isSet = mode.match(MSet(_));
+				function mkUnknownField():TClassField {
+					var nf = TypeFunctions.mkField(i, TypeFunctions.mkMono(), pfield, Position.nullPos);
+					nf.kind = Var(new VarKind(AccNormal, isSet ? AccNormal : AccNo));
+					return nf;
+				}
+				function checkConstr(kind:TMonoConstraintKind):AccessKind {
+					return switch (kind) {
+						case CStructural(fields, isOpen):
+							var f = fields.get(i);
+							if (f != null) fieldAccess(ctx, mode, f, FHAnon, e, pfield);
+							else if (isOpen) {
+								var nf = mkUnknownField();
+								TypeUnification.addDownConstraint(r, MField(nf));
+								fieldAccess(ctx, mode, nf, FHAnon, e, pfield);
+							} else throw fieldNotFound(e.type, i, pfield);
+						case CTypes(tl):
+							var res:AccessKind = null;
+							var err:Dynamic = null;
+							for (tc in tl) {
+								try { res = typeField(ctx, TypeFunctions.mk(e.expr, tc.t, e.pos), i, p, mode, withType); break; }
+								catch (ex:NotFound) err = ex
+								catch (ex:TypingError) err = ex;
+							}
+							if (res != null) res else throw (err != null ? err : new NotFound());
+						case CUnknown:
+							var seen = false;
+							for (mp in ctx.monomorphs) if (mp.m == r) { seen = true; break; }
+							if (!seen) ctx.monomorphs.unshift({m: r, p: p});
+							var nf = mkUnknownField();
+							TypeUnification.addDownConstraint(r, MField(nf));
+							TypeUnification.addDownConstraint(r, MOpenStructure);
+							fieldAccess(ctx, mode, nf, FHAnon, e, pfield);
+						case CMixed(kinds):
+							var res:AccessKind = null;
+							var err:Dynamic = null;
+							for (k in kinds) {
+								try { res = checkConstr(k); break; }
+								catch (ex:NotFound) err = ex
+								catch (ex:TypingError) err = ex;
+							}
+							if (res != null) res else throw (err != null ? err : new NotFound());
+					};
+				}
+				checkConstr(TypeUnification.classifyDownConstraints(r));
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
 				if (cf == null) {
