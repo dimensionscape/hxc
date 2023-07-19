@@ -948,14 +948,27 @@ class EvalStdLib {
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
 		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> mkBytes(ctx, haxe.io.Bytes.alloc(toInt(arg(a, 0))))));
 		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Bytes", "ofHex", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofHex(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Bytes", "ofData", vfn(a -> arg(a, 0)));
+		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> VInt(thisBytes([arg(a, 0)]).get(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "get", vmethod(a -> VInt(thisBytes(a).get(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "set", vmethod(a -> { thisBytes(a).set(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "getData", vmethod(a -> arg(a, 0)));
+		reg(inst, "haxe.io.Bytes", "getDouble", vmethod(a -> VFloat(thisBytes(a).getDouble(toInt(arg(a, 1))))));
+		reg(inst, "haxe.io.Bytes", "getFloat", vmethod(a -> VFloat(thisBytes(a).getFloat(toInt(arg(a, 1))))));
+		reg(inst, "haxe.io.Bytes", "getInt32", vmethod(a -> VInt(thisBytes(a).getInt32(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> mkStr(thisBytes(a).getString(toInt(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(inst, "haxe.io.Bytes", "getUInt16", vmethod(a -> VInt(thisBytes(a).getUInt16(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> mkStr(thisBytes(a).toString())));
+		reg(inst, "haxe.io.Bytes", "toHex", vmethod(a -> mkStr(thisBytes(a).toHex())));
 		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> mkBytes(ctx, thisBytes(a).sub(toInt(arg(a, 1)), toInt(arg(a, 2))))));
 		reg(inst, "haxe.io.Bytes", "fill", vmethod(a -> { thisBytes(a).fill(toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "blit", vmethod(a -> { thisBytes(a).blit(toInt(arg(a, 1)), thisBytes([arg(a, 2)]), toInt(arg(a, 3)), toInt(arg(a, 4))); VNull; }));
 		reg(inst, "haxe.io.Bytes", "compare", vmethod(a -> VInt(thisBytes(a).compare(thisBytes([arg(a, 1)])))));
+		reg(inst, "haxe.io.Bytes", "setDouble", vmethod(a -> { thisBytes(a).setDouble(toInt(arg(a, 1)), toFloat(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "setFloat", vmethod(a -> { thisBytes(a).setFloat(toInt(arg(a, 1)), toFloat(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "setInt32", vmethod(a -> { thisBytes(a).setInt32(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
+		reg(inst, "haxe.io.Bytes", "setUInt16", vmethod(a -> { thisBytes(a).setUInt16(toInt(arg(a, 1)), toInt(arg(a, 2))); VNull; }));
 	}
 
 	static function mapToString(m:Map<String, MapEntry>):String {
