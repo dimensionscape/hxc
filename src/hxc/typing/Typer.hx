@@ -243,6 +243,28 @@ class Typer {
 					args.push({v: TypeFunctions.allocVar(VUser(TVOLocalVariable), fa.name.name, at, fa.name.pos), c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
+				// Top-down inference: bind unannotated (mono) arg/return types from an expected function
+				// type.
+				switch (withType) {
+					case WithType(wt, _):
+						switch (TypeFunctions.follow(wt)) {
+							case TFun(sig) if (sig.args.length == args.length):
+								for (i in 0...args.length) switch (TypeFunctions.follow(args[i].v.type)) {
+									case TMono(_): try TypeUnification.unifyDefault(sig.args[i].t, args[i].v.type) catch (_:Dynamic) {}
+									case _:
+								}
+								var expectVoid = switch (TypeFunctions.follow(sig.ret)) {
+									case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void" && !kind.match(FKArrow);
+									case _: false;
+								};
+								if (!expectVoid) switch (TypeFunctions.follow(ret)) {
+									case TMono(_): try TypeUnification.unifyDefault(ret, sig.ret) catch (_:Dynamic) {}
+									case _:
+								}
+							case _:
+						}
+					case _:
+				}
 				var ft = TFun({args: [for (a in args) {name: a.v.name, opt: false, t: a.v.type}], ret: ret});
 				// A named local function binds its name (in scope before the body, so it can recurse)
 				// and evaluates to a TVar assignment; an anonymous one is just the function value.
