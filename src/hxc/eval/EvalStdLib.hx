@@ -491,6 +491,10 @@ class EvalStdLib {
 		return fileName + ":" + lineNumber + ": " + parts.join(",") + "\n";
 	}
 
+	static function hostIpString(ip:Int):String {
+		return (ip >>> 24) + "." + ((ip >>> 16) & 0xFF) + "." + ((ip >>> 8) & 0xFF) + "." + (ip & 0xFF);
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
@@ -1327,6 +1331,10 @@ class EvalStdLib {
 		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
 		reg(s, "sys.FileSystem", "rename", vfn(a -> { sys.FileSystem.rename(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
 		reg(s, "sys.FileSystem", "stat", vfn(a -> mkFileStat(ctx, sys.FileSystem.stat(stringOf(arg(a, 0))))));
+		reg(s, "sys.net.Host", "localhost", vfn(a -> mkStr(sys.net.Host.localhost())));
+		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(new sys.net.Host(stringOf(arg(a, 0))).ip)));
+		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
+		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
 		reg(s, "sys.io.File", "getBytes", vfn(a -> mkBytes(ctx, sys.io.File.getBytes(stringOf(arg(a, 0))))));
 		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
