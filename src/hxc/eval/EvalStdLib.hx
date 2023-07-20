@@ -476,6 +476,21 @@ class EvalStdLib {
 		};
 	}
 
+	static function traceString(ctx:EvalContext, value:EvalValue, infos:EvalValue):String {
+		var s = stringOf(value);
+		if (infos == VNull) return s + "\n";
+		var fileName = stringOf(EvalField.field(ctx, infos, EvalHash.hash("fileName")));
+		var lineNumber = toInt(EvalField.field(ctx, infos, EvalHash.hash("lineNumber")));
+		var params = EvalField.field(ctx, infos, EvalHash.hash("customParams"));
+		var parts = [s];
+		switch (params) {
+			case VArray(va):
+				for (i in 0...va.alength) parts.push(stringOf(va.avalues[i]));
+			case _:
+		}
+		return fileName + ":" + lineNumber + ": " + parts.join(",") + "\n";
+	}
+
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
@@ -781,6 +796,7 @@ class EvalStdLib {
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
 		reg(s, "Std", "parseInt", vfn(a -> { var r = Std.parseInt(stringOf(arg(a, 0))); r == null ? VNull : VInt(r); }));
 		reg(s, "Std", "parseFloat", vfn(a -> VFloat(Std.parseFloat(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Log", "trace", vfn(a -> { Sys.print(traceString(ctx, arg(a, 0), arg(a, 1))); VNull; }));
 		reg(s, "Sys", "println", vfn(a -> { Sys.println(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "print", vfn(a -> { Sys.print(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "args", vfn(a -> {
