@@ -363,6 +363,8 @@ class EvalStdLib {
 	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
 	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
+	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:sys.io.FileInput, eof:Bool}>();
+	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, sys.io.FileOutput>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -393,6 +395,44 @@ class EvalStdLib {
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
+	}
+
+	static function mkFileInput(ctx:EvalContext, input:sys.io.FileInput):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileInput"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		fileInputs.set(vi, {input: input, eof: false});
+		return VInstance(vi);
+	}
+
+	static function mkFileOutput(ctx:EvalContext, output:sys.io.FileOutput):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileOutput"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		fileOutputs.set(vi, output);
+		return VInstance(vi);
+	}
+
+	static function thisFileInput(a:Array<EvalValue>):{input:sys.io.FileInput, eof:Bool} {
+		return fileInputs.get(thisInstance(a, "FileInput"));
+	}
+
+	static function thisFileOutput(a:Array<EvalValue>):sys.io.FileOutput {
+		return fileOutputs.get(thisInstance(a, "FileOutput"));
+	}
+
+	static function fileSeekMode(mode:EvalValue):sys.io.FileSeek {
+		return switch (mode) {
+			case VEnumValue(ev): switch (ev.eindex) {
+				case 1: sys.io.FileSeek.SeekCur;
+				case 2: sys.io.FileSeek.SeekEnd;
+				case _: sys.io.FileSeek.SeekBegin;
+			}
+			case _: sys.io.FileSeek.SeekBegin;
+		};
+	}
+
+	static function eof(ctx:EvalContext):Dynamic {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Eof"));
+		return EvalExceptions.exc(ctx, VInstance(new VInstance(proto.pinstanceFields.copy(), proto)));
 	}
 
 	static function mkBytesBuffer(ctx:EvalContext):EvalValue {
@@ -1354,10 +1394,63 @@ class EvalStdLib {
 		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(new sys.net.Host(stringOf(arg(a, 0))).ip)));
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
+		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
 		reg(s, "sys.io.File", "getBytes", vfn(a -> mkBytes(ctx, sys.io.File.getBytes(stringOf(arg(a, 0))))));
 		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
+		reg(s, "sys.io.File", "read", vfn(a -> mkFileInput(ctx, sys.io.File.read(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
 		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
+		reg(s, "sys.io.File", "update", vfn(a -> mkFileOutput(ctx, sys.io.File.update(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
+		reg(s, "sys.io.File", "write", vfn(a -> mkFileOutput(ctx, sys.io.File.write(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
+		reg(inst, "sys.io.FileInput", "close", vmethod(a -> {
+			var vi = thisInstance(a, "FileInput");
+			fileInputs.get(vi).input.close();
+			fileInputs.remove(vi);
+			VNull;
+		}));
+		reg(inst, "sys.io.FileInput", "eof", vmethod(a -> EvalValueTools.vbool(thisFileInput(a).eof)));
+		reg(inst, "sys.io.FileInput", "seek", vmethod(a -> {
+			var ch = thisFileInput(a);
+			ch.eof = false;
+			ch.input.seek(toInt(arg(a, 1)), fileSeekMode(arg(a, 2)));
+			VNull;
+		}));
+		reg(inst, "sys.io.FileInput", "tell", vmethod(a -> VInt(thisFileInput(a).input.tell())));
+		reg(inst, "sys.io.FileInput", "readByte", vmethod(a -> {
+			var ch = thisFileInput(a);
+			try VInt(ch.input.readByte()) catch (_:Dynamic) {
+				ch.eof = true;
+				eof(ctx);
+			}
+		}));
+		reg(inst, "sys.io.FileInput", "readBytes", vmethod(a -> {
+			var ch = thisFileInput(a);
+			var n = try ch.input.readBytes(thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))) catch (_:Dynamic) {
+				ch.eof = true;
+				eof(ctx);
+			}
+			if (n == 0) {
+				ch.eof = true;
+				eof(ctx);
+			}
+			VInt(n);
+		}));
+		reg(inst, "sys.io.FileOutput", "close", vmethod(a -> {
+			var vi = thisInstance(a, "FileOutput");
+			fileOutputs.get(vi).close();
+			fileOutputs.remove(vi);
+			VNull;
+		}));
+		reg(inst, "sys.io.FileOutput", "flush", vmethod(a -> { thisFileOutput(a).flush(); VNull; }));
+		reg(inst, "sys.io.FileOutput", "seek", vmethod(a -> {
+			var out = thisFileOutput(a);
+			out.seek(toInt(arg(a, 1)), fileSeekMode(arg(a, 2)));
+			VNull;
+		}));
+		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> VInt(thisFileOutput(a).tell())));
+		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { thisFileOutput(a).writeByte(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(thisFileOutput(a).writeBytes(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));
 		reg(s, "eval._NativeString.NativeString_Impl_", "toBytes", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(nativeStringOf(arg(a, 0))))));
