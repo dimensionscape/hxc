@@ -360,6 +360,8 @@ class EvalStdLib {
 	// Stable per-object identity for ObjectMap keys, assigned lazily on first use.
 	static var objIds = new haxe.ds.ObjectMap<{}, Int>();
 	static var objIdNext = 0;
+	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
+	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -442,6 +444,36 @@ class EvalStdLib {
 			{name: "size", value: VInt(stat.size)},
 			{name: "mode", value: VInt(stat.mode)}
 		]);
+	}
+
+	static function thisInstance(a:Array<EvalValue>, typeName:String):VInstance {
+		return switch (arg(a, 0)) {
+			case VInstance(vi): vi;
+			case _: throw "Unexpected value for " + typeName;
+		};
+	}
+
+	static function zipResult(r:Dynamic):EvalValue {
+		var wrote:Dynamic = Reflect.field(r, "write");
+		if (wrote == null) wrote = Reflect.field(r, "wriet");
+		return mkObject([
+			{name: "done", value: EvalValueTools.vbool(Reflect.field(r, "done"))},
+			{name: "read", value: VInt(Reflect.field(r, "read"))},
+			{name: "write", value: VInt(wrote)}
+		]);
+	}
+
+	static function flushMode(v:EvalValue):haxe.zip.FlushMode {
+		return switch (v) {
+			case VEnumValue(ev): switch (ev.eindex) {
+				case 0: haxe.zip.FlushMode.NO;
+				case 1: haxe.zip.FlushMode.SYNC;
+				case 2: haxe.zip.FlushMode.FULL;
+				case 3: haxe.zip.FlushMode.FINISH;
+				case _: haxe.zip.FlushMode.BLOCK;
+			}
+			case _: haxe.zip.FlushMode.NO;
+		};
 	}
 
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
@@ -1328,6 +1360,10 @@ class EvalStdLib {
 		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.crypto.Sha1", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha1.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.zip.Compress", "run",
+			vfn(a -> mkBytes(ctx, haxe.zip.Compress.run(thisBytes([arg(a, 0)]), toInt(arg(a, 1))))));
+		reg(s, "haxe.zip.Uncompress", "run",
+			vfn(a -> mkBytes(ctx, haxe.zip.Uncompress.run(thisBytes([arg(a, 0)]), arg(a, 1) == VNull ? null : toInt(arg(a, 1))))));
 		reg(s, "haxe.io.FPHelper", "doubleToI64", vfn(a -> doubleBits(toFloat(arg(a, 0)))));
 		reg(s, "haxe.io.FPHelper", "floatToI32", vfn(a -> VInt(floatBits(toFloat(arg(a, 0))))));
 		reg(s, "haxe.io.FPHelper", "i32ToFloat", vfn(a -> VFloat(floatOfBits(toInt(arg(a, 0))))));
@@ -1382,6 +1418,42 @@ class EvalStdLib {
 		reg(inst, "haxe.io.BytesBuffer", "addDouble", vmethod(a -> { var b = bytesOfDouble(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
 		reg(inst, "haxe.io.BytesBuffer", "addBytes", vmethod(a -> { bytesBufferAddBytes(thisMap(a), thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
 		reg(inst, "haxe.io.BytesBuffer", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisMap(a)))));
+		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
+			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+			zipCompress.set(vi, new haxe.zip.Compress(toInt(arg(a, 0))));
+			return VInstance(vi);
+		});
+		ctors.set(EvalHash.hash("haxe.zip.Uncompress"), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Uncompress"));
+			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+			zipUncompress.set(vi, new haxe.zip.Uncompress(arg(a, 0) == VNull ? null : toInt(arg(a, 0))));
+			return VInstance(vi);
+		});
+		reg(inst, "haxe.zip.Compress", "execute", vmethod(a -> zipResult(zipCompress.get(thisInstance(a, "Compress")).execute(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), thisBytes([arg(a, 3)]), toInt(arg(a, 4))))));
+		reg(inst, "haxe.zip.Compress", "setFlushMode", vmethod(a -> {
+			zipCompress.get(thisInstance(a, "Compress")).setFlushMode(flushMode(arg(a, 1)));
+			VNull;
+		}));
+		reg(inst, "haxe.zip.Compress", "close", vmethod(a -> {
+			var vi = thisInstance(a, "Compress");
+			zipCompress.get(vi).close();
+			zipCompress.remove(vi);
+			VNull;
+		}));
+		reg(inst, "haxe.zip.Uncompress", "execute", vmethod(a -> zipResult(zipUncompress.get(thisInstance(a, "Uncompress")).execute(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), thisBytes([arg(a, 3)]), toInt(arg(a, 4))))));
+		reg(inst, "haxe.zip.Uncompress", "setFlushMode", vmethod(a -> {
+			zipUncompress.get(thisInstance(a, "Uncompress")).setFlushMode(flushMode(arg(a, 1)));
+			VNull;
+		}));
+		reg(inst, "haxe.zip.Uncompress", "close", vmethod(a -> {
+			var vi = thisInstance(a, "Uncompress");
+			zipUncompress.get(vi).close();
+			zipUncompress.remove(vi);
+			VNull;
+		}));
 	}
 
 	static function mapToString(m:Map<String, MapEntry>):String {
