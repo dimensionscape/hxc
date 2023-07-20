@@ -362,6 +362,7 @@ class EvalStdLib {
 	static var objIdNext = 0;
 	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
 	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
+	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -493,6 +494,24 @@ class EvalStdLib {
 
 	static function hostIpString(ip:Int):String {
 		return (ip >>> 24) + "." + ((ip >>> 16) & 0xFF) + "." + ((ip >>> 8) & 0xFF) + "." + (ip & 0xFF);
+	}
+
+	static function mkNativeSocket(ctx:EvalContext, socket:sys.net.Socket):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeSocket"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeSockets.set(vi, socket);
+		return VInstance(vi);
+	}
+
+	static function thisSocket(a:Array<EvalValue>):sys.net.Socket {
+		return nativeSockets.get(thisInstance(a, "NativeSocket"));
+	}
+
+	static function hostInfo(info:{host:sys.net.Host, port:Int}):EvalValue {
+		return mkObject([
+			{name: "ip", value: VInt(info.host.ip)},
+			{name: "port", value: VInt(info.port)}
+		]);
 	}
 
 	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
@@ -1454,6 +1473,7 @@ class EvalStdLib {
 			zipUncompress.set(vi, new haxe.zip.Uncompress(arg(a, 0) == VNull ? null : toInt(arg(a, 0))));
 			return VInstance(vi);
 		});
+		ctors.set(EvalHash.hash("eval.vm.NativeSocket"), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));
 		reg(inst, "haxe.zip.Compress", "execute", vmethod(a -> zipResult(zipCompress.get(thisInstance(a, "Compress")).execute(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), thisBytes([arg(a, 3)]), toInt(arg(a, 4))))));
 		reg(inst, "haxe.zip.Compress", "setFlushMode", vmethod(a -> {
@@ -1478,6 +1498,71 @@ class EvalStdLib {
 			zipUncompress.remove(vi);
 			VNull;
 		}));
+		reg(s, "eval.vm.NativeSocket", "select", vfn(a -> {
+			function socketValue(v:EvalValue):sys.net.Socket {
+				var field = EvalField.field(ctx, v, EvalHash.hash("socket"));
+				return nativeSockets.get(thisInstance([field], "NativeSocket"));
+			}
+			function list(v:EvalValue):Array<EvalValue> {
+				return switch (v) {
+					case VArray(va): va.avalues.slice(0, va.alength);
+					case _: [];
+				};
+			}
+			var read = list(arg(a, 0));
+			var write = list(arg(a, 1));
+			var others = list(arg(a, 2));
+			var timeout = arg(a, 3) == VNull ? 0.0 : toFloat(arg(a, 3));
+			var selected = sys.net.Socket.select(
+				[for (v in read) socketValue(v)],
+				[for (v in write) socketValue(v)],
+				[for (v in others) socketValue(v)],
+				timeout
+			);
+			function keep(src:Array<EvalValue>, selected:Array<sys.net.Socket>):EvalValue {
+				var out:Array<EvalValue> = [];
+				for (v in src) {
+					var sock = socketValue(v);
+					for (s in selected) if (sock == s) {
+						out.push(v);
+						break;
+					}
+				}
+				return VArray(new VArray(out, out.length));
+			}
+			mkObject([
+				{name: "read", value: keep(read, selected.read)},
+				{name: "write", value: keep(write, selected.write)},
+				{name: "others", value: keep(others, selected.others)}
+			]);
+		}));
+		reg(inst, "eval.vm.NativeSocket", "accept", vmethod(a -> mkNativeSocket(ctx, thisSocket(a).accept())));
+		reg(inst, "eval.vm.NativeSocket", "bind", vmethod(a -> {
+			thisSocket(a).bind(new sys.net.Host(hostIpString(toInt(arg(a, 1)))), toInt(arg(a, 2)));
+			VNull;
+		}));
+		reg(inst, "eval.vm.NativeSocket", "close", vmethod(a -> {
+			var vi = thisInstance(a, "NativeSocket");
+			nativeSockets.get(vi).close();
+			nativeSockets.remove(vi);
+			VNull;
+		}));
+		reg(inst, "eval.vm.NativeSocket", "connect", vmethod(a -> {
+			thisSocket(a).connect(new sys.net.Host(hostIpString(toInt(arg(a, 1)))), toInt(arg(a, 2)));
+			VNull;
+		}));
+		reg(inst, "eval.vm.NativeSocket", "host", vmethod(a -> hostInfo(thisSocket(a).host())));
+		reg(inst, "eval.vm.NativeSocket", "listen", vmethod(a -> { thisSocket(a).listen(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "eval.vm.NativeSocket", "peer", vmethod(a -> hostInfo(thisSocket(a).peer())));
+		reg(inst, "eval.vm.NativeSocket", "receive", vmethod(a -> VInt(thisSocket(a).input.readBytes(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "eval.vm.NativeSocket", "receiveChar", vmethod(a -> VInt(thisSocket(a).input.readByte())));
+		reg(inst, "eval.vm.NativeSocket", "send", vmethod(a -> VInt(thisSocket(a).output.writeBytes(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "eval.vm.NativeSocket", "sendChar", vmethod(a -> { thisSocket(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "eval.vm.NativeSocket", "setFastSend", vmethod(a -> { thisSocket(a).setFastSend(arg(a, 1) == VTrue); VNull; }));
+		reg(inst, "eval.vm.NativeSocket", "setTimeout", vmethod(a -> { thisSocket(a).setTimeout(toFloat(arg(a, 1))); VNull; }));
+		reg(inst, "eval.vm.NativeSocket", "shutdown", vmethod(a -> { thisSocket(a).shutdown(arg(a, 1) == VTrue, arg(a, 2) == VTrue); VNull; }));
 	}
 
 	static function mapToString(m:Map<String, MapEntry>):String {
