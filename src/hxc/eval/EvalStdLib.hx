@@ -889,6 +889,109 @@ class EvalStdLib {
 		return VEnumValue(new VEnumValue(idx, args, EvalHash.hash("ValueType"), null));
 	}
 
+	static var gcMinorHeapSize = 262144;
+	static var gcMajorHeapIncrement = 15;
+	static var gcSpaceOverhead = 80;
+	static var gcVerbose = 0;
+	static var gcMaxOverhead = 500;
+	static var gcStackLimit = 1048576;
+	static var gcAllocationPolicy = 0;
+	static var gcMinorCollections = 0;
+	static var gcMajorCollections = 0;
+	static var gcCompactions = 0;
+
+	static function gcCurrentBytes():Float {
+		#if cpp
+		return cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_CURRENT);
+		#else
+		return 0;
+		#end
+	}
+
+	static function gcUsedBytes():Float {
+		#if cpp
+		return cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE);
+		#else
+		return 0;
+		#end
+	}
+
+	static function gcWordCount(bytes:Float):Int {
+		return Std.int(bytes / 8);
+	}
+
+	static function gcMinor():Void {
+		gcMinorCollections++;
+		#if cpp
+		cpp.vm.Gc.run(false);
+		#end
+	}
+
+	static function gcMajor():Void {
+		gcMinorCollections++;
+		gcMajorCollections++;
+		#if cpp
+		cpp.vm.Gc.run(true);
+		#end
+	}
+
+	static function gcCompact():Void {
+		gcMajor();
+		gcCompactions++;
+		#if cpp
+		cpp.vm.Gc.compact();
+		#end
+	}
+
+	static function gcCounters():EvalValue {
+		var words = gcWordCount(gcCurrentBytes());
+		return mkObject([
+			{name: "minor_words", value: VFloat(words)},
+			{name: "promoted_words", value: VFloat(0)},
+			{name: "major_words", value: VFloat(words)}
+		]);
+	}
+
+	static function gcStats():EvalValue {
+		var used = gcWordCount(gcUsedBytes());
+		var current = gcWordCount(gcCurrentBytes());
+		return mkObject([
+			{name: "minor_words", value: VFloat(current)},
+			{name: "promoted_words", value: VFloat(0)},
+			{name: "major_words", value: VFloat(current)},
+			{name: "minor_collections", value: VInt(gcMinorCollections)},
+			{name: "major_collections", value: VInt(gcMajorCollections)},
+			{name: "heap_words", value: VInt(current)},
+			{name: "heap_chunks", value: VInt(current == 0 ? 0 : 1)},
+			{name: "live_words", value: VInt(used)},
+			{name: "live_blocks", value: VInt(0)},
+			{name: "free_words", value: VInt(0)},
+			{name: "free_blocks", value: VInt(0)},
+			{name: "largest_free", value: VInt(0)},
+			{name: "fragments", value: VInt(0)},
+			{name: "compactions", value: VInt(gcCompactions)},
+			{name: "top_heap_words", value: VInt(current)},
+			{name: "stack_size", value: VInt(0)}
+		]);
+	}
+
+	static function gcControl():EvalValue {
+		return mkObject([
+			{name: "minor_heap_size", value: VInt(gcMinorHeapSize)},
+			{name: "major_heap_increment", value: VInt(gcMajorHeapIncrement)},
+			{name: "space_overhead", value: VInt(gcSpaceOverhead)},
+			{name: "verbose", value: VInt(gcVerbose)},
+			{name: "max_overhead", value: VInt(gcMaxOverhead)},
+			{name: "stack_limit", value: VInt(gcStackLimit)},
+			{name: "allocation_policy", value: VInt(gcAllocationPolicy)}
+		]);
+	}
+
+	static function gcField(ctx:EvalContext, r:EvalValue, name:String, current:Int):Int {
+		var v = EvalField.dynamicField(ctx, r, EvalHash.hash(name));
+		return v == VNull ? current : toInt(v);
+	}
+
 	public static function init(ctx:EvalContext):Void {
 		var s = ctx.builtins.staticBuiltins;
 
@@ -960,6 +1063,36 @@ class EvalStdLib {
 		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
 		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
+		reg(s, "eval.vm.Gc", "allocated_bytes", vfn(a -> VFloat(gcCurrentBytes())));
+		reg(s, "eval.vm.Gc", "compact", vfn(a -> { gcCompact(); VNull; }));
+		reg(s, "eval.vm.Gc", "counters", vfn(a -> gcCounters()));
+		reg(s, "eval.vm.Gc", "finalise", vfn(a -> VNull));
+		reg(s, "eval.vm.Gc", "finalise_release", vfn(a -> VNull));
+		reg(s, "eval.vm.Gc", "full_major", vfn(a -> { gcMajor(); VNull; }));
+		reg(s, "eval.vm.Gc", "get", vfn(a -> gcControl()));
+		reg(s, "eval.vm.Gc", "major", vfn(a -> { gcMajor(); VNull; }));
+		reg(s, "eval.vm.Gc", "major_slice", vfn(a -> { gcMajor(); VInt(0); }));
+		reg(s, "eval.vm.Gc", "minor", vfn(a -> { gcMinor(); VNull; }));
+		reg(s, "eval.vm.Gc", "print_stat", vfn(a -> {
+			var out = thisFileOutput([arg(a, 0)]).output;
+			out.writeString("minor_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalHash.hash("minor_words"))) + "\n");
+			out.writeString("major_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalHash.hash("major_words"))) + "\n");
+			out.flush();
+			VNull;
+		}));
+		reg(s, "eval.vm.Gc", "quick_stat", vfn(a -> gcStats()));
+		reg(s, "eval.vm.Gc", "set", vfn(a -> {
+			var r = arg(a, 0);
+			gcMinorHeapSize = gcField(ctx, r, "minor_heap_size", gcMinorHeapSize);
+			gcMajorHeapIncrement = gcField(ctx, r, "major_heap_increment", gcMajorHeapIncrement);
+			gcSpaceOverhead = gcField(ctx, r, "space_overhead", gcSpaceOverhead);
+			gcVerbose = gcField(ctx, r, "verbose", gcVerbose);
+			gcMaxOverhead = gcField(ctx, r, "max_overhead", gcMaxOverhead);
+			gcStackLimit = gcField(ctx, r, "stack_limit", gcStackLimit);
+			gcAllocationPolicy = gcField(ctx, r, "allocation_policy", gcAllocationPolicy);
+			VNull;
+		}));
+		reg(s, "eval.vm.Gc", "stat", vfn(a -> gcStats()));
 
 		var inst = ctx.builtins.instanceBuiltins;
 
