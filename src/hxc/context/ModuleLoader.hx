@@ -284,11 +284,7 @@ class ModuleLoader {
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
 					var isCore = TypeFunctions.hasMeta(":coreType", a.meta);
-					var isMultiType = TypeFunctions.hasMeta(":multiType", a.meta);
-					var isMapMultiType = isMultiType && d.dName.name == "Map" && (
-						m.path.pack.length == 0 || (m.path.pack.length == 2 && m.path.pack[0] == "haxe" && m.path.pack[1] == "ds")
-					);
-					if (!isMapMultiType && !(d.dData.length == 0 && isCore)) {
+					if (!(d.dData.length == 0 && isCore)) {
 						var aTParams:Array<TypeParamOrConst> = [
 							for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 						];
