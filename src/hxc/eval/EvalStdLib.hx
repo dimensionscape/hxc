@@ -366,6 +366,10 @@ class EvalStdLib {
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
+	static var threadMutexes = new haxe.ds.ObjectMap<VInstance, {mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int}>();
+	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
+	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
+	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -437,6 +441,50 @@ class EvalStdLib {
 
 	static function thisProcess(a:Array<EvalValue>):sys.io.Process {
 		return nativeProcesses.get(thisInstance(a, "NativeProcess"));
+	}
+
+	static function mkThreadMutex(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Mutex"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadMutexes.set(vi, {mutex: new sys.thread.Mutex(), owner: null, count: 0});
+		return VInstance(vi);
+	}
+
+	static function thisThreadMutex(a:Array<EvalValue>):{mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int} {
+		return threadMutexes.get(thisInstance(a, "Mutex"));
+	}
+
+	static function mkThreadLock(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Lock"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadLocks.set(vi, new sys.thread.Lock());
+		return VInstance(vi);
+	}
+
+	static function thisThreadLock(a:Array<EvalValue>):sys.thread.Lock {
+		return threadLocks.get(thisInstance(a, "Lock"));
+	}
+
+	static function mkThreadTls(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Tls"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadTls.set(vi, new sys.thread.Tls<EvalValue>());
+		return VInstance(vi);
+	}
+
+	static function thisThreadTls(a:Array<EvalValue>):sys.thread.Tls<EvalValue> {
+		return threadTls.get(thisInstance(a, "Tls"));
+	}
+
+	static function mkThreadDeque(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Deque"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadDeques.set(vi, new sys.thread.Deque<EvalValue>());
+		return VInstance(vi);
+	}
+
+	static function thisThreadDeque(a:Array<EvalValue>):sys.thread.Deque<EvalValue> {
+		return threadDeques.get(thisInstance(a, "Deque"));
 	}
 
 	static function processArgs(ctx:EvalContext, v:EvalValue):Null<Array<String>> {
@@ -1408,6 +1456,10 @@ class EvalStdLib {
 				EvalExceptions.excString(ctx, Std.string(e));
 			}
 		});
+		ctors.set(EvalHash.hash("sys.thread.Mutex"), function(a) return mkThreadMutex(ctx));
+		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
+		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) return mkThreadTls(ctx));
+		ctors.set(EvalHash.hash("sys.thread.Deque"), function(a) return mkThreadDeque(ctx));
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
@@ -1510,6 +1562,60 @@ class EvalStdLib {
 		reg(inst, "sys.io._Process.NativeProcess", "closeStdin", vmethod(a -> { thisProcess(a).stdin.close(); VNull; }));
 		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> VInt(thisProcess(a).stdin.writeBytes(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "sys.thread.Mutex", "acquire", vmethod(a -> {
+			var mutex = thisThreadMutex(a);
+			var thread = sys.thread.Thread.current();
+			if (mutex.owner != null && mutex.owner == thread) {
+				mutex.count++;
+			} else {
+				mutex.mutex.acquire();
+				mutex.owner = thread;
+				mutex.count = 1;
+			}
+			VNull;
+		}));
+		reg(inst, "sys.thread.Mutex", "tryAcquire", vmethod(a -> {
+			var mutex = thisThreadMutex(a);
+			var thread = sys.thread.Thread.current();
+			if (mutex.owner != null && mutex.owner == thread) {
+				mutex.count++;
+				VTrue;
+			} else if (mutex.mutex.tryAcquire()) {
+				mutex.owner = thread;
+				mutex.count = 1;
+				VTrue;
+			} else {
+				VFalse;
+			}
+		}));
+		reg(inst, "sys.thread.Mutex", "release", vmethod(a -> {
+			var mutex = thisThreadMutex(a);
+			if (mutex.count > 1) {
+				mutex.count--;
+			} else {
+				mutex.owner = null;
+				mutex.count = 0;
+				mutex.mutex.release();
+			}
+			VNull;
+		}));
+		reg(inst, "sys.thread.Lock", "release", vmethod(a -> { thisThreadLock(a).release(); VNull; }));
+		reg(inst, "sys.thread.Lock", "wait", vmethod(a -> EvalValueTools.vbool(
+			arg(a, 1) == VNull ? thisThreadLock(a).wait() : thisThreadLock(a).wait(toFloat(arg(a, 1))))));
+		reg(inst, "sys.thread.Tls", "get_value", vmethod(a -> {
+			var v = thisThreadTls(a).value;
+			v == null ? VNull : v;
+		}));
+		reg(inst, "sys.thread.Tls", "set_value", vmethod(a -> {
+			thisThreadTls(a).value = arg(a, 1);
+			arg(a, 1);
+		}));
+		reg(inst, "sys.thread.Deque", "add", vmethod(a -> { thisThreadDeque(a).add(arg(a, 1)); VNull; }));
+		reg(inst, "sys.thread.Deque", "push", vmethod(a -> { thisThreadDeque(a).push(arg(a, 1)); VNull; }));
+		reg(inst, "sys.thread.Deque", "pop", vmethod(a -> {
+			var v = thisThreadDeque(a).pop(arg(a, 1) == VTrue);
+			v == null ? VNull : v;
+		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));
 		reg(s, "eval._NativeString.NativeString_Impl_", "toBytes", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(nativeStringOf(arg(a, 0))))));
