@@ -802,17 +802,88 @@ class EvalStdLib {
 		return bytes.toString();
 	}
 
-	public static function stringOf(v:EvalValue):String {
-		return switch (v) {
+	static function maxPrintDepth():Int {
+		return try EvalContext.getCtx().maxPrintDepth catch (_:Dynamic) 100;
+	}
+
+	static function enumConstructorName(ev:VEnumValue):String {
+		return try {
+			var p = EvalContext.getCtx().staticPrototypes.get(ev.epath);
+			if (p == null) "#unknown" else switch (p.pkind) {
+				case PEnum(cs):
+					ev.eindex >= 0 && ev.eindex < cs.length ? cs[ev.eindex].name : "#unknown";
+				case _: "#unknown";
+			}
+		} catch (_:Dynamic) {
+			"#unknown";
+		}
+	}
+
+	static function callToString(v:EvalValue, depth:Int):Null<String> {
+		return try {
+			var ctx = EvalContext.getCtx();
+			var fn = EvalField.field(ctx, v, EvalHash.hash("toString"));
+			fn == VNull ? null : stringOfDepth(callValueOn(v, fn, []), depth + 1);
+		} catch (_:Dynamic) {
+			null;
+		}
+	}
+
+	static function protoString(proto:VPrototype):String {
+		return switch (proto.pkind) {
+			case PClass(_): "Class<" + EvalHash.revHash(proto.ppath) + ">";
+			case PEnum(_): "Enum<" + EvalHash.revHash(proto.ppath) + ">";
+			case PInstance | PObject: EvalHash.revHash(proto.ppath);
+		};
+	}
+
+	static function objectString(o:VObject, depth:Int):String {
+		var parts:Array<String> = [];
+		var fields = objectFieldMap(o);
+		for (k in fields.keys()) parts.push(EvalHash.revHash(k) + ": " + stringOfDepth(fields.get(k), depth + 1));
+		return "{" + parts.join(", ") + "}";
+	}
+
+	static function stringOfDepth(v:EvalValue, depth:Int):String {
+		if (depth > maxPrintDepth()) return "<...>";
+		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: "null";
 			case VTrue: "true";
 			case VFalse: "false";
 			case VInt(i): Std.string(i);
-			case VFloat(f): Std.string(f);
+			case VFloat(f):
+				var s = Std.string(f);
+				StringTools.endsWith(s, ".") ? s.substr(0, s.length - 1) : s;
 			case VString(s): s.sstring;
 			case VNativeString(s): s;
-			case _: "<value>";
+			case VFunction(_, _): "#fun";
+			case VFieldClosure(_, _): "#closure";
+			case VEnumValue(ev):
+				var name = enumConstructorName(ev);
+				ev.eargs.length == 0 ? name : name + "(" + [for (a in ev.eargs) stringOfDepth(a, depth + 1)].join(",") + ")";
+			case VArray(va): "[" + [for (i in 0...va.alength) stringOfDepth(va.avalues[i], depth + 1)].join(",") + "]";
+			case VVector(vv): "[" + [for (x in vv) stringOfDepth(x, depth + 1)].join(",") + "]";
+			case VObject(o):
+				var s = callToString(VObject(o), depth);
+				s == null ? objectString(o, depth + 1) : s;
+			case VInstance(vi):
+				switch (vi.ikind) {
+					case IDate(ts): Date.fromTime(ts).toString();
+					case IPos(_): "#pos";
+					case IRegex(_): "#regexp";
+					case _:
+						var s = callToString(VInstance(vi), depth);
+						s == null ? EvalHash.revHash(vi.iproto.ppath) : s;
+				}
+			case VPrototype(proto):
+				var s = callToString(VPrototype(proto), depth);
+				s == null ? protoString(proto) : s;
+			case VLazy(_): throw "unreachable";
 		};
+	}
+
+	public static function stringOf(v:EvalValue):String {
+		return stringOfDepth(v, 0);
 	}
 
 	static function isSubProto(p:VPrototype, targetPath:Int):Bool {
