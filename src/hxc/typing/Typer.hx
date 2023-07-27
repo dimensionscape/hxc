@@ -821,9 +821,11 @@ class Typer {
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
-				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key
-				// type against each @:to cast's key-parameter constraint, then constructs that type.
-				// The expression takes the concrete type so its fields resolve directly.
+				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key type
+				// against each @:to cast's key-parameter constraint, then constructs that type. The
+				// expression is typed as the abstract (Map) so it unifies with Map-typed targets; the
+				// concrete type is only the constructed runtime value (field access goes through the
+				// abstract impl).
 				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, atl, p));
 				switch (ct) {
 					case TInst(c, ctl):
@@ -834,7 +836,7 @@ class Typer {
 							case _: {args: [], ret: ctx.com.basic.tvoid};
 						};
 						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-						TypeFunctions.mk(TNew(c, ctl, r.el), ct, p);
+						TypeFunctions.mk(TNew(c, ctl, r.el), TAbstract(a, atl), p);
 					case _:
 						throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
 				}
