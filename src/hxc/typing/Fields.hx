@@ -99,7 +99,10 @@ class Fields {
 								case AbstractStatics(ab) if (ab.impl != null): fieldAccess(ctx, mode, f, FHStatic(ab.impl), e, pfield);
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
-						} else throw fieldNotFound(e.type, i, pfield);
+						} else {
+							var u = tryUsing(ctx, e, i, pfield);
+							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+						}
 				}
 			case TMono(r):
 				// A field access on a monomorph adds a structural down-constraint (the receiver becomes an
