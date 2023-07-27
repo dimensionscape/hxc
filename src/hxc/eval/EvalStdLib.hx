@@ -365,6 +365,7 @@ class EvalStdLib {
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
+	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -425,6 +426,25 @@ class EvalStdLib {
 
 	static function thisFileOutput(a:Array<EvalValue>):{output:haxe.io.Output, file:Null<sys.io.FileOutput>} {
 		return fileOutputs.get(thisInstance(a, "FileOutput"));
+	}
+
+	static function mkNativeProcess(ctx:EvalContext, proc:sys.io.Process):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io._Process.NativeProcess"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeProcesses.set(vi, proc);
+		return VInstance(vi);
+	}
+
+	static function thisProcess(a:Array<EvalValue>):sys.io.Process {
+		return nativeProcesses.get(thisInstance(a, "NativeProcess"));
+	}
+
+	static function processArgs(ctx:EvalContext, v:EvalValue):Null<Array<String>> {
+		return switch (v) {
+			case VNull: null;
+			case VArray(va): [for (i in 0...va.alength) stringOf(va.avalues[i])];
+			case _: EvalExceptions.unexpectedValue(ctx, v, "array");
+		}
 	}
 
 	static function fileSeekMode(mode:EvalValue):sys.io.FileSeek {
@@ -1383,6 +1403,11 @@ class EvalStdLib {
 			var d = new Date(toInt(arg(a, 0)), toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)), toInt(arg(a, 4)), toInt(arg(a, 5)));
 			return mkDate(ctx, d.getTime());
 		});
+		ctors.set(EvalHash.hash("sys.io._Process.NativeProcess"), function(a) {
+			return try mkNativeProcess(ctx, new sys.io.Process(stringOf(arg(a, 0)), processArgs(ctx, arg(a, 1)))) catch (e:Dynamic) {
+				EvalExceptions.excString(ctx, Std.string(e));
+			}
+		});
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
@@ -1462,6 +1487,28 @@ class EvalStdLib {
 		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> VInt(thisFileOutput(a).file.tell())));
 		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { thisFileOutput(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
 		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(thisFileOutput(a).output.writeBytes(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "sys.io._Process.NativeProcess", "close", vmethod(a -> {
+			var vi = thisInstance(a, "NativeProcess");
+			nativeProcesses.get(vi).close();
+			nativeProcesses.remove(vi);
+			VNull;
+		}));
+		reg(inst, "sys.io._Process.NativeProcess", "exitCode", vmethod(a -> VInt(thisProcess(a).exitCode())));
+		reg(inst, "sys.io._Process.NativeProcess", "getPid", vmethod(a -> VInt(thisProcess(a).getPid())));
+		reg(inst, "sys.io._Process.NativeProcess", "kill", vmethod(a -> { thisProcess(a).kill(); VNull; }));
+		reg(inst, "sys.io._Process.NativeProcess", "readStderr", vmethod(a -> {
+			try VInt(thisProcess(a).stderr.readBytes(thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
+				EvalExceptions.excString(ctx, "Could not read stderr");
+			}
+		}));
+		reg(inst, "sys.io._Process.NativeProcess", "readStdout", vmethod(a -> {
+			try VInt(thisProcess(a).stdout.readBytes(thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:Dynamic) {
+				EvalExceptions.excString(ctx, "Could not read stdout");
+			}
+		}));
+		reg(inst, "sys.io._Process.NativeProcess", "closeStdin", vmethod(a -> { thisProcess(a).stdin.close(); VNull; }));
+		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> VInt(thisProcess(a).stdin.writeBytes(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));
