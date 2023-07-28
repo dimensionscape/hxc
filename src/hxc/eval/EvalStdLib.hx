@@ -1,6 +1,7 @@
 package hxc.eval;
 
 import hxc.ast.Position;
+import hxc.core.Type.ModuleType;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
@@ -608,6 +609,18 @@ class EvalStdLib {
 		return fileName + ":" + lineNumber + ": " + parts.join(",") + "\n";
 	}
 
+	static function sysProgramPath(ctx:EvalContext):EvalValue {
+		for (mt in ctx.typeCache) switch (mt) {
+			case TClassDecl(c):
+				if (c.statics.exists("main")) {
+					var file = c.pos.file;
+					return file == null || file == "?" ? VNull : mkStr(sys.FileSystem.fullPath(file));
+				}
+			case _:
+		}
+		return VNull;
+	}
+
 	static function hostIpString(ip:Int):String {
 		return (ip >>> 24) + "." + ((ip >>> 16) & 0xFF) + "." + ((ip >>> 8) & 0xFF) + "." + (ip & 0xFF);
 	}
@@ -1125,6 +1138,7 @@ class EvalStdLib {
 			v == null ? VNull : mkStr(v);
 		}));
 		reg(s, "Sys", "getChar", vfn(a -> VInt(Sys.getChar(arg(a, 0) == VTrue))));
+		reg(s, "Sys", "programPath", vfn(a -> sysProgramPath(ctx)));
 		reg(s, "Sys", "putEnv", vfn(a -> { Sys.putEnv(stringOf(arg(a, 0)), arg(a, 1) == VNull ? null : stringOf(arg(a, 1))); VNull; }));
 		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
