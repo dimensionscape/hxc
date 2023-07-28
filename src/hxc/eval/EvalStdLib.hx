@@ -1132,6 +1132,7 @@ class EvalStdLib {
 		reg(s, "Sys", "_command", vfn(a -> VInt(Sys.command(stringOf(arg(a, 0))))));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
+		reg(s, "Sys", "exit", vfn(a -> { Sys.exit(toInt(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "getCwd", vfn(a -> mkStr(Sys.getCwd())));
 		reg(s, "Sys", "getEnv", vfn(a -> {
 			var v = Sys.getEnv(stringOf(arg(a, 0)));
