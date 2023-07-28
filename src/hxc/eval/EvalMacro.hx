@@ -24,6 +24,7 @@ class EvalMacro {
 	static var curPos:Position = Position.nullPos;
 	static var curTctx:Null<TyperContext> = null;
 	static var curBuildFields:EvalValue = VNull;
+	static var curBuildClass:Null<TClass> = null;
 	static var builtClasses:Map<String, Bool> = new Map();
 
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
@@ -80,6 +81,8 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
+		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type.
+		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, TypeFunctions.extractParamTypes(curBuildClass.params))));
 		reg2("makePosition", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
 			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
@@ -164,6 +167,8 @@ class EvalMacro {
 			case _:
 		}
 		var ec = getContext(com);
+		var savedBuildClass = curBuildClass;
+		curBuildClass = c;
 		curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
 		var result = switch (callExpr.expr) {
 			case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
@@ -172,6 +177,7 @@ class EvalMacro {
 		var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
 		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
+		curBuildClass = savedBuildClass;
 		hxc.context.ModuleLoader.rebuildFields(c, newFields);
 		hxc.typing.TypeResolve.resolveClass(com, c, newDef, declEntry.pos);
 		// Type the freshly added field bodies so their expr is set for the interpreter.
@@ -865,7 +871,7 @@ class EvalMacro {
 		return switch (t) {
 			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeRef(ec, VNull)]);
 			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeRef(ec, encodeBaseType(ec, e.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
-			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeRef(ec, encodeBaseType(ec, c.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TFun(sig): mkEnumValue(ec, "Type", "TFun", [encodeArray([for (a in sig.args) encodeTypeFunArg(ec, a)]), encodeType(ec, sig.ret)]);
 			case TAnon(_): mkEnumValue(ec, "Type", "TAnonymous", [encodeRef(ec, VNull)]);
@@ -887,6 +893,128 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload, true));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	// A lazy Ref<T>: .get() computes the payload on demand. Refs must stay lazy so a class encoding
+	// can reference itself (field types, super chain) without infinite recursion.
+	static function encodeLazyRef(ec:EvalContext, thunk:Void->EvalValue):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("get"), VFunction(function(_) return thunk(), true));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encPos(p:Position):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("file"), mkString(p.file));
+		fields.set(EvalHash.hash("min"), VInt(p.min));
+		fields.set(EvalHash.hash("max"), VInt(p.max));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	// haxe.macro.Type.MetaAccess: get/has/add/extract/remove over a mutable list.
+	static function encodeMetaAccess(ec:EvalContext, getMeta:Void->Metadata, setMeta:Metadata->Void):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("get"), VFunction(function(_) return encodeArray([for (m in getMeta()) encodeMetadataEntry(ec, m)]), true));
+		fields.set(EvalHash.hash("has"), VFunction(function(a) { var k = strOf(a[0]); for (m in getMeta()) if (m.name == k) return VTrue; return VFalse; }, true));
+		fields.set(EvalHash.hash("add"), VFunction(function(a) {
+			var k = strOf(a[0]);
+			var params = (a.length > 1 && a[1] != VNull) ? [for (pv in arrOf(a[1])) decodeExpr(ec, pv, Position.nullPos)] : [];
+			var meta = getMeta();
+			meta.push({name: k, params: params, pos: Position.nullPos});
+			setMeta(meta);
+			return VNull;
+		}, true));
+		fields.set(EvalHash.hash("extract"), VFunction(function(a) { var k = strOf(a[0]); return encodeArray([for (m in getMeta()) if (m.name == k) encodeMetadataEntry(ec, m)]); }, true));
+		fields.set(EvalHash.hash("remove"), VFunction(function(a) { var k = strOf(a[0]); setMeta([for (m in getMeta()) if (m.name != k) m]); return VNull; }, true));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeTVarAccess(ec:EvalContext, a:VarAccess):EvalValue {
+		return switch (a) {
+			case AccNormal: mkEnumValue(ec, "VarAccess", "AccNormal", []);
+			case AccNo: mkEnumValue(ec, "VarAccess", "AccNo", []);
+			case AccNever: mkEnumValue(ec, "VarAccess", "AccNever", []);
+			case AccCtor: mkEnumValue(ec, "VarAccess", "AccCtor", []);
+			case AccCall: mkEnumValue(ec, "VarAccess", "AccCall", []);
+			case AccInline: mkEnumValue(ec, "VarAccess", "AccInline", []);
+			case AccRequire(s, msg): mkEnumValue(ec, "VarAccess", "AccRequire", [mkString(s), msg == null ? VNull : mkString(msg)]);
+		};
+	}
+
+	static function encodeTMethodKind(ec:EvalContext, m:MethodKind):EvalValue {
+		return switch (m) {
+			case MethNormal: mkEnumValue(ec, "MethodKind", "MethNormal", []);
+			case MethInline: mkEnumValue(ec, "MethodKind", "MethInline", []);
+			case MethDynamic: mkEnumValue(ec, "MethodKind", "MethDynamic", []);
+			case MethMacro: mkEnumValue(ec, "MethodKind", "MethMacro", []);
+		};
+	}
+
+	static function encodeTFieldKind(ec:EvalContext, k:FieldKind):EvalValue {
+		return switch (k) {
+			case Var(vk): mkEnumValue(ec, "FieldKind", "FVar", [encodeTVarAccess(ec, vk.read), encodeTVarAccess(ec, vk.write)]);
+			case Method(m): mkEnumValue(ec, "FieldKind", "FMethod", [encodeTMethodKind(ec, m)]);
+		};
+	}
+
+	static function encodeClassField(ec:EvalContext, cf:TClassField):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("name"), mkString(cf.name));
+		f.set(EvalHash.hash("type"), encodeType(ec, cf.type));
+		f.set(EvalHash.hash("isPublic"), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
+		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
+		f.set(EvalHash.hash("expr"), VFunction(function(_) return VNull, true));
+		f.set(EvalHash.hash("kind"), encodeTFieldKind(ec, cf.kind));
+		f.set(EvalHash.hash("pos"), encPos(cf.pos));
+		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
+		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([])));
+		f.set(EvalHash.hash("isExtern"), VFalse);
+		f.set(EvalHash.hash("isFinal"), VFalse);
+		f.set(EvalHash.hash("isAbstract"), VFalse);
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	static function encodeClassRelation(ec:EvalContext, rel:TClassWithParams):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("t"), encodeClassRef(ec, rel.c));
+		f.set(EvalHash.hash("params"), encodeArray([for (p in rel.params) encodeType(ec, p)]));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	static function encodeClassRef(ec:EvalContext, c:TClass):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassType(ec, c), true));
+		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(c.path)), true));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	// haxe.macro.Type.ClassType. Refs (super/fields/statics) are lazy so a class can reference itself
+	// without infinite recursion.
+	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("pack"), encodeArray([for (s in c.path.pack) mkString(s)]));
+		f.set(EvalHash.hash("name"), mkString(c.path.name));
+		f.set(EvalHash.hash("module"), mkString(c.module == null ? c.path.name : Context.pathKey(c.module.path)));
+		f.set(EvalHash.hash("pos"), encPos(c.pos));
+		f.set(EvalHash.hash("isPrivate"), VFalse);
+		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
+		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("kind"), mkEnumValue(ec, "ClassKind", "KNormal", []));
+		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
+		f.set(EvalHash.hash("isInterface"), TypeFunctions.hasClassFlag(c, CInterface) ? VTrue : VFalse);
+		f.set(EvalHash.hash("isFinal"), TypeFunctions.hasClassFlag(c, CFinal) ? VTrue : VFalse);
+		f.set(EvalHash.hash("isAbstract"), VFalse);
+		f.set(EvalHash.hash("superClass"), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
+		f.set(EvalHash.hash("interfaces"), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
+		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf)])));
+		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.statics) encodeClassField(ec, cf)])));
+		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+		f.set(EvalHash.hash("init"), VNull);
+		f.set(EvalHash.hash("overrides"), encodeArray([]));
+		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeTypeFunArg(ec:EvalContext, a:TSignatureArg):EvalValue {
