@@ -1883,6 +1883,18 @@ class EvalStdLib {
 			vfn(a -> mkBytes(ctx, haxe.zip.Compress.run(thisBytes([arg(a, 0)]), toInt(arg(a, 1))))));
 		reg(s, "haxe.zip.Uncompress", "run",
 			vfn(a -> mkBytes(ctx, haxe.zip.Uncompress.run(thisBytes([arg(a, 0)]), arg(a, 1) == VNull ? null : toInt(arg(a, 1))))));
+		reg(s, "haxe.Resource", "listNames", vfn(a -> {
+			var names = [for (name in ctx.resources.keys()) mkStr(name)];
+			VArray(new VArray(names, names.length));
+		}));
+		reg(s, "haxe.Resource", "getString", vfn(a -> {
+			var bytes = ctx.resources.get(stringOf(arg(a, 0)));
+			bytes == null ? VNull : mkStr(bytes.toString());
+		}));
+		reg(s, "haxe.Resource", "getBytes", vfn(a -> {
+			var bytes = ctx.resources.get(stringOf(arg(a, 0)));
+			bytes == null ? VNull : mkBytes(ctx, bytes);
+		}));
 		reg(s, "haxe.io.FPHelper", "doubleToI64", vfn(a -> doubleBits(toFloat(arg(a, 0)))));
 		reg(s, "haxe.io.FPHelper", "floatToI32", vfn(a -> VInt(floatBits(toFloat(arg(a, 0))))));
 		reg(s, "haxe.io.FPHelper", "i32ToFloat", vfn(a -> VFloat(floatOfBits(toInt(arg(a, 0))))));

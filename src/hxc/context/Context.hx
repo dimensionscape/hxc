@@ -47,6 +47,9 @@ class Context {
 	/** All loaded types, registration order. */
 	public var types:Array<ModuleType>;
 
+	/** Embedded resources from `--resource file@name`. */
+	public var resources:StringMap<haxe.io.Bytes>;
+
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
 
 	/**
@@ -102,6 +105,7 @@ class Context {
 		this.moduleNonexistentLut = new StringMap();
 		this.modules = [];
 		this.types = [];
+		this.resources = new StringMap();
 		this.declOfType = new StringMap();
 		this.moduleImports = new StringMap();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
@@ -133,6 +137,7 @@ class Context {
 		c.platform = Eval;
 		c.platformConfig = PlatformConfig.eval();
 		c.isMacro = true;
+		for (name in this.resources.keys()) c.resources.set(name, this.resources.get(name));
 		return c;
 	}
 

@@ -6,6 +6,7 @@ import hxc.core.NotFound;
 import hxc.core.TypingError;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalHash;
+import haxe.ds.StringMap;
 
 enum EvalEnvKind {
 	EKLocalFunction(index:Int);
@@ -102,6 +103,7 @@ class EvalContext {
 	public var eval:Eval;
 	public var maxStackDepth:Int;
 	public var maxPrintDepth:Int;
+	public var resources:StringMap<haxe.io.Bytes>;
 
 	public function new(ctxId:Int, isMacro:Bool) {
 		this.ctxId = ctxId;
@@ -119,6 +121,7 @@ class EvalContext {
 		this.eval = new Eval();
 		this.maxStackDepth = 1000;
 		this.maxPrintDepth = 100;
+		this.resources = new StringMap();
 	}
 
 	static var current:Null<EvalContext> = null;

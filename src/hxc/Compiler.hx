@@ -30,6 +30,7 @@ class Compiler {
 			switch (a) {
 				case "-cp" | "-p" | "--class-path": userCp.push(args[i++]);
 				case "-main" | "-m" | "--main": mainClass = args[i++];
+				case "--resource": addResource(ctx, args[i++]);
 				case "-D" | "--define":
 					var kv = args[i++];
 					var eq = kv.indexOf("=");
@@ -78,7 +79,7 @@ class Compiler {
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
-				var ectx = hxc.eval.EvalMain.create(false);
+				var ectx = hxc.eval.EvalMain.create(false, ctx.resources);
 				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
 				hxc.eval.EvalMain.runMain(ectx, path);
 			} else {
@@ -95,5 +96,12 @@ class Compiler {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	static function addResource(ctx:Context, spec:String):Void {
+		var at = spec.lastIndexOf("@");
+		var file = at < 0 ? spec : spec.substr(0, at);
+		var name = at < 0 ? haxe.io.Path.withoutDirectory(file) : spec.substr(at + 1);
+		ctx.resources.set(name, sys.io.File.getBytes(file));
 	}
 }

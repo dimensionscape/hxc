@@ -6,11 +6,15 @@ import hxc.eval.EvalValue;
 import hxc.eval.EvalContext;
 import hxc.eval.EvalPrototype;
 import hxc.eval.EvalHash;
+import haxe.ds.StringMap;
 
 // Interpreter entry: registers prototypes for the loaded types, then runs an entry point.
 class EvalMain {
-	public static function create(isMacro:Bool):EvalContext {
+	public static function create(isMacro:Bool, ?resources:StringMap<haxe.io.Bytes>):EvalContext {
 		var ctx = new EvalContext(0, isMacro);
+		if (resources != null) {
+			for (name in resources.keys()) ctx.resources.set(name, resources.get(name));
+		}
 		EvalContext.setCtx(ctx);
 		EvalStdLib.init(ctx);
 		return ctx;
