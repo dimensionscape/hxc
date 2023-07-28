@@ -371,6 +371,8 @@ class EvalStdLib {
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
 	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
+	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
+	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -486,6 +488,58 @@ class EvalStdLib {
 
 	static function thisThreadDeque(a:Array<EvalValue>):sys.thread.Deque<EvalValue> {
 		return threadDeques.get(thisInstance(a, "Deque"));
+	}
+
+	static function xmlTypeValue(x:Xml):EvalValue {
+		return VInt(cast x.nodeType);
+	}
+
+	static function setInstanceFieldIfExists(vi:VInstance, name:String, value:EvalValue):Void {
+		var idx = vi.iproto.pinstanceNames.get(EvalHash.hash(name));
+		if (idx != null) vi.ifields[idx] = value;
+	}
+
+	static function xmlInstance(ctx:EvalContext, x:Xml):VInstance {
+		var vi = nativeXmlValues.get(x);
+		if (vi == null) {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("Xml"));
+			vi = new VInstance(proto.pinstanceFields.copy(), proto);
+			nativeXmlValues.set(x, vi);
+			nativeXml.set(vi, x);
+		}
+		return vi;
+	}
+
+	static function syncXmlFields(ctx:EvalContext, vi:VInstance, x:Xml):Void {
+		setInstanceFieldIfExists(vi, "nodeType", xmlTypeValue(x));
+		setInstanceFieldIfExists(vi, "parent", x.parent == null ? VNull : VInstance(xmlInstance(ctx, x.parent)));
+		setInstanceFieldIfExists(vi, "nodeName", try mkStr(x.nodeName) catch (_:Dynamic) VNull);
+		setInstanceFieldIfExists(vi, "nodeValue", try mkStr(x.nodeValue) catch (_:Dynamic) VNull);
+		var children = switch (x.nodeType) {
+			case Xml.Element | Xml.Document: [for (child in x) xmlValue(ctx, child)];
+			case _: [];
+		};
+		setInstanceFieldIfExists(vi, "children", VArray(new VArray(children, children.length)));
+	}
+
+	static function xmlValue(ctx:EvalContext, x:Xml):EvalValue {
+		var vi = xmlInstance(ctx, x);
+		syncXmlFields(ctx, vi, x);
+		return VInstance(vi);
+	}
+
+	static function thisXml(a:Array<EvalValue>):Xml {
+		return nativeXml.get(thisInstance(a, "Xml"));
+	}
+
+	static function xmlChildren(ctx:EvalContext, x:Xml, ?elementsOnly:Bool, ?name:String):Array<EvalValue> {
+		var out:Array<EvalValue> = [];
+		for (child in x) {
+			if (elementsOnly == true && child.nodeType != Xml.Element) continue;
+			if (name != null && child.nodeName != name) continue;
+			out.push(xmlValue(ctx, child));
+		}
+		return out;
 	}
 
 	static function processArgs(ctx:EvalContext, v:EvalValue):Null<Array<String>> {
@@ -1112,6 +1166,22 @@ class EvalStdLib {
 		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
 		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "Element", VInt(0));
+		reg(s, "Xml", "PCData", VInt(1));
+		reg(s, "Xml", "CData", VInt(2));
+		reg(s, "Xml", "Comment", VInt(3));
+		reg(s, "Xml", "DocType", VInt(4));
+		reg(s, "Xml", "ProcessingInstruction", VInt(5));
+		reg(s, "Xml", "Document", VInt(6));
+		reg(s, "Xml", "parse", vfn(a -> xmlValue(ctx, Xml.parse(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createElement", vfn(a -> xmlValue(ctx, Xml.createElement(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createPCData", vfn(a -> xmlValue(ctx, Xml.createPCData(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createCData", vfn(a -> xmlValue(ctx, Xml.createCData(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createComment", vfn(a -> xmlValue(ctx, Xml.createComment(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createDocType", vfn(a -> xmlValue(ctx, Xml.createDocType(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createProcessingInstruction", vfn(a -> xmlValue(ctx, Xml.createProcessingInstruction(stringOf(arg(a, 0))))));
+		reg(s, "Xml", "createDocument", vfn(a -> xmlValue(ctx, Xml.createDocument())));
+		reg(s, "haxe.xml.Printer", "print", vfn(a -> mkStr(haxe.xml.Printer.print(thisXml([arg(a, 0)]), arg(a, 1) == VTrue))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
@@ -1638,6 +1708,64 @@ class EvalStdLib {
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [VArray(new VArray(items, items.length))]);
+		reg(inst, "Xml", "get_nodeName", vmethod(a -> mkStr(thisXml(a).nodeName)));
+		reg(inst, "Xml", "set_nodeName", vmethod(a -> {
+			var x = thisXml(a);
+			x.nodeName = stringOf(arg(a, 1));
+			syncXmlFields(ctx, thisInstance(a, "Xml"), x);
+			arg(a, 1);
+		}));
+		reg(inst, "Xml", "get_nodeValue", vmethod(a -> mkStr(thisXml(a).nodeValue)));
+		reg(inst, "Xml", "set_nodeValue", vmethod(a -> {
+			var x = thisXml(a);
+			x.nodeValue = stringOf(arg(a, 1));
+			syncXmlFields(ctx, thisInstance(a, "Xml"), x);
+			arg(a, 1);
+		}));
+		reg(inst, "Xml", "get", vmethod(a -> {
+			var v = thisXml(a).get(stringOf(arg(a, 1)));
+			v == null ? VNull : mkStr(v);
+		}));
+		reg(inst, "Xml", "set", vmethod(a -> { thisXml(a).set(stringOf(arg(a, 1)), stringOf(arg(a, 2))); VNull; }));
+		reg(inst, "Xml", "remove", vmethod(a -> { thisXml(a).remove(stringOf(arg(a, 1))); VNull; }));
+		reg(inst, "Xml", "exists", vmethod(a -> EvalValueTools.vbool(thisXml(a).exists(stringOf(arg(a, 1))))));
+		reg(inst, "Xml", "attributes", vmethod(a -> iteratorOf([for (name in thisXml(a).attributes()) mkStr(name)])));
+		reg(inst, "Xml", "iterator", vmethod(a -> iteratorOf(xmlChildren(ctx, thisXml(a)))));
+		reg(inst, "Xml", "elements", vmethod(a -> iteratorOf(xmlChildren(ctx, thisXml(a), true))));
+		reg(inst, "Xml", "elementsNamed", vmethod(a -> iteratorOf(xmlChildren(ctx, thisXml(a), true, stringOf(arg(a, 1))))));
+		reg(inst, "Xml", "firstChild", vmethod(a -> {
+			var x = thisXml(a).firstChild();
+			x == null ? VNull : xmlValue(ctx, x);
+		}));
+		reg(inst, "Xml", "firstElement", vmethod(a -> {
+			var x = thisXml(a).firstElement();
+			x == null ? VNull : xmlValue(ctx, x);
+		}));
+		reg(inst, "Xml", "addChild", vmethod(a -> {
+			var parent = thisXml(a);
+			var child = thisXml([arg(a, 1)]);
+			parent.addChild(child);
+			syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
+			syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
+			VNull;
+		}));
+		reg(inst, "Xml", "removeChild", vmethod(a -> {
+			var parent = thisXml(a);
+			var child = thisXml([arg(a, 1)]);
+			parent.removeChild(child);
+			syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
+			syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
+			VNull;
+		}));
+		reg(inst, "Xml", "insertChild", vmethod(a -> {
+			var parent = thisXml(a);
+			var child = thisXml([arg(a, 1)]);
+			parent.insertChild(child, toInt(arg(a, 2)));
+			syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
+			syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
+			VNull;
+		}));
+		reg(inst, "Xml", "toString", vmethod(a -> mkStr(thisXml(a).toString())));
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
