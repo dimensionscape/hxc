@@ -309,6 +309,8 @@ class Operators {
 			case AKAccessor(fa):
 				var setterAcc = hxc.typing.Fields.typeField(ctx, fa.on, "set_" + fa.field.name, fa.pos, MCall([e2]), WithTypeTools.value);
 				hxc.typing.Calls.buildCall(ctx, setterAcc, [e2], WithTypeTools.value, p);
+			case AKAccess(a, tl, c, ebase, ekey):
+				hxc.typing.Calls.arraySet(ctx, a, tl, c, ebase, ekey, e2, p);
 			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);
 			case _: throw new TypingError("This assignment target is not yet ported", p);
 		};

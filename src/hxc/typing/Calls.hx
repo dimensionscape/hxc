@@ -22,9 +22,12 @@ class Calls {
 	}
 
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
-		// Abstract @:arrayAccess read: dispatch to the impl getter taking (this, key).
+		// Abstract @:arrayAccess. A write defers to the assignment/compound handlers (which call the
+		// (this, key, value) setter); a read dispatches here to the (this, key) getter.
 		switch (TypeFunctions.follow(e1.type)) {
-			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0 && !mode.match(MSet(_))):
+			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0 && mode.match(MSet(_))):
+				return AKAccess(a, tl, a.impl, e1, e2);
+			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
 				for (cf in a.array) {
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
@@ -50,6 +53,22 @@ class Calls {
 			throw new TypingError("Array index must be of type Int", e2.pos);
 		}
 		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
+	}
+
+	// Abstract @:arrayAccess write: call the impl setter taking (this, key, value). .
+	public static function arraySet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueExpr:Expr, p:Position):TExpr {
+		for (cf in a.array) {
+			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
+				case TFun(sig) if (sig.args.length == 3):
+					var implExpr = Texpr.makeStaticThis(c, p);
+					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+					var val = Typer.castOrUnify(ctx, sig.args[2].t, Typer.typeExpr(ctx, valueExpr, WithTypeTools.withType(sig.args[2].t)), p);
+					return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
+				case _:
+			}
+		}
+		throw new TypingError("No matching @:arrayAccess setter", p);
 	}
 
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
