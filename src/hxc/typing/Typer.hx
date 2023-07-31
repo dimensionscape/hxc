@@ -451,10 +451,16 @@ class Typer {
 			case _:
 		}
 		if (ctx.curclass != TypeFunctions.nullClass) {
-			var imf = ctx.curclass.fields.get(i);
-			if (imf != null && !ctx.curfun.match(FunStatic)) {
-				var thisExpr = TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
-				return AKField(FieldAccessTools.create(thisExpr, imf, FieldAccessTools.getHost(ctx.curclass, imf), false, p));
+			// Member-variable lookup searches the whole inheritance chain, not just the class's own fields,
+			// so a bare call to an inherited method resolves against `this`. The access uses the class the
+			// field was found in as its host.
+			if (!ctx.curfun.match(FunStatic)) {
+				var found = try TypeFunctions.rawClassField(function(f) return TypeFunctions.fieldType(f), ctx.curclass, TypeFunctions.extractParamTypes(ctx.curclass.params), i) catch (_:hxc.core.NotFound) null;
+				if (found != null) {
+					var thisExpr = TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
+					var host:FieldHost = switch (found.c2) { case null: FHAnon; case cw: FHInstance(cw.c, cw.params); };
+					return AKField(FieldAccessTools.create(thisExpr, found.f, host, false, p));
+				}
 			}
 			var smf = ctx.curclass.statics.get(i);
 			if (smf != null) {
