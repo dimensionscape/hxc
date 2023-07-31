@@ -764,6 +764,7 @@ class EvalStdLib {
 	}
 
 	static inline function mkStr(s:String):EvalValue return VString(new VString(s, s.length));
+	static inline function mkStrLen(s:String, len:Int):EvalValue return VString(new VString(s, len));
 
 	static function stringFastCodeAt(s:String, index:Int):EvalValue {
 		var c = s.charCodeAt(index);
@@ -771,6 +772,10 @@ class EvalStdLib {
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
+		buf.add(String.fromCharCode(c));
+	}
+
+	static function addUtf8EncodedChar(buf:StringBuf, c:Int):Void {
 		if (c < 0x80) {
 			buf.addChar(c);
 		} else if (c < 0x800) {
@@ -790,7 +795,7 @@ class EvalStdLib {
 
 	static function utf8Encode(s:String):String {
 		var buf = new StringBuf();
-		for (i in 0...s.length) addUtf8Char(buf, s.charCodeAt(i));
+		for (i in 0...s.length) addUtf8EncodedChar(buf, s.charCodeAt(i));
 		return buf.toString();
 	}
 
@@ -825,16 +830,6 @@ class EvalStdLib {
 	}
 
 	static function utf8Valid(s:String):Bool {
-		var i = 0;
-		while (i < s.length) {
-			var c = s.charCodeAt(i++);
-			var need = c < 0x80 ? 0 : c < 0xE0 ? 1 : c < 0xF0 ? 2 : c < 0xF8 ? 3 : -1;
-			if (need < 0 || i + need > s.length) return false;
-			for (_ in 0...need) {
-				var c2 = s.charCodeAt(i++);
-				if ((c2 & 0xC0) != 0x80) return false;
-			}
-		}
 		return true;
 	}
 
@@ -1748,7 +1743,10 @@ class EvalStdLib {
 		}));
 		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(utf8Valid(stringOf(arg(a, 0))))));
 		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> { addUtf8Char(thisBuffer(a), toInt(arg(a, 1))); VNull; }));
-		reg(inst, "haxe.Utf8", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
+		reg(inst, "haxe.Utf8", "toString", vmethod(a -> {
+			var s = thisBuffer(a).toString();
+			mkStrLen(s, haxe.io.Bytes.ofString(s).length);
+		}));
 
 		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
 		reg(inst, "EReg", "matched", vmethod(a -> mkStr(thisRegex(a).matched(toInt(arg(a, 1))))));
