@@ -282,15 +282,22 @@ class EvalStdLib {
 				switch (proto.pkind) {
 					case PEnum(_):
 						var f = EvalField.field(ctx, VPrototype(proto), name);
-						switch (f) {
-							case VFunction(fn, _): fn(argList(params));
-							case VEnumValue(_) if (params == VNull || argList(params).length == 0): f;
-							case VEnumValue(_): f;
-							case _: VNull;
+						switch [f, params] {
+							case [VEnumValue(_), VNull]: f;
+							case [VEnumValue(_), VArray(va)] if (va.alength == 0): f;
+							case [VFunction(fn, _), VArray(va)]: fn(va.avalues.slice(0, va.alength));
+							case _: unexpectedEnumParams(ctx, params);
 						}
 					case _: VNull;
 				}
 			case _: VNull;
+		};
+	}
+
+	static function unexpectedEnumParams(ctx:EvalContext, params:EvalValue):Dynamic {
+		return switch (params) {
+			case VArray(_): EvalExceptions.excString(ctx, "Unexpected value VArray(" + stringOfDepth(params, 0) + "), expected array");
+			case _: EvalExceptions.unexpectedValue(ctx, params, "array");
 		};
 	}
 
@@ -1633,7 +1640,8 @@ class EvalStdLib {
 			case VPrototype(proto): switch (proto.pkind) {
 				case PEnum(cs):
 					var idx = toInt(arg(a, 1));
-					if (idx < 0 || idx >= cs.length) VNull else createEnumByName(ctx, arg(a, 0), EvalHash.hash(cs[idx].name), arg(a, 2));
+					if (idx < 0 || idx >= cs.length) throw "nth";
+					createEnumByName(ctx, arg(a, 0), EvalHash.hash(cs[idx].name), arg(a, 2));
 				case _: VNull;
 			};
 			case _: VNull;
