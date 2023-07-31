@@ -194,6 +194,14 @@ class PatternMaker {
 		var kind:PatKind = switch (e.expr) {
 			case EParenthesis(e1) | ECast(e1, null):
 				return make(pctx, toplevel, t, e1);
+			case ECheckType(e1, {ct: CTPath(tp)}) if (tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro" && tp.tname == "Expr" && tp.tsub == null):
+				// `case (macro EXPR : haxe.macro.Expr)`: a reification pattern matches against the reified
+				// AST. Position fields are ignored from here on.
+				var old = pctx.inReification;
+				pctx.inReification = true;
+				var r = make(pctx, toplevel, t, e1);
+				pctx.inReification = old;
+				return r;
 			case EConst(CInt(_, _)) | EConst(CFloat(_, _)) | EConst(CString(_, _)) | EConst(CIdent("true")) | EConst(CIdent("false")):
 				var ce = Texpr.typeConstant(basic, switch (e.expr) { case EConst(c): c; case _: throw "unreachable"; }, p);
 				unifyExpected(ce.type);
@@ -240,7 +248,11 @@ class PatternMaker {
 				var anonFields = switch (TypeFunctions.follow(t)) { case TAnon(a): a.fields; case _: null; };
 				var pairs = [for (f in fields) {
 					var cf = anonFields == null ? null : anonFields.get(f.name);
-					{name: f.name, sub: make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, f.expr)};
+					// In a reification pattern, position fields carry no matchable information. .
+					var sub = (pctx.inReification && (f.name == "pos" || f.name == "posPath" || f.name == "namePos"))
+						? ({pat: PatAny, pos: f.expr.pos} : Pattern)
+						: make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, f.expr);
+					{name: f.name, sub: sub};
 				}];
 				pairs.sort(function(a2, b2) return a2.name < b2.name ? -1 : (a2.name > b2.name ? 1 : 0));
 				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
