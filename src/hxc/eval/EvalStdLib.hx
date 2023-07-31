@@ -1548,7 +1548,7 @@ class EvalStdLib {
 			case CEq: 0;
 			case CInf: -1;
 			case CSup: 1;
-			case CUndef: 0;
+			case CUndef: -1;
 		})));
 		reg(s, "Reflect", "compareMethods", vfn(a -> EvalValueTools.vbool(compareMethodsValue(arg(a, 0), arg(a, 1)))));
 		reg(s, "Reflect", "copy", vfn(a -> copyValue(arg(a, 0))));
