@@ -51,6 +51,51 @@ class EvalStdLib {
 		};
 	}
 
+	static function arrayLive(va:VArray):Array<EvalValue> {
+		return va.avalues.slice(0, va.alength);
+	}
+
+	static function arrayEnsure(va:VArray, len:Int):Void {
+		while (va.avalues.length < len) va.avalues.push(VNull);
+	}
+
+	static function arraySet(va:VArray, i:Int, v:EvalValue):Void {
+		if (i >= va.alength) {
+			if (i >= va.avalues.length) {
+				var len = va.avalues.length * 2 + 5;
+				var minLen = i + 5;
+				if (len < minLen) len = minLen;
+				arrayEnsure(va, len);
+			}
+			va.alength = i + 1;
+		}
+		va.avalues[i] = v;
+	}
+
+	static function arrayPush(va:VArray, v:EvalValue):Int {
+		if (va.alength + 1 >= va.avalues.length) arrayEnsure(va, va.avalues.length * 2 + 5);
+		va.avalues[va.alength] = v;
+		va.alength++;
+		return va.alength;
+	}
+
+	static function arrayInsert(va:VArray, pos:Int, v:EvalValue):Void {
+		if (va.alength + 1 >= va.avalues.length) arrayEnsure(va, va.avalues.length * 2 + 5);
+		var count = va.alength - pos;
+		for (i in 0...count) {
+			var src = va.alength - i - 1;
+			va.avalues[src + 1] = va.avalues[src];
+		}
+		va.avalues[pos] = v;
+		va.alength++;
+	}
+
+	static function arrayRemoveAt(va:VArray, pos:Int):Void {
+		var count = va.alength - pos - 1;
+		for (i in 0...count) va.avalues[pos + i] = va.avalues[pos + i + 1];
+		va.alength--;
+	}
+
 	static function thisVector(a:Array<EvalValue>):Array<EvalValue> {
 		return switch (a[0]) {
 			case VVector(vv): vv;
@@ -1288,23 +1333,23 @@ class EvalStdLib {
 
 		reg(inst, "Array", "push", vmethod(a -> {
 			var va = thisArray(a);
-			va.avalues.push(arg(a, 1));
-			va.alength = va.avalues.length;
-			VInt(va.alength);
+			VInt(arrayPush(va, arg(a, 1)));
 		}));
 		reg(inst, "Array", "pop", vmethod(a -> {
 			var va = thisArray(a);
 			if (va.alength == 0) VNull;
 			else {
-				var v = va.avalues.pop();
-				va.alength = va.avalues.length;
+				var v = va.avalues[va.alength - 1];
+				va.avalues[va.alength - 1] = VNull;
+				va.alength--;
 				v;
 			}
 		}));
 		reg(inst, "Array", "concat", vmethod(a -> {
 			var va = thisArray(a);
 			var other = thisArray([arg(a, 1)]);
-			VArray(new VArray(va.avalues.concat(other.avalues), va.alength + other.alength));
+			var out = arrayLive(va).concat(arrayLive(other));
+			VArray(new VArray(out, out.length));
 		}));
 		reg(inst, "Array", "join", vmethod(a -> {
 			var va = thisArray(a);
@@ -1339,7 +1384,7 @@ class EvalStdLib {
 			if (end < 0) end = length + end;
 			if (pos < 0) pos = 0;
 			if (end < 0) end = 0;
-			var sub = va.avalues.slice(pos, end);
+			var sub = arrayLive(va).slice(pos, end);
 			VArray(new VArray(sub, sub.length));
 		}));
 		reg(inst, "Array", "splice", vmethod(a -> {
@@ -1354,14 +1399,21 @@ class EvalStdLib {
 				if (pos < 0) pos = 0;
 				var delta = length - pos;
 				if (len > delta) len = delta;
-				var removed = va.avalues.splice(pos, len);
-				va.alength = va.avalues.length;
+				var removed = [for (i in 0...len) va.avalues[pos + i]];
+				for (i in 0...(length - pos - len)) va.avalues[pos + i] = va.avalues[pos + len + i];
+				va.alength -= len;
 				VArray(new VArray(removed, removed.length));
 			}
 		}));
-		reg(inst, "Array", "reverse", vmethod(a -> { thisArray(a).avalues.reverse(); VNull; }));
+		reg(inst, "Array", "reverse", vmethod(a -> {
+			var va = thisArray(a);
+			va.avalues = arrayLive(va);
+			va.avalues.reverse();
+			VNull;
+		}));
 		reg(inst, "Array", "sort", vmethod(a -> {
 			var va = thisArray(a); var cmp = arg(a, 1);
+			va.avalues = arrayLive(va);
 			va.avalues.sort((x, y) -> toInt(applyFn(cmp, [x, y])));
 			VNull;
 		}));
@@ -1383,31 +1435,49 @@ class EvalStdLib {
 			for (i in 0...va.alength) out.push(applyFn(fn, [va.avalues[i]]));
 			VArray(new VArray(out, out.length));
 		}));
-		reg(inst, "Array", "copy", vmethod(a -> { var va = thisArray(a); VArray(new VArray(va.avalues.copy(), va.alength)); }));
+		reg(inst, "Array", "copy", vmethod(a -> { var va = thisArray(a); var out = arrayLive(va); VArray(new VArray(out, out.length)); }));
 		reg(inst, "Array", "remove", vmethod(a -> {
 			var va = thisArray(a); var t = arg(a, 1); var idx = -1;
 			for (i in 0...va.alength) if (EvalValueTools.equals(va.avalues[i], t)) { idx = i; break; }
-			if (idx >= 0) { va.avalues.splice(idx, 1); va.alength = va.avalues.length; EvalValueTools.vbool(true); } else EvalValueTools.vbool(false);
+			if (idx >= 0) { arrayRemoveAt(va, idx); EvalValueTools.vbool(true); } else EvalValueTools.vbool(false);
 		}));
 		reg(inst, "Array", "insert", vmethod(a -> {
 			var va = thisArray(a);
 			var pos = toInt(arg(a, 1));
 			if (pos >= va.alength) {
-				va.avalues.push(arg(a, 2));
+				arrayPush(va, arg(a, 2));
 			} else {
 				if (pos < 0) pos = va.alength + pos;
 				if (pos < 0) pos = 0;
-				va.avalues.insert(pos, arg(a, 2));
+				arrayInsert(va, pos, arg(a, 2));
 			}
-			va.alength = va.avalues.length;
 			VNull;
 		}));
 		reg(inst, "Array", "shift", vmethod(a -> {
 			var va = thisArray(a);
-			if (va.alength == 0) VNull else { var v = va.avalues.shift(); va.alength = va.avalues.length; v; }
+			if (va.alength == 0) VNull else {
+				var v = va.avalues[0];
+				va.alength--;
+				for (i in 0...va.alength) va.avalues[i] = va.avalues[i + 1];
+				v;
+			}
 		}));
 		reg(inst, "Array", "unshift", vmethod(a -> {
-			var va = thisArray(a); va.avalues.unshift(arg(a, 1)); va.alength = va.avalues.length; VNull;
+			var va = thisArray(a);
+			if (va.alength + 1 >= va.avalues.length) {
+				var old = va.avalues;
+				va.avalues = [for (_ in 0...(old.length * 2 + 5)) VNull];
+				for (i in 0...va.alength) va.avalues[i + 1] = old[i];
+			} else {
+				var i = va.alength;
+				while (i > 0) {
+					va.avalues[i] = va.avalues[i - 1];
+					i--;
+				}
+			}
+			va.avalues[0] = arg(a, 1);
+			va.alength++;
+			VNull;
 		}));
 		reg(inst, "Array", "lastIndexOf", vmethod(a -> {
 			var va = thisArray(a); var t = arg(a, 1); var idx = -1; var last = va.alength - 1;
@@ -1420,9 +1490,11 @@ class EvalStdLib {
 		reg(inst, "Array", "resize", vmethod(a -> {
 			var va = thisArray(a); var len = toInt(arg(a, 1));
 			if (len < 0) len = 0;
-			while (va.avalues.length > len) va.avalues.pop();
-			while (va.avalues.length < len) va.avalues.push(VNull);
-			va.alength = len;
+			if (va.alength < len) arraySet(va, len - 1, VNull);
+			else if (va.alength > len) {
+				for (i in len...va.alength) va.avalues[i] = VNull;
+				va.alength = len;
+			}
 			VNull;
 		}));
 
