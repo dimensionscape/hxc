@@ -575,10 +575,34 @@ class Typer {
 		};
 	}
 
+	// Acc_get (subset).
+	// Read of a field flagged inline (AccInline var, or an inline method closure). For an inline var the
+	// stored constant value is substituted at the access site.
+	static function inlineRead(ctx:TyperContext, fa:FieldAccess):TExpr {
+		var cf = fa.field;
+		var p = fa.pos;
+		return switch (cf.kind) {
+			case Method(_):
+				// An inline method read yields its closure. The reference additionally routes extern inline
+				// methods through their _Impl_ class not needed here.
+				FieldAccessTools.getFieldExpr(fa, FRead);
+			case Var(_):
+				switch (cf.expr) {
+					case null: throw new TypingError("Recursive inline is not supported", p);
+					case e:
+						// apply_params is the identity for static/instance hosts, so substituting the stored
+						// value only moves it to the access position; a TCast bridges any type mismatch.
+						var e2 = TypeFunctions.mk(e.expr, e.type, p);
+						var tf = cf.type;
+						TypeUnification.typeIseqDefault(tf, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), tf, p);
+				}
+		};
+	}
+
 	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
 		return switch (acc) {
 			case AKExpr(e): e;
-			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead);
+			case AKField(fa): fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
 			case AKAccessor(fa):
 				var getterAcc = Fields.typeField(ctx, fa.on, "get_" + fa.field.name, fa.pos, MCall([]), WithTypeTools.value);
