@@ -85,6 +85,12 @@ class Compiler {
 			} else {
 				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 			}
+		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
+			// An uncaught exception escaping the interpreted program: render the thrown value and its
+			// position, as the canonical eval target does, rather than the bare wrapper message.
+			Sys.stderr().writeString(ex.pos.toString() + " : " + hxc.eval.EvalStdLib.stringOf(ex.value) + "
+");
+			Sys.exit(1);
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "
 ");
