@@ -22,29 +22,38 @@ class EvalMain {
 
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>):Void {
 		var delays:Array<{proto:VPrototype, fn:VPrototype->Void}> = [];
-		for (mt in types) {
-			switch (mt) {
-				case TClassDecl(c):
-					ctx.typeCache.set(EvalHash.pathHash(c.path), mt);
-					var iproto = EvalPrototype.buildInstance(ctx, c);
-					ctx.instancePrototypes.set(EvalHash.pathHash(c.path), iproto);
-					if (c.path.pack.length == 0) switch (c.path.name) {
-						case "String": ctx.stringPrototype = iproto;
-						case "Array": ctx.arrayPrototype = iproto;
-						case _:
-					}
-					if (c.path.pack.length == 1 && c.path.pack[0] == "eval" && c.path.name == "Vector")
-						ctx.vectorPrototype = iproto;
-					var r = EvalPrototype.buildStatic(ctx, c);
-					ctx.staticPrototypes.set(r.proto.ppath, r.proto);
-					for (d in r.delays) delays.push({proto: r.proto, fn: d});
-					var ctor = EvalPrototype.makeConstructor(ctx, c);
-					if (ctor != null) ctx.constructors.set(EvalHash.pathHash(c.path), ctor);
-				case TEnumDecl(en):
-					ctx.typeCache.set(EvalHash.pathHash(en.path), mt);
-					ctx.staticPrototypes.set(EvalHash.pathHash(en.path), EvalPrototype.buildEnum(ctx, en));
+		// Register type-cache entries and enum prototypes up front.
+		for (mt in types) switch (mt) {
+			case TClassDecl(c): ctx.typeCache.set(EvalHash.pathHash(c.path), mt);
+			case TEnumDecl(en):
+				ctx.typeCache.set(EvalHash.pathHash(en.path), mt);
+				ctx.staticPrototypes.set(EvalHash.pathHash(en.path), EvalPrototype.buildEnum(ctx, en));
+			case _:
+		}
+		// Build a class prototype, its superclass first, so a subclass inherits the parent field layout
+		// regardless of module registration order.
+		function buildClass(c:TClass):Void {
+			var key = EvalHash.pathHash(c.path);
+			if (ctx.instancePrototypes.exists(key)) return;
+			if (c.superClass != null) buildClass(c.superClass.c);
+			var iproto = EvalPrototype.buildInstance(ctx, c);
+			ctx.instancePrototypes.set(key, iproto);
+			if (c.path.pack.length == 0) switch (c.path.name) {
+				case "String": ctx.stringPrototype = iproto;
+				case "Array": ctx.arrayPrototype = iproto;
 				case _:
 			}
+			if (c.path.pack.length == 1 && c.path.pack[0] == "eval" && c.path.name == "Vector")
+				ctx.vectorPrototype = iproto;
+			var r = EvalPrototype.buildStatic(ctx, c);
+			ctx.staticPrototypes.set(r.proto.ppath, r.proto);
+			for (d in r.delays) delays.push({proto: r.proto, fn: d});
+			var ctor = EvalPrototype.makeConstructor(ctx, c);
+			if (ctor != null) ctx.constructors.set(key, ctor);
+		}
+		for (mt in types) switch (mt) {
+			case TClassDecl(c): buildClass(c);
+			case _:
 		}
 		// Static field initializers run after every prototype is registered.
 		for (d in delays) d.fn(d.proto);
