@@ -11,6 +11,7 @@ import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
+import hxc.typing.Matcher.Match;
 
 class Calls {
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position):TExpr {
@@ -83,10 +84,34 @@ class Calls {
 				return typeTrace(ctx, el, withType, p);
 			case EConst(CIdent("super")):
 				return typeSuperCall(ctx, el, p);
+			case EField(e1, "match", _) if (el.length == 1):
+				// `e.match(pattern)` on an enum is sugar for `switch e { case pattern: true; case _: false;
+				// }`.
+				// Only intercept for enum-ish receivers; an abstract that defines its own `match` impl
+				// keeps the
+				// normal call.
+				var et = Typer.typeExpr(ctx, e1, WithTypeTools.value);
+				if (hasEnumMatch(et.type)) {
+					var cases:Array<SwitchCase> = [{values: [el[0]], guard: null, expr: new Expr(EConst(CIdent("true")), p), pos: p}];
+					var def = {e: new Expr(EConst(CIdent("false")), p), pos: p};
+					return Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p);
+				}
 			case _:
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
 		return buildCall(ctx, acc, el, withType, p);
+	}
+
+	// True when `.match()` applies: the receiver is an enum, or a @:forward abstract over one that
+	// does not define its own `match`.
+	static function hasEnumMatch(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TEnum(_, _): true;
+			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":forward", a.meta) && !TypeFunctions.hasMeta(":coreType", a.meta)):
+				if (a.impl != null && a.impl.statics.exists("match") && TypeFunctions.hasClassFieldFlag(a.impl.statics.get("match"), CfImpl)) false
+				else hasEnumMatch(TypeFunctions.applyParams(a.params, tl, a.thisType));
+			case _: false;
+		};
 	}
 
 	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position):TExpr {
