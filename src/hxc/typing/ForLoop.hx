@@ -21,13 +21,11 @@ class ForLoop {
 		};
 	}
 
+	// Build a 0-argument call `e.name`, dispatched through the full call machinery so an iterator
+	// supplied by an abstract method (e.g. Map.iterator via its _Impl_) resolves like any other call.
 	static function call0(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
-		var ce = methodCallee(ctx, e, name, p);
-		var ret = switch (TypeFunctions.follow(ce.type)) {
-			case TFun(sig): sig.ret;
-			case _: TypeFunctions.mkMono();
-		};
-		return Calls.makeCall(ctx, ce, [], ret, p);
+		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
+		return Calls.buildCall(ctx, acc, [], WithTypeTools.value, p);
 	}
 
 	// Type_for_loop (general iterator desugar).
