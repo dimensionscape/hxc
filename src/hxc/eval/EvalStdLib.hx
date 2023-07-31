@@ -433,6 +433,49 @@ class EvalStdLib {
 		return id;
 	}
 
+	static function jsonToValue(ctx:EvalContext, v:Dynamic):EvalValue {
+		if (v == null) return VNull;
+		if (Std.isOfType(v, Bool)) return v ? VTrue : VFalse;
+		if (Std.isOfType(v, Int)) return VInt(v);
+		if (Std.isOfType(v, Float)) return VFloat(v);
+		if (Std.isOfType(v, String)) return mkStr(v);
+		if (Std.isOfType(v, Array)) {
+			var arr:Array<Dynamic> = v;
+			return VArray(new VArray([for (item in arr) jsonToValue(ctx, item)], arr.length));
+		}
+		var fields = new Map<Int, EvalValue>();
+		for (name in Reflect.fields(v)) fields.set(EvalHash.hash(name), jsonToValue(ctx, Reflect.field(v, name)));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function valueToJson(v:EvalValue):Dynamic {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VNull: null;
+			case VTrue: true;
+			case VFalse: false;
+			case VInt(i): i;
+			case VFloat(f): f;
+			case VString(s): s.sstring;
+			case VNativeString(s): s;
+			case VArray(va): [for (i in 0...va.alength) valueToJson(va.avalues[i])];
+			case VVector(vv): [for (item in vv) valueToJson(item)];
+			case VObject(o):
+				var obj = {};
+				var fields = objectFieldMap(o);
+				var names = [for (key in fields.keys()) EvalHash.revHash(key)];
+				names.sort(Reflect.compare);
+				for (name in names) Reflect.setField(obj, name, valueToJson(fields.get(EvalHash.hash(name))));
+				obj;
+			case VInstance(vi):
+				var obj = {};
+				var names = [for (key in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(key)];
+				names.sort(Reflect.compare);
+				for (name in names) Reflect.setField(obj, name, valueToJson(vi.ifields[vi.iproto.pinstanceNames.get(EvalHash.hash(name))]));
+				obj;
+			case _: null;
+		}
+	}
+
 	static function thisDate(a:Array<EvalValue>):Float {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IDate(ts): ts; case _: 0.0; };
@@ -1888,6 +1931,10 @@ class EvalStdLib {
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
+		reg(s, "haxe.Json", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
+		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
+		reg(s, "haxe.format.JsonPrinter", "print", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 
 		// sys.FileSystem / sys.io.File: macros read the source tree at compile time; the interpreter
 		// host has real filesystem access.
