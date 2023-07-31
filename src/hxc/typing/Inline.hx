@@ -39,7 +39,9 @@ class Inline {
 			case Method(MethInline):
 			case _: return null;
 		}
-		if (cf.params.length != 0) return null;
+		// A method's own type parameters do not affect the inlined value: the evaluator runs the body
+		// without re-typing, so the substitution proceeds with the body types left as-is (the params
+		// would only matter for the return type, which the evaluator does not need).
 		// Force the callee's body to be typed first: it may live in a module that has not been
 		// installed yet, so type it on demand from its owning class, then follow the lazy as a backstop.
 		if (c != null) TypeFields.forceFieldBody(ctx.com, c, cf);
