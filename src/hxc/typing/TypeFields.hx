@@ -105,6 +105,33 @@ class TypeFields {
 		cf.type = TLazy(r);
 	}
 
+	// Force the field bodies of a single class whose fields were just rewritten by a @:build macro.
+	// A full installAndForce per build is O(builds x modules) and re-enters through lazy typing; this
+	// types only the rewritten class, so the cost stays proportional to the fields actually added.
+	public static function forceClassFields(ctx:Context, c:TClass):Void {
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return;
+		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
+		var tctx = new TyperContext(ctx);
+		tctx.curclass = c;
+		tctx.typeParams = c.params;
+		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var savedMod = ctx.currentModule;
+		ctx.currentModule = c.module;
+		for (cff in d.dData) {
+			var isStatic = false;
+			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
+			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
+			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
+				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
+			if (cf == null || cf.expr != null) continue;
+			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}; case _: }
+			try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) { ctx.unresolvedFields++; }
+		}
+		ctx.currentModule = savedMod;
+	}
+
 	static var _forcing:Array<TClassField> = [];
 
 	// Type a single field body on demand. Inline expansion needs a callee body that may not be

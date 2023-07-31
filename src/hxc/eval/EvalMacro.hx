@@ -179,9 +179,11 @@ class EvalMacro {
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
 		curBuildClass = savedBuildClass;
 		hxc.context.ModuleLoader.rebuildFields(c, newFields);
-		hxc.typing.TypeResolve.resolveClass(com, c, newDef, declEntry.pos);
+		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
+		// just the field signatures (resolveClass would re-process extends and reject the set super).
+		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
 		// Type the freshly added field bodies so their expr is set for the interpreter.
-		hxc.typing.TypeFields.installAndForce(com);
+		hxc.typing.TypeFields.forceClassFields(com, c);
 	}
 
 	static function flattenExprPath(e:Expr):Null<Array<String>> {
@@ -216,19 +218,68 @@ class EvalMacro {
 	}
 
 	static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
-		var ed = switch (v) {
-			case VInt(i): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CInt", [mkString(Std.string(i)), VNull])]);
-			case VFloat(f): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CFloat", [mkString(Std.string(f)), VNull])]);
-			case VString(s): mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CString", [mkString(s.sstring), VNull])]);
-			case VTrue: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("true")])]);
-			case VFalse: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("false")])]);
-			case VNull: mkEnumValue(ec, "ExprDef", "EConst", [mkEnumValue(ec, "Constant", "CIdent", [mkString("null")])]);
-			case _: throw new TypingError("Context.makeExpr: unsupported value", curPos);
+		return encodeExpr(ec, valueToExpr(ec, v, Position.nullPos));
+	}
+
+	static function identChar(c:Int):Bool {
+		return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
+	}
+
+	static function isIdentName(s:String):Bool {
+		if (s.length == 0 || !identChar(s.charCodeAt(0))) return false;
+		for (i in 1...s.length) {
+			var c = s.charCodeAt(i);
+			if (!identChar(c) && !(c >= "0".code && c <= "9".code)) return false;
+		}
+		return true;
+	}
+
+	// Build the dotted type-path expression for an enum value's owning enum.
+	static function enumPathExpr(ec:EvalContext, pathHash:Int, p:Position):Expr {
+		var mt = ec.typeCache.get(pathHash);
+		if (mt == null) throw "value_to_expr: enum type not found";
+		var path = TypeFunctions.tInfos(mt).path;
+		var segs = path.pack.concat([path.name]);
+		var e = new Expr(EConst(CIdent(segs[0])), p);
+		for (i in 1...segs.length) e = new Expr(EField(e, segs[i], EFNormal), p);
+		return e;
+	}
+
+	// Build an AST expression that evaluates to the given runtime value; Context.makeExpr / `$v{...}` reify
+	// a value back into a haxe.macro.Expr.
+	static function valueToExpr(ec:EvalContext, v:EvalValue, p:Position):Expr {
+		inline function mk(ed:ExprDef):Expr return new Expr(ed, p);
+		return switch (EvalValue.EvalValueTools.vresolve(v)) {
+			case VNull: mk(EConst(CIdent("null")));
+			case VTrue: mk(EConst(CIdent("true")));
+			case VFalse: mk(EConst(CIdent("false")));
+			case VInt(i): mk(EConst(CInt(Std.string(i), null)));
+			case VFloat(f): mk(EConst(CFloat(Std.string(f), null)));
+			case VString(s): mk(EConst(CString(s.sstring, SDoubleQuotes)));
+			case VNativeString(s): mk(EConst(CString(s, SDoubleQuotes)));
+			case VArray(va): mk(EArrayDecl([for (i in 0...va.alength) valueToExpr(ec, va.avalues[i], p)]));
+			case VObject(o):
+				var fields:Array<ObjectField> = [];
+				function add(name:String, val:EvalValue) {
+					// Ignore generated pos fields.
+					var isPos = name == "pos" && (switch (EvalValue.EvalValueTools.vresolve(val)) {
+						case VInstance(vi): switch (vi.ikind) { case IPos(_): true; case _: false; };
+						case _: false;
+					});
+					if (!isPos) fields.push({name: name, pos: p, quotes: isIdentName(name) ? NoQuotes : DoubleQuotes, expr: valueToExpr(ec, val, p)});
+				}
+				switch (o.oproto) {
+					case OProto(proto): for (k in proto.pinstanceNames.keys()) add(EvalHash.revHash(k), o.ofields[proto.pinstanceNames.get(k)]);
+					case ODictionary(m): for (k in m.keys()) add(EvalHash.revHash(k), m.get(k));
+				}
+				mk(EObjectDecl(fields));
+			case VEnumValue(ev):
+				var proto = EvalContext.getStaticPrototypeRaise(ec, ev.epath);
+				var name = switch (proto.pkind) { case PEnum(ctors): ctors[ev.eindex].name; case _: throw "value_to_expr: not an enum"; };
+				var ctorExpr = new Expr(EField(enumPathExpr(ec, ev.epath, p), name, EFNormal), p);
+				ev.eargs.length == 0 ? ctorExpr : mk(ECall(ctorExpr, [for (a in ev.eargs) valueToExpr(ec, a, p)]));
+			case other: EvalExceptions.excString(ec, "Cannot convert " + EvalExceptions.sValueKind(other) + " to expr");
 		};
-		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("expr"), ed);
-		fields.set(EvalHash.hash("pos"), VNull);
-		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	public static function isMacroField(cf:TClassField):Bool {

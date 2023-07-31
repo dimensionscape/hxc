@@ -70,7 +70,12 @@ class TypeResolve {
 				checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
+		resolveClassFields(ctx, c, d, p);
+	}
 
+	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro
+	// rewrites the field list but not the heritage, so it re-runs this without redoing extends.
+	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
 		// (abstract member). Mirror that when locating the registered cf so the enum-abstract `var X`
