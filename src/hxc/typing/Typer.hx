@@ -181,6 +181,10 @@ class Typer {
 			case EParenthesis(e1):
 				var te = typeExpr(ctx, e1, withType);
 				TypeFunctions.mk(TParenthesis(te), te.type, te.pos);
+			case EBlock([]) if (emptyBlockIsObject(withType)):
+				// `{}` parses as an empty block; in a value position with a known (non-mono) type it is an
+				// empty object literal, not a Void block.
+				typeExpr(ctx, new Expr(EObjectDecl([]), p), withType);
 			case EBlock(l):
 				var restore = saveLocals(ctx);
 				var te = typeBlock(ctx, l, withType, p);
@@ -596,6 +600,16 @@ class Typer {
 						var tf = cf.type;
 						TypeUnification.typeIseqDefault(tf, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), tf, p);
 				}
+		};
+	}
+
+	// An empty `{}` is an object literal (not a Void block) when a value of a known structure type is
+	// expected. With no expected value, or an implicit return into a still-open monomorph, it stays a block.
+	static function emptyBlockIsObject(wt:WithType):Bool {
+		return switch (wt) {
+			case NoValue: false;
+			case WithType(t, ImplicitReturn): switch (TypeFunctions.follow(t)) { case TMono(_): false; case _: true; };
+			case _: true;
 		};
 	}
 
