@@ -1497,7 +1497,7 @@ class EvalStdLib {
 		})));
 		reg(s, "Reflect", "makeVarArgs", vfn(a -> {
 			var fn = arg(a, 0);
-			VFunction(function(vl:Array<EvalValue>):EvalValue return callValueOn(VNull, fn, [VArray(new VArray(vl, vl.length))]), true);
+			VFunction(function(vl:Array<EvalValue>):EvalValue return applyFn(fn, [VArray(new VArray(vl, vl.length))]), true);
 		}));
 		reg(s, "Reflect", "setProperty", vfn(a -> {
 			var o = arg(a, 0);
