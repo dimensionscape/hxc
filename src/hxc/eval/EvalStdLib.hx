@@ -308,6 +308,26 @@ class EvalStdLib {
 		};
 	}
 
+	static function iterableValues(ctx:EvalContext, v:EvalValue):Array<EvalValue> {
+		switch (EvalValueTools.vresolve(v)) {
+			case VArray(va):
+				return va.avalues.slice(0, va.alength);
+			case VVector(vv):
+				return vv.copy();
+			case _:
+		}
+		var it = applyFn(EvalField.dynamicField(ctx, v, EvalHash.hash("iterator")), []);
+		var values:Array<EvalValue> = [];
+		while (EvalMisc.isTrue(callValueOn(it, EvalField.dynamicField(ctx, it, EvalHash.hash("hasNext")), []))) {
+			values.push(callValueOn(it, EvalField.dynamicField(ctx, it, EvalHash.hash("next")), []));
+		}
+		return values;
+	}
+
+	static function valueArray(values:Array<EvalValue>):EvalValue {
+		return VArray(new VArray(values, values.length));
+	}
+
 	static function thisBuffer(a:Array<EvalValue>):StringBuf {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IBuffer(b): b; case _: new StringBuf(); };
@@ -1738,6 +1758,83 @@ class EvalStdLib {
 			var fn = arg(a, 1); var args = argList(arg(a, 2));
 			callValueOn(arg(a, 0), fn, args);
 		}));
+		reg(s, "Lambda", "array", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)))));
+		reg(s, "Lambda", "list", vfn(a -> {
+			var list = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
+			for (v in iterableValues(ctx, arg(a, 0))) callValueOn(list, EvalField.dynamicField(ctx, list, EvalHash.hash("add")), [v]);
+			list;
+		}));
+		reg(s, "Lambda", "map", vfn(a -> valueArray([for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [v])])));
+		reg(s, "Lambda", "mapi", vfn(a -> {
+			var i = 0;
+			valueArray([for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [VInt(i++), v])]);
+		}));
+		reg(s, "Lambda", "flatten", vfn(a -> {
+			var out:Array<EvalValue> = [];
+			for (it in iterableValues(ctx, arg(a, 0))) out = out.concat(iterableValues(ctx, it));
+			valueArray(out);
+		}));
+		reg(s, "Lambda", "flatMap", vfn(a -> {
+			var out:Array<EvalValue> = [];
+			for (v in iterableValues(ctx, arg(a, 0))) out = out.concat(iterableValues(ctx, applyFn(arg(a, 1), [v])));
+			valueArray(out);
+		}));
+		reg(s, "Lambda", "has", vfn(a -> {
+			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(EvalMisc.opEq(v, arg(a, 1)))) return VTrue;
+			VFalse;
+		}));
+		reg(s, "Lambda", "exists", vfn(a -> {
+			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VTrue;
+			VFalse;
+		}));
+		reg(s, "Lambda", "foreach", vfn(a -> {
+			for (v in iterableValues(ctx, arg(a, 0))) if (!EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VFalse;
+			VTrue;
+		}));
+		reg(s, "Lambda", "iter", vfn(a -> {
+			for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [v]);
+			VNull;
+		}));
+		reg(s, "Lambda", "filter", vfn(a -> valueArray([for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) v])));
+		reg(s, "Lambda", "fold", vfn(a -> {
+			var acc = arg(a, 2);
+			for (v in iterableValues(ctx, arg(a, 0))) acc = applyFn(arg(a, 1), [v, acc]);
+			acc;
+		}));
+		reg(s, "Lambda", "foldi", vfn(a -> {
+			var acc = arg(a, 2);
+			var i = 0;
+			for (v in iterableValues(ctx, arg(a, 0))) acc = applyFn(arg(a, 1), [v, acc, VInt(i++)]);
+			acc;
+		}));
+		reg(s, "Lambda", "count", vfn(a -> {
+			var n = 0;
+			var pred = arg(a, 1);
+			for (v in iterableValues(ctx, arg(a, 0))) if (pred == VNull || EvalMisc.isTrue(applyFn(pred, [v]))) n++;
+			VInt(n);
+		}));
+		reg(s, "Lambda", "empty", vfn(a -> EvalValueTools.vbool(iterableValues(ctx, arg(a, 0)).length == 0)));
+		reg(s, "Lambda", "indexOf", vfn(a -> {
+			var i = 0;
+			for (v in iterableValues(ctx, arg(a, 0))) {
+				if (EvalMisc.isTrue(EvalMisc.opEq(v, arg(a, 1)))) return VInt(i);
+				i++;
+			}
+			VInt(-1);
+		}));
+		reg(s, "Lambda", "find", vfn(a -> {
+			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return v;
+			VNull;
+		}));
+		reg(s, "Lambda", "findIndex", vfn(a -> {
+			var i = 0;
+			for (v in iterableValues(ctx, arg(a, 0))) {
+				if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VInt(i);
+				i++;
+			}
+			VInt(-1);
+		}));
+		reg(s, "Lambda", "concat", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)).concat(iterableValues(ctx, arg(a, 1))))));
 
 		var ctors = ctx.builtins.constructorBuiltins;
 		ctors.set(EvalHash.hash("StringBuf"), function(a) {
