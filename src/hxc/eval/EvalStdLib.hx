@@ -108,7 +108,9 @@ class EvalStdLib {
 			case VObject(o):
 				switch (o.oproto) {
 					case OProto(proto): [for (k in proto.pinstanceNames.keys()) EvalHash.revHash(k)];
-					case ODictionary(l): [for (k in l.keys()) EvalHash.revHash(k)];
+					case ODictionary(l):
+						var order = objectFieldOrders.get(o);
+						if (order == null) [for (k in l.keys()) EvalHash.revHash(k)] else [for (k in order) if (l.exists(k)) EvalHash.revHash(k)];
 				};
 			case VInstance(vi):
 				[for (k in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(k)];
@@ -150,7 +152,16 @@ class EvalStdLib {
 		switch (EvalValueTools.vresolve(v)) {
 			case VObject(o):
 				switch (o.oproto) {
-					case ODictionary(m): m.set(name, value);
+					case ODictionary(m):
+						if (!m.exists(name)) {
+							var order = objectFieldOrders.get(o);
+							if (order == null) {
+								order = [for (k in m.keys()) k];
+								objectFieldOrders.set(o, order);
+							}
+							order.push(name);
+						}
+						m.set(name, value);
 					case OProto(proto):
 						var idx = proto.pinstanceNames.get(name);
 						if (idx != null) o.ofields[idx] = value;
@@ -158,6 +169,9 @@ class EvalStdLib {
 							var m = objectFieldMap(o);
 							m.set(name, value);
 							o.oproto = ODictionary(m);
+							var order = [for (k in proto.pinstanceNames.keys()) k];
+							order.push(name);
+							objectFieldOrders.set(o, order);
 						}
 				}
 			case VInstance(vi):
@@ -177,6 +191,8 @@ class EvalStdLib {
 				var had = m.exists(name);
 				m.remove(name);
 				o.oproto = ODictionary(m);
+				var order = objectFieldOrders.get(o);
+				if (order != null) order.remove(name);
 				had;
 			case _:
 				false;
@@ -186,7 +202,11 @@ class EvalStdLib {
 	static function copyValue(v:EvalValue):EvalValue {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: VNull;
-			case VObject(o): VObject(new VObject(o.ofields.copy(), o.oproto));
+			case VObject(o):
+				var copy = new VObject(o.ofields.copy(), o.oproto);
+				var order = objectFieldOrders.get(o);
+				if (order != null) objectFieldOrders.set(copy, order.copy());
+				VObject(copy);
 			case VInstance(vi): VInstance(new VInstance(vi.ifields.copy(), vi.iproto, vi.ikind));
 			case VArray(va): VArray(new VArray(va.avalues.copy(), va.alength));
 			case VVector(vv): VVector(vv.copy());
@@ -445,6 +465,7 @@ class EvalStdLib {
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
+	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
