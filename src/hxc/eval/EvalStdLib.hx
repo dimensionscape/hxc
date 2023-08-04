@@ -103,6 +103,29 @@ class EvalStdLib {
 		};
 	}
 
+	static function sortedFieldKeys(names:Map<Int, Int>):Array<Int> {
+		var keys = [for (k in names.keys()) k];
+		keys.sort(function(a, b) return names.get(a) - names.get(b));
+		return keys;
+	}
+
+	static function instanceFieldKeys(proto:VPrototype):Array<Int> {
+		return sortedFieldKeys(proto.pinstanceNames);
+	}
+
+	static function isReflectHidden(path:Int, name:Int, isStatic:Bool):Bool {
+		if (isStatic) {
+			if (path == EvalHash.hash("haxe.Json")) return name == EvalHash.hash("parse") || name == EvalHash.hash("stringify");
+			if (path == EvalHash.hash("haxe.format.JsonParser")) return name == EvalHash.hash("parse");
+			if (path == EvalHash.hash("haxe.format.JsonPrinter")) return name == EvalHash.hash("print");
+			if (path == EvalHash.hash("haxe.Serializer") || path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("run");
+		} else {
+			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.key_toString;
+			if (path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("unserialize") || name == EvalHash.hash("getResolver") || name == EvalHash.hash("setResolver");
+		}
+		return false;
+	}
+
 	static function fieldNames(v:EvalValue):Array<String> {
 		return switch (v) {
 			case VObject(o):
@@ -113,8 +136,8 @@ class EvalStdLib {
 						if (order == null) [for (k in l.keys()) EvalHash.revHash(k)] else [for (k in order) if (l.exists(k)) EvalHash.revHash(k)];
 				};
 			case VInstance(vi):
-				[for (k in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(k)];
-			case VPrototype(proto): [for (k in proto.pnames.keys()) EvalHash.revHash(k)];
+				[for (k in instanceFieldKeys(vi.iproto)) EvalHash.revHash(k)];
+			case VPrototype(proto): [for (k in sortedFieldKeys(proto.pnames)) if (!isReflectHidden(proto.ppath, k, true)) EvalHash.revHash(k)];
 			case VString(_) | VArray(_) | VVector(_): ["length"];
 			case _: [];
 		};
@@ -222,11 +245,11 @@ class EvalStdLib {
 					case ODictionary(m): m.exists(name);
 				}
 			case VInstance(vi):
-				if (vi.iproto.pinstanceNames.exists(name)) true else {
+				if (isReflectHidden(vi.iproto.ppath, name, false)) false else if (vi.iproto.pinstanceNames.exists(name)) true else {
 					var p = vi.iproto;
 					var found = false;
 					while (p != null && !found) {
-						found = p.pnames.exists(name);
+						found = p.pnames.exists(name) && !isReflectHidden(p.ppath, name, false);
 						p = p.pparent;
 					}
 					found;
@@ -235,7 +258,7 @@ class EvalStdLib {
 				var p = proto;
 				var found = false;
 				while (p != null && !found) {
-					found = p.pnames.exists(name);
+					found = p.pnames.exists(name) && !isReflectHidden(p.ppath, name, true);
 					p = p.pparent;
 				}
 				found;
@@ -1615,7 +1638,13 @@ class EvalStdLib {
 		}));
 		reg(s, "Reflect", "field", vfn(a -> {
 			var o = arg(a, 0);
-			if (o == VNull) VNull else EvalField.dynamicField(ctx, o, EvalHash.hash(stringOf(arg(a, 1))));
+			var name = EvalHash.hash(stringOf(arg(a, 1)));
+			switch (EvalValueTools.vresolve(o)) {
+				case VPrototype(proto) if (isReflectHidden(proto.ppath, name, true)): VNull;
+				case VInstance(vi) if (isReflectHidden(vi.iproto.ppath, name, false)): VNull;
+				case _:
+					if (o == VNull) VNull else EvalField.dynamicField(ctx, o, name);
+			}
 		}));
 		reg(s, "Reflect", "setField", vfn(a -> {
 			setDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
