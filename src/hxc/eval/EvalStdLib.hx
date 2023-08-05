@@ -2181,6 +2181,11 @@ class EvalStdLib {
 		reg(inst, "sys.io._Process.NativeProcess", "closeStdin", vmethod(a -> { thisProcess(a).stdin.close(); VNull; }));
 		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> VInt(thisProcess(a).stdin.writeBytes(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "sys.io._Process.Stdin", "close", vmethod(a -> {
+			var proc = EvalField.field(ctx, arg(a, 0), EvalHash.hash("proc"));
+			thisProcess([proc]).stdin.close();
+			VNull;
+		}));
 		reg(inst, "sys.thread.Mutex", "acquire", vmethod(a -> {
 			var mutex = thisThreadMutex(a);
 			var thread = sys.thread.Thread.current();
