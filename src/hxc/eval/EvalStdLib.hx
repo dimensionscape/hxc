@@ -113,6 +113,69 @@ class EvalStdLib {
 		return sortedFieldKeys(proto.pinstanceNames);
 	}
 
+	static inline function rotl32(x:Int, n:Int):Int {
+		return (x << n) | (x >>> (32 - n));
+	}
+
+	static inline function hashMix(h0:Int, d0:Int):Int {
+		var d = d0 * 0xcc9e2d51;
+		d = rotl32(d, 15);
+		d *= 0x1b873593;
+		var h = h0 ^ d;
+		h = rotl32(h, 13);
+		return h * 5 + 0xe6546b64;
+	}
+
+	static inline function hashFinalMix(h0:Int):Int {
+		var h = h0;
+		h ^= h >>> 16;
+		h *= 0x85ebca6b;
+		h ^= h >>> 13;
+		h *= 0xc2b2ae35;
+		h ^= h >>> 16;
+		return h;
+	}
+
+	static function seededStringHash(s:String):Int {
+		var cached = stringHashCache.get(s);
+		if (cached != null) return cached;
+		var bytes = haxe.io.Bytes.ofString(s);
+		var h = 0;
+		var i = 0;
+		while (i + 4 <= bytes.length) {
+			h = hashMix(h, bytes.get(i) | (bytes.get(i + 1) << 8) | (bytes.get(i + 2) << 16) | (bytes.get(i + 3) << 24));
+			i += 4;
+		}
+		var w = 0;
+		switch (bytes.length & 3) {
+			case 3:
+				w = bytes.get(i + 2) << 16;
+				w |= bytes.get(i + 1) << 8;
+				w |= bytes.get(i);
+				h = hashMix(h, w);
+			case 2:
+				w = bytes.get(i + 1) << 8;
+				w |= bytes.get(i);
+				h = hashMix(h, w);
+			case 1:
+				h = hashMix(h, bytes.get(i));
+			case _:
+		}
+		h ^= bytes.length;
+		var result = hashFinalMix(h) & 0x3fffffff;
+		stringHashCache.set(s, result);
+		return result;
+	}
+
+	static function objectDictionaryKeys(fields:Map<Int, EvalValue>):Array<Int> {
+		var keys = [for (k in fields.keys()) k];
+		keys.sort(function(a, b) {
+			var d = seededStringHash(EvalHash.revHash(b)) - seededStringHash(EvalHash.revHash(a));
+			return d != 0 ? d : Reflect.compare(EvalHash.revHash(a), EvalHash.revHash(b));
+		});
+		return keys;
+	}
+
 	static function isReflectHidden(path:Int, name:Int, isStatic:Bool):Bool {
 		if (isStatic) {
 			if (path == EvalHash.hash("haxe.Json")) return name == EvalHash.hash("parse") || name == EvalHash.hash("stringify");
@@ -130,10 +193,9 @@ class EvalStdLib {
 		return switch (v) {
 			case VObject(o):
 				switch (o.oproto) {
-					case OProto(proto): [for (k in proto.pinstanceNames.keys()) EvalHash.revHash(k)];
+					case OProto(proto): [for (k in instanceFieldKeys(proto)) EvalHash.revHash(k)];
 					case ODictionary(l):
-						var order = objectFieldOrders.get(o);
-						if (order == null) [for (k in l.keys()) EvalHash.revHash(k)] else [for (k in order) if (l.exists(k)) EvalHash.revHash(k)];
+						[for (k in objectDictionaryKeys(l)) EvalHash.revHash(k)];
 				};
 			case VInstance(vi):
 				[for (k in instanceFieldKeys(vi.iproto)) EvalHash.revHash(k)];
@@ -489,6 +551,7 @@ class EvalStdLib {
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
+	static var stringHashCache = new Map<String, Int>();
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -1061,7 +1124,11 @@ class EvalStdLib {
 	static function objectString(o:VObject, depth:Int):String {
 		var parts:Array<String> = [];
 		var fields = objectFieldMap(o);
-		for (k in fields.keys()) parts.push(EvalHash.revHash(k) + ": " + stringOfDepth(fields.get(k), depth + 1));
+		var keys = switch (o.oproto) {
+			case OProto(proto): instanceFieldKeys(proto);
+			case ODictionary(_): objectDictionaryKeys(fields);
+		};
+		for (k in keys) if (fields.exists(k)) parts.push(EvalHash.revHash(k) + ": " + stringOfDepth(fields.get(k), depth + 1));
 		return "{" + parts.join(", ") + "}";
 	}
 
