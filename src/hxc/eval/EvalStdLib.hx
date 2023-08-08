@@ -1302,6 +1302,16 @@ class EvalStdLib {
 		#end
 	}
 
+	static function gcMajorSlice(n:EvalValue):EvalValue {
+		switch (n) {
+			case VNull:
+				throw "Null Access";
+			case _:
+				gcMajor();
+				return VInt(0);
+		}
+	}
+
 	static function gcCounters():EvalValue {
 		var words = gcWordCount(gcCurrentBytes());
 		return mkObject([
@@ -1448,7 +1458,7 @@ class EvalStdLib {
 		reg(s, "eval.vm.Gc", "full_major", vfn(a -> { gcMajor(); VNull; }));
 		reg(s, "eval.vm.Gc", "get", vfn(a -> gcControl()));
 		reg(s, "eval.vm.Gc", "major", vfn(a -> { gcMajor(); VNull; }));
-		reg(s, "eval.vm.Gc", "major_slice", vfn(a -> { gcMajor(); VInt(0); }));
+		reg(s, "eval.vm.Gc", "major_slice", vfn(a -> gcMajorSlice(arg(a, 0))));
 		reg(s, "eval.vm.Gc", "minor", vfn(a -> { gcMinor(); VNull; }));
 		reg(s, "eval.vm.Gc", "print_stat", vfn(a -> {
 			var out = thisFileOutput([arg(a, 0)]).output;
