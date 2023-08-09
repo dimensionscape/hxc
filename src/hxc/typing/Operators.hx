@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
+import hxc.core.Texpr;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.FieldAccess;
@@ -317,6 +318,32 @@ class Operators {
 	}
 
 	static function typeAssignOp(ctx:TyperContext, sub:Binop, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
+		// `a[k] op= v` on an abstract @:arrayAccess: bind base and key to temps, read via the getter, apply
+		// the op, write via the setter. AKAccess.
+		switch (e1.expr) {
+			case EArray(baseE, keyE):
+				var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
+				switch (TypeFunctions.follow(tb.type)) {
+					case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
+						var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
+						var tvoid = ctx.com.basic.tvoid;
+						var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
+						var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+						var eb = Texpr.makeLocal(vb, p);
+						var ek = Texpr.makeLocal(vk, p);
+						var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
+						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+						var eop = toTexpr(makeBinop(ctx, sub, eget, te2, true, withType, p));
+						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return eop, p);
+						return TypeFunctions.mk(TBlock([
+							TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p),
+							TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p),
+							eset
+						]), eset.type, p);
+					case _:
+				}
+			case _:
+		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
 			case AKExpr(te1):
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);

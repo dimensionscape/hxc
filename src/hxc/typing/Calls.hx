@@ -57,13 +57,19 @@ class Calls {
 
 	// Abstract @:arrayAccess write: call the impl setter taking (this, key, value). .
 	public static function arraySet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueExpr:Expr, p:Position):TExpr {
+		return arraySetValue(ctx, a, tl, c, ebase, ekey, function(vt:T) return Typer.typeExpr(ctx, valueExpr, WithTypeTools.withType(vt)), p);
+	}
+
+	// Setter call with an already-computed value; valueFn receives the setter's value-parameter type so a
+	// plain write can infer its literal, while a compound write supplies the precomputed op result.
+	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position):TExpr {
 		for (cf in a.array) {
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 3):
 					var implExpr = Texpr.makeStaticThis(c, p);
 					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
-					var val = Typer.castOrUnify(ctx, sig.args[2].t, Typer.typeExpr(ctx, valueExpr, WithTypeTools.withType(sig.args[2].t)), p);
+					var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
 					return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
 				case _:
 			}
