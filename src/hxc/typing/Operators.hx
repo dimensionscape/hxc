@@ -364,6 +364,18 @@ class Operators {
 			case Spread:
 				throw new TypingError("Spread unary operator is only allowed for unpacking the last argument in a call with rest arguments", p);
 			case Increment | Decrement:
+				// `a[k]++` / `--a[k]` on an abstract @:arrayAccess: bind base+key to temps, then get, op
+				// with 1, and set, yielding the old value for postfix and the new value for prefix.
+				switch (e.expr) {
+					case EArray(baseE, keyE):
+						var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
+						switch (TypeFunctions.follow(tb.type)) {
+							case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
+								return arrayIncr(ctx, a, tl, op, flag, tb, keyE, withType, p);
+							case _:
+						}
+					case _:
+				}
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MGet, withType)) {
 					case AKExpr(te): TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case AKField(fa):
@@ -375,6 +387,37 @@ class Operators {
 				var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
 				makeUnop(ctx, op, flag, te, p);
 		};
+	}
+
+	// Increment/decrement of an abstract @:arrayAccess element via getter+setter.
+	static function arrayIncr(ctx:TyperContext, a:TAbstract, tl:TParams, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
+		var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
+		var tvoid = ctx.com.basic.tvoid;
+		var tint = ctx.com.basic.tint;
+		var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
+		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+		var eb = Texpr.makeLocal(vb, p);
+		var ek = Texpr.makeLocal(vk, p);
+		var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
+		var binop = op.match(Increment) ? OpAdd : OpSub;
+		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
+		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
+		if (flag.match(Postfix)) {
+			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
+			var eold = Texpr.makeLocal(vold, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+			stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return newv, p));
+			stmts.push(eold);
+			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+		}
+		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
+		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
+		var enew = Texpr.makeLocal(vnew, p);
+		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
+		stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return enew, p));
+		stmts.push(enew);
+		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}
 
 	static function makeUnop(ctx:TyperContext, op:Unop, flag:UnopFlag, e:TExpr, p:Position):TExpr {
