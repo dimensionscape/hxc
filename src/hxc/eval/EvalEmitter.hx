@@ -169,6 +169,15 @@ class EvalEmitter {
 						var r = binopValue(ctx, sub, EvalField.field(ctx, obj, name), eval(ctx, e2), p);
 						EvalField.setField(ctx, obj, name, r, p);
 						r;
+					case TArray(arrE, idxE):
+						switch (eval(ctx, arrE)) {
+							case VArray(va):
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var r = binopValue(ctx, sub, arrayElemGet(va, idx), eval(ctx, e2), p);
+								arrayElemSet(va, idx, r);
+								r;
+							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+						}
 					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target");
 				}
 			case _: binopValue(ctx, op, eval(ctx, e1), eval(ctx, e2), p);
@@ -181,6 +190,16 @@ class EvalEmitter {
 			case FEnum(_, ef): EvalHash.hash(ef.name);
 			case FDynamic(s): EvalHash.hash(s);
 		};
+	}
+
+	static inline function arrayElemGet(va:VArray, idx:Int):EvalValue {
+		return (idx >= 0 && idx < va.alength) ? va.avalues[idx] : VNull;
+	}
+
+	static function arrayElemSet(va:VArray, idx:Int, value:EvalValue):Void {
+		while (va.avalues.length <= idx) va.avalues.push(VNull);
+		va.avalues[idx] = value;
+		if (idx >= va.alength) va.alength = idx + 1;
 	}
 
 	static function assign(ctx:EvalContext, lhs:TExpr, value:EvalValue):EvalValue {
@@ -248,6 +267,21 @@ class EvalEmitter {
 						};
 						EvalField.setField(ctx, obj, name, next, p);
 						flag == Prefix ? next : old;
+					case TArray(arrE, idxE):
+						switch (eval(ctx, arrE)) {
+							case VArray(va):
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var old = arrayElemGet(va, idx);
+								var delta = op == Increment ? 1 : -1;
+								var next = switch (old) {
+									case VInt(i): VInt(i + delta);
+									case VFloat(f): VFloat(f + delta);
+									case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+								};
+								arrayElemSet(va, idx, next);
+								flag == Prefix ? next : old;
+							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+						}
 					case _: EvalExceptions.excString(ctx, "Unsupported increment target");
 				}
 			case _: EvalExceptions.excString(ctx, "Unsupported unop");
