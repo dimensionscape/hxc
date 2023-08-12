@@ -603,6 +603,64 @@ class EvalStdLib {
 		}
 	}
 
+	static function valueToHost(ctx:EvalContext, v:EvalValue):Dynamic {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VNull: null;
+			case VTrue: true;
+			case VFalse: false;
+			case VInt(i): i;
+			case VFloat(f): f;
+			case VString(s): s.sstring;
+			case VNativeString(s): s;
+			case VArray(va): [for (i in 0...va.alength) valueToHost(ctx, va.avalues[i])];
+			case VVector(vv): [for (item in vv) valueToHost(ctx, item)];
+			case VObject(o):
+				var obj = {};
+				for (name in fieldNames(VObject(o))) Reflect.setField(obj, name, valueToHost(ctx, EvalField.field(ctx, VObject(o), EvalHash.hash(name))));
+				obj;
+			case VInstance(vi):
+				var obj = {};
+				for (name in fieldNames(VInstance(vi))) Reflect.setField(obj, name, valueToHost(ctx, EvalField.field(ctx, VInstance(vi), EvalHash.hash(name))));
+				obj;
+			case VEnumValue(ev):
+				enumConstructorName(ev);
+			case _: null;
+		}
+	}
+
+	static function hostToValue(ctx:EvalContext, v:Dynamic):EvalValue {
+		if (v == null) return VNull;
+		if (Std.isOfType(v, Bool)) return v ? VTrue : VFalse;
+		if (Std.isOfType(v, Int)) return VInt(v);
+		if (Std.isOfType(v, Float)) return VFloat(v);
+		if (Std.isOfType(v, String)) return mkStr(v);
+		if (Std.isOfType(v, Array)) {
+			var arr:Array<Dynamic> = v;
+			return VArray(new VArray([for (item in arr) hostToValue(ctx, item)], arr.length));
+		}
+		var fields = new Map<Int, EvalValue>();
+		var order:Array<Int> = [];
+		for (name in Reflect.fields(v)) {
+			var key = EvalHash.hash(name);
+			order.push(key);
+			fields.set(key, hostToValue(ctx, Reflect.field(v, name)));
+		}
+		var o = new VObject([], ODictionary(fields));
+		objectFieldOrders.set(o, order);
+		return VObject(o);
+	}
+
+	static function serializerAppend(ctx:EvalContext, serializer:EvalValue, value:EvalValue):EvalValue {
+		var data = haxe.Serializer.run(valueToHost(ctx, value));
+		var buf = EvalField.field(ctx, serializer, EvalHash.hash("buf"));
+		thisBuffer([buf]).add(data);
+		return VNull;
+	}
+
+	static function unserializeString(ctx:EvalContext, data:String):EvalValue {
+		return hostToValue(ctx, haxe.Unserializer.run(data));
+	}
+
 	static function thisDate(a:Array<EvalValue>):Float {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IDate(ts): ts; case _: 0.0; };
@@ -2159,6 +2217,16 @@ class EvalStdLib {
 		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
 		reg(s, "haxe.format.JsonPrinter", "print", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
+		reg(s, "haxe.Serializer", "run", vfn(a -> mkStr(haxe.Serializer.run(valueToHost(ctx, arg(a, 0))))));
+		reg(inst, "haxe.Serializer", "serialize", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
+		reg(inst, "haxe.Serializer", "serializeException", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
+		reg(s, "haxe.Unserializer", "run", vfn(a -> unserializeString(ctx, stringOf(arg(a, 0)))));
+		reg(inst, "haxe.Unserializer", "unserialize", vmethod(a -> {
+			var self = arg(a, 0);
+			var data = stringOf(EvalField.field(ctx, self, EvalHash.hash("buf")));
+			setDynamicField(self, EvalHash.hash("pos"), VInt(data.length));
+			unserializeString(ctx, data);
+		}));
 
 		// sys.FileSystem / sys.io.File: macros read the source tree at compile time; the interpreter
 		// host has real filesystem access.
