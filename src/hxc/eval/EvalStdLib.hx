@@ -619,9 +619,37 @@ class EvalStdLib {
 				for (name in fieldNames(VObject(o))) Reflect.setField(obj, name, valueToHost(ctx, EvalField.field(ctx, VObject(o), EvalHash.hash(name))));
 				obj;
 			case VInstance(vi):
-				var obj = {};
-				for (name in fieldNames(VInstance(vi))) Reflect.setField(obj, name, valueToHost(ctx, EvalField.field(ctx, VInstance(vi), EvalHash.hash(name))));
-				obj;
+				switch (vi.ikind) {
+					case IDate(ts):
+						Date.fromTime(ts);
+					case IBytes(b):
+						b;
+					case IMap(m):
+						switch (EvalHash.revHash(vi.iproto.ppath)) {
+							case "haxe.ds.StringMap":
+								var out = new haxe.ds.StringMap<Dynamic>();
+								for (entry in m) out.set(stringOf(entry.key), valueToHost(ctx, entry.value));
+								out;
+							case "haxe.ds.IntMap":
+								var out = new haxe.ds.IntMap<Dynamic>();
+								for (entry in m) out.set(toInt(entry.key), valueToHost(ctx, entry.value));
+								out;
+							case _:
+								var obj = {};
+								for (entry in m) Reflect.setField(obj, stringOf(entry.key), valueToHost(ctx, entry.value));
+								obj;
+						}
+					case _:
+						if (vi.iproto.ppath == EvalHash.hash("haxe.ds.List")) {
+							var out = new haxe.ds.List<Dynamic>();
+							for (item in iterableValues(ctx, VInstance(vi))) out.add(valueToHost(ctx, item));
+							out;
+						} else {
+							var obj = {};
+							for (name in fieldNames(VInstance(vi))) Reflect.setField(obj, name, valueToHost(ctx, EvalField.field(ctx, VInstance(vi), EvalHash.hash(name))));
+							obj;
+						}
+				}
 			case VEnumValue(ev):
 				enumConstructorName(ev);
 			case _: null;
@@ -634,6 +662,34 @@ class EvalStdLib {
 		if (Std.isOfType(v, Int)) return VInt(v);
 		if (Std.isOfType(v, Float)) return VFloat(v);
 		if (Std.isOfType(v, String)) return mkStr(v);
+		if (Std.isOfType(v, Date)) return mkDate(ctx, (cast v : Date).getTime());
+		if (Std.isOfType(v, haxe.io.Bytes)) return mkBytes(ctx, (cast v : haxe.io.Bytes));
+		if (Std.isOfType(v, haxe.ds.List)) {
+			var out = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
+			var list:haxe.ds.List<Dynamic> = cast v;
+			for (item in list) callValueOn(out, EvalField.dynamicField(ctx, out, EvalHash.hash("add")), [hostToValue(ctx, item)]);
+			return out;
+		}
+		if (Std.isOfType(v, haxe.ds.StringMap)) {
+			var map = new Map<String, MapEntry>();
+			var src:haxe.ds.StringMap<Dynamic> = cast v;
+			for (key in src.keys()) {
+				var k = mkStr(key);
+				map.set(mapKey(k), {key: k, value: hostToValue(ctx, src.get(key))});
+			}
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(map)));
+		}
+		if (Std.isOfType(v, haxe.ds.IntMap)) {
+			var map = new Map<String, MapEntry>();
+			var src:haxe.ds.IntMap<Dynamic> = cast v;
+			for (key in src.keys()) {
+				var k = VInt(key);
+				map.set(mapKey(k), {key: k, value: hostToValue(ctx, src.get(key))});
+			}
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.IntMap"));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(map)));
+		}
 		if (Std.isOfType(v, Array)) {
 			var arr:Array<Dynamic> = v;
 			return VArray(new VArray([for (item in arr) hostToValue(ctx, item)], arr.length));
@@ -650,15 +706,385 @@ class EvalStdLib {
 		return VObject(o);
 	}
 
+	static function serializeStringTag(s:String, buf:StringBuf):Void {
+		s = urlEncode(s);
+		buf.add("y");
+		buf.add(s.length);
+		buf.add(":");
+		buf.add(s);
+	}
+
+	static function serializerBoolField(ctx:EvalContext, v:EvalValue, name:String, fallback:Bool):Bool {
+		var field = EvalField.dynamicField(ctx, v, EvalHash.hash(name));
+		return field == VNull ? fallback : field == VTrue;
+	}
+
+	static function serializerUseEnumIndex(ctx:EvalContext, serializer:EvalValue):Bool {
+		return serializerBoolField(ctx, serializer, "useEnumIndex", serializerBoolField(ctx, classValue(ctx, EvalHash.hash("haxe.Serializer")), "USE_ENUM_INDEX", false));
+	}
+
+	static function serializerUseCache(ctx:EvalContext, serializer:EvalValue):Bool {
+		return serializerBoolField(ctx, serializer, "useCache", serializerBoolField(ctx, classValue(ctx, EvalHash.hash("haxe.Serializer")), "USE_CACHE", false));
+	}
+
+	static function serializeEval(ctx:EvalContext, value:EvalValue, useEnumIndex:Bool, useCache:Bool):String {
+		var buf = new StringBuf();
+		var cache:Array<EvalValue> = [];
+		var shash = new Map<String, Int>();
+		var scount = 0;
+		function stringTag(s:String):Void {
+			var idx = shash.get(s);
+			if (idx != null) {
+				buf.add("R");
+				buf.add(idx);
+				return;
+			}
+			shash.set(s, scount++);
+			serializeStringTag(s, buf);
+		}
+		function sameCacheValue(a:EvalValue, b:EvalValue):Bool {
+			return switch [EvalValueTools.vresolve(a), EvalValueTools.vresolve(b)] {
+				case [VArray(aa), VArray(ba)]: aa == ba;
+				case [VObject(ao), VObject(bo)]: ao == bo;
+				case [VInstance(ai), VInstance(bi)]: ai == bi;
+				case [VEnumValue(ae), VEnumValue(be)]: ae == be;
+				case [VPrototype(ap), VPrototype(bp)]: ap == bp;
+				case _: false;
+			}
+		}
+		function serializeRef(v:EvalValue):Bool {
+			for (i in 0...cache.length) {
+				if (sameCacheValue(cache[i], v)) {
+					buf.add("r");
+					buf.add(i);
+					return true;
+				}
+			}
+			cache.push(v);
+			return false;
+		}
+		function loop(v:EvalValue):Void {
+			switch (EvalValueTools.vresolve(v)) {
+				case VNull:
+					buf.add("n");
+				case VTrue:
+					buf.add("t");
+				case VFalse:
+					buf.add("f");
+				case VInt(i):
+					if (i == 0) buf.add("z") else {
+						buf.add("i");
+						buf.add(i);
+					}
+				case VFloat(f):
+					if (Math.isNaN(f)) buf.add("k") else if (!Math.isFinite(f)) buf.add(f < 0 ? "m" : "p") else {
+						buf.add("d");
+						buf.add(f);
+					}
+				case VString(s):
+					stringTag(s.sstring);
+				case VNativeString(s):
+					stringTag(s);
+				case VArray(va):
+					if (useCache && serializeRef(VArray(va))) return;
+					buf.add("a");
+					for (i in 0...va.alength) loop(va.avalues[i]);
+					buf.add("h");
+				case VVector(vv):
+					buf.add("a");
+					for (item in vv) loop(item);
+					buf.add("h");
+				case VObject(o):
+					if (useCache && serializeRef(VObject(o))) return;
+					buf.add(haxe.Serializer.run(valueToHost(ctx, VObject(o))));
+				case VInstance(vi):
+					if (useCache && serializeRef(VInstance(vi))) return;
+					switch (vi.ikind) {
+						case IDate(ts):
+							buf.add("v");
+							buf.add(ts);
+						case IBytes(b):
+							buf.add(haxe.Serializer.run(b));
+						case IMap(m):
+							switch (EvalHash.revHash(vi.iproto.ppath)) {
+								case "haxe.ds.StringMap":
+									buf.add("b");
+									for (entry in m) {
+										stringTag(stringOf(entry.key));
+										loop(entry.value);
+									}
+									buf.add("h");
+								case "haxe.ds.IntMap":
+									buf.add("q");
+									for (entry in m) {
+										buf.add(":");
+										buf.add(toInt(entry.key));
+										loop(entry.value);
+									}
+									buf.add("h");
+								case "haxe.ds.ObjectMap":
+									buf.add("M");
+									for (entry in m) {
+										loop(entry.key);
+										loop(entry.value);
+									}
+									buf.add("h");
+								case _:
+									buf.add("o");
+									for (entry in m) {
+										stringTag(stringOf(entry.key));
+										loop(entry.value);
+									}
+									buf.add("g");
+							}
+						case _:
+							if (vi.iproto.ppath == EvalHash.hash("haxe.ds.List")) {
+								buf.add("l");
+								for (item in iterableValues(ctx, VInstance(vi))) loop(item);
+								buf.add("h");
+							} else {
+								buf.add("c");
+								stringTag(EvalHash.revHash(vi.iproto.ppath));
+								for (name in fieldNames(VInstance(vi))) {
+									stringTag(name);
+									loop(EvalField.field(ctx, VInstance(vi), EvalHash.hash(name)));
+								}
+								buf.add("g");
+							}
+					}
+				case VEnumValue(ev):
+					if (useCache && serializeRef(VEnumValue(ev))) return;
+					buf.add(useEnumIndex ? "j" : "w");
+					stringTag(EvalHash.revHash(ev.epath));
+					if (useEnumIndex) {
+						buf.add(":");
+						buf.add(ev.eindex);
+					} else {
+						stringTag(enumConstructorName(ev));
+					}
+					buf.add(":");
+					buf.add(ev.eargs.length);
+					for (arg in ev.eargs) loop(arg);
+				case VPrototype(proto):
+					switch (proto.pkind) {
+						case PEnum(_):
+							buf.add("B");
+						case _:
+							buf.add("A");
+					}
+					stringTag(EvalHash.revHash(proto.ppath));
+				case VFunction(_, _) | VFieldClosure(_, _):
+					throw "Cannot serialize function";
+				case VLazy(_):
+					throw "unreachable";
+			}
+		}
+		loop(value);
+		return buf.toString();
+	}
+
+	static function mapInstance(ctx:EvalContext, path:String, map:Map<String, MapEntry>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash(path));
+		return proto == null ? VNull : VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(map)));
+	}
+
+	static function unserializeEval(ctx:EvalContext, data:String):EvalValue {
+		var pos = 0;
+		var cache:Array<EvalValue> = [];
+		var scache:Array<String> = [];
+		function get():Int return pos < data.length ? data.charCodeAt(pos) : 0;
+		function readDigits():Int {
+			var start = pos;
+			if (data.charCodeAt(pos) == "-".code) pos++;
+			while (pos < data.length) {
+				var c = data.charCodeAt(pos);
+				if (c < "0".code || c > "9".code) break;
+				pos++;
+			}
+			return Std.parseInt(data.substr(start, pos - start));
+		}
+		function readFloatString():String {
+			var start = pos;
+			while (pos < data.length) {
+				var c = data.charCodeAt(pos);
+				var ok = (c >= "0".code && c <= "9".code) || c == "-".code || c == "+".code || c == ".".code || c == "e".code || c == "E".code;
+				if (!ok) break;
+				pos++;
+			}
+			return data.substr(start, pos - start);
+		}
+		var loop:Void->EvalValue = null;
+		var fields:EvalValue->Void = null;
+		fields = function(target:EvalValue):Void {
+			while (get() != "g".code) {
+				var name = stringOf(loop());
+				setDynamicField(target, EvalHash.hash(name), loop());
+			}
+			pos++;
+		};
+		loop = function():EvalValue {
+			var start = pos;
+			return switch (data.charCodeAt(pos++)) {
+				case "n".code: VNull;
+				case "t".code: VTrue;
+				case "f".code: VFalse;
+				case "z".code: VInt(0);
+				case "i".code: VInt(readDigits());
+				case "d".code: VFloat(Std.parseFloat(readFloatString()));
+				case "k".code: VFloat(Math.NaN);
+				case "m".code: VFloat(Math.NEGATIVE_INFINITY);
+				case "p".code: VFloat(Math.POSITIVE_INFINITY);
+				case "y".code:
+					var len = readDigits();
+					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) throw "Invalid string length";
+					var s = urlDecode(data.substr(pos, len));
+					pos += len;
+					scache.push(s);
+					mkStr(s);
+				case "R".code:
+					var idx = readDigits();
+					if (idx < 0 || idx >= scache.length) throw "Invalid string reference";
+					mkStr(scache[idx]);
+				case "r".code:
+					var idx = readDigits();
+					if (idx < 0 || idx >= cache.length) throw "Invalid reference";
+					cache[idx];
+				case "a".code:
+					var values:Array<EvalValue> = [];
+					var va = new VArray(values, 0);
+					var out = VArray(va);
+					cache.push(out);
+					while (get() != "h".code) {
+						if (get() == "u".code) {
+							pos++;
+							var n = readDigits();
+							for (_ in 0...n) values.push(VNull);
+						} else {
+							values.push(loop());
+						}
+					}
+					pos++;
+					va.alength = values.length;
+					out;
+				case "o".code:
+					var out = VObject(new VObject([], ODictionary(new Map())));
+					cache.push(out);
+					fields(out);
+					out;
+				case "c".code:
+					var name = stringOf(loop());
+					var proto = ctx.instancePrototypes.get(EvalHash.hash(name));
+					if (proto == null) throw "Class not found " + name;
+					var out = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
+					cache.push(out);
+					fields(out);
+					out;
+				case "w".code:
+					var name = stringOf(loop());
+					var constructor = stringOf(loop());
+					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					var count = readDigits();
+					var args = [for (_ in 0...count) loop()];
+					var params = VArray(new VArray(args, args.length));
+					var out = createEnumByName(ctx, classValue(ctx, EvalHash.hash(name)), EvalHash.hash(constructor), params);
+					cache.push(out);
+					out;
+				case "j".code:
+					var name = stringOf(loop());
+					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					var index = readDigits();
+					var proto = ctx.staticPrototypes.get(EvalHash.hash(name));
+					if (proto == null) throw "Enum not found " + name;
+					var constructor = switch (proto.pkind) {
+						case PEnum(cs):
+							if (index < 0 || index >= cs.length) throw "Unknown enum index " + name + "@" + index;
+							cs[index].name;
+						case _: throw "Enum not found " + name;
+					}
+					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					var count = readDigits();
+					var args = [for (_ in 0...count) loop()];
+					var params = VArray(new VArray(args, args.length));
+					var out = createEnumByName(ctx, classValue(ctx, EvalHash.hash(name)), EvalHash.hash(constructor), params);
+					cache.push(out);
+					out;
+				case "l".code:
+					var out = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
+					cache.push(out);
+					while (get() != "h".code) callValueOn(out, EvalField.dynamicField(ctx, out, EvalHash.hash("add")), [loop()]);
+					pos++;
+					out;
+				case "b".code:
+					var map:Map<String, MapEntry> = new Map();
+					var out = mapInstance(ctx, "haxe.ds.StringMap", map);
+					cache.push(out);
+					while (get() != "h".code) {
+						var key = loop();
+						map.set(mapKey(key), {key: key, value: loop()});
+					}
+					pos++;
+					out;
+				case "q".code:
+					var map:Map<String, MapEntry> = new Map();
+					var out = mapInstance(ctx, "haxe.ds.IntMap", map);
+					cache.push(out);
+					while (get() == ":".code) {
+						pos++;
+						var key = VInt(readDigits());
+						map.set(mapKey(key), {key: key, value: loop()});
+					}
+					if (data.charCodeAt(pos++) != "h".code) throw "Invalid IntMap format";
+					out;
+				case "M".code:
+					var map:Map<String, MapEntry> = new Map();
+					var out = mapInstance(ctx, "haxe.ds.ObjectMap", map);
+					cache.push(out);
+					while (get() != "h".code) {
+						var key = loop();
+						map.set(mapKey(key), {key: key, value: loop()});
+					}
+					pos++;
+					out;
+				case "v".code:
+					var out = mkDate(ctx, Std.parseFloat(readFloatString()));
+					cache.push(out);
+					out;
+				case "s".code:
+					var len = readDigits();
+					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) throw "Invalid bytes length";
+					pos += len;
+					var out = hostToValue(ctx, haxe.Unserializer.run(data.substr(start, pos - start)));
+					cache.push(out);
+					out;
+				case "A".code:
+					var name = stringOf(loop());
+					var out = classValue(ctx, EvalHash.hash(name));
+					if (out == VNull) throw "Class not found " + name;
+					out;
+				case "B".code:
+					var name = stringOf(loop());
+					var out = classValue(ctx, EvalHash.hash(name));
+					if (out == VNull) throw "Enum not found " + name;
+					out;
+				case "x".code:
+					throw stringOf(loop());
+				case _:
+					pos--;
+					throw "Invalid char " + data.charAt(pos) + " at position " + pos;
+			}
+		};
+		return loop();
+	}
+
 	static function serializerAppend(ctx:EvalContext, serializer:EvalValue, value:EvalValue):EvalValue {
-		var data = haxe.Serializer.run(valueToHost(ctx, value));
+		var data = serializeEval(ctx, value, serializerUseEnumIndex(ctx, serializer), serializerUseCache(ctx, serializer));
 		var buf = EvalField.field(ctx, serializer, EvalHash.hash("buf"));
 		thisBuffer([buf]).add(data);
 		return VNull;
 	}
 
 	static function unserializeString(ctx:EvalContext, data:String):EvalValue {
-		return hostToValue(ctx, haxe.Unserializer.run(data));
+		return unserializeEval(ctx, data);
 	}
 
 	static function thisDate(a:Array<EvalValue>):Float {
@@ -2217,7 +2643,10 @@ class EvalStdLib {
 		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
 		reg(s, "haxe.format.JsonPrinter", "print", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
-		reg(s, "haxe.Serializer", "run", vfn(a -> mkStr(haxe.Serializer.run(valueToHost(ctx, arg(a, 0))))));
+		reg(s, "haxe.Serializer", "run", vfn(a -> {
+			var serializer = classValue(ctx, EvalHash.hash("haxe.Serializer"));
+			mkStr(serializeEval(ctx, arg(a, 0), serializerBoolField(ctx, serializer, "USE_ENUM_INDEX", false), serializerBoolField(ctx, serializer, "USE_CACHE", false)));
+		}));
 		reg(inst, "haxe.Serializer", "serialize", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
 		reg(inst, "haxe.Serializer", "serializeException", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
 		reg(s, "haxe.Unserializer", "run", vfn(a -> unserializeString(ctx, stringOf(arg(a, 0)))));
