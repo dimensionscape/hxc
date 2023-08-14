@@ -1881,6 +1881,8 @@ class EvalStdLib {
 		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
 		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.SysTools", "quoteUnixArg", vfn(a -> mkStr(haxe.SysTools.quoteUnixArg(stringOf(arg(a, 0))))));
+		reg(s, "haxe.SysTools", "quoteWinArg", vfn(a -> mkStr(haxe.SysTools.quoteWinArg(stringOf(arg(a, 0)), arg(a, 1) == VTrue))));
 		reg(s, "Xml", "Element", VInt(0));
 		reg(s, "Xml", "PCData", VInt(1));
 		reg(s, "Xml", "CData", VInt(2));
@@ -1915,6 +1917,11 @@ class EvalStdLib {
 			VArray(new VArray(args, args.length));
 		}));
 		reg(s, "Sys", "_command", vfn(a -> VInt(Sys.command(stringOf(arg(a, 0))))));
+		reg(s, "Sys", "command", vfn(a -> {
+			var cmd = stringOf(arg(a, 0));
+			var args = processArgs(ctx, arg(a, 1));
+			return VInt(args == null ? Sys.command(cmd) : Sys.command(cmd, args));
+		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
 		reg(s, "Sys", "exit", vfn(a -> { Sys.exit(toInt(arg(a, 0))); VNull; }));
