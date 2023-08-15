@@ -94,9 +94,24 @@ class Calls {
 				throw new TypingError("Too many arguments", el[ei].pos);
 			} else {
 				var a = args[ai];
-				out.push(typeAgainst(a.name, a.t, el[ei]));
-				ei++;
-				ai++;
+				// Optional-argument skipping: if the value does not fit this optional parameter but more
+				// parameters than values remain, skip (default) the parameter and retry the value against
+				// the next one. This binds e.g. equals(v, v2, pos) past `?msg` onto `?pos`.
+				var mightSkip = (el.length - ei - 1) < (args.length - ai - 1);
+				var te:Null<TExpr> = null;
+				var skip = false;
+				try te = typeAgainst(a.name, a.t, el[ei]) catch (err:TypingError) {
+					if (a.opt && mightSkip) skip = true;
+					else throw err;
+				}
+				if (skip) {
+					out.push(Texpr.makeNull(ctx.com.basic.tnull(a.t), callp));
+					ai++;
+				} else {
+					out.push(te);
+					ei++;
+					ai++;
+				}
 			}
 		}
 		return {el: out, tfunc: TFun({args: args, ret: r})};
