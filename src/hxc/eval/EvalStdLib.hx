@@ -2862,10 +2862,19 @@ class EvalStdLib {
 		reg(s, "haxe.io.Bytes", "ofData", vfn(a -> arg(a, 0)));
 		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> VInt(thisBytes([arg(a, 0)]).get(toInt(arg(a, 1))))));
 		reg(s, "haxe.crypto.Crc32", "make", vfn(a -> VInt(haxe.crypto.Crc32.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Adler32", "make", vfn(a -> VInt(haxe.crypto.Adler32.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Base64", "encode", vfn(a -> mkStr(haxe.crypto.Base64.encode(thisBytes([arg(a, 0)]), arg(a, 1) == VNull || arg(a, 1) == VTrue))));
+		reg(s, "haxe.crypto.Base64", "decode", vfn(a -> mkBytes(ctx, haxe.crypto.Base64.decode(stringOf(arg(a, 0)), arg(a, 1) == VNull || arg(a, 1) == VTrue))));
+		reg(s, "haxe.crypto.Base64", "urlEncode", vfn(a -> mkStr(haxe.crypto.Base64.urlEncode(thisBytes([arg(a, 0)]), arg(a, 1) == VTrue))));
+		reg(s, "haxe.crypto.Base64", "urlDecode", vfn(a -> mkBytes(ctx, haxe.crypto.Base64.urlDecode(stringOf(arg(a, 0)), arg(a, 1) == VTrue))));
 		reg(s, "haxe.crypto.Md5", "encode", vfn(a -> mkStr(haxe.crypto.Md5.encode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.crypto.Sha1", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha1.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Sha224", "encode", vfn(a -> mkStr(haxe.crypto.Sha224.encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.crypto.Sha224", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha224.make(thisBytes([arg(a, 0)])))));
+		reg(s, "haxe.crypto.Sha256", "encode", vfn(a -> mkStr(haxe.crypto.Sha256.encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.crypto.Sha256", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha256.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.zip.Compress", "run",
 			vfn(a -> mkBytes(ctx, haxe.zip.Compress.run(thisBytes([arg(a, 0)]), toInt(arg(a, 1))))));
 		reg(s, "haxe.zip.Uncompress", "run",
