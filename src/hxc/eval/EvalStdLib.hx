@@ -185,6 +185,8 @@ class EvalStdLib {
 		} else {
 			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.key_toString;
 			if (path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("unserialize") || name == EvalHash.hash("getResolver") || name == EvalHash.hash("setResolver");
+			if (path == EvalHash.hash("sys.thread.Semaphore")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release");
+			if (path == EvalHash.hash("sys.thread.Condition")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release") || name == EvalHash.hash("wait") || name == EvalHash.hash("signal") || name == EvalHash.hash("broadcast");
 		}
 		return false;
 	}
@@ -2374,7 +2376,7 @@ class EvalStdLib {
 		}));
 		reg(s, "Reflect", "callMethod", vfn(a -> {
 			var fn = arg(a, 1); var args = argList(arg(a, 2));
-			callValueOn(arg(a, 0), fn, args);
+			if (fn == VNull) EvalExceptions.excString(ctx, "Cannot call null") else callValueOn(arg(a, 0), fn, args);
 		}));
 		reg(s, "Lambda", "array", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)))));
 		reg(s, "Lambda", "list", vfn(a -> {
