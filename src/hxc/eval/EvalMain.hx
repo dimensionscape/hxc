@@ -17,7 +17,49 @@ class EvalMain {
 		}
 		EvalContext.setCtx(ctx);
 		EvalStdLib.init(ctx);
+		installInterfaceIsOfType(ctx);
 		return ctx;
+	}
+
+	// Std.isOfType must accept interfaces (the runtime prototype chain only records superclasses), so
+	// layer an interface-aware check over the base native: match walks superClass + interfaces via the
+	// type cache, and any other case falls through to the original isOfType.
+	static function installInterfaceIsOfType(ctx:EvalContext):Void {
+		var stdKey = EvalHash.hash("Std");
+		var list = ctx.builtins.staticBuiltins.get(stdKey);
+		if (list == null) return;
+		var iofHash = EvalHash.hash("isOfType");
+		var orig:Null<EvalValue->Array<EvalValue>->EvalValue> = null;
+		var base:Null<Array<EvalValue>->EvalValue> = null;
+		for (b in list) if (b.name == iofHash) switch (b.v) { case VFunction(f, _): base = f; case _: };
+		if (base == null) return;
+		var baseFn = base;
+		list.push({name: iofHash, v: VFunction(function(a:Array<EvalValue>):EvalValue {
+			var v = a.length > 0 ? a[0] : VNull;
+			var t = a.length > 1 ? a[1] : VNull;
+			switch ([v, t]) {
+				case [VInstance(vi), VPrototype(proto)]:
+					if (classHierarchyHas(ctx, vi.iproto.ppath, proto.ppath)) return VTrue;
+				case _:
+			}
+			return baseFn(a);
+		}, true)});
+	}
+
+	// True when the class at `classPath` is, extends, or implements the type at `targetPath` (walks the
+	// superclass and interface graph via the type cache).
+	static function classHierarchyHas(ctx:EvalContext, classPath:Int, targetPath:Int):Bool {
+		if (classPath == targetPath) return true;
+		return switch (ctx.typeCache.get(classPath)) {
+			case TClassDecl(c):
+				if (c.superClass != null && classHierarchyHas(ctx, EvalHash.pathHash(c.superClass.c.path), targetPath)) true
+				else {
+					var found = false;
+					for (i in c.interfaces) if (classHierarchyHas(ctx, EvalHash.pathHash(i.c.path), targetPath)) { found = true; break; }
+					found;
+				}
+			case _: false;
+		};
 	}
 
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>):Void {
