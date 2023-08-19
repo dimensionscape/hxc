@@ -196,8 +196,13 @@ class TypeFields {
 					var args = buildArgs(tctx, sig, fd);
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, cff.cffPos);
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
-				case FProp(_, _, _, _):
-					// Property accessors are typed as their own get_/set_ methods
+				case FProp(_, _, _, eo):
+					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
+					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
+					if (eo != null) {
+						var te = Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), cff.cffPos);
+						cf.expr = checkCast(te, sigType);
+					}
 			}
 		} catch (e:haxe.Exception) {
 			cleanup();
