@@ -167,6 +167,10 @@ class TypeFields {
 
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
 		var restore = Typer.saveLocals(tctx);
+		// A field body starts with no locals in scope. Lazy typing can force one body while another is
+		// still open (its type is queried from the first body), so start clean and let restore() give
+		// the caller its locals back; otherwise a stale local shadows a same-named member.
+		tctx.locals = new haxe.ds.StringMap();
 		var oldField = tctx.curfield;
 		var oldFun = tctx.curfun;
 		var oldParams = tctx.typeParams;
