@@ -269,7 +269,8 @@ class Typer {
 						}
 					case _:
 				}
-				var ft = TFun({args: [for (a in args) {name: a.v.name, opt: false, t: a.v.type}], ret: ret});
+				// An arg is optional in the function type when marked `?` or given a default value.
+				var ft = TFun({args: [for (i in 0...args.length) {name: args[i].v.name, opt: f.fArgs[i].opt || f.fArgs[i].value != null, t: args[i].v.type}], ret: ret});
 				// A named local function binds its name (in scope before the body, so it can recurse)
 				// and evaluates to a TVar assignment; an anonymous one is just the function value.
 				var namedVar:Null<TVar> = switch (kind) {
