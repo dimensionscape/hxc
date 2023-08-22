@@ -226,7 +226,14 @@ class Typer {
 				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
 				ctx.untypedMode = old;
 				te;
-			case EMeta(_, e1):
+			case EMeta(m, e1) if (m.name == ":bypassAccessor"):
+					// The next field access typed within e1 consumes this and becomes a raw access.
+					var oldBypass = ctx.bypassAccessor;
+					ctx.bypassAccessor = oldBypass + 1;
+					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
+					ctx.bypassAccessor = oldBypass;
+					teBypass;
+				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
 				accGet(ctx, typeAccess(ctx, e.expr, p, mode, withType));
@@ -460,7 +467,9 @@ class Typer {
 				if (found != null) {
 					var thisExpr = TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
 					var host:FieldHost = switch (found.c2) { case null: FHAnon; case cw: FHInstance(cw.c, cw.params); };
-					return AKField(FieldAccessTools.create(thisExpr, found.f, host, false, p));
+					// Dispatch on the field kind so a property read/write goes through its accessor
+					// (get_/set_), not a raw field access.
+					return Fields.fieldAccess(ctx, mode, found.f, host, thisExpr, p);
 				}
 			}
 			var smf = ctx.curclass.statics.get(i);

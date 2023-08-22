@@ -14,6 +14,8 @@ class Fields {
 	public static function fieldAccess(ctx:TyperContext, mode:AccessMode, f:TClassField, fh:FieldHost, e:TExpr, pfield:Position):AccessKind {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
+		// Each field access consumes one @:bypassAccessor from the pending count.
+		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;
 		function makeAccess(isInline:Bool):FieldAccess {
 			return FieldAccessTools.create(e, f, fh, isInline, pfull);
 		}
@@ -35,7 +37,20 @@ class Fields {
 					case AccInline:
 						AKField(makeAccess(true));
 					case AccCall:
-						switch (fh) {
+						// Reading/writing a property through its own accessor (or under @:bypassAccessor)
+						// resolves to a raw field access, so the getter/setter does not recurse into itself.
+						var accName = (isSet ? "set_" : "get_") + f.name;
+						var selfAccess = accName == ctx.curfield.name && (switch (e.expr) {
+							case TConst(TThis): true;
+							case TLocal(v): ctx.vthis != null && v == ctx.vthis;
+							case TTypeExpr(TClassDecl(c)): c == ctx.curclass;
+							case _: false;
+						});
+						if (bypassAccessor || selfAccess) {
+							if (!TypeFunctions.isPhysicalField(f))
+								throw new TypingError("This field cannot be accessed because it is not a real variable", pfield);
+							AKField(makeAccess(false));
+						} else switch (fh) {
 							case FHAbstract(a, tl, c):
 								AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
 							case _:
