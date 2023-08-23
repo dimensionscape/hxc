@@ -445,7 +445,7 @@ class EvalMacro {
 			case "EBlock": EBlock([for (e in arrOf(a[0])) decodeExpr(ec, e, dp)]);
 			case "EVars": EVars([for (vv in arrOf(a[0])) decodeVar(ec, vv, dp)]);
 			case "EThrow": EThrow(decodeExpr(ec, a[0], dp));
-			case "EMeta": decodeExpr(ec, a[1], dp).expr;
+			case "EMeta": EMeta(decodeMetadataEntry(ec, a[0], dp), decodeExpr(ec, a[1], dp));
 			case "ENew": ENew({path: decodeTypePath(ec, a[0]), pos: dp}, [for (e in arrOf(a[1])) decodeExpr(ec, e, dp)]);
 			case "EFunction": EFunction(decodeFunctionKind(ec, a[0], dp), decodeFunc(ec, a[1], dp));
 			case "EFor": EFor(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp));
@@ -529,7 +529,19 @@ class EvalMacro {
 		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
 		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: dp} : PlacedAccess)];
 		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), dp);
-		return new ClassField({name: name, pos: dp}, null, dp, [], access, kind);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp);
+		return new ClassField({name: name, pos: dp}, null, dp, meta, access, kind);
+	}
+
+	static function decodeMetadata(ec:EvalContext, v:EvalValue, dp:Position):Metadata {
+		return v == VNull ? [] : [for (mv in arrOf(v)) decodeMetadataEntry(ec, mv, dp)];
+	}
+
+	static function decodeMetadataEntry(ec:EvalContext, v:EvalValue, dp:Position):MetadataEntry {
+		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var pv = EvalField.field(ec, v, EvalHash.hash("params"));
+		var params = pv == VNull ? [] : [for (pe in arrOf(pv)) decodeExpr(ec, pe, dp)];
+		return {name: name, params: params, pos: dp};
 	}
 
 	static function decodeAccess(ec:EvalContext, v:EvalValue):Access {
@@ -762,7 +774,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
 		fields.set(EvalHash.hash("pos"), VNull);
-		fields.set(EvalHash.hash("meta"), encodeArray([]));
+		fields.set(EvalHash.hash("meta"), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
