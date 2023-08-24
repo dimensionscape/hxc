@@ -666,6 +666,13 @@ class Typer {
 					case EConst(CString(s, _)) if (field == "code" && s.length == 1):
 						var code = s.charCodeAt(0);
 						if (code != null) return AKExpr(TypeFunctions.mk(TConst(TInt(code)), ctx.com.basic.tint, p));
+					case EConst(CIdent("super")):
+						// `super.field` resolves the field against the superclass with a TSuper receiver, so
+						// the call dispatches to the inherited definition rather than an override.
+						var sup = ctx.curclass.superClass;
+						if (sup == null) throw new TypingError("Current class does not have a super class", p);
+						var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(sup.c, sup.params), e1.pos);
+						return Fields.typeField(ctx, superExpr, field, p, mode, withType);
 					case _:
 				}
 				try {

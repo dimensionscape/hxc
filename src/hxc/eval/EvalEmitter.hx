@@ -345,6 +345,21 @@ class EvalEmitter {
 					case _:
 				}
 				return VNull;
+			case TField({expr: TConst(TSuper)}, fa):
+				// A `super.method()` call dispatches to the definition on the named class, not the
+				// receiver's override, so resolve the method from that class's prototype directly.
+				var c = switch (fa) { case FInstance(cc, _, _): cc; case FClosure(cc, _): cc == null ? null : cc.c; case _: null; };
+				var cf = switch (fa) { case FInstance(_, _, f) | FClosure(_, f): f; case _: null; };
+				if (c != null && cf != null) {
+					var proto = ctx.instancePrototypes.get(EvalHash.pathHash(c.path));
+					var m = superProtoMethod(proto, EvalHash.hash(cf.name));
+					var vthis = EvalContext.getEval(ctx).env.vthis;
+					var args = [for (a in argExprs) eval(ctx, a)];
+					switch (m) {
+						case VFunction(f, _): return f([vthis].concat(args));
+						case _:
+					}
+				}
 			case _:
 		}
 		var fn = EvalValueTools.vresolve(eval(ctx, callee));
@@ -354,6 +369,18 @@ class EvalEmitter {
 			case VFieldClosure(recv, f): f([recv].concat(args));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
 		};
+	}
+
+	// Resolve a method by hashed name from the given prototype up its parent chain (used for super
+	// calls, which start the lookup at the named class rather than the receiver's runtime prototype).
+	static function superProtoMethod(proto:Null<VPrototype>, name:Int):EvalValue {
+		var p = proto;
+		while (p != null) {
+			var idx = p.pnames.get(name);
+			if (idx != null) return p.pfields[idx];
+			p = p.pparent;
+		}
+		return VNull;
 	}
 
 	static function evalSwitch(ctx:EvalContext, subject:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):EvalValue {
