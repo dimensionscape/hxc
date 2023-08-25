@@ -152,6 +152,13 @@ class EvalPrototype {
 					if (tf != null) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
 						pfields.push(VFunction(makeFunction(ctx, tf, true), false));
+						// A dynamic method is reassignable per instance, so it also occupies an instance
+						// slot defaulting
+						// to the same function.
+						if (cf.kind.match(Method(MethDynamic))) {
+							pinstNames.set(EvalHash.hash(cf.name), pinstFields.length);
+							pinstFields.push(VFunction(makeFunction(ctx, tf, true), false));
+						}
 					} else if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
 						pfields.push(VNull);
