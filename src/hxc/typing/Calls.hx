@@ -6,7 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
@@ -31,7 +31,7 @@ class Calls {
 				for (cf in a.array) {
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
-							var implExpr = Texpr.makeStaticThis(a.impl, p);
+							var implExpr = TexprTools.makeStaticThis(a.impl, p);
 							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(a.impl), false, p), FCall);
 							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
 							return AKExpr(makeCall(ctx, fieldExpr, [e1, key], sig.ret, p));
@@ -66,7 +66,7 @@ class Calls {
 		for (cf in a.array) {
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 3):
-					var implExpr = Texpr.makeStaticThis(c, p);
+					var implExpr = TexprTools.makeStaticThis(c, p);
 					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 					var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
@@ -88,7 +88,7 @@ class Calls {
 			if (ei >= el.length) {
 				var a = args[ai];
 				if (!a.opt) throw new TypingError("Not enough arguments", callp);
-				out.push(Texpr.makeNull(ctx.com.basic.tnull(a.t), callp));
+				out.push(TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
 				ai++;
 			} else if (ai >= args.length) {
 				throw new TypingError("Too many arguments", el[ei].pos);
@@ -105,7 +105,7 @@ class Calls {
 					else throw err;
 				}
 				if (skip) {
-					out.push(Texpr.makeNull(ctx.com.basic.tnull(a.t), callp));
+					out.push(TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
 					ai++;
 				} else {
 					out.push(te);

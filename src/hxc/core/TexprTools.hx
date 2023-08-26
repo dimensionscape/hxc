@@ -6,7 +6,7 @@ import hxc.core.Type;
 import hxc.core.Ref;
 import hxc.core.TypingError;
 
-class Texpr {
+class TexprTools {
 	public static inline function makeInt(basic:BasicTypes, i:Int, p:Position):TExpr {
 		return TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 	}

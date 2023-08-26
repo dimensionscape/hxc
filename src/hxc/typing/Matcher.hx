@@ -6,7 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.WithType;
 import hxc.core.Globals;
 import hxc.core.TypingError;
@@ -106,10 +106,10 @@ class Constructor {
 		var basic = ctx.com.basic;
 		return switch (con.kind) {
 			case ConEnum(_, ef):
-				matchDebug ? Texpr.makeString(basic, ef.name, p) : Texpr.makeInt(basic, ef.index, p);
-			case ConConst(ct): Texpr.makeConstTexpr(basic, ct, p);
-			case ConArray(i): Texpr.makeInt(basic, i, p);
-			case ConStatic(c, cf): Texpr.makeStaticField(c, cf, p);
+				matchDebug ? TexprTools.makeString(basic, ef.name, p) : TexprTools.makeInt(basic, ef.index, p);
+			case ConConst(ct): TexprTools.makeConstTexpr(basic, ct, p);
+			case ConArray(i): TexprTools.makeInt(basic, i, p);
+			case ConStatic(c, cf): TexprTools.makeStaticField(c, cf, p);
 			case ConTypeExpr(_): throw new TypingError("Constructor.to_texpr for a type expression is not yet ported", p);
 			case ConFields(_): throw new TypingError("Something went wrong", p);
 		};
@@ -203,7 +203,7 @@ class PatternMaker {
 				pctx.inReification = old;
 				return r;
 			case EConst(CInt(_, _)) | EConst(CFloat(_, _)) | EConst(CString(_, _)) | EConst(CIdent("true")) | EConst(CIdent("false")):
-				var ce = Texpr.typeConstant(basic, switch (e.expr) { case EConst(c): c; case _: throw "unreachable"; }, p);
+				var ce = TexprTools.typeConstant(basic, switch (e.expr) { case EConst(c): c; case _: throw "unreachable"; }, p);
 				unifyExpected(ce.type);
 				switch (ce.expr) {
 					case TConst(ct): PatConstructor(Constructor.make(ConConst(ct), p), []);
@@ -578,7 +578,7 @@ class DtCompile {
 				}
 			case ConArray(n):
 				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
-				[for (i in 0...n) TypeFunctions.mk(TArray(e, Texpr.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
+				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
 			case ConFields(fields):
 				var anonFields = switch (TypeFunctions.follow(e.type)) { case TAnon(a): a.fields; case _: null; };
 				[for (i in 0...fields.length) {
@@ -693,7 +693,7 @@ class DtCompile {
 			for (sse in subSubjects) {
 				var v = genLocal(mctx.ctx, sse.type, sse.pos);
 				bindings.push({v: v, p: v.pos, e: sse});
-				subExprs.push(Texpr.makeLocal(v, v.pos));
+				subExprs.push(TexprTools.makeLocal(v, v.pos));
 			}
 			var newSubjects = subExprs.concat(rest);
 			var spec = specialize(subject, s.con, cases);
@@ -726,7 +726,7 @@ class DtCompile {
 				case TConst(_) | TLocal(_): subj.push(e);
 				case _:
 					var v = genLocal(ctx, e.type, e.pos);
-					subj.push(Texpr.makeLocal(v, e.pos));
+					subj.push(TexprTools.makeLocal(v, e.pos));
 					vars.push({v: v, p: e.pos, e: e});
 			}
 		}

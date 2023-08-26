@@ -7,7 +7,7 @@ import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TypingError;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
@@ -86,7 +86,7 @@ class Typer {
 	}
 
 	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
-		var implExpr = Texpr.makeTypeExpr(TClassDecl(implC), p);
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, [e], t, p);
 	}
@@ -419,7 +419,7 @@ class Typer {
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
 			case CInt(s, suffix):
-				if (suffix == null) Texpr.typeConstant(basic, c, p);
+				if (suffix == null) TexprTools.typeConstant(basic, c, p);
 				else switch (suffix) {
 					case "i32":
 						var i = Std.parseInt(s);
@@ -429,15 +429,15 @@ class Typer {
 					case other: throw new TypingError(other + " is not a valid integer suffix", p);
 				}
 			case CFloat(s, suffix):
-				if (suffix == null) Texpr.typeConstant(basic, c, p);
+				if (suffix == null) TexprTools.typeConstant(basic, c, p);
 				else switch (suffix) {
-					case "f64": Texpr.typeConstant(basic, CFloat(s, null), p);
+					case "f64": TexprTools.typeConstant(basic, CFloat(s, null), p);
 					case other: throw new TypingError(other + " is not a valid float suffix", p);
 				}
 			case CString(str, SSingleQuotes) if (str.indexOf("$") >= 0):
 				typeExpr(ctx, formatString(str, p), withType);
 			case CString(_, _):
-				Texpr.typeConstant(basic, c, p);
+				TexprTools.typeConstant(basic, c, p);
 			case CRegexp(r, opt):
 				var tp:PlacedTypePath = {path: {tpackage: [], tname: "EReg", tparams: [], tsub: null}, pos: p};
 				var args = [new Expr(EConst(CString(r, SDoubleQuotes)), p), new Expr(EConst(CString(opt, SDoubleQuotes)), p)];
@@ -449,12 +449,12 @@ class Typer {
 	// imports, and globals resolve in the fields-dispatch unit.
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		if (ctx.locals.exists(i)) {
-			return AKExpr(Texpr.makeLocal(ctx.locals.get(i), p));
+			return AKExpr(TexprTools.makeLocal(ctx.locals.get(i), p));
 		}
 		switch (i) {
 			case "null": return AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
-			case "true": return AKExpr(Texpr.makeBool(ctx.com.basic, true, p));
-			case "false": return AKExpr(Texpr.makeBool(ctx.com.basic, false, p));
+			case "true": return AKExpr(TexprTools.makeBool(ctx.com.basic, true, p));
+			case "false": return AKExpr(TexprTools.makeBool(ctx.com.basic, false, p));
 			case "this": return AKExpr(TypeFunctions.mk(TConst(TThis), ctx.tthis, p));
 			case _:
 		}
@@ -477,10 +477,10 @@ class Typer {
 				// Inside an abstract impl method, a bare call to a sibling member method threads `this`.
 				var isAbsImpl = switch (ctx.curclass.kind) { case KAbstractImpl(_): true; case _: false; };
 				if (isAbsImpl && smf.kind.match(Method(_)) && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
-					var thisExpr = Texpr.makeLocal(ctx.locals.get("this"), p);
+					var thisExpr = TexprTools.makeLocal(ctx.locals.get("this"), p);
 					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(ctx.curclass, smf, thisExpr, false, p));
 				}
-				var typeExpr = Texpr.makeTypeExpr(TClassDecl(ctx.curclass), p);
+				var typeExpr = TexprTools.makeTypeExpr(TClassDecl(ctx.curclass), p);
 				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
 			}
 		}
@@ -488,20 +488,20 @@ class Typer {
 			case WithType(wt, _):
 				switch (TypeFunctions.follow(wt)) {
 					case TEnum(en, _) if (en.constrs.exists(i)):
-						return Fields.enumConstructor(ctx, en, Texpr.makeTypeExpr(TEnumDecl(en), p), i, p);
+						return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
 					case _:
 				}
 			case _:
 		}
 		var bareEnum = findBareEnumConstructor(ctx, i);
 		if (bareEnum != null) {
-			var et = Texpr.makeTypeExpr(TEnumDecl(bareEnum), p);
+			var et = TexprTools.makeTypeExpr(TEnumDecl(bareEnum), p);
 			return Fields.enumConstructor(ctx, bareEnum, et, i, p);
 		}
 		if (i == "trace") {
 			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
-			return Fields.typeField(ctx, Texpr.makeTypeExpr(logMt, p), "trace", p, mode, withType);
+			return Fields.typeField(ctx, TexprTools.makeTypeExpr(logMt, p), "trace", p, mode, withType);
 		}
 		var mt = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
 		if (mt == null) {
@@ -517,7 +517,7 @@ class Typer {
 		// statics have real types (idempotent via processed).
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-		return AKExpr(Texpr.makeTypeExpr(mt, p));
+		return AKExpr(TexprTools.makeTypeExpr(mt, p));
 	}
 
 	// A bare identifier that names a constructor of an enum declared in the current module.
@@ -572,7 +572,7 @@ class Typer {
 		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-		var acc:AccessKind = AKExpr(Texpr.makeTypeExpr(mt, p));
+		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(mt, p));
 		for (i in 0...rest.length) {
 			var isLast = i == rest.length - 1;
 			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], p, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
@@ -645,7 +645,7 @@ class Typer {
 				var implC = FieldAccessTools.getHostClassRaise(fa.host);
 				var getterCf = implC.statics.get("get_" + fa.field.name);
 				if (getterCf != null) {
-					var getterFa = FieldAccessTools.create(Texpr.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, FHStatic(implC), false, fa.pos);
+					var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, FHStatic(implC), false, fa.pos);
 					Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
 				} else {
 					FieldAccessTools.getFieldExpr(fa, FRead);
@@ -903,7 +903,7 @@ class Typer {
 				}
 			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("_new")):
 				// An abstract is constructed by calling its impl's _new static.
-				var implExpr = Texpr.makeTypeExpr(TClassDecl(a.impl), p);
+				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 				Calls.buildCall(ctx, Fields.typeField(ctx, implExpr, "_new", p, MCall(el), withType), el, withType, p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);

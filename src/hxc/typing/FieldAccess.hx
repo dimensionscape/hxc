@@ -3,7 +3,7 @@ package hxc.typing;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.NotFound;
 import hxc.typing.AccessKind;
 
@@ -136,12 +136,12 @@ class FieldAccessTools {
 	}
 
 	public static function makeStaticExtensionAccess(c:TClass, cf:TClassField, eThis:TExpr, isInline:Bool, p:Position):StaticExtensionAccess {
-		var eStatic = Texpr.makeStaticThis(c, p);
+		var eStatic = TexprTools.makeStaticThis(c, p);
 		return {thisExpr: eThis, access: create(eStatic, cf, FHStatic(c), isInline, p)};
 	}
 
 	public static function makeAbstractStaticExtensionAccess(a:TAbstract, tl:TParams, c:TClass, cf:TClassField, eThis:TExpr, isInline:Bool, p:Position):StaticExtensionAccess {
-		var eStatic = Texpr.makeStaticThis(c, p);
+		var eStatic = TexprTools.makeStaticThis(c, p);
 		return {thisExpr: eThis, access: create(eStatic, cf, FHAbstract(a, tl, c), isInline, p)};
 	}
 }

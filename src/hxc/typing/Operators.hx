@@ -6,7 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.FieldAccess;
@@ -260,7 +260,7 @@ class Operators {
 								// A bodyless (native) @:op is the underlying operation, typed as its declared return.
 								return TypeFunctions.mk(TBinop(op, e1, c2), sig.ret, p);
 							}
-							var implExpr = hxc.core.Texpr.makeStaticThis(a.impl, p);
+							var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
 							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, aop.cf, FHStatic(a.impl), false, p), FCall);
 							return Calls.makeCall(ctx, fieldExpr, [e1, c2], sig.ret, p);
 						case _:
@@ -329,8 +329,8 @@ class Operators {
 						var tvoid = ctx.com.basic.tvoid;
 						var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
 						var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
-						var eb = Texpr.makeLocal(vb, p);
-						var ek = Texpr.makeLocal(vk, p);
+						var eb = TexprTools.makeLocal(vb, p);
+						var ek = TexprTools.makeLocal(vk, p);
 						var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 						var eop = toTexpr(makeBinop(ctx, sub, eget, te2, true, withType, p));
@@ -396,15 +396,15 @@ class Operators {
 		var tint = ctx.com.basic.tint;
 		var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
 		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
-		var eb = Texpr.makeLocal(vb, p);
-		var ek = Texpr.makeLocal(vk, p);
+		var eb = TexprTools.makeLocal(vb, p);
+		var ek = TexprTools.makeLocal(vk, p);
 		var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
 		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
 		if (flag.match(Postfix)) {
 			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
-			var eold = Texpr.makeLocal(vold, p);
+			var eold = TexprTools.makeLocal(vold, p);
 			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
 			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
 			stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return newv, p));
@@ -413,7 +413,7 @@ class Operators {
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
 		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
-		var enew = Texpr.makeLocal(vnew, p);
+		var enew = TexprTools.makeLocal(vnew, p);
 		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
 		stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return enew, p));
 		stmts.push(enew);

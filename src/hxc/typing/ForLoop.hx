@@ -4,7 +4,7 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
-import hxc.core.Texpr;
+import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
@@ -78,7 +78,7 @@ class ForLoop {
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
 		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_it", iterExpr.type, p);
-		var eIt = Texpr.makeLocal(vIt, p);
+		var eIt = TexprTools.makeLocal(vIt, p);
 		var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, pt, p);
 		var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
 		ctx.inLoop = oldLoop;
