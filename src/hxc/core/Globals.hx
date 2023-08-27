@@ -53,7 +53,7 @@ typedef CompilerMessage = {
 
 class Globals {
 	// Version components use integer division and remainder.
-	public static final version:Int = 4300;
+	public static final version:Int = 4307;
 	public static final versionMajor:Int = Std.int(version / 1000); // Version / 1000
 	public static final versionMinor:Int = Std.int((version % 1000) / 100); // (version mod 1000) / 100
 	public static final versionRevision:Int = version % 100; // Version mod 100
