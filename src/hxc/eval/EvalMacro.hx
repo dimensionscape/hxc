@@ -556,9 +556,9 @@ class EvalMacro {
 	static function decodeFieldKind(ec:EvalContext, v:EvalValue, dp:Position):ClassFieldKind {
 		var a = eargs(v);
 		return switch (ctorName(ec, v)) {
-			case "FVar": FVar(null, decodeExprOpt(ec, a.length > 1 ? a[1] : VNull, dp));
+			case "FVar": FVar((a.length > 0 && a[0] != VNull) ? decodeTypeHint(ec, a[0], dp) : null, decodeExprOpt(ec, a.length > 1 ? a[1] : VNull, dp));
 			case "FFun": FFun(decodeFunc(ec, a[0], dp));
-			case "FProp": FProp({name: strOf(a[0]), pos: dp}, {name: strOf(a[1]), pos: dp}, null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
+			case "FProp": FProp({name: strOf(a[0]), pos: dp}, {name: strOf(a[1]), pos: dp}, (a.length > 2 && a[2] != VNull) ? decodeTypeHint(ec, a[2], dp) : null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
 			case other: throw "macro decode: unhandled FieldType " + other;
 		};
 	}
@@ -789,9 +789,9 @@ class EvalMacro {
 
 	static function encodeFieldKind(ec:EvalContext, k:ClassFieldKind):EvalValue {
 		return switch (k) {
-			case FVar(_, e): mkEnumValue(ec, "FieldType", "FVar", [VNull, e == null ? VNull : encodeExpr(ec, e)]);
+			case FVar(t, e): mkEnumValue(ec, "FieldType", "FVar", [t == null ? VNull : encodeComplexType(ec, t.ct), e == null ? VNull : encodeExpr(ec, e)]);
 			case FFun(fn): mkEnumValue(ec, "FieldType", "FFun", [encodeFunc(ec, fn)]);
-			case FProp(get, set, _, e): mkEnumValue(ec, "FieldType", "FProp", [mkString(get.name), mkString(set.name), VNull, e == null ? VNull : encodeExpr(ec, e)]);
+			case FProp(get, set, t, e): mkEnumValue(ec, "FieldType", "FProp", [mkString(get.name), mkString(set.name), t == null ? VNull : encodeComplexType(ec, t.ct), e == null ? VNull : encodeExpr(ec, e)]);
 		};
 	}
 
