@@ -605,6 +605,135 @@ class EvalStdLib {
 		}
 	}
 
+	static function jsonFieldNames(fields:Map<Int, EvalValue>):Array<String> {
+		var names = [for (key in fields.keys()) EvalHash.revHash(key)];
+		names.sort(Reflect.compare);
+		return names;
+	}
+
+	static function jsonString(s:String):String {
+		return haxe.Json.stringify(s);
+	}
+
+	static function jsonPrintValue(v:EvalValue, ?space:String):String {
+		var buf = new StringBuf();
+		var pretty = space != null;
+		var nind = 0;
+		inline function newl():Void {
+			if (pretty) buf.addChar("\n".code);
+		}
+		inline function ipad():Void {
+			if (pretty) for (_ in 0...nind) buf.add(space);
+		}
+		var write:EvalValue->Void = null;
+		function fieldsString(names:Array<String>, get:String->EvalValue):Void {
+			buf.addChar("{".code);
+			var empty = true;
+			for (name in names) {
+				var value = EvalValueTools.vresolve(get(name));
+				switch (value) {
+					case VFunction(_, _) | VFieldClosure(_, _):
+						continue;
+					case _:
+				}
+				if (empty) {
+					nind++;
+					empty = false;
+				} else {
+					buf.addChar(",".code);
+				}
+				newl();
+				ipad();
+				buf.add(jsonString(name));
+				buf.addChar(":".code);
+				if (pretty) buf.addChar(" ".code);
+				write(value);
+			}
+			if (!empty) {
+				nind--;
+				newl();
+				ipad();
+			}
+			buf.addChar("}".code);
+		}
+		write = function(value:EvalValue):Void {
+			switch (EvalValueTools.vresolve(value)) {
+				case VNull:
+					buf.add("null");
+				case VTrue:
+					buf.add("true");
+				case VFalse:
+					buf.add("false");
+				case VInt(i):
+					buf.add(i);
+				case VFloat(f):
+					buf.add(Math.isFinite(f) ? Std.string(f) : "null");
+				case VString(s):
+					buf.add(jsonString(s.sstring));
+				case VNativeString(s):
+					buf.add(jsonString(s));
+				case VArray(va):
+					buf.addChar("[".code);
+					var last = va.alength - 1;
+					for (i in 0...va.alength) {
+						if (i > 0) {
+							buf.addChar(",".code);
+						} else {
+							nind++;
+						}
+						newl();
+						ipad();
+						write(va.avalues[i]);
+						if (i == last) {
+							nind--;
+							newl();
+							ipad();
+						}
+					}
+					buf.addChar("]".code);
+				case VVector(vv):
+					buf.addChar("[".code);
+					var last = vv.length - 1;
+					for (i in 0...vv.length) {
+						if (i > 0) {
+							buf.addChar(",".code);
+						} else {
+							nind++;
+						}
+						newl();
+						ipad();
+						write(vv[i]);
+						if (i == last) {
+							nind--;
+							newl();
+							ipad();
+						}
+					}
+					buf.addChar("]".code);
+				case VObject(o):
+					var fields = objectFieldMap(o);
+					fieldsString(jsonFieldNames(fields), name -> fields.get(EvalHash.hash(name)));
+				case VInstance(vi):
+					switch (vi.ikind) {
+						case IDate(ts):
+							buf.add(jsonString(Date.fromTime(ts).toString()));
+						case _:
+							var names = [for (key in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(key)];
+							names.sort(Reflect.compare);
+							fieldsString(names, name -> vi.ifields[vi.iproto.pinstanceNames.get(EvalHash.hash(name))]);
+					}
+				case VEnumValue(ev):
+					buf.add(ev.eindex);
+				case VFunction(_, _) | VFieldClosure(_, _):
+					buf.add("\"<fun>\"");
+				case VPrototype(_) | VLazy(_):
+					buf.add("null");
+			}
+		}
+		write(v);
+		return buf.toString();
+	}
+
 	static function valueToHost(ctx:EvalContext, v:EvalValue):Dynamic {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: null;
@@ -2649,9 +2778,9 @@ class EvalStdLib {
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
 		reg(s, "haxe.Json", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
-		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
+		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(jsonPrintValue(arg(a, 0), arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
-		reg(s, "haxe.format.JsonPrinter", "print", vfn(a -> mkStr(haxe.Json.stringify(valueToJson(arg(a, 0)), null, arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
+		reg(s, "haxe.format.JsonPrinter", "print", vfn(a -> mkStr(jsonPrintValue(arg(a, 0), arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.Serializer", "run", vfn(a -> {
 			var serializer = classValue(ctx, EvalHash.hash("haxe.Serializer"));
 			mkStr(serializeEval(ctx, arg(a, 0), serializerBoolField(ctx, serializer, "USE_ENUM_INDEX", false), serializerBoolField(ctx, serializer, "USE_CACHE", false)));
