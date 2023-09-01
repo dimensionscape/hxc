@@ -1639,11 +1639,9 @@ class EvalStdLib {
 	}
 
 	static function urlEncode(s:String):String {
-		var bytes = haxe.io.Bytes.ofString(s);
 		var hex = "0123456789ABCDEF";
 		var b = new StringBuf();
-		for (i in 0...bytes.length) {
-			var c = bytes.get(i);
+		function addByte(c:Int):Void {
 			if ((c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)
 				|| (c >= "0".code && c <= "9".code) || c == "_".code || c == "-".code || c == ".".code) {
 				b.addChar(c);
@@ -1652,6 +1650,26 @@ class EvalStdLib {
 				b.addChar(hex.charCodeAt(c >> 4));
 				b.addChar(hex.charCodeAt(c & 15));
 			}
+		}
+		function addCodePoint(c:Int):Void {
+			if (c < 0x80) addByte(c);
+			else if (c < 0x800) {
+				addByte(0xC0 | (c >> 6));
+				addByte(0x80 | (c & 0x3F));
+			} else if (c < 0x10000) {
+				addByte(0xE0 | (c >> 12));
+				addByte(0x80 | ((c >> 6) & 0x3F));
+				addByte(0x80 | (c & 0x3F));
+			} else {
+				addByte(0xF0 | (c >> 18));
+				addByte(0x80 | ((c >> 12) & 0x3F));
+				addByte(0x80 | ((c >> 6) & 0x3F));
+				addByte(0x80 | (c & 0x3F));
+			}
+		}
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			if (c <= 0xFF) addByte(c) else addCodePoint(c);
 		}
 		return b.toString();
 	}
