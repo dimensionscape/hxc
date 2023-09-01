@@ -1230,6 +1230,60 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IDate(ts)));
 	}
 
+	static final dateDayShortNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+	static final dateDayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+	static final dateMonthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	static final dateMonthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+	static function dateToolsFormat(d:Date, f:String):String {
+		function get(e:String):String {
+			return switch (e) {
+				case "%": "%";
+				case "a": dateDayShortNames[d.getDay()];
+				case "A": dateDayNames[d.getDay()];
+				case "b" | "h": dateMonthShortNames[d.getMonth()];
+				case "B": dateMonthNames[d.getMonth()];
+				case "C": StringTools.lpad(Std.string(Std.int(d.getFullYear() / 100)), "0", 2);
+				case "d": StringTools.lpad(Std.string(d.getDate()), "0", 2);
+				case "D": dateToolsFormat(d, "%m/%d/%y");
+				case "e": Std.string(d.getDate());
+				case "F": dateToolsFormat(d, "%Y-%m-%d");
+				case "H" | "k": StringTools.lpad(Std.string(d.getHours()), e == "H" ? "0" : " ", 2);
+				case "I" | "l":
+					var hour = d.getHours() % 12;
+					StringTools.lpad(Std.string(hour == 0 ? 12 : hour), e == "I" ? "0" : " ", 2);
+				case "m": StringTools.lpad(Std.string(d.getMonth() + 1), "0", 2);
+				case "M": StringTools.lpad(Std.string(d.getMinutes()), "0", 2);
+				case "n": "\n";
+				case "p": d.getHours() > 11 ? "PM" : "AM";
+				case "r": dateToolsFormat(d, "%I:%M:%S %p");
+				case "R": dateToolsFormat(d, "%H:%M");
+				case "s": Std.string(Std.int(d.getTime() / 1000));
+				case "S": StringTools.lpad(Std.string(d.getSeconds()), "0", 2);
+				case "t": "\t";
+				case "T": dateToolsFormat(d, "%H:%M:%S");
+				case "u":
+					var day = d.getDay();
+					day == 0 ? "7" : Std.string(day);
+				case "w": Std.string(d.getDay());
+				case "y": StringTools.lpad(Std.string(d.getFullYear() % 100), "0", 2);
+				case "Y": Std.string(d.getFullYear());
+				case _: throw "Date.format %" + e + "- not implemented yet.";
+			}
+		}
+		var r = new StringBuf();
+		var p = 0;
+		while (true) {
+			var np = f.indexOf("%", p);
+			if (np < 0) break;
+			r.addSub(f, p, np - p);
+			r.add(get(f.substr(np + 1, 1)));
+			p = np + 2;
+		}
+		r.addSub(f, p, f.length - p);
+		return r.toString();
+	}
+
 	static function thisBytes(a:Array<EvalValue>):haxe.io.Bytes {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IBytes(b): b; case _: haxe.io.Bytes.alloc(0); };
@@ -2795,6 +2849,7 @@ class EvalStdLib {
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
+		reg(s, "DateTools", "format", vfn(a -> mkStr(dateToolsFormat(Date.fromTime(thisDate([arg(a, 0)])), stringOf(arg(a, 1))))));
 		reg(s, "haxe.Json", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
 		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(jsonPrintValue(arg(a, 0), arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
