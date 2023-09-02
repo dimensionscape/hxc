@@ -1692,6 +1692,37 @@ class EvalStdLib {
 		return s.split(sub).join(by);
 	}
 
+	static function stringIndexOf(s:String, sub:String, startValue:EvalValue):Int {
+		var start = startValue == VNull ? 0 : toInt(startValue);
+		if (sub.length == 0) {
+			if (start < 0) return 0;
+			return start > s.length ? s.length : start;
+		}
+		if (start < 0) start = s.length + start;
+		if (start < 0) start = 0;
+		if (start > s.length - sub.length) return -1;
+		var max = s.length - sub.length;
+		for (i in start...max + 1) {
+			if (s.substr(i, sub.length) == sub) return i;
+		}
+		return -1;
+	}
+
+	static function stringLastIndexOf(s:String, sub:String, startValue:EvalValue):Int {
+		var start = startValue == VNull ? s.length : toInt(startValue);
+		if (sub.length == 0) {
+			if (start < 0) return 0;
+			return start > s.length ? s.length : start;
+		}
+		if (start < 0) return -1;
+		var i = start > s.length - sub.length ? s.length - sub.length : start;
+		while (i >= 0) {
+			if (s.substr(i, sub.length) == sub) return i;
+			i--;
+		}
+		return -1;
+	}
+
 	static function urlEncode(s:String):String {
 		var hex = "0123456789ABCDEF";
 		var b = new StringBuf();
@@ -2188,10 +2219,10 @@ class EvalStdLib {
 			var i = toInt(arg(a, 1));
 			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
 		}));
-		reg(inst, "String", "indexOf", vmethod(a -> VInt(thisString(a).indexOf(stringOf(arg(a, 1)), a.length > 2 ? toInt(arg(a, 2)) : 0))));
+		reg(inst, "String", "indexOf", vmethod(a -> VInt(stringIndexOf(thisString(a), stringOf(arg(a, 1)), arg(a, 2)))));
 		reg(inst, "String", "lastIndexOf", vmethod(a -> {
 			var str = thisString(a);
-			VInt(a.length > 2 && arg(a, 2) != VNull ? str.lastIndexOf(stringOf(arg(a, 1)), toInt(arg(a, 2))) : str.lastIndexOf(stringOf(arg(a, 1))));
+			VInt(stringLastIndexOf(str, stringOf(arg(a, 1)), arg(a, 2)));
 		}));
 		reg(inst, "String", "toUpperCase", vmethod(a -> mkStr(thisString(a).toUpperCase())));
 		reg(inst, "String", "toLowerCase", vmethod(a -> mkStr(thisString(a).toLowerCase())));
