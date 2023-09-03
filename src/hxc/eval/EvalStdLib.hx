@@ -1723,6 +1723,20 @@ class EvalStdLib {
 		return -1;
 	}
 
+	static function stringHex(n:Int, digits:EvalValue):String {
+		var s = "";
+		var hexChars = "0123456789ABCDEF";
+		do {
+			s = hexChars.charAt(n & 15) + s;
+			n >>>= 4;
+		} while (n > 0);
+		if (digits != VNull) {
+			var l = toInt(digits);
+			while (s.length < l) s = "0" + s;
+		}
+		return s;
+	}
+
 	static function urlEncode(s:String):String {
 		var hex = "0123456789ABCDEF";
 		var b = new StringBuf();
@@ -2113,6 +2127,7 @@ class EvalStdLib {
 		reg(s, "StringTools", "fastCodeAt", vfn(a -> stringFastCodeAt(stringOf(arg(a, 0)), toInt(arg(a, 1)))));
 		reg(s, "StringTools", "unsafeCodeAt", vfn(a -> stringFastCodeAt(stringOf(arg(a, 0)), toInt(arg(a, 1)))));
 		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
+		reg(s, "StringTools", "hex", vfn(a -> mkStr(stringHex(toInt(arg(a, 0)), arg(a, 1)))));
 		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.SysTools", "quoteUnixArg", vfn(a -> mkStr(haxe.SysTools.quoteUnixArg(stringOf(arg(a, 0))))));
