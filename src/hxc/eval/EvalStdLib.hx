@@ -1737,6 +1737,77 @@ class EvalStdLib {
 		return s;
 	}
 
+	static function stringHtmlEscape(s:String, quotes:Bool):String {
+		var buf = new StringBuf();
+		for (i in 0...s.length) {
+			switch (s.charCodeAt(i)) {
+				case "&".code:
+					buf.add("&amp;");
+				case "<".code:
+					buf.add("&lt;");
+				case ">".code:
+					buf.add("&gt;");
+				case "\"".code if (quotes):
+					buf.add("&quot;");
+				case "'".code if (quotes):
+					buf.add("&#039;");
+				case code:
+					buf.addChar(code);
+			}
+		}
+		return buf.toString();
+	}
+
+	static function stringHtmlUnescape(s:String):String {
+		return stringReplace(stringReplace(stringReplace(stringReplace(stringReplace(s, "&gt;", ">"), "&lt;", "<"), "&quot;", "\""), "&#039;", "'"), "&amp;", "&");
+	}
+
+	static function stringStartsWith(s:String, start:String):Bool {
+		return s.length >= start.length && stringLastIndexOf(s, start, VInt(0)) == 0;
+	}
+
+	static function stringEndsWith(s:String, end:String):Bool {
+		var elen = end.length;
+		var slen = s.length;
+		return slen >= elen && stringIndexOf(s, end, VInt(slen - elen)) == slen - elen;
+	}
+
+	static function stringIsSpace(s:String, pos:Int):Bool {
+		var c = s.charCodeAt(pos);
+		return c != null && ((c > 8 && c < 14) || c == 32);
+	}
+
+	static function stringLTrim(s:String):String {
+		var l = s.length;
+		var r = 0;
+		while (r < l && stringIsSpace(s, r)) r++;
+		return r > 0 ? s.substr(r, l - r) : s;
+	}
+
+	static function stringRTrim(s:String):String {
+		var l = s.length;
+		var r = 0;
+		while (r < l && stringIsSpace(s, l - r - 1)) r++;
+		return r > 0 ? s.substr(0, l - r) : s;
+	}
+
+	static function stringLPad(s:String, c:String, l:Int):String {
+		if (c.length <= 0) return s;
+		var buf = new StringBuf();
+		l -= s.length;
+		while (buf.length < l) buf.add(c);
+		buf.add(s);
+		return buf.toString();
+	}
+
+	static function stringRPad(s:String, c:String, l:Int):String {
+		if (c.length <= 0) return s;
+		var buf = new StringBuf();
+		buf.add(s);
+		while (buf.length < l) buf.add(c);
+		return buf.toString();
+	}
+
 	static function urlEncode(s:String):String {
 		var hex = "0123456789ABCDEF";
 		var b = new StringBuf();
@@ -2128,6 +2199,18 @@ class EvalStdLib {
 		reg(s, "StringTools", "unsafeCodeAt", vfn(a -> stringFastCodeAt(stringOf(arg(a, 0)), toInt(arg(a, 1)))));
 		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
 		reg(s, "StringTools", "hex", vfn(a -> mkStr(stringHex(toInt(arg(a, 0)), arg(a, 1)))));
+		reg(s, "StringTools", "htmlEscape", vfn(a -> mkStr(stringHtmlEscape(stringOf(arg(a, 0)), arg(a, 1) == VTrue))));
+		reg(s, "StringTools", "htmlUnescape", vfn(a -> mkStr(stringHtmlUnescape(stringOf(arg(a, 0))))));
+		reg(s, "StringTools", "contains", vfn(a -> EvalValueTools.vbool(stringIndexOf(stringOf(arg(a, 0)), stringOf(arg(a, 1)), VInt(0)) != -1)));
+		reg(s, "StringTools", "startsWith", vfn(a -> EvalValueTools.vbool(stringStartsWith(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "StringTools", "endsWith", vfn(a -> EvalValueTools.vbool(stringEndsWith(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "StringTools", "isSpace", vfn(a -> EvalValueTools.vbool(stringIsSpace(stringOf(arg(a, 0)), toInt(arg(a, 1))))));
+		reg(s, "StringTools", "ltrim", vfn(a -> mkStr(stringLTrim(stringOf(arg(a, 0))))));
+		reg(s, "StringTools", "rtrim", vfn(a -> mkStr(stringRTrim(stringOf(arg(a, 0))))));
+		reg(s, "StringTools", "trim", vfn(a -> mkStr(stringLTrim(stringRTrim(stringOf(arg(a, 0)))))));
+		reg(s, "StringTools", "lpad", vfn(a -> mkStr(stringLPad(stringOf(arg(a, 0)), stringOf(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(s, "StringTools", "rpad", vfn(a -> mkStr(stringRPad(stringOf(arg(a, 0)), stringOf(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(s, "StringTools", "isEof", vfn(a -> EvalValueTools.vbool(arg(a, 0) == VNull)));
 		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.SysTools", "quoteUnixArg", vfn(a -> mkStr(haxe.SysTools.quoteUnixArg(stringOf(arg(a, 0))))));
