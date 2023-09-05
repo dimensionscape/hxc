@@ -1214,6 +1214,11 @@ class EvalStdLib {
 		return VNull;
 	}
 
+	static function serializerToString(ctx:EvalContext, serializer:EvalValue):EvalValue {
+		var buf = EvalField.field(ctx, serializer, EvalHash.hash("buf"));
+		return mkStr(thisBuffer([buf]).toString());
+	}
+
 	static function unserializeString(ctx:EvalContext, data:String):EvalValue {
 		return unserializeEval(ctx, data);
 	}
@@ -2989,6 +2994,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "haxe.Serializer", "serialize", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
 		reg(inst, "haxe.Serializer", "serializeException", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
+		reg(inst, "haxe.Serializer", "toString", vmethod(a -> serializerToString(ctx, arg(a, 0))));
 		reg(s, "haxe.Unserializer", "run", vfn(a -> unserializeString(ctx, stringOf(arg(a, 0)))));
 		reg(inst, "haxe.Unserializer", "unserialize", vmethod(a -> {
 			var self = arg(a, 0);
