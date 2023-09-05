@@ -546,6 +546,8 @@ class EvalStdLib {
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
+	static var nativeArrayIterators = new haxe.ds.ObjectMap<VInstance, {array:VArray, current:Int}>();
+	static var nativeMapKeyValueIterators = new haxe.ds.ObjectMap<VInstance, {entries:Array<MapEntry>, current:Int}>();
 	static var threadMutexes = new haxe.ds.ObjectMap<VInstance, {mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int}>();
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
 	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
@@ -1469,6 +1471,46 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(buf)));
 	}
 
+	static function arrayIteratorValue(ctx:EvalContext, arrayValue:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.ArrayIterator"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeArrayIterators.set(vi, {array: thisArray([arrayValue]), current: 0});
+		setInstanceFieldIfExists(vi, "array", arrayValue);
+		setInstanceFieldIfExists(vi, "current", VInt(0));
+		return VInstance(vi);
+	}
+
+	static function thisArrayIterator(a:Array<EvalValue>):{array:VArray, current:Int} {
+		var vi = thisInstance(a, "ArrayIterator");
+		var it = nativeArrayIterators.get(vi);
+		if (it == null) throw "Unexpected value for ArrayIterator";
+		return it;
+	}
+
+	static function arrayIteratorSetCurrent(v:EvalValue, current:Int):Void {
+		switch (v) {
+			case VInstance(vi): setInstanceFieldIfExists(vi, "current", VInt(current));
+			case _:
+		}
+	}
+
+	static function mapKeyValueIteratorValue(ctx:EvalContext, mapValue:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.MapKeyValueIterator"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		var entries = [for (e in thisMap([mapValue])) e];
+		nativeMapKeyValueIterators.set(vi, {entries: entries, current: 0});
+		setInstanceFieldIfExists(vi, "map", mapValue);
+		setInstanceFieldIfExists(vi, "keys", arrayIteratorValue(ctx, VArray(new VArray([for (e in entries) e.key], entries.length))));
+		return VInstance(vi);
+	}
+
+	static function thisMapKeyValueIterator(a:Array<EvalValue>):{entries:Array<MapEntry>, current:Int} {
+		var vi = thisInstance(a, "MapKeyValueIterator");
+		var it = nativeMapKeyValueIterators.get(vi);
+		if (it == null) throw "Unexpected value for MapKeyValueIterator";
+		return it;
+	}
+
 	static function nativeStringOf(v:EvalValue):String {
 		return switch (v) {
 			case VNativeString(s): s;
@@ -2386,7 +2428,30 @@ class EvalStdLib {
 			var va = thisArray(a);
 			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
 		}));
-		reg(inst, "Array", "iterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [a[0]])));
+		reg(inst, "Array", "iterator", vmethod(a -> arrayIteratorValue(ctx, a[0])));
+		reg(inst, "haxe.iterators.ArrayIterator", "hasNext", vmethod(a -> {
+			var it = thisArrayIterator(a);
+			EvalValueTools.vbool(it.current < it.array.alength);
+		}));
+		reg(inst, "haxe.iterators.ArrayIterator", "next", vmethod(a -> {
+			var it = thisArrayIterator(a);
+			if (it.current >= it.array.alength) VNull else {
+				var value = it.array.avalues[it.current++];
+				arrayIteratorSetCurrent(arg(a, 0), it.current);
+				value;
+			}
+		}));
+		reg(inst, "haxe.iterators.MapKeyValueIterator", "hasNext", vmethod(a -> {
+			var it = thisMapKeyValueIterator(a);
+			EvalValueTools.vbool(it.current < it.entries.length);
+		}));
+		reg(inst, "haxe.iterators.MapKeyValueIterator", "next", vmethod(a -> {
+			var it = thisMapKeyValueIterator(a);
+			if (it.current >= it.entries.length) VNull else {
+				var entry = it.entries[it.current++];
+				mkObject([{name: "value", value: entry.value}, {name: "key", value: entry.key}]);
+			}
+		}));
 		reg(inst, "Array", "keyValueIterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayKeyValueIterator"), [a[0]])));
 		reg(inst, "Array", "slice", vmethod(a -> {
 			var va = thisArray(a);
@@ -2880,7 +2945,7 @@ class EvalStdLib {
 
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
-			return EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayIterator"), [VArray(new VArray(items, items.length))]);
+			return arrayIteratorValue(ctx, VArray(new VArray(items, items.length)));
 		reg(inst, "Xml", "get_nodeName", vmethod(a -> mkStr(thisXml(a).nodeName)));
 		reg(inst, "Xml", "set_nodeName", vmethod(a -> {
 			var x = thisXml(a);
@@ -2950,7 +3015,7 @@ class EvalStdLib {
 			reg(inst, mapPath, "remove", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); var had = m.exists(k); m.remove(k); EvalValueTools.vbool(had); }));
 			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.value])));
 			reg(inst, mapPath, "keys", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.key])));
-			reg(inst, mapPath, "keyValueIterator", vmethod(a -> objectIterator([for (e in thisMap(a)) mkObject([{name: "key", value: e.key}, {name: "value", value: e.value}])])));
+			reg(inst, mapPath, "keyValueIterator", vmethod(a -> mapKeyValueIteratorValue(ctx, arg(a, 0))));
 			reg(inst, mapPath, "clear", vmethod(a -> { thisMap(a).clear(); VNull; }));
 			reg(inst, mapPath, "copy", vmethod(a -> {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
@@ -2963,6 +3028,8 @@ class EvalStdLib {
 
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
+		ctors.set(EvalHash.hash("haxe.iterators.ArrayIterator"), function(a) return arrayIteratorValue(ctx, arg(a, 0)));
+		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 
