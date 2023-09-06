@@ -1665,7 +1665,13 @@ class EvalStdLib {
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
-		buf.add(String.fromCharCode(c));
+		if (c < 0x10000) {
+			buf.add(String.fromCharCode(c));
+		} else {
+			var u = c - 0x10000;
+			buf.add(String.fromCharCode(0xD800 + (u >> 10)));
+			buf.add(String.fromCharCode(0xDC00 + (u & 0x3FF)));
+		}
 	}
 
 	static function addUtf8EncodedChar(buf:StringBuf, c:Int):Void {
@@ -1688,7 +1694,7 @@ class EvalStdLib {
 
 	static function utf8Encode(s:String):String {
 		var buf = new StringBuf();
-		for (i in 0...s.length) addUtf8EncodedChar(buf, s.charCodeAt(i));
+		for (c in utf8Codes(s)) addUtf8EncodedChar(buf, c);
 		return buf.toString();
 	}
 
@@ -1698,28 +1704,40 @@ class EvalStdLib {
 		while (i < s.length) {
 			var c = s.charCodeAt(i++);
 			if (c < 0x80) {
-				buf.addChar(c);
+				addUtf8Char(buf, c);
 			} else if (c < 0xE0 && i < s.length) {
-				buf.addChar(((c & 0x1F) << 6) | (s.charCodeAt(i++) & 0x3F));
+				addUtf8Char(buf, ((c & 0x1F) << 6) | (s.charCodeAt(i++) & 0x3F));
 			} else if (c < 0xF0 && i + 1 < s.length) {
 				var c2 = s.charCodeAt(i++);
 				var c3 = s.charCodeAt(i++);
-				buf.addChar(((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F));
+				addUtf8Char(buf, ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F));
 			} else if (i + 2 < s.length) {
 				var c2 = s.charCodeAt(i++);
 				var c3 = s.charCodeAt(i++);
 				var c4 = s.charCodeAt(i++);
-				buf.addChar(((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F));
+				addUtf8Char(buf, ((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F));
 			} else {
-				buf.addChar(c);
+				addUtf8Char(buf, c);
 			}
 		}
 		return buf.toString();
 	}
 
 	static function utf8Codes(s:String):Array<Int> {
-		var decoded = utf8Decode(s);
-		return decoded.length < s.length ? [for (i in 0...decoded.length) decoded.charCodeAt(i)] : [for (i in 0...s.length) s.charCodeAt(i)];
+		var out = [];
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			if (c >= 0xD800 && c <= 0xDBFF && i < s.length) {
+				var c2 = s.charCodeAt(i);
+				if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+					i++;
+					c = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+				}
+			}
+			out.push(c);
+		}
+		return out;
 	}
 
 	static function utf8Valid(s:String):Bool {
@@ -2907,7 +2925,7 @@ class EvalStdLib {
 			var len = toInt(arg(a, 2));
 			var buf = new StringBuf();
 			for (i in pos...Std.int(Math.min(pos + len, codes.length))) addUtf8Char(buf, codes[i]);
-			mkStr(buf.toString());
+			mkStrLen(buf.toString(), Std.int(Math.min(len, Math.max(0, codes.length - pos))));
 		}));
 		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(utf8Valid(stringOf(arg(a, 0))))));
 		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> { addUtf8Char(thisBuffer(a), toInt(arg(a, 1))); VNull; }));
