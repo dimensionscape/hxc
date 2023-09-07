@@ -2346,7 +2346,7 @@ class EvalStdLib {
 		reg(s, "eval.vm.Gc", "full_major", vfn(a -> { gcMajor(); VNull; }));
 		reg(s, "eval.vm.Gc", "get", vfn(a -> gcControl()));
 		reg(s, "eval.vm.Gc", "major", vfn(a -> { gcMajor(); VNull; }));
-		reg(s, "eval.vm.Gc", "major_slice", vfn(a -> gcMajorSlice(a.length == 0 ? VInt(0) : arg(a, 0))));
+		reg(s, "eval.vm.Gc", "major_slice", vfn(a -> gcMajorSlice(arg(a, 0))));
 		reg(s, "eval.vm.Gc", "minor", vfn(a -> { gcMinor(); VNull; }));
 		reg(s, "eval.vm.Gc", "print_stat", vfn(a -> {
 			var out = thisFileOutput([arg(a, 0)]).output;
