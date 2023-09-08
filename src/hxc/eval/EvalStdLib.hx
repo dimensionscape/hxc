@@ -167,10 +167,16 @@ class EvalStdLib {
 		return result;
 	}
 
+	static inline function ptmapOrderKey(k:Int):Int {
+		var r = 0;
+		for (i in 0...30) r = (r << 1) | ((k >>> i) & 1);
+		return r;
+	}
+
 	static function objectDictionaryKeys(fields:Map<Int, EvalValue>):Array<Int> {
 		var keys = [for (k in fields.keys()) k];
 		keys.sort(function(a, b) {
-			var d = seededStringHash(EvalHash.revHash(b)) - seededStringHash(EvalHash.revHash(a));
+			var d = ptmapOrderKey(seededStringHash(EvalHash.revHash(a))) - ptmapOrderKey(seededStringHash(EvalHash.revHash(b)));
 			return d != 0 ? d : Reflect.compare(EvalHash.revHash(a), EvalHash.revHash(b));
 		});
 		return keys;
@@ -593,24 +599,18 @@ class EvalStdLib {
 			case VObject(o):
 				var obj = {};
 				var fields = objectFieldMap(o);
-				var names = [for (key in fields.keys()) EvalHash.revHash(key)];
-				names.sort(Reflect.compare);
-				for (name in names) Reflect.setField(obj, name, valueToJson(fields.get(EvalHash.hash(name))));
+				for (key in objectDictionaryKeys(fields)) Reflect.setField(obj, EvalHash.revHash(key), valueToJson(fields.get(key)));
 				obj;
 			case VInstance(vi):
 				var obj = {};
-				var names = [for (key in vi.iproto.pinstanceNames.keys()) EvalHash.revHash(key)];
-				names.sort(Reflect.compare);
-				for (name in names) Reflect.setField(obj, name, valueToJson(vi.ifields[vi.iproto.pinstanceNames.get(EvalHash.hash(name))]));
+				for (key in instanceFieldKeys(vi.iproto)) Reflect.setField(obj, EvalHash.revHash(key), valueToJson(vi.ifields[vi.iproto.pinstanceNames.get(key)]));
 				obj;
 			case _: null;
 		}
 	}
 
 	static function jsonFieldNames(fields:Map<Int, EvalValue>):Array<String> {
-		var names = [for (key in fields.keys()) EvalHash.revHash(key)];
-		names.sort(Reflect.compare);
-		return names;
+		return [for (key in objectDictionaryKeys(fields)) EvalHash.revHash(key)];
 	}
 
 	static function jsonString(s:String):String {
