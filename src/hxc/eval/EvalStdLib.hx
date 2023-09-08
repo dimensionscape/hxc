@@ -669,7 +669,7 @@ class EvalStdLib {
 				case VInt(i):
 					buf.add(i);
 				case VFloat(f):
-					buf.add(Math.isFinite(f) ? Std.string(f) : "null");
+					buf.add(Math.isFinite(f) ? floatString(f) : "null");
 				case VString(s):
 					buf.add(jsonString(s.sstring));
 				case VNativeString(s):
@@ -912,7 +912,7 @@ class EvalStdLib {
 				case VFloat(f):
 					if (Math.isNaN(f)) buf.add("k") else if (!Math.isFinite(f)) buf.add(f < 0 ? "m" : "p") else {
 						buf.add("d");
-						buf.add(f);
+						buf.add(floatString(f));
 					}
 				case VString(s):
 					stringTag(s.sstring);
@@ -1656,6 +1656,34 @@ class EvalStdLib {
 		};
 	}
 
+	static function isNegativeZero(f:Float):Bool {
+		return f == 0 && 1 / f == Math.NEGATIVE_INFINITY;
+	}
+
+	static function normalizeFloatExponent(s:String):String {
+		var e = s.indexOf("e");
+		if (e < 0) e = s.indexOf("E");
+		if (e < 0) return s;
+		var head = s.substr(0, e);
+		var exp = s.substr(e + 1);
+		var sign = "";
+		if (StringTools.startsWith(exp, "-") || StringTools.startsWith(exp, "+")) {
+			sign = exp.substr(0, 1);
+			exp = exp.substr(1);
+		}
+		while (exp.length < 3) exp = "0" + exp;
+		return head + "e" + sign + exp;
+	}
+
+	static function floatString(f:Float):String {
+		if (Math.isNaN(f)) return "nan";
+		if (!Math.isFinite(f)) return f < 0 ? "neg_infinity" : "infinity";
+		if (isNegativeZero(f)) return "-0";
+		var s = Std.string(f);
+		if (StringTools.endsWith(s, ".")) s = s.substr(0, s.length - 1);
+		return normalizeFloatExponent(s);
+	}
+
 	static inline function mkStr(s:String):EvalValue return VString(new VString(s, s.length));
 	static inline function mkStrLen(s:String, len:Int):EvalValue return VString(new VString(s, len));
 
@@ -2007,9 +2035,7 @@ class EvalStdLib {
 			case VTrue: "true";
 			case VFalse: "false";
 			case VInt(i): Std.string(i);
-			case VFloat(f):
-				var s = Std.string(f);
-				StringTools.endsWith(s, ".") ? s.substr(0, s.length - 1) : s;
+			case VFloat(f): floatString(f);
 			case VString(s): s.sstring;
 			case VNativeString(s): s;
 			case VFunction(_, _): "#fun";
