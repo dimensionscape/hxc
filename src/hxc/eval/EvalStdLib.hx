@@ -1785,6 +1785,73 @@ class EvalStdLib {
 		return s.split(sub).join(by);
 	}
 
+	static inline function numericWhitespace(code:Int):Bool {
+		return code > 8 && code < 14;
+	}
+
+	static function stdParseInt(s:String):EvalValue {
+		var sp = 0;
+		while (sp < s.length) {
+			var c = s.charCodeAt(sp);
+			if (c == " ".code || numericWhitespace(c)) sp++ else break;
+		}
+		var start = sp;
+		if (sp < s.length && (s.charCodeAt(sp) == "+".code || s.charCodeAt(sp) == "-".code)) sp++;
+		var digitsStart = sp;
+		var isHex = sp + 1 < s.length && s.charCodeAt(sp) == "0".code && (s.charCodeAt(sp + 1) == "x".code || s.charCodeAt(sp + 1) == "X".code);
+		if (isHex) sp += 2;
+		var valueStart = sp;
+		while (sp < s.length) {
+			var c = s.charCodeAt(sp);
+			var digit = c >= "0".code && c <= "9".code;
+			var hex = isHex && ((c >= "a".code && c <= "f".code) || (c >= "A".code && c <= "F".code));
+			if (digit || hex) sp++ else break;
+		}
+		if (sp == valueStart || (!isHex && sp == digitsStart)) return VNull;
+		var parsed = Std.parseInt(s.substr(start, sp - start));
+		return parsed == null ? VNull : VInt(parsed);
+	}
+
+	static function stdParseFloat(s:String):Float {
+		var sp = 0;
+		while (sp < s.length) {
+			var c = s.charCodeAt(sp);
+			if (c == " ".code || numericWhitespace(c)) sp++ else break;
+		}
+		var pos = sp;
+		while (pos < s.length) {
+			var c = s.charCodeAt(pos);
+			if ((c >= "0".code && c <= "9".code) || c == "-".code || c == "+".code || c == "e".code || c == "E".code || c == ".".code) pos++ else break;
+		}
+		var part = s.substr(sp, pos - sp);
+		var i = 0;
+		if (i < part.length && (part.charCodeAt(i) == "+".code || part.charCodeAt(i) == "-".code)) i++;
+		var digits = 0;
+		while (i < part.length && part.charCodeAt(i) >= "0".code && part.charCodeAt(i) <= "9".code) {
+			i++;
+			digits++;
+		}
+		if (i < part.length && part.charCodeAt(i) == ".".code) {
+			i++;
+			while (i < part.length && part.charCodeAt(i) >= "0".code && part.charCodeAt(i) <= "9".code) {
+				i++;
+				digits++;
+			}
+		}
+		if (digits == 0) return Math.NaN;
+		if (i < part.length && (part.charCodeAt(i) == "e".code || part.charCodeAt(i) == "E".code)) {
+			i++;
+			if (i < part.length && (part.charCodeAt(i) == "+".code || part.charCodeAt(i) == "-".code)) i++;
+			var expDigits = 0;
+			while (i < part.length && part.charCodeAt(i) >= "0".code && part.charCodeAt(i) <= "9".code) {
+				i++;
+				expDigits++;
+			}
+			if (expDigits == 0) return Math.NaN;
+		}
+		return i == part.length ? Std.parseFloat(part) : Math.NaN;
+	}
+
 	static function stringIndexOf(s:String, sub:String, startValue:EvalValue):Int {
 		var start = startValue == VNull ? 0 : toInt(startValue);
 		if (sub.length == 0) {
@@ -1901,6 +1968,36 @@ class EvalStdLib {
 		return buf.toString();
 	}
 
+	static function isUtf8ByteString(s:String):Bool {
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			if (c > 0xFF) return false;
+			if (c < 0x80) continue;
+			var need = 0;
+			var min = 0;
+			if (c >= 0xC2 && c <= 0xDF) {
+				need = 1;
+				min = 0x80;
+			} else if (c >= 0xE0 && c <= 0xEF) {
+				need = 2;
+				min = c == 0xE0 ? 0xA0 : 0x80;
+			} else if (c >= 0xF0 && c <= 0xF4) {
+				need = 3;
+				min = c == 0xF0 ? 0x90 : 0x80;
+			} else {
+				return false;
+			}
+			for (j in 0...need) {
+				if (i >= s.length) return false;
+				var c2 = s.charCodeAt(i++);
+				if (c2 < min || c2 > 0xBF) return false;
+				min = 0x80;
+			}
+		}
+		return true;
+	}
+
 	static function urlEncode(s:String):String {
 		var hex = "0123456789ABCDEF";
 		var b = new StringBuf();
@@ -1930,9 +2027,21 @@ class EvalStdLib {
 				addByte(0x80 | (c & 0x3F));
 			}
 		}
-		for (i in 0...s.length) {
-			var c = s.charCodeAt(i);
-			if (c <= 0xFF) addByte(c) else addCodePoint(c);
+		if (isUtf8ByteString(s)) {
+			for (i in 0...s.length) addByte(s.charCodeAt(i));
+			return b.toString();
+		}
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			if (c >= 0xD800 && c <= 0xDBFF && i < s.length) {
+				var c2 = s.charCodeAt(i);
+				if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+					i++;
+					c = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+				}
+			}
+			if (c < 0x80) addByte(c) else addCodePoint(c);
 		}
 		return b.toString();
 	}
@@ -2330,8 +2439,8 @@ class EvalStdLib {
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
-		reg(s, "Std", "parseInt", vfn(a -> { var r = Std.parseInt(stringOf(arg(a, 0))); r == null ? VNull : VInt(r); }));
-		reg(s, "Std", "parseFloat", vfn(a -> VFloat(Std.parseFloat(stringOf(arg(a, 0))))));
+		reg(s, "Std", "parseInt", vfn(a -> stdParseInt(stringOf(arg(a, 0)))));
+		reg(s, "Std", "parseFloat", vfn(a -> VFloat(stdParseFloat(stringOf(arg(a, 0))))));
 		reg(s, "haxe.Log", "trace", vfn(a -> { Sys.print(traceString(ctx, arg(a, 0), arg(a, 1))); VNull; }));
 		reg(s, "Sys", "println", vfn(a -> { Sys.println(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "print", vfn(a -> { Sys.print(stringOf(arg(a, 0))); VNull; }));
