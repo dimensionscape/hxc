@@ -554,6 +554,7 @@ class EvalStdLib {
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
 	static var nativeArrayIterators = new haxe.ds.ObjectMap<VInstance, {array:VArray, current:Int}>();
 	static var nativeMapKeyValueIterators = new haxe.ds.ObjectMap<VInstance, {entries:Array<MapEntry>, current:Int}>();
+	static var nativeMapOrders = new haxe.ds.ObjectMap<VInstance, Array<String>>();
 	static var threadMutexes = new haxe.ds.ObjectMap<VInstance, {mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int}>();
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
 	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
@@ -1497,7 +1498,7 @@ class EvalStdLib {
 	static function mapKeyValueIteratorValue(ctx:EvalContext, mapValue:EvalValue):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.MapKeyValueIterator"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		var entries = [for (e in thisMap([mapValue])) e];
+		var entries = orderedMapEntries(mapValue);
 		nativeMapKeyValueIterators.set(vi, {entries: entries, current: 0});
 		setInstanceFieldIfExists(vi, "map", mapValue);
 		setInstanceFieldIfExists(vi, "keys", arrayIteratorValue(ctx, VArray(new VArray([for (e in entries) e.key], entries.length))));
@@ -1645,6 +1646,26 @@ class EvalStdLib {
 			case VObject(o): "o:" + objId(o);
 			case VInstance(vi): "o:" + objId(vi);
 			case _: stringOf(v);
+		};
+	}
+
+	static function orderedMapEntries(v:EvalValue):Array<MapEntry> {
+		return switch (v) {
+			case VInstance(vi):
+				var m = thisMap([v]);
+				var order = nativeMapOrders.get(vi);
+				var entries = order == null ? [for (e in m) e] : [for (k in order) if (m.exists(k)) m.get(k)];
+				if (vi.iproto.ppath == EvalHash.hash("haxe.ds.StringMap")) {
+					entries.sort(function(a, b) {
+						var ak = stringOf(a.key);
+						var bk = stringOf(b.key);
+						var d = seededStringHash(ak) - seededStringHash(bk);
+						return d != 0 ? d : Reflect.compare(ak, bk);
+					});
+				}
+				entries;
+			case _:
+				[];
 		};
 	}
 
@@ -3160,20 +3181,59 @@ class EvalStdLib {
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
-				return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map())));
+				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map()));
+				nativeMapOrders.set(vi, []);
+				return VInstance(vi);
 			});
-			reg(inst, mapPath, "set", vmethod(a -> { thisMap(a).set(mapKey(arg(a, 1)), {key: arg(a, 1), value: arg(a, 2)}); VNull; }));
+			reg(inst, mapPath, "set", vmethod(a -> {
+				var vi = thisInstance(a, mapPath);
+				var m = thisMap(a);
+				var k = mapKey(arg(a, 1));
+				if (!m.exists(k)) {
+					var order = nativeMapOrders.get(vi);
+					if (order == null) {
+						order = [for (key in m.keys()) key];
+						nativeMapOrders.set(vi, order);
+					}
+					order.push(k);
+				}
+				m.set(k, {key: arg(a, 1), value: arg(a, 2)});
+				VNull;
+			}));
 			reg(inst, mapPath, "get", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); m.exists(k) ? m.get(k).value : VNull; }));
 			reg(inst, mapPath, "exists", vmethod(a -> EvalValueTools.vbool(thisMap(a).exists(mapKey(arg(a, 1))))));
-			reg(inst, mapPath, "remove", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); var had = m.exists(k); m.remove(k); EvalValueTools.vbool(had); }));
-			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.value])));
-			reg(inst, mapPath, "keys", vmethod(a -> iteratorOf([for (e in thisMap(a)) e.key])));
+			reg(inst, mapPath, "remove", vmethod(a -> {
+				var vi = thisInstance(a, mapPath);
+				var m = thisMap(a);
+				var k = mapKey(arg(a, 1));
+				var had = m.exists(k);
+				m.remove(k);
+				var order = nativeMapOrders.get(vi);
+				if (order != null) order.remove(k);
+				EvalValueTools.vbool(had);
+			}));
+			reg(inst, mapPath, "iterator", vmethod(a -> iteratorOf([for (e in orderedMapEntries(arg(a, 0))) e.value])));
+			reg(inst, mapPath, "keys", vmethod(a -> iteratorOf([for (e in orderedMapEntries(arg(a, 0))) e.key])));
 			reg(inst, mapPath, "keyValueIterator", vmethod(a -> mapKeyValueIteratorValue(ctx, arg(a, 0))));
-			reg(inst, mapPath, "clear", vmethod(a -> { thisMap(a).clear(); VNull; }));
+			reg(inst, mapPath, "clear", vmethod(a -> {
+				var vi = thisInstance(a, mapPath);
+				thisMap(a).clear();
+				var order = nativeMapOrders.get(vi);
+				if (order != null) order.resize(0);
+				VNull;
+			}));
 			reg(inst, mapPath, "copy", vmethod(a -> {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
-				var nm = new Map(); var src = thisMap(a); for (k in src.keys()) nm.set(k, src.get(k));
-				VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(nm)));
+				var nm = new Map();
+				var order = [];
+				for (e in orderedMapEntries(arg(a, 0))) {
+					var k = mapKey(e.key);
+					nm.set(k, e);
+					order.push(k);
+				}
+				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(nm));
+				nativeMapOrders.set(vi, order);
+				VInstance(vi);
 			}));
 			reg(inst, mapPath, "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 		}
