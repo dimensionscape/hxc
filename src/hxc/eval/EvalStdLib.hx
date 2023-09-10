@@ -1,4 +1,4 @@
-package hxc.eval;
+﻿package hxc.eval;
 
 import hxc.ast.Position;
 import hxc.core.Type.ModuleType;
@@ -1299,6 +1299,23 @@ class EvalStdLib {
 		};
 	}
 
+	static function bytesString(b:haxe.io.Bytes, pos:Int, len:Int):String {
+		var out = new StringBuf();
+		var start = pos;
+		var end = pos + len;
+		var i = pos;
+		while (i < end) {
+			if (b.get(i) == 0) {
+				if (i > start) out.add(b.getString(start, i - start));
+				out.addChar(0);
+				start = i + 1;
+			}
+			i++;
+		}
+		if (end > start) out.add(b.getString(start, end - start));
+		return out.toString();
+	}
+
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
@@ -1600,6 +1617,22 @@ class EvalStdLib {
 			case _:
 		}
 		return fileName + ":" + lineNumber + ": " + parts.join(",") + "\n";
+	}
+
+	static function writeStdoutString(s:String, newline:Bool):Void {
+		var start = 0;
+		var i = 0;
+		while (i < s.length) {
+			if (s.charCodeAt(i) == 0) {
+				if (i > start) Sys.print(s.substr(start, i - start));
+				var out = Sys.stdout();
+				out.writeByte(0);
+				start = i + 1;
+			}
+			i++;
+		}
+		if (start < s.length) Sys.print(s.substr(start));
+		if (newline) Sys.println("");
 	}
 
 	static function sysProgramPath(ctx:EvalContext):EvalValue {
@@ -2462,9 +2495,9 @@ class EvalStdLib {
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
 		reg(s, "Std", "parseInt", vfn(a -> stdParseInt(stringOf(arg(a, 0)))));
 		reg(s, "Std", "parseFloat", vfn(a -> VFloat(stdParseFloat(stringOf(arg(a, 0))))));
-		reg(s, "haxe.Log", "trace", vfn(a -> { Sys.print(traceString(ctx, arg(a, 0), arg(a, 1))); VNull; }));
-		reg(s, "Sys", "println", vfn(a -> { Sys.println(stringOf(arg(a, 0))); VNull; }));
-		reg(s, "Sys", "print", vfn(a -> { Sys.print(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "haxe.Log", "trace", vfn(a -> { writeStdoutString(traceString(ctx, arg(a, 0), arg(a, 1)), false); VNull; }));
+		reg(s, "Sys", "println", vfn(a -> { writeStdoutString(stringOf(arg(a, 0)), true); VNull; }));
+		reg(s, "Sys", "print", vfn(a -> { writeStdoutString(stringOf(arg(a, 0)), false); VNull; }));
 		reg(s, "Sys", "args", vfn(a -> {
 			var args = [for (s in Sys.args()) mkStr(s)];
 			VArray(new VArray(args, args.length));
@@ -3520,9 +3553,12 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "getDouble", vmethod(a -> VFloat(thisBytes(a).getDouble(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "getFloat", vmethod(a -> VFloat(thisBytes(a).getFloat(toInt(arg(a, 1))))));
 		reg(inst, "haxe.io.Bytes", "getInt32", vmethod(a -> VInt(thisBytes(a).getInt32(toInt(arg(a, 1))))));
-		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> mkStr(thisBytes(a).getString(toInt(arg(a, 1)), toInt(arg(a, 2))))));
+		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> mkStr(bytesString(thisBytes(a), toInt(arg(a, 1)), toInt(arg(a, 2))))));
 		reg(inst, "haxe.io.Bytes", "getUInt16", vmethod(a -> VInt(thisBytes(a).getUInt16(toInt(arg(a, 1))))));
-		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> mkStr(thisBytes(a).toString())));
+		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> {
+			var b = thisBytes(a);
+			mkStr(bytesString(b, 0, b.length));
+		}));
 		reg(inst, "haxe.io.Bytes", "toHex", vmethod(a -> mkStr(thisBytes(a).toHex())));
 		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> mkBytes(ctx, thisBytes(a).sub(toInt(arg(a, 1)), toInt(arg(a, 2))))));
 		reg(inst, "haxe.io.Bytes", "fill", vmethod(a -> { thisBytes(a).fill(toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
