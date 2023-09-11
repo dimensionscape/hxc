@@ -551,6 +551,8 @@ class EvalStdLib {
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
+	static var nativeBytesOutputs = new haxe.ds.ObjectMap<VInstance, Map<String, MapEntry>>();
+	static var nativeBytesInputs = new haxe.ds.ObjectMap<VInstance, {bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
 	static var nativeArrayIterators = new haxe.ds.ObjectMap<VInstance, {array:VArray, current:Int}>();
 	static var nativeMapKeyValueIterators = new haxe.ds.ObjectMap<VInstance, {entries:Array<MapEntry>, current:Int}>();
@@ -1482,11 +1484,62 @@ class EvalStdLib {
 		return EvalExceptions.exc(ctx, VInstance(new VInstance(proto.pinstanceFields.copy(), proto)));
 	}
 
-	static function mkBytesBuffer(ctx:EvalContext):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesBuffer"));
+	static function newBytesBufferMap():Map<String, MapEntry> {
 		var buf:Map<String, MapEntry> = new Map();
 		bytesBufferSetLength(buf, 0);
+		return buf;
+	}
+
+	static function bytesBufferValue(ctx:EvalContext, buf:Map<String, MapEntry>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesBuffer"));
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(buf)));
+	}
+
+	static function mkBytesBuffer(ctx:EvalContext):EvalValue {
+		return bytesBufferValue(ctx, newBytesBufferMap());
+	}
+
+	static function mkBytesOutput(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesOutput"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		var buf = newBytesBufferMap();
+		nativeBytesOutputs.set(vi, buf);
+		setInstanceFieldIfExists(vi, "b", bytesBufferValue(ctx, buf));
+		return VInstance(vi);
+	}
+
+	static function thisBytesOutput(a:Array<EvalValue>):Map<String, MapEntry> {
+		var vi = thisInstance(a, "BytesOutput");
+		var buf = nativeBytesOutputs.get(vi);
+		if (buf == null) throw "Unexpected value for BytesOutput";
+		return buf;
+	}
+
+	static function mkBytesInput(ctx:EvalContext, bytesValue:EvalValue, posValue:EvalValue, lenValue:EvalValue):EvalValue {
+		var bytes = thisBytes([bytesValue]);
+		var pos = posValue == VNull ? 0 : toInt(posValue);
+		var len = lenValue == VNull ? bytes.length - pos : toInt(lenValue);
+		if (pos < 0 || len < 0 || pos + len > bytes.length) throw "Outside bounds";
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesInput"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeBytesInputs.set(vi, {bytes: bytes, pos: pos, len: len, totlen: len});
+		syncBytesInputFields(vi);
+		return VInstance(vi);
+	}
+
+	static function thisBytesInput(a:Array<EvalValue>):{bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int} {
+		var vi = thisInstance(a, "BytesInput");
+		var input = nativeBytesInputs.get(vi);
+		if (input == null) throw "Unexpected value for BytesInput";
+		return input;
+	}
+
+	static function syncBytesInputFields(vi:VInstance):Void {
+		var input = nativeBytesInputs.get(vi);
+		if (input == null) return;
+		setInstanceFieldIfExists(vi, "pos", VInt(input.pos));
+		setInstanceFieldIfExists(vi, "len", VInt(input.len));
+		setInstanceFieldIfExists(vi, "totlen", VInt(input.totlen));
 	}
 
 	static function arrayIteratorValue(ctx:EvalContext, arrayValue:EvalValue):EvalValue {
@@ -3278,6 +3331,8 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
+		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
+		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
 
 		// Date: a native instance carrying its epoch timestamp.
 		ctors.set(EvalHash.hash("Date"), function(a) {
@@ -3600,6 +3655,58 @@ class EvalStdLib {
 		reg(inst, "haxe.io.BytesBuffer", "addDouble", vmethod(a -> { var b = bytesOfDouble(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
 		reg(inst, "haxe.io.BytesBuffer", "addBytes", vmethod(a -> { bytesBufferAddBytes(thisMap(a), thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
 		reg(inst, "haxe.io.BytesBuffer", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisMap(a)))));
+		reg(inst, "haxe.io.BytesOutput", "get_length", vmethod(a -> VInt(bytesBufferLength(thisBytesOutput(a)))));
+		reg(inst, "haxe.io.BytesOutput", "writeByte", vmethod(a -> { bytesBufferAddByte(thisBytesOutput(a), toInt(arg(a, 1))); VNull; }));
+		reg(inst, "haxe.io.BytesOutput", "writeBytes", vmethod(a -> {
+			var buf = thisBytesOutput(a);
+			var bytes = thisBytes([arg(a, 1)]);
+			var pos = toInt(arg(a, 2));
+			var len = toInt(arg(a, 3));
+			if (pos < 0 || len < 0 || pos + len > bytes.length) throw "Outside bounds";
+			bytesBufferAddBytes(buf, bytes, pos, len);
+			VInt(len);
+		}));
+		reg(inst, "haxe.io.BytesOutput", "writeString", vmethod(a -> {
+			var bytes = haxe.io.Bytes.ofString(stringOf(arg(a, 1)));
+			bytesBufferAddBytes(thisBytesOutput(a), bytes, 0, bytes.length);
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesOutput", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisBytesOutput(a)))));
+		reg(inst, "haxe.io.BytesInput", "get_length", vmethod(a -> VInt(thisBytesInput(a).totlen)));
+		reg(inst, "haxe.io.BytesInput", "get_position", vmethod(a -> VInt(thisBytesInput(a).pos)));
+		reg(inst, "haxe.io.BytesInput", "set_position", vmethod(a -> {
+			var input = thisBytesInput(a);
+			var p = toInt(arg(a, 1));
+			if (p < 0) p = 0;
+			else if (p > input.totlen) p = input.totlen;
+			input.pos = p;
+			input.len = input.totlen - p;
+			syncBytesInputFields(thisInstance(a, "BytesInput"));
+			VInt(input.pos);
+		}));
+		reg(inst, "haxe.io.BytesInput", "readByte", vmethod(a -> {
+			var input = thisBytesInput(a);
+			if (input.len == 0) eof(ctx);
+			var byte = input.bytes.get(input.pos);
+			input.pos++;
+			input.len--;
+			syncBytesInputFields(thisInstance(a, "BytesInput"));
+			VInt(byte);
+		}));
+		reg(inst, "haxe.io.BytesInput", "readBytes", vmethod(a -> {
+			var input = thisBytesInput(a);
+			var out = thisBytes([arg(a, 1)]);
+			var pos = toInt(arg(a, 2));
+			var len = toInt(arg(a, 3));
+			if (pos < 0 || len < 0 || pos + len > out.length) throw "Outside bounds";
+			if (input.len == 0 && len > 0) eof(ctx);
+			if (input.len < len) len = input.len;
+			for (i in 0...len) out.set(pos + i, input.bytes.get(input.pos + i));
+			input.pos += len;
+			input.len -= len;
+			syncBytesInputFields(thisInstance(a, "BytesInput"));
+			VInt(len);
+		}));
 		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
