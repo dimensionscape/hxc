@@ -554,6 +554,7 @@ class EvalStdLib {
 	static var nativeBytesOutputs = new haxe.ds.ObjectMap<VInstance, Map<String, MapEntry>>();
 	static var nativeBytesInputs = new haxe.ds.ObjectMap<VInstance, {bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
+	static var nativeLists = new haxe.ds.ObjectMap<VInstance, Array<EvalValue>>();
 	static var nativeArrayIterators = new haxe.ds.ObjectMap<VInstance, {array:VArray, current:Int}>();
 	static var nativeMapKeyValueIterators = new haxe.ds.ObjectMap<VInstance, {entries:Array<MapEntry>, current:Int}>();
 	static var nativeMapOrders = new haxe.ds.ObjectMap<VInstance, Array<String>>();
@@ -801,10 +802,8 @@ class EvalStdLib {
 		if (Std.isOfType(v, Date)) return mkDate(ctx, (cast v : Date).getTime());
 		if (Std.isOfType(v, haxe.io.Bytes)) return mkBytes(ctx, (cast v : haxe.io.Bytes));
 		if (Std.isOfType(v, haxe.ds.List)) {
-			var out = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
 			var list:haxe.ds.List<Dynamic> = cast v;
-			for (item in list) callValueOn(out, EvalField.dynamicField(ctx, out, EvalHash.hash("add")), [hostToValue(ctx, item)]);
-			return out;
+			return listValue(ctx, [for (item in list) hostToValue(ctx, item)]);
 		}
 		if (Std.isOfType(v, haxe.ds.StringMap)) {
 			var map = new Map<String, MapEntry>();
@@ -1145,7 +1144,7 @@ class EvalStdLib {
 					cache.push(out);
 					out;
 				case "l".code:
-					var out = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
+					var out = mkList(ctx);
 					cache.push(out);
 					while (get() != "h".code) callValueOn(out, EvalField.dynamicField(ctx, out, EvalHash.hash("add")), [loop()]);
 					pos++;
@@ -1362,6 +1361,32 @@ class EvalStdLib {
 
 	static function thisProcess(a:Array<EvalValue>):sys.io.Process {
 		return nativeProcesses.get(thisInstance(a, "NativeProcess"));
+	}
+
+	static function mkList(ctx:EvalContext, ?items:Array<EvalValue>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.List"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		var list = items == null ? [] : items.copy();
+		nativeLists.set(vi, list);
+		syncListFields(vi);
+		return VInstance(vi);
+	}
+
+	static function thisList(a:Array<EvalValue>):Array<EvalValue> {
+		var vi = thisInstance(a, "List");
+		var list = nativeLists.get(vi);
+		if (list == null) throw "Unexpected value for List";
+		return list;
+	}
+
+	static function syncListFields(vi:VInstance):Void {
+		var list = nativeLists.get(vi);
+		if (list == null) return;
+		setInstanceFieldIfExists(vi, "length", VInt(list.length));
+	}
+
+	static function listValue(ctx:EvalContext, items:Array<EvalValue>):EvalValue {
+		return mkList(ctx, items);
 	}
 
 	static function mkThreadMutex(ctx:EvalContext):EvalValue {
@@ -3040,9 +3065,7 @@ class EvalStdLib {
 		}));
 		reg(s, "Lambda", "array", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)))));
 		reg(s, "Lambda", "list", vfn(a -> {
-			var list = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds.List"), []);
-			for (v in iterableValues(ctx, arg(a, 0))) callValueOn(list, EvalField.dynamicField(ctx, list, EvalHash.hash("add")), [v]);
-			list;
+			listValue(ctx, iterableValues(ctx, arg(a, 0)));
 		}));
 		reg(s, "Lambda", "map", vfn(a -> valueArray([for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [v])])));
 		reg(s, "Lambda", "mapi", vfn(a -> {
@@ -3203,6 +3226,67 @@ class EvalStdLib {
 		}));
 		reg(s, "EReg", "escape", vfn(a -> mkStr(EReg.escape(stringOf(arg(a, 0))))));
 
+		reg(inst, "haxe.ds.List", "add", vmethod(a -> {
+			var list = thisList(a);
+			list.push(arg(a, 1));
+			syncListFields(thisInstance(a, "List"));
+			VNull;
+		}));
+		reg(inst, "haxe.ds.List", "push", vmethod(a -> {
+			var list = thisList(a);
+			list.unshift(arg(a, 1));
+			syncListFields(thisInstance(a, "List"));
+			VNull;
+		}));
+		reg(inst, "haxe.ds.List", "first", vmethod(a -> {
+			var list = thisList(a);
+			list.length == 0 ? VNull : list[0];
+		}));
+		reg(inst, "haxe.ds.List", "last", vmethod(a -> {
+			var list = thisList(a);
+			list.length == 0 ? VNull : list[list.length - 1];
+		}));
+		reg(inst, "haxe.ds.List", "pop", vmethod(a -> {
+			var list = thisList(a);
+			if (list.length == 0) return VNull;
+			var v = list.shift();
+			syncListFields(thisInstance(a, "List"));
+			v;
+		}));
+		reg(inst, "haxe.ds.List", "isEmpty", vmethod(a -> EvalValueTools.vbool(thisList(a).length == 0)));
+		reg(inst, "haxe.ds.List", "clear", vmethod(a -> {
+			thisList(a).resize(0);
+			syncListFields(thisInstance(a, "List"));
+			VNull;
+		}));
+		reg(inst, "haxe.ds.List", "remove", vmethod(a -> {
+			var list = thisList(a);
+			var v = arg(a, 1);
+			for (i in 0...list.length) {
+				if (EvalMisc.isTrue(EvalMisc.opEq(list[i], v))) {
+					list.splice(i, 1);
+					syncListFields(thisInstance(a, "List"));
+					return VTrue;
+				}
+			}
+			VFalse;
+		}));
+		reg(inst, "haxe.ds.List", "iterator", vmethod(a -> objectIterator(thisList(a).copy())));
+		reg(inst, "haxe.ds.List", "keyValueIterator", vmethod(a -> {
+			var list = thisList(a);
+			objectIterator([for (i in 0...list.length) mkObject([{name: "value", value: list[i]}, {name: "key", value: VInt(i)}])]);
+		}));
+		reg(inst, "haxe.ds.List", "toString", vmethod(a -> mkStr("{" + [for (v in thisList(a)) stringOf(v)].join(", ") + "}")));
+		reg(inst, "haxe.ds.List", "join", vmethod(a -> mkStr([for (v in thisList(a)) stringOf(v)].join(stringOf(arg(a, 1))))));
+		reg(inst, "haxe.ds.List", "filter", vmethod(a -> {
+			var fn = arg(a, 1);
+			listValue(ctx, [for (v in thisList(a)) if (EvalMisc.isTrue(applyFn(fn, [v]))) v]);
+		}));
+		reg(inst, "haxe.ds.List", "map", vmethod(a -> {
+			var fn = arg(a, 1);
+			listValue(ctx, [for (v in thisList(a)) applyFn(fn, [v])]);
+		}));
+
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return arrayIteratorValue(ctx, VArray(new VArray(items, items.length)));
@@ -3330,6 +3414,7 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.iterators.ArrayIterator"), function(a) return arrayIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
+		ctors.set(EvalHash.hash("haxe.ds.List"), function(a) return mkList(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
