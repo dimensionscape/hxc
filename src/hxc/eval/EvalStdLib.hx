@@ -548,6 +548,8 @@ class EvalStdLib {
 	static var objIdNext = 0;
 	static var zipCompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Compress>();
 	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
+	static var cryptoHmacs = new haxe.ds.ObjectMap<VInstance, haxe.crypto.Hmac>();
+	static var cryptoBaseCodes = new haxe.ds.ObjectMap<VInstance, haxe.crypto.BaseCode>();
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
@@ -1361,6 +1363,43 @@ class EvalStdLib {
 
 	static function thisProcess(a:Array<EvalValue>):sys.io.Process {
 		return nativeProcesses.get(thisInstance(a, "NativeProcess"));
+	}
+
+	static function hashMethodValue(v:EvalValue):haxe.crypto.Hmac.HashMethod {
+		return switch (v) {
+			case VEnumValue(ev): switch (ev.eindex) {
+				case 1: haxe.crypto.Hmac.HashMethod.SHA1;
+				case 2: haxe.crypto.Hmac.HashMethod.SHA256;
+				case _: haxe.crypto.Hmac.HashMethod.MD5;
+			}
+			case _: haxe.crypto.Hmac.HashMethod.MD5;
+		}
+	}
+
+	static function mkHmac(ctx:EvalContext, method:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.crypto.Hmac"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		cryptoHmacs.set(vi, new haxe.crypto.Hmac(hashMethodValue(method)));
+		return VInstance(vi);
+	}
+
+	static function thisHmac(a:Array<EvalValue>):haxe.crypto.Hmac {
+		var hmac = cryptoHmacs.get(thisInstance(a, "Hmac"));
+		if (hmac == null) throw "Unexpected value for Hmac";
+		return hmac;
+	}
+
+	static function mkBaseCode(ctx:EvalContext, base:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.crypto.BaseCode"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		cryptoBaseCodes.set(vi, new haxe.crypto.BaseCode(thisBytes([base])));
+		return VInstance(vi);
+	}
+
+	static function thisBaseCode(a:Array<EvalValue>):haxe.crypto.BaseCode {
+		var baseCode = cryptoBaseCodes.get(thisInstance(a, "BaseCode"));
+		if (baseCode == null) throw "Unexpected value for BaseCode";
+		return baseCode;
 	}
 
 	static function mkList(ctx:EvalContext, ?items:Array<EvalValue>):EvalValue {
@@ -3415,6 +3454,8 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
 		ctors.set(EvalHash.hash("haxe.ds.List"), function(a) return mkList(ctx));
+		ctors.set(EvalHash.hash("haxe.crypto.Hmac"), function(a) return mkHmac(ctx, arg(a, 0)));
+		ctors.set(EvalHash.hash("haxe.crypto.BaseCode"), function(a) return mkBaseCode(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
@@ -3792,6 +3833,13 @@ class EvalStdLib {
 			syncBytesInputFields(thisInstance(a, "BytesInput"));
 			VInt(len);
 		}));
+		reg(s, "haxe.crypto.BaseCode", "encode", vfn(a -> mkStr(haxe.crypto.BaseCode.encode(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "haxe.crypto.BaseCode", "decode", vfn(a -> mkStr(haxe.crypto.BaseCode.decode(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(inst, "haxe.crypto.BaseCode", "encodeBytes", vmethod(a -> mkBytes(ctx, thisBaseCode(a).encodeBytes(thisBytes([arg(a, 1)])))));
+		reg(inst, "haxe.crypto.BaseCode", "decodeBytes", vmethod(a -> mkBytes(ctx, thisBaseCode(a).decodeBytes(thisBytes([arg(a, 1)])))));
+		reg(inst, "haxe.crypto.BaseCode", "encodeString", vmethod(a -> mkStr(thisBaseCode(a).encodeString(stringOf(arg(a, 1))))));
+		reg(inst, "haxe.crypto.BaseCode", "decodeString", vmethod(a -> mkStr(thisBaseCode(a).decodeString(stringOf(arg(a, 1))))));
+		reg(inst, "haxe.crypto.Hmac", "make", vmethod(a -> mkBytes(ctx, thisHmac(a).make(thisBytes([arg(a, 1)]), thisBytes([arg(a, 2)])))));
 		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
