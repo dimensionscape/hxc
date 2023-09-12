@@ -550,6 +550,7 @@ class EvalStdLib {
 	static var zipUncompress = new haxe.ds.ObjectMap<VInstance, haxe.zip.Uncompress>();
 	static var cryptoHmacs = new haxe.ds.ObjectMap<VInstance, haxe.crypto.Hmac>();
 	static var cryptoBaseCodes = new haxe.ds.ObjectMap<VInstance, haxe.crypto.BaseCode>();
+	static var nativeTemplates = new haxe.ds.ObjectMap<VInstance, haxe.Template>();
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
@@ -1402,6 +1403,19 @@ class EvalStdLib {
 		return baseCode;
 	}
 
+	static function mkTemplate(ctx:EvalContext, source:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Template"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeTemplates.set(vi, new haxe.Template(stringOf(source)));
+		return VInstance(vi);
+	}
+
+	static function thisTemplate(a:Array<EvalValue>):haxe.Template {
+		var template = nativeTemplates.get(thisInstance(a, "Template"));
+		if (template == null) throw "Unexpected value for Template";
+		return template;
+	}
+
 	static function mkList(ctx:EvalContext, ?items:Array<EvalValue>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.List"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
@@ -1530,6 +1544,23 @@ class EvalStdLib {
 			case VArray(va): [for (i in 0...va.alength) stringOf(va.avalues[i])];
 			case _: EvalExceptions.unexpectedValue(ctx, v, "array");
 		}
+	}
+
+	static function stringArray(v:EvalValue):Array<String> {
+		return switch (v) {
+			case VArray(va): [for (i in 0...va.alength) stringOf(va.avalues[i])];
+			case _: [];
+		}
+	}
+
+	static function pathToString(ctx:EvalContext, v:EvalValue):String {
+		var dir = EvalField.field(ctx, v, EvalHash.hash("dir"));
+		var file = EvalField.field(ctx, v, EvalHash.hash("file"));
+		var ext = EvalField.field(ctx, v, EvalHash.hash("ext"));
+		var backslash = EvalField.field(ctx, v, EvalHash.hash("backslash")) == VTrue;
+		return (dir == VNull ? "" : stringOf(dir) + (backslash ? "\\" : "/"))
+			+ (file == VNull ? "" : stringOf(file))
+			+ (ext == VNull ? "" : "." + stringOf(ext));
 	}
 
 	static function fileSeekMode(mode:EvalValue):sys.io.FileSeek {
@@ -3325,6 +3356,11 @@ class EvalStdLib {
 			var fn = arg(a, 1);
 			listValue(ctx, [for (v in thisList(a)) applyFn(fn, [v])]);
 		}));
+		reg(inst, "haxe.Template", "execute", vmethod(a -> {
+			var macros = arg(a, 2);
+			mkStr(thisTemplate(a).execute(valueToHost(ctx, arg(a, 1)), macros == VNull ? null : valueToHost(ctx, macros)));
+		}));
+		reg(inst, "haxe.io.Path", "toString", vmethod(a -> mkStr(pathToString(ctx, arg(a, 0)))));
 
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
@@ -3456,6 +3492,7 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.ds.List"), function(a) return mkList(ctx));
 		ctors.set(EvalHash.hash("haxe.crypto.Hmac"), function(a) return mkHmac(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.crypto.BaseCode"), function(a) return mkBaseCode(ctx, arg(a, 0)));
+		ctors.set(EvalHash.hash("haxe.Template"), function(a) return mkTemplate(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
@@ -3478,6 +3515,16 @@ class EvalStdLib {
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
 		reg(s, "DateTools", "format", vfn(a -> mkStr(dateToolsFormat(Date.fromTime(thisDate([arg(a, 0)])), stringOf(arg(a, 1))))));
+		reg(s, "haxe.io.Path", "withoutExtension", vfn(a -> mkStr(haxe.io.Path.withoutExtension(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "withoutDirectory", vfn(a -> mkStr(haxe.io.Path.withoutDirectory(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "directory", vfn(a -> mkStr(haxe.io.Path.directory(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "extension", vfn(a -> mkStr(haxe.io.Path.extension(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "withExtension", vfn(a -> mkStr(haxe.io.Path.withExtension(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "haxe.io.Path", "join", vfn(a -> mkStr(haxe.io.Path.join(stringArray(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "normalize", vfn(a -> mkStr(haxe.io.Path.normalize(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "addTrailingSlash", vfn(a -> mkStr(haxe.io.Path.addTrailingSlash(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "removeTrailingSlashes", vfn(a -> mkStr(haxe.io.Path.removeTrailingSlashes(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Path", "isAbsolute", vfn(a -> EvalValueTools.vbool(haxe.io.Path.isAbsolute(stringOf(arg(a, 0))))));
 		reg(s, "haxe.Json", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
 		reg(s, "haxe.Json", "stringify", vfn(a -> mkStr(jsonPrintValue(arg(a, 0), arg(a, 2) == VNull ? null : stringOf(arg(a, 2))))));
 		reg(s, "haxe.format.JsonParser", "parse", vfn(a -> jsonToValue(ctx, haxe.Json.parse(stringOf(arg(a, 0))))));
