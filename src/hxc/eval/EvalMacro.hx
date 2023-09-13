@@ -179,11 +179,17 @@ class EvalMacro {
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
 		curBuildClass = savedBuildClass;
 		hxc.context.ModuleLoader.rebuildFields(c, newFields);
+		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
+		// private typedef used in a field signature) resolve; a build triggered from another module's
+		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
+		var savedMod = com.currentModule;
+		com.currentModule = c.module;
 		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
 		// just the field signatures (resolveClass would re-process extends and reject the set super).
 		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
 		// Type the freshly added field bodies so their expr is set for the interpreter.
 		hxc.typing.TypeFields.forceClassFields(com, c);
+		com.currentModule = savedMod;
 	}
 
 	static function flattenExprPath(e:Expr):Null<Array<String>> {
