@@ -1421,7 +1421,7 @@ class EvalStdLib {
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var list = items == null ? [] : items.copy();
 		nativeLists.set(vi, list);
-		syncListFields(vi);
+		syncListFields(ctx, vi);
 		return VInstance(vi);
 	}
 
@@ -1432,9 +1432,23 @@ class EvalStdLib {
 		return list;
 	}
 
-	static function syncListFields(vi:VInstance):Void {
+	static function listNodeValue(ctx:EvalContext, item:EvalValue, next:EvalValue):EvalValue {
+		var node = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds._List.ListNode"), [item, next]);
+		return node == VNull ? mkObject([{name: "item", value: item}, {name: "next", value: next}]) : node;
+	}
+
+	static function syncListFields(ctx:EvalContext, vi:VInstance):Void {
 		var list = nativeLists.get(vi);
 		if (list == null) return;
+		var head:EvalValue = VNull;
+		var tail:EvalValue = VNull;
+		for (offset in 0...list.length) {
+			var node = listNodeValue(ctx, list[list.length - 1 - offset], head);
+			if (tail == VNull) tail = node;
+			head = node;
+		}
+		setInstanceFieldIfExists(vi, "h", head);
+		setInstanceFieldIfExists(vi, "q", tail);
 		setInstanceFieldIfExists(vi, "length", VInt(list.length));
 	}
 
@@ -3299,13 +3313,13 @@ class EvalStdLib {
 		reg(inst, "haxe.ds.List", "add", vmethod(a -> {
 			var list = thisList(a);
 			list.push(arg(a, 1));
-			syncListFields(thisInstance(a, "List"));
+			syncListFields(ctx, thisInstance(a, "List"));
 			VNull;
 		}));
 		reg(inst, "haxe.ds.List", "push", vmethod(a -> {
 			var list = thisList(a);
 			list.unshift(arg(a, 1));
-			syncListFields(thisInstance(a, "List"));
+			syncListFields(ctx, thisInstance(a, "List"));
 			VNull;
 		}));
 		reg(inst, "haxe.ds.List", "first", vmethod(a -> {
@@ -3320,13 +3334,13 @@ class EvalStdLib {
 			var list = thisList(a);
 			if (list.length == 0) return VNull;
 			var v = list.shift();
-			syncListFields(thisInstance(a, "List"));
+			syncListFields(ctx, thisInstance(a, "List"));
 			v;
 		}));
 		reg(inst, "haxe.ds.List", "isEmpty", vmethod(a -> EvalValueTools.vbool(thisList(a).length == 0)));
 		reg(inst, "haxe.ds.List", "clear", vmethod(a -> {
 			thisList(a).resize(0);
-			syncListFields(thisInstance(a, "List"));
+			syncListFields(ctx, thisInstance(a, "List"));
 			VNull;
 		}));
 		reg(inst, "haxe.ds.List", "remove", vmethod(a -> {
@@ -3335,7 +3349,7 @@ class EvalStdLib {
 			for (i in 0...list.length) {
 				if (EvalMisc.isTrue(EvalMisc.opEq(list[i], v))) {
 					list.splice(i, 1);
-					syncListFields(thisInstance(a, "List"));
+					syncListFields(ctx, thisInstance(a, "List"));
 					return VTrue;
 				}
 			}
