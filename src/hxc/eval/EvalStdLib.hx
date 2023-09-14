@@ -1813,6 +1813,15 @@ class EvalStdLib {
 		return (ip >>> 24) + "." + ((ip >>> 16) & 0xFF) + "." + ((ip >>> 8) & 0xFF) + "." + (ip & 0xFF);
 	}
 
+	static function hostIpInt(host:String):Int {
+		var parts = new sys.net.Host(host).toString().split(".");
+		if (parts.length != 4) return 0;
+		return ((Std.parseInt(parts[0]) & 0xFF) << 24)
+			| ((Std.parseInt(parts[1]) & 0xFF) << 16)
+			| ((Std.parseInt(parts[2]) & 0xFF) << 8)
+			| (Std.parseInt(parts[3]) & 0xFF);
+	}
+
 	static function mkNativeSocket(ctx:EvalContext, socket:sys.net.Socket):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeSocket"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
@@ -1826,7 +1835,7 @@ class EvalStdLib {
 
 	static function hostInfo(info:{host:sys.net.Host, port:Int}):EvalValue {
 		return mkObject([
-			{name: "ip", value: VInt(info.host.ip)},
+			{name: "ip", value: VInt(hostIpInt(info.host.toString()))},
 			{name: "port", value: VInt(info.port)}
 		]);
 	}
@@ -3574,7 +3583,7 @@ class EvalStdLib {
 		reg(s, "sys.FileSystem", "rename", vfn(a -> { sys.FileSystem.rename(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
 		reg(s, "sys.FileSystem", "stat", vfn(a -> mkFileStat(ctx, sys.FileSystem.stat(stringOf(arg(a, 0))))));
 		reg(s, "sys.net.Host", "localhost", vfn(a -> mkStr(sys.net.Host.localhost())));
-		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(new sys.net.Host(stringOf(arg(a, 0))).ip)));
+		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(hostIpInt(stringOf(arg(a, 0))))));
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
 		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
