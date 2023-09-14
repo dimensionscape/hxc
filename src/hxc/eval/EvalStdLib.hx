@@ -189,7 +189,8 @@ class EvalStdLib {
 			if (path == EvalHash.hash("haxe.format.JsonPrinter")) return name == EvalHash.hash("print");
 			if (path == EvalHash.hash("haxe.Serializer") || path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("run");
 		} else {
-			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.key_toString;
+			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.hash("serializeFields")
+				|| name == EvalHash.hash("serializeRef") || name == EvalHash.hash("serializeString") || name == EvalHash.key_toString;
 			if (path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("unserialize") || name == EvalHash.hash("getResolver") || name == EvalHash.hash("setResolver");
 			if (path == EvalHash.hash("sys.thread.Semaphore")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release");
 			if (path == EvalHash.hash("sys.thread.Condition")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release") || name == EvalHash.hash("wait") || name == EvalHash.hash("signal") || name == EvalHash.hash("broadcast");
@@ -219,13 +220,20 @@ class EvalStdLib {
 
 	static function instanceFieldNames(proto:VPrototype):Array<EvalValue> {
 		var names = new Map<Int, Bool>();
+		var out:Array<EvalValue> = [];
+		function add(n:Int):Void {
+			if (!names.exists(n)) {
+				names.set(n, true);
+				out.push(mkStr(EvalHash.revHash(n)));
+			}
+		}
 		function loop(p:VPrototype):Void {
 			if (p.pparent != null) loop(p.pparent);
-			for (n in p.pinstanceNames.keys()) names.set(n, true);
-			for (n in p.pnames.keys()) names.set(n, true);
+			for (n in instanceFieldKeys(p)) add(n);
+			for (n in sortedFieldKeys(p.pnames)) if (!isReflectHidden(p.ppath, n, false)) add(n);
 		}
 		loop(proto);
-		return [for (n in names.keys()) mkStr(EvalHash.revHash(n))];
+		return out;
 	}
 
 	static function objectFieldMap(o:VObject):Map<Int, EvalValue> {
@@ -934,7 +942,12 @@ class EvalStdLib {
 					buf.add("h");
 				case VObject(o):
 					if (useCache && serializeRef(VObject(o))) return;
-					buf.add(haxe.Serializer.run(valueToHost(ctx, VObject(o))));
+					buf.add("o");
+					for (name in fieldNames(VObject(o))) {
+						stringTag(name);
+						loop(EvalField.field(ctx, VObject(o), EvalHash.hash(name)));
+					}
+					buf.add("g");
 				case VInstance(vi):
 					if (useCache && serializeRef(VInstance(vi))) return;
 					switch (vi.ikind) {
