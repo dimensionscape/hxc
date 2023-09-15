@@ -167,6 +167,16 @@ class EvalStdLib {
 		return result;
 	}
 
+	static inline function seededIntHash(i:Int):Int {
+		return hashFinalMix(hashMix(0, (i << 1) | 1)) & 0x3fffffff;
+	}
+
+	static function hashTableBucketCount(size:Int):Int {
+		var buckets = 16;
+		while (size > buckets * 2) buckets *= 2;
+		return buckets;
+	}
+
 	static inline function ptmapOrderKey(k:Int):Int {
 		var r = 0;
 		for (i in 0...30) r = (r << 1) | ((k >>> i) & 1);
@@ -1878,6 +1888,16 @@ class EvalStdLib {
 						var bk = stringOf(b.key);
 						var d = seededStringHash(ak) - seededStringHash(bk);
 						return d != 0 ? d : Reflect.compare(ak, bk);
+					});
+				} else if (vi.iproto.ppath == EvalHash.hash("haxe.ds.IntMap")) {
+					var buckets = hashTableBucketCount(entries.length);
+					var positions = order == null ? [for (e in entries) mapKey(e.key)] : order;
+					entries.sort(function(a, b) {
+						var ak = toInt(a.key);
+						var bk = toInt(b.key);
+						var d = (seededIntHash(bk) & (buckets - 1)) - (seededIntHash(ak) & (buckets - 1));
+						if (d != 0) return d;
+						return Reflect.compare(positions.indexOf(mapKey(a.key)), positions.indexOf(mapKey(b.key)));
 					});
 				}
 				entries;
