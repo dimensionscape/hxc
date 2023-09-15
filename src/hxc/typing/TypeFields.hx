@@ -174,11 +174,15 @@ class TypeFields {
 		var oldField = tctx.curfield;
 		var oldFun = tctx.curfun;
 		var oldParams = tctx.typeParams;
-		// A static field sees only its own type params; the class params are out of scope.
-		var isAbsImpl = switch (tctx.curclass.kind) { case KAbstractImpl(_): true; case _: false; };
+		// A static field sees only its own type params; the class params are out of scope. The exception is
+		// an abstract member (CfImpl): its body references the abstract's own type params (via the
+		// underlying `this` type), so put those in scope.
+		var abstractParams = switch (tctx.curclass.kind) { case KAbstractImpl(a): a.params; case _: null; };
+		var isAbsImpl = abstractParams != null;
 		tctx.curfield = cf;
 		tctx.curfun = isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember);
-		if (isStatic && !isAbsImpl) tctx.typeParams = [];
+		if (isAbsImpl && TypeFunctions.hasClassFieldFlag(cf, CfImpl)) tctx.typeParams = abstractParams;
+		else if (isStatic && !isAbsImpl) tctx.typeParams = [];
 		// The method's own type parameters are in scope within its body.
 		if (cf.params.length > 0) tctx.typeParams = tctx.typeParams.concat(cf.params);
 		function cleanup() {
