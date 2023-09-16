@@ -217,6 +217,7 @@ class EvalStdLib {
 						[for (k in objectDictionaryKeys(l)) EvalHash.revHash(k)];
 				};
 			case VInstance(vi):
+				if (vi.iproto.ppath == EvalHash.hash("sys.thread.EventLoop")) return ["promisedEventsCount", "started", "wakeup", "mutex", "handle", "pending", "isMainThread"];
 				[for (k in instanceFieldKeys(vi.iproto)) EvalHash.revHash(k)];
 			case VPrototype(proto): [for (k in sortedFieldKeys(proto.pnames)) if (!isReflectHidden(proto.ppath, k, true)) EvalHash.revHash(k)];
 			case VString(_) | VArray(_) | VVector(_): ["length"];
