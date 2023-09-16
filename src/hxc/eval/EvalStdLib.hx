@@ -1328,6 +1328,7 @@ class EvalStdLib {
 	}
 
 	static function bytesString(b:haxe.io.Bytes, pos:Int, len:Int):String {
+		if (!bytesUtf8Valid(b, pos, len)) throw "Invalid string";
 		var out = new StringBuf();
 		var start = pos;
 		var end = pos + len;
@@ -1342,6 +1343,45 @@ class EvalStdLib {
 		}
 		if (end > start) out.add(b.getString(start, end - start));
 		return out.toString();
+	}
+
+	static function bytesUtf8Valid(b:haxe.io.Bytes, pos:Int, len:Int):Bool {
+		var end = pos + len;
+		var i = pos;
+		inline function cont(index:Int):Bool {
+			var c = b.get(index);
+			return c >= 0x80 && c <= 0xBF;
+		}
+		while (i < end) {
+			var c = b.get(i++);
+			if (c < 0x80) continue;
+			if (c >= 0xC2 && c <= 0xDF) {
+				if (i >= end || !cont(i++)) return false;
+			} else if (c == 0xE0) {
+				if (i + 1 >= end) return false;
+				var c2 = b.get(i++);
+				if (c2 < 0xA0 || c2 > 0xBF || !cont(i++)) return false;
+			} else if ((c >= 0xE1 && c <= 0xEC) || (c >= 0xEE && c <= 0xEF)) {
+				if (i + 1 >= end || !cont(i++) || !cont(i++)) return false;
+			} else if (c == 0xED) {
+				if (i + 1 >= end) return false;
+				var c2 = b.get(i++);
+				if (c2 < 0x80 || c2 > 0x9F || !cont(i++)) return false;
+			} else if (c == 0xF0) {
+				if (i + 2 >= end) return false;
+				var c2 = b.get(i++);
+				if (c2 < 0x90 || c2 > 0xBF || !cont(i++) || !cont(i++)) return false;
+			} else if (c >= 0xF1 && c <= 0xF3) {
+				if (i + 2 >= end || !cont(i++) || !cont(i++) || !cont(i++)) return false;
+			} else if (c == 0xF4) {
+				if (i + 2 >= end) return false;
+				var c2 = b.get(i++);
+				if (c2 < 0x80 || c2 > 0x8F || !cont(i++) || !cont(i++)) return false;
+			} else {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
@@ -1952,13 +1992,7 @@ class EvalStdLib {
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
-		if (c < 0x10000) {
-			buf.add(String.fromCharCode(c));
-		} else {
-			var u = c - 0x10000;
-			buf.add(String.fromCharCode(0xD800 + (u >> 10)));
-			buf.add(String.fromCharCode(0xDC00 + (u & 0x3FF)));
-		}
+		buf.add(String.fromCharCode(c));
 	}
 
 	static function addUtf8EncodedChar(buf:StringBuf, c:Int):Void {
