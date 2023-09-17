@@ -2801,6 +2801,8 @@ class EvalStdLib {
 			sys.FileSystem.exists(file) ? VNull : EvalExceptions.excString(ctx, "Could not find file " + file);
 		}));
 		reg(s, "eval.vm.Context", "breakHere", vfn(a -> VNull));
+		reg(s, "eval.vm.Context", "loadPlugin", vfn(a ->
+			EvalExceptions.excString(ctx, "error loading shared library: " + nativeStringOf(arg(a, 0)))));
 
 		var inst = ctx.builtins.instanceBuiltins;
 
