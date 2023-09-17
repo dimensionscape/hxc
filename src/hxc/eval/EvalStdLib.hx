@@ -2796,6 +2796,11 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(s, "eval.vm.Gc", "stat", vfn(a -> gcStats()));
+		reg(s, "eval.vm.Context", "addBreakpoint", vfn(a -> {
+			var file = stringOf(arg(a, 0));
+			sys.FileSystem.exists(file) ? VNull : EvalExceptions.excString(ctx, "Could not find file " + file);
+		}));
+		reg(s, "eval.vm.Context", "breakHere", vfn(a -> VNull));
 
 		var inst = ctx.builtins.instanceBuiltins;
 
