@@ -171,10 +171,22 @@ class PatternMaker {
 		return v;
 	}
 
+	// A typed value pattern may be wrapped by an implicit abstract cast (e.g. an enum-abstract value whose
+	// stored constant is `cast N`), a metadata node, or parentheses; the constant/ctor to match on is
+	// underneath.
+	static function skipValue(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TCast(e1, null): skipValue(e1);
+			case TMeta(_, e1): skipValue(e1);
+			case TParenthesis(e1): skipValue(e1);
+			case _: e;
+		};
+	}
+
 	static function handleIdent(pctx:PatternContext, t:T, i:String, p:Position):PatKind {
 		try {
 			var e = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
-			switch (e.expr) {
+			switch (skipValue(e).expr) {
 				case TConst(ct): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConConst(ct), p), []);
 				case TField(_, FEnum(en, ef)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
@@ -284,7 +296,7 @@ class PatternMaker {
 				// A qualified value pattern (Type.Const / Type.EnumCtor / static const) matches by value.
 				var te = try Typer.typeExpr(ctx, e, WithTypeTools.withType(t)) catch (_:TypingError) null;
 				if (te == null) throw new TypingError("This pattern is not yet ported", p);
-				switch (te.expr) {
+				switch (skipValue(te).expr) {
 					case TConst(ct): unifyExpected(te.type); PatConstructor(Constructor.make(ConConst(ct), p), []);
 					case TField(_, FEnum(en, ef)): unifyExpected(te.type); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 					case TField(_, FStatic(c, cf)): unifyExpected(te.type); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);

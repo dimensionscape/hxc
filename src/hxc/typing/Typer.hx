@@ -489,6 +489,14 @@ class Typer {
 				switch (TypeFunctions.follow(wt)) {
 					case TEnum(en, _) if (en.constrs.exists(i)):
 						return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
+					case TAbstract(a, _) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
+						// An enum-abstract value used unqualified resolves against the expected type, like an
+						// enum constructor: look it up as an @:enum static on the abstract's impl class.
+						var cf = a.impl.statics.get(i);
+						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
+							var typeExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
+							return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), typeExpr, p);
+						}
 					case _:
 				}
 			case _:
@@ -607,6 +615,13 @@ class Typer {
 				// methods through their _Impl_ class not needed here.
 				FieldAccessTools.getFieldExpr(fa, FRead);
 			case Var(_):
+				if (cf.expr == null) {
+					// The inline var's initializer may not be typed yet (its module is processed later,
+					// or it is an enum-abstract value forced on demand); type its body before reading the
+					// stored constant. A genuine cycle leaves expr null and falls through to the error.
+					var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) null;
+					if (host != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, host, cf);
+				}
 				switch (cf.expr) {
 					case null: throw new TypingError("Recursive inline is not supported", p);
 					case e:
