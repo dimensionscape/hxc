@@ -656,6 +656,17 @@ class ModuleLoader {
 						i--;
 					}
 					throw e;
+				case ModuleNotFound(_) if (sub == null && path.pack.length >= 1):
+					// A flattened sub-type path (pack ends in the module name, `name` is the sub-type, e.g.
+					// `pack.Module.Sub` stored as {pack: [pack, Module], name: Sub}) has no module file of its
+					// own; resolve the module from the last pack segment and find the sub-type in it.
+					var mname = path.pack[path.pack.length - 1];
+					var mpack = path.pack.slice(0, path.pack.length - 1);
+					var m = try loadModule(ctx, {pack: mpack, name: mname}, p) catch (_:ContextError) null;
+					if (m != null) {
+						try { return findTypeInModule(m, path.name, p); } catch (_:ContextError) {}
+					}
+					throw e;
 				case _:
 					throw e;
 			}
