@@ -353,8 +353,20 @@ class Typer {
 					};
 					TypeFunctions.mk(TCast(te, mt), t, p);
 				}
-			case EIs(_, _):
-				throw new TypingError("is-expressions are not yet ported", p);
+			case EIs(e1, th):
+				// `x is T` is sugar for Std.isOfType(x, T); T must be a named type path (its type
+				// parameters are ignored at runtime).
+				switch (th.ct) {
+					case CTPath(tp):
+						var names = tp.tpackage.concat([tp.tname]);
+						if (tp.tsub != null) names.push(tp.tsub);
+						var pathExpr = new Expr(EConst(CIdent(names[0])), p);
+						for (i in 1...names.length) pathExpr = new Expr(EField(pathExpr, names[i], EFNormal), p);
+						var stdE = new Expr(EField(new Expr(EConst(CIdent("Std")), p), "isOfType", EFNormal), p);
+						typeExpr(ctx, new Expr(ECall(stdE, [e1, pathExpr]), p), withType);
+					case _:
+						throw new TypingError("Cannot use 'is' with this type", p);
+				}
 			case EDisplay(_, _):
 				throw new TypingError("Display is not yet ported", p);
 			case ECheckType(e1, th):
