@@ -201,6 +201,11 @@ class Calls {
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
+			case AKAccessor(_):
+				// Calling a property whose value is itself callable: read it through the getter, then call
+				// the
+				// resulting value.
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
 	}

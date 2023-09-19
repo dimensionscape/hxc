@@ -644,7 +644,7 @@ class Typer {
 		};
 	}
 
-	static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
+	public static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
 		return switch (acc) {
 			case AKExpr(e): e;
 			case AKField(fa): fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
