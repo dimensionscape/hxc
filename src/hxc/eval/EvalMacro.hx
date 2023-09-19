@@ -669,7 +669,10 @@ class EvalMacro {
 		return switch (ctorName(ec, v)) {
 			case "CInt": CInt(strOf(a[0]), a.length > 1 ? strOpt(a[1]) : null);
 			case "CFloat": CFloat(strOf(a[0]), a.length > 1 ? strOpt(a[1]) : null);
-			case "CString": CString(strOf(a[0]), SDoubleQuotes);
+			case "CString":
+				var kind = SDoubleQuotes;
+				if (a.length > 1) switch (a[1]) { case VNull: case _: if (ctorName(ec, a[1]) == "SingleQuotes") kind = SSingleQuotes; }
+				CString(strOf(a[0]), kind);
 			case "CIdent": CIdent(strOf(a[0]));
 			case "CRegexp": CRegexp(strOf(a[0]), strOf(a[1]));
 			case other: throw "macro decode: unhandled Constant " + other;
@@ -840,7 +843,7 @@ class EvalMacro {
 		return switch (c) {
 			case CInt(s, suf): mkEnumValue(ec, "Constant", "CInt", [mkString(s), mkString(suf)]);
 			case CFloat(s, suf): mkEnumValue(ec, "Constant", "CFloat", [mkString(s), mkString(suf)]);
-			case CString(s, _): mkEnumValue(ec, "Constant", "CString", [mkString(s), VNull]);
+			case CString(s, kind): mkEnumValue(ec, "Constant", "CString", [mkString(s), mkEnumValue(ec, "StringLiteralKind", (switch (kind) { case SSingleQuotes: "SingleQuotes"; case SDoubleQuotes: "DoubleQuotes"; }), [])]);
 			case CIdent(s): mkEnumValue(ec, "Constant", "CIdent", [mkString(s)]);
 			case CRegexp(r, o): mkEnumValue(ec, "Constant", "CRegexp", [mkString(r), mkString(o)]);
 		};
