@@ -1036,9 +1036,9 @@ class EvalStdLib {
 					}
 					stringTag(EvalHash.revHash(proto.ppath));
 				case VFunction(_, _) | VFieldClosure(_, _):
-					throw "Cannot serialize function";
+					EvalExceptions.excString(ctx, "Cannot serialize function");
 				case VLazy(_):
-					throw "unreachable";
+					EvalExceptions.excString(ctx, "unreachable");
 			}
 		}
 		loop(value);
@@ -1098,18 +1098,18 @@ class EvalStdLib {
 				case "p".code: VFloat(Math.POSITIVE_INFINITY);
 				case "y".code:
 					var len = readDigits();
-					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) throw "Invalid string length";
+					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) EvalExceptions.excString(ctx, "Invalid string length");
 					var s = urlDecode(data.substr(pos, len));
 					pos += len;
 					scache.push(s);
 					mkStr(s);
 				case "R".code:
 					var idx = readDigits();
-					if (idx < 0 || idx >= scache.length) throw "Invalid string reference";
+					if (idx < 0 || idx >= scache.length) EvalExceptions.excString(ctx, "Invalid string reference");
 					mkStr(scache[idx]);
 				case "r".code:
 					var idx = readDigits();
-					if (idx < 0 || idx >= cache.length) throw "Invalid reference";
+					if (idx < 0 || idx >= cache.length) EvalExceptions.excString(ctx, "Invalid reference");
 					cache[idx];
 				case "a".code:
 					var values:Array<EvalValue> = [];
@@ -1136,7 +1136,7 @@ class EvalStdLib {
 				case "c".code:
 					var name = stringOf(loop());
 					var proto = ctx.instancePrototypes.get(EvalHash.hash(name));
-					if (proto == null) throw "Class not found " + name;
+					if (proto == null) EvalExceptions.excString(ctx, "Class not found " + name);
 					var out = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
 					cache.push(out);
 					fields(out);
@@ -1144,7 +1144,7 @@ class EvalStdLib {
 				case "w".code:
 					var name = stringOf(loop());
 					var constructor = stringOf(loop());
-					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					if (data.charCodeAt(pos++) != ":".code) EvalExceptions.excString(ctx, "Invalid enum format");
 					var count = readDigits();
 					var args = [for (_ in 0...count) loop()];
 					var params = VArray(new VArray(args, args.length));
@@ -1153,17 +1153,17 @@ class EvalStdLib {
 					out;
 				case "j".code:
 					var name = stringOf(loop());
-					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					if (data.charCodeAt(pos++) != ":".code) EvalExceptions.excString(ctx, "Invalid enum format");
 					var index = readDigits();
 					var proto = ctx.staticPrototypes.get(EvalHash.hash(name));
-					if (proto == null) throw "Enum not found " + name;
+					if (proto == null) EvalExceptions.excString(ctx, "Enum not found " + name);
 					var constructor = switch (proto.pkind) {
 						case PEnum(cs):
-							if (index < 0 || index >= cs.length) throw "Unknown enum index " + name + "@" + index;
+							if (index < 0 || index >= cs.length) EvalExceptions.excString(ctx, "Unknown enum index " + name + "@" + index);
 							cs[index].name;
-						case _: throw "Enum not found " + name;
+						case _: EvalExceptions.excString(ctx, "Enum not found " + name);
 					}
-					if (data.charCodeAt(pos++) != ":".code) throw "Invalid enum format";
+					if (data.charCodeAt(pos++) != ":".code) EvalExceptions.excString(ctx, "Invalid enum format");
 					var count = readDigits();
 					var args = [for (_ in 0...count) loop()];
 					var params = VArray(new VArray(args, args.length));
@@ -1195,7 +1195,7 @@ class EvalStdLib {
 						var key = VInt(readDigits());
 						map.set(mapKey(key), {key: key, value: loop()});
 					}
-					if (data.charCodeAt(pos++) != "h".code) throw "Invalid IntMap format";
+					if (data.charCodeAt(pos++) != "h".code) EvalExceptions.excString(ctx, "Invalid IntMap format");
 					out;
 				case "M".code:
 					var map:Map<String, MapEntry> = new Map();
@@ -1213,7 +1213,7 @@ class EvalStdLib {
 					out;
 				case "s".code:
 					var len = readDigits();
-					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) throw "Invalid bytes length";
+					if (data.charCodeAt(pos++) != ":".code || data.length - pos < len) EvalExceptions.excString(ctx, "Invalid bytes length");
 					pos += len;
 					var out = hostToValue(ctx, haxe.Unserializer.run(data.substr(start, pos - start)));
 					cache.push(out);
@@ -1221,18 +1221,18 @@ class EvalStdLib {
 				case "A".code:
 					var name = stringOf(loop());
 					var out = classValue(ctx, EvalHash.hash(name));
-					if (out == VNull) throw "Class not found " + name;
+					if (out == VNull) EvalExceptions.excString(ctx, "Class not found " + name);
 					out;
 				case "B".code:
 					var name = stringOf(loop());
 					var out = classValue(ctx, EvalHash.hash(name));
-					if (out == VNull) throw "Enum not found " + name;
+					if (out == VNull) EvalExceptions.excString(ctx, "Enum not found " + name);
 					out;
 				case "x".code:
-					throw stringOf(loop());
+					EvalExceptions.excString(ctx, stringOf(loop()));
 				case _:
 					pos--;
-					throw "Invalid char " + data.charAt(pos) + " at position " + pos;
+					EvalExceptions.excString(ctx, "Invalid char " + data.charAt(pos) + " at position " + pos);
 			}
 		};
 		return loop();
@@ -3634,7 +3634,11 @@ class EvalStdLib {
 		reg(inst, "haxe.Serializer", "serialize", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
 		reg(inst, "haxe.Serializer", "serializeException", vmethod(a -> serializerAppend(ctx, arg(a, 0), arg(a, 1))));
 		reg(inst, "haxe.Serializer", "toString", vmethod(a -> serializerToString(ctx, arg(a, 0))));
-		reg(s, "haxe.Unserializer", "run", vfn(a -> unserializeString(ctx, stringOf(arg(a, 0)))));
+		reg(s, "haxe.Unserializer", "run", vfn(a -> {
+			var data = arg(a, 0);
+			if (data == VNull) EvalExceptions.excString(ctx, "field access on null");
+			unserializeString(ctx, stringOf(data));
+		}));
 		reg(inst, "haxe.Unserializer", "unserialize", vmethod(a -> {
 			var self = arg(a, 0);
 			var data = stringOf(EvalField.field(ctx, self, EvalHash.hash("buf")));
