@@ -175,7 +175,11 @@ class Fields {
 					if (u != null) return u;
 					throw fieldNotFound(e.type, i, pfield);
 				}
-				AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
+				// A property (get/set accessors) dispatches through its accessor via fieldAccess (which
+				// yields AKUsingAccessor for an abstract host); other fields are a direct impl access.
+				var isProp = switch (cf.kind) { case Var(vk): vk.read.match(AccCall) || vk.write.match(AccCall); case _: false; };
+				if (isProp) fieldAccess(ctx, mode, cf, FHAbstract(a, params, a.impl), e, pfield);
+				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
 			case TAbstract(_, _):
 				var u = tryUsing(ctx, e, i, pfield);
 				if (u != null) u else throw new TypingError("Abstract field access is not yet ported", p);

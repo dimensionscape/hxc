@@ -313,6 +313,14 @@ class Operators {
 			case AKAccess(a, tl, c, ebase, ekey):
 				hxc.typing.Calls.arraySet(ctx, a, tl, c, ebase, ekey, e2, p);
 			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);
+			case AKUsingAccessor(se):
+				// Writing an abstract property calls the impl's set_<name>(this, value).
+				var fa = se.access;
+				var implC = FieldAccessTools.getHostClassRaise(fa.host);
+				var setterCf = implC.statics.get("set_" + fa.field.name);
+				if (setterCf == null) throw new TypingError("This expression cannot be accessed for writing", p);
+				var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, FHStatic(implC), false, fa.pos);
+				hxc.typing.Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: setterFa}), [e2], WithTypeTools.value, p);
 			case _: throw new TypingError("This assignment target is not yet ported", p);
 		};
 	}

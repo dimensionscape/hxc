@@ -664,7 +664,14 @@ class Typer {
 			case AKAccessor(fa):
 				var getterAcc = Fields.typeField(ctx, fa.on, "get_" + fa.field.name, fa.pos, MCall([]), WithTypeTools.value);
 				Calls.buildCall(ctx, getterAcc, [], WithTypeTools.value, fa.pos);
-			case AKUsingAccessor(_): throw new TypingError("Property accessor reads are not yet ported (needs call dispatch, unit 5)", Position.nullPos);
+			case AKUsingAccessor(se):
+				// Reading an abstract property calls the impl's get_<name>(this).
+				var fa = se.access;
+				var implC = FieldAccessTools.getHostClassRaise(fa.host);
+				var getterCf = implC.statics.get("get_" + fa.field.name);
+				if (getterCf == null) throw new TypingError("This field cannot be accessed for reading", fa.pos);
+				var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, FHStatic(implC), false, fa.pos);
+				Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
 			case AKUsingField(se):
 				// Reading an abstract/static-extension field: a property calls its impl getter with the
 				// receiver; otherwise read the impl field directly.
