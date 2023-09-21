@@ -590,6 +590,15 @@ class Typer {
 		var name = segs[typeIdx];
 		var rest = segs.slice(typeIdx + 1);
 		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
+		// pack.Module.SubType.field: when the next segment names a sub-type of the module, resolve it as
+		// the type (module + sub) rather than a field access on the module's main type.
+		if (rest.length > 0) {
+			var c0 = rest[0].charCodeAt(0);
+			if (c0 >= "A".code && c0 <= "Z".code) {
+				var subMt = try ctx.com.getType({pack: pack, name: name}, p, rest[0]) catch (_:Dynamic) null;
+				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
+			}
+		}
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(mt, p));
