@@ -433,6 +433,11 @@ class EvalStdLib {
 		};
 	}
 
+	static function ioError(ctx:EvalContext, name:String):Dynamic {
+		EvalExceptions.throwValue(ctx, createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.io.Error")), EvalHash.hash(name), VNull), Position.nullPos);
+		return VNull;
+	}
+
 	static function argList(v:EvalValue):Array<EvalValue> {
 		return switch (v) {
 			case VArray(va): va.avalues.slice(0, va.alength);
@@ -3988,7 +3993,7 @@ class EvalStdLib {
 			var bytes = thisBytes([arg(a, 1)]);
 			var pos = toInt(arg(a, 2));
 			var len = toInt(arg(a, 3));
-			if (pos < 0 || len < 0 || pos + len > bytes.length) throw "Outside bounds";
+			if (pos < 0 || len < 0 || pos + len > bytes.length) ioError(ctx, "OutsideBounds");
 			bytesBufferAddBytes(buf, bytes, pos, len);
 			VInt(len);
 		}));
@@ -4024,7 +4029,7 @@ class EvalStdLib {
 			var out = thisBytes([arg(a, 1)]);
 			var pos = toInt(arg(a, 2));
 			var len = toInt(arg(a, 3));
-			if (pos < 0 || len < 0 || pos + len > out.length) throw "Outside bounds";
+			if (pos < 0 || len < 0 || pos + len > out.length) ioError(ctx, "OutsideBounds");
 			if (input.len == 0 && len > 0) eof(ctx);
 			if (input.len < len) len = input.len;
 			for (i in 0...len) out.set(pos + i, input.bytes.get(input.pos + i));
