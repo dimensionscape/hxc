@@ -3997,8 +3997,14 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "getInt32", vmethod(a -> try VInt(thisBytes(a).getInt32(toInt(arg(a, 1)))) catch (e:Dynamic) {
 			EvalExceptions.excString(ctx, Std.string(e));
 		}));
-		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> try mkStr(bytesString(thisBytes(a), toInt(arg(a, 1)), toInt(arg(a, 2)))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
+		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> {
+			var b = thisBytes(a);
+			var pos = toInt(arg(a, 1));
+			var len = toInt(arg(a, 2));
+			if (pos < 0 || len < 0 || pos + len > b.length) ioError(ctx, "OutsideBounds");
+			try mkStr(bytesString(b, pos, len)) catch (e:Dynamic) {
+				EvalExceptions.excString(ctx, Std.string(e));
+			}
 		}));
 		reg(inst, "haxe.io.Bytes", "getUInt16", vmethod(a -> try VInt(thisBytes(a).getUInt16(toInt(arg(a, 1)))) catch (e:Dynamic) {
 			EvalExceptions.excString(ctx, Std.string(e));
@@ -4008,8 +4014,12 @@ class EvalStdLib {
 			mkStr(bytesString(b, 0, b.length));
 		}));
 		reg(inst, "haxe.io.Bytes", "toHex", vmethod(a -> mkStr(thisBytes(a).toHex())));
-		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> try mkBytes(ctx, thisBytes(a).sub(toInt(arg(a, 1)), toInt(arg(a, 2)))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
+		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> {
+			var b = thisBytes(a);
+			var pos = toInt(arg(a, 1));
+			var len = toInt(arg(a, 2));
+			if (pos < 0 || len < 0 || pos + len > b.length) ioError(ctx, "OutsideBounds");
+			mkBytes(ctx, b.sub(pos, len));
 		}));
 		reg(inst, "haxe.io.Bytes", "fill", vmethod(a -> try {
 			thisBytes(a).fill(toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)));
