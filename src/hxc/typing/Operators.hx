@@ -117,9 +117,32 @@ class Operators {
 		var tint = basic.tint, tfloat = basic.tfloat, tstring = basic.tstring, tbool = basic.tbool;
 		var haxeNext = ctx.com.defines.rawDefined("haxe_next");
 
+		function callToString(e:TExpr):TExpr {
+			// `if (e == null) "null" else e.toString()`, using a temp for a non-trivial operand so it is
+			// evaluated once. .
+			function gen(x:TExpr):TExpr
+				return hxc.typing.Calls.buildCall(ctx, hxc.typing.Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(tstring)), [], WithTypeTools.withType(tstring), x.pos);
+			var strNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
+			var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };
+			if (simple) {
+				var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
+				return TypeFunctions.mk(TIf(check, strNull, gen(e)), tstring, e.pos);
+			}
+			var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", e.type, e.pos);
+			var tmpLocal = TexprTools.makeLocal(tmp, e.pos);
+			var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
+			var iff = TypeFunctions.mk(TIf(check, strNull, gen(tmpLocal)), tstring, e.pos);
+			var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, e.pos);
+			return TypeFunctions.mk(TBlock([decl, iff]), tstring, e.pos);
+		}
 		function toString(e:TExpr):TExpr {
-			// The operand is concatenated as-is; the runtime stringifies a non-string side.
-			return e;
+			// An abstract operand in a string concatenation whose impl defines toString is converted by
+			// calling it (null-checked); other operands are stringified by the runtime.
+			return switch (classify(e.type)) {
+				case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
+					callToString(e);
+				case _: e;
+			};
 		}
 		function mkOp(a:TExpr, b:TExpr, t:T):BinopResult {
 			if (op.match(OpAdd) && (switch (classify(t)) { case KString: true; case _: false; })) {
