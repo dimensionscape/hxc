@@ -317,9 +317,12 @@ class Typer {
 					case _: null;
 				};
 				for (f in fields) {
-					var fwt = WithTypeTools.value;
-					if (expected != null) { var ef = expected.fields.get(f.name); if (ef != null) fwt = WithTypeTools.withType(ef.type); }
+					var ef = expected != null ? expected.fields.get(f.name) : null;
+					var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
 					var te = typeExpr(ctx, f.expr, fwt);
+					// Against an expected field type, coerce the value to it so an implicit abstract cast
+					// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
+					if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
 					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 					anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
 				}
