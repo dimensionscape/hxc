@@ -2638,13 +2638,8 @@ class EvalStdLib {
 	}
 
 	static function gcMajorSlice(n:EvalValue):EvalValue {
-		switch (n) {
-			case VNull:
-				throw "Null Access";
-			case _:
-				gcMajor();
-				return VInt(0);
-		}
+		gcMajor();
+		return VInt(0);
 	}
 
 	static function gcCounters():EvalValue {
