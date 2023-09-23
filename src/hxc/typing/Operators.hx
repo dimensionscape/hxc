@@ -279,6 +279,9 @@ class Operators {
 						case TFun(sig) if (sig.args.length == 2):
 							var c2 = coerceArg(ctx, sig.args[1].t, e2, p);
 							if (c2 == null) continue;
+							// The @:op method body may not be typed yet; force it so a real (non-native)
+							// operator dispatches to the method instead of a bare TBinop the runtime rejects.
+							if (aop.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, aop.cf);
 							if (aop.cf.expr == null) {
 								// A bodyless (native) @:op is the underlying operation, typed as its declared return.
 								return TypeFunctions.mk(TBinop(op, e1, c2), sig.ret, p);
