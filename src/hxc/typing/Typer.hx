@@ -440,7 +440,19 @@ class Typer {
 						var i = Std.parseInt(s);
 						if (i == null) throw new TypingError("Cannot represent " + s + " with a 32 bit integer", p);
 						TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
-					case "i64" | "u32": throw new TypingError("Integer suffix " + suffix + " is not yet supported", p);
+					case "i64":
+						// NNNi64 is a haxe.Int64 literal: split the 64-bit value into high/low halves and
+						// build haxe.Int64.make(high, low).
+						var v = parseInt64Literal(s);
+						function intExpr(n:Int):Expr return new Expr(EConst(CInt(Std.string(n), null)), p);
+						var mk = new Expr(EField(new Expr(EField(new Expr(EConst(CIdent("haxe")), p), "Int64", EFNormal), p), "make", EFNormal), p);
+						var call = new Expr(ECall(mk, [intExpr(v.high), intExpr(v.low)]), p);
+						typeExpr(ctx, call, withType);
+					case "u32":
+						// NNNu32 is `(NNN : UInt)`.
+						var inner = new Expr(EConst(CInt(s, null)), p);
+						var ct:TypeHint = {ct: CTPath({tpackage: [], tname: "UInt", tparams: [], tsub: null}), pos: p};
+						typeExpr(ctx, new Expr(ECheckType(inner, ct), p), withType);
 					case other: throw new TypingError(other + " is not a valid integer suffix", p);
 				}
 			case CFloat(s, suffix):
@@ -545,6 +557,24 @@ class Typer {
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		return AKExpr(TexprTools.makeTypeExpr(mt, p));
+	}
+
+	// Parse an i64 literal string (decimal or 0x-hex) into its 64-bit value.
+	static function parseInt64Literal(s:String):haxe.Int64 {
+		if (s.length >= 2 && (s.substr(0, 2) == "0x" || s.substr(0, 2) == "0X")) {
+			var v = haxe.Int64.ofInt(0);
+			var sixteen = haxe.Int64.ofInt(16);
+			for (i in 2...s.length) {
+				var c = s.charCodeAt(i);
+				var d = if (c >= "0".code && c <= "9".code) c - "0".code
+					else if (c >= "a".code && c <= "f".code) c - "a".code + 10
+					else if (c >= "A".code && c <= "F".code) c - "A".code + 10
+					else 0;
+				v = haxe.Int64.add(haxe.Int64.mul(v, sixteen), haxe.Int64.ofInt(d));
+			}
+			return v;
+		}
+		return haxe.Int64.parseString(s);
 	}
 
 	// A bare identifier provided by an explicit static-field import (`import M.field`) or a static
