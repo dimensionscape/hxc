@@ -526,6 +526,10 @@ class Typer {
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
 			return Fields.typeField(ctx, TexprTools.makeTypeExpr(logMt, p), "trace", p, mode, withType);
 		}
+		// A static-field import (`import M.field`) or a static wildcard (`import M.*` on a type) makes a
+		// static field or enum constructor available unqualified.
+		var imp = resolveImportedStatic(ctx, i, p, mode);
+		if (imp != null) return imp;
 		var mt = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
 		if (mt == null) {
 			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
@@ -541,6 +545,43 @@ class Typer {
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		return AKExpr(TexprTools.makeTypeExpr(mt, p));
+	}
+
+	// A bare identifier provided by an explicit static-field import (`import M.field`) or a static
+	// wildcard import (`import M.*` where M is a type): resolve it as that type's static field or
+	// enum constructor. Abstract members (CfImpl, which need `this`) are not importable unqualified.
+	static function resolveImportedStatic(ctx:TyperContext, i:String, p:Position, mode:AccessMode):Null<AccessKind> {
+		var m = ctx.com.currentModule;
+		if (m == null) return null;
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports == null) return null;
+		function tryType(mt:ModuleType):Null<AccessKind> {
+			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+			switch (mt) {
+				case TClassDecl(c):
+					hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
+					var cf = c.statics.get(i);
+					if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
+				case TAbstractDecl(a) if (a.impl != null):
+					var cf = a.impl.statics.get(i);
+					if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
+						return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
+				case TEnumDecl(en) if (en.constrs.exists(i)):
+					return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
+				case _:
+			}
+			return null;
+		}
+		var g = imports.globals.get(i);
+		if (g != null) {
+			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
+			if (mt != null) { var r = tryType(mt); if (r != null) return r; }
+		}
+		for (w in imports.wildcards) {
+			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
+			if (mt != null) { var r = tryType(mt); if (r != null) return r; }
+		}
+		return null;
 	}
 
 	// A bare identifier that names a constructor of an enum declared in the current module.
