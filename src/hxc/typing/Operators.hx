@@ -415,10 +415,13 @@ class Operators {
 					case _:
 				}
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MGet, withType)) {
-					case AKExpr(te): TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+					case AKExpr(te):
+						var abs = tryAbstractUnop(ctx, op, flag, te, p);
+						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case AKField(fa):
 						var te = FieldAccessTools.getFieldExpr(fa, FWrite);
-						TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+						var abs = tryAbstractUnop(ctx, op, flag, te, p);
+						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:
