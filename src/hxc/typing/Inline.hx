@@ -53,10 +53,13 @@ class Inline {
 			case _: return null;
 		};
 		if (tf.args.length != params.length) return null;
-		return try doInline(ctx, tf, ethis, isStatic, params, tret, p) catch (_:InlineBail) null;
+		// An abstract instance member (CfImpl) is an impl static whose first arg is the abstract `this`;
+		// a mutation of `this` must write back to an lvalue receiver.
+		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		return try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, p:Position):TExpr {
+	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, p:Position):TExpr {
 		var subst = new Map<Int, TVar>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
@@ -68,9 +71,16 @@ class Inline {
 		}
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
-			var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
-			subst.set(av.id, nv);
-			binds.push(TypeFunctions.mk(TVarExpr(nv, params[i]), tvoid, p));
+			// The abstract `this` (first arg of an abstract member) binds to a local receiver directly, so
+			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
+			var directLocal = (absMember && i == 0) ? (switch (params[0].expr) { case TLocal(v): v; case _: null; }) : null;
+			if (directLocal != null) {
+				subst.set(av.id, directLocal);
+			} else {
+				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
+				subst.set(av.id, nv);
+				binds.push(TypeFunctions.mk(TVarExpr(nv, params[i]), tvoid, p));
+			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
 		return TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
