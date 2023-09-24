@@ -3942,9 +3942,13 @@ class EvalStdLib {
 		reg(s, "haxe.crypto.Crc32", "make", vfn(a -> VInt(haxe.crypto.Crc32.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Adler32", "make", vfn(a -> VInt(haxe.crypto.Adler32.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Base64", "encode", vfn(a -> mkStr(haxe.crypto.Base64.encode(thisBytes([arg(a, 0)]), arg(a, 1) == VNull || arg(a, 1) == VTrue))));
-		reg(s, "haxe.crypto.Base64", "decode", vfn(a -> mkBytes(ctx, haxe.crypto.Base64.decode(stringOf(arg(a, 0)), arg(a, 1) == VNull || arg(a, 1) == VTrue))));
+		reg(s, "haxe.crypto.Base64", "decode", vfn(a -> try mkBytes(ctx, haxe.crypto.Base64.decode(stringOf(arg(a, 0)), arg(a, 1) == VNull || arg(a, 1) == VTrue)) catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(s, "haxe.crypto.Base64", "urlEncode", vfn(a -> mkStr(haxe.crypto.Base64.urlEncode(thisBytes([arg(a, 0)]), arg(a, 1) == VTrue))));
-		reg(s, "haxe.crypto.Base64", "urlDecode", vfn(a -> mkBytes(ctx, haxe.crypto.Base64.urlDecode(stringOf(arg(a, 0)), arg(a, 1) == VTrue))));
+		reg(s, "haxe.crypto.Base64", "urlDecode", vfn(a -> try mkBytes(ctx, haxe.crypto.Base64.urlDecode(stringOf(arg(a, 0)), arg(a, 1) == VTrue)) catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(s, "haxe.crypto.Md5", "encode", vfn(a -> mkStr(haxe.crypto.Md5.encode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.crypto.Md5", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Md5.make(thisBytes([arg(a, 0)])))));
 		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(stringOf(arg(a, 0))))));
@@ -4138,11 +4142,17 @@ class EvalStdLib {
 			VInt(len);
 		}));
 		reg(s, "haxe.crypto.BaseCode", "encode", vfn(a -> mkStr(haxe.crypto.BaseCode.encode(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
-		reg(s, "haxe.crypto.BaseCode", "decode", vfn(a -> mkStr(haxe.crypto.BaseCode.decode(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+		reg(s, "haxe.crypto.BaseCode", "decode", vfn(a -> try mkStr(haxe.crypto.BaseCode.decode(stringOf(arg(a, 0)), stringOf(arg(a, 1)))) catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(inst, "haxe.crypto.BaseCode", "encodeBytes", vmethod(a -> mkBytes(ctx, thisBaseCode(a).encodeBytes(thisBytes([arg(a, 1)])))));
-		reg(inst, "haxe.crypto.BaseCode", "decodeBytes", vmethod(a -> mkBytes(ctx, thisBaseCode(a).decodeBytes(thisBytes([arg(a, 1)])))));
+		reg(inst, "haxe.crypto.BaseCode", "decodeBytes", vmethod(a -> try mkBytes(ctx, thisBaseCode(a).decodeBytes(thisBytes([arg(a, 1)]))) catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(inst, "haxe.crypto.BaseCode", "encodeString", vmethod(a -> mkStr(thisBaseCode(a).encodeString(stringOf(arg(a, 1))))));
-		reg(inst, "haxe.crypto.BaseCode", "decodeString", vmethod(a -> mkStr(thisBaseCode(a).decodeString(stringOf(arg(a, 1))))));
+		reg(inst, "haxe.crypto.BaseCode", "decodeString", vmethod(a -> try mkStr(thisBaseCode(a).decodeString(stringOf(arg(a, 1)))) catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(inst, "haxe.crypto.Hmac", "make", vmethod(a -> mkBytes(ctx, thisHmac(a).make(thisBytes([arg(a, 1)]), thisBytes([arg(a, 2)])))));
 		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
