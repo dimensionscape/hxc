@@ -423,7 +423,8 @@ class Operators {
 				}
 			case Not | Neg | NegBits:
 				var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
-				makeUnop(ctx, op, flag, te, p);
+				var abs = tryAbstractUnop(ctx, op, flag, te, p);
+				if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 		};
 	}
 
@@ -456,6 +457,25 @@ class Operators {
 		stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return enew, p));
 		stmts.push(enew);
 		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
+	}
+
+	// An abstract that overloads this unary operator dispatches to its @:op impl method.
+	static function tryAbstractUnop(ctx:TyperContext, op:Unop, flag:UnopFlag, e:TExpr, p:Position):Null<TExpr> {
+		switch (TypeFunctions.follow(e.type)) {
+			case TAbstract(a, tl) if (a.impl != null):
+				for (au in a.unops) {
+					if (au.op != op || au.flag != flag) continue;
+					var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, au.cf.type))) { case TFun(s): s; case _: null; };
+					var ret = sig != null ? sig.ret : e.type;
+					if (au.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
+					if (au.cf.expr == null) return TypeFunctions.mk(TUnop(op, flag, e), ret, p);
+					var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
+					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, au.cf, FHStatic(a.impl), false, p), FCall);
+					return Calls.makeCall(ctx, fieldExpr, [e], ret, p);
+				}
+			case _:
+		}
+		return null;
 	}
 
 	static function makeUnop(ctx:TyperContext, op:Unop, flag:UnopFlag, e:TExpr, p:Position):TExpr {
