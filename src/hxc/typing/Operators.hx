@@ -378,16 +378,20 @@ class Operators {
 				}
 			case _:
 		}
+		function compound(te1:TExpr):TExpr {
+			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
+			// native op stays as a compound TBinop the evaluator applies in place.
+			return switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
+				case BinopSpecial(opCall, _):
+					TypeFunctions.mk(TBinop(OpAssign, te1, Typer.castOrUnify(ctx, te1.type, opCall, p)), te1.type, p);
+				case _:
+					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
+			};
+		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
-			case AKExpr(te1):
-				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				makeBinop(ctx, sub, te1, te2, true, withType, p);
-				TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
-			case AKField(fa):
-				var te1 = FieldAccessTools.getFieldExpr(fa, FWrite);
-				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				makeBinop(ctx, sub, te1, te2, true, withType, p);
-				TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
+			case AKExpr(te1): compound(te1);
+			case AKField(fa): compound(FieldAccessTools.getFieldExpr(fa, FWrite));
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
 		};
