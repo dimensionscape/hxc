@@ -1022,6 +1022,21 @@ class Typer {
 				// An abstract is constructed by calling its impl's _new static.
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 				Calls.buildCall(ctx, Fields.typeField(ctx, implExpr, "_new", p, MCall(el), withType), el, withType, p);
+			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
+				// @:forward.new forwards construction to the underlying type: build the underlying value
+				// and cast it to the abstract. .
+				switch (TypeFunctions.follow(a.thisType)) {
+					case TInst(uc, upl):
+						hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
+						var ctorType = findConstructorType(ctx, uc, upl);
+						if (ctorType == null) throw new TypingError(uc.path.name + " does not have a constructor", p);
+						var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
+						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+						var enew = TypeFunctions.mk(TNew(uc, upl, r.el), TInst(uc, upl), p);
+						TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
+					case _:
+						throw new TypingError("This type cannot be constructed", p);
+				}
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};
