@@ -9,12 +9,16 @@ import hxc.core.Globals;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.Path;
 import hxc.ast.Position;
+import sys.FileSystem;
+import sys.io.File;
+import sys.io.Process;
 
 class Compiler {
 	public function new() run(Sys.args());
 	public static function main() run(Sys.args());
 
 	public static function run(args:Array<String>):Void {
+		args = expandArgs(args);
 		var ctx = new Context();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
@@ -50,9 +54,11 @@ class Compiler {
 					targetDir = "cpp";
 					i++; // Consume the output dir
 				case "--macro":
-					i++;
+					ctx.initMacros.push(args[i++]);
 				case "-v" | "--verbose":
 					ctx.defines.rawDefine("verbose");
+				case "--dce":
+					i++;
 				case _:
 			}
 		}
@@ -66,6 +72,7 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		ModuleLoader.initBasicTypes(ctx);
+		hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 
 		if (mainClass == null) {
 			Sys.println("hxc " + Globals.sVersion + " (" + Globals.platformName(platform) + ", no -main)");
@@ -76,6 +83,7 @@ class Compiler {
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			TypeResolve.resolveAll(ctx);
 			TypeFields.typeAllModules(ctx);
+			hxc.eval.EvalMacro.runGenerateCallbacks();
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
@@ -103,8 +111,7 @@ class Compiler {
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:Dynamic) {
-			Sys.stderr().writeString("Error: " + Std.string(e) + "
-");
+			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
 			Sys.exit(1);
 		}
 	}
@@ -113,6 +120,118 @@ class Compiler {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	static function expandArgs(args:Array<String>):Array<String> {
+		return expandArgsInner(args, []);
+	}
+
+	static function expandArgsInner(args:Array<String>, seen:Array<String>):Array<String> {
+		var out:Array<String> = [];
+		var i = 0;
+		while (i < args.length) {
+			var a = args[i++];
+			if (!StringTools.startsWith(a, "-") && StringTools.endsWith(a, ".hxml")) {
+				out = out.concat(expandHxml(a, seen));
+				continue;
+			}
+			if (a == "-lib" || a == "--library") {
+				if (i >= args.length) throw "Missing library name";
+				out = out.concat(expandHaxelib(args[i++], seen));
+				continue;
+			}
+			out.push(a);
+		}
+		return out;
+	}
+
+	static function expandHxml(path:String, seen:Array<String>):Array<String> {
+		var file = resolveHxml(path, seen.length == 0 ? null : seen[seen.length - 1]);
+		var norm = StringTools.replace(file, "\\", "/");
+		if (seen.indexOf(norm) >= 0) throw "Recursive hxml include: " + path;
+		var nextSeen = seen.concat([norm]);
+		var args:Array<String> = [];
+		for (line in File.getContent(file).split("\n"))
+			args = args.concat(parseHxmlLine(line));
+		return expandArgsInner(args, nextSeen);
+	}
+
+	static function resolveHxml(path:String, ?from:String):String {
+		if (FileSystem.exists(path)) return path;
+		if (from != null) {
+			var base = directoryOf(from);
+			var p = base == "" ? path : base + "/" + path;
+			if (FileSystem.exists(p)) return p;
+		}
+		return path;
+	}
+
+	static function expandHaxelib(lib:String, seen:Array<String>):Array<String> {
+		var p = new Process("haxelib", ["path", lib]);
+		var stdout = p.stdout.readAll().toString();
+		var stderr = p.stderr.readAll().toString();
+		var code = p.exitCode();
+		p.close();
+		if (code != 0) throw "haxelib path " + lib + " failed: " + stderr;
+		var args:Array<String> = [];
+		for (line in stdout.split("\n")) {
+			var parsed = parseHxmlLine(line);
+			if (parsed.length == 1 && !StringTools.startsWith(parsed[0], "-") && !StringTools.endsWith(parsed[0], ".hxml"))
+				args = args.concat(["-cp", parsed[0]]);
+			else
+				args = args.concat(parsed);
+		}
+		return expandArgsInner(args, seen);
+	}
+
+	static function parseHxmlLine(line:String):Array<String> {
+		line = StringTools.trim(StringTools.replace(line, "\r", ""));
+		if (line == "" || StringTools.startsWith(line, "#")) return [];
+		var out:Array<String> = [];
+		var buf = new StringBuf();
+		var quote = 0;
+		var escaped = false;
+		var i = 0;
+		function flush() {
+			var s = buf.toString();
+			if (s.length > 0) {
+				out.push(s);
+				buf = new StringBuf();
+			}
+		}
+		while (i < line.length) {
+			var c = line.charCodeAt(i++);
+			if (escaped) {
+				buf.addChar(c);
+				escaped = false;
+				continue;
+			}
+			if (c == "\\".code && quote != 0) {
+				escaped = true;
+				continue;
+			}
+			if (quote != 0) {
+				if (c == quote) quote = 0 else buf.addChar(c);
+				continue;
+			}
+			if (c == "\"".code || c == "'".code) {
+				quote = c;
+				continue;
+			}
+			if (c == " ".code || c == "\t".code) {
+				flush();
+				continue;
+			}
+			buf.addChar(c);
+		}
+		flush();
+		return out;
+	}
+
+	static function directoryOf(path:String):String {
+		var p = StringTools.replace(path, "\\", "/");
+		var i = p.lastIndexOf("/");
+		return i < 0 ? "" : p.substr(0, i);
 	}
 
 	static function printPositionMessage(msg:String, pos:Position):Void {

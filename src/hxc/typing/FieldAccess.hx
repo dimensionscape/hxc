@@ -60,7 +60,7 @@ class FieldAccessTools {
 	public static function getFieldExpr(fa:FieldAccess, mode:FieldAccessMode):TExpr {
 		var cf = fa.field;
 		var t = switch (mode) {
-			case FCall: cf.type;
+			case FCall: TypeFields.fieldCallType(cf);
 			case FGet | FRead | FWrite: TypeFunctions.fieldType(cf);
 		};
 		var faAcc:TFieldAccess;

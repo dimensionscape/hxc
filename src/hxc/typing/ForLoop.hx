@@ -162,30 +162,37 @@ class ForLoop {
 		return Calls.buildCall(ctx, acc, [], WithTypeTools.value, p);
 	}
 
-	// Type_for_loop (general iterator desugar).
-	// `for (k => v in e)` desugars to iterating e.keyValueIterator(), binding k and v from each
-	// pair, then typing the resulting block with the existing machinery.
-	// NOTE: per-iteration loop-var wrapping (see needsLoopVarWrap / wrapLoopVarsBody) is applied in
-	// typeForLoop only. Key-value goes through the untyped-AST desugar below, so the typed k/v TVars
-	// are not exposed here to wrap in an IIFE; wiring it would require restructuring this path. Left
-	// as-is so the single-var case (the capture failures) is fixed without risking key-value.
 	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
-		var tmpIt = "`kvit";
-		var tmpKv = "`kv";
-		inline function ident(n:String):Expr return new Expr(EConst(CIdent(n)), p);
-		inline function decl(n:String, e:Expr):Expr
-			return new Expr(EVars([{evName: {name: n, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: e, evMeta: []}]), p);
-		inline function call0e(recv:Expr, m:String):Expr
-			return new Expr(ECall(new Expr(EField(recv, m, EFNormal), p), []), p);
-		var itDecl = decl(tmpIt, call0e(rhs, "keyValueIterator"));
-		var cond = call0e(ident(tmpIt), "hasNext");
-		var kvDecl = decl(tmpKv, call0e(ident(tmpIt), "next"));
-		var kDecl = decl(ki, new Expr(EField(ident(tmpKv), "key", EFNormal), p));
-		var vDecl = decl(vi, new Expr(EField(ident(tmpKv), "value", EFNormal), p));
-		var innerBody = new Expr(EBlock([kvDecl, kDecl, vDecl, body]), p);
-		var ewhile = new Expr(EWhile(cond, innerBody, NormalWhile), p);
-		var block = new Expr(EBlock([itDecl, ewhile]), p);
-		return Typer.typeExpr(ctx, block, WithTypeTools.noValue);
+		var basic = ctx.com.basic;
+		var rhsTyped = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
+		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p) catch (_:TypingError) rhsTyped;
+		var oldLoop = ctx.inLoop;
+		var oldLocals = Typer.saveLocals(ctx);
+		ctx.inLoop = true;
+		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_kvit", iterExpr.type, p);
+		var eIt = TexprTools.makeLocal(vIt, p);
+		var ehasnext = call0(ctx, eIt, "hasNext", p);
+		var enext = call0(ctx, eIt, "next", p);
+		var vKv = Typer.addLocal(ctx, VGenerated, "_hx_kv", enext.type, p);
+		var eKv = TexprTools.makeLocal(vKv, p);
+		var ekey = Typer.accGet(ctx, Fields.typeField(ctx, eKv, "key", p, MGet, WithTypeTools.value));
+		var evalue = Typer.accGet(ctx, Fields.typeField(ctx, eKv, "value", p, MGet, WithTypeTools.value));
+		var vkey = Typer.addLocalWithOrigin(ctx, TVOForVariable, ki, ekey.type, p);
+		var vvalue = Typer.addLocalWithOrigin(ctx, TVOForVariable, vi, evalue.type, p);
+		var typedBody = Typer.typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
+		ctx.inLoop = oldLoop;
+		oldLocals();
+		var whileBody = TypeFunctions.mk(TBlock([
+			TypeFunctions.mk(TVarExpr(vKv, enext), basic.tvoid, p),
+			TypeFunctions.mk(TVarExpr(vkey, ekey), basic.tvoid, p),
+			TypeFunctions.mk(TVarExpr(vvalue, evalue), basic.tvoid, p),
+			typedBody
+		]), basic.tvoid, p);
+		var ewhile = TypeFunctions.mk(TWhile(ehasnext, whileBody, NormalWhile), basic.tvoid, p);
+		return TypeFunctions.mk(TBlock([
+			TypeFunctions.mk(TVarExpr(vIt, iterExpr), basic.tvoid, p),
+			ewhile
+		]), basic.tvoid, p);
 	}
 
 	// Array-access iteration: for an array-like value (a length:Int field plus array read access) that

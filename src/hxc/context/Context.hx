@@ -50,6 +50,8 @@ class Context {
 	/** Embedded resources from `--resource file@name`. */
 	public var resources:StringMap<haxe.io.Bytes>;
 
+	public var initMacros:Array<String>;
+
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
 
 	/**
@@ -106,6 +108,7 @@ class Context {
 		this.modules = [];
 		this.types = [];
 		this.resources = new StringMap();
+		this.initMacros = [];
 		this.declOfType = new StringMap();
 		this.moduleImports = new StringMap();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
@@ -117,7 +120,7 @@ class Context {
 			return null;
 		};
 		this.parse = function(s:String, pos:Position):Expr {
-			return hxc.parser.Parser.parseExprString(s, pos.file);
+			return hxc.parser.Parser.parseExprString(s, pos.file, this.defines);
 		};
 		this.defineType = function(mt:ModuleType):Void {
 			throw new ContextError("defineType seam not attached", Position.nullPos);
@@ -138,6 +141,7 @@ class Context {
 		c.platformConfig = PlatformConfig.eval();
 		c.isMacro = true;
 		for (name in this.resources.keys()) c.resources.set(name, this.resources.get(name));
+		c.initMacros = this.initMacros.copy();
 		return c;
 	}
 

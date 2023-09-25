@@ -4230,6 +4230,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "Array", "lastIndexOf", vmethod(a -> {
 			var va = thisArray(a); var t = arg(a, 1); var idx = -1; var last = va.alength - 1;
+			if (va.alength == 0) return VInt(-1);
 			var i = a.length > 2 && arg(a, 2) != VNull ? toInt(arg(a, 2)) : last;
 			if (i < 0) i = va.alength + i;
 			if (i < 0) i = 0 else if (i > last) i = last;

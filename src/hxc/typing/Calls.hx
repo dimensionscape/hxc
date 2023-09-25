@@ -397,10 +397,10 @@ class Calls {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
-			case AKField(fa): callExpr(ctx, monomorphizeParams(ctx, fa.field, FieldAccessTools.getFieldExpr(fa, FCall)), el, p);
+			case AKField(fa): callFieldAccess(ctx, fa, el, p);
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument.
-				var ce = monomorphizeParams(ctx, se.access.field, FieldAccessTools.getFieldExpr(se.access, FCall));
+				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access));
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length > 0):
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
@@ -415,6 +415,44 @@ class Calls {
 				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
+	}
+
+	static function callFieldExpr(ctx:TyperContext, fa:FieldAccess):TExpr {
+		var cf = fa.field;
+		if (!ctx.com.isMacro && TypeFunctions.hasMono(TypeFields.fieldCallType(cf))) {
+			switch (fa.host) {
+				case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c):
+					TypeFields.forceFieldBody(ctx.com, c, cf);
+				case FHAnon:
+			}
+		}
+		return FieldAccessTools.getFieldExpr(fa, FCall);
+	}
+
+	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position):TExpr {
+		var candidates = [fa.field].concat(fa.field.overloads);
+		var firstError:Null<Dynamic> = null;
+		for (cf in candidates) {
+			try {
+				return TypeUnification.withMonoRollback(function() {
+					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
+					var ce = monomorphizeParams(ctx, cf, callFieldExpr(ctx, fa2));
+					return switch (TypeFunctions.follow(ce.type)) {
+						case TFun(sig):
+							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+							makeCall(ctx, ce, r.el, sig.ret, p);
+						case _:
+							callExpr(ctx, ce, el, p);
+					}
+				});
+			} catch (e:UnifyError) {
+				if (firstError == null) firstError = e;
+			} catch (e:TypingError) {
+				if (firstError == null) firstError = e;
+			}
+		}
+		if (firstError != null) throw firstError;
+		throw new TypingError("No matching overload", p);
 	}
 
 	// A generic method's own type parameters become fresh monomorphs for the call.

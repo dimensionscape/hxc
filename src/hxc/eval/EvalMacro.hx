@@ -26,6 +26,7 @@ class EvalMacro {
 	static var curBuildFields:EvalValue = VNull;
 	static var curBuildClass:Null<TClass> = null;
 	static var builtClasses:Map<String, Bool> = new Map();
+	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
@@ -57,12 +58,14 @@ class EvalMacro {
 		reg2("warning", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
-		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?")));
+		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
+		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
+		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
 		reg2("typeof", "typeof", function(a) {
 			if (curTctx == null) throw new TypingError("typeof outside a macro", curPos);
-			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), NoValue);
+			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
 			return encodeType(ec, te.type);
 		});
 		reg2("follow", "follow", function(a) return a[0]);
@@ -84,6 +87,7 @@ class EvalMacro {
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
 		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type.
 		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, TypeFunctions.extractParamTypes(curBuildClass.params))));
+		reg2("getLocalClass", "get_local_class", function(a) return curBuildClass == null ? VNull : encodeClassRef(ec, curBuildClass));
 		reg2("makePosition", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
 			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
@@ -96,6 +100,17 @@ class EvalMacro {
 			if (!com.defines.rawDefined(k)) return VNull;
 			var v = com.defines.rawDefinedValue(k);
 			return VString(new VString(v, v.length));
+		});
+		reg2("define", "define", function(a) {
+			var k = StringTools.replace(strOf(a[0]), "-", "_");
+			if (a.length < 2 || a[1] == VNull) com.defines.rawDefine(k);
+			else com.defines.rawDefineValue(k, strOf(a[1]));
+			return VNull;
+		});
+		reg2("filterMessages", "filter_messages", function(a) return VNull);
+		reg2("onGenerate", "on_generate", function(a) {
+			onGenerateCallbacks.push({ec: ec, fn: a[0]});
+			return VNull;
 		});
 		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
@@ -165,7 +180,7 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name});
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name}, t.method);
 			case _:
 		}
 		var ec = getContext(com);
@@ -247,6 +262,37 @@ class EvalMacro {
 		var idx = proto.pnames.get(EvalHash.hash(t.method));
 		if (idx == null) throw new TypingError("@:build macro not found: " + t.method, p);
 		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
+	}
+
+	public static function runInitMacros(com:Context, exprs:Array<String>):Void {
+		if (exprs.length == 0) return;
+		for (s in exprs) {
+			var e = hxc.parser.Parser.parseExprString(s, "<macro>", com.defines);
+			switch (e.expr) {
+				case ECall(callee, args):
+					var t = macroTarget(callee);
+					if (t == null) throw new TypingError("--macro target must be a static call", e.pos);
+					loadMacroClass(com, {pack: t.pack, name: t.name}, t.method, true);
+					var ec = getContext(com);
+					var savedPos = curPos;
+					curPos = e.pos;
+					resolveMacroFn(ec, callee, e.pos)([for (a in args) encodeExpr(ec, a)]);
+					curPos = savedPos;
+				case _:
+					throw new TypingError("--macro expects a call expression", e.pos);
+			}
+		}
+	}
+
+	public static function runGenerateCallbacks():Void {
+		for (cb in onGenerateCallbacks) {
+			EvalContext.setCtx(cb.ec);
+			switch (cb.fn) {
+				case VFunction(f, _): f([VArray(new VArray([], 0))]);
+				case VFieldClosure(recv, f): f([recv, VArray(new VArray([], 0))]);
+				case _:
+			}
+		}
 	}
 
 	static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
@@ -332,7 +378,8 @@ class EvalMacro {
 				// The interpreter runs macro-world code, so build it from the macro context's modules
 				// (macro defined, its own parse cache), never the host com. Context API queries still
 				// target the host com (defines/types reflect the program being compiled).
-				hxc.typing.TypeFields.typeAllModules(macroCom);
+				hxc.typing.TypeResolve.resolveAll(macroCom);
+				hxc.typing.TypeFields.installLazy(macroCom);
 				if (macroCtx == null) {
 					var ec = EvalMain.create(true);
 					registerContext(ec, com);
@@ -357,22 +404,92 @@ class EvalMacro {
 	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
 	// copy into the macro context. The host parses every module without macro, which drops the #if macro
 	// members a macro function's body relies on. reference:
-	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path):Void {
+	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false):Void {
 		if (macroCom == null) {
 			macroCom = host.cloneForMacro();
 			hxc.context.ModuleLoader.attach(macroCom);
 			hxc.context.ModuleLoader.initBasicTypes(macroCom);
 		}
 		try {
-			hxc.context.ModuleLoader.loadModule(macroCom, path, Position.nullPos);
-			hxc.typing.TypeFields.typeAllModules(macroCom);
+			var m = hxc.context.ModuleLoader.loadModule(macroCom, path, Position.nullPos);
+			hxc.typing.TypeResolve.resolveAll(macroCom);
+			hxc.typing.TypeFields.installLazy(macroCom);
+			for (mt in m.types) switch (mt) {
+				case TClassDecl(c) if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")):
+					if (forceAll || fieldName == null)
+						hxc.typing.TypeFields.forceClassFields(macroCom, c);
+					else {
+						var cf = c.statics.get(fieldName);
+						if (cf == null) cf = c.fields.get(fieldName);
+						if (cf != null) {
+							hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
+							forceReachableStatics(macroCom, c, cf);
+						}
+					}
+				case _:
+			}
 		} catch (_:Dynamic) {}
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
 			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 			lastModuleCount = macroCom.modules.length;
+		} else if (macroCtx != null) {
+			macroCtx = null;
+			lastModuleCount = -1;
 		}
+	}
+
+	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Void {
+		var seen = new Map<TClassField, Bool>();
+		var ownerKey = Context.pathKey(owner.path);
+		inline function sameOwner(c:TClass):Bool {
+			return Context.pathKey(c.path) == ownerKey;
+		}
+		function scan(e:Null<TExpr>):Void {
+			if (e == null) return;
+			switch (e.expr) {
+				case TField(_, FStatic(c, cf)) if (sameOwner(c) && cf.expr == null && !seen.exists(cf)):
+					seen.set(cf, true);
+					hxc.typing.TypeFields.forceFieldBody(com, c, cf);
+					scan(cf.expr);
+				case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
+					scan(e1);
+				case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2):
+					scan(e1); scan(e2);
+				case TObjectDecl(fields):
+					for (f in fields) scan(f.expr);
+				case TArrayDecl(el) | TBlock(el):
+					for (x in el) scan(x);
+				case TCall(e1, el):
+					scan(e1); for (x in el) scan(x);
+				case TNew(_, _, el):
+					for (x in el) scan(x);
+				case TIf(e1, e2, e3):
+					scan(e1); scan(e2); scan(e3);
+				case TWhile(e1, e2, _):
+					scan(e1); scan(e2);
+				case TSwitch(e1, cases, edef):
+					scan(e1);
+					for (c in cases) {
+						for (v in c.values) scan(v);
+						scan(c.expr);
+					}
+					scan(edef);
+				case TTry(e1, catches):
+					scan(e1);
+					for (c in catches) scan(c.expr);
+				case TFunction(tf):
+					scan(tf.expr);
+				case TVarExpr(_, eo):
+					scan(eo);
+				case TReturn(eo):
+					scan(eo);
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_):
+			}
+		}
+		seen.set(root, true);
+		scan(root.expr);
 	}
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
@@ -387,7 +504,8 @@ class EvalMacro {
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
-			loadMacroClass(tctx.com, path);
+			loadMacroClass(tctx.com, path, fa.field.name);
+			ec = getContext(tctx.com);
 			proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
@@ -397,12 +515,23 @@ class EvalMacro {
 			case VFunction(f, _): f;
 			case _: throw new TypingError("Not a macro function: " + fa.field.name, p);
 		};
-		var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
-		var args = [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
-		curTctx = tctx;
-		var result = fn(args);
-		var astExpr = decodeExpr(ec, result, p);
-		return Typer.typeExpr(tctx, astExpr, withType);
+		var savedTctx = curTctx;
+		var savedPos = curPos;
+		try {
+			var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
+			var args = [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
+			curTctx = tctx;
+			curPos = p;
+			var result = fn(args);
+			var astExpr = decodeExpr(ec, result, p);
+			curTctx = savedTctx;
+			curPos = savedPos;
+			return Typer.typeExpr(tctx, astExpr, withType);
+		} catch (e:haxe.Exception) {
+			curTctx = savedTctx;
+			curPos = savedPos;
+			throw e;
+		}
 	}
 
 	// An Expr (or ExprOf) macro parameter receives the reified expression; any other parameter type

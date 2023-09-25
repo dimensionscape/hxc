@@ -598,6 +598,16 @@ class TypeUnification {
 
 	static function fastEqPair(a:T, b:T, a2:T, b2:T):Bool return fastEq(a, a2) && fastEq(b, b2);
 
+	static function fastEqAbstractHeadPair(a:T, b:T, a2:T, b2:T):Bool {
+		if (fastEqPair(a, b, a2, b2)) return true;
+		return switch [TypeFunctions.follow(a), TypeFunctions.follow(b), TypeFunctions.follow(a2), TypeFunctions.follow(b2)] {
+			case [TAbstract(aa, _), TAbstract(ab, _), TAbstract(aa2, _), TAbstract(ab2, _)]:
+				aa == aa2 && ab == ab2;
+			case _:
+				false;
+		}
+	}
+
 	static function fastEqUnboundMono(a:T, b:T):Bool {
 		return switch [a, b] {
 			case [TMono(m1), TMono(m2)] if (m1.type == null && m2.type == null): true;
@@ -1251,7 +1261,7 @@ class TypeUnification {
 
 	static function unifiesWithAbstract(uctx:UnificationContext, a:T, b:T, f:UnificationContext->Bool):Bool {
 		return recStackDefault(abstractCastStack, {a: a, b: b},
-			function(p) return fastEqPair(a, b, p.a, p.b),
+			function(p) return fastEqAbstractHeadPair(a, b, p.a, p.b),
 			function() return (uctx.allowTransitiveCast && f(uctx.withAllowTransitiveCast(false))) || f(uctx),
 			false);
 	}
@@ -1365,7 +1375,7 @@ class TypeUnification {
 		function unifiesAbstract(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, ats:Array<T>):Bool {
 			return try {
 				var uctx2 = get_abstract_context(uctx, a, b, ab);
-				recStackDefault(abstractCastStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
+				recStackDefault(abstractCastStack, {a: a, b: b}, function(p) return fastEqAbstractHeadPair(a, b, p.a, p.b),
 					function() return Lambda.exists(ats, function(at) return doesFuncUnifyArg(function(at) {
 						var at2 = TypeFunctions.applyParams(ab.params, tl, at);
 						if (ats == ab.to) withVariance(uctx2, f, at2, b);

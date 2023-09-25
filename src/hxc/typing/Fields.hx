@@ -218,7 +218,10 @@ class Fields {
 	}
 
 	static function usingDoesUnify(a:T, b:T):Bool {
-		return try { hxc.core.TypeUnification.unifyDefault(a, b); true; } catch (_:hxc.core.TypeUnification.UnifyError) false;
+		return try TypeUnification.withMonoRollback(function() {
+			TypeUnification.unifyDefault(a, b);
+			return true;
+		}) catch (_:hxc.core.TypeUnification.UnifyError) false;
 	}
 
 	// True when the abstract forwards member `name` to its underlying type: @:forward with no

@@ -15,8 +15,10 @@ import hxc.typing.TyperContext.CurrentFun;
 // field forces its body to type, resolving an inferred (unannotated) type before any consumer in
 // another module can bind it. A final flush forces every remaining field.
 class TypeFields {
+	static var lazyFieldTypes:haxe.ds.ObjectMap<TClassField, T> = new haxe.ds.ObjectMap();
+
 	public static function typeAllModules(ctx:Context):Void {
-		hxc.eval.EvalMacro.runBuildMacros(ctx);
+		if (!ctx.isMacro) hxc.eval.EvalMacro.runBuildMacros(ctx);
 		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat
 		// at the top level until the module set is closed (installAndForce stays re-entrancy-safe
 		// for the nested call build macros make).
@@ -44,6 +46,15 @@ class TypeFields {
 					try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}
 				case _:
 			}
+		}
+	}
+
+	public static function installLazy(ctx:Context):Void {
+		var pending:Array<TClassField> = [];
+		var i = 0;
+		while (i < ctx.modules.length) {
+			installModuleFields(ctx, ctx.modules[i], pending);
+			i++;
 		}
 	}
 
@@ -95,10 +106,14 @@ class TypeFields {
 		if (cf.expr != null) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var sigType = cf.type;
+		lazyFieldTypes.set(cf, sigType);
 		var r = new Ref(LAvailable(sigType));
 		var force = function():T {
+			for (f in _forcing) if (f == cf) return sigType;
 			// Re-entry while typing returns the resolved signature, breaking cycles.
 			r.set(LProcessing(function() return sigType));
+			cf.type = sigType;
+			_forcing.push(cf);
 			var savedMod = ctx.currentModule;
 			ctx.currentModule = m;
 			try {
@@ -107,11 +122,22 @@ class TypeFields {
 				ctx.unresolvedFields++;
 			}
 			ctx.currentModule = savedMod;
+			_forcing.remove(cf);
 			r.set(LAvailable(sigType));
 			return sigType;
 		};
 		r.set(LWait(force));
 		cf.type = TLazy(r);
+	}
+
+	public static function fieldCallType(cf:TClassField):T {
+		return switch (cf.type) {
+			case TLazy(_):
+				var t = lazyFieldTypes.get(cf);
+				t == null ? cf.type : t;
+			case _:
+				cf.type;
+		}
 	}
 
 	// Force the field bodies of a single class whose fields were just rewritten by a @:build macro.
@@ -135,8 +161,13 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
+			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}; case _: }
-			try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) { ctx.unresolvedFields++; }
+			try {
+				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
+			} catch (_:haxe.Exception) {
+				ctx.unresolvedFields++;
+			}
 		}
 		ctx.currentModule = savedMod;
 	}
@@ -156,9 +187,26 @@ class TypeFields {
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
 		var cff:ClassField = null;
-		for (f in d.dData) if (f.cffName.name == cf.name) { cff = f; break; }
-		if (cff == null) return;
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var nameSeen = new haxe.ds.StringMap<Int>();
+		for (f in d.dData) {
+			var fStatic = false;
+			for (a in f.cffAccess) if (a.access == AStatic) fStatic = true;
+			if (isAbsImpl && !fStatic && f.cffName.name != "new") fStatic = true;
+			var base = if (!fStatic && f.cffName.name == "new") c.constructor
+				else (fStatic ? c.statics : c.fields).get(f.cffName.name);
+			if (base == null) continue;
+			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
+			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
+			nameSeen.set(key, occ + 1);
+			var target = if (occ > 0 && base.overloads.length >= occ) base.overloads[base.overloads.length - occ] else base;
+			if (target == cf) {
+				cff = f;
+				break;
+			}
+		}
+		if (cff == null) return;
+		if (skipMacroBodyInHost(ctx, cf)) return;
 		var isStatic = false;
 		for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 		if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
@@ -169,7 +217,9 @@ class TypeFields {
 		_forcing.push(cf);
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
-		try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) {}
+		try {
+			typeFieldBody(tctx, cf, cff, isStatic, cf.type);
+		} catch (_:haxe.Exception) {}
 		ctx.currentModule = savedMod;
 		_forcing.remove(cf);
 	}

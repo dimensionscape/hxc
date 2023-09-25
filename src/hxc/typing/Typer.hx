@@ -47,6 +47,7 @@ class Typer {
 	}
 
 	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
+		if (TypeUnification.fastEq(e.type, t)) return e;
 		try {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
@@ -77,7 +78,7 @@ class Typer {
 								var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
 								var mapArg = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.args[0].t));
 								var mapRet = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.ret));
-								if (doesUnify(e.type, mapArg) && doesUnify(mapRet, t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+								if (doesUnify(e.type, mapArg) && doesUnify(mapRet, t)) return callImplCastDirect(ctx, a.impl, fc.cf, e, t, p);
 							case _:
 						}
 					} else if (doesUnify(e.type, TypeFunctions.applyParams(a.params, atl, fc.t))) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
@@ -104,6 +105,12 @@ class Typer {
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, [e], t, p);
+	}
+
+	static function callImplCastDirect(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
+		return TypeFunctions.mk(TCall(staticExpr, [e]), t, p);
 	}
 
 	static function isVoid(t:T):Bool {
@@ -1173,6 +1180,11 @@ class Typer {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
 				}
+				switch (ex.expr) {
+					case EUntyped(_):
+						return TypeFunctions.mk(TReturn(TypeFunctions.mk(TCast(teRaw, null), ctx.ret, teRaw.pos)), monoOrDynamic(ctx, withType, p), p);
+					case _:
+				}
 				var te = castOrUnify(ctx, ctx.ret, teRaw, p);
 				if (isVoid(TypeFunctions.follow(te.type))) {
 					switch (te.expr) {
@@ -1318,7 +1330,9 @@ class Typer {
 				// expression is typed as the abstract (Map) so it unifies with Map-typed targets; the
 				// concrete type is only the constructed runtime value (field access goes through the
 				// abstract impl).
-				var usedAtl = atl;
+				var usedAtl = atl.length == 0 && tp.path.tparams.length == 0
+					? [for (_ in a.params) spawnMonomorph(ctx, p)]
+					: atl;
 				if (tp.path.tparams.length == 0) switch (withType) {
 					case WithType(wt, _):
 						switch (TypeFunctions.follow(wt)) {
@@ -1355,11 +1369,9 @@ class Typer {
 				// otherwise fail to unify against the arguments).
 				var newCf = a.impl.statics.get("_new");
 				TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
-				var appliedType = TypeFunctions.applyParams(a.params, atl, TypeFunctions.follow(newCf.type));
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
-				var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, newCf, FHStatic(a.impl), false, p), FCall);
-				var callee = TypeFunctions.mk(fieldExpr.expr, appliedType, fieldExpr.pos);
-				Calls.buildCall(ctx, AKExpr(callee), el, withType, p);
+				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(a, atl, a.impl), false, p);
+				Calls.buildCall(ctx, AKField(fa), el, withType, p);
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
 				// and cast it to the abstract. .
