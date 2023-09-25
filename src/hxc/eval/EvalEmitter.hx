@@ -512,18 +512,32 @@ class EvalEmitter {
 		};
 	}
 
-	// Instance variable initializers run on the new object before the constructor body.
+	// Instance variable initializers run on the new object before the constructor body. A subclass inherits
+	// its ancestors' field initializers (each class's inits run in its own constructor, so super() runs
+	// them); walk the super chain root-first so ancestor inits apply before the subclass's, and no
+	// inherited initializer is skipped.
 	static function applyFieldInits(ctx:EvalContext, c:TClass, instVal:EvalValue):Void {
-		for (cf in c.orderedFields) {
-			switch (cf.kind) {
-				case Var(_) if (cf.expr != null):
-					var env = EvalContext.pushEnvironment(ctx, {isStatic: false, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0});
-					env.vthis = instVal;
-					var v = eval(ctx, cf.expr);
-					EvalContext.popEnvironment(ctx, env);
-					EvalField.setField(ctx, instVal, EvalHash.hash(cf.name), v, c.pos);
-				case _:
+		var chain:Array<TClass> = [];
+		var cur = c;
+		while (cur != null) {
+			chain.push(cur);
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		var i = chain.length - 1;
+		while (i >= 0) {
+			var cls = chain[i];
+			for (cf in cls.orderedFields) {
+				switch (cf.kind) {
+					case Var(_) if (cf.expr != null):
+						var env = EvalContext.pushEnvironment(ctx, {isStatic: false, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0});
+						env.vthis = instVal;
+						var v = eval(ctx, cf.expr);
+						EvalContext.popEnvironment(ctx, env);
+						EvalField.setField(ctx, instVal, EvalHash.hash(cf.name), v, cls.pos);
+					case _:
+				}
 			}
+			i--;
 		}
 	}
 
