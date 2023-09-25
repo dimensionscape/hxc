@@ -270,6 +270,10 @@ class Fields {
 					case TClassDecl(uc):
 						var r = tryUsingClass(ctx, uc, e, i, p);
 						if (r != null) return r;
+					// `using` on an abstract (e.g. `using haxe.Int64`) exposes its impl statics as extensions.
+					case TAbstractDecl(a) if (a.impl != null):
+						var r = tryUsingClass(ctx, a.impl, e, i, p);
+						if (r != null) return r;
 					case _:
 				}
 			}
@@ -281,6 +285,9 @@ class Fields {
 			for (mt in gm.types) switch (mt) {
 				case TClassDecl(uc):
 					var r = tryUsingClass(ctx, uc, e, i, p);
+					if (r != null) return r;
+				case TAbstractDecl(a) if (a.impl != null):
+					var r = tryUsingClass(ctx, a.impl, e, i, p);
 					if (r != null) return r;
 				case _:
 			}
