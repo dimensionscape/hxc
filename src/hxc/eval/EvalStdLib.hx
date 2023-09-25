@@ -2394,6 +2394,10 @@ class EvalStdLib {
 		if (newline) Sys.println("");
 	}
 
+	static function flushStdout():Void {
+		try Sys.stdout().flush() catch (_:Dynamic) {}
+	}
+
 	static function sysProgramPath(ctx:EvalContext):EvalValue {
 		for (mt in ctx.typeCache) switch (mt) {
 			case TClassDecl(c):
@@ -3496,10 +3500,14 @@ class EvalStdLib {
 			var args = [for (s in Sys.args()) mkStr(s)];
 			VArray(new VArray(args, args.length));
 		}));
-		reg(s, "Sys", "_command", vfn(a -> VInt(Sys.command(stringOf(arg(a, 0))))));
+		reg(s, "Sys", "_command", vfn(a -> {
+			flushStdout();
+			VInt(Sys.command(stringOf(arg(a, 0))));
+		}));
 		reg(s, "Sys", "command", vfn(a -> {
 			var cmd = stringOf(arg(a, 0));
 			var args = processArgs(ctx, arg(a, 1));
+			flushStdout();
 			return VInt(args == null ? Sys.command(cmd) : Sys.command(cmd, args));
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
