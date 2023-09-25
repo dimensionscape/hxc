@@ -65,8 +65,23 @@ class Typer {
 	// representation-preserving cast.
 	static function tryAbstractCast(ctx:TyperContext, e:TExpr, t:T, p:Position):Null<TExpr> {
 		switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, _):
-				if (a.impl != null) for (fc in a.fromField) if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+			case TAbstract(a, atl):
+				if (a.impl != null) for (fc in a.fromField) {
+					if (fc.cf.params.length > 0) {
+						// A generic @:from (e.g. haxe.Rest.of<T>): map its argument and return types
+						// through the abstract's type parameters (params -> atl) and fresh monos for the
+						// method's own parameters, then unify the source against the argument and the
+						// return against the target.
+						switch (TypeFunctions.follow(fc.cf.type)) {
+							case TFun(sig) if (sig.args.length == 1):
+								var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
+								var mapArg = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.args[0].t));
+								var mapRet = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.ret));
+								if (doesUnify(e.type, mapArg) && doesUnify(mapRet, t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+							case _:
+						}
+					} else if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+				}
 				for (ft in a.from) if (doesUnify(e.type, ft)) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
 		}
@@ -1084,10 +1099,17 @@ class Typer {
 					case _:
 						throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
 				}
-			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("_new")):
-				// An abstract is constructed by calling its impl's _new static.
+			case TAbstract(a, atl) if (a.impl != null && a.impl.statics.exists("_new")):
+				// An abstract is constructed by calling its impl _new static, with the abstract type
+				// parameters applied so a generic abstract threads them (a rigid type parameter would
+				// otherwise fail to unify against the arguments).
+				var newCf = a.impl.statics.get("_new");
+				TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
+				var appliedType = TypeFunctions.applyParams(a.params, atl, TypeFunctions.follow(newCf.type));
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
-				Calls.buildCall(ctx, Fields.typeField(ctx, implExpr, "_new", p, MCall(el), withType), el, withType, p);
+				var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, newCf, FHStatic(a.impl), false, p), FCall);
+				var callee = TypeFunctions.mk(fieldExpr.expr, appliedType, fieldExpr.pos);
+				Calls.buildCall(ctx, AKExpr(callee), el, withType, p);
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
 				// and cast it to the abstract. .

@@ -77,6 +77,14 @@ class Calls {
 		throw new TypingError("No matching @:arrayAccess setter", p);
 	}
 
+	// The element type of a haxe.Rest<T>, or null if `t` is not a rest type.
+	static function restElemType(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, params) if (params.length == 1 && a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest"): params[0];
+			case _: null;
+		};
+	}
+
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
 		function typeAgainst(name:String, t:T, e:Expr):TExpr {
 			var te = Typer.typeExpr(ctx, e, WithTypeTools.withArgument(t, name));
@@ -85,6 +93,39 @@ class Calls {
 		var out:Array<TExpr> = [];
 		var ei = 0, ai = 0;
 		while (ei < el.length || ai < args.length) {
+			// A trailing haxe.Rest<T> parameter absorbs every remaining argument. On targets without native
+			// rest support (eval, cpp) they are wrapped in an array and coerced through Rest's @:from
+			// Array;
+			// a single spread `...e` passes its source array directly.
+			if (args.length - ai == 1 && !args[ai].opt) {
+				var argT = restElemType(args[ai].t);
+				if (argT != null) {
+					var name = args[ai].name;
+					var rt = args[ai].t;
+					var remaining = el.slice(ei);
+					var spreadInner:Null<Expr> = (remaining.length == 1) ? (switch (remaining[0].expr) { case EUnop(Spread, Prefix, e): e; case _: null; }) : null;
+					var restExpr:TExpr;
+					if (spreadInner != null) {
+						restExpr = typeAgainst(name, rt, spreadInner);
+					} else if (remaining.length == 0) {
+						restExpr = typeAgainst(name, rt, new Expr(EArrayDecl([]), callp));
+					} else {
+						var arr = new Expr(EArrayDecl(remaining), callp);
+						var toType = switch (TypeFunctions.follow(argT)) {
+							case TDynamic(_):
+								var dynHint:TypeHint = {ct: CTPath({tpackage: [], tname: "Dynamic", tparams: [], tsub: null}), pos: callp};
+								var arrHint:TypeHint = {ct: CTPath({tpackage: [], tname: "Array", tparams: [TPType(dynHint)], tsub: null}), pos: callp};
+								new Expr(ECheckType(arr, arrHint), callp);
+							case _: arr;
+						};
+						restExpr = typeAgainst(name, rt, toType);
+					}
+					out.push(restExpr);
+					ei = el.length;
+					ai = args.length;
+					continue;
+				}
+			}
 			if (ei >= el.length) {
 				var a = args[ai];
 				if (!a.opt) throw new TypingError("Not enough arguments", callp);
