@@ -632,6 +632,53 @@ class EvalStdLib {
 		return out;
 	}
 
+	static function utf16IndexOfCodePoint(s:String, pos:Int):Int {
+		if (pos <= 0) return 0;
+		var i = 0;
+		var count = 0;
+		while (i < s.length && count < pos) {
+			var c = s.charCodeAt(i++);
+			if (c >= 0xD800 && c <= 0xDBFF && i < s.length) {
+				var c2 = s.charCodeAt(i);
+				if (c2 >= 0xDC00 && c2 <= 0xDFFF) i++;
+			}
+			count++;
+		}
+		return i;
+	}
+
+	static function utf16LengthOfCodePoints(s:String, pos:Int, len:Int):Int {
+		if (len < 0) return -1;
+		var start = utf16IndexOfCodePoint(s, pos);
+		var end = utf16IndexOfCodePoint(s, pos + len);
+		return end - start;
+	}
+
+	static function regexMatch(re:EReg, s:String):Bool {
+		var info = nativeRegexInfo.get(re);
+		if (info != null) info.lastSubject = s;
+		return re.match(s);
+	}
+
+	static function regexMatchSub(re:EReg, s:String, pos:Int, len:Int):Bool {
+		var info = nativeRegexInfo.get(re);
+		if (info != null) info.lastSubject = s;
+		var hostPos = utf16IndexOfCodePoint(s, pos);
+		var hostLen = len < 0 ? -1 : utf16LengthOfCodePoints(s, pos, len);
+		return re.matchSub(s, hostPos, hostLen);
+	}
+
+	static function regexMatchedPos(re:EReg):{pos:Int, len:Int} {
+		var p = re.matchedPos();
+		var info = nativeRegexInfo.get(re);
+		var s = info == null ? null : info.lastSubject;
+		if (s == null) return p;
+		return {
+			pos: stringLength(s.substr(0, p.pos)),
+			len: stringLength(s.substr(p.pos, p.len))
+		};
+	}
+
 	static function thisMap(a:Array<EvalValue>):Map<String, MapEntry> {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IMap(m): m; case _: new Map(); };
@@ -754,7 +801,7 @@ class EvalStdLib {
 	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
-	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool}>();
+	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool, lastSubject:Null<String>}>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 
@@ -3944,7 +3991,7 @@ class EvalStdLib {
 			var flags = stringOf(arg(a, 1));
 			validateRegexFlags(flags);
 			var re = new EReg(pattern, flags);
-			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0});
+			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0, lastSubject: null});
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
 		});
 
@@ -3997,7 +4044,10 @@ class EvalStdLib {
 			mkStrLen(s, haxe.io.Bytes.ofString(s).length);
 		}));
 
-		reg(inst, "EReg", "match", vmethod(a -> EvalValueTools.vbool(thisRegex(a).match(stringOf(arg(a, 1))))));
+		reg(inst, "EReg", "match", vmethod(a -> {
+			var s = stringOf(arg(a, 1));
+			EvalValueTools.vbool(regexMatch(thisRegex(a), s));
+		}));
 		reg(inst, "EReg", "matched", vmethod(a -> try mkNullStr(thisRegex(a).matched(toInt(arg(a, 1)))) catch (e:Dynamic) {
 			EvalExceptions.excString(ctx, Std.string(e));
 		}));
@@ -4008,7 +4058,7 @@ class EvalStdLib {
 			EvalExceptions.excString(ctx, Std.string(e));
 		}));
 		reg(inst, "EReg", "matchedPos", vmethod(a -> {
-			var p = try thisRegex(a).matchedPos() catch (e:Dynamic) {
+			var p = try regexMatchedPos(thisRegex(a)) catch (e:Dynamic) {
 				return EvalExceptions.excString(ctx, Std.string(e));
 			};
 			var m = new Map();
@@ -4018,21 +4068,32 @@ class EvalStdLib {
 		}));
 		reg(inst, "EReg", "matchSub", vmethod(a -> {
 			var len = a.length > 3 && arg(a, 3) != VNull ? toInt(arg(a, 3)) : -1;
-			EvalValueTools.vbool(thisRegex(a).matchSub(stringOf(arg(a, 1)), toInt(arg(a, 2)), len));
+			EvalValueTools.vbool(regexMatchSub(thisRegex(a), stringOf(arg(a, 1)), toInt(arg(a, 2)), len));
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
-			var parts = regexSplit(thisRegex(a), stringOf(arg(a, 1)));
+			var re = thisRegex(a);
+			var s = stringOf(arg(a, 1));
+			var info = nativeRegexInfo.get(re);
+			if (info != null) info.lastSubject = s;
+			var parts = regexSplit(re, s);
 			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
 		}));
 		reg(inst, "EReg", "replace", vmethod(a -> {
 			var re = thisRegex(a);
+			var info = nativeRegexInfo.get(re);
 			var by = stringOf(arg(a, 2));
-			mkStr(regexReplace(re, stringOf(arg(a, 1)), by));
+			var s = stringOf(arg(a, 1));
+			if (info != null) info.lastSubject = s;
+			mkStr(regexReplace(re, s, by));
 		}));
 		reg(inst, "EReg", "map", vmethod(a -> {
 			var recv = arg(a, 0);
 			var fn = arg(a, 2);
-			mkStr(thisRegex(a).map(stringOf(arg(a, 1)), function(_) return stringOf(callValueOn(recv, fn, [recv]))));
+			var re = thisRegex(a);
+			var s = stringOf(arg(a, 1));
+			var info = nativeRegexInfo.get(re);
+			if (info != null) info.lastSubject = s;
+			mkStr(re.map(s, function(_) return stringOf(callValueOn(recv, fn, [recv]))));
 		}));
 		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(stringOf(arg(a, 0))))));
 
