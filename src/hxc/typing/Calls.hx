@@ -37,6 +37,29 @@ class Calls {
 		return null;
 	}
 
+	// If a class implements haxe.Constraints.IMap<K,V> (haxe.ds.IntMap/StringMap/ObjectMap/...), return
+	// its key/value types. Such a map supports `m[k]` as m.get(k) / m.set(k, v); the @:arrayAccess proper
+	// lives on the Map abstract, but hxc types map literals as the concrete impl.
+	public static function imapKV(c:TClass, tl:TParams):Null<{k:T, v:T}> {
+		var cur = c;
+		var curtl = tl;
+		var guard = 0;
+		while (cur != null && guard++ < 50) {
+			for (impl in cur.interfaces) {
+				var ic = impl.c;
+				if (ic.path.name == "IMap") {
+					var ps = [for (t in impl.params) TypeFunctions.applyParams(cur.params, curtl, t)];
+					if (ps.length >= 2) return {k: ps[0], v: ps[1]};
+				}
+			}
+			if (cur.superClass == null) break;
+			var sup = cur.superClass;
+			curtl = [for (t in sup.params) TypeFunctions.applyParams(cur.params, curtl, t)];
+			cur = sup.c;
+		}
+		return null;
+	}
+
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
 		// Abstract @:arrayAccess. A write defers to the assignment/compound handlers (which call the
 		// (this, key, value) setter); a read dispatches here to the (this, key) getter.
@@ -76,6 +99,13 @@ class Calls {
 					try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
 					catch (_:UnifyError) throw new TypingError("Array index must be of type Int", e2.pos);
 					return AKExpr(TypeFunctions.mk(TArray(e1, e2), elem, p));
+				}
+				var kv = imapKV(c, tl);
+				if (kv != null && !mode.match(MSet(_))) {
+					// Read `m[k]` as m.get(k) (writes/increments are lowered by typeAssign/typeUnop).
+					var key = Typer.castOrUnify(ctx, kv.k, e2, e2.pos);
+					var getExpr = Typer.accGet(ctx, Fields.typeField(ctx, e1, "get", p, MGet, WithTypeTools.value));
+					return AKExpr(makeCall(ctx, getExpr, [key], ctx.com.basic.tnull(kv.v), p));
 				}
 			case _:
 		}

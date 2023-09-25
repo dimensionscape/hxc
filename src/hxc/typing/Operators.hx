@@ -496,6 +496,34 @@ class Operators {
 	}
 
 	static function typeAssign(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
+		// A concrete map write `m[k] = v` lowers to m.set(k, v), yielding v. Map operations stay on the
+		// concrete impl (which has get/set); the @:arrayAccess proper lives on the Map abstract.
+		switch (e1.expr) {
+			case EArray(baseE, keyE):
+				var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
+				var kv = switch (TypeFunctions.follow(tb.type)) { case TInst(c, tl): Calls.imapKV(c, tl); case _: null; };
+				if (kv != null) {
+					var tvoid = ctx.com.basic.tvoid;
+					var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
+					var tv = Typer.castOrUnify(ctx, kv.v, Typer.typeExpr(ctx, e2, WithTypeTools.withType(kv.v)), p);
+					var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
+					var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+					var vv = TypeFunctions.allocVar(VGenerated, "`v", tv.type, p);
+					var eb = TexprTools.makeLocal(vb, p);
+					var ek = TexprTools.makeLocal(vk, p);
+					var ev = TexprTools.makeLocal(vv, p);
+					var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "set", p, MGet, WithTypeTools.value));
+					var setCall = Calls.makeCall(ctx, setExpr, [ek, ev], tvoid, p);
+					return TypeFunctions.mk(TBlock([
+						TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p),
+						TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p),
+						TypeFunctions.mk(TVarExpr(vv, tv), tvoid, p),
+						setCall,
+						ev
+					]), tv.type, p);
+				}
+			case _:
+		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
 			case AKField(fa): assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
@@ -620,6 +648,9 @@ class Operators {
 						switch (TypeFunctions.follow(tb.type)) {
 							case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
 								return arrayIncr(ctx, a, tl, op, flag, tb, keyE, withType, p);
+							case TInst(c, tl):
+								var kv = Calls.imapKV(c, tl);
+								if (kv != null) return imapIncr(ctx, kv, op, flag, tb, keyE, withType, p);
 							case _:
 						}
 					case _:
@@ -641,6 +672,40 @@ class Operators {
 				var abs = tryAbstractUnop(ctx, op, flag, te, p);
 				if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 		};
+	}
+
+	// Increment/decrement of a concrete map element `m[k]++` via its IMap get(k)/set(k, v) methods,
+	// binding base and key to temps so each evaluates once. Postfix yields the old value, prefix the new.
+	static function imapIncr(ctx:TyperContext, kv:{k:T, v:T}, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
+		var tvoid = ctx.com.basic.tvoid;
+		var tint = ctx.com.basic.tint;
+		var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
+		var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
+		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+		var eb = TexprTools.makeLocal(vb, p);
+		var ek = TexprTools.makeLocal(vk, p);
+		var getExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "get", p, MGet, WithTypeTools.value));
+		var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "set", p, MGet, WithTypeTools.value));
+		var eget = Calls.makeCall(ctx, getExpr, [ek], ctx.com.basic.tnull(kv.v), p);
+		var binop = op.match(Increment) ? OpAdd : OpSub;
+		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
+		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
+		if (flag.match(Postfix)) {
+			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
+			var eold = TexprTools.makeLocal(vold, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+			stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, newv, p)], tvoid, p));
+			stmts.push(eold);
+			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+		}
+		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
+		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
+		var enew = TexprTools.makeLocal(vnew, p);
+		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
+		stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, enew, p)], tvoid, p));
+		stmts.push(enew);
+		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}
 
 	// Increment/decrement of an abstract @:arrayAccess element via getter+setter.
