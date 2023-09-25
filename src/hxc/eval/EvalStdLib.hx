@@ -2351,6 +2351,14 @@ class EvalStdLib {
 		};
 	}
 
+	static function evalMathInt(f:Float):Int {
+		if (Math.isNaN(f) || !Math.isFinite(f)) return 0x80000000;
+		var sign = f < 0 ? -1 : 1;
+		var r = Math.abs(f) % 2147483648.0;
+		var i = Std.int(r);
+		return sign < 0 ? -i : i;
+	}
+
 	static function isNegativeZero(f:Float):Bool {
 		return f == 0 && 1 / f == Math.NEGATIVE_INFINITY;
 	}
@@ -3208,9 +3216,9 @@ class EvalStdLib {
 		reg(s, "Math", "NaN", VFloat(Math.NaN));
 		reg(s, "Math", "POSITIVE_INFINITY", VFloat(Math.POSITIVE_INFINITY));
 		reg(s, "Math", "NEGATIVE_INFINITY", VFloat(Math.NEGATIVE_INFINITY));
-		reg(s, "Math", "floor", vfn(a -> VInt(Math.floor(toFloat(arg(a, 0))))));
-		reg(s, "Math", "ceil", vfn(a -> VInt(Math.ceil(toFloat(arg(a, 0))))));
-		reg(s, "Math", "round", vfn(a -> VInt(Math.round(toFloat(arg(a, 0))))));
+		reg(s, "Math", "floor", vfn(a -> VInt(evalMathInt(Math.ffloor(toFloat(arg(a, 0)))))));
+		reg(s, "Math", "ceil", vfn(a -> VInt(evalMathInt(Math.fceil(toFloat(arg(a, 0)))))));
+		reg(s, "Math", "round", vfn(a -> VInt(evalMathInt(Math.fround(toFloat(arg(a, 0)))))));
 		reg(s, "Math", "abs", vfn(a -> VFloat(Math.abs(toFloat(arg(a, 0))))));
 		reg(s, "Math", "sqrt", vfn(a -> VFloat(Math.sqrt(toFloat(arg(a, 0))))));
 		reg(s, "Math", "pow", vfn(a -> VFloat(Math.pow(toFloat(arg(a, 0)), toFloat(arg(a, 1))))));
