@@ -1156,7 +1156,7 @@ class TypeUnification {
 								case _:
 							}
 							for (f in an.fields) {
-								try typeEq(uctx, TypeFunctions.fieldType(f), t1)
+								try typeEq(uctx.withEqualityKind(EqRightDynamic), TypeFunctions.fieldType(f), t1)
 								catch (e:UnifyError) error([invalidField(f.name)].concat(e.errors));
 							}
 						} catch (e:UnifyError) {
