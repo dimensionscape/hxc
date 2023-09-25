@@ -14,6 +14,9 @@ import cpp.NativeSocket;
 
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
+#if cpp
+@:cppFileCode("#include <stdio.h>")
+#end
 class EvalStdLib {
 	static function reg(map:Map<Int, Array<BuiltinField>>, typeName:String, fieldName:String, v:EvalValue):Void {
 		var key = EvalHash.hash(typeName);
@@ -2217,11 +2220,32 @@ class EvalStdLib {
 		return head + "e" + sign + exp;
 	}
 
+	static function cFormatFloat(f:Float, precision:Int):String {
+		#if cpp
+		return switch (precision) {
+			case 12:
+				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.12g", v); return String(buf); })({0})', f);
+			case 15:
+				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.15g", v); return String(buf); })({0})', f);
+			case 18:
+				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.18g", v); return String(buf); })({0})', f);
+			case _:
+				Std.string(f);
+		}
+		#else
+		return Std.string(f);
+		#end
+	}
+
 	static function floatString(f:Float):String {
 		if (Math.isNaN(f)) return "nan";
 		if (!Math.isFinite(f)) return f < 0 ? "neg_infinity" : "infinity";
 		if (isNegativeZero(f)) return "-0";
-		var s = Std.string(f);
+		var s = cFormatFloat(f, 12);
+		if (Std.parseFloat(s) != f) {
+			s = cFormatFloat(f, 15);
+			if (Std.parseFloat(s) != f) s = cFormatFloat(f, 18);
+		}
 		if (StringTools.endsWith(s, ".")) s = s.substr(0, s.length - 1);
 		return normalizeFloatExponent(s);
 	}
