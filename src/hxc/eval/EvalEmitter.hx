@@ -73,16 +73,18 @@ class EvalEmitter {
 					result = eval(ctx, e1);
 				} catch (ex:EvalRunTimeException) {
 					ev.env = savedEnv;
-					var matched = false;
-					for (c in catches) {
-						if (catchMatches(ctx, ex.value, c.v.type)) {
-							savedEnv.locals[slot(savedEnv, c.v.id)] = ex.value;
-							matched = true;
-							result = eval(ctx, c.expr);
-							break;
-						}
-					}
-					if (!matched) throw ex;
+					result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; });
+				} catch (ex:Dynamic) {
+					// Control-flow signals must reach their own handlers, never a program try/catch.
+					if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)) throw ex;
+					// Any other host exception is an hxc-internal failure escaping the interpreter (a dropped
+					// field, a native builtin error). Present it to the running program as a normal thrown
+					// value so its own try/catch (e.g. the utest runner) records an error and continues,
+					// instead of aborting the whole run. The value is re-raised if no local catch matches.
+					ev.env = savedEnv;
+					var s = Std.string(ex);
+					var v = VString(new VString(s, s.length));
+					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
 				}
 				result;
 			case TArray(e1, e2):
@@ -354,12 +356,29 @@ class EvalEmitter {
 		return VNull;
 	}
 
+	// Match a thrown value against a try's catch clauses; run the first that matches, else onUnmatched.
+	static function runCatch(ctx:EvalContext, value:EvalValue, catches:Array<TCatch>, savedEnv:EvalEnv, onUnmatched:Void->EvalValue):EvalValue {
+		for (c in catches) {
+			if (catchMatches(ctx, value, c.v.type)) {
+				savedEnv.locals[slot(savedEnv, c.v.id)] = value;
+				return eval(ctx, c.expr);
+			}
+		}
+		return onUnmatched();
+	}
+
 	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position):EvalValue {
 		return switch (fa) {
 			case FStatic(c, cf):
-				EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name));
+				// A static field missing from the prototype means its owning body failed to type and was
+				// dropped (a known hxc typing gap). Surface it as a catchable interpreted exception so the
+				// running program (e.g. the utest runner) records an error for that test and keeps going,
+				// rather than a host NotFound escaping the interpreter and aborting the whole run.
+				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name))
+				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)");
 			case FEnum(en, ef):
-				EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name));
+				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
+				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)");
 			case FInstance(_, _, cf) | FClosure(_, cf):
 				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
 			case FAnon(cf):
