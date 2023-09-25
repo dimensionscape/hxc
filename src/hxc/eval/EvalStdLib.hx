@@ -1981,6 +1981,36 @@ class EvalStdLib {
 		return VObject(new VObject([], ODictionary(m)));
 	}
 
+	static function stackEnum(ctx:EvalContext, name:String, args:Array<EvalValue>):EvalValue {
+		return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.StackItem")), EvalHash.hash(name), VArray(new VArray(args, args.length)));
+	}
+
+	static function stackFilePos(ctx:EvalContext, env:EvalEnv, item:EvalValue):EvalValue {
+		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
+		if (file == null) file = "?";
+		return stackEnum(ctx, "FilePos", [item, mkStr(file), VInt(0), VInt(0)]);
+	}
+
+	static function stackItem(ctx:EvalContext, env:EvalEnv):EvalValue {
+		return switch (env.info.kind) {
+			case EKLocalFunction(index):
+				stackFilePos(ctx, env, stackEnum(ctx, "LocalFunction", [VInt(index)]));
+			case EKMethod(typeKey, fieldKey):
+				var typeName = EvalHash.revHash(typeKey);
+				var fieldName = EvalHash.revHash(fieldKey);
+				stackFilePos(ctx, env, stackEnum(ctx, "Method", [typeName == null ? VNull : mkStr(typeName), fieldName == null ? VNull : mkStr(fieldName)]));
+			case EKEntrypoint:
+				stackFilePos(ctx, env, VNull);
+		};
+	}
+
+	static function callStackValue(ctx:EvalContext):EvalValue {
+		var envs = EvalExceptions.callStack(EvalContext.getEval(ctx));
+		if (envs.length >= 2) envs = envs.slice(2);
+		var items = [for (env in envs) stackItem(ctx, env)];
+		return VArray(new VArray(items, items.length));
+	}
+
 	static function objectIterator(items:Array<EvalValue>):EvalValue {
 		var index = 0;
 		return mkObject([
@@ -2985,6 +3015,8 @@ class EvalStdLib {
 		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
 		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
+		reg(s, "haxe.NativeStackTrace", "_callStack", vfn(a -> callStackValue(ctx)));
+		reg(s, "haxe.NativeStackTrace", "exceptionStack", vfn(a -> VArray(new VArray([], 0))));
 		reg(s, "eval.vm.Gc", "allocated_bytes", vfn(a -> VFloat(gcCurrentBytes())));
 		reg(s, "eval.vm.Gc", "compact", vfn(a -> { gcCompact(); VNull; }));
 		reg(s, "eval.vm.Gc", "counters", vfn(a -> gcCounters()));
