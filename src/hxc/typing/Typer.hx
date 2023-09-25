@@ -588,10 +588,14 @@ class Typer {
 				}
 			case _:
 		}
-		var bareEnum = findBareEnumConstructor(ctx, i);
-		if (bareEnum != null) {
-			var et = TexprTools.makeTypeExpr(TEnumDecl(bareEnum), p);
-			return Fields.enumConstructor(ctx, bareEnum, et, i, p);
+		var bareEnum = findBareEnumLike(ctx, i);
+		if (bareEnum != null) switch (bareEnum) {
+			case TEnumDecl(en):
+				return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
+			case TAbstractDecl(a) if (a.impl != null):
+				var cf = a.impl.statics.get(i);
+				return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
+			case _:
 		}
 		if (i == "trace") {
 			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
@@ -674,23 +678,25 @@ class Typer {
 		return null;
 	}
 
-	// A bare identifier that names a constructor of an enum declared in the current module.
-	static function findBareEnumConstructor(ctx:TyperContext, i:String):Null<TEnum> {
+	// A bare identifier that names a constructor of an enum, or a member of an enum abstract, declared
+	// in the current module or brought in by a module import. Returns the owning enum/abstract decl.
+	static function findBareEnumLike(ctx:TyperContext, i:String):Null<ModuleType> {
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
-		function scan(types:Array<ModuleType>):Null<TEnum> {
+		function scan(types:Array<ModuleType>):Null<ModuleType> {
 			for (mt in types) switch (mt) {
-				case TEnumDecl(en) if (en.constrs.exists(i)): return en;
+				case TEnumDecl(en) if (en.constrs.exists(i)): return mt;
+				case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)): return mt;
 				case _:
 			}
 			return null;
 		}
 		var own = scan(m.types);
 		if (own != null) return own;
-		// A module import brings the constructors of that module's enums into scope.
+		// A module import brings the constructors/members of that module's enums into scope.
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) {
-			function scanPath(path:hxc.core.Globals.Path):Null<TEnum> {
+			function scanPath(path:hxc.core.Globals.Path):Null<ModuleType> {
 				var md = try hxc.context.ModuleLoader.loadModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
 				return md == null ? null : scan(md.types);
 			}
