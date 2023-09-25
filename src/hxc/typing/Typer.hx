@@ -380,6 +380,16 @@ class Typer {
 					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
 						return typeMapDeclaration(ctx, el, withType, p);
 					case _:
+						if (el.length == 0) switch (withType) {
+							case WithType(wt, _):
+								switch (TypeFunctions.follow(wt)) {
+									case TAbstract(a, _) if (a.path.name == "Map"):
+										var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
+										return typeNew(ctx, tp, [], withType, p);
+									case _:
+								}
+							case _:
+						}
 						var expectedEt:Null<T> = switch (withType) {
 							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
 								case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"): t;
