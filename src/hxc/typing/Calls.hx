@@ -117,6 +117,43 @@ class Calls {
 		return {el: out, tfunc: TFun({args: args, ret: r})};
 	}
 
+	// `f.bind(params)` builds `{ var f = <fn>; var g = given...; return function(missing) return f(all); }`.
+	// A param that is `_`, or an argument past the supplied params, stays a parameter of the bound function.
+	static function typeBind(ctx:TyperContext, fe:TExpr, sig:TSignature, params:Array<Expr>, p:Position):TExpr {
+		var tvoid = ctx.com.basic.tvoid;
+		var decls:Array<TExpr> = [];
+		var fv = TypeFunctions.allocVar(VGenerated, "`f", fe.type, p);
+		decls.push(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, p));
+		var feLocal = TexprTools.makeLocal(fv, p);
+		var callArgs:Array<TExpr> = [];
+		var missingVl:Array<TVar> = [];
+		var missingArgs:Array<TSignatureArg> = [];
+		var pi = 0;
+		for (arg in sig.args) {
+			var isUnderscore = pi < params.length && (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
+			if (pi >= params.length || isUnderscore) {
+				var v = TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p);
+				missingVl.push(v);
+				missingArgs.push({name: arg.name, opt: arg.opt, t: arg.t});
+				callArgs.push(TexprTools.makeLocal(v, p));
+				if (isUnderscore) pi++;
+			} else {
+				var te = Typer.castOrUnify(ctx, arg.t, Typer.typeExpr(ctx, params[pi], WithTypeTools.withArgument(arg.t, arg.name)), params[pi].pos);
+				var v = TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p);
+				decls.push(TypeFunctions.mk(TVarExpr(v, te), tvoid, p));
+				callArgs.push(TexprTools.makeLocal(v, p));
+				pi++;
+			}
+		}
+		if (pi < params.length) throw new TypingError("Too many callback arguments", p);
+		var call = makeCall(ctx, feLocal, callArgs, sig.ret, p);
+		var body = TypeFunctions.mk(TReturn(call), sig.ret, p);
+		var tf = new TFunc([for (v in missingVl) {v: v}], sig.ret, body);
+		var ft = TFun({args: missingArgs, ret: sig.ret});
+		decls.push(TypeFunctions.mk(TFunction(tf), ft, p));
+		return TypeFunctions.mk(TBlock(decls), ft, p);
+	}
+
 	// A call target goes through buildCall (core: plain function value and method call).
 	public static function typeCall(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		switch (callee.expr) {
@@ -135,6 +172,15 @@ class Calls {
 					var cases:Array<SwitchCase> = [{values: [el[0]], guard: null, expr: new Expr(EConst(CIdent("true")), p), pos: p}];
 					var def = {e: new Expr(EConst(CIdent("false")), p), pos: p};
 					return Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p);
+				}
+			case EField(e1, "bind", _):
+				// `f.bind(args)` partial application: when f is a function, bind the given args and return
+				// a
+				// closure over the missing ones (`_` or omitted).
+				var fe = try Typer.typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) null;
+				if (fe != null) switch (TypeFunctions.follow(fe.type)) {
+					case TFun(sig): return typeBind(ctx, fe, sig, el, p);
+					case _:
 				}
 			case _:
 		}
