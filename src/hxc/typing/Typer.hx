@@ -1085,7 +1085,17 @@ class Typer {
 				// expression is typed as the abstract (Map) so it unifies with Map-typed targets; the
 				// concrete type is only the constructed runtime value (field access goes through the
 				// abstract impl).
-				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, atl, p));
+				var usedAtl = atl;
+				if (tp.path.tparams.length == 0) switch (withType) {
+					case WithType(wt, _):
+						switch (TypeFunctions.follow(wt)) {
+							case TAbstract(wa, wtl) if (wa == a && wtl.length == a.params.length):
+								usedAtl = wtl;
+							case _:
+						}
+					case _:
+				}
+				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, usedAtl, p));
 				switch (ct) {
 					case TInst(c, ctl):
 						hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
@@ -1095,7 +1105,7 @@ class Typer {
 							case _: {args: [], ret: ctx.com.basic.tvoid};
 						};
 						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-						TypeFunctions.mk(TNew(c, ctl, r.el), TAbstract(a, atl), p);
+						TypeFunctions.mk(TNew(c, ctl, r.el), TAbstract(a, usedAtl), p);
 					case _:
 						throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
 				}
