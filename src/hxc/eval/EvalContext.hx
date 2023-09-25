@@ -122,7 +122,10 @@ class EvalContext {
 		this.vectorPrototype = null;
 		this.toplevel = VNull;
 		this.eval = new Eval();
-		this.maxStackDepth = 1000;
+		// Soft call-depth cap. Well above any legitimate recursion in the corpus, but far below the
+		// point where the host's native stack is exhausted, so runaway interpreted recursion raises a
+		// catchable exception (matching the reference eval) instead of crashing the whole process.
+		this.maxStackDepth = 20000;
 		this.maxPrintDepth = 100;
 		this.resources = new StringMap();
 		this.defines = defines == null ? new Define() : defines;
@@ -153,6 +156,7 @@ class EvalContext {
 		var locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
 		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];
 		var stackDepth = eval.env == null ? 1 : eval.env.stackDepth + 1;
+		if (stackDepth > ctx.maxStackDepth) hxc.eval.EvalExceptions.excString(ctx, "Stack overflow");
 		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval);
 		eval.env = env;
 		return env;
