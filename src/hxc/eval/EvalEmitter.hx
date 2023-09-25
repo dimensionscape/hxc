@@ -186,6 +186,12 @@ class EvalEmitter {
 						var r = binopValue(ctx, sub, fe.locals[s], eval(ctx, e2), p);
 						fe.locals[s] = r;
 						r;
+					case TField(_, FStatic(c, cf)):
+						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p);
+						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+						var r = binopValue(ctx, sub, proto.pfields[idx], eval(ctx, e2), p);
+						proto.pfields[idx] = r;
+						r;
 					case TField(fe, fa):
 						var obj = eval(ctx, fe);
 						var name = fieldKey(fa);
@@ -308,6 +314,18 @@ class EvalEmitter {
 							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
 						};
 						fe.locals[s] = next;
+						flag == Prefix ? next : old;
+					case TField(_, FStatic(c, cf)):
+						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p);
+						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+						var old = proto.pfields[idx];
+						var delta = op == Increment ? 1 : -1;
+						var next = switch (old) {
+							case VInt(i): VInt(i + delta);
+							case VFloat(f): VFloat(f + delta);
+							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+						};
+						proto.pfields[idx] = next;
 						flag == Prefix ? next : old;
 					case TField(fe, fa):
 						var obj = eval(ctx, fe);
