@@ -202,6 +202,10 @@ class Calls {
 				return typeTrace(ctx, el, withType, p);
 			case EConst(CIdent("super")):
 				return typeSuperCall(ctx, el, p);
+			case EField({expr: EConst(CIdent("Std"))}, "string", _) if (el.length == 1):
+				var e = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
+				var converted = abstractToString(ctx, e, p);
+				if (converted != null) return converted;
 			case EField(e1, "match", _) if (el.length == 1):
 				// `e.match(pattern)` on an enum is sugar for `switch e { case pattern: true; case _: false;
 				// }`.
@@ -227,6 +231,29 @@ class Calls {
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
 		return buildCall(ctx, acc, el, withType, p);
+	}
+
+	static function abstractToString(ctx:TyperContext, e:TExpr, p:Position):Null<TExpr> {
+		switch (TypeFunctions.follow(e.type)) {
+			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
+				function call(x:TExpr):TExpr {
+					return buildCall(ctx, Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(ctx.com.basic.tstring)), [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
+				}
+				var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
+				var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };
+				if (simple) {
+					var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
+					return TypeFunctions.mk(TIf(check, strNull, call(e)), ctx.com.basic.tstring, p);
+				}
+				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", e.type, p);
+				var tmpLocal = TexprTools.makeLocal(tmp, p);
+				var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, p);
+				var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
+				var body = TypeFunctions.mk(TIf(check, strNull, call(tmpLocal)), ctx.com.basic.tstring, p);
+				return TypeFunctions.mk(TBlock([decl, body]), ctx.com.basic.tstring, p);
+			case _:
+				return null;
+		}
 	}
 
 	// True when `.match()` applies: the receiver is an enum, or a @:forward abstract over one that

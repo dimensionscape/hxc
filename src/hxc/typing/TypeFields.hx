@@ -1,6 +1,7 @@
 package hxc.typing;
 
 import hxc.ast.Ast;
+import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.Ref;
 import hxc.core.TypeFunctions;
@@ -195,7 +196,7 @@ class TypeFields {
 			switch (cff.cffKind) {
 				case FVar(_, eo):
 					if (eo != null) {
-						var te = Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), cff.cffPos);
+						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						cf.expr = checkCast(te, sigType);
 					}
 				case FFun(fd):
@@ -208,7 +209,7 @@ class TypeFields {
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
 					if (eo != null) {
-						var te = Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), cff.cffPos);
+						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						cf.expr = checkCast(te, sigType);
 					}
 			}
@@ -217,6 +218,20 @@ class TypeFields {
 			throw e;
 		}
 		cleanup();
+	}
+
+	static function hasVarHint(k:ClassFieldKind):Bool {
+		return switch (k) {
+			case FVar(th, _) | FProp(_, _, th, _): th != null;
+			case _: true;
+		};
+	}
+
+	static function typeVarInitializer(tctx:TyperContext, sigType:T, eo:Expr, hasHint:Bool, p:Position):TExpr {
+		if (hasHint) return Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), p);
+		var te = Typer.typeExpr(tctx, eo, WithTypeTools.value);
+		TypeUnification.unifyDefault(te.type, sigType);
+		return te;
 	}
 
 	// An Int literal bound to a Float field is rewritten to a Float literal.

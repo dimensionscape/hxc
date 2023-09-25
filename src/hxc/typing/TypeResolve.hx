@@ -333,6 +333,9 @@ class TypeResolve {
 			if (cf == null) continue;
 			try {
 				resolveFieldType(ctx, c.params, cf, cff);
+				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
+					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
+				}
 			} catch (e:ContextError) {
 				ctx.unresolvedFields++;
 			}

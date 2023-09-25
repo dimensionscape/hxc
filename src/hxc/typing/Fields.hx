@@ -14,6 +14,7 @@ class Fields {
 	public static function fieldAccess(ctx:TyperContext, mode:AccessMode, f:TClassField, fh:FieldHost, e:TExpr, pfield:Position):AccessKind {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
+		forceFieldType(ctx, f, fh);
 		// Each field access consumes one @:bypassAccessor from the pending count.
 		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;
 		function makeAccess(isInline:Bool):FieldAccess {
@@ -60,6 +61,19 @@ class Fields {
 						throw new TypingError(msg != null ? msg : ("Field " + f.name + " is not available"), pfield);
 				}
 		};
+	}
+
+	static function forceFieldType(ctx:TyperContext, f:TClassField, fh:FieldHost):Void {
+		if (f.expr != null) return;
+		switch (f.kind) {
+			case Var(_):
+				switch (fh) {
+					case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c):
+						TypeFields.forceFieldBody(ctx.com, c, f);
+					case FHAnon:
+				}
+			case _:
+		}
 	}
 
 	static function fieldTypeC(c:TClass, tl:TParams, f:TClassField):T {
@@ -111,7 +125,11 @@ class Fields {
 						if (f != null) {
 							switch (a.status.get()) {
 								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
-								case AbstractStatics(ab) if (ab.impl != null): fieldAccess(ctx, mode, f, FHStatic(ab.impl), e, pfield);
+								case AbstractStatics(ab) if (ab.impl != null):
+									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) || TypeFunctions.hasClassFieldFlag(f, CfEnum))
+										? FHAbstract(ab, TypeFunctions.extractParamTypes(ab.params), ab.impl)
+										: FHStatic(ab.impl);
+									fieldAccess(ctx, mode, f, host, e, pfield);
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
 						} else {
