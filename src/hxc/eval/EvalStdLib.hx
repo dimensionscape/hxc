@@ -2377,6 +2377,8 @@ class EvalStdLib {
 				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.12g", v); return String(buf); })({0})', f);
 			case 15:
 				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.15g", v); return String(buf); })({0})', f);
+			case 17:
+				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.17g", v); return String(buf); })({0})', f);
 			case 18:
 				untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.18g", v); return String(buf); })({0})', f);
 			case _:
@@ -2394,7 +2396,10 @@ class EvalStdLib {
 		var s = cFormatFloat(f, 12);
 		if (Std.parseFloat(s) != f) {
 			s = cFormatFloat(f, 15);
-			if (Std.parseFloat(s) != f) s = cFormatFloat(f, 18);
+			if (Std.parseFloat(s) != f) {
+				s = cFormatFloat(f, 17);
+				if (Std.parseFloat(s) != f) s = cFormatFloat(f, 18);
+			}
 		}
 		if (StringTools.endsWith(s, ".")) s = s.substr(0, s.length - 1);
 		return normalizeFloatExponent(s);
