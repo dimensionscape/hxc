@@ -370,7 +370,19 @@ class Calls {
 		return TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos);
 	}
 
-	static function callExpr(ctx:TyperContext, ce:TExpr, el:Array<Expr>, p:Position):TExpr {
+	// A generic local function stores its type params on its TVar (extra); a call gives each a fresh
+	// monomorph so the arguments can bind them.
+	static function monomorphizeLocalParams(ctx:TyperContext, ce:TExpr):TExpr {
+		return switch (ce.expr) {
+			case TLocal(v) if (v.extra != null && v.extra.params.length > 0):
+				var monos:TParams = [for (_ in v.extra.params) Typer.spawnMonomorph(ctx, ce.pos)];
+				TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(v.extra.params, monos, ce.type), ce.pos);
+			case _: ce;
+		};
+	}
+
+	static function callExpr(ctx:TyperContext, ce0:TExpr, el:Array<Expr>, p:Position):TExpr {
+		var ce = monomorphizeLocalParams(ctx, ce0);
 		return switch (TypeFunctions.follow(ce.type)) {
 			case TFun(sig):
 				var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);

@@ -274,11 +274,11 @@ class Typer {
 				typeNew(ctx, tp, el, withType, p);
 			case EFunction(kind, f):
 				var savedTypeParams = ctx.typeParams;
+				var localParams:TypeParams = [];
 				if (f.fParams.length > 0) {
 					// A local function's own type parameters (`function foo<T>(...)`) are in scope for its
 					// argument/return hints and body.
 					var declPath:hxc.core.Globals.Path = {pack: [], name: switch (kind) { case FKNamed(n, _): n.name; case _: "`localfun"; }};
-					var localParams:TypeParams = [];
 					for (tp in f.fParams) localParams.push(Typeload.typeTypeParam(ctx.com, declPath, () -> savedTypeParams.concat(localParams), tp));
 					ctx.typeParams = savedTypeParams.concat(localParams);
 				}
@@ -318,6 +318,8 @@ class Typer {
 					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalVariable), n.name, ft, n.pos);
 					case _: null;
 				};
+				// A named generic local function stores its type params so a later call can monomorphize them.
+				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
 				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
 				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
