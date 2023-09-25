@@ -45,7 +45,7 @@ class EvalStdLib {
 
 	static function thisString(a:Array<EvalValue>):String {
 		return switch (a[0]) {
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case _: "";
 		};
 	}
@@ -798,7 +798,7 @@ class EvalStdLib {
 			case VFalse: false;
 			case VInt(i): i;
 			case VFloat(f): f;
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case VNativeString(s): s;
 			case VArray(va): [for (i in 0...va.alength) valueToJson(va.avalues[i])];
 			case VVector(vv): [for (item in vv) valueToJson(item)];
@@ -877,7 +877,7 @@ class EvalStdLib {
 				case VFloat(f):
 					buf.add(Math.isFinite(f) ? floatString(f) : "null");
 				case VString(s):
-					buf.add(jsonString(s.sstring));
+					buf.add(jsonString(normalizeString(s.sstring)));
 				case VNativeString(s):
 					buf.add(jsonString(s));
 				case VArray(va):
@@ -949,7 +949,7 @@ class EvalStdLib {
 			case VFalse: false;
 			case VInt(i): i;
 			case VFloat(f): f;
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case VNativeString(s): s;
 			case VArray(va): [for (i in 0...va.alength) valueToHost(ctx, va.avalues[i])];
 			case VVector(vv): [for (item in vv) valueToHost(ctx, item)];
@@ -1119,7 +1119,7 @@ class EvalStdLib {
 						buf.add(floatString(f));
 					}
 				case VString(s):
-					stringTag(s.sstring);
+					stringTag(normalizeString(s.sstring));
 				case VNativeString(s):
 					stringTag(s);
 				case VArray(va):
@@ -1508,60 +1508,61 @@ class EvalStdLib {
 	}
 
 	static function bytesString(b:haxe.io.Bytes, pos:Int, len:Int):String {
-		if (!bytesUtf8Valid(b, pos, len)) throw "Invalid string";
 		var out = new StringBuf();
-		var start = pos;
 		var end = pos + len;
 		var i = pos;
-		while (i < end) {
-			if (b.get(i) == 0) {
-				if (i > start) out.add(b.getString(start, i - start));
-				out.addChar(0);
-				start = i + 1;
-			}
-			i++;
-		}
-		if (end > start) out.add(b.getString(start, end - start));
-		return out.toString();
-	}
-
-	static function bytesUtf8Valid(b:haxe.io.Bytes, pos:Int, len:Int):Bool {
-		var end = pos + len;
-		var i = pos;
-		inline function cont(index:Int):Bool {
-			var c = b.get(index);
-			return c >= 0x80 && c <= 0xBF;
-		}
 		while (i < end) {
 			var c = b.get(i++);
-			if (c < 0x80) continue;
-			if (c >= 0xC2 && c <= 0xDF) {
-				if (i >= end || !cont(i++)) return false;
-			} else if (c == 0xE0) {
-				if (i + 1 >= end) return false;
-				var c2 = b.get(i++);
-				if (c2 < 0xA0 || c2 > 0xBF || !cont(i++)) return false;
-			} else if ((c >= 0xE1 && c <= 0xEC) || (c >= 0xEE && c <= 0xEF)) {
-				if (i + 1 >= end || !cont(i++) || !cont(i++)) return false;
-			} else if (c == 0xED) {
-				if (i + 1 >= end) return false;
-				var c2 = b.get(i++);
-				if (c2 < 0x80 || c2 > 0x9F || !cont(i++)) return false;
-			} else if (c == 0xF0) {
-				if (i + 2 >= end) return false;
-				var c2 = b.get(i++);
-				if (c2 < 0x90 || c2 > 0xBF || !cont(i++) || !cont(i++)) return false;
-			} else if (c >= 0xF1 && c <= 0xF3) {
-				if (i + 2 >= end || !cont(i++) || !cont(i++) || !cont(i++)) return false;
-			} else if (c == 0xF4) {
-				if (i + 2 >= end) return false;
-				var c2 = b.get(i++);
-				if (c2 < 0x80 || c2 > 0x8F || !cont(i++) || !cont(i++)) return false;
+			if (c < 0x80) {
+				out.addChar(c);
+			} else if (c >= 0xC2 && c <= 0xDF) {
+				if (i < end) {
+					var c2 = b.get(i);
+					if (c2 >= 0x80 && c2 <= 0xBF) {
+						i++;
+						addUtf8Char(out, ((c & 0x1F) << 6) | (c2 & 0x3F));
+					} else {
+						addUtf8Char(out, 0xFFFD);
+					}
+				} else {
+					addUtf8Char(out, 0xFFFD);
+				}
+			} else if (c >= 0xE0 && c <= 0xEF) {
+				var min = c == 0xE0 ? 0xA0 : 0x80;
+				if (i + 1 < end) {
+					var c2 = b.get(i);
+					var c3 = b.get(i + 1);
+					if (c2 >= min && c2 <= 0xBF && c3 >= 0x80 && c3 <= 0xBF) {
+						i += 2;
+						addUtf8Char(out, ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F));
+					} else {
+						addUtf8Char(out, 0xFFFD);
+					}
+				} else {
+					i = end;
+					addUtf8Char(out, 0xFFFD);
+				}
+			} else if (c >= 0xF0 && c <= 0xF4) {
+				var min = c == 0xF0 ? 0x90 : 0x80;
+				if (i + 2 < end) {
+					var c2 = b.get(i);
+					var c3 = b.get(i + 1);
+					var c4 = b.get(i + 2);
+					if (c2 >= min && c2 <= 0xBF && c3 >= 0x80 && c3 <= 0xBF && c4 >= 0x80 && c4 <= 0xBF) {
+						i += 3;
+						addUtf8Char(out, ((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F));
+					} else {
+						addUtf8Char(out, 0xFFFD);
+					}
+				} else {
+					i = end;
+					addUtf8Char(out, 0xFFFD);
+				}
 			} else {
-				return false;
+				addUtf8Char(out, 0xFFFD);
 			}
 		}
-		return true;
+		return out.toString();
 	}
 
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
@@ -1933,12 +1934,12 @@ class EvalStdLib {
 
 	static function syncXmlHostFields(vi:VInstance, x:Xml):Void {
 		switch (instanceFieldIfExists(vi, "nodeName")) {
-			case VString(s) if (x.nodeType == Xml.Element): x.nodeName = s.sstring;
+			case VString(s) if (x.nodeType == Xml.Element): x.nodeName = normalizeString(s.sstring);
 			case VNativeString(s) if (x.nodeType == Xml.Element): x.nodeName = s;
 			case _:
 		}
 		switch (instanceFieldIfExists(vi, "nodeValue")) {
-			case VString(s) if (x.nodeType != Xml.Element && x.nodeType != Xml.Document): x.nodeValue = s.sstring;
+			case VString(s) if (x.nodeType != Xml.Element && x.nodeType != Xml.Document): x.nodeValue = normalizeString(s.sstring);
 			case VNativeString(s) if (x.nodeType != Xml.Element && x.nodeType != Xml.Document): x.nodeValue = s;
 			case _:
 		}
@@ -2115,7 +2116,7 @@ class EvalStdLib {
 	static function nativeStringOf(v:EvalValue):String {
 		return switch (v) {
 			case VNativeString(s): s;
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case _: stringOf(v);
 		};
 	}
@@ -2303,7 +2304,7 @@ class EvalStdLib {
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case VInt(i): Std.string(i);
 			case VEnumValue(ev): "e:" + ev.epath + ":" + ev.eindex + ":" + [for (a in ev.eargs) mapKey(a)].join(",");
 			case VObject(o): "o:" + objId(o);
@@ -2399,13 +2400,40 @@ class EvalStdLib {
 		return normalizeFloatExponent(s);
 	}
 
-	static inline function mkStr(s:String):EvalValue return VString(new VString(s, s.length));
-	static inline function mkStrLen(s:String, len:Int):EvalValue return VString(new VString(s, len));
+	public static function normalizeString(s:String):String {
+		var codes = utf8ByteCodes(s);
+		if (codes == null) return s;
+		var buf = new StringBuf();
+		for (c in codes) addUtf8Char(buf, c);
+		return buf.toString();
+	}
+
+	public static function stringLength(s:String):Int {
+		return utf8Codes(s).length;
+	}
+
+	static inline function mkStr(s:String):EvalValue {
+		var ns = normalizeString(s);
+		return VString(new VString(ns, stringLength(ns)));
+	}
+	static inline function mkStrLen(s:String, len:Int):EvalValue return VString(new VString(normalizeString(s), len));
 	static inline function mkNullStr(s:String):EvalValue return s == null ? VNull : mkStr(s);
 
 	static function stringFastCodeAt(s:String, index:Int):EvalValue {
 		var codes = utf8Codes(s);
 		return index < 0 || index >= codes.length ? VNull : VInt(codes[index]);
+	}
+
+	static function stringFromCodes(codes:Array<Int>, start:Int, len:Int):String {
+		var buf = new StringBuf();
+		var end = Std.int(Math.min(codes.length, start + len));
+		for (i in start...end) addUtf8Char(buf, codes[i]);
+		return buf.toString();
+	}
+
+	static function stringCharAt(s:String, index:Int):String {
+		var codes = utf8Codes(s);
+		return index < 0 || index >= codes.length ? "" : stringFromCodes(codes, index, 1);
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
@@ -2517,6 +2545,9 @@ class EvalStdLib {
 	}
 
 	static function stringReplace(s:String, sub:String, by:String):String {
+		s = normalizeString(s);
+		sub = normalizeString(sub);
+		by = normalizeString(by);
 		if (sub.length == 0) {
 			if (by.length == 0 || s.length == 0) return s;
 			var b = new StringBuf();
@@ -2527,6 +2558,45 @@ class EvalStdLib {
 			return b.toString();
 		}
 		return s.split(sub).join(by);
+	}
+
+	static function stringSubstr(s:String, pos:Int, len:Null<Int>):String {
+		var codes = utf8Codes(s);
+		var l = codes.length;
+		if (pos < 0) {
+			pos = l + pos;
+			if (pos < 0) pos = 0;
+		}
+		if (pos > l) pos = l;
+		var n = len == null ? l - pos : len;
+		if (n < 0) n = 0;
+		return stringFromCodes(codes, pos, n);
+	}
+
+	static function stringSubstring(s:String, start:Int, end:Null<Int>):String {
+		var codes = utf8Codes(s);
+		var l = codes.length;
+		if (start < 0) start = 0;
+		if (start > l) start = l;
+		var stop = end == null ? l : end;
+		if (stop < 0) stop = 0;
+		if (stop > l) stop = l;
+		if (start > stop) {
+			var tmp = start;
+			start = stop;
+			stop = tmp;
+		}
+		return stringFromCodes(codes, start, stop - start);
+	}
+
+	static function stringSplit(s:String, delimiter:String):Array<String> {
+		s = normalizeString(s);
+		delimiter = normalizeString(delimiter);
+		if (delimiter == "") {
+			var codes = utf8Codes(s);
+			return [for (i in 0...codes.length) stringFromCodes(codes, i, 1)];
+		}
+		return s.split(delimiter);
 	}
 
 	static inline function numericWhitespace(code:Int):Bool {
@@ -2597,6 +2667,8 @@ class EvalStdLib {
 	}
 
 	static function stringIndexOf(s:String, sub:String, startValue:EvalValue):Int {
+		s = normalizeString(s);
+		sub = normalizeString(sub);
 		var start = startValue == VNull ? 0 : toInt(startValue);
 		if (sub.length == 0) {
 			if (start < 0) return 0;
@@ -2613,6 +2685,8 @@ class EvalStdLib {
 	}
 
 	static function stringLastIndexOf(s:String, sub:String, startValue:EvalValue):Int {
+		s = normalizeString(s);
+		sub = normalizeString(sub);
 		var start = startValue == VNull ? s.length : toInt(startValue);
 		if (sub.length == 0) {
 			if (start < 0) return 0;
@@ -2889,7 +2963,7 @@ class EvalStdLib {
 			case VFalse: "false";
 			case VInt(i): Std.string(i);
 			case VFloat(f): floatString(f);
-			case VString(s): s.sstring;
+			case VString(s): normalizeString(s.sstring);
 			case VNativeString(s): s;
 			case VFunction(_, _): "#fun";
 			case VFieldClosure(_, _): "#closure";
@@ -3289,16 +3363,16 @@ class EvalStdLib {
 
 		var inst = ctx.builtins.instanceBuiltins;
 
-		reg(inst, "String", "charAt", vmethod(a -> mkStr(thisString(a).charAt(toInt(arg(a, 1))))));
+		reg(inst, "String", "charAt", vmethod(a -> mkStr(stringCharAt(thisString(a), toInt(arg(a, 1))))));
 		reg(inst, "String", "charCodeAt", vmethod(a -> {
 			var str = thisString(a);
 			var i = toInt(arg(a, 1));
-			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
+			stringFastCodeAt(str, i);
 		}));
 		reg(inst, "String", "cca", vmethod(a -> {
 			var str = thisString(a);
 			var i = toInt(arg(a, 1));
-			(i >= 0 && i < str.length) ? VInt(str.charCodeAt(i)) : VNull;
+			stringFastCodeAt(str, i);
 		}));
 		reg(inst, "String", "indexOf", vmethod(a -> VInt(stringIndexOf(thisString(a), stringOf(arg(a, 1)), arg(a, 2)))));
 		reg(inst, "String", "lastIndexOf", vmethod(a -> {
@@ -3310,15 +3384,15 @@ class EvalStdLib {
 		reg(inst, "String", "substr", vmethod(a -> {
 			var str = thisString(a);
 			var pos = toInt(arg(a, 1));
-			mkStr(a.length > 2 && arg(a, 2) != VNull ? str.substr(pos, toInt(arg(a, 2))) : str.substr(pos));
+			mkStr(stringSubstr(str, pos, a.length > 2 && arg(a, 2) != VNull ? toInt(arg(a, 2)) : null));
 		}));
 		reg(inst, "String", "substring", vmethod(a -> {
 			var str = thisString(a);
 			var start = toInt(arg(a, 1));
-			mkStr(a.length > 2 && arg(a, 2) != VNull ? str.substring(start, toInt(arg(a, 2))) : str.substring(start));
+			mkStr(stringSubstring(str, start, a.length > 2 && arg(a, 2) != VNull ? toInt(arg(a, 2)) : null));
 		}));
 		reg(inst, "String", "split", vmethod(a -> {
-			var parts = thisString(a).split(stringOf(arg(a, 1)));
+			var parts = stringSplit(thisString(a), stringOf(arg(a, 1)));
 			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
 		}));
 		reg(inst, "String", "toString", vmethod(a -> arg(a, 0)));
@@ -4450,7 +4524,7 @@ class EvalStdLib {
 
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
 		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> mkBytes(ctx, haxe.io.Bytes.alloc(toInt(arg(a, 0))))));
-		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(stringOf(arg(a, 0))))));
+		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(normalizeString(stringOf(arg(a, 0)))))));
 		reg(s, "haxe.io.Bytes", "ofHex", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofHex(stringOf(arg(a, 0))))));
 		reg(s, "haxe.io.Bytes", "ofData", vfn(a -> arg(a, 0)));
 		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> try VInt(thisBytes([arg(a, 0)]).get(toInt(arg(a, 1)))) catch (e:Dynamic) {
