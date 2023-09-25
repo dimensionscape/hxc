@@ -334,7 +334,7 @@ class Typer {
 									case _:
 								}
 								var expectVoid = switch (TypeFunctions.follow(sig.ret)) {
-									case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void" && !kind.match(FKArrow);
+									case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
 									case _: false;
 								};
 								if (!expectVoid) switch (TypeFunctions.follow(ret)) {
