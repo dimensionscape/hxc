@@ -1565,6 +1565,18 @@ class EvalStdLib {
 		return out.toString();
 	}
 
+	static function bytesRawString(b:haxe.io.Bytes, pos:Int, len:Int):String {
+		var out = new StringBuf();
+		for (i in pos...pos + len) out.addChar(b.get(i));
+		return out.toString();
+	}
+
+	static function bytesStringStrict(b:haxe.io.Bytes, pos:Int, len:Int):String {
+		var raw = bytesRawString(b, pos, len);
+		if (utf8ByteCodes(raw) == null) throw "Invalid string";
+		return bytesString(b, pos, len);
+	}
+
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
@@ -2554,7 +2566,9 @@ class EvalStdLib {
 	}
 
 	static function utf8Valid(s:String):Bool {
-		return true;
+		if (utf8ByteCodes(s) != null) return true;
+		for (i in 0...s.length) if (s.charCodeAt(i) > 0xFF) return true;
+		return false;
 	}
 
 	static function stringReplace(s:String, sub:String, by:String):String {
@@ -4615,7 +4629,9 @@ class EvalStdLib {
 		}));
 		reg(inst, "haxe.io.Bytes", "toString", vmethod(a -> {
 			var b = thisBytes(a);
-			mkStr(bytesString(b, 0, b.length));
+			try mkStr(bytesStringStrict(b, 0, b.length)) catch (e:Dynamic) {
+				EvalExceptions.excString(ctx, Std.string(e));
+			}
 		}));
 		reg(inst, "haxe.io.Bytes", "toHex", vmethod(a -> mkStr(thisBytes(a).toHex())));
 		reg(inst, "haxe.io.Bytes", "sub", vmethod(a -> {
