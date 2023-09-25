@@ -2273,6 +2273,16 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
+	static function definesForExternal(defines:Map<String, String>):Map<String, String> {
+		var out = new Map<String, String>();
+		for (k => v in defines) {
+			out.set(k, v);
+			var dashed = StringTools.replace(k, "_", "-");
+			if (dashed != k) out.set(dashed, v);
+		}
+		return out;
+	}
+
 	static function mkObject(fields:Array<{name:String, value:EvalValue}>):EvalValue {
 		var m:Map<Int, EvalValue> = new Map();
 		for (f in fields) m.set(EvalHash.hash(f.name), f.value);
@@ -3576,6 +3586,8 @@ class EvalStdLib {
 						var key = stringOf(arg(args, 0));
 						return ctx.defines.rawDefined(key) ? mkStr(ctx.defines.rawDefinedValue(key)) : VNull;
 					}, true);
+				case "get_defines":
+					VFunction(function(args) return mkStringMap(ctx, definesForExternal(ctx.defines.values)), true);
 				case _:
 					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
 			}
