@@ -773,12 +773,51 @@ class Typer {
 		};
 	}
 
+	// `T.new` is the constructor as a value: a function `(args) -> new T(args)`. Handles a class and a
+	// @:forward.new abstract (whose construction forwards to the underlying class).
+	static function constructorValue(ctx:TyperContext, e1:Expr, mode:AccessMode, p:Position):Null<AccessKind> {
+		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return null;
+		// (target class, its params, the value type of `new`, an optional cast target for an abstract)
+		var target:Null<{c:TClass, tl:TParams, vt:T, castTo:Null<T>}> = switch (te1.expr) {
+			case TTypeExpr(TClassDecl(c)):
+				var monos:TParams = [for (_ in c.params) TypeFunctions.mkMono()];
+				{c: c, tl: monos, vt: TInst(c, monos), castTo: null};
+			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
+				var atl:TParams = [for (_ in a.params) TypeFunctions.mkMono()];
+				switch (TypeFunctions.follow(a.thisType)) {
+					case TInst(uc, upl): {c: uc, tl: upl, vt: TInst(uc, upl), castTo: TAbstract(a, atl)};
+					case _: null;
+				}
+			case _: null;
+		};
+		if (target == null) return null;
+		if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
+		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.c.path) + "()' instead", p);
+		hxc.eval.EvalMacro.ensureBuilt(ctx.com, target.c);
+		var ctor = target.c.constructor;
+		if (ctor == null) return null;
+		hxc.typing.TypeFields.forceFieldBody(ctx.com, target.c, ctor);
+		var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(target.c.params, target.tl, TypeFunctions.follow(ctor.type)))) { case TFun(s): s; case _: return null; };
+		var vl = [for (arg in sig.args) TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p)];
+		var el:Array<TExpr> = [for (v in vl) TexprTools.makeLocal(v, p)];
+		var enew = TypeFunctions.mk(TNew(target.c, target.tl, el), target.vt, p);
+		var result = target.castTo == null ? enew : TypeFunctions.mk(TCast(enew, null), target.castTo, p);
+		var retT = target.castTo == null ? target.vt : target.castTo;
+		var body = TypeFunctions.mk(TReturn(result), retT, p);
+		var tf = new TFunc([for (v in vl) {v: v}], retT, body);
+		return AKExpr(TypeFunctions.mk(TFunction(tf), TFun({args: sig.args, ret: retT}), p));
+	}
+
 	public static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		return switch (edef) {
 			case EConst(CIdent(s)):
 				typeIdent(ctx, s, p, mode, withType);
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
+				if (field == "new") {
+					var cv = constructorValue(ctx, e1, mode, p);
+					if (cv != null) return cv;
+				}
 				switch (e1.expr) {
 					case EConst(CString(s, _)) if (field == "code" && s.length == 1):
 						var code = s.charCodeAt(0);
