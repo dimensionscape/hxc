@@ -528,6 +528,20 @@ class EvalStdLib {
 		}
 	}
 
+	static function regexEscape(s:String):String {
+		var buf = new StringBuf();
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			switch (c) {
+				case "\\".code | "^".code | "$".code | ".".code | "[".code | "]".code | "*".code | "+".code | "?".code:
+					buf.addChar("\\".code);
+				case _:
+			}
+			buf.addChar(c);
+		}
+		return buf.toString();
+	}
+
 	static function regexReplacement(re:EReg, by:String):String {
 		var info = nativeRegexInfo.get(re);
 		var captureCount = info == null ? 9 : info.captureCount;
@@ -3878,7 +3892,7 @@ class EvalStdLib {
 			var fn = arg(a, 2);
 			mkStr(thisRegex(a).map(stringOf(arg(a, 1)), function(_) return stringOf(callValueOn(recv, fn, [recv]))));
 		}));
-		reg(s, "EReg", "escape", vfn(a -> mkStr(EReg.escape(stringOf(arg(a, 0))))));
+		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(stringOf(arg(a, 0))))));
 
 		reg(inst, "haxe.ds.List", "add", vmethod(a -> {
 			var list = thisList(a);
