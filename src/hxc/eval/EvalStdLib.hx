@@ -594,7 +594,9 @@ class EvalStdLib {
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 
-	public static function processEvents():Void {}
+	public static function processEvents():Void {
+		sys.thread.Thread.processEvents();
+	}
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
