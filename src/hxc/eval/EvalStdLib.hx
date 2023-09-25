@@ -2313,6 +2313,8 @@ class EvalStdLib {
 	}
 
 	static function utf8Codes(s:String):Array<Int> {
+		var bytes = utf8ByteCodes(s);
+		if (bytes != null) return bytes;
 		var out = [];
 		var i = 0;
 		while (i < s.length) {
@@ -2325,6 +2327,38 @@ class EvalStdLib {
 				}
 			}
 			out.push(c);
+		}
+		return out;
+	}
+
+	static function utf8ByteCodes(s:String):Null<Array<Int>> {
+		var out = [];
+		var i = 0;
+		while (i < s.length) {
+			var c = s.charCodeAt(i++);
+			if (c > 0xFF) return null;
+			if (c < 0x80) {
+				out.push(c);
+			} else if (c >= 0xC2 && c <= 0xDF && i < s.length) {
+				var c2 = s.charCodeAt(i++);
+				if (c2 < 0x80 || c2 > 0xBF) return null;
+				out.push(((c & 0x1F) << 6) | (c2 & 0x3F));
+			} else if (c >= 0xE0 && c <= 0xEF && i + 1 < s.length) {
+				var c2 = s.charCodeAt(i++);
+				var c3 = s.charCodeAt(i++);
+				var min = c == 0xE0 ? 0xA0 : 0x80;
+				if (c2 < min || c2 > 0xBF || c3 < 0x80 || c3 > 0xBF) return null;
+				out.push(((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F));
+			} else if (c >= 0xF0 && c <= 0xF4 && i + 2 < s.length) {
+				var c2 = s.charCodeAt(i++);
+				var c3 = s.charCodeAt(i++);
+				var c4 = s.charCodeAt(i++);
+				var min = c == 0xF0 ? 0x90 : 0x80;
+				if (c2 < min || c2 > 0xBF || c3 < 0x80 || c3 > 0xBF || c4 < 0x80 || c4 > 0xBF) return null;
+				out.push(((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F));
+			} else {
+				return null;
+			}
 		}
 		return out;
 	}
