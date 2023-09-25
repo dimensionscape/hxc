@@ -21,6 +21,22 @@ class Calls {
 		return TypeFunctions.mk(TCall(e, params), t, p);
 	}
 
+	// The element type of a class implementing ArrayAccess<T>, walking the superclass chain and applying
+	// type parameters at each step; null when no ancestor declares array access.
+	static function arrayAccessElem(c:TClass, tl:TParams):Null<T> {
+		var cur = c;
+		var curtl = tl;
+		var guard = 0;
+		while (cur != null && guard++ < 50) {
+			if (cur.arrayAccess != null) return TypeFunctions.applyParams(cur.params, curtl, cur.arrayAccess);
+			if (cur.superClass == null) break;
+			var sup = cur.superClass;
+			curtl = [for (t in sup.params) TypeFunctions.applyParams(cur.params, curtl, t)];
+			cur = sup.c;
+		}
+		return null;
+	}
+
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
 		// Abstract @:arrayAccess. A write defers to the assignment/compound handlers (which call the
 		// (this, key, value) setter); a read dispatches here to the (this, key) getter.
@@ -50,6 +66,18 @@ class Calls {
 					effType = TypeFunctions.applyParams(a.params, tl, a.thisType);
 				case _: break;
 			}
+		}
+		// A class implementing ArrayAccess<T> (String, eval.Vector, ...) allows native `e[i]` with element
+		// type T and an Int index; the read/write both compile to a TArray the evaluator handles directly.
+		switch (TypeFunctions.follow(effType)) {
+			case TInst(c, tl):
+				var elem = arrayAccessElem(c, tl);
+				if (elem != null) {
+					try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
+					catch (_:UnifyError) throw new TypingError("Array index must be of type Int", e2.pos);
+					return AKExpr(TypeFunctions.mk(TArray(e1, e2), elem, p));
+				}
+			case _:
 		}
 		var pt = Typer.spawnMonomorph(ctx, p);
 		var t = ctx.com.basic.tarray(pt);

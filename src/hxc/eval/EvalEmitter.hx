@@ -90,6 +90,9 @@ class EvalEmitter {
 					case VArray(va):
 						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
 						(idx >= 0 && idx < va.alength) ? va.avalues[idx] : VNull;
+					case VVector(vv):
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						vecElemGet(vv, idx);
 					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
 				}
 			case TTypeExpr(mt):
@@ -194,6 +197,11 @@ class EvalEmitter {
 								var r = binopValue(ctx, sub, arrayElemGet(va, idx), eval(ctx, e2), p);
 								arrayElemSet(va, idx, r);
 								r;
+							case VVector(vv):
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var r = binopValue(ctx, sub, vecElemGet(vv, idx), eval(ctx, e2), p);
+								vecElemSet(vv, idx, r);
+								r;
 							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
 						}
 					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target");
@@ -220,6 +228,16 @@ class EvalEmitter {
 		if (idx >= va.alength) va.alength = idx + 1;
 	}
 
+	// A fixed-size eval.Vector: reads out of range yield null and writes out of range are dropped, since a
+	// Vector never grows (its slots are allocated at construction).
+	static inline function vecElemGet(vv:Array<EvalValue>, idx:Int):EvalValue {
+		return (idx >= 0 && idx < vv.length) ? vv[idx] : VNull;
+	}
+
+	static inline function vecElemSet(vv:Array<EvalValue>, idx:Int, value:EvalValue):Void {
+		if (idx >= 0 && idx < vv.length) vv[idx] = value;
+	}
+
 	static function assign(ctx:EvalContext, lhs:TExpr, value:EvalValue):EvalValue {
 		switch (lhs.expr) {
 			case TLocal(v):
@@ -237,6 +255,9 @@ class EvalEmitter {
 						while (va.avalues.length <= idx) va.avalues.push(VNull);
 						va.avalues[idx] = value;
 						if (idx >= va.alength) va.alength = idx + 1;
+					case VVector(vv):
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						vecElemSet(vv, idx, value);
 					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
 				}
 			case _:
@@ -297,6 +318,17 @@ class EvalEmitter {
 									case _: EvalExceptions.unexpectedValue(ctx, old, "number");
 								};
 								arrayElemSet(va, idx, next);
+								flag == Prefix ? next : old;
+							case VVector(vv):
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var old = vecElemGet(vv, idx);
+								var delta = op == Increment ? 1 : -1;
+								var next = switch (old) {
+									case VInt(i): VInt(i + delta);
+									case VFloat(f): VFloat(f + delta);
+									case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+								};
+								vecElemSet(vv, idx, next);
 								flag == Prefix ? next : old;
 							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
 						}
