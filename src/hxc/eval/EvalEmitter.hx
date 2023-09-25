@@ -380,7 +380,13 @@ class EvalEmitter {
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
 				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)");
 			case FInstance(_, _, cf) | FClosure(_, cf):
-				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(cf.name));
+				// Accessing a field on a null receiver raises a catchable Null Object Reference, matching
+				// the reference; returning null here would silently mask the error.
+				var recv = eval(ctx, e1);
+				switch (recv) {
+					case VNull: EvalExceptions.excString(ctx, "Null Object Reference");
+					case _: EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+				}
 			case FAnon(cf):
 				// On a class instance/builtin viewed structurally an instance method binds its receiver
 				// (e.g. iterator via Iterable); on a plain anonymous object the field is a raw value.
