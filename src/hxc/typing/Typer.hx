@@ -645,19 +645,19 @@ class Typer {
 		if (m == null) return null;
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports == null) return null;
-		function tryType(mt:ModuleType):Null<AccessKind> {
+		function tryType(mt:ModuleType, lookupName:String):Null<AccessKind> {
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 			switch (mt) {
 				case TClassDecl(c):
 					hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
-					var cf = c.statics.get(i);
+					var cf = c.statics.get(lookupName);
 					if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
 				case TAbstractDecl(a) if (a.impl != null):
-					var cf = a.impl.statics.get(i);
+					var cf = a.impl.statics.get(lookupName);
 					if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
 						return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
-				case TEnumDecl(en) if (en.constrs.exists(i)):
-					return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
+				case TEnumDecl(en) if (en.constrs.exists(lookupName)):
+					return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), lookupName, p);
 				case _:
 			}
 			return null;
@@ -665,11 +665,11 @@ class Typer {
 		var g = imports.globals.get(i);
 		if (g != null) {
 			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt); if (r != null) return r; }
+			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) return r; }
 		}
 		for (w in imports.wildcards) {
 			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt); if (r != null) return r; }
+			if (mt != null) { var r = tryType(mt, i); if (r != null) return r; }
 		}
 		return null;
 	}
