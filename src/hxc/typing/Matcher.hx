@@ -11,6 +11,12 @@ import hxc.core.WithType;
 import hxc.core.Globals;
 import hxc.core.TypingError;
 
+// Signals that a decision-tree column holds an extractor pattern; compile catches it and routes to
+// compileExtractors. Extractor.
+private class MatchExtractor extends haxe.Exception {
+	public function new() super("match-extractor");
+}
+
 enum ConKind {
 	ConConst(c:TConstant);
 	ConEnum(e:TEnum, ef:TEnumField);
@@ -251,6 +257,17 @@ class PatternMaker {
 					case _:
 						throw new TypingError("Unrecognized pattern", p);
 				}
+			case EBinop(OpArrow, e1, e2):
+				// Extractor pattern `expr => subpattern`: bind `_` to the subject, type the extractor
+				// expression, then match subpattern against its result type.
+				var restore = Typer.saveLocals(ctx);
+				ctx.locals = pctx.ctxLocals.copy();
+				var v = Typer.addLocal(ctx, VGenerated, "_", t, p);
+				var te1 = Typer.typeExpr(ctx, e1, WithTypeTools.value);
+				v.name = "tmp";
+				restore();
+				var pat = make(pctx, toplevel, te1.type, e2);
+				return {pat: PatExtractor(v, te1, pat), pos: p};
 			case EArrayDecl(el):
 				var et = switch (TypeFunctions.follow(t)) { case TInst(_, [x]): x; case _: TypeFunctions.tDynamic; };
 				PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
@@ -627,7 +644,7 @@ class DtCompile {
 						loop([{v: v, p: pat.pos, e: subject}].concat(bindings), pat1);
 					case PatVariable(_) | PatAny:
 					case PatExtractor(_, _, _):
-						throw new TypingError("Extractor patterns are not yet ported", mc.c.pos);
+						throw new MatchExtractor();
 					case _:
 						throw new TypingError("Unexpected pattern: " + (switch (pat.pat) { case PatTuple(_): "tuple"; case _: "?"; }), mc.c.pos);
 				}
@@ -652,7 +669,7 @@ class DtCompile {
 		var cs = expand(cases);
 		var sel = selectColumn(subjects, cs);
 		cs = expand(sel.cases);
-		return compileSwitch(mctx, sel.subjects, cs);
+		return try compileSwitch(mctx, sel.subjects, cs) catch (_:MatchExtractor) compileExtractors(mctx, sel.subjects, cs);
 	}
 
 	static function compileLeaf(mctx:MatcherContext, subjects:Array<TExpr>, mc:MatchCase, cases:Array<MatchCase>):Dt {
@@ -725,6 +742,64 @@ class DtCompile {
 		}
 		var dtNull = compile(mctx, rest, sig.nullCases.concat(def));
 		return guardNull(mctx, subject, dtNull, dt);
+	}
+
+	// Extractor columns: introduce one fresh subject per extractor case (its expression evaluated once with
+	// `_` bound to the subject), rewrite each case's patterns to target that column, and recompile.
+	static function compileExtractors(mctx:MatcherContext, subjects:Array<TExpr>, cases:Array<MatchCase>):Dt {
+		if (subjects.length == 0) throw new TypingError("Internal match failure", mctx.matchPos);
+		var subject = subjects[0];
+		var rest = subjects.slice(1);
+		var infos:Array<Null<{v:TVar, e1:TExpr, pat:Pattern, binds:Array<Binding>}>> = [];
+		var numEx = 0;
+		for (mc in cases) {
+			var binds:Array<Binding> = [];
+			var pat = mc.patterns[0];
+			var info:Null<{v:TVar, e1:TExpr, pat:Pattern, binds:Array<Binding>}> = null;
+			var go = true;
+			while (go) switch (pat.pat) {
+				case PatExtractor(v, e1, inner): info = {v: v, e1: e1, pat: inner, binds: binds}; go = false;
+				case PatBind(bv, pat1): binds = binds.concat([{v: bv, p: pat.pos, e: subject}]); pat = pat1;
+				case _: go = false;
+			}
+			if (info != null) numEx++;
+			infos.push(info);
+		}
+		var patAny:Pattern = {pat: PatAny, pos: mctx.matchPos};
+		var exSubjects:Array<TExpr> = [];
+		var exBindings:Array<Binding> = [];
+		var newCases:Array<MatchCase> = [];
+		var left = 0;
+		for (i in 0...cases.length) {
+			var mc = cases[i];
+			var info = infos[i];
+			var restPatterns = mc.patterns.slice(1);
+			if (info != null) {
+				var e1 = info.e1;
+				var ev = TypeFunctions.allocVar(VExtractorVariable, "_hx_tmp", e1.type, e1.pos);
+				// Evaluate the extractor once: bind `_` to the subject, then the extractor var to its result.
+				exBindings.push({v: info.v, p: subject.pos, e: subject});
+				exBindings.push({v: ev, p: e1.pos, e: e1});
+				exSubjects.push(TexprTools.makeLocal(ev, e1.pos));
+				var patterns = makeOffsetList(1 + left, numEx - 1 - left, info.pat, patAny).concat(restPatterns);
+				newCases.push({c: mc.c, bindings: info.binds.concat(mc.bindings), patterns: patterns});
+				left++;
+			} else {
+				var patterns = makeOffsetList(0, numEx, mc.patterns[0], patAny).concat(restPatterns);
+				newCases.push({c: mc.c, bindings: mc.bindings, patterns: patterns});
+			}
+		}
+		var recompSubjects = [subject].concat(exSubjects).concat(rest);
+		var dt = compile(mctx, recompSubjects, newCases);
+		return exBindings.length == 0 ? dt : bind(mctx, exBindings, dt);
+	}
+
+	static function makeOffsetList(left:Int, right:Int, x:Pattern, pad:Pattern):Array<Pattern> {
+		var r:Array<Pattern> = [];
+		for (_i in 0...left) r.push(pad);
+		r.push(x);
+		for (_i in 0...right) r.push(pad);
+		return r;
 	}
 
 	// Compile (entry): bind non-trivial subjects to temps, then compile.
