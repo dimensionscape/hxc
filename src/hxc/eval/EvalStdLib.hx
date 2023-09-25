@@ -2582,6 +2582,7 @@ class EvalStdLib {
 		}
 		if (pos > l) pos = l;
 		var n = len == null ? l - pos : len;
+		if (n < 0) n = l + n - pos;
 		if (n < 0) n = 0;
 		return stringFromCodes(codes, pos, n);
 	}
