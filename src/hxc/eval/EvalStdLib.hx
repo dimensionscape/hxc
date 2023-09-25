@@ -217,7 +217,6 @@ class EvalStdLib {
 						[for (k in objectDictionaryKeys(l)) EvalHash.revHash(k)];
 				};
 			case VInstance(vi):
-				if (vi.iproto.ppath == EvalHash.hash("sys.thread.EventLoop")) return ["promisedEventsCount", "started", "wakeup", "mutex", "handle", "pending", "isMainThread"];
 				[for (k in instanceFieldKeys(vi.iproto)) EvalHash.revHash(k)];
 			case VPrototype(proto): [for (k in sortedFieldKeys(proto.pnames)) if (!isReflectHidden(proto.ppath, k, true)) EvalHash.revHash(k)];
 			case VString(_) | VArray(_) | VVector(_): ["length"];
@@ -589,13 +588,30 @@ class EvalStdLib {
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
 	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
+	static var threadConditions = new haxe.ds.ObjectMap<VInstance, sys.thread.Condition>();
+	static var threadSemaphores = new haxe.ds.ObjectMap<VInstance, sys.thread.Semaphore>();
+	static var threadEventLoops = new haxe.ds.ObjectMap<VInstance, sys.thread.EventLoop>();
+	static var threadEventHandlers = new Map<Int, Dynamic>();
+	static var threadEventHandlerNextId = 1;
+	static var nativeThreads = new haxe.ds.ObjectMap<VInstance, {id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue}>();
+	static var nativeTimers = new haxe.ds.ObjectMap<VInstance, {loop:sys.thread.EventLoop, handler:Dynamic}>();
+	static var nativeThreadSelf:Null<VInstance> = null;
+	static var nativeThreadNextId = 1;
+	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 
 	public static function processEvents():Void {
-		sys.thread.Thread.processEvents();
+		var ctx = evalContext;
+		var timers = [for (vi in nativeTimers.keys()) nativeTimers.get(vi)];
+		for (timer in timers) if (timer != null) timer.loop.loop();
+		var self = nativeThreadSelf;
+		if (ctx == null || self == null) return;
+		var thread = nativeThreads.get(self);
+		if (thread == null || thread.events == VNull) return;
+		applyFn(EvalField.dynamicField(ctx, thread.events, EvalHash.hash("loop")), []);
 	}
 
 	static function objId(o:{}):Int {
@@ -1571,6 +1587,150 @@ class EvalStdLib {
 
 	static function thisThreadDeque(a:Array<EvalValue>):sys.thread.Deque<EvalValue> {
 		return threadDeques.get(thisInstance(a, "Deque"));
+	}
+
+	static function mkThreadCondition(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Condition"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadConditions.set(vi, new sys.thread.Condition());
+		return VInstance(vi);
+	}
+
+	static function thisThreadCondition(a:Array<EvalValue>):sys.thread.Condition {
+		return threadConditions.get(thisInstance(a, "Condition"));
+	}
+
+	static function mkThreadSemaphore(ctx:EvalContext, value:Int):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Semaphore"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadSemaphores.set(vi, new sys.thread.Semaphore(value));
+		return VInstance(vi);
+	}
+
+	static function thisThreadSemaphore(a:Array<EvalValue>):sys.thread.Semaphore {
+		return threadSemaphores.get(thisInstance(a, "Semaphore"));
+	}
+
+	static function mkThreadEventLoop(ctx:EvalContext):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.EventLoop"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		threadEventLoops.set(vi, new sys.thread.EventLoop());
+		return VInstance(vi);
+	}
+
+	static function thisThreadEventLoop(a:Array<EvalValue>):sys.thread.EventLoop {
+		return threadEventLoops.get(thisInstance(a, "EventLoop"));
+	}
+
+	static function eventHandlerValue(handler:Dynamic):EvalValue {
+		var id = threadEventHandlerNextId++;
+		threadEventHandlers.set(id, handler);
+		return VInt(id);
+	}
+
+	static function eventHandlerOf(v:EvalValue):Dynamic {
+		return threadEventHandlers.get(toInt(v));
+	}
+
+	static function nextEventTimeValue(ctx:EvalContext, v:Dynamic):EvalValue {
+		var e = classValue(ctx, EvalHash.hash("sys.thread.NextEventTime"));
+		if (e == VNull) return VNull;
+		var name = Type.enumConstructor(v);
+		var params = Type.enumParameters(v);
+		if (name == "AnyTime") {
+			var time:Null<Float> = params[0];
+			var p = time == null ? VNull : VFloat(time);
+			return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray([p], 1)));
+		}
+		if (name == "At") {
+			var time:Float = params[0];
+			return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray([VFloat(time)], 1)));
+		}
+		return createEnumByName(ctx, e, EvalHash.hash(name), VNull);
+	}
+
+	static function threadEventLoopObject(ctx:EvalContext, loop:sys.thread.EventLoop):EvalValue {
+		return mkObject([
+			{name: "repeat", value: VFunction(function(a) {
+				var fn = arg(a, 0);
+				return eventHandlerValue(loop.repeat(function() applyFn(fn, []), toInt(arg(a, 1))));
+			}, true)},
+			{name: "cancel", value: VFunction(function(a) {
+				var handler = eventHandlerOf(arg(a, 0));
+				if (handler != null) loop.cancel(cast handler);
+				return VNull;
+			}, true)},
+			{name: "promise", value: VFunction(function(a) { loop.promise(); return VNull; }, true)},
+			{name: "run", value: VFunction(function(a) {
+				var fn = arg(a, 0);
+				loop.run(function() applyFn(fn, []));
+				return VNull;
+			}, true)},
+			{name: "runPromised", value: VFunction(function(a) {
+				var fn = arg(a, 0);
+				loop.runPromised(function() applyFn(fn, []));
+				return VNull;
+			}, true)},
+			{name: "progress", value: VFunction(function(a) return nextEventTimeValue(ctx, loop.progress()), true)},
+			{name: "wait", value: VFunction(function(a) return EvalValueTools.vbool(
+				arg(a, 0) == VNull ? loop.wait() : loop.wait(toFloat(arg(a, 0)))), true)},
+			{name: "loop", value: VFunction(function(a) { loop.loop(); return VNull; }, true)}
+		]);
+	}
+
+	static function mkTimer(ctx:EvalContext, timeMs:Int):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Timer"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		var value = VInstance(vi);
+		var loop = new sys.thread.EventLoop();
+		var handler = loop.repeat(function() {
+			applyFn(EvalField.dynamicField(ctx, value, EvalHash.hash("run")), []);
+		}, timeMs);
+		nativeTimers.set(vi, {loop: loop, handler: handler});
+		return value;
+	}
+
+	static function stopTimer(a:Array<EvalValue>):Void {
+		var vi = thisInstance(a, "Timer");
+		var timer = nativeTimers.get(vi);
+		if (timer != null) {
+			timer.loop.cancel(cast timer.handler);
+			nativeTimers.remove(vi);
+		}
+	}
+
+	static function mkNativeThread(ctx:EvalContext, ?job:EvalValue):EvalValue {
+		if (job != null && job != VNull)
+			return EvalExceptions.excString(ctx, "sys.thread.Thread.create is not supported by eval");
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
+		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
+		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: VNull});
+		return VInstance(vi);
+	}
+
+	static function nativeThreadSelfValue(ctx:EvalContext):EvalValue {
+		if (nativeThreadSelf == null) {
+			switch (mkNativeThread(ctx)) {
+				case VInstance(vi): nativeThreadSelf = vi;
+				case v: return v;
+			}
+		}
+		return VInstance(nativeThreadSelf);
+	}
+
+	static function nativeThreadData(a:Array<EvalValue>):{id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue} {
+		return nativeThreads.get(thisInstance(a, "NativeThread"));
+	}
+
+	static function nativeThreadEventLoop(ctx:EvalContext, vi:VInstance):EvalValue {
+		var thread = nativeThreads.get(vi);
+		if (thread == null) return VNull;
+		if (thread.events == VNull) {
+			thread.events = EvalEmitter.constructPath(ctx, EvalHash.hash("sys.thread.EventLoop"), []);
+			if (thread.events == VNull)
+				thread.events = threadEventLoopObject(ctx, new sys.thread.EventLoop());
+		}
+		return thread.events;
 	}
 
 	static function xmlTypeValue(x:Xml):EvalValue {
@@ -2696,6 +2856,14 @@ class EvalStdLib {
 	}
 
 	public static function init(ctx:EvalContext):Void {
+		evalContext = ctx;
+		nativeThreads = new haxe.ds.ObjectMap();
+		nativeThreadSelf = null;
+		nativeThreadNextId = 1;
+		threadEventLoops = new haxe.ds.ObjectMap();
+		threadEventHandlers = new Map();
+		threadEventHandlerNextId = 1;
+		nativeTimers = new haxe.ds.ObjectMap();
 		var s = ctx.builtins.staticBuiltins;
 
 		reg(s, "Math", "PI", VFloat(Math.PI));
@@ -3689,6 +3857,7 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.crypto.Hmac"), function(a) return mkHmac(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.crypto.BaseCode"), function(a) return mkBaseCode(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.Template"), function(a) return mkTemplate(ctx, arg(a, 0)));
+		ctors.set(EvalHash.hash("haxe.Timer"), function(a) return mkTimer(ctx, toInt(arg(a, 0))));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
@@ -3707,6 +3876,10 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) return mkThreadTls(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Deque"), function(a) return mkThreadDeque(ctx));
+		ctors.set(EvalHash.hash("sys.thread.Condition"), function(a) return mkThreadCondition(ctx));
+		ctors.set(EvalHash.hash("sys.thread.Semaphore"), function(a) return mkThreadSemaphore(ctx, toInt(arg(a, 0))));
+		ctors.set(EvalHash.hash("sys.thread.EventLoop"), function(a) return mkThreadEventLoop(ctx));
+		ctors.set(EvalHash.hash("eval.vm.NativeThread"), function(a) return mkNativeThread(ctx, arg(a, 0)));
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
 		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
@@ -3900,6 +4073,62 @@ class EvalStdLib {
 		reg(inst, "sys.thread.Deque", "pop", vmethod(a -> {
 			var v = thisThreadDeque(a).pop(arg(a, 1) == VTrue);
 			v == null ? VNull : v;
+		}));
+		reg(inst, "haxe.Timer", "stop", vmethod(a -> { stopTimer(a); VNull; }));
+		reg(inst, "sys.thread.EventLoop", "repeat", vmethod(a -> {
+			var fn = arg(a, 1);
+			eventHandlerValue(thisThreadEventLoop(a).repeat(function() applyFn(fn, []), toInt(arg(a, 2))));
+		}));
+		reg(inst, "sys.thread.EventLoop", "cancel", vmethod(a -> {
+			var handler = eventHandlerOf(arg(a, 1));
+			if (handler != null) thisThreadEventLoop(a).cancel(cast handler);
+			VNull;
+		}));
+		reg(inst, "sys.thread.EventLoop", "promise", vmethod(a -> { thisThreadEventLoop(a).promise(); VNull; }));
+		reg(inst, "sys.thread.EventLoop", "run", vmethod(a -> {
+			var fn = arg(a, 1);
+			thisThreadEventLoop(a).run(function() applyFn(fn, []));
+			VNull;
+		}));
+		reg(inst, "sys.thread.EventLoop", "runPromised", vmethod(a -> {
+			var fn = arg(a, 1);
+			thisThreadEventLoop(a).runPromised(function() applyFn(fn, []));
+			VNull;
+		}));
+		reg(inst, "sys.thread.EventLoop", "progress", vmethod(a -> nextEventTimeValue(ctx, thisThreadEventLoop(a).progress())));
+		reg(inst, "sys.thread.EventLoop", "wait", vmethod(a -> EvalValueTools.vbool(
+			arg(a, 1) == VNull ? thisThreadEventLoop(a).wait() : thisThreadEventLoop(a).wait(toFloat(arg(a, 1))))));
+		reg(inst, "sys.thread.EventLoop", "loop", vmethod(a -> { thisThreadEventLoop(a).loop(); VNull; }));
+		reg(inst, "sys.thread.Condition", "acquire", vmethod(a -> { thisThreadCondition(a).acquire(); VNull; }));
+		reg(inst, "sys.thread.Condition", "tryAcquire", vmethod(a -> EvalValueTools.vbool(thisThreadCondition(a).tryAcquire())));
+		reg(inst, "sys.thread.Condition", "release", vmethod(a -> { thisThreadCondition(a).release(); VNull; }));
+		reg(inst, "sys.thread.Condition", "wait", vmethod(a -> { thisThreadCondition(a).wait(); VNull; }));
+		reg(inst, "sys.thread.Condition", "signal", vmethod(a -> { thisThreadCondition(a).signal(); VNull; }));
+		reg(inst, "sys.thread.Condition", "broadcast", vmethod(a -> { thisThreadCondition(a).broadcast(); VNull; }));
+		reg(inst, "sys.thread.Semaphore", "acquire", vmethod(a -> { thisThreadSemaphore(a).acquire(); VNull; }));
+		reg(inst, "sys.thread.Semaphore", "tryAcquire", vmethod(a -> EvalValueTools.vbool(
+			arg(a, 1) == VNull ? thisThreadSemaphore(a).tryAcquire() : thisThreadSemaphore(a).tryAcquire(toFloat(arg(a, 1))))));
+		reg(inst, "sys.thread.Semaphore", "release", vmethod(a -> { thisThreadSemaphore(a).release(); VNull; }));
+		reg(s, "eval.vm.NativeThread", "self", vfn(a -> nativeThreadSelfValue(ctx)));
+		reg(s, "eval.vm.NativeThread", "delay", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
+		reg(s, "eval.vm.NativeThread", "exit", vfn(a -> EvalExceptions.excString(ctx, "sys.thread.Thread.exit is not supported by eval")));
+		reg(s, "eval.vm.NativeThread", "join", vfn(a -> VNull));
+		reg(s, "eval.vm.NativeThread", "yield", vfn(a -> VNull));
+		reg(s, "eval.vm.NativeThread", "readMessage", vfn(a -> {
+			switch (nativeThreadSelfValue(ctx)) {
+				case VInstance(vi):
+					var v = nativeThreads.get(vi).messages.pop(arg(a, 0) == VTrue);
+					v == null ? VNull : v;
+				case _: VNull;
+			}
+		}));
+		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(nativeThreadData(a).id)));
+		reg(inst, "eval.vm.NativeThread", "kill", vmethod(a -> VInt(0)));
+		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { nativeThreadData(a).messages.add(arg(a, 1)); VNull; }));
+		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> nativeThreadEventLoop(ctx, thisInstance(a, "NativeThread"))));
+		reg(inst, "eval.vm.NativeThread", "set_events", vmethod(a -> {
+			nativeThreadData(a).events = arg(a, 1);
+			arg(a, 1);
 		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));

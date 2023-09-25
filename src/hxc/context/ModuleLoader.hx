@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.context.Context;
 import hxc.core.Globals.Path;
+import hxc.core.Globals.Platform;
 import haxe.ds.StringMap;
 import sys.FileSystem;
 import sys.io.File;
@@ -24,9 +25,20 @@ class ModuleLoader {
 	public static function findFile(ctx:Context, relPath:String, m:Path, p:Position):String {
 		for (dir in ctx.classPath) {
 			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
+			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
 			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return full;
 		}
 		throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+	}
+
+	static function skipEvalOverlayFile(ctx:Context, dir:String, relPath:String):Bool {
+		if (ctx.platform != Platform.Eval) return false;
+		var d = StringTools.replace(dir, "\\", "/");
+		if (!StringTools.endsWith(d, "/")) d += "/";
+		if (!StringTools.endsWith(d, "/eval/_std/")) return false;
+		return relPath == "sys/thread/EventLoop.hx"
+			|| relPath == "sys/thread/Condition.hx"
+			|| relPath == "sys/thread/Semaphore.hx";
 	}
 
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
