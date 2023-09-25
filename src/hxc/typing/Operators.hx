@@ -8,6 +8,7 @@ import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TexprTools;
 import hxc.core.TypingError;
+import hxc.core.NotFound;
 import hxc.core.WithType;
 import hxc.typing.FieldAccess;
 
@@ -152,10 +153,11 @@ class Operators {
 			return BinopNormal(op, a, b, t, isAssignOp, false, p);
 		}
 
-		// Abstract operator overloading dispatches through the abstract @:op methods.
+		// Abstract operator overloading dispatches through the abstract @:op methods (left or right
+		// operand).
 		if (!op.match(OpAssign) && !op.match(OpAssignOp(_))) {
-			var opCall = tryAbstractOp(ctx, op, e1, e2, p);
-			if (opCall != null) return BinopSpecial(opCall, isAssignOp);
+			var br = tryAbstractBinop(ctx, op, e1, e2, isAssignOp, withType, p);
+			if (br != null) return br;
 		}
 		return switch (op) {
 			case OpAdd:
@@ -248,16 +250,6 @@ class Operators {
 		};
 	}
 
-	// An operand already of the same abstract (by path) is passed through despite a possible
-	// distinct type instance; otherwise an implicit cast is attempted.
-	static function coerceArg(ctx:TyperContext, argT:T, e:TExpr, p:Position):Null<TExpr> {
-		switch [TypeFunctions.follow(argT), TypeFunctions.follow(e.type)] {
-			case [TAbstract(x, _), TAbstract(y, _)] if (x.path.name == y.path.name && x.path.pack.join(".") == y.path.pack.join(".")): return e;
-			case _:
-		}
-		return try Typer.castOrUnify(ctx, argT, e, p) catch (_:TypingError) null;
-	}
-
 	static function sameOp(a:Binop, b:Binop):Bool {
 		return switch [a, b] {
 			case [OpAdd, OpAdd] | [OpSub, OpSub] | [OpMult, OpMult] | [OpDiv, OpDiv] | [OpMod, OpMod]
@@ -268,33 +260,180 @@ class Operators {
 		};
 	}
 
-	// The abstract on the left of the operator owns the dispatch; its value is passed as the
-	// impl method receiver and the right operand is coerced to the second parameter.
-	static function tryAbstractOp(ctx:TyperContext, op:Binop, e1:TExpr, e2:TExpr, p:Position):Null<TExpr> {
-		switch (TypeFunctions.follow(e1.type)) {
-			case TAbstract(a, tl) if (a.impl != null):
-				for (aop in a.ops) {
-					if (!sameOp(aop.op, op)) continue;
-					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, aop.cf.type))) {
-						case TFun(sig) if (sig.args.length == 2):
-							var c2 = coerceArg(ctx, sig.args[1].t, e2, p);
-							if (c2 == null) continue;
-							// The @:op method body may not be typed yet; force it so a real (non-native)
-							// operator dispatches to the method instead of a bare TBinop the runtime rejects.
-							if (aop.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, aop.cf);
-							if (aop.cf.expr == null) {
-								// A bodyless (native) @:op is the underlying operation, typed as its declared return.
-								return TypeFunctions.mk(TBinop(op, e1, c2), sig.ret, p);
-							}
-							var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
-							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, aop.cf, FHStatic(a.impl), false, p), FCall);
-							return Calls.makeCall(ctx, fieldExpr, [e1, c2], sig.ret, p);
-						case _:
-					}
+	// Emit the static impl-method call for a @:op field, preserving evaluation order when the operands were
+	// swapped for a @:commutative overload (bind both to temps so the original left is evaluated first).
+	static function makeStaticOpCall(ctx:TyperContext, implC:TClass, cf:TClassField, args:Array<TExpr>, tret:T, p:Position):TExpr {
+		var implExpr = hxc.core.TexprTools.makeStaticThis(implC, p);
+		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
+		return Calls.makeCall(ctx, fieldExpr, args, tret, p);
+	}
+
+	// Try to dispatch a binary operator through an abstract @:op overload, on either operand. The
+	// abstract-side operand is matched with a NON-binding-on-failure type equality (EqStrict, wrapped in a
+	// mono-rollback so a failed probe never leaves an unrelated mono bound), the other operand is
+	// implicitly cast.
+	static function tryAbstractBinop(ctx:TyperContext, op:Binop, e1:TExpr, e2:TExpr, isAssignOp:Bool, withType:WithType, p:Position):Null<BinopResult> {
+		return try {
+			switch (TypeFunctions.follow(e1.type)) {
+				case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, true, isAssignOp, withType, p);
+				case _: throw new NotFound();
+			}
+		} catch (_:NotFound) {
+			try {
+				switch (TypeFunctions.follow(e2.type)) {
+					case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, false, isAssignOp, withType, p);
+					case _: null;
 				}
+			} catch (_:NotFound) null;
+		}
+	}
+
+	// A NotFound in the overload search bubbles to tryAbstractBinop, which then tries the other operand.
+	static function findAbstractBinop(ctx:TyperContext, op:Binop, e1:TExpr, e2:TExpr, a:TAbstract, implC:TClass, tl:TParams, left:Bool, isAssignOp:Bool, withType:WithType, p:Position):BinopResult {
+		function map(t:T):T return TypeFunctions.applyParams(a.params, tl, t);
+		var isEqOp = switch (op) { case OpEq | OpNotEq: true; case _: false; };
+
+		// == / != with a monomorph operand: unify the two operand types so comparison semantics hold.
+		if (isEqOp) switch [TypeFunctions.follow(e1.type), TypeFunctions.follow(e2.type)] {
+			case [TMono(_), _] | [_, TMono(_)]: try TypeUnification.unifyDefault(e1.type, e2.type) catch (_:UnifyError) {}
 			case _:
 		}
-		return null;
+
+		function make(opCf:Binop, cf:TClassField, me1:TExpr, me2:TExpr, tret:T, needsAssign:Bool, swapped:Bool):BinopResult {
+			// The @:op body may be unforced; force it so a genuinely bodyless (native) @:op is
+			// distinguished from a not-yet-typed one.
+			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, implC, cf);
+			if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+				// A bodyless @:op without @:noExpr is a recursive operator method in the reference; hxc
+				// tolerates it and applies the native underlying-type semantics below. The reference also
+				// verifies the declared return type is compatible with the native result type make); hxc
+				// omits that raise because its make_binop type classification for mixed operands (e.g. A
+				// bodyless @:op means the underlying-type semantics: emit the native operation on the
+				// (possibly swapped) operands, typed as the declared return. It is returned as a special
+				// result (not BinopNormal) so a compound assignment lowers it to `a = (a op b)` rather than
+				// a native `a op= b`, which the evaluator cannot apply to an abstract value. The assign
+				// flag uses is_assign_op (bodyless @:op wants underlying-type assignment semantics).
+				if (swapped) {
+					var tvoid = ctx.com.basic.tvoid;
+					var vlhs = TypeFunctions.allocVar(VGenerated, "`lhs", me2.type, me2.pos);
+					var vrhs = TypeFunctions.allocVar(VGenerated, "`rhs", me1.type, me1.pos);
+					var elhs = TexprTools.makeLocal(vlhs, me2.pos);
+					var erhs = TexprTools.makeLocal(vrhs, me1.pos);
+					var e = TypeFunctions.mk(TBlock([
+						TypeFunctions.mk(TVarExpr(vlhs, me2), tvoid, me2.pos),
+						TypeFunctions.mk(TVarExpr(vrhs, me1), tvoid, me1.pos),
+						TypeFunctions.mk(TBinop(op, erhs, elhs), tret, p)
+					]), tret, p);
+					return BinopSpecial(e, isAssignOp);
+				}
+				return BinopSpecial(TypeFunctions.mk(TBinop(op, me1, me2), tret, p), isAssignOp);
+			} else if (swapped) {
+				// Preserve evaluation order after the commutative swap by binding both operands to temps.
+				var tvoid = ctx.com.basic.tvoid;
+				var vlhs = TypeFunctions.allocVar(VGenerated, "`lhs", me2.type, me2.pos);
+				var vrhs = TypeFunctions.allocVar(VGenerated, "`rhs", me1.type, me1.pos);
+				var elhs = TexprTools.makeLocal(vlhs, me2.pos);
+				var erhs = TexprTools.makeLocal(vrhs, me1.pos);
+				var call = makeStaticOpCall(ctx, implC, cf, [erhs, elhs], tret, p);
+				var e = TypeFunctions.mk(TBlock([
+					TypeFunctions.mk(TVarExpr(vlhs, me2), tvoid, me2.pos),
+					TypeFunctions.mk(TVarExpr(vrhs, me1), tvoid, me1.pos),
+					call
+				]), tret, p);
+				return BinopSpecial(e, needsAssign);
+			} else {
+				return BinopSpecial(makeStaticOpCall(ctx, implC, cf, [me1, me2], tret, p), needsAssign);
+			}
+		}
+
+		// Search a.ops for an overload matching findOp; returns the BinopResult or throws NotFound.
+		function loop(findOp:Binop, ol:Array<TAbstractOp>):BinopResult {
+			for (i in 0...ol.length) {
+				var aop = ol[i];
+				if (!Type.enumEq(aop.op, findOp)) continue;
+				var cf = aop.cf;
+				var isImpl = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+				switch (TypeFunctions.follow(cf.type)) {
+					case TFun(sig) if (sig.args.length >= 2):
+						var bt1 = sig.args[0].t;
+						var bt2 = sig.args[1].t;
+						var btret = sig.ret;
+						function check(ce1:TExpr, ce2:TExpr, swapped:Bool):BinopResult {
+							// Fresh monos per attempt so a failed probe cannot bind the method's own params, and
+							// wrap the whole attempt in a mono-rollback so a failure restores every touched mono.
+							return TypeUnification.withMonoRollback(function() {
+								var monos = [for (_ in cf.params) TypeFunctions.mkMono()];
+								function mapCf(t:T):T return map(TypeFunctions.applyParams(cf.params, monos, t));
+								var t1 = mapCf(bt1);
+								var t2 = mapCf(bt2);
+								var tret = mapCf(btret);
+								if (isImpl) t1 = TypeFunctions.followWithAbstracts(t1);
+								var re1:TExpr, re2:TExpr;
+								if (left || (!left && swapped)) {
+									var lhsT = isImpl ? TypeFunctions.followWithAbstracts(ce1.type) : ce1.type;
+									TypeUnification.typeEqKind(EqStrict, lhsT, t1);
+									re1 = ce1;
+									re2 = Typer.castOrUnify(ctx, t2, ce2, p);
+								} else {
+									TypeUnification.typeEqKind(EqStrict, ce2.type, t2);
+									re1 = Typer.castOrUnify(ctx, t1, ce1, p);
+									re2 = ce2;
+								}
+								// Null operand only allowed against an explicitly-nullable arg (issue #3376).
+								if (isEqOp) {
+									checkNullArg(re2, t2);
+									checkNullArg(re1, t1);
+								}
+								var needsAssign = isAssignOp && Type.enumEq(aop.op, op);
+								return make(aop.op, cf, re1, re2, tret, needsAssign, swapped);
+							});
+						}
+						// Try direct order, then the commutative-swapped order. A failed probe (Unify_error or a
+						// typing error from the cast) moves on; the mono rollback inside check has already
+						// undone any speculative binding.
+						try {
+							return check(e1, e2, false);
+						} catch (_:UnifyError) {
+						} catch (_:TypingError) {
+						}
+						if (TypeFunctions.hasMeta(":commutative", cf.meta)) {
+							try {
+								return check(e2, e1, true);
+							} catch (_:UnifyError) {
+							} catch (_:TypingError) {
+							}
+						}
+					case _:
+				}
+			}
+			throw new NotFound();
+		}
+
+		// Right operand: only non-impl (bodyless) or @:commutative overloads may apply.
+		function find(findOp:Binop):BinopResult {
+			if (left) return loop(findOp, a.ops);
+			var filtered = [for (aop in a.ops) if (!TypeFunctions.hasClassFieldFlag(aop.cf, CfImpl) || TypeFunctions.hasMeta(":commutative", aop.cf.meta)) aop];
+			return loop(findOp, filtered);
+		}
+
+		if (isAssignOp) {
+			return try find(OpAssignOp(op)) catch (_:NotFound) find(op);
+		}
+		return find(op);
+	}
+
+	static function checkNullArg(e:TExpr, t:T):Void {
+		switch (e.expr) {
+			case TConst(TNull) if (!TypeFunctions.isExplicitNull(t)): throw new UnifyError([]);
+			case _:
+		}
+	}
+
+	static function binopResultType(br:BinopResult):T {
+		return switch (br) {
+			case BinopNormal(_, _, _, t, _, _, _): t;
+			case BinopSpecial(e, _): e.type;
+		};
 	}
 
 	static function toTexpr(br:BinopResult):TExpr {

@@ -143,6 +143,56 @@ class TypeUnification {
 	static var abstractCastStack:RecStack<{a:T, b:T}> = new RecStack();
 	static var unifyNewMonos:RecStack<T> = new RecStack();
 
+	// Mono journal: while active, records the pre-mutation state of every monomorph touched by a
+	// bind/constraint operation so a speculative unification (an operator-overload probe) can be rolled
+	// back on failure without leaving unrelated monos corrupted. Abstract binop overload resolution relies
+	// on failed typeEq/cast attempts not persisting.
+	static var monoJournal:Null<Array<{m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>}>> = null;
+
+	static function journalMono(m:TMono):Void {
+		var j = monoJournal;
+		if (j != null) {
+			// Record only the first time a mono is seen in this probe (its earliest state).
+			for (e in j) if (e.m == m) return;
+			j.push({m: m, ty: m.type, down: m.downConstraints, up: m.upConstraints});
+		}
+	}
+
+	// Run f under a fresh journal frame. If f throws, every mono touched during f is restored to its
+	// prior state and the exception is rethrown. On success the recorded states are discarded (the
+	// bindings stand), and any monos recorded here are merged into an enclosing frame so an outer
+	// rollback still undoes them.
+	public static function withMonoRollback<R>(f:Void->R):R {
+		var outer = monoJournal;
+		var frame:Array<{m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>}> = [];
+		monoJournal = frame;
+		try {
+			var r = f();
+			monoJournal = outer;
+			if (outer != null) {
+				// Preserve earliest-state entries for the enclosing frame.
+				for (e in frame) {
+					var seen = false;
+					for (o in outer) if (o.m == e.m) { seen = true; break; }
+					if (!seen) outer.push(e);
+				}
+			}
+			return r;
+		} catch (ex:haxe.Exception) {
+			monoJournal = outer;
+			// Restore in reverse touch order so the earliest recorded state wins per mono.
+			var i = frame.length - 1;
+			while (i >= 0) {
+				var e = frame[i];
+				e.m.type = e.ty;
+				e.m.downConstraints = e.down;
+				e.m.upConstraints = e.up;
+				i--;
+			}
+			throw ex;
+		}
+	}
+
 	public static function error(l:Array<UnifyErrorKind>):Dynamic {
 		throw new UnifyError(l);
 	}
@@ -207,18 +257,22 @@ class TypeUnification {
 	}
 
 	static function addUpConstraint(m:TMono, constr:TUpConstraint):Void {
+		journalMono(m);
 		m.upConstraints = [constr].concat(m.upConstraints);
 		switch (constr.t) {
 			case TMono(m2):
+				journalMono(m2);
 				m2.downConstraints = ([MMono(m, constr.name)] : Array<TMonoConstraint>).concat(m2.downConstraints);
 			case _:
 		}
 	}
 
 	public static function addDownConstraint(m:TMono, constr:TMonoConstraint):Void {
+		journalMono(m);
 		m.downConstraints = [constr].concat(m.downConstraints);
 		switch (constr) {
 			case MMono(m2, s):
+				journalMono(m2);
 				m2.upConstraints = [{t: TMono(m), name: s}].concat(m.upConstraints);
 			case _:
 		}
@@ -351,6 +405,7 @@ class TypeUnification {
 	}
 
 	static function doBind(m:TMono, t:T):Void {
+		journalMono(m);
 		m.type = t;
 		m.downConstraints = [];
 		m.upConstraints = [];
@@ -374,6 +429,7 @@ class TypeUnification {
 					}
 				}
 			case _:
+				journalMono(m);
 				checkUpConstraints(m, t);
 				// Due to recursive constraints (#9603), tentatively bind before checking.
 				m.type = t;
@@ -424,6 +480,7 @@ class TypeUnification {
 	}
 
 	public static function unbind(m:TMono):Void {
+		journalMono(m);
 		m.type = null;
 	}
 
