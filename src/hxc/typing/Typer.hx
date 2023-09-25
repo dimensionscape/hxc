@@ -452,13 +452,13 @@ class Typer {
 				if (suffix == null) TexprTools.typeConstant(basic, c, p);
 				else switch (suffix) {
 					case "i32":
-						var i = Std.parseInt(s);
+						var i = Std.parseInt(StringTools.replace(s, "_", ""));
 						if (i == null) throw new TypingError("Cannot represent " + s + " with a 32 bit integer", p);
 						TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 					case "i64":
 						// NNNi64 is a haxe.Int64 literal: split the 64-bit value into high/low halves and
 						// build haxe.Int64.make(high, low).
-						var v = parseInt64Literal(s);
+						var v = parseInt64Literal(StringTools.replace(s, "_", ""));
 						function intExpr(n:Int):Expr return new Expr(EConst(CInt(Std.string(n), null)), p);
 						var mk = new Expr(EField(new Expr(EField(new Expr(EConst(CIdent("haxe")), p), "Int64", EFNormal), p), "make", EFNormal), p);
 						var call = new Expr(ECall(mk, [intExpr(v.high), intExpr(v.low)]), p);
