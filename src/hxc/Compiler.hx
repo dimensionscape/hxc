@@ -88,8 +88,19 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			// An uncaught exception escaping the interpreted program: render the thrown value and its
 			// position, as the canonical eval target does, rather than the bare wrapper message.
-			Sys.stderr().writeString(ex.pos.toString() + " : " + hxc.eval.EvalStdLib.stringOf(ex.value) + "
-");
+			printPositionMessage(hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
+			Sys.exit(1);
+		} catch (e:hxc.parser.LexerError) {
+			printPositionMessage(hxc.parser.LexerError.errorMsg(e.msg), e.pos);
+			Sys.exit(1);
+		} catch (e:hxc.parser.ParserError) {
+			printPositionMessage(hxc.parser.ParserError.errorMsg(e.msg), e.pos);
+			Sys.exit(1);
+		} catch (e:hxc.context.Context.ContextError) {
+			printPositionMessage(e.message, e.pos);
+			Sys.exit(1);
+		} catch (e:hxc.core.TypingError) {
+			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "
@@ -102,6 +113,11 @@ class Compiler {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	static function printPositionMessage(msg:String, pos:Position):Void {
+		Sys.stderr().writeString(Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos) + " : " + msg + "
+");
 	}
 
 	static function addResource(ctx:Context, spec:String):Void {

@@ -9,7 +9,6 @@ import hxc.core.Globals.Path;
 import hxc.core.Globals.Platform;
 import haxe.ds.StringMap;
 import sys.FileSystem;
-import sys.io.File;
 
 class ModuleLoader {
 	public static function attach(ctx:Context):Void {
@@ -402,7 +401,7 @@ class ModuleLoader {
 	public static function refreshClassFieldsFromCurrentDefines(ctx:Context, c:TClass):Array<ClassField> {
 		var file = c.module != null && c.module.extra != null ? c.module.extra.file : null;
 		if (file == null || file == "" || !FileSystem.exists(file)) return [];
-		var src = File.getContent(file);
+		var src = Position.getFileContent(file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		if (!sameArray(pkg.pack, c.module.path.pack)) return [];
 		for (td in pkg.decls) switch (td.decl) {
@@ -621,7 +620,7 @@ class ModuleLoader {
 			throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 		}
 
-		var src = File.getContent(file);
+		var src = Position.getFileContent(file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {

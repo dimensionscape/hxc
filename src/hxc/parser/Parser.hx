@@ -119,6 +119,7 @@ class Parser {
 	}
 
 	static function make(src:String, file:String, ?defines:Define):Parser {
+		Position.registerFileContent(file, src);
 		var toks = lexAll(src, file);
 		// Conditional-compilation preprocessing (#if/#else/#elseif/#end/#error/
 		// #line). Only run when the stream actually contains a Sharp token, so

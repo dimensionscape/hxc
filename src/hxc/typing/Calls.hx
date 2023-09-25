@@ -352,9 +352,8 @@ class Calls {
 		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
 	}
 
-	// A final optional `?p:haxe.PosInfos` the caller omits is filled with the call-site position info
-	// (Haxe's PosInfos magic), not null. lineNumber is 0 -- hxc does not compute source lines. Returns null
-	// when the parameter type is not haxe.PosInfos. (unify_call_params PosInfos).
+	// A final optional `?p:haxe.PosInfos` the caller omits is filled with the call-site position info.
+	// (unify_call_params PosInfos).
 	static function makePosInfosArg(ctx:TyperContext, t:T, callp:Position):Null<TExpr> {
 		var isPI = switch (t) {
 			case TType(d, _): d.path.name == "PosInfos" && d.path.pack.length == 1 && d.path.pack[0] == "haxe";
@@ -368,7 +367,7 @@ class Calls {
 		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: callp};
 		var infos = new Expr(EObjectDecl([
 			fld("fileName", strE(callp.file)),
-			fld("lineNumber", new Expr(EConst(CInt("0", null)), callp)),
+			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(callp)), null)), callp)),
 			fld("className", strE(ctx.curclass == null ? "" : ctx.curclass.path.name)),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
 		]), callp);
@@ -383,7 +382,7 @@ class Calls {
 		var customParams = el.length > 1 ? new Expr(EArrayDecl(el.slice(1)), p) : new Expr(EConst(CIdent("null")), p);
 		var infos = new Expr(EObjectDecl([
 			fld("fileName", strE(p.file)),
-			fld("lineNumber", new Expr(EConst(CInt("0", null)), p)),
+			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(p)), null)), p)),
 			fld("className", strE(ctx.curclass.path.name)),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name)),
 			fld("customParams", customParams)

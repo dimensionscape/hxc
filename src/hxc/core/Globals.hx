@@ -166,7 +166,13 @@ class Globals {
 	}
 
 	public static var getErrorPosRef:(String->Int->String)->Position->String = function(printer, p) {
-		return '${p.file}: characters ${p.min}-${p.max}';
+		var info = Position.getInfos(p);
+		if (info.line <= 0) return '${p.file}: (unknown)';
+		if (info.line != info.endLine) return printer(p.file, info.line) + ' lines ${info.line}-${info.endLine}';
+		var c1 = info.column + 1;
+		var c2 = info.endColumn + 1;
+		if (c1 == c2) return printer(p.file, info.line) + ' character $c1';
+		return printer(p.file, info.line) + ' characters $c1-$c2';
 	};
 
 	public static final sVersion:String = {
