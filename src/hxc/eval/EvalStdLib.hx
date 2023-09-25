@@ -28,6 +28,12 @@ typedef EvalLoopState = {
 	var mainLoopNext:Null<Float>;
 }
 
+typedef ThreadConditionState = {
+	var cond:sys.thread.Condition;
+	var owner:Null<sys.thread.Thread>;
+	var count:Int;
+}
+
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
@@ -871,7 +877,7 @@ class EvalStdLib {
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
 	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
-	static var threadConditions = new haxe.ds.ObjectMap<VInstance, sys.thread.Condition>();
+	static var threadConditions = new haxe.ds.ObjectMap<VInstance, ThreadConditionState>();
 	static var threadSemaphores = new haxe.ds.ObjectMap<VInstance, sys.thread.Semaphore>();
 	static var threadEventLoops = new haxe.ds.ObjectMap<VInstance, EvalLoopState>();
 	static var eventLoopObjects = new haxe.ds.ObjectMap<VObject, EvalLoopState>();
@@ -1907,11 +1913,11 @@ class EvalStdLib {
 	static function mkThreadCondition(ctx:EvalContext):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Condition"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		threadConditions.set(vi, new sys.thread.Condition());
+		threadConditions.set(vi, {cond: new sys.thread.Condition(), owner: null, count: 0});
 		return VInstance(vi);
 	}
 
-	static function thisThreadCondition(a:Array<EvalValue>):sys.thread.Condition {
+	static function thisThreadCondition(a:Array<EvalValue>):ThreadConditionState {
 		return threadConditions.get(thisInstance(a, "Condition"));
 	}
 
@@ -5076,12 +5082,56 @@ class EvalStdLib {
 		reg(inst, "sys.thread.EventLoop", "wait", vmethod(a -> EvalValueTools.vbool(
 			arg(a, 1) == VNull ? evalLoopWait(thisThreadEventLoop(a)) : evalLoopWait(thisThreadEventLoop(a), toFloat(arg(a, 1))))));
 		reg(inst, "sys.thread.EventLoop", "loop", vmethod(a -> { evalLoopDrain(ctx, thisThreadEventLoop(a), null); VNull; }));
-		reg(inst, "sys.thread.Condition", "acquire", vmethod(a -> { thisThreadCondition(a).acquire(); VNull; }));
-		reg(inst, "sys.thread.Condition", "tryAcquire", vmethod(a -> EvalValueTools.vbool(thisThreadCondition(a).tryAcquire())));
-		reg(inst, "sys.thread.Condition", "release", vmethod(a -> { thisThreadCondition(a).release(); VNull; }));
-		reg(inst, "sys.thread.Condition", "wait", vmethod(a -> { thisThreadCondition(a).wait(); VNull; }));
-		reg(inst, "sys.thread.Condition", "signal", vmethod(a -> { thisThreadCondition(a).signal(); VNull; }));
-		reg(inst, "sys.thread.Condition", "broadcast", vmethod(a -> { thisThreadCondition(a).broadcast(); VNull; }));
+		reg(inst, "sys.thread.Condition", "acquire", vmethod(a -> {
+			var cond = thisThreadCondition(a);
+			var thread = sys.thread.Thread.current();
+			if (cond.owner != null && cond.owner == thread) {
+				cond.count++;
+			} else {
+				cond.cond.acquire();
+				cond.owner = thread;
+				cond.count = 1;
+			}
+			VNull;
+		}));
+		reg(inst, "sys.thread.Condition", "tryAcquire", vmethod(a -> {
+			var cond = thisThreadCondition(a);
+			var thread = sys.thread.Thread.current();
+			if (cond.owner != null && cond.owner == thread) {
+				cond.count++;
+				VTrue;
+			} else if (cond.cond.tryAcquire()) {
+				cond.owner = thread;
+				cond.count = 1;
+				VTrue;
+			} else {
+				VFalse;
+			}
+		}));
+		reg(inst, "sys.thread.Condition", "release", vmethod(a -> {
+			var cond = thisThreadCondition(a);
+			if (cond.count > 1) {
+				cond.count--;
+			} else {
+				cond.owner = null;
+				cond.count = 0;
+				cond.cond.release();
+			}
+			VNull;
+		}));
+		reg(inst, "sys.thread.Condition", "wait", vmethod(a -> {
+			var cond = thisThreadCondition(a);
+			var thread = sys.thread.Thread.current();
+			var count = cond.count <= 0 ? 1 : cond.count;
+			cond.owner = null;
+			cond.count = 0;
+			cond.cond.wait();
+			cond.owner = thread;
+			cond.count = count;
+			VNull;
+		}));
+		reg(inst, "sys.thread.Condition", "signal", vmethod(a -> { thisThreadCondition(a).cond.signal(); VNull; }));
+		reg(inst, "sys.thread.Condition", "broadcast", vmethod(a -> { thisThreadCondition(a).cond.broadcast(); VNull; }));
 		reg(inst, "sys.thread.Semaphore", "acquire", vmethod(a -> { thisThreadSemaphore(a).acquire(); VNull; }));
 		reg(inst, "sys.thread.Semaphore", "tryAcquire", vmethod(a -> EvalValueTools.vbool(
 			arg(a, 1) == VNull ? thisThreadSemaphore(a).tryAcquire() : thisThreadSemaphore(a).tryAcquire(toFloat(arg(a, 1))))));
