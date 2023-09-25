@@ -308,11 +308,30 @@ class Operators {
 		return switch (op) {
 			case OpAssign:
 				typeAssign(ctx, e1, e2, withType, p);
+			case OpAssignOp(OpNullCoal):
+				// `a ??= b` rewrites to `a = (if (a != null) a else b)`.
+				var eNull = new Expr(EConst(CIdent("null")), p);
+				var eCond = new Expr(EBinop(OpNotEq, e1, eNull), p);
+				var eIf = new Expr(EIf(eCond, e1, e2), p);
+				typeAssign(ctx, e1, eIf, withType, p);
 			case OpAssignOp(sub):
 				typeAssignOp(ctx, sub, e1, e2, withType, p);
 			case OpInterval:
 				var tp:PlacedTypePath = {path: {tpackage: [], tname: "IntIterator", tparams: [], tsub: null}, pos: p};
 				Typer.typeNew(ctx, tp, [e1, e2], withType, p);
+			case OpNullCoal:
+				// `a ?? b` desugars to `{ var tmp = a; if (tmp != null) tmp else b }`, evaluating the left
+				// once.
+				var te1 = Typer.typeExpr(ctx, e1, withType);
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type));
+				var t = Typer.unifyMin(ctx, [te1, te2]);
+				var tvoid = ctx.com.basic.tvoid;
+				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", te1.type, p);
+				var tmpLocal = TexprTools.makeLocal(tmp, p);
+				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(te1.type, p)), ctx.com.basic.tbool, p);
+				var iff = TypeFunctions.mk(TIf(check, tmpLocal, te2), t, p);
+				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
+				TypeFunctions.mk(TBlock([decl, iff]), t, p);
 			case _:
 				var te1 = Typer.typeExpr(ctx, e1, WithTypeTools.value);
 				var rhsWt = switch (op) {

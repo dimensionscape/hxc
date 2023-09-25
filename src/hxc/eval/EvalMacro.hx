@@ -686,6 +686,7 @@ class EvalMacro {
 			case "OpAnd": OpAnd; case "OpOr": OpOr; case "OpXor": OpXor; case "OpBoolAnd": OpBoolAnd; case "OpBoolOr": OpBoolOr;
 			case "OpShl": OpShl; case "OpShr": OpShr; case "OpUShr": OpUShr;
 			case "OpAssign": OpAssign; case "OpInterval": OpInterval; case "OpArrow": OpArrow; case "OpIn": OpIn;
+			case "OpNullCoal": OpNullCoal;
 			case "OpAssignOp": OpAssignOp(decodeBinop(ec, eargs(v)[0]));
 			case other: throw "macro decode: unhandled Binop " + other;
 		};
