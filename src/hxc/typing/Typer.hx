@@ -1151,12 +1151,14 @@ class Typer {
 	// type-parameter constraint is satisfied by the actual key type, with the concrete return
 	// type specialized to the actual type parameters.
 	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):T {
-		var key = atl.length > 0 ? atl[0] : ctx.com.basic.tvoid;
+		// Follow an abstract key to its underlying type so a key like `enum abstract Foo(String)` selects
+		// the impl for its underlying (StringMap), matching the reference.
+		var key = atl.length > 0 ? TypeFunctions.followWithAbstracts(atl[0]) : ctx.com.basic.tvoid;
 		for (toCast in a.toField) {
 			var cf = toCast.cf;
 			if (cf.params.length == 0) continue;
+			// An unconstrained key parameter accepts any key (the fallback impl, e.g. ObjectMap).
 			var constraints = multiTypeConstraints(cf.params[0]);
-			if (constraints.length == 0) continue;
 			var ok = true;
 			for (cn in constraints) if (!tryUnifyMulti(key, cn)) { ok = false; break; }
 			if (ok) return TypeFunctions.applyParams(cf.params, atl, toCast.t);
