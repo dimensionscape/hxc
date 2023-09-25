@@ -983,14 +983,14 @@ class EvalMacro {
 	static function encodeType(ec:EvalContext, t:T):EvalValue {
 		return switch (t) {
 			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeRef(ec, VNull)]);
-			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeRef(ec, encodeBaseType(ec, e.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeRef(ec, encodeBaseType(ec, e.path), e.path), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)])]);
-			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path), d.path), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TFun(sig): mkEnumValue(ec, "Type", "TFun", [encodeArray([for (a in sig.args) encodeTypeFunArg(ec, a)]), encodeType(ec, sig.ret)]);
 			case TAnon(_): mkEnumValue(ec, "Type", "TAnonymous", [encodeRef(ec, VNull)]);
 			case TDynamic(t2): mkEnumValue(ec, "Type", "TDynamic", [t2 == null ? VNull : encodeType(ec, t2)]);
 			case TLazy(f): encodeType(ec, TypeFunctions.lazyType(f));
-			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeRef(ec, encodeBaseType(ec, a.path)), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeRef(ec, encodeBaseType(ec, a.path), a.path), encodeArray([for (p in params) encodeType(ec, p)])]);
 		};
 	}
 
@@ -1002,9 +1002,12 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function encodeRef(ec:EvalContext, payload:EvalValue):EvalValue {
+	static function encodeRef(ec:EvalContext, payload:EvalValue, ?path:hxc.core.Globals.Path):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload, true));
+		// A macro Ref<T> also exposes toString() -- the type's dot path -- which Std.string of the
+		// encoded Type enum uses; without it a base-type ref renders as its raw {get: ...} structure.
+		if (path != null) fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(path)), true));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
