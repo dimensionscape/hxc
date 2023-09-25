@@ -113,6 +113,20 @@ class Typer {
 		};
 	}
 
+	// The compile-time value of a single-character string's `.code`. A host string is UTF-16 here, so a
+	// character outside the BMP is a surrogate pair (two units) that combines into its codepoint. Returns
+	// null when the literal is not exactly one codepoint, letting normal field access report the error.
+	static function singleCodePoint(s:String):Null<Int> {
+		if (s.length == 1) return s.charCodeAt(0);
+		if (s.length == 2) {
+			var hi = s.charCodeAt(0);
+			var lo = s.charCodeAt(1);
+			if (hi >= 0xD800 && hi <= 0xDBFF && lo >= 0xDC00 && lo <= 0xDFFF)
+				return 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+		}
+		return null;
+	}
+
 	public static function unifyMinRaise(ctx:TyperContext, el:Array<TExpr>):T {
 		var basic = ctx.com.basic;
 		if (el.length == 0) return spawnMonomorph(ctx, Position.nullPos);
@@ -999,9 +1013,9 @@ class Typer {
 					if (cv != null) return cv;
 				}
 				switch (e1.expr) {
-					case EConst(CString(s, _)) if (field == "code" && s.length == 1):
-						var code = s.charCodeAt(0);
-						if (code != null) return AKExpr(TypeFunctions.mk(TConst(TInt(code)), ctx.com.basic.tint, p));
+					case EConst(CString(s, _)) if (field == "code"):
+						var cp = singleCodePoint(s);
+						if (cp != null) return AKExpr(TypeFunctions.mk(TConst(TInt(cp)), ctx.com.basic.tint, p));
 					case EConst(CIdent("super")):
 						// `super.field` resolves the field against the superclass with a TSuper receiver, so
 						// the call dispatches to the inherited definition rather than an override.
