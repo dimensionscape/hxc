@@ -422,9 +422,9 @@ class EvalStdLib {
 							case [VFunction(fn, _), VArray(va)]: fn(va.avalues.slice(0, va.alength));
 							case _: unexpectedEnumParams(ctx, params);
 						}
-					case _: VNull;
+					case _: unexpectedEnumParams(ctx, params);
 				}
-			case _: VNull;
+			case _: EvalExceptions.unexpectedValue(ctx, e, "enum");
 		};
 	}
 
@@ -3389,7 +3389,7 @@ class EvalStdLib {
 		reg(s, "Type", "createEnum", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(_):
 				createEnumByName(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
-			case _: VNull;
+			case _: EvalExceptions.unexpectedValue(ctx, arg(a, 0), "enum");
 		}));
 		reg(s, "Type", "createEnumIndex", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(proto): switch (proto.pkind) {
