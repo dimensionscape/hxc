@@ -198,7 +198,8 @@ class Calls {
 			if (ei >= el.length) {
 				var a = args[ai];
 				if (!a.opt) throw new TypingError("Not enough arguments", callp);
-				out.push(TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
+				var pi = makePosInfosArg(ctx, a.t, callp);
+				out.push(pi != null ? pi : TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
 				ai++;
 			} else if (ai >= args.length) {
 				throw new TypingError("Too many arguments", el[ei].pos);
@@ -215,7 +216,8 @@ class Calls {
 					else throw err;
 				}
 				if (skip) {
-					out.push(TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
+					var pi = makePosInfosArg(ctx, a.t, callp);
+					out.push(pi != null ? pi : TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
 					ai++;
 				} else {
 					out.push(te);
@@ -348,6 +350,29 @@ class Calls {
 		var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), p);
 		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
+	}
+
+	// A final optional `?p:haxe.PosInfos` the caller omits is filled with the call-site position info
+	// (Haxe's PosInfos magic), not null. lineNumber is 0 -- hxc does not compute source lines. Returns null
+	// when the parameter type is not haxe.PosInfos. (unify_call_params PosInfos).
+	static function makePosInfosArg(ctx:TyperContext, t:T, callp:Position):Null<TExpr> {
+		var isPI = switch (t) {
+			case TType(d, _): d.path.name == "PosInfos" && d.path.pack.length == 1 && d.path.pack[0] == "haxe";
+			case _: switch (TypeFunctions.follow(t)) {
+				case TAnon(an): an.fields.exists("fileName") && an.fields.exists("lineNumber") && an.fields.exists("className") && an.fields.exists("methodName");
+				case _: false;
+			};
+		};
+		if (!isPI) return null;
+		function strE(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), callp);
+		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: callp};
+		var infos = new Expr(EObjectDecl([
+			fld("fileName", strE(callp.file)),
+			fld("lineNumber", new Expr(EConst(CInt("0", null)), callp)),
+			fld("className", strE(ctx.curclass == null ? "" : ctx.curclass.path.name)),
+			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
+		]), callp);
+		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
 	}
 
 	// `trace(v, ...)` lowers to haxe.Log.trace(v, posInfos) with the call's position info.
