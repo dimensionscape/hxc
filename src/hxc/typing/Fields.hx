@@ -189,6 +189,12 @@ class Fields {
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
 				if (cf == null) {
+					// @:forward: a member not on the impl is resolved on the underlying type, which the
+					// abstract wraps transparently.
+					if (forwardsField(a, i)) {
+						var underlying = TypeFunctions.applyParams(a.params, params, a.thisType);
+						return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+					}
 					var u = tryUsing(ctx, e, i, pfield);
 					if (u != null) return u;
 					throw fieldNotFound(e.type, i, pfield);
@@ -213,6 +219,20 @@ class Fields {
 
 	static function usingDoesUnify(a:T, b:T):Bool {
 		return try { hxc.core.TypeUnification.unifyDefault(a, b); true; } catch (_:hxc.core.TypeUnification.UnifyError) false;
+	}
+
+	// True when the abstract forwards member `name` to its underlying type: @:forward with no
+	// arguments forwards everything, @:forward(a, b, ...) forwards only the listed names.
+	static function forwardsField(a:TAbstract, name:String):Bool {
+		if (!TypeFunctions.hasMeta(":forward", a.meta)) return false;
+		var entry = TypeFunctions.getMeta(":forward", a.meta);
+		if (entry.params.length == 0) return true;
+		for (pe in entry.params) switch (pe.expr) {
+			case EConst(CIdent(n)) if (n == name): return true;
+			case EConst(CString(s, _)) if (s == name): return true;
+			case _:
+		}
+		return false;
 	}
 
 	// A field not found on its type may be provided by a `using` static extension whose first
