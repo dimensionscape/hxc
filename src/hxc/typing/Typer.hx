@@ -248,6 +248,16 @@ class Typer {
 					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
 					ctx.bypassAccessor = oldBypass;
 					teBypass;
+				case EMeta(m, e1) if (m.name == ":mergeBlock"):
+					// A @:mergeBlock block opens no scope; its declarations merge into the enclosing block.
+					// Type the inner statements in the current scope and wrap them so the enclosing block
+					// splices them (see typeBlock).
+					switch (e1.expr) {
+						case EBlock(el):
+							var inner = typeBlock(ctx, el, withType, p);
+							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, inner), inner.type, inner.pos);
+						case _: typeExpr(ctx, e1, withType);
+					}
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
