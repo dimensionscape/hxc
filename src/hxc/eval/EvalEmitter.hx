@@ -462,6 +462,14 @@ class EvalEmitter {
 		return edef != null ? eval(ctx, edef) : VNull;
 	}
 
+	// The value bound to a function parameter: the passed argument, or when it is missing or null, the
+	// parameter's default value if it declares one (a compile-time constant), as if the body began with `if
+	// (arg == null) arg = default`.
+	public static function argValue(ctx:EvalContext, arg:TFuncArg, provided:EvalValue):EvalValue {
+		if (arg.c != null) switch (provided) { case VNull: return eval(ctx, arg.c); case _: }
+		return provided;
+	}
+
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
@@ -469,7 +477,7 @@ class EvalEmitter {
 			env2.lexicalParent = captured;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {
-				env2.locals[slot(env2, tf.args[i].v.id)] = i < args.length ? args[i] : VNull;
+				env2.locals[slot(env2, tf.args[i].v.id)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
 			}
 			var r = try {
 				eval(ctx, tf.expr);

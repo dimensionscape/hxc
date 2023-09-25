@@ -20,7 +20,7 @@ class EvalPrototype {
 			var bound:Array<{vid:Int, value:EvalValue}> = [];
 			for (i in 0...tf.args.length) {
 				var j = i + offset;
-				bound.push({vid: tf.args[i].v.id, value: j < args.length ? args[j] : VNull});
+				bound.push({vid: tf.args[i].v.id, value: EvalEmitter.argValue(ctx, tf.args[i], j < args.length ? args[j] : VNull)});
 			}
 			var vthis = isInstance ? (args.length > 0 ? args[0] : VNull) : null;
 			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis);
