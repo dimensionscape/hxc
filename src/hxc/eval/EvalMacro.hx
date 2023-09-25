@@ -522,13 +522,21 @@ class EvalMacro {
 		return v == VNull ? null : decodeExpr(ec, v, dp);
 	}
 
+	// EField's kind is an optional arg: a null (omitted) third slot means Normal, matching Expr.hx.
+	static function decodeEFieldKind(ec:EvalContext, v:EvalValue):EFieldKind {
+		return switch (v) {
+			case VEnumValue(_): ctorName(ec, v) == "Safe" ? EFSafe : EFNormal;
+			case _: EFNormal;
+		};
+	}
+
 	static function decodeExprDef(ec:EvalContext, v:EvalValue, dp:Position):ExprDef {
 		var a = eargs(v);
 		return switch (ctorName(ec, v)) {
 			case "EConst": EConst(decodeConstant(ec, a[0]));
 			case "EArray": EArray(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp));
 			case "EBinop": EBinop(decodeBinop(ec, a[0]), decodeExpr(ec, a[1], dp), decodeExpr(ec, a[2], dp));
-			case "EField": EField(decodeExpr(ec, a[0], dp), strOf(a[1]), EFNormal);
+			case "EField": EField(decodeExpr(ec, a[0], dp), strOf(a[1]), decodeEFieldKind(ec, a[2]));
 			case "EParenthesis": EParenthesis(decodeExpr(ec, a[0], dp));
 			case "EObjectDecl": EObjectDecl([for (f in arrOf(a[0])) decodeObjField(ec, f, dp)]);
 			case "EArrayDecl": EArrayDecl([for (e in arrOf(a[0])) decodeExpr(ec, e, dp)]);
@@ -827,7 +835,7 @@ class EvalMacro {
 			case EConst(c): mkEnumValue(ec, "ExprDef", "EConst", [encodeConstant(ec, c)]);
 			case EArray(e1, e2): mkEnumValue(ec, "ExprDef", "EArray", [encodeExpr(ec, e1), encodeExpr(ec, e2)]);
 			case EBinop(op, e1, e2): mkEnumValue(ec, "ExprDef", "EBinop", [encodeBinop(ec, op), encodeExpr(ec, e1), encodeExpr(ec, e2)]);
-			case EField(e1, f, _): mkEnumValue(ec, "ExprDef", "EField", [encodeExpr(ec, e1), mkString(f)]);
+			case EField(e1, f, k): mkEnumValue(ec, "ExprDef", "EField", [encodeExpr(ec, e1), mkString(f), mkEnumValue(ec, "EFieldKind", (k == EFSafe ? "Safe" : "Normal"), [])]);
 			case EParenthesis(e1): mkEnumValue(ec, "ExprDef", "EParenthesis", [encodeExpr(ec, e1)]);
 			case EArrayDecl(el): mkEnumValue(ec, "ExprDef", "EArrayDecl", [encodeArray([for (e in el) encodeExpr(ec, e)])]);
 			case ECall(e1, el): mkEnumValue(ec, "ExprDef", "ECall", [encodeExpr(ec, e1), encodeArray([for (e in el) encodeExpr(ec, e)])]);
