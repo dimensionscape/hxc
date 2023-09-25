@@ -607,6 +607,10 @@ class Typer {
 				return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 			case _:
 		}
+		// A module-level field (Haxe 4.2 module-level `var`/`function`, stored in the synthetic
+		// <Module>_Fields_ class) is visible unqualified within its own module.
+		var modStatic = resolveModuleStatic(ctx, i, p, mode);
+		if (modStatic != null) return modStatic;
 		if (i == "trace") {
 			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
@@ -686,6 +690,16 @@ class Typer {
 			if (mt != null) { var r = tryType(mt, i); if (r != null) return r; }
 		}
 		return null;
+	}
+
+	// A bare identifier naming a module-level field (stored on the synthetic <Module>_Fields_ class).
+	static function resolveModuleStatic(ctx:TyperContext, i:String, p:Position, mode:AccessMode):Null<AccessKind> {
+		var m = ctx.com.currentModule;
+		if (m == null || m.statics == null) return null;
+		var c = m.statics;
+		var cf = c.statics.get(i);
+		if (cf == null) return null;
+		return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
 	}
 
 	// A bare identifier that names a constructor of an enum, or a member of an enum abstract, declared
