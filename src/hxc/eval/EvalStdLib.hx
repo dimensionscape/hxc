@@ -4289,9 +4289,12 @@ class EvalStdLib {
 		reg(s, "Type", "createEmptyInstance", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(proto): switch (proto.pkind) {
 				case PClass(_):
-					var iproto = ctx.instancePrototypes.get(proto.ppath);
-					if (iproto == null && isCoreClassPath(proto.ppath)) iproto = coreInstancePrototype(ctx, proto.ppath);
-					iproto == null ? VNull : VInstance(new VInstance(iproto.pinstanceFields.copy(), iproto, INormal));
+					var empty = ctx.builtins.emptyConstructorBuiltins.get(proto.ppath);
+					if (empty != null) empty() else {
+						var iproto = ctx.instancePrototypes.get(proto.ppath);
+						if (iproto == null && isCoreClassPath(proto.ppath)) iproto = coreInstancePrototype(ctx, proto.ppath);
+						iproto == null ? VNull : VInstance(new VInstance(iproto.pinstanceFields.copy(), iproto, INormal));
+					}
 				case _: VNull;
 			};
 			case _: VNull;
@@ -4458,6 +4461,9 @@ class EvalStdLib {
 		reg(s, "Lambda", "concat", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)).concat(iterableValues(ctx, arg(a, 1))))));
 
 		var ctors = ctx.builtins.constructorBuiltins;
+		var emptyCtors = ctx.builtins.emptyConstructorBuiltins;
+		ctors.set(EvalHash.hash("String"), function(a) return arg(a, 0));
+		emptyCtors.set(EvalHash.hash("String"), function() return mkStr(""));
 		ctors.set(EvalHash.hash("StringBuf"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("StringBuf"));
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
@@ -4473,6 +4479,12 @@ class EvalStdLib {
 			validateRegexFlags(flags);
 			var re = new EReg(pattern, flags);
 			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0, lastSubject: null, matched: false});
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
+		});
+		emptyCtors.set(EvalHash.hash("EReg"), function() {
+			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
+			var re = new EReg("", "");
+			nativeRegexInfo.set(re, {captureCount: 0, global: false, lastSubject: null, matched: false});
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
 		});
 
@@ -4777,6 +4789,12 @@ class EvalStdLib {
 				nativeMapOrders.set(vi, []);
 				return VInstance(vi);
 			});
+			emptyCtors.set(EvalHash.hash(mapPath), function() {
+				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
+				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map()));
+				nativeMapOrders.set(vi, []);
+				return VInstance(vi);
+			});
 			reg(inst, mapPath, "set", vmethod(a -> {
 				var vi = thisInstance(a, mapPath);
 				var m = thisMap(a);
@@ -4833,15 +4851,25 @@ class EvalStdLib {
 
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
+		emptyCtors.set(EvalHash.hash("Array"), function() return VArray(new VArray([], 0)));
 		ctors.set(EvalHash.hash("haxe.iterators.ArrayIterator"), function(a) return arrayIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
+		emptyCtors.set(EvalHash.hash("eval.Vector"), function() return VVector([]));
 		ctors.set(EvalHash.hash("haxe.ds.List"), function(a) return mkList(ctx));
 		ctors.set(EvalHash.hash("haxe.crypto.Hmac"), function(a) return mkHmac(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.crypto.BaseCode"), function(a) return mkBaseCode(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.Template"), function(a) return mkTemplate(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.Timer"), function(a) return mkTimer(ctx, toInt(arg(a, 0))));
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
+		emptyCtors.set(EvalHash.hash("haxe.io.BytesBuffer"), function() return mkBytesBuffer(ctx));
+		ctors.set(EvalHash.hash("haxe.io.Bytes"), function(a) {
+			var length = toInt(arg(a, 0));
+			var source = thisBytes([arg(a, 1)]);
+			var bytes = haxe.io.Bytes.alloc(length);
+			bytes.blit(0, source, 0, length > source.length ? source.length : length);
+			return mkBytes(ctx, bytes);
+		});
 		ctors.set(EvalHash.hash("haxe.io.BytesOutput"), function(a) return mkBytesOutput(ctx));
 		ctors.set(EvalHash.hash("haxe.io.BytesInput"), function(a) return mkBytesInput(ctx, arg(a, 0), arg(a, 1), arg(a, 2)));
 
@@ -4850,6 +4878,7 @@ class EvalStdLib {
 			var d = new Date(toInt(arg(a, 0)), toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)), toInt(arg(a, 4)), toInt(arg(a, 5)));
 			return mkDate(ctx, d.getTime());
 		});
+		emptyCtors.set(EvalHash.hash("Date"), function() return mkDate(ctx, 0));
 		ctors.set(EvalHash.hash("sys.io._Process.NativeProcess"), function(a) {
 			return try mkNativeProcess(ctx, new sys.io.Process(stringOf(arg(a, 0)), processArgs(ctx, arg(a, 1)))) catch (e:Dynamic) {
 				EvalExceptions.excString(ctx, Std.string(e));
