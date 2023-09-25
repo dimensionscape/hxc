@@ -4123,7 +4123,7 @@ class EvalStdLib {
 			}
 		}));
 		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(nativeThreadData(a).id)));
-		reg(inst, "eval.vm.NativeThread", "kill", vmethod(a -> VInt(0)));
+		reg(inst, "eval.vm.NativeThread", "kill", vmethod(a -> throw "Field index for kill not found on prototype eval.vm.NativeThread"));
 		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { nativeThreadData(a).messages.add(arg(a, 1)); VNull; }));
 		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> nativeThreadEventLoop(ctx, thisInstance(a, "NativeThread"))));
 		reg(inst, "eval.vm.NativeThread", "set_events", vmethod(a -> {
