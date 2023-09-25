@@ -168,28 +168,52 @@ class EvalMacro {
 		}
 		var ec = getContext(com);
 		var savedBuildClass = curBuildClass;
-		curBuildClass = c;
-		curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
-		var result = switch (callExpr.expr) {
-			case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
-			case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
-		};
-		var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
-		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
-		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
-		curBuildClass = savedBuildClass;
-		hxc.context.ModuleLoader.rebuildFields(c, newFields);
-		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
-		// private typedef used in a field signature) resolve; a build triggered from another module's
-		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
+		var savedBuildFields = curBuildFields;
+		var savedTctx = curTctx;
+		var savedPos = curPos;
 		var savedMod = com.currentModule;
-		com.currentModule = c.module;
-		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
-		// just the field signatures (resolveClass would re-process extends and reject the set super).
-		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
-		// Type the freshly added field bodies so their expr is set for the interpreter.
-		hxc.typing.TypeFields.forceClassFields(com, c);
-		com.currentModule = savedMod;
+		try {
+			var buildTctx = new TyperContext(com);
+			buildTctx.curclass = c;
+			buildTctx.typeParams = c.params;
+			buildTctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+			com.currentModule = c.module;
+			curTctx = buildTctx;
+			curPos = callExpr.pos;
+			curBuildClass = c;
+			curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
+			var result = switch (callExpr.expr) {
+				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
+				case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
+			};
+			curTctx = savedTctx;
+			curPos = savedPos;
+			com.currentModule = savedMod;
+			var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
+			var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
+			com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
+			curBuildClass = savedBuildClass;
+			curBuildFields = savedBuildFields;
+			hxc.context.ModuleLoader.rebuildFields(c, newFields);
+			// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
+			// private typedef used in a field signature) resolve; a build triggered from another module's
+			// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
+			var savedResolveMod = com.currentModule;
+			com.currentModule = c.module;
+			// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
+			// just the field signatures (resolveClass would re-process extends and reject the set super).
+			hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
+			// Type the freshly added field bodies so their expr is set for the interpreter.
+			hxc.typing.TypeFields.forceClassFields(com, c);
+			com.currentModule = savedResolveMod;
+		} catch (e:haxe.Exception) {
+			curBuildClass = savedBuildClass;
+			curBuildFields = savedBuildFields;
+			curTctx = savedTctx;
+			curPos = savedPos;
+			com.currentModule = savedMod;
+			throw e;
+		}
 	}
 
 	static function flattenExprPath(e:Expr):Null<Array<String>> {
