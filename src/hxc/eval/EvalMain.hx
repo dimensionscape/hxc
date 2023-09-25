@@ -11,8 +11,8 @@ import haxe.ds.StringMap;
 
 // Interpreter entry: registers prototypes for the loaded types, then runs an entry point.
 class EvalMain {
-	public static function create(isMacro:Bool, ?resources:StringMap<haxe.io.Bytes>, ?defines:Define):EvalContext {
-		var ctx = new EvalContext(0, isMacro, defines);
+	public static function create(isMacro:Bool, ?resources:StringMap<haxe.io.Bytes>, ?defines:Define, ?classPath:Array<String>):EvalContext {
+		var ctx = new EvalContext(0, isMacro, defines, classPath);
 		if (resources != null) {
 			for (name in resources.keys()) ctx.resources.set(name, resources.get(name));
 		}

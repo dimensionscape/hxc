@@ -106,8 +106,9 @@ class EvalContext {
 	public var maxPrintDepth:Int;
 	public var resources:StringMap<haxe.io.Bytes>;
 	public var defines:Define;
+	public var classPath:Array<String>;
 
-	public function new(ctxId:Int, isMacro:Bool, ?defines:Define) {
+	public function new(ctxId:Int, isMacro:Bool, ?defines:Define, ?classPath:Array<String>) {
 		this.ctxId = ctxId;
 		this.isMacro = isMacro;
 		this.builtins = new Builtins();
@@ -125,6 +126,7 @@ class EvalContext {
 		this.maxPrintDepth = 100;
 		this.resources = new StringMap();
 		this.defines = defines == null ? new Define() : defines;
+		this.classPath = classPath == null ? [] : classPath.copy();
 	}
 
 	static var current:Null<EvalContext> = null;

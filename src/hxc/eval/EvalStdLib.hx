@@ -2613,6 +2613,14 @@ class EvalStdLib {
 		return StringTools.replace(k, "-", "_");
 	}
 
+	static function resolveMacroPath(ctx:EvalContext, file:String):EvalValue {
+		for (cp in ctx.classPath) {
+			var path = cp == "" ? file : cp + file;
+			if (sys.FileSystem.exists(path)) return mkStr(path);
+		}
+		return EvalExceptions.excString(ctx, "File not found '" + file + "'");
+	}
+
 	static function mkObject(fields:Array<{name:String, value:EvalValue}>):EvalValue {
 		var m:Map<Int, EvalValue> = new Map();
 		for (f in fields) m.set(EvalHash.hash(f.name), f.value);
@@ -3946,6 +3954,10 @@ class EvalStdLib {
 					}, true);
 				case "get_defines":
 					VFunction(function(args) return mkStringMap(ctx, definesForExternal(ctx.defines.values)), true);
+				case "class_path":
+					VFunction(function(args) return valueArray([for (p in ctx.classPath) mkStr(p)]), true);
+				case "resolve_path":
+					VFunction(function(args) return resolveMacroPath(ctx, stringOf(arg(args, 0))), true);
 				case "warning":
 					VFunction(function(args) {
 						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), arg(args, 1)));
@@ -3970,6 +3982,18 @@ class EvalStdLib {
 					VFunction(function(args) return mkPos(ctx, Position.nullPos), true);
 				case "get_macro_stack":
 					VFunction(function(args) return macroStackValue(ctx), true);
+				case "contains_display_position":
+					VFunction(function(args) return VFalse, true);
+				case "get_display_mode":
+					VFunction(function(args) return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.DisplayMode")), EvalHash.hash("None"), VNull), true);
+				case "get_expected_type" | "get_call_arguments":
+					VFunction(function(args) return VNull, true);
+				case "get_local_using" | "get_local_imports":
+					VFunction(function(args) return VArray(new VArray([], 0)), true);
+				case "local_vars":
+					VFunction(function(args) return mkStringMap(ctx, new Map()), true);
+				case "signature":
+					VFunction(function(args) return mkStr(haxe.crypto.Md5.encode(serializeEval(ctx, arg(args, 0), false, false))), true);
 				case "add_resource":
 					VFunction(function(args) {
 						var name = stringOf(arg(args, 0));
