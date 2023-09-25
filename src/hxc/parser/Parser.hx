@@ -34,7 +34,7 @@ class Parser {
 	}
 
 	public static function parseExprString(src:String, file:String = "?"):Expr {
-		var p = make(src, file);
+		var p = make(src, file, null, false);
 		var e = p.expr();
 		if (!p.tokEq(p.peek(), Eof)) p.serror();
 		return e;
@@ -118,8 +118,8 @@ class Parser {
 		}
 	}
 
-	static function make(src:String, file:String, ?defines:Define):Parser {
-		Position.registerFileContent(file, src);
+	static function make(src:String, file:String, ?defines:Define, registerContent:Bool = true):Parser {
+		if (registerContent) Position.registerFileContent(file, src);
 		var toks = lexAll(src, file);
 		// Conditional-compilation preprocessing (#if/#else/#elseif/#end/#error/
 		// #line). Only run when the stream actually contains a Sharp token, so
