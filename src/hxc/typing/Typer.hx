@@ -1077,12 +1077,67 @@ class Typer {
 		return new TFunc(args, ret, te);
 	}
 
-	// A class without its own constructor inherits the nearest superclass constructor, with the
-	// superclass type arguments substituted along the inheritance chain.
+	// A class without its own constructor inherits the nearest superclass constructor, with the superclass
+	// type arguments substituted along the inheritance chain. Generate a constructor for a @:structInit
+	// class that lacks one, from its physical var fields (one argument per field, assigned to it),
+	// threading the superclass constructor for inheritance. / get_struct_init_super_info.
+	static function ensureStructInitCtor(ctx:TyperContext, c:TClass):Void {
+		if (c.constructor != null) return;
+		if (!TypeFunctions.hasMeta(":structInit", c.meta)) return;
+		var params = TypeFunctions.extractParamTypes(c.params);
+		var tvoid = ctx.com.basic.tvoid;
+		var tthis = TypeFunctions.mk(TConst(TThis), TInst(c, params), c.pos);
+		var args:Array<TFuncArg> = [];
+		var sigArgs:Array<TSignatureArg> = [];
+		var body:Array<TExpr> = [];
+		for (cf in c.orderedFields) {
+			var physical = switch (cf.kind) {
+				case Var(k): switch (k.read) { case AccCall | AccInline | AccRequire(_, _): false; case _: switch (k.write) { case AccCall: false; case _: true; } };
+				case _: false;
+			};
+			if (!physical) continue;
+			switch (cf.type) { case TLazy(r): cf.type = TypeFunctions.lazyType(r); case _: }
+			var opt = TypeFunctions.hasMeta(":optional", cf.meta);
+			var at = opt ? ctx.com.basic.tnull(cf.type) : cf.type;
+			var v = TypeFunctions.allocVar(VGenerated, cf.name, at, cf.namePos);
+			args.push({v: v});
+			sigArgs.push({name: cf.name, opt: opt, t: at});
+			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, cf.pos);
+			var ev = TypeFunctions.mk(TLocal(v), v.type, cf.pos);
+			body.push(TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, cf.pos));
+		}
+		if (c.superClass != null) {
+			ensureStructInitCtor(ctx, c.superClass.c);
+			if (c.superClass.c.constructor != null) {
+				var st = TypeFunctions.applyParams(c.superClass.c.params, c.superClass.params, c.superClass.c.constructor.type);
+				switch (TypeFunctions.follow(st)) {
+					case TFun(ssig):
+						var superLocals:Array<TExpr> = [];
+						for (sa in ssig.args) {
+							var sv = TypeFunctions.allocVar(VGenerated, sa.name, sa.t, c.pos);
+							args.push({v: sv});
+							sigArgs.push({name: sa.name, opt: sa.opt, t: sa.t});
+							superLocals.push(TypeFunctions.mk(TLocal(sv), sa.t, c.pos));
+						}
+						var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
+						body.unshift(TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos));
+					case _:
+				}
+			}
+		}
+		var tf = new TFunc(args, tvoid, TypeFunctions.mk(TBlock(body), tvoid, c.pos));
+		var ctorType = TFun({args: sigArgs, ret: tvoid});
+		var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
+		cfCtor.kind = Method(MethNormal);
+		cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
+		c.constructor = cfCtor;
+	}
+
 	static function findConstructorType(ctx:TyperContext, c:TClass, tl:TParams):Null<T> {
 		var cur = c;
 		var curTl = tl;
 		while (cur != null) {
+			ensureStructInitCtor(ctx, cur);
 			if (cur.constructor != null) return TypeFunctions.applyParams(cur.params, curTl, cur.constructor.type);
 			if (cur.superClass == null) return null;
 			hxc.eval.EvalMacro.ensureBuilt(ctx.com, cur.superClass.c);
