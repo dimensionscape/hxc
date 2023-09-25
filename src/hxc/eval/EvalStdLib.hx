@@ -2283,6 +2283,10 @@ class EvalStdLib {
 		return out;
 	}
 
+	static inline function externalDefineKey(k:String):String {
+		return StringTools.replace(k, "-", "_");
+	}
+
 	static function mkObject(fields:Array<{name:String, value:EvalValue}>):EvalValue {
 		var m:Map<Int, EvalValue> = new Map();
 		for (f in fields) m.set(EvalHash.hash(f.name), f.value);
@@ -3579,11 +3583,19 @@ class EvalStdLib {
 		reg(s, "eval.vm.Context", "callMacroApi", vfn(a -> {
 			var name = stringOf(arg(a, 0));
 			switch (name) {
+				case "define":
+					VFunction(function(args) {
+						var key = externalDefineKey(stringOf(arg(args, 0)));
+						var value = arg(args, 1);
+						if (value == VNull) ctx.defines.rawDefine(key);
+						else ctx.defines.rawDefineValue(key, stringOf(value));
+						return VNull;
+					}, true);
 				case "defined":
-					VFunction(function(args) return ctx.defines.rawDefined(stringOf(arg(args, 0))) ? VTrue : VFalse, true);
+					VFunction(function(args) return ctx.defines.rawDefined(externalDefineKey(stringOf(arg(args, 0)))) ? VTrue : VFalse, true);
 				case "defined_value":
 					VFunction(function(args) {
-						var key = stringOf(arg(args, 0));
+						var key = externalDefineKey(stringOf(arg(args, 0)));
 						return ctx.defines.rawDefined(key) ? mkStr(ctx.defines.rawDefinedValue(key)) : VNull;
 					}, true);
 				case "get_defines":
