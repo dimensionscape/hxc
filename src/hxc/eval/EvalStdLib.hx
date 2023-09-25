@@ -413,6 +413,21 @@ class EvalStdLib {
 		return p == null ? VNull : p.pvalue;
 	}
 
+	static function coreClassValue(ctx:EvalContext, path:Int):EvalValue {
+		var p = ctx.staticPrototypes.get(path);
+		if (p == null) {
+			p = new VPrototype(path, [], new Map(), [], new Map(), null, PClass([]), VNull);
+			p.pvalue = VPrototype(p);
+			ctx.staticPrototypes.set(path, p);
+		}
+		return p.pvalue;
+	}
+
+	static function isCoreClassPath(path:Int):Bool {
+		return path == EvalHash.key_Int || path == EvalHash.key_Float || path == EvalHash.key_Bool
+			|| path == EvalHash.key_Dynamic || path == EvalHash.key_Class || path == EvalHash.key_Enum;
+	}
+
 	static function createEnumByName(ctx:EvalContext, e:EvalValue, name:Int, params:EvalValue):EvalValue {
 		return switch (EvalValueTools.vresolve(e)) {
 			case VPrototype(proto):
@@ -3940,8 +3955,9 @@ class EvalStdLib {
 			case _: VNull;
 		}));
 		reg(s, "Type", "resolveClass", vfn(a -> {
-			var p = ctx.staticPrototypes.get(EvalHash.hash(stringOf(arg(a, 0))));
-			p == null ? VNull : p.pvalue;
+			var path = EvalHash.hash(stringOf(arg(a, 0)));
+			var p = ctx.staticPrototypes.get(path);
+			p == null ? (isCoreClassPath(path) ? coreClassValue(ctx, path) : VNull) : p.pvalue;
 		}));
 		reg(s, "Type", "resolveEnum", vfn(a -> {
 			var p = ctx.staticPrototypes.get(EvalHash.hash(stringOf(arg(a, 0))));
