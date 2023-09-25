@@ -5283,6 +5283,16 @@ class EvalStdLib {
 		reg(inst, "haxe.io.Bytes", "getInt32", vmethod(a -> try VInt(thisBytes(a).getInt32(toInt(arg(a, 1)))) catch (e:Dynamic) {
 			EvalExceptions.excString(ctx, Std.string(e));
 		}));
+		reg(inst, "haxe.io.Bytes", "getInt64", vmethod(a -> try {
+			var b = thisBytes(a);
+			var pos = toInt(arg(a, 1));
+			mkObject([
+				{name: "low", value: VInt(b.getInt32(pos))},
+				{name: "high", value: VInt(b.getInt32(pos + 4))}
+			]);
+		} catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
 		reg(inst, "haxe.io.Bytes", "getString", vmethod(a -> {
 			var b = thisBytes(a);
 			var pos = toInt(arg(a, 1));
@@ -5336,6 +5346,16 @@ class EvalStdLib {
 		}));
 		reg(inst, "haxe.io.Bytes", "setInt32", vmethod(a -> try {
 			thisBytes(a).setInt32(toInt(arg(a, 1)), toInt(arg(a, 2)));
+			VNull;
+		} catch (e:Dynamic) {
+			EvalExceptions.excString(ctx, Std.string(e));
+		}));
+		reg(inst, "haxe.io.Bytes", "setInt64", vmethod(a -> try {
+			var b = thisBytes(a);
+			var pos = toInt(arg(a, 1));
+			var v = arg(a, 2);
+			b.setInt32(pos, int64Part(ctx, v, EvalHash.keyLow));
+			b.setInt32(pos + 4, int64Part(ctx, v, EvalHash.keyHigh));
 			VNull;
 		} catch (e:Dynamic) {
 			EvalExceptions.excString(ctx, Std.string(e));
