@@ -777,6 +777,33 @@ class Typer {
 	// @:forward.new abstract (whose construction forwards to the underlying class).
 	static function constructorValue(ctx:TyperContext, e1:Expr, mode:AccessMode, p:Position):Null<AccessKind> {
 		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return null;
+		// An abstract with its own constructor: `A.new` is a closure over the impl `_new` static.
+		switch (te1.expr) {
+			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && !TypeFunctions.hasMeta(":forward.new", a.meta) && a.impl.statics.exists("_new")):
+				if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
+				if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(a.path) + "()' instead", p);
+				// Building the closure over `_new` can fail for a complex (e.g. inline, generic) ctor; fall
+				// back to the normal access path rather than dropping the whole enclosing field.
+				return try {
+					var newCf = a.impl.statics.get("_new");
+					hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
+					var atl:TParams = [for (_ in a.params) TypeFunctions.mkMono()];
+					var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, atl, TypeFunctions.follow(newCf.type)))) { case TFun(s): s; case _: null; };
+					if (sig == null) null;
+					else {
+						var retT = TAbstract(a, atl);
+						var vl = [for (arg in sig.args) TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p)];
+						var el:Array<TExpr> = [for (v in vl) TexprTools.makeLocal(v, p)];
+						var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
+						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, newCf, FHStatic(a.impl), false, p), FCall);
+						var call = Calls.makeCall(ctx, fieldExpr, el, retT, p);
+						var body = TypeFunctions.mk(TReturn(call), retT, p);
+						var tf = new TFunc([for (v in vl) {v: v}], retT, body);
+						AKExpr(TypeFunctions.mk(TFunction(tf), TFun({args: sig.args, ret: retT}), p));
+					}
+				} catch (_:haxe.Exception) null;
+			case _:
+		}
 		// (target class, its params, the value type of `new`, an optional cast target for an abstract)
 		var target:Null<{c:TClass, tl:TParams, vt:T, castTo:Null<T>}> = switch (te1.expr) {
 			case TTypeExpr(TClassDecl(c)):
