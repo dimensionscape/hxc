@@ -4397,7 +4397,7 @@ class EvalStdLib {
 		reg(s, "eval.vm.NativeThread", "delay", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
 		reg(s, "eval.vm.NativeThread", "exit", vfn(a -> EvalExceptions.excString(ctx, "sys.thread.Thread.exit is not supported by eval")));
 		reg(s, "eval.vm.NativeThread", "join", vfn(a -> VNull));
-		reg(s, "eval.vm.NativeThread", "yield", vfn(a -> VNull));
+		reg(s, "eval.vm.NativeThread", "yield", vfn(a -> { Sys.sleep(0); VNull; }));
 		reg(s, "eval.vm.NativeThread", "readMessage", vfn(a -> {
 			switch (nativeThreadSelfValue(ctx)) {
 				case VInstance(vi):
