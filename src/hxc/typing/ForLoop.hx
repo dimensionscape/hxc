@@ -7,10 +7,144 @@ import hxc.core.TypeFunctions;
 import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.WithType;
+import hxc.context.CapturePolicy;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 
 class ForLoop {
+	// Per-iteration loop-variable capture (reference: Codegen capture-vars / CPLoopVars). Under the
+	// frame-based eval capture model a loop var reuses one slot across iterations, so every closure
+	// inside the body reads the final value. To give each iteration a fresh binding we run the body
+	// inside an immediately-invoked function whose parameter is the loop var itself: (function(v)
+	// body)(v). Because the param reuses the same TVar (id) as the loop var, references to v inside
+	// body resolve to the IIFE frame's fresh param slot, while the loop-frame value is threaded in as
+	// the call argument.
+
+	// True when any subnode is a closure literal (TFunction). Without a closure there is nothing
+	// to capture, so wrapping would be pointless.
+	static function containsClosure(e:TExpr):Bool {
+		switch (e.expr) {
+			case TFunction(_): return true;
+			case TConst(_), TLocal(_), TTypeExpr(_), TBreak, TContinue, TIdent(_): return false;
+			case TArray(e1, e2): return containsClosure(e1) || containsClosure(e2);
+			case TBinop(_, e1, e2): return containsClosure(e1) || containsClosure(e2);
+			case TField(e1, _): return containsClosure(e1);
+			case TParenthesis(e1): return containsClosure(e1);
+			case TObjectDecl(fields):
+				for (f in fields) if (containsClosure(f.expr)) return true;
+				return false;
+			case TArrayDecl(values):
+				for (v in values) if (containsClosure(v)) return true;
+				return false;
+			case TCall(e1, params):
+				if (containsClosure(e1)) return true;
+				for (a in params) if (containsClosure(a)) return true;
+				return false;
+			case TNew(_, _, args):
+				for (a in args) if (containsClosure(a)) return true;
+				return false;
+			case TUnop(_, _, e1): return containsClosure(e1);
+			case TVarExpr(_, e1): return e1 != null && containsClosure(e1);
+			case TBlock(exprs):
+				for (x in exprs) if (containsClosure(x)) return true;
+				return false;
+			case TFor(_, e1, e2): return containsClosure(e1) || containsClosure(e2);
+			case TIf(econd, eif, eelse):
+				return containsClosure(econd) || containsClosure(eif) || (eelse != null && containsClosure(eelse));
+			case TWhile(econd, e1, _): return containsClosure(econd) || containsClosure(e1);
+			case TSwitch(e1, cases, edef):
+				if (containsClosure(e1)) return true;
+				for (c in cases) {
+					for (v in c.values) if (containsClosure(v)) return true;
+					if (containsClosure(c.expr)) return true;
+				}
+				return edef != null && containsClosure(edef);
+			case TTry(e1, catches):
+				if (containsClosure(e1)) return true;
+				for (c in catches) if (containsClosure(c.expr)) return true;
+				return false;
+			case TReturn(e1): return e1 != null && containsClosure(e1);
+			case TThrow(e1): return containsClosure(e1);
+			case TCast(e1, _): return containsClosure(e1);
+			case TMeta(_, e1): return containsClosure(e1);
+			case TEnumParameter(e1, _, _): return containsClosure(e1);
+			case TEnumIndex(e1): return containsClosure(e1);
+		}
+	}
+
+	// True when a TBreak/TContinue is reachable in `e` without first crossing a nested loop
+	// (TWhile/TFor) or a function boundary (TFunction). Such control flow targets this loop, and it
+	// cannot cross the IIFE function boundary, so we must not wrap when it is present.
+	static function hasBareLoopControl(e:TExpr):Bool {
+		switch (e.expr) {
+			case TBreak, TContinue: return true;
+			// Nested loops rebind break/continue; function boundaries block them entirely.
+			case TWhile(_, _, _), TFor(_, _, _), TFunction(_): return false;
+			case TConst(_), TLocal(_), TTypeExpr(_), TIdent(_): return false;
+			case TArray(e1, e2): return hasBareLoopControl(e1) || hasBareLoopControl(e2);
+			case TBinop(_, e1, e2): return hasBareLoopControl(e1) || hasBareLoopControl(e2);
+			case TField(e1, _): return hasBareLoopControl(e1);
+			case TParenthesis(e1): return hasBareLoopControl(e1);
+			case TObjectDecl(fields):
+				for (f in fields) if (hasBareLoopControl(f.expr)) return true;
+				return false;
+			case TArrayDecl(values):
+				for (v in values) if (hasBareLoopControl(v)) return true;
+				return false;
+			case TCall(e1, params):
+				if (hasBareLoopControl(e1)) return true;
+				for (a in params) if (hasBareLoopControl(a)) return true;
+				return false;
+			case TNew(_, _, args):
+				for (a in args) if (hasBareLoopControl(a)) return true;
+				return false;
+			case TUnop(_, _, e1): return hasBareLoopControl(e1);
+			case TVarExpr(_, e1): return e1 != null && hasBareLoopControl(e1);
+			case TBlock(exprs):
+				for (x in exprs) if (hasBareLoopControl(x)) return true;
+				return false;
+			case TIf(econd, eif, eelse):
+				return hasBareLoopControl(econd) || hasBareLoopControl(eif) || (eelse != null && hasBareLoopControl(eelse));
+			case TSwitch(e1, cases, edef):
+				if (hasBareLoopControl(e1)) return true;
+				for (c in cases) {
+					for (v in c.values) if (hasBareLoopControl(v)) return true;
+					if (hasBareLoopControl(c.expr)) return true;
+				}
+				return edef != null && hasBareLoopControl(edef);
+			case TTry(e1, catches):
+				if (hasBareLoopControl(e1)) return true;
+				for (c in catches) if (hasBareLoopControl(c.expr)) return true;
+				return false;
+			case TReturn(e1): return e1 != null && hasBareLoopControl(e1);
+			case TThrow(e1): return hasBareLoopControl(e1);
+			case TCast(e1, _): return hasBareLoopControl(e1);
+			case TMeta(_, e1): return hasBareLoopControl(e1);
+			case TEnumParameter(e1, _, _): return hasBareLoopControl(e1);
+			case TEnumIndex(e1): return hasBareLoopControl(e1);
+		}
+	}
+
+	// True when the active capture policy needs per-iteration loop-var freshness. CPNone relies on
+	// native block scoping for fresh bindings; every other policy runs the frame-based model.
+	static function needsLoopVarWrap(ctx:TyperContext):Bool {
+		return switch (ctx.com.platformConfig.capturePolicy) {
+			case CPNone: false;
+			case CPLoopVars, CPWrapRef: true;
+		};
+	}
+
+	// Wrap `body` so it runs inside an IIFE taking the given loop vars as parameters, giving each
+	// iteration a fresh frame for its captured loop variables. Only called when safe (see guards).
+	static function wrapLoopVarsBody(ctx:TyperContext, loopVars:Array<TVar>, body:TExpr, p:Position):TExpr {
+		var basic = ctx.com.basic;
+		var args:Array<TFuncArg> = [for (v in loopVars) {v: v}];
+		var sigArgs:Array<TSignatureArg> = [for (v in loopVars) {name: v.name, opt: false, t: v.type}];
+		var tf = new TFunc(args, basic.tvoid, body);
+		var closure = TypeFunctions.mk(TFunction(tf), TFun({args: sigArgs, ret: basic.tvoid}), p);
+		var callArgs = [for (v in loopVars) TexprTools.makeLocal(v, p)];
+		return TypeFunctions.mk(TCall(closure, callArgs), basic.tvoid, p);
+	}
 	// Resolve a method access `e.name` for a 0-argument call, returning the callee texpr.
 	static function methodCallee(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
 		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
@@ -31,6 +165,10 @@ class ForLoop {
 	// Type_for_loop (general iterator desugar).
 	// `for (k => v in e)` desugars to iterating e.keyValueIterator(), binding k and v from each
 	// pair, then typing the resulting block with the existing machinery.
+	// NOTE: per-iteration loop-var wrapping (see needsLoopVarWrap / wrapLoopVarsBody) is applied in
+	// typeForLoop only. Key-value goes through the untyped-AST desugar below, so the typed k/v TVars
+	// are not exposed here to wrap in an IIFE; wiring it would require restructuring this path. Left
+	// as-is so the single-var case (the capture failures) is fixed without risking key-value.
 	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
 		var tmpIt = "`kvit";
 		var tmpKv = "`kv";
@@ -85,9 +223,15 @@ class ForLoop {
 		oldLocals();
 		var ehasnext = call0(ctx, eIt, "hasNext", p);
 		var enext = call0(ctx, eIt, "next", p);
+		// CPLoopVars: give each iteration a fresh binding of the loop var, but only when the body
+		// captures it (contains a closure) and no bare break/continue would need to cross the IIFE.
+		var iterBody = body;
+		if (needsLoopVarWrap(ctx) && containsClosure(body) && !hasBareLoopControl(body)) {
+			iterBody = wrapLoopVarsBody(ctx, [v], body, p);
+		}
 		var whileBody = TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, enext), basic.tvoid, p),
-			body
+			iterBody
 		]), basic.tvoid, p);
 		var ewhile = TypeFunctions.mk(TWhile(ehasnext, whileBody, NormalWhile), basic.tvoid, p);
 		return TypeFunctions.mk(TBlock([
