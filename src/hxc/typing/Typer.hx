@@ -325,24 +325,51 @@ class Typer {
 						TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
 				}
 			case EObjectDecl(fields):
-				var tfields:Array<TObjectField> = [];
-				var anonFields = new haxe.ds.StringMap<TClassField>();
-				var expected:Null<TAnon> = switch (withType) {
-					case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TAnon(a): a; case _: null; };
+				// A `{...}` literal against a @:structInit class types as a call to that class's
+				// constructor, matching fields to constructor arguments by name.
+				var scHit = switch (withType) {
+					case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+						case TInst(c, tl) if (TypeFunctions.hasMeta(":structInit", c.meta)): {c: c, tl: tl, t: TypeFunctions.follow(wt)};
+						case _: null;
+					};
 					case _: null;
 				};
-				for (f in fields) {
-					var ef = expected != null ? expected.fields.get(f.name) : null;
-					var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
-					var te = typeExpr(ctx, f.expr, fwt);
-					// Against an expected field type, coerce the value to it so an implicit abstract cast
-					// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
-					if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
-					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
-					anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
+				var scSig = scHit == null ? null : switch (findConstructorType(ctx, scHit.c, scHit.tl)) {
+					case null: null;
+					case ct: switch (TypeFunctions.follow(ct)) { case TFun(sig): sig; case _: null; };
+				};
+				if (scHit != null && scSig != null) {
+					var byName = new haxe.ds.StringMap<Expr>();
+					for (f in fields) byName.set(f.name, f.expr);
+					var el:Array<Expr> = [];
+					for (arg in scSig.args) {
+						var fe = byName.get(arg.name);
+						if (fe != null) el.push(fe);
+						else if (arg.opt) el.push(new Expr(EConst(CIdent("null")), p));
+						else throw new TypingError("Object requires field " + arg.name, p);
+					}
+					var r = Calls.unifyCallArgs(ctx, el, scSig.args, scSig.ret, p);
+					TypeFunctions.mk(TNew(scHit.c, scHit.tl, r.el), scHit.t, p);
+				} else {
+					var tfields:Array<TObjectField> = [];
+					var anonFields = new haxe.ds.StringMap<TClassField>();
+					var expected:Null<TAnon> = switch (withType) {
+						case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TAnon(a): a; case _: null; };
+						case _: null;
+					};
+					for (f in fields) {
+						var ef = expected != null ? expected.fields.get(f.name) : null;
+						var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
+						var te = typeExpr(ctx, f.expr, fwt);
+						// Against an expected field type, coerce the value to it so an implicit abstract cast
+						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
+						if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
+						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
+						anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
+					}
+					var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
+					TypeFunctions.mk(TObjectDecl(tfields), t, p);
 				}
-				var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
-				TypeFunctions.mk(TObjectDecl(tfields), t, p);
 			case ETry(e1, catches):
 				var te = typeExpr(ctx, e1, withType);
 				var tcatches:Array<TCatch> = [];
