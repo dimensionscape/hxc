@@ -208,7 +208,15 @@ class ForLoop {
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
 		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself.
 		var iterExpr = try call0(ctx, e1, "iterator", p) catch (_:TypingError) e1;
-		var pt = switch (TypeFunctions.follow(methodCallee(ctx, iterExpr, "next", p).type)) {
+		// When the iterator candidate is an abstract that does not expose next directly, follow it to its
+		// underlying type (the reference casts to Iterator<_>) so an abstract over an Iterator iterates.
+		// Additive: only retried when the direct resolution fails.
+		var nextCallee = try methodCallee(ctx, iterExpr, "next", p) catch (_:TypingError) {
+			var ut = TypeFunctions.followWithAbstracts(iterExpr.type);
+			iterExpr = TypeFunctions.mk(TCast(iterExpr, null), ut, iterExpr.pos);
+			methodCallee(ctx, iterExpr, "next", p);
+		};
+		var pt = switch (TypeFunctions.follow(nextCallee.type)) {
 			case TFun(sig): sig.ret;
 			case _: TypeFunctions.mkMono();
 		};
