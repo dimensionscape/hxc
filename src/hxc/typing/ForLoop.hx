@@ -188,6 +188,30 @@ class ForLoop {
 		return Typer.typeExpr(ctx, block, WithTypeTools.noValue);
 	}
 
+	// Array-access iteration: for an array-like value (a length:Int field plus array read access) that
+	// exposes no iterator, desugar `for (x in e)` to a 0...length index loop over e[i], reusing the
+	// existing length/array-access typing. Returns null when e is not array-like. The increment runs before
+	// the body so `continue` stays correct.
+	static function tryArrayAccessForLoop(ctx:TyperContext, vName:String, e1Expr:Expr, e2:Expr, p:Position):Null<TExpr> {
+		inline function ident(n:String):Expr return new Expr(EConst(CIdent(n)), p);
+		inline function decl(n:String, e:Expr):Expr
+			return new Expr(EVars([{evName: {name: n, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: e, evMeta: []}]), p);
+		var arr = "_hx_aa_arr", idx = "_hx_aa_i";
+		var cond = new Expr(EBinop(OpLt, ident(idx), new Expr(EField(ident(arr), "length", EFNormal), p)), p);
+		var wbody = new Expr(EBlock([
+			decl(vName, new Expr(EArray(ident(arr), ident(idx)), p)),
+			new Expr(EUnop(Increment, Postfix, ident(idx)), p),
+			e2
+		]), p);
+		var block = new Expr(EBlock([
+			decl(arr, e1Expr),
+			decl(idx, new Expr(EConst(CInt("0", null)), p)),
+			new Expr(EWhile(cond, wbody, NormalWhile), p)
+		]), p);
+		var restore = Typer.saveLocals(ctx);
+		return try Typer.typeExpr(ctx, block, WithTypeTools.noValue) catch (_:TypingError) { restore(); null; };
+	}
+
 	public static function typeForLoop(ctx:TyperContext, it:Expr, e2:Expr, p:Position):TExpr {
 		var vName:String;
 		var e1Expr:Expr;
@@ -206,20 +230,28 @@ class ForLoop {
 		}
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
-		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself.
-		var iterExpr = try call0(ctx, e1, "iterator", p) catch (_:TypingError) e1;
-		// When the iterator candidate is an abstract that does not expose next directly, follow it to its
-		// underlying type (the reference casts to Iterator<_>) so an abstract over an Iterator iterates.
-		// Additive: only retried when the direct resolution fails.
-		var nextCallee = try methodCallee(ctx, iterExpr, "next", p) catch (_:TypingError) {
-			var ut = TypeFunctions.followWithAbstracts(iterExpr.type);
-			iterExpr = TypeFunctions.mk(TCast(iterExpr, null), ut, iterExpr.pos);
-			methodCallee(ctx, iterExpr, "next", p);
-		};
-		var pt = switch (TypeFunctions.follow(nextCallee.type)) {
-			case TFun(sig): sig.ret;
-			case _: TypeFunctions.mkMono();
-		};
+		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself. If e1 exposes no iterator,
+		// fall back to array-access iteration for array-like values.
+		var iterExpr = e1;
+		var pt = TypeFunctions.mkMono();
+		try {
+			iterExpr = try call0(ctx, e1, "iterator", p) catch (_:TypingError) e1;
+			// When the iterator candidate is an abstract that does not expose next directly, follow it to its
+			// underlying type (the reference casts to Iterator<_>) so an abstract over an Iterator iterates.
+			var nextCallee = try methodCallee(ctx, iterExpr, "next", p) catch (_:TypingError) {
+				var ut = TypeFunctions.followWithAbstracts(iterExpr.type);
+				iterExpr = TypeFunctions.mk(TCast(iterExpr, null), ut, iterExpr.pos);
+				methodCallee(ctx, iterExpr, "next", p);
+			};
+			pt = switch (TypeFunctions.follow(nextCallee.type)) {
+				case TFun(sig): sig.ret;
+				case _: TypeFunctions.mkMono();
+			};
+		} catch (err:TypingError) {
+			var aa = tryArrayAccessForLoop(ctx, vName, e1Expr, e2, p);
+			if (aa != null) return aa;
+			throw err;
+		}
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
