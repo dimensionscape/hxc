@@ -204,7 +204,10 @@ class Fields {
 			case TDynamic(_):
 				AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 			case _:
-				if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+				// A field not found on an enum or other value may come from a `using` static extension
+				// (e.g. the global EnumValueTools on an enum value).
+				var u = tryUsing(ctx, e, i, pfield);
+				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
 		};
 	}
 
@@ -214,31 +217,51 @@ class Fields {
 
 	// A field not found on its type may be provided by a `using` static extension whose first
 	// argument accepts the receiver.
+	// One static-extension class: if it declares a static `i` whose first argument accepts the receiver,
+	// build the using access. Its own type parameters are monomorphized so a generic first argument
+	// (e.g. Iterable<A>) can accept the receiver.
+	static function tryUsingClass(ctx:TyperContext, uc:TClass, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
+		var cf = uc.statics.get(i);
+		if (cf == null) return null;
+		var cft = cf.type;
+		if (cf.params.length > 0) {
+			var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
+			cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
+		}
+		return switch (TypeFunctions.follow(cft)) {
+			case TFun(sig) if (sig.args.length > 0 && usingDoesUnify(e.type, sig.args[0].t)):
+				AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
+			case _: null;
+		};
+	}
+
+	// Compiler-wide static extensions applied to every module: haxe.EnumTools.{EnumTools, EnumValueTools}
+	// (so EnumValue.getIndex / Enum.createByName resolve without an explicit `using`). .
+	static var globalUsingModules = [{pack: ["haxe"], name: "EnumTools"}];
+
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
 		var m = ctx.com.currentModule;
-		if (m == null) return null;
-		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-		if (imports == null) return null;
-		for (up in imports.usings) {
-			var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
-			if (mt == null) continue;
-			switch (mt) {
+		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports != null) {
+			for (up in imports.usings) {
+				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
+				switch (mt) {
+					case TClassDecl(uc):
+						var r = tryUsingClass(ctx, uc, e, i, p);
+						if (r != null) return r;
+					case _:
+				}
+			}
+		}
+		// Global usings applied to every module. (ctx.g.global_using after module_using).
+		for (gp in globalUsingModules) {
+			var gm = try hxc.context.ModuleLoader.loadModule(ctx.com, gp, p) catch (_:Dynamic) null;
+			if (gm == null) continue;
+			for (mt in gm.types) switch (mt) {
 				case TClassDecl(uc):
-					try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
-					var cf = uc.statics.get(i);
-					if (cf == null) continue;
-					// Monomorphize the extension method's own type parameters so a generic first argument
-					// (e.g. Iterable<A>) can accept the receiver.
-					var cft = cf.type;
-					if (cf.params.length > 0) {
-						var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
-						cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
-					}
-					switch (TypeFunctions.follow(cft)) {
-						case TFun(sig) if (sig.args.length > 0 && usingDoesUnify(e.type, sig.args[0].t)):
-							return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
-						case _:
-					}
+					var r = tryUsingClass(ctx, uc, e, i, p);
+					if (r != null) return r;
 				case _:
 			}
 		}
