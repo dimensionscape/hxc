@@ -327,10 +327,7 @@ class Typer {
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
-						var acc = "_hx_comp";
-						var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: new Expr(EArrayDecl([]), p), evMeta: []}]), p);
-						var loop = comprehensionPush(acc, el[0]);
-						return typeExpr(ctx, new Expr(EBlock([decl, loop, new Expr(EConst(CIdent(acc)), p)]), p), withType);
+						return typeArrayComprehension(ctx, el[0], withType, p);
 					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
 						return typeMapDeclaration(ctx, el, withType, p);
 					case _:
@@ -778,18 +775,44 @@ class Typer {
 		return acc;
 	}
 
-	// Lowers an array comprehension body so each tail expression pushes onto the accumulator.
-	static function comprehensionPush(acc:String, e:Expr):Expr {
+	static function typeArrayComprehension(ctx:TyperContext, e:Expr, withType:WithType, p:Position):TExpr {
+		var acc = "_hx_comp";
+		var mapped = comprehensionPush(acc, e);
+		var init = mapped.isMap
+			? new Expr(ENew({path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p}, []), p)
+			: new Expr(EArrayDecl([]), p);
+		var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: init, evMeta: []}]), p);
+		return typeExpr(ctx, new Expr(EBlock([decl, mapped.expr, new Expr(EConst(CIdent(acc)), p)]), p), withType);
+	}
+
+	// Lowers a comprehension body so each tail expression updates the accumulator.
+	static function comprehensionPush(acc:String, e:Expr):{expr:Expr, isMap:Bool} {
+		inline function same(expr:Expr, isMap:Bool) return {expr: expr, isMap: isMap};
+		inline function call(name:String, args:Array<Expr>):Expr
+			return new Expr(ECall(new Expr(EField(new Expr(EConst(CIdent(acc)), e.pos), name, EFNormal), e.pos), args), e.pos);
 		return switch (e.expr) {
-			case EFor(it, body): new Expr(EFor(it, comprehensionPush(acc, body)), e.pos);
-			case EWhile(c, body, flag): new Expr(EWhile(c, comprehensionPush(acc, body), flag), e.pos);
-			case EIf(c, e1, e2): new Expr(EIf(c, comprehensionPush(acc, e1), e2 == null ? null : comprehensionPush(acc, e2)), e.pos);
+			case EFor(it, body):
+				var b = comprehensionPush(acc, body);
+				same(new Expr(EFor(it, b.expr), e.pos), b.isMap);
+			case EWhile(c, body, flag):
+				var b = comprehensionPush(acc, body);
+				same(new Expr(EWhile(c, b.expr, flag), e.pos), b.isMap);
+			case EIf(c, e1, e2):
+				var b1 = comprehensionPush(acc, e1);
+				var b2 = e2 == null ? null : comprehensionPush(acc, e2);
+				same(new Expr(EIf(c, b1.expr, b2 == null ? null : b2.expr), e.pos), b1.isMap || (b2 != null && b2.isMap));
 			case EBlock(l) if (l.length > 0):
 				var nl = l.copy();
-				nl[nl.length - 1] = comprehensionPush(acc, nl[nl.length - 1]);
-				new Expr(EBlock(nl), e.pos);
+				var last = comprehensionPush(acc, nl[nl.length - 1]);
+				nl[nl.length - 1] = last.expr;
+				same(new Expr(EBlock(nl), e.pos), last.isMap);
+			case EParenthesis(e1):
+				var b = comprehensionPush(acc, e1);
+				same(new Expr(EParenthesis(b.expr), e.pos), b.isMap);
+			case EBinop(OpArrow, a, b):
+				same(call("set", [a, b]), true);
 			case _:
-				new Expr(ECall(new Expr(EField(new Expr(EConst(CIdent(acc)), e.pos), "push", EFNormal), e.pos), [e]), e.pos);
+				same(call("push", [e]), false);
 		};
 	}
 
@@ -1236,6 +1259,10 @@ class Typer {
 						}
 					case _:
 				}
+				if (a.impl != null && multiTypeHasOpenSelector(a, usedAtl)) {
+					var r = Calls.unifyCallArgs(ctx, el, [], ctx.com.basic.tvoid, p);
+					return TypeFunctions.mk(TNew(a.impl, usedAtl, r.el), TAbstract(a, usedAtl), p);
+				}
 				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, usedAtl, p));
 				switch (ct) {
 					case TInst(c, ctl):
@@ -1324,9 +1351,15 @@ class Typer {
 	// type-parameter constraint is satisfied by the actual key type, with the concrete return
 	// type specialized to the actual type parameters.
 	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):T {
+		return resolveMultiTypeConcrete(a, atl, p);
+	}
+
+	public static function resolveMultiTypeConcrete(a:TAbstract, atl:Array<T>, p:Position):T {
 		// Follow an abstract key to its underlying type so a key like `enum abstract Foo(String)` selects
 		// the impl for its underlying (StringMap), matching the reference.
-		var key = atl.length > 0 ? TypeFunctions.followWithAbstracts(atl[0]) : ctx.com.basic.tvoid;
+		var key = atl.length > 0 ? TypeFunctions.followWithAbstracts(atl[0]) : TypeFunctions.tDynamic;
+		if (TypeFunctions.hasMono(key))
+			throw new TypingError("Type parameters of multi type abstracts must be known", p);
 		for (toCast in a.toField) {
 			var cf = toCast.cf;
 			if (cf.params.length == 0) continue;
@@ -1339,6 +1372,11 @@ class Typer {
 		throw new TypingError("Cannot resolve multi-type for " + a.path.name, p);
 	}
 
+	static function multiTypeHasOpenSelector(a:TAbstract, atl:Array<T>):Bool {
+		if (atl.length == 0) return false;
+		return TypeFunctions.hasMono(TypeFunctions.followWithAbstracts(atl[0]));
+	}
+
 	static function multiTypeConstraints(ttp:TypedTypeParam):Array<T> {
 		return switch (TypeFunctions.follow(ttp.type)) {
 			case TInst(c, _): switch (c.kind) { case KTypeParameter(tl): tl; case _: []; };
@@ -1347,10 +1385,10 @@ class Typer {
 	}
 
 	static function tryUnifyMulti(a:T, b:T):Bool {
-		return try {
+		return try TypeUnification.withMonoRollback(function() {
 			TypeUnification.unifyDefault(a, b);
-			true;
-		} catch (_:UnifyError) false;
+			return true;
+		}) catch (_:UnifyError) false;
 	}
 
 	static function hasReturn(e:TExpr):Bool {
