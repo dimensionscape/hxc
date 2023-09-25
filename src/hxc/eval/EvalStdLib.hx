@@ -423,6 +423,15 @@ class EvalStdLib {
 		return p.pvalue;
 	}
 
+	static function coreInstancePrototype(ctx:EvalContext, path:Int):VPrototype {
+		var p = ctx.instancePrototypes.get(path);
+		if (p == null) {
+			p = new VPrototype(path, [], new Map(), [], new Map(), null, PInstance, VNull);
+			ctx.instancePrototypes.set(path, p);
+		}
+		return p;
+	}
+
 	static function isCoreClassPath(path:Int):Bool {
 		return path == EvalHash.key_Int || path == EvalHash.key_Float || path == EvalHash.key_Bool
 			|| path == EvalHash.key_Dynamic || path == EvalHash.key_Class || path == EvalHash.key_Enum;
@@ -3194,7 +3203,7 @@ class EvalStdLib {
 					case "String": switch (v) { case VString(_): true; case _: false; };
 					case "Array": switch (v) { case VArray(_): true; case _: false; };
 					case "eval.Vector": switch (v) { case VVector(_): true; case _: false; };
-					case "Class": switch (v) { case VPrototype(p): switch (p.pkind) { case PClass(_): true; case _: false; }; case _: false; };
+					case "Class": switch (v) { case VPrototype(p): switch (p.pkind) { case PClass(_): true; case _: false; }; case VInstance(vi): vi.iproto.ppath == EvalHash.key_Class; case _: false; };
 					case "Enum": switch (v) { case VPrototype(p): switch (p.pkind) { case PEnum(_): true; case _: false; }; case _: false; };
 					case "EnumValue": switch (v) { case VEnumValue(_): true; case _: false; };
 					case _: switch (v) {
@@ -3879,6 +3888,7 @@ class EvalStdLib {
 			case VPrototype(proto): switch (proto.pkind) {
 				case PClass(_):
 					var iproto = ctx.instancePrototypes.get(proto.ppath);
+					if (iproto == null && isCoreClassPath(proto.ppath)) iproto = coreInstancePrototype(ctx, proto.ppath);
 					iproto == null ? VNull : VInstance(new VInstance(iproto.pinstanceFields.copy(), iproto, INormal));
 				case _: VNull;
 			};
@@ -3892,7 +3902,9 @@ class EvalStdLib {
 		reg(s, "Type", "getInstanceFields", vfn(a -> switch (arg(a, 0)) {
 			case VPrototype(proto):
 				var ip = ctx.instancePrototypes.get(proto.ppath);
-				if (ip == null) VNull else {
+				if (ip == null && isCoreClassPath(proto.ppath)) {
+					VArray(new VArray([], 0));
+				} else if (ip == null) VNull else {
 					var ns = instanceFieldNames(ip);
 					VArray(new VArray(ns, ns.length));
 				}
