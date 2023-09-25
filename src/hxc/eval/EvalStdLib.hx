@@ -3076,6 +3076,20 @@ class EvalStdLib {
 			sys.FileSystem.exists(file) ? VNull : EvalExceptions.excString(ctx, "Could not find file " + file);
 		}));
 		reg(s, "eval.vm.Context", "breakHere", vfn(a -> VNull));
+		reg(s, "eval.vm.Context", "callMacroApi", vfn(a -> {
+			var name = stringOf(arg(a, 0));
+			switch (name) {
+				case "defined":
+					VFunction(function(args) return ctx.defines.rawDefined(stringOf(arg(args, 0))) ? VTrue : VFalse, true);
+				case "defined_value":
+					VFunction(function(args) {
+						var key = stringOf(arg(args, 0));
+						return ctx.defines.rawDefined(key) ? mkStr(ctx.defines.rawDefinedValue(key)) : VNull;
+					}, true);
+				case _:
+					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
+			}
+		}));
 		reg(s, "eval.vm.Context", "loadPlugin", vfn(a ->
 			EvalExceptions.excString(ctx, "error loading shared library: " + nativeStringOf(arg(a, 0)))));
 

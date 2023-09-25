@@ -1,6 +1,7 @@
 package hxc.eval;
 
 import hxc.ast.Position;
+import hxc.core.Define;
 import hxc.core.Type.ModuleType;
 import hxc.core.NotFound;
 import hxc.core.TypingError;
@@ -104,8 +105,9 @@ class EvalContext {
 	public var maxStackDepth:Int;
 	public var maxPrintDepth:Int;
 	public var resources:StringMap<haxe.io.Bytes>;
+	public var defines:Define;
 
-	public function new(ctxId:Int, isMacro:Bool) {
+	public function new(ctxId:Int, isMacro:Bool, ?defines:Define) {
 		this.ctxId = ctxId;
 		this.isMacro = isMacro;
 		this.builtins = new Builtins();
@@ -122,6 +124,7 @@ class EvalContext {
 		this.maxStackDepth = 1000;
 		this.maxPrintDepth = 100;
 		this.resources = new StringMap();
+		this.defines = defines == null ? new Define() : defines;
 	}
 
 	static var current:Null<EvalContext> = null;
