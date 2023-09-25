@@ -71,15 +71,20 @@ class Inline {
 		}
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
+			var param = params[i];
+			if (tf.args[i].c != null) switch (param.expr) {
+				case TConst(TNull): param = tf.args[i].c;
+				case _:
+			}
 			// The abstract `this` (first arg of an abstract member) binds to a local receiver directly, so
 			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
-			var directLocal = (absMember && i == 0) ? (switch (params[0].expr) { case TLocal(v): v; case _: null; }) : null;
+			var directLocal = (absMember && i == 0) ? (switch (param.expr) { case TLocal(v): v; case _: null; }) : null;
 			if (directLocal != null) {
 				subst.set(av.id, directLocal);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
 				subst.set(av.id, nv);
-				binds.push(TypeFunctions.mk(TVarExpr(nv, params[i]), tvoid, p));
+				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
