@@ -12,6 +12,20 @@ import hxc.eval.EvalHash;
 import cpp.NativeSocket;
 #end
 
+typedef EvalLoopTimer = {
+	var fn:Void->Void;
+	var interval:Float;
+	var next:Float;
+	var cancelled:Bool;
+}
+
+typedef EvalLoopState = {
+	var pending:Array<Void->Void>;
+	var timers:Array<EvalLoopTimer>;
+	var promised:Int;
+	var started:Bool;
+}
+
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
@@ -857,11 +871,12 @@ class EvalStdLib {
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
 	static var threadConditions = new haxe.ds.ObjectMap<VInstance, sys.thread.Condition>();
 	static var threadSemaphores = new haxe.ds.ObjectMap<VInstance, sys.thread.Semaphore>();
-	static var threadEventLoops = new haxe.ds.ObjectMap<VInstance, sys.thread.EventLoop>();
+	static var threadEventLoops = new haxe.ds.ObjectMap<VInstance, EvalLoopState>();
+	static var eventLoopObjects = new haxe.ds.ObjectMap<VObject, EvalLoopState>();
 	static var threadEventHandlers = new Map<Int, Dynamic>();
 	static var threadEventHandlerNextId = 1;
 	static var nativeThreads = new haxe.ds.ObjectMap<VInstance, {id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue}>();
-	static var nativeTimers = new haxe.ds.ObjectMap<VInstance, {loop:sys.thread.EventLoop, handler:Dynamic}>();
+	static var nativeTimers = new haxe.ds.ObjectMap<VInstance, {loop:EvalLoopState, handler:Dynamic}>();
 	static var nativeThreadSelf:Null<VInstance> = null;
 	static var nativeThreadNextId = 1;
 	static var evalContext:Null<EvalContext> = null;
@@ -883,7 +898,7 @@ class EvalStdLib {
 	public static function processEvents():Void {
 		var ctx = evalContext;
 		var timers = [for (vi in nativeTimers.keys()) nativeTimers.get(vi)];
-		for (timer in timers) if (timer != null) timer.loop.loop();
+		for (timer in timers) if (timer != null) evalLoopDrain(timer.loop, null);
 		var self = nativeThreadSelf;
 		if (ctx == null || self == null) return;
 		var thread = nativeThreads.get(self);
@@ -1910,12 +1925,16 @@ class EvalStdLib {
 	static function mkThreadEventLoop(ctx:EvalContext):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.EventLoop"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		threadEventLoops.set(vi, new sys.thread.EventLoop());
+		threadEventLoops.set(vi, newEvalLoop());
 		return VInstance(vi);
 	}
 
-	static function thisThreadEventLoop(a:Array<EvalValue>):sys.thread.EventLoop {
+	static function thisThreadEventLoop(a:Array<EvalValue>):EvalLoopState {
 		return threadEventLoops.get(thisInstance(a, "EventLoop"));
+	}
+
+	static function newEvalLoop():EvalLoopState {
+		return {pending: [], timers: [], promised: 0, started: false};
 	}
 
 	static function eventHandlerValue(handler:Dynamic):EvalValue {
@@ -1928,58 +1947,205 @@ class EvalStdLib {
 		return threadEventHandlers.get(toInt(v));
 	}
 
-	static function nextEventTimeValue(ctx:EvalContext, v:Dynamic):EvalValue {
+	static function nextEventTimeValue(ctx:EvalContext, name:String, ?time:Null<Float>):EvalValue {
 		var e = classValue(ctx, EvalHash.hash("sys.thread.NextEventTime"));
 		if (e == VNull) return VNull;
-		var name = Type.enumConstructor(v);
-		var params = Type.enumParameters(v);
 		if (name == "AnyTime") {
-			var time:Null<Float> = params[0];
 			var p = time == null ? VNull : VFloat(time);
 			return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray([p], 1)));
 		}
 		if (name == "At") {
-			var time:Float = params[0];
-			return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray([VFloat(time)], 1)));
+			return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray([VFloat(time == null ? 0.0 : time)], 1)));
 		}
 		return createEnumByName(ctx, e, EvalHash.hash(name), VNull);
 	}
 
-	static function threadEventLoopObject(ctx:EvalContext, loop:sys.thread.EventLoop):EvalValue {
-		return mkObject([
+	static function evalLoopExpected(loop:EvalLoopState):Bool {
+		if (loop.pending.length > 0 || loop.promised > 0) return true;
+		for (timer in loop.timers) if (!timer.cancelled) return true;
+		return false;
+	}
+
+	static function evalLoopNextDue(loop:EvalLoopState):Null<Float> {
+		var at:Null<Float> = null;
+		for (timer in loop.timers) {
+			if (!timer.cancelled && (at == null || timer.next < at)) at = timer.next;
+		}
+		return at;
+	}
+
+	static function evalLoopRunPending(loop:EvalLoopState):Bool {
+		var ran = false;
+		while (loop.pending.length > 0) {
+			var pending = loop.pending;
+			loop.pending = [];
+			for (fn in pending) {
+				ran = true;
+				fn();
+			}
+		}
+		return ran;
+	}
+
+	static function evalLoopRunDue(loop:EvalLoopState):Bool {
+		var ran = false;
+		var now = Sys.time();
+		for (timer in loop.timers.copy()) {
+			if (timer.cancelled || timer.next > now) continue;
+			ran = true;
+			while (timer.next <= now) timer.next += timer.interval;
+			timer.fn();
+		}
+		return ran;
+	}
+
+	static function evalLoopStep(loop:EvalLoopState):Bool {
+		var ran = evalLoopRunPending(loop);
+		if (evalLoopRunDue(loop)) ran = true;
+		if (evalLoopRunPending(loop)) ran = true;
+		return ran;
+	}
+
+	static function evalLoopWait(loop:EvalLoopState, ?timeout:Null<Float>):Bool {
+		if (loop.started) throw "Event loop already started";
+		if (evalLoopStep(loop)) return timeout != null || evalLoopExpected(loop);
+		if (!evalLoopExpected(loop)) return timeout != null;
+		var until = timeout == null ? null : Sys.time() + timeout;
+		while (evalLoopExpected(loop)) {
+			var next = evalLoopNextDue(loop);
+			if (next == null) {
+				if (timeout == null) return false;
+				var left = until - Sys.time();
+				if (left <= 0) return false;
+				Sys.sleep(left > 0.01 ? 0.01 : left);
+			} else {
+				var sleep = next - Sys.time();
+				if (until != null && until < next) sleep = until - Sys.time();
+				if (sleep > 0) Sys.sleep(sleep > 0.01 ? 0.01 : sleep);
+			}
+			if (evalLoopStep(loop)) return timeout != null || evalLoopExpected(loop);
+			if (until != null && Sys.time() >= until) return false;
+		}
+		return false;
+	}
+
+	static function evalLoopDrain(loop:EvalLoopState, timeout:Null<Float>):Void {
+		if (loop.started) throw "Event loop already started";
+		loop.started = true;
+		try {
+			while (evalLoopExpected(loop)) {
+				if (!evalLoopWaitUnlocked(loop, timeout)) break;
+				timeout = null;
+			}
+		} catch (e) {
+			loop.started = false;
+			throw e;
+		}
+		loop.started = false;
+	}
+
+	static function evalLoopWaitUnlocked(loop:EvalLoopState, ?timeout:Null<Float>):Bool {
+		if (evalLoopStep(loop)) return true;
+		var until = timeout == null ? null : Sys.time() + timeout;
+		while (evalLoopExpected(loop)) {
+			var next = evalLoopNextDue(loop);
+			if (next == null) {
+				if (timeout == null) return false;
+				var left = until - Sys.time();
+				if (left <= 0) return false;
+				Sys.sleep(left > 0.01 ? 0.01 : left);
+			} else {
+				var sleep = next - Sys.time();
+				if (until != null && until < next) sleep = until - Sys.time();
+				if (sleep > 0) Sys.sleep(sleep > 0.01 ? 0.01 : sleep);
+			}
+			if (evalLoopStep(loop)) return true;
+			if (until != null && Sys.time() >= until) return false;
+		}
+		return false;
+	}
+
+	static function evalLoopRepeat(loop:EvalLoopState, fn:Void->Void, intervalMs:Int):EvalLoopTimer {
+		var interval = (intervalMs < 1 ? 1 : intervalMs) / 1000.0;
+		var timer = {fn: fn, interval: interval, next: Sys.time() + interval, cancelled: false};
+		loop.timers.push(timer);
+		return timer;
+	}
+
+	static function evalLoopCancel(timer:EvalLoopTimer):Void {
+		timer.cancelled = true;
+	}
+
+	static function evalLoopPromise(loop:EvalLoopState):Void {
+		loop.promised++;
+	}
+
+	static function evalLoopRunPromised(loop:EvalLoopState, fn:Void->Void):Void {
+		if (loop.promised > 0) loop.promised--;
+		loop.pending.push(fn);
+	}
+
+	static function evalLoopProgress(ctx:EvalContext, loop:EvalLoopState):EvalValue {
+		if (loop.started) throw "Event loop already started";
+		if (evalLoopStep(loop)) return nextEventTimeValue(ctx, "AnyTime", null);
+		var next = evalLoopNextDue(loop);
+		if (next != null) return nextEventTimeValue(ctx, "At", next);
+		return nextEventTimeValue(ctx, "Never");
+	}
+
+	static function threadEventLoopObject(ctx:EvalContext, loop:EvalLoopState):EvalValue {
+		var value = mkObject([
 			{name: "repeat", value: VFunction(function(a) {
 				var fn = arg(a, 0);
-				return eventHandlerValue(loop.repeat(function() applyFn(fn, []), toInt(arg(a, 1))));
+				return eventHandlerValue(evalLoopRepeat(loop, function() applyFn(fn, []), toInt(arg(a, 1))));
 			}, true)},
 			{name: "cancel", value: VFunction(function(a) {
 				var handler = eventHandlerOf(arg(a, 0));
-				if (handler != null) loop.cancel(cast handler);
+				if (handler != null) evalLoopCancel(cast handler);
 				return VNull;
 			}, true)},
-			{name: "promise", value: VFunction(function(a) { loop.promise(); return VNull; }, true)},
+			{name: "promise", value: VFunction(function(a) { evalLoopPromise(loop); return VNull; }, true)},
 			{name: "run", value: VFunction(function(a) {
 				var fn = arg(a, 0);
-				loop.run(function() applyFn(fn, []));
+				loop.pending.push(function() applyFn(fn, []));
 				return VNull;
 			}, true)},
 			{name: "runPromised", value: VFunction(function(a) {
 				var fn = arg(a, 0);
-				loop.runPromised(function() applyFn(fn, []));
+				evalLoopRunPromised(loop, function() applyFn(fn, []));
 				return VNull;
 			}, true)},
-			{name: "progress", value: VFunction(function(a) return nextEventTimeValue(ctx, loop.progress()), true)},
+			{name: "progress", value: VFunction(function(a) return evalLoopProgress(ctx, loop), true)},
 			{name: "wait", value: VFunction(function(a) return EvalValueTools.vbool(
-				arg(a, 0) == VNull ? loop.wait() : loop.wait(toFloat(arg(a, 0)))), true)},
-			{name: "loop", value: VFunction(function(a) { loop.loop(); return VNull; }, true)}
+				arg(a, 0) == VNull ? evalLoopWait(loop) : evalLoopWait(loop, toFloat(arg(a, 0)))), true)},
+			{name: "loop", value: VFunction(function(a) { evalLoopDrain(loop, null); return VNull; }, true)}
 		]);
+		switch (value) {
+			case VObject(o): eventLoopObjects.set(o, loop);
+			case _:
+		}
+		return value;
+	}
+
+	static function eventLoopOfValue(v:EvalValue):Null<EvalLoopState> {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VInstance(vi): threadEventLoops.get(vi);
+			case VObject(o): eventLoopObjects.get(o);
+			case _: null;
+		}
 	}
 
 	static function mkTimer(ctx:EvalContext, timeMs:Int):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Timer"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var value = VInstance(vi);
-		var loop = new sys.thread.EventLoop();
-		var handler = loop.repeat(function() {
+		var loop = switch (nativeThreadSelfValue(ctx)) {
+			case VInstance(thread):
+				var current = eventLoopOfValue(nativeThreadEventLoop(ctx, thread));
+				current == null ? newEvalLoop() : current;
+			case _: newEvalLoop();
+		}
+		var handler = evalLoopRepeat(loop, function() {
 			applyFn(EvalField.dynamicField(ctx, value, EvalHash.hash("run")), []);
 		}, timeMs);
 		nativeTimers.set(vi, {loop: loop, handler: handler});
@@ -1990,7 +2156,7 @@ class EvalStdLib {
 		var vi = thisInstance(a, "Timer");
 		var timer = nativeTimers.get(vi);
 		if (timer != null) {
-			timer.loop.cancel(cast timer.handler);
+			evalLoopCancel(cast timer.handler);
 			nativeTimers.remove(vi);
 		}
 	}
@@ -1999,8 +2165,11 @@ class EvalStdLib {
 		if (job != null && job != VNull)
 			return EvalExceptions.excString(ctx, "sys.thread.Thread.create is not supported by eval");
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
+		ensureInstanceField(proto, "events");
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: VNull});
+		var events = threadEventLoopObject(ctx, newEvalLoop());
+		setInstanceFieldIfExists(vi, "events", events);
+		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: events});
 		return VInstance(vi);
 	}
 
@@ -2022,9 +2191,8 @@ class EvalStdLib {
 		var thread = nativeThreads.get(vi);
 		if (thread == null) return VNull;
 		if (thread.events == VNull) {
-			thread.events = EvalEmitter.constructPath(ctx, EvalHash.hash("sys.thread.EventLoop"), []);
-			if (thread.events == VNull)
-				thread.events = threadEventLoopObject(ctx, new sys.thread.EventLoop());
+			thread.events = threadEventLoopObject(ctx, newEvalLoop());
+			setInstanceFieldIfExists(vi, "events", thread.events);
 		}
 		return thread.events;
 	}
@@ -2036,6 +2204,14 @@ class EvalStdLib {
 	static function setInstanceFieldIfExists(vi:VInstance, name:String, value:EvalValue):Void {
 		var idx = vi.iproto.pinstanceNames.get(EvalHash.hash(name));
 		if (idx != null) vi.ifields[idx] = value;
+	}
+
+	static function ensureInstanceField(proto:VPrototype, name:String):Void {
+		var key = EvalHash.hash(name);
+		if (!proto.pinstanceNames.exists(key)) {
+			proto.pinstanceNames.set(key, proto.pinstanceFields.length);
+			proto.pinstanceFields.push(VNull);
+		}
 	}
 
 	static function instanceFieldIfExists(vi:VInstance, name:String):Null<EvalValue> {
@@ -3454,6 +3630,7 @@ class EvalStdLib {
 		nativeThreadSelf = null;
 		nativeThreadNextId = 1;
 		threadEventLoops = new haxe.ds.ObjectMap();
+		eventLoopObjects = new haxe.ds.ObjectMap();
 		threadEventHandlers = new Map();
 		threadEventHandlerNextId = 1;
 		nativeTimers = new haxe.ds.ObjectMap();
@@ -4772,28 +4949,28 @@ class EvalStdLib {
 		reg(inst, "haxe.Timer", "stop", vmethod(a -> { stopTimer(a); VNull; }));
 		reg(inst, "sys.thread.EventLoop", "repeat", vmethod(a -> {
 			var fn = arg(a, 1);
-			eventHandlerValue(thisThreadEventLoop(a).repeat(function() applyFn(fn, []), toInt(arg(a, 2))));
+			eventHandlerValue(evalLoopRepeat(thisThreadEventLoop(a), function() applyFn(fn, []), toInt(arg(a, 2))));
 		}));
 		reg(inst, "sys.thread.EventLoop", "cancel", vmethod(a -> {
 			var handler = eventHandlerOf(arg(a, 1));
-			if (handler != null) thisThreadEventLoop(a).cancel(cast handler);
+			if (handler != null) evalLoopCancel(cast handler);
 			VNull;
 		}));
-		reg(inst, "sys.thread.EventLoop", "promise", vmethod(a -> { thisThreadEventLoop(a).promise(); VNull; }));
+		reg(inst, "sys.thread.EventLoop", "promise", vmethod(a -> { evalLoopPromise(thisThreadEventLoop(a)); VNull; }));
 		reg(inst, "sys.thread.EventLoop", "run", vmethod(a -> {
 			var fn = arg(a, 1);
-			thisThreadEventLoop(a).run(function() applyFn(fn, []));
+			thisThreadEventLoop(a).pending.push(function() applyFn(fn, []));
 			VNull;
 		}));
 		reg(inst, "sys.thread.EventLoop", "runPromised", vmethod(a -> {
 			var fn = arg(a, 1);
-			thisThreadEventLoop(a).runPromised(function() applyFn(fn, []));
+			evalLoopRunPromised(thisThreadEventLoop(a), function() applyFn(fn, []));
 			VNull;
 		}));
-		reg(inst, "sys.thread.EventLoop", "progress", vmethod(a -> nextEventTimeValue(ctx, thisThreadEventLoop(a).progress())));
+		reg(inst, "sys.thread.EventLoop", "progress", vmethod(a -> evalLoopProgress(ctx, thisThreadEventLoop(a))));
 		reg(inst, "sys.thread.EventLoop", "wait", vmethod(a -> EvalValueTools.vbool(
-			arg(a, 1) == VNull ? thisThreadEventLoop(a).wait() : thisThreadEventLoop(a).wait(toFloat(arg(a, 1))))));
-		reg(inst, "sys.thread.EventLoop", "loop", vmethod(a -> { thisThreadEventLoop(a).loop(); VNull; }));
+			arg(a, 1) == VNull ? evalLoopWait(thisThreadEventLoop(a)) : evalLoopWait(thisThreadEventLoop(a), toFloat(arg(a, 1))))));
+		reg(inst, "sys.thread.EventLoop", "loop", vmethod(a -> { evalLoopDrain(thisThreadEventLoop(a), null); VNull; }));
 		reg(inst, "sys.thread.Condition", "acquire", vmethod(a -> { thisThreadCondition(a).acquire(); VNull; }));
 		reg(inst, "sys.thread.Condition", "tryAcquire", vmethod(a -> EvalValueTools.vbool(thisThreadCondition(a).tryAcquire())));
 		reg(inst, "sys.thread.Condition", "release", vmethod(a -> { thisThreadCondition(a).release(); VNull; }));
@@ -4817,12 +4994,29 @@ class EvalStdLib {
 				case _: VNull;
 			}
 		}));
+		reg(s, "sys.thread._Thread.Thread_Impl_", "get_events", vfn(a -> {
+			return switch (arg(a, 0)) {
+				case VInstance(vi): nativeThreadEventLoop(ctx, vi);
+				case _: VNull;
+			}
+		}));
+		reg(s, "sys.thread._Thread.Thread_Impl_", "processEvents", vfn(a -> {
+			switch (nativeThreadSelfValue(ctx)) {
+				case VInstance(vi):
+					var events = nativeThreadEventLoop(ctx, vi);
+					applyFn(EvalField.dynamicField(ctx, events, EvalHash.hash("loop")), []);
+				case _:
+			}
+			VNull;
+		}));
 		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(nativeThreadData(a).id)));
 		reg(inst, "eval.vm.NativeThread", "kill", vmethod(a -> throw "Field index for kill not found on prototype eval.vm.NativeThread"));
 		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { nativeThreadData(a).messages.add(arg(a, 1)); VNull; }));
 		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> nativeThreadEventLoop(ctx, thisInstance(a, "NativeThread"))));
 		reg(inst, "eval.vm.NativeThread", "set_events", vmethod(a -> {
-			nativeThreadData(a).events = arg(a, 1);
+			var events = arg(a, 1);
+			nativeThreadData(a).events = events;
+			setInstanceFieldIfExists(thisInstance(a, "NativeThread"), "events", events);
 			arg(a, 1);
 		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> {
