@@ -3188,6 +3188,24 @@ class EvalStdLib {
 		return false;
 	}
 
+	static function classHierarchyHas(ctx:EvalContext, classPath:Int, targetPath:Int):Bool {
+		if (classPath == targetPath) return true;
+		return switch (ctx.typeCache.get(classPath)) {
+			case TClassDecl(c):
+				if (c.superClass != null && classHierarchyHas(ctx, EvalHash.pathHash(c.superClass.c.path), targetPath)) true
+				else {
+					var found = false;
+					for (i in c.interfaces) if (classHierarchyHas(ctx, EvalHash.pathHash(i.c.path), targetPath)) {
+						found = true;
+						break;
+					}
+					found;
+				}
+			case _:
+				false;
+		};
+	}
+
 	static function stdIsOfType(v:EvalValue, t:EvalValue):Bool {
 		return switch (t) {
 			case VPrototype(proto):
@@ -3216,9 +3234,18 @@ class EvalStdLib {
 		};
 	}
 
-	static function stdDowncast(v:EvalValue, t:EvalValue):EvalValue {
+	static function stdIsOfTypeCtx(ctx:EvalContext, v:EvalValue, t:EvalValue):Bool {
+		return switch ([v, t]) {
+			case [VInstance(vi), VPrototype(proto)] if (classHierarchyHas(ctx, vi.iproto.ppath, proto.ppath)):
+				true;
+			case _:
+				stdIsOfType(v, t);
+		};
+	}
+
+	static function stdDowncast(ctx:EvalContext, v:EvalValue, t:EvalValue):EvalValue {
 		return switch (t) {
-			case VPrototype(_): stdIsOfType(v, t) ? v : VNull;
+			case VPrototype(_): stdIsOfTypeCtx(ctx, v, t) ? v : VNull;
 			case _: VFalse;
 		};
 	}
@@ -3230,7 +3257,7 @@ class EvalStdLib {
 			proto.pvalue = VPrototype(proto);
 			ctx.staticPrototypes.set(path, proto);
 		}
-		return stdIsOfType(v, VPrototype(proto));
+		return stdIsOfTypeCtx(ctx, v, VPrototype(proto));
 	}
 
 	static function applyFn(fn:EvalValue, args:Array<EvalValue>):EvalValue {
@@ -3453,10 +3480,10 @@ class EvalStdLib {
 		reg(s, "Xml", "createDocument", vfn(a -> xmlValue(ctx, Xml.createDocument())));
 		reg(s, "haxe.xml.Printer", "print", vfn(a -> mkStr(haxe.xml.Printer.print(thisXml([arg(a, 0)]), arg(a, 1) == VTrue))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
-		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
-		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfType(arg(a, 0), arg(a, 1)))));
-		reg(s, "Std", "downcast", vfn(a -> stdDowncast(arg(a, 0), arg(a, 1))));
-		reg(s, "Std", "instance", vfn(a -> stdDowncast(arg(a, 0), arg(a, 1))));
+		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
+		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
+		reg(s, "Std", "downcast", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
+		reg(s, "Std", "instance", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
 
 		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
