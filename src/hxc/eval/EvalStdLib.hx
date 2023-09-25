@@ -1139,6 +1139,11 @@ class EvalStdLib {
 				}
 			case VEnumValue(ev):
 				enumConstructorName(ev);
+			case VFunction(_, _) | VFieldClosure(_, _):
+				var fn = v;
+				Reflect.makeVarArgs(function(args:Array<Dynamic>) {
+					return valueToHost(ctx, applyFn(fn, [for (arg in args) hostToValue(ctx, arg)]));
+				});
 			case _: null;
 		}
 	}
@@ -1149,6 +1154,11 @@ class EvalStdLib {
 		if (Std.isOfType(v, Int)) return VInt(v);
 		if (Std.isOfType(v, Float)) return VFloat(v);
 		if (Std.isOfType(v, String)) return mkStr(v);
+		if (Reflect.isFunction(v)) {
+			return VFunction(function(args:Array<EvalValue>):EvalValue {
+				return hostToValue(ctx, Reflect.callMethod(null, v, [for (arg in args) valueToHost(ctx, arg)]));
+			}, true);
+		}
 		if (Std.isOfType(v, Date)) return mkDate(ctx, (cast v : Date).getTime());
 		if (Std.isOfType(v, haxe.io.Bytes)) return mkBytes(ctx, (cast v : haxe.io.Bytes));
 		if (Std.isOfType(v, haxe.ds.List)) {
