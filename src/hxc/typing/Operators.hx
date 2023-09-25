@@ -549,8 +549,11 @@ class Operators {
 			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
 			// native op stays as a compound TBinop the evaluator applies in place.
 			return switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
-				case BinopSpecial(opCall, _):
-					TypeFunctions.mk(TBinop(OpAssign, te1, Typer.castOrUnify(ctx, te1.type, opCall, p)), te1.type, p);
+				case BinopSpecial(opCall, needsAssign):
+					// A dedicated @:op(A += B) overload (needsAssign=false) is the assignment and returns its own
+					// result (often Void); a plain @:op(A + B) reused for `+=` (needsAssign=true) reassigns a =
+					// a.op(b).
+					needsAssign ? TypeFunctions.mk(TBinop(OpAssign, te1, Typer.castOrUnify(ctx, te1.type, opCall, p)), te1.type, p) : opCall;
 				case _:
 					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
 			};
@@ -584,9 +587,14 @@ class Operators {
 			var er = TexprTools.makeLocal(vr, p);
 			var readVal = accessorReadOn(ctx, er, fa);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
-			var write = accessorWriteOn(ctx, er, fa, opResult, p);
-			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), write]), readVal.type, p);
+			var br = makeBinop(ctx, sub, readVal, te2, true, withType, p);
+			// A dedicated @:op(A += B) overload (needsAssign=false) mutates in place and needs no setter write;
+			// a plain @:op(A + B) reused for `+=` writes the reassembled value back through the setter.
+			var tail = switch (br) {
+				case BinopSpecial(opCall, false): opCall;
+				case _: accessorWriteOn(ctx, er, fa, toTexpr(br), p);
+			};
+			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), tail]), tail.type, p);
 		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
 			case AKExpr(te1): compound(te1);
