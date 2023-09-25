@@ -220,7 +220,7 @@ class PatternMaker {
 				var r = make(pctx, toplevel, t, e1);
 				pctx.inReification = old;
 				return r;
-			case EConst(CInt(_, _)) | EConst(CFloat(_, _)) | EConst(CString(_, _)) | EConst(CIdent("true")) | EConst(CIdent("false")):
+			case EConst(CInt(_, _)) | EConst(CFloat(_, _)) | EConst(CString(_, _)) | EConst(CIdent("true")) | EConst(CIdent("false")) | EConst(CIdent("null")):
 				var ce = TexprTools.typeConstant(basic, switch (e.expr) { case EConst(c): c; case _: throw "unreachable"; }, p);
 				unifyExpected(ce.type);
 				switch (ce.expr) {
@@ -272,16 +272,21 @@ class PatternMaker {
 				var et = switch (TypeFunctions.follow(t)) { case TInst(_, [x]): x; case _: TypeFunctions.tDynamic; };
 				PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
 			case EObjectDecl(fields):
-				// Structure pattern: match named fields against the expected anon type. Field order is
-				// normalized so every structure constructor compares equal regardless of source order.
+				// Structure pattern: match named fields against the expected anon type. Fields the pattern
+				// omits are filled with wildcards so every structure pattern for the type carries the same
+				// field set (and arity) -- the matcher then treats them as one constructor. (record fill).
 				var anonFields = switch (TypeFunctions.follow(t)) { case TAnon(a): a.fields; case _: null; };
-				var pairs = [for (f in fields) {
-					var cf = anonFields == null ? null : anonFields.get(f.name);
-					// In a reification pattern, position fields carry no matchable information. .
-					var sub = (pctx.inReification && (f.name == "pos" || f.name == "posPath" || f.name == "namePos"))
-						? ({pat: PatAny, pos: f.expr.pos} : Pattern)
-						: make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, f.expr);
-					{name: f.name, sub: sub};
+				var mentioned = new Map<String, Expr>();
+				for (f in fields) mentioned.set(f.name, f.expr);
+				var allNames = anonFields == null ? [for (f in fields) f.name] : [for (k in anonFields.keys()) k];
+				var pairs = [for (name in allNames) {
+					var cf = anonFields == null ? null : anonFields.get(name);
+					var fe = mentioned.get(name);
+					// An omitted field, or a reification position field (carries no matchable info), is a wildcard.
+					var sub = if (fe == null || (pctx.inReification && (name == "pos" || name == "posPath" || name == "namePos")))
+						({pat: PatAny, pos: fe == null ? p : fe.pos} : Pattern)
+						else make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, fe);
+					{name: name, sub: sub};
 				}];
 				pairs.sort(function(a2, b2) return a2.name < b2.name ? -1 : (a2.name > b2.name ? 1 : 0));
 				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
