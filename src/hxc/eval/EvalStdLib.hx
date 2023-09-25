@@ -484,6 +484,99 @@ class EvalStdLib {
 		};
 	}
 
+	static function countRegexCaptures(pattern:String):Int {
+		var count = 0;
+		var escaped = false;
+		var inClass = false;
+		var i = 0;
+		while (i < pattern.length) {
+			var c = pattern.charCodeAt(i);
+			if (escaped) {
+				escaped = false;
+			} else if (c == "\\".code) {
+				escaped = true;
+			} else if (c == "[".code) {
+				inClass = true;
+			} else if (c == "]".code) {
+				inClass = false;
+			} else if (!inClass && c == "(".code) {
+				var next = pattern.charCodeAt(i + 1);
+				if (next == "?".code) {
+					var kind = pattern.charCodeAt(i + 2);
+					if (kind == "'".code) count++;
+					else if (kind == "<".code) {
+						var after = pattern.charCodeAt(i + 3);
+						if (after != "=".code && after != "!".code) count++;
+					}
+				} else {
+					count++;
+				}
+			}
+			i++;
+		}
+		return count;
+	}
+
+	static function regexReplacement(re:EReg, by:String):String {
+		var info = nativeRegexInfo.get(re);
+		var captureCount = info == null ? 9 : info.captureCount;
+		var buf = new StringBuf();
+		var pendingDollar = false;
+		for (i in 0...by.length) {
+			var c = by.charCodeAt(i);
+			if (pendingDollar) {
+				pendingDollar = false;
+				if (c == "$".code) {
+					buf.addChar(c);
+				} else if (c >= "0".code && c <= "9".code) {
+					var n = c - "0".code;
+					if (n > captureCount) throw "Pcre2.replace: backreference denotes nonexistent subpattern";
+					var m = try re.matched(n) catch (_:Dynamic) null;
+					if (m != null) buf.add(m);
+				} else {
+					buf.addChar("$".code);
+					buf.addChar(c);
+				}
+			} else if (c == "$".code) {
+				pendingDollar = true;
+			} else {
+				buf.addChar(c);
+			}
+		}
+		if (pendingDollar) buf.addChar("$".code);
+		return buf.toString();
+	}
+
+	static function regexReplace(re:EReg, s:String, by:String):String {
+		var info = nativeRegexInfo.get(re);
+		var global = info != null && info.global;
+		var buf = new StringBuf();
+		var pos = 0;
+		while (true) {
+			if (!re.matchSub(s, pos)) {
+				buf.add(s.substr(pos));
+				break;
+			}
+			var p = re.matchedPos();
+			buf.add(s.substr(pos, p.pos - pos));
+			buf.add(regexReplacement(re, by));
+			var next = p.pos + p.len;
+			if (!global) {
+				buf.add(s.substr(next));
+				break;
+			}
+			if (p.len == 0) {
+				if (next >= s.length) break;
+				buf.add(s.charAt(next));
+				pos = next + 1;
+			} else {
+				pos = next;
+				if (pos >= s.length) break;
+			}
+		}
+		return buf.toString();
+	}
+
 	static function thisMap(a:Array<EvalValue>):Map<String, MapEntry> {
 		return switch (a[0]) {
 			case VInstance(vi): switch (vi.ikind) { case IMap(m): m; case _: new Map(); };
@@ -606,6 +699,7 @@ class EvalStdLib {
 	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
+	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool}>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 
@@ -2963,6 +3057,7 @@ class EvalStdLib {
 		threadEventHandlers = new Map();
 		threadEventHandlerNextId = 1;
 		nativeTimers = new haxe.ds.ObjectMap();
+		nativeRegexInfo = new haxe.ds.ObjectMap();
 		var s = ctx.builtins.staticBuiltins;
 
 		reg(s, "Math", "PI", VFloat(Math.PI));
@@ -3641,7 +3736,11 @@ class EvalStdLib {
 		});
 		ctors.set(EvalHash.hash("EReg"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
-			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(new EReg(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
+			var pattern = stringOf(arg(a, 0));
+			var flags = stringOf(arg(a, 1));
+			var re = new EReg(pattern, flags);
+			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0});
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
 		});
 
 		reg(inst, "StringBuf", "add", vmethod(a -> {
@@ -3717,7 +3816,11 @@ class EvalStdLib {
 			var parts = thisRegex(a).split(stringOf(arg(a, 1)));
 			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
 		}));
-		reg(inst, "EReg", "replace", vmethod(a -> mkStr(thisRegex(a).replace(stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
+		reg(inst, "EReg", "replace", vmethod(a -> {
+			var re = thisRegex(a);
+			var by = stringOf(arg(a, 2));
+			mkStr(regexReplace(re, stringOf(arg(a, 1)), by));
+		}));
 		reg(inst, "EReg", "map", vmethod(a -> {
 			var recv = arg(a, 0);
 			var fn = arg(a, 2);
