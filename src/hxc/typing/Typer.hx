@@ -753,6 +753,9 @@ class Typer {
 		}
 		if (typeIdx < 0) return null;
 		var pack = segs.slice(0, typeIdx);
+		// A leading `std` package selects the standard library type, bypassing a shadowing local or import
+		// (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). (std pack).
+		if (pack.length > 0 && pack[0] == "std") pack = pack.slice(1);
 		var name = segs[typeIdx];
 		var rest = segs.slice(typeIdx + 1);
 		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
