@@ -799,7 +799,7 @@ class EvalStdLib {
 			case VInt(i): i;
 			case VFloat(f): f;
 			case VString(s): normalizeString(s.sstring);
-			case VNativeString(s): s;
+			case VNativeString(s): bytesString(rawStringBytes(s), 0, s.length);
 			case VArray(va): [for (i in 0...va.alength) valueToJson(va.avalues[i])];
 			case VVector(vv): [for (item in vv) valueToJson(item)];
 			case VObject(o):
@@ -1571,6 +1571,12 @@ class EvalStdLib {
 		return out.toString();
 	}
 
+	static function rawStringBytes(s:String):haxe.io.Bytes {
+		var b = haxe.io.Bytes.alloc(s.length);
+		for (i in 0...s.length) b.set(i, s.charCodeAt(i) & 0xFF);
+		return b;
+	}
+
 	static function bytesStringStrict(b:haxe.io.Bytes, pos:Int, len:Int):String {
 		var raw = bytesRawString(b, pos, len);
 		if (utf8ByteCodes(raw) == null) throw "Invalid string";
@@ -2128,8 +2134,13 @@ class EvalStdLib {
 	static function nativeStringOf(v:EvalValue):String {
 		return switch (v) {
 			case VNativeString(s): s;
-			case VString(s): normalizeString(s.sstring);
-			case _: stringOf(v);
+			case VString(s):
+				var b = haxe.io.Bytes.ofString(normalizeString(s.sstring));
+				bytesRawString(b, 0, b.length);
+			case _:
+				var s = stringOf(v);
+				var b = haxe.io.Bytes.ofString(s);
+				bytesRawString(b, 0, b.length);
 		};
 	}
 
@@ -4545,12 +4556,22 @@ class EvalStdLib {
 			nativeThreadData(a).events = arg(a, 1);
 			arg(a, 1);
 		}));
-		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> VNativeString(thisBytes([arg(a, 0)]).toString())));
-		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(stringOf(arg(a, 0)))));
-		reg(s, "eval._NativeString.NativeString_Impl_", "toBytes", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(nativeStringOf(arg(a, 0))))));
-		reg(s, "eval._NativeString.NativeString_Impl_", "toString", vfn(a -> mkStr(nativeStringOf(arg(a, 0)))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> {
+			var b = thisBytes([arg(a, 0)]);
+			VNativeString(bytesRawString(b, 0, b.length));
+		}));
+		reg(s, "eval._NativeString.NativeString_Impl_", "fromString", vfn(a -> arg(a, 0) == VNull ? VNull : VNativeString(nativeStringOf(arg(a, 0)))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "toBytes", vfn(a -> mkBytes(ctx, rawStringBytes(nativeStringOf(arg(a, 0))))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "toString", vfn(a -> {
+			var raw = nativeStringOf(arg(a, 0));
+			mkStr(bytesString(rawStringBytes(raw), 0, raw.length));
+		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "concat", vfn(a -> VNativeString(nativeStringOf(arg(a, 0)) + nativeStringOf(arg(a, 1)))));
-		reg(s, "eval._NativeString.NativeString_Impl_", "char", vfn(a -> mkStr(nativeStringOf(arg(a, 0)).charAt(toInt(arg(a, 1))))));
+		reg(s, "eval._NativeString.NativeString_Impl_", "char", vfn(a -> {
+			var raw = nativeStringOf(arg(a, 0));
+			var pos = toInt(arg(a, 1));
+			mkStr(bytesString(rawStringBytes(raw), pos, 1));
+		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "code", vfn(a -> VInt(nativeStringOf(arg(a, 0)).charCodeAt(toInt(arg(a, 1))))));
 		reg(s, "eval._NativeString.NativeString_Impl_", "get_length", vfn(a -> VInt(nativeStringOf(arg(a, 0)).length)));
 		reg(s, "eval._NativeString.NativeString_Impl_", "sub", vfn(a -> {
