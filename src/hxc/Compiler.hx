@@ -105,9 +105,11 @@ class Compiler {
 	}
 
 	static function addResource(ctx:Context, spec:String):Void {
-		var at = spec.lastIndexOf("@");
-		var file = at < 0 ? spec : spec.substr(0, at);
-		var name = at < 0 ? haxe.io.Path.withoutDirectory(file) : spec.substr(at + 1);
+		var parts = spec.split("@");
+		if (parts.length > 2) throw "Invalid Resource format, expected file@name";
+		var file = parts[0];
+		var name = parts.length == 1 ? file : parts[1];
+		if (ctx.resources.exists(name)) throw "Duplicate resource name " + name;
 		ctx.resources.set(name, sys.io.File.getBytes(file));
 	}
 }
