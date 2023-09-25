@@ -273,6 +273,15 @@ class Typer {
 			case ENew(tp, el):
 				typeNew(ctx, tp, el, withType, p);
 			case EFunction(kind, f):
+				var savedTypeParams = ctx.typeParams;
+				if (f.fParams.length > 0) {
+					// A local function's own type parameters (`function foo<T>(...)`) are in scope for its
+					// argument/return hints and body.
+					var declPath:hxc.core.Globals.Path = {pack: [], name: switch (kind) { case FKNamed(n, _): n.name; case _: "`localfun"; }};
+					var localParams:TypeParams = [];
+					for (tp in f.fParams) localParams.push(Typeload.typeTypeParam(ctx.com, declPath, () -> savedTypeParams.concat(localParams), tp));
+					ctx.typeParams = savedTypeParams.concat(localParams);
+				}
 				var args:Array<TFuncArg> = [];
 				for (fa in f.fArgs) {
 					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
@@ -310,6 +319,7 @@ class Typer {
 					case _: null;
 				};
 				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
+				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
 				namedVar != null ? TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p) : fnExpr;
 			case EArrayDecl(el):
