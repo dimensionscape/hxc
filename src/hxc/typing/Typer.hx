@@ -554,10 +554,18 @@ class Typer {
 			var smf = ctx.curclass.statics.get(i);
 			if (smf != null) {
 				// Inside an abstract impl method, a bare call to a sibling member method threads `this`.
-				var isAbsImpl = switch (ctx.curclass.kind) { case KAbstractImpl(_): true; case _: false; };
-				if (isAbsImpl && smf.kind.match(Method(_)) && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
+				var absImpl = switch (ctx.curclass.kind) { case KAbstractImpl(ab): ab; case _: null; };
+				if (absImpl != null && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
 					var thisExpr = TexprTools.makeLocal(ctx.locals.get("this"), p);
-					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(ctx.curclass, smf, thisExpr, false, p));
+					// A bare reference to a sibling abstract member threads `this`: a method becomes a
+					// static extension call, a var/property dispatches through its accessor (get_/set_)
+					// rather than emitting a raw static field access.
+					switch (smf.kind) {
+						case Method(_):
+							return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(ctx.curclass, smf, thisExpr, false, p));
+						case Var(_):
+							return Fields.fieldAccess(ctx, mode, smf, FHAbstract(absImpl, TypeFunctions.extractParamTypes(absImpl.params), ctx.curclass), thisExpr, p);
+					}
 				}
 				var typeExpr = TexprTools.makeTypeExpr(TClassDecl(ctx.curclass), p);
 				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
