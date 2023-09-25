@@ -68,16 +68,23 @@ class EvalEmitter {
 			case TTry(e1, catches):
 				var ev = EvalContext.getEval(ctx);
 				var savedEnv = ev.env;
+				var result:EvalValue = VNull;
 				try {
-					eval(ctx, e1);
+					result = eval(ctx, e1);
 				} catch (ex:EvalRunTimeException) {
 					ev.env = savedEnv;
-					if (catches.length == 0) throw ex;
-					// First-catch binding; per-catch type filtering is deferred.
-					var c = catches[0];
-					savedEnv.locals[slot(savedEnv, c.v.id)] = ex.value;
-					eval(ctx, c.expr);
+					var matched = false;
+					for (c in catches) {
+						if (catchMatches(ctx, ex.value, c.v.type)) {
+							savedEnv.locals[slot(savedEnv, c.v.id)] = ex.value;
+							matched = true;
+							result = eval(ctx, c.expr);
+							break;
+						}
+					}
+					if (!matched) throw ex;
 				}
+				result;
 			case TArray(e1, e2):
 				switch (eval(ctx, e1)) {
 					case VArray(va):
@@ -124,6 +131,17 @@ class EvalEmitter {
 			case TNull: VNull;
 			case TThis: VNull;
 			case TSuper: VNull;
+		};
+	}
+
+	static function catchMatches(ctx:EvalContext, v:EvalValue, t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TDynamic(_): true;
+			case TInst(c, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(c.path));
+			case TEnum(en, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(en.path));
+			case TAbstract(a, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(a.path));
+			case TType(td, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(td.path));
+			case _: false;
 		};
 	}
 

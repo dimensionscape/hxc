@@ -2948,6 +2948,16 @@ class EvalStdLib {
 		};
 	}
 
+	public static function isOfTypePath(ctx:EvalContext, v:EvalValue, path:Int):Bool {
+		var proto = ctx.staticPrototypes.get(path);
+		if (proto == null) {
+			proto = new VPrototype(path, [], new Map(), [], new Map(), null, PClass([]), VNull);
+			proto.pvalue = VPrototype(proto);
+			ctx.staticPrototypes.set(path, proto);
+		}
+		return stdIsOfType(v, VPrototype(proto));
+	}
+
 	static function applyFn(fn:EvalValue, args:Array<EvalValue>):EvalValue {
 		return switch (fn) {
 			case VFunction(f, _): f(args);
