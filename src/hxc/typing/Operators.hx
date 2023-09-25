@@ -215,8 +215,16 @@ class Operators {
 					case TAbstract(a, _) if (isVoid(e2.type)): throw new TypingError("Cannot compare Void", p);
 					case _:
 				}
-				try unify(ctx, e1.type, e2.type, p) catch (_:TypingError) unify(ctx, e2.type, e1.type, p);
-				mkOp(e1, e2, tbool);
+				var c1 = e1, c2 = e2;
+				try unify(ctx, c1.type, c2.type, p) catch (_:TypingError) {
+					try unify(ctx, c2.type, c1.type, p) catch (_:TypingError) {
+						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an
+						// abstract compares against its underlying type (plain unify does not chase method
+						// casts). .
+						try c1 = Typer.castOrUnify(ctx, c2.type, c1, c1.pos) catch (_:TypingError) c2 = Typer.castOrUnify(ctx, c1.type, c2, c2.pos);
+					}
+				}
+				mkOp(c1, c2, tbool);
 			case OpGt | OpGte | OpLt | OpLte:
 				switch ([cmpClass(e1.type, op), cmpClass(e2.type, op)]) {
 					case [KInt, KInt] | [KInt, KFloat] | [KFloat, KInt] | [KFloat, KFloat] | [KString, KString]:
