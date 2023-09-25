@@ -66,6 +66,7 @@ class EvalMacro {
 			return encodeType(ec, te.type);
 		});
 		reg2("follow", "follow", function(a) return a[0]);
+		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
 		// Context.defineModule(path, types, imports, usings): build the module from decoded type
 		// definitions and inject it.
 		reg2("defineModule", "define_module", function(a) {
@@ -103,6 +104,7 @@ class EvalMacro {
 			if (list != null) for (e in list) if (e.name == key) return e.v;
 			throw new TypingError("Macro API not implemented: " + strOf(a[0]), curPos);
 		});
+		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
 	}
 
 
@@ -458,6 +460,56 @@ class EvalMacro {
 
 	static function arrOf(v:EvalValue):Array<EvalValue> {
 		return switch (v) { case VArray(a): a.avalues.slice(0, a.alength); case VNull: []; case _: throw "macro decode: expected array"; };
+	}
+
+	static function refGet(ec:EvalContext, v:EvalValue):EvalValue {
+		return switch (EvalField.field(ec, v, EvalHash.hash("get"))) {
+			case VFunction(f, _): f([]);
+			case _: VNull;
+		}
+	}
+
+	static function refString(ec:EvalContext, v:EvalValue):String {
+		return switch (EvalField.field(ec, v, EvalHash.hash("toString"))) {
+			case VFunction(f, _): strOf(f([]));
+			case _:
+				var payload = refGet(ec, v);
+				var name = EvalField.field(ec, payload, EvalHash.hash("name"));
+				var pack = EvalField.field(ec, payload, EvalHash.hash("pack"));
+				switch [name, pack] {
+					case [VString(n), VArray(a)]:
+						var parts = [for (p in a.avalues.slice(0, a.alength)) strOf(p)];
+						parts.length == 0 ? n.sstring : parts.join(".") + "." + n.sstring;
+					case _: "<unknown>";
+				}
+		}
+	}
+
+	static function macroTypeString(ec:EvalContext, v:EvalValue):String {
+		var args = eargs(v);
+		function params(pl:Array<EvalValue>):String {
+			return pl.length == 0 ? "" : "<" + [for (p in pl) macroTypeString(ec, p)].join(", ") + ">";
+		}
+		return switch (ctorName(ec, v)) {
+			case "TMono":
+				var t = refGet(ec, args[0]);
+				t == VNull ? "Unknown<0>" : macroTypeString(ec, t);
+			case "TEnum" | "TInst" | "TType" | "TAbstract":
+				refString(ec, args[0]) + params(arrOf(args[1]));
+			case "TFun":
+				var funArgs = arrOf(args[0]);
+				var parts = [for (a in funArgs) macroTypeString(ec, EvalField.field(ec, a, EvalHash.hash("t")))];
+				parts.push(macroTypeString(ec, args[1]));
+				parts.join(" -> ");
+			case "TAnonymous":
+				var an = refGet(ec, args[0]);
+				var fields = arrOf(EvalField.field(ec, an, EvalHash.hash("fields")));
+				if (fields.length == 0) "{}" else "{ " + [for (f in fields) strOf(EvalField.field(ec, f, EvalHash.hash("name"))) + " : " + macroTypeString(ec, EvalField.field(ec, f, EvalHash.hash("type")))].join(", ") + " }";
+			case "TDynamic":
+				args[0] == VNull ? "Dynamic" : "Dynamic<" + macroTypeString(ec, args[0]) + ">";
+			case other:
+				other;
+		}
 	}
 
 	static function decodeExpr(ec:EvalContext, v:EvalValue, dp:Position):Expr {
@@ -987,7 +1039,7 @@ class EvalMacro {
 			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path), d.path), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TFun(sig): mkEnumValue(ec, "Type", "TFun", [encodeArray([for (a in sig.args) encodeTypeFunArg(ec, a)]), encodeType(ec, sig.ret)]);
-			case TAnon(_): mkEnumValue(ec, "Type", "TAnonymous", [encodeRef(ec, VNull)]);
+			case TAnon(an): mkEnumValue(ec, "Type", "TAnonymous", [encodeAnonRef(ec, an)]);
 			case TDynamic(t2): mkEnumValue(ec, "Type", "TDynamic", [t2 == null ? VNull : encodeType(ec, t2)]);
 			case TLazy(f): encodeType(ec, TypeFunctions.lazyType(f));
 			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeRef(ec, encodeBaseType(ec, a.path), a.path), encodeArray([for (p in params) encodeType(ec, p)])]);
@@ -1008,6 +1060,18 @@ class EvalMacro {
 		// A macro Ref<T> also exposes toString() -- the type's dot path -- which Std.string of the
 		// encoded Type enum uses; without it a base-type ref renders as its raw {get: ...} structure.
 		if (path != null) fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(path)), true));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeAnonRef(ec:EvalContext, an:TAnon):EvalValue {
+		var payload = function() {
+			var fields:Map<Int, EvalValue> = new Map();
+			fields.set(EvalHash.hash("fields"), encodeArray([for (cf in an.fields) encodeClassField(ec, cf)]));
+			return VObject(new VObject([], ODictionary(fields)));
+		}
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload(), true));
+		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<anonymous>"), true));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 

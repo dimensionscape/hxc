@@ -147,6 +147,9 @@ class Typer {
 		}
 		if (!hasError) return t;
 
+		var anonMin = unifyMinConstAnon(ctx, el);
+		if (anonMin != null) return anonMin;
+
 		var commonTypes = TypeUnification.collectBaseTypes(t);
 		var dynTypes = [];
 		for (ty in commonTypes) {
@@ -165,6 +168,38 @@ class Typer {
 			case UnifyMinError(l, index):
 				throw new TypingError("Cannot find a common type for the given expressions", elTail[index].pos);
 		};
+	}
+
+	static function unifyMinConstAnon(ctx:TyperContext, el:Array<TExpr>):Null<T> {
+		var fieldsByExpr:Array<haxe.ds.StringMap<TExpr>> = [];
+		var fieldNames:Array<String> = [];
+		var fieldCount = -1;
+		for (e in el) {
+			switch [TypeFunctions.follow(e.type), e.expr] {
+				case [TAnon(a), TObjectDecl(fields)] if (a.status.get().match(Const)):
+					var map = new haxe.ds.StringMap<TExpr>();
+					for (f in fields) map.set(f.key.name, f.expr);
+					var count = 0;
+					for (_ in map.keys()) count++;
+					if (fieldCount == -1) {
+						fieldCount = count;
+						for (n in map.keys()) fieldNames.push(n);
+					} else if (fieldCount != count) {
+						return null;
+					}
+					for (n in fieldNames) if (!map.exists(n)) return null;
+					fieldsByExpr.push(map);
+				case _:
+					return null;
+			}
+		}
+		var fields = new haxe.ds.StringMap<TClassField>();
+		for (n in fieldNames) {
+			var exprs = [for (m in fieldsByExpr) m.get(n)];
+			var ft = try unifyMinRaise(ctx, exprs) catch (_:TypingError) return null;
+			fields.set(n, TypeFunctions.mkField(n, ft, exprs[0].pos, Position.nullPos));
+		}
+		return TypeFunctions.mkAnon(new hxc.core.Ref(Closed), fields);
 	}
 
 	static function hasUnifyMinDynamic(c:TClass):Bool {
