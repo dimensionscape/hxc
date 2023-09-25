@@ -177,7 +177,7 @@ class EvalEmitter {
 		return switch (op) {
 			case OpBoolAnd: EvalMisc.isTrue(eval(ctx, e1)) ? eval(ctx, e2) : VFalse;
 			case OpBoolOr: EvalMisc.isTrue(eval(ctx, e1)) ? VTrue : eval(ctx, e2);
-			case OpAssign: assign(ctx, e1, eval(ctx, e2));
+			case OpAssign: assign(ctx, e1, e2);
 			case OpAssignOp(sub):
 				switch (e1.expr) {
 					case TLocal(v):
@@ -240,32 +240,45 @@ class EvalEmitter {
 		if (idx >= 0 && idx < vv.length) vv[idx] = value;
 	}
 
-	static function assign(ctx:EvalContext, lhs:TExpr, value:EvalValue):EvalValue {
+	// `lhs = ve`: the assignment target's location is evaluated left to right before the value, so
+	// `a[i++]
+	// = i++` reads the index then the value, not the value first.
+	static function assign(ctx:EvalContext, lhs:TExpr, ve:TExpr):EvalValue {
 		switch (lhs.expr) {
 			case TLocal(v):
 				var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+				var value = eval(ctx, ve);
 				fe.locals[slot(fe, v.id)] = value;
+				return value;
 			case TField(_, FStatic(c, cf)):
 				var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), lhs.pos);
+				var value = eval(ctx, ve);
 				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
+				return value;
 			case TField(e1, fa):
-				EvalField.setField(ctx, eval(ctx, e1), fieldKey(fa), value, lhs.pos);
-			case TArray(e1, e2):
+				var obj = eval(ctx, e1);
+				var value = eval(ctx, ve);
+				EvalField.setField(ctx, obj, fieldKey(fa), value, lhs.pos);
+				return value;
+			case TArray(e1, eidx):
 				switch (eval(ctx, e1)) {
 					case VArray(va):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var value = eval(ctx, ve);
 						while (va.avalues.length <= idx) va.avalues.push(VNull);
 						va.avalues[idx] = value;
 						if (idx >= va.alength) va.alength = idx + 1;
+						return value;
 					case VVector(vv):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var value = eval(ctx, ve);
 						vecElemSet(vv, idx, value);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+						return value;
+					case v: return EvalExceptions.unexpectedValue(ctx, v, "Array");
 				}
 			case _:
-				EvalExceptions.excString(ctx, "Unsupported assignment target");
+				return EvalExceptions.excString(ctx, "Unsupported assignment target");
 		}
-		return value;
 	}
 
 	static function evalUnop(ctx:EvalContext, op:Unop, flag:UnopFlag, e1:TExpr, p:Position):EvalValue {
