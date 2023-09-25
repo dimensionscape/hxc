@@ -949,7 +949,10 @@ class EvalMacro {
 	static function encodeCatch(ec:EvalContext, c:Catch):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(c.name.name));
-		fields.set(EvalHash.hash("type"), VNull);
+		// Preserve the catch type hint so a build macro that reads and re-emits a try/catch keeps the
+		// declared catch type. Dropping it here made every round-tripped catch decode back to Dynamic,
+		// which then bound the raw thrown value instead of a haxe.ValueException wrapper.
+		fields.set(EvalHash.hash("type"), c.type == null ? VNull : encodeComplexType(ec, c.type.ct));
 		fields.set(EvalHash.hash("expr"), encodeExpr(ec, c.expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}

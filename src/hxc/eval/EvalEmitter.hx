@@ -59,7 +59,7 @@ class EvalEmitter {
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
-			case TThrow(e1): EvalExceptions.throwValue(ctx, eval(ctx, e1), e.pos);
+			case TThrow(e1): EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
 			case TObjectDecl(fields):
 				var m = new Map<Int, EvalValue>();
@@ -142,12 +142,56 @@ class EvalEmitter {
 	static function catchMatches(ctx:EvalContext, v:EvalValue, t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
 			case TDynamic(_): true;
-			case TInst(c, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(c.path));
+			case TInst(c, _):
+				var path = EvalHash.pathHash(c.path);
+				// A non-haxe.Exception value thrown and caught as haxe.Exception (the wildcard type) or
+				// haxe.ValueException is wrapped in a haxe.ValueException by the reference before the catch
+				// runs (see /caught). The eval binds the raw value, so a plain value like an Int never
+				// satisfies isOfTypePath against those types; treat such a catch as a match here and let
+				// runCatch build the wrapper. Values already extending haxe.Exception pass through.
+				if ((path == EvalHash.key_haxe_Exception || path == EvalHash.key_haxe_ValueException)
+					&& !EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)) true
+				else EvalStdLib.isOfTypePath(ctx, v, path);
 			case TEnum(en, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(en.path));
-			case TAbstract(a, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(a.path));
+			case TAbstract(a, _):
+				// A non-core-type abstract has no runtime identity, so a value is caught by it when the
+				// value matches the abstract's underlying representation (e.g. AbstrString from String
+				// catches a String). Core-type abstracts (Int/Float/Bool) keep their own path match.
+				var ut = TypeFunctions.followWithAbstracts(t);
+				if (EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(a.path))) true
+				else switch (ut) { case TAbstract(a2, _) if (a2.path == a.path): false; case _: catchMatches(ctx, v, ut); };
 			case TType(td, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(td.path));
 			case _: false;
 		};
+	}
+
+	// Throwing a haxe.ValueException throws its wrapped value instead (haxe.Exception.thrown/unwrap):
+	// a value caught by a wildcard `catch(e:Exception)` is bound as a ValueException wrapper, and
+	// rethrowing it must surface the original value again so an outer catch of its native type matches.
+	static function unwrapThrown(ctx:EvalContext, v:EvalValue):EvalValue {
+		return switch (v) {
+			case VInstance(vi) if (vi.iproto.ppath == EvalHash.key_haxe_ValueException):
+				EvalField.field(ctx, v, EvalHash.hash("value"));
+			case _: v;
+		};
+	}
+
+	// A value caught by a haxe.Exception or haxe.ValueException clause that is not already a
+	// haxe.Exception instance is wrapped in a freshly built haxe.ValueException, exposing .value
+	// (the original) and .message (Std.string(value)); see haxe/ValueException.hx. If the wrapper type
+	// is not loaded the raw value is returned unchanged.
+	static function wrapCaught(ctx:EvalContext, v:EvalValue, t:T):EvalValue {
+		switch (TypeFunctions.follow(t)) {
+			case TInst(c, _):
+				var path = EvalHash.pathHash(c.path);
+				if ((path == EvalHash.key_haxe_Exception || path == EvalHash.key_haxe_ValueException)
+					&& !EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)) {
+					var wrapped = constructPath(ctx, EvalHash.key_haxe_ValueException, [v]);
+					return wrapped == VNull ? v : wrapped;
+				}
+			case _:
+		}
+		return v;
 	}
 
 	static function binopValue(ctx:EvalContext, op:Binop, a:EvalValue, b:EvalValue, p:Position):EvalValue {
@@ -391,7 +435,7 @@ class EvalEmitter {
 	static function runCatch(ctx:EvalContext, value:EvalValue, catches:Array<TCatch>, savedEnv:EvalEnv, onUnmatched:Void->EvalValue):EvalValue {
 		for (c in catches) {
 			if (catchMatches(ctx, value, c.v.type)) {
-				savedEnv.locals[slot(savedEnv, c.v.id)] = value;
+				savedEnv.locals[slot(savedEnv, c.v.id)] = wrapCaught(ctx, value, c.v.type);
 				return eval(ctx, c.expr);
 			}
 		}

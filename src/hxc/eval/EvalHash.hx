@@ -52,6 +52,7 @@ class EvalHash {
 	public static final key_eval_Vector = hash("eval.Vector");
 	public static final key_String = hash("String");
 	public static final key_haxe_Exception = hash("haxe.Exception");
+	public static final key_haxe_ValueException = hash("haxe.ValueException");
 	public static final key_haxe_ds_Option = hash("haxe.ds.Option");
 	public static final key_haxe_ds_StringMap = hash("haxe.ds.StringMap");
 	public static final key_haxe_ds_IntMap = hash("haxe.ds.IntMap");
