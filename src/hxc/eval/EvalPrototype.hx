@@ -158,6 +158,11 @@ class EvalPrototype {
 						if (cf.kind.match(Method(MethDynamic))) {
 							pinstNames.set(EvalHash.hash(cf.name), pinstFields.length);
 							pinstFields.push(VFunction(makeFunction(ctx, tf, true), false));
+						} else {
+							// A plain override of an inherited dynamic method must replace that inherited
+							// instance-slot's default so instances dispatch to this override, not the base.
+							var inherited = pinstNames.get(EvalHash.hash(cf.name));
+							if (inherited != null) pinstFields[inherited] = VFunction(makeFunction(ctx, tf, true), false);
 						}
 					} else if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
