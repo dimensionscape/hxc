@@ -3881,7 +3881,13 @@ class EvalStdLib {
 			case _: VNull;
 		}));
 		reg(s, "Type", "createInstance", vfn(a -> switch (arg(a, 0)) {
-			case VPrototype(proto): switch (proto.pkind) { case PClass(_): EvalEmitter.constructPath(ctx, proto.ppath, argList(arg(a, 1))); case _: VNull; };
+			case VPrototype(proto): switch (proto.pkind) {
+				case PClass(_) if (proto.ppath == EvalHash.key_String):
+					var args = argList(arg(a, 1));
+					args.length == 1 ? mkStr(stringOf(args[0])) : EvalEmitter.constructPath(ctx, proto.ppath, args);
+				case PClass(_): EvalEmitter.constructPath(ctx, proto.ppath, argList(arg(a, 1)));
+				case _: VNull;
+			};
 			case _: VNull;
 		}));
 		reg(s, "Type", "createEmptyInstance", vfn(a -> switch (arg(a, 0)) {
