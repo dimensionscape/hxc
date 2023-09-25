@@ -51,7 +51,7 @@ class EvalMacro {
 			if (snake != camel) regBuiltin(ec, "haxe.macro.Context", snake, f);
 		}
 		reg2("defined", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
-		reg2("currentPos", "current_pos", function(a) return VNull);
+		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
 		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		reg2("warning", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
