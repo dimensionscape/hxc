@@ -625,6 +625,7 @@ class Operators {
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
+					case AKUsingAccessor(se): usingAccessorIncr(ctx, op, flag, se, withType, p);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:
@@ -690,6 +691,46 @@ class Operators {
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
 		return TypeFunctions.mk(TBinop(OpAssign, target, Typer.castOrUnify(ctx, target.type, value, p)), target.type, p);
+	}
+
+	// Increment/decrement of an abstract property (get,set) via its static impl accessors, passing the
+	// abstract value as this.
+	static function usingAccessorIncr(ctx:TyperContext, op:Unop, flag:UnopFlag, se:hxc.typing.AccessKind.StaticExtensionAccess, withType:WithType, p:Position):TExpr {
+		var fa = se.access;
+		var implC = FieldAccessTools.getHostClassRaise(fa.host);
+		var name = fa.field.name;
+		var getterCf = implC.statics.get("get_" + name);
+		var setterCf = implC.statics.get("set_" + name);
+		if (getterCf == null || setterCf == null) throw new TypingError("This increment target is not yet ported", p);
+		var tvoid = ctx.com.basic.tvoid;
+		var tint = ctx.com.basic.tint;
+		var recv = se.thisExpr;
+		var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+		var er = TexprTools.makeLocal(vr, p);
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
+		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
+		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, FHStatic(implC), false, p), FCall);
+		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
+		var binop = op.match(Increment) ? OpAdd : OpSub;
+		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
+		var stmts = [TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p)];
+		if (flag.match(Postfix)) {
+			var vold = TypeFunctions.allocVar(VGenerated, "`o", readVal.type, p);
+			var eold = TexprTools.makeLocal(vold, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vold, readVal), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+			stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p));
+			stmts.push(eold);
+			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+		}
+		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
+		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
+		var enew = TexprTools.makeLocal(vnew, p);
+		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
+		stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), enew, p)], retOf(setterCf), p));
+		stmts.push(enew);
+		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}
 
 	// Increment/decrement of a class property via its accessors: read once, apply +/-1, write back; postfix
