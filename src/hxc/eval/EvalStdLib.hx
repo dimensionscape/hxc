@@ -542,7 +542,7 @@ class EvalStdLib {
 		return buf.toString();
 	}
 
-	static function regexReplacement(re:EReg, by:String):String {
+	static function regexReplacement(re:EReg, by:String, opName:String):String {
 		var info = nativeRegexInfo.get(re);
 		var captureCount = info == null ? 9 : info.captureCount;
 		var buf = new StringBuf();
@@ -555,7 +555,7 @@ class EvalStdLib {
 					buf.addChar(c);
 				} else if (c >= "0".code && c <= "9".code) {
 					var n = c - "0".code;
-					if (n > captureCount) throw "Pcre2.replace: backreference denotes nonexistent subpattern";
+					if (n > captureCount) throw opName + ": backreference denotes nonexistent subpattern";
 					var m = try re.matched(n) catch (_:Dynamic) null;
 					if (m != null) buf.add(m);
 				} else {
@@ -584,7 +584,7 @@ class EvalStdLib {
 			}
 			var p = re.matchedPos();
 			buf.add(s.substr(pos, p.pos - pos));
-			buf.add(regexReplacement(re, by));
+			buf.add(regexReplacement(re, by, global ? "Pcre2.replace" : "Pcre2.replace_first"));
 			var next = p.pos + p.len;
 			if (!global) {
 				buf.add(s.substr(next));
