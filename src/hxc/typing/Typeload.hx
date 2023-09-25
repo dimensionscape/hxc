@@ -13,6 +13,8 @@ import haxe.ds.StringMap;
 
 class Typeload {
 	static final pNull = Position.nullPos;
+	static var genericInstances:StringMap<TClass> = new StringMap();
+	static var genericInstanceId:Int = 0;
 
 	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam):TypedTypeParam {
 		var n = tp.tpName.name;
@@ -518,12 +520,7 @@ class Typeload {
 	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position):T {
 		return switch (mt) {
 			case TClassDecl(c):
-				// `ft`: the do_build_instance builder. For a `@:generic`
-				// class (kind = KGeneric) build the per-instantiation MONOMORPHIZED specialized
-				// class; otherwise the plain TInst. GATED strictly
-				// on KGeneric so non-generic instantiation is byte-for-byte unaffected.
 				switch (c.kind) {
-					case KGeneric if (!hasOpenMono(params)): TInst(c, params);
 					case KGeneric: TInst(c, params);
 					case KGenericBuild(_): TInst(c, params);
 					case _: TInst(c, params);
@@ -534,8 +531,113 @@ class Typeload {
 		}
 	}
 
-	static function hasOpenMono(params:TParams):Bool {
-		for (t in params) if (TypeFunctions.hasMono(t)) return true;
+	static function hasOpenParam(params:TParams):Bool {
+		for (t in params) if (TypeFunctions.hasMono(t) || hasTypeParameter(t)) return true;
 		return false;
+	}
+
+	static function hasTypeParameter(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, tl):
+				switch (c.kind) {
+					case KTypeParameter(_): true;
+					case _: hasTypeParameterList(tl);
+				}
+			case TEnum(_, tl) | TAbstract(_, tl) | TType(_, tl):
+				hasTypeParameterList(tl);
+			case TFun(sig):
+				hasTypeParameterList([for (arg in sig.args) arg.t].concat([sig.ret]));
+			case TAnon(a):
+				for (f in a.fields) if (hasTypeParameter(f.type)) return true;
+				false;
+			case _:
+				false;
+		};
+	}
+
+	static function hasTypeParameterList(tl:Array<T>):Bool {
+		for (t in tl) if (hasTypeParameter(t)) return true;
+		return false;
+	}
+
+	static function genericKey(c:TClass, params:TParams):String {
+		return Context.pathKey(c.path) + "<" + [for (p in params) Std.string(TypeFunctions.follow(p))].join(",") + ">";
+	}
+
+	static function genericSuffix(params:TParams):String {
+		return [for (p in params) sanitizeGenericName(genericParamName(p))].join("_");
+	}
+
+	static function genericParamName(t:T):String {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, []): c.path.name;
+			case TInst(c, params): c.path.name + "_" + genericSuffix(params);
+			case TEnum(e, []): e.path.name;
+			case TEnum(e, params): e.path.name + "_" + genericSuffix(params);
+			case TAbstract(a, []): a.path.name;
+			case TAbstract(a, params): a.path.name + "_" + genericSuffix(params);
+			case TType(td, []): td.path.name;
+			case TType(td, params): td.path.name + "_" + genericSuffix(params);
+			case TDynamic(_): "Dynamic";
+			case TFun(_): "Function";
+			case TAnon(_): "Anon";
+			case TMono(_): "Unknown";
+			case TLazy(f): genericParamName(TypeFunctions.lazyType(f));
+		}
+	}
+
+	static function sanitizeGenericName(s:String):String {
+		var out = new StringBuf();
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
+			out.addChar(ok ? c : "_".code);
+		}
+		return out.toString();
+	}
+
+	static function cloneField(c:TClass, params:TParams, f:TClassField):TClassField {
+		var cf = TypeFunctions.copyField(f);
+		cf.type = TypeFunctions.applyParams(c.params, params, f.type);
+		cf.expr = null;
+		cf.exprUnoptimized = null;
+		cf.overloads = [for (o in f.overloads) cloneField(c, params, o)];
+		return cf;
+	}
+
+	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
+		var key = genericKey(c, params);
+		var cached = genericInstances.get(key);
+		if (cached != null) return cached;
+		var suffix = "_" + genericSuffix(params);
+		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
+		var ci = TypeFunctions.mkClass(c.module, {pack: c.path.pack, name: c.path.name + suffix}, c.pos, c.namePos);
+		ci.doc = c.doc;
+		ci.meta = c.meta;
+		ci.isPrivate = true;
+		ci.kind = KGenericInstance(c, params);
+		ci.flags = c.flags;
+		ci.usings = c.usings;
+		ci.superClass = c.superClass == null ? null : {c: c.superClass.c, params: [for (t in c.superClass.params) TypeFunctions.applyParams(c.params, params, t)]};
+		ci.interfaces = [for (i in c.interfaces) {c: i.c, params: [for (t in i.params) TypeFunctions.applyParams(c.params, params, t)]}];
+		ci.dynamicType = c.dynamicType == null ? null : TypeFunctions.applyParams(c.params, params, c.dynamicType);
+		ci.arrayAccess = c.arrayAccess == null ? null : TypeFunctions.applyParams(c.params, params, c.arrayAccess);
+		if (c.constructor != null) ci.constructor = cloneField(c, params, c.constructor);
+		for (f in c.orderedFields) {
+			var cf = cloneField(c, params, f);
+			ci.fields.set(cf.name, cf);
+			ci.orderedFields.push(cf);
+		}
+		for (f in c.orderedStatics) {
+			var cf = cloneField(c, params, f);
+			ci.statics.set(cf.name, cf);
+			ci.orderedStatics.push(cf);
+		}
+		genericInstances.set(key, ci);
+		c.module.types.push(TClassDecl(ci));
+		ctx.types.push(TClassDecl(ci));
+		ctx.declOfType.set(Context.pathKey(ci.path), ctx.declOfType.get(Context.pathKey(c.path)));
+		ctx.typeToModule.set(Context.pathKey(ci.path), c.module.path);
+		return ci;
 	}
 }

@@ -78,6 +78,7 @@ class Inline {
 				subst.set(av.id, directLocal);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
+				nv.extra = TypeFunctions.varExtra([], params[i]);
 				subst.set(av.id, nv);
 				binds.push(TypeFunctions.mk(TVarExpr(nv, params[i]), tvoid, p));
 			}
@@ -119,11 +120,20 @@ class Inline {
 			case TLocal(v): subst.exists(v.id) ? TLocal(subst.get(v.id)) : e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
 			case TBinop(op, e1, e2): TBinop(op, m(e1), m(e2));
-			case TField(e1, fa): TField(m(e1), fa);
+			case TField(e1, fa):
+				var me1 = m(e1);
+				var rewritten = Typer.tryMultiTypeForwardFieldExpr(ctx, me1, TypeFunctions.fieldName(fa), e.pos);
+				if (rewritten != null) return rewritten;
+				TField(me1, fa);
 			case TParenthesis(e1): TParenthesis(m(e1));
 			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: m(f.expr)}]);
 			case TArrayDecl(vals): TArrayDecl([for (x in vals) m(x)]);
-			case TCall(e1, ps): TCall(m(e1), [for (x in ps) m(x)]);
+			case TCall(e1, ps):
+				var me1 = m(e1);
+				var mps = [for (x in ps) m(x)];
+				var inlined = tryInline(ctx, me1, mps, e.type, e.pos);
+				if (inlined != null) return inlined;
+				TCall(me1, mps);
 			case TNew(c, tp, args): TNew(c, tp, [for (x in args) m(x)]);
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):

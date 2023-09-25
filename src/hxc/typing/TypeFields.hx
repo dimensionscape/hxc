@@ -52,6 +52,7 @@ class TypeFields {
 		for (mt in m.types) {
 			switch (mt) {
 				case TClassDecl(c):
+					switch (c.kind) { case KGeneric: continue; case _: }
 					var entry = ctx.declOfType.get(Context.pathKey(c.path));
 					if (entry == null) continue;
 					switch (entry.decl) {
@@ -66,8 +67,8 @@ class TypeFields {
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
-		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.typeParams = classBodyParams(c);
+		tctx.tthis = classThisType(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		for (cff in d.dData) {
 			var isStatic = false;
@@ -118,13 +119,14 @@ class TypeFields {
 	// A full installAndForce per build is O(builds x modules) and re-enters through lazy typing; this
 	// types only the rewritten class, so the cost stays proportional to the fields actually added.
 	public static function forceClassFields(ctx:Context, c:TClass):Void {
+		switch (c.kind) { case KGeneric: return; case _: }
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
-		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.typeParams = classBodyParams(c);
+		tctx.tthis = classThisType(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
@@ -135,23 +137,36 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
+			if (isForcing(cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}; case _: }
-			try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) { ctx.unresolvedFields++; }
+			_forcing.push(cf);
+			try {
+				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
+			} catch (_:haxe.Exception) {
+				ctx.unresolvedFields++;
+			}
+			_forcing.remove(cf);
 		}
 		ctx.currentModule = savedMod;
 	}
 
 	static var _forcing:Array<TClassField> = [];
 
+	static function isForcing(cf:TClassField):Bool {
+		for (f in _forcing) if (f == cf) return true;
+		return false;
+	}
+
 	// Type a single field body on demand. Inline expansion needs a callee body that may not be
 	// installed yet (its module is processed later, or loaded on demand); the owning class is known
 	// from the call site, so locate the syntactic field and run its body typing here.
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
+		switch (c.kind) { case KGeneric: return; case _: }
 		if (cf.expr != null) return;
 		// Re-entry on the same field returns its current (still-open) signature, as a lazy type still in
 		// progress does. A different field is forced normally even when nested, so an inline callee's
 		// return type is inferred before its result is consumed by the caller.
-		for (f in _forcing) if (f == cf) return;
+		if (isForcing(cf)) return;
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
@@ -164,14 +179,34 @@ class TypeFields {
 		if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
-		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.typeParams = classBodyParams(c);
+		tctx.tthis = classThisType(c);
 		_forcing.push(cf);
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
+		switch (cf.type) { case TLazy(r): cf.type = TypeFunctions.lazyType(r); case _: }
 		try typeFieldBody(tctx, cf, cff, isStatic, cf.type) catch (_:haxe.Exception) {}
 		ctx.currentModule = savedMod;
 		_forcing.remove(cf);
+	}
+
+	static function classBodyParams(c:TClass):TypeParams {
+		return switch (c.kind) {
+			case KGenericInstance(base, params):
+				[for (i in 0...base.params.length) {
+					var tp = base.params[i];
+					TypeFunctions.mkTypeParam(tp.name, i < params.length ? params[i] : tp.type, tp.defaultType);
+				}];
+			case _:
+				c.params;
+		}
+	}
+
+	static function classThisType(c:TClass):T {
+		return switch (c.kind) {
+			case KGenericInstance(_, _): TInst(c, []);
+			case _: TInst(c, TypeFunctions.extractParamTypes(c.params));
+		}
 	}
 
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
