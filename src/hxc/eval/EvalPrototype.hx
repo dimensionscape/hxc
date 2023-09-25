@@ -1,5 +1,6 @@
 package hxc.eval;
 
+import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.eval.EvalValue;
@@ -54,6 +55,7 @@ class EvalPrototype {
 			pnames.set(EvalHash.hash(name), pfields.length);
 			pfields.push(v);
 		}
+		addMeta(enumMeta(en), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), null, PEnum(constructors), VNull);
 		// The enum used as a value (Type.getEnumConstructs(E), createEnum) resolves to its prototype.
 		proto.pvalue = VPrototype(proto);
@@ -83,6 +85,134 @@ class EvalPrototype {
 				pfields[idx] = b.v;
 			}
 		}
+	}
+
+	// Runtime metadata (the compiler-synthesized __meta__ static). Only user metadata (a name not
+	// starting with ':' or '$') is kept; the params, which must be constant-value expressions, are
+	// evaluated to runtime values.
+
+	// A metadata param is restricted to constant values: only constants, parentheses, object and
+	// array literals; anything else is not a constant value.
+	static function metaConstant(e:Expr):EvalValue {
+		return switch (e.expr) {
+			case EConst(c): metaConst(c);
+			case EParenthesis(e1): metaConstant(e1);
+			case EObjectDecl(fields):
+				var m = new Map<Int, EvalValue>();
+				for (f in fields) m.set(EvalHash.hash(f.name), metaConstant(f.expr));
+				VObject(new VObject([], ODictionary(m)));
+			case EArrayDecl(el): VArray(new VArray([for (x in el) metaConstant(x)], el.length));
+			case _: throw new EvalMetaError();
+		};
+	}
+
+	// Constant folding for a metadata leaf (int overflow / hex fall back to float, the three keyword
+	// idents map to their values, any other ident is not a constant).
+	static function metaConst(c:Constant):EvalValue {
+		return switch (c) {
+			case CInt(s, _):
+				if (s.length > 10 && s.substr(0, 2) == "0x") throw new EvalMetaError();
+				var i = Std.parseInt(s);
+				(i == null || i < -2147483648 || i > 2147483647) ? VFloat(Std.parseFloat(s)) : VInt(i);
+			case CFloat(f, _): VFloat(Std.parseFloat(f));
+			case CString(s, _): VString(new VString(s, s.length));
+			case CIdent("true"): VTrue;
+			case CIdent("false"): VFalse;
+			case CIdent("null"): VNull;
+			case _: throw new EvalMetaError();
+		};
+	}
+
+	// True for a user metadata name: not a compiler/reserved one (leading ':' or '$').
+	static inline function isUserMeta(name:String):Bool {
+		if (name.length == 0) return false;
+		var c = name.charCodeAt(0);
+		return c != ":".code && c != "$".code;
+	}
+
+	// One entry's params become an Array of values, or null when there are no params (both no-parens
+	// and empty-parens yield the empty list, hence null).
+	static function metaParams(params:Array<Expr>):EvalValue {
+		if (params.length == 0) return VNull;
+		return VArray(new VArray([for (p in params) metaConstant(p)], params.length));
+	}
+
+	// Turn one named-metadata list ({name -> Metadata}) into a VObject of {name -> params}, keeping
+	// only user metadata and only entries that still carry some. Returns null when nothing remains.
+	static function metaField(entries:Array<{name:String, meta:Metadata}>):Null<EvalValue> {
+		var m = new Map<Int, EvalValue>();
+		var any = false;
+		for (e in entries) {
+			var inner = new Map<Int, EvalValue>();
+			var innerAny = false;
+			for (me in e.meta) if (isUserMeta(me.name)) {
+				inner.set(EvalHash.hash(me.name), metaParams(me.params));
+				innerAny = true;
+			}
+			if (innerAny) {
+				m.set(EvalHash.hash(e.name), VObject(new VObject([], ODictionary(inner))));
+				any = true;
+			}
+		}
+		return any ? VObject(new VObject([], ODictionary(m))) : null;
+	}
+
+	// The metadata of a single type (its own meta list under the "" key). Returns null when it has no
+	// user metadata.
+	static function metaObj(meta:Metadata):Null<EvalValue> {
+		var inner = new Map<Int, EvalValue>();
+		var any = false;
+		for (me in meta) if (isUserMeta(me.name)) {
+			inner.set(EvalHash.hash(me.name), metaParams(me.params));
+			any = true;
+		}
+		return any ? VObject(new VObject([], ODictionary(inner))) : null;
+	}
+
+	// Assemble the __meta__ value {obj?, fields?, statics?} for a type, or null when nothing applies.
+	// The nested metadata is dropped whole if any param is not a constant value, so a malformed entry
+	// never aborts the run.
+	static function buildMeta(obj:Metadata, fields:Array<{name:String, meta:Metadata}>,
+			statics:Array<{name:String, meta:Metadata}>):Null<EvalValue> {
+		try {
+			var vObj = metaObj(obj);
+			var vFields = metaField(fields);
+			var vStatics = metaField(statics);
+			if (vObj == null && vFields == null && vStatics == null) return null;
+			var m = new Map<Int, EvalValue>();
+			if (vObj != null) m.set(EvalHash.hash("obj"), vObj);
+			if (vFields != null) m.set(EvalHash.hash("fields"), vFields);
+			if (vStatics != null) m.set(EvalHash.hash("statics"), vStatics);
+			return VObject(new VObject([], ODictionary(m)));
+		} catch (_:EvalMetaError) {
+			return null;
+		}
+	}
+
+	// Install a computed __meta__ value as a static-prototype field.
+	static function addMeta(v:Null<EvalValue>, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
+		if (v == null) return;
+		pnames.set(EvalHash.key___meta__, pfields.length);
+		pfields.push(v);
+	}
+
+	// The runtime metadata of a class: its own meta, instance fields (the constructor keyed under "_"),
+	// and statics.
+	static function classMeta(c:TClass):Null<EvalValue> {
+		var fields:Array<{name:String, meta:Metadata}> = [for (f in c.orderedFields) {name: f.name, meta: f.meta}];
+		if (c.constructor != null) fields.push({name: "_", meta: c.constructor.meta});
+		var statics:Array<{name:String, meta:Metadata}> = [for (f in c.orderedStatics) {name: f.name, meta: f.meta}];
+		return buildMeta(c.meta, fields, statics);
+	}
+
+	// The runtime metadata of an enum: its own meta plus each constructor's meta (under fields).
+	static function enumMeta(en:TEnum):Null<EvalValue> {
+		var fields:Array<{name:String, meta:Metadata}> = [];
+		for (n in en.names) {
+			var ef = en.constrs.get(n);
+			if (ef != null) fields.push({name: n, meta: ef.meta});
+		}
+		return buildMeta(en.meta, fields, []);
 	}
 
 	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>} {
@@ -129,6 +259,7 @@ class EvalPrototype {
 			}
 		}
 		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames);
+		addMeta(classMeta(c), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
 		proto.pvalue = VPrototype(proto);
 		return {proto: proto, delays: delays};
@@ -179,4 +310,9 @@ class EvalPrototype {
 		proto.pvalue = VPrototype(proto);
 		return proto;
 	}
+}
+
+// Signals that a metadata param is not a constant value, so its whole __meta__ is skipped.
+class EvalMetaError extends haxe.Exception {
+	public function new() super("not a constant metadata value");
 }
