@@ -695,7 +695,7 @@ class EvalMacro {
 	static function decodeUnop(ec:EvalContext, v:EvalValue):Unop {
 		return switch (ctorName(ec, v)) {
 			case "OpIncrement": Increment; case "OpDecrement": Decrement;
-			case "OpNot": Not; case "OpNeg": Neg; case "OpNegBits": NegBits;
+			case "OpNot": Not; case "OpNeg": Neg; case "OpNegBits": NegBits; case "OpSpread": Spread;
 			case other: throw "macro decode: unhandled Unop " + other;
 		};
 	}
