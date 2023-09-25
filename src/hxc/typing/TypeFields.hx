@@ -81,11 +81,19 @@ class TypeFields {
 		}
 	}
 
+	// A macro function is typed only in the macro world; in the host (non-macro) context its body is
+	// discarded and it is invoked through the macro interpreter. Its body must not be host-typed (it
+	// references haxe.macro.* identifiers that resolve only under `macro`).
+	static function skipMacroBodyInHost(ctx:Context, cf:TClassField):Bool {
+		return !ctx.isMacro && cf.kind.match(Method(MethMacro));
+	}
+
 	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
 		// Idempotent: a field already lazy or already typed is left alone so typeAllModules can
 		// be re-run to pick up modules loaded on demand.
 		switch (cf.type) { case TLazy(_): return; case _: }
 		if (cf.expr != null) return;
+		if (skipMacroBodyInHost(ctx, cf)) return;
 		var sigType = cf.type;
 		var r = new Ref(LAvailable(sigType));
 		var force = function():T {

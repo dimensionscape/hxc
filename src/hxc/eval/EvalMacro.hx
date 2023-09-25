@@ -331,10 +331,17 @@ class EvalMacro {
 				// (macro defined, its own parse cache), never the host com. Context API queries still
 				// target the host com (defines/types reflect the program being compiled).
 				hxc.typing.TypeFields.typeAllModules(macroCom);
-				var ec = EvalMain.create(true);
-				registerContext(ec, com);
-				EvalMain.addModules(ec, macroCom.modules);
-				macroCtx = ec;
+				if (macroCtx == null) {
+					var ec = EvalMain.create(true);
+					registerContext(ec, com);
+					EvalMain.addModules(ec, macroCom.modules);
+					macroCtx = ec;
+				} else if (macroCom.modules.length > lastModuleCount) {
+					// Extend the existing context with only the newly loaded modules. Rebuilding the whole
+					// macro context on every macro-load (a suite macro-loads O(N) classes) would be O(N^2)
+					// and exhaust the GC ("Too many heap sections").
+					EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+				}
 				lastModuleCount = macroCom.modules.length;
 			} catch (e:Dynamic) { building = false; throw e; }
 			building = false;
@@ -358,7 +365,12 @@ class EvalMacro {
 			hxc.context.ModuleLoader.loadModule(macroCom, path, Position.nullPos);
 			hxc.typing.TypeFields.typeAllModules(macroCom);
 		} catch (_:Dynamic) {}
-		if (macroCtx != null) EvalMain.addModules(macroCtx, macroCom.modules);
+		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
+		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
+		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
+			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+			lastModuleCount = macroCom.modules.length;
+		}
 	}
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
