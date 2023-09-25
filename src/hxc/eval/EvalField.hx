@@ -49,7 +49,7 @@ class EvalField {
 			case VPrototype(proto): protoFieldRaise(proto, f);
 			case VArray(va): f == EvalHash.keyLength ? VInt(va.alength) : sharedField(ctx.arrayPrototype, f);
 			case VVector(vv): f == EvalHash.keyLength ? VInt(vv.length) : sharedField(ctx.vectorPrototype, f);
-			case VString(s): f == EvalHash.keyLength ? VInt(EvalStdLib.stringLength(s.sstring)) : sharedField(ctx.stringPrototype, f);
+			case VString(s): f == EvalHash.keyLength ? VInt(EvalStdLib.runtimeStringLength(s)) : sharedField(ctx.stringPrototype, f);
 				// eval.NativeString is the interpreter's raw-string optimization; for field access it is a
 				// String, so length and the String methods resolve through the shared string prototype.
 			case VNativeString(s): f == EvalHash.keyLength ? VInt(s.length) : sharedField(ctx.stringPrototype, f);

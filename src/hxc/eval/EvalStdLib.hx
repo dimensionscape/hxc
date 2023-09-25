@@ -2437,6 +2437,11 @@ class EvalStdLib {
 		return utf8Codes(s).length;
 	}
 
+	public static function runtimeStringLength(s:VString):Int {
+		var logical = stringLength(s.sstring);
+		return s.slength != s.sstring.length || (s.slength != logical && isUtf8ByteString(s.sstring)) ? s.slength : logical;
+	}
+
 	static inline function mkStr(s:String):EvalValue {
 		var ns = normalizeString(s);
 		return VString(new VString(ns, stringLength(ns)));
@@ -2487,6 +2492,14 @@ class EvalStdLib {
 		var buf = new StringBuf();
 		for (c in utf8Codes(s)) addUtf8EncodedChar(buf, c);
 		return buf.toString();
+	}
+
+	static function utf8EncodedLength(s:String):Int {
+		var len = 0;
+		for (c in utf8Codes(s)) {
+			len += c < 0x80 ? 1 : (c < 0x800 ? 2 : (c < 0x10000 ? 3 : 4));
+		}
+		return len;
 	}
 
 	static function utf8Decode(s:String):String {
@@ -2569,6 +2582,19 @@ class EvalStdLib {
 		if (utf8ByteCodes(s) != null) return true;
 		for (i in 0...s.length) if (s.charCodeAt(i) > 0xFF) return true;
 		return false;
+	}
+
+	static function bytesOfStringValue(v:EvalValue):haxe.io.Bytes {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VString(s) if (s.slength != stringLength(s.sstring) && utf8ByteCodes(s.sstring) != null):
+				haxe.io.Bytes.ofString(s.sstring);
+			case VString(s):
+				haxe.io.Bytes.ofString(normalizeString(s.sstring));
+			case VNativeString(s):
+				haxe.io.Bytes.ofString(s);
+			case _:
+				haxe.io.Bytes.ofString(normalizeString(stringOf(v)));
+		}
 	}
 
 	static function stringReplace(s:String, sub:String, by:String):String {
@@ -2814,7 +2840,7 @@ class EvalStdLib {
 		return buf.toString();
 	}
 
-	static function isUtf8ByteString(s:String):Bool {
+	public static function isUtf8ByteString(s:String):Bool {
 		var i = 0;
 		while (i < s.length) {
 			var c = s.charCodeAt(i++);
@@ -3935,7 +3961,10 @@ class EvalStdLib {
 		}));
 		reg(s, "haxe.Utf8", "compare", vfn(a -> VInt(Reflect.compare(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
 		reg(s, "haxe.Utf8", "decode", vfn(a -> mkStr(utf8Decode(stringOf(arg(a, 0))))));
-		reg(s, "haxe.Utf8", "encode", vfn(a -> mkStr(utf8Encode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Utf8", "encode", vfn(a -> {
+			var s = stringOf(arg(a, 0));
+			VString(new VString(utf8Encode(s), utf8EncodedLength(s)));
+		}));
 		reg(s, "haxe.Utf8", "iter", vfn(a -> {
 			var fn = arg(a, 1);
 			for (c in utf8Codes(stringOf(arg(a, 0)))) applyFn(fn, [VInt(c)]);
@@ -4552,7 +4581,7 @@ class EvalStdLib {
 
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
 		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> mkBytes(ctx, haxe.io.Bytes.alloc(toInt(arg(a, 0))))));
-		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofString(normalizeString(stringOf(arg(a, 0)))))));
+		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, bytesOfStringValue(arg(a, 0)))));
 		reg(s, "haxe.io.Bytes", "ofHex", vfn(a -> mkBytes(ctx, haxe.io.Bytes.ofHex(stringOf(arg(a, 0))))));
 		reg(s, "haxe.io.Bytes", "ofData", vfn(a -> arg(a, 0)));
 		reg(s, "haxe.io.Bytes", "fastGet", vfn(a -> try VInt(thisBytes([arg(a, 0)]).get(toInt(arg(a, 1)))) catch (e:Dynamic) {
