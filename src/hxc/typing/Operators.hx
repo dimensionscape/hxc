@@ -574,9 +574,24 @@ class Operators {
 			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
 			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), setCall]), retOf(setterCf), p);
 		}
+		// A class property `a.p op= b` evaluates the receiver once, reads via its read access (the getter
+		// or
+		// the stored field), applies the op, and writes via its write access.
+		function accessorInstanceCompound(fa:hxc.typing.AccessKind.FieldAccess):TExpr {
+			var recv = fa.on;
+			var tvoid = ctx.com.basic.tvoid;
+			var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+			var er = TexprTools.makeLocal(vr, p);
+			var readVal = accessorReadOn(ctx, er, fa);
+			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
+			var write = accessorWriteOn(ctx, er, fa, opResult, p);
+			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), write]), readVal.type, p);
+		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
 			case AKExpr(te1): compound(te1);
 			case AKField(fa): compound(FieldAccessTools.getFieldExpr(fa, FWrite));
+			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
 				accessorCompound(se.thisExpr, FieldAccessTools.getHostClassRaise(se.access.host), se.access.field.name, true);
 			case _:
@@ -609,6 +624,7 @@ class Operators {
 						var te = FieldAccessTools.getFieldExpr(fa, FWrite);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:
@@ -645,6 +661,63 @@ class Operators {
 		var enew = TexprTools.makeLocal(vnew, p);
 		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
 		stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return enew, p));
+		stmts.push(enew);
+		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
+	}
+
+	// Read a class property `er.p`: call its getter when the read accessor is AccCall, else read the stored
+	// field.
+	static function accessorReadOn(ctx:TyperContext, er:TExpr, fa:hxc.typing.AccessKind.FieldAccess):TExpr {
+		var name = fa.field.name;
+		var isCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall); case _: false; };
+		if (isCall) {
+			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value);
+			return Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
+		}
+		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
+		return FieldAccessTools.getFieldExpr(faOn, FRead);
+	}
+
+	// Write `er.p = value`: call its setter when the write accessor is AccCall, else assign the stored
+	// field.
+	static function accessorWriteOn(ctx:TyperContext, er:TExpr, fa:hxc.typing.AccessKind.FieldAccess, value:TExpr, p:Position):TExpr {
+		var name = fa.field.name;
+		var isCall = switch (fa.field.kind) { case Var(k): k.write.match(AccCall); case _: false; };
+		if (isCall) {
+			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value));
+			return Calls.makeCall(ctx, setterExpr, [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
+		}
+		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
+		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
+		return TypeFunctions.mk(TBinop(OpAssign, target, Typer.castOrUnify(ctx, target.type, value, p)), target.type, p);
+	}
+
+	// Increment/decrement of a class property via its accessors: read once, apply +/-1, write back; postfix
+	// yields the old value, prefix the new.
+	static function accessorIncr(ctx:TyperContext, op:Unop, flag:UnopFlag, fa:hxc.typing.AccessKind.FieldAccess, withType:WithType, p:Position):TExpr {
+		var recv = fa.on;
+		var tvoid = ctx.com.basic.tvoid;
+		var tint = ctx.com.basic.tint;
+		var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+		var er = TexprTools.makeLocal(vr, p);
+		var readVal = accessorReadOn(ctx, er, fa);
+		var binop = op.match(Increment) ? OpAdd : OpSub;
+		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
+		var stmts = [TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p)];
+		if (flag.match(Postfix)) {
+			var vold = TypeFunctions.allocVar(VGenerated, "`o", readVal.type, p);
+			var eold = TexprTools.makeLocal(vold, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vold, readVal), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+			stmts.push(accessorWriteOn(ctx, er, fa, newv, p));
+			stmts.push(eold);
+			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+		}
+		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
+		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
+		var enew = TexprTools.makeLocal(vnew, p);
+		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
+		stmts.push(accessorWriteOn(ctx, er, fa, enew, p));
 		stmts.push(enew);
 		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}
