@@ -895,6 +895,7 @@ class EvalStdLib {
 	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool}>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
+	static var macroMessages:Array<EvalValue> = [];
 
 	static function regexInfo(re:EReg):{captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool} {
 		var info = nativeRegexInfo.get(re);
@@ -2648,6 +2649,17 @@ class EvalStdLib {
 		return VArray(new VArray(items, items.length));
 	}
 
+	static function macroStackValue(ctx:EvalContext):EvalValue {
+		var envs = EvalExceptions.callStack(EvalContext.getEval(ctx));
+		var items = [for (_ in envs) mkPos(ctx, Position.nullPos)];
+		return VArray(new VArray(items, items.length));
+	}
+
+	static function macroMessage(ctx:EvalContext, name:String, msg:EvalValue, pos:EvalValue):EvalValue {
+		var params = VArray(new VArray([msg, pos], 2));
+		return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.Message")), EvalHash.hash(name), params);
+	}
+
 	static function objectIterator(items:Array<EvalValue>):EvalValue {
 		var index = 0;
 		return mkObject([
@@ -3757,6 +3769,7 @@ class EvalStdLib {
 		evalLoopCreated = false;
 		entryPointThreadCount = 0;
 		nativeRegexInfo = new haxe.ds.ObjectMap();
+		macroMessages = [];
 		var s = ctx.builtins.staticBuiltins;
 
 		reg(s, "Math", "PI", VFloat(Math.PI));
@@ -3933,6 +3946,30 @@ class EvalStdLib {
 					}, true);
 				case "get_defines":
 					VFunction(function(args) return mkStringMap(ctx, definesForExternal(ctx.defines.values)), true);
+				case "warning":
+					VFunction(function(args) {
+						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), arg(args, 1)));
+						return VNull;
+					}, true);
+				case "info":
+					VFunction(function(args) {
+						macroMessages.push(macroMessage(ctx, "Info", arg(args, 0), arg(args, 1)));
+						return VNull;
+					}, true);
+				case "get_messages":
+					VFunction(function(args) return VArray(new VArray(macroMessages.copy(), macroMessages.length)), true);
+				case "filter_messages":
+					VFunction(function(args) {
+						var pred = arg(args, 0);
+						macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(pred, [msg]))) msg];
+						return VNull;
+					}, true);
+				case "init_macros_done":
+					VFunction(function(args) return VTrue, true);
+				case "current_pos":
+					VFunction(function(args) return mkPos(ctx, Position.nullPos), true);
+				case "get_macro_stack":
+					VFunction(function(args) return macroStackValue(ctx), true);
 				case "add_resource":
 					VFunction(function(args) {
 						var name = stringOf(arg(args, 0));
