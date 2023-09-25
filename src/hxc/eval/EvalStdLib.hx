@@ -2273,6 +2273,16 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
+	static function mkStringBytesMap(ctx:EvalContext, values:haxe.ds.StringMap<haxe.io.Bytes>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var m:Map<String, MapEntry> = new Map();
+		for (k in values.keys()) {
+			var bytes = values.get(k);
+			m.set(k, {key: mkStr(k), value: mkBytes(ctx, bytes.sub(0, bytes.length))});
+		}
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
+	}
+
 	static function definesForExternal(defines:Map<String, String>):Map<String, String> {
 		var out = new Map<String, String>();
 		for (k => v in defines) {
@@ -3600,6 +3610,16 @@ class EvalStdLib {
 					}, true);
 				case "get_defines":
 					VFunction(function(args) return mkStringMap(ctx, definesForExternal(ctx.defines.values)), true);
+				case "add_resource":
+					VFunction(function(args) {
+						var name = stringOf(arg(args, 0));
+						if (name == "") EvalExceptions.excString(ctx, "Empty resource name");
+						var bytes = thisBytes([arg(args, 1)]);
+						ctx.resources.set(name, bytes.sub(0, bytes.length));
+						return VNull;
+					}, true);
+				case "get_resources":
+					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
 				case _:
 					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
 			}
