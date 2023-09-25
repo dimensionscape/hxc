@@ -15,11 +15,6 @@ import hxc.typing.Matcher.Match;
 import hxc.typing.TyperContext.CurrentFun;
 import hxc.typing.Typeload;
 
-private enum MultiTypeCtorSelection {
-	MTCDefer;
-	MTCSelected(castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>);
-}
-
 class Typer {
 
 	// A fresh mono, recorded in the per-function list.
@@ -1032,8 +1027,6 @@ class Typer {
 				}
 				try {
 					var te = typeExpr(ctx, e1, WithTypeTools.value);
-					var mt = tryMultiTypeForwardField(ctx, te, field, p, mode);
-					if (mt != null) return mt;
 					Fields.typeField(ctx, te, field, p, mode, withType);
 				} catch (err:TypingError) {
 					var acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
@@ -1049,80 +1042,6 @@ class Typer {
 			case _:
 				AKExpr(typeExpr(ctx, new Expr(edef, p), withType));
 		};
-	}
-
-	static function tryMultiTypeForwardField(ctx:TyperContext, receiver:TExpr, field:String, p:Position, mode:AccessMode):Null<AccessKind> {
-		switch (mode) {
-			case MCall(_):
-			case _:
-				return null;
-		}
-		var found = findMultiTypeReceiver(receiver);
-		if (found == null) return null;
-		var concrete = try resolveMultiTypeConcrete(found.a, found.tl, p) catch (_:TypingError) return null;
-		concrete = specializeConcreteType(ctx, concrete, p);
-		var fa = try TypeFunctions.quickField(concrete, field) catch (_:hxc.core.NotFound) return null;
-		var concreteReceiver = TypeFunctions.mk(found.e.expr, concrete, found.e.pos);
-		return switch (fa) {
-			case FInstance(c, tl, cf):
-				AKField(FieldAccessTools.create(concreteReceiver, cf, FHInstance(c, tl), false, p));
-			case FAnon(cf):
-				AKField(FieldAccessTools.create(concreteReceiver, cf, FHAnon, false, p));
-			case FStatic(c, cf):
-				var typeExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
-				AKField(FieldAccessTools.create(typeExpr, cf, FHStatic(c), false, p));
-			case FDynamic(name):
-				AKExpr(TypeFunctions.mk(TField(concreteReceiver, FDynamic(name)), TDynamic(null), p));
-			case FEnum(_, _):
-				null;
-			case FClosure(cwp, cf):
-				var host = cwp == null ? FHAnon : FHInstance(cwp.c, cwp.params);
-				AKField(FieldAccessTools.create(concreteReceiver, cf, host, false, p));
-		}
-	}
-
-	public static function tryMultiTypeForwardFieldExpr(ctx:TyperContext, receiver:TExpr, field:String, p:Position):Null<TExpr> {
-		var acc = tryMultiTypeForwardField(ctx, receiver, field, p, MCall([]));
-		return switch (acc) {
-			case null: null;
-			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead);
-			case AKExpr(e): e;
-			case _: null;
-		}
-	}
-
-	static function specializeConcreteType(ctx:TyperContext, t:T, p:Position):T {
-		return switch (TypeFunctions.follow(t)) {
-			case TInst(c, params):
-				switch (c.kind) {
-					case KGeneric if (!hasOpenParam(params)):
-						var ci = Typeload.specializeGenericClass(ctx.com, c, params, p);
-						TypeFields.forceClassFields(ctx.com, ci);
-						TInst(ci, []);
-					case _:
-						t;
-				}
-			case _:
-				t;
-		}
-	}
-
-
-	static function findMultiTypeReceiver(e:TExpr):Null<{a:TAbstract, tl:TParams, e:TExpr}> {
-		return switch (TypeFunctions.follow(e.type)) {
-			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
-				{a: a, tl: tl, e: e};
-			case _:
-				switch (e.expr) {
-					case TCast(e1, null):
-						findMultiTypeReceiver(e1);
-					case TLocal(v) if (v.extra != null && v.extra.expr != null):
-						var r = findMultiTypeReceiver(v.extra.expr);
-						if (r == null) null else {a: r.a, tl: r.tl, e: TypeFunctions.mk(TCast(e, null), r.e.type, e.pos)};
-					case _:
-						null;
-				}
-		}
 	}
 
 	static function typeBlock(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
@@ -1164,7 +1083,6 @@ class Typer {
 					castOrUnify(ctx, t, te, p);
 			};
 			var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, t, pv);
-			if (e != null) v.extra = TypeFunctions.varExtra([], e);
 			v.meta = ev.evMeta;
 			if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
 			if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
@@ -1383,14 +1301,7 @@ class Typer {
 					case _: {args: [], ret: ctx.com.basic.tvoid};
 				};
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-				switch (c.kind) {
-					case KGeneric if (!hasOpenParam(tl)):
-						var ci = Typeload.specializeGenericClass(ctx.com, c, tl, p);
-						TypeFields.forceClassFields(ctx.com, ci);
-						TypeFunctions.mk(TNew(ci, [], r.el), TInst(ci, []), p);
-					case _:
-						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
-				}
+				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
 				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key type
 				// against each @:to cast's key-parameter constraint, then constructs that type. The
@@ -1407,18 +1318,11 @@ class Typer {
 						}
 					case _:
 				}
-				var deferCtorSelection = false;
 				var ctorSelection = selectMultiTypeByCtorArgs(ctx, a, usedAtl, el, p);
 				if (ctorSelection != null) {
-					switch (ctorSelection) {
-						case MTCDefer:
-							if (a.impl == null) throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
-							deferCtorSelection = true;
-						case MTCSelected(castField, castType, ret, args):
-							return buildMultiTypeCastCall(ctx, a, usedAtl, castField, castType, ret, args, p);
-					}
+					return buildMultiTypeCastCall(ctx, a, usedAtl, ctorSelection.castField, ctorSelection.castType, ctorSelection.ret, ctorSelection.args, p);
 				}
-				if (a.impl != null && (deferCtorSelection || multiTypeHasOpenSelector(a, usedAtl))) {
+				if (a.impl != null && multiTypeHasOpenSelector(a, usedAtl)) {
 					var sig = switch (a.impl.statics.get("_new")) {
 						case null:
 							{args: [], ret: ctx.com.basic.tvoid};
@@ -1553,10 +1457,9 @@ class Typer {
 		return t;
 	}
 
-	static function selectMultiTypeByCtorArgs(ctx:TyperContext, a:TAbstract, atl:Array<T>, el:Array<Expr>, p:Position):Null<MultiTypeCtorSelection> {
+	static function selectMultiTypeByCtorArgs(ctx:TyperContext, a:TAbstract, atl:Array<T>, el:Array<Expr>, p:Position):Null<{castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>}> {
 		if (el.length == 0) return null;
 		var typedArgs = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
-		for (arg in typedArgs) if (TypeFunctions.hasMono(arg.type) || hasTypeParameter(arg.type)) return MTCDefer;
 		for (toCast in a.toField) {
 			var found = try TypeUnification.withMonoRollback(function() {
 				var castType = applyMultiTypeCastType(a, atl, toCast.cf);
@@ -1568,7 +1471,7 @@ class Typer {
 						for (i in 0...typedArgs.length) {
 							args.push(castOrUnify(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
 						}
-						MTCSelected(toCast, castType, sig.ret, args);
+						{castField: toCast, castType: castType, ret: sig.ret, args: args};
 					case _:
 						throw new TypingError("No matching multi-type constructor", p);
 				}
@@ -1598,35 +1501,6 @@ class Typer {
 			case TInst(c, _): switch (c.kind) { case KTypeParameter(_): true; case _: false; }
 			case _: false;
 		};
-	}
-
-	static function hasOpenParam(tl:Array<T>):Bool {
-		for (t in tl) if (TypeFunctions.hasMono(t) || hasTypeParameter(t)) return true;
-		return false;
-	}
-
-	static function hasTypeParameter(t:T):Bool {
-		return switch (TypeFunctions.follow(t)) {
-			case TInst(c, tl):
-				switch (c.kind) {
-					case KTypeParameter(_): true;
-					case _: typeListHasTypeParameter(tl);
-				}
-			case TEnum(_, tl) | TAbstract(_, tl) | TType(_, tl):
-				typeListHasTypeParameter(tl);
-			case TFun(sig):
-				typeListHasTypeParameter([for (arg in sig.args) arg.t].concat([sig.ret]));
-			case TAnon(a):
-				for (f in a.fields) if (hasTypeParameter(f.type)) return true;
-				false;
-			case _:
-				false;
-		};
-	}
-
-	static function typeListHasTypeParameter(tl:Array<T>):Bool {
-		for (t in tl) if (hasTypeParameter(t)) return true;
-		return false;
 	}
 
 	static function multiTypeConstraints(ttp:TypedTypeParam):Array<T> {

@@ -580,20 +580,11 @@ class TypeUnification {
 			case [TEnum(e1, l1), TEnum(e2, l2)]:
 				e1 == e2 && forAll2(type_param_check, l1, l2);
 			case [TInst(c1, l1), TInst(c2, l2)]:
-				var g1 = genericClass(c1, l1);
-				var g2 = genericClass(c2, l2);
-				g1.c == g2.c && forAll2(type_param_check, g1.params, g2.params);
+				c1 == c2 && forAll2(type_param_check, l1, l2);
 			case [TAbstract(a1, l1), TAbstract(a2, l2)]:
 				a1 == a2 && forAll2(type_param_check, l1, l2);
 			case _:
 				false;
-		}
-	}
-
-	static function genericClass(c:TClass, params:TParams):{c:TClass, params:TParams} {
-		return switch (c.kind) {
-			case KGenericInstance(base, applied): {c: base, params: applied};
-			case _: {c: c, params: params};
 		}
 	}
 
@@ -827,12 +818,10 @@ class TypeUnification {
 				if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) error([cannotUnify(a, b)]);
 				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				var g1 = genericClass(c1, tl1);
-				var g2 = genericClass(c2, tl2);
-				if (g1.c != g2.c && !(param == EqCoreType && pathEq(g1.c.path, g2.c.path))
-					&& (switch [g1.c.kind, g2.c.kind] { case [KExpr(_), KExpr(_)]: false; case _: true; }))
+				if (c1 != c2 && !(param == EqCoreType && pathEq(c1.path, c2.path))
+					&& (switch [c1.kind, c2.kind] { case [KExpr(_), KExpr(_)]: false; case _: true; }))
 					error([cannotUnify(a, b)]);
-				typeEqParams(uctx, a, b, g1.params, g2.params);
+				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
 				var i = 0;
 				try {
@@ -965,11 +954,9 @@ class TypeUnification {
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
 				unifyAbstracts(uctx, a, b, a1, tl1, a2, tl2);
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				var g1 = genericClass(c1, tl1);
-				var g2 = genericClass(c2, tl2);
 				function loop(c:TClass, tl:Array<T>):Bool {
-					if (c == g2.c) {
-						unifyTypeParams(uctx, a, b, tl, g2.params);
+					if (c == c2) {
+						unifyTypeParams(uctx, a, b, tl, tl2);
 						return true;
 					}
 					var bySuper = switch (c.superClass) {
@@ -996,7 +983,7 @@ class TypeUnification {
 						case _: false;
 					}
 				}
-				if (!loop(g1.c, g1.params)) error([cannotUnify(a, b)]);
+				if (!loop(c1, tl1)) error([cannotUnify(a, b)]);
 			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
 				var uctx2 = get_nested_context(uctx);
 				var i = 0;
@@ -1388,10 +1375,7 @@ class TypeUnification {
 			} catch (e:UnifyError) false;
 		}
 		switch [t1, t2] {
-			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				var g1 = genericClass(c1, tl1);
-				var g2 = genericClass(c2, tl2);
-				if (g1.c == g2.c) unifyTls(g1.params, g2.params) else fail();
+			case [TInst(c1, tl1), TInst(c2, tl2)] if (c1 == c2): unifyTls(tl1, tl2);
 			case [TEnum(en1, tl1), TEnum(en2, tl2)] if (en1 == en2): unifyTls(tl1, tl2);
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2): unifyTls(tl1, tl2);
 			case [TType(td1, tl1), TType(td2, tl2)] if (td1 == td2): unifyTls(tl1, tl2);
