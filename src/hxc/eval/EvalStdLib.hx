@@ -1827,6 +1827,13 @@ class EvalStdLib {
 		return template;
 	}
 
+	static function templateGlobalsHost(ctx:EvalContext):Dynamic {
+		var proto = ctx.staticPrototypes.get(EvalHash.hash("haxe.Template"));
+		if (proto == null) return {};
+		var idx = proto.pnames.get(EvalHash.hash("globals"));
+		return idx == null ? {} : valueToHost(ctx, proto.pfields[idx]);
+	}
+
 	static function mkList(ctx:EvalContext, ?items:Array<EvalValue>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.List"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
@@ -4745,7 +4752,16 @@ class EvalStdLib {
 		}));
 		reg(inst, "haxe.Template", "execute", vmethod(a -> {
 			var macros = arg(a, 2);
-			mkStr(thisTemplate(a).execute(valueToHost(ctx, arg(a, 1)), macros == VNull ? null : valueToHost(ctx, macros)));
+			var oldGlobals = haxe.Template.globals;
+			haxe.Template.globals = templateGlobalsHost(ctx);
+			try {
+				var result = thisTemplate(a).execute(valueToHost(ctx, arg(a, 1)), macros == VNull ? null : valueToHost(ctx, macros));
+				haxe.Template.globals = oldGlobals;
+				mkStr(result);
+			} catch (e:Dynamic) {
+				haxe.Template.globals = oldGlobals;
+				throw e;
+			}
 		}));
 		reg(inst, "haxe.io.Path", "toString", vmethod(a -> mkStr(pathToString(ctx, arg(a, 0)))));
 
