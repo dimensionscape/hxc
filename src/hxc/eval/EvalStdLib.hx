@@ -2390,8 +2390,8 @@ class EvalStdLib {
 	static inline function mkNullStr(s:String):EvalValue return s == null ? VNull : mkStr(s);
 
 	static function stringFastCodeAt(s:String, index:Int):EvalValue {
-		var c = s.charCodeAt(index);
-		return c == null ? VNull : VInt(c);
+		var codes = utf8Codes(s);
+		return index < 0 || index >= codes.length ? VNull : VInt(codes[index]);
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
