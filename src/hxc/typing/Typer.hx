@@ -80,21 +80,21 @@ class Typer {
 								if (doesUnify(e.type, mapArg) && doesUnify(mapRet, t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
 							case _:
 						}
-					} else if (doesUnify(e.type, fc.t)) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+					} else if (doesUnify(e.type, TypeFunctions.applyParams(a.params, atl, fc.t))) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
 				}
-				for (ft in a.from) if (doesUnify(e.type, ft)) return TypeFunctions.mk(TCast(e, null), t, p);
+				for (ft in a.from) if (doesUnify(e.type, TypeFunctions.applyParams(a.params, atl, ft))) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
 		}
 		switch (TypeFunctions.follow(e.type)) {
-			case TAbstract(a, _):
+			case TAbstract(a, atl):
 				if (a.impl != null) for (tc in a.toField) {
 					if (tc.cf.params.length > 0) {
 						// A generic @:to (return is a bare type parameter, as in Any) converts to anything.
 						var monos = [for (_ in tc.cf.params) TypeFunctions.mkMono()];
 						if (doesUnify(TypeFunctions.applyParams(tc.cf.params, monos, tc.t), t)) return TypeFunctions.mk(TCast(e, null), t, p);
-					} else if (doesUnify(tc.t, t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
+					} else if (doesUnify(TypeFunctions.applyParams(a.params, atl, tc.t), t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
 				}
-				for (tt in a.to) if (doesUnify(tt, t)) return TypeFunctions.mk(TCast(e, null), t, p);
+				for (tt in a.to) if (doesUnify(TypeFunctions.applyParams(a.params, atl, tt), t)) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
 		}
 		return null;
@@ -1318,24 +1318,27 @@ class Typer {
 						}
 					case _:
 				}
+				var ctorSelection = selectMultiTypeByCtorArgs(ctx, a, usedAtl, el, p);
+				if (ctorSelection != null) {
+					return buildMultiTypeCastCall(ctx, a, usedAtl, ctorSelection.castField, ctorSelection.castType, ctorSelection.ret, ctorSelection.args, p);
+				}
 				if (a.impl != null && multiTypeHasOpenSelector(a, usedAtl)) {
-					var r = Calls.unifyCallArgs(ctx, el, [], ctx.com.basic.tvoid, p);
+					var sig = switch (a.impl.statics.get("_new")) {
+						case null:
+							{args: [], ret: ctx.com.basic.tvoid};
+						case newCf:
+							TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
+							var newType = TypeFunctions.applyParams(a.params, usedAtl, newCf.type);
+							switch (TypeFunctions.follow(newType)) {
+								case TFun(s): s;
+								case _: {args: [], ret: ctx.com.basic.tvoid};
+							}
+					}
+					var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 					return TypeFunctions.mk(TNew(a.impl, usedAtl, r.el), TAbstract(a, usedAtl), p);
 				}
-				var ct = TypeFunctions.follow(resolveMultiType(ctx, a, usedAtl, p));
-				switch (ct) {
-					case TInst(c, ctl):
-						hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
-						var ctorType = findConstructorType(ctx, c, ctl);
-						var sig = switch (ctorType == null ? ctx.com.basic.tvoid : TypeFunctions.follow(ctorType)) {
-							case TFun(s): s;
-							case _: {args: [], ret: ctx.com.basic.tvoid};
-						};
-						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-						TypeFunctions.mk(TNew(c, ctl, r.el), TAbstract(a, usedAtl), p);
-					case _:
-						throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
-				}
+				var selection = resolveMultiType(ctx, a, usedAtl, p);
+				return buildMultiTypeCastCall(ctx, a, usedAtl, selection.castField, selection.castType, selection.ret, [], p);
 			case TAbstract(a, atl) if (a.impl != null && a.impl.statics.exists("_new")):
 				// An abstract is constructed by calling its impl _new static, with the abstract type
 				// parameters applied so a generic abstract threads them (a rigid type parameter would
@@ -1409,11 +1412,15 @@ class Typer {
 	// Select a @:multiType abstract's concrete implementation: the first @:to cast whose key
 	// type-parameter constraint is satisfied by the actual key type, with the concrete return
 	// type specialized to the actual type parameters.
-	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):T {
-		return resolveMultiTypeConcrete(a, atl, p);
+	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
+		return resolveMultiTypeSelection(a, atl, p);
 	}
 
 	public static function resolveMultiTypeConcrete(a:TAbstract, atl:Array<T>, p:Position):T {
+		return resolveMultiTypeSelection(a, atl, p).ret;
+	}
+
+	static function resolveMultiTypeSelection(a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
 		// Follow an abstract key to its underlying type so a key like `enum abstract Foo(String)` selects
 		// the impl for its underlying (StringMap), matching the reference.
 		var key = atl.length > 0 ? TypeFunctions.followWithAbstracts(atl[0]) : TypeFunctions.tDynamic;
@@ -1421,19 +1428,79 @@ class Typer {
 			throw new TypingError("Type parameters of multi type abstracts must be known", p);
 		for (toCast in a.toField) {
 			var cf = toCast.cf;
-			if (cf.params.length == 0) continue;
+			if (cf.params.length == 0) {
+				if (a.params.length == 0) {
+					var castType = applyMultiTypeCastType(a, atl, cf);
+					return {castField: toCast, castType: castType, ret: TypeFunctions.follow(toCast.t)};
+				}
+				continue;
+			}
 			// An unconstrained key parameter accepts any key (the fallback impl, e.g. ObjectMap).
 			var constraints = multiTypeConstraints(cf.params[0]);
 			var ok = true;
 			for (cn in constraints) if (!tryUnifyMulti(key, cn)) { ok = false; break; }
-			if (ok) return TypeFunctions.applyParams(cf.params, atl, toCast.t);
+			if (ok) {
+				var castType = applyMultiTypeCastType(a, atl, cf);
+				return {castField: toCast, castType: castType, ret: TypeFunctions.applyParams(cf.params, atl, toCast.t)};
+			}
 		}
 		throw new TypingError("Cannot resolve multi-type for " + a.path.name, p);
 	}
 
+	static function applyMultiTypeCastType(a:TAbstract, atl:Array<T>, cf:TClassField):T {
+		var t = cf.type;
+		if (cf.params.length > 0) {
+			var params = cf.params.length == atl.length ? atl : [for (_ in cf.params) TypeFunctions.mkMono()];
+			t = TypeFunctions.applyParams(cf.params, params, t);
+		}
+		if (a.params.length > 0) t = TypeFunctions.applyParams(a.params, atl, t);
+		return t;
+	}
+
+	static function selectMultiTypeByCtorArgs(ctx:TyperContext, a:TAbstract, atl:Array<T>, el:Array<Expr>, p:Position):Null<{castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>}> {
+		if (el.length == 0) return null;
+		var typedArgs = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
+		for (toCast in a.toField) {
+			var found = try TypeUnification.withMonoRollback(function() {
+				var castType = applyMultiTypeCastType(a, atl, toCast.cf);
+				return switch (TypeFunctions.follow(castType)) {
+					case TFun(sig) if (sig.args.length == typedArgs.length + 1):
+						var receiver = TypeFunctions.applyParams(a.params, atl, a.thisType);
+						TypeUnification.unifyDefault(receiver, sig.args[0].t);
+						var args:Array<TExpr> = [];
+						for (i in 0...typedArgs.length) {
+							args.push(castOrUnify(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
+						}
+						{castField: toCast, castType: castType, ret: sig.ret, args: args};
+					case _:
+						throw new TypingError("No matching multi-type constructor", p);
+				}
+			}) catch (_:haxe.Exception) null;
+			if (found != null) return found;
+		}
+		return null;
+	}
+
+	static function buildMultiTypeCastCall(ctx:TyperContext, a:TAbstract, atl:Array<T>, castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>, p:Position):TExpr {
+		if (a.impl == null) throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
+		var cf = a.impl.statics.exists(castField.cf.name) ? a.impl.statics.get(castField.cf.name) : castField.cf;
+		TypeFields.forceFieldBody(ctx.com, a.impl, cf);
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
+		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(a.impl), false, p), FCall);
+		var callee = TypeFunctions.mk(fieldExpr.expr, castType, fieldExpr.pos);
+		var receiver = TexprTools.makeNull(TAbstract(a, atl), p);
+		var call = Calls.makeCall(ctx, callee, [receiver].concat(args), ret, p);
+		return TypeFunctions.mk(call.expr, TAbstract(a, atl), p);
+	}
+
 	static function multiTypeHasOpenSelector(a:TAbstract, atl:Array<T>):Bool {
 		if (atl.length == 0) return false;
-		return TypeFunctions.hasMono(TypeFunctions.followWithAbstracts(atl[0]));
+		var selector = TypeFunctions.followWithAbstracts(atl[0]);
+		if (TypeFunctions.hasMono(selector)) return true;
+		return switch (TypeFunctions.follow(selector)) {
+			case TInst(c, _): switch (c.kind) { case KTypeParameter(_): true; case _: false; }
+			case _: false;
+		};
 	}
 
 	static function multiTypeConstraints(ttp:TypedTypeParam):Array<T> {
