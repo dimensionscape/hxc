@@ -40,10 +40,21 @@ class Calls {
 				}
 			case _:
 		}
+		// A class-level @:arrayAccess abstract (no @:arrayAccess methods) forwards array access to its
+		// underlying type; follow the chain so the access resolves against the underlying.
+		var effType = e1.type;
+		var guard = 0;
+		while (guard++ < 20) {
+			switch (TypeFunctions.follow(effType)) {
+				case TAbstract(a, tl) if (TypeFunctions.hasMeta(":arrayAccess", a.meta)):
+					effType = TypeFunctions.applyParams(a.params, tl, a.thisType);
+				case _: break;
+			}
+		}
 		var pt = Typer.spawnMonomorph(ctx, p);
 		var t = ctx.com.basic.tarray(pt);
 		try {
-			TypeUnification.unifyDefault(e1.type, t);
+			TypeUnification.unifyDefault(effType, t);
 		} catch (_:UnifyError) {
 			throw new TypingError("Array access is not allowed on this type", e1.pos);
 		}
