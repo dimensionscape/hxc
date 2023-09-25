@@ -3583,7 +3583,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "Array", "resize", vmethod(a -> {
 			var va = thisArray(a); var len = toInt(arg(a, 1));
-			if (len < 0) len = 0;
+			if (len < 0) throw 'Invalid_argument("Array.fill")';
 			if (va.alength < len) arraySet(va, len - 1, VNull);
 			else if (va.alength > len) {
 				for (i in len...va.alength) va.avalues[i] = VNull;
