@@ -1139,7 +1139,17 @@ class Typer {
 				return TypeFunctions.mk(TReturn(null), expectVoid ? v : monoOrDynamic(ctx, withType, p), p);
 			case ex:
 				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue : WithTypeTools.withType(ctx.ret);
-				var te = castOrUnify(ctx, ctx.ret, typeExpr(ctx, ex, withExpected), p);
+				var teRaw = typeExpr(ctx, ex, withExpected);
+				// Returning a value from a Void function discards the value rather than unifying it.
+				// ctx.ret may only just have settled to Void while typing teRaw (an inner `return` in an
+				// unannotated arrow whose return mono that branch binds), so re-check here, not only up
+				// front. `return null` is exempt: it stays a type error ("Cannot return null from
+				// Void-function"), handled by the value path below.
+				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))) {
+					var vt = monoOrDynamic(ctx, withType, p);
+					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
+				}
+				var te = castOrUnify(ctx, ctx.ret, teRaw, p);
 				if (isVoid(TypeFunctions.follow(te.type))) {
 					switch (te.expr) {
 						case TConst(TNull): throw new TypingError("Cannot return null from Void-function", p);
