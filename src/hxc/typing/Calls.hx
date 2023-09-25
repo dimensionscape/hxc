@@ -353,6 +353,22 @@ class Calls {
 			case TDynamic(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				makeCall(ctx, ce, args, TDynamic(null), p);
+			case TAbstract(a, tl) if (a.call != null && a.impl != null):
+				// @:op(a()) call operator: dispatch to the impl call field with the abstract value as its
+				// first (`this`) argument. (call branch).
+				var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, a.call.type))) {
+					case TFun(s) if (s.args.length >= 1): s;
+					case _: null;
+				};
+				if (sig == null) throw new TypingError("Cannot call a non-function value", p);
+				var implExpr = TexprTools.makeStaticThis(a.impl, p);
+				var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, a.call, FHStatic(a.impl), false, p), FCall);
+				var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
+				makeCall(ctx, fieldExpr, [ce].concat(r.el), sig.ret, p);
+			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":callable", a.meta)):
+				// @:callable: calling the abstract forwards to its underlying (a function).
+				var underlying = TypeFunctions.applyParams(a.params, tl, a.thisType);
+				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
 			case _:
 				throw new TypingError("Cannot call a non-function value", p);
 		};
