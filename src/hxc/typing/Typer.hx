@@ -1171,6 +1171,12 @@ class Typer {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
+				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
+				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
+				// the
+				// first call site binds those still-open param monos to its arg types, corrupting later
+				// constructions.
+				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
 				var ctorType = findConstructorType(ctx, c, tl);
 				if (ctorType == null) throw new TypingError(c.path.name + " does not have a constructor", p);
 				var sig = switch (TypeFunctions.follow(ctorType)) {
