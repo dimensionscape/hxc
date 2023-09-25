@@ -517,6 +517,17 @@ class EvalStdLib {
 		return count;
 	}
 
+	static function validateRegexFlags(flags:String):Void {
+		for (i in 0...flags.length) {
+			var c = flags.charCodeAt(i);
+			switch (c) {
+				case "i".code | "s".code | "m".code | "u".code | "g".code:
+				case _:
+					throw "Unsupported regexp option '" + flags.charAt(i) + "'";
+			}
+		}
+	}
+
 	static function regexReplacement(re:EReg, by:String):String {
 		var info = nativeRegexInfo.get(re);
 		var captureCount = info == null ? 9 : info.captureCount;
@@ -575,6 +586,36 @@ class EvalStdLib {
 			}
 		}
 		return buf.toString();
+	}
+
+	static function regexSplit(re:EReg, s:String):Array<String> {
+		if (s.length == 0) return [""];
+		var info = nativeRegexInfo.get(re);
+		var global = info != null && info.global;
+		var copyOffset = 0;
+		var out:Array<String> = [];
+		var pos = 0;
+		while (true) {
+			if (!re.matchSub(s, pos)) {
+				out.push(s.substr(copyOffset));
+				break;
+			}
+			var p = re.matchedPos();
+			out.push(s.substr(copyOffset, p.pos - copyOffset));
+			copyOffset = p.pos + p.len;
+			var next = pos == copyOffset ? copyOffset + 1 : copyOffset;
+			if (next >= s.length) {
+				out.push("");
+				break;
+			}
+			if (global) {
+				pos = next;
+			} else {
+				out.push(s.substr(copyOffset));
+				break;
+			}
+		}
+		return out;
 	}
 
 	static function thisMap(a:Array<EvalValue>):Map<String, MapEntry> {
@@ -3738,6 +3779,7 @@ class EvalStdLib {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
 			var pattern = stringOf(arg(a, 0));
 			var flags = stringOf(arg(a, 1));
+			validateRegexFlags(flags);
 			var re = new EReg(pattern, flags);
 			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0});
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
@@ -3813,7 +3855,7 @@ class EvalStdLib {
 			EvalValueTools.vbool(thisRegex(a).matchSub(stringOf(arg(a, 1)), toInt(arg(a, 2)), len));
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
-			var parts = thisRegex(a).split(stringOf(arg(a, 1)));
+			var parts = regexSplit(thisRegex(a), stringOf(arg(a, 1)));
 			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
 		}));
 		reg(inst, "EReg", "replace", vmethod(a -> {
