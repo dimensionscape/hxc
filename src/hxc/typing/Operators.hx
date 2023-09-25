@@ -547,9 +547,30 @@ class Operators {
 					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
 			};
 		}
+		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
+		// the op, and writes via the setter.
+		function accessorCompound(recv:TExpr, implC:TClass, name:String, hostFa:Bool):TExpr {
+			var getterCf = implC.statics.get("get_" + name);
+			var setterCf = implC.statics.get("set_" + name);
+			if (getterCf == null || setterCf == null) throw new TypingError("This compound assignment target is not yet ported", p);
+			var tvoid = ctx.com.basic.tvoid;
+			var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+			var er = TexprTools.makeLocal(vr, p);
+			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+			function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
+			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
+			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, FHStatic(implC), false, p), FCall);
+			var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
+			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
+			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
+			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), setCall]), retOf(setterCf), p);
+		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
 			case AKExpr(te1): compound(te1);
 			case AKField(fa): compound(FieldAccessTools.getFieldExpr(fa, FWrite));
+			case AKUsingAccessor(se):
+				accessorCompound(se.thisExpr, FieldAccessTools.getHostClassRaise(se.access.host), se.access.field.name, true);
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
 		};
