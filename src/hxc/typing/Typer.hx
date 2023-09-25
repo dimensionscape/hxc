@@ -508,7 +508,7 @@ class Typer {
 	}
 
 	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.
-	static function formatString(str:String, p:Position):Expr {
+	public static function formatString(str:String, p:Position, ?defines:hxc.core.Define):Expr {
 		function strLit(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), p);
 		function isIdentStart(c:Int):Bool return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
 		function isIdentChar(c:Int):Bool return isIdentStart(c) || (c >= "0".code && c <= "9".code);
@@ -534,7 +534,7 @@ class Typer {
 						else sb.addChar(cj);
 						j++;
 					}
-					parts.push(hxc.parser.Parser.parseExprString(sb.toString(), p.file));
+					parts.push(hxc.parser.Parser.parseExprString(sb.toString(), p.file, defines));
 					i = j;
 				} else if (isIdentStart(d)) {
 					flush();

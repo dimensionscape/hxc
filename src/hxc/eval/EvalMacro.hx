@@ -61,6 +61,7 @@ class EvalMacro {
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
 		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
 		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
+		reg2("formatString", "format_string", function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), curPos, com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
 		reg2("typeof", "typeof", function(a) {
@@ -80,7 +81,13 @@ class EvalMacro {
 				var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, dp)];
 				var imports = (a.length > 2 && a[2] != VNull) ? [for (iv in arrOf(a[2])) decodeImport(ec, iv, dp)] : [];
 				var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
-				hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp);
+				var m = hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp);
+				hxc.typing.TypeResolve.resolveModule(com, m);
+				for (mt in m.types) switch (mt) {
+					case TClassDecl(c):
+						hxc.typing.TypeFields.forceClassFields(com, c);
+					case _:
+				}
 			}
 			return VNull;
 		});
@@ -442,14 +449,10 @@ class EvalMacro {
 
 	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Void {
 		var seen = new Map<TClassField, Bool>();
-		var ownerKey = Context.pathKey(owner.path);
-		inline function sameOwner(c:TClass):Bool {
-			return Context.pathKey(c.path) == ownerKey;
-		}
 		function scan(e:Null<TExpr>):Void {
 			if (e == null) return;
 			switch (e.expr) {
-				case TField(_, FStatic(c, cf)) if (sameOwner(c) && cf.expr == null && !seen.exists(cf)):
+				case TField(_, FStatic(c, cf)) if (cf.expr == null && !seen.exists(cf)):
 					seen.set(cf, true);
 					hxc.typing.TypeFields.forceFieldBody(com, c, cf);
 					scan(cf.expr);
