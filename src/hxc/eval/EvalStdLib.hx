@@ -2058,9 +2058,22 @@ class EvalStdLib {
 		return ran;
 	}
 
+	static function evalLoopWaitStep(ctx:Null<EvalContext>, loop:EvalLoopState):Bool {
+		evalLoopRunPending(loop);
+		var ran = evalLoopRunDue(loop);
+		if (evalLoopRunPending(loop)) ran = true;
+		if (evalLoopRunMainLoop(ctx, loop)) ran = true;
+		if (evalLoopRunPending(loop)) ran = true;
+		return ran;
+	}
+
 	static function evalLoopWait(loop:EvalLoopState, ?timeout:Null<Float>):Bool {
 		if (loop.started) throw "Event loop already started";
-		if (evalLoopStep(null, loop)) return timeout != null || evalLoopExpected(null, loop);
+		if (timeout == null) {
+			if (loop.pending.length > 0 && evalLoopNextDue(null, loop) == null) return false;
+			if (evalLoopWaitStep(null, loop)) return true;
+			if (!evalLoopExpected(null, loop)) return false;
+		} else if (evalLoopStep(null, loop)) return true;
 		if (!evalLoopExpected(null, loop)) return timeout != null;
 		var until = timeout == null ? null : Sys.time() + timeout;
 		while (evalLoopExpected(null, loop)) {
@@ -2075,7 +2088,9 @@ class EvalStdLib {
 				if (until != null && until < next) sleep = until - Sys.time();
 				if (sleep > 0) Sys.sleep(sleep > 0.01 ? 0.01 : sleep);
 			}
-			if (evalLoopStep(null, loop)) return timeout != null || evalLoopExpected(null, loop);
+			if (timeout == null) {
+				if (evalLoopWaitStep(null, loop)) return true;
+			} else if (evalLoopStep(null, loop)) return true;
 			if (until != null && Sys.time() >= until) return false;
 		}
 		return false;
@@ -2139,9 +2154,10 @@ class EvalStdLib {
 
 	static function evalLoopProgress(ctx:EvalContext, loop:EvalLoopState):EvalValue {
 		if (loop.started) throw "Event loop already started";
-		if (evalLoopStep(null, loop)) return nextEventTimeValue(ctx, "AnyTime", null);
+		if (evalLoopRunDue(loop)) return nextEventTimeValue(ctx, "AnyTime", null);
 		var next = evalLoopNextDue(null, loop);
 		if (next != null) return nextEventTimeValue(ctx, "At", next);
+		if (loop.promised > 0) return nextEventTimeValue(ctx, "AnyTime", null);
 		return nextEventTimeValue(ctx, "Never");
 	}
 
