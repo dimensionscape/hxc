@@ -108,6 +108,37 @@ class TypeResolve {
 				ctx.unresolvedFields++;
 			}
 		}
+		linkPropertyAccessors(c, isAbsImpl);
+	}
+
+	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_
+	// return or value argument would otherwise be a free monomorph that can unify with an unrelated sibling
+	// type during inference. accessor checks.
+	static function linkPropertyAccessors(c:TClass, isAbsImpl:Bool):Void {
+		var fields = isAbsImpl ? c.statics : c.fields;
+		for (name in fields.keys()) {
+			var cf = fields.get(name);
+			var pt = cf.type;
+			if (pt == null) continue;
+			switch (cf.kind) {
+				case Var(vk):
+					if (vk.read.match(AccCall)) {
+						var g = fields.get("get_" + name);
+						if (g != null) switch (TypeFunctions.follow(g.type)) {
+							case TFun(sig): try TypeUnification.unifyDefault(sig.ret, pt) catch (_:Dynamic) {};
+							case _:
+						}
+					}
+					if (vk.write.match(AccCall)) {
+						var st = fields.get("set_" + name);
+						if (st != null) switch (TypeFunctions.follow(st.type)) {
+							case TFun(sig) if (sig.args.length > 0): try TypeUnification.unifyDefault(sig.args[sig.args.length - 1].t, pt) catch (_:Dynamic) {};
+							case _:
+						}
+					}
+				case _:
+			}
+		}
 	}
 
 	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position):Void {
