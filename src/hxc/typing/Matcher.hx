@@ -918,8 +918,19 @@ class Match {
 		var matchCases:Array<MatchCase> = [];
 		for (cas in allCases) {
 			if (tupleEls != null) {
-				var r = CaseMaker.makeTuple(ctx, subjectTypes, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
-				matchCases.push({c: r.c, bindings: [], patterns: r.pats});
+				// `case [p..]|[q..]:` over a tuple is an or of tuple patterns; the parser folds the `|`
+				// alternatives into an OpOr expr. Flatten it and give each alternative its own case
+				// (sharing the guard and body), as the reference matcher does.
+				var alts:Array<Expr> = [];
+				function flattenOr(e:Expr):Void switch (e.expr) {
+					case EBinop(OpOr, a, b): flattenOr(a); flattenOr(b);
+					case _: alts.push(e);
+				}
+				for (v in cas.values) flattenOr(v);
+				for (v in alts) {
+					var r = CaseMaker.makeTuple(ctx, subjectTypes, [v], cas.guard, cas.expr, withType, postfix, cas.pos);
+					matchCases.push({c: r.c, bindings: [], patterns: r.pats});
+				}
 			} else {
 				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
