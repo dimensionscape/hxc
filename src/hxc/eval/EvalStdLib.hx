@@ -2283,6 +2283,25 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
+	static function mkPos(ctx:EvalContext, p:Position):EvalValue {
+		var path = EvalHash.hash("haxe.macro.Position");
+		var proto = ctx.instancePrototypes.get(path);
+		if (proto == null) {
+			proto = new VPrototype(path, [], new Map(), [], new Map(), null, PClass([]), VNull);
+			proto.pvalue = VPrototype(proto);
+			ctx.instancePrototypes.set(path, proto);
+		}
+		return VInstance(new VInstance([], proto, IPos(p)));
+	}
+
+	static function posInfos(p:Position):EvalValue {
+		return mkObject([
+			{name: "min", value: VInt(p.min)},
+			{name: "max", value: VInt(p.max)},
+			{name: "file", value: mkStr(p.file)}
+		]);
+	}
+
 	static function definesForExternal(defines:Map<String, String>):Map<String, String> {
 		var out = new Map<String, String>();
 		for (k => v in defines) {
@@ -3620,6 +3639,16 @@ class EvalStdLib {
 					}, true);
 				case "get_resources":
 					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
+				case "make_position":
+					VFunction(function(args) return mkPos(ctx, new Position(stringOf(arg(args, 2)), toInt(arg(args, 0)), toInt(arg(args, 1)))), true);
+				case "get_pos_infos":
+					VFunction(function(args) return switch (EvalValueTools.vresolve(arg(args, 0))) {
+						case VInstance(vi): switch (vi.ikind) {
+							case IPos(p): posInfos(p);
+							case _: EvalExceptions.excString(ctx, "Invalid expression");
+						}
+						case _: EvalExceptions.excString(ctx, "Invalid expression");
+					}, true);
 				case _:
 					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
 			}
