@@ -8,6 +8,9 @@ import hxc.eval.EvalContext;
 import hxc.eval.EvalField;
 import hxc.eval.EvalMisc;
 import hxc.eval.EvalHash;
+#if cpp
+import cpp.NativeSocket;
+#end
 
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
@@ -2097,6 +2100,14 @@ class EvalStdLib {
 
 	static function thisSocket(a:Array<EvalValue>):sys.net.Socket {
 		return nativeSockets.get(thisInstance(a, "NativeSocket"));
+	}
+
+	static function setSocketBroadcast(socket:sys.net.Socket, value:Bool):Void {
+		#if cpp
+		NativeSocket.socket_set_broadcast(untyped socket.__s, value);
+		#else
+		throw "setBroadcast is not supported on this host target";
+		#end
 	}
 
 	static function hostInfo(info:{host:sys.net.Host, port:Int}):EvalValue {
@@ -4487,7 +4498,7 @@ class EvalStdLib {
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "eval.vm.NativeSocket", "sendChar", vmethod(a -> { thisSocket(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "setFastSend", vmethod(a -> { thisSocket(a).setFastSend(arg(a, 1) == VTrue); VNull; }));
-		reg(inst, "eval.vm.NativeSocket", "setBroadcast", vmethod(a -> VNull));
+		reg(inst, "eval.vm.NativeSocket", "setBroadcast", vmethod(a -> { setSocketBroadcast(thisSocket(a), arg(a, 1) == VTrue); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "setTimeout", vmethod(a -> { thisSocket(a).setTimeout(toFloat(arg(a, 1))); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "shutdown", vmethod(a -> { thisSocket(a).shutdown(arg(a, 1) == VTrue, arg(a, 2) == VTrue); VNull; }));
 	}
