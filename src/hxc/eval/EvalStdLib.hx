@@ -2124,7 +2124,7 @@ class EvalStdLib {
 
 	static function stringArray(v:EvalValue):Array<String> {
 		return switch (v) {
-			case VArray(va): [for (i in 0...va.alength) stringOf(va.avalues[i])];
+			case VArray(va): [for (i in 0...va.alength) va.avalues[i] == VNull ? null : stringOf(va.avalues[i])];
 			case _: [];
 		}
 	}
