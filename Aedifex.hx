@@ -13,5 +13,6 @@ class Aedifex {
 		.version("0.0.0")
 		.description("A Haxe 4+ compiler written in Haxe.")
 		.license("GPL2")
+		.defineToken("HXCPP_GC_BIG_BLOCKS")
 		.done();
 }
