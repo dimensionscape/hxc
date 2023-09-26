@@ -461,6 +461,8 @@ class Operators {
 				var eCond = new Expr(EBinop(OpNotEq, e1, eNull), p);
 				var eIf = new Expr(EIf(eCond, e1, e2), p);
 				typeAssign(ctx, e1, eIf, withType, p);
+			case OpAssignOp(OpBoolAnd | OpBoolOr):
+				throw new TypingError("The operators ||= and &&= are not supported", p);
 			case OpAssignOp(sub):
 				typeAssignOp(ctx, sub, e1, e2, withType, p);
 			case OpInterval:
