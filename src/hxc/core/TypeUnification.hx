@@ -1208,7 +1208,7 @@ class TypeUnification {
 						error([invalidVisibility(n)]);
 					try {
 						var f1_type = if (fastEq(f1.type, f2.type)) f1.type else TypeFunctions.fieldType(f1);
-						unifyWithAccess(uctx, f1, f1_type, f2, true);
+						unifyWithAccess(uctx, f1, f1_type, f2);
 						switch (a1.status.get()) {
 							case Statics(_) if (!TypeFunctions.hasMeta(Meta.MaybeUsed, f1.meta)):
 								f1.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(f1.meta);
@@ -1440,28 +1440,17 @@ class TypeUnification {
 		}
 	}
 
-	static function unifyWithAccess(uctx:UnificationContext, f1:TClassField, t1:T, f2:TClassField, anonFields:Bool = false):Void {
+	static function unifyWithAccess(uctx:UnificationContext, f1:TClassField, t1:T, f2:TClassField):Void {
 		var uctx2 = get_nested_context(uctx);
 		switch (f2.kind) {
 			case Var(vk) if (switch (vk.read) { case AccNo | AccNever: true; case _: false; }):
 				unify(uctx2, f2.type, t1);
 			case Method(MethNormal) | Method(MethInline) | Var({write: AccNo}) | Var({write: AccNever}):
-				if (TypeFunctions.hasClassFieldFlag(f1, CfFinal) != TypeFunctions.hasClassFieldFlag(f2, CfFinal) && !(anonFields && anonFinalAccessOk(f1, f2)))
+				if (TypeFunctions.hasClassFieldFlag(f1, CfFinal) != TypeFunctions.hasClassFieldFlag(f2, CfFinal))
 					throw new UnifyError([FinalInvariance]);
 				unify(uctx2, t1, f2.type);
 			case _:
 				withVariance(uctx2, function(x, y) typeEq(uctx2.withEqualityKind(EqBothDynamic), x, y), t1, f2.type);
-		}
-	}
-
-	static function anonFinalAccessOk(f1:TClassField, f2:TClassField):Bool {
-		return TypeFunctions.hasClassFieldFlag(f2, CfFinal) ? fieldWriteNever(f1) : fieldWriteNever(f2);
-	}
-
-	static function fieldWriteNever(f:TClassField):Bool {
-		return switch (f.kind) {
-			case Var({write: AccNever}): true;
-			case _: false;
 		}
 	}
 
