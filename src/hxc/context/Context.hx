@@ -60,6 +60,8 @@ class Context {
 	 */
 	public var unresolvedFields:Int = 0;
 
+	public var diagnostics:Array<CompilerDiagnostic>;
+
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;
@@ -110,6 +112,7 @@ class Context {
 		this.resources = new StringMap();
 		this.initMacros = [];
 		this.declOfType = new StringMap();
+		this.diagnostics = [];
 		this.moduleImports = new StringMap();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
 		this.basic = TypeFunctions.makeStubBasicTypes();
@@ -157,7 +160,20 @@ class Context {
 	public static function seamNotAttached(msg:String, pos:Position):Void {
 		throw new ContextError(msg, pos);
 	}
+
+	public function addDiagnostic(message:String, pos:Position):Void {
+		diagnostics.push({message: message, pos: pos});
+	}
+
+	public function hasDiagnostics():Bool {
+		return diagnostics.length > 0;
+	}
 }
+
+typedef CompilerDiagnostic = {
+	var message:String;
+	var pos:Position;
+};
 
 class ContextError {
 	public var message:String;

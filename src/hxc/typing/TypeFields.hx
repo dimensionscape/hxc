@@ -9,6 +9,7 @@ import hxc.core.TypeUnification;
 import hxc.core.WithType;
 import hxc.core.TypingError;
 import hxc.context.Context;
+import hxc.context.Context.ContextError;
 import hxc.typing.TyperContext.CurrentFun;
 
 // Types class field bodies into expr. Field types are installed as TLazy so the first access to a
@@ -43,9 +44,23 @@ class TypeFields {
 		for (cf in pending) {
 			switch (cf.type) {
 				case TLazy(r):
-					try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}
+					try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
 				case _:
 			}
+		}
+	}
+
+	static function recordFieldError(ctx:Context, e:Dynamic):Void {
+		if (Std.isOfType(e, TypingError)) {
+			var te:TypingError = cast e;
+			ctx.addDiagnostic(te.message, te.pos);
+		} else if (Std.isOfType(e, ContextError)) {
+			var ce:ContextError = cast e;
+			ctx.addDiagnostic(ce.message, ce.pos);
+		} else if (Std.isOfType(e, haxe.Exception)) {
+			ctx.unresolvedFields++;
+		} else {
+			throw e;
 		}
 	}
 
@@ -87,9 +102,18 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			if (!hasFieldBody(cff)) continue;
+			if (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
+	}
+
+	static function hasFieldBody(cff:ClassField):Bool {
+		return switch (cff.cffKind) {
+			case FVar(_, eo) | FProp(_, _, _, eo): eo != null;
+			case FFun(fd): fd.fExpr != null;
+		};
 	}
 
 	// A macro function is typed only in the macro world; in the host (non-macro) context its body is
@@ -118,9 +142,7 @@ class TypeFields {
 			ctx.currentModule = m;
 			try {
 				typeFieldBody(tctx, cf, cff, isStatic, sigType);
-			} catch (_:haxe.Exception) {
-				ctx.unresolvedFields++;
-			}
+			} catch (e:Dynamic) recordFieldError(ctx, e);
 			ctx.currentModule = savedMod;
 			_forcing.remove(cf);
 			r.set(LAvailable(sigType));
@@ -161,13 +183,13 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
+			if (!hasFieldBody(cff)) continue;
+			if (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
-			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (_:haxe.Exception) {}; case _: }
+			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			try {
 				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
-			} catch (_:haxe.Exception) {
-				ctx.unresolvedFields++;
-			}
+			} catch (e:Dynamic) recordFieldError(ctx, e);
 		}
 		ctx.currentModule = savedMod;
 	}
@@ -206,6 +228,8 @@ class TypeFields {
 			}
 		}
 		if (cff == null) return;
+		if (!hasFieldBody(cff)) return;
+		if (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var isStatic = false;
 		for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
@@ -219,7 +243,7 @@ class TypeFields {
 		ctx.currentModule = c.module;
 		try {
 			typeFieldBody(tctx, cf, cff, isStatic, cf.type);
-		} catch (_:haxe.Exception) {}
+		} catch (e:Dynamic) recordFieldError(ctx, e);
 		ctx.currentModule = savedMod;
 		_forcing.remove(cf);
 	}
