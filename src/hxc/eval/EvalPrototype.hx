@@ -3,6 +3,7 @@ package hxc.eval;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.Globals.Path;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalContext;
 import hxc.eval.EvalEmitter;
@@ -196,6 +197,179 @@ class EvalPrototype {
 		pfields.push(v);
 	}
 
+	static inline function addStaticString(name:String, s:String, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
+		pnames.set(EvalHash.hash(name), pfields.length);
+		pfields.push(VString(new VString(s, s.length)));
+	}
+
+	static function hasRtti(c:TClass):Bool {
+		var cur:Null<TClass> = c;
+		while (cur != null) {
+			if (TypeFunctions.hasMeta(":rtti", cur.meta)) return true;
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return false;
+	}
+
+	static function xmlEscape(s:String):String {
+		var b = new StringBuf();
+		for (i in 0...s.length) {
+			switch (s.charCodeAt(i)) {
+				case "&".code: b.add("&amp;");
+				case "<".code: b.add("&lt;");
+				case ">".code: b.add("&gt;");
+				case '"'.code: b.add("&quot;");
+				case "'".code: b.add("&apos;");
+				case _: b.addChar(s.charCodeAt(i));
+			}
+		}
+		return b.toString();
+	}
+
+	static function pathString(p:Path):String {
+		return p.pack.length == 0 ? p.name : p.pack.join(".") + "." + p.name;
+	}
+
+	static function rttiTypeParams(params:TParams):String {
+		var b = new StringBuf();
+		for (t in params) b.add(rttiType(t));
+		return b.toString();
+	}
+
+	static function rttiPath(kind:String, p:Path, params:TParams):String {
+		return "<" + kind + " path=\"" + xmlEscape(pathString(p)) + "\">" + rttiTypeParams(params) + "</" + kind + ">";
+	}
+
+	static function rttiType(t:T):String {
+		return switch (TypeFunctions.follow(t)) {
+			case TMono(m):
+				m.type == null ? "<unknown/>" : rttiType(m.type);
+			case TEnum(e, params):
+				rttiPath("e", e.path, params);
+			case TInst(c, params):
+				rttiPath("c", c.path, params);
+			case TType(td, params):
+				rttiPath("t", td.path, params);
+			case TAbstract(a, params):
+				rttiPath("x", a.path, params);
+			case TFun(sig):
+				var b = new StringBuf();
+				b.add("<f a=\"");
+				b.add(xmlEscape([for (a in sig.args) (a.opt ? "?" : "") + a.name].join(":")));
+				b.add("\">");
+				for (a in sig.args) b.add(rttiType(a.t));
+				b.add(rttiType(sig.ret));
+				b.add("</f>");
+				b.toString();
+			case TAnon(a):
+				var fields = [for (name in a.fields.keys()) name];
+				fields.sort(Reflect.compare);
+				var b = new StringBuf();
+				b.add("<a>");
+				for (name in fields) b.add(rttiClassField(a.fields.get(name), false));
+				b.add("</a>");
+				b.toString();
+			case TDynamic(null):
+				"<d/>";
+			case TDynamic(t):
+				"<d>" + rttiType(t) + "</d>";
+			case TLazy(f):
+				rttiType(TypeFunctions.lazyType(f));
+		}
+	}
+
+	static function rttiAccess(a:VarAccess):String {
+		return switch (a) {
+			case AccNormal: "normal";
+			case AccNo | AccNever: "null";
+			case AccCall: "method";
+			case AccInline: "inline";
+			case AccRequire(s, _): s;
+			case AccCtor: "null";
+		}
+	}
+
+	static function inheritedField(c:Null<TClass>, name:String):Null<TClassField> {
+		var cur = c == null || c.superClass == null ? null : c.superClass.c;
+		while (cur != null) {
+			if (cur.fields.exists(name)) return cur.fields.get(name);
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	static function rttiClassField(cf:TClassField, isStatic:Bool, ?owner:TClass):String {
+		var inherited = isStatic ? null : inheritedField(owner, cf.name);
+		var b = new StringBuf();
+		b.add("<");
+		b.add(xmlEscape(cf.name));
+		if (isStatic) b.add(" static=\"1\"");
+		if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)
+			|| (inherited != null && TypeFunctions.hasClassFieldFlag(inherited, CfPublic)))
+			b.add(" public=\"1\"");
+		if (TypeFunctions.hasClassFieldFlag(cf, CfFinal)) b.add(" final=\"1\"");
+		if (TypeFunctions.hasClassFieldFlag(cf, CfOverride) || inherited != null) b.add(" override=\"1\"");
+		switch (cf.kind) {
+			case Method(_):
+				b.add(" set=\"method\"");
+			case Var(vk):
+				var r = rttiAccess(vk.read);
+				var w = rttiAccess(vk.write);
+				if (r != "normal") b.add(" get=\"" + xmlEscape(r) + "\"");
+				if (w != "normal") b.add(" set=\"" + xmlEscape(w) + "\"");
+		}
+		if (cf.params.length > 0) {
+			b.add(" params=\"");
+			b.add(xmlEscape([for (tp in cf.params) tp.name].join(":")));
+			b.add("\"");
+		}
+		b.add(">");
+		b.add(rttiType(TypeFunctions.fieldType(cf)));
+		b.add("</");
+		b.add(xmlEscape(cf.name));
+		b.add(">");
+		return b.toString();
+	}
+
+	static function rttiPathParams(kind:String, p:Path, params:TParams):String {
+		var empty = params.length == 0;
+		if (empty) return "<" + kind + " path=\"" + xmlEscape(pathString(p)) + "\"/>";
+		return "<" + kind + " path=\"" + xmlEscape(pathString(p)) + "\">" + rttiTypeParams(params) + "</" + kind + ">";
+	}
+
+	static function rttiClass(c:TClass):String {
+		var b = new StringBuf();
+		b.add("<class path=\"");
+		b.add(xmlEscape(pathString(c.path)));
+		b.add("\" params=\"");
+		b.add(xmlEscape([for (tp in c.params) tp.name].join(":")));
+		b.add("\"");
+		if (c.isPrivate) b.add(" private=\"1\"");
+		if (TypeFunctions.hasClassFlag(c, CExtern)) b.add(" extern=\"1\"");
+		if (TypeFunctions.hasClassFlag(c, CInterface)) b.add(" interface=\"1\"");
+		if (TypeFunctions.hasClassFlag(c, CFinal)) b.add(" final=\"1\"");
+		b.add(">");
+		if (c.superClass != null) b.add(rttiPathParams("extends", c.superClass.c.path, c.superClass.params));
+		for (i in c.interfaces) b.add(rttiPathParams("implements", i.c.path, i.params));
+		if (c.dynamicType != null) b.add("<haxe_dynamic>" + rttiType(c.dynamicType) + "</haxe_dynamic>");
+		for (cf in c.orderedStatics) {
+			if (isRemovable(cf) || cf.name == "__rtti" || cf.name == "__meta__") continue;
+			b.add(rttiClassField(cf, true, c));
+		}
+		for (cf in c.orderedFields) {
+			if (isRemovable(cf)) continue;
+			b.add(rttiClassField(cf, false, c));
+		}
+		if (c.constructor != null) b.add(rttiClassField(c.constructor, false, c));
+		b.add("</class>");
+		return b.toString();
+	}
+
+	static function addRtti(c:TClass, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
+		if (!hasRtti(c) || pnames.exists(EvalHash.hash("__rtti"))) return;
+		addStaticString("__rtti", rttiClass(c), pfields, pnames);
+	}
+
 	// The runtime metadata of a class: its own meta, instance fields (the constructor keyed under "_"),
 	// and statics.
 	static function classMeta(c:TClass):Null<EvalValue> {
@@ -259,6 +433,7 @@ class EvalPrototype {
 			}
 		}
 		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames);
+		addRtti(c, pfields, pnames);
 		addMeta(classMeta(c), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
 		proto.pvalue = VPrototype(proto);
