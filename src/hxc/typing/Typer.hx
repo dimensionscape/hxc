@@ -9,6 +9,7 @@ import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TypingError;
 import hxc.core.TexprTools;
 import hxc.core.WithType;
+import hxc.debug.DebugDump;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 import hxc.typing.Matcher.Match;
@@ -247,7 +248,7 @@ class Typer {
 		if (mode == null) mode = MGet;
 		var basic = ctx.com.basic;
 		var p = e.pos;
-		return switch (e.expr) {
+		var typed = switch (e.expr) {
 			case EConst(c): typeConst(ctx, c, p, mode, withType);
 			case EParenthesis(e1):
 				var te = typeExpr(ctx, e1, withType);
@@ -383,31 +384,34 @@ class Typer {
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
-						return typeArrayComprehension(ctx, el[0], withType, p);
+						typeArrayComprehension(ctx, el[0], withType, p);
 					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
-						return typeMapDeclaration(ctx, el, withType, p);
+						typeMapDeclaration(ctx, el, withType, p);
 					case _:
+						var emptyMap:Null<TExpr> = null;
 						if (el.length == 0) switch (withType) {
 							case WithType(wt, _):
 								switch (TypeFunctions.follow(wt)) {
 									case TAbstract(a, _) if (a.path.name == "Map"):
 										var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
-										return typeNew(ctx, tp, [], withType, p);
+										emptyMap = typeNew(ctx, tp, [], withType, p);
 									case _:
 								}
 							case _:
 						}
-						var expectedEt:Null<T> = switch (withType) {
-							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
-								case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"): t;
+						if (emptyMap != null) emptyMap else {
+							var expectedEt:Null<T> = switch (withType) {
+								case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+									case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"): t;
+									case _: null;
+								};
 								case _: null;
 							};
-							case _: null;
-						};
-						var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
-						var tl = [for (e in el) typeExpr(ctx, e, ewt)];
-						var et = expectedEt != null ? expectedEt : (tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl));
-						TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
+							var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
+							var tl = [for (e in el) typeExpr(ctx, e, ewt)];
+							var et = expectedEt != null ? expectedEt : (tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl));
+							TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
+						}
 				}
 			case EObjectDecl(fields):
 				// A `{...}` literal against a @:structInit class types as a call to that class's
@@ -505,6 +509,8 @@ class Typer {
 				var te2 = castOrUnify(ctx, t, te, p);
 				TypeUnification.typeIseqDefault(te2.type, t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
+		DebugDump.typed("typeExpr", typed);
+		return typed;
 	}
 
 	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.

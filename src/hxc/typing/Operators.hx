@@ -10,6 +10,7 @@ import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.NotFound;
 import hxc.core.WithType;
+import hxc.debug.DebugDump;
 import hxc.typing.FieldAccess;
 
 enum TypeClass {
@@ -31,6 +32,7 @@ enum BinopResult {
 
 class Operators {
 	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
+		DebugDump.unify("operator", a, b, p);
 		try {
 			TypeUnification.unifyDefault(a, b);
 		} catch (_:UnifyError) {
@@ -204,9 +206,12 @@ class Operators {
 		// operand).
 		if (!op.match(OpAssign) && !op.match(OpAssignOp(_))) {
 			var br = tryAbstractBinop(ctx, op, e1, e2, isAssignOp, withType, p);
-			if (br != null) return br;
+			if (br != null) {
+				DebugDump.selected("op", p, "abstract " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(br)));
+				return br;
+			}
 		}
-		return switch (op) {
+		var result = switch (op) {
 			case OpAdd:
 				var t = switch ([classify(e1.type), classify(e2.type)]) {
 					case [KInt, KInt]: tint;
@@ -303,6 +308,8 @@ class Operators {
 			case OpNullCoal | OpAssign | OpAssignOp(_):
 				throw new TypingError("This operator is not handled by make_binop", p);
 		};
+		DebugDump.selected("op", p, "builtin " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(result)));
+		return result;
 	}
 
 	static function sameOp(a:Binop, b:Binop):Bool {

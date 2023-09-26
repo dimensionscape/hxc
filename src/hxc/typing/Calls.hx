@@ -9,6 +9,7 @@ import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.WithType;
+import hxc.debug.DebugDump;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 import hxc.typing.Matcher.Match;
@@ -157,6 +158,7 @@ class Calls {
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
 		function typeAgainst(name:String, t:T, e:Expr):TExpr {
 			var te = Typer.typeExpr(ctx, e, WithTypeTools.withArgument(t, name));
+			DebugDump.unify("call-arg " + name, te.type, t, te.pos);
 			return Typer.castOrUnify(ctx, t, te, te.pos);
 		}
 		var out:Array<TExpr> = [];
@@ -440,6 +442,7 @@ class Calls {
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
 							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+							DebugDump.selected("call", p, "field " + cf.name + " -> " + DebugDump.typeString(sig.ret));
 							makeCall(ctx, ce, r.el, sig.ret, p);
 						case _:
 							callExpr(ctx, ce, el, p);
@@ -478,12 +481,15 @@ class Calls {
 		return switch (TypeFunctions.follow(ce.type)) {
 			case TFun(sig):
 				var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+				DebugDump.selected("call", p, "function -> " + DebugDump.typeString(sig.ret));
 				makeCall(ctx, ce, r.el, sig.ret, p);
 			case TMono(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
+				DebugDump.selected("call", p, "mono function");
 				makeCall(ctx, ce, args, TypeFunctions.mkMono(), p);
 			case TDynamic(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
+				DebugDump.selected("call", p, "dynamic function");
 				makeCall(ctx, ce, args, TDynamic(null), p);
 			case TAbstract(a, tl) if (a.call != null && a.impl != null):
 				// @:op(a()) call operator: dispatch to the impl call field with the abstract value as its
@@ -496,10 +502,12 @@ class Calls {
 				var implExpr = TexprTools.makeStaticThis(a.impl, p);
 				var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, a.call, FHStatic(a.impl), false, p), FCall);
 				var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
+				DebugDump.selected("call", p, "abstract callable " + a.call.name + " -> " + DebugDump.typeString(sig.ret));
 				makeCall(ctx, fieldExpr, [ce].concat(r.el), sig.ret, p);
 			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":callable", a.meta)):
 				// @:callable: calling the abstract forwards to its underlying (a function).
 				var underlying = TypeFunctions.applyParams(a.params, tl, a.thisType);
+				DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
 				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
 			case _:
 				throw new TypingError("Cannot call a non-function value", p);
