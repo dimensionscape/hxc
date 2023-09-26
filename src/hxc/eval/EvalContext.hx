@@ -20,12 +20,16 @@ enum EvalEnvKind {
 class EvalEnvInfo {
 	public var isStatic:Bool;
 	public var file:Int;
+	public var min:Int;
+	public var max:Int;
 	public var kind:EvalEnvKind;
 	public var numLocals:Int;
 	public var numCaptures:Int;
-	public function new(isStatic:Bool, file:Int, kind:EvalEnvKind, numLocals:Int, numCaptures:Int) {
+	public function new(isStatic:Bool, file:Int, min:Int, max:Int, kind:EvalEnvKind, numLocals:Int, numCaptures:Int) {
 		this.isStatic = isStatic;
 		this.file = file;
+		this.min = min;
+		this.max = max;
 		this.kind = kind;
 		this.numLocals = numLocals;
 		this.numCaptures = numCaptures;
@@ -149,8 +153,16 @@ class EvalContext {
 		return ctx.eval;
 	}
 
-	public static function createEnvInfo(isStatic:Bool, pfile:String, kind:EvalEnvKind, numLocals:Int, numCaptures:Int):EvalEnvInfo {
-		return {isStatic: isStatic, file: EvalHash.hash(pfile), kind: kind, numLocals: numLocals, numCaptures: numCaptures};
+	public static function createEnvInfo(isStatic:Bool, pos:Position, kind:EvalEnvKind, numLocals:Int, numCaptures:Int):EvalEnvInfo {
+		return {
+			isStatic: isStatic,
+			file: pos == null ? 0 : EvalHash.hash(pos.file),
+			min: pos == null ? -1 : pos.min,
+			max: pos == null ? -1 : pos.max,
+			kind: kind,
+			numLocals: numLocals,
+			numCaptures: numCaptures
+		};
 	}
 
 	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo):EvalEnv {

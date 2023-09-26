@@ -2651,7 +2651,8 @@ class EvalStdLib {
 	static function stackFilePos(ctx:EvalContext, env:EvalEnv, item:EvalValue):EvalValue {
 		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
 		if (file == null) file = "?";
-		return stackEnum(ctx, "FilePos", [item, mkStr(file), VInt(0), VInt(0)]);
+		var infos = Position.getInfos(new Position(file, env.info.min, env.info.max));
+		return stackEnum(ctx, "FilePos", [item, mkStr(file), VInt(infos.line), VInt(infos.column)]);
 	}
 
 	static function stackItem(ctx:EvalContext, env:EvalEnv):EvalValue {

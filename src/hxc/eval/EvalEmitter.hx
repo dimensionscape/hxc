@@ -491,7 +491,7 @@ class EvalEmitter {
 				switch (TypeFunctions.follow(callee.type)) {
 					case TInst(c, _):
 						var ctor = ctx.constructors.get(EvalHash.pathHash(c.path));
-						if (ctor != null) ctor([vthis].concat(args));
+						if (ctor != null) callAt(ctx, p, ctor, [vthis].concat(args));
 					case _:
 				}
 				return VNull;
@@ -506,7 +506,7 @@ class EvalEmitter {
 					var vthis = EvalContext.getEval(ctx).env.vthis;
 					var args = [for (a in argExprs) eval(ctx, a)];
 					switch (m) {
-						case VFunction(f, _): return f([vthis].concat(args));
+						case VFunction(f, _): return callAt(ctx, p, f, [vthis].concat(args));
 						case _:
 					}
 				}
@@ -515,9 +515,16 @@ class EvalEmitter {
 		var fn = EvalValueTools.vresolve(eval(ctx, callee));
 		var args = [for (a in argExprs) eval(ctx, a)];
 		return switch (fn) {
-			case VFunction(f, _): f(args);
-			case VFieldClosure(recv, f): f([recv].concat(args));
+			case VFunction(f, _): callAt(ctx, p, f, args);
+			case VFieldClosure(recv, f): callAt(ctx, p, f, [recv].concat(args));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
+		};
+	}
+
+	static function callAt(ctx:EvalContext, p:Position, f:VFunc, args:Array<EvalValue>):EvalValue {
+		return try f(args) catch (ex:EvalRunTimeException) {
+			EvalExceptions.addCallSite(ex, p);
+			throw ex;
 		};
 	}
 
@@ -554,7 +561,7 @@ class EvalEmitter {
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
-			var env2 = EvalContext.pushEnvironment(ctx, {isStatic: true, file: 0, kind: EKLocalFunction(0), numLocals: 0, numCaptures: 0});
+			var env2 = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(0), 0, 0));
 			env2.lexicalParent = captured;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {
@@ -583,7 +590,7 @@ class EvalEmitter {
 		}
 		var key = EvalHash.pathHash(c.path);
 		var special = ctx.builtins.constructorBuiltins.get(key);
-		if (special != null) return special(args);
+		if (special != null) return callAt(ctx, p, special, args);
 		return constructClass(ctx, c, key, args, p);
 	}
 
@@ -598,7 +605,7 @@ class EvalEmitter {
 			cc = cc.superClass.c;
 			ctor = ctx.constructors.get(EvalHash.pathHash(cc.path));
 		}
-		if (ctor != null) ctor([instVal].concat(args));
+		if (ctor != null) callAt(ctx, p, ctor, [instVal].concat(args));
 		return instVal;
 	}
 
@@ -627,7 +634,7 @@ class EvalEmitter {
 			for (cf in cls.orderedFields) {
 				switch (cf.kind) {
 					case Var(_) if (cf.expr != null):
-						var env = EvalContext.pushEnvironment(ctx, {isStatic: false, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0});
+						var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(false, cf.expr.pos, EKEntrypoint, 0, 0));
 						env.vthis = instVal;
 						var v = eval(ctx, cf.expr);
 						EvalContext.popEnvironment(ctx, env);
@@ -641,8 +648,8 @@ class EvalEmitter {
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
 	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue):EvalValue {
-		var info:EvalEnvInfo = {isStatic: vthis == null, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0};
+	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo):EvalValue {
+		if (info == null) info = EvalContext.createEnvInfo(vthis == null, body.pos, EKEntrypoint, 0, 0);
 		var env = EvalContext.pushEnvironment(ctx, info);
 		env.vthis = vthis;
 		for (a in args) env.locals[slot(env, a.vid)] = a.value;

@@ -16,7 +16,7 @@ typedef ProtoDelay = VPrototype->Void;
 class EvalPrototype {
 	// An instance method or constructor receives the receiver as the first call argument and binds
 	// it as this; a static method binds its arguments directly.
-	static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool):VFunc {
+	static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
 			var offset = isInstance ? 1 : 0;
 			var bound:Array<{vid:Int, value:EvalValue}> = [];
@@ -25,14 +25,17 @@ class EvalPrototype {
 				bound.push({vid: tf.args[i].v.id, value: EvalEmitter.argValue(ctx, tf.args[i], j < args.length ? args[j] : VNull)});
 			}
 			var vthis = isInstance ? (args.length > 0 ? args[0] : VNull) : null;
-			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis);
+			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis, info);
 		};
 	}
 
 	public static function makeConstructor(ctx:EvalContext, c:TClass):Null<VFunc> {
 		if (c.constructor == null) return null;
 		var tf = asFunction(c.constructor.expr);
-		return tf == null ? null : makeFunction(ctx, tf, true);
+		if (tf == null) return null;
+		var field = c.constructor;
+		var info = EvalContext.createEnvInfo(false, field.namePos, EKMethod(EvalHash.pathHash(c.path), EvalHash.hash(field.name)), 0, 0);
+		return makeFunction(ctx, tf, true, info);
 	}
 
 	// The static face of an enum: each constructor is a value (no-arg) or a builder (with args).
@@ -403,7 +406,8 @@ class EvalPrototype {
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							pnames.set(EvalHash.hash(cf.name), pfields.length);
-							pfields.push(VFunction(makeFunction(ctx, tf, false), true));
+							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
+							pfields.push(VFunction(makeFunction(ctx, tf, false, info), true));
 						}
 					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
@@ -413,7 +417,7 @@ class EvalPrototype {
 						delays.push(function(proto) {
 							var ctxEval = EvalContext.getEval(ctx);
 							var prev = ctxEval.env;
-							var env = EvalContext.pushEnvironment(ctx, {isStatic: true, file: 0, kind: EKEntrypoint, numLocals: 0, numCaptures: 0});
+							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
 							try {
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
@@ -457,18 +461,19 @@ class EvalPrototype {
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);
-						pfields.push(VFunction(makeFunction(ctx, tf, true), false));
+						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
+						pfields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						// A dynamic method is reassignable per instance, so it also occupies an instance
 						// slot defaulting
 						// to the same function.
 						if (cf.kind.match(Method(MethDynamic))) {
 							pinstNames.set(EvalHash.hash(cf.name), pinstFields.length);
-							pinstFields.push(VFunction(makeFunction(ctx, tf, true), false));
+							pinstFields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						} else {
 							// A plain override of an inherited dynamic method must replace that inherited
 							// instance-slot's default so instances dispatch to this override, not the base.
 							var inherited = pinstNames.get(EvalHash.hash(cf.name));
-							if (inherited != null) pinstFields[inherited] = VFunction(makeFunction(ctx, tf, true), false);
+							if (inherited != null) pinstFields[inherited] = VFunction(makeFunction(ctx, tf, true, info), false);
 						}
 					} else if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) {
 						pnames.set(EvalHash.hash(cf.name), pfields.length);

@@ -98,7 +98,8 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			// An uncaught exception escaping the interpreted program: render the thrown value and its
 			// position, as the canonical eval target does, rather than the bare wrapper message.
-			printPositionMessage(hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
+			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
+			for (p in ex.callPositions) printPositionMessage("Called from here", p);
 			Sys.exit(1);
 		} catch (e:hxc.parser.LexerError) {
 			printPositionMessage(hxc.parser.LexerError.errorMsg(e.msg), e.pos);

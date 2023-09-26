@@ -33,11 +33,13 @@ class EvalSysExit extends haxe.Exception {
 class EvalRunTimeException extends haxe.Exception {
 	public var value:EvalValue;
 	public var envStack:Array<EvalEnv>;
+	public var callPositions:Array<Position>;
 	public var pos:Position;
 	public function new(value:EvalValue, envStack:Array<EvalEnv>, pos:Position) {
 		super("runtime exception");
 		this.value = value;
 		this.envStack = envStack;
+		this.callPositions = [];
 		this.pos = pos;
 	}
 }
@@ -55,6 +57,10 @@ class EvalExceptions {
 
 	public static function throwValue(ctx:EvalContext, v:EvalValue, p:Position):Dynamic {
 		throw new EvalRunTimeException(v, callStack(EvalContext.getEval(ctx)), p);
+	}
+
+	public static function addCallSite(ex:EvalRunTimeException, p:Position):Void {
+		if (p != null && p.min >= 0) ex.callPositions.push(p);
 	}
 
 	public static function exc(ctx:EvalContext, v:EvalValue):Dynamic {
