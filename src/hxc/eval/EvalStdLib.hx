@@ -2686,6 +2686,36 @@ class EvalStdLib {
 		return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.Message")), EvalHash.hash(name), params);
 	}
 
+	static function macroPosOf(v:EvalValue, fallback:Position):Position {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VInstance(vi): switch (vi.ikind) { case IPos(p): p; case _: fallback; }
+			case _: fallback;
+		};
+	}
+
+	static function macroErrorValue(ctx:EvalContext, msg:String, posValue:EvalValue):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"));
+		if (proto == null) proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error"));
+		if (proto == null) return mkStr(msg);
+		ensureInstanceSlot(proto, EvalHash.hash("message"));
+		ensureInstanceSlot(proto, EvalHash.hash("get_message"));
+		ensureInstanceSlot(proto, EvalHash.hash("pos"));
+		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
+		var pos = macroPosOf(posValue, EvalMacro.currentPosition());
+		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
+		EvalField.setField(ctx, v, EvalHash.hash("message"), mkStr(msg), pos);
+		EvalField.setField(ctx, v, EvalHash.hash("get_message"), VFunction(function(_) return mkStr(msg), false), pos);
+		EvalField.setField(ctx, v, EvalHash.hash("pos"), posValue, pos);
+		EvalField.setField(ctx, v, EvalHash.hash("childErrors"), VNull, pos);
+		return v;
+	}
+
+	static function ensureInstanceSlot(proto:VPrototype, name:Int):Void {
+		if (proto.pinstanceNames.exists(name)) return;
+		proto.pinstanceNames.set(name, proto.pinstanceFields.length);
+		proto.pinstanceFields.push(VNull);
+	}
+
 	static function objectIterator(items:Array<EvalValue>):EvalValue {
 		var index = 0;
 		return mkObject([
@@ -3976,14 +4006,25 @@ class EvalStdLib {
 					VFunction(function(args) return valueArray([for (p in ctx.classPath) mkStr(p)]), true);
 				case "resolve_path":
 					VFunction(function(args) return resolveMacroPath(ctx, stringOf(arg(args, 0))), true);
+				case "error" | "fatal_error":
+					VFunction(function(args) {
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						return EvalExceptions.throwValue(ctx, macroErrorValue(ctx, stringOf(arg(args, 0)), posValue), macroPosOf(posValue, EvalMacro.currentPosition()));
+					}, true);
+				case "report_error":
+					VFunction(function(args) {
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						EvalMacro.reportError(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()));
+						return VNull;
+					}, true);
 				case "warning":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), arg(args, 1)));
+						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
 						return VNull;
 					}, true);
 				case "info":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Info", arg(args, 0), arg(args, 1)));
+						macroMessages.push(macroMessage(ctx, "Info", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
 						return VNull;
 					}, true);
 				case "get_messages":
@@ -3997,7 +4038,7 @@ class EvalStdLib {
 				case "init_macros_done":
 					VFunction(function(args) return VTrue, true);
 				case "current_pos":
-					VFunction(function(args) return mkPos(ctx, Position.nullPos), true);
+					VFunction(function(args) return mkPos(ctx, EvalMacro.currentPosition()), true);
 				case "get_macro_stack":
 					VFunction(function(args) return macroStackValue(ctx), true);
 				case "contains_display_position":

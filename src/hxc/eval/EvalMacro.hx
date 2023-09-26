@@ -25,6 +25,8 @@ class EvalMacro {
 	static var curTctx:Null<TyperContext> = null;
 	static var curBuildFields:EvalValue = VNull;
 	static var curBuildClass:Null<TClass> = null;
+	static var currentCom:Null<Context> = null;
+	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 
@@ -36,8 +38,8 @@ class EvalMacro {
 		// as a catchable eval exception so macro-level try/catch (e.g. Context.typeof in a try) handles it.
 		var wrapped:VFunc = function(a:Array<EvalValue>):EvalValue {
 			try return f(a)
-			catch (ce:hxc.context.Context.ContextError) return EvalExceptions.excString(ec, ce.message)
-			catch (te:TypingError) return EvalExceptions.excString(ec, te.message);
+			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos)
+			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos);
 		};
 		list.push({name: EvalHash.hash(fieldName), v: VFunction(wrapped, true)});
 	}
@@ -55,7 +57,9 @@ class EvalMacro {
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
 		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		reg2("warning", "warning", function(a) { Sys.println("Warning: " + strOf(a[0])); return VNull; });
+		reg2("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
+		reg2("warning", "warning", function(a) { macroMessages.push(macroMessage(ec, "Warning", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
+		reg2("info", "info", function(a) { macroMessages.push(macroMessage(ec, "Info", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
@@ -114,7 +118,13 @@ class EvalMacro {
 			else com.defines.rawDefineValue(k, strOf(a[1]));
 			return VNull;
 		});
-		reg2("filterMessages", "filter_messages", function(a) return VNull);
+		reg2("getMessages", "get_messages", function(a) return encodeArray(macroMessages.copy()));
+		reg2("filterMessages", "filter_messages", function(a) {
+			var pred = a[0];
+			macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(ec, pred, [msg]))) msg];
+			return VNull;
+		});
+		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
 		reg2("onGenerate", "on_generate", function(a) {
 			onGenerateCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
@@ -403,6 +413,7 @@ class EvalMacro {
 			building = false;
 		}
 		EvalContext.setCtx(macroCtx);
+		currentCom = com;
 		return macroCtx;
 	}
 
@@ -580,6 +591,10 @@ class EvalMacro {
 
 	static function strOf(v:EvalValue):String {
 		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw "macro decode: expected string"; };
+	}
+
+	static function intOf(v:EvalValue):Int {
+		return switch (v) { case VInt(i): i; case _: throw "macro decode: expected int"; };
 	}
 
 	static function strOpt(v:EvalValue):Null<String> {
@@ -1229,6 +1244,80 @@ class EvalMacro {
 		fields.set(EvalHash.hash("min"), VInt(p.min));
 		fields.set(EvalHash.hash("max"), VInt(p.max));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function posOf(ec:EvalContext, v:EvalValue, fallback:Position):Position {
+		return switch (v) {
+			case VNull:
+				fallback;
+			case VInstance(vi): switch (vi.ikind) {
+				case IPos(p): p;
+				case _: fallback;
+			}
+			case _:
+				try new Position(strOf(EvalField.field(ec, v, EvalHash.hash("file"))), intOf(EvalField.field(ec, v, EvalHash.hash("min"))), intOf(EvalField.field(ec, v, EvalHash.hash("max"))))
+				catch (_:Dynamic) fallback;
+		};
+	}
+
+	static function posArg(ec:EvalContext, args:Array<EvalValue>, index:Int, fallback:Position):Position {
+		return args.length > index ? posOf(ec, args[index], fallback) : fallback;
+	}
+
+	static function applyFn(ec:EvalContext, fn:EvalValue, args:Array<EvalValue>):EvalValue {
+		return switch (EvalValueTools.vresolve(fn)) {
+			case VFunction(f, _): f(args);
+			case VFieldClosure(recv, f): f([recv].concat(args));
+			case v: EvalExceptions.unexpectedValue(ec, v, "function");
+		};
+	}
+
+	static function macroMessage(ec:EvalContext, name:String, msg:EvalValue, pos:EvalValue):EvalValue {
+		return mkEnumValue(ec, "Message", name, [msg, pos]);
+	}
+
+	static function posInfosValue(ec:EvalContext, p:Position):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("file"), mkString(p.file));
+		fields.set(EvalHash.hash("min"), VInt(p.min));
+		fields.set(EvalHash.hash("max"), VInt(p.max));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function throwMacroError(ec:EvalContext, msg:String, pos:Position):Dynamic {
+		var posValue = encPos(pos);
+		var err = macroErrorValue(ec, msg, posValue, pos);
+		return EvalExceptions.throwValue(ec, err, pos);
+	}
+
+	static function macroErrorValue(ec:EvalContext, msg:String, posValue:EvalValue, pos:Position):EvalValue {
+		var proto = ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"));
+		if (proto == null) proto = ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error"));
+		if (proto == null) return mkString(msg);
+		ensureInstanceSlot(proto, EvalHash.hash("message"));
+		ensureInstanceSlot(proto, EvalHash.hash("get_message"));
+		ensureInstanceSlot(proto, EvalHash.hash("pos"));
+		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
+		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
+		EvalField.setField(ec, v, EvalHash.hash("message"), mkString(msg), pos);
+		EvalField.setField(ec, v, EvalHash.hash("get_message"), VFunction(function(_) return mkString(msg), false), pos);
+		EvalField.setField(ec, v, EvalHash.hash("pos"), posValue, pos);
+		EvalField.setField(ec, v, EvalHash.hash("childErrors"), VNull, pos);
+		return v;
+	}
+
+	static function ensureInstanceSlot(proto:VPrototype, name:Int):Void {
+		if (proto.pinstanceNames.exists(name)) return;
+		proto.pinstanceNames.set(name, proto.pinstanceFields.length);
+		proto.pinstanceFields.push(VNull);
+	}
+
+	public static function currentPosition():Position {
+		return curPos;
+	}
+
+	public static function reportError(msg:String, pos:Position):Void {
+		if (currentCom != null) currentCom.addDiagnostic(msg, pos);
 	}
 
 	// haxe.macro.Type.MetaAccess: get/has/add/extract/remove over a mutable list.

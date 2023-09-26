@@ -10,6 +10,8 @@ import hxc.core.WithType;
 import hxc.core.TypingError;
 import hxc.context.Context;
 import hxc.context.Context.ContextError;
+import hxc.eval.EvalExceptions.EvalRunTimeException;
+import hxc.eval.EvalStdLib;
 import hxc.typing.TyperContext.CurrentFun;
 
 // Types class field bodies into expr. Field types are installed as TLazy so the first access to a
@@ -57,6 +59,9 @@ class TypeFields {
 		} else if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
 			ctx.addDiagnostic(ce.message, ce.pos);
+		} else if (Std.isOfType(e, EvalRunTimeException)) {
+			var re:EvalRunTimeException = cast e;
+			ctx.addDiagnostic(EvalStdLib.stringOf(re.value), re.pos);
 		} else if (Std.isOfType(e, haxe.Exception)) {
 			ctx.unresolvedFields++;
 		} else {
