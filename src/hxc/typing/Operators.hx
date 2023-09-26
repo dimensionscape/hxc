@@ -38,6 +38,53 @@ class Operators {
 		}
 	}
 
+	static function checkAssign(ctx:TyperContext, e:TExpr):Void {
+		switch (e.expr) {
+			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal) && !ctx.untypedMode):
+				throw new TypingError("Cannot assign to final", e.pos);
+			case TLocal(v) if (v.extra == null):
+			case TField(ef, FInstance(_, _, cf)) if (!ctx.untypedMode):
+				switch (cf.kind) {
+					case Var({write: AccNever}) if (!isConstructorThisField(ctx, ef)):
+						throw new TypingError("This expression cannot be accessed for writing", e.pos);
+					case _:
+				}
+			case TField(_, FStatic(_, cf) | FAnon(cf)) if (!ctx.untypedMode):
+				switch (cf.kind) {
+					case Var({write: AccNever}):
+						throw new TypingError("This expression cannot be accessed for writing", e.pos);
+					case _:
+				}
+			case TArray(_, _) | TField(_, _) | TIdent(_):
+			case TConst(TThis) | TTypeExpr(_) if (ctx.untypedMode):
+			case _ if (!ctx.untypedMode):
+				throw new TypingError("Invalid assign", e.pos);
+			case _:
+		}
+	}
+
+	static function isSameAssignTarget(e1:TExpr, e2:TExpr):Bool {
+		return switch [e1.expr, e2.expr] {
+			case [TLocal(v1), TLocal(v2)] if (v1 == v2): true;
+			case [TField({expr: TConst(TThis)}, FInstance(_, _, f1)), TField({expr: TConst(TThis)}, FInstance(_, _, f2))] if (f1 == f2): true;
+			case _: false;
+		}
+	}
+
+	static function isConstructorThisField(ctx:TyperContext, e:TExpr):Bool {
+		return switch (ctx.curfun) {
+			case FunConstructor:
+				switch (e.expr) {
+					case TConst(TThis): true;
+					case TLocal(v) if (ctx.vthis != null && v == ctx.vthis): true;
+					case TLocal({kind: VGenerated | VInlined | VInlinedConstructorVariable}): true;
+					case _: false;
+				}
+			case _:
+				false;
+		}
+	}
+
 	static inline function isVoid(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
 			case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
@@ -494,6 +541,8 @@ class Operators {
 
 	static function assignTo(ctx:TyperContext, te1:TExpr, e2:Expr, p:Position):TExpr {
 		var te2 = Typer.castOrUnify(ctx, te1.type, Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type)), p);
+		checkAssign(ctx, te1);
+		if (isSameAssignTarget(te1, te2)) throw new TypingError("Assigning a value to itself", p);
 		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
 	}
 
