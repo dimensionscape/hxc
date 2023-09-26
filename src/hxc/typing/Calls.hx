@@ -442,7 +442,8 @@ class Calls {
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
 							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-							DebugDump.selected("call", p, "field " + cf.name + " -> " + DebugDump.typeString(sig.ret));
+							if (DebugDump.enabled("select", p))
+								DebugDump.selected("call", p, "field " + cf.name + " -> " + DebugDump.typeString(sig.ret));
 							makeCall(ctx, ce, r.el, sig.ret, p);
 						case _:
 							callExpr(ctx, ce, el, p);
@@ -481,7 +482,8 @@ class Calls {
 		return switch (TypeFunctions.follow(ce.type)) {
 			case TFun(sig):
 				var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-				DebugDump.selected("call", p, "function -> " + DebugDump.typeString(sig.ret));
+				if (DebugDump.enabled("select", p))
+					DebugDump.selected("call", p, "function -> " + DebugDump.typeString(sig.ret));
 				makeCall(ctx, ce, r.el, sig.ret, p);
 			case TMono(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
@@ -502,12 +504,14 @@ class Calls {
 				var implExpr = TexprTools.makeStaticThis(a.impl, p);
 				var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, a.call, FHStatic(a.impl), false, p), FCall);
 				var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
-				DebugDump.selected("call", p, "abstract callable " + a.call.name + " -> " + DebugDump.typeString(sig.ret));
+				if (DebugDump.enabled("select", p))
+					DebugDump.selected("call", p, "abstract callable " + a.call.name + " -> " + DebugDump.typeString(sig.ret));
 				makeCall(ctx, fieldExpr, [ce].concat(r.el), sig.ret, p);
 			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":callable", a.meta)):
 				// @:callable: calling the abstract forwards to its underlying (a function).
 				var underlying = TypeFunctions.applyParams(a.params, tl, a.thisType);
-				DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
+				if (DebugDump.enabled("select", p))
+					DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
 				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
 			case _:
 				throw new TypingError("Cannot call a non-function value", p);

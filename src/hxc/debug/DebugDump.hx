@@ -49,10 +49,12 @@ class DebugDump {
 	}
 
 	public static function typed(label:String, e:TExpr):Void {
+		if (!enabled("typed", e.pos)) return;
 		emit("typed", e.pos, label + " " + exprName(e) + " : " + typeString(e.type));
 	}
 
 	public static function unify(kind:String, a:T, b:T, p:Position):Void {
+		if (!enabled("unify", p)) return;
 		emit("unify", p, kind + " " + typeString(a) + " <-> " + typeString(b));
 	}
 

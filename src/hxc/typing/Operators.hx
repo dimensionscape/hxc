@@ -207,7 +207,8 @@ class Operators {
 		if (!op.match(OpAssign) && !op.match(OpAssignOp(_))) {
 			var br = tryAbstractBinop(ctx, op, e1, e2, isAssignOp, withType, p);
 			if (br != null) {
-				DebugDump.selected("op", p, "abstract " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(br)));
+				if (DebugDump.enabled("select", p))
+					DebugDump.selected("op", p, "abstract " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(br)));
 				return br;
 			}
 		}
@@ -308,7 +309,8 @@ class Operators {
 			case OpNullCoal | OpAssign | OpAssignOp(_):
 				throw new TypingError("This operator is not handled by make_binop", p);
 		};
-		DebugDump.selected("op", p, "builtin " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(result)));
+		if (DebugDump.enabled("select", p))
+			DebugDump.selected("op", p, "builtin " + Std.string(op) + " -> " + DebugDump.typeString(binopResultType(result)));
 		return result;
 	}
 
