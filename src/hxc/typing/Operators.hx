@@ -588,8 +588,14 @@ class Operators {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
 			case AKField(fa): assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
 			case AKAccessor(fa):
-				var setterAcc = hxc.typing.Fields.typeField(ctx, fa.on, "set_" + fa.field.name, fa.pos, MCall([e2]), WithTypeTools.value);
-				hxc.typing.Calls.buildCall(ctx, setterAcc, [e2], WithTypeTools.value, p);
+				switch (FieldAccessTools.resolveAccessor(fa, MSet(e2))) {
+					case AccessorFound(setterFa):
+						hxc.typing.Calls.buildCall(ctx, AKField(setterFa), [e2], WithTypeTools.value, p);
+					case AccessorAnon:
+						assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
+					case AccessorNotFound | AccessorInvalid:
+						throw new TypingError("This expression cannot be accessed for writing", p);
+				}
 			case AKAccess(a, tl, c, ebase, ekey):
 				hxc.typing.Calls.arraySet(ctx, a, tl, c, ebase, ekey, e2, p);
 			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);

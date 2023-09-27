@@ -112,6 +112,11 @@ class EvalMacro {
 			var v = com.defines.rawDefinedValue(k);
 			return VString(new VString(v, v.length));
 		});
+		regBuiltin(ec, "haxe.macro.Compiler", "getDefine", function(a) {
+			var k = strOf(a[0]);
+			var v = com.defines.rawDefined(k) ? mkString(com.defines.rawDefinedValue(k)) : VNull;
+			return encodeExpr(ec, valueToExpr(ec, v, curPos));
+		});
 		reg2("define", "define", function(a) {
 			var k = StringTools.replace(strOf(a[0]), "-", "_");
 			if (a.length < 2 || a[1] == VNull) com.defines.rawDefine(k);

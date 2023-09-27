@@ -507,7 +507,7 @@ class Typer {
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
 				var te2 = castOrUnify(ctx, t, te, p);
-				TypeUnification.typeIseqDefault(te2.type, t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
+				TypeUnification.fastEq(te2.type, t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
 		return typed;
@@ -935,8 +935,14 @@ class Typer {
 			case AKField(fa): fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
 			case AKAccessor(fa):
-				var getterAcc = Fields.typeField(ctx, fa.on, "get_" + fa.field.name, fa.pos, MCall([]), WithTypeTools.value);
-				Calls.buildCall(ctx, getterAcc, [], WithTypeTools.value, fa.pos);
+				switch (FieldAccessTools.resolveAccessor(fa, MGet)) {
+					case AccessorFound(getterFa):
+						Calls.buildCall(ctx, AKField(getterFa), [], WithTypeTools.value, fa.pos);
+					case AccessorAnon:
+						FieldAccessTools.getFieldExpr(fa, FRead);
+					case AccessorNotFound | AccessorInvalid:
+						throw new TypingError("This field cannot be accessed for reading", fa.pos);
+				}
 			case AKUsingAccessor(se):
 				// Reading an abstract property calls the impl's get_<name>(this).
 				var fa = se.access;

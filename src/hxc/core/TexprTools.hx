@@ -92,6 +92,20 @@ class TexprTools {
 
 	// Suffix-less; the typer handles i32/i64/u32/f64 suffixes
 	// before reaching here.
+	static function decimalFitsInt32(s:String):Bool {
+		var neg = s.charAt(0) == "-";
+		var body = neg ? s.substr(1) : s;
+		if (body.length >= 2 && body.substr(0, 2).toLowerCase() == "0x") return true;
+		while (body.length > 1 && body.charAt(0) == "0") body = body.substr(1);
+		for (i in 0...body.length) {
+			var c = body.charCodeAt(i);
+			if (c < "0".code || c > "9".code) return false;
+		}
+		var max = neg ? "2147483648" : "2147483647";
+		if (body.length != max.length) return body.length < max.length;
+		return body <= max;
+	}
+
 	public static function typeConstant(basic:BasicTypes, c:Constant, p:Position):TExpr {
 		return switch (c) {
 			case CInt(s, _):
@@ -99,7 +113,7 @@ class TexprTools {
 				// computing the value.
 				var s = StringTools.replace(s, "_", "");
 				if (s.length > 10 && s.substr(0, 2) == "0x") throw new TypingError("Invalid hexadecimal integer", p);
-				var i = Std.parseInt(s);
+				var i = decimalFitsInt32(s) ? Std.parseInt(s) : null;
 				if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
 				else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 			case CFloat(f, _): TypeFunctions.mk(TConst(TFloat(StringTools.replace(f, "_", ""))), basic.tfloat, p);

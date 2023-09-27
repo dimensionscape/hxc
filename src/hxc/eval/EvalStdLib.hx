@@ -1604,6 +1604,28 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IDate(ts)));
 	}
 
+	static function dateFromString(ctx:EvalContext, s:String):EvalValue {
+		function bad():EvalValue return EvalExceptions.excString(ctx, "Invalid date format : " + s);
+		function digits(pos:Int, len:Int):Bool {
+			for (i in pos...pos + len) {
+				var c = s.charCodeAt(i);
+				if (c < "0".code || c > "9".code) return false;
+			}
+			return true;
+		}
+		function part(pos:Int, len:Int):Int return Std.parseInt(s.substr(pos, len));
+		return switch (s.length) {
+			case 19 if (digits(0, 4) && s.charAt(4) == "-" && digits(5, 2) && s.charAt(7) == "-" && digits(8, 2) && s.charAt(10) == " " && digits(11, 2) && s.charAt(13) == ":" && digits(14, 2) && s.charAt(16) == ":" && digits(17, 2)):
+				mkDate(ctx, new Date(part(0, 4), part(5, 2) - 1, part(8, 2), part(11, 2), part(14, 2), part(17, 2)).getTime());
+			case 10 if (digits(0, 4) && s.charAt(4) == "-" && digits(5, 2) && s.charAt(7) == "-" && digits(8, 2)):
+				mkDate(ctx, new Date(part(0, 4), part(5, 2) - 1, part(8, 2), 0, 0, 0).getTime());
+			case 8 if (digits(0, 2) && s.charAt(2) == ":" && digits(3, 2) && s.charAt(5) == ":" && digits(6, 2)):
+				mkDate(ctx, ((part(0, 2) * 60 * 60) + (part(3, 2) * 60) + part(6, 2)) * 1000.0);
+			case _:
+				bad();
+		}
+	}
+
 	static final dateDayShortNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 	static final dateDayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 	static final dateMonthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -4630,11 +4652,14 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "StringBuf", "addChar", vmethod(a -> {
-			thisBuffer(a).addChar(toInt(arg(a, 1)));
+			thisBuffer(a).add(stringFromCodes([toInt(arg(a, 1))], 0, 1));
 			VNull;
 		}));
 		reg(inst, "StringBuf", "addSub", vmethod(a -> {
-			thisBuffer(a).add(stringOf(arg(a, 1)).substr(toInt(arg(a, 2)), toInt(arg(a, 3))));
+			var s = stringOf(arg(a, 1));
+			var pos = toInt(arg(a, 2));
+			var len = arg(a, 3) == VNull ? stringLength(s) - pos : toInt(arg(a, 3));
+			if (len > 0) thisBuffer(a).add(stringFromCodes(utf8Codes(s), pos, len));
 			VNull;
 		}));
 		reg(inst, "StringBuf", "toString", vmethod(a -> mkStr(thisBuffer(a).toString())));
@@ -5040,7 +5065,7 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("eval.vm.NativeThread"), function(a) return mkNativeThread(ctx, arg(a, 0)));
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
-		reg(s, "Date", "fromString", vfn(a -> mkDate(ctx, Date.fromString(stringOf(arg(a, 0))).getTime())));
+		reg(s, "Date", "fromString", vfn(a -> dateFromString(ctx, stringOf(arg(a, 0)))));
 		reg(s, "DateTools", "format", vfn(a -> mkStr(dateToolsFormat(Date.fromTime(thisDate([arg(a, 0)])), stringOf(arg(a, 1))))));
 		reg(s, "haxe.io.Path", "withoutExtension", vfn(a -> mkStr(haxe.io.Path.withoutExtension(stringOf(arg(a, 0))))));
 		reg(s, "haxe.io.Path", "withoutDirectory", vfn(a -> mkStr(haxe.io.Path.withoutDirectory(stringOf(arg(a, 0))))));
