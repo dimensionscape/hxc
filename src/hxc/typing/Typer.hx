@@ -1315,6 +1315,10 @@ class Typer {
 			if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
 			out.push({v: v, e: e});
 		}
+		for (ve in out) {
+			if (isVoid(TypeFunctions.follow(ve.v.type)))
+				throw new TypingError("Variables of type Void are not allowed", ve.v.pos);
+		}
 		if (out.length == 1) {
 			return TypeFunctions.mk(TVarExpr(out[0].v, out[0].e), basic.tvoid, p);
 		}
