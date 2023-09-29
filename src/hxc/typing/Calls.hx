@@ -423,6 +423,13 @@ class Calls {
 				// the
 				// resulting value.
 				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+			case AKSafeNav(sn):
+				Typer.accGet(ctx, AKSafeNav({
+					pos: sn.pos,
+					base: sn.base,
+					tempVar: sn.tempVar,
+					access: AKExpr(buildCall(ctx, sn.access, el, withType, p))
+				}));
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
 	}

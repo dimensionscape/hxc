@@ -1113,7 +1113,16 @@ class Typer {
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);
 				}
-			case AKSafeNav(_): throw new TypingError("Safe navigation is not yet ported", Position.nullPos);
+			case AKSafeNav(sn):
+				var ethen = accGet(ctx, sn.access);
+				var t = ctx.com.basic.tnull(ethen.type);
+				if (!TypeFunctions.isNull(ethen.type) && !TypeFunctions.isExplicitNull(ethen.type))
+					ethen = TypeFunctions.mk(TCast(ethen, null), t, ethen.pos);
+				var enullBase = TypeFunctions.mk(TConst(TNull), sn.base.type, sn.pos);
+				var econd = TypeFunctions.mk(TBinop(OpNotEq, sn.base, enullBase), ctx.com.basic.tbool, sn.pos);
+				var eelse = TypeFunctions.mk(TConst(TNull), t, sn.pos);
+				var eif = TypeFunctions.mk(TIf(econd, ethen, eelse), t, sn.pos);
+				sn.tempVar == null ? eif : TypeFunctions.mk(TBlock([sn.tempVar, eif]), t, sn.pos);
 		};
 	}
 
@@ -1183,6 +1192,19 @@ class Typer {
 		return switch (edef) {
 			case EConst(CIdent(s)):
 				typeIdent(ctx, s, p, mode, withType);
+			case EField(e1, field, EFSafe):
+				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
+				var base = typeExpr(ctx, e1, WithTypeTools.value);
+				var safeBase = base;
+				var temp:Null<TExpr> = null;
+				switch (base.expr) {
+					case TLocal(_) | TTypeExpr(_) | TConst(_):
+					case _:
+						var v = TypeFunctions.allocVar(VGenerated, "`tmp", base.type, base.pos);
+						temp = TypeFunctions.mk(TVarExpr(v, base), ctx.com.basic.tvoid, base.pos);
+						safeBase = TexprTools.makeLocal(v, base.pos);
+				}
+				AKSafeNav({pos: p, base: safeBase, tempVar: temp, access: Fields.typeField(ctx, safeBase, field, p, mode, withType)});
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
 				if (field == "new") {
