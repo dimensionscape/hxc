@@ -244,6 +244,54 @@ class Typer {
 		};
 	}
 
+	static function arrayElementFromType(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, [et]) if (c.path.pack.length == 0 && c.path.name == "Array"):
+				switch (TypeFunctions.follow(et)) {
+					case TMono(_): null;
+					case _: et;
+				}
+			case _:
+				null;
+		}
+	}
+
+	static function expectedArrayElement(ctx:TyperContext, t:T):Null<T> {
+		function loop(seen:Array<T>, t:T):Null<T> {
+			t = TypeFunctions.follow(t);
+			var direct = arrayElementFromType(t);
+			if (direct != null) return direct;
+			return switch (t) {
+				case TAbstract(a, tl):
+					for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return null;
+					var hits:Array<T> = [];
+					function addHit(ft:T):Void {
+						var et = loop(seen.concat([t]), ft);
+						if (et != null) hits.push(et);
+					}
+					for (ft in a.from) addHit(TypeFunctions.applyParams(a.params, tl, ft));
+					for (fc in a.fromField) {
+						switch (TypeFunctions.follow(fc.cf.type)) {
+							case TFun(sig) if (sig.args.length > 0):
+								var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
+								function map(x:T):T return TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(fc.cf.params, monos, x));
+								try {
+									TypeUnification.unifyDefault(map(sig.ret), t);
+									addHit(map(sig.args[0].t));
+								} catch (_:UnifyError) {}
+							case _:
+						}
+					}
+					hits.length == 1 ? hits[0] : null;
+				case TDynamic(_):
+					t;
+				case _:
+					null;
+			}
+		}
+		return loop([], t);
+	}
+
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (mode == null) mode = MGet;
 		var basic = ctx.com.basic;
@@ -401,10 +449,7 @@ class Typer {
 						}
 						if (emptyMap != null) emptyMap else {
 							var expectedEt:Null<T> = switch (withType) {
-								case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
-									case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"): t;
-									case _: null;
-								};
+								case WithType(wt, _): expectedArrayElement(ctx, wt);
 								case _: null;
 							};
 							var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
