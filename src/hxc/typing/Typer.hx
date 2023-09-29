@@ -292,6 +292,30 @@ class Typer {
 		return loop([], t);
 	}
 
+	static function abstractFromTypes(ctx:TyperContext, t:T):Array<T> {
+		t = TypeFunctions.follow(t);
+		return switch (t) {
+			case TAbstract(a, tl):
+				var hits:Array<T> = [];
+				for (ft in a.from) hits.push(TypeFunctions.applyParams(a.params, tl, ft));
+				for (fc in a.fromField) {
+					switch (TypeFunctions.follow(fc.cf.type)) {
+						case TFun(sig) if (sig.args.length == 1):
+							var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
+							function map(x:T):T return TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(fc.cf.params, monos, x));
+							try {
+								TypeUnification.unifyDefault(map(sig.ret), t);
+								hits.push(map(sig.args[0].t));
+							} catch (_:UnifyError) {}
+						case _:
+					}
+				}
+				hits;
+			case _:
+				[];
+		}
+	}
+
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (mode == null) mode = MGet;
 		var basic = ctx.com.basic;
@@ -395,24 +419,74 @@ class Typer {
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
 				// Top-down inference: bind unannotated (mono) arg/return types from an expected function
 				// type.
+				function expectVoid(t:T):Bool {
+					return switch (TypeFunctions.follow(t)) {
+						case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
+						case _: false;
+					}
+				}
+				function maybeUnifyArg(t1:T, t2:T):Void {
+					switch (TypeFunctions.follow(t1)) {
+						case TMono(_): try TypeUnification.unifyDefault(t2, t1) catch (_:Dynamic) {}
+						case _:
+					}
+				}
+				function maybeUnifyRet(t2:T):Void {
+					if (!expectVoid(t2)) switch (TypeFunctions.follow(ret)) {
+						case TMono(_): try TypeUnification.unifyDefault(ret, t2) catch (_:Dynamic) {}
+						case _:
+					}
+				}
+				function applyFunExpectation(t:T):Bool {
+					return switch (TypeFunctions.follow(t)) {
+						case TFun(sig) if (sig.args.length == args.length):
+							for (i in 0...args.length) maybeUnifyArg(args[i].v.type, sig.args[i].t);
+							maybeUnifyRet(sig.ret);
+							true;
+						case _:
+							false;
+					}
+				}
+				function flattenAbstractSources(t:T, seen:Array<T>):Array<T> {
+					t = TypeFunctions.follow(t);
+					return switch (t) {
+						case TAbstract(_, _):
+							for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return [];
+							var sources = abstractFromTypes(ctx, t);
+							if (sources.length == 1) flattenAbstractSources(sources[0], seen.concat([t])) else {
+								var out:Array<T> = [];
+								for (source in sources) switch (TypeFunctions.follow(source)) {
+									case TAbstract(_, _): out = out.concat(flattenAbstractSources(source, seen.concat([t])));
+									case _: out.push(source);
+								}
+								out;
+							}
+						case _:
+							[t];
+					}
+				}
+				function commonType(types:Array<T>):Null<T> {
+					if (types.length == 0) return null;
+					var first = types[0];
+					for (i in 1...types.length) if (!TypeUnification.typeIseqDefault(first, types[i])) return null;
+					return first;
+				}
+				function applyAbstractFunctionMatrix(t:T):Void {
+					var candidates = [for (source in flattenAbstractSources(t, [])) switch (TypeFunctions.follow(source)) {
+						case TFun(sig) if (sig.args.length == args.length): sig;
+						case _: null;
+					}].filter(x -> x != null);
+					if (candidates.length == 0) return;
+					for (i in 0...args.length) {
+						var t = commonType([for (sig in candidates) sig.args[i].t]);
+						if (t != null) maybeUnifyArg(args[i].v.type, t);
+					}
+					var rt = commonType([for (sig in candidates) sig.ret]);
+					if (rt != null) maybeUnifyRet(rt);
+				}
 				switch (withType) {
 					case WithType(wt, _):
-						switch (TypeFunctions.follow(wt)) {
-							case TFun(sig) if (sig.args.length == args.length):
-								for (i in 0...args.length) switch (TypeFunctions.follow(args[i].v.type)) {
-									case TMono(_): try TypeUnification.unifyDefault(sig.args[i].t, args[i].v.type) catch (_:Dynamic) {}
-									case _:
-								}
-								var expectVoid = switch (TypeFunctions.follow(sig.ret)) {
-									case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
-									case _: false;
-								};
-								if (!expectVoid) switch (TypeFunctions.follow(ret)) {
-									case TMono(_): try TypeUnification.unifyDefault(ret, sig.ret) catch (_:Dynamic) {}
-									case _:
-								}
-							case _:
-						}
+						if (!applyFunExpectation(wt)) applyAbstractFunctionMatrix(wt);
 					case _:
 				}
 				// An arg is optional in the function type when marked `?` or given a default value.
