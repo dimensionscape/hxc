@@ -734,6 +734,18 @@ class Typer {
 	// Type_ident (subset): locals and the literal idents. Member/static fields, types,
 	// imports, and globals resolve in the fields-dispatch unit.
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		if (i == "abstract") {
+			return switch [mode, ctx.curclass.kind] {
+				case [MSet(_), KAbstractImpl(_)]: throw new TypingError("Property 'abstract' is read-only", p);
+				case [MGet, KAbstractImpl(a)] | [MCall(_), KAbstractImpl(a)]:
+					var v = ctx.locals.get("this");
+					if (v == null) throw new TypingError("Cannot reference this abstract here", p);
+					var tl = TypeFunctions.extractParamTypes(a.params);
+					AKExpr(TypeFunctions.mk(TLocal(v), TAbstract(a, tl), p));
+				case _:
+					throw new TypingError("Property 'abstract' is reserved and only available in abstracts", p);
+			}
+		}
 		if (ctx.locals.exists(i)) {
 			return AKExpr(TexprTools.makeLocal(ctx.locals.get(i), p));
 		}

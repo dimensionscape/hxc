@@ -268,9 +268,10 @@ class TypeFields {
 		// underlying `this` type), so put those in scope.
 		var abstractParams = switch (tctx.curclass.kind) { case KAbstractImpl(a): a.params; case _: null; };
 		var isAbsImpl = abstractParams != null;
+		var isAbstractMember = isAbsImpl && TypeFunctions.hasClassFieldFlag(cf, CfImpl);
 		tctx.curfield = cf;
-		tctx.curfun = isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember);
-		if (isAbsImpl && TypeFunctions.hasClassFieldFlag(cf, CfImpl)) tctx.typeParams = abstractParams;
+		tctx.curfun = isAbstractMember ? FunMemberAbstract : (isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember));
+		if (isAbstractMember) tctx.typeParams = abstractParams;
 		else if (isStatic && !isAbsImpl) tctx.typeParams = [];
 		// The method's own type parameters are in scope within its body.
 		if (cf.params.length > 0) tctx.typeParams = tctx.typeParams.concat(cf.params);
@@ -337,7 +338,8 @@ class TypeFields {
 		for (i in 0...fd.fArgs.length) {
 			var fa = fd.fArgs[i];
 			var at = (sig != null && i < sig.args.length) ? sig.args[i].t : TypeFunctions.mkMono();
-			var v = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
+			var kind = if (tctx.curfun.match(FunMemberAbstract) && i == 0 && fa.name.name == "this") VAbstractThis else VUser(TVOArgument);
+			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
 			var def:Null<TExpr> = if (fa.value != null) Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at))
 				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
 				else null;
