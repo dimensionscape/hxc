@@ -78,6 +78,24 @@ class EvalMacro {
 			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
 			return encodeTypedExpr(ec, te);
 		});
+		reg2("withImports", "with_imports", function(a) {
+			var m = com.currentModule;
+			if (m == null) throw new TypingError("withImports outside a module", curPos);
+			var key = Context.pathKey(m.path);
+			var old = com.moduleImports.get(key);
+			var next = cloneImports(old);
+			for (iv in arrOf(a[0])) addImportSpec(next, strOf(iv));
+			for (uv in arrOf(a[1])) next.usings.push(pathFromDotted(strOf(uv)));
+			com.moduleImports.set(key, next);
+			try {
+				var ret = applyFn(ec, a[2], []);
+				restoreImports(com, key, old);
+				return ret;
+			} catch (e:Dynamic) {
+				restoreImports(com, key, old);
+				throw e;
+			}
+		});
 		reg2("follow", "follow", function(a) return a[0]);
 		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
 		// Context.defineModule(path, types, imports, usings): build the module from decoded type
@@ -147,6 +165,71 @@ class EvalMacro {
 			throw new TypingError("Macro API not implemented: " + strOf(a[0]), curPos);
 		});
 		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
+	}
+
+	static function cloneImports(old:Null<hxc.context.Context.ModuleImports>):hxc.context.Context.ModuleImports {
+		var names = new haxe.ds.StringMap<hxc.context.Context.ImportedName>();
+		var globals = new haxe.ds.StringMap<hxc.context.Context.ImportedGlobal>();
+		if (old != null) {
+			for (key in old.names.keys()) names.set(key, old.names.get(key));
+			for (key in old.globals.keys()) globals.set(key, old.globals.get(key));
+		}
+		return new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals);
+	}
+
+	static function restoreImports(com:Context, key:String, old:Null<hxc.context.Context.ModuleImports>):Void {
+		if (old == null) com.moduleImports.remove(key) else com.moduleImports.set(key, old);
+	}
+
+	static function pathFromDotted(s:String):hxc.core.Globals.Path {
+		var parts = s.split(".");
+		return {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+	}
+
+	static function splitImportPath(parts:Array<String>):Null<{modulePath:hxc.core.Globals.Path, sub:Null<String>, field:Null<String>}> {
+		var pack:Array<String> = [];
+		var i = 0;
+		while (i < parts.length) {
+			var c = parts[i].charCodeAt(0);
+			if (c >= "A".code && c <= "Z".code) break;
+			pack.push(parts[i]);
+			i++;
+		}
+		if (i >= parts.length) return null;
+		var moduleName = parts[i++];
+		var sub:Null<String> = null;
+		var field:Null<String> = null;
+		if (i < parts.length) {
+			var c2 = parts[i].charCodeAt(0);
+			if (c2 >= "A".code && c2 <= "Z".code) {
+				sub = parts[i++];
+				if (i < parts.length) field = parts[i];
+			} else {
+				field = parts[i];
+			}
+		}
+		return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
+	}
+
+	static function addImportSpec(imports:hxc.context.Context.ModuleImports, raw:String):Void {
+		var spec = StringTools.trim(raw);
+		var alias:Null<String> = null;
+		var asIndex = spec.indexOf(" as ");
+		if (asIndex >= 0) {
+			alias = StringTools.trim(spec.substr(asIndex + 4));
+			spec = StringTools.trim(spec.substr(0, asIndex));
+		}
+		if (StringTools.endsWith(spec, ".*")) {
+			imports.wildcards.push(pathFromDotted(spec.substr(0, spec.length - 2)));
+			return;
+		}
+		var split = splitImportPath(spec.split("."));
+		if (split == null) return;
+		if (split.field != null) {
+			imports.globals.set(alias == null ? split.field : alias, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
+		} else {
+			imports.names.set(alias == null ? (split.sub == null ? split.modulePath.name : split.sub) : alias, {modulePath: split.modulePath, sub: split.sub});
+		}
 	}
 
 
