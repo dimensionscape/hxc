@@ -537,14 +537,21 @@ class Typer {
 				// parameters are ignored at runtime).
 				switch (th.ct) {
 					case CTPath(tp):
-						var names = tp.tpackage.concat([tp.tname]);
-						if (tp.tsub != null) names.push(tp.tsub);
-						var pathExpr = new Expr(EConst(CIdent(names[0])), p);
-						for (i in 1...names.length) pathExpr = new Expr(EField(pathExpr, names[i], EFNormal), p);
-						var stdE = new Expr(EField(new Expr(EConst(CIdent("Std")), p), "isOfType", EFNormal), p);
-						typeExpr(ctx, new Expr(ECall(stdE, [e1, pathExpr]), p), withType);
+						if (tp.tparams.length > 0) ctx.com.addDiagnostic("Type parameters are not supported for the `is` operator", th.pos);
+						var e = typeExpr(ctx, e1, WithTypeTools.value);
+						var mt = Typeload.resolveTypePath(ctx.com, {pack: tp.tpackage, name: tp.tname}, tp.tsub, th.pos);
+						var eType = TexprTools.makeTypeExpr(mt, th.pos);
+						var std = switch (Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, p)) {
+							case TClassDecl(c): c;
+							case _: throw new TypingError("Std is not a class", p);
+						};
+						var cf = std.statics.get("isOfType");
+						if (cf == null) throw new TypingError("Field not found : isOfType", p);
+						var stdIs = TexprTools.makeStaticField(std, cf, p);
+						TypeFunctions.mk(TCall(stdIs, [e, eType]), ctx.com.basic.tbool, p);
 					case _:
-						throw new TypingError("Cannot use 'is' with this type", p);
+						ctx.com.addDiagnostic("Unsupported type for `is` operator", th.pos);
+						TexprTools.makeBool(ctx.com.basic, false, p);
 				}
 			case EDisplay(_, _):
 				throw new TypingError("Display is not yet ported", p);
