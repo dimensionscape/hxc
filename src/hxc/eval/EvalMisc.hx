@@ -31,8 +31,11 @@ class EvalMisc {
 			case [VFalse, VTrue]: CInf;
 			case [VTrue, VFalse]: CSup;
 			case [VString(s1), VString(s2)]:
-				var a = s1.sstring, b = s2.sstring;
-				a == b ? CEq : (a < b ? CInf : CSup);
+				switch (EvalStdLib.stringCompare(s1.sstring, s2.sstring)) {
+					case 0: CEq;
+					case n if (n < 0): CInf;
+					case _: CSup;
+				}
 			case [VFunction(f1, _), VFunction(f2, _)]: Reflect.compareMethods(f1, f2) ? CEq : CUndef;
 			case [VArray(x), VArray(y)]: x == y ? CEq : CUndef;
 			case [VVector(x), VVector(y)]: x == y ? CEq : CUndef;

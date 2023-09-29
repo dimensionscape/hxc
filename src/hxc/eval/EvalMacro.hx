@@ -62,9 +62,9 @@ class EvalMacro {
 		reg2("info", "info", function(a) { macroMessages.push(macroMessage(ec, "Info", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
-		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
-		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
-		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), "?", com.defines)));
+		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
+		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
+		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
 		reg2("formatString", "format_string", function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), curPos, com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
@@ -110,7 +110,7 @@ class EvalMacro {
 			var k = strOf(a[0]);
 			if (!com.defines.rawDefined(k)) return VNull;
 			var v = com.defines.rawDefinedValue(k);
-			return VString(new VString(v, v.length));
+			return mkString(v);
 		});
 		regBuiltin(ec, "haxe.macro.Compiler", "getDefine", function(a) {
 			var k = strOf(a[0]);
@@ -558,7 +558,7 @@ class EvalMacro {
 	// expression.
 	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>):EvalValue {
 		if (pt != null && !isExprParam(pt)) switch (e.expr) {
-			case EConst(CString(s, _)): return VString(new VString(s, s.length));
+			case EConst(CString(s, _)): return mkString(s);
 			case EConst(CInt(s, _)): var n = Std.parseInt(s); return VInt(n == null ? 0 : n);
 			case EConst(CFloat(s, _)): return VFloat(Std.parseFloat(s));
 			case EConst(CIdent("true")): return VTrue;
@@ -666,8 +666,9 @@ class EvalMacro {
 
 	static function decodeExpr(ec:EvalContext, v:EvalValue, dp:Position):Expr {
 		if (v == VNull) return new Expr(EConst(CIdent("null")), dp);
-		var ed = decodeExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp);
-		return new Expr(ed, dp);
+		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
+		var ed = decodeExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
+		return new Expr(ed, p);
 	}
 
 	static function decodeExprOpt(ec:EvalContext, v:EvalValue, dp:Position):Null<Expr> {
@@ -971,14 +972,16 @@ class EvalMacro {
 	}
 
 	static function mkString(s:String):EvalValue {
-		return s == null ? VNull : VString(new VString(s, s.length));
+		if (s == null) return VNull;
+		var ns = EvalStdLib.normalizeString(s);
+		return VString(new VString(ns, EvalStdLib.stringLength(ns)));
 	}
 
 	static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {
 		var ed = encodeExprDef(ec, e.expr);
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("expr"), ed);
-		fields.set(EvalHash.hash("pos"), VNull);
+		fields.set(EvalHash.hash("pos"), encPos(e.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 

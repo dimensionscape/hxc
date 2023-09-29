@@ -2576,6 +2576,14 @@ class EvalStdLib {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.MapKeyValueIterator"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var entries = orderedMapEntries(mapValue);
+		if (entries.length == 0) {
+			var keys = applyFn(EvalField.dynamicField(ctx, mapValue, EvalHash.hash("keys")), []);
+			while (EvalMisc.isTrue(callValueOn(keys, EvalField.dynamicField(ctx, keys, EvalHash.hash("hasNext")), []))) {
+				var key = callValueOn(keys, EvalField.dynamicField(ctx, keys, EvalHash.hash("next")), []);
+				var value = callValueOn(mapValue, EvalField.dynamicField(ctx, mapValue, EvalHash.hash("get")), [key]);
+				entries.push({key: key, value: value});
+			}
+		}
 		nativeMapKeyValueIterators.set(vi, {entries: entries, current: 0});
 		setInstanceFieldIfExists(vi, "map", mapValue);
 		setInstanceFieldIfExists(vi, "keys", arrayIteratorValue(ctx, VArray(new VArray([for (e in entries) e.key], entries.length))));
@@ -3003,6 +3011,16 @@ class EvalStdLib {
 		return utf8Codes(s).length;
 	}
 
+	public static function stringCompare(a:String, b:String):Int {
+		var ac = utf8Codes(normalizeString(a));
+		var bc = utf8Codes(normalizeString(b));
+		var len = ac.length < bc.length ? ac.length : bc.length;
+		for (i in 0...len) {
+			if (ac[i] != bc[i]) return ac[i] < bc[i] ? -1 : 1;
+		}
+		return ac.length == bc.length ? 0 : (ac.length < bc.length ? -1 : 1);
+	}
+
 	public static function runtimeStringLength(s:VString):Int {
 		var logical = stringLength(s.sstring);
 		return s.slength != s.sstring.length || (s.slength != logical && isUtf8ByteString(s.sstring)) ? s.slength : logical;
@@ -3287,35 +3305,49 @@ class EvalStdLib {
 	}
 
 	static function stringIndexOf(s:String, sub:String, startValue:EvalValue):Int {
-		s = normalizeString(s);
-		sub = normalizeString(sub);
+		var codes = utf8Codes(normalizeString(s));
+		var subCodes = utf8Codes(normalizeString(sub));
 		var start = startValue == VNull ? 0 : toInt(startValue);
-		if (sub.length == 0) {
+		if (subCodes.length == 0) {
 			if (start < 0) return 0;
-			return start > s.length ? s.length : start;
+			return start > codes.length ? codes.length : start;
 		}
-		if (start < 0) start = s.length + start;
+		if (start < 0) start = codes.length + start;
 		if (start < 0) start = 0;
-		if (start > s.length - sub.length) return -1;
-		var max = s.length - sub.length;
+		if (start > codes.length - subCodes.length) return -1;
+		var max = codes.length - subCodes.length;
 		for (i in start...max + 1) {
-			if (s.substr(i, sub.length) == sub) return i;
+			var matched = true;
+			for (j in 0...subCodes.length) {
+				if (codes[i + j] != subCodes[j]) {
+					matched = false;
+					break;
+				}
+			}
+			if (matched) return i;
 		}
 		return -1;
 	}
 
 	static function stringLastIndexOf(s:String, sub:String, startValue:EvalValue):Int {
-		s = normalizeString(s);
-		sub = normalizeString(sub);
-		var start = startValue == VNull ? s.length : toInt(startValue);
-		if (sub.length == 0) {
+		var codes = utf8Codes(normalizeString(s));
+		var subCodes = utf8Codes(normalizeString(sub));
+		var start = startValue == VNull ? codes.length : toInt(startValue);
+		if (subCodes.length == 0) {
 			if (start < 0) return 0;
-			return start > s.length ? s.length : start;
+			return start > codes.length ? codes.length : start;
 		}
 		if (start < 0) return -1;
-		var i = start > s.length - sub.length ? s.length - sub.length : start;
+		var i = start > codes.length - subCodes.length ? codes.length - subCodes.length : start;
 		while (i >= 0) {
-			if (s.substr(i, sub.length) == sub) return i;
+			var matched = true;
+			for (j in 0...subCodes.length) {
+				if (codes[i + j] != subCodes[j]) {
+					matched = false;
+					break;
+				}
+			}
+			if (matched) return i;
 			i--;
 		}
 		return -1;

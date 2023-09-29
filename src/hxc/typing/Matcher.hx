@@ -116,7 +116,7 @@ class Constructor {
 			case ConConst(ct): TexprTools.makeConstTexpr(basic, ct, p);
 			case ConArray(i): TexprTools.makeInt(basic, i, p);
 			case ConStatic(c, cf): TexprTools.makeStaticField(c, cf, p);
-			case ConTypeExpr(_): throw new TypingError("Constructor.to_texpr for a type expression is not yet ported", p);
+			case ConTypeExpr(mt): TexprTools.makeTypeExpr(mt, p);
 			case ConFields(_): throw new TypingError("Something went wrong", p);
 		};
 	}
@@ -177,6 +177,34 @@ class PatternMaker {
 		return v;
 	}
 
+	static function getGeneralModuleType(ctx:TyperContext, mt:ModuleType, p:Position):T {
+		function load(name:String):T {
+			return Typeload.loadInstance(ctx.com, ctx.typeParams, {tpackage: [], tname: name, tparams: [], tsub: null}, p, true);
+		}
+		return switch (mt) {
+			case TClassDecl(_): load("Class");
+			case TEnumDecl(_): load("Enum");
+			case TAbstractDecl(a) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)): load("Class");
+			case TTypeDecl(_):
+				switch (TypeFunctions.follow(TypeFunctions.typeOfModuleType(mt))) {
+					case TInst(c, _): getGeneralModuleType(ctx, TClassDecl(c), p);
+					case TEnum(en, _): getGeneralModuleType(ctx, TEnumDecl(en), p);
+					case TAbstract(a, _): getGeneralModuleType(ctx, TAbstractDecl(a), p);
+					case _: throw new TypingError("Cannot use this type as a value", p);
+				}
+			case _:
+				throw new TypingError("Cannot use this type as a value", p);
+		}
+	}
+
+	static function unifyTypePattern(ctx:TyperContext, mt:ModuleType, t:T, p:Position):Void {
+		var tcl = switch (TypeFunctions.follow(getGeneralModuleType(ctx, mt, p))) {
+			case TAbstract(a, _): TAbstract(a, [TypeFunctions.mkMono()]);
+			case other: other;
+		};
+		unify(ctx, tcl, t, p);
+	}
+
 	// A typed value pattern may be wrapped by an implicit abstract cast (e.g. an enum-abstract value whose
 	// stored constant is `cast N`), a metadata node, or parentheses; the constant/ctor to match on is
 	// underneath.
@@ -196,6 +224,7 @@ class PatternMaker {
 				case TConst(ct): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConConst(ct), p), []);
 				case TField(_, FEnum(en, ef)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); return PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 				case _:
 			}
 		} catch (_:TypingError) {}
@@ -322,6 +351,7 @@ class PatternMaker {
 					case TConst(ct): unifyExpected(te.type); PatConstructor(Constructor.make(ConConst(ct), p), []);
 					case TField(_, FEnum(en, ef)): unifyExpected(te.type); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 					case TField(_, FStatic(c, cf)): unifyExpected(te.type); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+					case TTypeExpr(mt): unifyTypePattern(ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
 			case _:
@@ -848,6 +878,13 @@ class TexprConverter {
 			case Leaf(c):
 				c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), basic.tvoid, c.pos);
 			case Switch(subject, cases, def):
+				if (cases.length == 1) {
+					switch (cases[0].con.kind) {
+						case ConFields(_):
+							return toTexpr(ctx, tSwitch, withType, cases[0].dt);
+						case _:
+					}
+				}
 				var defE = toTexpr(ctx, tSwitch, withType, def);
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {

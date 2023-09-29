@@ -35,13 +35,33 @@ class EvalEmitter {
 		return env;
 	}
 
+	static inline function isAbstractPath(t:T, pack:Array<String>, name:String):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _): a.path.name == name && a.path.pack.join(".") == pack.join(".");
+			case _: false;
+		};
+	}
+
+	static function evalCast(ctx:EvalContext, e:TExpr, target:T):EvalValue {
+		var v = eval(ctx, e);
+		if (isAbstractPath(e.type, [], "UInt") && isAbstractPath(target, [], "Float")) {
+			return switch (v) {
+				case VInt(i): VFloat(i < 0 ? 4294967296.0 + i : i + 0.0);
+				case VFloat(_): v;
+				case _: v;
+			};
+		}
+		return v;
+	}
+
 	public static function eval(ctx:EvalContext, e:TExpr):EvalValue {
 		var env = EvalContext.getEval(ctx).env;
 		return switch (e.expr) {
 			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
 			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
-			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): eval(ctx, e1);
+			case TParenthesis(e1) | TMeta(_, e1): eval(ctx, e1);
+			case TCast(e1, _): evalCast(ctx, e1, e.type);
 			case TBlock(el):
 				var r:EvalValue = VNull;
 				for (x in el) r = eval(ctx, x);

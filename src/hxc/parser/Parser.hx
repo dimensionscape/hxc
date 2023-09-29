@@ -1118,12 +1118,12 @@ class Parser {
 				return parseMacroExpr(p);
 			case Kwd(KwdVar):
 				var p1 = next().pos;
-				var v = parseVarDecl(false);
-				return new Expr(EVars([v]), p1);
+				var vl = parseVarDecls(false);
+				return new Expr(EVars(vl), p1);
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
-				var v = parseVarDecl(true);
-				return new Expr(EVars([v]), p1);
+				var vl = parseVarDecls(true);
+				return new Expr(EVars(vl), p1);
 			case Const(c):
 				var p = next().pos;
 				return exprNext(new Expr(EConst(c), p));

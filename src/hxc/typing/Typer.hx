@@ -793,6 +793,7 @@ class Typer {
 		if (imports != null) {
 			function scanPath(path:hxc.core.Globals.Path):Null<ModuleType> {
 				var md = try hxc.context.ModuleLoader.loadModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
+				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
 				return md == null ? null : scan(md.types);
 			}
 			for (imp in imports.names) { var r = scanPath(imp.modulePath); if (r != null) return r; }
