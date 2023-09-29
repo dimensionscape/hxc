@@ -29,6 +29,7 @@ class TypeResolve {
 				ctx.currentModule = m;
 			}
 		}
+		for (mt in m.types) resolveUsingMetadata(ctx, mt);
 		ctx.currentModule = savedMod;
 	}
 
@@ -56,6 +57,49 @@ class TypeResolve {
 				resolveEnum(ctx, e, d, p);
 			case _:
 				// Mismatch / unsupported (EStatic module-fields class, etc.), skip.
+		}
+	}
+
+	static function resolveUsingMetadata(ctx:Context, mt:ModuleType):Void {
+		var info = TypeFunctions.tInfos(mt);
+		for (meta in info.meta) {
+			if (meta.name != ":using") continue;
+			for (param in meta.params) {
+				var parts = exprPath(param);
+				if (parts == null || parts.length == 0) continue;
+				var path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+				var used = try ctx.getType(path, param.pos, null) catch (_:Dynamic) null;
+				var usingClass = switch (used) {
+					case TClassDecl(c): c;
+					case TAbstractDecl(a) if (a.impl != null): a.impl;
+					case _: null;
+				}
+				if (usingClass != null) addUsing(mt, usingClass, param.pos);
+			}
+		}
+	}
+
+	static function exprPath(e:Expr):Null<Array<String>> {
+		return switch (e.expr) {
+			case EConst(CIdent(s)): [s];
+			case EField(e1, f, _):
+				var pre = exprPath(e1);
+				pre == null ? null : pre.concat([f]);
+			case _: null;
+		};
+	}
+
+	static function addUsing(mt:ModuleType, c:TClass, p:Position):Void {
+		var u = {c: c, pos: p};
+		switch (mt) {
+			case TClassDecl(c2):
+				c2.usings.unshift(u);
+			case TEnumDecl(e):
+				e.usings.unshift(u);
+			case TTypeDecl(t):
+				t.usings.unshift(u);
+			case TAbstractDecl(a):
+				a.usings.unshift(u);
 		}
 	}
 

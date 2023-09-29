@@ -119,7 +119,12 @@ class Fields {
 				}
 			case TAnon(a):
 				switch (a.status.get()) {
-					case EnumStatics(en): enumConstructor(ctx, en, e, i, pfield);
+					case EnumStatics(en):
+						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, pfield);
+						else {
+							var u = tryUsing(ctx, e, i, pfield);
+							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+						}
 					case _:
 						var f = a.fields.get(i);
 						if (f != null) {
@@ -271,6 +276,10 @@ class Fields {
 	static var globalUsingModules = [{pack: ["haxe"], name: "EnumTools"}];
 
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		for (u in typeUsings(e.type)) {
+			var r = tryUsingClass(ctx, u.c, e, i, p);
+			if (r != null) return r;
+		}
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) {
@@ -303,6 +312,22 @@ class Fields {
 			}
 		}
 		return null;
+	}
+
+	static function typeUsings(t:T):Array<TClassUsing> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, _): c.usings;
+			case TEnum(e, _): e.usings;
+			case TType(td, _): td.usings;
+			case TAbstract(a, _): a.usings;
+			case TAnon(a): switch (a.status.get()) {
+				case Statics(c): c.usings;
+				case EnumStatics(e): e.usings;
+				case AbstractStatics(a): a.usings;
+				case _: [];
+			}
+			case _: [];
+		};
 	}
 
 	public static function enumConstructor(ctx:TyperContext, en:TEnum, e:TExpr, i:String, p:Position):AccessKind {
