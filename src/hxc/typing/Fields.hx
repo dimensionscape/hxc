@@ -189,6 +189,13 @@ class Fields {
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
 				if (cf == null) {
+					var resolveCf = switch (mode) {
+						case MSet(_): a.write;
+						case _: a.read;
+					};
+					if (resolveCf != null) {
+						return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, pfield), i);
+					}
 					// @:forward: a member not on the impl is resolved on the underlying type, which the
 					// abstract wraps transparently.
 					if (forwardsField(a, i)) {

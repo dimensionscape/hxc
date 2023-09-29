@@ -220,6 +220,15 @@ class TypeResolve {
 
 		resolveAbstractCasts(ctx, a, d);
 
+		if (a.impl != null) {
+			var implEntry = ctx.declOfType.get(Context.pathKey(a.impl.path));
+			switch (implEntry != null ? implEntry.decl : null) {
+				case EClass(impl):
+					resolveClassFields(ctx, a.impl, impl, p);
+				case _:
+			}
+		}
+
 		resolveAbstractOps(ctx, a, d);
 
 	}
@@ -275,8 +284,23 @@ class TypeResolve {
 						a.call = cf;
 					else
 						a.call.overloads.unshift(cf);
+				case EField(_, _, _):
+					registerResolveField(a, cf, cff, opExpr.pos);
 				case _:
 			}
+		}
+	}
+
+	static function registerResolveField(a:TAbstract, cf:TClassField, cff:ClassField, p:Position):Void {
+		switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig) if (sig.args.length == 2):
+				if (a.read != null) throw new ContextError("Multiple resolve-read methods are not supported", p);
+				a.read = cf;
+			case TFun(sig) if (sig.args.length == 3):
+				if (a.write != null) throw new ContextError("Multiple resolve-write methods are not supported", p);
+				a.write = cf;
+			case _:
+				throw new ContextError("Field type of resolve must be " + cff.cffName.name + " -> String -> T", p);
 		}
 	}
 

@@ -965,7 +965,16 @@ class Typer {
 					FieldAccessTools.getFieldExpr(fa, FRead);
 				}
 			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
-			case AKResolve(_, _): throw new TypingError("@:resolve access is not yet ported", Position.nullPos);
+			case AKResolve(se, name):
+				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
+				switch (TypeFunctions.follow(ce.type)) {
+					case TFun(sig) if (sig.args.length >= 2):
+						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
+						var nameArg = castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
+						Calls.makeCall(ctx, ce, [se.thisExpr, nameArg], sig.ret, se.access.pos);
+					case _:
+						throw new TypingError("Resolve target is not a function", se.access.pos);
+				}
 			case AKSafeNav(_): throw new TypingError("Safe navigation is not yet ported", Position.nullPos);
 		};
 	}
