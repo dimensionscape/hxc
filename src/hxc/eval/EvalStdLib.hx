@@ -5788,8 +5788,8 @@ class EvalStdLib {
 		reg(inst, "eval.vm.NativeSocket", "host", vmethod(a -> hostInfo(thisSocket(a).host())));
 		reg(inst, "eval.vm.NativeSocket", "listen", vmethod(a -> { thisSocket(a).listen(toInt(arg(a, 1))); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "peer", vmethod(a -> hostInfo(thisSocket(a).peer())));
-		reg(inst, "eval.vm.NativeSocket", "receive", vmethod(a -> VInt(thisSocket(a).input.readBytes(
-			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
+		reg(inst, "eval.vm.NativeSocket", "receive", vmethod(a -> try VInt(thisSocket(a).input.readBytes(
+			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:haxe.io.Eof) VInt(0)));
 		reg(inst, "eval.vm.NativeSocket", "receiveChar", vmethod(a -> VInt(thisSocket(a).input.readByte())));
 		reg(inst, "eval.vm.NativeSocket", "send", vmethod(a -> VInt(thisSocket(a).output.writeBytes(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
