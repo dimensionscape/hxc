@@ -1100,7 +1100,35 @@ class Typer {
 					var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, FHStatic(implC), false, fa.pos);
 					Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
 				} else {
-					FieldAccessTools.getFieldExpr(fa, FRead);
+					var fieldExpr = FieldAccessTools.getFieldExpr(fa, FGet);
+					switch (TypeFunctions.follow(fieldExpr.type)) {
+						case TFun(sig) if (sig.args.length > 0):
+							var p = fa.pos;
+							var receiverType = switch (TypeFunctions.follow(se.thisExpr.type)) {
+								case TAbstract(a, tl) if (TypeFunctions.hasClassFieldFlag(fa.field, CfImpl)):
+									TypeFunctions.applyParams(a.params, tl, a.thisType);
+								case _:
+									se.thisExpr.type;
+							};
+							try TypeUnification.unifyDefault(receiverType, sig.args[0].t) catch (_:Dynamic) {};
+							var rest = sig.args.slice(1);
+							var ret = sig.ret;
+							var tcall = TFun({args: rest, ret: ret});
+							var args:Array<TFuncArg> = [];
+							var locals:Array<TExpr> = [];
+							for (a in rest) {
+								var vt = a.opt ? ctx.com.basic.tnull(a.t) : a.t;
+								var name = a.name == "" ? "`arg" : a.name;
+								var v = TypeFunctions.allocVar(VGenerated, name, vt, p);
+								args.push({v: v, c: a.opt ? TypeFunctions.mk(TConst(TNull), vt, p) : null});
+								locals.push(TypeFunctions.mk(TLocal(v), vt, p));
+							}
+							var call = Calls.makeCall(ctx, fieldExpr, [se.thisExpr].concat(locals), ret, p);
+							var body = isVoid(TypeFunctions.follow(ret)) ? call : TypeFunctions.mk(TReturn(call), TypeFunctions.tDynamic, p);
+							TypeFunctions.mk(TFunction(new TFunc(args, ret, body)), tcall, p);
+						case _:
+							FieldAccessTools.getFieldExpr(fa, FRead);
+					}
 				}
 			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
 			case AKResolve(se, name):
