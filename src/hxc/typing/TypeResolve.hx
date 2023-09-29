@@ -242,8 +242,7 @@ class TypeResolve {
 		for (cff in d.dData) {
 			// Locate the impl cf (member -> promoted static; static -> static). Resolve it up front: both
 			// the @:op arms and the @:arrayAccess arm need it.
-			var cf = c.statics.get(cff.cffName.name);
-			if (cf == null) cf = c.fields.get(cff.cffName.name);
+			var cf = abstractImplField(c, cff.cffName.name);
 			if (cf == null) continue;
 			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)) {
 				a.array.push(cf);
@@ -289,6 +288,38 @@ class TypeResolve {
 				case _:
 			}
 		}
+	}
+
+	static function abstractImplField(c:TClass, name:String):Null<TClassField> {
+		var cf = c.statics.get(name);
+		if (cf == null) cf = c.fields.get(name);
+		if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+			var native = nativeImplField(c, name);
+			if (native != null) return native;
+		}
+		return cf;
+	}
+
+	static function nativeImplField(c:TClass, name:String):Null<TClassField> {
+		for (fieldName in c.statics.keys()) {
+			var cf = c.statics.get(fieldName);
+			if (!TypeFunctions.hasClassFieldFlag(cf, CfExtern) && nativeFieldName(cf) == name) return cf;
+		}
+		for (fieldName in c.fields.keys()) {
+			var cf = c.fields.get(fieldName);
+			if (!TypeFunctions.hasClassFieldFlag(cf, CfExtern) && nativeFieldName(cf) == name) return cf;
+		}
+		return null;
+	}
+
+	static function nativeFieldName(cf:TClassField):Null<String> {
+		return try {
+			var meta = TypeFunctions.getMeta(":native", cf.meta);
+			switch (meta.params.length > 0 ? meta.params[0].expr : null) {
+				case EConst(CString(s, _)): s;
+				case _: null;
+			}
+		} catch (_:NotFound) null;
 	}
 
 	static function registerResolveField(a:TAbstract, cf:TClassField, cff:ClassField, p:Position):Void {

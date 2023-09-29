@@ -71,9 +71,12 @@ class Calls {
 				for (cf in a.array) {
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
+							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
+							if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, cf);
+							if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+								return AKExpr(TypeFunctions.mk(TArray(e1, key), sig.ret, p));
 							var implExpr = TexprTools.makeStaticThis(a.impl, p);
 							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(a.impl), false, p), FCall);
-							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
 							return AKExpr(makeCall(ctx, fieldExpr, [e1, key], sig.ret, p));
 						case _:
 					}
@@ -136,10 +139,15 @@ class Calls {
 		for (cf in a.array) {
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 3):
-					var implExpr = TexprTools.makeStaticThis(c, p);
-					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 					var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
+					if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+					if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+						var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
+						return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
+					}
+					var implExpr = TexprTools.makeStaticThis(c, p);
+					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 					return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
 				case _:
 			}
