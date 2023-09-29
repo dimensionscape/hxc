@@ -383,6 +383,15 @@ class EvalMacro {
 				var name = switch (proto.pkind) { case PEnum(ctors): ctors[ev.eindex].name; case _: throw "value_to_expr: not an enum"; };
 				var ctorExpr = new Expr(EField(enumPathExpr(ec, ev.epath, p), name, EFNormal), p);
 				ev.eargs.length == 0 ? ctorExpr : mk(ECall(ctorExpr, [for (a in ev.eargs) valueToExpr(ec, a, p)]));
+			case VInstance(vi): switch (vi.ikind) {
+				case IMap(m) if (vi.iproto.ppath == EvalHash.key_haxe_ds_IntMap
+						|| vi.iproto.ppath == EvalHash.key_haxe_ds_StringMap
+						|| vi.iproto.ppath == EvalHash.key_haxe_ds_ObjectMap
+						|| vi.iproto.ppath == EvalHash.hash("haxe.ds.EnumValueMap")):
+					mk(EArrayDecl([for (entry in m) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
+				case _:
+					EvalExceptions.excString(ec, "Cannot convert " + EvalExceptions.sValueKind(v) + " to expr");
+			}
 			case other: EvalExceptions.excString(ec, "Cannot convert " + EvalExceptions.sValueKind(other) + " to expr");
 		};
 	}
