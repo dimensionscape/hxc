@@ -465,14 +465,26 @@ class EvalMacro {
 
 	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Void {
 		var seen = new Map<TClassField, Bool>();
-		function scan(e:Null<TExpr>):Void {
+		var scan:Null<TExpr>->Void = null;
+		function forceAndScan(c:TClass, cf:TClassField):Void {
+			if (seen.exists(cf)) return;
+			seen.set(cf, true);
+			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(com, c, cf);
+			scan(cf.expr);
+		}
+		scan = function(e:Null<TExpr>):Void {
 			if (e == null) return;
 			switch (e.expr) {
-				case TField(_, FStatic(c, cf)) if (cf.expr == null && !seen.exists(cf)):
-					seen.set(cf, true);
-					hxc.typing.TypeFields.forceFieldBody(com, c, cf);
-					scan(cf.expr);
-				case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
+				case TField(e1, fa):
+					scan(e1);
+					switch (fa) {
+						case FStatic(c, cf) | FInstance(c, _, cf):
+							forceAndScan(c, cf);
+						case FClosure(c, cf) if (c != null):
+							forceAndScan(c.c, cf);
+						case _:
+					}
+				case TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
 					scan(e1);
 				case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2):
 					scan(e1); scan(e2);
@@ -506,7 +518,7 @@ class EvalMacro {
 					scan(eo);
 				case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_):
 			}
-		}
+		};
 		seen.set(root, true);
 		scan(root.expr);
 	}
@@ -538,7 +550,7 @@ class EvalMacro {
 		var savedPos = curPos;
 		try {
 			var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
-			var args = [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
+			var args = macroArgs(ec, el, sigArgs);
 			curTctx = tctx;
 			curPos = p;
 			var result = fn(args);
@@ -551,6 +563,27 @@ class EvalMacro {
 			curPos = savedPos;
 			throw e;
 		}
+	}
+
+	static function macroArgs(ec:EvalContext, el:Array<Expr>, sigArgs:Null<Array<TSignatureArg>>):Array<EvalValue> {
+		if (sigArgs != null && sigArgs.length > 0) {
+			var last = sigArgs[sigArgs.length - 1].t;
+			var restT = restElemType(last);
+			if (restT != null) return macroRestArgs(ec, el, sigArgs, restT);
+			var arrayT = arrayExprElemType(last);
+			if (arrayT != null) return macroRestArgs(ec, el, sigArgs, arrayT);
+		}
+		return [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
+	}
+
+	static function macroRestArgs(ec:EvalContext, el:Array<Expr>, sigArgs:Array<TSignatureArg>, restT:T):Array<EvalValue> {
+		var fixed = sigArgs.length - 1;
+		var out:Array<EvalValue> = [];
+		for (i in 0...fixed) out.push(i < el.length ? macroArg(ec, el[i], sigArgs[i].t) : VNull);
+		var rest:Array<EvalValue> = [];
+		for (i in fixed...el.length) rest.push(macroArg(ec, el[i], restT));
+		out.push(VArray(new VArray(rest, rest.length)));
+		return out;
 	}
 
 	// An Expr (or ExprOf) macro parameter receives the reified expression; any other parameter type
@@ -569,12 +602,48 @@ class EvalMacro {
 		return encodeExpr(ec, e);
 	}
 
+	static function restElemType(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, params) if (params.length == 1 && a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest"): params[0];
+			case _: null;
+		};
+	}
+
+	static function arrayExprElemType(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, params) if (params.length == 1 && c.path.pack.length == 0 && c.path.name == "Array" && isExprParam(params[0])): params[0];
+			case _: null;
+		};
+	}
+
 	static function isExprParam(t:T):Bool {
 		return switch (t) {
 			case TType(d, _): d.path.name == "Expr" || d.path.name == "ExprOf";
 			case TInst(c, _): c.path.name == "Expr";
 			case TAbstract(a, _): a.path.name == "Expr";
+			case TAnon(a): isExprAnon(a);
 			case TLazy(f): isExprParam(TypeFunctions.lazyType(f));
+			case _: false;
+		};
+	}
+
+	static function isExprAnon(a:TAnon):Bool {
+		var expr = a.fields.get("expr");
+		var pos = a.fields.get("pos");
+		return expr != null && pos != null && isExprDefType(expr.type) && isPositionType(pos.type);
+	}
+
+	static function isExprDefType(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TEnum(e, _) if (e.path.pack.length == 2 && e.path.pack[0] == "haxe" && e.path.pack[1] == "macro" && e.path.name == "ExprDef"): true;
+			case _: false;
+		};
+	}
+
+	static function isPositionType(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _) if (a.path.pack.length == 2 && a.path.pack[0] == "haxe" && a.path.pack[1] == "macro" && a.path.name == "Position"): true;
+			case TAnon(a): a.fields.exists("file") && a.fields.exists("min") && a.fields.exists("max");
 			case _: false;
 		};
 	}
