@@ -219,6 +219,39 @@ class ForLoop {
 		return try Typer.typeExpr(ctx, block, WithTypeTools.noValue) catch (_:TypingError) { restore(); null; };
 	}
 
+	static function typeIntIteratorForLoop(ctx:TyperContext, vName:String, e1:TExpr, e2:Expr, p:Position):Null<TExpr> {
+		var args = switch (e1.expr) {
+			case TNew(c, [], args) if (c.path.pack.length == 0 && c.path.name == "IntIterator" && args.length == 2):
+				args;
+			case _:
+				return null;
+		}
+		var basic = ctx.com.basic;
+		var oldLoop = ctx.inLoop;
+		var oldLocals = Typer.saveLocals(ctx);
+		ctx.inLoop = true;
+		var vIndex = Typer.addLocal(ctx, VGenerated, "_hx_i", basic.tint, args[0].pos);
+		var eIndex = TexprTools.makeLocal(vIndex, p);
+		var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, basic.tint, p);
+		var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
+		ctx.inLoop = oldLoop;
+		oldLocals();
+
+		var op = TypeFunctions.mk(TUnop(Increment, Postfix, eIndex), basic.tint, p);
+		var evar = TypeFunctions.mk(TVarExpr(v, op), basic.tvoid, p);
+		var iterBody = body;
+		if (needsLoopVarWrap(ctx) && containsClosure(body) && !hasBareLoopControl(body)) {
+			iterBody = wrapLoopVarsBody(ctx, [v], body, p);
+		}
+		var whileBody = TypeFunctions.mk(TBlock([evar, iterBody]), basic.tvoid, p);
+		var cond = TypeFunctions.mk(TBinop(OpLt, eIndex, args[1]), basic.tbool, p);
+		var ewhile = TypeFunctions.mk(TWhile(cond, whileBody, NormalWhile), basic.tvoid, p);
+		return TypeFunctions.mk(TBlock([
+			TypeFunctions.mk(TVarExpr(vIndex, args[0]), basic.tvoid, args[0].pos),
+			ewhile
+		]), basic.tvoid, p);
+	}
+
 	public static function typeForLoop(ctx:TyperContext, it:Expr, e2:Expr, p:Position):TExpr {
 		var vName:String;
 		var e1Expr:Expr;
@@ -237,6 +270,8 @@ class ForLoop {
 		}
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
+		var intLoop = typeIntIteratorForLoop(ctx, vName, e1, e2, p);
+		if (intLoop != null) return intLoop;
 		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself. If e1 exposes no iterator,
 		// fall back to array-access iteration for array-like values.
 		var iterExpr = e1;
