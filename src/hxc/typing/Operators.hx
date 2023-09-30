@@ -527,14 +527,16 @@ class Operators {
 			case OpNullCoal:
 				// `a ?? b` desugars to `{ var tmp = a; if (tmp != null) tmp else b }`, evaluating the left
 				// once.
-				var te1 = Typer.typeExpr(ctx, e1, withType);
+				var te1 = Typer.typeExpr(ctx, Expr.ensureBlock(e1), withType);
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type));
-				var t = Typer.unifyMin(ctx, [te1, te2]);
+				var tmin = Typer.unifyMin(ctx, [te1, te2]);
+				var t = TexprTools.hasDeadEnd(te2) ? TypeFunctions.followWithoutType(ctx.com.basic.tnull(tmin)) : tmin;
 				var tvoid = ctx.com.basic.tvoid;
-				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", te1.type, p);
+				var tmpType = ctx.com.basic.tnull(tmin);
+				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", tmpType, p);
 				var tmpLocal = TexprTools.makeLocal(tmp, p);
-				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(te1.type, p)), ctx.com.basic.tbool, p);
-				var iff = TypeFunctions.mk(TIf(check, tmpLocal, te2), t, p);
+				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p)), ctx.com.basic.tbool, p);
+				var iff = Typer.makeIfThenElse(ctx, check, tmpLocal, te2, WithTypeTools.withType(t), p);
 				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
 				TypeFunctions.mk(TBlock([decl, iff]), t, p);
 			case _:

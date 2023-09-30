@@ -1387,7 +1387,7 @@ class Typer {
 		};
 	}
 
-	static function makeIfThenElse(ctx:TyperContext, e0:TExpr, e1:TExpr, e2:TExpr, withType:WithType, p:Position):TExpr {
+	public static function makeIfThenElse(ctx:TyperContext, e0:TExpr, e1:TExpr, e2:TExpr, withType:WithType, p:Position):TExpr {
 		var t:T;
 		switch (withType) {
 			case NoValue:
