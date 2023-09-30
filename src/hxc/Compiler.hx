@@ -13,6 +13,18 @@ import sys.FileSystem;
 import sys.io.File;
 import sys.io.Process;
 
+@:buildXml('
+<files id="pcre2-8">
+	<compilerflag value="-DMATCH_LIMIT=4294967295U"/>
+	<compilerflag value="-DMATCH_LIMIT_DEPTH=4294967295U"/>
+	<compilerflag value="/USUPPORT_JIT" if="windows"/>
+</files>
+<files id="pcre2-16">
+	<compilerflag value="-DMATCH_LIMIT=4294967295U"/>
+	<compilerflag value="-DMATCH_LIMIT_DEPTH=4294967295U"/>
+	<compilerflag value="/USUPPORT_JIT" if="windows"/>
+</files>
+')
 class Compiler {
 	public function new() run(Sys.args());
 	public static function main() run(Sys.args());

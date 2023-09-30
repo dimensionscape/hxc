@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.Ref;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
+import hxc.core.TexprTools;
 import hxc.core.WithType;
 import hxc.core.TypingError;
 import hxc.context.Context;
@@ -293,6 +294,7 @@ class TypeFields {
 					var ret = sig != null ? sig.ret : tctx.t.tvoid;
 					var args = buildArgs(tctx, sig, fd);
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, cff.cffPos);
+					tf.expr = localStatics(tctx, tf.expr);
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
 				case FProp(_, _, _, eo):
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
@@ -321,6 +323,117 @@ class TypeFields {
 		var te = Typer.typeExpr(tctx, eo, WithTypeTools.value);
 		TypeUnification.unifyDefault(te.type, sigType);
 		return te;
+	}
+
+	static function promoteLocalStatic(tctx:TyperContext, lut:Map<Int, TClassField>, v:TVar, eo:Null<TExpr>):Void {
+		var name = tctx.curfield.name + "_" + v.name;
+		if (tctx.curclass.statics.exists(name))
+			throw new TypingError("The expanded name of this local (" + name + ") conflicts with another static field", v.pos);
+		if (eo != null) checkLocalStaticInit(eo);
+		var cf = TypeFunctions.mkField(name, v.type, v.pos, v.pos, false, true);
+		cf.meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(v.meta);
+		TypeFunctions.addClassFieldFlag(cf, CfNoLookup);
+		cf.expr = eo;
+		tctx.curclass.statics.set(name, cf);
+		tctx.curclass.orderedStatics.push(cf);
+		lut.set(v.id, cf);
+	}
+
+	static function checkLocalStaticInit(e:TExpr):Void {
+		function loop(e:TExpr):Void {
+			switch (e.expr) {
+				case TLocal(_) | TFunction(_):
+					throw new TypingError("Accessing local variables in static initialization is not allowed", e.pos);
+				case TConst(TThis) | TConst(TSuper):
+					throw new TypingError("Accessing `this` in static initialization is not allowed", e.pos);
+				case TReturn(_) | TBreak | TContinue:
+					throw new TypingError("This kind of control flow in static initialization is not allowed", e.pos);
+				case TArray(e1, e2) | TBinop(_, e1, e2):
+					loop(e1); loop(e2);
+				case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
+					loop(e1);
+				case TObjectDecl(fields):
+					for (f in fields) loop(f.expr);
+				case TArrayDecl(el) | TBlock(el):
+					for (x in el) loop(x);
+				case TCall(e1, el):
+					loop(e1);
+					for (x in el) loop(x);
+				case TNew(_, _, el):
+					for (x in el) loop(x);
+				case TVarExpr(_, eo):
+					if (eo != null) loop(eo);
+				case TFor(_, e1, e2):
+					loop(e1); loop(e2);
+				case TIf(e1, e2, e3):
+					loop(e1); loop(e2); if (e3 != null) loop(e3);
+				case TWhile(e1, e2, _):
+					loop(e1); loop(e2);
+				case TSwitch(e1, cases, edef):
+					loop(e1);
+					for (c in cases) {
+						for (v in c.values) loop(v);
+						loop(c.expr);
+					}
+					if (edef != null) loop(edef);
+				case TTry(e1, catches):
+					loop(e1);
+					for (c in catches) loop(c.expr);
+				case TConst(_) | TTypeExpr(_) | TIdent(_):
+			}
+		}
+		loop(e);
+	}
+
+	static function localStatics(tctx:TyperContext, e:TExpr):TExpr {
+		var lut:Map<Int, TClassField> = new Map();
+		var loop:TExpr->TExpr = null;
+		function opt(e:Null<TExpr>):Null<TExpr> return e == null ? null : loop(e);
+		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) loop(x)];
+		loop = function(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TBlock(el):
+					var out:Array<TExpr> = [];
+					for (x in el) switch (x.expr) {
+						case TVarExpr(v, eo) if (TypeFunctions.hasVarFlag(v, VStatic)):
+							promoteLocalStatic(tctx, lut, v, eo);
+						case _:
+							out.push(loop(x));
+					}
+					e.expr = TBlock(out);
+					e;
+				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VStatic)):
+					var cf = lut.get(v.id);
+					if (cf == null) throw new TypingError("Could not find local static " + v.name + " (id " + v.id + ")", e.pos);
+					TexprTools.makeStaticField(tctx.curclass, cf, e.pos);
+				case TArray(e1, e2): e.expr = TArray(loop(e1), loop(e2)); e;
+				case TBinop(op, e1, e2): e.expr = TBinop(op, loop(e1), loop(e2)); e;
+				case TField(e1, fa): e.expr = TField(loop(e1), fa); e;
+				case TParenthesis(e1): e.expr = TParenthesis(loop(e1)); e;
+				case TObjectDecl(fields): e.expr = TObjectDecl([for (f in fields) {key: f.key, expr: loop(f.expr)}]); e;
+				case TArrayDecl(values): e.expr = TArrayDecl(arr(values)); e;
+				case TCall(e1, params): e.expr = TCall(loop(e1), arr(params)); e;
+				case TNew(c, params, args): e.expr = TNew(c, params, arr(args)); e;
+				case TUnop(op, flag, e1): e.expr = TUnop(op, flag, loop(e1)); e;
+				case TFunction(f): f.expr = loop(f.expr); e;
+				case TVarExpr(v, eo): e.expr = TVarExpr(v, opt(eo)); e;
+				case TFor(v, e1, e2): e.expr = TFor(v, loop(e1), loop(e2)); e;
+				case TIf(econd, eif, eelse): e.expr = TIf(loop(econd), loop(eif), opt(eelse)); e;
+				case TWhile(econd, body, flag): e.expr = TWhile(loop(econd), loop(body), flag); e;
+				case TSwitch(subject, cases, edef):
+					e.expr = TSwitch(loop(subject), [for (c in cases) {values: arr(c.values), expr: loop(c.expr)}], opt(edef));
+					e;
+				case TTry(e1, catches): e.expr = TTry(loop(e1), [for (c in catches) {v: c.v, expr: loop(c.expr)}]); e;
+				case TReturn(eo): e.expr = TReturn(opt(eo)); e;
+				case TThrow(e1): e.expr = TThrow(loop(e1)); e;
+				case TCast(e1, mt): e.expr = TCast(loop(e1), mt); e;
+				case TMeta(entry, e1): e.expr = TMeta(entry, loop(e1)); e;
+				case TEnumParameter(e1, ef, index): e.expr = TEnumParameter(loop(e1), ef, index); e;
+				case TEnumIndex(e1): e.expr = TEnumIndex(loop(e1)); e;
+				case TConst(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue | TLocal(_): e;
+			}
+		};
+		return loop(e);
 	}
 
 	// An Int literal bound to a Float field is rewritten to a Float literal.
