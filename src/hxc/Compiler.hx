@@ -83,9 +83,9 @@ class Compiler {
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			TypeResolve.resolveAll(ctx);
 			TypeFields.typeAllModules(ctx);
-			abortOnDiagnostics(ctx);
+			abortOnDiagnostics(ctx, platform);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
-			abortOnDiagnostics(ctx);
+			abortOnDiagnostics(ctx, platform);
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
@@ -125,7 +125,8 @@ class Compiler {
 		return {pack: parts, name: name};
 	}
 
-	static function abortOnDiagnostics(ctx:Context):Void {
+	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
+		if (platform == Eval) return;
 		if (!ctx.hasDiagnostics()) return;
 		for (d in ctx.diagnostics) printPositionMessage(d.message, d.pos);
 		Sys.exit(1);
