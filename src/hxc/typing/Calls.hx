@@ -69,10 +69,10 @@ class Calls {
 				return AKAccess(a, tl, a.impl, e1, e2);
 			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
 				for (cf in a.array) {
+					if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, cf);
 					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 						case TFun(sig) if (sig.args.length == 2):
 							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
-							if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, cf);
 							if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
 								return AKExpr(TypeFunctions.mk(TArray(e1, key), sig.ret, p));
 							var implExpr = TexprTools.makeStaticThis(a.impl, p);
@@ -137,11 +137,11 @@ class Calls {
 	// plain write can infer its literal, while a compound write supplies the precomputed op result.
 	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position):TExpr {
 		for (cf in a.array) {
+			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 3):
 					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 					var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
-					if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 					if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
 						var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 						return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);

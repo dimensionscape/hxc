@@ -132,7 +132,8 @@ class TypeResolve {
 		for (cff in d.dData) {
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
-			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
+			var isAbstractMember = isAbsImpl && !isStatic && cff.cffName.name != "new";
+			if (isAbstractMember) isStatic = true;
 			// The constructor lives in constructor (not fields); resolve it there.
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
@@ -142,6 +143,7 @@ class TypeResolve {
 			nameSeen.set(key, occ + 1);
 			// Occurrence > 0 is a merged overload sibling: resolve onto its overloads slot.
 			var target = if (occ > 0 && cf.overloads.length >= occ) cf.overloads[cf.overloads.length - occ] else cf;
+			if (isAbstractMember) TypeFunctions.addClassFieldFlag(target, CfImpl);
 			try {
 				var params = if (isAbsImpl && abstractTypeParams != null && TypeFunctions.hasClassFieldFlag(target, CfImpl))
 					abstractTypeParams
