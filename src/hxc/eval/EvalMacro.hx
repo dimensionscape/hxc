@@ -9,6 +9,7 @@ import hxc.core.WithType;
 import hxc.context.Context;
 import hxc.typing.TyperContext;
 import hxc.typing.Typer;
+import hxc.typing.Typeload;
 import hxc.typing.AccessKind.FieldAccess;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalContext;
@@ -77,6 +78,12 @@ class EvalMacro {
 			if (curTctx == null) throw new TypingError("typeExpr outside a macro", curPos);
 			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
 			return encodeTypedExpr(ec, te);
+		});
+		reg2("resolveType", "resolve_type", function(a) {
+			if (curTctx == null) throw new TypingError("resolveType outside a macro", curPos);
+			var p = posArg(ec, a, 1, curPos);
+			var t = Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: decodeComplexType(ec, a[0], p), pos: p});
+			return encodeType(ec, t);
 		});
 		reg2("withImports", "with_imports", function(a) {
 			var m = com.currentModule;
@@ -1376,14 +1383,14 @@ class EvalMacro {
 	static function encodeType(ec:EvalContext, t:T):EvalValue {
 		return switch (t) {
 			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeRef(ec, VNull)]);
-			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeRef(ec, encodeBaseType(ec, e.path), e.path), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeEnumRef(ec, e), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)])]);
-			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeRef(ec, encodeBaseType(ec, d.path), d.path), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeDefRef(ec, d), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TFun(sig): mkEnumValue(ec, "Type", "TFun", [encodeArray([for (a in sig.args) encodeTypeFunArg(ec, a)]), encodeType(ec, sig.ret)]);
 			case TAnon(an): mkEnumValue(ec, "Type", "TAnonymous", [encodeAnonRef(ec, an)]);
 			case TDynamic(t2): mkEnumValue(ec, "Type", "TDynamic", [t2 == null ? VNull : encodeType(ec, t2)]);
 			case TLazy(f): encodeType(ec, TypeFunctions.lazyType(f));
-			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeRef(ec, encodeBaseType(ec, a.path), a.path), encodeArray([for (p in params) encodeType(ec, p)])]);
+			case TAbstract(a, params): mkEnumValue(ec, "Type", "TAbstract", [encodeAbstractRef(ec, a), encodeArray([for (p in params) encodeType(ec, p)])]);
 		};
 	}
 
@@ -1704,6 +1711,28 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
+	static function encodeAbstractBinop(ec:EvalContext, op:TAbstractOp):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("op"), encodeBinop(ec, op.op));
+		f.set(EvalHash.hash("field"), encodeClassField(ec, op.cf));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	static function encodeAbstractUnop(ec:EvalContext, op:TAbstractUnop):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("op"), encodeUnop(ec, op.op));
+		f.set(EvalHash.hash("postFix"), op.flag == Postfix ? VTrue : VFalse);
+		f.set(EvalHash.hash("field"), encodeClassField(ec, op.cf));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	static function encodeAbstractCast(ec:EvalContext, t:T, cf:Null<TClassField>):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("t"), encodeType(ec, t));
+		f.set(EvalHash.hash("field"), cf == null ? VNull : encodeClassField(ec, cf));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
 	static function encodeClassRef(ec:EvalContext, c:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassType(ec, c), true));
@@ -1832,9 +1861,11 @@ class EvalMacro {
 		f.set(EvalHash.hash("doc"), VNull);
 		f.set(EvalHash.hash("params"), encodeArray([]));
 		f.set(EvalHash.hash("type"), encodeType(ec, a.thisType));
+		f.set(EvalHash.hash("binops"), encodeArray([for (op in a.ops) encodeAbstractBinop(ec, op)]));
+		f.set(EvalHash.hash("unops"), encodeArray([for (op in a.unops) encodeAbstractUnop(ec, op)]));
 		f.set(EvalHash.hash("array"), encodeArray([for (cf in a.array) encodeClassField(ec, cf)]));
-		f.set(EvalHash.hash("from"), encodeArray([for (t in a.from) encodeType(ec, t)]));
-		f.set(EvalHash.hash("to"), encodeArray([for (t in a.to) encodeType(ec, t)]));
+		f.set(EvalHash.hash("from"), encodeArray([for (t in a.from) encodeAbstractCast(ec, t, null)].concat([for (c in a.fromField) encodeAbstractCast(ec, c.t, c.cf)])));
+		f.set(EvalHash.hash("to"), encodeArray([for (t in a.to) encodeAbstractCast(ec, t, null)].concat([for (c in a.toField) encodeAbstractCast(ec, c.t, c.cf)])));
 		f.set(EvalHash.hash("impl"), a.impl == null ? VNull : encodeClassRef(ec, a.impl));
 		return VObject(new VObject([], ODictionary(f)));
 	}
