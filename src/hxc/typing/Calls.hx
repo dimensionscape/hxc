@@ -408,6 +408,8 @@ class Calls {
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
 			case AKField(fa): callFieldAccess(ctx, fa, el, p);
+			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
+				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument.
 				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access));
@@ -432,6 +434,32 @@ class Calls {
 				}));
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
+	}
+
+	static function typedExprToSyntax(e:TExpr):Expr {
+		var p = e.pos;
+		return switch (e.expr) {
+			case TConst(TInt(i)):
+				new Expr(EConst(CInt(Std.string(i), null)), p);
+			case TConst(TFloat(s)):
+				new Expr(EConst(CFloat(s, null)), p);
+			case TConst(TString(s)):
+				new Expr(EConst(CString(s, SDoubleQuotes)), p);
+			case TConst(TBool(b)):
+				new Expr(EConst(CIdent(b ? "true" : "false")), p);
+			case TConst(TNull):
+				new Expr(EConst(CIdent("null")), p);
+			case TConst(TThis):
+				new Expr(EConst(CIdent("this")), p);
+			case TLocal(v):
+				new Expr(EConst(CIdent(v.name)), p);
+			case TParenthesis(e1):
+				new Expr(EParenthesis(typedExprToSyntax(e1)), p);
+			case TField(e1, fa):
+				new Expr(EField(typedExprToSyntax(e1), TypeFunctions.fieldName(fa), EFNormal), p);
+			case _:
+				throw new TypingError("Cannot use this expression as a macro extension receiver", p);
+		}
 	}
 
 	static function callFieldExpr(ctx:TyperContext, fa:FieldAccess):TExpr {

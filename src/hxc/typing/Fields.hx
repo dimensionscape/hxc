@@ -236,6 +236,42 @@ class Fields {
 		}) catch (_:hxc.core.TypeUnification.UnifyError) false;
 	}
 
+	static function exprOfParam(t:T):Null<T> {
+		return switch (t) {
+			case TType(td, params) if (params.length == 1 && td.path.name == "ExprOf"):
+				params[0];
+			case TLazy(f):
+				exprOfParam(TypeFunctions.lazyType(f));
+			case _:
+				null;
+		}
+	}
+
+	static function isMacroExprParam(t:T):Bool {
+		return switch (t) {
+			case TType(td, _): td.path.name == "Expr" || td.path.name == "ExprOf";
+			case TInst(c, _): c.path.name == "Expr";
+			case TAbstract(a, _): a.path.name == "Expr";
+			case TAnon(a):
+				a.fields.exists("expr") && a.fields.exists("pos");
+			case TLazy(f):
+				isMacroExprParam(TypeFunctions.lazyType(f));
+			case _:
+				false;
+		}
+	}
+
+	static function usingAccepts(cf:TClassField, recv:T, first:T):Bool {
+		if (!hxc.eval.EvalMacro.isMacroField(cf))
+			return usingDoesUnify(recv, first);
+		var exprOf = exprOfParam(first);
+		if (exprOf != null)
+			return usingDoesUnify(recv, exprOf);
+		if (isMacroExprParam(first))
+			return true;
+		return usingDoesUnify(recv, first);
+	}
+
 	// True when the abstract forwards member `name` to its underlying type: @:forward with no
 	// arguments forwards everything, @:forward(a, b, ...) forwards only the listed names.
 	static function forwardsField(a:TAbstract, name:String):Bool {
@@ -259,13 +295,22 @@ class Fields {
 		try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
 		var cf = uc.statics.get(i);
 		if (cf == null) return null;
+		switch (cf.type) {
+			case TMono(r) if (r.type == null):
+				var entry = ctx.com.declOfType.get(hxc.context.Context.pathKey(uc.path));
+				if (entry != null) switch (entry.decl) {
+					case EClass(d): TypeResolve.resolveClassFields(ctx.com, uc, d, entry.pos);
+					case _:
+				}
+			case _:
+		}
 		var cft = cf.type;
 		if (cf.params.length > 0) {
 			var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
 			cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
 		}
 		return switch (TypeFunctions.follow(cft)) {
-			case TFun(sig) if (sig.args.length > 0 && usingDoesUnify(e.type, sig.args[0].t)):
+			case TFun(sig) if (sig.args.length > 0 && usingAccepts(cf, e.type, sig.args[0].t)):
 				AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
 			case _: null;
 		};

@@ -585,10 +585,9 @@ class TypeResolve {
 				}
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
-				var macroCtx = isMacroField && ctx.defines.rawDefined("macro");
 				var args:Array<TSignatureArg> = [];
 				for (fa in fd.fArgs) {
-					var at = macroCtx ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
 					if (fa.opt) at = ctx.basic.tnull(at);
 					var sigOpt = fa.opt || fa.value != null;
 					args.push({name: fa.name.name, opt: sigOpt, t: at});

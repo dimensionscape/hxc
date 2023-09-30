@@ -530,14 +530,23 @@ class EvalMacro {
 
 	static function macroLoadPath(path:hxc.core.Globals.Path):hxc.core.Globals.Path {
 		var suffix = "_Fields_";
-		if (path.name.length <= suffix.length || path.name.substr(path.name.length - suffix.length) != suffix)
-			return path;
-		var moduleName = path.name.substr(0, path.name.length - suffix.length);
-		if (path.pack.length == 0 || path.pack[path.pack.length - 1] != "_" + moduleName)
-			return path;
-		var pack = path.pack.copy();
-		pack.pop();
-		return {pack: pack, name: moduleName};
+		if (path.name.length > suffix.length && path.name.substr(path.name.length - suffix.length) == suffix) {
+			var moduleName = path.name.substr(0, path.name.length - suffix.length);
+			if (path.pack.length > 0 && path.pack[path.pack.length - 1] == "_" + moduleName) {
+				var pack = path.pack.copy();
+				pack.pop();
+				return {pack: pack, name: moduleName};
+			}
+		}
+		if (path.pack.length > 0) {
+			var last = path.pack[path.pack.length - 1];
+			if (last.length > 1 && last.charAt(0) == "_") {
+				var pack = path.pack.copy();
+				pack.pop();
+				return {pack: pack, name: last.substr(1)};
+			}
+		}
+		return path;
 	}
 
 	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
