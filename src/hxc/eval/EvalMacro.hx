@@ -4,6 +4,8 @@ import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
+import hxc.core.TypeUnification.UnifyError;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.context.Context;
@@ -30,6 +32,8 @@ class EvalMacro {
 	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
+	static var macroMonoId:Int = 0;
+	static var macroMonos:Map<Int, TMono> = new Map();
 
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
@@ -78,6 +82,19 @@ class EvalMacro {
 			if (curTctx == null) throw new TypingError("typeExpr outside a macro", curPos);
 			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
 			return encodeTypedExpr(ec, te);
+		});
+		reg2("getType", "get_type", function(a) {
+			var path = pathFromDotted(strOf(a[0]));
+			var tpath:TypePath = {tpackage: path.pack, tname: path.name, tparams: [], tsub: null};
+			return encodeType(ec, Typeload.loadInstance(com, [], tpath, curPos, true));
+		});
+		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
+		reg2("unify", "unify", function(a) {
+			if (curTctx == null) throw new TypingError("unify outside a macro", curPos);
+			var t1 = decodeType(ec, a[0]);
+			var t2 = decodeType(ec, a[1]);
+			var e1 = TypeFunctions.mk(TObjectDecl([]), t1, Position.nullPos);
+			return macroCastOrUnify(t2, e1) ? VTrue : VFalse;
 		});
 		reg2("resolveType", "resolve_type", function(a) {
 			if (curTctx == null) throw new TypingError("resolveType outside a macro", curPos);
@@ -858,6 +875,129 @@ class EvalMacro {
 		}
 	}
 
+	static function macroCastOrUnify(tleft:T, eright:TExpr):Bool {
+		var didCast = macroCheckCast(tleft, eright.type);
+		if (didCast) return true;
+		var didUnify = try {
+			TypeUnification.unifyDefault(eright.type, tleft);
+			true;
+		} catch (_:UnifyError) false;
+		return didUnify;
+	}
+
+	static function macroCheckCast(tleft:T, tright:T):Bool {
+		var stack:Array<{tleft:T, tright:T}> = [];
+		function loop(tleft:T, tright:T):Bool {
+			if (TypeUnification.typeIseqDefault(tleft, tright)) return true;
+			for (item in stack) if (TypeUnification.fastEq(tleft, item.tleft) && TypeUnification.fastEq(tright, item.tright)) return false;
+			stack.push({tleft: tleft, tright: tright});
+			var ok = switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
+				case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
+					macroLoopAbstractTo(a2, tl2, tleft, tright, loop)
+						|| macroLoopAbstractFrom(a1, tl1, tleft, tright, loop);
+				case [TAbstract(a, tl), _]:
+					macroLoopAbstractFrom(a, tl, tleft, tright, loop);
+				case [_, TAbstract(a, tl)]:
+					macroLoopAbstractTo(a, tl, tleft, tright, loop);
+				case _:
+					false;
+			}
+			stack.pop();
+			return ok;
+		}
+		return loop(tleft, tright);
+	}
+
+	static function macroLoopAbstractFrom(a:TAbstract, tl:Array<T>, tleft:T, tright:T, loop:T->T->Bool):Bool {
+		for (tc in a.from) {
+			if (!TypeUnification.typeIseqDefault(tc, tleft)
+				&& loop(TypeFunctions.applyParams(a.params, tl, tc), tright))
+				return true;
+		}
+		return false;
+	}
+
+	static function macroLoopAbstractTo(a:TAbstract, tl:Array<T>, tleft:T, tright:T, loop:T->T->Bool):Bool {
+		for (tc in a.to) {
+			if (!TypeUnification.typeIseqDefault(tc, tright)
+				&& loop(tleft, TypeFunctions.applyParams(a.params, tl, tc)))
+				return true;
+		}
+		return false;
+	}
+
+	static function decodeType(ec:EvalContext, v:EvalValue):T {
+		var args = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "TMono":
+				TMono(decodeMonoRef(ec, args[0]));
+			case "TEnum":
+				switch (moduleTypeFromRef(ec, args[0])) {
+					case TEnumDecl(e): TEnum(e, [for (p in arrOf(args[1])) decodeType(ec, p)]);
+					case _: throw new TypingError("Macro decode: expected enum type", curPos);
+				}
+			case "TInst":
+				switch (moduleTypeFromRef(ec, args[0])) {
+					case TClassDecl(c): TInst(c, [for (p in arrOf(args[1])) decodeType(ec, p)]);
+					case _: throw new TypingError("Macro decode: expected class type", curPos);
+				}
+			case "TType":
+				switch (moduleTypeFromRef(ec, args[0])) {
+					case TTypeDecl(d): TType(d, [for (p in arrOf(args[1])) decodeType(ec, p)]);
+					case _: throw new TypingError("Macro decode: expected typedef type", curPos);
+				}
+			case "TFun":
+				TFun({
+					args: [for (a in arrOf(args[0])) {
+						name: strOf(EvalField.field(ec, a, EvalHash.hash("name"))),
+						opt: boolOf(EvalField.field(ec, a, EvalHash.hash("opt"))),
+						t: decodeType(ec, EvalField.field(ec, a, EvalHash.hash("t")))
+					}],
+					ret: decodeType(ec, args[1])
+				});
+			case "TAnonymous":
+				throw new TypingError("Macro decode: anonymous types are not available", curPos);
+			case "TDynamic":
+				args[0] == VNull ? TDynamic(null) : TDynamic(decodeType(ec, args[0]));
+			case "TLazy":
+				decodeType(ec, refGet(ec, args[0]));
+			case "TAbstract":
+				switch (moduleTypeFromRef(ec, args[0])) {
+					case TAbstractDecl(a): TAbstract(a, [for (p in arrOf(args[1])) decodeType(ec, p)]);
+					case _: throw new TypingError("Macro decode: expected abstract type", curPos);
+				}
+			case other:
+				throw new TypingError("Macro decode: unhandled Type " + other, curPos);
+		}
+	}
+
+	static function decodeMonoRef(ec:EvalContext, v:EvalValue):TMono {
+		return switch (EvalField.field(ec, v, EvalHash.hash("__hxc_mono_id"))) {
+			case VInt(id):
+				var m = macroMonos.get(id);
+				if (m == null) throw new TypingError("Macro decode: unknown monomorph", curPos);
+				m;
+			case _:
+				throw new TypingError("Macro decode: expected monomorph ref", curPos);
+		};
+	}
+
+	static function moduleTypeFromRef(ec:EvalContext, v:EvalValue):ModuleType {
+		var path = pathFromDotted(refString(ec, v));
+		var key = EvalHash.pathHash(path);
+		var cached = ec.typeCache.get(key);
+		if (cached != null) return cached;
+		if (currentCom != null) {
+			var wanted = Context.pathKey(path);
+			for (m in currentCom.modules) for (mt in m.types) {
+				if (Context.pathKey(TypeFunctions.tPath(mt)) == wanted)
+					return mt;
+			}
+			try return currentCom.getType(path, curPos, null) catch (_:Dynamic) {}
+		}
+		throw new TypingError("Macro decode: type not found " + Context.pathKey(path), curPos);
+	}
+
 	static function decodeExpr(ec:EvalContext, v:EvalValue, dp:Position):Expr {
 		if (v == VNull) return new Expr(EConst(CIdent("null")), dp);
 		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
@@ -1391,7 +1531,7 @@ class EvalMacro {
 	// bound type (matching a post-typing result), so Context.follow is the identity on these.
 	static function encodeType(ec:EvalContext, t:T):EvalValue {
 		return switch (t) {
-			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeRef(ec, VNull)]);
+			case TMono(m): m.type != null ? encodeType(ec, m.type) : mkEnumValue(ec, "Type", "TMono", [encodeMonoRef(ec, m)]);
 			case TEnum(e, params): mkEnumValue(ec, "Type", "TEnum", [encodeEnumRef(ec, e), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TInst(c, params): mkEnumValue(ec, "Type", "TInst", [encodeClassRef(ec, c), encodeArray([for (p in params) encodeType(ec, p)])]);
 			case TType(d, params): mkEnumValue(ec, "Type", "TType", [encodeDefRef(ec, d), encodeArray([for (p in params) encodeType(ec, p)])]);
@@ -1543,6 +1683,16 @@ class EvalMacro {
 		// A macro Ref<T> also exposes toString() -- the type's dot path -- which Std.string of the
 		// encoded Type enum uses; without it a base-type ref renders as its raw {get: ...} structure.
 		if (path != null) fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(path)), true));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeMonoRef(ec:EvalContext, m:TMono):EvalValue {
+		var id = ++macroMonoId;
+		macroMonos.set(id, m);
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("get"), VFunction(function(_) return m.type == null ? VNull : encodeType(ec, m.type), true));
+		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<mono>"), true));
+		fields.set(EvalHash.hash("__hxc_mono_id"), VInt(id));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
