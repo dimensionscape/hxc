@@ -561,10 +561,7 @@ class Typer {
 				} else {
 					var tfields:Array<TObjectField> = [];
 					var anonFields = new haxe.ds.StringMap<TClassField>();
-					var expected:Null<TAnon> = switch (withType) {
-						case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TAnon(a): a; case _: null; };
-						case _: null;
-					};
+					var expected = expectedAnonFromWithType(withType);
 					for (f in fields) {
 						var ef = expected != null ? expected.fields.get(f.name) : null;
 						var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
@@ -573,7 +570,9 @@ class Typer {
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
 						if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
-						anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, f.pos, f.pos));
+						var anonField = TypeFunctions.mkField(f.name, te.type, f.pos, f.pos);
+						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
+						anonFields.set(f.name, anonField);
 					}
 					var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
 					TypeFunctions.mk(TObjectDecl(tfields), t, p);
@@ -637,6 +636,31 @@ class Typer {
 		};
 		DebugDump.typed("typeExpr", typed);
 		return typed;
+	}
+
+	static function expectedAnonFromWithType(withType:WithType):Null<TAnon> {
+		return switch (withType) {
+			case WithType(t, _): expectedAnonFromType(t, []);
+			case _: null;
+		}
+	}
+
+	static function expectedAnonFromType(t:T, seen:Array<T>):Null<TAnon> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAnon(a):
+				a;
+			case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				for (old in seen) if (TypeUnification.shallowEq(t, old)) return null;
+				var hits:Array<TAnon> = [];
+				var nextSeen = seen.concat([t]);
+				for (fromType in a.from) {
+					var hit = expectedAnonFromType(TypeFunctions.applyParams(a.params, params, fromType), nextSeen);
+					if (hit != null) hits.push(hit);
+				}
+				hits.length == 1 ? hits[0] : null;
+			case _:
+				null;
+		}
 	}
 
 	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.
