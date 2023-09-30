@@ -1277,19 +1277,39 @@ class Typer {
 					case _:
 				}
 				try {
-					var te = typeExpr(ctx, e1, WithTypeTools.value);
-					Fields.typeField(ctx, te, field, p, mode, withType);
+					var acc = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
+					switch (acc) {
+						case AKSafeNav(sn):
+							AKSafeNav({
+								pos: sn.pos,
+								base: sn.base,
+								tempVar: sn.tempVar,
+								access: Fields.typeField(ctx, accGet(ctx, sn.access), field, p, mode, withType)
+							});
+						case _:
+							Fields.typeField(ctx, accGet(ctx, acc), field, p, mode, withType);
+					}
 				} catch (err:TypingError) {
 					var acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
 					if (acc == null) throw err;
 					acc;
 				}
 			case EArray(e1, e2):
-				var te1 = typeExpr(ctx, e1, WithTypeTools.value);
+				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
-				Calls.arrayAccess(ctx, te1, te2, mode, p);
+				switch (a1) {
+					case AKSafeNav(sn):
+						AKSafeNav({
+							pos: sn.pos,
+							base: sn.base,
+							tempVar: sn.tempVar,
+							access: Calls.arrayAccess(ctx, accGet(ctx, sn.access), te2, mode, p)
+						});
+					case _:
+						Calls.arrayAccess(ctx, accGet(ctx, a1), te2, mode, p);
+				}
 			case ECall(e1, params):
-				AKExpr(Calls.typeCall(ctx, e1, params, withType, p));
+				Calls.typeCallAccess(ctx, e1, params, withType, p);
 			case _:
 				AKExpr(typeExpr(ctx, new Expr(edef, p), withType));
 		};

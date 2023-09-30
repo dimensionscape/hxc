@@ -278,15 +278,19 @@ class Calls {
 
 	// A call target goes through buildCall (core: plain function value and method call).
 	public static function typeCall(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		return Typer.accGet(ctx, typeCallAccess(ctx, callee, el, withType, p));
+	}
+
+	public static function typeCallAccess(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position):AccessKind {
 		switch (callee.expr) {
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
-				return typeTrace(ctx, el, withType, p);
+				return AKExpr(typeTrace(ctx, el, withType, p));
 			case EConst(CIdent("super")):
-				return typeSuperCall(ctx, el, p);
+				return AKExpr(typeSuperCall(ctx, el, p));
 			case EField({expr: EConst(CIdent("Std"))}, "string", _) if (el.length == 1):
 				var e = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
 				var converted = abstractToString(ctx, e, p);
-				if (converted != null) return converted;
+				if (converted != null) return AKExpr(converted);
 			case EField(e1, "match", _) if (el.length == 1):
 				// `e.match(pattern)` on an enum is sugar for `switch e { case pattern: true; case _: false;
 				// }`.
@@ -297,7 +301,7 @@ class Calls {
 				if (hasEnumMatch(et.type)) {
 					var cases:Array<SwitchCase> = [{values: [el[0]], guard: null, expr: new Expr(EConst(CIdent("true")), p), pos: p}];
 					var def = {e: new Expr(EConst(CIdent("false")), p), pos: p};
-					return Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p);
+					return AKExpr(Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p));
 				}
 			case EField(e1, "bind", _):
 				// `f.bind(args)` partial application: when f is a function, bind the given args and return
@@ -305,13 +309,13 @@ class Calls {
 				// closure over the missing ones (`_` or omitted).
 				var fe = try Typer.typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) null;
 				if (fe != null) switch (TypeFunctions.follow(fe.type)) {
-					case TFun(sig): return typeBind(ctx, fe, sig, el, p);
+					case TFun(sig): return AKExpr(typeBind(ctx, fe, sig, el, p));
 					case _:
 				}
 			case _:
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
-		return buildCall(ctx, acc, el, withType, p);
+		return buildCallAccess(ctx, acc, el, withType, p);
 	}
 
 	static function abstractToString(ctx:TyperContext, e:TExpr, p:Position):Null<TExpr> {
@@ -402,6 +406,20 @@ class Calls {
 		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [v, infos]), p), withType);
 	}
 
+	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):AccessKind {
+		return switch (acc) {
+			case AKSafeNav(sn):
+				AKSafeNav({
+					pos: sn.pos,
+					base: sn.base,
+					tempVar: sn.tempVar,
+					access: buildCallAccess(ctx, sn.access, el, withType, p)
+				});
+			case _:
+				AKExpr(buildCall(ctx, acc, el, withType, p));
+		};
+	}
+
 	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
@@ -426,12 +444,7 @@ class Calls {
 				// resulting value.
 				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
 			case AKSafeNav(sn):
-				Typer.accGet(ctx, AKSafeNav({
-					pos: sn.pos,
-					base: sn.base,
-					tempVar: sn.tempVar,
-					access: AKExpr(buildCall(ctx, sn.access, el, withType, p))
-				}));
+				Typer.accGet(ctx, buildCallAccess(ctx, acc, el, withType, p));
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
 		};
 	}
