@@ -146,7 +146,15 @@ class EvalMacro {
 		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type.
 		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, TypeFunctions.extractParamTypes(curBuildClass.params))));
 		reg2("getLocalClass", "get_local_class", function(a) return curBuildClass == null ? VNull : encodeClassRef(ec, curBuildClass));
-		reg2("makePosition", "make_position", function(a) {
+		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) {
+			var info = a.length > 0 ? a[0] : VNull;
+			var m = new Map<Int, EvalValue>();
+			m.set(EvalHash.hash("file"), EvalField.field(ec, info, EvalHash.hash("file")));
+			m.set(EvalHash.hash("min"), EvalField.field(ec, info, EvalHash.hash("min")));
+			m.set(EvalHash.hash("max"), EvalField.field(ec, info, EvalHash.hash("max")));
+			return VObject(new VObject([], ODictionary(m)));
+		});
+		regBuiltin(ec, "haxe.macro.Context", "make_position", function(a) {
 			var m = new Map<Int, EvalValue>();
 			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
 			m.set(EvalHash.hash("min"), a.length > 0 ? a[0] : VInt(0));
@@ -183,10 +191,11 @@ class EvalMacro {
 		});
 		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
-			var key = EvalHash.hash(strOf(a[0]));
+			var name = strOf(a[0]);
+			var key = EvalHash.hash(name);
 			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
 			if (list != null) for (e in list) if (e.name == key) return e.v;
-			throw new TypingError("Macro API not implemented: " + strOf(a[0]), curPos);
+			throw new TypingError("Macro API not implemented: " + name, curPos);
 		});
 		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
 	}
