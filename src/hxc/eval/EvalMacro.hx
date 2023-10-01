@@ -741,16 +741,50 @@ class EvalMacro {
 	// receives the argument's constant value. Non-constant value arguments fall back to the reified
 	// expression.
 	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>):EvalValue {
-		if (pt != null && !isExprParam(pt)) switch (e.expr) {
-			case EConst(CString(s, _)): return mkString(s);
-			case EConst(CInt(s, _)): var n = Std.parseInt(s); return VInt(n == null ? 0 : n);
-			case EConst(CFloat(s, _)): return VFloat(Std.parseFloat(s));
-			case EConst(CIdent("true")): return VTrue;
-			case EConst(CIdent("false")): return VFalse;
-			case EConst(CIdent("null")): return VNull;
-			case _:
+		if (pt != null && !isExprParam(pt)) {
+			var c = macroConstArg(ec, e);
+			if (c.ok) return c.value;
 		}
 		return encodeExpr(ec, e);
+	}
+
+	static function macroConstArg(ec:EvalContext, e:Expr):{ok:Bool, value:EvalValue} {
+		function no():{ok:Bool, value:EvalValue} return {ok: false, value: VNull};
+		return switch (e.expr) {
+			case EConst(CString(s, _)):
+				{ok: true, value: mkString(s)};
+			case EConst(CInt(s, _)):
+				var n = Std.parseInt(s);
+				{ok: true, value: VInt(n == null ? 0 : n)};
+			case EConst(CFloat(s, _)):
+				{ok: true, value: VFloat(Std.parseFloat(s))};
+			case EConst(CIdent("true")):
+				{ok: true, value: VTrue};
+			case EConst(CIdent("false")):
+				{ok: true, value: VFalse};
+			case EConst(CIdent("null")):
+				{ok: true, value: VNull};
+			case EParenthesis(e1) | ECast(e1, _) | EMeta(_, e1):
+				macroConstArg(ec, e1);
+			case EArrayDecl(el):
+				var values:Array<EvalValue> = [];
+				for (x in el) {
+					var cv = macroConstArg(ec, x);
+					if (!cv.ok) return no();
+					values.push(cv.value);
+				}
+				{ok: true, value: VArray(new VArray(values, values.length))};
+			case EObjectDecl(fields):
+				var m = new Map<Int, EvalValue>();
+				for (f in fields) {
+					var cv = macroConstArg(ec, f.expr);
+					if (!cv.ok) return no();
+					m.set(EvalHash.hash(f.name), cv.value);
+				}
+				{ok: true, value: VObject(new VObject([], ODictionary(m)))};
+			case _:
+				no();
+		}
 	}
 
 	static function restElemType(t:T):Null<T> {

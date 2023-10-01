@@ -77,6 +77,22 @@ class EvalPrototype {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasClassFieldFlag(cf, CfGeneric);
 	}
 
+	static function nativeFieldName(cf:TClassField):Null<String> {
+		return try {
+			var meta = TypeFunctions.getMeta(":native", cf.meta);
+			switch (meta.params.length > 0 ? meta.params[0].expr : null) {
+				case EConst(CString(s, _)): s;
+				case _: null;
+			}
+		} catch (_:Dynamic) null;
+	}
+
+	static function addNameAlias(pnames:Map<Int, Int>, cf:TClassField, idx:Int):Void {
+		var native = nativeFieldName(cf);
+		if (native != null && native != "" && native != cf.name)
+			pnames.set(EvalHash.hash(native), idx);
+	}
+
 	// Install native builtins for a type (extern stdlib classes get their fields from here).
 	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
 		if (list == null) return;
@@ -405,13 +421,16 @@ class EvalPrototype {
 					case Method(_):
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
-							pnames.set(EvalHash.hash(cf.name), pfields.length);
+							var idx = pfields.length;
+							pnames.set(EvalHash.hash(cf.name), idx);
+							addNameAlias(pnames, cf, idx);
 							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
 							pfields.push(VFunction(makeFunction(ctx, tf, false, info), true));
 						}
 					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
+						addNameAlias(pnames, cf, idx);
 						pfields.push(VNull);
 						var init = cf.expr;
 						delays.push(function(proto) {
@@ -430,7 +449,9 @@ class EvalPrototype {
 						});
 					// A physical field without an initializer still occupies a slot.
 					case _ if (TypeFunctions.isPhysicalField(cf)):
-						pnames.set(EvalHash.hash(cf.name), pfields.length);
+						var idx = pfields.length;
+						pnames.set(EvalHash.hash(cf.name), idx);
+						addNameAlias(pnames, cf, idx);
 						pfields.push(VNull);
 					case _:
 				}
@@ -460,14 +481,18 @@ class EvalPrototype {
 				case Method(_):
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
-						pnames.set(EvalHash.hash(cf.name), pfields.length);
+						var idx = pfields.length;
+						pnames.set(EvalHash.hash(cf.name), idx);
+						addNameAlias(pnames, cf, idx);
 						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
 						pfields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						// A dynamic method is reassignable per instance, so it also occupies an instance
 						// slot defaulting
 						// to the same function.
 						if (cf.kind.match(Method(MethDynamic))) {
-							pinstNames.set(EvalHash.hash(cf.name), pinstFields.length);
+							var instIdx = pinstFields.length;
+							pinstNames.set(EvalHash.hash(cf.name), instIdx);
+							addNameAlias(pinstNames, cf, instIdx);
 							pinstFields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						} else {
 							// A plain override of an inherited dynamic method must replace that inherited
@@ -480,7 +505,9 @@ class EvalPrototype {
 						pfields.push(VNull);
 					}
 				case Var(_) if (TypeFunctions.isPhysicalField(cf)):
-					pinstNames.set(EvalHash.hash(cf.name), pinstFields.length);
+					var idx = pinstFields.length;
+					pinstNames.set(EvalHash.hash(cf.name), idx);
+					addNameAlias(pinstNames, cf, idx);
 					pinstFields.push(VNull);
 				case _:
 			}
