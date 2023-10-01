@@ -1107,7 +1107,7 @@ class EvalMacro {
 		return {
 			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
 			evFinal: boolOf(EvalField.field(ec, v, EvalHash.hash("isFinal"))),
-			evStatic: false,
+			evStatic: boolOf(EvalField.field(ec, v, EvalHash.hash("isStatic"))),
 			evType: { var tv = EvalField.field(ec, v, EvalHash.hash("type")); tv == VNull ? null : decodeTypeHint(ec, tv, dp); },
 			evExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
 			evMeta: []
@@ -1358,6 +1358,7 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(ev.evName.name));
 		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
+		fields.set(EvalHash.hash("isStatic"), ev.evStatic ? VTrue : VFalse);
 		fields.set(EvalHash.hash("type"), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType.ct));
 		fields.set(EvalHash.hash("expr"), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
 		return VObject(new VObject([], ODictionary(fields)));

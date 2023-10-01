@@ -449,7 +449,7 @@ class Calls {
 		};
 	}
 
-	static function typedExprToSyntax(e:TExpr):Expr {
+	public static function typedExprToSyntax(e:TExpr):Expr {
 		var p = e.pos;
 		return switch (e.expr) {
 			case TConst(TInt(i)):

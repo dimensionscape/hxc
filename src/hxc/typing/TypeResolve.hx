@@ -406,7 +406,8 @@ class TypeResolve {
 			// model that `this`-prepend here so the type has the leading arg
 			// unifiesToField/unifiesFromField expect (TFun((_,_,ta)::_,_)).
 			var isStatic = false;
-			for (acc in cff.cffAccess) switch (acc.access) { case AStatic: isStatic = true; case _: }
+			var isMacro = false;
+			for (acc in cff.cffAccess) switch (acc.access) { case AStatic: isStatic = true; case AMacro: isMacro = true; case _: }
 			var isAbstractMember = !isStatic;
 			switch (cff.cffKind) {
 				case FFun(fd):
@@ -430,7 +431,7 @@ class TypeResolve {
 					var ft = TFun({args: args, ret: ret});
 					var cf = TypeFunctions.mkField(cff.cffName.name, ft, cff.cffPos, cff.cffName.pos, true, true);
 					cf.meta = cff.cffMeta;
-					cf.kind = Method(MethInline);
+					cf.kind = Method(isMacro ? MethMacro : MethInline);
 					cf.params = methodParams;
 					// Abstract-impl field flag (check_abstract sets CfImpl on @:to fields).
 					TypeFunctions.addClassFieldFlag(cf, CfImpl);

@@ -103,15 +103,23 @@ class Typer {
 	}
 
 	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		if (hxc.eval.EvalMacro.isMacroField(cf)) return callMacroCast(ctx, implC, cf, e, t, p);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, [e], t, p);
 	}
 
 	static function callImplCastDirect(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		if (hxc.eval.EvalMacro.isMacroField(cf)) return callMacroCast(ctx, implC, cf, e, t, p);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return TypeFunctions.mk(TCall(staticExpr, [e]), t, p);
+	}
+
+	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
+		return castOrUnify(ctx, t, hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(e)], WithTypeTools.withType(t), p), p);
 	}
 
 	static function isVoid(t:T):Bool {
