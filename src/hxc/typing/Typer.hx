@@ -69,8 +69,31 @@ class Typer {
 
 	static function prefersAbstractCast(from:T, to:T):Bool {
 		return switch [TypeFunctions.follow(from), TypeFunctions.follow(to)] {
-			case [TAbstract(a, _), TDynamic(_)] if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+			case [TAbstract(a, tl), _] if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				hasDirectToCast(a, tl, to);
+			case _:
+				false;
+		}
+	}
+
+	static function hasDirectToCast(a:TAbstract, tl:Array<T>, to:T):Bool {
+		for (castField in a.toField) {
+			var castType = TypeFunctions.applyParams(a.params, tl, castField.t);
+			if (sameDirectCastTarget(castType, to)) return true;
+		}
+		return false;
+	}
+
+	static function sameDirectCastTarget(a:T, b:T):Bool {
+		return switch [TypeFunctions.follow(a), TypeFunctions.follow(b)] {
+			case [TDynamic(_), TDynamic(_)]:
 				true;
+			case [TAbstract(a1, _), TAbstract(a2, _)]:
+				a1 == a2;
+			case [TInst(c1, _), TInst(c2, _)]:
+				c1 == c2;
+			case [TEnum(e1, _), TEnum(e2, _)]:
+				e1 == e2;
 			case _:
 				false;
 		}
