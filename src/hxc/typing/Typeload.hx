@@ -425,7 +425,7 @@ class Typeload {
 		ctx.currentModule = saved;
 	}
 
-	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool):T {
+	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
 		// Look up a bare type-parameter name before resolving a module.
 		if (t.tpackage.length == 0 && t.tsub == null) {
 			var pt:Null<T> = null;
@@ -447,7 +447,7 @@ class Typeload {
 		ensureResolved(ctx, TypeFunctions.tInfos(mt).module);
 		var types = TypeFunctions.tInfos(mt).params;
 		var declPath = TypeFunctions.tPath(mt);
-		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p);
+		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric);
 		var isGenericBuild = switch (mt) {
 			case TClassDecl(c): switch (c.kind) { case KGenericBuild(_): true; case _: false; }
 			case _: false;
@@ -517,9 +517,23 @@ class Typeload {
 	// Do_build_instance (subset): for the non-generic case it is just
 	// `apply_params decl_params actual_params (type_of_module_type mt)`-style construction.
 	// TInst/TEnum/TType/TAbstract with the given params. We build directly.
-	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position):T {
+	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool):T {
 		return switch (mt) {
-			case TClassDecl(c): TInst(c, params);
+			case TClassDecl(c):
+				switch (c.kind) {
+					case KGeneric if (specializeGeneric && canSpecializeGeneric(params)):
+						var fallback = TInst(c, params);
+						var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(fallback));
+						r.set(TypeFunctions.lazyWait(function():T {
+							r.set(TypeFunctions.lazyProcessing(function():T return fallback));
+							var t = TInst(specializeGenericClass(ctx, c, params, p), []);
+							r.set(TypeFunctions.lazyAvailable(t));
+							return t;
+						}));
+						TLazy(r);
+					case _:
+						TInst(c, params);
+				}
 			case TEnumDecl(e): TEnum(e, params);
 			case TTypeDecl(td): TType(td, params);
 			case TAbstractDecl(a): TAbstract(a, params);
@@ -529,6 +543,50 @@ class Typeload {
 	static function hasOpenMono(params:TParams):Bool {
 		for (t in params) if (TypeFunctions.hasMono(t)) return true;
 		return false;
+	}
+
+	static function hasTypeParameter(t:T):Bool {
+		return switch (t) {
+			case TInst(c, tl):
+				switch (c.kind) {
+					case KTypeParameter(_): true;
+					case _: hasTypeParameterParams(tl);
+				}
+			case TEnum(_, tl) | TType(_, tl) | TAbstract(_, tl):
+				hasTypeParameterParams(tl);
+			case TFun(sig):
+				if (hasTypeParameter(sig.ret)) true
+				else {
+					var found = false;
+					for (a in sig.args) if (hasTypeParameter(a.t)) {
+						found = true;
+						break;
+					}
+					found;
+				}
+			case TAnon(a):
+				var found = false;
+				for (f in a.fields) if (hasTypeParameter(f.type)) {
+					found = true;
+					break;
+				}
+				found;
+			case TDynamic(t):
+				t != null && hasTypeParameter(t);
+			case TLazy(f):
+				false;
+			case TMono(_):
+				false;
+		}
+	}
+
+	static function hasTypeParameterParams(params:TParams):Bool {
+		for (t in params) if (hasTypeParameter(t)) return true;
+		return false;
+	}
+
+	static function canSpecializeGeneric(params:TParams):Bool {
+		return !hasOpenMono(params) && !hasTypeParameterParams(params);
 	}
 
 	static function genericKey(c:TClass, params:TParams):String {
@@ -629,13 +687,56 @@ class Typeload {
 		}, et, e.pos);
 	}
 
-	static function cloneField(c:TClass, params:TParams, f:TClassField):TClassField {
-		var subst = function(t:T) return TypeFunctions.applyParams(c.params, params, t);
+	static function genericSubstituteType(ctx:Context, c:TClass, params:TParams, p:Position, t:T):T {
+		var applied = TypeFunctions.applyParams(c.params, params, t);
+		function loop(t:T):T {
+			return switch (t) {
+				case TInst(gc, tl):
+					var tl2 = [for (x in tl) loop(x)];
+					switch (gc.kind) {
+						case KGeneric if (gc != c && canSpecializeGeneric(tl2)):
+							TInst(specializeGenericClass(ctx, gc, tl2, p), []);
+						case _:
+							TInst(gc, tl2);
+					}
+				case TEnum(e, tl):
+					TEnum(e, [for (x in tl) loop(x)]);
+				case TType(td, tl):
+					TType(td, [for (x in tl) loop(x)]);
+				case TAbstract(a, tl):
+					TAbstract(a, [for (x in tl) loop(x)]);
+				case TFun(sig):
+					TFun({args: [for (a in sig.args) {name: a.name, opt: a.opt, t: loop(a.t)}], ret: loop(sig.ret)});
+				case TAnon(a):
+					var fields = new StringMap<TClassField>();
+					for (k in a.fields.keys()) {
+						var nf = TypeFunctions.copyField(a.fields.get(k));
+						nf.type = loop(nf.type);
+						fields.set(k, nf);
+					}
+					TAnon({fields: fields, status: a.status});
+				case TLazy(f):
+					loop(TypeFunctions.lazyType(f));
+				case TMono(r):
+					switch (r.type) {
+						case null: t;
+						case some: loop(some);
+					}
+				case TDynamic(t):
+					TDynamic(t == null ? null : loop(t));
+			}
+		}
+		return loop(applied);
+	}
+
+	static function cloneField(ctx:Context, c:TClass, params:TParams, f:TClassField):TClassField {
+		var subst = function(t:T) return genericSubstituteType(ctx, c, params, f.pos, t);
+		if (f.expr == null) TypeFields.forceFieldBody(ctx, c, f);
 		var cf = TypeFunctions.copyField(f);
 		cf.type = subst(f.type);
 		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map());
 		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map());
-		cf.overloads = [for (o in f.overloads) cloneField(c, params, o)];
+		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, params, o)];
 		return cf;
 	}
 
@@ -655,18 +756,24 @@ class Typeload {
 		cg.kind = KGenericInstance(c, params);
 		cg.flags = c.flags;
 		cg.usings = c.usings;
-		cg.superClass = c.superClass == null ? null : {c: c.superClass.c, params: [for (t in c.superClass.params) TypeFunctions.applyParams(c.params, params, t)]};
-		cg.interfaces = [for (i in c.interfaces) {c: i.c, params: [for (t in i.params) TypeFunctions.applyParams(c.params, params, t)]}];
-		cg.dynamicType = c.dynamicType == null ? null : TypeFunctions.applyParams(c.params, params, c.dynamicType);
-		cg.arrayAccess = c.arrayAccess == null ? null : TypeFunctions.applyParams(c.params, params, c.arrayAccess);
-		if (c.constructor != null) cg.constructor = cloneField(c, params, c.constructor);
+		genericInstances.set(key, cg);
+		cg.superClass = c.superClass == null ? null : switch (genericSubstituteType(ctx, c, params, p, TInst(c.superClass.c, c.superClass.params))) {
+			case TInst(cs, pl): {c: cs, params: pl};
+			case _: null;
+		};
+		cg.interfaces = [for (i in c.interfaces) switch (genericSubstituteType(ctx, c, params, p, TInst(i.c, i.params))) {
+			case TInst(ci, pl): {c: ci, params: pl};
+			case _: throw "generic interface substitution failed";
+		}];
+		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, params, p, c.dynamicType);
+		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, params, p, c.arrayAccess);
+		if (c.constructor != null) cg.constructor = cloneField(ctx, c, params, c.constructor);
 		for (f in c.orderedFields) {
-			var cf = cloneField(c, params, f);
+			var cf = cloneField(ctx, c, params, f);
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
 		}
 		mg.types = [TClassDecl(cg)];
-		genericInstances.set(key, cg);
 		ctx.modules.push(mg);
 		ctx.types.push(TClassDecl(cg));
 		ctx.moduleLut.set(Context.pathKey(path), mg);

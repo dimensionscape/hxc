@@ -107,10 +107,10 @@ class TypeResolve {
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
-				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false);
+				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, false);
 				checkHerit(ctx, c, t, true, pt.pos);
 			case HImplements(pt):
-				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false);
+				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, false);
 				checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
