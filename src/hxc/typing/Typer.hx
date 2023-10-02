@@ -1668,7 +1668,7 @@ class Typer {
 			};
 			case _: null;
 		};
-		if (tkey == null) switch (el[0].expr) {
+		if (tkey == null || mapKeyNeedsLiteralInference(tkey)) switch (el[0].expr) {
 			case EBinop(OpArrow, k, _): tkey = typeExpr(ctx, k, WithTypeTools.value).type;
 			case _:
 		}
@@ -1686,6 +1686,15 @@ class Typer {
 		}
 		stmts.push(new Expr(EConst(CIdent(tmp)), p));
 		return typeExpr(ctx, new Expr(EBlock(stmts), p), withType);
+	}
+
+	static function mapKeyNeedsLiteralInference(t:T):Bool {
+		var selector = TypeFunctions.followWithAbstracts(t);
+		if (TypeFunctions.hasMono(selector)) return true;
+		return switch (TypeFunctions.follow(selector)) {
+			case TInst(c, _): switch (c.kind) { case KTypeParameter(_): true; case _: false; }
+			case _: false;
+		};
 	}
 
 	static function pickMapImpl(tkey:Null<T>):String {

@@ -273,7 +273,7 @@ class TypeUnification {
 		switch (constr) {
 			case MMono(m2, s):
 				journalMono(m2);
-				m2.upConstraints = [{t: TMono(m), name: s}].concat(m.upConstraints);
+				m2.upConstraints = [{t: TMono(m), name: s}].concat(m2.upConstraints);
 			case _:
 		}
 	}

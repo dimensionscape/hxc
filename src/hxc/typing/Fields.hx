@@ -78,8 +78,9 @@ class Fields {
 
 	static function fieldTypeC(c:TClass, tl:TParams, f:TClassField):T {
 		if (f.params.length == 0) return TypeFunctions.applyParams(c.params, tl, f.type);
-		var monos:TParams = [for (_ in f.params) TypeFunctions.mkMono()];
-		return TypeFunctions.applyParams(c.params, tl, TypeFunctions.applyParams(f.params, monos, f.type));
+		function mapClassParams(t:T):T return TypeFunctions.applyParams(c.params, tl, t);
+		var monos:TParams = TypeUnification.spawnConstrainedMonos(mapClassParams, f.params);
+		return mapClassParams(TypeFunctions.applyParams(f.params, monos, f.type));
 	}
 
 	static function classField(c:TClass, tl:TParams, i:String):{c2:Null<TClassWithParams>, t:T, f:TClassField} {

@@ -454,7 +454,7 @@ class Typeload {
 
 		// Allow_no_params && no syntactic params -> spawn constrained monos for each param.
 		if (allowNoParams && t.tparams.length == 0 && !isRestGenericBuild) {
-			var monos = [for (_ in types) spawnMonomorph()];
+			var monos = hxc.core.TypeUnification.spawnConstrainedMonos(function(t) return t, types);
 			return build(monos);
 		}
 

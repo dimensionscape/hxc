@@ -122,6 +122,10 @@ class EvalMacro {
 		});
 		reg2("follow", "follow", function(a) return a[0]);
 		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
+		reg2("defineType", "define_type", function(a) {
+			defineMacroType(ec, com, a[0], a.length > 1 ? a[1] : VNull);
+			return VNull;
+		});
 		// Context.defineModule(path, types, imports, usings): build the module from decoded type
 		// definitions and inject it.
 		reg2("defineModule", "define_module", function(a) {
@@ -217,6 +221,83 @@ class EvalMacro {
 	static function pathFromDotted(s:String):hxc.core.Globals.Path {
 		var parts = s.split(".");
 		return {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+	}
+
+	static function defineMacroType(ec:EvalContext, com:Context, v:EvalValue, moduleDependency:EvalValue):Void {
+		var dp = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
+		var path = macroTypeDefinitionPath(ec, v);
+		var td = decodeTypeDefinition(ec, v, dp);
+		var hasMacroFields = isMacroClassDecl(td.decl);
+		var hostModule = hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos);
+		hostModule.extra.kind = MFake;
+		addMacroTypeDependency(com, hostModule, moduleDependency, dp);
+		hxc.typing.TypeResolve.resolveModule(com, hostModule);
+		forceModuleClassFields(com, hostModule);
+
+		if (!com.isMacro && hasMacroFields) {
+			if (macroCom == null) {
+				macroCom = com.cloneForMacro();
+				hxc.context.ModuleLoader.attach(macroCom);
+				hxc.context.ModuleLoader.initBasicTypes(macroCom);
+			}
+			var macroTd = decodeTypeDefinition(ec, v, dp);
+			var macroModule = hxc.context.ModuleLoader.defineTypeDecl(macroCom, path, macroTd.decl, macroTd.pos);
+			macroModule.extra.kind = MMacro;
+			addMacroTypeDependency(macroCom, macroModule, moduleDependency, dp);
+			hxc.typing.TypeResolve.resolveModule(macroCom, macroModule);
+			forceModuleClassFields(macroCom, macroModule);
+			macroCtx = null;
+			lastModuleCount = -1;
+		}
+	}
+
+	static function addMacroTypeDependency(com:Context, m:ModuleDef, moduleDependency:EvalValue, p:Position):Void {
+		if (moduleDependency != VNull) {
+			var dep = hxc.context.ModuleLoader.loadModule(com, pathFromDotted(strOf(moduleDependency)), p);
+			TypeFunctions.addDependency(m, dep);
+		} else if (com.currentModule != null) {
+			TypeFunctions.addDependency(m, com.currentModule);
+		}
+	}
+
+	static function macroTypeDefinitionPath(ec:EvalContext, v:EvalValue):hxc.core.Globals.Path {
+		var pack = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("pack")))) strOf(pv)];
+		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		if (pack.length > 0) {
+			var last = pack[pack.length - 1];
+			if (startsUppercaseIdentifier(last)) {
+				pack = pack.slice(0, pack.length - 1);
+				name = last;
+			}
+		}
+		return {pack: pack, name: name};
+	}
+
+	static function startsUppercaseIdentifier(s:String):Bool {
+		if (s.length == 0) return false;
+		var c = s.charCodeAt(0);
+		return c >= "A".code && c <= "Z".code;
+	}
+
+	static function isMacroClassDecl(td:TypeDef):Bool {
+		return switch (td) {
+			case EClass(d):
+				for (f in d.dData) {
+					for (m in f.cffMeta) if (m.name == ":macro") return true;
+					for (a in f.cffAccess) if (a.access == AMacro) return true;
+				}
+				false;
+			case _:
+				false;
+		}
+	}
+
+	static function forceModuleClassFields(com:Context, m:ModuleDef):Void {
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c):
+				hxc.typing.TypeFields.forceClassFields(com, c);
+			case _:
+		}
 	}
 
 	static function splitImportPath(parts:Array<String>):Null<{modulePath:hxc.core.Globals.Path, sub:Null<String>, field:Null<String>}> {
@@ -999,7 +1080,7 @@ class EvalMacro {
 					ret: decodeType(ec, args[1])
 				});
 			case "TAnonymous":
-				throw new TypingError("Macro decode: anonymous types are not available", curPos);
+				decodeAnonRef(ec, args[0]);
 			case "TDynamic":
 				args[0] == VNull ? TDynamic(null) : TDynamic(decodeType(ec, args[0]));
 			case "TLazy":
@@ -1012,6 +1093,30 @@ class EvalMacro {
 			case other:
 				throw new TypingError("Macro decode: unhandled Type " + other, curPos);
 		}
+	}
+
+	static function decodeAnonRef(ec:EvalContext, v:EvalValue):T {
+		var payload = refGet(ec, v);
+		var fields = new haxe.ds.StringMap<TClassField>();
+		for (fv in arrOf(EvalField.field(ec, payload, EvalHash.hash("fields")))) {
+			var cf = decodeTypedClassField(ec, fv);
+			fields.set(cf.name, cf);
+		}
+		return TypeFunctions.mkAnon(new hxc.core.Ref(Closed), fields);
+	}
+
+	static function decodeTypedClassField(ec:EvalContext, v:EvalValue):TClassField {
+		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
+		var namePos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), pos);
+		var cf = TypeFunctions.mkField(
+			strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
+			decodeType(ec, EvalField.field(ec, v, EvalHash.hash("type"))),
+			pos,
+			namePos,
+			boolOf(EvalField.field(ec, v, EvalHash.hash("isPublic")))
+		);
+		cf.meta = [];
+		return cf;
 	}
 
 	static function decodeMonoRef(ec:EvalContext, v:EvalValue):TMono {
@@ -1267,8 +1372,9 @@ class EvalMacro {
 		return {path: path, mode: mode};
 	}
 
-	static function decodeClassFlags(ec:EvalContext, kind:EvalValue, dp:Position):Array<ClassFlag> {
+	static function decodeClassFlags(ec:EvalContext, kind:EvalValue, isExtern:Bool, dp:Position):Array<ClassFlag> {
 		var flags:Array<ClassFlag> = [];
+		if (isExtern) flags.push(HExtern);
 		switch (ctorName(ec, kind)) {
 			case "TDClass":
 				var a = eargs(kind);
@@ -1282,12 +1388,45 @@ class EvalMacro {
 		return flags;
 	}
 
+	static function decodeAbstractFlags(ec:EvalContext, kind:EvalValue, isExtern:Bool, dp:Position):Array<AbstractFlag> {
+		var flags:Array<AbstractFlag> = [];
+		var a = eargs(kind);
+		if (a.length > 0 && a[0] != VNull) flags.push(AbOver(decodeTypeHint(ec, a[0], dp)));
+		if (a.length > 1 && a[1] != VNull) for (fv in arrOf(a[1])) switch (ctorName(ec, fv)) {
+			case "AbEnum":
+				flags.push(AbEnum);
+			case "AbFrom":
+				flags.push(AbFrom(decodeTypeHint(ec, eargs(fv)[0], dp)));
+			case "AbTo":
+				flags.push(AbTo(decodeTypeHint(ec, eargs(fv)[0], dp)));
+			case _:
+				flags.push(AbFrom(decodeTypeHint(ec, fv, dp)));
+		}
+		if (a.length > 2 && a[2] != VNull) for (fv in arrOf(a[2])) flags.push(AbFrom(decodeTypeHint(ec, fv, dp)));
+		if (a.length > 3 && a[3] != VNull) for (tv in arrOf(a[3])) flags.push(AbTo(decodeTypeHint(ec, tv, dp)));
+		if (isExtern) flags.push(AbExtern);
+		return flags;
+	}
+
 	static function decodeTypeDefinition(ec:EvalContext, v:EvalValue, dp:Position):TypeDecl {
 		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
 		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalHash.hash("fields")))) decodeField(ec, fv, dp)];
-		var flags = decodeClassFlags(ec, EvalField.field(ec, v, EvalHash.hash("kind")), dp);
-		var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: [], dMeta: [], dFlags: flags, dData: fields};
-		return {decl: EClass(def), pos: dp};
+		var kind = EvalField.field(ec, v, EvalHash.hash("kind"));
+		var isExtern = boolOf(EvalField.field(ec, v, EvalHash.hash("isExtern")));
+		var params = decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp);
+		return switch (ctorName(ec, kind)) {
+			case "TDClass":
+				var flags = decodeClassFlags(ec, kind, isExtern, dp);
+				var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				{decl: EClass(def), pos: dp};
+			case "TDAbstract":
+				var flags = decodeAbstractFlags(ec, kind, isExtern, dp);
+				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				{decl: EAbstract(def), pos: dp};
+			case other:
+				throw new TypingError("defineType supports only TDClass/TDAbstract, got " + other, dp);
+		};
 	}
 
 	static function decodeConstant(ec:EvalContext, v:EvalValue):Constant {

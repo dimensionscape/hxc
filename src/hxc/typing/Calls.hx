@@ -518,7 +518,7 @@ class Calls {
 	// A generic method's own type parameters become fresh monomorphs for the call.
 	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr):TExpr {
 		if (cf.params.length == 0) return ce;
-		var monos:TParams = [for (_ in cf.params) Typer.spawnMonomorph(ctx, ce.pos)];
+		var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
 		return TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos);
 	}
 
@@ -527,7 +527,7 @@ class Calls {
 	static function monomorphizeLocalParams(ctx:TyperContext, ce:TExpr):TExpr {
 		return switch (ce.expr) {
 			case TLocal(v) if (v.extra != null && v.extra.params.length > 0):
-				var monos:TParams = [for (_ in v.extra.params) Typer.spawnMonomorph(ctx, ce.pos)];
+				var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, v.extra.params);
 				TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(v.extra.params, monos, ce.type), ce.pos);
 			case _: ce;
 		};

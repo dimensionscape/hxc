@@ -756,7 +756,7 @@ class ModuleLoader {
 		if (cur == null) return null;
 
 		for (mt in cur.types) {
-			if (!TypeFunctions.tInfos(mt).isPrivate && TypeFunctions.tInfos(mt).path.name == name) return mt;
+			if (TypeFunctions.tInfos(mt).path.name == name) return mt;
 		}
 
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
