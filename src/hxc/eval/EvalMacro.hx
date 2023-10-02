@@ -769,6 +769,7 @@ class EvalMacro {
 		var isInstance = false;
 		var path = switch (fa.host) {
 			case FHStatic(c): c.path;
+			case FHAbstract(_, _, c): c.path;
 			case FHInstance(c, _):
 				isInstance = true;
 				c.path;
