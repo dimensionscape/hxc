@@ -11,10 +11,29 @@ import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 
 class Fields {
+	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
+		if (!ctx.untypedMode && !TypeFunctions.hasClassFieldFlag(f, CfPublic) && !TypeFunctions.extendsClass(ctx.curclass, c))
+			throw new TypingError("Cannot access private field " + f.name, p);
+	}
+
+	static function checkAbstractFieldAccess(ctx:TyperContext, a:TAbstract, f:TClassField, p:Position):Void {
+		if (a.impl != null && TypeFunctions.hasClassFieldFlag(f, CfImpl))
+			checkFieldAccess(ctx, a.impl, f, p);
+	}
+
 	public static function fieldAccess(ctx:TyperContext, mode:AccessMode, f:TClassField, fh:FieldHost, e:TExpr, pfield:Position):AccessKind {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
 		forceFieldType(ctx, f, fh);
+		switch (fh) {
+			case FHStatic(c):
+				switch (c.kind) {
+					case KAbstractImpl(_):
+						checkFieldAccess(ctx, c, f, pfield);
+					case _:
+				}
+			case _:
+		}
 		// Each field access consumes one @:bypassAccessor from the pending count.
 		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;
 		function makeAccess(isInline:Bool):FieldAccess {
@@ -129,12 +148,15 @@ class Fields {
 					case _:
 						var f = a.fields.get(i);
 						if (f != null) {
+							if (TypeFunctions.hasClassFieldFlag(f, CfImpl) && !TypeFunctions.hasClassFieldFlag(f, CfEnum))
+								throw new TypingError("Cannot access non-static abstract field statically", pfield);
 							switch (a.status.get()) {
 								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
 								case AbstractStatics(ab) if (ab.impl != null):
 									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) || TypeFunctions.hasClassFieldFlag(f, CfEnum))
 										? FHAbstract(ab, TypeFunctions.extractParamTypes(ab.params), ab.impl)
 										: FHStatic(ab.impl);
+									checkAbstractFieldAccess(ctx, ab, f, pfield);
 									fieldAccess(ctx, mode, f, host, e, pfield);
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
@@ -194,6 +216,7 @@ class Fields {
 				checkConstr(TypeUnification.classifyDownConstraints(r));
 			case TAbstract(a, params) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
+				if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl)) cf = null;
 				if (cf == null) {
 					var resolveCf = switch (mode) {
 						case MSet(_): a.write;
@@ -215,6 +238,7 @@ class Fields {
 				// A property (get/set accessors) dispatches through its accessor via fieldAccess (which
 				// yields AKUsingAccessor for an abstract host); other fields are a direct impl access.
 				var isProp = switch (cf.kind) { case Var(vk): vk.read.match(AccCall) || vk.write.match(AccCall); case _: false; };
+				checkAbstractFieldAccess(ctx, a, cf, pfield);
 				if (isProp) fieldAccess(ctx, mode, cf, FHAbstract(a, params, a.impl), e, pfield);
 				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
 			case TAbstract(_, _):

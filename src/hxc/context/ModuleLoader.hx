@@ -309,13 +309,14 @@ class ModuleLoader {
 						var implName = d.dName.name + "_Impl_";
 						var implPath:Path = {pack: m.path.pack.concat(["_" + m.path.name]), name: implName};
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
-							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: [],
+							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: d.dMeta,
 							dFlags: [HPrivate], dData: implFields
 						};
 						var implDecl:TypeDef = EClass(implDef);
 						var c = TypeFunctions.mkClass(m, implPath, p, p);
 						c.build = function():BuildState return Built;
 						c.module = m;
+						c.meta = d.dMeta;
 						c.isPrivate = true;
 						c.kind = KAbstractImpl(a);
 						TypeFunctions.addClassFlag(c, CFinal);
@@ -470,6 +471,7 @@ class ModuleLoader {
 				: (explicitPublic
 					|| TypeFunctions.hasClassFlag(c, CExtern)
 					|| TypeFunctions.hasClassFlag(c, CInterface)
+					|| TypeFunctions.hasMeta(":publicFields", c.meta)
 					|| (switch (c.kind) { case KModuleFields(_): true; case _: false; }));
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, isStatic);
 			cf.doc = cff.cffDoc;
