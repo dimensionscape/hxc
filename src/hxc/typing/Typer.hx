@@ -50,6 +50,10 @@ class Typer {
 
 	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
 		if (TypeUnification.fastEq(e.type, t)) return e;
+		if (prefersAbstractCast(e.type, t)) {
+			var casted = tryAbstractCast(ctx, e, t, p);
+			if (casted != null) return casted;
+		}
 		try {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
@@ -61,6 +65,15 @@ class Typer {
 
 	static function doesUnify(a:T, b:T):Bool {
 		return try { TypeUnification.unifyDefault(a, b); true; } catch (_:UnifyError) false;
+	}
+
+	static function prefersAbstractCast(from:T, to:T):Bool {
+		return switch [TypeFunctions.follow(from), TypeFunctions.follow(to)] {
+			case [TAbstract(a, _), TDynamic(_)] if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				true;
+			case _:
+				false;
+		}
 	}
 
 	// Implicit abstract conversion. The search is recursive: a declarative from/to type can expose a nested
