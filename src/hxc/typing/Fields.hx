@@ -134,8 +134,25 @@ class Fields {
 		return switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, tl):
 				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) {
-					var u = tryUsing(ctx, e, i, pfield);
-					if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+					var constrained:AccessKind = null;
+					switch (c.kind) {
+						case KTypeParameter(constraints):
+							for (t in constraints) switch (TypeFunctions.follow(t)) {
+								case TAbstract(_, _):
+									try {
+										constrained = typeField(ctx, TypeFunctions.mkCast(e, t, p), i, p, mode, withType);
+										break;
+									} catch (_:NotFound) {
+									} catch (_:TypingError) {
+									}
+								case _:
+							}
+						case _:
+					}
+					if (constrained != null) constrained else {
+						var u = tryUsing(ctx, e, i, pfield);
+						if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+					}
 				}
 			case TAnon(a):
 				switch (a.status.get()) {
