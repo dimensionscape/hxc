@@ -1591,10 +1591,46 @@ class Typer {
 		return null;
 	}
 
+	static function hasTypeParameter(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, params):
+				switch (c.kind) {
+					case KTypeParameter(_): true;
+					case _: hasTypeParameterParams(params);
+				}
+			case TEnum(_, params) | TType(_, params) | TAbstract(_, params):
+				hasTypeParameterParams(params);
+			case TFun(sig):
+				for (arg in sig.args) if (hasTypeParameter(arg.t)) return true;
+				hasTypeParameter(sig.ret);
+			case TAnon(a):
+				for (name in a.fields.keys()) if (hasTypeParameter(a.fields.get(name).type)) return true;
+				false;
+			case TLazy(f):
+				hasTypeParameter(TypeFunctions.lazyType(f));
+			case TDynamic(t):
+				t != null && hasTypeParameter(t);
+			case TMono(_):
+				false;
+		}
+	}
+
+	static function hasTypeParameterParams(params:Array<T>):Bool {
+		for (t in params) if (hasTypeParameter(t)) return true;
+		return false;
+	}
+
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		var t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, tp.path.tparams.length == 0);
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
+				var tl = switch (c.kind) {
+					case KGeneric if (tp.path.tparams.length == 0 && hasTypeParameterParams(tl)):
+						TypeUnification.spawnConstrainedMonos(function(t) return t, c.params);
+					case _:
+						tl;
+				}
+				var t = TInst(c, tl);
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
 				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
 				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
@@ -1609,7 +1645,13 @@ class Typer {
 					case _: {args: [], ret: ctx.com.basic.tvoid};
 				};
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
+				switch (c.kind) {
+					case KGeneric if (!TypeFunctions.hasMono(TInst(c, tl))):
+						var gc = Typeload.specializeGenericClass(ctx.com, c, tl, p);
+						TypeFunctions.mk(TNew(gc, [], r.el), TInst(gc, []), p);
+					case _:
+						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
+				}
 			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
 				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key type
 				// against each @:to cast's key-parameter constraint, then constructs that type. The

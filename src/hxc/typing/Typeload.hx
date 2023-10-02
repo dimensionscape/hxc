@@ -13,6 +13,8 @@ import haxe.ds.StringMap;
 
 class Typeload {
 	static final pNull = Position.nullPos;
+	static var genericInstanceId:Int = 0;
+	static var genericInstances:Map<String, TClass> = new Map();
 
 	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam):TypedTypeParam {
 		var n = tp.tpName.name;
@@ -517,17 +519,7 @@ class Typeload {
 	// TInst/TEnum/TType/TAbstract with the given params. We build directly.
 	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position):T {
 		return switch (mt) {
-			case TClassDecl(c):
-				// `ft`: the do_build_instance builder. For a `@:generic`
-				// class (kind = KGeneric) build the per-instantiation MONOMORPHIZED specialized
-				// class; otherwise the plain TInst. GATED strictly
-				// on KGeneric so non-generic instantiation is byte-for-byte unaffected.
-				switch (c.kind) {
-					case KGeneric if (!hasOpenMono(params)): TInst(c, params);
-					case KGeneric: TInst(c, params);
-					case KGenericBuild(_): TInst(c, params);
-					case _: TInst(c, params);
-				}
+			case TClassDecl(c): TInst(c, params);
 			case TEnumDecl(e): TEnum(e, params);
 			case TTypeDecl(td): TType(td, params);
 			case TAbstractDecl(a): TAbstract(a, params);
@@ -537,5 +529,149 @@ class Typeload {
 	static function hasOpenMono(params:TParams):Bool {
 		for (t in params) if (TypeFunctions.hasMono(t)) return true;
 		return false;
+	}
+
+	static function genericKey(c:TClass, params:TParams):String {
+		return Context.pathKey(c.path) + "_" + genericSuffix(params);
+	}
+
+	static function genericSuffix(params:TParams):String {
+		return [for (p in params) sanitizeGenericName(genericParamName(p))].join("_");
+	}
+
+	static function genericParamName(t:T):String {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, []): c.path.name;
+			case TInst(c, params): c.path.name + "_" + genericSuffix(params);
+			case TEnum(e, []): e.path.name;
+			case TEnum(e, params): e.path.name + "_" + genericSuffix(params);
+			case TAbstract(a, []): a.path.name;
+			case TAbstract(a, params): a.path.name + "_" + genericSuffix(params);
+			case TType(td, []): td.path.name;
+			case TType(td, params): td.path.name + "_" + genericSuffix(params);
+			case TDynamic(_): "Dynamic";
+			case TFun(_): "Function";
+			case TAnon(_): "Anon";
+			case TLazy(f): genericParamName(TypeFunctions.lazyType(f));
+			case TMono(_): "Unknown";
+		}
+	}
+
+	static function sanitizeGenericName(s:String):String {
+		var out = new StringBuf();
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
+			out.addChar(ok ? c : "_".code);
+		}
+		return out.toString();
+	}
+
+	static function cloneVar(v:TVar, subst:T->T, vars:Map<Int, TVar>):TVar {
+		var found = vars.get(v.id);
+		if (found != null) return found;
+		var nv = TypeFunctions.allocVar(v.kind, v.name, subst(v.type), v.pos);
+		nv.extra = v.extra;
+		nv.meta = v.meta;
+		nv.flags = v.flags;
+		vars.set(v.id, nv);
+		return nv;
+	}
+
+	static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>):TExpr {
+		function opt(eo:Null<TExpr>):Null<TExpr> return eo == null ? null : cloneExpr(eo, subst, vars);
+		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) cloneExpr(x, subst, vars)];
+		function fieldAccess(fa:TFieldAccess):TFieldAccess {
+			return switch (fa) {
+				case FAnon(cf): FAnon(cf);
+				case FInstance(c, tl, cf): FInstance(c, [for (t in tl) subst(t)], cf);
+				case FStatic(c, cf): FStatic(c, cf);
+				case FClosure(c, cf): FClosure(c == null ? null : {c: c.c, params: [for (t in c.params) subst(t)]}, cf);
+				case FEnum(en, ef): FEnum(en, ef);
+				case FDynamic(s): FDynamic(s);
+			}
+		}
+		var et = subst(e.type);
+		return TypeFunctions.mk(switch (e.expr) {
+			case TConst(c): TConst(c);
+			case TLocal(v): TLocal(cloneVar(v, subst, vars));
+			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
+			case TBinop(op, e1, e2): TBinop(op, cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
+			case TField(e1, fa): TField(cloneExpr(e1, subst, vars), fieldAccess(fa));
+			case TTypeExpr(mt): TTypeExpr(mt);
+			case TParenthesis(e1): TParenthesis(cloneExpr(e1, subst, vars));
+			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: cloneExpr(f.expr, subst, vars)}]);
+			case TArrayDecl(values): TArrayDecl(arr(values));
+			case TCall(e1, params): TCall(cloneExpr(e1, subst, vars), arr(params));
+			case TNew(c, params, args): TNew(c, [for (t in params) subst(t)], arr(args));
+			case TUnop(op, flag, e1): TUnop(op, flag, cloneExpr(e1, subst, vars));
+			case TFunction(f):
+				var fvars = new Map<Int, TVar>();
+				for (id in vars.keys()) fvars.set(id, vars.get(id));
+				var args = [for (a in f.args) {v: cloneVar(a.v, subst, fvars), c: opt(a.c)}];
+				TFunction(new TFunc(args, subst(f.type), cloneExpr(f.expr, subst, fvars)));
+			case TVarExpr(v, eo): TVarExpr(cloneVar(v, subst, vars), opt(eo));
+			case TBlock(exprs): TBlock(arr(exprs));
+			case TFor(v, e1, e2): TFor(cloneVar(v, subst, vars), cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
+			case TIf(econd, eif, eelse): TIf(cloneExpr(econd, subst, vars), cloneExpr(eif, subst, vars), opt(eelse));
+			case TWhile(econd, e1, flag): TWhile(cloneExpr(econd, subst, vars), cloneExpr(e1, subst, vars), flag);
+			case TSwitch(e1, cases, edef): TSwitch(cloneExpr(e1, subst, vars), [for (c in cases) {values: arr(c.values), expr: cloneExpr(c.expr, subst, vars)}], opt(edef));
+			case TTry(e1, catches): TTry(cloneExpr(e1, subst, vars), [for (c in catches) {v: cloneVar(c.v, subst, vars), expr: cloneExpr(c.expr, subst, vars)}]);
+			case TReturn(eo): TReturn(opt(eo));
+			case TBreak: TBreak;
+			case TContinue: TContinue;
+			case TThrow(e1): TThrow(cloneExpr(e1, subst, vars));
+			case TCast(e1, mt): TCast(cloneExpr(e1, subst, vars), mt);
+			case TMeta(entry, e1): TMeta(entry, cloneExpr(e1, subst, vars));
+			case TEnumParameter(e1, ef, index): TEnumParameter(cloneExpr(e1, subst, vars), ef, index);
+			case TEnumIndex(e1): TEnumIndex(cloneExpr(e1, subst, vars));
+			case TIdent(s): TIdent(s);
+		}, et, e.pos);
+	}
+
+	static function cloneField(c:TClass, params:TParams, f:TClassField):TClassField {
+		var subst = function(t:T) return TypeFunctions.applyParams(c.params, params, t);
+		var cf = TypeFunctions.copyField(f);
+		cf.type = subst(f.type);
+		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map());
+		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map());
+		cf.overloads = [for (o in f.overloads) cloneField(c, params, o)];
+		return cf;
+	}
+
+	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
+		var key = genericKey(c, params);
+		var cached = genericInstances.get(key);
+		if (cached != null) return cached;
+		var suffix = "_" + genericSuffix(params);
+		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
+		var path = {pack: c.path.pack, name: c.path.name + suffix};
+		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
+		mg.extra.processed = 2;
+		var cg = TypeFunctions.mkClass(mg, path, c.pos, c.namePos);
+		cg.doc = c.doc;
+		cg.meta = c.meta;
+		cg.isPrivate = true;
+		cg.kind = KGenericInstance(c, params);
+		cg.flags = c.flags;
+		cg.usings = c.usings;
+		cg.superClass = c.superClass == null ? null : {c: c.superClass.c, params: [for (t in c.superClass.params) TypeFunctions.applyParams(c.params, params, t)]};
+		cg.interfaces = [for (i in c.interfaces) {c: i.c, params: [for (t in i.params) TypeFunctions.applyParams(c.params, params, t)]}];
+		cg.dynamicType = c.dynamicType == null ? null : TypeFunctions.applyParams(c.params, params, c.dynamicType);
+		cg.arrayAccess = c.arrayAccess == null ? null : TypeFunctions.applyParams(c.params, params, c.arrayAccess);
+		if (c.constructor != null) cg.constructor = cloneField(c, params, c.constructor);
+		for (f in c.orderedFields) {
+			var cf = cloneField(c, params, f);
+			cg.fields.set(cf.name, cf);
+			cg.orderedFields.push(cf);
+		}
+		mg.types = [TClassDecl(cg)];
+		genericInstances.set(key, cg);
+		ctx.modules.push(mg);
+		ctx.types.push(TClassDecl(cg));
+		ctx.moduleLut.set(Context.pathKey(path), mg);
+		ctx.typeToModule.set(Context.pathKey(path), path);
+		TypeFunctions.addDependency(mg, c.module);
+		return cg;
 	}
 }
