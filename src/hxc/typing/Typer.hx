@@ -390,7 +390,7 @@ class Typer {
 				ctx.untypedMode = true;
 				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
 				ctx.untypedMode = old;
-				te;
+				TypeFunctions.mk(te.expr, spawnMonomorph(ctx, te.pos), te.pos);
 			case EMeta(m, e1) if (m.name == ":bypassAccessor"):
 					// The next field access typed within e1 consumes this and becomes a raw access.
 					var oldBypass = ctx.bypassAccessor;
