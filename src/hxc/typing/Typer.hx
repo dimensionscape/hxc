@@ -1031,11 +1031,19 @@ class Typer {
 			for (mt in types) switch (mt) {
 				case TEnumDecl(en) if (en.constrs.exists(i)): return mt;
 				case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)): return mt;
+				case TTypeDecl(td):
+					switch (TypeFunctions.follow(td.type)) {
+						case TEnum(en, _) if (en.constrs.exists(i)): return TEnumDecl(en);
+						case TAbstract(a, _) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)): return TAbstractDecl(a);
+						case _:
+					}
 				case _:
 			}
 			return null;
 		}
-		var own = scan(m.types);
+		var ownTypes = m.types.copy();
+		ownTypes.reverse();
+		var own = scan(ownTypes);
 		if (own != null) return own;
 		// A module import brings the constructors/members of that module's enums into scope.
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
