@@ -133,6 +133,7 @@ enum PatKind {
 }
 
 typedef Pattern = {pat:PatKind, pos:Position};
+typedef UnappliedTypeParam = {m:TMono, old:Null<T>};
 
 class PatternContext {
 	public var ctx:TyperContext;
@@ -141,6 +142,7 @@ class PatternContext {
 	public var currentLocals:Map<String, {v:TVar, p:Position}>;
 	public var inReification:Bool;
 	public var isPostfixMatch:Bool;
+	public var unapplyTypeParameters:Void->Array<UnappliedTypeParam>;
 
 	public function new(ctx:TyperContext, ctxLocals:Map<String, TVar>) {
 		this.ctx = ctx;
@@ -149,6 +151,28 @@ class PatternContext {
 		this.currentLocals = new Map();
 		this.inReification = false;
 		this.isPostfixMatch = false;
+		this.unapplyTypeParameters = function() return [];
+	}
+}
+
+private class TypeParameterFrame {
+	public static function unapply(params:TypeParams, monos:TParams):Array<UnappliedTypeParam> {
+		var out:Array<UnappliedTypeParam> = [];
+		var len = params.length < monos.length ? params.length : monos.length;
+		for (i in 0...len) switch [monos[i], TypeFunctions.follow(monos[i])] {
+			case [TMono(m), TMono(_)]:
+				out.push({m: m, old: m.type});
+				TypeUnification.monoBind(m, params[i].type);
+			case _:
+		}
+		return out;
+	}
+
+	public static function reapply(unapplied:Array<UnappliedTypeParam>):Void {
+		for (u in unapplied) switch (u.old) {
+			case null: TypeUnification.unbind(u.m);
+			case t: TypeUnification.monoBind(u.m, t);
+		}
 	}
 }
 
@@ -292,7 +316,13 @@ class PatternMaker {
 				var restore = Typer.saveLocals(ctx);
 				ctx.locals = pctx.ctxLocals.copy();
 				var v = Typer.addLocal(ctx, VGenerated, "_", t, p);
-				var te1 = Typer.typeExpr(ctx, e1, WithTypeTools.value);
+				var unapplied = pctx.unapplyTypeParameters();
+				var te1 = try Typer.typeExpr(ctx, e1, WithTypeTools.value) catch (ex:Dynamic) {
+					TypeParameterFrame.reapply(unapplied);
+					restore();
+					throw ex;
+				};
+				TypeParameterFrame.reapply(unapplied);
 				v.name = "tmp";
 				restore();
 				var pat = make(pctx, toplevel, te1.type, e2);
@@ -325,19 +355,47 @@ class PatternMaker {
 					case TField(_, FEnum(en, ef)):
 						switch (TypeFunctions.follow(head.type)) {
 							case TFun(sig):
-								unify(ctx, sig.ret, t, p);
+								var headTl = switch (TypeFunctions.follow(sig.ret)) {
+									case TEnum(_, tl): tl;
+									case _: throw new TypingError("This pattern is not yet ported", p);
+								};
+								var declaredTl = switch (TypeFunctions.follow(ef.type)) {
+									case TFun(declared):
+										switch (TypeFunctions.follow(declared.ret)) {
+											case TEnum(_, tl): tl;
+											case _: headTl;
+										}
+									case _: headTl;
+								};
+								var enumParams = TypeFunctions.extractParamTypes(en.params);
+								var tl = [for (i in 0...headTl.length) {
+									var declared = i < declaredTl.length ? declaredTl[i] : headTl[i];
+									var param = i < enumParams.length ? enumParams[i] : null;
+									param != null && declared == param ? headTl[i] : declared;
+								}];
+								function mapEnum(x:T):T return TypeFunctions.applyParams(en.params, tl, x);
+								var monos = TypeUnification.spawnConstrainedMonos(mapEnum, ef.params);
+								function map(x:T):T return mapEnum(TypeFunctions.applyParams(ef.params, monos, x));
+								unify(ctx, map(ef.type), head.type, head.pos);
+								var args = switch (TypeFunctions.follow(head.type)) {
+									case TFun(sig2):
+										unifyExpected(sig2.ret);
+										sig2.args;
+									case _: throw new TypingError("This pattern is not yet ported", p);
+								};
 								// A single `_` argument matches every constructor argument; otherwise match
 								// positionally, filling omitted trailing optional args with wildcards.
 								var single = el.length == 1 && (switch (el[0].expr) { case EConst(CIdent("_")): true; case _: false; });
 								var subs:Array<Pattern> = [];
 								var ei = 0;
-								for (ai in 0...sig.args.length) {
+								for (ai in 0...args.length) {
 									if (single) subs.push({pat: PatAny, pos: el[0].pos});
-									else if (ei < el.length) { subs.push(make(pctx, false, sig.args[ai].t, el[ei])); ei++; }
-									else if (sig.args[ai].opt) subs.push({pat: PatAny, pos: p});
+									else if (ei < el.length) { subs.push(make(pctx, false, args[ai].t, el[ei])); ei++; }
+									else if (args[ai].opt) subs.push({pat: PatAny, pos: p});
 									else throw new TypingError("Not enough arguments", p);
 								}
 								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
+								TypeParameterFrame.unapply(ef.params, monos);
 								PatConstructor(Constructor.make(ConEnum(en, ef), p), subs);
 							case _: throw new TypingError("This pattern is not yet ported", p);
 						}
@@ -386,26 +444,59 @@ class CaseMaker {
 			i--;
 		}
 		var save = Typer.saveLocals(ctx);
+		var monos:TParams = [for (_ in ctx.typeParams) TypeFunctions.mkMono()];
+		function map(t:T):T return TypeFunctions.applyParams(ctx.typeParams, monos, t);
+		var oldTypes:Array<{v:TVar, t:T}> = [];
+		for (v in ctx.locals) {
+			oldTypes.push({v: v, t: v.type});
+			v.type = map(v.type);
+		}
+		var oldRet = ctx.ret;
+		ctx.ret = map(ctx.ret);
+		function cleanup() {
+			ctx.ret = oldRet;
+			for (old in oldTypes) old.v.type = old.t;
+			save();
+		}
 		var pctx = new PatternContext(ctx, ctx.locals);
 		pctx.isPostfixMatch = postfixMatch;
-		var pat = PatternMaker.make(pctx, true, t, e);
+		pctx.unapplyTypeParameters = function() return TypeParameterFrame.unapply(ctx.typeParams, monos);
+		var pat:Pattern;
+		try {
+			pat = PatternMaker.make(pctx, true, map(t), e);
+			TypeParameterFrame.unapply(ctx.typeParams, monos);
+		} catch (ex:Dynamic) {
+			cleanup();
+			throw ex;
+		}
 		var egT:Null<TExpr> = if (eg == null) null else {
-			var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
-			Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+			try {
+				var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
+				Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+			} catch (ex:Dynamic) {
+				cleanup();
+				throw ex;
+			}
 		};
-		var eoT:Null<TExpr> = switch ([eoAst, withType]) {
-			case [null, WithType(wt, _)]:
-				unify(ctx, ctx.com.basic.tvoid, wt, e.pos);
-				null;
-			case [null, _]:
-				null;
-			case [body, WithType(wt, _)]:
-				var be = Typer.typeExpr(ctx, body, WithTypeTools.withType(wt));
-				Typer.castOrUnify(ctx, wt, be, be.pos);
-			case [body, _]:
-				Typer.typeExpr(ctx, body, withType);
+		var eoT:Null<TExpr> = try {
+			switch ([eoAst, withType]) {
+				case [null, WithType(wt, _)]:
+					unify(ctx, ctx.com.basic.tvoid, wt, e.pos);
+					null;
+				case [null, _]:
+					null;
+				case [body, WithType(wt, src)]:
+					var mapped = map(wt);
+					var be = Typer.typeExpr(ctx, body, WithType(mapped, src));
+					Typer.castOrUnify(ctx, mapped, be, be.pos);
+				case [body, _]:
+					Typer.typeExpr(ctx, body, withType);
+			}
+		} catch (ex:Dynamic) {
+			cleanup();
+			throw ex;
 		};
-		save();
+		cleanup();
 		return {c: {guard: egT, expr: eoT, pos: p}, pat: pat};
 	}
 
@@ -415,27 +506,63 @@ class CaseMaker {
 		if (el.length == 0) throw new TypingError("case without pattern", p);
 		if (el.length > 1) throw new TypingError("or-patterns over a tuple switch are not yet supported", p);
 		var save = Typer.saveLocals(ctx);
+		var monos:TParams = [for (_ in ctx.typeParams) TypeFunctions.mkMono()];
+		function map(t:T):T return TypeFunctions.applyParams(ctx.typeParams, monos, t);
+		var oldTypes:Array<{v:TVar, t:T}> = [];
+		for (v in ctx.locals) {
+			oldTypes.push({v: v, t: v.type});
+			v.type = map(v.type);
+		}
+		var oldRet = ctx.ret;
+		ctx.ret = map(ctx.ret);
+		function cleanup() {
+			ctx.ret = oldRet;
+			for (old in oldTypes) old.v.type = old.t;
+			save();
+		}
 		var pctx = new PatternContext(ctx, ctx.locals);
 		pctx.isPostfixMatch = postfixMatch;
-		var pats:Array<Pattern> = switch (el[0].expr) {
-			case EArrayDecl(elems) if (elems.length == types.length):
-				[for (i in 0...types.length) PatternMaker.make(pctx, true, types[i], elems[i])];
-			case EConst(CIdent("_")):
-				[for (i in 0...types.length) ({pat: PatAny, pos: el[0].pos} : Pattern)];
-			case _:
-				throw new TypingError("tuple switch case must be a [..] pattern of arity " + types.length, p);
-		};
+		pctx.unapplyTypeParameters = function() return TypeParameterFrame.unapply(ctx.typeParams, monos);
+		var mappedTypes = [for (t in types) map(t)];
+		var pats:Array<Pattern>;
+		try {
+			pats = switch (el[0].expr) {
+				case EArrayDecl(elems) if (elems.length == mappedTypes.length):
+					[for (i in 0...mappedTypes.length) PatternMaker.make(pctx, true, mappedTypes[i], elems[i])];
+				case EConst(CIdent("_")):
+					[for (i in 0...mappedTypes.length) ({pat: PatAny, pos: el[0].pos} : Pattern)];
+				case _:
+					throw new TypingError("tuple switch case must be a [..] pattern of arity " + mappedTypes.length, p);
+			};
+			TypeParameterFrame.unapply(ctx.typeParams, monos);
+		} catch (ex:Dynamic) {
+			cleanup();
+			throw ex;
+		}
 		var egT:Null<TExpr> = if (eg == null) null else {
-			var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
-			Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+			try {
+				var ge = Typer.typeExpr(ctx, eg, WithTypeTools.value);
+				Typer.castOrUnify(ctx, ctx.com.basic.tbool, ge, ge.pos);
+			} catch (ex:Dynamic) {
+				cleanup();
+				throw ex;
+			}
 		};
-		var eoT:Null<TExpr> = switch ([eoAst, withType]) {
-			case [null, WithType(wt, _)]: unify(ctx, ctx.com.basic.tvoid, wt, p); null;
-			case [null, _]: null;
-			case [body, WithType(wt, _)]: var be = Typer.typeExpr(ctx, body, WithTypeTools.withType(wt)); Typer.castOrUnify(ctx, wt, be, be.pos);
-			case [body, _]: Typer.typeExpr(ctx, body, withType);
+		var eoT:Null<TExpr> = try {
+			switch ([eoAst, withType]) {
+				case [null, WithType(wt, _)]: unify(ctx, ctx.com.basic.tvoid, wt, p); null;
+				case [null, _]: null;
+				case [body, WithType(wt, src)]:
+					var mapped = map(wt);
+					var be = Typer.typeExpr(ctx, body, WithType(mapped, src));
+					Typer.castOrUnify(ctx, mapped, be, be.pos);
+				case [body, _]: Typer.typeExpr(ctx, body, withType);
+			}
+		} catch (ex:Dynamic) {
+			cleanup();
+			throw ex;
 		};
-		save();
+		cleanup();
 		return {c: {guard: egT, expr: eoT, pos: p}, pats: pats};
 	}
 }
@@ -655,6 +782,58 @@ class DtCompile {
 		};
 	}
 
+	static function enumConstructorReturn(ef:TEnumField):T {
+		return switch (TypeFunctions.follow(ef.type)) {
+			case TFun(sig): sig.ret;
+			case t: t;
+		}
+	}
+
+	static function paramCompatible(subject:T, constructor:T):Bool {
+		if (subject == constructor) return true;
+		return switch (TypeFunctions.follow(subject)) {
+			case TMono(_): true;
+			case TInst(c, _):
+				switch (c.kind) {
+					case KTypeParameter(_): true;
+					case _: TypeUnification.typeIseqDefault(subject, constructor);
+				}
+			case _: TypeUnification.typeIseqDefault(subject, constructor);
+		}
+	}
+
+	public static function enumConstructorCompatible(subjectType:T, en:TEnum, ef:TEnumField):Bool {
+		return switch [TypeFunctions.follow(subjectType), TypeFunctions.follow(enumConstructorReturn(ef))] {
+			case [TEnum(se, stl), TEnum(re, rtl)] if (se == en && re == en && stl.length == rtl.length):
+				for (i in 0...stl.length) if (!paramCompatible(stl[i], rtl[i])) return false;
+				true;
+			case [TEnum(se, _), _] if (se == en):
+				true;
+			case _:
+				false;
+		}
+	}
+
+	static function refineSubjects(subject:TExpr, con:Con, rest:Array<TExpr>):Array<TExpr> {
+		var subst:Array<{from:T, to:T}> = switch (con.kind) {
+			case ConEnum(en, ef):
+				switch [TypeFunctions.follow(subject.type), TypeFunctions.follow(enumConstructorReturn(ef))] {
+					case [TEnum(se, stl), TEnum(re, rtl)] if (se == en && re == en && stl.length == rtl.length):
+						[for (i in 0...stl.length) {from: stl[i], to: rtl[i]}];
+					case _:
+						[];
+				}
+			case _:
+				[];
+		};
+		if (subst.length == 0) return rest;
+		function mapType(t:T):T {
+			for (s in subst) if (t == s.from) return s.to;
+			return TypeFunctions.map(mapType, t);
+		}
+		return [for (e in rest) TypeFunctions.mk(e.expr, mapType(e.type), e.pos)];
+	}
+
 	static function getColumnSigma(subject:TExpr, cases:Array<MatchCase>):{sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}>, nullCases:Array<MatchCase>} {
 		var sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}> = [];
 		var unguarded:Array<Con> = [];
@@ -759,7 +938,7 @@ class DtCompile {
 				bindings.push({v: v, p: v.pos, e: sse});
 				subExprs.push(TexprTools.makeLocal(v, v.pos));
 			}
-			var newSubjects = subExprs.concat(rest);
+			var newSubjects = subExprs.concat(refineSubjects(subject, s.con, rest));
 			var spec = specialize(subject, s.con, cases);
 			var dt = compile(mctx, newSubjects, spec);
 			dt = bind(mctx, bindings, dt);
@@ -879,7 +1058,10 @@ class TexprConverter {
 					case ConEnum(en2, ef) if (en2 == en): found.set(ef.name, true);
 					case _:
 				}
-				for (name in en.constrs.keys()) if (!found.exists(name)) return false;
+				for (name in en.constrs.keys()) {
+					var ef = en.constrs.get(name);
+					if (DtCompile.enumConstructorCompatible(subject.type, en, ef) && !found.exists(name)) return false;
+				}
 				return true;
 			case TAbstract(a, _) if (a.isEnum && a.impl != null):
 				var found = new Map<String, Bool>();

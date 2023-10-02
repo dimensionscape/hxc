@@ -544,8 +544,20 @@ class TypeResolve {
 			if (c.ecParams.length > 0)
 				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams);
 			var localParams = ctorParams.concat(e.params);
+			var rt = switch (c.ecType) {
+				case null:
+					et;
+				case th:
+					var t = Typeload.loadTypeHint(ctx, localParams, th, false);
+					switch (TypeFunctions.follow(t)) {
+						case TEnum(te, _) if (te == e):
+						case _:
+							throw new ContextError("Explicit enum type must be of the same enum type", c.ecPos);
+					}
+					t;
+			};
 			var t:T = if (c.ecArgs.length == 0) {
-				et;
+				rt;
 			} else {
 				var args:Array<TSignatureArg> = [];
 				for (a in c.ecArgs) {
@@ -553,7 +565,7 @@ class TypeResolve {
 					if (a.opt) at = ctx.basic.tnull(at);
 					args.push({name: a.name, opt: a.opt, t: at});
 				}
-				TFun({args: args, ret: et});
+				TFun({args: args, ret: rt});
 			};
 			var ef = new TEnumField(c.ecName.name, t, c.ecPos, c.ecName.pos, c.ecDoc, index, ctorParams, c.ecMeta);
 			e.constrs.set(c.ecName.name, ef);
