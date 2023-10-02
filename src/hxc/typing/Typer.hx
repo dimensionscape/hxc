@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
+import hxc.core.NotFound;
 import hxc.core.TypingError;
 import hxc.core.TexprTools;
 import hxc.core.WithType;
@@ -62,44 +63,56 @@ class Typer {
 		return try { TypeUnification.unifyDefault(a, b); true; } catch (_:UnifyError) false;
 	}
 
-	// Implicit abstract conversion when plain unification fails: @:from on the target abstract or
-	// @:to on the source abstract. A field cast calls the impl method; a bare from/to type is a
-	// representation-preserving cast.
+	// Implicit abstract conversion. The search is recursive: a declarative from/to type can expose a nested
+	// runtime cast field.
 	static function tryAbstractCast(ctx:TyperContext, e:TExpr, t:T, p:Position):Null<TExpr> {
-		switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, atl):
-				if (a.impl != null) for (fc in a.fromField) {
-					if (fc.cf.params.length > 0) {
-						// A generic @:from (e.g. haxe.Rest.of<T>): map its argument and return types
-						// through the abstract's type parameters (params -> atl) and fresh monos for the
-						// method's own parameters, then unify the source against the argument and the
-						// return against the target.
-						switch (TypeFunctions.follow(fc.cf.type)) {
-							case TFun(sig) if (sig.args.length == 1):
-								var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
-								var mapArg = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.args[0].t));
-								var mapRet = TypeFunctions.applyParams(a.params, atl, TypeFunctions.applyParams(fc.cf.params, monos, sig.ret));
-								if (doesUnify(e.type, mapArg) && doesUnify(mapRet, t)) return callImplCastDirect(ctx, a.impl, fc.cf, e, t, p);
-							case _:
-						}
-					} else if (doesUnify(e.type, TypeFunctions.applyParams(a.params, atl, fc.t))) return callImplCast(ctx, a.impl, fc.cf, e, t, p);
+		try return abstractCastLoop(ctx, e, t, e.type, [], p) catch (_:NotFound) return null;
+	}
+
+	static function abstractCastLoop(ctx:TyperContext, e:TExpr, tleft:T, tright:T, stack:Array<{l:T, r:T}>, p:Position):TExpr {
+		for (s in stack)
+			if (TypeUnification.fastEq(tleft, s.l) && TypeUnification.fastEq(tright, s.r))
+				throw new NotFound();
+		var stack2 = [{l: tleft, r: tright}].concat(stack);
+		var uctx = TypeUnification.defaultUnificationContext;
+		switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
+				var found = TypeUnification.findToFrom(uctx, e.type, tleft, a2, tl2, a1, tl1);
+				if (found == null) throw new NotFound();
+				return makeAbstractCast(ctx, found.a, found.tl, found.castField, e, tleft, p);
+			case [TAbstract(a, tl), _]:
+				try {
+					return makeAbstractCast(ctx, a, tl, TypeUnification.findFrom(uctx, e.type, a, tl), e, tleft, p);
+				} catch (_:NotFound) {
+					for (tc in a.from) {
+						var tnext = TypeFunctions.applyParams(a.params, tl, tc);
+						if (!TypeUnification.typeIseqDefault(tnext, tleft))
+							return abstractCastLoop(ctx, e, tnext, tright, stack2, p);
+					}
+					throw new NotFound();
 				}
-				for (ft in a.from) if (doesUnify(e.type, TypeFunctions.applyParams(a.params, atl, ft))) return TypeFunctions.mk(TCast(e, null), t, p);
-			case _:
-		}
-		switch (TypeFunctions.follow(e.type)) {
-			case TAbstract(a, atl):
-				if (a.impl != null) for (tc in a.toField) {
-					if (tc.cf.params.length > 0) {
-						// A generic @:to (return is a bare type parameter, as in Any) converts to anything.
-						var monos = [for (_ in tc.cf.params) TypeFunctions.mkMono()];
-						if (doesUnify(TypeFunctions.applyParams(tc.cf.params, monos, tc.t), t)) return TypeFunctions.mk(TCast(e, null), t, p);
-					} else if (doesUnify(TypeFunctions.applyParams(a.params, atl, tc.t), t)) return callImplCast(ctx, a.impl, tc.cf, e, t, p);
+			case [_, TAbstract(a, tl)]:
+				try {
+					return makeAbstractCast(ctx, a, tl, TypeUnification.findTo(uctx, tleft, a, tl), e, tleft, p);
+				} catch (_:NotFound) {
+					for (tc in a.to) {
+						var tnext = TypeFunctions.applyParams(a.params, tl, tc);
+						if (!TypeUnification.typeIseqDefault(tnext, tright))
+							return abstractCastLoop(ctx, e, tleft, tnext, stack2, p);
+					}
+					throw new NotFound();
 				}
-				for (tt in a.to) if (doesUnify(TypeFunctions.applyParams(a.params, atl, tt), t)) return TypeFunctions.mk(TCast(e, null), t, p);
 			case _:
+				throw new NotFound();
 		}
-		return null;
+	}
+
+	static function makeAbstractCast(ctx:TyperContext, a:TAbstract, tl:Array<T>, castField:TAbstractCast, e:TExpr, t:T, p:Position):TExpr {
+		if (TypeFunctions.hasMeta(":multiType", castField.cf.meta)) return TypeFunctions.mk(TCast(e, null), t, p);
+		if (a.path.pack.length == 0 && a.path.name == "Any" && castField.cf.name == "__promote") return TypeFunctions.mk(TCast(e, null), t, p);
+		if (TypeFunctions.hasClassFieldFlag(castField.cf, CfExtern)) return TypeFunctions.mk(TCast(e, null), t, p);
+		if (a.impl == null) throw new NotFound();
+		return callImplCast(ctx, a.impl, castField.cf, e, t, p);
 	}
 
 	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
