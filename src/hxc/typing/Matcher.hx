@@ -871,6 +871,43 @@ class TexprConverter {
 		};
 	}
 
+	static function completeFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Bool {
+		switch (TypeFunctions.follow(subject.type)) {
+			case TEnum(en, _):
+				var found = new Map<String, Bool>();
+				for (sc in cases) if (sc.unguarded) switch (sc.con.kind) {
+					case ConEnum(en2, ef) if (en2 == en): found.set(ef.name, true);
+					case _:
+				}
+				for (name in en.constrs.keys()) if (!found.exists(name)) return false;
+				return true;
+			case TAbstract(a, _) if (a.isEnum && a.impl != null):
+				var found = new Map<String, Bool>();
+				for (sc in cases) if (sc.unguarded) switch (sc.con.kind) {
+					case ConStatic(c, cf) if (c == a.impl && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
+						found.set(cf.name, true);
+					case _:
+				}
+				var total = 0;
+				for (cf in a.impl.statics) if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
+					total++;
+					if (!found.exists(cf.name)) return false;
+				}
+				return total > 0;
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"):
+				var hasTrue = false;
+				var hasFalse = false;
+				for (sc in cases) if (sc.unguarded) switch (sc.con.kind) {
+					case ConConst(TBool(true)): hasTrue = true;
+					case ConConst(TBool(false)): hasFalse = true;
+					case _:
+				}
+				return hasTrue && hasFalse;
+			case _:
+				return false;
+		}
+	}
+
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
@@ -890,6 +927,11 @@ class TexprConverter {
 				for (sc in cases) {
 					var ce = toTexpr(ctx, tSwitch, withType, sc.dt);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
+				}
+				if (defE == null && !completeFiniteCoverage(subject, cases)) switch (withType) {
+					case NoValue:
+					case _:
+						throw new TypingError("Unmatched patterns: _", subject.pos);
 				}
 				// An enum switch dispatches on the constructor index.
 				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
