@@ -142,6 +142,61 @@ class Typer {
 		};
 	}
 
+	static function defaultCatchTypeHint(p:Position):TypeHint {
+		return {
+			ct: CTPath({tpackage: ["haxe"], tname: "Exception", tparams: [], tsub: null}),
+			pos: p
+		};
+	}
+
+	static function isDynamic(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TDynamic(_): true;
+			case _: false;
+		}
+	}
+
+	static function checkCatchTypeParams(params:TParams, p:Position):Void {
+		for (pt in params) switch (TypeFunctions.followWithAbstracts(pt)) {
+			case TDynamic(_):
+			case _: throw new TypingError("Catch class parameter must be Dynamic", p);
+		}
+	}
+
+	static function normalizeCatchType(t:T, p:Position):T {
+		function loop(t:T):T {
+			return switch (TypeFunctions.follow(t)) {
+				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
+					throw new TypingError("Cannot catch non-generic type parameter", p);
+				case TInst(_, params) | TEnum(_, params):
+					checkCatchTypeParams(params, p);
+					t;
+				case TAbstract(a, params) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)):
+					checkCatchTypeParams(params, p);
+					t;
+				case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+					loop(TypeFunctions.getUnderlyingType(a, tl));
+				case TDynamic(_):
+					t;
+				case _:
+					throw new TypingError("Catch type must be a class, an enum or Dynamic", p);
+			}
+		}
+		return loop(t);
+	}
+
+	static function checkCatchUnreachable(prev:Array<TCatch>, t:T, p:Position):Void {
+		for (c in prev) {
+			if (isDynamic(c.v.type)) throw new TypingError("This block is unreachable", p);
+			if (!isDynamic(t)) {
+				try {
+					TypeUnification.unifyDefault(t, c.v.type);
+					throw new TypingError("This block is unreachable", p);
+				} catch (_:UnifyError) {}
+			}
+		}
+	}
+
 	// The compile-time value of a single-character string's `.code`. A host string is UTF-16 here, so a
 	// character outside the BMP is a surrogate pair (two units) that combines into its codepoint. Returns
 	// null when the literal is not exactly one codepoint, letting normal field access report the error.
@@ -610,10 +665,14 @@ class Typer {
 				var tcatches:Array<TCatch> = [];
 				var bodies = [te];
 				for (c in catches) {
+					var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
+					var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
+					var normalizedCatchType = normalizeCatchType(catchType, th.pos);
+					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
-					var ct = c.type != null ? Typeload.loadComplexType(ctx.com, ctx.typeParams, c.type) : TypeFunctions.tDynamic;
-					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, ct, c.pos);
+					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.pos);
 					var cbody = typeExpr(ctx, c.expr, withType);
+					v.type = normalizedCatchType;
 					restore();
 					tcatches.push({v: v, expr: cbody});
 					bodies.push(cbody);
