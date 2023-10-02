@@ -427,7 +427,7 @@ class Calls {
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
 			case AKField(fa): callFieldAccess(ctx, fa, el, p);
 			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
-				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(se.thisExpr)].concat(el), withType, p);
+				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument.
 				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access));
@@ -449,7 +449,7 @@ class Calls {
 		};
 	}
 
-	public static function typedExprToSyntax(e:TExpr):Expr {
+	public static function typedExprToSyntax(ctx:TyperContext, e:TExpr):Expr {
 		var p = e.pos;
 		return switch (e.expr) {
 			case TConst(TInt(i)):
@@ -467,11 +467,14 @@ class Calls {
 			case TLocal(v):
 				new Expr(EConst(CIdent(v.name)), p);
 			case TParenthesis(e1):
-				new Expr(EParenthesis(typedExprToSyntax(e1)), p);
+				new Expr(EParenthesis(typedExprToSyntax(ctx, e1)), p);
 			case TField(e1, fa):
-				new Expr(EField(typedExprToSyntax(e1), TypeFunctions.fieldName(fa), EFNormal), p);
+				new Expr(EField(typedExprToSyntax(ctx, e1), TypeFunctions.fieldName(fa), EFNormal), p);
 			case _:
-				throw new TypingError("Cannot use this expression as a macro extension receiver", p);
+				var id = ctx.com.nextStoredTypedExprId++;
+				ctx.com.storedTypedExprs.set(id, e);
+				var eid = new Expr(EConst(CInt(Std.string(id), null)), p);
+				new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), p);
 		}
 	}
 

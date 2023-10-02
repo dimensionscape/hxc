@@ -66,6 +66,10 @@ class Context {
 
 	public var currentModule:Null<ModuleDef> = null;
 
+	public var storedTypedExprs:Map<Int, TExpr>;
+
+	public var nextStoredTypedExprId:Int = 0;
+
 	/**
 	 * Initialize from loaded StdTypes, String and Array declarations; retain safe placeholders until
 	 * loading completes.
@@ -114,6 +118,7 @@ class Context {
 		this.declOfType = new StringMap();
 		this.diagnostics = [];
 		this.moduleImports = new StringMap();
+		this.storedTypedExprs = new Map();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
 		this.basic = TypeFunctions.makeStubBasicTypes();
 

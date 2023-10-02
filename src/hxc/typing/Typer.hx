@@ -132,7 +132,7 @@ class Typer {
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
-		return castOrUnify(ctx, t, hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(e)], WithTypeTools.withType(t), p), p);
+		return castOrUnify(ctx, t, hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p), p);
 	}
 
 	static function isVoid(t:T):Bool {
@@ -398,7 +398,7 @@ class Typer {
 					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
 					ctx.bypassAccessor = oldBypass;
 					teBypass;
-				case EMeta(m, e1) if (m.name == ":mergeBlock"):
+			case EMeta(m, e1) if (m.name == ":mergeBlock"):
 					// A @:mergeBlock block opens no scope; its declarations merge into the enclosing block.
 					// Type the inner statements in the current scope and wrap them so the enclosing block
 					// splices them (see typeBlock).
@@ -408,6 +408,13 @@ class Typer {
 							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, inner), inner.type, inner.pos);
 						case _: typeExpr(ctx, e1, withType);
 					}
+				case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
+					var id = switch (e1.expr) {
+						case EConst(CInt(s, _)): Std.parseInt(s);
+						case _: null;
+					}
+					if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
+					ctx.com.storedTypedExprs.get(id);
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):

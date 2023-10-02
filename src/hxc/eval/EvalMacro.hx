@@ -12,6 +12,7 @@ import hxc.context.Context;
 import hxc.typing.TyperContext;
 import hxc.typing.Typer;
 import hxc.typing.Typeload;
+import hxc.typing.Calls;
 import hxc.typing.AccessKind.FieldAccess;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalContext;
@@ -757,19 +758,23 @@ class EvalMacro {
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		curPos = p;
+		var isInstance = false;
 		var path = switch (fa.host) {
 			case FHStatic(c): c.path;
-			case _: throw new TypingError("Only static macro functions are supported", p);
+			case FHInstance(c, _):
+				isInstance = true;
+				c.path;
+			case _: throw new TypingError("Only static or member macro functions are supported", p);
 		};
 		var ec = getContext(tctx.com);
-		var proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
+		var proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
 			loadMacroClass(tctx.com, path, fa.field.name);
 			ec = getContext(tctx.com);
-			proto = ec.staticPrototypes.get(EvalHash.pathHash(path));
+			proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
@@ -782,7 +787,9 @@ class EvalMacro {
 		var savedPos = curPos;
 		try {
 			var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
-			var args = macroArgs(ec, el, sigArgs);
+			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
+			var args = macroArgs(ec, callEl, sigArgs);
+			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
 			var result = fn(args);
