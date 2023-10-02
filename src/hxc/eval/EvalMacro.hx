@@ -27,6 +27,7 @@ class EvalMacro {
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
 	static var curTctx:Null<TyperContext> = null;
+	static var expectedTypeStack:Array<WithType> = [];
 	static var curBuildFields:EvalValue = VNull;
 	static var curBuildClass:Null<TClass> = null;
 	static var currentCom:Null<Context> = null;
@@ -67,6 +68,13 @@ class EvalMacro {
 		reg2("warning", "warning", function(a) { macroMessages.push(macroMessage(ec, "Warning", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
 		reg2("info", "info", function(a) { macroMessages.push(macroMessage(ec, "Info", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
+		reg2("getExpectedType", "get_expected_type", function(a) {
+			if (expectedTypeStack.length == 0) return VNull;
+			return switch (expectedTypeStack[expectedTypeStack.length - 1]) {
+				case WithType(t, _): encodeType(ec, t);
+				case _: VNull;
+			}
+		});
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
 		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
@@ -792,12 +800,15 @@ class EvalMacro {
 			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
+			expectedTypeStack.push(withType);
 			var result = fn(args);
+			expectedTypeStack.pop();
 			var astExpr = decodeExpr(ec, result, p);
 			curTctx = savedTctx;
 			curPos = savedPos;
 			return Typer.typeExpr(tctx, astExpr, withType);
 		} catch (e:haxe.Exception) {
+			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
 			curTctx = savedTctx;
 			curPos = savedPos;
 			throw e;
@@ -980,6 +991,7 @@ class EvalMacro {
 	}
 
 	static function macroTypeString(ec:EvalContext, v:EvalValue):String {
+		if (v == VNull) return "Unknown<0>";
 		var args = eargs(v);
 		function params(pl:Array<EvalValue>):String {
 			return pl.length == 0 ? "" : "<" + [for (p in pl) macroTypeString(ec, p)].join(", ") + ">";
