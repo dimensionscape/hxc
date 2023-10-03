@@ -1943,51 +1943,68 @@ class Typer {
 		};
 	}
 
-	// A map literal [k => v, ...] desugars to constructing the concrete map implied by the key
-	// type and setting each pair, mirroring the compiler's type_map_declaration.
 	static function typeMapDeclaration(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
-		var tkey:Null<T> = switch (withType) {
-			case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
-				case TAbstract(a, [tk, _]) if (a.path.name == "Map"): tk;
-				case _: null;
-			};
+		var mapParams = switch (withType) {
+			case WithType(wt, _): getMapParams(ctx, wt);
 			case _: null;
 		};
-		if (tkey == null || mapKeyNeedsLiteralInference(tkey)) switch (el[0].expr) {
-			case EBinop(OpArrow, k, _): tkey = typeExpr(ctx, k, WithTypeTools.value).type;
-			case _:
-		}
-		var implName = pickMapImpl(tkey);
-		var tmp = "`map";
-		var tpath:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: implName, tparams: [], tsub: null}, pos: p};
-		var stmts:Array<Expr> = [];
-		stmts.push(new Expr(EVars([{evName: {name: tmp, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: new Expr(ENew(tpath, []), p), evMeta: []}]), p));
+		var tkey = mapParams == null ? spawnMonomorph(ctx, p) : mapParams.k;
+		var tval = mapParams == null ? spawnMonomorph(ctx, p) : mapParams.v;
+		var keys:Array<TExpr> = [];
+		var values:Array<TExpr> = [];
 		for (e in el) switch (e.expr) {
 			case EBinop(OpArrow, k, v):
-				var recv = new Expr(EField(new Expr(EConst(CIdent(tmp)), p), "set", EFNormal), p);
-				stmts.push(new Expr(ECall(recv, [k, v]), p));
+				if (mapParams == null) {
+					keys.push(typeExpr(ctx, k, WithTypeTools.value));
+					values.push(typeExpr(ctx, v, WithTypeTools.value));
+				} else {
+					var tk = typeExpr(ctx, k, WithTypeTools.withType(tkey));
+					var tv = typeExpr(ctx, v, WithTypeTools.withType(tval));
+					keys.push(castOrUnify(ctx, tkey, tk, tk.pos));
+					values.push(castOrUnify(ctx, tval, tv, tv.pos));
+				}
 			case _:
 				throw new TypingError("Invalid map literal entry", e.pos);
 		}
-		stmts.push(new Expr(EConst(CIdent(tmp)), p));
-		return typeExpr(ctx, new Expr(EBlock(stmts), p), withType);
-	}
-
-	static function mapKeyNeedsLiteralInference(t:T):Bool {
-		var selector = TypeFunctions.followWithAbstracts(t);
-		if (TypeFunctions.hasMono(selector)) return true;
-		return switch (TypeFunctions.follow(selector)) {
-			case TInst(c, _): switch (c.kind) { case KTypeParameter(_): true; case _: false; }
-			case _: false;
+		if (mapParams == null) {
+			tkey = unifyMinRaise(ctx, keys);
+			tval = unifyMinRaise(ctx, values);
+		}
+		var mt = Typeload.resolveTypePath(ctx.com, {pack: ["haxe", "ds"], name: "Map"}, null, p);
+		TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module);
+		var a = switch (mt) {
+			case TAbstractDecl(ab): ab;
+			case _: throw new TypingError("Map is not an abstract", p);
 		};
+		var impl = a.impl;
+		if (impl == null) throw new TypingError("Map has no implementation", p);
+		var tmap = TAbstract(a, [tkey, tval]);
+		var tmp = TypeFunctions.allocVar(VUser(TVOLocalVariable), "`map", tmap, p);
+		var local = TypeFunctions.mk(TLocal(tmp), tmap, p);
+		var newMap = TypeFunctions.mk(TNew(impl, [tkey, tval], []), tmap, p);
+		var setCf = impl.statics.get("set");
+		if (setCf == null) throw new TypingError("Map.set is not available", p);
+		var setExpr = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(impl), p), FStatic(impl, setCf)),
+			TFun({args: [{name: "this", opt: false, t: tmap}, {name: "key", opt: false, t: tkey}, {name: "value", opt: false, t: tval}], ret: ctx.com.basic.tvoid}), p);
+		var block:Array<TExpr> = [TypeFunctions.mk(TVarExpr(tmp, newMap), ctx.com.basic.tvoid, p)];
+		for (i in 0...keys.length)
+			block.push(Calls.makeCall(ctx, setExpr, [local, keys[i], values[i]], ctx.com.basic.tvoid, p));
+		block.push(local);
+		return TypeFunctions.mk(TBlock(block), tmap, p);
 	}
 
-	static function pickMapImpl(tkey:Null<T>):String {
-		return tkey == null ? "StringMap" : switch (TypeFunctions.follow(tkey)) {
-			case TInst(c, _) if (c.path.pack.length == 0 && c.path.name == "String"): "StringMap";
-			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Int"): "IntMap";
-			case TEnum(_, _): "EnumValueMap";
-			case _: "ObjectMap";
+	static function getMapParams(ctx:TyperContext, t:T):Null<{k:T, v:T}> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, [tk, tv]) if (a.path.pack.join(".") == "haxe.ds" && a.path.name == "Map"):
+				{k: tk, v: tv};
+			case TInst(c, [tv]) if (c.path.pack.join(".") == "haxe.ds" && c.path.name == "StringMap"):
+				{k: ctx.com.basic.tstring, v: tv};
+			case TInst(c, [tv]) if (c.path.pack.join(".") == "haxe.ds" && c.path.name == "IntMap"):
+				{k: ctx.com.basic.tint, v: tv};
+			case TInst(c, [tk, tv]) if (c.path.pack.join(".") == "haxe.ds" && (c.path.name == "ObjectMap" || c.path.name == "EnumValueMap")):
+				{k: tk, v: tv};
+			case _:
+				null;
 		};
 	}
 
