@@ -574,6 +574,16 @@ class Operators {
 		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
 	}
 
+	static function maybeTempReceiver(ctx:TyperContext, recv:TExpr, p:Position):{expr:TExpr, init:Null<TExpr>} {
+		return switch (recv.expr) {
+			case TLocal(_) | TConst(_) | TTypeExpr(_):
+				{expr: recv, init: null};
+			case _:
+				var v = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+				{expr: TexprTools.makeLocal(v, p), init: TypeFunctions.mk(TVarExpr(v, recv), ctx.com.basic.tvoid, p)};
+		}
+	}
+
 	static function typeAssign(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
 		// A concrete map write `m[k] = v` lowers to m.set(k, v), yielding v. Map operations stay on the
 		// concrete impl (which has get/set); the @:arrayAccess proper lives on the Map abstract.
@@ -678,8 +688,8 @@ class Operators {
 			var setterCf = implC.statics.get("set_" + name);
 			if (getterCf == null || setterCf == null) throw new TypingError("This compound assignment target is not yet ported", p);
 			var tvoid = ctx.com.basic.tvoid;
-			var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
-			var er = TexprTools.makeLocal(vr, p);
+			var tmp = maybeTempReceiver(ctx, recv, p);
+			var er = tmp.expr;
 			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 			function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
 			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
@@ -688,7 +698,7 @@ class Operators {
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
 			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
-			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), setCall]), retOf(setterCf), p);
+			return tmp.init == null ? setCall : TypeFunctions.mk(TBlock([tmp.init, setCall]), retOf(setterCf), p);
 		}
 		// A class property `a.p op= b` evaluates the receiver once, reads via its read access (the getter
 		// or
@@ -863,8 +873,8 @@ class Operators {
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
 		var recv = se.thisExpr;
-		var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
-		var er = TexprTools.makeLocal(vr, p);
+		var tmp = maybeTempReceiver(ctx, recv, p);
+		var er = tmp.expr;
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
 		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
@@ -872,7 +882,7 @@ class Operators {
 		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		var stmts = [TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p)];
+		var stmts = tmp.init == null ? [] : [tmp.init];
 		if (flag.match(Postfix)) {
 			var vold = TypeFunctions.allocVar(VGenerated, "`o", readVal.type, p);
 			var eold = TexprTools.makeLocal(vold, p);
