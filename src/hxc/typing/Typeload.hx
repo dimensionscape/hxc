@@ -636,7 +636,7 @@ class Typeload {
 		return nv;
 	}
 
-	static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>):TExpr {
+	public static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>):TExpr {
 		function opt(eo:Null<TExpr>):Null<TExpr> return eo == null ? null : cloneExpr(eo, subst, vars);
 		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) cloneExpr(x, subst, vars)];
 		function fieldAccess(fa:TFieldAccess):TFieldAccess {

@@ -199,10 +199,20 @@ class Typer {
 		}
 	}
 
-	static function normalizeCatchType(t:T, p:Position):T {
+	static function isGenericCatchParameter(ctx:TyperContext, c:TClass):Bool {
+		if (!TypeFunctions.hasClassFieldFlag(ctx.curfield, CfGeneric)) return false;
+		for (tp in ctx.curfield.params) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(c2, _) if (c2 == c):
+				return true;
+			case _:
+		}
+		return false;
+	}
+
+	static function normalizeCatchType(ctx:TyperContext, t:T, p:Position):T {
 		function loop(t:T):T {
 			return switch (TypeFunctions.follow(t)) {
-				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
+				case TInst(c, _) if (c.kind.match(KTypeParameter(_)) && !isGenericCatchParameter(ctx, c)):
 					throw new TypingError("Cannot catch non-generic type parameter", p);
 				case TInst(_, params) | TEnum(_, params):
 					checkCatchTypeParams(params, p);
@@ -703,7 +713,7 @@ class Typer {
 				for (c in catches) {
 					var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
 					var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
-					var normalizedCatchType = normalizeCatchType(catchType, th.pos);
+					var normalizedCatchType = normalizeCatchType(ctx, catchType, th.pos);
 					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
 					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.pos);

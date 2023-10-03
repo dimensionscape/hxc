@@ -497,13 +497,20 @@ class Calls {
 			try {
 				return TypeUnification.withMonoRollback(function() {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
-					var ce = monomorphizeParams(ctx, cf, callFieldExpr(ctx, fa2));
+					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2));
+					var ce = mono.expr;
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
 							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc);
+							if (faCall != fa2) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
+							var ret = switch (TypeFunctions.follow(ce.type)) {
+								case TFun(sig2): sig2.ret;
+								case _: sig.ret;
+							};
 							if (DebugDump.enabled("select", p))
-								DebugDump.selected("call", p, "field " + cf.name + " -> " + DebugDump.typeString(sig.ret));
-							makeCall(ctx, ce, r.el, sig.ret, p);
+								DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
+							makeCall(ctx, ce, r.el, ret, p);
 						case _:
 							callExpr(ctx, ce, el, p);
 					}
@@ -519,10 +526,100 @@ class Calls {
 	}
 
 	// A generic method's own type parameters become fresh monomorphs for the call.
-	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr):TExpr {
-		if (cf.params.length == 0) return ce;
+	static function monomorphizeParamsWith(ctx:TyperContext, cf:TClassField, ce:TExpr):{expr:TExpr, monos:TParams} {
+		if (cf.params.length == 0) return {expr: ce, monos: []};
 		var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
-		return TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos);
+		return {expr: TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos), monos: monos};
+	}
+
+	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr):TExpr {
+		return monomorphizeParamsWith(ctx, cf, ce).expr;
+	}
+
+	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T):FieldAccess {
+		if (cf.params.length == 0 || !TypeFunctions.hasClassFieldFlag(cf, CfGeneric)) return fa;
+		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
+		TypeFields.forceFieldBody(ctx.com, host, cf);
+		if (cf.expr == null) return fa;
+		var params = [for (m in monos) TypeFunctions.follow(m)];
+		var name = cf.name + "_" + genericSuffix(params);
+		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
+		var fields = stat ? host.statics : host.fields;
+		var ordered = stat ? host.orderedStatics : host.orderedFields;
+		var cf2 = fields.get(name);
+		if (cf2 == null) {
+			function subst(t:T):T return substituteGenericMethodType(cf.params, params, t);
+			cf2 = TypeFunctions.mkField(name, resolveGenericMonos(subst(callType)), cf.pos, cf.namePos, TypeFunctions.hasClassFieldFlag(cf, CfPublic), stat);
+			cf2.doc = cf.doc;
+			cf2.meta = cf.meta;
+			cf2.kind = cf.kind;
+			cf2.expr = Typeload.cloneExpr(cf.expr, subst, new Map());
+			cf2.exprUnoptimized = cf.exprUnoptimized == null ? null : Typeload.cloneExpr(cf.exprUnoptimized, subst, new Map());
+			cf2.flags = cf.flags;
+			TypeFunctions.removeClassFieldFlag(cf2, CfGeneric);
+			if (stat) TypeFunctions.addClassFieldFlag(cf2, CfStatic);
+			else TypeFunctions.removeClassFieldFlag(cf2, CfStatic);
+			fields.set(name, cf2);
+			ordered.unshift(cf2);
+		}
+		return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
+	}
+
+	static function substituteGenericMethodType(cparams:TypeParams, params:TParams, t:T):T {
+		return resolveGenericMonos(TypeFunctions.applyParams(cparams, params, t));
+	}
+
+	static function resolveGenericMonos(t:T):T {
+		return switch (TypeFunctions.follow(t)) {
+			case TFun(sig):
+				TFun({args: [for (a in sig.args) {name: a.name, opt: a.opt, t: resolveGenericMonos(a.t)}], ret: resolveGenericMonos(sig.ret)});
+			case TInst(c, params):
+				TInst(c, [for (p in params) resolveGenericMonos(p)]);
+			case TEnum(e, params):
+				TEnum(e, [for (p in params) resolveGenericMonos(p)]);
+			case TAbstract(a, params):
+				TAbstract(a, [for (p in params) resolveGenericMonos(p)]);
+			case TType(td, params):
+				TType(td, [for (p in params) resolveGenericMonos(p)]);
+			case TDynamic(t2):
+				TDynamic(t2 == null ? null : resolveGenericMonos(t2));
+			case TLazy(f):
+				resolveGenericMonos(TypeFunctions.lazyType(f));
+			case _:
+				TypeFunctions.follow(t);
+		}
+	}
+
+	static function genericSuffix(params:TParams):String {
+		return [for (p in params) sanitizeGenericPart(genericPart(p))].join("_");
+	}
+
+	static function genericPart(t:T):String {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, params): pathName(c.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
+			case TEnum(e, params): pathName(e.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
+			case TAbstract(a, params): pathName(a.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
+			case TType(td, params): pathName(td.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
+			case TDynamic(_): "Dynamic";
+			case TMono(_): "Mono";
+			case TFun(_): "Function";
+			case TAnon(_): "Anon";
+			case TLazy(f): genericPart(TypeFunctions.lazyType(f));
+		}
+	}
+
+	static function pathName(path:hxc.core.Globals.Path):String {
+		return path == null ? "T" : (path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name);
+	}
+
+	static function sanitizeGenericPart(s:String):String {
+		var b = new StringBuf();
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
+			b.addChar(ok ? c : "_".code);
+		}
+		return b.toString();
 	}
 
 	// A generic local function stores its type params on its TVar (extra); a call gives each a fresh
