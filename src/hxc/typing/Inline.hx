@@ -13,10 +13,10 @@ private class InlineBail extends haxe.Exception {
 }
 
 // Compile-time expansion of inline-function calls, a safe subset ported It handles expression-bodied inline
-// functions (single or final return, no early returns, no nested loops/switch/try/closures, no type
-// parameters): arguments and `this` bind to fresh locals and the body is substituted in place. Anything
-// else bails and the caller emits a normal call. Types in the inlined body are left as-is (the evaluator
-// runs the result without re-typing, so values stay correct).
+// functions (single or final return, no early returns, no nested switch/try/closures, no type parameters):
+// arguments and `this` bind to fresh locals and the body is substituted in place. Anything else bails and
+// the caller emits a normal call. Types in the inlined body are left as-is (the evaluator runs the result
+// without re-typing, so values stay correct).
 class Inline {
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
 		var cf:TClassField = null;
@@ -112,8 +112,7 @@ class Inline {
 		}
 	}
 
-	// Substitutes argument/this locals; bails on anything outside the handled subset (notably any
-	// non-final return, nested function, or loop/switch/try carrying control flow).
+	// Substitutes argument/this locals; bails on anything outside the handled subset.
 	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TVar>, vthis:Null<TVar>):TExpr {
 		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis);
 		var ne:TExprExpr = switch (e.expr) {
@@ -136,14 +135,24 @@ class Inline {
 				subst.set(v.id, nv);
 				TVarExpr(nv, eo == null ? null : m(eo));
 			case TBlock(el): TBlock([for (x in el) m(x)]);
+			case TFor(v, e1, e2):
+				var me1 = m(e1);
+				var hadOld = subst.exists(v.id);
+				var old = hadOld ? subst.get(v.id) : null;
+				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
+				subst.set(v.id, nv);
+				var me2 = m(e2);
+				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
+				TFor(nv, me1, me2);
 			case TIf(c, a, b): TIf(m(c), m(a), b == null ? null : m(b));
+			case TWhile(c, body, flag): TWhile(m(c), m(body), flag);
 			case TCast(e1, mt): TCast(m(e1), mt);
 			case TMeta(entry, e1): TMeta(entry, m(e1));
 			case TThrow(e1): TThrow(m(e1));
 			case TEnumParameter(e1, ef, idx): TEnumParameter(m(e1), ef, idx);
 			case TEnumIndex(e1): TEnumIndex(m(e1));
 			case TTypeExpr(_) | TIdent(_) | TBreak | TContinue: e.expr;
-			case TReturn(_) | TFunction(_) | TWhile(_, _, _) | TFor(_, _, _) | TSwitch(_, _, _) | TTry(_, _):
+			case TReturn(_) | TFunction(_) | TSwitch(_, _, _) | TTry(_, _):
 				throw new InlineBail();
 		};
 		return TypeFunctions.mk(ne, e.type, e.pos);
