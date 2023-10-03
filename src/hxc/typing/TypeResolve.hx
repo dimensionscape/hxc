@@ -431,6 +431,8 @@ class TypeResolve {
 					var ft = TFun({args: args, ret: ret});
 					var cf = TypeFunctions.mkField(cff.cffName.name, ft, cff.cffPos, cff.cffName.pos, true, true);
 					cf.meta = cff.cffMeta;
+					if (TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember && !TypeFunctions.hasMeta(":multiType", cf.meta))
+						cf.meta = [{name: ":multiType", params: [], pos: Position.nullPos}].concat(cf.meta);
 					cf.kind = Method(isMacro ? MethMacro : MethInline);
 					cf.params = methodParams;
 					// Abstract-impl field flag (check_abstract sets CfImpl on @:to fields).
