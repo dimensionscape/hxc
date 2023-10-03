@@ -507,6 +507,22 @@ class Operators {
 		};
 	}
 
+	static function promotedBinopWithType(op:Binop, withType:WithType):WithType {
+		return switch (withType) {
+			case WithType(t, _):
+				switch (TypeFunctions.follow(t)) {
+					case TAbstract(a, _):
+						var n = 0;
+						for (aop in a.ops) if (Type.enumEq(aop.op, op) || Type.enumEq(aop.op, OpAssignOp(op))) n++;
+						n == 1 ? withType : WithTypeTools.value;
+					case _:
+						WithTypeTools.value;
+				}
+			case _:
+				WithTypeTools.value;
+		}
+	}
+
 	public static function typeBinop(ctx:TyperContext, op:Binop, e1:Expr, e2:Expr, isAssignOp:Bool, withType:WithType, p:Position):TExpr {
 		return switch (op) {
 			case OpAssign:
@@ -540,10 +556,11 @@ class Operators {
 				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
 				TypeFunctions.mk(TBlock([decl, iff]), t, p);
 			case _:
-				var te1 = Typer.typeExpr(ctx, e1, WithTypeTools.value);
+				var lhsWt = promotedBinopWithType(op, withType);
+				var te1 = Typer.typeExpr(ctx, e1, lhsWt);
 				var rhsWt = switch (op) {
 					case OpEq | OpNotEq | OpLt | OpLte | OpGt | OpGte: WithTypeTools.withType(te1.type);
-					case _: WithTypeTools.value;
+					case _: lhsWt;
 				};
 				var te2 = Typer.typeExpr(ctx, e2, rhsWt);
 				toTexpr(makeBinop(ctx, op, te1, te2, isAssignOp, withType, p));

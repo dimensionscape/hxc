@@ -43,11 +43,14 @@ class Fields {
 			case Method(m):
 				if (isSet && !m.match(MethDynamic) && !ctx.untypedMode)
 					throw new TypingError("Cannot rebind this method : please use 'dynamic' before method declaration", pfield);
+				function methodAccess() {
+					return makeAccess(m.match(MethInline));
+				}
 				switch (fh) {
 					case FHAbstract(a, tl, c):
 						AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
 					case _:
-						AKField(makeAccess(false));
+						AKField(methodAccess());
 				}
 			case Var(vk):
 				var acc = isSet ? vk.write : vk.read;

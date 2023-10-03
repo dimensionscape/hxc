@@ -235,8 +235,8 @@ class TypeFields {
 		}
 		if (cff == null) return;
 		if (!hasFieldBody(cff)) return;
-		var isInlineMethod = switch (cf.kind) { case Method(MethInline): true; case _: false; };
-		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineMethod) return;
+		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
+		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var isStatic = false;
 		for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;

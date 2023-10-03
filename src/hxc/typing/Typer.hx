@@ -942,11 +942,12 @@ class Typer {
 				switch (TypeFunctions.follow(wt)) {
 					case TEnum(en, _) if (en.constrs.exists(i)):
 						return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
-					case TAbstract(a, _) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
+					case TAbstract(a, tl) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
 						// An enum-abstract value used unqualified resolves against the expected type, like an
 						// enum constructor: look it up as an @:enum static on the abstract's impl class.
 						var cf = a.impl.statics.get(i);
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
+							cf.type = TAbstract(a, tl);
 							var typeExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 							return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), typeExpr, p);
 						}
@@ -960,6 +961,8 @@ class Typer {
 				return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
 			case TAbstractDecl(a) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
+				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum))
+					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
 				return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 			case _:
 		}
@@ -1185,14 +1188,121 @@ class Typer {
 	// Acc_get (subset).
 	// Read of a field flagged inline (AccInline var, or an inline method closure). For an inline var the
 	// stored constant value is substituted at the access site.
+	static function samePath(a:hxc.core.Globals.Path, b:hxc.core.Globals.Path):Bool {
+		return a.name == b.name && a.pack.join(".") == b.pack.join(".");
+	}
+
+	static function externInlineImplClass(c:TClass):TClass {
+		var m = c.module;
+		var implPath = {pack: m.path.pack.concat(["_" + m.path.name]), name: m.path.name + "_Impl_"};
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c2) if (samePath(c2.path, implPath)):
+				return c2;
+			case _:
+		}
+		var c2 = TypeFunctions.mkClass(m, implPath, c.pos, Position.nullPos);
+		m.types.unshift(TClassDecl(c2));
+		return c2;
+	}
+
+	static function externInlineField(ctx:TyperContext, c:TClass, cf:TClassField):TClassField {
+		var c2 = externInlineImplClass(c);
+		var cf2 = c2.statics.get(cf.name);
+		if (cf2 != null) return cf2;
+		TypeFields.forceFieldBody(ctx.com, c, cf);
+		var body = cf.expr == null ? null : foldInlineStatics(ctx, cf.expr);
+		cf2 = new TClassField(cf.name, cf.type, cf.pos, cf.namePos, cf.doc, cf.meta.copy(), Method(MethNormal), cf.params.copy(), body, cf.exprUnoptimized, cf.overloads.copy(), cf.flags);
+		TypeFunctions.removeClassFieldFlag(cf2, CfExtern);
+		TypeFunctions.addClassFieldFlag(cf2, CfStatic);
+		c2.statics.set(cf2.name, cf2);
+		c2.orderedStatics.unshift(cf2);
+		return cf2;
+	}
+
+	static function foldedInlineStatic(ctx:TyperContext, c:TClass, cf:TClassField, p:Position):Null<TExpr> {
+		switch (cf.kind) {
+			case Var({read: AccInline}):
+				TypeFields.forceFieldBody(ctx.com, c, cf);
+				return switch (cf.expr) {
+					case null:
+						null;
+					case e:
+						var e2 = TypeFunctions.mk(e.expr, e.type, p);
+						TypeUnification.typeIseqDefault(cf.type, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), cf.type, p);
+				}
+			case _:
+				return null;
+		}
+	}
+
+	static function foldInlineStatics(ctx:TyperContext, e:TExpr):TExpr {
+		function m(x:TExpr):TExpr return foldInlineStatics(ctx, x);
+		var ne:TExprExpr = switch (e.expr) {
+			case TField(e1, fa):
+				switch (fa) {
+					case FStatic(c, cf):
+						var folded = foldedInlineStatic(ctx, c, cf, e.pos);
+						if (folded != null) return folded;
+						TField(m(e1), fa);
+					case _:
+						TField(m(e1), fa);
+				}
+			case TArray(e1, e2): TArray(m(e1), m(e2));
+			case TBinop(op, e1, e2): TBinop(op, m(e1), m(e2));
+			case TParenthesis(e1): TParenthesis(m(e1));
+			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: m(f.expr)}]);
+			case TArrayDecl(values): TArrayDecl([for (x in values) m(x)]);
+			case TCall(e1, params): TCall(m(e1), [for (x in params) m(x)]);
+			case TNew(c, params, args): TNew(c, params, [for (x in args) m(x)]);
+			case TUnop(op, flag, e1): TUnop(op, flag, m(e1));
+			case TFunction(f): TFunction(new TFunc([for (a in f.args) {v: a.v, c: a.c == null ? null : m(a.c)}], f.type, m(f.expr)));
+			case TVarExpr(v, eo): TVarExpr(v, eo == null ? null : m(eo));
+			case TBlock(exprs): TBlock([for (x in exprs) m(x)]);
+			case TFor(v, e1, e2): TFor(v, m(e1), m(e2));
+			case TIf(econd, eif, eelse): TIf(m(econd), m(eif), eelse == null ? null : m(eelse));
+			case TWhile(econd, e1, flag): TWhile(m(econd), m(e1), flag);
+			case TSwitch(e1, cases, edef):
+				TSwitch(m(e1), [for (c in cases) {values: [for (v in c.values) m(v)], expr: m(c.expr)}], edef == null ? null : m(edef));
+			case TTry(e1, catches): TTry(m(e1), [for (c in catches) {v: c.v, expr: m(c.expr)}]);
+			case TReturn(eo): TReturn(eo == null ? null : m(eo));
+			case TThrow(e1): TThrow(m(e1));
+			case TCast(e1, mt): TCast(m(e1), mt);
+			case TMeta(entry, e1): TMeta(entry, m(e1));
+			case TEnumParameter(e1, ef, index): TEnumParameter(m(e1), ef, index);
+			case TEnumIndex(e1): TEnumIndex(m(e1));
+			case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_):
+				e.expr;
+		};
+		return TypeFunctions.mk(ne, e.type, e.pos);
+	}
+
 	static function inlineRead(ctx:TyperContext, fa:FieldAccess):TExpr {
 		var cf = fa.field;
 		var p = fa.pos;
 		return switch (cf.kind) {
 			case Method(_):
-				// An inline method read yields its closure. The reference additionally routes extern inline
-				// methods through their _Impl_ class not needed here.
-				FieldAccessTools.getFieldExpr(fa, FRead);
+				var wrapClass = switch (TypeFunctions.follow(fa.on.type)) {
+					case TInst(c, _) if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !TypeFunctions.hasMeta(":runtime", cf.meta)):
+						throw new TypingError("Can't create closure on an extern inline member method", p);
+					case TAnon(a):
+						switch (a.status.value) {
+							case Statics(c) if (TypeFunctions.hasClassFlag(c, CExtern) && !TypeFunctions.hasMeta(":runtime", cf.meta)):
+								c;
+							case Statics(_) if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) && !TypeFunctions.hasMeta(":runtime", cf.meta)):
+								throw new TypingError("Cannot create closure on @:extern inline method", p);
+							case _:
+								null;
+						}
+					case _:
+						null;
+				};
+				if (wrapClass != null) {
+					var c2 = externInlineImplClass(wrapClass);
+					var cf2 = externInlineField(ctx, wrapClass, cf);
+					FieldAccessTools.getFieldExpr(FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(c2), p), cf2, FHStatic(c2), true, p), FRead);
+				} else {
+					FieldAccessTools.getFieldExpr(fa, FRead);
+				}
 			case Var(_):
 				if (cf.expr == null) {
 					// The inline var's initializer may not be typed yet (its module is processed later,
