@@ -476,7 +476,7 @@ class Typeload {
 						case EConst(CString(s, _)): "S" + s;
 						case EConst(CInt(v, _)): "I" + v;
 						case EConst(CFloat(f, _)): "F" + f;
-						case _: "Expr";
+						case _: hxc.ast.Printer.sExprInner("", e);
 					};
 					var m = ctx.currentModule != null ? ctx.currentModule : TypeFunctions.nullModule;
 					var c = TypeFunctions.mkClass(m, {pack: [], name: name}, p, e.pos);
