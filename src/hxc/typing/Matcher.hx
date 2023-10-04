@@ -771,13 +771,10 @@ class DtCompile {
 				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
 				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
 			case ConFields(fields):
-				var anonFields = switch (TypeFunctions.follow(e.type)) { case TAnon(a): a.fields; case _: null; };
 				[for (i in 0...fields.length) {
 					var name = fields[i];
-					var cf = anonFields == null ? null : anonFields.get(name);
-					TypeFunctions.mk(TField(e, cf != null ? FAnon(cf) : FDynamic(name)),
-						cf != null ? cf.type : TypeFunctions.tDynamic,
-						i < argPositions.length ? argPositions[i] : con.pos);
+					var p = i < argPositions.length ? argPositions[i] : con.pos;
+					Typer.accGet(mctx.ctx, Fields.typeField(mctx.ctx, e, name, p, MGet, WithTypeTools.value));
 				}];
 		};
 	}
