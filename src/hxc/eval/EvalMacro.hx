@@ -138,7 +138,11 @@ class EvalMacro {
 				throw e;
 			}
 		});
-		reg2("follow", "follow", function(a) return a[0]);
+		reg2("follow", "follow", function(a) {
+			var t = decodeType(ec, a[0]);
+			var once = a.length > 1 && a[1] != VNull && boolOf(a[1]);
+			return encodeType(ec, once ? TypeFunctions.followOnce(t) : TypeFunctions.follow(t));
+		});
 		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
 		reg2("defineType", "define_type", function(a) {
 			defineMacroType(ec, com, a[0], a.length > 1 ? a[1] : VNull);
@@ -2005,12 +2009,30 @@ class EvalMacro {
 		var payload = function() {
 			var fields:Map<Int, EvalValue> = new Map();
 			fields.set(EvalHash.hash("fields"), encodeArray([for (cf in an.fields) encodeClassField(ec, cf)]));
+			fields.set(EvalHash.hash("status"), encodeAnonStatus(ec, an.status.get()));
 			return VObject(new VObject([], ODictionary(fields)));
 		}
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload(), true));
 		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<anonymous>"), true));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeAnonStatus(ec:EvalContext, status:AnonStatus):EvalValue {
+		return switch (status) {
+			case Closed:
+				mkEnumValue(ec, "AnonStatus", "AClosed", []);
+			case Const:
+				mkEnumValue(ec, "AnonStatus", "AConst", []);
+			case Extend(tl):
+				mkEnumValue(ec, "AnonStatus", "AExtend", [encodeRef(ec, encodeArray([for (t in tl) encodeType(ec, t)]))]);
+			case Statics(c):
+				mkEnumValue(ec, "AnonStatus", "AClassStatics", [encodeClassRef(ec, c)]);
+			case EnumStatics(e):
+				mkEnumValue(ec, "AnonStatus", "AEnumStatics", [encodeEnumRef(ec, e)]);
+			case AbstractStatics(a):
+				mkEnumValue(ec, "AnonStatus", "AAbstractStatics", [encodeAbstractRef(ec, a)]);
+		};
 	}
 
 	// A lazy Ref<T>: .get() computes the payload on demand. Refs must stay lazy so a class encoding
