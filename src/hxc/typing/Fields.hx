@@ -361,9 +361,38 @@ class Fields {
 		};
 	}
 
+	static function tryUsingModuleType(ctx:TyperContext, mt:ModuleType, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		return switch (mt) {
+			case TClassDecl(uc):
+				tryUsingClass(ctx, uc, e, i, p);
+			case TAbstractDecl(a) if (a.impl != null):
+				tryUsingClass(ctx, a.impl, e, i, p);
+			case TTypeDecl(td):
+				switch (TypeFunctions.follow(td.type)) {
+					case TInst(uc, _): tryUsingClass(ctx, uc, e, i, p);
+					case TAbstract(a, _) if (a.impl != null): tryUsingClass(ctx, a.impl, e, i, p);
+					case _: null;
+				}
+			case _:
+				null;
+		};
+	}
+
 	// Compiler-wide static extensions applied to every module: haxe.EnumTools.{EnumTools, EnumValueTools}
 	// (so EnumValue.getIndex / Enum.createByName resolve without an explicit `using`). .
 	static var globalUsingModules = [{pack: ["haxe"], name: "EnumTools"}];
+	static var macroToolsUsingModules = [
+		{pack: ["haxe", "macro"], name: "ExprTools"},
+		{pack: ["haxe", "macro"], name: "ComplexTypeTools"},
+		{pack: ["haxe", "macro"], name: "TypeTools"},
+		{pack: ["haxe", "macro"], name: "MacroStringTools"},
+		{pack: ["haxe", "macro"], name: "TypedExprTools"},
+		{pack: ["haxe", "macro"], name: "PositionTools"}
+	];
+
+	static function isMacroToolsUsing(path:hxc.core.Globals.Path):Bool {
+		return path.pack.length == 2 && path.pack[0] == "haxe" && path.pack[1] == "macro" && path.name == "Tools";
+	}
 
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
 		for (u in typeUsings(e.type)) {
@@ -375,15 +404,16 @@ class Fields {
 		if (imports != null) {
 			for (up in imports.usings) {
 				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
-				switch (mt) {
-					case TClassDecl(uc):
-						var r = tryUsingClass(ctx, uc, e, i, p);
+				if (mt != null) {
+					var r = tryUsingModuleType(ctx, mt, e, i, p);
+					if (r != null) return r;
+				} else if (isMacroToolsUsing(up)) {
+					for (toolPath in macroToolsUsingModules) {
+						var tool = try ctx.com.getType(toolPath, p, null) catch (_:Dynamic) null;
+						if (tool == null) continue;
+						var r = tryUsingModuleType(ctx, tool, e, i, p);
 						if (r != null) return r;
-					// `using` on an abstract (e.g. `using haxe.Int64`) exposes its impl statics as extensions.
-					case TAbstractDecl(a) if (a.impl != null):
-						var r = tryUsingClass(ctx, a.impl, e, i, p);
-						if (r != null) return r;
-					case _:
+					}
 				}
 			}
 		}

@@ -76,6 +76,10 @@ class EvalMacro {
 				case _: VNull;
 			}
 		});
+		reg2("getCallArguments", "get_call_arguments", function(a) {
+			if (com.callArgumentStack.length == 0) return VNull;
+			return encodeArray([for (e in com.callArgumentStack[0]) encodeExpr(ec, e)]);
+		});
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
 		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
@@ -111,6 +115,10 @@ class EvalMacro {
 			var p = posArg(ec, a, 1, curPos);
 			var t = Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: decodeComplexType(ec, a[0], p), pos: p});
 			return encodeType(ec, t);
+		});
+		reg2("toComplexType", "to_complex_type", function(a) {
+			var ct = typeToComplexType(decodeType(ec, a[0]));
+			return ct == null ? VNull : encodeComplexType(ec, ct);
 		});
 		reg2("withImports", "with_imports", function(a) {
 			var m = com.currentModule;
@@ -703,9 +711,12 @@ class EvalMacro {
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
 			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 			lastModuleCount = macroCom.modules.length;
-		} else if (macroCtx != null) {
-			macroCtx = null;
-			lastModuleCount = -1;
+		} else if (macroCtx != null && fieldName != null) {
+			var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
+			if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
+				macroCtx = null;
+				lastModuleCount = -1;
+			}
 		}
 	}
 
@@ -926,6 +937,15 @@ class EvalMacro {
 				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
 				case _: throw new TypingError("genericBuild requires a single expression call parameter", callExpr.pos);
 			};
+			if (result == VNull) {
+				curBuildClass = savedBuildClass;
+				curBuildParams = savedBuildParams;
+				curBuildFields = savedBuildFields;
+				curTctx = savedTctx;
+				curPos = savedPos;
+				com.currentModule = savedMod;
+				return TypeFunctions.mkMono();
+			}
 			var ct = decodeComplexType(ec, result, p);
 			curBuildClass = savedBuildClass;
 			curBuildParams = savedBuildParams;
@@ -933,7 +953,8 @@ class EvalMacro {
 			curTctx = savedTctx;
 			curPos = savedPos;
 			com.currentModule = savedMod;
-			return hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p});
+			var ret = hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p});
+			return ret;
 		} catch (e:haxe.Exception) {
 			curBuildClass = savedBuildClass;
 			curBuildParams = savedBuildParams;
@@ -1773,6 +1794,29 @@ class EvalMacro {
 		fields.set(EvalHash.hash("params"), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
 		fields.set(EvalHash.hash("pos"), VNull);
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function typeToComplexType(t:T):Null<ComplexType> {
+		function hint(t:T):TypeHint return {ct: typeToComplexType(t), pos: Position.nullPos};
+		function params(tl:Array<T>):Array<TypeParamOrConst> return [for (t in tl) TPType(hint(t))];
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, tl):
+				CTPath({tpackage: c.path.pack, tname: c.path.name, tparams: params(tl), tsub: null});
+			case TEnum(e, tl):
+				CTPath({tpackage: e.path.pack, tname: e.path.name, tparams: params(tl), tsub: null});
+			case TType(td, tl):
+				CTPath({tpackage: td.path.pack, tname: td.path.name, tparams: params(tl), tsub: null});
+			case TAbstract(a, tl):
+				CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: params(tl), tsub: null});
+			case TFun(sig):
+				CTFunction([for (a in sig.args) hint(a.t)], hint(sig.ret));
+			case TDynamic(_):
+				CTPath({tpackage: [], tname: "Dynamic", tparams: [], tsub: null});
+			case TAnon(_) | TMono(_):
+				null;
+			case TLazy(r):
+				typeToComplexType(TypeFunctions.lazyType(r));
+		};
 	}
 
 	static function encodeComplexType(ec:EvalContext, ct:ComplexType):EvalValue {

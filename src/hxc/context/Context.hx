@@ -66,6 +66,8 @@ class Context {
 
 	public var currentModule:Null<ModuleDef> = null;
 
+	public var callArgumentStack:Array<Array<Expr>>;
+
 	public var storedTypedExprs:Map<Int, TExpr>;
 
 	public var nextStoredTypedExprId:Int = 0;
@@ -118,6 +120,7 @@ class Context {
 		this.declOfType = new StringMap();
 		this.diagnostics = [];
 		this.moduleImports = new StringMap();
+		this.callArgumentStack = [];
 		this.storedTypedExprs = new Map();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
 		this.basic = TypeFunctions.makeStubBasicTypes();

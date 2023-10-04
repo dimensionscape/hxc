@@ -207,6 +207,12 @@ class TypeFields {
 	// from the call site, so locate the syntactic field and run its body typing here.
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
+		switch (cf.type) {
+			case TLazy(r):
+				try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
+				if (cf.expr != null) return;
+			case _:
+		}
 		// Re-entry on the same field returns its current (still-open) signature, as a lazy type still in
 		// progress does. A different field is forced normally even when nested, so an inline callee's
 		// return type is inferred before its result is consumed by the caller.

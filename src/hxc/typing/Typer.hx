@@ -1844,7 +1844,19 @@ class Typer {
 	}
 
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
-		var t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, tp.path.tparams.length == 0);
+		var t:T;
+		if (tp.path.tparams.length == 0) {
+			ctx.com.callArgumentStack.unshift(el);
+			try {
+				t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true);
+				ctx.com.callArgumentStack.shift();
+			} catch (e:Dynamic) {
+				ctx.com.callArgumentStack.shift();
+				throw e;
+			}
+		} else {
+			t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false);
+		}
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
 				var tl = switch (c.kind) {
