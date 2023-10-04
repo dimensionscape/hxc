@@ -33,8 +33,8 @@ class Parser {
 		this.inMacro = inMacro;
 	}
 
-	public static function parseExprString(src:String, file:String = "?", ?defines:Define):Expr {
-		var p = make(src, file, defines, false);
+	public static function parseExprString(src:String, file:String = "?", ?defines:Define, registerContent:Bool = false):Expr {
+		var p = make(src, file, defines, registerContent);
 		var e = p.expr();
 		if (!p.tokEq(p.peek(), Eof)) p.serror();
 		return e;

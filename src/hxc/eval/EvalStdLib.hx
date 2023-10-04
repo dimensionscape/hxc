@@ -3607,6 +3607,18 @@ class EvalStdLib {
 		return "{" + parts.join(", ") + "}";
 	}
 
+	static function posString(p:Position):String {
+		if (p.min == -1) return "#pos((unknown))";
+		var info = Position.getInfos(p);
+		if (info.line == info.endLine) {
+			var c1 = info.column + 1;
+			var c2 = info.endColumn + 1;
+			var chars = c1 == c2 ? " character " + c1 : " characters " + c1 + "-" + c2;
+			return "#pos(" + info.file + ":" + info.line + ":" + chars + ")";
+		}
+		return "#pos(" + info.file + ":" + info.line + ": lines " + info.line + "-" + info.endLine + ")";
+	}
+
 	static function stringOfDepth(v:EvalValue, depth:Int):String {
 		if (depth > maxPrintDepth()) return "<...>";
 		return switch (EvalValueTools.vresolve(v)) {
@@ -3630,7 +3642,7 @@ class EvalStdLib {
 			case VInstance(vi):
 				switch (vi.ikind) {
 					case IDate(ts): Date.fromTime(ts).toString();
-					case IPos(_): "#pos";
+					case IPos(p): posString(p);
 					case IRegex(_): "#regexp";
 					case _:
 						var s = callToString(VInstance(vi), depth);

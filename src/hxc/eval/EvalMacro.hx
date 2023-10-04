@@ -81,9 +81,9 @@ class EvalMacro {
 			return encodeArray([for (e in com.callArgumentStack[0]) encodeExpr(ec, e)]);
 		});
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
-		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
+		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, a.length > 2 && a[2] == VTrue)));
 		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
-		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
+		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, true)));
 		reg2("formatString", "format_string", function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), curPos, com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
@@ -174,18 +174,10 @@ class EvalMacro {
 		reg2("getLocalClass", "get_local_class", function(a) return curBuildClass == null ? VNull : encodeClassRef(ec, curBuildClass));
 		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) {
 			var info = a.length > 0 ? a[0] : VNull;
-			var m = new Map<Int, EvalValue>();
-			m.set(EvalHash.hash("file"), EvalField.field(ec, info, EvalHash.hash("file")));
-			m.set(EvalHash.hash("min"), EvalField.field(ec, info, EvalHash.hash("min")));
-			m.set(EvalHash.hash("max"), EvalField.field(ec, info, EvalHash.hash("max")));
-			return VObject(new VObject([], ODictionary(m)));
+			return encPos(new Position(strOf(EvalField.field(ec, info, EvalHash.hash("file"))), intOf(EvalField.field(ec, info, EvalHash.hash("min"))), intOf(EvalField.field(ec, info, EvalHash.hash("max")))));
 		});
 		regBuiltin(ec, "haxe.macro.Context", "make_position", function(a) {
-			var m = new Map<Int, EvalValue>();
-			m.set(EvalHash.hash("file"), a.length > 2 ? a[2] : VNull);
-			m.set(EvalHash.hash("min"), a.length > 0 ? a[0] : VInt(0));
-			m.set(EvalHash.hash("max"), a.length > 1 ? a[1] : VInt(0));
-			return VObject(new VObject([], ODictionary(m)));
+			return encPos(new Position(a.length > 2 ? strOf(a[2]) : "?", a.length > 0 ? intOf(a[0]) : 0, a.length > 1 ? intOf(a[1]) : 0));
 		});
 		reg2("definedValue", "defined_value", function(a) {
 			var k = strOf(a[0]);
@@ -2059,11 +2051,20 @@ class EvalMacro {
 	}
 
 	static function encPos(p:Position):EvalValue {
-		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("file"), mkString(p.file));
-		fields.set(EvalHash.hash("min"), VInt(p.min));
-		fields.set(EvalHash.hash("max"), VInt(p.max));
-		return VObject(new VObject([], ODictionary(fields)));
+		var path = EvalHash.hash("haxe.macro.Position");
+		var proto = ecProto(path);
+		return VInstance(new VInstance([], proto, IPos(p)));
+	}
+
+	static function ecProto(path:Int):VPrototype {
+		var ec = EvalContext.getCtx();
+		var proto = ec.instancePrototypes.get(path);
+		if (proto == null) {
+			proto = new VPrototype(path, [], new Map(), [], new Map(), null, PClass([]), VNull);
+			proto.pvalue = VPrototype(proto);
+			ec.instancePrototypes.set(path, proto);
+		}
+		return proto;
 	}
 
 	static function posOf(ec:EvalContext, v:EvalValue, fallback:Position):Position {
