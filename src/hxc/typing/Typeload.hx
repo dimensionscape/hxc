@@ -531,6 +531,8 @@ class Typeload {
 							return t;
 						}));
 						TLazy(r);
+					case KGenericBuild(fields):
+						hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p);
 					case _:
 						TInst(c, params);
 				}

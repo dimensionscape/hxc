@@ -30,6 +30,7 @@ class EvalMacro {
 	static var expectedTypeStack:Array<WithType> = [];
 	static var curBuildFields:EvalValue = VNull;
 	static var curBuildClass:Null<TClass> = null;
+	static var curBuildParams:TParams = [];
 	static var currentCom:Null<Context> = null;
 	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
@@ -157,7 +158,7 @@ class EvalMacro {
 		});
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
 		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type.
-		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, TypeFunctions.extractParamTypes(curBuildClass.params))));
+		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, curBuildParams)));
 		reg2("getLocalClass", "get_local_class", function(a) return curBuildClass == null ? VNull : encodeClassRef(ec, curBuildClass));
 		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) {
 			var info = a.length > 0 ? a[0] : VNull;
@@ -418,6 +419,7 @@ class EvalMacro {
 		}
 		var ec = getContext(com);
 		var savedBuildClass = curBuildClass;
+		var savedBuildParams = curBuildParams;
 		var savedBuildFields = curBuildFields;
 		var savedTctx = curTctx;
 		var savedPos = curPos;
@@ -431,6 +433,7 @@ class EvalMacro {
 			curTctx = buildTctx;
 			curPos = callExpr.pos;
 			curBuildClass = c;
+			curBuildParams = TypeFunctions.extractParamTypes(c.params);
 			curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
@@ -443,6 +446,7 @@ class EvalMacro {
 			var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 			com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
 			curBuildClass = savedBuildClass;
+			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;
 			hxc.context.ModuleLoader.rebuildFields(c, newFields);
 			// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
@@ -458,6 +462,7 @@ class EvalMacro {
 			com.currentModule = savedResolveMod;
 		} catch (e:haxe.Exception) {
 			curBuildClass = savedBuildClass;
+			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;
 			curTctx = savedTctx;
 			curPos = savedPos;
@@ -884,6 +889,59 @@ class EvalMacro {
 				{ok: true, value: VObject(new VObject([], ODictionary(m)))};
 			case _:
 				no();
+		}
+	}
+
+	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position):T {
+		var entry = findMeta(c.meta, ":genericBuild");
+		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta", p);
+		if (entry.params.length != 1) throw new TypingError("genericBuild requires a single expression call parameter", p);
+		var callExpr = entry.params[0];
+		switch (callExpr.expr) {
+			case ECall(callee, _):
+				var t = macroTarget(callee);
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name}, t.method);
+			case _:
+				throw new TypingError("genericBuild requires a single expression call parameter", p);
+		}
+		var ec = getContext(com);
+		var savedBuildClass = curBuildClass;
+		var savedBuildParams = curBuildParams;
+		var savedBuildFields = curBuildFields;
+		var savedTctx = curTctx;
+		var savedPos = curPos;
+		var savedMod = com.currentModule;
+		try {
+			var buildTctx = new TyperContext(com);
+			buildTctx.curclass = c;
+			buildTctx.typeParams = c.params;
+			buildTctx.tthis = TInst(c, params);
+			com.currentModule = c.module;
+			curTctx = buildTctx;
+			curPos = callExpr.pos;
+			curBuildClass = c;
+			curBuildParams = params;
+			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
+			var result = switch (callExpr.expr) {
+				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
+				case _: throw new TypingError("genericBuild requires a single expression call parameter", callExpr.pos);
+			};
+			var ct = decodeComplexType(ec, result, p);
+			curBuildClass = savedBuildClass;
+			curBuildParams = savedBuildParams;
+			curBuildFields = savedBuildFields;
+			curTctx = savedTctx;
+			curPos = savedPos;
+			com.currentModule = savedMod;
+			return hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p});
+		} catch (e:haxe.Exception) {
+			curBuildClass = savedBuildClass;
+			curBuildParams = savedBuildParams;
+			curBuildFields = savedBuildFields;
+			curTctx = savedTctx;
+			curPos = savedPos;
+			com.currentModule = savedMod;
+			throw e;
 		}
 	}
 
