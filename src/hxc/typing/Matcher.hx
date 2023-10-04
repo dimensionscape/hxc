@@ -1037,6 +1037,12 @@ class DtCompile {
 	}
 }
 
+enum DtRecursion {
+	DRToplevel;
+	DRAfterSwitch;
+	DRDeep;
+}
+
 class TexprConverter {
 	static function arrayLengthExpr(ctx:TyperContext, subject:TExpr):TExpr {
 		return switch (TypeFunctions.follow(subject.type)) {
@@ -1088,10 +1094,10 @@ class TexprConverter {
 	}
 
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
-		return toTexprRec(ctx, tSwitch, withType, dt, true);
+		return toTexprRec(ctx, tSwitch, withType, dt, DRToplevel);
 	}
 
-	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, topLevel:Bool):Null<TExpr> {
+	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
 		var e:Null<TExpr> = switch (dt.t) {
@@ -1101,15 +1107,17 @@ class TexprConverter {
 				if (cases.length == 1) {
 					switch (cases[0].con.kind) {
 						case ConFields(_):
-							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, topLevel);
+							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, rec);
 						case _:
 					}
 				}
+				var topLevel = rec.match(DRToplevel);
+				var nextRec = topLevel ? DRAfterSwitch : DRDeep;
 				var complete = completeFiniteCoverage(subject, cases);
-				var defE = (topLevel && complete) ? null : toTexprRec(ctx, tSwitch, withType, def, false);
+				var defE = (topLevel && complete) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {
-					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, false);
+					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, nextRec);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
 				}
 				if (defE == null && !complete) switch (withType) {
@@ -1125,15 +1133,18 @@ class TexprConverter {
 				};
 				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
-				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, false);
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
 				if (eThen == null) null else {
-					var eElse = toTexprRec(ctx, tSwitch, withType, dt2, false);
+					var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec);
 					if (eElse != null) TypeFunctions.mk(TIf(e, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
-					else TypeFunctions.mk(TIf(e, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
+					else if (withType.match(NoValue) && (rec.match(DRToplevel) || rec.match(DRAfterSwitch)))
+						TypeFunctions.mk(TIf(e, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
+					else null;
 				}
 			case GuardNull(e, dt1, dt2):
-				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, false);
-				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, false);
+				var topLevel = rec.match(DRToplevel);
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
+				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec);
 				if (eThen == null) {
 					if (topLevel || withType.match(NoValue)) eElse else throw new TypingError("Unmatched patterns: null", e.pos);
 				} else if (eElse == null) {
@@ -1148,7 +1159,7 @@ class TexprConverter {
 					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
 				}
 			case Bind(bl, dt2):
-				var inner = toTexprRec(ctx, tSwitch, withType, dt2, topLevel);
+				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec);
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
 					el.push(inner);
