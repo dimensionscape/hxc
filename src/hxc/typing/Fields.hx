@@ -181,8 +181,19 @@ class Fields {
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
 						} else {
-							var u = tryUsing(ctx, e, i, pfield);
-							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+							switch (a.status.get()) {
+								case AbstractStatics(ab) if (ab.impl != null && forwardsStaticField(ab, i)):
+									try {
+										var mt = TypeFunctions.moduleTypeOfType(ab.thisType);
+										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, pfield), i, pfield, mode, withType);
+									} catch (_:hxc.core.ExitException) {
+										var u = tryUsing(ctx, e, i, pfield);
+										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+									}
+								case _:
+									var u = tryUsing(ctx, e, i, pfield);
+									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+							}
 						}
 				}
 			case TMono(r):
@@ -320,8 +331,16 @@ class Fields {
 	// True when the abstract forwards member `name` to its underlying type: @:forward with no
 	// arguments forwards everything, @:forward(a, b, ...) forwards only the listed names.
 	static function forwardsField(a:TAbstract, name:String):Bool {
-		if (!TypeFunctions.hasMeta(":forward", a.meta)) return false;
-		var entry = TypeFunctions.getMeta(":forward", a.meta);
+		return forwardsMetaField(a, name, ":forward");
+	}
+
+	static function forwardsStaticField(a:TAbstract, name:String):Bool {
+		return forwardsMetaField(a, name, ":forwardStatics");
+	}
+
+	static function forwardsMetaField(a:TAbstract, name:String, meta:String):Bool {
+		if (!TypeFunctions.hasMeta(meta, a.meta)) return false;
+		var entry = TypeFunctions.getMeta(meta, a.meta);
 		if (entry.params.length == 0) return true;
 		for (pe in entry.params) switch (pe.expr) {
 			case EConst(CIdent(n)) if (n == name): return true;

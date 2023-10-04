@@ -1118,14 +1118,29 @@ class EvalMacro {
 			if (TypeUnification.typeIseqDefault(tleft, tright)) return true;
 			for (item in stack) if (TypeUnification.fastEq(tleft, item.tleft) && TypeUnification.fastEq(tright, item.tright)) return false;
 			stack.push({tleft: tleft, tright: tright});
+			var uctx = TypeUnification.defaultUnificationContext;
 			var ok = switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
 				case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
-					macroLoopAbstractTo(a2, tl2, tleft, tright, loop)
-						|| macroLoopAbstractFrom(a1, tl1, tleft, tright, loop);
+					try {
+						TypeUnification.findToFrom(uctx, tright, tleft, a2, tl2, a1, tl1);
+						true;
+					} catch (_:hxc.core.NotFound) {
+						false;
+					}
 				case [TAbstract(a, tl), _]:
-					macroLoopAbstractFrom(a, tl, tleft, tright, loop);
+					try {
+						TypeUnification.findFrom(uctx, tright, a, tl);
+						true;
+					} catch (_:hxc.core.NotFound) {
+						macroLoopAbstractFrom(a, tl, tleft, tright, loop);
+					}
 				case [_, TAbstract(a, tl)]:
-					macroLoopAbstractTo(a, tl, tleft, tright, loop);
+					try {
+						TypeUnification.findTo(uctx, tleft, a, tl);
+						true;
+					} catch (_:hxc.core.NotFound) {
+						macroLoopAbstractTo(a, tl, tleft, tright, loop);
+					}
 				case _:
 					false;
 			}

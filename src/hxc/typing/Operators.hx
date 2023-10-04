@@ -654,15 +654,26 @@ class Operators {
 						var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
 						var eb = TexprTools.makeLocal(vb, p);
 						var ek = TexprTools.makeLocal(vk, p);
-						var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
+						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
+						var keyInit:Null<TExpr> = null;
+						switch (get.key.expr) {
+							case TLocal(v) if (v == vk):
+							case _:
+								var vkc = TypeFunctions.allocVar(VGenerated, "`k", get.key.type, p);
+								keyInit = TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p);
+								get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
+						}
+						var eget = get.expr;
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 						var eop = toTexpr(makeBinop(ctx, sub, eget, te2, true, withType, p));
-						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return eop, p);
-						return TypeFunctions.mk(TBlock([
+						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return eop, p);
+						var block = [
 							TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p),
-							TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p),
-							eset
-						]), eset.type, p);
+							TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)
+						];
+						if (keyInit != null) block.push(keyInit);
+						block.push(eset);
+						return TypeFunctions.mk(TBlock(block), eset.type, p);
 					case _:
 				}
 			case _:
@@ -812,16 +823,36 @@ class Operators {
 		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
 		var eb = TexprTools.makeLocal(vb, p);
 		var ek = TexprTools.makeLocal(vk, p);
-		var eget = switch (Calls.arrayAccess(ctx, eb, ek, MGet, p)) { case AKExpr(e): e; case _: throw new TypingError("@:arrayAccess getter not resolved", p); };
+		var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
 		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
+		switch (get.key.expr) {
+			case TLocal(v) if (v == vk):
+			case _:
+				var vkc = TypeFunctions.allocVar(VGenerated, "`k", get.key.type, p);
+				stmts.push(TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p));
+				get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
+		}
+		var eget = get.expr;
+		function fallback(e:TypingError):TExpr {
+			if (e.message != "No matching @:arrayAccess setter") throw e;
+			var abs = tryAbstractUnop(ctx, op, flag, eget, p);
+			if (abs == null) throw e;
+			var out = stmts.copy();
+			out.push(abs);
+			return TypeFunctions.mk(TBlock(out), abs.type, p);
+		}
 		if (flag.match(Postfix)) {
 			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
 			var eold = TexprTools.makeLocal(vold, p);
 			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
 			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
-			stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return newv, p));
+			try {
+				stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return newv, p));
+			} catch (e:TypingError) {
+				return fallback(e);
+			}
 			stmts.push(eold);
 			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
 		}
@@ -829,7 +860,11 @@ class Operators {
 		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
 		var enew = TexprTools.makeLocal(vnew, p);
 		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, ek, function(_) return enew, p));
+		try {
+			stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return enew, p));
+		} catch (e:TypingError) {
+			return fallback(e);
+		}
 		stmts.push(enew);
 		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}

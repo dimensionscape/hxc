@@ -68,19 +68,7 @@ class Calls {
 			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0 && mode.match(MSet(_))):
 				return AKAccess(a, tl, a.impl, e1, e2);
 			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
-				for (cf in a.array) {
-					if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, cf);
-					switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
-						case TFun(sig) if (sig.args.length == 2):
-							var key = Typer.castOrUnify(ctx, sig.args[1].t, e2, e2.pos);
-							if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
-								return AKExpr(TypeFunctions.mk(TArray(e1, key), sig.ret, p));
-							var implExpr = TexprTools.makeStaticThis(a.impl, p);
-							var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(a.impl), false, p), FCall);
-							return AKExpr(makeCall(ctx, fieldExpr, [e1, key], sig.ret, p));
-						case _:
-					}
-				}
+				return AKExpr(abstractArrayGet(ctx, a, tl, a.impl, e1, e2, p).expr);
 			case _:
 		}
 		// A class-level @:arrayAccess abstract (no @:arrayAccess methods) forwards array access to its
@@ -126,6 +114,23 @@ class Calls {
 			throw new TypingError("Array index must be of type Int", e2.pos);
 		}
 		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
+	}
+
+	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr} {
+		for (cf in a.array) {
+			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
+				case TFun(sig) if (sig.args.length == 2):
+					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+					if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+						return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
+					var implExpr = TexprTools.makeStaticThis(c, p);
+					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+					return {expr: makeCall(ctx, fieldExpr, [ebase, key], sig.ret, p), key: key};
+				case _:
+			}
+		}
+		throw new TypingError("@:arrayAccess getter not resolved", p);
 	}
 
 	// Abstract @:arrayAccess write: call the impl setter taking (this, key, value). .
