@@ -1091,6 +1091,10 @@ class TexprConverter {
 	}
 
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
+		return toTexprRec(ctx, tSwitch, withType, dt, true);
+	}
+
+	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, topLevel:Bool):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
 		var e:Null<TExpr> = switch (dt.t) {
@@ -1100,14 +1104,14 @@ class TexprConverter {
 				if (cases.length == 1) {
 					switch (cases[0].con.kind) {
 						case ConFields(_):
-							return toTexpr(ctx, tSwitch, withType, cases[0].dt);
+							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, false);
 						case _:
 					}
 				}
-				var defE = toTexpr(ctx, tSwitch, withType, def);
+				var defE = toTexprRec(ctx, tSwitch, withType, def, false);
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {
-					var ce = toTexpr(ctx, tSwitch, withType, sc.dt);
+					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, false);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
 				}
 				if (defE == null && !completeFiniteCoverage(subject, cases)) switch (withType) {
@@ -1123,22 +1127,30 @@ class TexprConverter {
 				};
 				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
-				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, false);
 				if (eThen == null) null else {
-					var eElse = toTexpr(ctx, tSwitch, withType, dt2);
+					var eElse = toTexprRec(ctx, tSwitch, withType, dt2, false);
 					if (eElse != null) TypeFunctions.mk(TIf(e, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
 					else TypeFunctions.mk(TIf(e, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
 				}
 			case GuardNull(e, dt1, dt2):
-				var eThen = toTexpr(ctx, tSwitch, withType, dt1);
-				var eElse = toTexpr(ctx, tSwitch, withType, dt2);
-				if (eThen == null) eElse else if (eElse == null) eThen else {
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, false);
+				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, false);
+				if (eThen == null) {
+					if (topLevel || withType.match(NoValue)) eElse else throw new TypingError("Unmatched patterns: null", e.pos);
+				} else if (eElse == null) {
+					if (topLevel || withType.match(NoValue)) {
+						var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
+						var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
+						TypeFunctions.mk(TIf(cond, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
+					} else throw new TypingError("Unmatched patterns: _", e.pos);
+				} else {
 					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
 					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
 				}
 			case Bind(bl, dt2):
-				var inner = toTexpr(ctx, tSwitch, withType, dt2);
+				var inner = toTexprRec(ctx, tSwitch, withType, dt2, false);
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
 					el.push(inner);
