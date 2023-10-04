@@ -121,12 +121,14 @@ class Calls {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 2):
-					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
-					if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
-						return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
-					var implExpr = TexprTools.makeStaticThis(c, p);
-					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-					return {expr: makeCall(ctx, fieldExpr, [ebase, key], sig.ret, p), key: key};
+					try {
+						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
+						var implExpr = TexprTools.makeStaticThis(c, p);
+						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+						return {expr: makeCall(ctx, fieldExpr, [ebase, key], sig.ret, p), key: key};
+					} catch (_:TypingError) {}
 				case _:
 			}
 		}
@@ -145,15 +147,17 @@ class Calls {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
 				case TFun(sig) if (sig.args.length == 3):
-					var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
-					var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
-					if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
-						var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
-						return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
-					}
-					var implExpr = TexprTools.makeStaticThis(c, p);
-					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-					return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
+					try {
+						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+						var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
+						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
+							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
+						}
+						var implExpr = TexprTools.makeStaticThis(c, p);
+						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+						return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
+					} catch (_:TypingError) {}
 				case _:
 			}
 		}
