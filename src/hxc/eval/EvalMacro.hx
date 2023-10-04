@@ -1072,6 +1072,14 @@ class EvalMacro {
 		function params(pl:Array<EvalValue>):String {
 			return pl.length == 0 ? "" : "<" + [for (p in pl) macroTypeString(ec, p)].join(", ") + ">";
 		}
+		function funArg(v:EvalValue, void:Bool):String {
+			var s = macroTypeString(ec, v);
+			return switch (ctorName(ec, v)) {
+				case "TFun": "(" + s + ")";
+				case "TAbstract" if (void && s == "Void"): "(" + s + ")";
+				case _: s;
+			}
+		}
 		return switch (ctorName(ec, v)) {
 			case "TMono":
 				var t = refGet(ec, args[0]);
@@ -1080,9 +1088,19 @@ class EvalMacro {
 				refString(ec, args[0]) + params(arrOf(args[1]));
 			case "TFun":
 				var funArgs = arrOf(args[0]);
-				var parts = [for (a in funArgs) macroTypeString(ec, EvalField.field(ec, a, EvalHash.hash("t")))];
-				parts.push(macroTypeString(ec, args[1]));
-				parts.join(" -> ");
+				var lhs = if (funArgs.length == 0) "()"
+					else if (funArgs.length == 1 && strOf(EvalField.field(ec, funArgs[0], EvalHash.hash("name"))) == "")
+						(boolOf(EvalField.field(ec, funArgs[0], EvalHash.hash("opt"))) ? "?" : "") + funArg(EvalField.field(ec, funArgs[0], EvalHash.hash("t")), true)
+					else {
+						var parts = [for (a in funArgs) {
+							var name = strOf(EvalField.field(ec, a, EvalHash.hash("name")));
+							(boolOf(EvalField.field(ec, a, EvalHash.hash("opt"))) ? "?" : "")
+								+ (name == "" ? "" : name + " : ")
+								+ funArg(EvalField.field(ec, a, EvalHash.hash("t")), true);
+						}];
+						"(" + parts.join(", ") + ")";
+					}
+				lhs + " -> " + funArg(args[1], false);
 			case "TAnonymous":
 				var an = refGet(ec, args[0]);
 				var fields = arrOf(EvalField.field(ec, an, EvalHash.hash("fields")));
@@ -2199,7 +2217,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("pos"), encPos(cf.pos));
 		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
 		f.set(EvalHash.hash("doc"), VNull);
-		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([])));
+		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([for (ocf in cf.overloads) encodeClassField(ec, ocf)])));
 		f.set(EvalHash.hash("isExtern"), VFalse);
 		f.set(EvalHash.hash("isFinal"), VFalse);
 		f.set(EvalHash.hash("isAbstract"), VFalse);
