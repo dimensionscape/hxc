@@ -1104,17 +1104,18 @@ class TexprConverter {
 				if (cases.length == 1) {
 					switch (cases[0].con.kind) {
 						case ConFields(_):
-							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, false);
+							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, topLevel);
 						case _:
 					}
 				}
-				var defE = toTexprRec(ctx, tSwitch, withType, def, false);
+				var complete = completeFiniteCoverage(subject, cases);
+				var defE = (topLevel && complete) ? null : toTexprRec(ctx, tSwitch, withType, def, false);
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {
 					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, false);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
 				}
-				if (defE == null && !completeFiniteCoverage(subject, cases)) switch (withType) {
+				if (defE == null && !complete) switch (withType) {
 					case NoValue:
 					case _:
 						throw new TypingError("Unmatched patterns: _", subject.pos);
@@ -1150,7 +1151,7 @@ class TexprConverter {
 					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
 				}
 			case Bind(bl, dt2):
-				var inner = toTexprRec(ctx, tSwitch, withType, dt2, false);
+				var inner = toTexprRec(ctx, tSwitch, withType, dt2, topLevel);
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
 					el.push(inner);
