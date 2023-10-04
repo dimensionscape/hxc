@@ -4,12 +4,15 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.WithType.WithTypeTools;
 import hxc.core.NotFound;
 import hxc.core.Ref;
 import hxc.core.Globals.Path;
 import hxc.context.Context;
 import hxc.context.Context.ContextError;
 import haxe.ds.StringMap;
+
+private typedef GenericSubstEntry = {from:T, to:T, expr:Null<TExpr>};
 
 class Typeload {
 	static final pNull = Position.nullPos;
@@ -638,9 +641,15 @@ class Typeload {
 		return nv;
 	}
 
-	public static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>):TExpr {
-		function opt(eo:Null<TExpr>):Null<TExpr> return eo == null ? null : cloneExpr(eo, subst, vars);
-		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) cloneExpr(x, subst, vars)];
+	public static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>, ?gsubst:Array<GenericSubstEntry>):TExpr {
+		if (gsubst != null) switch (e.expr) {
+			case TTypeExpr(TClassDecl(c)):
+				var hit = findGenericSubst(gsubst, TInst(c, []));
+				if (hit != null && hit.expr != null) return cloneExpr(hit.expr, subst, vars, gsubst);
+			case _:
+		}
+		function opt(eo:Null<TExpr>):Null<TExpr> return eo == null ? null : cloneExpr(eo, subst, vars, gsubst);
+		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) cloneExpr(x, subst, vars, gsubst)];
 		function fieldAccess(fa:TFieldAccess):TFieldAccess {
 			return switch (fa) {
 				case FAnon(cf): FAnon(cf);
@@ -655,43 +664,85 @@ class Typeload {
 		return TypeFunctions.mk(switch (e.expr) {
 			case TConst(c): TConst(c);
 			case TLocal(v): TLocal(cloneVar(v, subst, vars));
-			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
-			case TBinop(op, e1, e2): TBinop(op, cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
-			case TField(e1, fa): TField(cloneExpr(e1, subst, vars), fieldAccess(fa));
+			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
+			case TBinop(op, e1, e2): TBinop(op, cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
+			case TField(e1, fa): TField(cloneExpr(e1, subst, vars, gsubst), fieldAccess(fa));
 			case TTypeExpr(mt): TTypeExpr(mt);
-			case TParenthesis(e1): TParenthesis(cloneExpr(e1, subst, vars));
-			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: cloneExpr(f.expr, subst, vars)}]);
+			case TParenthesis(e1): TParenthesis(cloneExpr(e1, subst, vars, gsubst));
+			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: cloneExpr(f.expr, subst, vars, gsubst)}]);
 			case TArrayDecl(values): TArrayDecl(arr(values));
-			case TCall(e1, params): TCall(cloneExpr(e1, subst, vars), arr(params));
+			case TCall(e1, params): TCall(cloneExpr(e1, subst, vars, gsubst), arr(params));
 			case TNew(c, params, args): TNew(c, [for (t in params) subst(t)], arr(args));
-			case TUnop(op, flag, e1): TUnop(op, flag, cloneExpr(e1, subst, vars));
+			case TUnop(op, flag, e1): TUnop(op, flag, cloneExpr(e1, subst, vars, gsubst));
 			case TFunction(f):
 				var fvars = new Map<Int, TVar>();
 				for (id in vars.keys()) fvars.set(id, vars.get(id));
 				var args = [for (a in f.args) {v: cloneVar(a.v, subst, fvars), c: opt(a.c)}];
-				TFunction(new TFunc(args, subst(f.type), cloneExpr(f.expr, subst, fvars)));
+				TFunction(new TFunc(args, subst(f.type), cloneExpr(f.expr, subst, fvars, gsubst)));
 			case TVarExpr(v, eo): TVarExpr(cloneVar(v, subst, vars), opt(eo));
 			case TBlock(exprs): TBlock(arr(exprs));
-			case TFor(v, e1, e2): TFor(cloneVar(v, subst, vars), cloneExpr(e1, subst, vars), cloneExpr(e2, subst, vars));
-			case TIf(econd, eif, eelse): TIf(cloneExpr(econd, subst, vars), cloneExpr(eif, subst, vars), opt(eelse));
-			case TWhile(econd, e1, flag): TWhile(cloneExpr(econd, subst, vars), cloneExpr(e1, subst, vars), flag);
-			case TSwitch(e1, cases, edef): TSwitch(cloneExpr(e1, subst, vars), [for (c in cases) {values: arr(c.values), expr: cloneExpr(c.expr, subst, vars)}], opt(edef));
-			case TTry(e1, catches): TTry(cloneExpr(e1, subst, vars), [for (c in catches) {v: cloneVar(c.v, subst, vars), expr: cloneExpr(c.expr, subst, vars)}]);
+			case TFor(v, e1, e2): TFor(cloneVar(v, subst, vars), cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
+			case TIf(econd, eif, eelse): TIf(cloneExpr(econd, subst, vars, gsubst), cloneExpr(eif, subst, vars, gsubst), opt(eelse));
+			case TWhile(econd, e1, flag): TWhile(cloneExpr(econd, subst, vars, gsubst), cloneExpr(e1, subst, vars, gsubst), flag);
+			case TSwitch(e1, cases, edef): TSwitch(cloneExpr(e1, subst, vars, gsubst), [for (c in cases) {values: arr(c.values), expr: cloneExpr(c.expr, subst, vars, gsubst)}], opt(edef));
+			case TTry(e1, catches): TTry(cloneExpr(e1, subst, vars, gsubst), [for (c in catches) {v: cloneVar(c.v, subst, vars), expr: cloneExpr(c.expr, subst, vars, gsubst)}]);
 			case TReturn(eo): TReturn(opt(eo));
 			case TBreak: TBreak;
 			case TContinue: TContinue;
-			case TThrow(e1): TThrow(cloneExpr(e1, subst, vars));
-			case TCast(e1, mt): TCast(cloneExpr(e1, subst, vars), mt);
-			case TMeta(entry, e1): TMeta(entry, cloneExpr(e1, subst, vars));
-			case TEnumParameter(e1, ef, index): TEnumParameter(cloneExpr(e1, subst, vars), ef, index);
-			case TEnumIndex(e1): TEnumIndex(cloneExpr(e1, subst, vars));
+			case TThrow(e1): TThrow(cloneExpr(e1, subst, vars, gsubst));
+			case TCast(e1, mt): TCast(cloneExpr(e1, subst, vars, gsubst), mt);
+			case TMeta(entry, e1): TMeta(entry, cloneExpr(e1, subst, vars, gsubst));
+			case TEnumParameter(e1, ef, index): TEnumParameter(cloneExpr(e1, subst, vars, gsubst), ef, index);
+			case TEnumIndex(e1): TEnumIndex(cloneExpr(e1, subst, vars, gsubst));
 			case TIdent(s): TIdent(s);
 		}, et, e.pos);
 	}
 
-	static function genericSubstituteType(ctx:Context, c:TClass, params:TParams, p:Position, t:T):T {
-		var applied = TypeFunctions.applyParams(c.params, params, t);
+	static function genericCheckConstExpr(ctx:Context, t:T):GenericSubstEntry {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst({kind: KExpr(e)}, _):
+				var tctx = new TyperContext(ctx);
+				var te = Typer.typeExpr(tctx, e, WithTypeTools.value);
+				{from: t, to: te.type, expr: te};
+			case _:
+				{from: t, to: t, expr: null};
+		}
+	}
+
+	static function typeParamClass(t:T):Null<TClass> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): c;
+			case _: null;
+		}
+	}
+
+	static function findGenericSubst(gsubst:Array<GenericSubstEntry>, t:T):Null<GenericSubstEntry> {
+		var c = typeParamClass(t);
+		if (c == null) return null;
+		for (s in gsubst) {
+			var c2 = typeParamClass(s.from);
+			if (c2 == c) return s;
+		}
+		return null;
+	}
+
+	static function makeGenericSubst(ctx:Context, c:TClass, params:TParams):Array<GenericSubstEntry> {
+		var out:Array<GenericSubstEntry> = [];
+		for (i in 0...c.params.length) {
+			var from = switch (c.params[i].type) {
+				case TLazy(f): TypeFunctions.lazyType(f);
+				case t: t;
+			}
+			var checked = genericCheckConstExpr(ctx, params[i]);
+			out.push({from: from, to: checked.to, expr: checked.expr});
+		}
+		return out;
+	}
+
+	static function genericSubstituteType(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, p:Position, t:T):T {
 		function loop(t:T):T {
+			var hit = findGenericSubst(gsubst, t);
+			if (hit != null) return loop(hit.to);
 			return switch (t) {
 				case TInst(gc, tl):
 					var tl2 = [for (x in tl) loop(x)];
@@ -728,17 +779,17 @@ class Typeload {
 					TDynamic(t == null ? null : loop(t));
 			}
 		}
-		return loop(applied);
+		return loop(t);
 	}
 
-	static function cloneField(ctx:Context, c:TClass, params:TParams, f:TClassField):TClassField {
-		var subst = function(t:T) return genericSubstituteType(ctx, c, params, f.pos, t);
+	static function cloneField(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, f:TClassField):TClassField {
+		var subst = function(t:T) return genericSubstituteType(ctx, c, gsubst, f.pos, t);
 		if (f.expr == null) TypeFields.forceFieldBody(ctx, c, f);
 		var cf = TypeFunctions.copyField(f);
 		cf.type = subst(f.type);
-		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map());
-		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map());
-		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, params, o)];
+		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map(), gsubst);
+		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst);
+		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o)];
 		return cf;
 	}
 
@@ -759,19 +810,20 @@ class Typeload {
 		cg.flags = c.flags;
 		cg.usings = c.usings;
 		genericInstances.set(key, cg);
-		cg.superClass = c.superClass == null ? null : switch (genericSubstituteType(ctx, c, params, p, TInst(c.superClass.c, c.superClass.params))) {
+		var gsubst = makeGenericSubst(ctx, c, params);
+		cg.superClass = c.superClass == null ? null : switch (genericSubstituteType(ctx, c, gsubst, p, TInst(c.superClass.c, c.superClass.params))) {
 			case TInst(cs, pl): {c: cs, params: pl};
 			case _: null;
 		};
-		cg.interfaces = [for (i in c.interfaces) switch (genericSubstituteType(ctx, c, params, p, TInst(i.c, i.params))) {
+		cg.interfaces = [for (i in c.interfaces) switch (genericSubstituteType(ctx, c, gsubst, p, TInst(i.c, i.params))) {
 			case TInst(ci, pl): {c: ci, params: pl};
 			case _: throw "generic interface substitution failed";
 		}];
-		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, params, p, c.dynamicType);
-		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, params, p, c.arrayAccess);
-		if (c.constructor != null) cg.constructor = cloneField(ctx, c, params, c.constructor);
+		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.dynamicType);
+		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.arrayAccess);
+		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor);
 		for (f in c.orderedFields) {
-			var cf = cloneField(ctx, c, params, f);
+			var cf = cloneField(ctx, c, gsubst, f);
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
 		}

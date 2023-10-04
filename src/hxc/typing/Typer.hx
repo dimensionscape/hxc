@@ -209,6 +209,26 @@ class Typer {
 		return false;
 	}
 
+	static function isGenericParameter(ctx:TyperContext, c:TClass):Bool {
+		if (ctx.curclass != null) {
+			switch (ctx.curclass.kind) {
+				case KGeneric:
+					for (tp in ctx.curclass.params) switch (TypeFunctions.follow(tp.type)) {
+						case TInst(c2, _) if (c2 == c): return true;
+						case _:
+					}
+				case _:
+			}
+		}
+		if (ctx.curfield != null && TypeFunctions.hasClassFieldFlag(ctx.curfield, CfGeneric)) {
+			for (tp in ctx.curfield.params) switch (TypeFunctions.follow(tp.type)) {
+				case TInst(c2, _) if (c2 == c): return true;
+				case _:
+			}
+		}
+		return false;
+	}
+
 	static function normalizeCatchType(ctx:TyperContext, t:T, p:Position):T {
 		function loop(t:T):T {
 			return switch (TypeFunctions.follow(t)) {
@@ -980,6 +1000,17 @@ class Typer {
 		// <Module>_Fields_ class) is visible unqualified within its own module.
 		var modStatic = resolveModuleStatic(ctx, i, p, mode);
 		if (modStatic != null) return modStatic;
+		var resolvedToTypeParameter = false;
+		for (tp in ctx.typeParams) if (tp.name == i) {
+			resolvedToTypeParameter = true;
+			switch (TypeFunctions.follow(TypeFunctions.extractParamType(tp))) {
+				case TInst(c, _) if (isGenericParameter(ctx, c) && TypeFunctions.hasMeta(":const", c.meta)):
+					var e = TexprTools.makeTypeExpr(TClassDecl(c), p);
+					return AKExpr(TypeFunctions.mk(e.expr, TypeFunctions.extractParamType(tp), e.pos));
+				case _:
+			}
+			break;
+		}
 		if (i == "trace") {
 			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
@@ -997,6 +1028,7 @@ class Typer {
 			// In untyped mode an unresolved identifier becomes a TIdent, letting reification builtins such
 			// as $__mk_pos__ (recognized by the interpreter) pass typing.
 			if (ctx.untypedMode) return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
+			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
 		// Hxc resolves field types in a separate pass; resolve the referenced module so its
