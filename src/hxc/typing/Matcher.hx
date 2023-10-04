@@ -1045,12 +1045,7 @@ enum DtRecursion {
 
 class TexprConverter {
 	static function arrayLengthExpr(ctx:TyperContext, subject:TExpr):TExpr {
-		return switch (TypeFunctions.follow(subject.type)) {
-			case TInst(c, params):
-				var lengthCf = c.fields.get("length");
-				lengthCf == null ? subject : TypeFunctions.mk(TField(subject, FInstance(c, params, lengthCf)), ctx.com.basic.tint, subject.pos);
-			case _: subject;
-		};
+		return Typer.accGet(ctx, Fields.typeField(ctx, subject, "length", subject.pos, MGet, WithTypeTools.value));
 	}
 
 	static function completeFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Bool {
