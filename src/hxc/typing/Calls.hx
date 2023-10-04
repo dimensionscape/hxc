@@ -387,7 +387,7 @@ class Calls {
 		var infos = new Expr(EObjectDecl([
 			fld("fileName", strE(callp.file)),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(callp)), null)), callp)),
-			fld("className", strE(ctx.curclass == null ? "" : ctx.curclass.path.name)),
+			fld("className", strE(ctx.curclass == null ? "" : hxc.core.Globals.sTypePath(ctx.curclass.path))),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
 		]), callp);
 		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
@@ -402,7 +402,7 @@ class Calls {
 		var infos = new Expr(EObjectDecl([
 			fld("fileName", strE(p.file)),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(p)), null)), p)),
-			fld("className", strE(ctx.curclass.path.name)),
+			fld("className", strE(hxc.core.Globals.sTypePath(ctx.curclass.path))),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name)),
 			fld("customParams", customParams)
 		]), p);
