@@ -969,9 +969,10 @@ class Typer {
 		}
 		switch (withType) {
 			case WithType(wt, _):
+				var expectedEnum = expectedEnumLike(wt, []);
+				if (expectedEnum != null && expectedEnum.constrs.exists(i))
+					return Fields.enumConstructor(ctx, expectedEnum, TexprTools.makeTypeExpr(TEnumDecl(expectedEnum), p), i, p);
 				switch (TypeFunctions.follow(wt)) {
-					case TEnum(en, _) if (en.constrs.exists(i)):
-						return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
 					case TAbstract(a, tl) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
 						// An enum-abstract value used unqualified resolves against the expected type, like an
 						// enum constructor: look it up as an @:enum static on the abstract's impl class.
@@ -1036,6 +1037,18 @@ class Typer {
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		return AKExpr(TexprTools.makeTypeExpr(mt, p));
+	}
+
+	static function expectedEnumLike(t:T, stack:Array<T>):Null<TEnum> {
+		for (s in stack) if (TypeUnification.shallowEq(t, s)) return null;
+		return switch (TypeFunctions.follow(t)) {
+			case TEnum(en, _):
+				en;
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta) && a.from.length == 1):
+				expectedEnumLike(TypeFunctions.applyParams(a.params, tl, a.from[0]), [t].concat(stack));
+			case _:
+				null;
+		}
 	}
 
 	// Parse an i64 literal string (decimal or 0x-hex) into its 64-bit value.

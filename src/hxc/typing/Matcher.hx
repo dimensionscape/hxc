@@ -759,11 +759,13 @@ class DtCompile {
 		return switch (con.kind) {
 			case ConConst(_) | ConTypeExpr(_) | ConStatic(_, _): [];
 			case ConEnum(en, ef):
-				var pl = switch (TypeFunctions.follow(e.type)) { case TEnum(_, params): params; case _: []; };
+				var pl = TypeUnification.spawnConstrainedMonos(function(t) return t, en.params);
+				var ten = TEnum(en, pl);
+				var subject = TypeUnification.typeIseqDefault(ten, e.type) ? e : TypeFunctions.mk(TCast(e, null), ten, e.pos);
 				switch (TypeFunctions.follow(ef.type)) {
 					case TFun(sig):
-						[for (i in 0...sig.args.length) TypeFunctions.mk(TEnumParameter(e, ef, i),
-							TypeFunctions.applyParams(en.params, pl, sig.args[i].t),
+						[for (i in 0...sig.args.length) TypeFunctions.mk(TEnumParameter(subject, ef, i),
+							TypeFunctions.applyParams(en.params, pl, TypeFunctions.monomorphs(ef.params, sig.args[i].t)),
 							i < argPositions.length ? argPositions[i] : con.pos)];
 					case _: [];
 				}
