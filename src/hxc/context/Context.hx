@@ -211,11 +211,13 @@ class ModuleImports {
 	public var wildcards:Array<Path>;
 	public var usings:Array<Path>;
 	public var globals:StringMap<ImportedGlobal>;
-	public function new(names:StringMap<ImportedName>, wildcards:Array<Path>, usings:Array<Path>, ?globals:StringMap<ImportedGlobal>) {
+	public var rawImports:Array<Import>;
+	public function new(names:StringMap<ImportedName>, wildcards:Array<Path>, usings:Array<Path>, ?globals:StringMap<ImportedGlobal>, ?rawImports:Array<Import>) {
 		this.names = names;
 		this.wildcards = wildcards;
 		this.usings = usings;
 		this.globals = globals != null ? globals : new StringMap();
+		this.rawImports = rawImports != null ? rawImports : [];
 	}
 }
 

@@ -1,6 +1,9 @@
 ﻿package hxc.eval;
 
 import hxc.ast.Position;
+import hxc.ast.Ast.Import;
+import hxc.ast.Ast.ImportMode;
+import hxc.ast.Ast.PlacedName;
 import hxc.core.Type.ModuleType;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools;
@@ -2646,6 +2649,41 @@ class EvalStdLib {
 		]);
 	}
 
+	static function importMode(ctx:EvalContext, mode:ImportMode):EvalValue {
+		var e = classValue(ctx, EvalHash.hash("haxe.macro.ImportMode"));
+		return switch (mode) {
+			case INormal:
+				createEnumByName(ctx, e, EvalHash.hash("INormal"), VNull);
+			case IAsName(alias):
+				createEnumByName(ctx, e, EvalHash.hash("IAsName"), valueArray([mkStr(alias.name)]));
+			case IAll:
+				createEnumByName(ctx, e, EvalHash.hash("IAll"), VNull);
+		}
+	}
+
+	static function importPathPart(ctx:EvalContext, pn:PlacedName):EvalValue {
+		return mkObject([
+			{name: "name", value: mkStr(pn.name)},
+			{name: "pos", value: mkPos(ctx, pn.pos)}
+		]);
+	}
+
+	static function importExpr(ctx:EvalContext, imp:Import):EvalValue {
+		return mkObject([
+			{name: "path", value: valueArray([for (pn in imp.path) importPathPart(ctx, pn)])},
+			{name: "mode", value: importMode(ctx, imp.mode)}
+		]);
+	}
+
+	static function localImports(ctx:EvalContext):EvalValue {
+		var com = EvalMacro.currentCompiler();
+		var m = EvalMacro.currentModule();
+		if (com == null || m == null) return valueArray([]);
+		var imports = com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports == null) return valueArray([]);
+		return valueArray([for (imp in imports.rawImports) importExpr(ctx, imp)]);
+	}
+
 	static function definesForExternal(defines:Map<String, String>):Map<String, String> {
 		var out = new Map<String, String>();
 		for (k => v in defines) {
@@ -4113,8 +4151,10 @@ class EvalStdLib {
 					VFunction(function(args) return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.DisplayMode")), EvalHash.hash("None"), VNull), true);
 				case "get_expected_type" | "get_call_arguments":
 					VFunction(function(args) return VNull, true);
-				case "get_local_using" | "get_local_imports":
+				case "get_local_using":
 					VFunction(function(args) return VArray(new VArray([], 0)), true);
+				case "get_local_imports":
+					VFunction(function(args) return localImports(ctx), true);
 				case "local_vars":
 					VFunction(function(args) return mkStringMap(ctx, new Map()), true);
 				case "signature":

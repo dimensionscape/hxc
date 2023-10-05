@@ -26,6 +26,7 @@ class EvalMacro {
 	static var lastModuleCount:Int = -1;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
+	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;
 	static var expectedTypeStack:Array<WithType> = [];
 	static var curBuildFields:EvalValue = VNull;
@@ -79,6 +80,13 @@ class EvalMacro {
 		reg2("getCallArguments", "get_call_arguments", function(a) {
 			if (com.callArgumentStack.length == 0) return VNull;
 			return encodeArray([for (e in com.callArgumentStack[0]) encodeExpr(ec, e)]);
+		});
+		reg2("getLocalImports", "get_local_imports", function(a) {
+			var m = currentModule();
+			if (m == null) return encodeArray([]);
+			var imports = com.moduleImports.get(Context.pathKey(m.path));
+			if (imports == null) return encodeArray([]);
+			return encodeArray([for (imp in imports.rawImports) encodeImportExpr(ec, imp)]);
 		});
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
 		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, a.length > 2 && a[2] == VTrue)));
@@ -225,7 +233,7 @@ class EvalMacro {
 			for (key in old.names.keys()) names.set(key, old.names.get(key));
 			for (key in old.globals.keys()) globals.set(key, old.globals.get(key));
 		}
-		return new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals);
+		return new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals, old == null ? [] : old.rawImports.copy());
 	}
 
 	static function restoreImports(com:Context, key:String, old:Null<hxc.context.Context.ModuleImports>):Void {
@@ -787,6 +795,7 @@ class EvalMacro {
 				c.path;
 			case _: throw new TypingError("Only static or member macro functions are supported", p);
 		};
+		var callModule = moduleForPosition(tctx.com, p);
 		var ec = getContext(tctx.com);
 		var proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
@@ -806,6 +815,7 @@ class EvalMacro {
 		};
 		var savedTctx = curTctx;
 		var savedPos = curPos;
+		var savedModule = curModule;
 		try {
 			var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
 			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
@@ -813,19 +823,40 @@ class EvalMacro {
 			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
+			curModule = callModule;
 			expectedTypeStack.push(withType);
 			var result = fn(args);
 			expectedTypeStack.pop();
 			var astExpr = decodeExpr(ec, result, p);
 			curTctx = savedTctx;
 			curPos = savedPos;
+			curModule = savedModule;
 			return Typer.typeExpr(tctx, astExpr, withType);
 		} catch (e:haxe.Exception) {
 			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
 			curTctx = savedTctx;
 			curPos = savedPos;
+			curModule = savedModule;
 			throw e;
 		}
+	}
+
+	static function moduleForPosition(com:Context, p:Position):Null<ModuleDef> {
+		var cur = com.currentModule;
+		if (moduleMatchesPosition(cur, p)) return cur;
+		for (m in com.modules) if (moduleMatchesPosition(m, p)) return m;
+		return cur;
+	}
+
+	static function moduleMatchesPosition(m:Null<ModuleDef>, p:Position):Bool {
+		if (m == null || m.extra == null || p == null || p.file == null || p.file == "") return false;
+		var moduleFile = normalizeFile(m.extra.file);
+		var posFile = normalizeFile(p.file);
+		return moduleFile == posFile || StringTools.endsWith(moduleFile, "/" + posFile) || StringTools.endsWith(posFile, "/" + moduleFile);
+	}
+
+	static function normalizeFile(file:String):String {
+		return StringTools.replace(file, "\\", "/").toLowerCase();
 	}
 
 	static function macroArgs(ec:EvalContext, el:Array<Expr>, sigArgs:Null<Array<TSignatureArg>>):Array<EvalValue> {
@@ -1500,6 +1531,31 @@ class EvalMacro {
 		return {path: path, mode: mode};
 	}
 
+	static function encodeImportExpr(ec:EvalContext, imp:Import):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("path"), encodeArray([for (pn in imp.path) encodeImportPathPart(ec, pn)]));
+		fields.set(EvalHash.hash("mode"), encodeImportMode(ec, imp.mode));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeImportPathPart(ec:EvalContext, pn:PlacedName):EvalValue {
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("name"), mkString(pn.name));
+		fields.set(EvalHash.hash("pos"), encPos(pn.pos));
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	static function encodeImportMode(ec:EvalContext, mode:ImportMode):EvalValue {
+		return switch (mode) {
+			case INormal:
+				mkEnumValue(ec, "ImportMode", "INormal", []);
+			case IAsName(alias):
+				mkEnumValue(ec, "ImportMode", "IAsName", [mkString(alias.name)]);
+			case IAll:
+				mkEnumValue(ec, "ImportMode", "IAll", []);
+		}
+	}
+
 	static function decodeClassFlags(ec:EvalContext, kind:EvalValue, isExtern:Bool, dp:Position):Array<ClassFlag> {
 		var flags:Array<ClassFlag> = [];
 		if (isExtern) flags.push(HExtern);
@@ -2153,6 +2209,17 @@ class EvalMacro {
 
 	public static function currentPosition():Position {
 		return curPos;
+	}
+
+	public static function currentModule():Null<ModuleDef> {
+		if (curModule != null) return curModule;
+		if (curTctx != null) return curTctx.com.currentModule;
+		return currentCom == null ? null : currentCom.currentModule;
+	}
+
+	public static function currentCompiler():Null<Context> {
+		if (curTctx != null) return curTctx.com;
+		return currentCom;
 	}
 
 	public static function reportError(msg:String, pos:Position):Void {

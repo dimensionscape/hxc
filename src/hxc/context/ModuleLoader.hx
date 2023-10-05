@@ -97,6 +97,7 @@ class ModuleLoader {
 		}
 
 		function recordImport(imp:Import):Void {
+			imports.rawImports.unshift(imp);
 			var parts = [for (pn in imp.path) pn.name];
 			switch (imp.mode) {
 				case IAll:
