@@ -415,10 +415,15 @@ class EvalPrototype {
 		var pnames:Map<Int, Int> = new Map();
 		var delays:Array<ProtoDelay> = [];
 		if (!TypeFunctions.hasClassFlag(c, CExtern)) {
-			for (cf in c.orderedStatics) {
+			var fields = c.orderedStatics.copy();
+			var seen = new Map<String, Bool>();
+			for (cf in fields) seen.set(cf.name, true);
+			for (name in c.statics.keys()) if (!seen.exists(name)) fields.push(c.statics.get(name));
+			for (cf in fields) {
 				if (isRemovable(cf)) continue;
 				switch (cf.kind) {
 					case Method(_):
+						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							var idx = pfields.length;

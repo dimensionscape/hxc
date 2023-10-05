@@ -964,7 +964,7 @@ class Typer {
 					}
 				}
 				var typeExpr = TexprTools.makeTypeExpr(TClassDecl(ctx.curclass), p);
-				return AKField(FieldAccessTools.create(typeExpr, smf, FieldAccessTools.getHost(ctx.curclass, smf), false, p));
+				return Fields.fieldAccess(ctx, mode, smf, FieldAccessTools.getHost(ctx.curclass, smf), typeExpr, p);
 			}
 		}
 		switch (withType) {

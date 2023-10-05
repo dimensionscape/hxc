@@ -367,7 +367,7 @@ class Operators {
 			// The @:op body may be unforced; force it so a genuinely bodyless (native) @:op is
 			// distinguished from a not-yet-typed one.
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, implC, cf);
-			if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+			if (cf.expr == null && !hxc.typing.TypeFields.fieldHasSyntaxBody(ctx.com, implC, cf) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
 				// A bodyless @:op without @:noExpr is a recursive operator method in the reference; hxc
 				// tolerates it and applies the native underlying-type semantics below. The reference also
 				// verifies the declared return type is compatible with the native result type make); hxc

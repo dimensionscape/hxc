@@ -3,6 +3,7 @@ package hxc.eval;
 import hxc.core.Type;
 import hxc.core.Define;
 import hxc.core.Globals.Path;
+import hxc.context.Context;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalContext;
 import hxc.eval.EvalPrototype;
@@ -11,8 +12,8 @@ import haxe.ds.StringMap;
 
 // Interpreter entry: registers prototypes for the loaded types, then runs an entry point.
 class EvalMain {
-	public static function create(isMacro:Bool, ?resources:StringMap<haxe.io.Bytes>, ?defines:Define, ?classPath:Array<String>):EvalContext {
-		var ctx = new EvalContext(0, isMacro, defines, classPath);
+	public static function create(isMacro:Bool, ?resources:StringMap<haxe.io.Bytes>, ?defines:Define, ?classPath:Array<String>, ?com:Context):EvalContext {
+		var ctx = new EvalContext(0, isMacro, defines, classPath, com);
 		if (resources != null) {
 			for (name in resources.keys()) ctx.resources.set(name, resources.get(name));
 		}

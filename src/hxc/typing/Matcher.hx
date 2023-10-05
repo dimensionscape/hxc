@@ -1051,6 +1051,28 @@ class TexprConverter {
 	}
 
 	static function completeFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Bool {
+		function constKey(ct:TConstant):String {
+			return switch (ct) {
+				case TInt(v): "i:" + v;
+				case TFloat(s): "f:" + s;
+				case TString(s): "s:" + s;
+				case TBool(b): "b:" + b;
+				case TNull: "null";
+				case TThis: "this";
+				case TSuper: "super";
+			}
+		}
+		function fieldConst(cf:TClassField):Null<TConstant> {
+			function loop(e:TExpr):Null<TConstant> {
+				return switch (e.expr) {
+					case TConst(TNull): null;
+					case TConst(ct): ct;
+					case TCast(e1, null) | TMeta(_, e1) | TParenthesis(e1): loop(e1);
+					case _: null;
+				}
+			}
+			return cf.expr == null ? null : loop(cf.expr);
+		}
 		switch (TypeFunctions.follow(subject.type)) {
 			case TEnum(en, _):
 				var found = new Map<String, Bool>();
@@ -1065,15 +1087,19 @@ class TexprConverter {
 				return true;
 			case TAbstract(a, _) if (a.isEnum && a.impl != null):
 				var found = new Map<String, Bool>();
+				var foundConst = new Map<String, Bool>();
 				for (sc in cases) if (sc.unguarded) switch (sc.con.kind) {
-					case ConStatic(c, cf) if (c == a.impl && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
+					case ConStatic(c, cf) if (c == a.impl && a.impl.statics.exists(cf.name) && TypeFunctions.hasClassFieldFlag(a.impl.statics.get(cf.name), CfEnum)):
 						found.set(cf.name, true);
+					case ConConst(ct):
+						foundConst.set(constKey(ct), true);
 					case _:
 				}
 				var total = 0;
 				for (cf in a.impl.statics) if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
 					total++;
-					if (!found.exists(cf.name)) return false;
+					var ct = fieldConst(cf);
+					if (!found.exists(cf.name) && (ct == null || !foundConst.exists(constKey(ct)))) return false;
 				}
 				return total > 0;
 			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"):

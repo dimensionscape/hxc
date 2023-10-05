@@ -122,6 +122,11 @@ class TypeFields {
 		};
 	}
 
+	public static function fieldHasSyntaxBody(ctx:Context, c:TClass, cf:TClassField):Bool {
+		var cff = findFieldDecl(ctx, c, cf);
+		return cff != null && hasFieldBody(cff);
+	}
+
 	// A macro function is typed only in the macro world; in the host (non-macro) context its body is
 	// discarded and it is invoked through the macro interpreter. Its body must not be host-typed (it
 	// references haxe.macro.* identifiers that resolve only under `macro`).
@@ -217,33 +222,13 @@ class TypeFields {
 		// progress does. A different field is forced normally even when nested, so an inline callee's
 		// return type is inferred before its result is consumed by the caller.
 		for (f in _forcing) if (f == cf) return;
-		var entry = ctx.declOfType.get(Context.pathKey(c.path));
-		if (entry == null) return;
-		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
-		var cff:ClassField = null;
-		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
-		var nameSeen = new haxe.ds.StringMap<Int>();
-		for (f in d.dData) {
-			var fStatic = false;
-			for (a in f.cffAccess) if (a.access == AStatic) fStatic = true;
-			if (isAbsImpl && !fStatic && f.cffName.name != "new") fStatic = true;
-			var base = if (!fStatic && f.cffName.name == "new") c.constructor
-				else (fStatic ? c.statics : c.fields).get(f.cffName.name);
-			if (base == null) continue;
-			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
-			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
-			nameSeen.set(key, occ + 1);
-			var target = if (occ > 0 && base.overloads.length >= occ) base.overloads[base.overloads.length - occ] else base;
-			if (target == cf) {
-				cff = f;
-				break;
-			}
-		}
+		var cff = findFieldDecl(ctx, c, cf);
 		if (cff == null) return;
 		if (!hasFieldBody(cff)) return;
 		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
 		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
+		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var isStatic = false;
 		for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 		if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
@@ -259,6 +244,28 @@ class TypeFields {
 		} catch (e:Dynamic) recordFieldError(ctx, e);
 		ctx.currentModule = savedMod;
 		_forcing.remove(cf);
+	}
+
+	static function findFieldDecl(ctx:Context, c:TClass, cf:TClassField):Null<ClassField> {
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return null;
+		var d = switch (entry.decl) { case EClass(dd): dd; case _: return null; };
+		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var nameSeen = new haxe.ds.StringMap<Int>();
+		for (f in d.dData) {
+			var fStatic = false;
+			for (a in f.cffAccess) if (a.access == AStatic) fStatic = true;
+			if (isAbsImpl && !fStatic && f.cffName.name != "new") fStatic = true;
+			var base = if (!fStatic && f.cffName.name == "new") c.constructor
+				else (fStatic ? c.statics : c.fields).get(f.cffName.name);
+			if (base == null) continue;
+			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
+			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
+			nameSeen.set(key, occ + 1);
+			var target = if (occ > 0 && base.overloads.length >= occ) base.overloads[base.overloads.length - occ] else base;
+			if (target == cf) return f;
+		}
+		return null;
 	}
 
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {

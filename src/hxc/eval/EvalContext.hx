@@ -5,6 +5,7 @@ import hxc.core.Define;
 import hxc.core.Type.ModuleType;
 import hxc.core.NotFound;
 import hxc.core.TypingError;
+import hxc.context.Context;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalHash;
 import haxe.ds.StringMap;
@@ -111,8 +112,9 @@ class EvalContext {
 	public var resources:StringMap<haxe.io.Bytes>;
 	public var defines:Define;
 	public var classPath:Array<String>;
+	public var com:Null<Context>;
 
-	public function new(ctxId:Int, isMacro:Bool, ?defines:Define, ?classPath:Array<String>) {
+	public function new(ctxId:Int, isMacro:Bool, ?defines:Define, ?classPath:Array<String>, ?com:Context) {
 		this.ctxId = ctxId;
 		this.isMacro = isMacro;
 		this.builtins = new Builtins();
@@ -136,6 +138,7 @@ class EvalContext {
 		this.resources = new StringMap();
 		this.defines = defines == null ? new Define() : defines;
 		this.classPath = classPath == null ? [] : classPath.copy();
+		this.com = com;
 	}
 
 	static var current:Null<EvalContext> = null;

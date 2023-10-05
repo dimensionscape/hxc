@@ -101,7 +101,7 @@ class Compiler {
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
-				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath);
+				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
 				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
 				hxc.eval.EvalMain.runMain(ectx, path);
 			} else {
