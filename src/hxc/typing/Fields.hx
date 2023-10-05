@@ -246,7 +246,8 @@ class Fields {
 				}
 				checkConstr(TypeUnification.classifyDownConstraints(r));
 			case TAbstract(a, params) if (a.impl != null):
-				var cf = a.impl.statics.get(i);
+				var staticCf = a.impl.statics.get(i);
+				var cf = staticCf;
 				if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl)) cf = null;
 				if (cf == null) {
 					var resolveCf = switch (mode) {
@@ -264,6 +265,8 @@ class Fields {
 					}
 					var u = tryUsing(ctx, e, i, pfield);
 					if (u != null) return u;
+					if (staticCf != null && !TypeFunctions.hasClassFieldFlag(staticCf, CfImpl))
+						throw new TypingError("Invalid call to static function " + i + " through abstract instance", pfield);
 					throw fieldNotFound(e.type, i, pfield);
 				}
 				// A property (get/set accessors) dispatches through its accessor via fieldAccess (which
