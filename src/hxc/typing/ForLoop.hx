@@ -150,6 +150,7 @@ class ForLoop {
 		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
 		return switch (acc) {
 			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FCall);
+			case AKUsingField(se): FieldAccessTools.getFieldExpr(se.access, FCall);
 			case AKExpr(ce): ce;
 			case _: throw new TypingError("Cannot call " + name, p);
 		};
