@@ -551,7 +551,7 @@ class Typeload {
 	}
 
 	static function hasTypeParameter(t:T):Bool {
-		return switch (t) {
+		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, tl):
 				switch (c.kind) {
 					case KTypeParameter(_): true;
@@ -579,7 +579,7 @@ class Typeload {
 			case TDynamic(t):
 				t != null && hasTypeParameter(t);
 			case TLazy(f):
-				false;
+				hasTypeParameter(TypeFunctions.lazyType(f));
 			case TMono(_):
 				false;
 		}
