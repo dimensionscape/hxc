@@ -557,30 +557,7 @@ class Typeload {
 					case KTypeParameter(_): true;
 					case _: hasTypeParameterParams(tl);
 				}
-			case TEnum(_, tl) | TType(_, tl) | TAbstract(_, tl):
-				hasTypeParameterParams(tl);
-			case TFun(sig):
-				if (hasTypeParameter(sig.ret)) true
-				else {
-					var found = false;
-					for (a in sig.args) if (hasTypeParameter(a.t)) {
-						found = true;
-						break;
-					}
-					found;
-				}
-			case TAnon(a):
-				var found = false;
-				for (f in a.fields) if (hasTypeParameter(f.type)) {
-					found = true;
-					break;
-				}
-				found;
-			case TDynamic(t):
-				t != null && hasTypeParameter(t);
-			case TLazy(f):
-				hasTypeParameter(TypeFunctions.lazyType(f));
-			case TMono(_):
+			case _:
 				false;
 		}
 	}
@@ -603,7 +580,7 @@ class Typeload {
 	}
 
 	static function genericParamName(t:T):String {
-		return switch (TypeFunctions.follow(t)) {
+		return switch (t) {
 			case TInst(c, []): c.path.name;
 			case TInst(c, params): c.path.name + "_" + genericSuffix(params);
 			case TEnum(e, []): e.path.name;
@@ -616,7 +593,11 @@ class Typeload {
 			case TFun(_): "Function";
 			case TAnon(_): "Anon";
 			case TLazy(f): genericParamName(TypeFunctions.lazyType(f));
-			case TMono(_): "Unknown";
+			case TMono(r):
+				switch (r.type) {
+					case null: "Unknown";
+					case some: genericParamName(some);
+				}
 		}
 	}
 
