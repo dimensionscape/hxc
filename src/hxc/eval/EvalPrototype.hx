@@ -259,10 +259,10 @@ class EvalPrototype {
 		return "<" + kind + " path=\"" + xmlEscape(pathString(p)) + "\">" + rttiTypeParams(params) + "</" + kind + ">";
 	}
 
-	static function rttiType(t:T):String {
+	static function rttiType(t:T, ?values:haxe.ds.StringMap<Expr>):String {
 		return switch (TypeFunctions.follow(t)) {
 			case TMono(m):
-				m.type == null ? "<unknown/>" : rttiType(m.type);
+				m.type == null ? "<unknown/>" : rttiType(m.type, values);
 			case TEnum(e, params):
 				rttiPath("e", e.path, params);
 			case TInst(c, params):
@@ -275,6 +275,11 @@ class EvalPrototype {
 				var b = new StringBuf();
 				b.add("<f a=\"");
 				b.add(xmlEscape([for (a in sig.args) (a.opt ? "?" : "") + a.name].join(":")));
+				var valueAttr = rttiFunctionValues(sig, values);
+				if (valueAttr != null) {
+					b.add("\" v=\"");
+					b.add(xmlEscape(valueAttr));
+				}
 				b.add("\">");
 				for (a in sig.args) b.add(rttiType(a.t));
 				b.add(rttiType(sig.ret));
@@ -293,7 +298,36 @@ class EvalPrototype {
 			case TDynamic(t):
 				"<d>" + rttiType(t) + "</d>";
 			case TLazy(f):
-				rttiType(TypeFunctions.lazyType(f));
+				rttiType(TypeFunctions.lazyType(f), values);
+		}
+	}
+
+	static function rttiFunctionValues(sig:TSignature, values:Null<haxe.ds.StringMap<Expr>>):Null<String> {
+		if (values == null) return null;
+		var hasValue = false;
+		var out:Array<String> = [];
+		for (a in sig.args) {
+			var e = values.get(a.name);
+			if (e == null)
+				out.push("");
+			else {
+				hasValue = true;
+				out.push(hxc.ast.Printer.sExpr(e));
+			}
+		}
+		return hasValue ? out.join(":") : null;
+	}
+
+	static function valueMeta(meta:Metadata):haxe.ds.StringMap<Expr> {
+		return Ast.getValueMeta(meta);
+	}
+
+	static function fieldValueExpr(meta:Metadata):Null<Expr> {
+		try {
+			var m = TypeFunctions.getMeta(":value", meta);
+			return m.params.length == 1 ? m.params[0] : null;
+		} catch (_:Dynamic) {
+			return null;
 		}
 	}
 
@@ -332,6 +366,12 @@ class EvalPrototype {
 			case Method(_):
 				b.add(" set=\"method\"");
 			case Var(vk):
+				var ve = fieldValueExpr(cf.meta);
+				if (ve != null) {
+					b.add(" expr=\"");
+					b.add(xmlEscape(hxc.ast.Printer.sExpr(ve)));
+					b.add("\"");
+				}
 				var r = rttiAccess(vk.read);
 				var w = rttiAccess(vk.write);
 				if (r != "normal") b.add(" get=\"" + xmlEscape(r) + "\"");
@@ -343,7 +383,7 @@ class EvalPrototype {
 			b.add("\"");
 		}
 		b.add(">");
-		b.add(rttiType(TypeFunctions.fieldType(cf)));
+		b.add(rttiType(TypeFunctions.fieldType(cf), valueMeta(cf.meta)));
 		b.add("</");
 		b.add(xmlEscape(cf.name));
 		b.add(">");

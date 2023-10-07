@@ -299,10 +299,12 @@ class TypeFields {
 			switch (cff.cffKind) {
 				case FVar(_, eo):
 					if (eo != null) {
+						setValueMeta(cf, [eo]);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						cf.expr = checkCast(te, sigType);
 					}
 				case FFun(fd):
+					setFunctionValueMeta(cf, fd);
 					var sig = switch (TypeFunctions.follow(sigType)) { case TFun(s): s; case _: null; };
 					var ret = sig != null ? sig.ret : tctx.t.tvoid;
 					var args = buildArgs(tctx, sig, fd);
@@ -313,6 +315,7 @@ class TypeFields {
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
 					if (eo != null) {
+						setValueMeta(cf, [eo]);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						cf.expr = checkCast(te, sigType);
 					}
@@ -322,6 +325,18 @@ class TypeFields {
 			throw e;
 		}
 		cleanup();
+	}
+
+	static function setValueMeta(cf:TClassField, params:Array<Expr>):Void {
+		cf.meta = [{name: ":value", params: params, pos: cf.pos}].concat([for (m in cf.meta) if (m.name != ":value") m]);
+	}
+
+	static function setFunctionValueMeta(cf:TClassField, fd:Func):Void {
+		var fields:Array<ObjectField> = [];
+		for (arg in fd.fArgs) if (arg.value != null)
+			fields.push({name: arg.name.name, pos: arg.name.pos, quotes: NoQuotes, expr: arg.value});
+		if (fields.length > 0)
+			setValueMeta(cf, [new Expr(EObjectDecl(fields), cf.pos)]);
 	}
 
 	static function hasVarHint(k:ClassFieldKind):Bool {
