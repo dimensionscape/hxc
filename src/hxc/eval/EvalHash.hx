@@ -46,6 +46,7 @@ class EvalHash {
 	public static final keyName = hash("name");
 	public static final keyError = hash("error");
 	public static final keyExceptionMessage = hash("__exceptionMessage");
+	public static final keyExceptionStack = hash("__exceptionStack");
 	public static final keyNativeException = hash("__nativeException");
 	public static final keyNativeStack = hash("__nativeStack");
 	public static final key_Array = hash("Array");

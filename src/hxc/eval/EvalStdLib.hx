@@ -2713,33 +2713,57 @@ class EvalStdLib {
 	}
 
 	static function stackEnum(ctx:EvalContext, name:String, args:Array<EvalValue>):EvalValue {
-		return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.StackItem")), EvalHash.hash(name), VArray(new VArray(args, args.length)));
+		var path = EvalHash.hash("haxe.StackItem");
+		var e = classValue(ctx, path);
+		if (e != VNull) return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray(args, args.length)));
+		var index = switch (name) {
+			case "CFunction": 0;
+			case "Module": 1;
+			case "FilePos": 2;
+			case "Method": 3;
+			case "LocalFunction": 4;
+			case _: 0;
+		}
+		return VEnumValue(new VEnumValue(index, args, path, null));
 	}
 
-	static function stackFilePos(ctx:EvalContext, env:EvalEnv, item:EvalValue):EvalValue {
-		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
+	static function stackFilePos(ctx:EvalContext, p:Position, item:EvalValue):EvalValue {
+		var file = p == null ? "?" : p.file;
 		if (file == null) file = "?";
-		var infos = Position.getInfos(new Position(file, env.info.min, env.info.max));
+		var infos = Position.getInfos(p == null ? Position.nullPos : p);
 		return stackEnum(ctx, "FilePos", [item, mkStr(file), VInt(infos.line), VInt(infos.column)]);
 	}
 
-	static function stackItem(ctx:EvalContext, env:EvalEnv):EvalValue {
-		return switch (env.info.kind) {
+	static function stackItem(ctx:EvalContext, p:Position, kind:EvalEnvKind):EvalValue {
+		return switch (kind) {
 			case EKLocalFunction(index):
-				stackFilePos(ctx, env, stackEnum(ctx, "LocalFunction", [VInt(index)]));
+				stackFilePos(ctx, p, stackEnum(ctx, "LocalFunction", [VInt(index)]));
 			case EKMethod(typeKey, fieldKey):
 				var typeName = EvalHash.revHash(typeKey);
 				var fieldName = EvalHash.revHash(fieldKey);
-				stackFilePos(ctx, env, stackEnum(ctx, "Method", [typeName == null ? VNull : mkStr(typeName), fieldName == null ? VNull : mkStr(fieldName)]));
+				stackFilePos(ctx, p, stackEnum(ctx, "Method", [typeName == null ? VNull : mkStr(typeName), fieldName == null ? VNull : mkStr(fieldName)]));
 			case EKEntrypoint:
-				stackFilePos(ctx, env, VNull);
+				stackFilePos(ctx, p, VNull);
 		};
+	}
+
+	static function envStackItem(ctx:EvalContext, env:EvalEnv):EvalValue {
+		return stackItem(ctx, EvalExceptions.envPosition(env), env.info.kind);
 	}
 
 	static function callStackValue(ctx:EvalContext):EvalValue {
 		var envs = EvalExceptions.callStack(EvalContext.getEval(ctx));
 		if (envs.length >= 2) envs = envs.slice(2);
-		var items = [for (env in envs) stackItem(ctx, env)];
+		var items = [for (env in envs) envStackItem(ctx, env)];
+		return VArray(new VArray(items, items.length));
+	}
+
+	public static function exceptionStackValue(ctx:EvalContext):EvalValue {
+		var frames = EvalContext.getEval(ctx).exceptionStack;
+		var items = [for (i in 0...frames.length) {
+			var frame = frames[frames.length - 1 - i];
+			stackItem(ctx, frame.pos, frame.kind);
+		}];
 		return VArray(new VArray(items, items.length));
 	}
 
@@ -4050,7 +4074,7 @@ class EvalStdLib {
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
 		reg(s, "Sys", "time", vfn(a -> VFloat(Sys.time())));
 		reg(s, "haxe.NativeStackTrace", "_callStack", vfn(a -> callStackValue(ctx)));
-		reg(s, "haxe.NativeStackTrace", "exceptionStack", vfn(a -> VArray(new VArray([], 0))));
+		reg(s, "haxe.NativeStackTrace", "exceptionStack", vfn(a -> exceptionStackValue(ctx)));
 		reg(s, "eval.vm.Gc", "allocated_bytes", vfn(a -> VFloat(gcCurrentBytes())));
 		reg(s, "eval.vm.Gc", "compact", vfn(a -> { gcCompact(); VNull; }));
 		reg(s, "eval.vm.Gc", "counters", vfn(a -> gcCounters()));
@@ -4188,6 +4212,10 @@ class EvalStdLib {
 
 		var inst = ctx.builtins.instanceBuiltins;
 
+		reg(inst, "haxe.Exception", "get_stack", vmethod(a -> {
+			var stack = EvalField.field(ctx, arg(a, 0), EvalHash.keyExceptionStack);
+			stack == VNull ? EvalField.field(ctx, arg(a, 0), EvalHash.keyNativeStack) : stack;
+		}));
 		reg(inst, "String", "charAt", vmethod(a -> mkStr(stringCharAt(thisString(a), toInt(arg(a, 1))))));
 		reg(inst, "String", "charCodeAt", vmethod(a -> {
 			var str = thisString(a);

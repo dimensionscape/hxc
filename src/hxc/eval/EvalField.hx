@@ -81,6 +81,12 @@ class EvalField {
 		};
 		return switch (field(ctx, recv, name)) {
 			case VFunction(f, false): VFieldClosure(recv, f);
+			case VNull:
+				if (name == EvalHash.hash("stack") && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.key_haxe_Exception)) {
+					var stack = field(ctx, recv, EvalHash.keyNativeStack);
+					if (stack != VNull) return stack;
+				}
+				VNull;
 			case other: other;
 		};
 	}

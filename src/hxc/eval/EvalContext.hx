@@ -70,10 +70,12 @@ class Eval {
 	public var env:Null<EvalEnv>;
 	public var lastReturn:Null<EvalValue>;
 	public var caughtTypes:Map<Int, Bool>;
+	public var exceptionStack:Array<{pos:Position, kind:EvalEnvKind}>;
 	public function new() {
 		this.env = null;
 		this.lastReturn = null;
 		this.caughtTypes = new Map();
+		this.exceptionStack = [];
 	}
 }
 

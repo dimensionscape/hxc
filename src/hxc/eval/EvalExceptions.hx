@@ -63,6 +63,26 @@ class EvalExceptions {
 		if (p != null && p.min >= 0) ex.callPositions.push(p);
 	}
 
+	public static function envPosition(env:EvalEnv):Position {
+		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
+		if (file == null) file = "?";
+		return new Position(file, env.info.min, env.info.max);
+	}
+
+	public static function exceptionStack(ex:EvalRunTimeException):Array<{pos:Position, kind:EvalEnvKind}> {
+		var out:Array<{pos:Position, kind:EvalEnvKind}> = [];
+		var first = true;
+		for (env in ex.envStack) {
+			var p = first && ex.pos != null && ex.pos.min >= 0 ? ex.pos : envPosition(env);
+			if (p != null && p.min >= 0) out.push({pos: p, kind: env.info.kind});
+			first = false;
+		}
+		for (p in ex.callPositions) {
+			if (p != null && p.min >= 0) out.push({pos: p, kind: EKEntrypoint});
+		}
+		return out;
+	}
+
 	public static function exc(ctx:EvalContext, v:EvalValue):Dynamic {
 		return throwValue(ctx, v, Position.nullPos);
 	}

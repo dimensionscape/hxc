@@ -93,6 +93,7 @@ class EvalEmitter {
 					result = eval(ctx, e1);
 				} catch (ex:EvalRunTimeException) {
 					ev.env = savedEnv;
+					ev.exceptionStack = EvalExceptions.exceptionStack(ex);
 					result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; });
 				} catch (ex:Dynamic) {
 					// Control-flow signals must reach their own handlers, never a program try/catch.
@@ -102,6 +103,7 @@ class EvalEmitter {
 					// value so its own try/catch (e.g. the utest runner) records an error and continues,
 					// instead of aborting the whole run. The value is re-raised if no local catch matches.
 					ev.env = savedEnv;
+					ev.exceptionStack = [for (env in EvalExceptions.callStack(ev)) {pos: EvalExceptions.envPosition(env), kind: env.info.kind}];
 					var s = Std.string(ex);
 					var v = VString(new VString(s, s.length));
 					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
@@ -207,6 +209,13 @@ class EvalEmitter {
 				if ((path == EvalHash.key_haxe_Exception || path == EvalHash.key_haxe_ValueException)
 					&& !EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)) {
 					var wrapped = constructPath(ctx, EvalHash.key_haxe_ValueException, [v]);
+					if (wrapped != VNull) {
+						var stack = EvalStdLib.exceptionStackValue(ctx);
+						EvalField.setField(ctx, wrapped, EvalHash.keyExceptionStack, stack, Position.nullPos);
+						EvalField.setField(ctx, wrapped, EvalHash.keyNativeStack, stack, Position.nullPos);
+						EvalField.setField(ctx, wrapped, EvalHash.keyNativeException, v, Position.nullPos);
+						EvalField.setField(ctx, wrapped, EvalHash.hash("__skipStack"), VInt(0), Position.nullPos);
+					}
 					return wrapped == VNull ? v : wrapped;
 				}
 			case _:
@@ -490,7 +499,9 @@ class EvalEmitter {
 					case _:
 						switch (cf.kind) {
 							case Method(_): EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
-							case Var(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+							case Var(_):
+								var v = EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.key_haxe_Exception)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
 						}
 				}
 			case FAnon(cf):
