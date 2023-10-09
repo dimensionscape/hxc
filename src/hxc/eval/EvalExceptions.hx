@@ -56,14 +56,23 @@ class EvalExceptions {
 	}
 
 	public static function throwValue(ctx:EvalContext, v:EvalValue, p:Position):Dynamic {
-		throw new EvalRunTimeException(v, callStack(EvalContext.getEval(ctx)), p);
+		var eval = EvalContext.getEval(ctx);
+		if (eval.env != null) setLeavePosition(eval.env, p);
+		throw new EvalRunTimeException(v, callStack(eval), p);
 	}
 
 	public static function addCallSite(ex:EvalRunTimeException, p:Position):Void {
-		if (p != null && p.min >= 0) ex.callPositions.push(p);
+		if (p == null || p.min < 0) return;
+		var env = ex.envStack.length > 1 ? ex.envStack[1] : (ex.envStack.length == 0 ? null : ex.envStack[0]);
+		if (env != null) setLeavePosition(env, p);
+	}
+
+	public static function setLeavePosition(env:EvalEnv, p:Position):Void {
+		if (p != null && p.min >= 0) env.leavePos = p;
 	}
 
 	public static function envPosition(env:EvalEnv):Position {
+		if (env.leavePos != null && env.leavePos.min >= 0) return env.leavePos;
 		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
 		if (file == null) file = "?";
 		return new Position(file, env.info.min, env.info.max);
@@ -71,24 +80,20 @@ class EvalExceptions {
 
 	public static function exceptionStack(ex:EvalRunTimeException):Array<{pos:Position, kind:EvalEnvKind}> {
 		var out:Array<{pos:Position, kind:EvalEnvKind}> = [];
-		var first = true;
 		for (env in ex.envStack) {
-			var p = first && ex.pos != null && ex.pos.min >= 0 ? ex.pos : envPosition(env);
+			var p = envPosition(env);
 			if (p != null && p.min >= 0) out.push({pos: p, kind: env.info.kind});
-			first = false;
-		}
-		for (p in ex.callPositions) {
-			if (p != null && p.min >= 0) out.push({pos: p, kind: EKEntrypoint});
 		}
 		return out;
 	}
 
-	public static function exc(ctx:EvalContext, v:EvalValue):Dynamic {
-		return throwValue(ctx, v, Position.nullPos);
+	public static function exc(ctx:EvalContext, v:EvalValue, ?p:Position):Dynamic {
+		if (p == null || p.min < 0) p = EvalContext.getEval(ctx).currentPos;
+		return throwValue(ctx, v, p == null ? Position.nullPos : p);
 	}
 
-	public static function excString(ctx:EvalContext, str:String):Dynamic {
-		return exc(ctx, VString(new VString(str, str.length)));
+	public static function excString(ctx:EvalContext, str:String, ?p:Position):Dynamic {
+		return exc(ctx, VString(new VString(str, str.length)), p);
 	}
 
 	public static function sValueKind(v:EvalValue):String {
@@ -112,15 +117,15 @@ class EvalExceptions {
 		};
 	}
 
-	public static function unexpectedValue(ctx:EvalContext, v:EvalValue, expected:String):Dynamic {
+	public static function unexpectedValue(ctx:EvalContext, v:EvalValue, expected:String, ?p:Position):Dynamic {
 		var str = switch (v) {
 			case VNull: "Null Access";
 			case _: "Unexpected value " + sValueKind(v) + ", expected " + expected;
 		};
-		return excString(ctx, str);
+		return excString(ctx, str, p);
 	}
 
-	public static function invalidCallArgNumber(ctx:EvalContext, expected:Int, got:Int):Dynamic {
-		return excString(ctx, "Invalid number of call arguments: Expected " + expected + ", got " + got);
+	public static function invalidCallArgNumber(ctx:EvalContext, expected:Int, got:Int, ?p:Position):Dynamic {
+		return excString(ctx, "Invalid number of call arguments: Expected " + expected + ", got " + got, p);
 	}
 }

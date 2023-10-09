@@ -550,6 +550,8 @@ class Calls {
 		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
 		TypeFields.forceFieldBody(ctx.com, host, cf);
 		if (cf.expr == null) return fa;
+		propagateGenericConstraints(ctx, cf.params, monos);
+		closeGenericMonos(monos);
 		var params = [for (m in monos) TypeFunctions.follow(m)];
 		var name = cf.name + "_" + genericSuffix(params);
 		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
@@ -572,6 +574,148 @@ class Calls {
 			ordered.unshift(cf2);
 		}
 		return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
+	}
+
+	static function propagateGenericConstraints(ctx:TyperContext, cparams:TypeParams, monos:TParams):Void {
+		for (i in 0...cparams.length) {
+			if (i >= monos.length) break;
+			var actual = TypeFunctions.follow(monos[i]);
+			switch (actual) {
+				case TMono(r) if (r.type == null):
+					continue;
+				case _:
+			}
+			switch (TypeFunctions.follow(cparams[i].type)) {
+				case TInst(c, _):
+					switch (c.kind) {
+						case KTypeParameter(constr):
+							for (ct in constr) {
+								var expected = applyGenericConstraintParams(cparams, monos, ct);
+								try {
+									TypeUnification.unifyDefault(actual, expected);
+								} catch (e:UnifyError) {
+									if (!unifyIteratorConstraint(ctx, actual, expected)) throw e;
+								}
+							}
+						case _:
+					}
+				case _:
+			}
+		}
+	}
+
+	static function applyGenericConstraintParams(cparams:TypeParams, monos:TParams, t:T):T {
+		function typeParamHit(t:T):Null<T> {
+			switch (TypeFunctions.follow(t)) {
+				case TInst(c, []):
+					for (i in 0...cparams.length) if (i < monos.length) {
+						switch (TypeFunctions.follow(cparams[i].type)) {
+							case TInst(pc, []) if (sameTypeParam(c, pc)):
+								return monos[i];
+							case _:
+						}
+					}
+					return null;
+				case _:
+					return null;
+			}
+		}
+		function loop(t:T):T {
+			var hit = typeParamHit(t);
+			if (hit != null) return hit;
+			return switch (t) {
+				case TMono(r):
+					switch (r.type) {
+						case null: t;
+						case some: loop(some);
+					}
+				case TEnum(e, tl):
+					TEnum(e, [for (x in tl) loop(x)]);
+				case TInst(c, tl):
+					TInst(c, [for (x in tl) loop(x)]);
+				case TAbstract(a, tl):
+					TAbstract(a, [for (x in tl) loop(x)]);
+				case TType(td, tl):
+					loop(TypeFunctions.applyTypedef(td, [for (x in tl) loop(x)]));
+				case TFun(sig):
+					TFun({args: [for (arg in sig.args) {name: arg.name, opt: arg.opt, t: loop(arg.t)}], ret: loop(sig.ret)});
+				case TAnon(an):
+					var fields = new haxe.ds.StringMap<TClassField>();
+					for (name in an.fields.keys()) {
+						var f = TypeFunctions.copyField(an.fields.get(name));
+						f.type = loop(f.type);
+						fields.set(name, f);
+					}
+					TypeFunctions.mkAnon(an.status, fields);
+				case TLazy(f):
+					loop(TypeFunctions.lazyType(f));
+				case TDynamic(null):
+					t;
+				case TDynamic(t2):
+					TDynamic(loop(t2));
+			}
+		}
+		return loop(t);
+	}
+
+	static function sameTypeParam(c:TClass, pc:TClass):Bool {
+		if (c == pc) return true;
+		return switch [c.kind, pc.kind] {
+			case [KTypeParameter(_), KTypeParameter(_)]:
+				c.path.name == pc.path.name
+					&& c.path.pack.length == pc.path.pack.length
+					&& {
+						var same = true;
+						for (i in 0...c.path.pack.length) if (c.path.pack[i] != pc.path.pack[i]) {
+							same = false;
+							break;
+						}
+						same;
+					};
+			case _:
+				false;
+		}
+	}
+
+	static function unifyIteratorConstraint(ctx:TyperContext, actual:T, expected:T):Bool {
+		var actualNext = iteratorNextType(ctx, actual);
+		var expectedNext = iteratorNextType(ctx, expected);
+		if (actualNext == null || expectedNext == null) return false;
+		TypeUnification.unifyDefault(actualNext, expectedNext);
+		return true;
+	}
+
+	static function iteratorNextType(ctx:TyperContext, t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, tl):
+				c.build();
+				var r = try TypeFunctions.classField(c, tl, "next") catch (_:hxc.core.NotFound) return null;
+				switch (r.c2) {
+					case null:
+					case cwp: TypeFields.forceFieldBody(ctx.com, cwp.c, r.f);
+				}
+				r = try TypeFunctions.classField(c, tl, "next") catch (_:hxc.core.NotFound) return null;
+				switch (TypeFunctions.follow(r.t)) {
+					case TFun(sig) if (sig.args.length == 0): sig.ret;
+					case _: null;
+				}
+			case TAnon(an):
+				if (!an.fields.exists("next") || !an.fields.exists("hasNext")) return null;
+				var next = an.fields.get("next");
+				switch (TypeFunctions.follow(next.type)) {
+					case TFun(sig) if (sig.args.length == 0): sig.ret;
+					case _: null;
+				}
+			case _:
+				null;
+		}
+	}
+
+	static function closeGenericMonos(monos:TParams):Void {
+		for (m in monos) switch (TypeFunctions.follow(m)) {
+			case TMono(r): TypeUnification.close(r);
+			case _:
+		}
 	}
 
 	static function substituteGenericMethodType(cparams:TypeParams, params:TParams, t:T):T {

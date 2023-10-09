@@ -55,8 +55,11 @@ class EvalEmitter {
 	}
 
 	public static function eval(ctx:EvalContext, e:TExpr):EvalValue {
-		var env = EvalContext.getEval(ctx).env;
-		return switch (e.expr) {
+		var ev = EvalContext.getEval(ctx);
+		var oldPos = ev.currentPos;
+		if (e.pos != null && e.pos.min >= 0) ev.currentPos = e.pos;
+		var env = ev.env;
+		var result = try switch (e.expr) {
 			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
 			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
@@ -76,6 +79,8 @@ class EvalEmitter {
 				else if (eelse != null) eval(ctx, eelse);
 				else VNull;
 			case TWhile(econd, body, flag): evalWhile(ctx, econd, body, flag);
+			case TFor(v, eiter, body):
+				evalFor(ctx, v, eiter, body, e.pos);
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
@@ -89,6 +94,7 @@ class EvalEmitter {
 				var ev = EvalContext.getEval(ctx);
 				var savedEnv = ev.env;
 				var result:EvalValue = VNull;
+				ev.lastExceptionPos = Position.nullPos;
 				try {
 					result = eval(ctx, e1);
 				} catch (ex:EvalRunTimeException) {
@@ -103,7 +109,7 @@ class EvalEmitter {
 					// value so its own try/catch (e.g. the utest runner) records an error and continues,
 					// instead of aborting the whole run. The value is re-raised if no local catch matches.
 					ev.env = savedEnv;
-					ev.exceptionStack = [for (env in EvalExceptions.callStack(ev)) {pos: EvalExceptions.envPosition(env), kind: env.info.kind}];
+					ev.exceptionStack = hostExceptionStack(ev);
 					var s = Std.string(ex);
 					var v = VString(new VString(s, s.length));
 					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
@@ -112,12 +118,12 @@ class EvalEmitter {
 			case TArray(e1, e2):
 				switch (eval(ctx, e1)) {
 					case VArray(va):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e2.pos); };
 						(idx >= 0 && idx < va.alength) ? va.avalues[idx] : VNull;
 					case VVector(vv):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e2.pos); };
 						vecElemGet(vv, idx);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+					case v: EvalExceptions.unexpectedValue(ctx, v, "Array", e1.pos);
 				}
 			case TTypeExpr(mt):
 				// A type without an eval prototype (e.g. the core-type abstracts Int/Float/Bool) still
@@ -138,15 +144,38 @@ class EvalEmitter {
 			case TEnumParameter(e1, _, index):
 				switch (eval(ctx, e1)) {
 					case VEnumValue(ev): ev.eargs[index];
-					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
+					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value", e1.pos);
 				}
 			case TEnumIndex(e1):
 				switch (eval(ctx, e1)) {
 					case VEnumValue(ev): VInt(ev.eindex);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
+					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value", e1.pos);
 				}
-			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0]);
+			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0], e.pos);
+		} catch (ex:Dynamic) {
+			if (!Std.isOfType(ex, EvalBreak)
+				&& !Std.isOfType(ex, EvalContinue)
+				&& !Std.isOfType(ex, EvalReturn)
+				&& !Std.isOfType(ex, EvalSysExit)
+				&& !Std.isOfType(ex, EvalRunTimeException)
+				&& (ev.lastExceptionPos == null || ev.lastExceptionPos.min < 0)) {
+				ev.lastExceptionPos = ev.currentPos;
+			}
+			ev.currentPos = oldPos;
+			throw ex;
 		};
+		ev.currentPos = oldPos;
+		return result;
+	}
+
+	static function hostExceptionStack(ev:Eval):Array<{pos:Position, kind:EvalEnvKind}> {
+		var out = [for (env in EvalExceptions.callStack(ev)) {pos: EvalExceptions.envPosition(env), kind: env.info.kind}];
+		var p = ev.lastExceptionPos;
+		if (p != null && p.min >= 0) {
+			if (out.length > 0) out[0] = {pos: p, kind: out[0].kind};
+			else out.push({pos: p, kind: EKEntrypoint});
+		}
+		return out;
 	}
 
 	static function evalConst(c:TConstant):EvalValue {
@@ -242,7 +271,7 @@ class EvalEmitter {
 			case OpShl: EvalMisc.opShl(ctx, p, a, b);
 			case OpShr: EvalMisc.opShr(ctx, p, a, b);
 			case OpUShr: EvalMisc.opUShr(ctx, p, a, b);
-			case _: EvalExceptions.excString(ctx, "Unsupported binop");
+			case _: EvalExceptions.excString(ctx, "Unsupported binop", p);
 		};
 	}
 
@@ -274,18 +303,18 @@ class EvalEmitter {
 					case TArray(arrE, idxE):
 						switch (eval(ctx, arrE)) {
 							case VArray(va):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
 								var r = binopValue(ctx, sub, arrayElemGet(va, idx), eval(ctx, e2), p);
 								arrayElemSet(va, idx, r);
 								r;
 							case VVector(vv):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
 								var r = binopValue(ctx, sub, vecElemGet(vv, idx), eval(ctx, e2), p);
 								vecElemSet(vv, idx, r);
 								r;
-							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+							case v: EvalExceptions.unexpectedValue(ctx, v, "Array", arrE.pos);
 						}
-					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target");
+					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target", p);
 				}
 			case _: binopValue(ctx, op, eval(ctx, e1), eval(ctx, e2), p);
 		};
@@ -342,21 +371,21 @@ class EvalEmitter {
 			case TArray(e1, eidx):
 				switch (eval(ctx, e1)) {
 					case VArray(va):
-						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", eidx.pos); };
 						var value = eval(ctx, ve);
 						while (va.avalues.length <= idx) va.avalues.push(VNull);
 						va.avalues[idx] = value;
 						if (idx >= va.alength) va.alength = idx + 1;
 						return value;
 					case VVector(vv):
-						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", eidx.pos); };
 						var value = eval(ctx, ve);
 						vecElemSet(vv, idx, value);
 						return value;
-					case v: return EvalExceptions.unexpectedValue(ctx, v, "Array");
+					case v: return EvalExceptions.unexpectedValue(ctx, v, "Array", e1.pos);
 				}
 			case _:
-				return EvalExceptions.excString(ctx, "Unsupported assignment target");
+				return EvalExceptions.excString(ctx, "Unsupported assignment target", lhs.pos);
 		}
 	}
 
@@ -367,12 +396,12 @@ class EvalEmitter {
 				switch (eval(ctx, e1)) {
 					case VInt(i): VInt(-i);
 					case VFloat(f): VFloat(-f);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "number");
+					case v: EvalExceptions.unexpectedValue(ctx, v, "number", e1.pos);
 				}
 			case NegBits:
 				switch (eval(ctx, e1)) {
 					case VInt(i): VInt(~i);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "Int");
+					case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e1.pos);
 				}
 			case Increment | Decrement:
 				switch (e1.expr) {
@@ -384,7 +413,7 @@ class EvalEmitter {
 						var next = switch (old) {
 							case VInt(i): VInt(i + delta);
 							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
 						};
 						fe.locals[s] = next;
 						flag == Prefix ? next : old;
@@ -396,7 +425,7 @@ class EvalEmitter {
 						var next = switch (old) {
 							case VInt(i): VInt(i + delta);
 							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
 						};
 						proto.pfields[idx] = next;
 						flag == Prefix ? next : old;
@@ -408,39 +437,39 @@ class EvalEmitter {
 						var next = switch (old) {
 							case VInt(i): VInt(i + delta);
 							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
 						};
 						EvalField.setField(ctx, obj, name, next, p);
 						flag == Prefix ? next : old;
 					case TArray(arrE, idxE):
 						switch (eval(ctx, arrE)) {
 							case VArray(va):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
 								var old = arrayElemGet(va, idx);
 								var delta = op == Increment ? 1 : -1;
 								var next = switch (old) {
 									case VInt(i): VInt(i + delta);
 									case VFloat(f): VFloat(f + delta);
-									case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+									case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
 								};
 								arrayElemSet(va, idx, next);
 								flag == Prefix ? next : old;
 							case VVector(vv):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int"); };
+								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
 								var old = vecElemGet(vv, idx);
 								var delta = op == Increment ? 1 : -1;
 								var next = switch (old) {
 									case VInt(i): VInt(i + delta);
 									case VFloat(f): VFloat(f + delta);
-									case _: EvalExceptions.unexpectedValue(ctx, old, "number");
+									case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
 								};
 								vecElemSet(vv, idx, next);
 								flag == Prefix ? next : old;
-							case v: EvalExceptions.unexpectedValue(ctx, v, "Array");
+							case v: EvalExceptions.unexpectedValue(ctx, v, "Array", arrE.pos);
 						}
-					case _: EvalExceptions.excString(ctx, "Unsupported increment target");
+					case _: EvalExceptions.excString(ctx, "Unsupported increment target", e1.pos);
 				}
-			case _: EvalExceptions.excString(ctx, "Unsupported unop");
+			case _: EvalExceptions.excString(ctx, "Unsupported unop", p);
 		};
 	}
 
@@ -458,6 +487,24 @@ class EvalEmitter {
 				}
 		}
 		return VNull;
+	}
+
+	static function evalFor(ctx:EvalContext, v:TVar, eiter:TExpr, body:TExpr, p:Position):EvalValue {
+		var it = eval(ctx, eiter);
+		var env = EvalContext.getEval(ctx).env;
+		while (EvalMisc.isTrue(callField(ctx, it, "hasNext", [], p))) {
+			env.locals[slot(env, v.id)] = callField(ctx, it, "next", [], p);
+			try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+		}
+		return VNull;
+	}
+
+	static function callField(ctx:EvalContext, recv:EvalValue, name:String, args:Array<EvalValue>, p:Position):EvalValue {
+		return switch (EvalValueTools.vresolve(EvalField.dynamicField(ctx, recv, EvalHash.hash(name)))) {
+			case VFunction(f, _): callAt(ctx, p, f, args);
+			case VFieldClosure(r, f): callAt(ctx, p, f, [r].concat(args));
+			case v: EvalExceptions.unexpectedValue(ctx, v, "function", p);
+		}
 	}
 
 	// Match a thrown value against a try's catch clauses; run the first that matches, else onUnmatched.
@@ -479,26 +526,32 @@ class EvalEmitter {
 				// running program (e.g. the utest runner) records an error for that test and keeps going,
 				// rather than a host NotFound escaping the interpreter and aborting the whole run.
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name))
-				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)");
+				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
 			case FEnum(en, ef):
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
-				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)");
-			case FClosure(_, cf):
+				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)", p);
+			case FClosure(cwp, cf):
 				// Accessing a field on a null receiver raises a catchable Null Object Reference, matching
 				// the reference; returning null here would silently mask the error.
 				var recv = eval(ctx, e1);
 				switch (recv) {
-					case VNull: EvalExceptions.excString(ctx, "Null Object Reference");
-					case _: EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+					case VNull: EvalExceptions.excString(ctx, "Null Object Reference", e1.pos);
+					case _:
+						if (cf.expr == null && ctx.com != null && cwp != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, cwp.c, cf);
+						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+						if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
 				}
-			case FInstance(_, _, cf):
+			case FInstance(c, _, cf):
 				var recv = eval(ctx, e1);
 				switch (recv) {
 					case VNull:
-						EvalExceptions.excString(ctx, "Null Object Reference");
+						EvalExceptions.excString(ctx, "Null Object Reference", e1.pos);
 					case _:
 						switch (cf.kind) {
-							case Method(_): EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+							case Method(_):
+								if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+								var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+								if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
 							case Var(_):
 								var v = EvalField.field(ctx, recv, EvalHash.hash(cf.name));
 								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.key_haxe_Exception)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
@@ -510,11 +563,65 @@ class EvalEmitter {
 				var recv = eval(ctx, e1);
 				switch (recv) {
 					case VObject(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
-					case _: EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+					case _:
+						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+						if (v == VNull) lateInstanceMethodByName(ctx, recv, cf.name, p) else v;
 				}
 			case FDynamic(s):
 				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(s));
 		};
+	}
+
+	static function lateInstanceMethod(ctx:EvalContext, recv:EvalValue, cf:TClassField):EvalValue {
+		return switch (recv) {
+			case VInstance(vi):
+				switch (cf.expr) {
+					case {expr: TFunction(tf)}:
+						var name = EvalHash.hash(cf.name);
+						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(vi.iproto.ppath, name), 0, 0);
+						var vf = VFunction(EvalPrototype.makeFunction(ctx, tf, true, info), false);
+						var idx = vi.iproto.pnames.get(name);
+						if (idx == null) {
+							vi.iproto.pnames.set(name, vi.iproto.pfields.length);
+							vi.iproto.pfields.push(vf);
+						} else {
+							vi.iproto.pfields[idx] = vf;
+						}
+						switch (vf) {
+							case VFunction(f, _): VFieldClosure(recv, f);
+							case _: VNull;
+						}
+					case _:
+						var typeName = EvalHash.revHash(vi.iproto.ppath);
+						EvalExceptions.excString(ctx, "hxc: method body is not available: " + (typeName == null ? "?" : typeName) + "." + cf.name, cf.namePos);
+				}
+			case _:
+				VNull;
+		}
+	}
+
+	static function lateInstanceMethodByName(ctx:EvalContext, recv:EvalValue, name:String, p:Position):EvalValue {
+		return switch (recv) {
+			case VInstance(vi):
+				switch (ctx.typeCache.get(vi.iproto.ppath)) {
+					case TClassDecl(c):
+						try {
+							var r = TypeFunctions.rawClassField(function(f) return f.type, c, TypeFunctions.extractParamTypes(c.params), name);
+							switch (r.c2) {
+								case null:
+								case cwp:
+									if (r.f.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, cwp.c, r.f);
+							}
+							lateInstanceMethod(ctx, recv, r.f);
+						} catch (_:hxc.core.NotFound) {
+							VNull;
+						}
+					case _:
+						VNull;
+				}
+			case _:
+				VNull;
+		}
 	}
 
 	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
@@ -559,7 +666,7 @@ class EvalEmitter {
 		return switch (fn) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(recv, f): callAt(ctx, p, f, [recv].concat(args));
-			case v: EvalExceptions.unexpectedValue(ctx, v, "function");
+			case v: EvalExceptions.unexpectedValue(ctx, v, "function", p);
 		};
 	}
 

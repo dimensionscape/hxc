@@ -46,6 +46,7 @@ class EvalEnv {
 	public var parent:Null<EvalEnv>;
 	public var stackDepth:Int;
 	public var eval:Eval;
+	public var leavePos:Position;
 	// Maps a variable id to its local slot, filled as variables are first seen.
 	public var slots:Map<Int, Int>;
 	// The receiver for an instance method or constructor body.
@@ -59,6 +60,7 @@ class EvalEnv {
 		this.parent = parent;
 		this.stackDepth = stackDepth;
 		this.eval = eval;
+		this.leavePos = new Position(info.file == 0 ? "?" : EvalHash.revHash(info.file), info.min, info.max);
 		this.slots = new Map();
 		this.vthis = null;
 	}
@@ -71,11 +73,15 @@ class Eval {
 	public var lastReturn:Null<EvalValue>;
 	public var caughtTypes:Map<Int, Bool>;
 	public var exceptionStack:Array<{pos:Position, kind:EvalEnvKind}>;
+	public var currentPos:Position;
+	public var lastExceptionPos:Position;
 	public function new() {
 		this.env = null;
 		this.lastReturn = null;
 		this.caughtTypes = new Map();
 		this.exceptionStack = [];
+		this.currentPos = Position.nullPos;
+		this.lastExceptionPos = Position.nullPos;
 	}
 }
 

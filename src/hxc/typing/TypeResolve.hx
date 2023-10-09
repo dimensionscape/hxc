@@ -587,16 +587,18 @@ class TypeResolve {
 			case FProp(_, _, th, _):
 				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
 			case FFun(fd):
-				// Method -> TFun(args, ret). Faithful: optional arg -> Null<T>; missing hint > fresh mono (the
-				// typer infers it). Method-local type params are not added to scope here (annotations only;
-				// rarely affects stdlib signatures, and a missing local-param ref would just resolve via the
-				// class params or a mono).
-				var localParams = typeParams;
+				// Method -> TFun(args, ret). Faithful: optional arg -> Null<T>; missing hint
+				// > fresh mono (the typer infers it).
+				var isStaticField = false;
+				for (acc in cff.cffAccess) if (acc.access == AStatic) isStaticField = true;
+				var isAbstractMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+				var outerParams = (isStaticField && !isAbstractMember) ? [] : typeParams;
+				var localParams = outerParams;
 				var methodParams:TypeParams = [];
 				if (fd.fParams.length > 0) {
 					// Add method type params so arg/return hints referencing them resolve.
-					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams);
-					localParams = methodParams.concat(typeParams);
+					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams, outerParams);
+					localParams = methodParams.concat(outerParams);
 				}
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;

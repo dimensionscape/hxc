@@ -16,7 +16,7 @@ typedef ProtoDelay = VPrototype->Void;
 class EvalPrototype {
 	// An instance method or constructor receives the receiver as the first call argument and binds
 	// it as this; a static method binds its arguments directly.
-	static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo):VFunc {
+	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
 			var offset = isInstance ? 1 : 0;
 			var bound:Array<{vid:Int, value:EvalValue}> = [];

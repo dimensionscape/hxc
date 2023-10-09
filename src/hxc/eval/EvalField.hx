@@ -100,12 +100,12 @@ class EvalField {
 					case OProto(proto):
 						var idx = proto.pinstanceNames.get(name);
 						if (idx != null) o.ofields[idx] = value;
-						else EvalExceptions.excString(ctx, "Cannot add field " + EvalHash.revHash(name) + " to this object");
+						else EvalExceptions.excString(ctx, "Cannot add field " + EvalHash.revHash(name) + " to this object", p);
 					case ODictionary(l):
 						l.set(name, value);
 				}
 			case _:
-				EvalExceptions.unexpectedValue(ctx, v, "object");
+				EvalExceptions.unexpectedValue(ctx, v, "object", p);
 		}
 	}
 }

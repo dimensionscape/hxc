@@ -5,6 +5,7 @@ import hxc.ast.Ast.Import;
 import hxc.ast.Ast.ImportMode;
 import hxc.ast.Ast.PlacedName;
 import hxc.core.Type.ModuleType;
+import hxc.core.TypeFunctions;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
@@ -257,6 +258,32 @@ class EvalStdLib {
 
 	static function protoFieldNames(proto:VPrototype):Array<EvalValue> {
 		return [for (n in proto.pnames.keys()) mkStr(EvalHash.revHash(n))];
+	}
+
+	static function classFieldNames(ctx:EvalContext, proto:VPrototype):Array<EvalValue> {
+		var names = new Map<Int, Bool>();
+		var out:Array<EvalValue> = [];
+		function add(n:Int):Void {
+			if (!names.exists(n) && !isReflectHidden(proto.ppath, n, true)) {
+				names.set(n, true);
+				out.push(mkStr(EvalHash.revHash(n)));
+			}
+		}
+		for (n in proto.pnames.keys()) add(n);
+		switch (ctx.typeCache.get(proto.ppath)) {
+			case TClassDecl(c):
+				for (cf in c.orderedStatics) {
+					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+						add(EvalHash.hash(cf.name));
+				}
+				for (name in c.statics.keys()) {
+					var cf = c.statics.get(name);
+					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+						add(EvalHash.hash(cf.name));
+				}
+			case _:
+		}
+		return out;
 	}
 
 	static function instanceFieldNames(proto:VPrototype):Array<EvalValue> {
@@ -2751,10 +2778,16 @@ class EvalStdLib {
 		return stackItem(ctx, EvalExceptions.envPosition(env), env.info.kind);
 	}
 
+	static function envCallStackItem(ctx:EvalContext, env:EvalEnv):EvalValue {
+		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
+		if (file == null) file = "?";
+		return stackItem(ctx, new Position(file, env.info.min, env.info.max), env.info.kind);
+	}
+
 	static function callStackValue(ctx:EvalContext):EvalValue {
 		var envs = EvalExceptions.callStack(EvalContext.getEval(ctx));
 		if (envs.length >= 2) envs = envs.slice(2);
-		var items = [for (env in envs) envStackItem(ctx, env)];
+		var items = [for (env in envs) envCallStackItem(ctx, env)];
 		return VArray(new VArray(items, items.length));
 	}
 
@@ -4292,6 +4325,16 @@ class EvalStdLib {
 			mkStr("[" + [for (i in 0...va.alength) stringOf(va.avalues[i])].join(",") + "]");
 		}));
 		reg(inst, "Array", "iterator", vmethod(a -> arrayIteratorValue(ctx, a[0])));
+		reg(inst, "IntIterator", "hasNext", vmethod(a -> {
+			var self = arg(a, 0);
+			EvalValueTools.vbool(toInt(EvalField.field(ctx, self, EvalHash.hash("min"))) < toInt(EvalField.field(ctx, self, EvalHash.hash("max"))));
+		}));
+		reg(inst, "IntIterator", "next", vmethod(a -> {
+			var self = arg(a, 0);
+			var min = toInt(EvalField.field(ctx, self, EvalHash.hash("min")));
+			setDynamicField(self, EvalHash.hash("min"), VInt(min + 1));
+			VInt(min);
+		}));
 		reg(inst, "haxe.iterators.ArrayIterator", "hasNext", vmethod(a -> {
 			var it = thisArrayIterator(a);
 			EvalValueTools.vbool(it.current < it.array.alength);
@@ -4572,7 +4615,7 @@ class EvalStdLib {
 		}));
 
 		reg(s, "Type", "getClassFields", vfn(a -> switch (arg(a, 0)) {
-			case VPrototype(proto): switch (proto.pkind) { case PClass(_): var ns = protoFieldNames(proto); VArray(new VArray(ns, ns.length)); case _: VNull; };
+			case VPrototype(proto): switch (proto.pkind) { case PClass(_): var ns = classFieldNames(ctx, proto); VArray(new VArray(ns, ns.length)); case _: VNull; };
 			case _: VNull;
 		}));
 		reg(s, "Type", "getInstanceFields", vfn(a -> switch (arg(a, 0)) {

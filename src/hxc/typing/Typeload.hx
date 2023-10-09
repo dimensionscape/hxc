@@ -119,11 +119,12 @@ class Typeload {
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 
-	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>):TypeParams {
+	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams):TypeParams {
 		// Returns the sibling params so a
 		// first, then hand each param a thunk closing over it.
 		var params:TypeParams = [];
-		var getParams = function():TypeParams return params;
+		if (baseParams == null) baseParams = [];
+		var getParams = function():TypeParams return params.concat(baseParams);
 		for (tp in tps) params.push(typeTypeParam(ctx, declPath, getParams, tp));
 		return params;
 	}
@@ -641,13 +642,36 @@ class Typeload {
 				case FDynamic(s): FDynamic(s);
 			}
 		}
+		function fieldAccessForReceiver(fa:TFieldAccess, recv:TExpr):TFieldAccess {
+			return switch (fa) {
+				case FAnon(cf):
+					switch (TypeFunctions.follow(recv.type)) {
+						case TInst(c, tl):
+							try {
+								var r = TypeFunctions.rawClassField(function(f) return f.type, c, tl, cf.name);
+								switch (r.c2) {
+									case null: FAnon(r.f);
+									case cwp: FInstance(cwp.c, cwp.params, r.f);
+								}
+							} catch (_:NotFound) {
+								FAnon(cf);
+							}
+						case _:
+							FAnon(cf);
+					}
+				case _:
+					fieldAccess(fa);
+			}
+		}
 		var et = subst(e.type);
 		return TypeFunctions.mk(switch (e.expr) {
 			case TConst(c): TConst(c);
 			case TLocal(v): TLocal(cloneVar(v, subst, vars));
 			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
 			case TBinop(op, e1, e2): TBinop(op, cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
-			case TField(e1, fa): TField(cloneExpr(e1, subst, vars, gsubst), fieldAccess(fa));
+			case TField(e1, fa):
+				var ce1 = cloneExpr(e1, subst, vars, gsubst);
+				TField(ce1, fieldAccessForReceiver(fa, ce1));
 			case TTypeExpr(mt): TTypeExpr(mt);
 			case TParenthesis(e1): TParenthesis(cloneExpr(e1, subst, vars, gsubst));
 			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: cloneExpr(f.expr, subst, vars, gsubst)}]);
