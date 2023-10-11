@@ -97,24 +97,7 @@ class DebugDump {
 	}
 
 	public static function typeString(t:T):String {
-		return switch (TypeFunctions.follow(t)) {
-			case TMono(r): r.type == null ? "Unknown" : typeString(r.type);
-			case TEnum(e, tl): pathString(e.path) + paramsString(tl);
-			case TInst(c, tl): pathString(c.path) + paramsString(tl);
-			case TType(td, tl): pathString(td.path) + paramsString(tl);
-			case TFun(sig):
-				"(" + [for (a in sig.args) (a.opt ? "?" : "") + a.name + ":" + typeString(a.t)].join(", ") + ") -> " + typeString(sig.ret);
-			case TAnon(a):
-				var fields = [for (name in a.fields.keys()) name + ":" + typeString(a.fields.get(name).type)];
-				"{" + fields.join(", ") + "}";
-			case TDynamic(t2): t2 == null ? "Dynamic" : "Dynamic<" + typeString(t2) + ">";
-			case TLazy(f): typeString(TypeFunctions.lazyType(f));
-			case TAbstract(a, tl): pathString(a.path) + paramsString(tl);
-		};
-	}
-
-	static function paramsString(tl:Array<T>):String {
-		return tl.length == 0 ? "" : "<" + [for (t in tl) typeString(t)].join(", ") + ">";
+		return hxc.core.TPrinting.sTypeStr(t);
 	}
 
 	static function pathString(path:hxc.core.Globals.Path):String {

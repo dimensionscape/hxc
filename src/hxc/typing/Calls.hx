@@ -294,6 +294,18 @@ class Calls {
 		switch (callee.expr) {
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
 				return AKExpr(typeTrace(ctx, el, withType, p));
+			case EConst(CIdent("$type")) if (el.length == 1):
+				// $type(e): type e, report its type, return e unchanged; $type(_) reports the expected
+				// with-type instead.
+				switch (el[0].expr) {
+					case EConst(CIdent("_")):
+						ctx.com.warning(WithTypeTools.toString(withType), p);
+						return AKExpr(TypeFunctions.mk(TConst(TNull), TDynamic(null), p));
+					case _:
+						var te = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
+						ctx.com.warning(hxc.core.TPrinting.sTypeStr(te.type), te.pos);
+						return AKExpr(te);
+				}
 			case EConst(CIdent("super")):
 				return AKExpr(typeSuperCall(ctx, el, p));
 			case EField({expr: EConst(CIdent("Std"))}, "string", _) if (el.length == 1):

@@ -233,20 +233,8 @@ class TypeUnification {
 		};
 	}
 
-	// Minimal type printer for the `close` recursive-type error message only.
-	// TPrinting is a later port; the message text is not semantically load-bearing.
 	static function sType(t:T):String {
-		return switch (t) {
-			case TMono(r): r.type == null ? "Unknown<0>" : sType(r.type);
-			case TEnum(e, _): sPath(e.path);
-			case TInst(c, _): sPath(c.path);
-			case TType(d, _): sPath(d.path);
-			case TAbstract(a, _): sPath(a.path);
-			case TFun(_): "Function";
-			case TAnon(_): "{...}";
-			case TDynamic(_): "Dynamic";
-			case TLazy(f): sType(TypeFunctions.lazyType(f));
-		}
+		return TPrinting.sTypeStr(t);
 	}
 	static function sPath(p:Path):String {
 		return p.pack.length == 0 ? p.name : p.pack.join(".") + "." + p.name;

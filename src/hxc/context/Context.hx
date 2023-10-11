@@ -173,6 +173,10 @@ class Context {
 		diagnostics.push({message: message, pos: pos});
 	}
 
+	public function warning(message:String, pos:Position):Void {
+		Sys.stderr().writeString(hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos) + " : Warning : " + message + "\n");
+	}
+
 	public function hasDiagnostics():Bool {
 		return diagnostics.length > 0;
 	}

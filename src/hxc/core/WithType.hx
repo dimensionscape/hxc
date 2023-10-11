@@ -35,19 +35,17 @@ class WithTypeTools {
 	public static function namedStructureField(name:String):WithType return Value(StructureField(makeSourceInfo(name)));
 	public static var noValue(default, null):WithType = NoValue;
 
-	// The WithType case omits the s_type rendering of `t` (TPrinting
-	// is a later port); it is a non-load-bearing diagnostic helper.
 	public static function toString(w:WithType):String {
 		return switch (w) {
 			case NoValue: "NoValue";
 			case Value(null) | Value(ImplicitReturn): "Value";
 			case Value(FunctionArgument(si)) | Value(StructureField(si)): "Value " + si.name;
-			case WithType(_, s):
+			case WithType(t, s):
 				var name = switch (s) {
 					case FunctionArgument(si) | StructureField(si): si.name;
 					case _: "None";
 				};
-				"WithType(" + name + ")";
+				"WithType(" + TPrinting.sTypeStr(t) + ", " + name + ")";
 		};
 	}
 }
