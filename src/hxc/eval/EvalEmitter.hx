@@ -531,11 +531,10 @@ class EvalEmitter {
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
 				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)", p);
 			case FClosure(cwp, cf):
-				// Accessing a field on a null receiver raises a catchable Null Object Reference, matching
-				// the reference; returning null here would silently mask the error.
+				// A bound-method value read off a null receiver is simply null (no raise).
 				var recv = eval(ctx, e1);
 				switch (recv) {
-					case VNull: EvalExceptions.excString(ctx, "Null Object Reference", e1.pos);
+					case VNull: VNull;
 					case _:
 						if (cf.expr == null && ctx.com != null && cwp != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, cwp.c, cf);
 						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
@@ -545,7 +544,13 @@ class EvalEmitter {
 				var recv = eval(ctx, e1);
 				switch (recv) {
 					case VNull:
-						EvalExceptions.excString(ctx, "Null Object Reference", e1.pos);
+						// Reference splits the null receiver by field kind: a method-call receiver is
+						// caught by emit_null_check -> "Null Access", a var read by
+						// emit_instance_field_read -> "field access on null" .
+						switch (cf.kind) {
+							case Method(_): EvalExceptions.excString(ctx, "Null Access", e1.pos);
+							case Var(_): EvalExceptions.excString(ctx, "field access on null", e1.pos);
+						}
 					case _:
 						switch (cf.kind) {
 							case Method(_):
@@ -563,6 +568,8 @@ class EvalEmitter {
 				var recv = eval(ctx, e1);
 				switch (recv) {
 					case VObject(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+					// A structure's field read raises on a null receiver.
+					case VNull: EvalExceptions.excString(ctx, "field access on null", e1.pos);
 					case _:
 						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 						if (v == VNull) lateInstanceMethodByName(ctx, recv, cf.name, p) else v;
