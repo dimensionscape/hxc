@@ -96,6 +96,7 @@ class Compiler {
 			TypeResolve.resolveAll(ctx);
 			TypeFields.typeAllModules(ctx);
 			abortOnDiagnostics(ctx, platform);
+			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
 			abortOnDiagnostics(ctx, platform);
 			if (platform == Eval) {

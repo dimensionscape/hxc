@@ -210,4 +210,58 @@ class TPrinting {
 		var ctx = printContext();
 		return sExpr(function(t) return sType(ctx, t), e);
 	}
+
+	// Haxe-syntax expression printer; variable IDs are omitted by default.
+	public static function sExprPretty(printVarIds:Bool, tabs:String, topLevel:Bool, st:T->String, e:TExpr):String {
+		function loop(x:TExpr):String return sExprPretty(printVarIds, tabs, false, st, x);
+		inline function clist(f:TExpr->String, l:Array<TExpr>):String return l.map(f).join(", ");
+		function local(v:TVar):String return printVarIds ? v.name + "<" + v.id + ">" : v.name;
+		return switch (e.expr) {
+			case TConst(c): sConst(c);
+			case TLocal(v): local(v);
+			case TArray(e1, e2): loop(e1) + "[" + loop(e2) + "]";
+			case TBinop(op, e1, e2): loop(e1) + " " + Ast.sBinop(op) + " " + loop(e2);
+			case TEnumParameter(e1, _, i): loop(e1) + "[" + i + "]";
+			case TEnumIndex(e1): "enumIndex " + loop(e1);
+			case TField(e1, s): loop(e1) + "." + TypeFunctions.fieldName(s);
+			case TTypeExpr(mt): Globals.sTypePath(TypeFunctions.tPath(mt));
+			case TParenthesis(e1): "(" + loop(e1) + ")";
+			case TObjectDecl(fl): "{" + fl.map(function(of) return Ast.sObjectKeyName(of.key.name, of.key.quotes) + " : " + loop(of.expr)).join(", ") + "}";
+			case TArrayDecl(el): "[" + clist(loop, el) + "]";
+			case TCall(e1, el): loop(e1) + "(" + clist(loop, el) + ")";
+			case TNew(c, _, el): "new " + Globals.sTypePath(c.path) + "(" + clist(loop, el) + ")";
+			case TUnop(op, f, e1): f.match(Prefix) ? Ast.sUnop(op) + " " + loop(e1) : loop(e1) + " " + Ast.sUnop(op);
+			case TFunction(f):
+				var args = f.args.map(function(a) return local(a.v) + ":" + st(a.v.type) + (a.c == null ? "" : " = " + loop(a.c))).join(", ");
+				(topLevel ? "" : "function") + "(" + args + ") " + loop(f.expr);
+			case TVarExpr(v, eo): "var " + local(v) + (eo == null ? "" : " = " + loop(eo));
+			case TBlock(el):
+				var ntabs = tabs + "\t";
+				switch (el) {
+					case []: "{}";
+					case _: "{\n" + el.map(function(x) return ntabs + sExprPretty(printVarIds, ntabs, topLevel, st, x) + ";\n").join("") + tabs + "}";
+				}
+			case TFor(v, econd, e1): "for (" + local(v) + " in " + loop(econd) + ") " + loop(e1);
+			case TIf(e1, ethen, eelse): "if (" + loop(e1) + ") " + loop(ethen) + (eelse == null ? "" : " else " + loop(eelse));
+			case TWhile(econd, e1, flag):
+				flag.match(NormalWhile) ? "while (" + loop(econd) + ") " + loop(e1) : "do (" + loop(e1) + ") while(" + loop(econd) + ")";
+			case TSwitch(e1, cases, def):
+				var ntabs = tabs + "\t";
+				var body = cases.map(function(c) return ntabs + "case " + clist(loop, c.values) + ": " + sExprPretty(printVarIds, ntabs, topLevel, st, c.expr) + ";\n").join("");
+				var d = def == null ? "" : ntabs + "default: " + sExprPretty(printVarIds, ntabs, topLevel, st, def) + "\n";
+				"switch (" + loop(e1) + ") {\n" + body + d + tabs + "}";
+			case TTry(e1, cl):
+				"try " + loop(e1) + cl.map(function(c) return " catch (" + local(c.v) + ":" + st(c.v.type) + ") " + loop(c.expr)).join(", ");
+			case TReturn(null): "return";
+			case TReturn(e1): "return " + loop(e1);
+			case TBreak: "break";
+			case TContinue: "continue";
+			case TThrow(e1): "throw " + loop(e1);
+			case TCast(e1, null): "cast " + loop(e1);
+			case TCast(e1, mt): "cast (" + loop(e1) + "," + Globals.sTypePath(TypeFunctions.tPath(mt)) + ")";
+			case TMeta(entry, e1):
+				"@" + entry.name + (entry.params.length == 0 ? "" : "(" + entry.params.map(Printer.sExpr).join(", ") + ")") + " " + loop(e1);
+			case TIdent(s): s;
+		}
+	}
 }
