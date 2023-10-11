@@ -60,7 +60,7 @@ class Typer {
 		} catch (_:UnifyError) {}
 		var casted = tryAbstractCast(ctx, e, t, p);
 		if (casted != null) return casted;
-		throw new TypingError("Cannot unify types", p);
+		throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(e.type, t), p);
 	}
 
 	static function doesUnify(a:T, b:T):Bool {

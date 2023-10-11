@@ -432,7 +432,7 @@ typedef Case = {guard:Null<TExpr>, expr:Null<TExpr>, pos:Position};
 
 class CaseMaker {
 	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
-		try TypeUnification.unifyDefault(a, b) catch (_:UnifyError) throw new TypingError("Cannot unify types", p);
+		try TypeUnification.unifyDefault(a, b) catch (_:UnifyError) throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(a, b), p);
 	}
 
 	public static function make(ctx:TyperContext, t:T, el:Array<Expr>, eg:Null<Expr>, eoAst:Null<Expr>, withType:WithType, postfixMatch:Bool, p:Position):{c:Case, pat:Pattern} {

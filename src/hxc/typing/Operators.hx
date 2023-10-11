@@ -36,7 +36,7 @@ class Operators {
 		try {
 			TypeUnification.unifyDefault(a, b);
 		} catch (_:UnifyError) {
-			throw new TypingError("Cannot unify types", p);
+			throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(a, b), p);
 		}
 	}
 

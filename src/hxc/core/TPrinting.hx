@@ -139,6 +139,12 @@ class TPrinting {
 		return sType(printContext(), t);
 	}
 
+	// Cannot-unify message: both types share one print context.
+	public static function unifyErrorMsg(t1:T, t2:T):String {
+		var pc = printContext();
+		return sType(pc, t1) + " should be " + sType(pc, t2);
+	}
+
 
 	public static function sConst(c:TConstant):String {
 		return switch (c) {
