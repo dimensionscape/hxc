@@ -209,6 +209,33 @@ class Typer {
 		return false;
 	}
 
+	// A type param is constructible if a constraint exposes a `new` field, is haxe.Constructible<T>, or
+	// nests another constructible type param.
+	static function getConstructibleConstraint(ctx:TyperContext, tl:Array<T>, p:Position):Null<TSignature> {
+		function extractFunction(t:T):TSignature {
+			return switch (TypeFunctions.follow(t)) {
+				case TFun(sig): sig;
+				case _: throw new TypingError("Constructible type parameter should be function", p);
+			};
+		}
+		function loop(tl:Array<T>):Null<TSignature> {
+			for (t in tl) switch (TypeFunctions.follow(t)) {
+				case TAnon(a):
+					var nf = a.fields.get("new");
+					if (nf != null) return extractFunction(nf.type);
+				case TAbstract(a, [t1]) if (a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Constructible"):
+					return extractFunction(t1);
+				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
+					var tl1 = switch (c.kind) { case KTypeParameter(x): x; case _: []; };
+					var r = loop(tl1);
+					if (r != null) return r;
+				case _:
+			}
+			return null;
+		}
+		return loop(tl);
+	}
+
 	static function isGenericParameter(ctx:TyperContext, c:TClass):Bool {
 		if (ctx.curclass != null) {
 			switch (ctx.curclass.kind) {
@@ -1908,6 +1935,17 @@ class Typer {
 			t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false);
 		}
 		return switch (TypeFunctions.follow(t)) {
+				case TInst(c, params) if (c.kind.match(KTypeParameter(_))):
+					// New T() on a generic type parameter resolves the constructor from a constructible
+					// constraint.
+					if (!isGenericParameter(ctx, c)) throw new TypingError("Only generic type parameters can be constructed", p);
+					var ctl = switch (c.kind) { case KTypeParameter(x): x; case _: []; };
+					switch (getConstructibleConstraint(ctx, ctl, p)) {
+						case null: throw new TypingError(c.path.name + " does not have a constructor", p);
+						case cc:
+							var r = Calls.unifyCallArgs(ctx, el, cc.args, cc.ret, p);
+							TypeFunctions.mk(TNew(c, params, r.el), t, p);
+					}
 			case TInst(c, tl):
 				var tl = switch (c.kind) {
 					case KGeneric if (tp.path.tparams.length == 0 && hasTypeParameterParams(tl)):
