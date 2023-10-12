@@ -1970,6 +1970,7 @@ class Typer {
 				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
 				var ctorType = findConstructorType(ctx, c, tl);
 				if (ctorType == null) throw new TypingError(c.path.name + " does not have a constructor", p);
+				if (c.constructor != null) Fields.checkConstructorAccess(ctx, c, c.constructor, p);
 				var sig = switch (TypeFunctions.follow(ctorType)) {
 					case TFun(s): s;
 					case _: {args: [], ret: ctx.com.basic.tvoid};
