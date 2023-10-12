@@ -7,6 +7,8 @@ import hxc.core.TypeFunctions;
 import hxc.core.Globals.Path;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.MessageSeverity;
+import hxc.core.WarningList.WarningMode;
+import hxc.core.WarningList.WarningOption;
 import hxc.core.Define;
 import haxe.ds.StringMap;
 
@@ -62,6 +64,7 @@ class Context {
 	public var unresolvedFields:Int = 0;
 
 	public var diagnostics:Array<CompilerDiagnostic>;
+	public var warningOptions:Array<Array<hxc.core.WarningList.WarningOption>>;
 
 	public var moduleImports:StringMap<ModuleImports>;
 
@@ -120,6 +123,8 @@ class Context {
 		this.initMacros = [];
 		this.declOfType = new StringMap();
 		this.diagnostics = [];
+		// Initialize default-disabled warnings with WMDisable options.
+		this.warningOptions = [[for (w in hxc.core.WarningList.disabledWarnings) {warning: w, mode: WMDisable}]];
 		this.moduleImports = new StringMap();
 		this.callArgumentStack = [];
 		this.storedTypedExprs = new Map();
@@ -181,8 +186,15 @@ class Context {
 		for (i in 1...stack.length) addDiagnostic(stack[i].message, stack[i].pos, depth + 1, sev);
 	}
 
-	public function warning(message:String, pos:Position, depth:Int = 0):Void {
-		diagnostics.push({message: message, pos: pos, depth: depth, severity: Warning});
+	// Drop disabled warnings; prefix enabled non-generic warnings with (WName).
+	public function warning(w:hxc.core.WarningList.Warning, options:Array<Array<hxc.core.WarningList.WarningOption>>, message:String, pos:Position, depth:Int = 0):Void {
+		switch (hxc.core.WarningList.getMode(w, options.concat(warningOptions))) {
+			case WMEnable:
+				var obj = hxc.core.WarningList.warningObj(w);
+				var msg = obj.generic ? message : "(" + obj.name + ") " + message;
+				diagnostics.push({message: msg, pos: pos, depth: depth, severity: MessageSeverity.Warning});
+			case WMDisable:
+		}
 	}
 
 	public function info(message:String, pos:Position, depth:Int = 0):Void {

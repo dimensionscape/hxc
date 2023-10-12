@@ -22,6 +22,7 @@ class Meta {
 	public static inline var From = ":from";
 	public static inline var To = ":to";
 	public static inline var ImplicitCast = ":implicitCast";
+	public static inline var HaxeWarning = ":haxe.warning";
 }
 
 enum UnifyErrorKind {

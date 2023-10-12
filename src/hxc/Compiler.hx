@@ -87,6 +87,10 @@ class Compiler {
 					i++;
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
+				case "-w":
+					var spec = args[i++];
+					var wpos = new Position("-w " + spec, 0, 0);
+					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
 					// A bare positional argument whose type name starts uppercase is a class to compile
 					// (haxe allows the startup class without -main).

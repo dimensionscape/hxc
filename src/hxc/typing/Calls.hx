@@ -2,6 +2,7 @@ package hxc.typing;
 
 import hxc.ast.Position;
 import hxc.ast.Ast;
+import hxc.core.WarningList.Warning;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
@@ -299,11 +300,11 @@ class Calls {
 				// with-type instead.
 				switch (el[0].expr) {
 					case EConst(CIdent("_")):
-						ctx.com.warning(WithTypeTools.toString(withType), p);
+						ctx.com.warning(WInfo, hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta)), WithTypeTools.toString(withType), p);
 						return AKExpr(TypeFunctions.mk(TConst(TNull), TDynamic(null), p));
 					case _:
 						var te = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
-						ctx.com.warning(hxc.core.TPrinting.sTypeStr(te.type), te.pos);
+						ctx.com.warning(WInfo, hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta)), hxc.core.TPrinting.sTypeStr(te.type), te.pos);
 						return AKExpr(te);
 				}
 			case EConst(CIdent("super")):
