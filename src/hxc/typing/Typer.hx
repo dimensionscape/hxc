@@ -752,7 +752,10 @@ class Typer {
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
 						if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
-						var anonField = TypeFunctions.mkField(f.name, te.type, f.pos, f.pos);
+						// Against an expected structure the field takes the expected type (the value was
+						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
+						// `{f:Int}`. ODKWithStructure.
+						var anonField = TypeFunctions.mkField(f.name, ef != null ? ef.type : te.type, f.pos, f.pos);
 						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
 						anonFields.set(f.name, anonField);
 					}
