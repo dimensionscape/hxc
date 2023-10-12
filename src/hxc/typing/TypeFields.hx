@@ -20,6 +20,10 @@ import hxc.typing.TyperContext.CurrentFun;
 // another module can bind it. A final flush forces every remaining field.
 class TypeFields {
 	static var lazyFieldTypes:haxe.ds.ObjectMap<TClassField, T> = new haxe.ds.ObjectMap();
+	// Field bodies whose typing has been attempted. A body that errors leaves expr null, so the
+	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
+	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
+	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 
 	public static function typeAllModules(ctx:Context):Void {
 		if (!ctx.isMacro) hxc.eval.EvalMacro.runBuildMacros(ctx);
@@ -139,6 +143,8 @@ class TypeFields {
 		// be re-run to pick up modules loaded on demand.
 		switch (cf.type) { case TLazy(_): return; case _: }
 		if (cf.expr != null) return;
+		// A body that already ran (successfully or with an error) is not re-typed on later passes.
+		if (bodyTyped.exists(cf)) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var sigType = cf.type;
 		lazyFieldTypes.set(cf, sigType);
@@ -269,6 +275,7 @@ class TypeFields {
 	}
 
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
+		bodyTyped.set(cf, true);
 		var restore = Typer.saveLocals(tctx);
 		// A field body starts with no locals in scope. Lazy typing can force one body while another is
 		// still open (its type is queried from the first body), so start clean and let restore() give
