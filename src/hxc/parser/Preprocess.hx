@@ -345,7 +345,11 @@ class Preprocess {
 		return switch v {
 			case TNull: "null";
 			case TBool(b): "boolean " + b;
-			case TFloat(f): "float " + f;
+			case TFloat(f):
+				// A float always prints with a decimal point (0. not 0).
+				var sf = Std.string(f);
+				if (~/^-?[0-9]+$/.match(sf)) sf += ".";
+				"float " + sf;
 			case TString(s): "string \"" + s + "\"";
 			case TVersion(v): "version " + v;
 		}
