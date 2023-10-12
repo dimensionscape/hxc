@@ -166,13 +166,23 @@ class ForLoop {
 	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var rhsTyped = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
-		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p) catch (_:TypingError) rhsTyped;
+		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p) catch (kvErr:TypingError) {
+			// rhsTyped may itself be a KeyValueIterator (exposing hasNext/next); use it directly then. If
+			// it is neither iterable nor exposes keyValueIterator, the missing accessor is the real
+			// problem, so surface that error rather than a later hasNext failure. from
+			// IterationKind.check_iterator .
+			try { call0(ctx, rhsTyped, "hasNext", p); call0(ctx, rhsTyped, "next", p); rhsTyped; }
+			catch (_:TypingError) throw kvErr;
+		};
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
 		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_kvit", iterExpr.type, p);
 		var eIt = TexprTools.makeLocal(vIt, p);
 		var ehasnext = call0(ctx, eIt, "hasNext", p);
+		// hasNext must yield Bool (the Iterator<T> contract); reference types it with WithType Bool.
+		try hxc.core.TypeUnification.unifyDefault(ehasnext.type, basic.tbool)
+		catch (e:hxc.core.TypeUnification.UnifyError) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 		var enext = call0(ctx, eIt, "next", p);
 		var vKv = Typer.addLocal(ctx, VGenerated, "_hx_kv", enext.type, p);
 		var eKv = TexprTools.makeLocal(vKv, p);

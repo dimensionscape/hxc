@@ -379,7 +379,7 @@ class Fields {
 				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
 			case TAbstract(_, _):
 				var u = tryUsing(ctx, e, i, pfield);
-				if (u != null) u else throw new TypingError("Abstract field access is not yet ported", p);
+				if (u != null) u else throw fieldNotFound(e.type, i, pfield);
 			case TDynamic(_):
 				AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 			case _:
