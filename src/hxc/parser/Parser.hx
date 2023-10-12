@@ -909,8 +909,17 @@ class Parser {
 		return {catches: catches, max: pmax};
 	}
 
+	// A keyword where a name is expected gets a specific message instead of "Expected identifier".
+	function noKeyword(what:String):Void {
+		switch (peek()) {
+			case Kwd(kwd): err("Keyword " + Ast.sKeyword(kwd) + " cannot be used as " + what);
+			case _:
+		}
+	}
+
 	function parseVarDecl(isFinal:Bool):EVar {
 		var meta = parseMeta();
+		noKeyword("variable name");
 		var name = dollarIdent();
 		var t = poptTypeHint();
 		var eo:Null<Expr> = null;
