@@ -97,25 +97,25 @@ class EvalMacro {
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
 		reg2("typeof", "typeof", function(a) {
 			if (curTctx == null) throw new TypingError("typeof outside a macro", curPos);
-			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			return encodeType(ec, te.type);
 		});
 		reg2("typeExpr", "type_expr", function(a) {
 			if (curTctx == null) throw new TypingError("typeExpr outside a macro", curPos);
-			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			return encodeTypedExpr(ec, te);
 		});
 		// store_expr(e): type a syntax expression and store the typed expression, returning the syntax
 		// marker `@:storedTypedExpr(id)` that re-types to it. /
 		reg2("storeExpr", "store_expr", function(a) {
 			if (curTctx == null) throw new TypingError("storeExpr outside a macro", curPos);
-			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
 		});
 		// Type the expression and retain its type.
 		reg2("typeAndStoreExpr", "type_and_store_expr", function(a) {
 			if (curTctx == null) throw new TypingError("typeAndStoreExpr outside a macro", curPos);
-			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			var fields:Map<Int, EvalValue> = new Map();
 			fields.set(EvalHash.hash("expr"), encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te)));
 			fields.set(EvalHash.hash("type"), encodeType(ec, te.type));
@@ -1345,6 +1345,27 @@ class EvalMacro {
 	// undecodable and raises that same string (Context.getTypedExpr(null)).
 	static function decodeStoredTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
 		return EvalExceptions.excString(ec, "Invalid expression");
+	}
+
+	// Type an expression on behalf of Context.typeof / typeExpr / storeExpr. A statement error inside a
+	// block is recorded as a diagnostic by typeBlock's recovery instead of thrown, but a macro's typeExpr
+	// has to propagate that error to the caller so the macro can catch it. Surface the first new error
+	// diagnostic as a throw (the builtin wrapper turns it into a catchable haxe.macro.Error) and roll the
+	// trial diagnostics back so a caught error does not leak into the final compiler output.
+	static function typeMacroExpr(ctx:TyperContext, e:Expr):TExpr {
+		var com = ctx.com;
+		var before = com.diagnostics.length;
+		var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
+		var i = before;
+		while (i < com.diagnostics.length) {
+			var d = com.diagnostics[i];
+			if (d.severity == hxc.core.Globals.MessageSeverity.Error) {
+				com.diagnostics.resize(before);
+				throw new TypingError(d.message, d.pos, d.depth);
+			}
+			i++;
+		}
+		return te;
 	}
 
 	// EField's kind is an optional arg: a null (omitted) third slot means Normal, matching Expr.hx.
