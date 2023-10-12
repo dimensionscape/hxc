@@ -64,12 +64,55 @@ class EvalMain {
 		};
 	}
 
+	// Enum half of applying @:native paths: rewrite each @:native constructor's name, rebuild
+	// constrs/names under the new names (declaration order kept so index still matches position),
+	// and rewrite path to the enum's @:native path. There is no separate filter pass, so this runs just
+	// before the enum prototype is built.
+	static function nativeNameOf(meta:hxc.ast.Ast.Metadata):Null<String> {
+		return try {
+			var m = hxc.core.TypeFunctions.getMeta(":native", meta);
+			switch (m.params.length > 0 ? m.params[0].expr : null) {
+				case EConst(CString(s, _)): s;
+				case _: null;
+			}
+		} catch (_:Dynamic) null;
+	}
+
+	static function applyNativePathsEnum(en:TEnum):Void {
+		var didChange = false;
+		for (name in en.names) {
+			var ef = en.constrs.get(name);
+			if (ef == null) continue;
+			var nn = nativeNameOf(ef.meta);
+			if (nn != null) {
+				ef.name = nn;
+				didChange = true;
+			}
+		}
+		if (didChange) {
+			var oldNames = en.names;
+			var newConstrs = new haxe.ds.StringMap<TEnumField>();
+			var newNames:Array<String> = [];
+			for (name in oldNames) {
+				var ef = en.constrs.get(name);
+				if (ef == null) continue;
+				newConstrs.set(ef.name, ef);
+				newNames.push(ef.name);
+			}
+			en.constrs = newConstrs;
+			en.names = newNames;
+		}
+		var np = nativeNameOf(en.meta);
+		if (np != null) en.path = hxc.ast.Ast.parsePath(np);
+	}
+
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>):Void {
 		var delays:Array<{proto:VPrototype, fn:VPrototype->Void}> = [];
 		// Register type-cache entries and enum prototypes up front.
 		for (mt in types) switch (mt) {
 			case TClassDecl(c): ctx.typeCache.set(EvalHash.pathHash(c.path), mt);
 			case TEnumDecl(en):
+				applyNativePathsEnum(en);
 				ctx.typeCache.set(EvalHash.pathHash(en.path), mt);
 				ctx.staticPrototypes.set(EvalHash.pathHash(en.path), EvalPrototype.buildEnum(ctx, en));
 			case _:
