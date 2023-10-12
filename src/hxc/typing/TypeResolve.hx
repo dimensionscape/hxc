@@ -322,6 +322,11 @@ class TypeResolve {
 				a.array.push(cf);
 				continue;
 			}
+				// @:resolve routes to the same read/write registration as @:op([EField]).
+				if (TypeFunctions.hasMeta(":resolve", cff.cffMeta)) {
+					registerResolveField(a, cf, cff, cf.pos);
+					continue;
+				}
 			// The @:op meta survives transformAbstractField (it concats f.cffMeta), so read it off
 			// the SOURCE field and resolve the matching impl cf by name. A member @:op was promoted
 			// to a static abstract member; a `static` @:op stays a static too.
