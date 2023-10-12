@@ -125,7 +125,14 @@ class Typeload {
 		var params:TypeParams = [];
 		if (baseParams == null) baseParams = [];
 		var getParams = function():TypeParams return params.concat(baseParams);
-		for (tp in tps) params.push(typeTypeParam(ctx, declPath, getParams, tp));
+		var names:Array<String> = [];
+		for (tp in tps) {
+			// A repeated type-parameter name is reported and typing continues.
+			if (names.indexOf(tp.tpName.name) >= 0)
+				ctx.addDiagnostic("Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
+			names.push(tp.tpName.name);
+			params.push(typeTypeParam(ctx, declPath, getParams, tp));
+		}
 		return params;
 	}
 
