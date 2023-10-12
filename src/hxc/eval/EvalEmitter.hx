@@ -64,7 +64,24 @@ class EvalEmitter {
 			case TConst(c): evalConst(c);
 			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
 			case TParenthesis(e1) | TMeta(_, e1): eval(ctx, e1);
-			case TCast(e1, _): evalCast(ctx, e1, e.type);
+			case TCast(e1, mt):
+				switch (mt) {
+					// Reference emit_safe_cast a safe cast `cast(e,T)` checks the runtime type and throws
+					// "Class cast error" unless the value is null or `is v t`. The check is applied only
+					// for class/interface targets, where isOfTypePath is reliable; abstract/enum/typedef
+					// targets pass through (isOfTypePath does not model @:multiType / abstract-over-basic
+					// membership, so checking them would wrongly reject valid casts).
+					case TClassDecl(_):
+						var v1 = eval(ctx, e1);
+						switch (EvalValueTools.vresolve(v1)) {
+							case VNull: v1;
+							case _:
+								var path = EvalHash.pathHash(TypeFunctions.tInfos(mt).path);
+								if (!EvalStdLib.isOfTypePath(ctx, v1, path)) EvalExceptions.excString(ctx, "Class cast error", e.pos);
+								else v1;
+						}
+					case _: evalCast(ctx, e1, e.type);
+				}
 			case TBlock(el):
 				var r:EvalValue = VNull;
 				for (x in el) r = eval(ctx, x);
