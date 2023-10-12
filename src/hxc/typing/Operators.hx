@@ -170,8 +170,13 @@ class Operators {
 		function callToString(e:TExpr):TExpr {
 			// `if (e == null) "null" else e.toString()`, using a temp for a non-trivial operand so it is
 			// evaluated once. .
-			function gen(x:TExpr):TExpr
-				return hxc.typing.Calls.buildCall(ctx, hxc.typing.Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(tstring)), [], WithTypeTools.withType(tstring), x.pos);
+			function gen(x:TExpr):TExpr {
+				// Ignore the visibility of toString.
+				ctx.privateAccess++;
+				var accS = hxc.typing.Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(tstring));
+				ctx.privateAccess--;
+				return hxc.typing.Calls.buildCall(ctx, accS, [], WithTypeTools.withType(tstring), x.pos);
+			}
 			var strNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
 			var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };
 			if (simple) {
