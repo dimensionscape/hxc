@@ -170,6 +170,15 @@ class TypeResolve {
 			}
 		}
 		function loop(fields:StringMap<TClassField>):Void {
+			var generated:Array<TClassField> = [];
+			inline function genAccessor(accName:String, propType:T, isSetter:Bool):TClassField {
+				// Generate the virtual accessor for an interface property.
+				var ft = isSetter ? TFun({args: [{name: "value", opt: false, t: propType}], ret: propType}) : TFun({args: [], ret: propType});
+				var acc = TypeFunctions.mkField(accName, ft, c.pos, c.pos, true, false);
+				acc.kind = Method(MethNormal);
+				acc.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}, {name: ":noCompletion", params: [], pos: Position.nullPos}];
+				return acc;
+			}
 			for (name in fields.keys()) {
 				var cf = fields.get(name);
 				var pt = cf.type;
@@ -182,6 +191,7 @@ class TypeResolve {
 								case TFun(sig): usePropertyType(sig.ret, pt);
 								case _:
 							}
+							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("get_" + name, pt, false));
 						}
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
@@ -191,9 +201,14 @@ class TypeResolve {
 									usePropertyType(sig.ret, pt);
 								case _:
 							}
+							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("set_" + name, pt, true));
 						}
 					case _:
 				}
+			}
+			for (acc in generated) {
+				c.fields.set(acc.name, acc);
+				c.orderedFields.push(acc);
 			}
 		}
 		loop(c.statics);
