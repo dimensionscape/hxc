@@ -737,17 +737,47 @@ class Typer {
 					case ct: switch (TypeFunctions.follow(ct)) { case TFun(sig): sig; case _: null; };
 				};
 				if (scHit != null && scSig != null) {
-					var byName = new haxe.ds.StringMap<Expr>();
-					for (f in fields) byName.set(f.name, f.expr);
-					var el:Array<Expr> = [];
+					// Type each provided field against its constructor-arg type in the object literal
+					// source order; build the call in the constructor declared arg order, hoisting a field
+					// into a temp when a later-source field has a side effect, so initializers still run in
+					// source order.
+					var argByName = new haxe.ds.StringMap<TSignatureArg>();
+					for (arg in scSig.args) argByName.set(arg.name, arg);
+					var byName = new haxe.ds.StringMap<TExpr>();
+					for (f in fields) {
+						var arg = argByName.get(f.name);
+						var te = typeExpr(ctx, f.expr, arg != null ? WithTypeTools.withStructureField(arg.t, f.name) : WithTypeTools.value);
+						if (arg != null) te = castOrUnify(ctx, arg.t, te, te.pos);
+						byName.set(f.name, te);
+					}
+					var evars:Array<TExpr> = [];
+					var hadSideEffect = false;
+					var fi = fields.length - 1;
+					while (fi >= 0) {
+						var fname = fields[fi].name;
+						var te = byName.get(fname);
+						switch (te.expr) {
+							case TConst(_) | TTypeExpr(_) | TFunction(_):
+							case _:
+								if (hadSideEffect) {
+									var v = TypeFunctions.allocVar(VGenerated, "`s", te.type, te.pos);
+									evars.unshift(TypeFunctions.mk(TVarExpr(v, te), te.type, te.pos));
+									byName.set(fname, TexprTools.makeLocal(v, te.pos));
+								} else if (hasSideEffect(te)) {
+									hadSideEffect = true;
+								}
+						}
+						fi--;
+					}
+					var el:Array<TExpr> = [];
 					for (arg in scSig.args) {
-						var fe = byName.get(arg.name);
-						if (fe != null) el.push(fe);
-						else if (arg.opt) el.push(new Expr(EConst(CIdent("null")), p));
+						var te = byName.get(arg.name);
+						if (te != null) el.push(te);
+						else if (arg.opt) el.push(TexprTools.makeNull(arg.t, p));
 						else throw new TypingError("Object requires field " + arg.name, p);
 					}
-					var r = Calls.unifyCallArgs(ctx, el, scSig.args, scSig.ret, p);
-					TypeFunctions.mk(TNew(scHit.c, scHit.tl, r.el), scHit.t, p);
+					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
+					if (evars.length == 0) enew else TypeFunctions.mk(TBlock(evars.concat([enew])), scHit.t, p);
 				} else {
 					var tfields:Array<TObjectField> = [];
 					var anonFields = new haxe.ds.StringMap<TClassField>();
@@ -2250,6 +2280,28 @@ class Typer {
 			case TWhile(e1, e2, _): hasReturn(e1) || hasReturn(e2);
 			case TSwitch(e1, cases, edef): hasReturn(e1) || Lambda.exists(cases, c -> Lambda.exists(c.values, hasReturn) || hasReturn(c.expr)) || (edef != null && hasReturn(edef));
 			case TTry(e1, catches): hasReturn(e1) || Lambda.exists(catches, c -> hasReturn(c.expr));
+		};
+	}
+
+	// Whether evaluating the expression can cause a side effect (assignment, increment, call, allocation,
+	// control flow). Object-literal @:structInit field initializers that follow a side-effecting field are
+	// hoisted into temp vars so they still evaluate in source order. Conservative (does not model @:pure).
+	static function hasSideEffect(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_): false;
+			case TNew(_, _, _) | TCall(_, _) | TReturn(_) | TBreak | TContinue | TThrow(_): true;
+			case TBinop(OpAssign | OpAssignOp(_), _, _): true;
+			case TUnop(Increment | Decrement, _, _): true;
+			case TCast(_, mt): mt != null;
+			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2): hasSideEffect(e1) || hasSideEffect(e2);
+			case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1): hasSideEffect(e1);
+			case TVarExpr(_, eo): eo != null && hasSideEffect(eo);
+			case TObjectDecl(fields): Lambda.exists(fields, f -> hasSideEffect(f.expr));
+			case TArrayDecl(el) | TBlock(el): Lambda.exists(el, hasSideEffect);
+			case TIf(e1, e2, e3): hasSideEffect(e1) || hasSideEffect(e2) || (e3 != null && hasSideEffect(e3));
+			case TWhile(e1, e2, _): hasSideEffect(e1) || hasSideEffect(e2);
+			case TSwitch(e1, cases, edef): hasSideEffect(e1) || Lambda.exists(cases, c -> Lambda.exists(c.values, hasSideEffect) || hasSideEffect(c.expr)) || (edef != null && hasSideEffect(edef));
+			case TTry(e1, catches): hasSideEffect(e1) || Lambda.exists(catches, c -> hasSideEffect(c.expr));
 		};
 	}
 }
