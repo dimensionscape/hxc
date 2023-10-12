@@ -71,6 +71,8 @@ class Compiler {
 					ctx.defines.rawDefine("verbose");
 				case "--dce":
 					i++;
+				case "--times":
+					hxc.core.Timer.measureTimes = true;
 				case _:
 			}
 		}
@@ -92,9 +94,17 @@ class Compiler {
 		}
 		var path = parseTypePath(mainClass);
 		try {
+			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			tLoad();
+			var tType = hxc.core.Timer.timer(["typing"]);
+			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
 			TypeResolve.resolveAll(ctx);
+			tResolve();
+			var tFields = hxc.core.Timer.timer(["typing", "fields"]);
 			TypeFields.typeAllModules(ctx);
+			tFields();
+			tType();
 			abortOnDiagnostics(ctx, platform);
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
@@ -102,9 +112,11 @@ class Compiler {
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
+				var tInterp = hxc.core.Timer.timer(["interp"]);
 				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
 				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
 				hxc.eval.EvalMain.runMain(ectx, path);
+				tInterp();
 			} else {
 				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 			}
@@ -129,6 +141,10 @@ class Compiler {
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
 			Sys.exit(1);
+		}
+		if (hxc.core.Timer.measureTimes) {
+			hxc.core.Timer.closeTimes();
+			hxc.core.Timer.reportTimes(function(s) Sys.stderr().writeString(s + "\n"));
 		}
 	}
 
