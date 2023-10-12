@@ -155,7 +155,9 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
-		if (platform == Eval) return;
+		// Eval normally runs the program even with recorded (often spurious) diagnostics; -D hxc-diagnostics
+		// opts into report-and-abort so tests/misc diagnostic output can be diffed against haxe.
+		if (platform == Eval && !ctx.defines.rawDefined("hxc_diagnostics")) return;
 		if (!ctx.hasDiagnostics()) return;
 		for (d in ctx.diagnostics) printPositionMessage(d.message, d.pos);
 		Sys.exit(1);
