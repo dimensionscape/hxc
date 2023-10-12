@@ -196,6 +196,10 @@ class Operators {
 			return switch (classify(e.type)) {
 				case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
 					callToString(e);
+				case KAbstract(_, _):
+					// An abstract with no toString is converted to String by its @:to String cast when it
+					// has one; otherwise it stringifies as its underlying value.
+					try Typer.castOrUnify(ctx, tstring, e, p) catch (_:Dynamic) e;
 				case _: e;
 			};
 		}
