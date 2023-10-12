@@ -193,11 +193,9 @@ class Messages {
 	}
 
 	public static function display(ctx:Context):Void {
-		var mode = ctx.defines.rawDefinedValueSafe("message.reporting", "classic");
-		if (mode != "pretty" && mode != "indent" && mode != "classic") {
-			ctx.addDiagnostic('Invalid message reporting mode: "$mode", expected classic | pretty | indent (for -D message.reporting).', Position.nullPos);
-			mode = "classic";
-		}
+		// Validate both screen and log formats, even when one will not be printed.
+		var mode = validateMode(ctx, "message.reporting", "classic");
+		validateMode(ctx, "message.log_format", "indent");
 		var msgs = ctx.diagnostics;
 		var ectx:PrettyCtx = {lastPositions: new Map(), previous: null, gutter: new Map(), maxLines: maxLines(msgs)};
 		var buf = new StringBuf();
@@ -210,6 +208,16 @@ class Messages {
 			if (s != null) buf.add(s + "\n");
 		}
 		Sys.stderr().writeString(buf.toString());
+	}
+
+	// Report an unknown mode using its canonical define key, then use the default.
+	static function validateMode(ctx:Context, key:String, def:String):String {
+		var mode = ctx.defines.rawDefinedValueSafe(key, def);
+		if (mode != "pretty" && mode != "indent" && mode != "classic") {
+			ctx.addDiagnostic('Invalid message reporting mode: "$mode", expected classic | pretty | indent (for -D $key).', Position.nullPos);
+			return def;
+		}
+		return mode;
 	}
 }
 

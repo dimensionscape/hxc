@@ -57,6 +57,20 @@ class Compiler {
 					platform = Eval;
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");                                   
+				case "-x":
+					// X <class>: interpret <class>, i.e. --interp plus a startup class. .
+					platform = Eval;
+					targetDir = "eval";
+					ctx.defines.rawDefine("interp");
+					if (mainClass == null) mainClass = args[i++]; else i++;
+				case "--run":
+					// Run <module> [args...]: like -x but the trailing arguments are the program's own argv, not
+					// compiler flags. (rewrites to `-x cl` with sys_args = rest).
+					platform = Eval;
+					targetDir = "eval";
+					ctx.defines.rawDefine("interp");
+					if (mainClass == null) mainClass = args[i++]; else i++;
+					i = args.length; // Remaining args belong to the interpreted program
 				case "-js" | "--js":
 					platform = Js;
 					targetDir = "js";
@@ -74,6 +88,15 @@ class Compiler {
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
 				case _:
+					// A bare positional argument whose type name starts uppercase is a class to compile
+					// (haxe allows the startup class without -main).
+					if (mainClass == null && !StringTools.startsWith(a, "-")) {
+						var nm = a.split(".").pop();
+						if (nm != null && nm.length > 0) {
+							var c0 = nm.charCodeAt(0);
+							if (c0 >= "A".code && c0 <= "Z".code) mainClass = a;
+						}
+					}
 			}
 		}
 
@@ -155,7 +178,6 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
-		if (ctx.diagnostics.length == 0) return;
 		// Eval normally runs the program even with recorded (often spurious) diagnostics; -D hxc-diagnostics
 		// opts into report-and-abort so tests/misc diagnostic output can be diffed against haxe. Warnings
 		// and info ($type) are still surfaced under plain --interp; only the spurious errors are held back.
@@ -166,6 +188,8 @@ class Compiler {
 			ctx.diagnostics = [];
 			return;
 		}
+		// Display validates -D message.reporting (adding an error for an invalid mode) even with no other
+		// messages, so an unknown reporting mode is reported on an otherwise clean compile.
 		hxc.compiler.Messages.display(ctx);
 		var hadError = ctx.hasError();
 		ctx.diagnostics = [];
