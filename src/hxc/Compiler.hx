@@ -140,7 +140,8 @@ class Compiler {
 				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
 				hxc.eval.EvalMain.runMain(ectx, path);
 				tInterp();
-			} else {
+			} else if (ctx.defines.rawDefined("verbose")) {
+				// Compile-status line is a verbose-only aid; haxe prints nothing here on a successful compile.
 				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 			}
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
