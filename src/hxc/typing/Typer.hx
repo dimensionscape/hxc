@@ -1659,7 +1659,13 @@ class Typer {
 		var i = 0;
 		while (i < el.length) {
 			var wt = (i == el.length - 1) ? withType : WithTypeTools.noValue;
-			merge(typeExpr(ctx, el[i], wt));
+			// A statement that fails to type is recorded and skipped so the rest of the block still types,
+			// accumulating multiple errors instead of aborting on the first.
+			try {
+				merge(typeExpr(ctx, el[i], wt));
+			} catch (err:TypingError) {
+				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+			}
 			i++;
 		}
 		var t = acc.length == 0 ? ctx.com.basic.tvoid : acc[acc.length - 1].type;
