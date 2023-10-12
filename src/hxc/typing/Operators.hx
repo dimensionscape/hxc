@@ -798,6 +798,43 @@ class Operators {
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
 				accessorCompound(se.thisExpr, FieldAccessTools.getHostClassRaise(se.access.host), se.access.field.name, true);
+			case AKResolve(se, name):
+				// Compound assign on a resolve field: resolveWrite(this, name, resolveRead(this, name) OP
+				// value), evaluating the receiver once.
+				var aw = switch (se.access.host) { case FHAbstract(a, tl, c): {a: a, tl: tl, c: c}; case _: null; };
+				if (aw == null || aw.a.write == null)
+					throw new TypingError("This compound assignment target is not yet ported", p);
+				var basic = ctx.com.basic;
+				var vr = TypeFunctions.allocVar(VGenerated, "`fh", se.thisExpr.type, se.thisExpr.pos);
+				var recv = TexprTools.makeLocal(vr, p);
+				var readCe = FieldAccessTools.getFieldExpr(se.access, FCall);
+				var read = switch (TypeFunctions.follow(readCe.type)) {
+					case TFun(rs) if (rs.args.length >= 2):
+						var nm = TexprTools.makeString(basic, name, se.access.pos);
+						Calls.makeCall(ctx, readCe, [recv, Typer.castOrUnify(ctx, rs.args[1].t, nm, nm.pos)], rs.ret, p);
+					case _: throw new TypingError("Resolve target is not a function", se.access.pos);
+				};
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+				var tempInit = TypeFunctions.mk(TVarExpr(vr, se.thisExpr), basic.tvoid, p);
+				switch (makeBinop(ctx, sub, read, te2, true, withType, p)) {
+					case BinopSpecial(opCall, false):
+						// A dedicated @:op(a -= b) overload is the assignment and returns its own result, so the
+						// value is not written back through resolveWrite.
+						TypeFunctions.mk(TBlock([tempInit, opCall]), opCall.type, p);
+					case br:
+						var opResult = toTexpr(br);
+						var writeSe = FieldAccessTools.makeAbstractStaticExtensionAccess(aw.a, aw.tl, aw.c, aw.a.write, recv, false, p);
+						var writeCe = FieldAccessTools.getFieldExpr(writeSe.access, FCall);
+						var write = switch (TypeFunctions.follow(writeCe.type)) {
+							case TFun(ws) if (ws.args.length >= 3):
+								var nm2 = TexprTools.makeString(basic, name, p);
+								var nameArg = Typer.castOrUnify(ctx, ws.args[1].t, nm2, p);
+								var valArg = Typer.castOrUnify(ctx, ws.args[2].t, opResult, p);
+								Calls.makeCall(ctx, writeCe, [recv, nameArg, valArg], ws.ret, p);
+							case _: throw new TypingError("Resolve target is not a function", p);
+						};
+						TypeFunctions.mk(TBlock([tempInit, write]), write.type, p);
+				}
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
 		};
