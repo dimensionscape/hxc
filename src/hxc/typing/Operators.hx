@@ -683,16 +683,45 @@ class Operators {
 				}
 			case _:
 		}
+		// Bind the side-effecting parts of an lvalue (an array base/key, a field receiver) to temps so the
+		// lvalue can be read and written without re-evaluating them.
+		function stabilizeLvalue(te1:TExpr):{init:Array<TExpr>, lv:TExpr} {
+			var tvoid = ctx.com.basic.tvoid;
+			var init:Array<TExpr> = [];
+			function temp(e:TExpr):TExpr {
+				return switch (e.expr) {
+					case TLocal(_) | TConst(_) | TTypeExpr(_): e;
+					case _:
+						var v = TypeFunctions.allocVar(VGenerated, "`t", e.type, e.pos);
+						init.push(TypeFunctions.mk(TVarExpr(v, e), tvoid, e.pos));
+						TexprTools.makeLocal(v, e.pos);
+				};
+			}
+			var lv = switch (te1.expr) {
+				case TArray(base, key): TypeFunctions.mk(TArray(temp(base), temp(key)), te1.type, te1.pos);
+				case TField(recv, fa): TypeFunctions.mk(TField(temp(recv), fa), te1.type, te1.pos);
+				case _: te1;
+			};
+			return {init: init, lv: lv};
+		}
 		function compound(te1:TExpr):TExpr {
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
 			// native op stays as a compound TBinop the evaluator applies in place.
 			return switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
-				case BinopSpecial(opCall, needsAssign):
-					// A dedicated @:op(A += B) overload (needsAssign=false) is the assignment and returns its own
-					// result (often Void); a plain @:op(A + B) reused for `+=` (needsAssign=true) reassigns a =
-					// a.op(b).
-					needsAssign ? TypeFunctions.mk(TBinop(OpAssign, te1, Typer.castOrUnify(ctx, te1.type, opCall, p)), te1.type, p) : opCall;
+				case BinopSpecial(_, true):
+					// A plain @:op(A + B) reused for `+=` reassigns `a = a.op(b)`, which names the target twice;
+					// bind its side-effecting parts to temps and re-dispatch so it is evaluated once.
+					var st = stabilizeLvalue(te1);
+					var opCall = switch (makeBinop(ctx, sub, st.lv, te2, true, withType, p)) {
+						case BinopSpecial(oc, _): oc;
+						case r: toTexpr(r);
+					};
+					var assign = TypeFunctions.mk(TBinop(OpAssign, st.lv, Typer.castOrUnify(ctx, st.lv.type, opCall, p)), st.lv.type, p);
+					st.init.length == 0 ? assign : TypeFunctions.mk(TBlock(st.init.concat([assign])), assign.type, p);
+				case BinopSpecial(opCall, false):
+					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
+					opCall;
 				case _:
 					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
 			};
