@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.Globals.Path;
 import hxc.core.Globals.Platform;
+import hxc.core.Globals.MessageSeverity;
 import hxc.core.Define;
 import haxe.ds.StringMap;
 
@@ -169,22 +170,40 @@ class Context {
 		throw new ContextError(msg, pos);
 	}
 
-	public function addDiagnostic(message:String, pos:Position):Void {
-		diagnostics.push({message: message, pos: pos});
+	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
+		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 
-	public function warning(message:String, pos:Position):Void {
-		Sys.stderr().writeString(hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos) + " : Warning : " + message + "\n");
+	public function addDiagnosticStack(stack:Array<{message:String, pos:Position}>, depth:Int = 0, ?severity:MessageSeverity):Void {
+		if (stack.length == 0) return;
+		var sev = severity == null ? Error : severity;
+		addDiagnostic(stack[0].message, stack[0].pos, depth, sev);
+		for (i in 1...stack.length) addDiagnostic(stack[i].message, stack[i].pos, depth + 1, sev);
+	}
+
+	public function warning(message:String, pos:Position, depth:Int = 0):Void {
+		diagnostics.push({message: message, pos: pos, depth: depth, severity: Warning});
+	}
+
+	public function info(message:String, pos:Position, depth:Int = 0):Void {
+		diagnostics.push({message: message, pos: pos, depth: depth, severity: Information});
 	}
 
 	public function hasDiagnostics():Bool {
 		return diagnostics.length > 0;
+	}
+
+	public function hasError():Bool {
+		for (d in diagnostics) if (d.severity == Error) return true;
+		return false;
 	}
 }
 
 typedef CompilerDiagnostic = {
 	var message:String;
 	var pos:Position;
+	var depth:Int;
+	var severity:MessageSeverity;
 };
 
 class ContextError {

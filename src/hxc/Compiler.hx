@@ -155,12 +155,21 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
+		if (ctx.diagnostics.length == 0) return;
 		// Eval normally runs the program even with recorded (often spurious) diagnostics; -D hxc-diagnostics
-		// opts into report-and-abort so tests/misc diagnostic output can be diffed against haxe.
-		if (platform == Eval && !ctx.defines.rawDefined("hxc_diagnostics")) return;
-		if (!ctx.hasDiagnostics()) return;
-		for (d in ctx.diagnostics) printPositionMessage(d.message, d.pos);
-		Sys.exit(1);
+		// opts into report-and-abort so tests/misc diagnostic output can be diffed against haxe. Warnings
+		// and info ($type) are still surfaced under plain --interp; only the spurious errors are held back.
+		if (platform == Eval && !ctx.defines.rawDefined("hxc_diagnostics")) {
+			var keep = [for (d in ctx.diagnostics) if (d.severity != hxc.core.Globals.MessageSeverity.Error) d];
+			ctx.diagnostics = keep;
+			if (keep.length > 0) hxc.compiler.Messages.display(ctx);
+			ctx.diagnostics = [];
+			return;
+		}
+		hxc.compiler.Messages.display(ctx);
+		var hadError = ctx.hasError();
+		ctx.diagnostics = [];
+		if (hadError) Sys.exit(1);
 	}
 
 	static function expandArgs(args:Array<String>):Array<String> {
