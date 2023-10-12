@@ -343,7 +343,11 @@ class Calls {
 		switch (TypeFunctions.follow(e.type)) {
 			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
 				function call(x:TExpr):TExpr {
-					return buildCall(ctx, Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(ctx.com.basic.tstring)), [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
+					// Ignore the visibility of toString.
+					ctx.privateAccess++;
+					var accS = Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(ctx.com.basic.tstring));
+					ctx.privateAccess--;
+					return buildCall(ctx, accS, [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
 				}
 				var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
 				var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };

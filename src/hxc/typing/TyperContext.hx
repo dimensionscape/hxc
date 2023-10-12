@@ -25,6 +25,7 @@ class TyperContext {
 	public var vthis:Null<TVar>;
 	// @:bypassAccessor nesting counter: each field access consumes one, forcing a raw field access.
 	public var bypassAccessor:Int;
+	public var privateAccess:Int;
 
 	public function new(com:Context) {
 		this.com = com;
@@ -46,6 +47,7 @@ class TyperContext {
 		this.curfield = hxc.core.TypeFunctions.nullField;
 		this.vthis = null;
 		this.bypassAccessor = 0;
+		this.privateAccess = 0;
 	}
 }
 

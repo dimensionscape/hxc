@@ -1,18 +1,113 @@
 package hxc.typing;
 
 import hxc.ast.Position;
+import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.core.NotFound;
+import hxc.core.StringHelper;
 import hxc.core.TypingError;
 import hxc.core.WithType;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 
 class Fields {
+	// Visibility, including @:allow / @:access paths, module statics, superclass, type-param
+	// constraints, and @:privateAccess (ctx.privateAccess).
+	static function makePath(c:TClass, f:TClassField):Array<String> {
+		return switch (c.kind) {
+			case KAbstractImpl(a): a.path.pack.concat([a.path.name, f.name]);
+			case KGenericInstance(c2, _): makePath(c2, f);
+			case _ if (c.isPrivate): c.path.pack.slice(0, c.path.pack.length - 1).concat([c.path.name, f.name]);
+			case _: c.path.pack.concat([c.path.name, f.name]);
+		};
+	}
+
+	static function exprPath(acc:Array<String>, e:Expr):Array<String> {
+		return switch (e.expr) {
+			case EField(e1, fn, _): exprPath([fn].concat(acc), e1);
+			case EConst(CIdent(n)): [n].concat(acc);
+			case _: [];
+		};
+	}
+
+	static function chkPath(psub:Array<String>, pfull:Array<String>, isCurrentPath:Bool):Bool {
+		if (psub.length == 0) return true;
+		if (pfull.length == 0) return false;
+		if (psub[0] != pfull[0]) return false;
+		var l1 = psub.slice(1);
+		if (!isCurrentPath && l1.length == 0 && !StringHelper.startsUppercaseIdentifier(psub[0])) return false;
+		return chkPath(l1, pfull.slice(1), isCurrentPath);
+	}
+
+	static function hasMetaPath(m:String, c:TClass, f:TClassField, path:Array<String>, isCurrentPath:Bool):Bool {
+		function loop(ml:Metadata):Bool {
+			for (entry in ml) if (entry.name == m) {
+				for (e in entry.params) switch (e.expr) {
+					case EConst(CIdent("std")): if (path.length == 2) return true;
+					case _:
+						var p = exprPath([], e);
+						if (p.length != 0 && chkPath(p, path, isCurrentPath)) return true;
+				}
+			}
+			return false;
+		}
+		return loop(c.meta) || loop(f.meta);
+	}
+
+	static function canAccess(ctx:TyperContext, c:TClass, cf:TClassField, stat:Bool):Bool {
+		if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) return true;
+		if (c == ctx.curclass) return true;
+		var ms = ctx.curclass.module.statics;
+		if (ms != null && c == ms) return true;
+		var modulePath = ctx.curclass.module.path;
+		var curPaths:Array<{path:Array<String>, cur:Bool}> = [{path: modulePath.pack.concat([modulePath.name]), cur: false}];
+		function loopCur(c2:TClass, isCurrentPath:Bool):Void {
+			curPaths.unshift({path: makePath(c2, ctx.curfield), cur: isCurrentPath});
+			switch (c2.superClass) { case null: case sup: loopCur(sup.c, false); }
+			for (i in c2.interfaces) loopCur(i.c, false);
+		}
+		loopCur(ctx.curclass, true);
+		var isConstr = cf.name == "new";
+		function loopTarget(c2:TClass):Bool {
+			try {
+				if (hasMetaPath(":access", ctx.curclass, ctx.curfield, makePath(c2, cf), true)) return true;
+				function allowed(ff:TClassField):Bool {
+					if (TypeFunctions.extendsClass(ctx.curclass, c2)) return true;
+					for (cp in curPaths) if (hasMetaPath(":allow", c2, ff, cp.path, cp.cur)) return true;
+					return false;
+				}
+				var direct:Bool;
+				if (isConstr) {
+					switch (c2.constructor) {
+						case null: direct = false;
+						case ctor:
+							if (allowed(ctor)) direct = true;
+							else if (ctor.expr == null) direct = false;
+							else throw new NotFound();
+					}
+				} else {
+					var ff = (stat ? c2.statics : c2.fields).get(cf.name);
+					direct = ff == null ? false : allowed(ff);
+				}
+				if (direct) return true;
+				return switch (c2.superClass) { case null: false; case sup: loopTarget(sup.c); };
+			} catch (_:NotFound) {
+				return false;
+			}
+		}
+		var result = loopTarget(c);
+		if (!result) switch (c.kind) {
+			case KTypeParameter(tl):
+				for (t in tl) switch (TypeFunctions.follow(t)) { case TInst(ci, _): if (loopTarget(ci)) { result = true; break; } case _: }
+			case _:
+		}
+		return result || ctx.privateAccess > 0;
+	}
+
 	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
-		if (!ctx.untypedMode && !TypeFunctions.hasClassFieldFlag(f, CfPublic) && !TypeFunctions.extendsClass(ctx.curclass, c))
+		if (!ctx.untypedMode && !canAccess(ctx, c, f, true))
 			throw new TypingError("Cannot access private field " + f.name, p);
 	}
 
