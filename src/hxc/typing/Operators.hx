@@ -35,8 +35,8 @@ class Operators {
 		DebugDump.unify("operator", a, b, p);
 		try {
 			TypeUnification.unifyDefault(a, b);
-		} catch (_:UnifyError) {
-			throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(a, b), p);
+		} catch (e:UnifyError) {
+			throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 		}
 	}
 

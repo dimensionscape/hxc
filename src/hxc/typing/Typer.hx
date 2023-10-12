@@ -54,13 +54,14 @@ class Typer {
 			var casted = tryAbstractCast(ctx, e, t, p);
 			if (casted != null) return casted;
 		}
+		var uerr:Array<hxc.core.TypeUnification.UnifyErrorKind> = null;
 		try {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
-		} catch (_:UnifyError) {}
+		} catch (ue:UnifyError) { uerr = ue.errors; }
 		var casted = tryAbstractCast(ctx, e, t, p);
 		if (casted != null) return casted;
-		throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(e.type, t), p);
+		throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
 	}
 
 	static function doesUnify(a:T, b:T):Bool {

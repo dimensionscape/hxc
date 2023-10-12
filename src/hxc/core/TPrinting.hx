@@ -8,6 +8,11 @@ import hxc.core.Type.T;
 import hxc.core.Type.TMono;
 import hxc.core.Type.TMonoConstraintKind;
 import hxc.core.Type.AnonStatus;
+import hxc.core.Type.FieldKind;
+import hxc.core.Type.VarAccess;
+import hxc.core.Type.MethodKind;
+import hxc.core.TypeUnification.UnifyErrorKind;
+import hxc.core.Globals.Path;
 
 // Type and typed-expression printers. sType renders a type as a string with Unknown<N> numbering for
 // unbound monomorphs; it backs $type, -D dump, and unify-error messages. sExpr prints a typed expression
@@ -131,8 +136,14 @@ class TPrinting {
 		}
 	}
 
+	// When set, sType renders type parameters as "<...>". Used only for the have/want leaf types of a
+	// structured unify error; the inner "X should be Y" and every other caller keep the full parameters.
+	static var shortParams:Bool = false;
+
 	static function sTypeParams(ctx:Ref<Array<{m:TMono, id:Int}>>, tl:Array<T>):String {
-		return tl.length == 0 ? "" : "<" + tl.map(function(t) return sType(ctx, t)).join(", ") + ">";
+		if (tl.length == 0) return "";
+		if (shortParams) return "<" + [for (_ in tl) "..."].join(", ") + ">";
+		return "<" + tl.map(function(t) return sType(ctx, t)).join(", ") + ">";
 	}
 
 	public static inline function sTypeStr(t:T):String {
@@ -150,6 +161,153 @@ class TPrinting {
 	public static function unifyErrorMsg(t1:T, t2:T):String {
 		var pc = printContext();
 		return sType(pc, t1) + " should be " + sType(pc, t2);
+	}
+
+	static function shortType(ctx:Ref<Array<{m:TMono, id:Int}>>, t:T):String {
+		var s = sType(ctx, t);
+		return s.length > 150 ? s.substr(0, 147) + "..." : s;
+	}
+
+	static function sAccessK(isRead:Bool, a:VarAccess):String {
+		return switch (a) {
+			case AccNormal: "default";
+			case AccNo: "null";
+			case AccNever: "never";
+			case AccCall: isRead ? "get" : "set";
+			case AccInline: "inline";
+			case AccRequire(n, _): "require " + n;
+			case AccCtor: "ctor";
+		}
+	}
+
+	static function sKind(k:FieldKind):String {
+		return switch (k) {
+			case Var(v) if (v.read == AccNormal && v.write == AccNormal): "var";
+			case Var(v): "(" + sAccessK(true, v.read) + "," + sAccessK(false, v.write) + ")";
+			case Method(m): switch (m) {
+				case MethNormal: "method";
+				case MethDynamic: "dynamic method";
+				case MethInline: "inline method";
+				case MethMacro: "macro method";
+			}
+		}
+	}
+
+	static function unifyErrorMsgOne(ctx:Ref<Array<{m:TMono, id:Int}>>, err:UnifyErrorKind):String {
+		return switch (err) {
+			case Cannot_unify(t1, t2): sType(ctx, t1) + " should be " + sType(ctx, t2);
+			case Invalid_field_type(s): "Invalid type for field " + s + " :";
+			case Has_no_field(t, n): shortType(ctx, t) + " has no field " + n;
+			case Has_no_runtime_field(t, n): sType(ctx, t) + "." + n + " is not accessible at runtime";
+			case Has_extra_field(t, n): shortType(ctx, t) + " has extra field " + n;
+			case Invalid_kind(f, a, b):
+				switch [a, b] {
+					case [Var(va), Var(vb)]:
+						var name, stra, strb;
+						if (va.read == vb.read) { name = "setter"; stra = sAccessK(false, va.write); strb = sAccessK(false, vb.write); }
+						else if (va.write == vb.write) { name = "getter"; stra = sAccessK(true, va.read); strb = sAccessK(true, vb.read); }
+						else { name = "access"; stra = "(" + sAccessK(true, va.read) + "," + sAccessK(false, va.write) + ")"; strb = "(" + sAccessK(true, vb.read) + "," + sAccessK(false, vb.write) + ")"; }
+						"Inconsistent " + name + " for field " + f + " : " + stra + " should be " + strb;
+					case _: "Field " + f + " is " + sKind(a) + " but should be " + sKind(b);
+				}
+			case Invalid_visibility(n): "The field " + n + " is not public";
+			case Not_matching_optional(n): "Optional attribute of parameter " + n + " differs";
+			case Cant_force_optional: "Optional parameters can't be forced";
+			case Invariant_parameter(_): "Type parameters are invariant";
+			case Constraint_failure(name): "Constraint check failure for " + name;
+			case Missing_overload(cf, t): cf.name + " has no overload for " + sType(ctx, t);
+			case FinalInvariance: "Cannot unify final and non-final fields";
+			case Invalid_function_argument(i, _): "Cannot unify argument " + i;
+			case Invalid_return_type: "Cannot unify return types";
+			case Unify_custom(msg): msg;
+		}
+	}
+
+	// better_error_message turn a unify-error list into either a simple "X should be Y" or, when the
+	// mismatch is nested in a field/argument/return/type-parameter, the "error: <cause>\nhave:
+	// <actual>\nwant: <expected>" form (the have/want lines are rendered as message continuations by the
+	// formatters).
+	public static function betterErrorMessage(errors:Array<UnifyErrorKind>):String {
+		var ctx = printContext();
+		// Collapse a run of consecutive Cannot_unify down to its first entry.
+		var l:Array<UnifyErrorKind> = [];
+		var i = 0;
+		while (i < errors.length) {
+			var cur = errors[i];
+			if (cur.match(Cannot_unify(_, _)))
+				while (i + 1 < errors.length && errors[i + 1].match(Cannot_unify(_, _))) i++;
+			l.push(cur);
+			i++;
+		}
+		var root = getAccessChain(l);
+		var buffer = new StringBuf();
+		function fill(s:String, idx:Int, total:Int):Array<String> {
+			return [for (k in 1...total + 1) k == idx ? s : "..."];
+		}
+		function getParams(t:T):{path:Path, count:Int} {
+			return switch (t) {
+				case TInst(c, pl): {path: c.path, count: pl.length};
+				case TEnum(e, pl): {path: e.path, count: pl.length};
+				case TAbstract(a, pl): {path: a.path, count: pl.length};
+				case TType(d, pl): {path: d.path, count: pl.length};
+				case _: {path: {pack: [], name: "?"}, count: 0};
+			}
+		}
+		function loopAccess(access:BEAccess, prev:BEAccess):{a:String, e:String} {
+			function deep():{a:String, e:String} {
+				if (access.next != null) return loopAccess(access.next, access);
+				if (access.messages.length > 0) buffer.add(unifyErrorMsgOne(ctx, access.messages[0]));
+				shortParams = true;
+				var r = {a: sType(ctx, access.actual), e: sType(ctx, access.expected)};
+				shortParams = false;
+				return r;
+			}
+			return switch (access.kind) {
+				case BField(s):
+					var r = deep();
+					{a: "{ " + s + ": " + r.a + " }", e: "{ " + s + ": " + r.e + " }"};
+				case BFuncArg(idx, total):
+					var r = deep();
+					var sl1 = fill(r.a, idx, total);
+					var sl2 = fill(r.e, idx, total);
+					// Arguments are contravariant, so the actual/expected sides swap.
+					{a: "(" + sl2.join(", ") + ") -> ...", e: "(" + sl1.join(", ") + ") -> ..."};
+				case BFuncRet:
+					var r = deep();
+					{a: "(...) -> " + r.a, e: "(...) -> " + r.e};
+				case BTypeParam(idx):
+					var r = deep();
+					var p1 = getParams(prev.actual);
+					var p2 = getParams(prev.expected);
+					{a: Globals.sTypePath(p1.path) + "<" + fill(r.a, idx, p1.count).join(", ") + ">", e: Globals.sTypePath(p2.path) + "<" + fill(r.e, idx, p2.count).join(", ") + ">"};
+				case BRoot:
+					deep();
+			}
+		}
+		if (root.next == null) {
+			var all = root.extra.concat(root.messages);
+			all.reverse();
+			return [for (e in all) unifyErrorMsgOne(ctx, e)].join("\n");
+		}
+		var r = loopAccess(root.next, root);
+		return "error: " + buffer.toString() + "\nhave: " + r.a + "\nwant: " + r.e;
+	}
+
+	// Fold the flat error list into a chain of field/argument/return/type-parameter accesses ending at the
+	// leaf mismatch.
+	static function getAccessChain(errors:Array<UnifyErrorKind>):BEAccess {
+		var root = new BEAccess(BRoot, TDynamic(null), TDynamic(null));
+		var current = root;
+		for (err in errors) switch (err) {
+			case Cannot_unify(t1, t2): current.actual = t1; current.expected = t2; current.messages.unshift(err);
+			case Invalid_field_type(s): var a = new BEAccess(BField(s), TDynamic(null), TDynamic(null)); current.next = a; current = a;
+			case Invalid_function_argument(idx, total): var a = new BEAccess(BFuncArg(idx, total), TDynamic(null), TDynamic(null)); current.next = a; current = a;
+			case Invalid_return_type: var a = new BEAccess(BFuncRet, TDynamic(null), TDynamic(null)); current.next = a; current = a;
+			case Invariant_parameter(idx): var a = new BEAccess(BTypeParam(idx), TDynamic(null), TDynamic(null)); current.next = a; current = a;
+			case Unify_custom(_): current.extra.unshift(err);
+			case _: current.messages.unshift(err);
+		}
+		return root;
 	}
 
 
@@ -276,5 +434,28 @@ class TPrinting {
 				"@" + entry.name + (entry.params.length == 0 ? "" : "(" + entry.params.map(Printer.sExpr).join(", ") + ")") + " " + loop(e1);
 			case TIdent(s): s;
 		}
+	}
+}
+
+enum BEKind {
+	BField(s:String);
+	BFuncArg(index:Int, total:Int);
+	BFuncRet;
+	BTypeParam(index:Int);
+	BRoot;
+}
+
+class BEAccess {
+	public var kind:BEKind;
+	public var expected:T;
+	public var actual:T;
+	public var messages:Array<UnifyErrorKind> = [];
+	public var extra:Array<UnifyErrorKind> = [];
+	public var next:Null<BEAccess> = null;
+
+	public function new(kind:BEKind, actual:T, expected:T) {
+		this.kind = kind;
+		this.actual = actual;
+		this.expected = expected;
 	}
 }
