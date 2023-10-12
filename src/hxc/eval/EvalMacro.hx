@@ -105,6 +105,29 @@ class EvalMacro {
 			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
 			return encodeTypedExpr(ec, te);
 		});
+		// store_expr(e): type a syntax expression and store the typed expression, returning the syntax
+		// marker `@:storedTypedExpr(id)` that re-types to it. /
+		reg2("storeExpr", "store_expr", function(a) {
+			if (curTctx == null) throw new TypingError("storeExpr outside a macro", curPos);
+			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
+		});
+		// Type the expression and retain its type.
+		reg2("typeAndStoreExpr", "type_and_store_expr", function(a) {
+			if (curTctx == null) throw new TypingError("typeAndStoreExpr outside a macro", curPos);
+			var te = Typer.typeExpr(curTctx, decodeExpr(ec, a[0], curPos), WithTypeTools.value);
+			var fields:Map<Int, EvalValue> = new Map();
+			fields.set(EvalHash.hash("expr"), encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te)));
+			fields.set(EvalHash.hash("type"), encodeType(ec, te.type));
+			return VObject(new VObject([], ODictionary(fields)));
+		});
+		// get_typed_expr(te): convert a typed expression back to a syntax expression. A value that is not a
+		// decodable typed expression raises "Invalid expression".
+		reg2("getTypedExpr", "get_typed_expr", function(a) {
+			if (curTctx == null) throw new TypingError("getTypedExpr outside a macro", curPos);
+			var te = decodeStoredTypedExpr(ec, a[0]);
+			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
+		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
 			var tpath:TypePath = {tpackage: path.pack, tname: path.name, tparams: [], tsub: null};
@@ -1314,6 +1337,14 @@ class EvalMacro {
 
 	static function decodeExprOpt(ec:EvalContext, v:EvalValue, dp:Position):Null<Expr> {
 		return v == VNull ? null : decodeExpr(ec, v, dp);
+	}
+
+	// Raises MacroApi.Invalid_expr on a value that is not a well-formed haxe.macro.TypedExpr; 's
+	// builtin wrapper turns that into `exc_string "Invalid expression"`, a plain string exception (not
+	// a haxe.macro.Error). A full typed-expr decoder is not yet in place, so any input is treated as
+	// undecodable and raises that same string (Context.getTypedExpr(null)).
+	static function decodeStoredTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
+		return EvalExceptions.excString(ec, "Invalid expression");
 	}
 
 	// EField's kind is an optional arg: a null (omitted) third slot means Normal, matching Expr.hx.
