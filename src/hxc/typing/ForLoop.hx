@@ -238,6 +238,10 @@ class ForLoop {
 		ctx.inLoop = oldLoop;
 		oldLocals();
 
+		// The IntIterator captures its upper bound at construction; bind it to a temp so a body that
+		// mutates the bound expression does not change the iteration count.
+		var vMax = TypeFunctions.allocVar(VGenerated, "_hx_max", args[1].type, args[1].pos);
+		var eMax = TexprTools.makeLocal(vMax, p);
 		var op = TypeFunctions.mk(TUnop(Increment, Postfix, eIndex), basic.tint, p);
 		var evar = TypeFunctions.mk(TVarExpr(v, op), basic.tvoid, p);
 		var iterBody = body;
@@ -245,10 +249,11 @@ class ForLoop {
 			iterBody = wrapLoopVarsBody(ctx, [v], body, p);
 		}
 		var whileBody = TypeFunctions.mk(TBlock([evar, iterBody]), basic.tvoid, p);
-		var cond = TypeFunctions.mk(TBinop(OpLt, eIndex, args[1]), basic.tbool, p);
+		var cond = TypeFunctions.mk(TBinop(OpLt, eIndex, eMax), basic.tbool, p);
 		var ewhile = TypeFunctions.mk(TWhile(cond, whileBody, NormalWhile), basic.tvoid, p);
 		return TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(vIndex, args[0]), basic.tvoid, args[0].pos),
+			TypeFunctions.mk(TVarExpr(vMax, args[1]), basic.tvoid, args[1].pos),
 			ewhile
 		]), basic.tvoid, p);
 	}
