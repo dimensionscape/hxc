@@ -216,7 +216,7 @@ class Calls {
 			}
 			if (ei >= el.length) {
 				var a = args[ai];
-				if (!a.opt) throw new TypingError("Not enough arguments", callp);
+				if (!a.opt) throw new TypingError("Not enough arguments, expected " + [for (x in args.slice(ai)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
 				var pi = makePosInfosArg(ctx, a.t, callp);
 				out.push(pi != null ? pi : TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
 				ai++;
