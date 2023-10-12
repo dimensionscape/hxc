@@ -274,7 +274,14 @@ class Compiler {
 	}
 
 	static function printPositionMessage(msg:String, pos:Position):Void {
-		Sys.stderr().writeString(Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos) + " : " + msg + "
+		// Classic message formatter: each continuation line gets a "... " prefix and repeats the position.
+		var epos = Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos);
+		var lines = msg.split("
+");
+		var parts = [lines[0]];
+		for (i in 1...lines.length) parts.push("... " + lines[i]);
+		Sys.stderr().writeString(epos + " : " + parts.join("
+" + epos + " : ") + "
 ");
 	}
 
