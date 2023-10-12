@@ -178,7 +178,7 @@ private class TypeParameterFrame {
 
 class PatternMaker {
 	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
-		try TypeUnification.unifyDefault(a, b) catch (_:UnifyError) throw new TypingError("Cannot unify types in pattern", p);
+		try TypeUnification.unifyDefault(a, b) catch (_:UnifyError) throw new TypingError(hxc.core.TPrinting.unifyErrorMsg(a, b), p);
 	}
 
 	static function addLocal(pctx:PatternContext, isFinal:Bool, name:String, t:T, p:Position):TVar {
