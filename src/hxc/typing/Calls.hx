@@ -107,7 +107,7 @@ class Calls {
 		try {
 			TypeUnification.unifyDefault(effType, t);
 		} catch (_:UnifyError) {
-			throw new TypingError("Array access is not allowed on this type", e1.pos);
+			throw new TypingError("Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type), e1.pos);
 		}
 		try {
 			TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint);
