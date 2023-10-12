@@ -139,6 +139,13 @@ class TPrinting {
 		return sType(printContext(), t);
 	}
 
+	// A list of types sharing one print context so their Unknown<N> numbering stays consistent across the
+	// list.
+	public static function sTypes(tl:Array<T>, sep:String = ", "):String {
+		var pc = printContext();
+		return [for (t in tl) sType(pc, t)].join(sep);
+	}
+
 	// Cannot-unify message: both types share one print context.
 	public static function unifyErrorMsg(t1:T, t2:T):String {
 		var pc = printContext();
