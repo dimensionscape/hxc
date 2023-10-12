@@ -549,9 +549,19 @@ class Operators {
 				// `a ?? b` desugars to `{ var tmp = a; if (tmp != null) tmp else b }`, evaluating the left
 				// once.
 				var te1 = Typer.typeExpr(ctx, Expr.ensureBlock(e1), withType);
-				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type));
+				var te2 = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.withType(te1.type));
 				var tmin = Typer.unifyMin(ctx, [te1, te2]);
-				var t = TexprTools.hasDeadEnd(te2) ? TypeFunctions.followWithoutType(ctx.com.basic.tnull(tmin)) : tmin;
+				// The result type: when e2 is not a dead end and is not explicitly
+					// Null, strip Null from tmin so a null-coalescing with a non-nullable right side is itself
+					// non-nullable (e.g. nullBool ?? true is Bool, not Null<Bool>).
+					var t = if (TexprTools.hasDeadEnd(te2)) {
+						TypeFunctions.followWithoutType(ctx.com.basic.tnull(tmin));
+					} else {
+						switch (te2.type) {
+							case TAbstract(a, [_]) if (a.path.pack.length == 0 && a.path.name == "Null"): tmin;
+							case _: TypeFunctions.followWithoutType(tmin);
+						}
+					};
 				var tvoid = ctx.com.basic.tvoid;
 				var tmpType = ctx.com.basic.tnull(tmin);
 				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", tmpType, p);
