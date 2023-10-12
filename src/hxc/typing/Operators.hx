@@ -302,7 +302,7 @@ class Operators {
 					case [KInt, KNumParam(_)] | [KFloat, KNumParam(_)] | [KDyn, KNumParam(_)] | [KUnk, KNumParam(_)]:
 					case [KStrParam(_), KString] | [KStrParam(_), KStrParam(_)] | [KStrParam(_), KUnk] | [KStrParam(_), KDyn]:
 					case [KString, KStrParam(_)] | [KUnk, KStrParam(_)] | [KDyn, KStrParam(_)]:
-					case _: throw new TypingError("Cannot compare the given types", p);
+					case _: throw new TypingError("Cannot compare " + hxc.core.TPrinting.sTypeStr(e1.type) + " and " + hxc.core.TPrinting.sTypeStr(e2.type), p);
 				}
 				mkOp(e1, e2, tbool);
 			case OpBoolAnd | OpBoolOr:
@@ -655,6 +655,20 @@ class Operators {
 				if (setterCf == null) throw new TypingError("This expression cannot be accessed for writing", p);
 				var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, FHStatic(implC), false, fa.pos);
 				hxc.typing.Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: setterFa}), [e2], WithTypeTools.value, p);
+			case AKResolve(se, name):
+				// `e.name = value` on an abstract with a resolve-write (@:op(a.b) taking name and value)
+				// calls resolveWrite(this, name, value).
+				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
+				switch (TypeFunctions.follow(ce.type)) {
+					case TFun(sig) if (sig.args.length >= 3):
+						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
+						var nameArg = Typer.castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
+						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
+						var valArg = Typer.castOrUnify(ctx, sig.args[2].t, te2, p);
+						hxc.typing.Calls.makeCall(ctx, ce, [se.thisExpr, nameArg, valArg], sig.ret, se.access.pos);
+					case _:
+						throw new TypingError("Resolve target is not a function", se.access.pos);
+				}
 			case _: throw new TypingError("This assignment target is not yet ported", p);
 		};
 	}
