@@ -681,6 +681,14 @@ class Typer {
 				};
 				// A named generic local function stores its type params so a later call can monomorphize them.
 				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
+				// Type each argument default value against its (possibly inferred) type, binding an unbound
+				// monomorph and recording it for runtime default insertion. .
+				for (i in 0...args.length) {
+					var fa = f.fArgs[i];
+					var at = args[i].v.type;
+					if (fa.value != null) args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
+					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
+				}
 				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
 				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
