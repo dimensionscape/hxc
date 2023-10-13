@@ -242,16 +242,30 @@ class PatternMaker {
 	}
 
 	static function handleIdent(pctx:PatternContext, t:T, i:String, p:Position):PatKind {
+		function checkTyped(e:TExpr):Null<PatKind> {
+			return switch (skipValue(e).expr) {
+				case TConst(ct): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConConst(ct), p), []);
+				case TField(_, FEnum(en, ef)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
+				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
+				case _: null;
+			};
+		}
 		try {
 			var e = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
-			switch (skipValue(e).expr) {
-				case TConst(ct): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConConst(ct), p), []);
-				case TField(_, FEnum(en, ef)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
-				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); return PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
-				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); return PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
-				case _:
-			}
+			var pat = checkTyped(e);
+			if (pat != null) return pat;
 		} catch (_:TypingError) {}
+		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
+		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
+		// when that fails too. .
+		try {
+			var mt = TypeFunctions.moduleTypeOfType(t);
+			var emt = TexprTools.makeTypeExpr(mt, p);
+			var acc = Fields.typeField(pctx.ctx, emt, i, p, MGet, WithTypeTools.value);
+			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
+			if (pat != null) return pat;
+		} catch (_:Dynamic) {}
 		var v = addLocal(pctx, false, i, t, p);
 		return PatVariable(v);
 	}
