@@ -163,7 +163,24 @@ class EvalMain {
 		};
 	}
 
+	// Run every class's static __init__ before main. A static __init__ becomes the class init expression
+	// which the evaluator runs at startup.
+	public static function runStaticInits(ctx:EvalContext):Void {
+		for (proto in ctx.staticPrototypes) {
+			switch (proto.pkind) {
+				case PClass(_):
+					var idx = proto.pnames.get(EvalHash.key___init__);
+					if (idx != null) switch (proto.pfields[idx]) {
+						case VFunction(f, _): f([]);
+						case _:
+					}
+				case _:
+			}
+		}
+	}
+
 	public static function runMain(ctx:EvalContext, mainPath:Path):EvalValue {
+		runStaticInits(ctx);
 		// A module-level `function main` has no class named after the module; it lives in the
 		// synthetic <Module>_Fields_ class. Fall back to it when the module type is absent.
 		var result;
