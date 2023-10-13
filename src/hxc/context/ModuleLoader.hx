@@ -499,11 +499,11 @@ class ModuleLoader {
 					}
 					Method(isMacro ? MethMacro : isInline ? MethInline : isDynamic ? MethDynamic : MethNormal);
 				case FVar(_, _):
-					// Inline enum-abstract variables are read-inline and write-never. Final fields are
-					// read-normal, write-never and carry CfFinal.
+					// Inline variables are read-inline and write-never. Final instance fields permit constructor
+					// writes; final statics permit none, and both carry CfFinal.
 					var varInline = false;
 					for (a in cff.cffAccess) if (a.access == AInline) varInline = true;
-					varInline ? Var({read: AccInline, write: AccNever}) : isFinalField ? Var({read: AccNormal, write: AccNever}) : Var({read: AccNormal, write: AccNormal});
+					varInline ? Var({read: AccInline, write: AccNever}) : isFinalField ? Var({read: AccNormal, write: isStatic ? AccNever : AccCtor}) : Var({read: AccNormal, write: AccNormal});
 				case FProp(get, set, _, _):
 					// Property accessors use AccCall for get/set or dynamic, AccNo for null, AccNever for never
 					// and AccNormal for default. This makes reads invoke getters rather than uninitialized backing

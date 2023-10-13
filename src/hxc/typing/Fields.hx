@@ -56,8 +56,10 @@ class Fields {
 		return loop(c.meta) || loop(f.meta);
 	}
 
-	static function canAccess(ctx:TyperContext, c:TClass, cf:TClassField, stat:Bool):Bool {
-		if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) return true;
+	// forcePrivate ignores CfPublic, treating the field as non-public when an AccNo/AccNever
+	// accessor makes a public field effectively private.
+	static function canAccess(ctx:TyperContext, c:TClass, cf:TClassField, stat:Bool, forcePrivate:Bool = false):Bool {
+		if (!forcePrivate && TypeFunctions.hasClassFieldFlag(cf, CfPublic)) return true;
 		if (c == ctx.curclass) return true;
 		var ms = ctx.curclass.module.statics;
 		if (ms != null && c == ms) return true;
@@ -167,9 +169,33 @@ class Fields {
 				}
 			case Var(vk):
 				var acc = isSet ? vk.write : vk.read;
+				// An AccNo/AccNever access outside the owner resolves to AKNo, which errors only when the
+				// value is actually read, written or called.
+				function normalFailure():AccessKind return AKNo(AKField(makeAccess(false)), pfield);
 				switch (acc) {
-					case AccNormal | AccNo | AccNever | AccCtor:
+					case AccNo if (ctx.privateAccess == 0):
+						switch (TypeFunctions.follow(e.type)) {
+							case TInst(c2, _) if (TypeFunctions.extendsClass(ctx.curclass, c2) || canAccess(ctx, c2, f, false, true)):
+								AKField(makeAccess(false));
+							case TAnon(an):
+								switch (an.status.get()) {
+									case Statics(c2) if (ctx.curclass == c2 || canAccess(ctx, c2, f, true, true)): AKField(makeAccess(false));
+									case _: ctx.untypedMode ? AKField(makeAccess(false)) : normalFailure();
+								}
+							case _:
+								ctx.untypedMode ? AKField(makeAccess(false)) : normalFailure();
+						}
+					case AccNormal | AccNo:
 						AKField(makeAccess(false));
+					case AccNever:
+						ctx.untypedMode ? AKField(makeAccess(false)) : normalFailure();
+					case AccCtor:
+						var ok = switch [ctx.curfun, fh] {
+							case [FunConstructor, FHInstance(c2, _)]:
+								c2 == ctx.curclass || (TypeFunctions.hasClassFlag(c2, CAbstract) && TypeFunctions.extendsClass(ctx.curclass, c2));
+							case _: false;
+						};
+						ok ? AKField(makeAccess(false)) : normalFailure();
 					case AccInline:
 						AKField(makeAccess(true));
 					case AccCall:
