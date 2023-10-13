@@ -1622,7 +1622,18 @@ class Typer {
 		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.c.path) + "()' instead", p);
 		hxc.eval.EvalMacro.ensureBuilt(ctx.com, target.c);
 		var ctor = target.c.constructor;
-		if (ctor == null) return null;
+		if (ctor == null) {
+			// No constructor anywhere in the hierarchy is No_constructor an inherited one falls back to the
+			// plain access path.
+			var csup = target.c.superClass;
+			while (csup != null) {
+				if (csup.c.constructor != null) return null;
+				csup = csup.c.superClass;
+			}
+			throw new TypingError(hxc.core.Globals.sTypePath(target.c.path) + " does not have a constructor", p);
+		}
+		if (TypeFunctions.hasClassFlag(target.c, CAbstract))
+			throw new TypingError(hxc.core.Globals.sTypePath(target.c.path) + " is abstract and cannot be constructed", p);
 		hxc.typing.TypeFields.forceFieldBody(ctx.com, target.c, ctor);
 		var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(target.c.params, target.tl, TypeFunctions.follow(ctor.type)))) { case TFun(s): s; case _: return null; };
 		var vl = [for (arg in sig.args) TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p)];
