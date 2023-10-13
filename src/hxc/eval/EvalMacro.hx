@@ -2254,11 +2254,14 @@ class EvalMacro {
 		ensureInstanceSlot(proto, EvalHash.hash("get_message"));
 		ensureInstanceSlot(proto, EvalHash.hash("pos"));
 		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
+		ensureInstanceSlot(proto, EvalHash.hash("toString"));
 		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
 		EvalField.setField(ec, v, EvalHash.hash("message"), mkString(msg), pos);
 		EvalField.setField(ec, v, EvalHash.hash("get_message"), VFunction(function(_) return mkString(msg), false), pos);
 		EvalField.setField(ec, v, EvalHash.hash("pos"), posValue, pos);
 		EvalField.setField(ec, v, EvalHash.hash("childErrors"), VNull, pos);
+		// haxe.Exception.toString() yields the message, so Std.string(err) is the message text.
+		EvalField.setField(ec, v, EvalHash.hash("toString"), VFunction(function(_) return mkString(msg), false), pos);
 		return v;
 	}
 

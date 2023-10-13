@@ -805,6 +805,24 @@ class Typer {
 						anonFields.set(f.name, anonField);
 					}
 					var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
+					// A literal against an expected structure must provide every non-optional expected
+					// field and nothing more. Recorded, not raised, so every violation is reported (and a
+					// macro Context.typeof raises through the record).
+					if (expected != null && !ctx.untypedMode) {
+						var missing:Array<String> = [];
+						for (n in expected.fields.keys()) {
+							var ef = expected.fields.get(n);
+							if (!TypeFunctions.hasMeta(":optional", ef.meta) && !anonFields.exists(n)) missing.push(n);
+						}
+						// Missing fields are listed in descending name order.
+						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						if (missing.length == 1) ctx.com.addDiagnostic("Object requires field " + missing[0], p);
+						else if (missing.length > 1) ctx.com.addDiagnostic("Object requires fields: " + missing.join(", "), p);
+						for (f in fields) {
+							if (!expected.fields.exists(f.name))
+								ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
+						}
+					}
 					TypeFunctions.mk(TObjectDecl(tfields), t, p);
 				}
 			case ETry(e1, catches):
