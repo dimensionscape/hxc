@@ -175,7 +175,13 @@ class Context {
 		throw new ContextError(msg, pos);
 	}
 
+	// During macro expression typing, raise errors immediately so the macro can catch and annotate
+	// them.
+	public var raiseTypingErrors:Bool = false;
+
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
+		if (raiseTypingErrors && (severity == null || severity == Error))
+			throw new hxc.core.TypingError(message, pos, depth);
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 

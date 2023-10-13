@@ -1355,7 +1355,16 @@ class EvalMacro {
 	static function typeMacroExpr(ctx:TyperContext, e:Expr):TExpr {
 		var com = ctx.com;
 		var before = com.diagnostics.length;
-		var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
+		var oldRaise = com.raiseTypingErrors;
+		com.raiseTypingErrors = true;
+		var te = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (err:haxe.Exception) {
+			com.raiseTypingErrors = oldRaise;
+			if (com.diagnostics.length > before) com.diagnostics.resize(before);
+			throw err;
+		};
+		com.raiseTypingErrors = oldRaise;
+		// Fallback for a path that records into diagnostics directly (bypassing addDiagnostic): surface
+		// the first new error and roll the trial diagnostics back.
 		var i = before;
 		while (i < com.diagnostics.length) {
 			var d = com.diagnostics[i];

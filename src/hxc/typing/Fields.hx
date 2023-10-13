@@ -106,9 +106,10 @@ class Fields {
 		return result || ctx.privateAccess > 0;
 	}
 
-	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
-		if (!ctx.untypedMode && !canAccess(ctx, c, f, true))
-			throw new TypingError("Cannot access private field " + f.name, p);
+	// Recorded, not raised, so typing continues and a batch compile reports every access violation.
+	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, stat:Bool, p:Position):Void {
+		if (!ctx.untypedMode && !canAccess(ctx, c, f, stat))
+			ctx.com.addDiagnostic("Cannot access private field " + f.name, p);
 	}
 
 	// Recorded (not raised) so typing continues; a missing constructor is left to the caller (a null
@@ -120,21 +121,31 @@ class Fields {
 
 	static function checkAbstractFieldAccess(ctx:TyperContext, a:TAbstract, f:TClassField, p:Position):Void {
 		if (a.impl != null && TypeFunctions.hasClassFieldFlag(f, CfImpl))
-			checkFieldAccess(ctx, a.impl, f, p);
+			checkFieldAccess(ctx, a.impl, f, true, p);
 	}
 
 	public static function fieldAccess(ctx:TyperContext, mode:AccessMode, f:TClassField, fh:FieldHost, e:TExpr, pfield:Position):AccessKind {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
 		forceFieldType(ctx, f, fh);
+		// Visibility. An overloaded method call is checked after the actual overload is resolved, so
+		// skip it here; an instance access uses the actual (potential child) class from the receiver
+		// type.
+		function maybeCheckVisibility(c:TClass, stat:Bool):Void {
+			switch (mode) {
+				case MCall(_) if (TypeFunctions.hasClassFieldFlag(f, CfOverload)):
+				case _: checkFieldAccess(ctx, c, f, stat, pfield);
+			}
+		}
 		switch (fh) {
-			case FHStatic(c):
-				switch (c.kind) {
-					case KAbstractImpl(_):
-						checkFieldAccess(ctx, c, f, pfield);
+			case FHInstance(_, _):
+				switch (TypeFunctions.follow(e.type)) {
+					case TInst(c2, _): maybeCheckVisibility(c2, false);
 					case _:
 				}
-			case _:
+			case FHStatic(c): maybeCheckVisibility(c, true);
+			case FHAbstract(_, _, c): maybeCheckVisibility(c, true);
+			case FHAnon:
 		}
 		// Each field access consumes one @:bypassAccessor from the pending count.
 		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;

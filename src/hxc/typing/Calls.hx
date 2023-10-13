@@ -233,7 +233,8 @@ class Calls {
 				var skip = false;
 				try te = typeAgainst(a.name, a.t, el[ei]) catch (err:TypingError) {
 					if (a.opt && mightSkip) skip = true;
-					else throw err;
+					// arg_error annotate the argument's error with the parameter name.
+					else throw new TypingError(err.message + "\nFor " + (a.opt ? "optional " : "") + "function argument '" + a.name + "'", err.pos, err.depth);
 				}
 				if (skip) {
 					var pi = makePosInfosArg(ctx, a.t, callp);

@@ -545,6 +545,13 @@ class Typer {
 				var rPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess--; throw err; };
 				ctx.privateAccess--;
 				return rPriv;
+			case EMeta(m, e1) if (m.name == ":noPrivateAccess"):
+				// Strips any enclosing @:privateAccess for the subexpression.
+				var oldPa = ctx.privateAccess;
+				ctx.privateAccess = 0;
+				var rNoPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess = oldPa; throw err; };
+				ctx.privateAccess = oldPa;
+				return rNoPriv;
 			case EMeta(m, e1) if (m.name == ":bypassAccessor"):
 					// The next field access typed within e1 consumes this and becomes a raw access.
 					var oldBypass = ctx.bypassAccessor;
