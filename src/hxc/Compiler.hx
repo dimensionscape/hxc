@@ -263,48 +263,29 @@ class Compiler {
 		return expandArgsInner(args, seen);
 	}
 
+	// An hxml line is at most a flag and one argument, split at the first space; surrounding quotes are
+	// stripped per part and embedded quotes stay literal.
 	static function parseHxmlLine(line:String):Array<String> {
-		line = StringTools.trim(StringTools.replace(line, "\r", ""));
+		line = unquote(StringTools.trim(StringTools.replace(line, "\r", "")));
 		if (line == "" || StringTools.startsWith(line, "#")) return [];
-		var out:Array<String> = [];
-		var buf = new StringBuf();
-		var quote = 0;
-		var escaped = false;
-		var i = 0;
-		function flush() {
-			var s = buf.toString();
-			if (s.length > 0) {
-				out.push(s);
-				buf = new StringBuf();
-			}
+		if (line.charCodeAt(0) == "-".code) {
+			var i = line.indexOf(" ");
+			if (i < 0) return [line];
+			var a = line.substr(0, i);
+			var b = StringTools.trim(line.substr(i + 1));
+			return [unquote(a), unquote(b)];
 		}
-		while (i < line.length) {
-			var c = line.charCodeAt(i++);
-			if (escaped) {
-				buf.addChar(c);
-				escaped = false;
-				continue;
-			}
-			if (c == "\\".code && quote != 0) {
-				escaped = true;
-				continue;
-			}
-			if (quote != 0) {
-				if (c == quote) quote = 0 else buf.addChar(c);
-				continue;
-			}
-			if (c == "\"".code || c == "'".code) {
-				quote = c;
-				continue;
-			}
-			if (c == " ".code || c == "\t".code) {
-				flush();
-				continue;
-			}
-			buf.addChar(c);
+		return [line];
+	}
+
+	static function unquote(s:String):String {
+		var len = s.length;
+		if (len > 1) {
+			var f = s.charCodeAt(0), l = s.charCodeAt(len - 1);
+			if ((f == "\"".code && l == "\"".code) || (f == "'".code && l == "'".code))
+				return s.substr(1, len - 2);
 		}
-		flush();
-		return out;
+		return s;
 	}
 
 	static function directoryOf(path:String):String {
