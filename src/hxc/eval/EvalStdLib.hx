@@ -273,12 +273,12 @@ class EvalStdLib {
 		switch (ctx.typeCache.get(proto.ppath)) {
 			case TClassDecl(c):
 				for (cf in c.orderedStatics) {
-					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern) && TypeFunctions.isPhysicalField(cf))
 						add(EvalHash.hash(cf.name));
 				}
 				for (name in c.statics.keys()) {
 					var cf = c.statics.get(name);
-					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+					if (!TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern) && TypeFunctions.isPhysicalField(cf))
 						add(EvalHash.hash(cf.name));
 				}
 			case _:
