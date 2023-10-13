@@ -2027,6 +2027,9 @@ class Typer {
 						tl;
 				}
 				var t = TInst(c, tl);
+				// An abstract class has no direct construction.
+				if (TypeFunctions.hasClassFlag(c, CAbstract))
+					throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " is abstract and cannot be constructed", p);
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
 				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
 				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
