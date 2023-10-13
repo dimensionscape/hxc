@@ -87,8 +87,21 @@ class EvalPrototype {
 		} catch (_:Dynamic) null;
 	}
 
-	static function addNameAlias(pnames:Map<Int, Int>, cf:TClassField, idx:Int):Void {
+	static function addNameAlias(pnames:Map<Int, Int>, cf:TClassField, idx:Int, ?owner:TClass):Void {
 		var native = nativeFieldName(cf);
+		// An override inherits its parent field's @:native name.
+		if (native == null && owner != null) {
+			var cur = owner.superClass;
+			var guard = 0;
+			while (cur != null && guard++ < 50) {
+				var base = cur.c.fields.get(cf.name);
+				if (base != null) {
+					native = nativeFieldName(base);
+					if (native != null) break;
+				}
+				cur = cur.c.superClass;
+			}
+		}
 		if (native != null && native != "" && native != cf.name)
 			pnames.set(EvalHash.hash(native), idx);
 	}
@@ -528,7 +541,7 @@ class EvalPrototype {
 					if (tf != null) {
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
-						addNameAlias(pnames, cf, idx);
+						addNameAlias(pnames, cf, idx, c);
 						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
 						pfields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						// A dynamic method is reassignable per instance, so it also occupies an instance
@@ -537,7 +550,7 @@ class EvalPrototype {
 						if (cf.kind.match(Method(MethDynamic))) {
 							var instIdx = pinstFields.length;
 							pinstNames.set(EvalHash.hash(cf.name), instIdx);
-							addNameAlias(pinstNames, cf, instIdx);
+							addNameAlias(pinstNames, cf, instIdx, c);
 							pinstFields.push(VFunction(makeFunction(ctx, tf, true, info), false));
 						} else {
 							// A plain override of an inherited dynamic method must replace that inherited
@@ -552,7 +565,7 @@ class EvalPrototype {
 				case Var(_) if (TypeFunctions.isPhysicalField(cf)):
 					var idx = pinstFields.length;
 					pinstNames.set(EvalHash.hash(cf.name), idx);
-					addNameAlias(pinstNames, cf, idx);
+					addNameAlias(pinstNames, cf, idx, c);
 					pinstFields.push(VNull);
 				case _:
 			}
