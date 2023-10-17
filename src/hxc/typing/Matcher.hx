@@ -1151,7 +1151,15 @@ class TexprConverter {
 				var topLevel = rec.match(DRToplevel);
 				var nextRec = topLevel ? DRAfterSwitch : DRDeep;
 				var complete = completeFiniteCoverage(subject, cases);
-				var defE = (topLevel && complete) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
+				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
+				// abstract is compile-time finite, so a runtime value can be out of range and a user
+				// default must be kept.
+				var runtimeFinite = switch (TypeFunctions.follow(subject.type)) {
+					case TEnum(_, _): true;
+					case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
+					case _: false;
+				};
+				var defE = (topLevel && complete && runtimeFinite) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {
 					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, nextRec);
