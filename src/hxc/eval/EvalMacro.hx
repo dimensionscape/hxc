@@ -637,7 +637,7 @@ class EvalMacro {
 		}
 	}
 
-	static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
+	public static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
 		return encodeExpr(ec, valueToExpr(ec, v, Position.nullPos));
 	}
 

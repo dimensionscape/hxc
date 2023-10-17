@@ -4226,6 +4226,8 @@ class EvalStdLib {
 					}, true);
 				case "get_resources":
 					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
+				case "make_expr":
+					VFunction(function(args) return EvalMacro.makeExprValue(ctx, arg(args, 0)), true);
 				case "make_position":
 					VFunction(function(args) return mkPos(ctx, new Position(stringOf(arg(args, 2)), toInt(arg(args, 0)), toInt(arg(args, 1)))), true);
 				case "get_pos_infos":
