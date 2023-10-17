@@ -566,7 +566,11 @@ class Fields {
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) {
-			for (up in imports.usings) {
+			// A later using declaration takes priority: the reference prepends each using onto
+			// module_using, so lookup runs in reverse declaration order .
+			var ups = imports.usings.copy();
+			ups.reverse();
+			for (up in ups) {
 				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
 				if (mt != null) {
 					var r = tryUsingModuleType(ctx, mt, e, i, p);
