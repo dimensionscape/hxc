@@ -47,6 +47,8 @@ class EvalMacro {
 	static var nextCfieldRefId:Int = 0;
 	static var moduleTypeRefs:Map<Int, ModuleType> = new Map();
 	static var nextModuleTypeRefId:Int = 0;
+	static var anonRefs:Map<Int, TAnon> = new Map();
+	static var nextAnonRefId:Int = 0;
 
 	static function stashModuleTypeRef(f:Map<Int, EvalValue>, mt:ModuleType):Void {
 		var refId = nextModuleTypeRefId++;
@@ -152,6 +154,33 @@ class EvalMacro {
 			curTctx.com.storedTypedExprs.set(id, te);
 			var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
 			return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
+		});
+		// map_anon_ref(a, fn): rebuild the anonymous structure with every field's type passed through fn,
+		// keeping each field's kind, metadata and flags.
+		reg2("map_anon_ref", "map_anon_ref", function(a) {
+			var t = decodeAnonRef(ec, a[0]);
+			var fnv = a[1];
+			return switch (TypeFunctions.follow(t)) {
+				case TAnon(an):
+					var fields = new haxe.ds.StringMap<TClassField>();
+					for (name in an.fields.keys()) {
+						var f = an.fields.get(name);
+						var mappedV = switch (fnv) {
+							case VFunction(fn, _): fn([encodeType(ec, f.type)]);
+							case _: throw new TypingError("map_anon_ref: expected function", curPos);
+						};
+						var nf = TypeFunctions.mkField(f.name, decodeType(ec, mappedV), f.pos, f.namePos);
+						nf.meta = f.meta;
+						nf.kind = f.kind;
+						nf.flags = f.flags;
+						fields.set(name, nf);
+					}
+					switch (TypeFunctions.mkAnon(new hxc.core.Ref(an.status.get()), fields)) {
+						case TAnon(an2): encodeAnonRef(ec, an2);
+						case _: throw new TypingError("map_anon_ref: expected anonymous type", curPos);
+					}
+				case _: throw new TypingError("map_anon_ref: expected anonymous type", curPos);
+			};
 		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
@@ -1332,6 +1361,11 @@ class EvalMacro {
 	}
 
 	static function decodeAnonRef(ec:EvalContext, v:EvalValue):T {
+		// A ref built here round-trips the anon itself.
+		switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
+			case VInt(id) if (anonRefs.exists(id)): return TAnon(anonRefs.get(id));
+			case _:
+		}
 		var payload = refGet(ec, v);
 		var fields = new haxe.ds.StringMap<TClassField>();
 		for (fv in arrOf(EvalField.field(ec, payload, EvalHash.hash("fields")))) {
@@ -2352,11 +2386,17 @@ class EvalMacro {
 	static function encodeAnonRef(ec:EvalContext, an:TAnon):EvalValue {
 		var payload = function() {
 			var fields:Map<Int, EvalValue> = new Map();
-			fields.set(EvalHash.hash("fields"), encodeArray([for (cf in an.fields) encodeClassField(ec, cf)]));
+			// Fields encode in ascending name order.
+			var names = [for (k in an.fields.keys()) k];
+			names.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
+			fields.set(EvalHash.hash("fields"), encodeArray([for (n in names) encodeClassField(ec, an.fields.get(n))]));
 			fields.set(EvalHash.hash("status"), encodeAnonStatus(ec, an.status.get()));
 			return VObject(new VObject([], ODictionary(fields)));
 		}
 		var fields:Map<Int, EvalValue> = new Map();
+		var refId = nextAnonRefId++;
+		anonRefs.set(refId, an);
+		fields.set(EvalHash.hash("$"), VInt(refId));
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload(), true));
 		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<anonymous>"), true));
 		return VObject(new VObject([], ODictionary(fields)));
