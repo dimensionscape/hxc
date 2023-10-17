@@ -809,7 +809,13 @@ class EvalMacro {
 						if (cf == null) cf = c.fields.get(fieldName);
 						if (cf != null) {
 							hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-							forceReachableStatics(macroCom, c, cf);
+							// A dependency (e.g. TypeTools.map) typed only now, after its class's prototype
+							// was built, leaves that prototype with a dead slot; rebuild (state migrates).
+							if (forceReachableStatics(macroCom, c, cf) && macroCtx != null) {
+								staleMacroCtx = macroCtx;
+								macroCtx = null;
+								lastModuleCount = -1;
+							}
 						}
 					}
 				case _:
@@ -830,13 +836,20 @@ class EvalMacro {
 		}
 	}
 
-	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Void {
+	// Returns true when a body was typed for a field whose class already has a live prototype in the
+	// macro context (that prototype's slot for it is a dead thrower and needs a rebuild).
+	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Bool {
+		var staleProto = false;
 		var seen = new Map<TClassField, Bool>();
 		var scan:Null<TExpr>->Void = null;
 		function forceAndScan(c:TClass, cf:TClassField):Void {
 			if (seen.exists(cf)) return;
 			seen.set(cf, true);
-			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(com, c, cf);
+			if (cf.expr == null) {
+				hxc.typing.TypeFields.forceFieldBody(com, c, cf);
+				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
+					staleProto = true;
+			}
 			scan(cf.expr);
 		}
 		scan = function(e:Null<TExpr>):Void {
@@ -888,6 +901,7 @@ class EvalMacro {
 		};
 		seen.set(root, true);
 		scan(root.expr);
+		return staleProto;
 	}
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {

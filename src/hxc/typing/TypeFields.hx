@@ -58,6 +58,7 @@ class TypeFields {
 	}
 
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
+		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e) + (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : ""));
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
 			ctx.addDiagnostic(te.message, te.pos);
