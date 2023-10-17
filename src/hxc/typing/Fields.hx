@@ -515,7 +515,9 @@ class Fields {
 		}
 		var cft = cf.type;
 		if (cf.params.length > 0) {
-			var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
+			// Constrained monos so the receiver must satisfy the extension type parameter constraints
+			// (e.g. sorted<T:Float> does not accept an Array<String> receiver).
+			var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
 			cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
 		}
 		return switch (TypeFunctions.follow(cft)) {
