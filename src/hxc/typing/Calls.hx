@@ -468,7 +468,7 @@ class Calls {
 				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument.
-				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access));
+				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access), se.access);
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length > 0):
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
@@ -535,7 +535,7 @@ class Calls {
 			try {
 				return TypeUnification.withMonoRollback(function() {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
-					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2));
+					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2), fa2);
 					var ce = mono.expr;
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
@@ -563,15 +563,31 @@ class Calls {
 		throw new TypingError("No matching overload", p);
 	}
 
-	// A generic method's own type parameters become fresh monomorphs for the call.
-	static function monomorphizeParamsWith(ctx:TyperContext, cf:TClassField, ce:TExpr):{expr:TExpr, monos:TParams} {
-		if (cf.params.length == 0) return {expr: ce, monos: []};
-		var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
-		return {expr: TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, ce.type), ce.pos), monos: monos};
+	// A generic method's own type parameters become fresh monomorphs for the call. The host's class
+	// parameters apply to the constraints, so `getInstance<S:T>` on a GenericTest<MyC> constrains S to
+	// MyC rather than to the raw class parameter T.
+	static function hostParamMap(fa:Null<FieldAccess>):T->T {
+		if (fa == null) return function(t) return t;
+		return switch (fa.host) {
+			case FHInstance(c, tl) if (c.params.length > 0 && tl.length == c.params.length):
+				function(t) return TypeFunctions.applyParams(c.params, tl, t);
+			case FHAbstract(a, tl, _) if (a.params.length > 0 && tl.length == a.params.length):
+				function(t) return TypeFunctions.applyParams(a.params, tl, t);
+			case _: function(t) return t;
+		};
 	}
 
-	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr):TExpr {
-		return monomorphizeParamsWith(ctx, cf, ce).expr;
+	static function monomorphizeParamsWith(ctx:TyperContext, cf:TClassField, ce:TExpr, ?fa:FieldAccess):{expr:TExpr, monos:TParams} {
+		if (cf.params.length == 0) return {expr: ce, monos: []};
+		var hostMap = hostParamMap(fa);
+		var monos:TParams = TypeUnification.spawnConstrainedMonos(hostMap, cf.params);
+		// The signature gets the same host mapping as the constraints, so a class parameter appearing in
+		// both stays one type (host params apply first, then field params).
+		return {expr: TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, hostMap(ce.type)), ce.pos), monos: monos};
+	}
+
+	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr, ?fa:FieldAccess):TExpr {
+		return monomorphizeParamsWith(ctx, cf, ce, fa).expr;
 	}
 
 	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T):FieldAccess {
@@ -579,7 +595,7 @@ class Calls {
 		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
 		TypeFields.forceFieldBody(ctx.com, host, cf);
 		if (cf.expr == null) return fa;
-		propagateGenericConstraints(ctx, cf.params, monos);
+		propagateGenericConstraints(ctx, cf.params, monos, hostParamMap(fa));
 		closeGenericMonos(monos);
 		var params = [for (m in monos) TypeFunctions.follow(m)];
 		var name = cf.name + "_" + genericSuffix(params);
@@ -605,7 +621,7 @@ class Calls {
 		return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
 	}
 
-	static function propagateGenericConstraints(ctx:TyperContext, cparams:TypeParams, monos:TParams):Void {
+	static function propagateGenericConstraints(ctx:TyperContext, cparams:TypeParams, monos:TParams, ?hostMap:T->T):Void {
 		for (i in 0...cparams.length) {
 			if (i >= monos.length) break;
 			var actual = TypeFunctions.follow(monos[i]);
@@ -619,7 +635,9 @@ class Calls {
 					switch (c.kind) {
 						case KTypeParameter(constr):
 							for (ct in constr) {
-								var expected = applyGenericConstraintParams(cparams, monos, ct);
+								// The host's class parameters apply to the constraint like they do to the
+								// signature, so a constraint naming a class parameter checks the actual type.
+								var expected = applyGenericConstraintParams(cparams, monos, hostMap != null ? hostMap(ct) : ct);
 								try {
 									TypeUnification.unifyDefault(actual, expected);
 								} catch (e:UnifyError) {

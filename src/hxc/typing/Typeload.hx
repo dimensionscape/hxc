@@ -690,6 +690,7 @@ class Typeload {
 					case KTypeParameter(_) | KGeneric:
 						// The node's own type is the physical parameter type the substitution knows;
 						// a freshly built TInst never matches its identity-keyed table.
+						if (Sys.getEnv("HXC_DEBUG_TNEW") != null) Sys.println("[tnew] c=" + c.path.pack.join(".") + "." + c.path.name + " etype=" + hxc.core.TPrinting.sTypeStr(e.type) + " subst=" + hxc.core.TPrinting.sTypeStr(TypeFunctions.follow(subst(e.type))));
 						switch (TypeFunctions.follow(subst(e.type))) {
 							case TInst(c2, pl2): TNew(c2, pl2, arr(args));
 							case TAbstract(a, pl2) if (a.impl != null): TNew(a.impl, pl2, arr(args));
