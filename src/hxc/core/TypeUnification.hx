@@ -541,7 +541,10 @@ class TypeUnification {
 		// Tell if already a ~= b
 		if (loop(b)) {
 			return TypeFunctions.follow(b) == a;
-		} else if (b == TypeFunctions.tDynamic) {
+		} else if (b.match(TDynamic(null))) {
+			// A mono unified against plain Dynamic stays unbound (the unification succeeds without
+			// binding), so a later use can still bind it to a concrete type. Matched structurally since
+			// plain Dynamic is not a shared instance here.
 			return true;
 		} else {
 			monoBind(e, b);
