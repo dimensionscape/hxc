@@ -489,6 +489,8 @@ class TypeFields {
 			var at = (sig != null && i < sig.args.length) ? sig.args[i].t : TypeFunctions.mkMono();
 			var kind = if (tctx.curfun.match(FunMemberAbstract) && i == 0 && fa.name.name == "this") VAbstractThis else VUser(TVOArgument);
 			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
+			// An argument's metadata lives on its variable.
+			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
 			var def:Null<TExpr> = if (fa.value != null) Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at))
 				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
 				else null;

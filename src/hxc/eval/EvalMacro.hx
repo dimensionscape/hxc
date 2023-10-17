@@ -254,9 +254,23 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
-		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type.
-		reg2("getLocalType", "get_local_type", function(a) return curBuildClass == null ? VNull : encodeType(ec, TInst(curBuildClass, curBuildParams)));
-		reg2("getLocalClass", "get_local_class", function(a) return curBuildClass == null ? VNull : encodeClassRef(ec, curBuildClass));
+		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type, or
+		// outside a build macro the class containing the macro call (none for the null class), with empty
+		// params.
+		function localClass():Null<TClass> {
+			if (curBuildClass != null) return curBuildClass;
+			if (curTctx != null && curTctx.curclass != null && curTctx.curclass != TypeFunctions.nullClass) return curTctx.curclass;
+			return null;
+		}
+		reg2("getLocalType", "get_local_type", function(a) {
+			if (curBuildClass != null) return encodeType(ec, TInst(curBuildClass, curBuildParams));
+			var c = localClass();
+			return c == null ? VNull : encodeType(ec, TInst(c, []));
+		});
+		reg2("getLocalClass", "get_local_class", function(a) {
+			var c = localClass();
+			return c == null ? VNull : encodeClassRef(ec, c);
+		});
 		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) {
 			var info = a.length > 0 ? a[0] : VNull;
 			return encPos(new Position(strOf(EvalField.field(ec, info, EvalHash.hash("file"))), intOf(EvalField.field(ec, info, EvalHash.hash("min"))), intOf(EvalField.field(ec, info, EvalHash.hash("max")))));
@@ -2645,14 +2659,20 @@ class EvalMacro {
 		};
 	}
 
-	static function encodeClassField(ec:EvalContext, cf:TClassField):EvalValue {
+	static function encodeClassField(ec:EvalContext, cf:TClassField, ?owner:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		f.set(EvalHash.hash("name"), mkString(cf.name));
 		f.set(EvalHash.hash("type"), encodeType(ec, cf.type));
 		f.set(EvalHash.hash("isPublic"), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
 		f.set(EvalHash.hash("params"), encodeArray([]));
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
-		f.set(EvalHash.hash("expr"), VFunction(function(_) return VNull, true));
+		// ClassField.expr(): the field's typed expression, typing the body on demand when the owner is
+		// known.
+		f.set(EvalHash.hash("expr"), VFunction(function(_) {
+			if (cf.expr == null && owner != null && currentCompiler() != null)
+				hxc.typing.TypeFields.forceFieldBody(currentCompiler(), owner, cf);
+			return cf.expr == null ? VNull : encodeTypedExpr(ec, cf.expr);
+		}, true));
 		f.set(EvalHash.hash("kind"), encodeTFieldKind(ec, cf.kind));
 		f.set(EvalHash.hash("pos"), encPos(cf.pos));
 		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
@@ -2774,8 +2794,8 @@ class EvalMacro {
 		f.set(EvalHash.hash("isAbstract"), VFalse);
 		f.set(EvalHash.hash("superClass"), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalHash.hash("interfaces"), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
-		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf)])));
-		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.statics) encodeClassField(ec, cf)])));
+		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
+		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.statics) encodeClassField(ec, cf, c)])));
 		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
 		f.set(EvalHash.hash("init"), VNull);
 		f.set(EvalHash.hash("overrides"), encodeArray([]));
