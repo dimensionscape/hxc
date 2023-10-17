@@ -684,7 +684,19 @@ class Typeload {
 			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: cloneExpr(f.expr, subst, vars, gsubst)}]);
 			case TArrayDecl(values): TArrayDecl(arr(values));
 			case TCall(e1, params): TCall(cloneExpr(e1, subst, vars, gsubst), arr(params));
-			case TNew(c, params, args): TNew(c, [for (t in params) subst(t)], arr(args));
+			case TNew(c, params, args):
+				// A constructed type parameter (new T()) rebuilds its class from the substituted type.
+				switch (c.kind) {
+					case KTypeParameter(_) | KGeneric:
+						// The node's own type is the physical parameter type the substitution knows;
+						// a freshly built TInst never matches its identity-keyed table.
+						switch (TypeFunctions.follow(subst(e.type))) {
+							case TInst(c2, pl2): TNew(c2, pl2, arr(args));
+							case TAbstract(a, pl2) if (a.impl != null): TNew(a.impl, pl2, arr(args));
+							case _: TNew(c, [for (t in params) subst(t)], arr(args));
+						}
+					case _: TNew(c, [for (t in params) subst(t)], arr(args));
+				}
 			case TUnop(op, flag, e1): TUnop(op, flag, cloneExpr(e1, subst, vars, gsubst));
 			case TFunction(f):
 				var fvars = new Map<Int, TVar>();
