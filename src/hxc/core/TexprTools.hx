@@ -265,4 +265,64 @@ class TexprTools {
 			case CRegexp(_, _): throw new TypingError("Invalid constant", p);
 		};
 	}
+
+	// Fresh tvars for every declaration site so a stored typed expression re-inserts without sharing
+	// variable slots with its original context; TConst TThis is rebuilt by fThis (the caller supplies the
+	// enclosing context's this).
+	public static function duplicateTvars(fThis:TExpr->TExpr, e:TExpr):TExpr {
+		var vars:Map<Int, TVar> = new Map();
+		function copyVar(v:TVar):TVar {
+			var v2 = TypeFunctions.allocVar(v.kind, v.name, v.type, v.pos);
+			v2.meta = v.meta;
+			v2.extra = v.extra;
+			v2.flags = v.flags;
+			vars.set(v.id, v2);
+			return v2;
+		}
+		function build(e:TExpr):TExpr {
+			inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
+			return switch (e.expr) {
+				case TVarExpr(v, eo):
+					var v2 = copyVar(v);
+					mk2(TVarExpr(v2, eo == null ? null : build(eo)));
+				case TFor(v, e1, e2):
+					var v2 = copyVar(v);
+					mk2(TFor(v2, build(e1), build(e2)));
+				case TTry(e1, catches):
+					var e1b = build(e1);
+					mk2(TTry(e1b, [for (c in catches) { var v2 = copyVar(c.v); {v: v2, expr: build(c.expr)}; }]));
+				case TFunction(f):
+					var args:Array<TFuncArg> = [for (a in f.args) {v: copyVar(a.v), c: a.c}];
+					mk2(TFunction(new TFunc(args, f.type, build(f.expr))));
+				case TLocal(v):
+					var v2 = vars.get(v.id);
+					v2 == null ? e : mk2(TLocal(v2));
+				case TConst(TThis):
+					fThis(e);
+				case TConst(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue:
+					e;
+				case TArray(e1, e2): mk2(TArray(build(e1), build(e2)));
+				case TBinop(op, e1, e2): mk2(TBinop(op, build(e1), build(e2)));
+				case TField(e1, fa): mk2(TField(build(e1), fa));
+				case TParenthesis(e1): mk2(TParenthesis(build(e1)));
+				case TObjectDecl(fl): mk2(TObjectDecl([for (f in fl) {key: f.key, expr: build(f.expr)}]));
+				case TArrayDecl(el): mk2(TArrayDecl([for (x in el) build(x)]));
+				case TCall(e1, el): mk2(TCall(build(e1), [for (x in el) build(x)]));
+				case TNew(c, tl, el): mk2(TNew(c, tl, [for (x in el) build(x)]));
+				case TUnop(op, flag, e1): mk2(TUnop(op, flag, build(e1)));
+				case TBlock(el): mk2(TBlock([for (x in el) build(x)]));
+				case TIf(c, e1, e2): mk2(TIf(build(c), build(e1), e2 == null ? null : build(e2)));
+				case TWhile(c, e1, flag): mk2(TWhile(build(c), build(e1), flag));
+				case TSwitch(e1, cases, edef):
+					mk2(TSwitch(build(e1), [for (c in cases) {values: [for (x in c.values) build(x)], expr: build(c.expr)}], edef == null ? null : build(edef)));
+				case TReturn(eo): mk2(TReturn(eo == null ? null : build(eo)));
+				case TThrow(e1): mk2(TThrow(build(e1)));
+				case TCast(e1, mt): mk2(TCast(build(e1), mt));
+				case TMeta(m, e1): mk2(TMeta(m, build(e1)));
+				case TEnumParameter(e1, ef, i): mk2(TEnumParameter(build(e1), ef, i));
+				case TEnumIndex(e1): mk2(TEnumIndex(build(e1)));
+			};
+		}
+		return build(e);
+	}
 }

@@ -39,6 +39,21 @@ class EvalMacro {
 	static var macroMonoId:Int = 0;
 	static var macroMonos:Map<Int, TMono> = new Map();
 
+	// A typed-expr value round-trips its native objects through a hidden `$` handle: a tvar is stashed on
+	// the object itself and read back from its `$` field. Class-field refs round-trip the same way.
+	static var tvarRefs:Map<Int, TVar> = new Map();
+	static var nextTvarRefId:Int = 0;
+	static var cfieldRefs:Map<Int, TClassField> = new Map();
+	static var nextCfieldRefId:Int = 0;
+	static var moduleTypeRefs:Map<Int, ModuleType> = new Map();
+	static var nextModuleTypeRefId:Int = 0;
+
+	static function stashModuleTypeRef(f:Map<Int, EvalValue>, mt:ModuleType):Void {
+		var refId = nextModuleTypeRefId++;
+		moduleTypeRefs.set(refId, mt);
+		f.set(EvalHash.hash("$"), VInt(refId));
+	}
+
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
 		var list = ec.builtins.staticBuiltins.get(key);
@@ -127,6 +142,16 @@ class EvalMacro {
 			if (curTctx == null) throw new TypingError("getTypedExpr outside a macro", curPos);
 			var te = decodeStoredTypedExpr(ec, a[0]);
 			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
+		});
+		// store_typed_expr(te): store the decoded typed expression and return the syntax marker
+		// `@:storedTypedExpr(id)` that re-types to it.
+		reg2("storeTypedExpr", "store_typed_expr", function(a) {
+			if (curTctx == null) throw new TypingError("storeTypedExpr outside a macro", curPos);
+			var te = decodeStoredTypedExpr(ec, a[0]);
+			var id = curTctx.com.nextStoredTypedExprId++;
+			curTctx.com.storedTypedExprs.set(id, te);
+			var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
+			return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
 		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
@@ -1313,6 +1338,12 @@ class EvalMacro {
 	}
 
 	static function moduleTypeFromRef(ec:EvalContext, v:EvalValue):ModuleType {
+		// A ref built here round-trips the module type itself through the hidden `$` handle; the path
+		// lookup below covers everything else.
+		switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
+			case VInt(id) if (moduleTypeRefs.exists(id)): return moduleTypeRefs.get(id);
+			case _:
+		}
 		var path = pathFromDotted(refString(ec, v));
 		var key = EvalHash.pathHash(path);
 		var cached = ec.typeCache.get(key);
@@ -1339,12 +1370,151 @@ class EvalMacro {
 		return v == VNull ? null : decodeExpr(ec, v, dp);
 	}
 
-	// Raises MacroApi.Invalid_expr on a value that is not a well-formed haxe.macro.TypedExpr; 's
-	// builtin wrapper turns that into `exc_string "Invalid expression"`, a plain string exception (not
-	// a haxe.macro.Error). A full typed-expr decoder is not yet in place, so any input is treated as
-	// undecodable and raises that same string (Context.getTypedExpr(null)).
+	// A value that is not a well-formed haxe.macro.TypedExpr is an invalid expression, which the builtin
+	// wrapper turns into the plain string exception "Invalid expression" (not a haxe.macro.Error).
 	static function decodeStoredTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
-		return EvalExceptions.excString(ec, "Invalid expression");
+		return try decodeTypedExpr(ec, v) catch (e:Dynamic) {
+			if (Sys.getEnv("HXC_DEBUG_DECODE") != null) Sys.println("[decode_texpr] " + Std.string(e));
+			EvalExceptions.excString(ec, "Invalid expression");
+		}
+	}
+
+	// The tvar itself round-trips through the hidden `$` handle.
+	static function decodeTVar(ec:EvalContext, v:EvalValue):TVar {
+		return switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
+			case VInt(id) if (tvarRefs.exists(id)): tvarRefs.get(id);
+			case _: throw new TypingError("macro decode: expected tvar", curPos);
+		};
+	}
+
+	static function classFieldFromRef(ec:EvalContext, v:EvalValue):TClassField {
+		return switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
+			case VInt(id) if (cfieldRefs.exists(id)): cfieldRefs.get(id);
+			case _: throw new TypingError("macro decode: expected class field ref", curPos);
+		};
+	}
+
+	static function decodeTConstValue(ec:EvalContext, v:EvalValue):TConstant {
+		var args = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "TInt": switch (args[0]) { case VInt(i): TInt(i); case _: throw new TypingError("macro decode: expected int", curPos); };
+			case "TFloat": TFloat(strOf(args[0]));
+			case "TString": TString(strOf(args[0]));
+			case "TBool": TBool(boolOf(args[0]));
+			case "TNull": TNull;
+			case "TThis": TThis;
+			case "TSuper": TSuper;
+			case other: throw new TypingError("macro decode: unhandled TConstant " + other, curPos);
+		};
+	}
+
+	// Resolve the constructor by name on the enum of the field's type.
+	static function decodeEnumFieldValue(ec:EvalContext, v:EvalValue):TEnumField {
+		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		function getEnum(t:T):Null<TEnum> {
+			return switch (TypeFunctions.follow(t)) {
+				case TEnum(en, _): en;
+				case TFun(sig): getEnum(sig.ret);
+				case _: null;
+			};
+		}
+		var en = getEnum(decodeType(ec, EvalField.field(ec, v, EvalHash.hash("type"))));
+		var ef = en == null ? null : en.constrs.get(name);
+		if (ef == null) throw new TypingError("macro decode: unknown enum field " + name, curPos);
+		return ef;
+	}
+
+	static function decodeFieldAccessValue(ec:EvalContext, v:EvalValue):TFieldAccess {
+		var args = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "FInstance": switch (moduleTypeFromRef(ec, args[0])) {
+				case TClassDecl(c): FInstance(c, [for (p in arrOf(args[1])) decodeType(ec, p)], classFieldFromRef(ec, args[2]));
+				case _: throw new TypingError("macro decode: expected class ref", curPos);
+			}
+			case "FStatic": switch (moduleTypeFromRef(ec, args[0])) {
+				case TClassDecl(c): FStatic(c, classFieldFromRef(ec, args[1]));
+				case _: throw new TypingError("macro decode: expected class ref", curPos);
+			}
+			case "FAnon": FAnon(classFieldFromRef(ec, args[0]));
+			case "FDynamic": FDynamic(strOf(args[0]));
+			case "FClosure":
+				var co:Null<TClassWithParams> = if (args[0] == VNull) null else switch (moduleTypeFromRef(ec, EvalField.field(ec, args[0], EvalHash.hash("c")))) {
+					case TClassDecl(c): {c: c, params: [for (p in arrOf(EvalField.field(ec, args[0], EvalHash.hash("params")))) decodeType(ec, p)]};
+					case _: throw new TypingError("macro decode: expected class ref", curPos);
+				};
+				FClosure(co, classFieldFromRef(ec, args[1]));
+			case "FEnum": switch (moduleTypeFromRef(ec, args[0])) {
+				case TEnumDecl(e): FEnum(e, decodeEnumFieldValue(ec, args[1]));
+				case _: throw new TypingError("macro decode: expected enum ref", curPos);
+			}
+			case other: throw new TypingError("macro decode: unhandled FieldAccess " + other, curPos);
+		};
+	}
+
+	static function decodeModuleTypeValue(ec:EvalContext, v:EvalValue):ModuleType {
+		var args = eargs(v);
+		return switch (ctorName(ec, v)) {
+			case "TClassDecl" | "TEnumDecl" | "TTypeDecl" | "TAbstract": moduleTypeFromRef(ec, args[0]);
+			case other: throw new TypingError("macro decode: unhandled ModuleType " + other, curPos);
+		};
+	}
+
+	static function decodeTFuncValue(ec:EvalContext, v:EvalValue):TFunc {
+		var fnArgs:Array<TFuncArg> = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) {
+			var value = EvalField.field(ec, av, EvalHash.hash("value"));
+			{v: decodeTVar(ec, EvalField.field(ec, av, EvalHash.hash("v"))), c: value == VNull ? null : decodeTypedExpr(ec, value)};
+		}];
+		return new TFunc(fnArgs, decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t"))), decodeTypedExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr"))));
+	}
+
+	static function decodeTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
+		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
+		var t = decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t")));
+		var ed = decodeTypedExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
+		return TypeFunctions.mk(ed, t, p);
+	}
+
+	static function decodeTypedExprDef(ec:EvalContext, e:EvalValue, p:Position):TExprExpr {
+		var args = eargs(e);
+		inline function loop(x:EvalValue):TExpr return decodeTypedExpr(ec, x);
+		return switch (ctorName(ec, e)) {
+			case "TConst": TConst(decodeTConstValue(ec, args[0]));
+			case "TLocal": TLocal(decodeTVar(ec, args[0]));
+			case "TArray": TArray(loop(args[0]), loop(args[1]));
+			case "TBinop": TBinop(decodeBinop(ec, args[0]), loop(args[1]), loop(args[2]));
+			case "TField": TField(loop(args[0]), decodeFieldAccessValue(ec, args[1]));
+			case "TTypeExpr": TTypeExpr(decodeModuleTypeValue(ec, args[0]));
+			case "TParenthesis": TParenthesis(loop(args[0]));
+			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0]))
+				{key: {name: strOf(EvalField.field(ec, fv, EvalHash.hash("name"))), pos: p, quotes: NoQuotes}, expr: loop(EvalField.field(ec, fv, EvalHash.hash("expr")))}]);
+			case "TArrayDecl": TArrayDecl([for (x in arrOf(args[0])) loop(x)]);
+			case "TCall": TCall(loop(args[0]), [for (x in arrOf(args[1])) loop(x)]);
+			case "TNew": switch (moduleTypeFromRef(ec, args[0])) {
+				case TClassDecl(c): TNew(c, [for (x in arrOf(args[1])) decodeType(ec, x)], [for (x in arrOf(args[2])) loop(x)]);
+				case _: throw new TypingError("macro decode: expected class ref", curPos);
+			}
+			case "TUnop": TUnop(decodeUnop(ec, args[0]), boolOf(args[1]) ? Postfix : Prefix, loop(args[2]));
+			case "TFunction": TFunction(decodeTFuncValue(ec, args[0]));
+			case "TVar": TVarExpr(decodeTVar(ec, args[0]), args[1] == VNull ? null : loop(args[1]));
+			case "TBlock": TBlock([for (x in arrOf(args[0])) loop(x)]);
+			case "TFor": TFor(decodeTVar(ec, args[0]), loop(args[1]), loop(args[2]));
+			case "TIf": TIf(loop(args[0]), loop(args[1]), args[2] == VNull ? null : loop(args[2]));
+			case "TWhile": TWhile(loop(args[0]), loop(args[1]), boolOf(args[2]) ? NormalWhile : DoWhile);
+			case "TSwitch": TSwitch(loop(args[0]), [for (cv in arrOf(args[1]))
+				{values: [for (x in arrOf(EvalField.field(ec, cv, EvalHash.hash("values")))) loop(x)], expr: loop(EvalField.field(ec, cv, EvalHash.hash("expr")))}], args[2] == VNull ? null : loop(args[2]));
+			case "TTry": TTry(loop(args[0]), [for (cv in arrOf(args[1]))
+				{v: decodeTVar(ec, EvalField.field(ec, cv, EvalHash.hash("v"))), expr: loop(EvalField.field(ec, cv, EvalHash.hash("expr")))}]);
+			case "TReturn": TReturn(args[0] == VNull ? null : loop(args[0]));
+			case "TBreak": TBreak;
+			case "TContinue": TContinue;
+			case "TThrow": TThrow(loop(args[0]));
+			case "TCast": TCast(loop(args[0]), args[1] == VNull ? null : decodeModuleTypeValue(ec, args[1]));
+			case "TMeta": TMeta(decodeMetadataEntry(ec, args[0], p), loop(args[1]));
+			case "TEnumParameter": TEnumParameter(loop(args[0]), decodeEnumFieldValue(ec, args[1]), switch (args[2]) { case VInt(i): i; case _: throw new TypingError("macro decode: expected int", curPos); });
+			case "TEnumIndex": TEnumIndex(loop(args[0]));
+			case "TIdent": TIdent(strOf(args[0]));
+			case other: throw new TypingError("macro decode: unhandled TypedExprDef " + other, curPos);
+		};
 	}
 
 	// Type an expression on behalf of Context.typeof / typeExpr / storeExpr. A statement error inside a
@@ -2052,6 +2222,9 @@ class EvalMacro {
 
 	static function encodeTVar(ec:EvalContext, v:TVar):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
+		var refId = nextTvarRefId++;
+		tvarRefs.set(refId, v);
+		fields.set(EvalHash.hash("$"), VInt(refId));
 		fields.set(EvalHash.hash("id"), VInt(v.id));
 		fields.set(EvalHash.hash("name"), mkString(v.name));
 		fields.set(EvalHash.hash("t"), encodeType(ec, v.type));
@@ -2386,6 +2559,7 @@ class EvalMacro {
 
 	static function encodeClassRef(ec:EvalContext, c:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TClassDecl(c));
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassType(ec, c), true));
 		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(c.path)), true));
 		return VObject(new VObject([], ODictionary(f)));
@@ -2393,6 +2567,9 @@ class EvalMacro {
 
 	static function encodeClassFieldRef(ec:EvalContext, cf:TClassField):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		var refId = nextCfieldRefId++;
+		cfieldRefs.set(refId, cf);
+		f.set(EvalHash.hash("$"), VInt(refId));
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassField(ec, cf), true));
 		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(cf.name), true));
 		return VObject(new VObject([], ODictionary(f)));
@@ -2400,6 +2577,7 @@ class EvalMacro {
 
 	static function encodeEnumRef(ec:EvalContext, e:TEnum):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TEnumDecl(e));
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeEnumType(ec, e), true));
 		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(e.path)), true));
 		return VObject(new VObject([], ODictionary(f)));
@@ -2407,6 +2585,7 @@ class EvalMacro {
 
 	static function encodeDefRef(ec:EvalContext, d:TDef):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TTypeDecl(d));
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeDefType(ec, d), true));
 		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(d.path)), true));
 		return VObject(new VObject([], ODictionary(f)));
@@ -2414,6 +2593,7 @@ class EvalMacro {
 
 	static function encodeAbstractRef(ec:EvalContext, a:TAbstract):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TAbstractDecl(a));
 		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeAbstractType(ec, a), true));
 		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(a.path)), true));
 		return VObject(new VObject([], ODictionary(f)));

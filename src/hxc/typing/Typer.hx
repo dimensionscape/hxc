@@ -575,7 +575,11 @@ class Typer {
 						case _: null;
 					}
 					if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
-					ctx.com.storedTypedExprs.get(id);
+					// Fresh tvars on every retrieval so the expression does not share variable slots with
+					// its original (macro-time) context; this rebinds to the enclosing context.
+					TexprTools.duplicateTvars(function(te) {
+						return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te.pos) : te;
+					}, ctx.com.storedTypedExprs.get(id));
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
