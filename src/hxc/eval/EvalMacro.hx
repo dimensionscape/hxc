@@ -316,6 +316,7 @@ class EvalMacro {
 			addMacroTypeDependency(macroCom, macroModule, moduleDependency, dp);
 			hxc.typing.TypeResolve.resolveModule(macroCom, macroModule);
 			forceModuleClassFields(macroCom, macroModule);
+			staleMacroCtx = macroCtx;
 			macroCtx = null;
 			lastModuleCount = -1;
 		}
@@ -688,11 +689,19 @@ class EvalMacro {
 				hxc.typing.TypeResolve.resolveAll(macroCom);
 				hxc.typing.TypeFields.installLazy(macroCom);
 				if (macroCtx == null) {
+					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] FULL BUILD, modules=" + macroCom.modules.length);
 					var ec = EvalMain.create(true);
 					registerContext(ec, com);
 					EvalMain.addModules(ec, macroCom.modules);
+					// A rebuild must not reset macro-world static state; carry static var values over from
+					// the retired context.
+					if (staleMacroCtx != null) {
+						migrateMacroStatics(staleMacroCtx, ec);
+						staleMacroCtx = null;
+					}
 					macroCtx = ec;
 				} else if (macroCom.modules.length > lastModuleCount) {
+					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] EXTEND from " + lastModuleCount + " to " + macroCom.modules.length);
 					// Extend the existing context with only the newly loaded modules. Rebuilding the whole
 					// macro context on every macro-load (a suite macro-loads O(N) classes) would be O(N^2)
 					// and exhaust the GC ("Too many heap sections").
@@ -708,6 +717,25 @@ class EvalMacro {
 	}
 
 	static var macroCom:Context = null;
+	static var staleMacroCtx:Null<EvalContext> = null;
+
+	// Copy every static var value from a retired macro context into its replacement so mutable
+	// macro-world state (e.g. an Expr cached in a macro class static) survives a rebuild.
+	static function migrateMacroStatics(oldCtx:EvalContext, newCtx:EvalContext):Void {
+		for (key in oldCtx.staticPrototypes.keys()) {
+			var op = oldCtx.staticPrototypes.get(key);
+			var np = newCtx.staticPrototypes.get(key);
+			if (np == null) continue;
+			var c = switch (newCtx.typeCache.get(key)) { case TClassDecl(c): c; case _: null; };
+			if (c == null) continue;
+			for (name in op.pnames.keys()) {
+				var cf = c.statics.get(EvalHash.revHash(name));
+				if (cf == null || !cf.kind.match(Var(_))) continue;
+				var ni = np.pnames.get(name);
+				if (ni != null) np.pfields[ni] = op.pfields[op.pnames.get(name)];
+			}
+		}
+	}
 
 	static function macroLoadPath(path:hxc.core.Globals.Path):hxc.core.Globals.Path {
 		var suffix = "_Fields_";
@@ -766,6 +794,7 @@ class EvalMacro {
 		} else if (macroCtx != null && fieldName != null) {
 			var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
 			if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
+				staleMacroCtx = macroCtx;
 				macroCtx = null;
 				lastModuleCount = -1;
 			}
