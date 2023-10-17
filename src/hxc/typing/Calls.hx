@@ -117,10 +117,21 @@ class Calls {
 		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
 	}
 
+	// An @:arrayAccess method's own type parameters are instantiated as constrained monomorphs so the
+	// key and value unify against them while the constraints still apply.
+	static function arrayAccessFieldType(tl:TParams, a:TAbstract, cf:TClassField):T {
+		var t = TypeFunctions.applyParams(a.params, tl, cf.type);
+		if (cf.params.length > 0) {
+			var monos = TypeUnification.spawnConstrainedMonos(function(t2) return TypeFunctions.applyParams(a.params, tl, t2), cf.params);
+			t = TypeFunctions.applyParams(cf.params, monos, t);
+		}
+		return t;
+	}
+
 	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr} {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
-			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
+			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
 				case TFun(sig) if (sig.args.length == 2):
 					try {
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
@@ -146,7 +157,7 @@ class Calls {
 	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position):TExpr {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
-			switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, cf.type))) {
+			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
 				case TFun(sig) if (sig.args.length == 3):
 					try {
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
