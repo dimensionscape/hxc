@@ -1073,8 +1073,20 @@ class Typer {
 		switch (withType) {
 			case WithType(wt, _):
 				var expectedEnum = expectedEnumLike(wt, []);
-				if (expectedEnum != null && expectedEnum.constrs.exists(i))
-					return Fields.enumConstructor(ctx, expectedEnum, TexprTools.makeTypeExpr(TEnumDecl(expectedEnum), p), i, p);
+				if (expectedEnum != null && expectedEnum.constrs.exists(i)) {
+					var acc = Fields.enumConstructor(ctx, expectedEnum, TexprTools.makeTypeExpr(TEnumDecl(expectedEnum), p), i, p);
+					// A constructor function's return unifies with the expected type so the enum's type
+					// parameters bind from the expectation before the arguments; failure is ignored. .
+					switch (acc) {
+						case AKExpr(te):
+							switch (TypeFunctions.follow(te.type)) {
+								case TFun(sig): try TypeUnification.unifyDefault(sig.ret, wt) catch (_:UnifyError) {};
+								case _:
+							}
+						case _:
+					}
+					return acc;
+				}
 				switch (TypeFunctions.follow(wt)) {
 					case TAbstract(a, tl) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
 						// An enum-abstract value used unqualified resolves against the expected type, like an
