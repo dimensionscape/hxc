@@ -418,7 +418,10 @@ class Fields {
 				var u = tryUsing(ctx, e, i, pfield);
 				if (u != null) u else throw fieldNotFound(e.type, i, pfield);
 			case TDynamic(_):
-				AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
+				// A using extension applies to a Dynamic receiver before the dynamic-field fallback
+				// type_field_by_type_extension runs before type_field_by_fallback).
+				var u = tryUsing(ctx, e, i, pfield);
+				if (u != null) u else AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 			case _:
 				// A field not found on an enum or other value may come from a `using` static extension
 				// (e.g. the global EnumValueTools on an enum value).
