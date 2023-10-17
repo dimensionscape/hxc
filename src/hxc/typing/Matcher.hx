@@ -1248,6 +1248,28 @@ class Match {
 			subjects = [subjectE];
 			subjectTypes = [subjectE.type];
 		}
+		// An unbound monomorph expected type gives the case bodies nothing to check against; the first body
+		// would bind it and every sibling branch would then have to unify with that one type. Type the
+		// bodies as plain values, infer the common type, and unify it back into the monomorph. An
+		// implicit-return Void keeps its source and skips the final unification.
+		var tmono:Null<T> = null;
+		var allowMinVoid = false;
+		switch (withType) {
+			case WithType(t, src):
+				var isImplicitReturn = src != null && src.match(ImplicitReturn);
+				switch (TypeFunctions.follow(t)) {
+					case TMono(m) if (m.type == null):
+						tmono = t;
+						allowMinVoid = isImplicitReturn;
+						withType = isImplicitReturn ? Value(src) : WithTypeTools.value;
+					case TAbstract(a, _) if (isImplicitReturn && a.path.pack.length == 0 && a.path.name == "Void"):
+						tmono = t;
+						allowMinVoid = true;
+						withType = Value(src);
+					case _:
+				}
+			case _:
+		}
 		var allCases = cases.copy();
 		if (def != null) allCases.push({values: [new Expr(EConst(CIdent("_")), def.pos)], guard: null, expr: def.e, pos: def.pos});
 		var matchCases:Array<MatchCase> = [];
@@ -1272,9 +1294,102 @@ class Match {
 			}
 		}
 		var tSwitch = inferSwitchType(ctx, withType, matchCases);
+		if (tmono != null) {
+			var skip = allowMinVoid && switch (TypeFunctions.follow(tmono)) {
+				case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
+				case _: false;
+			};
+			if (!skip) try hxc.core.TypeUnification.unifyDefault(tSwitch, tmono)
+				catch (err:hxc.core.TypeUnification.UnifyError) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(err.errors), p);
+		}
 		var dt = DtCompile.compileEntry(ctx, false, subjects, matchCases, p);
 		var te = TexprConverter.toTexpr(ctx, tSwitch, withType, dt);
 		if (te == null) throw new TypingError("Unmatched patterns: _", p);
-		return te;
+		return varLazify(te);
+	}
+
+	// An extractor variable's initialization moves from its declaration to its first use, so a guard (e.g.
+	// the null check before an extractor) runs before the extractor expression evaluates. It is applied per
+	// match expression since extractor variables are declared and used only inside the match's own tree.
+	static function varLazify(e:TExpr):TExpr {
+		var inits = new Map<Int, TExpr>();
+		function copyInits(src:Map<Int, TExpr>):Map<Int, TExpr> {
+			var r = new Map<Int, TExpr>();
+			for (k in src.keys()) r.set(k, src.get(k));
+			return r;
+		}
+		function loop(e:TExpr):TExpr {
+			function sub(x:TExpr):TExpr return loop(x);
+			return switch (e.expr) {
+				case TVarExpr(v, e1) if (e1 != null && v.kind.match(VExtractorVariable)):
+					inits.set(v.id, e1);
+					TypeFunctions.mk(TVarExpr(v, null), e.type, e.pos);
+				case TLocal(v) if (inits.exists(v.id)):
+					var einit = inits.get(v.id);
+					inits.remove(v.id);
+					einit = loop(einit);
+					TypeFunctions.mk(TParenthesis(TypeFunctions.mk(TBinop(OpAssign, e, einit), e.type, e.pos)), e.type, e.pos);
+				case TIf(e1, e2, eo):
+					var e1b = sub(e1);
+					var saved = copyInits(inits);
+					var e2b = sub(e2);
+					inits = copyInits(saved);
+					var eob = eo == null ? null : sub(eo);
+					inits = saved;
+					TypeFunctions.mk(TIf(e1b, e2b, eob), e.type, e.pos);
+				case TWhile(e1, e2, flag):
+					var e1b = sub(e1);
+					var saved = copyInits(inits);
+					var e2b = sub(e2);
+					inits = saved;
+					TypeFunctions.mk(TWhile(e1b, e2b, flag), e.type, e.pos);
+				case TSwitch(e1, cases, edef):
+					var e1b = sub(e1);
+					var saved = copyInits(inits);
+					var cs:Array<TSwitchCase> = [];
+					for (c in cases) {
+						var ce = sub(c.expr);
+						inits = copyInits(saved);
+						cs.push({values: c.values, expr: ce});
+					}
+					var db = edef == null ? null : sub(edef);
+					inits = saved;
+					TypeFunctions.mk(TSwitch(e1b, cs, db), e.type, e.pos);
+				case TTry(e1, catches):
+					var saved = copyInits(inits);
+					var e1b = sub(e1);
+					inits = copyInits(saved);
+					var cts:Array<TCatch> = [];
+					for (c in catches) {
+						var ce = sub(c.expr);
+						inits = copyInits(saved);
+						cts.push({v: c.v, expr: ce});
+					}
+					inits = saved;
+					TypeFunctions.mk(TTry(e1b, cts), e.type, e.pos);
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_):
+					e;
+				case TArray(e1, e2): TypeFunctions.mk(TArray(sub(e1), sub(e2)), e.type, e.pos);
+				case TBinop(op, e1, e2): TypeFunctions.mk(TBinop(op, sub(e1), sub(e2)), e.type, e.pos);
+				case TField(e1, fa): TypeFunctions.mk(TField(sub(e1), fa), e.type, e.pos);
+				case TParenthesis(e1): TypeFunctions.mk(TParenthesis(sub(e1)), e.type, e.pos);
+				case TObjectDecl(fields): TypeFunctions.mk(TObjectDecl([for (f in fields) {key: f.key, expr: sub(f.expr)}]), e.type, e.pos);
+				case TArrayDecl(values): TypeFunctions.mk(TArrayDecl([for (x in values) sub(x)]), e.type, e.pos);
+				case TCall(e1, params): TypeFunctions.mk(TCall(sub(e1), [for (x in params) sub(x)]), e.type, e.pos);
+				case TNew(c, params, args): TypeFunctions.mk(TNew(c, params, [for (x in args) sub(x)]), e.type, e.pos);
+				case TUnop(op, flag, e1): TypeFunctions.mk(TUnop(op, flag, sub(e1)), e.type, e.pos);
+				case TFunction(f): TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, sub(f.expr))), e.type, e.pos);
+				case TVarExpr(v, e1): TypeFunctions.mk(TVarExpr(v, e1 == null ? null : sub(e1)), e.type, e.pos);
+				case TBlock(exprs): TypeFunctions.mk(TBlock([for (x in exprs) sub(x)]), e.type, e.pos);
+				case TFor(v, e1, e2): TypeFunctions.mk(TFor(v, sub(e1), sub(e2)), e.type, e.pos);
+				case TReturn(e1): TypeFunctions.mk(TReturn(e1 == null ? null : sub(e1)), e.type, e.pos);
+				case TThrow(e1): TypeFunctions.mk(TThrow(sub(e1)), e.type, e.pos);
+				case TCast(e1, mt): TypeFunctions.mk(TCast(sub(e1), mt), e.type, e.pos);
+				case TMeta(m, e1): TypeFunctions.mk(TMeta(m, sub(e1)), e.type, e.pos);
+				case TEnumParameter(e1, ef, idx): TypeFunctions.mk(TEnumParameter(sub(e1), ef, idx), e.type, e.pos);
+				case TEnumIndex(e1): TypeFunctions.mk(TEnumIndex(sub(e1)), e.type, e.pos);
+			}
+		}
+		return loop(e);
 	}
 }
