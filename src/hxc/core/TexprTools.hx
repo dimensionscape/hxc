@@ -45,15 +45,17 @@ class TexprTools {
 		return TypeFunctions.mk(TField(eThis, FStatic(c, cf)), cf.type, p);
 	}
 
-	// Anon carrying the right status (Statics / EnumStatics / AbstractStatics).
+	// Anon carrying the right status (Statics / EnumStatics / AbstractStatics). A typedef resolves to its
+	// underlying module type, so the runtime value carries the concrete class/enum path.
 	public static function makeTypeExpr(mt:ModuleType, p:Position):TExpr {
-		var t = switch (TypeFunctions.resolveTypedef(mt)) {
+		var resolved = TypeFunctions.resolveTypedef(mt);
+		var t = switch (resolved) {
 			case TClassDecl(c): TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics);
 			case TEnumDecl(e): TypeFunctions.mkAnon(new Ref(EnumStatics(e)));
 			case TAbstractDecl(a): TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null);
 			case _: throw new TypingError("Invalid module type", p);
 		};
-		return TypeFunctions.mk(TTypeExpr(mt), t, p);
+		return TypeFunctions.mk(TTypeExpr(resolved), t, p);
 	}
 
 	public static function makeConstTexpr(basic:BasicTypes, ct:TConstant, p:Position):TExpr {
