@@ -957,9 +957,12 @@ class DtCompile {
 			dt = bind(mctx, bindings, dt);
 			switchCases.push({con: s.con, unguarded: s.unguarded, dt: dt});
 		}
-		// A structure pattern is irrefutable (every value of the type has the fields): bind the fields
-		// and continue with no switch test, which has no runtime discriminant to emit.
-		if (switchCases.length == 1 && sig.nullCases.length == 0 && (switch (sig.sigma[0].con.kind) { case ConFields(_): true; case _: false; }))
+		// A structure pattern is irrefutable (every value of the type has the fields): bind the fields and
+		// continue with no switch test, which has no runtime discriminant to emit. A nullable subject keeps
+		// the switch shell so the null guard below still routes null to the default the guard and collapses
+		// the single-ConFields switch at conversion).
+		if (switchCases.length == 1 && sig.nullCases.length == 0 && !TypeFunctions.isExplicitNull(subject.type)
+				&& (switch (sig.sigma[0].con.kind) { case ConFields(_): true; case _: false; }))
 			return switchCases[0].dt;
 		var def = defaultMatrix(subject, cases);
 		var switchDefault = compile(mctx, rest, def);
