@@ -1067,7 +1067,10 @@ class TexprConverter {
 		return Typer.accGet(ctx, Fields.typeField(ctx, subject, "length", subject.pos, MGet, WithTypeTools.value));
 	}
 
-	static function completeFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Bool {
+	// The unmatched constructor names of a finite subject (empty when fully covered), or null when the
+	// subject's constructor universe is not finite. The names feed the non-exhaustiveness error: constants
+	// of an enum abstract render as the declaring static's name; the list is sorted and joined with " | ".
+	static function unmatchedFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Null<Array<String>> {
 		function constKey(ct:TConstant):String {
 			return switch (ct) {
 				case TInt(v): "i:" + v;
@@ -1097,11 +1100,12 @@ class TexprConverter {
 					case ConEnum(en2, ef) if (en2 == en): found.set(ef.name, true);
 					case _:
 				}
+				var missing:Array<String> = [];
 				for (name in en.constrs.keys()) {
 					var ef = en.constrs.get(name);
-					if (DtCompile.enumConstructorCompatible(subject.type, en, ef) && !found.exists(name)) return false;
+					if (DtCompile.enumConstructorCompatible(subject.type, en, ef) && !found.exists(name)) missing.push(name);
 				}
-				return true;
+				return missing;
 			case TAbstract(a, _) if (a.isEnum && a.impl != null):
 				var found = new Map<String, Bool>();
 				var foundConst = new Map<String, Bool>();
@@ -1113,12 +1117,13 @@ class TexprConverter {
 					case _:
 				}
 				var total = 0;
+				var missing:Array<String> = [];
 				for (cf in a.impl.statics) if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
 					total++;
 					var ct = fieldConst(cf);
-					if (!found.exists(cf.name) && (ct == null || !foundConst.exists(constKey(ct)))) return false;
+					if (!found.exists(cf.name) && (ct == null || !foundConst.exists(constKey(ct)))) missing.push(cf.name);
 				}
-				return total > 0;
+				return total > 0 ? missing : null;
 			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"):
 				var hasTrue = false;
 				var hasFalse = false;
@@ -1127,9 +1132,12 @@ class TexprConverter {
 					case ConConst(TBool(false)): hasFalse = true;
 					case _:
 				}
-				return hasTrue && hasFalse;
+				var missing:Array<String> = [];
+				if (!hasTrue) missing.push("true");
+				if (!hasFalse) missing.push("false");
+				return missing;
 			case _:
-				return false;
+				return null;
 		}
 	}
 
@@ -1153,7 +1161,8 @@ class TexprConverter {
 				}
 				var topLevel = rec.match(DRToplevel);
 				var nextRec = topLevel ? DRAfterSwitch : DRDeep;
-				var complete = completeFiniteCoverage(subject, cases);
+				var unmatched = unmatchedFiniteCoverage(subject, cases);
+				var complete = unmatched != null && unmatched.length == 0;
 				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
 				// abstract is compile-time finite, so a runtime value can be out of range and a user
 				// default must be kept.
@@ -1171,7 +1180,11 @@ class TexprConverter {
 				if (defE == null && !complete) switch (withType) {
 					case NoValue:
 					case _:
-						throw new TypingError("Unmatched patterns: _", subject.pos);
+						var s = if (unmatched == null || unmatched.length == 0) "_" else {
+							unmatched.sort(Reflect.compare);
+							unmatched.join(" | ");
+						};
+						throw new TypingError("Unmatched patterns: " + s, subject.pos);
 				}
 				// An enum switch dispatches on the constructor index.
 				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
