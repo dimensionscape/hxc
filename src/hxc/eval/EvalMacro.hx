@@ -2205,7 +2205,60 @@ class EvalMacro {
 				CTFunction([for (a in sig.args) hint(a.t)], hint(sig.ret));
 			case TDynamic(_):
 				CTPath({tpackage: [], tname: "Dynamic", tparams: [], tsub: null});
-			case TAnon(_) | TMono(_):
+			case TAnon(an):
+				// An anonymous type: statics print as Class<X>/Enum<X>; otherwise rebuild the anonymous
+				// declaration, a var becoming a property whose accessor names spell its access.
+				switch (an.status.get()) {
+					case Statics(c):
+						CTPath({tpackage: [], tname: "Class", tparams: [TPType({ct: CTPath({tpackage: c.path.pack, tname: c.path.name, tparams: [], tsub: null}), pos: Position.nullPos})], tsub: null});
+					case EnumStatics(e):
+						CTPath({tpackage: [], tname: "Enum", tparams: [TPType({ct: CTPath({tpackage: e.path.pack, tname: e.path.name, tparams: [], tsub: null}), pos: Position.nullPos})], tsub: null});
+					case _:
+						// No hint for an unresolved mono or an unconvertible type.
+						function mkTypeHint(t:T):Null<TypeHint> {
+							return switch (TypeFunctions.follow(t)) {
+								case TMono(_): null;
+								case _:
+									var ct = typeToComplexType(t);
+									ct == null ? null : {ct: ct, pos: Position.nullPos};
+							};
+						}
+						// The field list is in descending name order: an ascending visit that prepends
+						// each.
+						var names = [for (k in an.fields.keys()) k];
+						names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						var fields:Array<hxc.ast.Ast.ClassField> = [];
+						for (n in names) {
+							var f = an.fields.get(n);
+							var access:Array<hxc.ast.Ast.PlacedAccess> = [];
+							// Prepend semantics give [extern, final, public/private].
+							if (TypeFunctions.hasClassFieldFlag(f, CfExtern)) access.push({access: AExtern, pos: Position.nullPos});
+							if (TypeFunctions.hasClassFieldFlag(f, CfFinal)) access.push({access: AFinal, pos: Position.nullPos});
+							access.push({access: TypeFunctions.hasClassFieldFlag(f, CfPublic) ? APublic : APrivate, pos: Position.nullPos});
+							var kind:Null<ClassFieldKind> = switch [f.kind, TypeFunctions.follow(f.type)] {
+								case [Var(v), _]:
+									function vas(va:VarAccess, gs:String):String return switch (va) {
+										case AccNormal | AccCtor | AccInline | AccRequire(_, _): "default";
+										case AccNo: "null";
+										case AccNever: "never";
+										case AccCall: gs;
+									};
+									FProp({name: vas(v.read, "get"), pos: Position.nullPos}, {name: vas(v.write, "set"), pos: Position.nullPos}, mkTypeHint(f.type), null);
+								case [Method(_), TFun(sig)]:
+									FFun({
+										fParams: [],
+										fArgs: [for (a in sig.args) {name: {name: a.name, pos: Position.nullPos}, opt: a.opt, meta: [], type: mkTypeHint(a.t), value: null}],
+										fType: mkTypeHint(sig.ret),
+										fExpr: null
+									});
+								case _: null;
+							};
+							if (kind == null) return null;
+							fields.push({cffName: {name: f.name, pos: Position.nullPos}, cffDoc: null, cffPos: f.pos, cffMeta: f.meta, cffAccess: access, cffKind: kind});
+						}
+						CTAnonymous(fields);
+				}
+			case TMono(_):
 				null;
 			case TLazy(r):
 				typeToComplexType(TypeFunctions.lazyType(r));
