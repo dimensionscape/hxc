@@ -4037,24 +4037,6 @@ class EvalStdLib {
 		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
 		reg(s, "haxe.SysTools", "quoteUnixArg", vfn(a -> mkStr(haxe.SysTools.quoteUnixArg(stringOf(arg(a, 0))))));
 		reg(s, "haxe.SysTools", "quoteWinArg", vfn(a -> mkStr(haxe.SysTools.quoteWinArg(stringOf(arg(a, 0)), arg(a, 1) == VTrue))));
-		reg(s, "Xml", "Element", VInt(0));
-		reg(s, "Xml", "PCData", VInt(1));
-		reg(s, "Xml", "CData", VInt(2));
-		reg(s, "Xml", "Comment", VInt(3));
-		reg(s, "Xml", "DocType", VInt(4));
-		reg(s, "Xml", "ProcessingInstruction", VInt(5));
-		reg(s, "Xml", "Document", VInt(6));
-		reg(s, "Xml", "parse", vfn(a -> try xmlValue(ctx, Xml.parse(stringOf(arg(a, 0)))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(s, "Xml", "createElement", vfn(a -> xmlValue(ctx, Xml.createElement(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createPCData", vfn(a -> xmlValue(ctx, Xml.createPCData(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createCData", vfn(a -> xmlValue(ctx, Xml.createCData(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createComment", vfn(a -> xmlValue(ctx, Xml.createComment(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createDocType", vfn(a -> xmlValue(ctx, Xml.createDocType(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createProcessingInstruction", vfn(a -> xmlValue(ctx, Xml.createProcessingInstruction(stringOf(arg(a, 0))))));
-		reg(s, "Xml", "createDocument", vfn(a -> xmlValue(ctx, Xml.createDocument())));
-		reg(s, "haxe.xml.Printer", "print", vfn(a -> mkStr(haxe.xml.Printer.print(thisXml([arg(a, 0)]), arg(a, 1) == VTrue))));
 		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
@@ -5002,114 +4984,6 @@ class EvalStdLib {
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return arrayIteratorValue(ctx, VArray(new VArray(items, items.length)));
-		reg(inst, "Xml", "get_nodeName", vmethod(a -> try mkStr(thisXml(a).nodeName) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "set_nodeName", vmethod(a -> {
-			try {
-				var x = thisXml(a);
-				x.nodeName = stringOf(arg(a, 1));
-				syncXmlFields(ctx, thisInstance(a, "Xml"), x);
-				arg(a, 1);
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "get_nodeValue", vmethod(a -> try mkStr(thisXml(a).nodeValue) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "set_nodeValue", vmethod(a -> {
-			try {
-				var x = thisXml(a);
-				x.nodeValue = stringOf(arg(a, 1));
-				syncXmlFields(ctx, thisInstance(a, "Xml"), x);
-				arg(a, 1);
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "get", vmethod(a -> {
-			try {
-				var v = thisXml(a).get(stringOf(arg(a, 1)));
-				v == null ? VNull : mkStr(v);
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "set", vmethod(a -> try { thisXml(a).set(stringOf(arg(a, 1)), stringOf(arg(a, 2))); VNull; } catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "remove", vmethod(a -> try { thisXml(a).remove(stringOf(arg(a, 1))); VNull; } catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "exists", vmethod(a -> try EvalValueTools.vbool(thisXml(a).exists(stringOf(arg(a, 1)))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "attributes", vmethod(a -> try iteratorOf([for (name in thisXml(a).attributes()) mkStr(name)]) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "iterator", vmethod(a -> try iteratorOf(xmlChildren(ctx, thisXml(a))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "elements", vmethod(a -> try iteratorOf(xmlChildren(ctx, thisXml(a), true)) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "elementsNamed", vmethod(a -> try iteratorOf(xmlChildren(ctx, thisXml(a), true, stringOf(arg(a, 1)))) catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
-		}));
-		reg(inst, "Xml", "firstChild", vmethod(a -> {
-			try {
-				var x = thisXml(a).firstChild();
-				x == null ? VNull : xmlValue(ctx, x);
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "firstElement", vmethod(a -> {
-			try {
-				var x = thisXml(a).firstElement();
-				x == null ? VNull : xmlValue(ctx, x);
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "addChild", vmethod(a -> {
-			try {
-				var parent = thisXml(a);
-				var child = thisXml([arg(a, 1)]);
-				parent.addChild(child);
-				syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
-				syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
-				VNull;
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "removeChild", vmethod(a -> {
-			try {
-				var parent = thisXml(a);
-				var child = thisXml([arg(a, 1)]);
-				parent.removeChild(child);
-				syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
-				syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
-				VNull;
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "insertChild", vmethod(a -> {
-			try {
-				var parent = thisXml(a);
-				var child = thisXml([arg(a, 1)]);
-				parent.insertChild(child, toInt(arg(a, 2)));
-				syncXmlFields(ctx, thisInstance(a, "Xml"), parent);
-				syncXmlFields(ctx, thisInstance([arg(a, 1)], "Xml"), child);
-				VNull;
-			} catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
-		}));
-		reg(inst, "Xml", "toString", vmethod(a -> mkStr(thisXml(a).toString())));
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
