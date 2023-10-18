@@ -1575,6 +1575,13 @@ class Typer {
 				}
 			case AKAccess(_, _, _, _, _): throw new TypingError("Abstract array access is not yet ported", Position.nullPos);
 			case AKResolve(se, name):
+				// A macro resolve method runs at type time with the receiver as syntax and the field name
+				// as a string literal; the resolve call goes through the field call, which dispatches macro
+				// methods.
+				if (se.access.field.kind.match(Method(MethMacro))) {
+					var eName = new Expr(EConst(CString(name, SDoubleQuotes)), se.access.pos);
+					return hxc.eval.EvalMacro.run(ctx, se.access, [Calls.typedExprToSyntax(ctx, se.thisExpr), eName], WithTypeTools.value, se.access.pos);
+				}
 				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length >= 2):
