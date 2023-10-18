@@ -18,7 +18,10 @@ private class InlineBail extends haxe.Exception {
 // the caller emits a normal call. Types in the inlined body are left as-is (the evaluator runs the result
 // without re-typing, so values stay correct).
 class Inline {
+	static var depth = 0;
+
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
+		if (depth > 32) return null;
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
 		var ethis:Null<TExpr> = null;
@@ -56,11 +59,14 @@ class Inline {
 		// An abstract instance member (CfImpl) is an impl static whose first arg is the abstract `this`;
 		// a mutation of `this` must write back to an lvalue receiver.
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
-		return try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
+		depth++;
+		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
+		depth--;
+		return r;
 	}
 
 	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, p:Position):TExpr {
-		var subst = new Map<Int, TVar>();
+		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
 		var vthis:Null<TVar> = null;
@@ -78,12 +84,13 @@ class Inline {
 			}
 			// The abstract `this` (first arg of an abstract member) binds to a local receiver directly, so
 			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
-			var directLocal = (absMember && i == 0) ? (switch (param.expr) { case TLocal(v): v; case _: null; }) : null;
-			if (directLocal != null) {
-				subst.set(av.id, directLocal);
+			// A stable lvalue receiver (a local or a side-effect-free field chain) substitutes
+			// directly, so this-assignments write back through it.
+			if (absMember && i == 0 && isStableLvalue(param)) {
+				subst.set(av.id, param);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
-				subst.set(av.id, nv);
+				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 			}
 		}
@@ -91,8 +98,21 @@ class Inline {
 		return TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
 	}
 
+	// A side-effect-free lvalue: re-reading and assigning through it is equivalent to a bound
+	// receiver, so the substituted body mutates the caller's storage.
+	static function isStableLvalue(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TLocal(_): true;
+			case TConst(TThis): true;
+			case TField(e1, _): isStableLvalue(e1);
+			case TTypeExpr(_): true;
+			case TParenthesis(e1): isStableLvalue(e1);
+			case _: false;
+		};
+	}
+
 	// The body reduced to its result value: a single or final return's value, else the body itself.
-	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TVar>, vthis:Null<TVar>):TExpr {
+	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>):TExpr {
 		switch (body.expr) {
 			case TReturn(eo):
 				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, body.pos) : mapExpr(ctx, eo, subst, vthis);
@@ -113,26 +133,36 @@ class Inline {
 	}
 
 	// Substitutes argument/this locals; bails on anything outside the handled subset.
-	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TVar>, vthis:Null<TVar>):TExpr {
+	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>):TExpr {
 		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis);
 		var ne:TExprExpr = switch (e.expr) {
 			case TConst(TThis):
 				if (vthis == null) throw new InlineBail();
 				TLocal(vthis);
 			case TConst(_): e.expr;
-			case TLocal(v): subst.exists(v.id) ? TLocal(subst.get(v.id)) : e.expr;
+			case TLocal(v):
+				if (subst.exists(v.id)) return subst.get(v.id);
+				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
 			case TBinop(op, e1, e2): TBinop(op, m(e1), m(e2));
 			case TField(e1, fa): TField(m(e1), fa);
 			case TParenthesis(e1): TParenthesis(m(e1));
 			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: m(f.expr)}]);
 			case TArrayDecl(vals): TArrayDecl([for (x in vals) m(x)]);
-			case TCall(e1, ps): TCall(m(e1), [for (x in ps) m(x)]);
+			case TCall(e1, ps):
+				// A nested inline call in the body expands too, so a sibling call mutating the
+				// abstract this still writes back to the substituted receiver (the reference
+				// inliner expands inline calls inside inlined bodies).
+				var me1 = m(e1);
+				var mps = [for (x in ps) m(x)];
+				var nested = tryInline(ctx, me1, mps, e.type, e.pos);
+				if (nested != null) return nested;
+				TCall(me1, mps);
 			case TNew(c, tp, args): TNew(c, tp, [for (x in args) m(x)]);
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
-				subst.set(v.id, nv);
+				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
 				TVarExpr(nv, eo == null ? null : m(eo));
 			case TBlock(el): TBlock([for (x in el) m(x)]);
 			case TFor(v, e1, e2):
@@ -140,7 +170,7 @@ class Inline {
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
 				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
-				subst.set(v.id, nv);
+				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
 				TFor(nv, me1, me2);
