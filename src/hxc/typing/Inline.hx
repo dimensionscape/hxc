@@ -92,6 +92,14 @@ class Inline {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
 				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
+				// An optional argument with a non-null default falls back when the passed value is null at
+				// runtime: if (v == null) v = default. (i_default_value) and
+				var dflt = tf.args[i].c;
+				if (dflt != null && !dflt.expr.match(TConst(TNull))) {
+					var ve = TypeFunctions.mk(TLocal(nv), nv.type, p);
+					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, p)), ctx.com.basic.tbool, p);
+					binds.push(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dflt), nv.type, p), null), tvoid, p));
+				}
 			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
