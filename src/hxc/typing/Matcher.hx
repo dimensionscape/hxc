@@ -804,6 +804,14 @@ class DtCompile {
 
 	static function paramCompatible(subject:T, constructor:T):Bool {
 		if (subject == constructor) return true;
+		// A plain (non-GADT) constructor return carries the enum's open type parameter, which
+		// unifies with any subject parameter (unifyConstructor spawns it as a mono); only a
+		// concrete constructor-side parameter filters GADT-style.
+		switch (TypeFunctions.follow(constructor)) {
+			case TMono(_): return true;
+			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): return true;
+			case _:
+		}
 		return switch (TypeFunctions.follow(subject)) {
 			case TMono(_): true;
 			case TInst(c, _):
