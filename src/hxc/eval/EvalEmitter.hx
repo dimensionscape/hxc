@@ -663,8 +663,19 @@ class EvalEmitter {
 				var vthis = EvalContext.getEval(ctx).env.vthis;
 				switch (TypeFunctions.follow(callee.type)) {
 					case TInst(c, _):
-						var ctor = ctx.constructors.get(EvalHash.pathHash(c.path));
-						if (ctor != null) callAt(ctx, p, ctor, [vthis].concat(args));
+						var key = EvalHash.pathHash(c.path);
+						// A native-backed parent (BytesInput, ...) constructs through a builtin that
+						// returns its own instance; the subclass's this delegates its native state to it.
+						var cb = ctx.builtins.constructorBuiltins.get(key);
+						if (cb != null) {
+							switch [vthis, cb(args)] {
+								case [VInstance(vt), VInstance(built)]: EvalStdLib.superDelegates.set(vt, built);
+								case _:
+							}
+						} else {
+							var ctor = ctx.constructors.get(key);
+							if (ctor != null) callAt(ctx, p, ctor, [vthis].concat(args));
+						}
 					case _:
 				}
 				return VNull;

@@ -906,6 +906,14 @@ class EvalStdLib {
 	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
 	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
 	static var nativeBytesOutputs = new haxe.ds.ObjectMap<VInstance, Map<String, MapEntry>>();
+	// A subclass instance whose super constructor is a native builtin (new StringInput -> super ->
+	// BytesInput's builtin) delegates its native state to the instance the builtin constructed.
+	public static var superDelegates = new haxe.ds.ObjectMap<VInstance, VInstance>();
+	static function nativeSelf(vi:VInstance):VInstance {
+		var d = superDelegates.get(vi);
+		return d != null ? d : vi;
+	}
+
 	static var nativeBytesInputs = new haxe.ds.ObjectMap<VInstance, {bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
 	static var nativeLists = new haxe.ds.ObjectMap<VInstance, Array<EvalValue>>();
@@ -2574,7 +2582,7 @@ class EvalStdLib {
 	}
 
 	static function thisBytesInput(a:Array<EvalValue>):{bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int} {
-		var vi = thisInstance(a, "BytesInput");
+		var vi = nativeSelf(thisInstance(a, "BytesInput"));
 		var input = nativeBytesInputs.get(vi);
 		if (input == null) throw "Unexpected value for BytesInput";
 		return input;
