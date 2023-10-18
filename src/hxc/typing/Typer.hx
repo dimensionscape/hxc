@@ -2086,6 +2086,22 @@ class Typer {
 					case KGeneric if (!TypeFunctions.hasMono(TInst(c, tl))):
 						var gc = Typeload.specializeGenericClass(ctx.com, c, tl, p);
 						TypeFunctions.mk(TNew(gc, [], r.el), TInst(gc, []), p);
+					case KGeneric:
+						// Parameters not inferable from the arguments: an expected type that is already a
+						// specialization of this class is used directly. .
+						var fromExpected = switch (withType) {
+							case WithType(wt, _):
+								switch (TypeFunctions.follow(wt)) {
+									case TInst(gc2, tl2):
+										switch (gc2.kind) {
+											case KGenericInstance(base, _) if (base == c): TypeFunctions.mk(TNew(gc2, tl2, r.el), TInst(gc2, tl2), p);
+											case _: null;
+										}
+									case _: null;
+								}
+							case _: null;
+						};
+						fromExpected != null ? fromExpected : TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 					case _:
 						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 				}
