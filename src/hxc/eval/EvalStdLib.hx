@@ -548,7 +548,16 @@ class EvalStdLib {
 
 	static function thisBuffer(a:Array<EvalValue>):StringBuf {
 		return switch (a[0]) {
-			case VInstance(vi): switch (vi.ikind) { case IBuffer(b): b; case _: new StringBuf(); };
+			case VInstance(vi): switch (vi.ikind) {
+				case IBuffer(b): b;
+				case _:
+					// A subclass of the native-backed StringBuf constructs through its own typed
+					// constructor, so the native buffer attaches on first use and every native call
+					// on the instance shares it.
+					var b = new StringBuf();
+					vi.ikind = IBuffer(b);
+					b;
+			};
 			case _: new StringBuf();
 		};
 	}
