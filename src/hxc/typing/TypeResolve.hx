@@ -457,6 +457,7 @@ class TypeResolve {
 					cf.params = methodParams;
 					// Abstract-impl field flag (check_abstract sets CfImpl on @:to fields).
 					TypeFunctions.addClassFieldFlag(cf, CfImpl);
+					if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfGeneric);
 					if (isFrom) {
 						// @:from: stored type = the single (non-`this`/non-PosInfos) argument type i.e. the value
 						// being converted into the abstract. For a member @:from

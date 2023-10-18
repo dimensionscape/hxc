@@ -132,14 +132,14 @@ class Calls {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
-				case TFun(sig) if (sig.args.length == 2):
+				case TFun(sig) if (sig.args.length == 2 || (sig.args.length == 3 && sig.args[2].opt)):
 					try {
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-						return {expr: makeCall(ctx, fieldExpr, [ebase, key], sig.ret, p), key: key};
+						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key};
 					} catch (_:TypingError) {}
 				case _:
 			}
@@ -158,7 +158,7 @@ class Calls {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
-				case TFun(sig) if (sig.args.length == 3):
+				case TFun(sig) if (sig.args.length == 3 || (sig.args.length == 4 && sig.args[3].opt)):
 					try {
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 						var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
@@ -168,7 +168,7 @@ class Calls {
 						}
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-						return makeCall(ctx, fieldExpr, [ebase, key, val], sig.ret, p);
+						return makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key, val], p), sig.ret, p);
 					} catch (_:TypingError) {}
 				case _:
 			}
@@ -426,6 +426,17 @@ class Calls {
 		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
 	}
 
+	// Pad an abstract-dispatch call (op, cast, array access, resolve) with the call-site PosInfos
+	// when the impl method declares one more trailing optional argument of that type, as an
+	// ordinary call's arguments are padded.
+	public static function padPosInfos(ctx:TyperContext, sigArgs:Array<TSignatureArg>, el:Array<TExpr>, callp:Position):Array<TExpr> {
+		if (sigArgs.length != el.length + 1) return el;
+		var last = sigArgs[sigArgs.length - 1];
+		if (!last.opt) return el;
+		var pi = makePosInfosArg(ctx, last.t, callp);
+		return pi == null ? el : el.concat([pi]);
+	}
+
 	// `trace(v, ...)` lowers to haxe.Log.trace(v, posInfos) with the call's position info.
 	static function typeTrace(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		function strE(s:String):Expr return new Expr(EConst(CString(s, SDoubleQuotes)), p);
@@ -467,12 +478,17 @@ class Calls {
 			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
 				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
-				// Static-extension / abstract impl call: the receiver is the first argument.
-				var ce = monomorphizeParams(ctx, se.access.field, callFieldExpr(ctx, se.access), se.access);
+				// Static-extension / abstract impl call: the receiver is the first argument. A generic
+				// method specializes here like a plain field call does.
+				var mono = monomorphizeParamsWith(ctx, se.access.field, callFieldExpr(ctx, se.access), se.access);
+				var ce = mono.expr;
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length > 0):
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
-						makeCall(ctx, ce, [se.thisExpr].concat(r.el), sig.ret, p);
+						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type);
+						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
+						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
+						makeCall(ctx, ce, [se.thisExpr].concat(r.el), ret, p);
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);

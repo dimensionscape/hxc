@@ -152,18 +152,26 @@ class Typer {
 		return callImplCast(ctx, a.impl, castField.cf, e, t, p);
 	}
 
+	// A trailing optional ?p:haxe.PosInfos on a cast method receives the call-site info.
+	static function castArgs(ctx:TyperContext, cf:TClassField, e:TExpr, p:Position):Array<TExpr> {
+		return switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig): Calls.padPosInfos(ctx, sig.args, [e], p);
+			case _: [e];
+		};
+	}
+
 	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
 		if (hxc.eval.EvalMacro.isMacroField(cf)) return callMacroCast(ctx, implC, cf, e, t, p);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
-		return Calls.makeCall(ctx, staticExpr, [e], t, p);
+		return Calls.makeCall(ctx, staticExpr, castArgs(ctx, cf, e, p), t, p);
 	}
 
 	static function callImplCastDirect(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
 		if (hxc.eval.EvalMacro.isMacroField(cf)) return callMacroCast(ctx, implC, cf, e, t, p);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
-		return TypeFunctions.mk(TCall(staticExpr, [e]), t, p);
+		return TypeFunctions.mk(TCall(staticExpr, castArgs(ctx, cf, e, p)), t, p);
 	}
 
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
@@ -1572,7 +1580,7 @@ class Typer {
 					case TFun(sig) if (sig.args.length >= 2):
 						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
 						var nameArg = castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
-						Calls.makeCall(ctx, ce, [se.thisExpr, nameArg], sig.ret, se.access.pos);
+						Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);
 				}

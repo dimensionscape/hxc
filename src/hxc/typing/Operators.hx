@@ -338,6 +338,11 @@ class Operators {
 	static function makeStaticOpCall(ctx:TyperContext, implC:TClass, cf:TClassField, args:Array<TExpr>, tret:T, p:Position):TExpr {
 		var implExpr = hxc.core.TexprTools.makeStaticThis(implC, p);
 		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
+		// A trailing optional ?p:haxe.PosInfos on the op method receives the call-site info.
+		switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig): args = Calls.padPosInfos(ctx, sig.args, args, p);
+			case _:
+		}
 		return Calls.makeCall(ctx, fieldExpr, args, tret, p);
 	}
 
@@ -665,7 +670,7 @@ class Operators {
 						var nameArg = Typer.castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
 						var valArg = Typer.castOrUnify(ctx, sig.args[2].t, te2, p);
-						hxc.typing.Calls.makeCall(ctx, ce, [se.thisExpr, nameArg, valArg], sig.ret, se.access.pos);
+						hxc.typing.Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg, valArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);
 				}
@@ -811,7 +816,7 @@ class Operators {
 				var read = switch (TypeFunctions.follow(readCe.type)) {
 					case TFun(rs) if (rs.args.length >= 2):
 						var nm = TexprTools.makeString(basic, name, se.access.pos);
-						Calls.makeCall(ctx, readCe, [recv, Typer.castOrUnify(ctx, rs.args[1].t, nm, nm.pos)], rs.ret, p);
+						Calls.makeCall(ctx, readCe, Calls.padPosInfos(ctx, rs.args, [recv, Typer.castOrUnify(ctx, rs.args[1].t, nm, nm.pos)], p), rs.ret, p);
 					case _: throw new TypingError("Resolve target is not a function", se.access.pos);
 				};
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
@@ -830,7 +835,7 @@ class Operators {
 								var nm2 = TexprTools.makeString(basic, name, p);
 								var nameArg = Typer.castOrUnify(ctx, ws.args[1].t, nm2, p);
 								var valArg = Typer.castOrUnify(ctx, ws.args[2].t, opResult, p);
-								Calls.makeCall(ctx, writeCe, [recv, nameArg, valArg], ws.ret, p);
+								Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [recv, nameArg, valArg], p), ws.ret, p);
 							case _: throw new TypingError("Resolve target is not a function", p);
 						};
 						TypeFunctions.mk(TBlock([tempInit, write]), write.type, p);
