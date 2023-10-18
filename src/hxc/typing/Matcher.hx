@@ -1141,8 +1141,42 @@ class TexprConverter {
 		}
 	}
 
+	// Subject-local bindings recorded during conversion so a nested counter-example can resolve a bound
+	// temp back to the enum parameter it reads.
+	static var vLookup:Map<Int, TExpr> = new Map();
+
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
+		vLookup = new Map();
 		return toTexprRec(ctx, tSwitch, withType, dt, DRToplevel);
+	}
+
+	static function fieldAccessNameOf(fa:TFieldAccess):String {
+		return switch (fa) {
+			case FInstance(_, _, cf) | FStatic(_, cf) | FAnon(cf) | FClosure(_, cf): cf.name;
+			case FDynamic(s): s;
+			case FEnum(_, ef): ef.name;
+		};
+	}
+
+	// A nested sub-subject (an enum parameter or field read, possibly through a bound temp) wraps the
+	// counter-example in its constructor context, e.g. Node(Node, _).
+	static function sSubject(s:String, e:TExpr):String {
+		function loop(top:Bool, s:String, e:TExpr):String {
+			return switch (e.expr) {
+				case TField(_, FEnum(_, _)): s;
+				case TField(e1, fa): top ? loop(false, s, e1) : loop(false, "{ " + fieldAccessNameOf(fa) + ": " + s + " }", e1);
+				case TEnumParameter(e1, ef, i):
+					var arity = switch (TypeFunctions.follow(ef.type)) { case TFun(sig): sig.args.length; case _: 0; };
+					var parts:Array<String> = [];
+					for (k in 0...arity) parts.push(k == i ? s : "_");
+					loop(false, ef.name + "(" + parts.join(", ") + ")", e1);
+				case TLocal(v):
+					var bound = vLookup.get(v.id);
+					bound != null ? loop(top, s, bound) : s;
+				case _: s;
+			};
+		}
+		return loop(true, s, e);
 	}
 
 	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion):Null<TExpr> {
@@ -1171,21 +1205,27 @@ class TexprConverter {
 					case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
 					case _: false;
 				};
+				function reportUnmatched():Void {
+					var s = if (unmatched == null || unmatched.length == 0) "_" else {
+						unmatched.sort(Reflect.compare);
+						unmatched.join(" | ");
+					};
+					throw new TypingError("Unmatched patterns: " + sSubject(s, subject), subject.pos);
+				}
+				// The default converts and reports first so a missing constructor at this switch is the
+				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that
+				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
 				var defE = (topLevel && complete && runtimeFinite) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
+				if (defE == null && !complete && !withType.match(NoValue)) reportUnmatched();
+				var caseFailed = false;
 				var swCases:Array<TSwitchCase> = [];
 				for (sc in cases) {
 					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, nextRec);
 					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
+					else caseFailed = true;
 				}
-				if (defE == null && !complete) switch (withType) {
-					case NoValue:
-					case _:
-						var s = if (unmatched == null || unmatched.length == 0) "_" else {
-							unmatched.sort(Reflect.compare);
-							unmatched.join(" | ");
-						};
-						throw new TypingError("Unmatched patterns: " + s, subject.pos);
-				}
+				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite) && !withType.match(NoValue))
+					reportUnmatched();
 				// An enum switch dispatches on the constructor index.
 				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
 					case ConEnum(_, _): TypeFunctions.mk(TEnumIndex(subject), basic.tint, subject.pos);
@@ -1220,6 +1260,7 @@ class TexprConverter {
 					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
 				}
 			case Bind(bl, dt2):
+				for (b in bl) vLookup.set(b.v.id, b.e);
 				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec);
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
