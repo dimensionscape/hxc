@@ -395,6 +395,12 @@ class Calls {
 		var sup = ctx.curclass.superClass;
 		if (sup == null) throw new TypingError("Class does not have a super class", p);
 		var c = sup.c;
+		// Type the super constructor's body first so an unannotated parameter is inferred from the body
+		// (binding its monomorph to the class parameter) before the call arguments unify; otherwise the
+		// argument binds the shared signature monomorph to the call's concrete type, and the later body
+		// typing drops the field assignment on a unification failure.
+		if (c.constructor != null && c.constructor.expr == null)
+			TypeFields.forceFieldBody(ctx.com, c, c.constructor);
 		var sig = if (c.constructor == null) {args: [], ret: ctx.com.basic.tvoid} else switch (TypeFunctions.follow(TypeFunctions.applyParams(c.params, sup.params, c.constructor.type))) {
 			case TFun(s): s;
 			case _: {args: [], ret: ctx.com.basic.tvoid};
