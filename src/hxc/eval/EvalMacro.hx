@@ -182,6 +182,24 @@ class EvalMacro {
 				case _: throw new TypingError("map_anon_ref: expected anonymous type", curPos);
 			};
 		});
+		// apply_params(tpl, tl, t): substitute the type parameters through t. The target's parameter
+		// occurrences are first rebound by STRUCTURAL equality to the decoded parameter instances, because
+		// the substitution itself matches by physical identity.
+		reg2("applyTypeParameters", "apply_params", function(a) {
+			var tl = [for (x in arrOf(a[1])) decodeType(ec, x)];
+			var tpl:TypeParams = [for (v in arrOf(a[0]))
+				new TypedTypeParam(strOf(EvalField.field(ec, v, EvalHash.hash("name"))), decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t"))), null)];
+			function mapT(t:T):T {
+				return switch (t) {
+					case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
+						var hit:Null<T> = null;
+						for (tp in tpl) if (TypeUnification.typeIseqDefault(t, tp.type)) { hit = tp.type; break; }
+						hit != null ? hit : TypeFunctions.map(mapT, t);
+					case _: TypeFunctions.map(mapT, t);
+				};
+			}
+			return encodeType(ec, TypeFunctions.applyParams(tpl, tl, mapT(decodeType(ec, a[2]))));
+		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
 			var tpath:TypePath = {tpackage: path.pack, tname: path.name, tparams: [], tsub: null};
@@ -2786,7 +2804,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("isPrivate"), VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
 		f.set(EvalHash.hash("doc"), VNull);
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in c.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("kind"), mkEnumValue(ec, "ClassKind", "KNormal", []));
 		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
 		f.set(EvalHash.hash("isInterface"), TypeFunctions.hasClassFlag(c, CInterface) ? VTrue : VFalse);
@@ -2811,7 +2829,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("isPrivate"), e.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return e.meta, function(m) e.meta = m));
 		f.set(EvalHash.hash("doc"), VNull);
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in e.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("isExtern"), e.isExtern ? VTrue : VFalse);
 		var constrs:Map<Int, EvalValue> = new Map();
 		for (name in e.names) {
@@ -2820,6 +2838,14 @@ class EvalMacro {
 		}
 		f.set(EvalHash.hash("constructs"), VObject(new VObject([], ODictionary(constrs))));
 		f.set(EvalHash.hash("names"), encodeArray([for (name in e.names) mkString(name)]));
+		return VObject(new VObject([], ODictionary(f)));
+	}
+
+	static function encodeTypeParameterValue(ec:EvalContext, tp:TypedTypeParam):EvalValue {
+		var f:Map<Int, EvalValue> = new Map();
+		f.set(EvalHash.hash("name"), mkString(tp.name));
+		f.set(EvalHash.hash("t"), encodeType(ec, tp.type));
+		f.set(EvalHash.hash("defaultType"), tp.defaultType == null ? VNull : encodeType(ec, tp.defaultType));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -2832,7 +2858,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("isPrivate"), d.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return d.meta, function(m) d.meta = m));
 		f.set(EvalHash.hash("doc"), VNull);
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in d.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("type"), encodeType(ec, d.type));
 		return VObject(new VObject([], ODictionary(f)));
 	}
@@ -2846,7 +2872,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("isPrivate"), a.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return a.meta, function(m) a.meta = m));
 		f.set(EvalHash.hash("doc"), VNull);
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in a.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("type"), encodeType(ec, a.thisType));
 		f.set(EvalHash.hash("binops"), encodeArray([for (op in a.ops) encodeAbstractBinop(ec, op)]));
 		f.set(EvalHash.hash("unops"), encodeArray([for (op in a.unops) encodeAbstractUnop(ec, op)]));

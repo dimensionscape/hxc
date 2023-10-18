@@ -444,7 +444,7 @@ class TypeResolve {
 					if (isAbstractMember) args.push({name: "this", opt: false, t: a.thisType});
 					for (fa in fd.fArgs) {
 						var at = Typeload.loadTypeHint(ctx, localParams, fa.type, false);
-						if (fa.opt) at = ctx.basic.tnull(at);
+						if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 						args.push({name: fa.name.name, opt: fa.opt || fa.value != null, t: at});
 					}
 					var ret = Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
@@ -626,7 +626,7 @@ class TypeResolve {
 				var args:Array<TSignatureArg> = [];
 				for (fa in fd.fArgs) {
 					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
-					if (fa.opt) at = ctx.basic.tnull(at);
+					if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 					var sigOpt = fa.opt || fa.value != null;
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
@@ -667,7 +667,7 @@ class TypeResolve {
 						// Topt: explicit type required, load the hint; opt `?`
 						// Null-wraps; a default value reports opt in the signature (no wrap).
 						var at = Typeload.loadTypeHint(ctx, localParams, fa.type, false);
-						if (fa.opt) at = ctx.basic.tnull(at);
+						if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 						var sigOpt = fa.opt || fa.value != null;
 						args.push({name: fa.name.name, opt: sigOpt, t: at});
 					}

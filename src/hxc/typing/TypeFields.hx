@@ -491,7 +491,9 @@ class TypeFields {
 			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
-			var def:Null<TExpr> = if (fa.value != null) Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at))
+			// The default value unifies into the argument type so an inferred argument settles from its
+			// default (x = 1 gives x:Int).
+			var def:Null<TExpr> = if (fa.value != null) Typer.castOrUnify(tctx, at, Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at)), fa.value.pos)
 				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
 				else null;
 			result.push({v: v, c: def});
