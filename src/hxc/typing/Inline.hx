@@ -108,11 +108,12 @@ class Inline {
 
 	// A side-effect-free lvalue: re-reading and assigning through it is equivalent to a bound
 	// receiver, so the substituted body mutates the caller's storage.
-	static function isStableLvalue(e:TExpr):Bool {
+	public static function isStableLvalue(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TLocal(_): true;
-			case TConst(TThis): true;
+			case TConst(_): true;
 			case TField(e1, _): isStableLvalue(e1);
+			case TArray(e1, e2): isStableLvalue(e1) && isStableLvalue(e2);
 			case TTypeExpr(_): true;
 			case TParenthesis(e1): isStableLvalue(e1);
 			case _: false;

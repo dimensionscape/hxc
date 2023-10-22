@@ -599,9 +599,9 @@ class Operators {
 	}
 
 	static function maybeTempReceiver(ctx:TyperContext, recv:TExpr, p:Position):{expr:TExpr, init:Null<TExpr>} {
-		return switch (recv.expr) {
-			case TLocal(_) | TConst(_) | TTypeExpr(_):
-				{expr: recv, init: null};
+		// A stable side-effect-free lvalue stays as-is so an inline setter assigning `this` writes
+		// back through the original storage (a static field, array element or field chain).
+		return if (Inline.isStableLvalue(recv)) {expr: recv, init: null} else switch (recv.expr) {
 			case _:
 				var v = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
 				{expr: TexprTools.makeLocal(v, p), init: TypeFunctions.mk(TVarExpr(v, recv), ctx.com.basic.tvoid, p)};
@@ -784,8 +784,8 @@ class Operators {
 		function accessorInstanceCompound(fa:hxc.typing.AccessKind.FieldAccess):TExpr {
 			var recv = fa.on;
 			var tvoid = ctx.com.basic.tvoid;
-			var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
-			var er = TexprTools.makeLocal(vr, p);
+			var tmp = maybeTempReceiver(ctx, recv, p);
+			var er = tmp.expr;
 			var readVal = accessorReadOn(ctx, er, fa);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var br = makeBinop(ctx, sub, readVal, te2, true, withType, p);
@@ -795,7 +795,7 @@ class Operators {
 				case BinopSpecial(opCall, false): opCall;
 				case _: accessorWriteOn(ctx, er, fa, toTexpr(br), p);
 			};
-			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), tail]), tail.type, p);
+			return tmp.init == null ? tail : TypeFunctions.mk(TBlock([tmp.init, tail]), tail.type, p);
 		}
 		// The target resolves with a write access so a (default, set) property dispatches through its
 		// setter for the write half.
