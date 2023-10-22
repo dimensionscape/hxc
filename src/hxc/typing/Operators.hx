@@ -645,7 +645,12 @@ class Operators {
 					case AccessorFound(setterFa):
 						hxc.typing.Calls.buildCall(ctx, AKField(setterFa), [e2], WithTypeTools.value, p);
 					case AccessorAnon:
-						assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
+						// No accessor field is available (anon structure or extern class): synthesize a
+						// dynamic set_<name>(v) call.
+						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(fa.field.type));
+						var t = fa.field.type;
+						var tf = TFun({args: [{name: "value", opt: false, t: te2.type}], ret: t});
+						hxc.typing.Calls.makeCall(ctx, TypeFunctions.mk(TField(fa.on, TypeFunctions.quickFieldDynamic(fa.on.type, "set_" + fa.field.name)), tf, p), [te2], t, p);
 					case AccessorNotFound | AccessorInvalid:
 						throw new TypingError("This expression cannot be accessed for writing", p);
 				}

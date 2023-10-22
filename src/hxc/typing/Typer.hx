@@ -1530,7 +1530,11 @@ class Typer {
 					case AccessorFound(getterFa):
 						Calls.buildCall(ctx, AKField(getterFa), [], WithTypeTools.value, fa.pos);
 					case AccessorAnon:
-						FieldAccessTools.getFieldExpr(fa, FRead);
+						// No accessor field is available (anon structure or extern class): synthesize a
+						// dynamic get_<name>() call.
+						var t = fa.field.type;
+						var tf = TFun({args: [], ret: t});
+						Calls.makeCall(ctx, TypeFunctions.mk(TField(fa.on, TypeFunctions.quickFieldDynamic(fa.on.type, "get_" + fa.field.name)), tf, fa.pos), [], t, fa.pos);
 					case AccessorNotFound | AccessorInvalid:
 						throw new TypingError("This field cannot be accessed for reading", fa.pos);
 				}

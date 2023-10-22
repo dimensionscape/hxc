@@ -106,11 +106,22 @@ class EvalMain {
 		if (np != null) en.path = hxc.ast.Ast.parsePath(np);
 	}
 
+	// Class half of applying @:native paths: rewrite path from @:native. Two classes may then
+	// share a path (an extern and its non-extern twin); only the first is registered, so registration
+	// below is first-wins per key.
+	static function applyNativePathsClass(c:TClass):Void {
+		var np = nativeNameOf(c.meta);
+		if (np != null) c.path = hxc.ast.Ast.parsePath(np);
+	}
+
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>):Void {
 		var delays:Array<{proto:VPrototype, fn:VPrototype->Void}> = [];
 		// Register type-cache entries and enum prototypes up front.
 		for (mt in types) switch (mt) {
-			case TClassDecl(c): ctx.typeCache.set(EvalHash.pathHash(c.path), mt);
+			case TClassDecl(c):
+				applyNativePathsClass(c);
+				var key = EvalHash.pathHash(c.path);
+				if (!ctx.typeCache.exists(key)) ctx.typeCache.set(key, mt);
 			case TEnumDecl(en):
 				applyNativePathsEnum(en);
 				ctx.typeCache.set(EvalHash.pathHash(en.path), mt);
