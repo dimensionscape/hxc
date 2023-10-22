@@ -870,13 +870,17 @@ class Typer {
 					TypeFunctions.mk(TCast(te, null), spawnMonomorph(ctx, p), p);
 				} else {
 					var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, ct);
-					var mt:Null<ModuleType> = switch (TypeFunctions.follow(t)) {
+					// The runtime-checked cast target: an abstract without @:runtimeValue resolves to its
+					// underlying type, so the eval safe-cast check sees the concrete class (or the
+					// @:runtimeValue basic).
+					function loop(t:T):Null<ModuleType> return switch (TypeFunctions.follow(t)) {
 						case TInst(c, _): TClassDecl(c);
 						case TEnum(en, _): TEnumDecl(en);
-						case TAbstract(a, _): TAbstractDecl(a);
+						case TAbstract(a, _) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)): TAbstractDecl(a);
+						case TAbstract(a, params): loop(TypeFunctions.getUnderlyingType(a, params));
 						case _: null;
 					};
-					TypeFunctions.mk(TCast(te, mt), t, p);
+					TypeFunctions.mk(TCast(te, loop(t)), t, p);
 				}
 			case EIs(e1, th):
 				// `x is T` is sugar for Std.isOfType(x, T); T must be a named type path (its type

@@ -66,12 +66,10 @@ class EvalEmitter {
 			case TParenthesis(e1) | TMeta(_, e1): eval(ctx, e1);
 			case TCast(e1, mt):
 				switch (mt) {
-					// Reference emit_safe_cast a safe cast `cast(e,T)` checks the runtime type and throws
-					// "Class cast error" unless the value is null or `is v t`. The check is applied only
-					// for class/interface targets, where isOfTypePath is reliable; abstract/enum/typedef
-					// targets pass through (isOfTypePath does not model @:multiType / abstract-over-basic
-					// membership, so checking them would wrongly reject valid casts).
-					case TClassDecl(_):
+					// A safe cast `cast(e,T)` checks the runtime type and throws "Class cast error" unless
+					// the value is null or `is v t`. Applied to class, enum, and abstract targets alike;
+					// `is` handles the basic-type paths (Int/Float/Bool/String).
+					case TClassDecl(_) | TEnumDecl(_) | TAbstractDecl(_):
 						var v1 = eval(ctx, e1);
 						switch (EvalValueTools.vresolve(v1)) {
 							case VNull: v1;
