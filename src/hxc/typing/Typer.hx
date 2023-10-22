@@ -2387,13 +2387,13 @@ class Typer {
 	// Whether evaluating the expression can cause a side effect (assignment, increment, call, allocation,
 	// control flow). Object-literal @:structInit field initializers that follow a side-effecting field are
 	// hoisted into temp vars so they still evaluate in source order. Conservative (does not model @:pure).
-	static function hasSideEffect(e:TExpr):Bool {
+	public static function hasSideEffect(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_): false;
 			case TNew(_, _, _) | TCall(_, _) | TReturn(_) | TBreak | TContinue | TThrow(_): true;
 			case TBinop(OpAssign | OpAssignOp(_), _, _): true;
 			case TUnop(Increment | Decrement, _, _): true;
-			case TCast(_, mt): mt != null;
+			case TCast(e1, mt): mt != null || hasSideEffect(e1);
 			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2): hasSideEffect(e1) || hasSideEffect(e2);
 			case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1): hasSideEffect(e1);
 			case TVarExpr(_, eo): eo != null && hasSideEffect(eo);
