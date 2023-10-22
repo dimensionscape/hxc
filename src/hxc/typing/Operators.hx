@@ -797,9 +797,29 @@ class Operators {
 			};
 			return TypeFunctions.mk(TBlock([TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p), tail]), tail.type, p);
 		}
-		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MGet, withType)) {
+		// The target resolves with a write access so a (default, set) property dispatches through its
+		// setter for the write half.
+		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
 			case AKExpr(te1): compound(te1);
-			case AKField(fa): compound(FieldAccessTools.getFieldExpr(fa, FWrite));
+			case AKNo(acc2, np):
+				// A write-restricted target (a final field) still takes a compound op when the abstract
+				// declares a dedicated overload that needs no write-back; the write error is deferred to
+				// the needs-assign result.
+				var te1 = switch (acc2) {
+					case AKExpr(te): te;
+					case AKField(fa) | AKAccessor(fa): FieldAccessTools.getFieldExpr(fa, FWrite);
+					case _: throw new TypingError("This expression cannot be accessed for writing", np);
+				};
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+				switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
+					case BinopSpecial(opCall, false): opCall;
+					case _: throw new TypingError("This expression cannot be accessed for writing", np);
+				}
+			case AKField(fa):
+				// A property with a call accessor on either side reads via its getter and writes via its
+				// setter; a plain field stays a raw compound.
+				var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
+				accCall ? accessorInstanceCompound(fa) : compound(FieldAccessTools.getFieldExpr(fa, FWrite));
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
 				accessorCompound(se.thisExpr, FieldAccessTools.getHostClassRaise(se.access.host), se.access.field.name, true);
@@ -812,7 +832,10 @@ class Operators {
 				var basic = ctx.com.basic;
 				var vr = TypeFunctions.allocVar(VGenerated, "`fh", se.thisExpr.type, se.thisExpr.pos);
 				var recv = TexprTools.makeLocal(vr, p);
-				var readCe = FieldAccessTools.getFieldExpr(se.access, FCall);
+				if (aw.a.read == null)
+					throw new TypingError("This compound assignment target is not yet ported", p);
+				var readSe = FieldAccessTools.makeAbstractStaticExtensionAccess(aw.a, aw.tl, aw.c, aw.a.read, recv, false, p);
+				var readCe = FieldAccessTools.getFieldExpr(readSe.access, FCall);
 				var read = switch (TypeFunctions.follow(readCe.type)) {
 					case TFun(rs) if (rs.args.length >= 2):
 						var nm = TexprTools.makeString(basic, name, se.access.pos);
@@ -865,16 +888,29 @@ class Operators {
 						}
 					case _:
 				}
-				switch (Typer.typeAccess(ctx, e.expr, e.pos, MGet, withType)) {
+				switch (Typer.typeAccess(ctx, e.expr, e.pos, MSet(null), withType)) {
 					case AKExpr(te):
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
 					case AKField(fa):
-						var te = FieldAccessTools.getFieldExpr(fa, FWrite);
-						var abs = tryAbstractUnop(ctx, op, flag, te, p);
-						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+						var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
+						if (accCall) accessorIncr(ctx, op, flag, fa, withType, p) else {
+							var te = FieldAccessTools.getFieldExpr(fa, FWrite);
+							var abs = tryAbstractUnop(ctx, op, flag, te, p);
+							if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+						}
 					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
 					case AKUsingAccessor(se): usingAccessorIncr(ctx, op, flag, se, withType, p);
+					case AKNo(acc2, np):
+						// A dedicated abstract increment overload needs no write-back, so it applies to a
+						// write-restricted target (a final field); anything else is a write error.
+						var te = switch (acc2) {
+							case AKExpr(te2): te2;
+							case AKField(fa) | AKAccessor(fa): FieldAccessTools.getFieldExpr(fa, FWrite);
+							case _: throw new TypingError("This expression cannot be accessed for writing", np);
+						};
+						var abs = tryAbstractUnop(ctx, op, flag, te, p);
+						if (abs != null) abs else throw new TypingError("This expression cannot be accessed for writing", np);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:
