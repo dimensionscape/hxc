@@ -4577,7 +4577,12 @@ class EvalStdLib {
 
 		reg(s, "Type", "getClass", vfn(a -> switch (arg(a, 0)) {
 			case VInstance(vi):
-				classValue(ctx, vi.iproto.ppath);
+				// An instance always has a class; a synthetic prototype (haxe.macro.Position) gets a
+				// class value on demand.
+				switch (classValue(ctx, vi.iproto.ppath)) {
+					case VNull: coreClassValue(ctx, vi.iproto.ppath);
+					case v: v;
+				}
 			case VString(_):
 				classValue(ctx, EvalHash.key_String);
 			case VArray(_):
