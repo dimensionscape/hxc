@@ -350,6 +350,9 @@ class Typer {
 		var anonMin = unifyMinConstAnon(ctx, el);
 		if (anonMin != null) return anonMin;
 
+		var funMin = unifyMinFun(el);
+		if (funMin != null) return funMin;
+
 		var commonTypes = TypeUnification.collectBaseTypes(t);
 		var dynTypes = [];
 		for (ty in commonTypes) {
@@ -400,6 +403,37 @@ class Typer {
 			fields.set(n, TypeFunctions.mkField(n, ft, exprs[0].pos, Position.nullPos));
 		}
 		return TypeFunctions.mkAnon(new hxc.core.Ref(Closed), fields);
+	}
+
+	// Common type of function values: per argument keep the type every other argument type unifies into
+	// (contravariance), and unify-min the returns.
+	static function unifyMinFun(el:Array<TExpr>):Null<T> {
+		var args:Array<TSignatureArg>;
+		var tr0:T;
+		switch (TypeFunctions.follow(el[0].type)) {
+			case TFun(sig): args = sig.args.copy(); tr0 = sig.ret;
+			case _: return null;
+		}
+		var rets:Array<T> = [];
+		for (i in 1...el.length) {
+			switch (TypeFunctions.follow(el[i].type)) {
+				case TFun(sig):
+					if (sig.args.length != args.length) return null;
+					for (j in 0...args.length) {
+						var tcur = args[j].t;
+						var argnew = sig.args[j];
+						if (TypeUnification.doesUnify(argnew.t, tcur)) args[j] = argnew;
+						else if (!TypeUnification.doesUnify(tcur, argnew.t)) return null;
+					}
+					rets.push(sig.ret);
+				case _: return null;
+			}
+		}
+		var commonTypes = TypeUnification.collectBaseTypes(tr0);
+		return switch (TypeUnification.unify_min_(TypeUnification.defaultUnificationContext, commonTypes, rets)) {
+			case UnifyMinOk(tr): TFun({args: args, ret: tr});
+			case UnifyMinError(_, _): null;
+		};
 	}
 
 	static function hasUnifyMinDynamic(c:TClass):Bool {
