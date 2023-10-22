@@ -133,6 +133,7 @@ class Compiler {
 			tFields();
 			tType();
 			abortOnDiagnostics(ctx, platform);
+			hxc.typing.UnusedPure.run(ctx);
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
 			abortOnDiagnostics(ctx, platform);
@@ -141,7 +142,7 @@ class Compiler {
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
 				var tInterp = hxc.core.Timer.timer(["interp"]);
 				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
-				hxc.eval.EvalMain.addModules(ectx, ctx.modules);
+				hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
 				hxc.eval.EvalMain.runMain(ectx, path);
 				tInterp();
 			} else if (ctx.defines.rawDefined("verbose")) {
