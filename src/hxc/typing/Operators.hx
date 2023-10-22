@@ -1015,6 +1015,13 @@ class Operators {
 		var name = fa.field.name;
 		var isCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall); case _: false; };
 		if (isCall) {
+			// An anonymous-structure host has no accessor field: synthesize a dynamic get_<name>() call
+			// resolved on the runtime object.
+			if (fa.host.match(FHAnon)) {
+				var t = fa.field.type;
+				var tf = TFun({args: [], ret: t});
+				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "get_" + name)), tf, fa.pos), [], t, fa.pos);
+			}
 			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value);
 			return Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
 		}
@@ -1028,6 +1035,13 @@ class Operators {
 		var name = fa.field.name;
 		var isCall = switch (fa.field.kind) { case Var(k): k.write.match(AccCall); case _: false; };
 		if (isCall) {
+			// An anonymous-structure host has no accessor field: synthesize a dynamic set_<name>(v) call
+			// resolved on the runtime object.
+			if (fa.host.match(FHAnon)) {
+				var t = fa.field.type;
+				var tf = TFun({args: [{name: "value", opt: false, t: value.type}], ret: t});
+				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "set_" + name)), tf, p), [value], t, p);
+			}
 			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value));
 			return Calls.makeCall(ctx, setterExpr, [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
 		}
