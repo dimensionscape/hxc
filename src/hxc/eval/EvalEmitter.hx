@@ -153,7 +153,10 @@ class EvalEmitter {
 					ctx.staticPrototypes.set(tpath, tproto);
 				}
 				tproto.pvalue;
-			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), false);
+			// A closure's arguments are exactly its declared ones (this lives in the captured
+			// environment), so it is self-contained: a read through a field must not rebind a receiver
+			// onto it, unlike a prototype method (e.g. a reassigned dynamic method's replacement).
+			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), true);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
 			case TNew(c, params, newArgs): evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos);
