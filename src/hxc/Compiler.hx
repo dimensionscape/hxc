@@ -133,6 +133,7 @@ class Compiler {
 			tFields();
 			tType();
 			abortOnDiagnostics(ctx, platform);
+			hxc.typing.ExceptionFilters.run(ctx);
 			hxc.typing.UnusedPure.run(ctx);
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();

@@ -707,6 +707,10 @@ class EvalEmitter {
 	}
 
 	static function callAt(ctx:EvalContext, p:Position, f:VFunc, args:Array<EvalValue>):EvalValue {
+		// The environment records where it last left off, so a stack captured deeper in shows each frame at
+		// its active call site rather than its function entry.
+		var ev = EvalContext.getEval(ctx);
+		if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
 		return try f(args) catch (ex:EvalRunTimeException) {
 			EvalExceptions.addCallSite(ex, p);
 			throw ex;

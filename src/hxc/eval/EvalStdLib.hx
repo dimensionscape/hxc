@@ -2796,9 +2796,7 @@ class EvalStdLib {
 	}
 
 	static function envCallStackItem(ctx:EvalContext, env:EvalEnv):EvalValue {
-		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
-		if (file == null) file = "?";
-		return stackItem(ctx, new Position(file, env.info.min, env.info.max), env.info.kind);
+		return stackItem(ctx, EvalExceptions.envPosition(env), env.info.kind);
 	}
 
 	static function callStackValue(ctx:EvalContext):EvalValue {
@@ -4247,8 +4245,24 @@ class EvalStdLib {
 		var inst = ctx.builtins.instanceBuiltins;
 
 		reg(inst, "haxe.Exception", "get_stack", vmethod(a -> {
-			var stack = EvalField.field(ctx, arg(a, 0), EvalHash.keyExceptionStack);
-			stack == VNull ? EvalField.field(ctx, arg(a, 0), EvalHash.keyNativeStack) : stack;
+			// Cache-once, slicing the constructor-chain frames counted by __skipStack (the eval std
+			// Exception.get_stack, whose interpreted body this builtin shadows).
+			var cached = EvalField.field(ctx, arg(a, 0), EvalHash.keyExceptionStack);
+			if (cached != VNull) cached else {
+				var native = EvalField.field(ctx, arg(a, 0), EvalHash.keyNativeStack);
+				var skip = switch (EvalField.field(ctx, arg(a, 0), EvalHash.hash("__skipStack"))) {
+					case VInt(i): i;
+					case _: 0;
+				};
+				var result = if (skip > 0) switch (native) {
+					case VArray(va):
+						var out = arrayLive(va).slice(skip);
+						VArray(new VArray(out, out.length));
+					case _: native;
+				} else native;
+				EvalField.setField(ctx, arg(a, 0), EvalHash.keyExceptionStack, result, Position.nullPos);
+				result;
+			}
 		}));
 		reg(inst, "String", "charAt", vmethod(a -> mkStr(stringCharAt(thisString(a), toInt(arg(a, 1))))));
 		reg(inst, "String", "charCodeAt", vmethod(a -> {
