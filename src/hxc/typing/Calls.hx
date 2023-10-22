@@ -622,8 +622,16 @@ class Calls {
 		var params = [for (m in monos) TypeFunctions.follow(m)];
 		var name = cf.name + "_" + genericSuffix(params);
 		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
-		var fields = stat ? host.statics : host.fields;
-		var ordered = stat ? host.orderedStatics : host.orderedFields;
+		// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
+		// synthesized class <Class>_<method>_<Params> in its own module, so the specialization is
+		// resolvable by that type path.
+		var target = host;
+		if (stat && TypeFunctions.hasMeta(":genericClassPerMethod", host.meta)) {
+			target = genericMethodContainer(ctx, host, cf, params);
+			name = cf.name;
+		}
+		var fields = stat ? target.statics : target.fields;
+		var ordered = stat ? target.orderedStatics : target.orderedFields;
 		var cf2 = fields.get(name);
 		if (cf2 == null) {
 			function subst(t:T):T return substituteGenericMethodType(cf.params, params, t);
@@ -640,7 +648,35 @@ class Calls {
 			fields.set(name, cf2);
 			ordered.unshift(cf2);
 		}
+		if (target != host)
+			return FieldAccessTools.create(TexprTools.makeStaticThis(target, fa.pos), cf2, FHStatic(target), fa.isInline, fa.pos);
 		return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
+	}
+
+	// Find or create the module-level container class for one @:genericClassPerMethod method
+	// specialization.
+	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, params:TParams):TClass {
+		var path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + genericSuffix(params)};
+		var key = hxc.context.Context.pathKey(path);
+		var existing = ctx.com.moduleLut.get(key);
+		if (existing != null) {
+			for (mt in existing.types) switch (mt) {
+				case TClassDecl(cg): return cg;
+				case _:
+			}
+		}
+		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
+		mg.extra.processed = 2;
+		var cg = TypeFunctions.mkClass(mg, path, host.pos, host.namePos);
+		cg.build = function():BuildState return Built;
+		cg.module = mg;
+		mg.types = [TClassDecl(cg)];
+		ctx.com.modules.push(mg);
+		ctx.com.types.push(TClassDecl(cg));
+		ctx.com.moduleLut.set(key, mg);
+		ctx.com.typeToModule.set(key, path);
+		TypeFunctions.addDependency(mg, host.module);
+		return cg;
 	}
 
 	static function propagateGenericConstraints(ctx:TyperContext, cparams:TypeParams, monos:TParams, ?hostMap:T->T):Void {
