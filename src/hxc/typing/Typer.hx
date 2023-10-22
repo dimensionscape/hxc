@@ -50,17 +50,17 @@ class Typer {
 
 	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
 		if (TypeUnification.fastEq(e.type, t)) return e;
-		if (prefersAbstractCast(e.type, t)) {
+		// The cast-field search runs before plain unification: its strict first pass can pick a @:from
+		// whose parameter matches exactly even when the value would also unify with a plain `from` type.
+		if (!TypeUnification.typeIseqDefault(t, e.type)) {
 			var casted = tryAbstractCast(ctx, e, t, p);
 			if (casted != null) return casted;
-		}
+		} else return e;
 		var uerr:Array<hxc.core.TypeUnification.UnifyErrorKind> = null;
 		try {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
 		} catch (ue:UnifyError) { uerr = ue.errors; }
-		var casted = tryAbstractCast(ctx, e, t, p);
-		if (casted != null) return casted;
 		throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
 	}
 
@@ -933,6 +933,16 @@ class Typer {
 				for (fromType in a.from) {
 					var hit = expectedAnonFromType(TypeFunctions.applyParams(a.params, params, fromType), nextSeen);
 					if (hit != null) hits.push(hit);
+				}
+				// @:from function argument types are candidates too; more than one structure candidate
+				// means the literal types plainly and unification decides. + ODKFailed.
+				for (c in a.fromField) {
+					switch (TypeFunctions.follow(c.cf.type)) {
+						case TFun(sig) if (sig.args.length == 1):
+							var hit = expectedAnonFromType(TypeFunctions.applyParams(a.params, params, sig.args[0].t), nextSeen);
+							if (hit != null) hits.push(hit);
+						case _:
+					}
 				}
 				hits.length == 1 ? hits[0] : null;
 			case _:
