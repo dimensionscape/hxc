@@ -736,7 +736,16 @@ class Typer {
 								case _: null;
 							};
 							var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
-							var tl = [for (e in el) typeExpr(ctx, e, ewt)];
+							// An element that does not unify with the expected element type coerces through
+							// an implicit abstract cast.
+							var tl = [for (e in el) {
+								var te = typeExpr(ctx, e, ewt);
+								if (expectedEt != null) {
+									try hxc.core.TypeUnification.unifyDefault(te.type, expectedEt)
+									catch (_:hxc.core.TypeUnification.UnifyError) te = castOrUnify(ctx, expectedEt, te, e.pos);
+								}
+								te;
+							}];
 							var et = expectedEt != null ? expectedEt : (tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl));
 							TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
 						}
