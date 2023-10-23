@@ -785,6 +785,14 @@ class Typer {
 						}
 				}
 			case EObjectDecl(fields):
+				// A field may appear only once in an object literal.
+				{
+					var seen = new haxe.ds.StringMap<Bool>();
+					for (f in fields) {
+						if (seen.exists(f.name)) throw new TypingError("Duplicate field in object declaration : " + f.name, f.pos);
+						seen.set(f.name, true);
+					}
+				}
 				// A `{...}` literal against a @:structInit class types as a call to that class's
 				// constructor, matching fields to constructor arguments by name.
 				var scHit = switch (withType) {
