@@ -504,6 +504,10 @@ class Fields {
 		try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
 		var cf = uc.statics.get(i);
 		if (cf == null) return null;
+		// An extension candidate is skipped when @:noUsing, when it is an abstract member impl, or
+		// when it is not accessible from the current class.
+		if (TypeFunctions.hasMeta(":noUsing", cf.meta) || TypeFunctions.hasClassFieldFlag(cf, CfImpl)) return null;
+		if (!ctx.untypedMode && !canAccess(ctx, uc, cf, true)) return null;
 		switch (cf.type) {
 			case TMono(r) if (r.type == null):
 				var entry = ctx.com.declOfType.get(hxc.context.Context.pathKey(uc.path));
