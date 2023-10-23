@@ -63,6 +63,18 @@ class FieldAccessTools {
 			case FCall: TypeFields.fieldCallType(cf);
 			case FGet | FRead | FWrite: TypeFunctions.fieldType(cf);
 		};
+		// A method value read while its inferred return is still an unbound monomorph gets a FRESH mono: a
+		// caller unifying the closure's return (eq(foo(), 3)) must not bind the declaration mono, which the
+		// later body typing needs open. The reference's TLazy forces the body at read instead .
+		if (mode.match(FRead) && cf.kind.match(Method(_)) && cf.expr == null) switch (TypeFunctions.follow(t)) {
+			case TFun(sig):
+				switch (TypeFunctions.follow(sig.ret)) {
+					case TMono(r) if (r.type == null):
+						t = TFun({args: sig.args, ret: TypeFunctions.mkMono()});
+					case _:
+				}
+			case _:
+		}
 		var faAcc:TFieldAccess;
 		switch (fa.host) {
 			case FHStatic(c):

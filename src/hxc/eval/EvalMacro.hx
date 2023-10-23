@@ -2245,8 +2245,20 @@ class EvalMacro {
 					case FClosure(w, cf) if (w != null): {c: w.c, cf: cf};
 					case _: null;
 				}
-				if (hit != null && hit.cf.expr == null && openRet(hit.cf) && currentCom != null)
+				if (hit != null && hit.cf.expr == null && openRet(hit.cf) && currentCom != null) {
 					hxc.typing.TypeFields.forceFieldBody(currentCom, hit.c, hit.cf);
+					// The read carries a fresh return monomorph (FieldAccess.getFieldExpr FRead); bind it
+					// to the now-settled declaration return.
+					switch [TypeFunctions.follow(te.type), TypeFunctions.follow(hit.cf.type)] {
+						case [TFun(s1), TFun(s2)]:
+							switch (TypeFunctions.follow(s1.ret)) {
+								case TMono(r) if (r.type == null):
+									try TypeUnification.unifyDefault(s2.ret, s1.ret) catch (_:Dynamic) {}
+								case _:
+							}
+						case _:
+					}
+				}
 			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _) | TUnop(_, _, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TThrow(e1):
 				settleOpenReturns(e1);
 			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2) | TWhile(e1, e2, _):
