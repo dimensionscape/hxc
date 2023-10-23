@@ -235,12 +235,15 @@ class EvalEmitter {
 	}
 
 	// Throwing a haxe.ValueException throws its wrapped value instead (haxe.Exception.thrown/unwrap):
-	// a value caught by a wildcard `catch(e:Exception)` is bound as a ValueException wrapper, and
-	// rethrowing it must surface the original value again so an outer catch of its native type matches.
+	// Throwing a haxe.Exception surfaces its native exception, which for a directly constructed one
+	// is the exception itself (its stack survives the throw), and for a wrapper built around a caught
+	// value is that original value, so an outer catch of the native type matches. from
+	// haxe.Exception.thrown returning (value:Exception).native.
 	static function unwrapThrown(ctx:EvalContext, v:EvalValue):EvalValue {
 		return switch (v) {
-			case VInstance(vi) if (vi.iproto.ppath == EvalHash.key_haxe_ValueException):
-				EvalField.field(ctx, v, EvalHash.hash("value"));
+			case VInstance(_) if (EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)):
+				var native = EvalField.field(ctx, v, EvalHash.keyNativeException);
+				native == VNull ? v : native;
 			case _: v;
 		};
 	}
