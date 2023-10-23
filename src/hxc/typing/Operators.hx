@@ -896,13 +896,13 @@ class Operators {
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MSet(null), withType)) {
 					case AKExpr(te):
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
-						if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+						if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 					case AKField(fa):
 						var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
 						if (accCall) accessorIncr(ctx, op, flag, fa, withType, p) else {
 							var te = FieldAccessTools.getFieldExpr(fa, FWrite);
 							var abs = tryAbstractUnop(ctx, op, flag, te, p);
-							if (abs != null) abs else TypeFunctions.mk(TUnop(op, flag, te), te.type, p);
+							if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 						}
 					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
 					case AKUsingAccessor(se): usingAccessorIncr(ctx, op, flag, se, withType, p);
@@ -1163,7 +1163,10 @@ class Operators {
 				basic.tint;
 			case Neg:
 				checkInt();
-			case Increment | Decrement | Spread:
+			case Increment | Decrement:
+				// checkAssign runs at the caller; here only checkInt.
+				checkInt();
+			case Spread:
 				throw new TypingError("Unexpected unary operator in makeUnop", p);
 		};
 		return TypeFunctions.mk(TUnop(op, flag, e), t, p);

@@ -2253,13 +2253,26 @@ class Typer {
 		var tval = mapParams == null ? spawnMonomorph(ctx, p) : mapParams.v;
 		var keys:Array<TExpr> = [];
 		var values:Array<TExpr> = [];
+		// A repeated constant key is an error.
+		var seenKeys:Array<TExpr> = [];
+		function checkKey(k:TExpr):Void {
+			switch (k.expr) {
+				case TConst(c):
+					for (prev in seenKeys) if (std.Type.enumEq(prev.expr, k.expr)) throw new TypingError("Duplicate key", k.pos);
+					seenKeys.push(k);
+				case _:
+			}
+		}
 		for (e in el) switch (e.expr) {
 			case EBinop(OpArrow, k, v):
 				if (mapParams == null) {
-					keys.push(typeExpr(ctx, k, WithTypeTools.value));
+					var tk = typeExpr(ctx, k, WithTypeTools.value);
+					checkKey(tk);
+					keys.push(tk);
 					values.push(typeExpr(ctx, v, WithTypeTools.value));
 				} else {
 					var tk = typeExpr(ctx, k, WithTypeTools.withType(tkey));
+					checkKey(tk);
 					var tv = typeExpr(ctx, v, WithTypeTools.withType(tval));
 					keys.push(castOrUnify(ctx, tkey, tk, tk.pos));
 					values.push(castOrUnify(ctx, tval, tv, tv.pos));
