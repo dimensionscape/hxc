@@ -1172,8 +1172,11 @@ class Typer {
 				return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
 			case TAbstractDecl(a) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
+				// Without an expected type the value's abstract parameters are fresh constrained
+				// monomorphs, not the declared type parameters. (the enum field type unifies with
+				// TAbstract(a, spawnConstrainedMonos ...)).
 				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum))
-					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
+					cf.type = TAbstract(a, TypeUnification.spawnConstrainedMonos(function(t) return t, a.params));
 				return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 			case _:
 		}
