@@ -2224,16 +2224,38 @@ class EvalMacro {
 
 	static function typeToComplexType(t:T):Null<ComplexType> {
 		function hint(t:T):TypeHint return {ct: typeToComplexType(t), pos: Position.nullPos};
-		function params(tl:Array<T>):Array<TypeParamOrConst> return [for (t in tl) TPType(hint(t))];
-		return switch (TypeFunctions.follow(t)) {
+		// A KExpr type parameter (@:const) converts back to its expression.
+		function params(tl:Array<T>):Array<TypeParamOrConst> return [for (t in tl) switch (t) {
+			case TInst({kind: KExpr(e)}, _): TPExpr(e);
+			case _: TPType(hint(t));
+		}];
+		// Module-aware path: a secondary type converts as <Module> with sub <Name>; a private type
+		// converts by bare name. Typedefs and monomorphs are not followed (the path itself is the
+		// result), except '#'-statics typedefs.
+		function tpath(path:hxc.core.Globals.Path, mpath:hxc.core.Globals.Path, priv:Bool, tl:Array<T>):ComplexType {
+			if (priv) return CTPath({tpackage: [], tname: path.name, tparams: params(tl), tsub: null});
+			if (mpath.name == path.name) return CTPath({tpackage: path.pack, tname: path.name, tparams: params(tl), tsub: null});
+			return CTPath({tpackage: mpath.pack, tname: mpath.name, tparams: params(tl), tsub: path.name});
+		}
+		return switch (t) {
+			case TMono(r):
+				r.type == null ? null : typeToComplexType(r.type);
+			case TLazy(f):
+				typeToComplexType(TypeFunctions.lazyType(f));
 			case TInst(c, tl):
-				CTPath({tpackage: c.path.pack, tname: c.path.name, tparams: params(tl), tsub: null});
+				switch (c.kind) {
+					case KExpr(_) | KTypeParameter(_):
+						CTPath({tpackage: [], tname: c.path.name, tparams: params(tl), tsub: null});
+					case _:
+						tpath(c.path, c.module.path, c.isPrivate, tl);
+				}
 			case TEnum(e, tl):
-				CTPath({tpackage: e.path.pack, tname: e.path.name, tparams: params(tl), tsub: null});
+				tpath(e.path, e.module.path, e.isPrivate, tl);
 			case TType(td, tl):
-				CTPath({tpackage: td.path.pack, tname: td.path.name, tparams: params(tl), tsub: null});
+				if (td.path.name.charCodeAt(0) == "#".code) typeToComplexType(TypeFunctions.follow(t))
+				else tpath(td.path, td.module.path, td.isPrivate, tl);
 			case TAbstract(a, tl):
-				CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: params(tl), tsub: null});
+				tpath(a.path, a.module.path, a.isPrivate, tl);
 			case TFun(sig):
 				CTFunction([for (a in sig.args) hint(a.t)], hint(sig.ret));
 			case TDynamic(_):
@@ -2291,10 +2313,6 @@ class EvalMacro {
 						}
 						CTAnonymous(fields);
 				}
-			case TMono(_):
-				null;
-			case TLazy(r):
-				typeToComplexType(TypeFunctions.lazyType(r));
 		};
 	}
 
