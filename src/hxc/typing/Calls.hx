@@ -849,10 +849,27 @@ class Calls {
 	}
 
 	static function genericSuffix(params:TParams):String {
+		// An unbound monomorph cannot name a specialization.
+		for (p in params) switch (TypeFunctions.follow(p)) {
+			case TMono(r) if (r.type == null):
+				throw new TypingError("Could not determine type for parameter", Position.nullPos);
+			case _:
+		}
 		return [for (p in params) sanitizeGenericPart(genericPart(p))].join("_");
 	}
 
+	static var genericPartDepth = 0;
+
 	static function genericPart(t:T):String {
+		// Recursive structures would loop forever; past a sane depth the part degrades to "_".
+		if (genericPartDepth > 10) return "_";
+		genericPartDepth++;
+		var r = genericPartInner(t);
+		genericPartDepth--;
+		return r;
+	}
+
+	static function genericPartInner(t:T):String {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, params): pathName(c.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
 			case TEnum(e, params): pathName(e.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
@@ -860,8 +877,13 @@ class Calls {
 			case TType(td, params): pathName(td.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
 			case TDynamic(_): "Dynamic";
 			case TMono(_): "Mono";
-			case TFun(_): "Function";
-			case TAnon(_): "Anon";
+			// A function parameter spells func_<args>_<ret>, an anonymous structure anon_<field>_<type>...
+			case TFun(sig): "func_" + [for (a in sig.args) genericPart(a.t)].join("_") + "_" + genericPart(sig.ret);
+			case TAnon(an): {
+				var names = [for (n in an.fields.keys()) n];
+				names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+				"anon_" + [for (n in names) n + "_" + genericPart(TypeFunctions.follow(an.fields.get(n).type))].join("_");
+			}
 			case TLazy(f): genericPart(TypeFunctions.lazyType(f));
 		}
 	}
