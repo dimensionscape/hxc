@@ -1836,7 +1836,7 @@ class EvalMacro {
 		return {
 			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
 			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
-			meta: [],
+			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp),
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
 			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
 		};
@@ -2126,6 +2126,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
 		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type.ct));
 		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
+		fields.set(EvalHash.hash("meta"), encodeArray([for (m in a.meta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
