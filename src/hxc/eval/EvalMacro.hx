@@ -536,7 +536,7 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name}, t.method);
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method);
 			case _:
 		}
 		var ec = getContext(com);
@@ -601,7 +601,9 @@ class EvalMacro {
 		};
 	}
 
-	static function macroTarget(callee:Expr):Null<{pack:Array<String>, name:String, method:String}> {
+	// The first capitalized segment is the module; the last segment before the method is the class (a
+	// Module.SubType.method path addresses a secondary module type).
+	static function macroTarget(callee:Expr):Null<{pack:Array<String>, module:String, name:String, method:String}> {
 		var segs = flattenExprPath(callee);
 		if (segs == null || segs.length < 2) return null;
 		var typeSegs = segs.slice(0, segs.length - 1);
@@ -611,7 +613,7 @@ class EvalMacro {
 			if (ch >= "A".code && ch <= "Z".code) { typeIdx = i; break; }
 		}
 		if (typeIdx < 0) return null;
-		return {pack: typeSegs.slice(0, typeIdx), name: typeSegs[typeIdx], method: segs[segs.length - 1]};
+		return {pack: typeSegs.slice(0, typeIdx), module: typeSegs[typeIdx], name: typeSegs[typeSegs.length - 1], method: segs[segs.length - 1]};
 	}
 
 	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
@@ -632,7 +634,7 @@ class EvalMacro {
 				case ECall(callee, args):
 					var t = macroTarget(callee);
 					if (t == null) throw new TypingError("--macro target must be a static call", e.pos);
-					loadMacroClass(com, {pack: t.pack, name: t.name}, t.method, true);
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true);
 					var ec = getContext(com);
 					var savedPos = curPos;
 					curPos = e.pos;
@@ -833,7 +835,9 @@ class EvalMacro {
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
 			for (mt in m.types) switch (mt) {
-				case TClassDecl(c) if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")):
+				// The named field may live on a secondary module type (Module.SubType.method), so any
+				// module class carrying it qualifies alongside the main one.
+				case TClassDecl(c) if ((c.path.name == path.name || (fieldName != null && c.statics.exists(fieldName))) && c.path.pack.join(".") == path.pack.join(".")):
 					if (forceAll || fieldName == null)
 						hxc.typing.TypeFields.forceClassFields(macroCom, c);
 					else {
@@ -1090,7 +1094,7 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.name}, t.method);
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method);
 			case _:
 				throw new TypingError("genericBuild requires a single expression call parameter", p);
 		}
