@@ -2807,11 +2807,9 @@ class EvalStdLib {
 	}
 
 	public static function exceptionStackValue(ctx:EvalContext):EvalValue {
+		// The recorded frames are already innermost-first, the order a stack value carries.
 		var frames = EvalContext.getEval(ctx).exceptionStack;
-		var items = [for (i in 0...frames.length) {
-			var frame = frames[frames.length - 1 - i];
-			stackItem(ctx, frame.pos, frame.kind);
-		}];
+		var items = [for (frame in frames) stackItem(ctx, frame.pos, frame.kind)];
 		return VArray(new VArray(items, items.length));
 	}
 
