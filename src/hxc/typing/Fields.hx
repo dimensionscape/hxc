@@ -608,11 +608,15 @@ class Fields {
 		return null;
 	}
 
+	// The type-own using list is collected on the UNFOLLOWED type: a typedef contributes its own
+	// @:using before the type it aliases, one follow step at a time.
 	static function typeUsings(t:T):Array<TClassUsing> {
-		return switch (TypeFunctions.follow(t)) {
+		return switch (t) {
+			case TMono(r): r.type == null ? [] : typeUsings(r.type);
+			case TLazy(f): typeUsings(TypeFunctions.lazyType(f));
+			case TType(td, tl): td.usings.concat(typeUsings(TypeFunctions.applyParams(td.params, tl, td.type)));
 			case TInst(c, _): c.usings;
 			case TEnum(e, _): e.usings;
-			case TType(td, _): td.usings;
 			case TAbstract(a, _): a.usings;
 			case TAnon(a): switch (a.status.get()) {
 				case Statics(c): c.usings;

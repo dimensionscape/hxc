@@ -69,6 +69,9 @@ class TypeResolve {
 				if (parts == null || parts.length == 0) continue;
 				var path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
 				var used = try ctx.getType(path, param.pos, null) catch (_:Dynamic) null;
+				// A Module.SubType path: the second-to-last segment is the module, the last the sub type.
+				if (used == null && parts.length >= 2)
+					used = try ctx.getType({pack: parts.slice(0, parts.length - 2), name: parts[parts.length - 2]}, param.pos, parts[parts.length - 1]) catch (_:Dynamic) null;
 				var usingClass = switch (used) {
 					case TClassDecl(c): c;
 					case TAbstractDecl(a) if (a.impl != null): a.impl;
