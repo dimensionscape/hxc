@@ -115,11 +115,13 @@ class EvalMacro {
 		reg2("typeof", "typeof", function(a) {
 			if (curTctx == null) throw new TypingError("typeof outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
+			settleOpenReturns(te);
 			return encodeType(ec, te.type);
 		});
 		reg2("typeExpr", "type_expr", function(a) {
 			if (curTctx == null) throw new TypingError("typeExpr outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
+			settleOpenReturns(te);
 			return encodeTypedExpr(ec, te);
 		});
 		// store_expr(e): type a syntax expression and store the typed expression, returning the syntax
@@ -2225,6 +2227,52 @@ class EvalMacro {
 		fields.set(EvalHash.hash("params"), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
 		fields.set(EvalHash.hash("pos"), VNull);
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	// A referenced method whose inferred return is still an unbound monomorph has an untyped body; typing
+	// it binds the return (e.g. Void), so the macro sees the settled type, as a read through the field's
+	// lazy type would.
+	static function settleOpenReturns(te:TExpr):Void {
+		function openRet(cf:TClassField):Bool return switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig): switch (TypeFunctions.follow(sig.ret)) { case TMono(r): r.type == null; case _: false; };
+			case _: false;
+		}
+		switch (te.expr) {
+			case TField(e1, fa):
+				settleOpenReturns(e1);
+				var hit = switch (fa) {
+					case FInstance(c, _, cf) | FStatic(c, cf): {c: c, cf: cf};
+					case FClosure(w, cf) if (w != null): {c: w.c, cf: cf};
+					case _: null;
+				}
+				if (hit != null && hit.cf.expr == null && openRet(hit.cf) && currentCom != null)
+					hxc.typing.TypeFields.forceFieldBody(currentCom, hit.c, hit.cf);
+			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _) | TUnop(_, _, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TThrow(e1):
+				settleOpenReturns(e1);
+			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2) | TWhile(e1, e2, _):
+				settleOpenReturns(e1); settleOpenReturns(e2);
+			case TBlock(el) | TArrayDecl(el):
+				for (x in el) settleOpenReturns(x);
+			case TCall(e1, el):
+				settleOpenReturns(e1); for (x in el) settleOpenReturns(x);
+			case TNew(_, _, el):
+				for (x in el) settleOpenReturns(x);
+			case TObjectDecl(fl):
+				for (f in fl) settleOpenReturns(f.expr);
+			case TVarExpr(_, eo) | TReturn(eo):
+				if (eo != null) settleOpenReturns(eo);
+			case TIf(e1, e2, e3):
+				settleOpenReturns(e1); settleOpenReturns(e2); if (e3 != null) settleOpenReturns(e3);
+			case TSwitch(e1, cases, edef):
+				settleOpenReturns(e1);
+				for (c in cases) { for (v in c.values) settleOpenReturns(v); settleOpenReturns(c.expr); }
+				if (edef != null) settleOpenReturns(edef);
+			case TTry(e1, catches):
+				settleOpenReturns(e1); for (c in catches) settleOpenReturns(c.expr);
+			case TFunction(f):
+				settleOpenReturns(f.expr);
+			case TConst(_) | TLocal(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue:
+		}
 	}
 
 	static function typeToComplexType(t:T):Null<ComplexType> {
