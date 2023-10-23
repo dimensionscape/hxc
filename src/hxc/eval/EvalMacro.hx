@@ -2258,7 +2258,13 @@ class EvalMacro {
 			case TAbstract(a, tl):
 				tpath(a.path, a.module.path, a.isPrivate, tl);
 			case TFun(sig):
-				CTFunction([for (a in sig.args) hint(a.t)], hint(sig.ret));
+				// A named argument converts as CTNamed and an optional one wraps in CTOptional.
+				CTFunction([for (a in sig.args) {
+					var th = hint(a.t);
+					if (a.name != "") th = {ct: CTNamed({name: a.name, pos: Position.nullPos}, th), pos: Position.nullPos};
+					if (a.opt) th = {ct: CTOptional(th), pos: Position.nullPos};
+					th;
+				}], hint(sig.ret));
 			case TDynamic(_):
 				CTPath({tpackage: [], tname: "Dynamic", tparams: [], tsub: null});
 			case TAnon(an):
