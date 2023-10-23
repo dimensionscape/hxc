@@ -382,15 +382,29 @@ class Operators {
 			// distinguished from a not-yet-typed one.
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, implC, cf);
 			if (cf.expr == null && !hxc.typing.TypeFields.fieldHasSyntaxBody(ctx.com, implC, cf) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
-				// A bodyless @:op without @:noExpr is a recursive operator method in the reference; hxc
-				// tolerates it and applies the native underlying-type semantics below. The reference also
-				// verifies the declared return type is compatible with the native result type make); hxc
-				// omits that raise because its make_binop type classification for mixed operands (e.g. A
-				// bodyless @:op means the underlying-type semantics: emit the native operation on the
+				// For a bodyless @:op on a non-core-type abstract the declared return type must be
+				// compatible with the native result of the operation on the underlying types.
+				if (!TypeFunctions.hasMeta(":coreType", a.meta)) {
+					var u1 = TypeFunctions.mk(me1.expr, TypeFunctions.followWithAbstracts(me1.type), me1.pos);
+					var u2 = TypeFunctions.mk(me1.expr, TypeFunctions.followWithAbstracts(me2.type), me1.pos);
+					var tExpected = switch (makeBinop(ctx, opCf, u1, u2, isAssignOp, withType, p)) {
+						case BinopNormal(_, _, _, t, _, _, _): t;
+						case BinopSpecial(e, _): e.type;
+					};
+					try TypeUnification.unifyDefault(tret, tExpected) catch (_:UnifyError) {
+						switch (TypeFunctions.follow(tret)) {
+							case TAbstract(ra, rtl) if (TypeUnification.typeIseqDefault(TypeFunctions.getUnderlyingType(ra, rtl), tExpected)):
+							case _:
+								throw new TypingError("The result of this operation (" + hxc.core.TPrinting.sTypeStr(tExpected) + ") is not compatible with declared return type " + hxc.core.TPrinting.sTypeStr(tret), p);
+						}
+					}
+				}
+				// A bodyless @:op means the underlying-type semantics: emit the native operation on the
 				// (possibly swapped) operands, typed as the declared return. It is returned as a special
 				// result (not BinopNormal) so a compound assignment lowers it to `a = (a op b)` rather than
 				// a native `a op= b`, which the evaluator cannot apply to an abstract value. The assign
-				// flag uses is_assign_op (bodyless @:op wants underlying-type assignment semantics).
+				// flag
+				// uses isAssignOp (bodyless @:op wants underlying-type assignment semantics).
 				if (swapped) {
 					var tvoid = ctx.com.basic.tvoid;
 					var vlhs = TypeFunctions.allocVar(VGenerated, "`lhs", me2.type, me2.pos);
