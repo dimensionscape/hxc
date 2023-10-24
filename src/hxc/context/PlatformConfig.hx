@@ -14,10 +14,12 @@ class PlatformConfig {
 	public var supportsRestArgs:Bool;              // `haxe.Rest` at call sites
 	public var usesUtf16:Bool;
 	public var supportsUnicode:Bool;
+	public var supportsThreads:Bool;                // Per-thread event loops
 
 	public function new(isStatic:Bool, sys:Bool, supportsOverload:Bool, capturePolicy:CapturePolicy,
 			padNulls:Bool, addFinalReturn:Bool, canSkipNonNullableArgument:Bool,
-			supportsRestArgs:Bool, usesUtf16:Bool, supportsUnicode:Bool) {
+			supportsRestArgs:Bool, usesUtf16:Bool, supportsUnicode:Bool,
+			supportsThreads:Bool = false) {
 		this.isStatic = isStatic;
 		this.sys = sys;
 		this.supportsOverload = supportsOverload;
@@ -28,6 +30,7 @@ class PlatformConfig {
 		this.supportsRestArgs = supportsRestArgs;
 		this.usesUtf16 = usesUtf16;
 		this.supportsUnicode = supportsUnicode;
+		this.supportsThreads = supportsThreads;
 	}
 
 	public static function defaults():PlatformConfig {
@@ -51,6 +54,7 @@ class PlatformConfig {
 			isStatic: true, sys: true, supportsOverload: false, capturePolicy: CPWrapRef,
 			padNulls: true, addFinalReturn: true, canSkipNonNullableArgument: true,
 			supportsRestArgs: false, usesUtf16: true, supportsUnicode: true,
+			supportsThreads: true,
 		};
 	}
 
@@ -59,6 +63,7 @@ class PlatformConfig {
 			isStatic: false, sys: true, supportsOverload: false, capturePolicy: CPWrapRef,
 			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
 			supportsRestArgs: false, usesUtf16: false, supportsUnicode: true,
+			supportsThreads: true,
 		};
 	}
 

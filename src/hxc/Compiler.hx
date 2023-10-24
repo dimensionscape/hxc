@@ -74,17 +74,21 @@ class Compiler {
 				case "-js" | "--js":
 					platform = Js;
 					targetDir = "js";
-					i++; // Consume the output file
+					ctx.file = args[i++];
 				case "-cpp" | "--cpp":
 					platform = Cpp;
 					targetDir = "cpp";
-					i++; // Consume the output dir
+					ctx.file = args[i++];
 				case "--macro":
 					ctx.initMacros.push(args[i++]);
 				case "-v" | "--verbose":
 					ctx.defines.rawDefine("verbose");
+				case "--debug" | "-debug":
+					// --debug also raises the debug define
+					ctx.debug = true;
+					ctx.defines.rawDefine("debug");
 				case "--dce":
-					i++;
+					ctx.defines.rawDefineValue("dce", args[i++]);
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
 				case "-w":
@@ -120,6 +124,7 @@ class Compiler {
 			return;
 		}
 		var path = parseTypePath(mainClass);
+		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
@@ -138,6 +143,8 @@ class Compiler {
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
 			abortOnDiagnostics(ctx, platform);
+			// Fix com.main and the static-init type order before any target consumes them
+			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
