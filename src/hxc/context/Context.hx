@@ -53,6 +53,21 @@ class Context {
 	/** Embedded resources from `--resource file@name`. */
 	public var resources:StringMap<haxe.io.Bytes>;
 
+	public var debug:Bool = false;
+
+	/** Target output file or directory (-js file, -cpp dir). */
+	public var file:String = "";
+
+	/**
+	    Feature flags read by the generators, committed from module features after DCE.
+	*/
+	public var features:StringMap<Bool>;
+
+	/**
+	 * Finalization's entry expression: main() call plus entry-point or event-loop tail.
+	 */
+	public var main:Null<TExpr> = null;
+
 	public var initMacros:Array<String>;
 
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
@@ -120,6 +135,7 @@ class Context {
 		this.modules = [];
 		this.types = [];
 		this.resources = new StringMap();
+		this.features = new StringMap();
 		this.initMacros = [];
 		this.declOfType = new StringMap();
 		this.diagnostics = [];
@@ -157,9 +173,76 @@ class Context {
 		c.platform = Eval;
 		c.platformConfig = PlatformConfig.eval();
 		c.isMacro = true;
+		// Copy debug settings while starting a fresh feature table.
+		c.debug = this.debug;
 		for (name in this.resources.keys()) c.resources.set(name, this.resources.get(name));
 		c.initMacros = this.initMacros.copy();
 		return c;
+	}
+
+	public function addFeature(f:String):Void {
+		features.set(f, true);
+	}
+
+	public function hasDce():Bool {
+		return defines.rawDefinedValueSafe("dce", "no") != "no";
+	}
+
+	public function isDirectlyUsed(meta:Metadata):Bool {
+		return !hasDce() || TypeFunctions.hasMeta(":directlyUsed", meta);
+	}
+
+	// Memoize feature lookups against loaded types and DCE metadata; a bare name checks name.*.
+	public function hasFeature(f:String):Bool {
+		var cached = features.get(f);
+		if (cached != null) return cached;
+		if (types.length == 0) return !hasDce();
+		var parts = f.split(".");
+		if (parts.length == 0) throw new ContextError("empty feature name", Position.nullPos);
+		if (parts.length == 1) return hasFeature(parts[0] + ".*");
+		var field = parts[parts.length - 1];
+		var cl = parts[parts.length - 2];
+		var pack = parts.slice(0, parts.length - 2);
+		var found:Null<ModuleType> = null;
+		for (t in types) {
+			var tp = TypeFunctions.tPath(t);
+			if (tp.name == cl && tp.pack.length == pack.length && !TypeFunctions.hasMeta(":realPath", TypeFunctions.tInfos(t).meta)) {
+				var same = true;
+				for (i in 0...pack.length) if (tp.pack[i] != pack[i]) { same = false; break; }
+				if (same) { found = t; break; }
+			}
+		}
+		var r = if (found == null) {
+			false;
+		} else if (field == "*") {
+			!hasDce() || switch (found) {
+				case TAbstractDecl(a): TypeFunctions.hasMeta(":valueUsed", a.meta);
+				case _: TypeFunctions.hasMeta(":used", TypeFunctions.tInfos(found).meta);
+			};
+		} else switch (found) {
+			case TClassDecl(c) if (TypeFunctions.hasClassFlag(c, CExtern) && (platform != Js || (cl != "Array" && cl != "Math"))):
+				if (!hasDce()) true else {
+					var cf = c.statics.get(field);
+					if (cf == null) cf = c.fields.get(field);
+					cf != null && TypeFunctions.hasMeta(":used", cf.meta);
+				}
+			case TClassDecl(c):
+				c.statics.exists(field) || c.fields.exists(field);
+			case _:
+				false;
+		}
+		features.set(f, r);
+		return r;
+	}
+
+	public function commitFeatures(t:ModuleType):Void {
+		var m = TypeFunctions.tInfos(t).module;
+		for (k in m.extra.features.keys()) addFeature(k);
+	}
+
+	public function getEsVersion():Int {
+		var v = Std.parseInt(defines.rawDefinedValueSafe("js_es", ""));
+		return v == null ? 0 : v;
 	}
 
 	public static function pathKey(path:Path):String {
