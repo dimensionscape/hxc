@@ -327,4 +327,347 @@ class TexprTools {
 		}
 		return build(e);
 	}
+
+	// Apply f to each direct sub-expression of e.
+	public static function iter(f:TExpr->Void, e:TExpr):Void {
+		switch (e.expr) {
+			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
+			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2) | TWhile(e1, e2, _):
+				f(e1);
+				f(e2);
+			case TThrow(e1) | TField(e1, _) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TParenthesis(e1) | TCast(e1, _) | TUnop(_, _, e1) | TMeta(_, e1):
+				f(e1);
+			case TArrayDecl(el) | TNew(_, _, el) | TBlock(el):
+				for (x in el) f(x);
+			case TObjectDecl(fl):
+				for (fd in fl) f(fd.expr);
+			case TCall(e1, el):
+				f(e1);
+				for (x in el) f(x);
+			case TVarExpr(_, eo):
+				if (eo != null) f(eo);
+			case TFunction(fu):
+				f(fu.expr);
+			case TIf(ec, e1, e2):
+				f(ec);
+				f(e1);
+				if (e2 != null) f(e2);
+			case TSwitch(e1, cases, def):
+				f(e1);
+				for (c in cases) {
+					for (v in c.values) f(v);
+					f(c.expr);
+				}
+				if (def != null) f(def);
+			case TTry(e1, catches):
+				f(e1);
+				for (c in catches) f(c.expr);
+			case TReturn(eo):
+				if (eo != null) f(eo);
+		}
+	}
+
+	// Rebuild e with f applied to each direct sub-expression.
+	public static function mapExpr(f:TExpr->TExpr, e:TExpr):TExpr {
+		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
+		return switch (e.expr) {
+			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
+				e;
+			case TArray(e1, e2):
+				var e1 = f(e1);
+				mk2(TArray(e1, f(e2)));
+			case TBinop(op, e1, e2):
+				var e1 = f(e1);
+				mk2(TBinop(op, e1, f(e2)));
+			case TFor(v, e1, e2):
+				var e1 = f(e1);
+				mk2(TFor(v, e1, f(e2)));
+			case TWhile(e1, e2, flag):
+				var e1 = f(e1);
+				mk2(TWhile(e1, f(e2), flag));
+			case TThrow(e1):
+				mk2(TThrow(f(e1)));
+			case TEnumParameter(e1, ef, i):
+				mk2(TEnumParameter(f(e1), ef, i));
+			case TEnumIndex(e1):
+				mk2(TEnumIndex(f(e1)));
+			case TField(e1, v):
+				mk2(TField(f(e1), v));
+			case TParenthesis(e1):
+				mk2(TParenthesis(f(e1)));
+			case TUnop(op, pre, e1):
+				mk2(TUnop(op, pre, f(e1)));
+			case TArrayDecl(el):
+				mk2(TArrayDecl([for (x in el) f(x)]));
+			case TNew(t, pl, el):
+				mk2(TNew(t, pl, [for (x in el) f(x)]));
+			case TBlock(el):
+				mk2(TBlock([for (x in el) f(x)]));
+			case TObjectDecl(fl):
+				mk2(TObjectDecl([for (fd in fl) {key: fd.key, expr: f(fd.expr)}]));
+			case TCall(e1, el):
+				var e1 = f(e1);
+				mk2(TCall(e1, [for (x in el) f(x)]));
+			case TVarExpr(v, eo):
+				mk2(TVarExpr(v, eo == null ? null : f(eo)));
+			case TFunction(fu):
+				mk2(TFunction(new TFunc(fu.args, fu.type, f(fu.expr))));
+			case TIf(ec, e1, e2):
+				var ec = f(ec);
+				var e1 = f(e1);
+				mk2(TIf(ec, e1, e2 == null ? null : f(e2)));
+			case TSwitch(e1, cases, def):
+				var e1 = f(e1);
+				var cases = [for (c in cases) {values: [for (v in c.values) f(v)], expr: f(c.expr)}];
+				mk2(TSwitch(e1, cases, def == null ? null : f(def)));
+			case TTry(e1, catches):
+				var e1 = f(e1);
+				mk2(TTry(e1, [for (c in catches) {v: c.v, expr: f(c.expr)}]));
+			case TReturn(eo):
+				mk2(TReturn(eo == null ? null : f(eo)));
+			case TCast(e1, t):
+				mk2(TCast(f(e1), t));
+			case TMeta(m, e1):
+				mk2(TMeta(m, f(e1)));
+		};
+	}
+
+	// Unwrap parens, meta, single-expr blocks and typeless casts.
+	public static function skip(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1) | TBlock([e1]) | TCast(e1, null): skip(e1);
+			case _: e;
+		};
+	}
+
+	static function foldmapList<A>(f:(acc:A, e:TExpr)->{acc:A, e:TExpr}, acc:A, el:Array<TExpr>):{acc:A, el:Array<TExpr>} {
+		var acc2 = [];
+		for (e1 in el) {
+			var r = f(acc, e1);
+			acc = r.acc;
+			acc2.push(r.e);
+		}
+		return {acc: acc, el: acc2};
+	}
+
+	static function foldmapOpt<A>(f:(acc:A, e:TExpr)->{acc:A, e:TExpr}, acc:A, eo:Null<TExpr>):{acc:A, eo:Null<TExpr>} {
+		if (eo == null) return {acc: acc, eo: null};
+		var r = f(acc, eo);
+		return {acc: r.acc, eo: r.e};
+	}
+
+	// mapExpr threading an accumulator through the sub-expressions.
+	public static function foldmap<A>(f:(acc:A, e:TExpr)->{acc:A, e:TExpr}, acc:A, e:TExpr):{acc:A, e:TExpr} {
+		inline function mk2(ed:TExprExpr):TExpr return TypeFunctions.mk(ed, e.type, e.pos);
+		return switch (e.expr) {
+			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
+				{acc: acc, e: e};
+			case TArray(e1, e2):
+				var r1 = f(acc, e1);
+				var r2 = f(r1.acc, e2);
+				{acc: r2.acc, e: mk2(TArray(r1.e, r2.e))};
+			case TBinop(op, e1, e2):
+				var r1 = f(acc, e1);
+				var r2 = f(r1.acc, e2);
+				{acc: r2.acc, e: mk2(TBinop(op, r1.e, r2.e))};
+			case TFor(v, e1, e2):
+				var r1 = f(acc, e1);
+				var r2 = f(r1.acc, e2);
+				{acc: r2.acc, e: mk2(TFor(v, r1.e, r2.e))};
+			case TWhile(e1, e2, flag):
+				var r1 = f(acc, e1);
+				var r2 = f(r1.acc, e2);
+				{acc: r2.acc, e: mk2(TWhile(r1.e, r2.e, flag))};
+			case TThrow(e1):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TThrow(r.e))};
+			case TEnumParameter(e1, ef, i):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TEnumParameter(r.e, ef, i))};
+			case TEnumIndex(e1):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TEnumIndex(r.e))};
+			case TField(e1, v):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TField(r.e, v))};
+			case TParenthesis(e1):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TParenthesis(r.e))};
+			case TUnop(op, pre, e1):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TUnop(op, pre, r.e))};
+			case TArrayDecl(el):
+				var r = foldmapList(f, acc, el);
+				{acc: r.acc, e: mk2(TArrayDecl(r.el))};
+			case TNew(t, pl, el):
+				var r = foldmapList(f, acc, el);
+				{acc: r.acc, e: mk2(TNew(t, pl, r.el))};
+			case TBlock(el):
+				var r = foldmapList(f, acc, el);
+				{acc: r.acc, e: mk2(TBlock(r.el))};
+			case TObjectDecl(fl):
+				// Re-reverses to source order
+				var flAcc = [];
+				for (fd in fl) {
+					var r = f(acc, fd.expr);
+					acc = r.acc;
+					flAcc.push({key: fd.key, expr: r.e});
+				}
+				{acc: acc, e: mk2(TObjectDecl(flAcc))};
+			case TCall(e1, el):
+				var r1 = f(acc, e1);
+				var r2 = foldmapList(f, r1.acc, el);
+				{acc: r2.acc, e: mk2(TCall(r1.e, r2.el))};
+			case TVarExpr(v, eo):
+				var r = foldmapOpt(f, acc, eo);
+				{acc: r.acc, e: mk2(TVarExpr(v, r.eo))};
+			case TFunction(fu):
+				var r = f(acc, fu.expr);
+				{acc: r.acc, e: mk2(TFunction(new TFunc(fu.args, fu.type, r.e)))};
+			case TIf(ec, e1, eo):
+				var rc = f(acc, ec);
+				var r1 = f(rc.acc, e1);
+				var ro = foldmapOpt(f, r1.acc, eo);
+				{acc: ro.acc, e: mk2(TIf(rc.e, r1.e, ro.eo))};
+			case TSwitch(e1, cases, def):
+				var r1 = f(acc, e1);
+				acc = r1.acc;
+				// Cases fold by prepending without a final reverse, so their order comes out reversed.
+				var casesAcc = [];
+				for (c in cases) {
+					var rv = foldmapList(f, acc, c.values);
+					var re = f(rv.acc, c.expr);
+					acc = re.acc;
+					casesAcc.unshift({values: rv.el, expr: re.e});
+				}
+				var rd = foldmapOpt(f, acc, def);
+				{acc: rd.acc, e: mk2(TSwitch(r1.e, casesAcc, rd.eo))};
+			case TTry(e1, catches):
+				var r1 = f(acc, e1);
+				acc = r1.acc;
+				// Re-reverses to source order
+				var catchesAcc = [];
+				for (c in catches) {
+					var r = f(acc, c.expr);
+					acc = r.acc;
+					catchesAcc.push({v: c.v, expr: r.e});
+				}
+				{acc: acc, e: mk2(TTry(r1.e, catchesAcc))};
+			case TReturn(eo):
+				var r = foldmapOpt(f, acc, eo);
+				{acc: r.acc, e: mk2(TReturn(r.eo))};
+			case TCast(e1, t):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TCast(r.e, t))};
+			case TMeta(m, e1):
+				var r = f(acc, e1);
+				{acc: r.acc, e: mk2(TMeta(m, r.e))};
+		};
+	}
+
+	// If (a == null) a = c;
+	public static function setDefault(basic:BasicTypes, a:TVar, c:TExpr, p:Position):TExpr {
+		var t = a.type;
+		var ve = TypeFunctions.mk(TLocal(a), t, p);
+		var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), t, p)), basic.tbool, p);
+		return TypeFunctions.mk(TIf(mkParent(cond), TypeFunctions.mk(TBinop(OpAssign, ve, c), t, p), null), basic.tvoid, p);
+	}
+
+	// Constants, object and array literals of constants.
+	public static function typeConstantValue(basic:BasicTypes, e:Expr):TExpr {
+		return switch (e.expr) {
+			case EConst(c):
+				typeConstant(basic, c, e.pos);
+			case EParenthesis(e1):
+				typeConstantValue(basic, e1);
+			case EObjectDecl(el):
+				TypeFunctions.mk(TObjectDecl([for (f in el) {
+					key: {name: f.name, pos: f.pos, quotes: f.quotes},
+					expr: typeConstantValue(basic, f.expr)
+				}]), TypeFunctions.mkAnon(new Ref(Closed)), e.pos);
+			case EArrayDecl(el):
+				TypeFunctions.mk(TArrayDecl([for (x in el) typeConstantValue(basic, x)]), basic.tarray(TypeFunctions.tDynamic), e.pos);
+			case _:
+				throw new TypingError("Constant value expected", e.pos);
+		};
+	}
+
+	// The __meta__ object {obj?, statics?, fields?} carrying the run-time (non-colon) metadata of a type,
+	// or null when it has none.
+	public static function buildMetadata(basic:BasicTypes, t:ModuleType):Null<TExpr> {
+		var p:Position;
+		var meta:Array<{name:String, ml:Metadata}>;
+		var fields:Array<{name:String, ml:Metadata}>;
+		var statics:Array<{name:String, ml:Metadata}>;
+		switch (t) {
+			case TClassDecl(c):
+				fields = [for (f in c.orderedFields) {name: f.name, ml: f.meta}];
+				if (c.constructor != null) fields.push({name: "_", ml: c.constructor.meta});
+				statics = [for (f in c.orderedStatics) {name: f.name, ml: f.meta}];
+				p = c.pos;
+				meta = [{name: "", ml: c.meta}];
+			case TEnumDecl(en):
+				p = en.pos;
+				meta = [{name: "", ml: en.meta}];
+				fields = [for (n in en.names) {name: n, ml: en.constrs.get(n).meta}];
+				statics = [];
+			case TTypeDecl(td):
+				p = td.pos;
+				meta = [{name: "", ml: td.meta}];
+				fields = switch (TypeFunctions.follow(td.type)) {
+					case TAnon(a):
+						// Prepending each name of the sorted list makes it name-descending.
+						var names = [for (k in a.fields.keys()) k];
+						names.sort(Reflect.compare);
+						var out = [];
+						for (n in names) out.unshift({name: n, ml: a.fields.get(n).meta});
+						out;
+					case _: [];
+				};
+				statics = [];
+			case TAbstractDecl(a):
+				p = a.pos;
+				meta = [{name: "", ml: a.meta}];
+				fields = [];
+				statics = [];
+		}
+		// Keep only run-time metadata: a name not starting with ':'
+		function filter(l:Array<{name:String, ml:Metadata}>):Array<{name:String, ml:Metadata}> {
+			var out = [];
+			for (entry in l) {
+				var ml = [for (m in entry.ml) if (m.name.length > 0 && m.name.charAt(0) != ":") m];
+				if (ml.length > 0) out.push({name: entry.name, ml: ml});
+			}
+			return out;
+		}
+		var meta = filter(meta);
+		var fields = filter(fields);
+		var statics = filter(statics);
+		function makeMetaField(ml:Metadata):TExpr {
+			var h = new haxe.ds.StringMap<Bool>();
+			return TypeFunctions.mk(TObjectDecl([for (m in ml) {
+				if (h.exists(m.name)) throw new TypingError("Duplicate metadata '" + m.name + "'", m.pos);
+				h.set(m.name, true);
+				{
+					key: {name: m.name, pos: Position.nullPos, quotes: NoQuotes},
+					expr: TypeFunctions.mk(m.params.length == 0 ? TConst(TNull) : TArrayDecl([for (x in m.params) typeConstantValue(basic, x)]), basic.tarray(TypeFunctions.tDynamic), m.pos)
+				};
+			}]), TypeFunctions.tDynamic, p);
+		}
+		function makeMeta(l:Array<{name:String, ml:Metadata}>):TExpr {
+			return TypeFunctions.mk(TObjectDecl([for (entry in l) {
+				key: {name: entry.name, pos: Position.nullPos, quotes: NoQuotes},
+				expr: makeMetaField(entry.ml)
+			}]), TypeFunctions.tDynamic, p);
+		}
+		if (meta.length == 0 && fields.length == 0 && statics.length == 0) return null;
+		var metaObj:Array<TObjectField> = [];
+		if (fields.length > 0) metaObj.unshift({key: {name: "fields", pos: Position.nullPos, quotes: NoQuotes}, expr: makeMeta(fields)});
+		if (statics.length > 0) metaObj.unshift({key: {name: "statics", pos: Position.nullPos, quotes: NoQuotes}, expr: makeMeta(statics)});
+		for (entry in meta) if (entry.name == "") {
+			metaObj.unshift({key: {name: "obj", pos: Position.nullPos, quotes: NoQuotes}, expr: makeMetaField(entry.ml)});
+			break;
+		}
+		return TypeFunctions.mk(TObjectDecl(metaObj), TypeFunctions.tDynamic, p);
+	}
 }
