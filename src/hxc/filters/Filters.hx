@@ -626,6 +626,7 @@ class Filters {
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
 			// Slot: AbstractCast.handle_abstract_casts (hxc types abstract casts during typing)
 		], t);
+		var exceptionsFilter = hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "local_statics", f: function(e) return localStatics(tctx, e)},
 			{name: "fix_return_dynamic_from_void_function", f: function(e) return fixReturnDynamicFromVoidFunction(tctx, true, e)},
@@ -633,7 +634,8 @@ class Filters {
 			{name: "check_abstract_as_value", f: checkAbstractAsValue},
 			// Slot: Tre (tail recursion elimination, gated on analyzer-optimize)
 			{name: "reduce_expression", f: function(e) return Optimizer.reduceExpression(tctx, e)},
-			// Slot: inline_constructors slot: Exceptions.filter
+			// Slot: inline_constructors
+			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
 		// Slot: Analyzer.Run.run_on_types PASS 2

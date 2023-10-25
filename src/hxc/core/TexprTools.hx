@@ -439,6 +439,14 @@ class TexprTools {
 		return TypeFunctions.mk(TCall(fieldOn(e, name, ft, p), el), ret, p);
 	}
 
+	// True when the predicate holds for at least one direct sub-expression (the root itself is not
+	// tested)
+	public static function checkExpr(predicate:TExpr->Bool, e:TExpr):Bool {
+		var found = false;
+		iter(function(x) if (!found && predicate(x)) found = true, e);
+		return found;
+	}
+
 	// Apply f to each direct sub-expression of e.
 	public static function iter(f:TExpr->Void, e:TExpr):Void {
 		switch (e.expr) {
