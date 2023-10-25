@@ -145,6 +145,14 @@ class Compiler {
 			abortOnDiagnostics(ctx, platform);
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
+			// The filter pipeline runs for generated targets eval keeps its unfiltered path until the switch
+			// is coordinated with the eval gate
+			if (platform == Js) {
+				var tFilter = hxc.core.Timer.timer(["filters"]);
+				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
+				tFilter();
+				abortOnDiagnostics(ctx, platform);
+			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
