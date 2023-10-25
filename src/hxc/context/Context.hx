@@ -55,6 +55,9 @@ class Context {
 
 	public var debug:Bool = false;
 
+	/** False under --no-opt: expression reduction is skipped. */
+	public var foptimize:Bool = true;
+
 	/** Target output file or directory (-js file, -cpp dir). */
 	public var file:String = "";
 

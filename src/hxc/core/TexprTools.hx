@@ -328,6 +328,117 @@ class TexprTools {
 		return build(e);
 	}
 
+	static function safeForAll2<A, B>(f:(a:A, b:B)->Bool, l1:Array<A>, l2:Array<B>):Bool {
+		if (l1.length != l2.length) return false;
+		for (i in 0...l1.length) if (!f(l1[i], l2[i])) return false;
+		return true;
+	}
+
+	// Same class and equal name is the same field, so value equality on the name is enough.
+	public static function equalFa(fa1:TFieldAccess, fa2:TFieldAccess):Bool {
+		return switch ([fa1, fa2]) {
+			case [FStatic(c1, cf1), FStatic(c2, cf2)]: c1 == c2 && cf1.name == cf2.name;
+			case [FInstance(c1, tl1, cf1), FInstance(c2, tl2, cf2)]:
+				c1 == c2 && safeForAll2(TypeUnification.typeIseqDefault, tl1, tl2) && cf1.name == cf2.name;
+			case [FAnon(cf1), FAnon(cf2)]: cf1.name == cf2.name;
+			case [FDynamic(s1), FDynamic(s2)]: s1 == s2;
+			case [FClosure(null, cf1), FClosure(null, cf2)]: cf1.name == cf2.name;
+			case [FClosure(w1, cf1), FClosure(w2, cf2)] if (w1 != null && w2 != null):
+				w1.c == w2.c && safeForAll2(TypeUnification.typeIseqDefault, w1.params, w2.params) && cf1.name == cf2.name;
+			case [FEnum(en1, ef1), FEnum(en2, ef2)]: en1 == en2 && ef1.name == ef2.name;
+			case _: false;
+		};
+	}
+
+	// Structural equality with identity on vars, classes and fields.
+	public static function equal(e1:TExpr, e2:TExpr):Bool {
+		return switch ([e1.expr, e2.expr]) {
+			case [TConst(ct1), TConst(ct2)]: std.Type.enumEq(ct1, ct2);
+			case [TLocal(v1), TLocal(v2)]: v1 == v2;
+			case [TArray(eb1, ei1), TArray(eb2, ei2)]: equal(eb1, eb2) && equal(ei1, ei2);
+			case [TBinop(op1, l1, r1), TBinop(op2, l2, r2)]: std.Type.enumEq(op1, op2) && equal(l1, l2) && equal(r1, r2);
+			case [TField(a1, fa1), TField(a2, fa2)]: equal(a1, a2) && equalFa(fa1, fa2);
+			case [TTypeExpr(TClassDecl(c1)), TTypeExpr(TClassDecl(c2))]: c1 == c2;
+			case [TTypeExpr(TEnumDecl(x1)), TTypeExpr(TEnumDecl(x2))]: x1 == x2;
+			case [TTypeExpr(TTypeDecl(t1)), TTypeExpr(TTypeDecl(t2))]: t1 == t2;
+			case [TTypeExpr(TAbstractDecl(a1)), TTypeExpr(TAbstractDecl(a2))]: a1 == a2;
+			case [TTypeExpr(_), TTypeExpr(_)]: false;
+			case [TParenthesis(a1), TParenthesis(a2)]: equal(a1, a2);
+			case [TObjectDecl(fl1), TObjectDecl(fl2)]:
+				safeForAll2(function(f1:TObjectField, f2:TObjectField) return f1.key.name == f2.key.name && equal(f1.expr, f2.expr), fl1, fl2);
+			case [TArrayDecl(el1), TArrayDecl(el2)] | [TBlock(el1), TBlock(el2)]: safeForAll2(equal, el1, el2);
+			case [TCall(a1, el1), TCall(a2, el2)]: equal(a1, a2) && safeForAll2(equal, el1, el2);
+			case [TNew(c1, tl1, el1), TNew(c2, tl2, el2)]:
+				c1 == c2 && safeForAll2(TypeUnification.typeIseqDefault, tl1, tl2) && safeForAll2(equal, el1, el2);
+			case [TUnop(op1, flag1, a1), TUnop(op2, flag2, a2)]: std.Type.enumEq(op1, op2) && std.Type.enumEq(flag1, flag2) && equal(a1, a2);
+			case [TFunction(tf1), TFunction(tf2)]: tf1 == tf2;
+			case [TVarExpr(v1, null), TVarExpr(v2, null)]: v1 == v2;
+			case [TVarExpr(v1, x1), TVarExpr(v2, x2)] if (x1 != null && x2 != null): v1 == v2 && equal(x1, x2);
+			case [TFor(v1, ec1, eb1), TFor(v2, ec2, eb2)]: v1 == v2 && equal(ec1, ec2) && equal(eb1, eb2);
+			case [TIf(a1, t1, null), TIf(a2, t2, null)]: equal(a1, a2) && equal(t1, t2);
+			case [TIf(a1, t1, x1), TIf(a2, t2, x2)] if (x1 != null && x2 != null): equal(a1, a2) && equal(t1, t2) && equal(x1, x2);
+			// Eb2 is compared with itself, so a while's body never affects equality.
+			case [TWhile(a1, _, flag1), TWhile(a2, eb2, flag2)]: equal(a1, a2) && equal(eb2, eb2) && std.Type.enumEq(flag1, flag2);
+			case [TSwitch(a1, cases1, def1), TSwitch(a2, cases2, def2)]:
+				equal(a1, a2)
+				&& safeForAll2(function(c1:TSwitchCase, c2:TSwitchCase) return safeForAll2(equal, c1.values, c2.values) && equal(c1.expr, c2.expr), cases1, cases2)
+				&& (def1 == null ? def2 == null : (def2 != null && equal(def1, def2)));
+			case [TTry(a1, catches1), TTry(a2, catches2)]:
+				equal(a1, a2) && safeForAll2(function(c1:TCatch, c2:TCatch) return c1.v == c2.v && equal(c1.expr, c2.expr), catches1, catches2);
+			case [TReturn(null), TReturn(null)]: true;
+			case [TReturn(x1), TReturn(x2)] if (x1 != null && x2 != null): equal(x1, x2);
+			case [TThrow(a1), TThrow(a2)]: equal(a1, a2);
+			case [TCast(a1, null), TCast(a2, null)]: equal(a1, a2);
+			case [TCast(a1, mt1), TCast(a2, mt2)] if (mt1 != null && mt2 != null):
+				// Module-type identity, arm by arm
+				equal(a1, a2) && switch ([mt1, mt2]) {
+					case [TClassDecl(c1), TClassDecl(c2)]: c1 == c2;
+					case [TEnumDecl(x1), TEnumDecl(x2)]: x1 == x2;
+					case [TTypeDecl(t1), TTypeDecl(t2)]: t1 == t2;
+					case [TAbstractDecl(b1), TAbstractDecl(b2)]: b1 == b2;
+					case _: false;
+				};
+			case [TMeta(m1, a1), TMeta(m2, a2)]:
+				m1.name == m2.name && safeForAll2(function(x1:Expr, x2:Expr) return hxc.ast.Ast.Printer.sExpr(x1) == hxc.ast.Ast.Printer.sExpr(x2), m1.params, m2.params) && equal(a1, a2);
+			case [TBreak, TBreak] | [TContinue, TContinue]: true;
+			case [TEnumParameter(a1, ef1, i1), TEnumParameter(a2, ef2, i2)]: equal(a1, a2) && ef1 == ef2 && i1 == i2;
+			case _: false;
+		};
+	}
+
+	// Collapse nested typeless casts to the same type.
+	public static function reduceUnsafeCasts(e:TExpr, t:T, requireCast:Bool = false):TExpr {
+		function sameType(t1:T, t2:T):Bool {
+			return TypeUnification.fastEq(TypeFunctions.followWithoutNull(t1), TypeFunctions.followWithoutNull(t2));
+		}
+		function loop(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TCast(subject, null):
+					var result = loop(subject);
+					if (sameType(e.type, subject.type)) result
+					else TypeFunctions.mk(TCast(result, null), e.type, e.pos);
+				case _: e;
+			};
+		}
+		var result = loop(e);
+		return switch (result.expr) {
+			case TCast(_, _): result;
+			case _ if (requireCast): TypeFunctions.mk(TCast(result, null), e.type, e.pos);
+			case _: result;
+		};
+	}
+
+	public static function fieldOn(e:TExpr, name:String, t:T, p:Position):TExpr {
+		var f = try TypeFunctions.quickField(e.type, name) catch (_:hxc.core.NotFound)
+			throw new TypingError("Field " + name + " not found on " + hxc.core.TPrinting.sTypeStr(e.type), p);
+		return TypeFunctions.mk(TField(e, f), t, p);
+	}
+
+	public static function fcall(e:TExpr, name:String, el:Array<TExpr>, ret:T, p:Position):TExpr {
+		var ft = TypeFunctions.tfun([for (x in el) x.type], ret);
+		return TypeFunctions.mk(TCall(fieldOn(e, name, ft, p), el), ret, p);
+	}
+
 	// Apply f to each direct sub-expression of e.
 	public static function iter(f:TExpr->Void, e:TExpr):Void {
 		switch (e.expr) {
