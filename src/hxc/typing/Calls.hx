@@ -107,12 +107,15 @@ class Calls {
 		try {
 			TypeUnification.unifyDefault(effType, t);
 		} catch (_:UnifyError) {
-			throw new TypingError("Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type), e1.pos);
+			// Untyped code swallows both failures
+			if (!ctx.untypedMode)
+				throw new TypingError("Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type), e1.pos);
 		}
 		try {
 			TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint);
 		} catch (_:UnifyError) {
-			throw new TypingError("Array index must be of type Int", e2.pos);
+			if (!ctx.untypedMode)
+				throw new TypingError("Array index must be of type Int", e2.pos);
 		}
 		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
 	}
@@ -950,7 +953,12 @@ class Calls {
 					DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
 				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
 			case _:
-				throw new TypingError("Cannot call a non-function value", p);
+				// Untyped code may call any value; the result is dynamic under ctx.untyped)
+				if (ctx.untypedMode) {
+					var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
+					makeCall(ctx, ce, args, TDynamic(null), p);
+				} else
+					throw new TypingError("Cannot call a non-function value", p);
 		};
 	}
 }

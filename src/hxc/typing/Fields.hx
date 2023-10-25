@@ -258,7 +258,7 @@ class Fields {
 	}
 
 	static function fieldNotFound(t:T, i:String, p:Position):TypingError {
-		return new TypingError(typeName(t) + " has no field " + i, p);
+		return new FieldNotFoundError(typeName(t) + " has no field " + i, p);
 	}
 
 	static function typeName(t:T):String {
@@ -272,6 +272,14 @@ class Fields {
 	}
 
 	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		if (ctx.untypedMode) {
+			return try typeFieldInner(ctx, e, i, p, mode, withType)
+			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
+		}
+		return typeFieldInner(ctx, e, i, p, mode, withType);
+	}
+
+	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		var pfield = p;
 		return switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, tl):
@@ -639,4 +647,7 @@ class Fields {
 		}
 		return AKExpr(TypeFunctions.mk(TField(e, FEnum(en, ef)), t, p));
 	}
+}
+
+class FieldNotFoundError extends TypingError {
 }

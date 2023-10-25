@@ -633,7 +633,8 @@ class Filters {
 			{name: "check_abstract_as_value", f: checkAbstractAsValue},
 			// Slot: Tre (tail recursion elimination, gated on analyzer-optimize)
 			{name: "reduce_expression", f: function(e) return Optimizer.reduceExpression(tctx, e)},
-			// Slot: inline_constructors slot: Exceptions.filter slot: CapturedVars.captured_vars
+			// Slot: inline_constructors slot: Exceptions.filter
+			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
 		// Slot: Analyzer.Run.run_on_types PASS 2
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [

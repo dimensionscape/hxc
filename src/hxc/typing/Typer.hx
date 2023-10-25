@@ -61,6 +61,8 @@ class Typer {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
 		} catch (ue:UnifyError) { uerr = ue.errors; }
+		// Untyped code swallows the unification failure and keeps the value
+		if (ctx.untypedMode) return e;
 		throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
 	}
 
