@@ -661,8 +661,18 @@ class Filters {
 			removeExternFields(com, t);
 			checkRemoveMetadata(t);
 		}
-		// Slot: Dce.run PASS 3: type filters post-DCE slot: Exceptions.insert_save_stacks,
-		// Exceptions.patch_constructors
+		// DCE: mode from the dce define; full downgrades to no under interp.
+		// Feature collection runs in every mode.
+		var dceMode:hxc.optimization.Dce.DceMode = switch (com.defines.rawDefinedValueSafe("dce", "no")) {
+			case "full": com.defines.rawDefined("interp") ? DceNo : DceFull;
+			case "std": DceStd;
+			case "no": DceNo;
+			case other: throw new TypingError("Unknown DCE mode " + other, Position.nullPos);
+		};
+		hxc.optimization.Dce.stdPath = com.stdPath;
+		hxc.optimization.Dce.run(com, dceMode);
+		// PASS 3: type filters post-DCE
+		// slot: Exceptions.insert_save_stacks, Exceptions.patch_constructors
 		for (t in com.types) {
 			switch (t) {
 				case TClassDecl(c): tctx.curclass = c;
