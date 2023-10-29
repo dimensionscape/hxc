@@ -621,6 +621,13 @@ class Filters {
 	public static function run(tctx:TyperContext):Void {
 		var com = tctx.com;
 		var newTypes = com.types;
+		// Register the inheritance graph first; DCE walks descendants to keep overrides of used fields
+		for (t in newTypes) switch (t) {
+			case TClassDecl(cls):
+				for (i in cls.interfaces) TypeFunctions.addDescendant(i.c, cls);
+				if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
+			case _:
+		}
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			// Slot: ForRemap (the typer lowers for loops; GenJS handles residual TFor)
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
@@ -644,7 +651,8 @@ class Filters {
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
 			// add_final_return: addFinalReturn is false for js
 			{name: "RenameVars", f: function(e) {
-				hxc.filters.RenameVarsRun.run(renameLocals, e);
+				try hxc.filters.RenameVarsRun.run(renameLocals, e)
+				catch (err:Dynamic) throw new TypingError(Std.string(err) + " in " + tctx.curclass.path.name + "." + tctx.curfield.name, e.pos);
 				return e;
 			}},
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
@@ -661,6 +669,14 @@ class Filters {
 			removeExternFields(com, t);
 			checkRemoveMetadata(t);
 		}
+		// Re-register the inheritance graph: the exceptions filter can load types after the first
+		// registration (addDescendant dedups)
+		for (t in com.types) switch (t) {
+			case TClassDecl(cls):
+				for (i in cls.interfaces) TypeFunctions.addDescendant(i.c, cls);
+				if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
+			case _:
+		}
 		// DCE: mode from the dce define; full downgrades to no under interp.
 		// Feature collection runs in every mode.
 		var dceMode:hxc.optimization.Dce.DceMode = switch (com.defines.rawDefinedValueSafe("dce", "no")) {
@@ -670,6 +686,7 @@ class Filters {
 			case other: throw new TypingError("Unknown DCE mode " + other, Position.nullPos);
 		};
 		hxc.optimization.Dce.stdPath = com.stdPath;
+		if (com.defines.rawDefined("dce_debug")) com.print = function(s) Sys.stderr().writeString(s);
 		hxc.optimization.Dce.run(com, dceMode);
 		// PASS 3: type filters post-DCE
 		// slot: Exceptions.insert_save_stacks, Exceptions.patch_constructors

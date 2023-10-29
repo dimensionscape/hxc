@@ -1220,8 +1220,10 @@ class Typer {
 		}
 		if (mt == null) {
 			// In untyped mode an unresolved identifier becomes a TIdent, letting reification builtins such
-			// as $__mk_pos__ (recognized by the interpreter) pass typing.
-			if (ctx.untypedMode) return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
+			// as $__mk_pos__ (recognized by the interpreter) pass typing. A name that is a package root on
+			// the class path stays unresolved instead, so the enclosing field chain resolves it as a type
+			// path .
+			if (ctx.untypedMode && !isPackageRoot(ctx, i)) return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
 			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
@@ -1230,6 +1232,24 @@ class Typer {
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		return AKExpr(TexprTools.makeTypeExpr(mt, p));
+	}
+
+	static var packageRootCache:Null<haxe.ds.StringMap<Bool>> = null;
+
+	// True when `name` is a package directory on the class path.
+	static function isPackageRoot(ctx:TyperContext, name:String):Bool {
+		if (packageRootCache == null) packageRootCache = new haxe.ds.StringMap();
+		var hit = packageRootCache.get(name);
+		if (hit != null) return hit;
+		var found = false;
+		for (cp in ctx.com.classPath) {
+			if (sys.FileSystem.exists(cp + name) && sys.FileSystem.isDirectory(cp + name)) {
+				found = true;
+				break;
+			}
+		}
+		packageRootCache.set(name, found);
+		return found;
 	}
 
 	static function expectedEnumLike(t:T, stack:Array<T>):Null<TEnum> {
@@ -2068,18 +2088,31 @@ class Typer {
 	}
 
 	static function findConstructorType(ctx:TyperContext, c:TClass, tl:TParams):Null<T> {
+		var all = findConstructorTypes(ctx, c, tl);
+		return all.length == 0 ? null : all[0];
+	}
+
+	// The primary constructor type plus its @:overload variants, class params applied (overloads are
+	// expanded for the call-site retry).
+	static function findConstructorTypes(ctx:TyperContext, c:TClass, tl:TParams):Array<T> {
 		var cur = c;
 		var curTl = tl;
 		while (cur != null) {
 			ensureStructInitCtor(ctx, cur);
-			if (cur.constructor != null) return TypeFunctions.applyParams(cur.params, curTl, cur.constructor.type);
-			if (cur.superClass == null) return null;
+			if (cur.constructor != null) {
+				var cf = cur.constructor;
+				var curTl2 = curTl;
+				var curCl = cur;
+				inline function apply(t:T):T return TypeFunctions.applyParams(curCl.params, curTl2, t);
+				return [apply(cf.type)].concat([for (o in cf.overloads) apply(o.type)]);
+			}
+			if (cur.superClass == null) return [];
 			hxc.eval.EvalMacro.ensureBuilt(ctx.com, cur.superClass.c);
 			var superTl = [for (sp in cur.superClass.params) TypeFunctions.applyParams(cur.params, curTl, sp)];
 			cur = cur.superClass.c;
 			curTl = superTl;
 		}
-		return null;
+		return [];
 	}
 
 	static function hasTypeParameter(t:T):Bool {
@@ -2155,14 +2188,27 @@ class Typer {
 				// first call site binds those still-open param monos to its arg types, corrupting later
 				// constructions.
 				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
-				var ctorType = findConstructorType(ctx, c, tl);
-				if (ctorType == null) throw new TypingError(c.path.name + " does not have a constructor", p);
+				var ctorTypes = findConstructorTypes(ctx, c, tl);
+				if (ctorTypes.length == 0) throw new TypingError(c.path.name + " does not have a constructor", p);
 				if (c.constructor != null) Fields.checkConstructorAccess(ctx, c, c.constructor, p);
-				var sig = switch (TypeFunctions.follow(ctorType)) {
-					case TFun(s): s;
-					case _: {args: [], ret: ctx.com.basic.tvoid};
-				};
-				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+				// Try each constructor signature, first success wins (overload retry).
+				var r:Dynamic = null;
+				var firstError:Null<Dynamic> = null;
+				for (ctorType in ctorTypes) {
+					var sig = switch (TypeFunctions.follow(ctorType)) {
+						case TFun(s): s;
+						case _: {args: [], ret: ctx.com.basic.tvoid};
+					};
+					try {
+						r = TypeUnification.withMonoRollback(function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+						break;
+					} catch (e:hxc.core.TypeUnification.UnifyError) {
+						if (firstError == null) firstError = e;
+					} catch (e:TypingError) {
+						if (firstError == null) firstError = e;
+					}
+				}
+				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
 				switch (c.kind) {
 					case KGeneric if (!TypeFunctions.hasMono(TInst(c, tl))):
 						var gc = Typeload.specializeGenericClass(ctx.com, c, tl, p);

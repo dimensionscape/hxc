@@ -414,7 +414,22 @@ class Calls {
 	}
 
 	// A final optional `?p:haxe.PosInfos` the caller omits is filled with the call-site position info.
-	// (unify_call_params PosInfos).
+	// The file is made relative: the first class-path entry whose slashed, lowercased string
+	// prefixes the file's full path is stripped; otherwise the file stays as stored. Macro contexts
+	// keep file verbatim.
+	public static function posInfosFile(ctx:TyperContext, pfile:String):String {
+		if (ctx.com.isMacro) return pfile;
+		if (ctx.com.defines.rawDefined("absolute_path")) return StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
+		var fpath = StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
+		var fpathLower = fpath.toLowerCase();
+		for (cp in ctx.com.classPath) {
+			var spath = StringTools.replace(cp, "\\", "/").toLowerCase();
+			if (spath.length > 0 && spath.length < fpathLower.length && fpathLower.substr(0, spath.length) == spath)
+				return fpath.substr(spath.length);
+		}
+		return pfile;
+	}
+
 	static function makePosInfosArg(ctx:TyperContext, t:T, callp:Position):Null<TExpr> {
 		var isPI = switch (t) {
 			case TType(d, _): d.path.name == "PosInfos" && d.path.pack.length == 1 && d.path.pack[0] == "haxe";
@@ -427,7 +442,7 @@ class Calls {
 		function strE(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), callp);
 		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: callp};
 		var infos = new Expr(EObjectDecl([
-			fld("fileName", strE(callp.file)),
+			fld("fileName", strE(posInfosFile(ctx, callp.file))),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(callp)), null)), callp)),
 			fld("className", strE(ctx.curclass == null ? "" : hxc.core.Globals.sTypePath(ctx.curclass.path))),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
@@ -453,7 +468,7 @@ class Calls {
 		var v = el.length > 0 ? el[0] : strE("");
 		var customParams = el.length > 1 ? new Expr(EArrayDecl(el.slice(1)), p) : new Expr(EConst(CIdent("null")), p);
 		var infos = new Expr(EObjectDecl([
-			fld("fileName", strE(p.file)),
+			fld("fileName", strE(posInfosFile(ctx, p.file))),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(p)), null)), p)),
 			fld("className", strE(hxc.core.Globals.sTypePath(ctx.curclass.path))),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name)),

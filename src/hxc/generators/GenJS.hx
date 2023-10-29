@@ -363,7 +363,25 @@ class GenJS {
 		com.warning(WDeprecated, [], msg, p);
 	}
 
+	static function unwrapRestArgs(el:Array<TExpr>):Array<TExpr> {
+		if (el.length == 0) return el;
+		var last = el[el.length - 1];
+		if (!isRestT(last.type)) return el;
+		function arrayItems(x:TExpr):Null<Array<TExpr>> {
+			return switch (x.expr) {
+				case TArrayDecl(items): items;
+				case TCall(_, [inner]): arrayItems(TexprTools.skip(inner));
+				case TCast(inner, _) | TMeta(_, inner) | TParenthesis(inner): arrayItems(inner);
+				case _: null;
+			};
+		}
+		var items = arrayItems(TexprTools.skip(last));
+		if (items == null) return el;
+		return el.slice(0, el.length - 1).concat(items);
+	}
+
 	function genCall(e:TExpr, el:Array<TExpr>, inValueCtx:Bool):Void {
+		var el = unwrapRestArgs(el);
 		var r = applyArgs(el);
 		var apply = r.apply;
 		var el = r.el;
@@ -704,7 +722,7 @@ class GenJS {
 			case TNew({path: {pack: [], name: "Array"}}, _, []):
 				print("[]");
 			case TNew(c, _, el):
-				var r = applyArgs(el, true);
+				var r = applyArgs(unwrapRestArgs(el), true);
 				var isSelfCall = c.constructor != null && TypeFunctions.hasMeta(":selfCall", c.constructor.meta);
 				if (!isSelfCall) print(r.apply ? "(new" : "new ");
 				var cls = typeAccessor(TClassDecl(c));
@@ -1508,6 +1526,18 @@ class GenJS {
 		switch (t) {
 			case TClassDecl(c):
 				if (c.init != null) inits.unshift(c.init);
+				// Hxc keeps a static __init__ as a field (the interpreter calls it); the reference moves its
+				// body to init at load time (typeloadFields FKInit), so route it to the init list here and keep
+				// it out of the statics
+				var initCf = c.statics.get("__init__");
+				if (initCf != null && initCf.expr != null) {
+					switch (initCf.expr.expr) {
+						case TFunction(fn): inits.unshift(fn.expr);
+						case _:
+					}
+					c.statics.remove("__init__");
+					c.orderedStatics = [for (f in c.orderedStatics) if (f.name != "__init__") f];
+				}
 				// Math.__name__ is added only when required (Math is extern); empty Std is skipped
 				var p = sPath(c.path);
 				if (p == "Math") generateClassName(c.path);

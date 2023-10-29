@@ -286,11 +286,11 @@ class Exceptions {
 			}
 		}
 		var transformed = transform(catches);
-		var body = TypeFunctions.mk(TBlock([
-			katch.declareHaxeException(catchVar.pos),
-			katch.declareUnwrap(catchVar.pos),
-			transformed
-		]), t, p);
+		// declareUnwrap runs before declareHaxeException: it creates the haxe-exception
+		// temp on demand, and the declaration must see it
+		var eUnwrap = katch.declareUnwrap(catchVar.pos);
+		var eDeclareHx = katch.declareHaxeException(catchVar.pos);
+		var body = TypeFunctions.mk(TBlock([eDeclareHx, eUnwrap, transformed]), t, p);
 		return [{v: catchVar, expr: body}];
 	}
 
@@ -371,11 +371,22 @@ class Exceptions {
 			case _: return function(e) return e;
 		}
 		var cfg = com.platformConfig;
+		function resolved(mt:ModuleType):ModuleType {
+			// A type loaded on demand at filter time needs its signatures resolved and its field bodies
+			// typed; the load-time typing passes have already run
+			var m = TypeFunctions.tInfos(mt).module;
+			try hxc.typing.TypeResolve.resolveModule(com, m) catch (_:Dynamic) {}
+			for (t in m.types) switch (t) {
+				case TClassDecl(c): try hxc.typing.TypeFields.forceClassFields(com, c) catch (_:Dynamic) {}
+				case _:
+			}
+			return mt;
+		}
 		function loadType(dotted:String):T {
 			if (dotted == "Dynamic" || dotted == "StdTypes.Dynamic") return TypeFunctions.tDynamic;
 			var parts = dotted.split(".");
 			var name = parts.pop();
-			var mt = com.getType({pack: parts, name: name}, Position.nullPos);
+			var mt = resolved(com.getType({pack: parts, name: name}, Position.nullPos));
 			return switch (mt) {
 				case TClassDecl(cls): TInst(cls, []);
 				case TAbstractDecl(a): TAbstract(a, []);
@@ -392,13 +403,13 @@ class Exceptions {
 		var isDynPath = function(dotted:String) return dotted == "Dynamic" || dotted == "StdTypes.Dynamic";
 		ctx.throwsAnything = isDynPath(cfg.baseThrow) && cfg.avoidWrapping;
 		ctx.catchesAnything = isDynPath(cfg.wildcardCatch) && cfg.avoidWrapping;
-		switch (com.getType({pack: ["haxe"], name: "Exception"}, Position.nullPos)) {
+		switch (resolved(com.getType({pack: ["haxe"], name: "Exception"}, Position.nullPos))) {
 			case TClassDecl(cls):
 				ctx.haxeExceptionClass = cls;
 				ctx.haxeExceptionType = TInst(cls, []);
 			case _: throw new TypingError("haxe.Exception is expected to be a class", Position.nullPos);
 		}
-		switch (com.getType({pack: ["haxe"], name: "ValueException"}, Position.nullPos)) {
+		switch (resolved(com.getType({pack: ["haxe"], name: "ValueException"}, Position.nullPos))) {
 			case TClassDecl(cls):
 				ctx.valueExceptionClass = cls;
 				ctx.valueExceptionType = TInst(cls, []);

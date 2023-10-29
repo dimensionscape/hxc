@@ -82,7 +82,7 @@ class RenameVarsRun {
 			if ((noShadowing || hoisting) && !scope.foreignVars.exists(v.id))
 				scope.foreignVars.set(v.id, v);
 			switch (scope.parent) {
-				case null: throw "RenameVars: Failed to locate variable declaration";
+				case null: throw "RenameVars: Failed to locate variable declaration: " + v.name + " (id " + v.id + ")";
 				case p: useVar(p, v);
 			}
 		}
