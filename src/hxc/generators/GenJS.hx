@@ -1122,13 +1122,657 @@ class GenJS {
 		}
 	}
 
-	// The driver entry lands with the declaration emitters; this placeholder proves the -js plumbing end to
-	// end.
+	function generatePackageCreate(p:Path):Void {
+		if (p.pack.length == 0) {
+			print("var ");
+			return;
+		}
+		var acc:Array<String> = [];
+		for (part in p.pack) {
+			var keyParts = acc.concat([part]);
+			var key = keyParts.join(".");
+			if (!packages.exists(key)) {
+				packages.set(key, true);
+				if (acc.length == 0) {
+					if (jsModern) print("var " + part + " = {}")
+					else print("var " + part + " = " + part + " || {}");
+				} else {
+					var path = acc.join(".") + field(part);
+					if (jsModern) print(path + " = {}")
+					else print("if(!" + path + ") " + path + " = {}");
+				}
+				separator = true;
+				newline();
+			}
+			acc.push(part);
+		}
+	}
+
+	function checkFieldName(c:TClass, f:TClassField):Void {
+		switch (f.name) {
+			case "prototype" | "__proto__" | "constructor":
+				throw new TypingError("The field name '" + f.name + "'  is not allowed in JS", f.expr == null ? c.pos : f.expr.pos);
+			case _:
+		}
+	}
+
+	static function pathToBrackets(path:String):String {
+		var parts = path.split(".");
+		return "[\"" + parts.join("\"][\"") + "\"]";
+	}
+
+	function genModuleFields(m:ModuleDef, c:TClass, fl:Array<TClassField>):Void {
+		for (f in fl) {
+			var name = moduleField(com, m, f);
+			if (f.expr == null) {
+				if (TypeFunctions.isPhysicalField(f)) {
+					print("var " + name + " = null");
+					newline();
+				}
+			} else switch (f.expr.expr) {
+				case TFunction(fn):
+					idCounter = 0;
+					print("function " + name);
+					genFunction(fn, f.expr.pos, "");
+					separator = false;
+					newline();
+					var mpath = m.path;
+					processExpose(com, f.meta, function() return moduleFieldExposePath(com, mpath, f), function(s) {
+						print("$hx_exports" + pathToBrackets(s) + " = " + name);
+						newline();
+					});
+				case _:
+					statics.push({c: c, f: f, e: f.expr});
+			}
+		}
+	}
+
+	function genClassStaticField(c:TClass, clPath:Path, f:TClassField):Void {
+		switch (f.expr) {
+			case null | {expr: TConst(TNull)} if (!hasFeature("Type.getClassFields")):
+			case null if (!TypeFunctions.isPhysicalField(f)):
+			case null:
+				print(sPath(clPath) + staticField(c, f) + " = null");
+				newline();
+			case e:
+				switch (e.expr) {
+					case TFunction(_):
+						var path = sPath(clPath) + staticField(c, f);
+						idCounter = 0;
+						print(path + " = ");
+						processExpose(com, f.meta, function() return dotPath(clPath) + "." + f.name, function(s) print("$hx_exports" + pathToBrackets(s) + " = "));
+						genValue(e);
+						newline();
+					case _:
+						statics.push({c: c, f: f, e: e});
+				}
+		}
+	}
+
+	function canGenClassField(f:TClassField):Bool {
+		switch (f.expr) {
+			case null | {expr: TConst(TNull)} if (!hasFeature("Type.getInstanceFields")):
+				return false;
+			case _:
+		}
+		if (TypeFunctions.hasClassFieldFlag(f, CfExtern)) return false;
+		return TypeFunctions.isPhysicalField(f);
+	}
+
+	function genClassField(c:TClass, f:TClassField):Void {
+		checkFieldName(c, f);
+		if (f.expr == null) {
+			newprop();
+			print(anonField(f.name) + ": ");
+			print("null");
+		} else {
+			newprop();
+			print(anonField(f.name) + ": ");
+			idCounter = 0;
+			genValue(f.expr);
+			separator = false;
+		}
+	}
+
+	function generateClassName(clPath:Path):Void {
+		if (hasFeature("js.Boot.isClass")) {
+			var p = sPath(clPath);
+			print(p + ".__name__ = ");
+			if (hasFeature("Type.getClassName") || (clPath.pack.length == 0 && (clPath.name == "Array" || clPath.name == "String")))
+				print("\"" + dotPath(clPath) + "\"")
+			else
+				print("true");
+			newline();
+		}
+	}
+
+	function generateClassIsInterface(c:TClass):Void {
+		if (TypeFunctions.hasClassFlag(c, CInterface) && hasFeature("js.Boot.isInterface")) {
+			print(sPath(c.path) + ".__isInterface__ = true");
+			newline();
+		}
+	}
+
+	function genProps(props:Array<{name:String, value:String}>):String {
+		return [for (p in props) p.name + ":\"" + p.value + "\""].join(",");
+	}
+
+	function generateClassEs3(c:TClass):Void {
+		var clPath = getGeneratedClassPath(c);
+		var abstractImpl = isAbstractImpl(c);
+
+		if (jsFlatten) print("var ")
+		else generatePackageCreate(clPath);
+
+		var p = sPath(clPath);
+		var dotp = dotPath(clPath);
+		var addedToHxClasses = hasResolveClass && !abstractImpl;
+
+		// Keep $hxClasses off the declaration line so a debugger's class stringification does not trip
+		if (com.debug || jsModern || !addedToHxClasses)
+			print(p + " = ")
+		else
+			print(p + " = $hxClasses[\"" + dotp + "\"] = ");
+
+		if (!com.debug)
+			processExpose(com, c.meta, function() return dotp, function(s) print("$hx_exports" + pathToBrackets(s) + " = "));
+
+		if (abstractImpl) {
+			// Abstract implementations only hold statics
+			print("{}");
+			separator = true;
+		} else {
+			switch (c.constructor) {
+				case {expr: e} if (e != null): genExpr(e);
+				case _:
+					print("function() { }");
+					separator = true;
+			}
+		}
+
+		newline();
+
+		if ((jsModern || com.debug) && addedToHxClasses) {
+			print("$hxClasses[\"" + dotp + "\"] = " + p);
+			newline();
+		}
+
+		if (com.debug)
+			processExpose(com, c.meta, function() return dotp, function(s) {
+				print("$hx_exports" + pathToBrackets(s) + " = " + p);
+				newline();
+			});
+
+		if (!abstractImpl) {
+			generateClassName(clPath);
+			generateClassIsInterface(c);
+		}
+
+		if (hasInterfaceCheck && c.interfaces.length > 0) {
+			print(p + ".__interfaces__ = [" + [for (i in c.interfaces) typeAccessor(TClassDecl(i.c))].join(",") + "]");
+			newline();
+		}
+
+		var hasPropertyReflection = hasFeature("Reflect.getProperty") || hasFeature("Reflect.setProperty");
+
+		if (hasPropertyReflection) {
+			var props = hxc.codegen.Codegen.getProperties(c.orderedStatics);
+			if (props.length > 0) {
+				print(p + ".__properties__ = {" + genProps(props) + "}");
+				separator = true;
+				newline();
+			}
+		}
+
+		for (f in c.orderedStatics) genClassStaticField(c, clPath, f);
+
+		var hasClass = hasFeature("js.Boot.getClass") && (c.superClass != null || c.orderedFields.length > 0 || c.constructor != null);
+		var hasFieldsToGen = false;
+		for (f in c.orderedFields) if (canGenClassField(f)) { hasFieldsToGen = true; break; }
+		var hasPrototype = c.superClass != null || hasClass || hasFieldsToGen;
+		if (hasPrototype) {
+			switch (c.superClass) {
+				case null:
+					print(p + ".prototype = {");
+				case sup:
+					var psup = typeAccessor(TClassDecl(sup.c));
+					print(p + ".__super__ = " + psup);
+					newline();
+					print(p + ".prototype = $extend(" + psup + ".prototype,{");
+			}
+
+			var bend = openBlock();
+			for (f in c.orderedFields) if (canGenClassField(f)) genClassField(c, f);
+			if (hasClass) {
+				newprop();
+				print("__class__: " + p);
+			}
+
+			if (hasPropertyReflection) {
+				var props = hxc.codegen.Codegen.getProperties(c.orderedFields);
+				if (props.length > 0) {
+					if (c.superClass != null && hxc.codegen.Codegen.hasProperties(c.superClass.c)) {
+						newprop();
+						var psup = typeAccessor(TClassDecl(c.superClass.c));
+						print("__properties__: $extend(" + psup + ".prototype.__properties__,{" + genProps(props) + "})");
+					} else {
+						newprop();
+						print("__properties__: {" + genProps(props) + "}");
+					}
+				}
+			}
+
+			bend();
+			print("\n}");
+			if (c.superClass == null) separator = true else print(")");
+			newline();
+		}
+	}
+
+	function generateClass(c:TClass):Void {
+		current = c;
+		idCounter = 0;
+		if (c.path.pack.length == 0 && c.path.name == "Function")
+			throw new TypingError("This class redefine a native one", c.pos);
+		switch (c.kind) {
+			case KModuleFields(m):
+				genModuleFields(m, c, c.orderedStatics);
+			case _:
+				if (esVersion >= 6)
+					throw new TypingError("es6 class generation is not ported yet", c.pos);
+				generateClassEs3(c);
+		}
+	}
+
+	function generateEnum(e:TEnum):Void {
+		var p = sPath(e.path);
+		var dotp = dotPath(e.path);
+		var hasEnumFeature = hasFeature("has_enum");
+		if (jsFlatten) print("var ")
+		else generatePackageCreate(e.path);
+		print(p + " = ");
+		var asObjects = !com.defines.rawDefined("js_enums_as_arrays");
+		if (asObjects)
+			print("$hxEnums[\"" + dotp + "\"] = ")
+		else if (hasFeature("Type.resolveEnum"))
+			print("$hxClasses[\"" + dotp + "\"] = ");
+		spr("{");
+		if (hasFeature("js.Boot.isEnum"))
+			print(" __ename__:" + (hasFeature("Type.getEnumName") ? "\"" + dotp + "\"" : "true") + ",");
+		if (asObjects)
+			print("__constructs__:null")
+		else
+			print("__constructs__:[" + [for (s in e.names) "\"" + s + "\""].join(",") + "]");
+		var bend:Void->Void;
+		if (!asObjects) {
+			spr(" }");
+			separator = true;
+			newline();
+			bend = function() {};
+		} else {
+			bend = openBlock();
+		}
+		for (n in e.names) {
+			var f = e.constrs.get(n);
+			if (asObjects) {
+				newprop();
+				print(anonField(f.name) + ": ");
+			} else
+				print(p + field(f.name) + " = ");
+			switch (f.type) {
+				case TFun(sig):
+					var sargs = [for (a in sig.args) ident(a.name)].join(",");
+					if (asObjects) {
+						var sfields = [for (a in sig.args) ident(a.name) + ":" + ident(a.name)].join(",");
+						var sparams = [for (a in sig.args) "\"" + ident(a.name) + "\""].join(",");
+						print("($_=function(" + sargs + ") { return {_hx_index:" + f.index + "," + sfields + ",__enum__:\"" + dotp + "\"");
+						if (hasEnumFeature) spr(",toString:$estr");
+						print("}; },$_._hx_name=\"" + f.name + "\",$_.__params__ = [" + sparams + "],$_)");
+					} else {
+						print("function(" + sargs + ") { var $x = [\"" + f.name + "\"," + f.index + "," + sargs + "]; $x.__enum__ = " + p + ";");
+						if (hasEnumFeature) spr(" $x.toString = $estr;");
+						spr(" return $x; }");
+					}
+				case _:
+					if (asObjects) {
+						print("{_hx_name:\"" + f.name + "\",_hx_index:" + f.index + ",__enum__:\"" + dotp + "\"" + (hasEnumFeature ? ",toString:$estr" : "") + "}");
+					} else {
+						print("[\"" + f.name + "\"," + f.index + "]");
+						newline();
+						if (hasFeature("has_enum")) {
+							print(p + field(f.name) + ".toString = $estr");
+							newline();
+						}
+						print(p + field(f.name) + ".__enum__ = " + p);
+					}
+			}
+			if (!asObjects) newline();
+		}
+		bend();
+		if (asObjects) {
+			spr("\n}");
+			separator = true;
+			newline();
+			print(p + ".__constructs__ = [" + [for (s in e.names) p + field(s)].join(",") + "]");
+			newline();
+		}
+		if (hasFeature("Type.allEnums")) {
+			var ctorsWithoutArgs = [for (s in e.names) if (!TypeFunctions.follow(e.constrs.get(s).type).match(TFun(_))) s];
+			print(p + ".__empty_constructs__ = [" + [for (s in ctorsWithoutArgs) p + "." + s].join(",") + "]");
+			newline();
+		}
+		var meta = TexprTools.buildMetadata(com.basic, TEnumDecl(e));
+		if (meta != null) {
+			print(p + ".__meta__ = ");
+			genExpr(meta);
+			newline();
+		}
+	}
+
+	function generateStatic(c:TClass, f:TClassField, e:TExpr):Void {
+		switch (c.kind) {
+			case KModuleFields(m):
+				print("var " + moduleField(com, m, f) + " = ");
+				var mpath = m.path;
+				processExpose(com, f.meta, function() return moduleFieldExposePath(com, mpath, f), function(s) print("$hx_exports" + pathToBrackets(s) + " = "));
+			case _:
+				var clPath = getGeneratedClassPath(c);
+				processExpose(com, f.meta, function() return dotPath(clPath) + "." + f.name, function(s) print("$hx_exports" + pathToBrackets(s) + " = "));
+				print(sPath(clPath) + staticField(c, f) + " = ");
+		}
+		genValue(e);
+		newline();
+	}
+
+	function generateRequire(path:Path, meta:Metadata):Void {
+		var entry = TypeFunctions.getMeta(":jsRequire", meta);
+		var p = sPath(path);
+		if (jsFlatten) spr("var ")
+		else generatePackageCreate(path);
+		switch (entry.params) {
+			case [{expr: EConst(CString(moduleName, _))}]:
+				print(p + " = require(\"" + moduleName + "\")");
+			case [{expr: EConst(CString(moduleName, _))}, {expr: EConst(CString(objectPath, _))}]:
+				print(p + " = require(\"" + moduleName + "\")." + objectPath);
+			case _:
+				throw new TypingError("Unsupported @:jsRequire format", entry.pos);
+		}
+		newline();
+	}
+
+	function needToGenerateInterface(c:TClass):Bool {
+		return hasResolveClass || hasInterfaceCheck || com.isDirectlyUsed(c.meta);
+	}
+
+	function generateType(t:ModuleType):Void {
+		switch (t) {
+			case TClassDecl(c):
+				if (c.init != null) inits.unshift(c.init);
+				// Math.__name__ is added only when required (Math is extern); empty Std is skipped
+				var p = sPath(c.path);
+				if (p == "Math") generateClassName(c.path);
+				if (p == "Std" && c.orderedStatics.length == 0) {
+					// Nothing
+				} else if (!TypeFunctions.hasClassFlag(c, CExtern)) {
+					if (!TypeFunctions.hasClassFlag(c, CInterface) || needToGenerateInterface(c))
+						generateClass(c);
+				} else if (TypeFunctions.hasMeta(":jsRequire", c.meta) && com.isDirectlyUsed(c.meta)) {
+					generateRequire(getGeneratedClassPath(c), c.meta);
+				} else if (!jsFlatten && TypeFunctions.hasMeta(":initPackage", c.meta)) {
+					if (c.path.pack.length > 0) generatePackageCreate(c.path);
+				}
+			case TEnumDecl(e) if (e.isExtern):
+				if (TypeFunctions.hasMeta(":jsRequire", e.meta) && com.isDirectlyUsed(e.meta))
+					generateRequire(e.path, e.meta);
+			case TEnumDecl(e):
+				generateEnum(e);
+			case TTypeDecl(_) | TAbstractDecl(_):
+		}
+	}
+
 	public static function generate(com:Context):Void {
 		var esVersion = com.getEsVersion();
-		setupKwds(com);
+		if (esVersion >= 6)
+			throw new TypingError("es6 output is not ported yet", Position.nullPos);
 		var ctx = allocCtx(com, esVersion);
 		hxc.codegen.Codegen.mapSourceHeader(com, function(s) ctx.print("// " + s + "\n"));
-		throw new TypingError("GenJS declaration emitters are not ported yet", Position.nullPos);
+		if (ctx.hasFeature("Class") || ctx.hasFeature("Type.getClassName")) ctx.addFeature("js.Boot.isClass");
+		if (ctx.hasFeature("Enum") || ctx.hasFeature("Type.getEnumName")) ctx.addFeature("js.Boot.isEnum");
+
+		var nodejs = com.defines.rawDefined("nodejs");
+		setupKwds(com);
+
+		var exposed:Array<String> = [];
+		for (t in com.types) switch (t) {
+			case TClassDecl(c):
+				var getExposePath:TClassField->String;
+				switch (c.kind) {
+					case KModuleFields(m):
+						var mpath = m.path;
+						getExposePath = function(f) return moduleFieldExposePath(com, mpath, f);
+					case _:
+						var path = dotPath(c.path);
+						processExpose(com, c.meta, function() return path, function(s) exposed.push(s));
+						getExposePath = function(f) return path + "." + f.name;
+				}
+				for (f in c.orderedStatics)
+					processExpose(com, f.meta, function() return getExposePath(f), function(s) exposed.push(s));
+			case _:
+		}
+		var anyExposed = exposed.length > 0;
+		// Nested-object index for shallow exposure
+		var exposedObject = {name: "", fields: new Array<Dynamic>()};
+		var toplevelExposed:Array<String> = [];
+		if (anyExposed) {
+			var exportMap = new StringMap<{name:String, fields:Array<Dynamic>}>();
+			for (path in exposed) {
+				var parts = path.split(".");
+				var pre = "";
+				for (i in 0...parts.length) {
+					if (i < parts.length - 1) {
+						var f = parts[i];
+						var cur = pre == "" ? f : pre + "." + f;
+						if (!exportMap.exists(cur)) {
+							var elts = {name: f, fields: new Array<Dynamic>()};
+							exportMap.set(cur, elts);
+							var cobject = pre == "" ? exposedObject : exportMap.get(pre);
+							cobject.fields.unshift(elts);
+						}
+						pre = cur;
+					} else if (i == 0) {
+						toplevelExposed.unshift(parts[0]);
+					}
+				}
+			}
+		}
+
+		var definedGlobalValue = com.defines.rawDefinedValueSafe("js_global", "");
+		var definedGlobal = definedGlobalValue != "";
+
+		function typeofJoin(l:Array<String>):String {
+			if (l.length == 1) return l[0];
+			return "typeof " + l[0] + " != \"undefined\" ? " + l[0] + " : " + typeofJoin(l.slice(1));
+		}
+
+		var varExports = {name: "$hx_exports", value: typeofJoin(definedGlobal ? ["exports", definedGlobalValue] : ["exports", "window", "self", "this"])};
+		var varGlobal = {name: "$global", value: typeofJoin(definedGlobal ? [definedGlobalValue] : ["window", "global", "self", "this"])};
+
+		var closureArgs = [varGlobal];
+		if (anyExposed && !com.defines.rawDefined("shallow_expose"))
+			closureArgs.unshift(varExports);
+		if (ctx.esVersion < 5)
+			closureArgs.unshift({name: "console", value: typeofJoin(["console", "{log:function(){}}"])});
+
+		if (nodejs)
+			for (s in ["global", "process", "__filename", "__dirname", "module"]) kwds2.set(s, true);
+
+		if (anyExposed && (com.defines.rawDefined("shallow_expose") || !ctx.jsModern)) {
+			ctx.print("var " + varExports.name + " = " + varExports.value);
+			ctx.separator = true;
+			ctx.newline();
+		}
+
+		if (ctx.jsModern) {
+			// Wrap the output in a closure
+			ctx.print("(function (" + [for (a in closureArgs) a.name].join(", ") + ") { \"use strict\"");
+			ctx.newline();
+		}
+
+		function printObj(f:{name:String, fields:Array<Dynamic>}, root:String):Void {
+			var path = root + pathToBrackets(f.name);
+			ctx.print(path + " = " + path + " || {}");
+			ctx.separator = true;
+			ctx.newline();
+			ctx.concatWith(";", function(g:Dynamic) printObj(g, path), f.fields);
+		}
+		for (f in exposedObject.fields) printObj(f, "$hx_exports");
+
+		if (!ctx.jsModern && ctx.esVersion < 5)
+			ctx.addFeature("js.Lib.global"); // Console polyfill reads console from $global
+
+		if (!ctx.jsModern)
+			ctx.print("var " + varGlobal.name + " = " + varGlobal.value + ";\n");
+
+		if (!ctx.jsModern && ctx.esVersion < 5)
+			ctx.spr("var console = $global.console || {log:function(){}};\n");
+
+		var enumsAsObjects = !com.defines.rawDefined("js_enums_as_arrays");
+
+		var vars:Array<String> = [];
+		if (ctx.hasResolveClass || (!enumsAsObjects && ctx.hasFeature("Type.resolveEnum")))
+			vars.push("$hxClasses = " + (ctx.jsModern ? "{}" : "$hxClasses || {}"));
+		if (ctx.hasFeature("has_enum"))
+			vars.push("$estr = function() { return " + ctx.typeAccessor(TClassDecl(bootClass())) + ".__string_rec(this,''); }");
+		if (enumsAsObjects && (ctx.hasFeature("has_enum") || ctx.hasFeature("Type.resolveEnum")))
+			vars.push("$hxEnums = $hxEnums || {}");
+		var hasDollarUnderscore = false;
+		for (t in com.types) switch (t) {
+			case TEnumDecl(e) if (!e.isExtern):
+				if (!hasDollarUnderscore) {
+					vars.push("$_");
+					hasDollarUnderscore = true;
+				}
+			case _:
+		}
+		if (vars.length > 0) {
+			ctx.print("var " + vars.join(","));
+			ctx.separator = true;
+			ctx.newline();
+		}
+		var needsExtend = false;
+		if (ctx.esVersion < 6)
+			for (t in com.types) switch (t) {
+				case TClassDecl(c) if (c.superClass != null && !TypeFunctions.hasClassFlag(c, CExtern)): needsExtend = true; break;
+				case _:
+			}
+		if (needsExtend) {
+			var extendCode = "function $extend(from, fields) {\n"
+				+ (ctx.esVersion < 5
+					? "	function Inherit() {} Inherit.prototype = from; var proto = new Inherit();\n"
+					: "	var proto = Object.create(from);\n")
+				+ "	for (var name in fields) proto[name] = fields[name];\n"
+				+ "	if( fields.toString !== Object.prototype.toString ) proto.toString = fields.toString;\n"
+				+ "	return proto;\n"
+				+ "}\n";
+			ctx.spr(extendCode);
+		}
+		for (t in com.types) ctx.generateType(t);
+		// Feature discovery over inits and statics
+		function chkFeatures(e:TExpr):Void {
+			if (ctx.isDynamicIterator(e)) ctx.addFeature("use.$iterator");
+			switch (e.expr) {
+				case TField(_, FClosure(_, _)):
+					ctx.addFeature("use.$bind");
+				case TCall(ef = {expr: TField(_, f)}, []) if (TypeFunctions.fieldName(f) == "iterator" && ctx.isDynamicIterator(ef)):
+					ctx.addFeature("use.$getIterator");
+				case _:
+					TexprTools.iter(chkFeatures, e);
+			}
+		}
+		for (e in ctx.inits) chkFeatures(e);
+		for (s in ctx.statics) chkFeatures(s.e);
+		if (ctx.hasFeature("use.$iterator")) {
+			ctx.addFeature("use.$bind");
+			var arrayIterator = ctx.sPath({pack: ["haxe", "iterators"], name: "ArrayIterator"});
+			ctx.print("function $iterator(o) { if( o instanceof Array ) return function() { return new " + arrayIterator + "(o); }; return typeof(o.iterator) == 'function' ? $bind(o,o.iterator) : o.iterator; }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("use.$keyValueIterator")) {
+			ctx.addFeature("use.$bind");
+			ctx.print("function $keyValueIterator(o) { if( o instanceof Array ) return function() { return HxOverrides.keyValueIter(o); }; return typeof(o.keyValueIterator) == 'function' ? $bind(o,o.keyValueIterator) : o.keyValueIterator; }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("use.$getIterator")) {
+			var arrayIterator = ctx.sPath({pack: ["haxe", "iterators"], name: "ArrayIterator"});
+			ctx.print("function $getIterator(o) { if( o instanceof Array ) return new " + arrayIterator + "(o); else return o.iterator(); }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("use.$getKeyValueIterator")) {
+			ctx.print("function $getKeyValueIterator(o) { if( o instanceof Array ) return HxOverrides.keyValueIter(o); else return o.keyValueIterator(); }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("use.$bind")) {
+			ctx.addFeature("$global.$haxeUID");
+			if (!hasDollarUnderscore) {
+				ctx.print("var $_");
+				ctx.newline();
+				hasDollarUnderscore = true;
+			}
+			if (ctx.esVersion < 5)
+				ctx.print("function $bind(o,m) { if( m == null ) return null; if( m.__id__ == null ) m.__id__ = $global.$haxeUID++; var f; if( o.hx__closures__ == null ) o.hx__closures__ = {}; else f = o.hx__closures__[m.__id__]; if( f == null ) { f = function(){ return f.method.apply(f.scope, arguments); }; f.scope = o; f.method = m; o.hx__closures__[m.__id__] = f; } return f; }")
+			else
+				ctx.print("function $bind(o,m) { if( m == null ) return null; if( m.__id__ == null ) m.__id__ = $global.$haxeUID++; var f; if( o.hx__closures__ == null ) o.hx__closures__ = {}; else f = o.hx__closures__[m.__id__]; if( f == null ) { f = m.bind(o); o.hx__closures__[m.__id__] = f; } return f; }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("use.$arrayPush")) {
+			ctx.print("function $arrayPush(x) { return this.push(x); }");
+			ctx.newline();
+		}
+		if (ctx.hasFeature("$global.$haxeUID")) {
+			ctx.addFeature("js.Lib.global");
+			ctx.print("$global.$haxeUID |= 0;\n");
+		}
+		if (!hasDollarUnderscore && ctx.hasFeature("thisForCallWithRestArgs")) {
+			ctx.print("var $_");
+			ctx.newline();
+			hasDollarUnderscore = true;
+		}
+		var initsRev = ctx.inits.copy();
+		initsRev.reverse();
+		for (e in initsRev) ctx.genBlockElement(e, true, ctx.esVersion >= 6);
+		var staticsRev = ctx.statics.copy();
+		staticsRev.reverse();
+		for (s in staticsRev) ctx.generateStatic(s.c, s.f, s.e);
+		if (com.main != null) {
+			ctx.genExpr(com.main);
+			ctx.newline();
+		}
+		if (ctx.jsModern) {
+			var args = closureArgs;
+			if (!(ctx.hasFeature("js.Lib.global") || definedGlobal)) {
+				// $global can be {} when nothing reads it
+				args = args.copy();
+				args[args.length - 1] = {name: args[args.length - 1].name, value: "{}"};
+			}
+			ctx.print("})(" + [for (a in args) a.value].join(", ") + ")");
+			ctx.newline();
+		}
+
+		if (anyExposed && com.defines.rawDefined("shallow_expose")) {
+			for (f in exposedObject.fields) {
+				var fo:{name:String, fields:Array<Dynamic>} = f;
+				ctx.print("var " + fo.name + " = $hx_exports" + pathToBrackets(fo.name));
+				ctx.separator = true;
+				ctx.newline();
+			}
+			for (f in toplevelExposed) {
+				ctx.print("var " + f + " = $hx_exports" + pathToBrackets(f));
+				ctx.separator = true;
+				ctx.newline();
+			}
+		}
+
+		// Flush source maps pending)
+		sys.io.File.saveContent(com.file, ctx.buf.toString());
 	}
 }
