@@ -152,6 +152,9 @@ class Compiler {
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
 				abortOnDiagnostics(ctx, platform);
+				var tGen = hxc.core.Timer.timer(["generate", "js"]);
+				hxc.generators.GenJS.generate(ctx);
+				tGen();
 			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
