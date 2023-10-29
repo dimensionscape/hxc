@@ -274,13 +274,861 @@ class GenJS {
 		return c.kind.match(KAbstractImpl(_));
 	}
 
-	// The driver entry lands with the declaration emitters; this placeholder writes the closure skeleton so
-	// the -js plumbing is provable end to end.
+	static function needsSwitchBreak(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TBlock([]): true;
+			case TBlock(el): needsSwitchBreak(el[el.length - 1]);
+			case TMeta(m, {expr: TBreak}) if (m.name == ":loopLabel"): false;
+			case TContinue | TReturn(_) | TThrow(_): false;
+			case _: true;
+		};
+	}
+
+	static function isIteratorFieldAccess(fa:TFieldAccess):Bool {
+		return switch (TypeFunctions.fieldName(fa)) {
+			case "iterator" | "keyValueIterator": true;
+			case _: false;
+		};
+	}
+
+	function isDynamicIterator(e:TExpr):Bool {
+		function check(x:TExpr):Bool {
+			function loop(t:T):Bool {
+				return switch (TypeFunctions.follow(t)) {
+					case TInst({path: {pack: [], name: "Array"}}, _): true;
+					case TInst(c, _) if (c.kind.match(KTypeParameter(_))): true;
+					case TAnon(_) | TDynamic(_) | TMono(_): true;
+					case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+						loop(TypeFunctions.getUnderlyingType(a, tl));
+					case _: false;
+				};
+			}
+			return hasFeature("haxe.iterators.ArrayIterator.*") && loop(x.type);
+		}
+		return switch (e.expr) {
+			case TField(x, f) if (isIteratorFieldAccess(f)): check(x);
+			case _: false;
+		};
+	}
+
+	function genConstant(p:Position, c:TConstant):Void {
+		switch (c) {
+			case TInt(i): print(Std.string(i));
+			case TFloat(s): spr(s);
+			case TString(s): print("\"" + hxc.core.StringHelper.sEscape(s) + "\"");
+			case TBool(b): spr(b ? "true" : "false");
+			case TNull: spr("null");
+			case TThis: spr(thisStr());
+			case TSuper:
+				if (esVersion < 6) throw new TypingError("super is only supported on es6+", p);
+				spr("super");
+		}
+	}
+
+	static function isCodeInjectionFunction(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TIdent("__js__"): true;
+			case TField(_, FStatic({path: {pack: ["js"], name: "Syntax"}}, {name: "code" | "plainCode"})): true;
+			case _: false;
+		};
+	}
+
+	static function isRestT(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _): a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest";
+			case _: false;
+		};
+	}
+
+	// On es<6 a trailing spread turns the call into fn.apply
+	function applyArgs(el:Array<TExpr>, addNullContext:Bool = false):{apply:Bool, el:Array<TExpr>} {
+		if (esVersion < 6 && el.length > 0) {
+			switch (el[el.length - 1].expr) {
+				case TUnop(Spread, Prefix, rest) if (el.length == 1 && !addNullContext):
+					return {apply: true, el: [rest]};
+				case TUnop(Spread, Prefix, rest):
+					// [arg1, ..., argN].concat(rest)
+					var args = el.slice(0, el.length - 1);
+					if (addNullContext) args = [TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, Position.nullPos)].concat(args);
+					var arr = TypeFunctions.mk(TArrayDecl(args), TypeFunctions.tDynamic, Position.nullPos);
+					var concat = TypeFunctions.mk(TField(arr, FDynamic("concat")), TypeFunctions.tDynamic, Position.nullPos);
+					return {apply: true, el: [TypeFunctions.mk(TCall(concat, [rest]), TypeFunctions.tDynamic, Position.nullPos)]};
+				case _:
+			}
+		}
+		return {apply: false, el: el};
+	}
+
+	function printDeprecation(msg:String, p:Position):Void {
+		com.warning(WDeprecated, [], msg, p);
+	}
+
+	function genCall(e:TExpr, el:Array<TExpr>, inValueCtx:Bool):Void {
+		var r = applyArgs(el);
+		var apply = r.apply;
+		var el = r.el;
+		switch (e.expr) {
+			case TConst(TSuper) if (esVersion < 6):
+				switch (current.superClass) {
+					case null: throw new TypingError("Missing api.setCurrentClass", e.pos);
+					case sup:
+						var call = apply ? "apply" : "call";
+						print(typeAccessor(TClassDecl(sup.c)) + "." + call + "(" + thisStr());
+						for (p in el) {
+							print(",");
+							genValue(p);
+						}
+						spr(")");
+				}
+			case TField({expr: TConst(TSuper)}, f) if (esVersion < 6):
+				switch (current.superClass) {
+					case null: throw new TypingError("Missing api.setCurrentClass", e.pos);
+					case sup:
+						var name = TypeFunctions.fieldName(f);
+						var call = apply ? "apply" : "call";
+						print(typeAccessor(TClassDecl(sup.c)) + ".prototype" + field(name) + "." + call + "(" + thisStr());
+						for (p in el) {
+							print(",");
+							genValue(p);
+						}
+						spr(")");
+				}
+			case TCall(x, _) if (!isCodeInjectionFunction(x)):
+				if (apply) genCallWithApply(e, el)
+				else {
+					spr("(");
+					genValue(e);
+					spr(")");
+					spr("(");
+					concatWith(",", genValue, el);
+					spr(")");
+				}
+			case TField(_, FStatic({path: {pack: ["js"], name: "Syntax"}}, {name: meth})):
+				genSyntax(meth, el, e.pos);
+			case TField(_, FStatic({path: {pack: ["js"], name: "Lib"}}, {name: "rethrow"})) if (el.length == 0):
+				switch (catchVars) {
+					case []: throw new TypingError("js.Lib.rethrow can only be called inside a catch block", e.pos);
+					case _:
+						spr("throw ");
+						genValue(catchVars[0]);
+				}
+			case TField(_, FStatic({path: {pack: ["js"], name: "Lib"}}, {name: "getOriginalException"})) if (el.length == 0):
+				switch (catchVars) {
+					case []: throw new TypingError("js.Lib.getOriginalException can only be called inside a catch block", e.pos);
+					case _: genValue(catchVars[0]);
+				}
+			case TIdent("__new__"):
+				printDeprecation("__new__ is deprecated, use js.Syntax.construct instead", e.pos);
+				genSyntax("construct", el, e.pos);
+			case TIdent("__js__"):
+				printDeprecation("__js__ is deprecated, use js.Syntax.code instead", e.pos);
+				genSyntax("code", el, e.pos);
+			case TIdent("__instanceof__"):
+				printDeprecation("__instanceof__ is deprecated, use js.Syntax.instanceof instead", e.pos);
+				genSyntax("instanceof", el, e.pos);
+			case TIdent("__typeof__"):
+				printDeprecation("__typeof__ is deprecated, use js.Syntax.typeof instead", e.pos);
+				genSyntax("typeof", el, e.pos);
+			case TIdent("__strict_eq__"):
+				printDeprecation("__strict_eq__ is deprecated, use js.Syntax.strictEq instead", e.pos);
+				genSyntax("strictEq", el, e.pos);
+			case TIdent("__strict_neq__"):
+				printDeprecation("__strict_neq__ is deprecated, use js.Syntax.strictNeq instead", e.pos);
+				genSyntax("strictNeq", el, e.pos);
+			case TIdent("__define_feature__") if (el.length == 2):
+				genExpr(el[1]);
+			case TIdent("__feature__") if (el.length >= 2):
+				switch (el[0].expr) {
+					case TConst(TString(f)):
+						if (hasFeature(f)) genValue(el[1])
+						else if (el.length > 2) genValue(el[2]);
+					case _: unsupported(e.pos);
+				}
+			case TIdent("__resources__") if (el.length == 0):
+				spr("[");
+				var names = [for (k in com.resources.keys()) k];
+				names.reverse();
+				concatWith(",", function(name:String) {
+					spr("{ ");
+					spr("name : ");
+					genConstant(e.pos, TString(name));
+					spr(", data : ");
+					genConstant(e.pos, TString(hxc.codegen.Codegen.bytesSerialize(com.resources.get(name))));
+					spr("}");
+				}, names);
+				spr("]");
+			case TIdent("`trace") if (el.length == 2):
+				var e2 = el[0];
+				var infos = el[1];
+				if (hasFeature("haxe.Log.trace")) {
+					var t:Null<ModuleType> = null;
+					for (mt in com.types) {
+						var tp = TypeFunctions.tPath(mt);
+						if (tp.name == "Log" && tp.pack.length == 1 && tp.pack[0] == "haxe") { t = mt; break; }
+					}
+					if (t == null) throw new TypingError("haxe.Log not loaded", e.pos);
+					spr(typeAccessor(t));
+					spr(".trace(");
+					genValue(e2);
+					spr(",");
+					genValue(infos);
+					spr(")");
+				} else {
+					spr("console.log(");
+					switch (infos.expr) {
+						case TObjectDecl(fl) if (fl.length >= 2 && fl[0].key.name == "fileName" && fl[1].key.name == "lineNumber"):
+							switch [fl[0].expr.expr, fl[1].expr.expr] {
+								case [TConst(TString(file)), TConst(TInt(line))]:
+									print("\"" + file + ":" + line + ":\",");
+								case _:
+							}
+						case _:
+					}
+					genValue(e2);
+					spr(")");
+				}
+			case TField(x, f) if (el.length == 0 && TypeFunctions.fieldName(f) == "iterator" && isDynamicIterator(e)):
+				addFeature("use.$getIterator");
+				print("$getIterator(");
+				genValue(x);
+				print(")");
+			case TField(x, f) if (el.length == 0 && TypeFunctions.fieldName(f) == "keyValueIterator" && isDynamicIterator(e)):
+				addFeature("use.$getKeyValueIterator");
+				print("$getKeyValueIterator(");
+				genValue(x);
+				print(")");
+			case _:
+				if (apply) genCallWithApply(e, el)
+				else {
+					genValue(e);
+					spr("(");
+					concatWith(",", genValue, el);
+					spr(")");
+				}
+		}
+	}
+
+	function genCallWithApply(target:TExpr, args:Array<TExpr>):Void {
+		if (args.length != 1) throw new TypingError("args for gen_call_with_apply must contain exactly one item", target.pos);
+		switch (target.expr) {
+			case TField(eThis, FInstance(_, _, {name: fname}) | FAnon({name: fname}) | FDynamic(fname) | FClosure(_, {name: fname})):
+				addFeature("thisForCallWithRestArgs");
+				spr("($_=");
+				genValue(eThis);
+				spr(",$_." + fname + ".apply($_,");
+				concatWith(",", genValue, args);
+				spr("))");
+			case _:
+				genValue(target);
+				spr(".apply(null,");
+				concatWith(",", genValue, args);
+				spr(")");
+		}
+	}
+
+	static function addObjectdeclParens(e:TExpr):TExpr {
+		function loop(x:TExpr):TExpr {
+			return switch (x.expr) {
+				case TCast(e1, null) | TMeta(_, e1): loop(e1);
+				case TObjectDecl(_): TypeFunctions.mk(TParenthesis(x), x.type, x.pos);
+				case _: x;
+			};
+		}
+		return loop(e);
+	}
+
+	public function genExpr(e:TExpr):Void {
+		switch (e.expr) {
+			case TConst(c): genConstant(e.pos, c);
+			case TLocal(v): spr(ident(v.name));
+			case TArray(e1, e2):
+				genValue(addObjectdeclParens(e1));
+				spr("[");
+				genValue(e2);
+				spr("]");
+			case TBinop(op, {expr: TField(x, f)}, e2) if (isIteratorFieldAccess(f)):
+				genValue(x);
+				spr(field(TypeFunctions.fieldName(f)));
+				print(" " + Ast.sBinop(op) + " ");
+				genValue(e2);
+			case TBinop(op = OpEq | OpNotEq, {expr: TField(x, f = FClosure(_, _))}, {expr: TConst(TNull)}):
+				genValue(x);
+				spr(field(TypeFunctions.fieldName(f)));
+				print(" " + Ast.sBinop(op) + " null");
+			case TBinop(op = OpEq | OpNotEq, {expr: TConst(TNull)}, {expr: TField(x, f = FClosure(_, _))}):
+				print("null " + Ast.sBinop(op) + " ");
+				genValue(x);
+				spr(field(TypeFunctions.fieldName(f)));
+			case TBinop(op, e1, e2):
+				genValue(e1);
+				print(" " + Ast.sBinop(op) + " ");
+				genValue(e2);
+			case TField(x, f) if (TypeFunctions.fieldName(f) == "iterator" && isDynamicIterator(e)):
+				addFeature("use.$iterator");
+				print("$iterator(");
+				genValue(x);
+				print(")");
+			case TField(x, f) if (TypeFunctions.fieldName(f) == "keyValueIterator" && isDynamicIterator(e)):
+				addFeature("use.$keyValueIterator");
+				print("$keyValueIterator(");
+				genValue(x);
+				print(")");
+			case TUnop(op, flag, fe = {expr: TField(x, f)}) if (isIteratorFieldAccess(f) && isDynamicIterator(fe)):
+				// Don't generate $iterator(value) for exprs like value.iterator--
+				switch (flag) {
+					case Prefix:
+						spr(Ast.sUnop(op));
+						genValue(x);
+						print("." + TypeFunctions.fieldName(f));
+					case Postfix:
+						genValue(x);
+						print("." + TypeFunctions.fieldName(f));
+						spr(Ast.sUnop(op));
+				}
+			case TField(x, FClosure(w, {name: "push"})) if (w != null && w.c.path.pack.length == 0 && w.c.path.name == "Array"):
+				// Issue #1997
+				addFeature("use.$arrayPush");
+				addFeature("use.$bind");
+				print("$bind(");
+				genValue(x);
+				print(",$arrayPush)");
+			case TField(x, FClosure(_, f)):
+				addFeature("use.$bind");
+				switch (x.expr) {
+					case TConst(_) | TLocal(_):
+						print("$bind(");
+						genValue(x);
+						print(",");
+						genValue(x);
+						print((TypeFunctions.hasMeta(":selfCall", f.meta) ? "" : field(f.name)) + ")");
+					case _:
+						print("($_=");
+						genValue(x);
+						print(",$bind($_,$_" + (TypeFunctions.hasMeta(":selfCall", f.meta) ? "" : field(f.name)) + "))");
+				}
+			case TEnumIndex(x):
+				genValue(x);
+				if (!com.defines.rawDefined("js_enums_as_arrays"))
+					print("._hx_index")
+				else
+					print("[1]");
+			case TEnumParameter(x, f, i):
+				genValue(x);
+				if (!com.defines.rawDefined("js_enums_as_arrays")) {
+					var fname = switch (f.type) {
+						case TFun(sig): sig.args[i].name;
+						case _: throw new TypingError("Invalid enum parameter", e.pos);
+					};
+					print("." + ident(fname));
+				} else
+					print("[" + (i + 2) + "]");
+			case TField(_, FStatic({path: {pack: [], name: ""}}, f)):
+				spr(f.name);
+			case TField(x, FInstance(_, _, f) | FStatic(_, f) | FAnon(f)) if (TypeFunctions.hasMeta(":selfCall", f.meta)):
+				genValue(x);
+			case TField(_, FStatic(c = {kind: KModuleFields(m)}, f)):
+				spr(moduleField(com, m, f));
+			case TField(x, f):
+				function skip(x:TExpr):TExpr {
+					return switch (x.expr) {
+						case TCast(e1, null) | TMeta(_, e1): skip(e1);
+						case TConst(TInt(_) | TFloat(_)) | TObjectDecl(_): TypeFunctions.mk(TParenthesis(x), x.type, x.pos);
+						case _: x;
+					};
+				}
+				genValue(skip(x));
+				spr(switch (f) {
+					case FStatic(c, cf): staticField(c, cf);
+					case FEnum(_, _) | FInstance(_, _, _) | FAnon(_) | FDynamic(_) | FClosure(_, _): field(TypeFunctions.fieldName(f));
+				});
+			case TTypeExpr(t):
+				spr(typeAccessor(t));
+			case TParenthesis(e1):
+				spr("(");
+				genValue(e1);
+				spr(")");
+			case TMeta(m, e1) if (m.name == ":loopLabel"):
+				switch (m.params) {
+					case [{expr: EConst(CInt(n, _))}]:
+						switch (e1.expr) {
+							case TWhile(_, _, _) | TFor(_, _, _):
+								print("_hx_loop" + n + ": ");
+								genExpr(e1);
+							case TBreak:
+								print("break _hx_loop" + n);
+							case _: throw new TypingError("Invalid loop label", e.pos);
+						}
+					case _: throw new TypingError("Invalid loop label", e.pos);
+				}
+			case TMeta(_, e1):
+				genExpr(e1);
+			case TReturn(eo):
+				if (valueVar != null) unsupported(e.pos);
+				if (eo == null) spr("return")
+				else {
+					spr("return ");
+					genValue(eo);
+				}
+			case TBreak:
+				if (!inLoop) unsupported(e.pos);
+				spr("break");
+			case TContinue:
+				if (!inLoop) unsupported(e.pos);
+				spr("continue");
+			case TBlock(el):
+				print("{");
+				var bend = openBlock();
+				for (x in el) genBlockElement(x);
+				bend();
+				newline();
+				print("}");
+			case TFunction(f):
+				genFunction(f, e.pos);
+			case TCall(callee, el):
+				genCall(callee, el, false);
+			case TArrayDecl(el):
+				spr("[");
+				concatWith(",", genValue, el);
+				spr("]");
+			case TThrow(e1):
+				spr("throw ");
+				genValue(e1);
+			case TVarExpr(v, eo):
+				spr(varKeyword() + " ");
+				checkVarDeclaration(v);
+				spr(ident(v.name));
+				if (eo != null) {
+					spr(" = ");
+					genValue(eo);
+				}
+			case TNew({path: {pack: [], name: "Array"}}, _, []):
+				print("[]");
+			case TNew(c, _, el):
+				var r = applyArgs(el, true);
+				var isSelfCall = c.constructor != null && TypeFunctions.hasMeta(":selfCall", c.constructor.meta);
+				if (!isSelfCall) print(r.apply ? "(new" : "new ");
+				var cls = typeAccessor(TClassDecl(c));
+				if (r.apply) {
+					print("(Function.prototype.bind.apply(" + cls + ",");
+					concatWith(",", genValue, r.el);
+					print(")))");
+				} else {
+					print(cls + "(");
+					concatWith(",", genValue, r.el);
+					spr(")");
+				}
+			case TIf(cond, eif, eelse):
+				spr("if");
+				genValue(cond);
+				spr(" ");
+				genExpr(TypeFunctions.mkBlock(eif));
+				if (eelse != null) {
+					switch (eif.expr) {
+						case TObjectDecl(_): separator = false;
+						case _:
+					}
+					semicolon();
+					spr(" else ");
+					genExpr(eelse.expr.match(TIf(_, _, _)) ? eelse : TypeFunctions.mkBlock(eelse));
+				}
+			case TUnop(op, Prefix, e1):
+				spr(Ast.sUnop(op));
+				genValue(e1);
+			case TUnop(op, Postfix, e1):
+				genValue(e1);
+				spr(Ast.sUnop(op));
+			case TWhile(cond, body, NormalWhile):
+				var oldInLoop = inLoop;
+				inLoop = true;
+				spr("while");
+				genValue(cond);
+				spr(" ");
+				genExpr(body);
+				inLoop = oldInLoop;
+			case TWhile(cond, body, DoWhile):
+				var oldInLoop = inLoop;
+				inLoop = true;
+				spr("do ");
+				genExpr(body);
+				semicolon();
+				spr(" while");
+				genValue(cond);
+				inLoop = oldInLoop;
+			case TObjectDecl(fields):
+				spr("{ ");
+				concatWith(", ", function(fl:TObjectField) {
+					switch (fl.key.quotes) {
+						case DoubleQuotes: print("\"" + hxc.core.StringHelper.sEscape(fl.key.name) + "\" : ");
+						case NoQuotes: print(anonField(fl.key.name) + " : ");
+					}
+					genValue(fl.expr);
+				}, fields);
+				spr("}");
+				separator = true;
+			case TFor(v, it, body):
+				checkVarDeclaration(v);
+				var oldInLoop = inLoop;
+				inLoop = true;
+				var itName = switch (it.expr) {
+					case TLocal(v2): ident(v2.name);
+					case _:
+						var id = idCounter;
+						idCounter++;
+						var name = "$it" + id;
+						print(varKeyword() + " " + name + " = ");
+						genValue(it);
+						newline();
+						name;
+				};
+				print("while( " + itName + ".hasNext() ) {");
+				var bend = openBlock();
+				newline();
+				print(varKeyword() + " " + ident(v.name) + " = " + itName + ".next()");
+				genBlockElement(body);
+				bend();
+				newline();
+				spr("}");
+				inLoop = oldInLoop;
+			case TTry(etry, [c]):
+				spr("try ");
+				genExpr(etry);
+				checkVarDeclaration(c.v);
+				print(" catch( " + c.v.name + " ) ");
+				catchVars.unshift(TypeFunctions.mk(TLocal(c.v), c.v.type, c.v.pos));
+				genExpr(c.expr);
+				catchVars.shift();
+			case TTry(_, _):
+				throw new TypingError("Unhandled try/catch, please report", e.pos);
+			case TSwitch(cond, cases, def):
+				spr("switch");
+				genValue(cond);
+				spr(" {");
+				newline();
+				for (c in cases) {
+					for (v in c.values) {
+						switch (v.expr) {
+							case TConst(TNull):
+								spr("case null: case undefined:");
+							case _:
+								spr("case ");
+								genValue(v);
+								spr(":");
+						}
+					}
+					var bend = openBlock();
+					genBlockElement(c.expr);
+					if (needsSwitchBreak(c.expr)) {
+						newline();
+						print("break");
+					}
+					bend();
+					newline();
+				}
+				if (def != null) {
+					spr("default:");
+					var bend = openBlock();
+					genBlockElement(def);
+					bend();
+					newline();
+				}
+				spr("}");
+			case TCast(e1, null):
+				genExpr(e1);
+			case TCast(e1, mt):
+				print(typeAccessor(TClassDecl(bootClass())) + ".__cast(");
+				genValue(e1);
+				spr(" , ");
+				spr(typeAccessor(mt));
+				spr(")");
+			case TIdent(s):
+				spr(s);
+		}
+	}
+
+	// A stand-in js.Boot class reference for __cast
+	static var _bootClass:TClass = null;
+
+	static function bootClass():TClass {
+		if (_bootClass == null) {
+			var mod:ModuleDef = TypeFunctions.nullClass.module;
+			_bootClass = TypeFunctions.mkClass(mod, {pack: ["js"], name: "Boot"}, Position.nullPos, Position.nullPos);
+		}
+		return _bootClass;
+	}
+
+	function genFunction(f:TFunc, pos:Position, keyword:String = "function"):Void {
+		var old = {v: valueVar, l: inLoop};
+		valueVar = null;
+		inLoop = false;
+		var f = f;
+		var args:Array<String>;
+		var lastRest = f.args.length > 0 && f.args[f.args.length - 1].c == null
+			&& isRestT(f.args[f.args.length - 1].v.type);
+		if (lastRest) {
+			var v = f.args[f.args.length - 1].v;
+			if (esVersion >= 6) {
+				args = [for (a in f.args) {
+					checkVarDeclaration(a.v);
+					a.v == v ? "..." + ident(a.v.name) : ident(a.v.name);
+				}];
+			} else {
+				checkVarDeclaration(v);
+				var nonRest = f.args.slice(0, f.args.length - 1);
+				var argsDecl = declareRestArgsLegacy(nonRest.length, v);
+				var el = switch (f.expr.expr) {
+					case TBlock(el): argsDecl.concat(el);
+					case _: argsDecl.concat([f.expr]);
+				};
+				var body = TypeFunctions.mk(TBlock(el), f.expr.type, f.expr.pos);
+				f = new TFunc(nonRest, f.type, body);
+				args = [for (a in f.args) {
+					checkVarDeclaration(a.v);
+					ident(a.v.name);
+				}];
+			}
+		} else {
+			args = [for (a in f.args) {
+				checkVarDeclaration(a.v);
+				ident(a.v.name);
+			}];
+		}
+		print(keyword + "(" + args.join(",") + ") ");
+		genExpr(funBlock(f, pos));
+		valueVar = old.v;
+		inLoop = old.l;
+		separator = true;
+	}
+
+	function declareRestArgsLegacy(offset:Int, restArg:TVar):Array<TExpr> {
+		var i = Std.string(offset);
+		var newArray = TypeFunctions.mk(TIdent("new Array($l>" + i + "?$l-" + i + ":0)"), TypeFunctions.tDynamic, restArg.pos);
+		var populate = TypeFunctions.mk(TIdent("for(var $i=" + i + ";$i<$l;++$i){" + ident(restArg.name) + "[$i-" + i + "]=arguments[$i];}"), com.basic.tvoid, restArg.pos);
+		return [
+			TypeFunctions.mk(TIdent("var $l=arguments.length"), com.basic.tvoid, restArg.pos),
+			TypeFunctions.mk(TVarExpr(restArg, newArray), com.basic.tvoid, restArg.pos),
+			populate
+		];
+	}
+
+	// Prepend the null-default checks
+	function funBlock(f:TFunc, p:Position):TExpr {
+		var e = f.expr;
+		for (a in f.args) {
+			switch (a.c) {
+				case null | {expr: TConst(TNull)}:
+				case c:
+					e = TypeFunctions.concat(TexprTools.setDefault(com.basic, a.v, c, p), e);
+			}
+		}
+		return e;
+	}
+
+	public function genBlockElement(e:TExpr, newlineAfter:Bool = false, keepBlocks:Bool = false):Void {
+		switch (e.expr) {
+			case TBlock(el) if (!keepBlocks):
+				for (x in el) genBlockElement(x, newlineAfter);
+			case TCall({expr: TIdent("__feature__")}, params) if (params.length >= 2):
+				switch (params[0].expr) {
+					case TConst(TString(f)):
+						if (hasFeature(f)) genBlockElement(params[1], newlineAfter)
+						else if (params.length > 2) genBlockElement(params[2], newlineAfter);
+					case _: unsupported(e.pos);
+				}
+			case TFunction(_):
+				genBlockElement(TypeFunctions.mk(TParenthesis(e), e.type, e.pos), newlineAfter);
+			case TObjectDecl(fl):
+				for (f in fl) genBlockElement(f.expr, newlineAfter);
+			case _:
+				if (!newlineAfter) newline();
+				genExpr(e);
+				if (newlineAfter) newline();
+		}
+	}
+
+	public function genValue(e:TExpr):Void {
+		function assign(e2:TExpr):TExpr {
+			return TypeFunctions.mk(TBinop(OpAssign,
+				TypeFunctions.mk(TLocal(valueVar), TypeFunctions.tDynamic, e2.pos), e2), e2.type, e2.pos);
+		}
+		function startValue():Void->Void {
+			var old = {v: valueVar, l: inLoop};
+			var r = TypeFunctions.allocVar(VGenerated, "$r", TypeFunctions.tDynamic, e.pos);
+			valueVar = r;
+			inLoop = false;
+			spr("(function($this) ");
+			spr("{");
+			var b = openBlock();
+			newline();
+			spr("var $r");
+			newline();
+			return function() {
+				newline();
+				spr("return $r");
+				b();
+				newline();
+				spr("}");
+				valueVar = old.v;
+				inLoop = old.l;
+				print("(" + thisStr() + "))");
+			};
+		}
+		switch (e.expr) {
+			case TConst(_) | TLocal(_) | TArray(_, _) | TBinop(_, _, _) | TField(_, _) | TEnumParameter(_, _, _)
+				| TEnumIndex(_) | TTypeExpr(_) | TParenthesis(_) | TObjectDecl(_) | TArrayDecl(_) | TNew(_, _, _)
+				| TUnop(_, _, _) | TFunction(_) | TIdent(_):
+				genExpr(e);
+			case TMeta(_, e1):
+				genValue(e1);
+			case TCall(callee, el):
+				genCall(callee, el, true);
+			case TReturn(_) | TBreak | TContinue:
+				unsupported(e.pos);
+			case TCast(e1, null):
+				genValue(e1);
+			case TCast(e1, mt):
+				print(typeAccessor(TClassDecl(bootClass())) + ".__cast(");
+				genValue(e1);
+				spr(" , ");
+				spr(typeAccessor(mt));
+				spr(")");
+			case TVarExpr(_, _) | TFor(_, _, _) | TWhile(_, _, _) | TThrow(_):
+				// Value is discarded anyway
+				var v = startValue();
+				genExpr(e);
+				v();
+			case TBlock([e1]):
+				genValue(e1);
+			case TBlock(el):
+				var v = startValue();
+				if (el.length == 0) {
+					spr("return null");
+				} else {
+					for (i in 0...el.length - 1) {
+						genExpr(el[i]);
+						newline();
+					}
+					genExpr(assign(el[el.length - 1]));
+				}
+				v();
+			case TIf(cond, eif, eelse):
+				// Drop the parens unless the condition binds looser than ?:
+				var cond = switch (cond.expr) {
+					case TParenthesis({expr: TBinop(OpAssign | OpAssignOp(_), _, _) | TIf(_, _, _)}): cond;
+					case TParenthesis(e1): e1;
+					case _: cond;
+				};
+				genValue(cond);
+				spr(" ? ");
+				genValue(eif);
+				spr(" : ");
+				if (eelse == null) spr("null") else genValue(eelse);
+			case TSwitch(cond, cases, def):
+				var v = startValue();
+				genExpr(TypeFunctions.mk(TSwitch(cond,
+					[for (c in cases) {values: c.values, expr: assign(c.expr)}],
+					def == null ? null : assign(def)), e.type, e.pos));
+				v();
+			case TTry(b, catches):
+				var v = startValue();
+				function block(x:TExpr):TExpr return TypeFunctions.mk(TBlock([x]), x.type, x.pos);
+				genExpr(TypeFunctions.mk(TTry(block(assign(b)),
+					[for (c in catches) {v: c.v, expr: block(assign(c.expr))}]), e.type, e.pos));
+				v();
+		}
+	}
+
+	function genSyntax(meth:String, args:Array<TExpr>, pos:Position):Void {
+		switch [meth, args] {
+			case ["construct", _] if (args.length >= 1):
+				spr("new ");
+				switch (args[0].expr) {
+					case TConst(TString(cl)): spr(cl);
+					case _: genValue(args[0]);
+				}
+				spr("(");
+				concatWith(",", genValue, args.slice(1));
+				spr(")");
+			case ["instanceof", [o, t]]:
+				spr("((");
+				genValue(o);
+				print(") instanceof ");
+				genValue(t);
+				spr(")");
+			case ["typeof", [o]]:
+				spr("typeof(");
+				genValue(o);
+				spr(")");
+			case ["strictEq", [x, y]]:
+				// Extra parens for operator precedence
+				spr("((");
+				genValue(x);
+				spr(") === ");
+				genValue(y);
+				spr(")");
+			case ["strictNeq", [x, y]]:
+				spr("((");
+				genValue(x);
+				spr(") !== ");
+				genValue(y);
+				spr(")");
+			case ["delete", [o, f]]:
+				spr("delete(");
+				genValue(o);
+				spr("[");
+				genValue(f);
+				spr("]");
+				spr(")");
+			case ["code", _] if (args.length >= 1):
+				var code = args[0];
+				var codeStr = switch (code.expr) {
+					case TConst(TString(s)): s;
+					case _: throw new TypingError("The `code` argument for js.Syntax.code must be a string constant", code.pos);
+				};
+				var params = args.slice(1);
+				if (params.length == 0 && codeStr == "this") {
+					spr(thisStr());
+				} else {
+					function revealExpr(x:TExpr):TExpr {
+						return switch (x.expr) {
+							case TCast(e1, _) | TMeta(_, e1): revealExpr(e1);
+							case _: x;
+						};
+					}
+					var params = [for (arg in params) switch (revealExpr(arg).expr) {
+						case TIf(_, _, _) | TBinop(_, _, _) | TUnop(_, _, _): TypeFunctions.mk(TParenthesis(arg), arg.type, arg.pos);
+						case _: arg;
+					}];
+					hxc.codegen.Codegen.interpolateCode(com, codeStr, params, spr, genValue, code.pos);
+				}
+			case ["plainCode", [code]]:
+				var codeStr = switch (code.expr) {
+					case TConst(TString(s)): s;
+					case _: throw new TypingError("The `code` argument for js.Syntax.plainCode must be a string constant", code.pos);
+				};
+				spr(codeStr.split("\r\n").join("\n"));
+			case ["field", [eobj, efield]]:
+				genValue(eobj);
+				switch (TexprTools.skip(efield).expr) {
+					case TConst(TString(s)) if (validJsIdent(s)):
+						spr(".");
+						spr(s);
+					case _:
+						spr("[");
+						genValue(efield);
+						spr("]");
+				}
+			case _:
+				throw new TypingError("Unknown js.Syntax method `" + meth + "` with " + args.length + " arguments", pos);
+		}
+	}
+
+	// The driver entry lands with the declaration emitters; this placeholder proves the -js plumbing end to
+	// end.
 	public static function generate(com:Context):Void {
 		var esVersion = com.getEsVersion();
 		setupKwds(com);
 		var ctx = allocCtx(com, esVersion);
 		hxc.codegen.Codegen.mapSourceHeader(com, function(s) ctx.print("// " + s + "\n"));
-		throw new TypingError("GenJS expression and declaration emitters are not ported yet", Position.nullPos);
+		throw new TypingError("GenJS declaration emitters are not ported yet", Position.nullPos);
 	}
 }
