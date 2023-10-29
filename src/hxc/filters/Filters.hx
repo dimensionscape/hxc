@@ -639,8 +639,14 @@ class Filters {
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
 		// Slot: Analyzer.Run.run_on_types PASS 2
+		var renameLocals = hxc.filters.RenameVars.init(com.types);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
+			// add_final_return: addFinalReturn is false for js
+			{name: "RenameVars", f: function(e) {
+				hxc.filters.RenameVarsRun.run(renameLocals, e);
+				return e;
+			}},
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
 		// Slot: onGenerate callbacks + save_class_state (server cache; single-shot hxc skips)
