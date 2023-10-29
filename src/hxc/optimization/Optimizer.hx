@@ -258,7 +258,7 @@ class Optimizer {
 		};
 	}
 
-	static function checkConstantSwitch(e1:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Null<TExpr> {
+	public static function checkConstantSwitch(e1:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Null<TExpr> {
 		function isEmpty(e:TExpr):Bool return e.expr.match(TBlock([]));
 		var subject = TexprTools.skip(e1);
 		switch (subject.expr) {
