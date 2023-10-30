@@ -448,6 +448,15 @@ class ModuleLoader {
 	}
 
 	public static function registerFields(c:TClass, fields:Array<ClassField>):Void {
+		function checkIfFeature(meta:Metadata):Array<String> {
+			for (m in meta) if (m.name == ":ifFeature")
+				return [for (p in m.params) switch (p.expr) {
+					case EConst(CString(s, _)): s;
+					case _: throw new ContextError("String expected", p.pos);
+				}];
+			return [];
+		}
+		var clIfFeature = checkIfFeature(c.meta);
 		for (cff in fields) {
 			var isStatic = false;
 			var isExtern = false;
@@ -488,6 +497,10 @@ class ModuleLoader {
 			if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfGeneric);
 			if (isExtern) TypeFunctions.addClassFieldFlag(cf, CfExtern);
 			if (isFinalField) TypeFunctions.addClassFieldFlag(cf, CfFinal);
+			if (c.module != null) {
+				for (s in clIfFeature) c.module.extra.ifFeature.unshift({name: s, cls: c, cf: cf, b: isStatic});
+				for (s in checkIfFeature(cff.cffMeta)) c.module.extra.ifFeature.unshift({name: s, cls: c, cf: cf, b: isStatic});
+			}
 			cf.kind = switch (cff.cffKind) {
 				case FFun(_):
 					var isInline = false, isDynamic = false, isMacro = false;
