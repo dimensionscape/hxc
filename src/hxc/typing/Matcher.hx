@@ -93,11 +93,33 @@ class Constructor {
 		};
 	}
 
+	// Total order over TConstant: the constructor tag orders first (TInt < TFloat < TString < TBool < TNull
+	// < TThis < TSuper), then the payload
+	static function constCompare(ct1:TConstant, ct2:TConstant):Int {
+		inline function cmpStr(a:String, b:String):Int return a < b ? -1 : (a > b ? 1 : 0);
+		function tag(ct:TConstant):Int return switch (ct) {
+			case TInt(_): 0;
+			case TFloat(_): 1;
+			case TString(_): 2;
+			case TBool(_): 3;
+			case TNull: 4;
+			case TThis: 5;
+			case TSuper: 6;
+		};
+		return switch ([ct1, ct2]) {
+			case [TInt(a), TInt(b)]: a < b ? -1 : (a > b ? 1 : 0);
+			case [TFloat(a), TFloat(b)]: cmpStr(a, b);
+			case [TString(a), TString(b)]: cmpStr(a, b);
+			case [TBool(a), TBool(b)]: a == b ? 0 : (a ? 1 : -1);
+			case _: tag(ct1) - tag(ct2);
+		};
+	}
+
 	// Compare (ordering for the decision-tree tables).
 	public static function compare(con1:Con, con2:Con):Int {
 		inline function cmpStr(a:String, b:String):Int return a < b ? -1 : (a > b ? 1 : 0);
 		return switch ([con1.kind, con2.kind]) {
-			case [ConConst(ct1), ConConst(ct2)]: cmpStr(sConst(ct1), sConst(ct2));
+			case [ConConst(ct1), ConConst(ct2)]: constCompare(ct1, ct2);
 			case [ConEnum(_, ef1), ConEnum(_, ef2)]: ef1.index - ef2.index;
 			case [ConStatic(_, cf1), ConStatic(_, cf2)]: cmpStr(cf1.name, cf2.name);
 			case [ConTypeExpr(mt1), ConTypeExpr(mt2)]: cmpStr(Globals.sTypePath(TypeFunctions.tInfos(mt1).path), Globals.sTypePath(TypeFunctions.tInfos(mt2).path));
@@ -617,11 +639,50 @@ class MatcherContext {
 	public var matchPos:Position;
 	public var matchDebug:Bool;
 	public var count:Int;
+	// Table: decision nodes are hashconsed so equal decisions share one node (the converter groups
+	// switch cases by node identity)
+	public var table:Array<Dt>;
 	public function new(ctx:TyperContext, p:Position) {
 		this.ctx = ctx;
 		this.matchPos = p;
 		this.matchDebug = false;
 		this.count = 0;
+		this.table = [];
+	}
+}
+
+// Decision-tree equality over dt kinds (child nodes compare by dt index)
+class DtEquality {
+	public static function kindEquals(k1:DtKind, k2:DtKind):Bool {
+		inline function eqDt(a:Dt, b:Dt):Bool return a.i == b.i;
+		return switch ([k1, k2]) {
+			case [Leaf(c1), Leaf(c2)]:
+				c1 == c2;
+			case [Switch(s1, cases1, def1), Switch(s2, cases2, def2)]:
+				if (cases1.length != cases2.length) false
+				else {
+					var ok = TexprTools.equal(s1, s2) && eqDt(def1, def2);
+					if (ok) for (i in 0...cases1.length) {
+						var a = cases1[i], b = cases2[i];
+						if (!(Constructor.equal(a.con, b.con) && a.unguarded == b.unguarded && eqDt(a.dt, b.dt))) { ok = false; break; }
+					}
+					ok;
+				}
+			case [Bind(l1, b1), Bind(l2, b2)]:
+				if (l1.length != l2.length) false
+				else {
+					var ok = eqDt(b1, b2);
+					if (ok) for (i in 0...l1.length)
+						if (!(l1[i].v == l2[i].v && TexprTools.equal(l1[i].e, l2[i].e))) { ok = false; break; }
+					ok;
+				}
+			case [Fail, Fail]:
+				true;
+			case [Guard(e1, d11, d12), Guard(e2, d21, d22)] | [GuardNull(e1, d11, d12), GuardNull(e2, d21, d22)]:
+				e1 == e2 && eqDt(d11, d21) && eqDt(d12, d22);
+			case _:
+				false;
+		};
 	}
 }
 
@@ -631,7 +692,9 @@ class DtCompile {
 	}
 
 	static function mkDt(mctx:MatcherContext, t:DtKind, p:Position):Dt {
+		for (d in mctx.table) if (DtEquality.kindEquals(t, d.t)) return d;
 		var d = new Dt(t, mctx.count, p);
+		mctx.table.push(d);
 		mctx.count++;
 		return d;
 	}
@@ -1187,6 +1250,11 @@ class TexprConverter {
 		return loop(true, s, e);
 	}
 
+	// Decision-tree equality; nodes are hashconsed so identity usually decides
+	static function dtEquals(d1:Dt, d2:Dt):Bool {
+		return d1 == d2 || DtEquality.kindEquals(d1.t, d2.t);
+	}
+
 	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
@@ -1225,12 +1293,24 @@ class TexprConverter {
 				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
 				var defE = (topLevel && complete && runtimeFinite) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
 				if (defE == null && !complete && !withType.match(NoValue)) reportUnmatched();
+				// Group: cases that share a decision emit one case with several values, sorted by constructor
+				// order
+				var groups:Array<{cons:Array<Con>, dt:Dt}> = [];
+				for (sc in cases) {
+					var found = null;
+					for (g in groups) if (dtEquals(g.dt, sc.dt)) { found = g; break; }
+					if (found == null) groups.push({cons: [sc.con], dt: sc.dt});
+					else found.cons.unshift(sc.con);
+				}
+				groups.sort(function(g1, g2) return Constructor.compare(g1.cons[0], g2.cons[0]));
 				var caseFailed = false;
 				var swCases:Array<TSwitchCase> = [];
-				for (sc in cases) {
-					var ce = toTexprRec(ctx, tSwitch, withType, sc.dt, nextRec);
-					if (ce != null) swCases.push({values: [Constructor.toTexpr(ctx, false, sc.con)], expr: ce});
-					else caseFailed = true;
+				for (g in groups) {
+					var ce = toTexprRec(ctx, tSwitch, withType, g.dt, nextRec);
+					if (ce != null) {
+						g.cons.sort(Constructor.compare);
+						swCases.push({values: [for (c in g.cons) Constructor.toTexpr(ctx, false, c)], expr: ce});
+					} else caseFailed = true;
 				}
 				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite) && !withType.match(NoValue))
 					reportUnmatched();
