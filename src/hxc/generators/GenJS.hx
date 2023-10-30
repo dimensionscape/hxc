@@ -13,9 +13,90 @@ import hxc.core.Globals.Path;
 import hxc.context.Context;
 import haxe.ds.StringMap;
 
+// Source map; positions encoded as base64 VLQ deltas
+private class JsSourceMap {
+	public var sources:Array<String> = [];
+	public var sourcesHash:StringMap<Int> = new StringMap();
+	public var mappings:StringBuf = new StringBuf();
+	public var sourceLastFile = 0;
+	public var sourceLastLine = 0;
+	public var sourceLastCol = 0;
+	public var printComma = false;
+	public var outputLastCol = 0;
+	public var outputCurrentCol = 0;
+	public var currentExpr:Null<{file:Int, line:Int, col:Int}> = null;
+
+	public function new() {}
+
+	static var base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	public function encodeMapping(pos:{file:Int, line:Int, col:Int}):Void {
+		if (printComma)
+			mappings.add(",");
+		else
+			printComma = true;
+		function base64Vlq(number:Int):Void {
+			var vlq = number < 0 ? ((-number) << 1) + 1 : number << 1;
+			while (true) {
+				var digit = vlq & 31;
+				vlq >>= 5;
+				mappings.add(base64Chars.charAt(vlq > 0 ? digit | 32 : digit));
+				if (vlq <= 0) break;
+			}
+		}
+		base64Vlq(outputCurrentCol - outputLastCol);
+		base64Vlq(pos.file - sourceLastFile);
+		base64Vlq(pos.line - sourceLastLine);
+		base64Vlq(pos.col - sourceLastCol);
+		sourceLastFile = pos.file;
+		sourceLastLine = pos.line;
+		sourceLastCol = pos.col;
+		outputLastCol = outputCurrentCol;
+	}
+
+	// Returns the restore closure
+	public function addMapping(p:Position):Void->Void {
+		if (p.min < 0) return function() {};
+		var file = sourcesHash.get(p.file);
+		if (file == null) {
+			file = sources.length;
+			sourcesHash.set(p.file, file);
+			sources.push(p.file);
+		}
+		var infos = Position.getInfos(p);
+		var pos = {file: file, line: infos.line - 1, col: infos.column};
+		if (sourceLastFile != pos.file || sourceLastLine != pos.line || sourceLastCol != pos.col) {
+			var old = currentExpr;
+			currentExpr = pos;
+			encodeMapping(pos);
+			return function() currentExpr = old;
+		}
+		return function() {};
+	}
+
+	public function handleNewlines(str:String):Void {
+		var from = 0;
+		while (true) {
+			var next = str.indexOf("\n", from);
+			if (next < 0) {
+				outputCurrentCol += str.length - from;
+				break;
+			}
+			next += 1;
+			mappings.add(";");
+			outputLastCol = 0;
+			outputCurrentCol = 0;
+			printComma = false;
+			if (currentExpr != null) encodeMapping(currentExpr);
+			from = next;
+		}
+	}
+}
+
 class GenJS {
 	public var com:Context;
 	public var buf:StringBuf;
+	public var smap:Null<JsSourceMap>;
 	public var packages:StringMap<Bool>;
 	public var jsModern:Bool;
 	public var jsFlatten:Bool;
@@ -164,12 +245,61 @@ class GenJS {
 
 	public function spr(s:String):Void {
 		separator = false;
+		if (smap != null) smap.handleNewlines(s);
 		buf.add(s);
 	}
 
 	public function print(s:String):Void {
 		separator = false;
+		if (smap != null) smap.handleNewlines(s);
 		buf.add(s);
+	}
+
+	// Source mapping over an expression position
+	public inline function addMapping(e:TExpr):Void->Void {
+		return smap != null ? smap.addMapping(e.pos) : function() {};
+	}
+
+	// The .js.map JSON plus the sourceMappingURL trailer
+	public function writeMappings():Void {
+		var basefile = haxe.io.Path.withoutDirectory(com.file);
+		print("\n//# sourceMappingURL=" + StringTools.urlEncode(basefile) + ".map");
+		var b = new StringBuf();
+		function toUrl(file:String):String {
+			return StringTools.replace(StringTools.replace(sys.FileSystem.absolutePath(file), "\\", "/"), "\\", "/");
+		}
+		b.add("{\n");
+		b.add("\"version\":3,\n");
+		b.add("\"file\":\"" + StringTools.replace(basefile, "\\", "\\\\") + "\",\n");
+		b.add("\"sourceRoot\":\"\",\n");
+		b.add("\"sources\":[" + [for (s in smap.sources) "\"file:///" + toUrl(s) + "\""].join(",") + "],\n");
+		if (com.defines.rawDefined("source_map_content")) {
+			b.add("\"sourcesContent\":[" + [for (s in smap.sources) {
+				try "\"" + sEscape(sys.io.File.getContent(s)) + "\"" catch (_:Dynamic) "null";
+			}].join(",") + "],\n");
+		}
+		b.add("\"names\":[],\n");
+		b.add("\"mappings\":\"");
+		b.add(smap.mappings.toString());
+		b.add("\"\n");
+		b.add("}");
+		sys.io.File.saveContent(com.file + ".map", b.toString());
+	}
+
+	static function sEscape(s:String):String {
+		var b = new StringBuf();
+		for (i in 0...s.length) {
+			var c = s.charCodeAt(i);
+			switch (c) {
+				case "\n".code: b.add("\\n");
+				case "\t".code: b.add("\\t");
+				case "\r".code: b.add("\\r");
+				case "\"".code: b.add("\\\"");
+				case "\\".code: b.add("\\\\");
+				case _: b.addChar(c);
+			}
+		}
+		return b.toString();
 	}
 
 	// A separator-aware statement break
@@ -229,6 +359,9 @@ class GenJS {
 		var ctx = new GenJS();
 		ctx.com = com;
 		ctx.buf = new StringBuf();
+		// Source maps under --debug or the js-source-map/source-map defines
+		ctx.smap = (com.debug || com.defines.rawDefined("js_source_map") || com.defines.rawDefined("source_map"))
+			? new JsSourceMap() : null;
 		ctx.packages = new StringMap();
 		ctx.jsModern = !com.defines.rawDefined("js_classic");
 		ctx.jsFlatten = !com.defines.rawDefined("js_unflatten");
@@ -555,7 +688,14 @@ class GenJS {
 		return loop(e);
 	}
 
+	// Each expression records a source mapping while generating
 	public function genExpr(e:TExpr):Void {
+		var clearMapping = addMapping(e);
+		genExprBody(e);
+		clearMapping();
+	}
+
+	function genExprBody(e:TExpr):Void {
 		switch (e.expr) {
 			case TConst(c): genConstant(e.pos, c);
 			case TLocal(v): spr(ident(v.name));
@@ -963,7 +1103,14 @@ class GenJS {
 		}
 	}
 
+	// Values record mappings too
 	public function genValue(e:TExpr):Void {
+		var clearMapping = addMapping(e);
+		genValueBody(e);
+		clearMapping();
+	}
+
+	function genValueBody(e:TExpr):Void {
 		function assign(e2:TExpr):TExpr {
 			return TypeFunctions.mk(TBinop(OpAssign,
 				TypeFunctions.mk(TLocal(valueVar), TypeFunctions.tDynamic, e2.pos), e2), e2.type, e2.pos);
@@ -1706,6 +1853,10 @@ class GenJS {
 				+ "}\n";
 			ctx.spr(extendCode);
 		}
+		if (com.defines.rawDefined("genjs_debug")) {
+			Sys.println("[GENJS] types=" + com.types.length);
+			for (t in com.types) Sys.println("[GENJS] " + Context.sTypePath(TypeFunctions.tPath(t)));
+		}
 		for (t in com.types) ctx.generateType(t);
 		// Feature discovery over inits and statics
 		function chkFeatures(e:TExpr):Void {
@@ -1802,7 +1953,11 @@ class GenJS {
 			}
 		}
 
-		// Flush source maps pending)
+		// Write the source map or remove a stale one, then flush
+		if (ctx.smap != null)
+			ctx.writeMappings();
+		else
+			try sys.FileSystem.deleteFile(com.file + ".map") catch (_:Dynamic) {}
 		sys.io.File.saveContent(com.file, ctx.buf.toString());
 	}
 }
