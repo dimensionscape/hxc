@@ -645,6 +645,15 @@ class Dce {
 					expr(cv.expr);
 					markT(cv.expr.pos, cv.v.type);
 				}
+			// The magic `trace call keeps its infos object fields alive
+			case TCall({expr: TIdent("`trace")}, [p, {expr: TObjectDecl(v)}]):
+				checkAndAddFeature("has_anon_trace");
+				for (of in v) expr(of.expr);
+				expr(p);
+			case TCall({expr: TIdent("__define_feature__")}, [{expr: TConst(TString(ft))}, e1]):
+				curclass.module.extra.features.set(ft, true);
+				checkFeature(ft);
+				expr(e1);
 			// Keep toString method of T when array<T>.join() is called
 			case TCall(ef, args) if (isArrayJoinCall(ef)):
 				var pl = arrayJoinParams(ef);

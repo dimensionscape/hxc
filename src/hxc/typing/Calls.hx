@@ -461,22 +461,68 @@ class Calls {
 		return pi == null ? el : el.concat([pi]);
 	}
 
-	// `trace(v, ...)` lowers to haxe.Log.trace(v, posInfos) with the call's position info.
+	// `e == null ? "null" : e.toString()` (js is not isStatic, so the null check always applies),
+	// with a temp when e needs one
+	public static function callToString(ctx:TyperContext, e:TExpr):TExpr {
+		var tstring = ctx.com.basic.tstring;
+		function genToString(x:TExpr):TExpr {
+			// Ignore visibility of the toString field
+			ctx.privateAccess++;
+			var acc = hxc.typing.Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(tstring));
+			ctx.privateAccess--;
+			return buildCall(ctx, acc, [], WithTypeTools.withType(tstring), x.pos);
+		}
+		var stringNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
+		var simple = switch (e.expr) { case TLocal(_) | TConst(_) | TTypeExpr(_): true; case _: false; };
+		if (!simple) {
+			var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, e.pos);
+			var tmpLocal = TexprTools.makeLocal(tmp, tmp.pos);
+			var checkNull = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(tmp.type, tmp.pos)), ctx.com.basic.tbool, e.pos);
+			return TypeFunctions.mk(TBlock([
+				TypeFunctions.mk(TVarExpr(tmp, e), tmp.type, tmp.pos),
+				TypeFunctions.mk(TIf(checkNull, stringNull, genToString(tmpLocal)), tstring, tmp.pos)
+			]), tstring, e.pos);
+		}
+		var checkNull = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
+		return TypeFunctions.mk(TIf(checkNull, stringNull, genToString(e)), tstring, e.pos);
+	}
+
+	// Trace(v, ...) keeps the `trace magic call on js with dce so the generator can decide between
+	// console.log and haxe.Log.trace; otherwise it lowers to haxe.Log.trace with the call-site
+	// position info
 	static function typeTrace(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		if (ctx.com.defines.rawDefined("no_traces"))
+			return TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, p);
 		function strE(s:String):Expr return new Expr(EConst(CString(s, SDoubleQuotes)), p);
 		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: p};
+		function mkToStringMeta(e:Expr):Expr return new Expr(EMeta({name: ":toString", params: [], pos: Position.nullPos}, e), e.pos);
 		var v = el.length > 0 ? el[0] : strE("");
-		var customParams = el.length > 1 ? new Expr(EArrayDecl(el.slice(1)), p) : new Expr(EConst(CIdent("null")), p);
-		var infos = new Expr(EObjectDecl([
+		// customParams only with extra args, methodName only inside a named field
+		var fields = [
 			fld("fileName", strE(posInfosFile(ctx, p.file))),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(p)), null)), p)),
-			fld("className", strE(hxc.core.Globals.sTypePath(ctx.curclass.path))),
-			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name)),
-			fld("customParams", customParams)
-		]), p);
+			fld("className", strE(hxc.core.Globals.sTypePath(ctx.curclass.path)))
+		];
+		if (ctx.curfield != null && ctx.curfield.name != "")
+			fields.push(fld("methodName", strE(ctx.curfield.name)));
+		if (el.length > 1)
+			fields.push(fld("customParams", new Expr(EArrayDecl([for (e2 in el.slice(1)) mkToStringMeta(e2)]), p)));
+		var infos = new Expr(EObjectDecl(fields), p);
+		if ((ctx.com.platform.match(Js) || ctx.com.platform.match(Python)) && el.length <= 1 && ctx.com.hasDce()) {
+			var e = Typer.typeExpr(ctx, v, WithTypeTools.value);
+			var tinfos = Typer.typeExpr(ctx, infos, WithTypeTools.value);
+			e = switch (TypeFunctions.follow(e.type)) {
+				case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
+					callToString(ctx, e);
+				case _:
+					e;
+			};
+			var eTrace = TypeFunctions.mk(TIdent("`trace"), TypeFunctions.tDynamic, p);
+			return TypeFunctions.mk(TCall(eTrace, [e, tinfos]), ctx.com.basic.tvoid, p);
+		}
 		var haxePkg = new Expr(EConst(CIdent("haxe")), p);
 		var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
-		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [v, infos]), p), withType);
+		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [mkToStringMeta(v), infos]), p), WithTypeTools.noValue);
 	}
 
 	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):AccessKind {

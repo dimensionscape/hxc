@@ -244,21 +244,16 @@ class AnalyzerTexprTransformer {
 				}
 				i--;
 			}
-			// Note it folds over the REVERSED-then-annotated list; net effect: right-to-left annotation,
-			// left-to-right evaluation.
+			// Annotation walked right-to-left above; evaluation (and temp binding) is left-to-right over the
+			// source-ordered list
 			var out:Array<TExpr> = [];
 			var bb = bb;
-			var j = annotated.length - 1;
-			// fold_left over `el` (the annotated list built by prepending from a reversed
-			// walk) visits elements right-to-left of source order; unshift restores order
-			while (j >= 0) {
-				var a = annotated[j];
+			for (a in annotated) {
 				if (bb != g.unreachable) {
 					var r = (a.aff || a.opt) ? bindToTemp(bb, a.e) : value(bb, a.e);
 					bb = r.bb;
-					out.unshift(r.e);
+					out.push(r.e);
 				}
-				j--;
 			}
 			return {bb: bb, el: out};
 		}
