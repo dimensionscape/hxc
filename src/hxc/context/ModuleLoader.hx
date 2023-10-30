@@ -891,6 +891,9 @@ class ModuleLoader {
 			tarray: function(t:T) return TInst(cArray, [t])
 		};
 		ctx.basic = basic;
+		// haxe.Exception is always loaded at typer creation (its closure pulls CallStack/ReadOnlyArray,
+		// whose `to Iterable` unify marks Array.iterator)
+		loadModule(ctx, {pack: ["haxe"], name: "Exception"}, p);
 		return basic;
 	}
 

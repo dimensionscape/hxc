@@ -207,6 +207,35 @@ class Calls {
 					var rt = args[ai].t;
 					var remaining = el.slice(ei);
 					var spreadInner:Null<Expr> = (remaining.length == 1) ? (switch (remaining[0].expr) { case EUnop(Spread, Prefix, e): e; case _: null; }) : null;
+					// Platforms with native rest args pass each argument individually; a lone spread stays
+					// a
+					// spread unop
+					if (ctx.com.platformConfig.supportsRestArgs) {
+						if (spreadInner != null) {
+							var te = typeAgainst(name, rt, spreadInner);
+							out.push(TypeFunctions.mk(TUnop(Spread, Prefix, te), rt, remaining[0].pos));
+						} else if (TypeFunctions.follow(argT).match(TMono(_))) {
+							var tel:Array<TExpr> = [];
+							for (e in remaining) {
+								switch (e.expr) {
+									case EUnop(Spread, Prefix, _): throw new TypingError("Cannot spread arguments with additional rest arguments", e.pos);
+									case _: tel.push(typeAgainst(name, Typer.spawnMonomorph(ctx, e.pos), e));
+								}
+							}
+							TypeUnification.unifyDefault(Typer.unifyMinRaise(ctx, tel), argT);
+							for (te in tel) out.push(te);
+						} else {
+							for (e in remaining) {
+								switch (e.expr) {
+									case EUnop(Spread, Prefix, _): throw new TypingError("Cannot spread arguments with additional rest arguments", e.pos);
+									case _: out.push(typeAgainst(name, argT, e));
+								}
+							}
+						}
+						ei = el.length;
+						ai = args.length;
+						continue;
+					}
 					var restExpr:TExpr;
 					if (spreadInner != null) {
 						restExpr = typeAgainst(name, rt, spreadInner);

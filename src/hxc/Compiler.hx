@@ -127,6 +127,7 @@ class Compiler {
 		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
+			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			tLoad();
 			var tType = hxc.core.Timer.timer(["typing"]);

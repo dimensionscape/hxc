@@ -57,6 +57,8 @@ class Dce {
 	var full:Bool;
 	var stdDirs:Array<String>;
 	var debug:Bool;
+	// Extra mark tracing under -D dce_debug_marks (hxc-only debugging aid)
+	var debugMarks:Bool;
 	var curclass:TClass;
 	// The per-pass worklist of fields to mark.
 	var addedFields:Array<DceFeatureEntry>;
@@ -72,6 +74,7 @@ class Dce {
 		this.full = full;
 		this.stdDirs = stdDirs;
 		this.debug = debug;
+		this.debugMarks = com.defines.rawDefined("dce_debug_marks");
 		this.addedFields = [];
 		this.markedFields = [];
 		this.markedMaybeFields = [];
@@ -222,6 +225,7 @@ class Dce {
 	function markField(c:TClass, cf:TClassField, stat:Bool):Void {
 		function add(cf:TClassField):Void {
 			if (!hasMeta(DceMeta.Used, cf.meta)) {
+				if (debugMarks) Sys.println("[DCE] Marked field " + Context.sTypePath(c.path) + "." + cf.name);
 				cf.meta = ([mkUsedMeta(cf.pos)] : Metadata).concat(cf.meta);
 				addedFields.unshift({c: c, cf: cf, stat: stat});
 				markedFields.unshift(cf);
@@ -266,6 +270,8 @@ class Dce {
 		for (cf in c.orderedFields) if (hasMeta(DceMeta.MaybeUsed, cf.meta)) markField(c, cf, false);
 		// We always have to keep super classes and implemented interfaces
 		switch (c.init) { case null: case init: expr(init); }
+		var initCf = c.statics.get("__init__");
+		if (initCf != null) markField(c, initCf, true);
 		for (i in c.interfaces) markClass(i.c);
 		switch (c.superClass) { case null: case s: markClass(s.c); }
 		pop();
@@ -274,6 +280,7 @@ class Dce {
 	// Mark a class as kept. If the class has fields marked as @:?keep, make sure to keep them.
 	function markClass(c:TClass):Void {
 		if (!hasMeta(DceMeta.Used, c.meta)) {
+			if (debugMarks) Sys.println("[DCE] Marked class " + Context.sTypePath(c.path));
 			c.meta = ([mkUsedMeta(c.pos)] : Metadata).concat(c.meta);
 			checkFeature(Context.sTypePath(c.path) + ".*");
 			updateMarkedClassFields(c);
@@ -945,7 +952,11 @@ class Dce {
 					function loop(stat:Bool, cf:TClassField):Void {
 						if (keepClass || keepField(cf, c, stat)) markField(c, cf, stat);
 					}
-					for (cf in c.orderedStatics) loop(true, cf);
+					// Hxc keeps static __init__ as a field; the reference moves it to init, which is only an entry
+					// point for kept or @:keepInit classes
+					for (cf in c.orderedStatics)
+						if (cf.name != "__init__" || keepClass || hasMeta(DceMeta.KeepInit, c.meta))
+							loop(true, cf);
 					for (cf in c.orderedFields) loop(false, cf);
 					switch (c.constructor) { case null: case cf: loop(false, cf); }
 					switch (c.init) {
@@ -1046,21 +1057,21 @@ class Dce {
 						case cf if (cf != null && !keepField(cf, c, false)): c.constructor = null;
 						case _:
 					}
+					// The __init__ static stands in for the reference's init: it does not count as a class-keeping
+					// field and only survives on a kept class
 					var hasNonExternFields = false;
 					for (cf in c.orderedFields) if (TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
-					if (!hasNonExternFields) for (cf in c.orderedStatics) if (TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
+					if (!hasNonExternFields) for (cf in c.orderedStatics) if (cf.name != "__init__" && TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
+					var hasInit = c.init != null || c.statics.exists("__init__");
 					// Keep a class if it was used or has a used field
 					if (hasMeta(DceMeta.Used, c.meta) || hasNonExternFields) {
 						acc.unshift(mt);
+					} else if (hasInit && hasMeta(DceMeta.KeepInit, c.meta)) {
+						// Only the __init__ block is needed
+						TypeFunctions.addClassFlag(c, CExtern);
+						acc.unshift(mt);
 					} else {
-						switch (c.init) {
-							case f if (f != null && hasMeta(DceMeta.KeepInit, c.meta)):
-								// Only the __init__ block is needed
-								TypeFunctions.addClassFlag(c, CExtern);
-								acc.unshift(mt);
-							case _:
-								if (debug) com.print("[DCE] Removed class " + Context.sTypePath(c.path) + "\n");
-						}
+						if (debug) com.print("[DCE] Removed class " + Context.sTypePath(c.path) + "\n");
 					}
 				case TEnumDecl(en) if (hasMeta(DceMeta.Used, en.meta) || en.isExtern || keepWholeEnum(en)):
 					acc.unshift(mt);

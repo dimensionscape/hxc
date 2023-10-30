@@ -281,6 +281,21 @@ class TypeResolve {
 			case AbPrivate | AbEnum:
 		}
 
+		// From/to declarations must unify with the underlying type (the unification also marks
+		// structure-matched class fields @:?used for DCE)
+		if (!isCore && isType) {
+			for (t in a.from) {
+				try hxc.core.TypeUnification.unifyDefault(t, a.thisType)
+				catch (_:hxc.core.TypeUnification.UnifyError)
+					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+			}
+			for (t in a.to) {
+				try hxc.core.TypeUnification.unifyDefault(a.thisType, t)
+				catch (_:hxc.core.TypeUnification.UnifyError)
+					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+			}
+		}
+
 		if (!isType) {
 			if (isCore)
 				a.thisType = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
