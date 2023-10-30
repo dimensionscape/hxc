@@ -16,9 +16,7 @@ import hxc.optimization.AnalyzerTexpr;
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
 
-private class Exit extends haxe.Exception {
-	public function new() super("exit");
-}
+private typedef Exit = hxc.core.ExitException;
 
 // The @:semantics(name) meta on the type chain
 class ExtTypeSemantics {

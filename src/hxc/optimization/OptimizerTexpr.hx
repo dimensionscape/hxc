@@ -10,9 +10,7 @@ import hxc.core.TypingError;
 import hxc.core.Numeric;
 import hxc.context.PurityState;
 
-private class Exit extends haxe.Exception {
-	public function new() super("exit");
-}
+private typedef Exit = hxc.core.ExitException;
 
 class OptimizerTexpr {
 	// Does not account for potential null accesses

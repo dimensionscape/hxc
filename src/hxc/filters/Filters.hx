@@ -521,7 +521,7 @@ class Filters {
 	}
 
 	// Member var initializers become constructor assignments.
-	public static function addFieldInits(com:Context, tctx:TyperContext, t:ModuleType):Void {
+	public static function addFieldInits(com:Context, tctx:TyperContext, renameLocals:Null<hxc.filters.RenameVars>, t:ModuleType):Void {
 		switch (t) {
 			case TClassDecl(c):
 				var ethis = TypeFunctions.mk(TConst(TThis), TInst(c, TypeFunctions.extractParamTypes(c.params)), c.pos);
@@ -554,8 +554,16 @@ class Filters {
 							throw new TypingError("Constructor without function body", c.pos);
 					}
 				}
-				if (cf.expr != null)
-					cf.expr = Optimizer.sanitize(com, tctx, cf.expr);
+				// The merged constructor goes through the analyzer again
+				var config = hxc.optimization.AnalyzerConfig.getFieldConfig(com, c, cf);
+				TypeFunctions.removeClassFieldFlag(cf, CfPostProcessed);
+				hxc.optimization.Analyzer.Run.runOnField(com, config, c, cf);
+				TypeFunctions.addClassFieldFlag(cf, CfPostProcessed);
+				if (cf.expr != null) {
+					var e = cf.expr;
+					if (renameLocals != null) hxc.filters.RenameVarsRun.run(renameLocals, e);
+					cf.expr = Optimizer.sanitize(com, tctx, e);
+				}
 				c.constructor = cf;
 			case _:
 		}
@@ -645,7 +653,8 @@ class Filters {
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
-		// Slot: Analyzer.Run.run_on_types PASS 2
+		// The analyzer runs between the pre-analyzer type filters and RenameVars
+		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		var renameLocals = hxc.filters.RenameVars.init(com.types);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
@@ -658,11 +667,11 @@ class Filters {
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
 		// Slot: onGenerate callbacks + save_class_state (server cache; single-shot hxc skips)
-		destruction(tctx);
+		destruction(tctx, renameLocals);
 	}
 
 	// The type filters around DCE
-	static function destruction(tctx:TyperContext):Void {
+	static function destruction(tctx:TyperContext, renameLocals:Null<hxc.filters.RenameVars>):Void {
 		var com = tctx.com;
 		for (t in com.types) {
 			removeGenericBase(t);
@@ -698,7 +707,7 @@ class Filters {
 			checkPrivatePath(tctx, t);
 			applyNativePaths(com, t);
 			addRtti(com, t);
-			addFieldInits(com, tctx, t);
+			addFieldInits(com, tctx, renameLocals, t);
 			addMetaField(com, t);
 			checkVoidField(t);
 			commitFeaturesOf(com, t);

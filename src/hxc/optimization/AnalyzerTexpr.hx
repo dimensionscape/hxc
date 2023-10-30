@@ -15,9 +15,7 @@ import hxc.optimization.OptimizerTexpr;
 import haxe.ds.IntMap;
 import haxe.ds.StringMap;
 
-private class Exit extends haxe.Exception {
-	public function new() super("exit");
-}
+private typedef Exit = hxc.core.ExitException;
 
 class AnalyzerTexpr {
 	// Apply f to each value-position leaf of a branching expression; returns the rewritten expression and

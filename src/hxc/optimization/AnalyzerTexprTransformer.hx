@@ -13,9 +13,7 @@ import hxc.context.Context;
 import hxc.optimization.AnalyzerTypes;
 import hxc.optimization.OptimizerTexpr;
 
-private class Exit extends haxe.Exception {
-	public function new() super("exit");
-}
+private typedef Exit = hxc.core.ExitException;
 
 class AnalyzerTexprTransformer {
 	static function isVoidT(t:T):Bool {
