@@ -259,11 +259,24 @@ class Calls {
 				}
 			}
 			if (ei >= el.length) {
-				var a = args[ai];
-				if (!a.opt) throw new TypingError("Not enough arguments, expected " + [for (x in args.slice(ai)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
-				var pi = makePosInfosArg(ctx, a.t, callp);
-				out.push(pi != null ? pi : TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp));
-				ai++;
+				// Trailing optional parameters fill right to left; a tail that stays empty is OMITTED
+				// unless
+				// the platform pads nulls, with a trailing PosInfos parameter auto-filled; a null pads
+				// before
+				// any filled tail
+				function tailLoop(k:Int):Array<TExpr> {
+					if (k >= args.length) return [];
+					var a = args[k];
+					if (!a.opt) throw new TypingError("Not enough arguments, expected " + [for (x in args.slice(k)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
+					var rest = tailLoop(k + 1);
+					var pi = makePosInfosArg(ctx, a.t, callp);
+					if (rest.length == 0 && !ctx.com.platformConfig.padNulls)
+						return pi != null ? [pi] : [];
+					// A PosInfos parameter's default value is filled in even when padding nulls
+					return [pi != null ? pi : TexprTools.makeNull(ctx.com.basic.tnull(a.t), callp)].concat(rest);
+				}
+				for (te in tailLoop(ai)) out.push(te);
+				ai = args.length;
 			} else if (ai >= args.length) {
 				throw new TypingError("Too many arguments", el[ei].pos);
 			} else {

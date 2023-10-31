@@ -1413,13 +1413,26 @@ class Typer {
 	}
 
 	static function typeArrayComprehension(ctx:TyperContext, e:Expr, withType:WithType, p:Position):TExpr {
+		// Uses a gen local; the syntactic name must stay unique for resolution, so the typed var is
+		// renamed to the backtick form afterwards (RenameVars then produces _g like the reference)
 		var acc = "_hx_comp";
 		var mapped = comprehensionPush(acc, e);
 		var init = mapped.isMap
 			? new Expr(ENew({path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p}, []), p)
 			: new Expr(EArrayDecl([]), p);
 		var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: init, evMeta: []}]), p);
-		return typeExpr(ctx, new Expr(EBlock([decl, mapped.expr, new Expr(EConst(CIdent(acc)), p)]), p), withType);
+		var te = typeExpr(ctx, new Expr(EBlock([decl, mapped.expr, new Expr(EConst(CIdent(acc)), p)]), p), withType);
+		switch (te.expr) {
+			case TBlock(el) if (el.length > 0):
+				switch (el[0].expr) {
+					case TVarExpr(v, _) if (v.name == acc):
+						v.name = "`";
+						v.kind = VGenerated;
+					case _:
+				}
+			case _:
+		}
+		return te;
 	}
 
 	// Lowers a comprehension body so each tail expression updates the accumulator.

@@ -47,6 +47,7 @@ class ExtTypeSemantics {
 
 	public static function hasVariableSemantics(t:T):Bool return hasSemantics(t, "variable");
 	public static function hasReferenceSemantics(t:T):Bool return hasSemantics(t, "reference");
+	public static function hasValueSemantics(t:T):Bool return hasSemantics(t, "value");
 }
 
 // Local read/write counts driving the fuse loop

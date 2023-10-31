@@ -3,6 +3,7 @@ package hxc.typing;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TexprTools;
 import hxc.typing.TyperContext;
 import hxc.typing.TypeFields;
 
@@ -75,6 +76,23 @@ class Inline {
 			vthis = TypeFunctions.allocVar(VGenerated, "_hx_this", ethis.type, p);
 			binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 		}
+		// A side-effecting argument always binds to a temp; once anything had a side effect (an argument
+		// or the mapped body: assignments, calls, news), any argument that might be affected and lacks
+		// @:semantics(value) binds too.
+		var checker = hxc.optimization.OptimizerTexpr.createAffectionChecker();
+		var hadSideEffect = bodyHasSideEffect(tf.expr);
+		var paramSideEffect:Array<Bool> = [];
+		for (param in params) {
+			var se = hxc.optimization.OptimizerTexpr.hasSideEffect(param);
+			paramSideEffect.push(se);
+			if (se) {
+				checker.collectModifiedLocals(param);
+				hadSideEffect = true;
+			}
+		}
+		function valueSemantics(t:T):Bool {
+			return hxc.optimization.AnalyzerFusion.ExtTypeSemantics.hasValueSemantics(t);
+		}
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
 			var param = params[i];
@@ -86,7 +104,24 @@ class Inline {
 			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
 			// A stable lvalue receiver (a local or a side-effect-free field chain) substitutes
 			// directly, so this-assignments write back through it.
+			var use = argUsage(av, tf.expr);
+			var hasRuntimeDefault = tf.args[i].c != null && !tf.args[i].c.expr.match(TConst(TNull));
+			// An unwritten local or constant argument substitutes without a
+			// temp; any other expression substitutes when it is used at most once; a captured
+			// non-constant argument or one with a runtime default needs the local.
+			var forceTemp = paramSideEffect[i]
+				|| (hadSideEffect && checker.mightBeAffected(param) && !valueSemantics(param.type));
+			var substitutable = !forceTemp && !hasRuntimeDefault
+				&& !(use.captured && !param.expr.match(TConst(_)))
+				&& switch (param.expr) {
+					case TConst(TNull): false;
+					case TLocal(_) | TConst(_): !use.writes;
+					case TFunction(_): use.reads <= 1 && !use.writes;
+					case _: !use.writes && use.reads <= 1;
+				};
 			if (absMember && i == 0 && isStableLvalue(param)) {
+				subst.set(av.id, param);
+			} else if (!(absMember && i == 0) && substitutable) {
 				subst.set(av.id, param);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
@@ -104,6 +139,54 @@ class Inline {
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
 		return TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+	}
+
+	// The body-map pass flags a side effect on assignments, increments,
+	// calls and constructions anywhere in the inlined body.
+	static function bodyHasSideEffect(e:TExpr):Bool {
+		var found = false;
+		function loop(e:TExpr):Void {
+			if (found) return;
+			switch (e.expr) {
+				case TBinop(OpAssign | OpAssignOp(_), _, _) | TUnop(Increment | Decrement, _, _) | TCall(_, _) | TNew(_, _, _):
+					found = true;
+				case _:
+					TexprTools.iter(loop, e);
+			}
+		}
+		loop(e);
+		return found;
+	}
+
+	// Usage analysis for one argument variable: read count, write flag, and
+	// whether a closure inside the body captures it.
+	static function argUsage(v:TVar, body:TExpr):{reads:Int, writes:Bool, captured:Bool} {
+		var reads = 0, writes = false, captured = false;
+		function loop(inClosure:Bool, e:TExpr):Void {
+			switch (e.expr) {
+				case TLocal(v2) if (v2 == v):
+					reads++;
+					if (inClosure) captured = true;
+				case TBinop(OpAssign, {expr: TLocal(v2)}, e2) if (v2 == v):
+					writes = true;
+					loop(inClosure, e2);
+				case TBinop(OpAssignOp(_), {expr: TLocal(v2)}, e2) if (v2 == v):
+					reads++;
+					writes = true;
+					if (inClosure) captured = true;
+					loop(inClosure, e2);
+				case TUnop(Increment | Decrement, _, {expr: TLocal(v2)}) if (v2 == v):
+					reads++;
+					writes = true;
+					if (inClosure) captured = true;
+				case TFunction(f):
+					loop(true, f.expr);
+				case _:
+					TexprTools.iter(function(e2) loop(inClosure, e2), e);
+			}
+		}
+		loop(false, body);
+		return {reads: reads, writes: writes, captured: captured};
 	}
 
 	// A side-effect-free lvalue: re-reading and assigning through it is equivalent to a bound
