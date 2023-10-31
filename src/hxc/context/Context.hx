@@ -171,7 +171,12 @@ class Context {
 	// Clone configuration with separate module tables and macro defines so host modules remain
 	// unchanged.
 	public function cloneForMacro():Context {
-		var c = new Context(this.classPath.copy(), Define.adaptToMacroContext(this.defines));
+		// Replace target overlays with eval/_std before loading macro modules; target-specific bodies may
+		// use unavailable syntax.
+		var macroCp = [for (s in this.classPath)
+			if (this.stdPath.indexOf(s) < 0 && !StringTools.endsWith(StringTools.replace(s, "\\", "/"), "/_std/")) s];
+		macroCp = macroCp.concat([for (p in this.stdPath) p + "eval/_std/"]).concat(this.stdPath);
+		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();
 		c.platform = Eval;
 		c.platformConfig = PlatformConfig.eval();
