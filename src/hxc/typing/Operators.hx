@@ -1041,7 +1041,11 @@ class Operators {
 				var tf = TFun({args: [], ret: t});
 				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "get_" + name)), tf, fa.pos), [], t, fa.pos);
 			}
+			// The property access already governs visibility; the getter dispatch is internal and must not
+			// re-check the (usually private) accessor's own visibility.
+			ctx.privateAccess++;
 			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value);
+			ctx.privateAccess--;
 			return Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
@@ -1061,7 +1065,11 @@ class Operators {
 				var tf = TFun({args: [{name: "value", opt: false, t: value.type}], ret: t});
 				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "set_" + name)), tf, p), [value], t, p);
 			}
+			// See accessorReadOn: the setter dispatch is internal, so bypass the accessor's
+			// own visibility check (the property access already governed it).
+			ctx.privateAccess++;
 			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value));
+			ctx.privateAccess--;
 			return Calls.makeCall(ctx, setterExpr, [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
