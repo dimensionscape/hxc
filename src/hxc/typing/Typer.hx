@@ -2295,8 +2295,10 @@ class Typer {
 				Calls.buildCall(ctx, AKField(fa), el, withType, p);
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
-				// and cast it to the abstract. .
-				switch (TypeFunctions.follow(a.thisType)) {
+				// and cast it to the abstract. . Apply the abstract's type arguments to the underlying so
+				// `new Foo<Array<Int>>()` forwards to Array's constructor, not to the bare type parameter
+				// T.
+				switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, atl, a.thisType))) {
 					case TInst(uc, upl):
 						hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
 						var ctorType = findConstructorType(ctx, uc, upl);
