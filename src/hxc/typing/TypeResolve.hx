@@ -153,11 +153,39 @@ class TypeResolve {
 				else
 					c.params;
 				resolveFieldType(ctx, params, target, cff);
+				// A non-static override with no explicit `public`/`private` inherits the overridden field's
+				// visibility; registerFields defaulted it to private before superClass was resolved.
+				if (!isStatic && cff.cffName.name != "new") {
+					var isOverride = false, explicitVis = false;
+					for (a in cff.cffAccess) switch (a.access) {
+						case AOverride: isOverride = true;
+						case APublic | APrivate: explicitVis = true;
+						case _:
+					}
+					if (isOverride && !explicitVis) {
+						var parent = getParentField(c, cff.cffName.name);
+						if (parent != null) {
+							if (TypeFunctions.hasClassFieldFlag(parent, CfPublic)) TypeFunctions.addClassFieldFlag(target, CfPublic);
+							else TypeFunctions.removeClassFieldFlag(target, CfPublic);
+						}
+					}
+				}
 			} catch (e:ContextError) {
 				ctx.unresolvedFields++;
 			}
 		}
 		linkPropertyAccessors(c, isAbsImpl);
+	}
+
+	// The same-named instance field on the nearest superclass.
+	static function getParentField(c:TClass, name:String):Null<TClassField> {
+		var s = c.superClass;
+		while (s != null) {
+			var f = s.c.fields.get(name);
+			if (f != null) return f;
+			s = s.c.superClass;
+		}
+		return null;
 	}
 
 	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_
