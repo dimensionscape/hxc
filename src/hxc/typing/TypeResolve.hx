@@ -466,6 +466,18 @@ class TypeResolve {
 						args.push({name: fa.name.name, opt: fa.opt || fa.value != null, t: at});
 					}
 					var ret = Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
+					// An inferred @:from return is the abstract itself (the @:from contract);
+					// parameterize it by the method's own type parameters so unification
+					// freshens them per attempt (spawnConstrainedMonos) instead of binding a
+					// shared open monomorph that the first cast poisons for later attempts. The
+					// synthetic entry is never force-typed, and forcing it during unification
+					// recurses, so settle the shape here at resolve time. Only when the arities
+					// line up (the body would infer exactly Abstract<K...>); otherwise the plain
+					// monomorph is kept.
+					if (isFrom && !isAbstractMember && fd.fType == null
+							&& methodParams.length > 0 && methodParams.length == a.params.length) {
+						ret = TAbstract(a, [for (tp in methodParams) tp.type]);
+					}
 					var ft = TFun({args: args, ret: ret});
 					var cf = TypeFunctions.mkField(cff.cffName.name, ft, cff.cffPos, cff.cffName.pos, true, true);
 					cf.meta = cff.cffMeta;
