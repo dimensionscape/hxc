@@ -87,7 +87,9 @@ class Setup {
 		if (cfg.isStatic) ctx.defines.rawDefine("target.static");
 		if (cfg.sys) { ctx.defines.rawDefine("target.sys"); ctx.defines.rawDefine("sys"); }
 		if (pf == Eval || pf == Cpp) ctx.defines.rawDefine("target.threaded");
-		if (cfg.usesUtf16) ctx.defines.rawDefine("target.utf16");
+		// A utf16 target raises both target.utf16 and the plain utf16 define that the std's #if utf16
+		// blocks (StringTools.utf16CodePointAt) test
+		if (cfg.usesUtf16) { ctx.defines.rawDefine("target.utf16"); ctx.defines.rawDefine("utf16"); }
 		if (cfg.supportsUnicode) ctx.defines.rawDefine("target.unicode");
 		ctx.defines.rawDefineValue("target.name", name);
 		ctx.defines.rawDefine(name);
