@@ -7,10 +7,13 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
 import hxc.core.TexprTools;
 import hxc.core.TypingError;
 import hxc.core.Globals;
 import hxc.context.Context;
+import hxc.typing.Calls;
+import hxc.typing.Typer;
 import hxc.typing.TyperContext;
 import hxc.optimization.Optimizer;
 import haxe.ds.StringMap;
@@ -624,6 +627,79 @@ class Filters {
 		}
 	}
 
+	static function handleAbstractCasts(ctx:TyperContext, e:TExpr):TExpr {
+		function underlying(a:TAbstract, pl:Array<T>, p:Position):T {
+			return TypeFunctions.hasMeta(":multiType", a.meta)
+				? Typer.resolveMultiTypeConcrete(a, pl, p)
+				: TypeFunctions.applyParams(a.params, pl, a.thisType);
+		}
+		function maybeCast(e:TExpr, t:T, p:Position):TExpr {
+			return TypeUnification.typeIseqDefault(e.type, t) ? e : TypeFunctions.mk(TCast(e, null), t, p);
+		}
+		function funType(fa:TFieldAccess):{t:T, args:Array<{name:String, opt:Bool, t:T}>, ret:T} {
+			var t = switch (fa) {
+				case FStatic(_, cf): cf.type;
+				case FInstance(c, tl, cf): TypeFunctions.applyParams(c.params, tl, cf.type);
+				case FAnon(cf): cf.type;
+				case _: throw new hxc.core.NotFound();
+			};
+			return switch (TypeFunctions.follow(t)) {
+				case TFun(sig): {t: t, args: sig.args, ret: sig.ret};
+				case _: throw new hxc.core.NotFound();
+			}
+		}
+		function findAbstract(e:TExpr):{a:TAbstract, pl:Array<T>, e:TExpr} {
+			return switch [TypeFunctions.follow(e.type), e.expr] {
+				case [TAbstract(a, pl), _] if (TypeFunctions.hasMeta(":multiType", a.meta)):
+					{a: a, pl: pl, e: e};
+				case [_, TCast(e1, null)]:
+					findAbstract(e1);
+				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null):
+					var found = findAbstract(v.extra.expr);
+					{a: found.a, pl: found.pl, e: TypeFunctions.mk(TCast(e, null), found.e.type, e.pos)};
+				case _:
+					throw new hxc.core.NotFound();
+			}
+		}
+		function loop(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TCall(e1, el):
+					try {
+						function findField(ef:TExpr):TExpr {
+							return switch (ef.expr) {
+								case TCast(e2, null):
+									TypeFunctions.mk(TCast(findField(e2), null), ef.type, ef.pos);
+								case TField(e2, fa):
+									var abs = findAbstract(e2);
+									var e2 = loop(abs.e);
+									var m = try underlying(abs.a, abs.pl, e2.pos) catch (_:Dynamic) throw new hxc.core.NotFound();
+									var fname = TypeFunctions.fieldName(fa);
+									var fa2 = TypeFunctions.quickField(m, fname);
+									var ft = funType(fa2);
+									var args = [for (arg in el) loop(arg)];
+									var field = TypeFunctions.mk(TField(TypeFunctions.mk(e2.expr, m, e2.pos), fa2), ft.t, e2.pos);
+									maybeCast(Calls.makeCall(ctx, field, args, ft.ret, e.pos), e.type, e.pos);
+								case _:
+									throw new hxc.core.NotFound();
+							}
+						}
+						findField(e1);
+					} catch (_:hxc.core.NotFound) {
+						TexprTools.mapExpr(loop, e);
+					}
+				case _:
+					TexprTools.mapExpr(loop, e);
+			}
+		}
+		return loop(e);
+	}
+
+	public static function runEvalAbstractCasts(tctx:TyperContext):Void {
+		for (t in tctx.com.types) FiltersCommon.runExpressionFilters(tctx, [
+			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)}
+		], t);
+	}
+
 	// The ordered filter driver. Stage slots that have their own rows (Tre, InlineConstructors,
 	// Exceptions, analyzer, RenameVars, DCE) are marked below and join this order as they land.
 	public static function run(tctx:TyperContext):Void {
@@ -639,7 +715,7 @@ class Filters {
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			// Slot: ForRemap (the typer lowers for loops; GenJS handles residual TFor)
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
-			// Slot: AbstractCast.handle_abstract_casts (hxc types abstract casts during typing)
+			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		var exceptionsFilter = hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
@@ -649,6 +725,7 @@ class Filters {
 			{name: "check_abstract_as_value", f: checkAbstractAsValue},
 			// Slot: Tre (tail recursion elimination, gated on analyzer-optimize)
 			{name: "reduce_expression", f: function(e) return Optimizer.reduceExpression(tctx, e)},
+			{name: "AbstractCast.handle_abstract_casts_after_reduce", f: function(e) return handleAbstractCasts(tctx, e)},
 			// Slot: inline_constructors
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},

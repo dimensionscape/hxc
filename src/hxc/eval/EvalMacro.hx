@@ -566,6 +566,12 @@ class EvalMacro {
 			curTctx = savedTctx;
 			curPos = savedPos;
 			com.currentModule = savedMod;
+			if (result == VNull) {
+				curBuildClass = savedBuildClass;
+				curBuildParams = savedBuildParams;
+				curBuildFields = savedBuildFields;
+				return;
+			}
 			var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
 			var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 			com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
@@ -847,9 +853,18 @@ class EvalMacro {
 						if (cf == null) cf = c.fields.get(fieldName);
 						if (cf != null) {
 							hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-							// A dependency (e.g. TypeTools.map) typed only now, after its class's prototype
-							// was built, leaves that prototype with a dead slot; rebuild (state migrates).
-							if (forceReachableStatics(macroCom, c, cf) && macroCtx != null) {
+							var needsRebuild = forceReachableStatics(macroCom, c, cf);
+							if (macroCtx != null) {
+								var key = EvalHash.pathHash(c.path);
+								var fieldHash = EvalHash.hash(fieldName);
+								var sp = macroCtx.staticPrototypes.get(key);
+								var ip = macroCtx.instancePrototypes.get(key);
+								if ((sp != null && !sp.pnames.exists(fieldHash)) || (ip != null && !ip.pnames.exists(fieldHash)))
+									needsRebuild = true;
+							}
+							// A dependency or requested field typed only now, after its class's prototype
+							// was built, leaves that prototype without a live slot; rebuild (state migrates).
+							if (needsRebuild && macroCtx != null) {
 								staleMacroCtx = macroCtx;
 								macroCtx = null;
 								lastModuleCount = -1;

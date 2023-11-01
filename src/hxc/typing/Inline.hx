@@ -125,6 +125,7 @@ class Inline {
 				subst.set(av.id, param);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
+				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// An optional argument with a non-null default falls back when the passed value is null at

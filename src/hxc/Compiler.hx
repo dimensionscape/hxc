@@ -141,6 +141,7 @@ class Compiler {
 			abortOnDiagnostics(ctx, platform);
 			hxc.typing.ExceptionFilters.run(ctx);
 			hxc.typing.UnusedPure.run(ctx);
+			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
 			abortOnDiagnostics(ctx, platform);

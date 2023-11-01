@@ -267,6 +267,10 @@ class Calls {
 				function tailLoop(k:Int):Array<TExpr> {
 					if (k >= args.length) return [];
 					var a = args[k];
+					if (args.length - k == 1 && !a.opt && restElemType(a.t) != null) {
+						if (ctx.com.platformConfig.supportsRestArgs) return [];
+						return [typeAgainst(a.name, a.t, new Expr(EArrayDecl([]), callp))];
+					}
 					if (!a.opt) throw new TypingError("Not enough arguments, expected " + [for (x in args.slice(k)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
 					var rest = tailLoop(k + 1);
 					var pi = makePosInfosArg(ctx, a.t, callp);
@@ -804,6 +808,11 @@ class Calls {
 								var expected = applyGenericConstraintParams(cparams, monos, hostMap != null ? hostMap(ct) : ct);
 								try {
 									TypeUnification.unifyDefault(actual, expected);
+									if (TypeFunctions.hasMono(expected)) {
+										try {
+											unifyIteratorConstraint(ctx, actual, expected);
+										} catch (_:UnifyError) {}
+									}
 								} catch (e:UnifyError) {
 									if (!unifyIteratorConstraint(ctx, actual, expected)) throw e;
 								}
