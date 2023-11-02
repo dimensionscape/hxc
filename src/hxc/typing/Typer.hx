@@ -2157,6 +2157,32 @@ class Typer {
 		return false;
 	}
 
+	// Construct a value of the underlying type a @:forward.new abstract forwards to: a class via its
+	// constructor, an abstract via its _new impl, or a nested @:forward.new abstract by recursing on
+	// its underlying. .
+	static function constructForwarded(ctx:TyperContext, t:T, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(uc, upl):
+				hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
+				var ctorType = findConstructorType(ctx, uc, upl);
+				if (ctorType == null) throw new TypingError(uc.path.name + " does not have a constructor", p);
+				var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
+				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+				TypeFunctions.mk(TNew(uc, upl, r.el), TInst(uc, upl), p);
+			case TAbstract(ua, ual) if (ua.impl != null && ua.impl.statics.exists("_new")):
+				var newCf = ua.impl.statics.get("_new");
+				TypeFields.forceFieldBody(ctx.com, ua.impl, newCf);
+				var implExpr = TexprTools.makeTypeExpr(TClassDecl(ua.impl), p);
+				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(ua, ual, ua.impl), false, p);
+				Calls.buildCall(ctx, AKField(fa), el, withType, p);
+			case TAbstract(ua, ual) if (ua.impl != null && TypeFunctions.hasMeta(":forward.new", ua.meta)):
+				var inner = constructForwarded(ctx, TypeFunctions.applyParams(ua.params, ual, ua.thisType), el, withType, p);
+				TypeFunctions.mk(TCast(inner, null), TAbstract(ua, ual), p);
+			case _:
+				throw new TypingError("This type cannot be constructed", p);
+		};
+	}
+
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		var t:T;
 		if (tp.path.tparams.length == 0) {
@@ -2295,21 +2321,12 @@ class Typer {
 				Calls.buildCall(ctx, AKField(fa), el, withType, p);
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
-				// and cast it to the abstract. . Apply the abstract's type arguments to the underlying so
-				// `new Foo<Array<Int>>()` forwards to Array's constructor, not to the bare type parameter
-				// T.
-				switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, atl, a.thisType))) {
-					case TInst(uc, upl):
-						hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
-						var ctorType = findConstructorType(ctx, uc, upl);
-						if (ctorType == null) throw new TypingError(uc.path.name + " does not have a constructor", p);
-						var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
-						var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-						var enew = TypeFunctions.mk(TNew(uc, upl, r.el), TInst(uc, upl), p);
-						TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
-					case _:
-						throw new TypingError("This type cannot be constructed", p);
-				}
+				// and cast it to the abstract. . Apply the abstract's type arguments so `new
+				// Foo<Array<Int>>()` forwards to Array's constructor (not the bare type parameter T) and a
+				// `new Foo<Bar>()` / `new Foo<Foo<_>>()` forwards into the underlying abstract's own
+				// constructor.
+				var enew = constructForwarded(ctx, TypeFunctions.applyParams(a.params, atl, a.thisType), el, withType, p);
+				TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};
