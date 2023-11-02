@@ -408,7 +408,14 @@ class Fields {
 					// abstract wraps transparently.
 					if (forwardsField(a, i)) {
 						var underlying = TypeFunctions.applyParams(a.params, params, a.thisType);
-						return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+						// If the underlying lacks it too, fall through to a `using` extension on the
+						// ORIGINAL abstract receiver: module extensions are tried on the abstract itself
+						// before
+						// forwarding, so an extension whose first argument is the abstract type still
+						// matches.
+						try {
+							return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+						} catch (_:FieldNotFoundError) {}
 					}
 					var u = tryUsing(ctx, e, i, pfield);
 					if (u != null) return u;
@@ -585,6 +592,24 @@ class Fields {
 			var ups = imports.usings.copy();
 			ups.reverse();
 			for (up in ups) {
+				// `using pack.Module` (no subtype) brings in every non-private type of the module as a
+				// static extension, not just the main type. filters isPrivate from md.types; getType returns
+				// only the main type, missing sibling extension classes (Issue5231/Issue7142). A subtype using
+				// (pack.Module.Sub) fails to load as a module and falls back to the single-type getType path
+				// below.
+				var um = try hxc.context.ModuleLoader.loadModule(ctx.com, up, p) catch (_:Dynamic) null;
+				if (um != null) {
+					// filter_classes reverses the module type list (last-declared type wins), so scan
+					// types back-to-front.
+					var uts = um.types.copy();
+					uts.reverse();
+					for (mt in uts) {
+						if (TypeFunctions.tInfos(mt).isPrivate) continue;
+						var r = tryUsingModuleType(ctx, mt, e, i, p);
+						if (r != null) return r;
+					}
+					continue;
+				}
 				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
 				if (mt != null) {
 					var r = tryUsingModuleType(ctx, mt, e, i, p);
