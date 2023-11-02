@@ -648,7 +648,7 @@ class Fields {
 			case TMono(r): r.type == null ? [] : typeUsings(r.type);
 			case TLazy(f): typeUsings(TypeFunctions.lazyType(f));
 			case TType(td, tl): td.usings.concat(typeUsings(TypeFunctions.applyParams(td.params, tl, td.type)));
-			case TInst(c, _): c.usings;
+			case TInst(c, _): collectClassUsings(c, []);
 			case TEnum(e, _): e.usings;
 			case TAbstract(a, _): a.usings;
 			case TAnon(a): switch (a.status.get()) {
@@ -659,6 +659,16 @@ class Fields {
 			}
 			case _: [];
 		};
+	}
+
+	// A class inherits @:using from its base classes and interfaces: own usings first, then
+	// super, then each interface, recursively so a grandparent/base-interface @:using still
+	// reaches the leaf type.
+	static function collectClassUsings(c:TClass, acc:Array<TClassUsing>):Array<TClassUsing> {
+		for (u in c.usings) acc.push(u);
+		if (c.superClass != null) collectClassUsings(c.superClass.c, acc);
+		for (impl in c.interfaces) collectClassUsings(impl.c, acc);
+		return acc;
 	}
 
 	public static function enumConstructor(ctx:TyperContext, en:TEnum, e:TExpr, i:String, p:Position):AccessKind {
