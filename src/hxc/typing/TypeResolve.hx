@@ -448,16 +448,40 @@ class TypeResolve {
 	}
 
 	static function registerResolveField(a:TAbstract, cf:TClassField, cff:ClassField, p:Position):Void {
+		// A resolve read is (this, String) and a write is (this, String, value); each may carry a trailing
+		// optional PosInfos argument (auto-filled at the call site), so only the leading count
+		// distinguishes them. is_empty_or_pos_infos on the tail.
 		switch (TypeFunctions.follow(cf.type)) {
-			case TFun(sig) if (sig.args.length == 2):
+			case TFun(sig) if (sig.args.length >= 2 && isEmptyOrPosInfos(sig.args.slice(2))):
 				if (a.read != null) throw new ContextError("Multiple resolve-read methods are not supported", p);
 				a.read = cf;
-			case TFun(sig) if (sig.args.length == 3):
+			case TFun(sig) if (sig.args.length >= 3 && isEmptyOrPosInfos(sig.args.slice(3))):
 				if (a.write != null) throw new ContextError("Multiple resolve-write methods are not supported", p);
 				a.write = cf;
 			case _:
 				throw new ContextError("Field type of resolve must be " + cff.cffName.name + " -> String -> T", p);
 		}
+	}
+
+	// A trailing argument list that is empty or a single optional PosInfos (the auto-filled position
+	// argument does not count toward arity).
+	static function isEmptyOrPosInfos(args:Array<TSignatureArg>):Bool {
+		return switch (args) {
+			case []: true;
+			case [one] if (one.opt): isPosInfos(one.t);
+			case _: false;
+		};
+	}
+
+	static function isPosInfos(t:T):Bool {
+		return switch (t) {
+			case TMono(r): r.type == null ? false : isPosInfos(r.type);
+			case TLazy(f): isPosInfos(TypeFunctions.lazyType(f));
+			case TType(td, []) if (td.path.name == "PosInfos" && td.path.pack.length == 1 && td.path.pack[0] == "haxe"): true;
+			case TType(td, tl): isPosInfos(TypeFunctions.applyParams(td.params, tl, td.type));
+			case TAbstract(ab, [inner]) if (ab.path.name == "Null" && ab.path.pack.length == 0): isPosInfos(inner);
+			case _: false;
+		};
 	}
 
 	// Resolve the @:from / @:to cast methods of an abstract into fromField / toField.
