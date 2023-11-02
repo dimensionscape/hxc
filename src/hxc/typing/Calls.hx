@@ -370,6 +370,16 @@ class Calls {
 				}
 			case EConst(CIdent("super")):
 				return AKExpr(typeSuperCall(ctx, el, p));
+			case EConst(CIdent("__unprotect__")) if (el.length == 1 && el[0].expr.match(EConst(CString(_, _)))):
+				// `__unprotect__("name")` is a Flash-only obfuscation guard; every other target types it
+				// away
+				// to the bare string.
+				var e = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
+				if (ctx.com.platform == Flash) {
+					var eUnprotect = TypeFunctions.mk(TIdent("__unprotect__"), TypeFunctions.tfun([e.type], e.type), p);
+					return AKExpr(TypeFunctions.mk(TCall(eUnprotect, [e]), e.type, e.pos));
+				}
+				return AKExpr(e);
 			case EField({expr: EConst(CIdent("Std"))}, "string", _) if (el.length == 1):
 				var e = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
 				var converted = abstractToString(ctx, e, p);
