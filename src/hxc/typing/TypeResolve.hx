@@ -364,15 +364,14 @@ class TypeResolve {
 			// the @:op arms and the @:arrayAccess arm need it.
 			var cf = abstractImplField(c, cff.cffName.name);
 			if (cf == null) continue;
-			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)) {
+			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
+			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
+			// the field (loop cf.meta).
+			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta))
 				a.array.push(cf);
-				continue;
-			}
-				// @:resolve routes to the same read/write registration as @:op([EField]).
-				if (TypeFunctions.hasMeta(":resolve", cff.cffMeta)) {
-					registerResolveField(a, cf, cff, cf.pos);
-					continue;
-				}
+			// @:resolve routes to the same read/write registration as @:op([EField]).
+			if (TypeFunctions.hasMeta(":resolve", cff.cffMeta))
+				registerResolveField(a, cf, cff, cf.pos);
 			// The @:op meta survives transformAbstractField (it concats f.cffMeta), so read it off
 			// the SOURCE field and resolve the matching impl cf by name. A member @:op was promoted
 			// to a static abstract member; a `static` @:op stays a static too.
