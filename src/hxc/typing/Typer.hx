@@ -1350,6 +1350,16 @@ class Typer {
 			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
 			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) return r; }
 		}
+		// `import M.X` with an uppercase trailing X was recorded as a sub-type import; when M has no
+		// sub-type X, it falls back to a static field X of M's main type (an uppercase static).
+		var n = imports.names.get(i);
+		if (n != null && n.sub == i) {
+			var subMt = try ctx.com.getType(n.modulePath, p, n.sub) catch (_:Dynamic) null;
+			if (subMt == null) {
+				var mainMt = try ctx.com.getType(n.modulePath, p, null) catch (_:Dynamic) null;
+				if (mainMt != null) { var r = tryType(mainMt, i); if (r != null) return r; }
+			}
+		}
 		for (w in imports.wildcards) {
 			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
 			if (mt != null) { var r = tryType(mt, i); if (r != null) return r; }
