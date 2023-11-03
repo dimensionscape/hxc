@@ -448,6 +448,14 @@ class PatternMaker {
 					case TTypeExpr(mt): unifyTypePattern(ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
+			case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
+				// A stored typed expression re-enters the pattern as its syntax.
+				var id = switch (e1.expr) { case EConst(CInt(s, _)): Std.parseInt(s); case _: null; };
+				if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
+				var te = TexprTools.duplicateTvars(function(te2) {
+					return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te2.pos) : te2;
+				}, ctx.com.storedTypedExprs.get(id));
+				return make(pctx, toplevel, t, Calls.typedExprToSyntax(ctx, te));
 			case _:
 				throw new TypingError("This pattern is not yet ported", p);
 		};

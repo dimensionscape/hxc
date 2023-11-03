@@ -271,15 +271,15 @@ class Fields {
 		};
 	}
 
-	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
 		if (ctx.untypedMode) {
-			return try typeFieldInner(ctx, e, i, p, mode, withType)
+			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
 			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 		}
-		return typeFieldInner(ctx, e, i, p, mode, withType);
+		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve);
 	}
 
-	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
 		var pfield = p;
 		return switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, tl):
@@ -397,15 +397,14 @@ class Fields {
 				var cf = staticCf;
 				if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl)) cf = null;
 				if (cf == null) {
-					var resolveCf = switch (mode) {
-						case MSet(_): a.write;
-						case _: a.read;
-					};
-					if (resolveCf != null) {
-						return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, pfield), i);
-					}
-					// @:forward: a member not on the impl is resolved on the underlying type, which the
-					// abstract wraps transparently.
+					// The type's own using extensions win over @:forward and over the @:op(a.b) resolve fallback:
+					// type_field_by_type_extension before forwarding recurses into the underlying type's
+					// extensions, and AKResolve lives in the last stage (type_field_by_fallback).
+					var own = tryUsingList(ctx, typeUsings(e.type, i), e, i, pfield);
+					if (own != null) return own;
+					// @:forward: a member not on the impl is resolved on the underlying type, which the abstract
+					// wraps transparently, without the underlying's resolve fallback: the outer abstract's own
+					// resolve runs first.
 					if (forwardsField(a, i)) {
 						var underlying = TypeFunctions.applyParams(a.params, params, a.thisType);
 						// If the underlying lacks it too, fall through to a `using` extension on the
@@ -414,11 +413,27 @@ class Fields {
 						// forwarding, so an extension whose first argument is the abstract type still
 						// matches.
 						try {
-							return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+							return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType, false);
 						} catch (_:FieldNotFoundError) {}
 					}
 					var u = tryUsing(ctx, e, i, pfield);
 					if (u != null) return u;
+					if (allowResolve) {
+						var resolveCf = switch (mode) {
+							case MSet(_): a.write;
+							case _: a.read;
+						};
+						if (resolveCf != null) {
+							return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, pfield), i);
+						}
+						// The underlying's resolve is the final fallback, after the own-resolve attempt.
+						if (forwardsField(a, i)) {
+							var underlying = TypeFunctions.applyParams(a.params, params, a.thisType);
+							try {
+								return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+							} catch (_:FieldNotFoundError) {}
+						}
+					}
 					if (staticCf != null && !TypeFunctions.hasClassFieldFlag(staticCf, CfImpl))
 						throw new TypingError("Invalid call to static function " + i + " through abstract instance", pfield);
 					throw fieldNotFound(e.type, i, pfield);
@@ -579,11 +594,17 @@ class Fields {
 		return path.pack.length == 2 && path.pack[0] == "haxe" && path.pack[1] == "macro" && path.name == "Tools";
 	}
 
-	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
-		for (u in typeUsings(e.type, i)) {
+	static function tryUsingList(ctx:TyperContext, usings:Array<TClassUsing>, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		for (u in usings) {
 			var r = tryUsingClass(ctx, u.c, e, i, p);
 			if (r != null) return r;
 		}
+		return null;
+	}
+
+	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		var own = tryUsingList(ctx, typeUsings(e.type, i), e, i, p);
+		if (own != null) return own;
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) {

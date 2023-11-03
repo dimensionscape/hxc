@@ -623,6 +623,9 @@ class Calls {
 				// the
 				// resulting value.
 				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+			case AKResolve(_, _):
+				// Calling a resolve field reads it through the resolve method, then calls the result.
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
 			case AKSafeNav(sn):
 				Typer.accGet(ctx, buildCallAccess(ctx, acc, el, withType, p));
 			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);

@@ -677,7 +677,9 @@ class Operators {
 				var implC = FieldAccessTools.getHostClassRaise(fa.host);
 				var setterCf = implC.statics.get("set_" + fa.field.name);
 				if (setterCf == null) throw new TypingError("This expression cannot be accessed for writing", p);
-				var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, FHStatic(implC), false, fa.pos);
+				// The accessor keeps the abstract host so its signature gets the instance's type parameters
+				// applied.
+				var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, fa.host, false, fa.pos);
 				hxc.typing.Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: setterFa}), [e2], WithTypeTools.value, p);
 			case AKResolve(se, name):
 				// `e.name = value` on an abstract with a resolve-write (@:op(a.b) taking name and value)
@@ -780,7 +782,8 @@ class Operators {
 		}
 		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
 		// the op, and writes via the setter.
-		function accessorCompound(recv:TExpr, implC:TClass, name:String, hostFa:Bool):TExpr {
+		function accessorCompound(recv:TExpr, host:hxc.typing.AccessKind.FieldHost, name:String):TExpr {
+			var implC = FieldAccessTools.getHostClassRaise(host);
 			var getterCf = implC.statics.get("get_" + name);
 			var setterCf = implC.statics.get("set_" + name);
 			if (getterCf == null || setterCf == null) throw new TypingError("This compound assignment target is not yet ported", p);
@@ -788,9 +791,12 @@ class Operators {
 			var tmp = maybeTempReceiver(ctx, recv, p);
 			var er = tmp.expr;
 			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
-			function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
-			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
-			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, FHStatic(implC), false, p), FCall);
+			// The accessor keeps the abstract host so its signature gets the instance's type parameters
+			// applied.
+			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, host, false, p), FCall);
+			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, host, false, p), FCall);
+			function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
+			function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
 			var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
@@ -841,7 +847,7 @@ class Operators {
 				accCall ? accessorInstanceCompound(fa) : compound(FieldAccessTools.getFieldExpr(fa, FWrite));
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
-				accessorCompound(se.thisExpr, FieldAccessTools.getHostClassRaise(se.access.host), se.access.field.name, true);
+				accessorCompound(se.thisExpr, se.access.host, se.access.field.name);
 			case AKResolve(se, name):
 				// Compound assign on a resolve field: resolveWrite(this, name, resolveRead(this, name) OP
 				// value), evaluating the receiver once.
@@ -1092,9 +1098,12 @@ class Operators {
 		var tmp = maybeTempReceiver(ctx, recv, p);
 		var er = tmp.expr;
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
-		function retOf(cf:TClassField):T return switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: tvoid; };
-		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, FHStatic(implC), false, p), FCall);
-		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, FHStatic(implC), false, p), FCall);
+		// The accessor keeps the abstract host so its signature gets the instance's type parameters
+		// applied.
+		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, fa.host, false, p), FCall);
+		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, fa.host, false, p), FCall);
+		function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
+		function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
 		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
