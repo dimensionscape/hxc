@@ -19,7 +19,19 @@ import hxc.typing.Typeload;
 
 class Typer {
 
-	// A fresh mono, recorded in the per-function list.
+	// A fresh mono, recorded in the per-function list. A valid Haxe identifier: an initial letter or `_`,
+	// then letters, digits or `_`. A quoted object field like "x-bar" is not one.
+	static function isValidIdentifier(s:String):Bool {
+		if (s.length == 0) return false;
+		inline function isAlphaUnderscore(c:Int) return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
+		if (!isAlphaUnderscore(s.charCodeAt(0))) return false;
+		for (i in 1...s.length) {
+			var c = s.charCodeAt(i);
+			if (!isAlphaUnderscore(c) && !(c >= "0".code && c <= "9".code)) return false;
+		}
+		return true;
+	}
+
 	public static function spawnMonomorph(ctx:TyperContext, p:Position):T {
 		var mono = TypeUnification.monoCreate();
 		ctx.monomorphs.unshift({m: mono, p: p}); // Prepends (newest first)
@@ -864,10 +876,15 @@ class Typer {
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 						// Against an expected structure the field takes the expected type (the value was
 						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
-						// `{f:Int}`. ODKWithStructure.
-						var anonField = TypeFunctions.mkField(f.name, ef != null ? ef.type : te.type, f.pos, f.pos);
-						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
-						anonFields.set(f.name, anonField);
+						// `{f:Int}`.
+						// A field whose name is not a valid identifier (a quoted key like "x-bar") is a
+						// reflection-only field: it stays in the runtime object but not in the structure
+						// type, and never counts as an "extra field".
+						if (isValidIdentifier(f.name)) {
+							var anonField = TypeFunctions.mkField(f.name, ef != null ? ef.type : te.type, f.pos, f.pos);
+							if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
+							anonFields.set(f.name, anonField);
+						}
 					}
 					var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
 					// A literal against an expected structure must provide every non-optional expected
@@ -884,7 +901,7 @@ class Typer {
 						if (missing.length == 1) ctx.com.addDiagnostic("Object requires field " + missing[0], p);
 						else if (missing.length > 1) ctx.com.addDiagnostic("Object requires fields: " + missing.join(", "), p);
 						for (f in fields) {
-							if (!expected.fields.exists(f.name))
+							if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
 								ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
 						}
 					}
