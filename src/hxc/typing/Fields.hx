@@ -357,7 +357,16 @@ class Fields {
 					return switch (kind) {
 						case CStructural(fields, isOpen):
 							var f = fields.get(i);
-							if (f != null) fieldAccess(ctx, mode, f, FHAnon, e, pfield);
+							if (f != null) {
+								// A field first seen by a READ carries AccNo write access; a later WRITE on
+								// an open structure promotes it to a normal write.
+								switch (f.kind) {
+									case Var(vk) if (isOpen && isSet && vk.write.match(AccNo)):
+										f.kind = Var(new VarKind(vk.read, AccNormal));
+									case _:
+								}
+								fieldAccess(ctx, mode, f, FHAnon, e, pfield);
+							}
 							else if (isOpen) {
 								var nf = mkUnknownField();
 								TypeUnification.addDownConstraint(r, MField(nf));
