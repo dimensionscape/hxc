@@ -639,8 +639,10 @@ class ForLoopFaithful {
 				try {
 					var vTmp = genLocal(ctx, e.type, e.pos);
 					var eTmp = TexprTools.makeLocal(vTmp, vTmp.pos);
-					var accNext = Fields.typeField(ctx, eTmp, "next", p, MCall([]), WithTypeTools.value);
-					var accHasNext = Fields.typeField(ctx, eTmp, "hasNext", p, MCall([]), WithTypeTools.withType(ctx.com.basic.tbool));
+					// Probe next/hasNext without the @:op(a.b) resolve fallback: a resolve would claim any name,
+					// and this probe must fail over to the iterator() lookup instead.
+					var accNext = Fields.typeField(ctx, eTmp, "next", p, MCall([]), WithTypeTools.value, false);
+					var accHasNext = Fields.typeField(ctx, eTmp, "hasNext", p, MCall([]), WithTypeTools.withType(ctx.com.basic.tbool), false);
 					switch [accNext, accHasNext] {
 						case [AKExpr({expr: TField(_, FDynamic(_))}), _] | [_, AKExpr({expr: TField(_, FDynamic(_))})]:
 							throw new hxc.core.NotFound();
