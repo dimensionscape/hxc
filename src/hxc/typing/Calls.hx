@@ -324,6 +324,17 @@ class Calls {
 		var pi = 0;
 		for (arg in sig.args) {
 			var isUnderscore = pi < params.length && (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
+			if (pi >= params.length && arg.opt) {
+				// An optional argument past the given parameters is consumed at bind time instead of
+				// staying on
+				// the closure: PosInfos receives the bind-site infos, pad-null targets get null, anything
+				// else
+				// is dropped.
+				var infos = makePosInfosArg(ctx, arg.t, p);
+				if (infos != null) callArgs.push(infos);
+				else if (ctx.com.platformConfig.padNulls) callArgs.push(TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, p));
+				continue;
+			}
 			if (pi >= params.length || isUnderscore) {
 				var v = TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p);
 				missingVl.push(v);

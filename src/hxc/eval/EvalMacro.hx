@@ -1021,7 +1021,10 @@ class EvalMacro {
 		var savedPos = curPos;
 		var savedModule = curModule;
 		try {
-			var sigArgs = switch (TypeFunctions.follow(fa.field.type)) { case TFun(s): s.args; case _: null; };
+			// The argument signature comes from the macro world: the host-context signature of a macro
+			// method degrades its types to Dynamic, which would hide the Expr parameters.
+			var sigCf = macroWorldField(path, fa.field.name, hostClass.module != null ? hostClass.module.path : null);
+			var sigArgs = switch (TypeFunctions.follow((sigCf != null ? sigCf : fa.field).type)) { case TFun(s): s.args; case _: null; };
 			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
 			var args = macroArgs(ec, callEl, sigArgs);
 			if (isInstance) args.unshift(VNull);
@@ -1043,6 +1046,21 @@ class EvalMacro {
 			curModule = savedModule;
 			throw e;
 		}
+	}
+
+	// The macro-world class field for a host-context field, carrying the real (Expr-typed)
+	// signature. Null when the macro world has no such class or field.
+	static function macroWorldField(path:hxc.core.Globals.Path, fieldName:String, modulePath:Null<hxc.core.Globals.Path>):Null<TClassField> {
+		if (macroCom == null) return null;
+		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) return null;
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")):
+				var cf = c.statics.get(fieldName);
+				if (cf == null) cf = c.fields.get(fieldName);
+				if (cf != null) return cf;
+			case _:
+		}
+		return null;
 	}
 
 	static function moduleForPosition(com:Context, p:Position):Null<ModuleDef> {

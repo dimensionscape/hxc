@@ -1385,9 +1385,18 @@ class Match {
 	}
 
 	public static function matchExpr(ctx:TyperContext, e:Expr, cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>, withType:WithType, postfix:Bool, p:Position):TExpr {
-		// `switch [a, b]` (a bracket literal) is a tuple match: each element is its own subject with
-		// its own type, and the case patterns match column by column.
-		var tupleEls:Null<Array<Expr>> = switch (e.expr) { case EArrayDecl(l): l; case _: null; };
+		// `switch [a, b]` (a bracket literal, possibly parenthesized) is a tuple match: each element is its
+		// own subject with its own type, and the case patterns match column by column. A single
+		// comprehension element is a real array, not a tuple.
+		function tupleOf(ex:Expr):Null<Array<Expr>> {
+			return switch (ex.expr) {
+				case EParenthesis(e1): tupleOf(e1);
+				case EArrayDecl([{expr: EFor(_, _) | EWhile(_, _, _)}]): null;
+				case EArrayDecl(l): l;
+				case _: null;
+			}
+		}
+		var tupleEls:Null<Array<Expr>> = tupleOf(e);
 		var subjects:Array<TExpr>;
 		var subjectTypes:Array<T>;
 		if (tupleEls != null) {

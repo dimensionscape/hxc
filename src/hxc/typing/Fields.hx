@@ -461,6 +461,16 @@ class Fields {
 	}
 
 	static function usingDoesUnify(a:T, b:T):Bool {
+		// A multi-type abstract on either side goes through the abstract-cast machinery, which resolves the
+		// concrete specialization before unifying (Map receiver against a StringMap parameter and vice
+		// versa).
+		function multi(t:T):Null<T> return switch (TypeFunctions.follow(t)) {
+			case TAbstract(ab, tl) if (TypeFunctions.hasMeta(":multiType", ab.meta)):
+				try TypeFunctions.follow(Typer.resolveMultiTypeConcrete(ab, tl, Position.nullPos)) catch (_:Dynamic) null;
+			case _: null;
+		}
+		var a2 = multi(a); if (a2 != null) a = a2;
+		var b2 = multi(b); if (b2 != null) b = b2;
 		return try TypeUnification.withMonoRollback(function() {
 			TypeUnification.unifyDefault(a, b);
 			return true;
@@ -532,13 +542,9 @@ class Fields {
 	// (e.g. Iterable<A>) can accept the receiver.
 	static function tryUsingClass(ctx:TyperContext, uc:TClass, e:TExpr, i:String, p:Position):Null<AccessKind> {
 		try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
-		var cf = uc.statics.get(i);
-		if (cf == null) return null;
-		// An extension candidate is skipped when @:noUsing, when it is an abstract member impl, or
-		// when it is not accessible from the current class.
-		if (TypeFunctions.hasMeta(":noUsing", cf.meta) || TypeFunctions.hasClassFieldFlag(cf, CfImpl)) return null;
-		if (!ctx.untypedMode && !canAccess(ctx, uc, cf, true)) return null;
-		switch (cf.type) {
+		var cf0 = uc.statics.get(i);
+		if (cf0 == null) return null;
+		switch (cf0.type) {
 			case TMono(r) if (r.type == null):
 				var entry = ctx.com.declOfType.get(hxc.context.Context.pathKey(uc.path));
 				if (entry != null) switch (entry.decl) {
@@ -547,18 +553,26 @@ class Fields {
 				}
 			case _:
 		}
-		var cft = cf.type;
-		if (cf.params.length > 0) {
-			// Constrained monos so the receiver must satisfy the extension type parameter constraints
-			// (e.g. sorted<T:Float> does not accept an Array<String> receiver).
-			var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
-			cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
+		// Every overload of the extension field is a candidate.
+		for (cf in [cf0].concat(cf0.overloads)) {
+			// An extension candidate is skipped when @:noUsing, when it is an abstract member impl, or
+			// when it is not accessible from the current class.
+			if (TypeFunctions.hasMeta(":noUsing", cf.meta) || TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
+			if (!ctx.untypedMode && !canAccess(ctx, uc, cf, true)) continue;
+			var cft = cf.type;
+			if (cf.params.length > 0) {
+				// Constrained monos so the receiver must satisfy the extension type parameter constraints
+				// (e.g. sorted<T:Float> does not accept an Array<String> receiver).
+				var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
+				cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
+			}
+			switch (TypeFunctions.follow(cft)) {
+				case TFun(sig) if (sig.args.length > 0 && usingAccepts(cf, e.type, sig.args[0].t)):
+					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
+				case _:
+			}
 		}
-		return switch (TypeFunctions.follow(cft)) {
-			case TFun(sig) if (sig.args.length > 0 && usingAccepts(cf, e.type, sig.args[0].t)):
-				AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
-			case _: null;
-		};
+		return null;
 	}
 
 	static function tryUsingModuleType(ctx:TyperContext, mt:ModuleType, e:TExpr, i:String, p:Position):Null<AccessKind> {

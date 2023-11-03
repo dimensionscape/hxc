@@ -1248,7 +1248,23 @@ class Typer {
 		// statics have real types (idempotent via processed).
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-		return AKExpr(TexprTools.makeTypeExpr(mt, p));
+		return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p));
+	}
+
+	// A @:genericBuild class referenced as a value builds first and the reference becomes the built module
+	// type.
+	public static function buildGenericValueType(ctx:TyperContext, mt:ModuleType, p:Position):ModuleType {
+		return switch (mt) {
+			case TClassDecl(c):
+				switch (c.kind) {
+					case KGenericBuild(fields):
+						var t = hxc.eval.EvalMacro.runGenericBuild(ctx.com, c, [], fields, p);
+						var built = try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(t)) catch (_:Dynamic) throw new TypingError("Invalid module type", p);
+						buildGenericValueType(ctx, built, p);
+					case _: mt;
+				}
+			case _: mt;
+		}
 	}
 
 	static var packageRootCache:Null<haxe.ds.StringMap<Bool>> = null;
@@ -1448,7 +1464,7 @@ class Typer {
 		if (mt == null) return null;
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(mt, p));
+		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p));
 		for (i in 0...rest.length) {
 			var isLast = i == rest.length - 1;
 			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], p, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);

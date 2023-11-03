@@ -89,6 +89,7 @@ class TypeFields {
 		for (mt in m.types) {
 			switch (mt) {
 				case TClassDecl(c):
+					addImplicitInterfaceFields(c);
 					var entry = ctx.declOfType.get(Context.pathKey(c.path));
 					if (entry == null) continue;
 					switch (entry.decl) {
@@ -98,6 +99,31 @@ class TypeFields {
 				case _:
 			}
 		}
+	}
+
+	// An abstract class implementing an interface gets an implicit abstract field for each interface method
+	// it does not implement, so instances resolve the field through the class type.
+	public static function addImplicitInterfaceFields(c:TClass):Void {
+		if (!TypeFunctions.hasClassFlag(c, CAbstract) || TypeFunctions.hasClassFlag(c, CInterface)) return;
+		function classHasField(c2:TClass, name:String):Bool {
+			if (c2.fields.exists(name)) return true;
+			return c2.superClass != null && classHasField(c2.superClass.c, name);
+		}
+		function walk(intf:TClass, params:TParams):Void {
+			for (imp in intf.interfaces)
+				walk(imp.c, [for (x in imp.params) TypeFunctions.applyParams(intf.params, params, x)]);
+			for (f in intf.orderedFields) {
+				switch (f.kind) { case Method(_): case _: continue; }
+				if (classHasField(c, f.name)) continue;
+				var cf = TypeFunctions.copyField(f);
+				cf.overloads = [];
+				cf.type = TypeFunctions.applyParams(intf.params, params, f.type);
+				TypeFunctions.addClassFieldFlag(cf, CfAbstract);
+				c.fields.set(cf.name, cf);
+				c.orderedFields.push(cf);
+			}
+		}
+		for (imp in c.interfaces) walk(imp.c, imp.params);
 	}
 
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {

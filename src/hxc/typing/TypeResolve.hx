@@ -144,6 +144,7 @@ class TypeResolve {
 			case _:
 		}
 		resolveClassFields(ctx, c, d, p);
+		TypeFields.addImplicitInterfaceFields(c);
 	}
 
 	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro
@@ -533,16 +534,32 @@ class TypeResolve {
 						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams);
 						localParams = methodParams.concat(a.params);
 					}
+					// In the host context a macro function's signature degrades every type to Dynamic, with
+					// ExprOf<T> keeping T, so a macro @:from accepts any value at unification and runs to
+					// decide. .
+					function macroHostType(th:Null<TypeHint>):T {
+						if (th != null) switch (th.ct) {
+							case CTPath(tp) if (tp.tparams.length == 1 && ((tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null)
+									|| (tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro" && tp.tname == "Expr" && tp.tsub == "ExprOf"))):
+								switch (tp.tparams[0]) {
+									case TPType(inner): return Typeload.loadTypeHint(ctx, localParams, inner, false);
+									case _:
+								}
+							case _:
+						}
+						return TypeFunctions.tDynamic;
+					}
+					var hostMacro = isMacro && !ctx.isMacro;
 					var args:Array<TSignatureArg> = [];
 					// For an abstract member cast, the underlying `this:thisType` is the first arg of the
 					// synthesized static impl (the receiver the cast converts from/relates).
 					if (isAbstractMember) args.push({name: "this", opt: false, t: a.thisType});
 					for (fa in fd.fArgs) {
-						var at = Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+						var at = hostMacro ? macroHostType(fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
 						if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 						args.push({name: fa.name.name, opt: fa.opt || fa.value != null, t: at});
 					}
-					var ret = Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
+					var ret = hostMacro ? macroHostType(fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
 					// An inferred @:from return is the abstract itself (the @:from contract);
 					// parameterize it by the method's own type parameters so unification
 					// freshens them per attempt (spawnConstrainedMonos) instead of binding a
