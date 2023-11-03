@@ -666,6 +666,23 @@ class ModuleLoader {
 			// are accessible by bare name via the implicit `import StdTypes`.
 			switch (e.kind) {
 				case ModuleNotFound(_) | TypeNotFound(_) if (sub == null && path.pack.length == 0 && path.name != "StdTypes"):
+					// A bare unqualified module name may be a sibling module in the current package (e.g.
+					// `ModA` inside `mp.Main` meaning `mp.ModA`). The reference resolves an unqualified
+					// name against the current package before the implicit StdTypes import . Without this a
+					// `Module.SubType.staticField` chain whose leading package was already consumed cannot
+					// re-resolve.
+					if (ctx.currentModule != null) {
+						var cpack = ctx.currentModule.path.pack;
+						var i = cpack.length;
+						while (i >= 1) {
+							var tryPack = cpack.slice(0, i);
+							var m = try loadModule(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
+							if (m != null) {
+								try { return findTypeInModule(m, tname, p); } catch (_:ContextError) {}
+							}
+							i--;
+						}
+					}
 					var std = loadModule(ctx, {pack: [], name: "StdTypes"}, p);
 					try {
 						return findTypeInModule(std, tname, p);

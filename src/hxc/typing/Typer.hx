@@ -1392,7 +1392,10 @@ class Typer {
 		if (pack.length > 0 && pack[0] == "std") pack = pack.slice(1);
 		var name = segs[typeIdx];
 		var rest = segs.slice(typeIdx + 1);
-		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) return null;
+		// A module with no same-named main type (e.g. unit.MyMacro holds only MyRestMacro /
+		// MyMacroHelper) leaves the main-type lookup empty; keep going so the sub-type lookup below
+		// can still resolve the path rather than bailing to a field access.
+		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) null;
 		// pack.Module.SubType.field: when the next segment names a sub-type of the module, resolve it as
 		// the type (module + sub) rather than a field access on the module's main type.
 		if (rest.length > 0) {
@@ -1402,6 +1405,7 @@ class Typer {
 				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
 			}
 		}
+		if (mt == null) return null;
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(mt, p));
