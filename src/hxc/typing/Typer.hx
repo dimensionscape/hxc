@@ -1401,8 +1401,16 @@ class Typer {
 		// find an imported module in the same package that declares it as a sub-type.
 		if (mt == null) {
 			var m = ctx.com.currentModule;
+			// A fully-qualified reference to a module-level SIBLING type in the current module
+			// (unit.UsedReferenced2 written inside module unit.TestDCE): it has no file of its own, but is
+			// already loaded as a sibling of the enclosing module.
+			if (m != null && m.path.pack.join(".") == pack.join(".")) {
+				for (mtp in m.types) {
+					if (TypeFunctions.tInfos(mtp).path.name == name) { mt = mtp; break; }
+				}
+			}
 			var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-			if (imports != null) {
+			if (mt == null && imports != null) {
 				for (imp in imports.names) {
 					if (imp.modulePath.pack.join(".") == pack.join(".") && imp.modulePath.name != name) {
 						var cand = try ctx.com.getType(imp.modulePath, p, name) catch (_:Dynamic) null;
