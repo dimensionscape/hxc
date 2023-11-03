@@ -367,11 +367,16 @@ class Fields {
 								}
 								fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
-							else if (isOpen) {
+						else if (isOpen) {
 								var nf = mkUnknownField();
 								TypeUnification.addDownConstraint(r, MField(nf));
 								fieldAccess(ctx, mode, nf, FHAnon, e, pfield);
-							} else throw fieldNotFound(e.type, i, pfield);
+							} else {
+								// A CLOSED structural monomorph (e.g. bound by an intersection constraint
+								// A & B) still consults the module's using extensions before failing.
+								var u = tryUsing(ctx, e, i, pfield);
+								if (u != null) u else throw fieldNotFound(e.type, i, pfield);
+							}
 						case CTypes(tl):
 							var res:AccessKind = null;
 							var err:Dynamic = null;
