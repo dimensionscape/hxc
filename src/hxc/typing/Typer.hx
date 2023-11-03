@@ -978,7 +978,12 @@ class Typer {
 
 	static function expectedAnonFromWithType(withType:WithType):Null<TAnon> {
 		return switch (withType) {
-			case WithType(t, _): expectedAnonFromType(t, []);
+			case WithType(t, _):
+				var a = expectedAnonFromType(t, []);
+				// An empty expected structure imposes no field requirements: the literal types plainly and
+				// unification decides, so `({name:1} : {})` and an abstract `from {}` both accept any
+				// object.
+				(a != null && !a.fields.keys().hasNext()) ? null : a;
 			case _: null;
 		}
 	}
