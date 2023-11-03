@@ -687,9 +687,22 @@ class Calls {
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType):TExpr {
 		var candidates = [fa.field].concat(fa.field.overloads);
 		var firstError:Null<Dynamic> = null;
+		// With several candidates an argument error must RAISE so the next overload is tried: a lambda
+		// body error inside a block would otherwise be recorded as a batch diagnostic and the first
+		// candidate would win with a poisoned result. Trial diagnostics roll back per attempt.
+		var multi = candidates.length > 1;
 		for (cf in candidates) {
+			var diagBefore = ctx.com.diagnostics.length;
+			var oldRaise = ctx.com.raiseTypingErrors;
+			if (multi) ctx.com.raiseTypingErrors = true;
+			inline function restore() {
+				if (multi) {
+					ctx.com.raiseTypingErrors = oldRaise;
+					if (ctx.com.diagnostics.length > diagBefore) ctx.com.diagnostics.resize(diagBefore);
+				}
+			}
 			try {
-				return TypeUnification.withMonoRollback(function() {
+				var r = TypeUnification.withMonoRollback(function() {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
 					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2), fa2);
 					var ce = mono.expr;
@@ -709,10 +722,17 @@ class Calls {
 							callExpr(ctx, ce, el, p);
 					}
 				});
+				if (multi) ctx.com.raiseTypingErrors = oldRaise;
+				return r;
 			} catch (e:UnifyError) {
+				restore();
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
+				restore();
 				if (firstError == null) firstError = e;
+			} catch (e:haxe.Exception) {
+				restore();
+				throw e;
 			}
 		}
 		if (firstError != null) throw firstError;
