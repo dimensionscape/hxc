@@ -600,7 +600,7 @@ class Calls {
 			case AKExpr(ce): callExpr(ctx, ce, el, p);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
-			case AKField(fa): callFieldAccess(ctx, fa, el, p);
+			case AKField(fa): callFieldAccess(ctx, fa, el, p, withType);
 			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
 				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
@@ -611,7 +611,7 @@ class Calls {
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length > 0):
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
-						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type);
+						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
 						makeCall(ctx, ce, [se.thisExpr].concat(r.el), ret, p);
@@ -670,7 +670,7 @@ class Calls {
 		return FieldAccessTools.getFieldExpr(fa, FCall);
 	}
 
-	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position):TExpr {
+	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType):TExpr {
 		var candidates = [fa.field].concat(fa.field.overloads);
 		var firstError:Null<Dynamic> = null;
 		for (cf in candidates) {
@@ -682,7 +682,7 @@ class Calls {
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
 							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc);
+							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, withType);
 							if (faCall != fa2) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 							var ret = switch (TypeFunctions.follow(ce.type)) {
 								case TFun(sig2): sig2.ret;
@@ -732,11 +732,20 @@ class Calls {
 		return monomorphizeParamsWith(ctx, cf, ce, fa).expr;
 	}
 
-	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T):FieldAccess {
+	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T, ?withType:WithType):FieldAccess {
 		if (cf.params.length == 0 || !TypeFunctions.hasClassFieldFlag(cf, CfGeneric)) return fa;
 		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
 		TypeFields.forceFieldBody(ctx.com, host, cf);
 		if (cf.expr == null) return fa;
+		// A return-only parameter infers from the expected type before the monomorphs close unifies fc_ret
+		// with the with-type first).
+		if (withType != null) switch (withType) {
+			case WithType(t, _): switch (TypeFunctions.follow(callType)) {
+				case TFun(sig): try TypeUnification.unifyDefault(sig.ret, t) catch (_:UnifyError) {}
+				case _:
+			}
+			case _:
+		}
 		propagateGenericConstraints(ctx, cf.params, monos, hostParamMap(fa));
 		closeGenericMonos(monos);
 		var params = [for (m in monos) TypeFunctions.follow(m)];
