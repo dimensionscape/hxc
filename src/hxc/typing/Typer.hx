@@ -625,6 +625,10 @@ class Typer {
 							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, inner), inner.type, inner.pos);
 						case _: typeExpr(ctx, e1, withType);
 					}
+				case EMeta(m, {expr: EReturn(re)}) if (m.name == ":implicitReturn"):
+					// An arrow function body's synthesized return.
+					if (!ctx.inFunction) throw new TypingError("Return outside function", p);
+					typeReturn(ctx, re, withType, p, true);
 				case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
 					var id = switch (e1.expr) {
 						case EConst(CInt(s, _)): Std.parseInt(s);
@@ -979,40 +983,50 @@ class Typer {
 	static function expectedAnonFromWithType(withType:WithType):Null<TAnon> {
 		return switch (withType) {
 			case WithType(t, _):
-				var a = expectedAnonFromType(t, []);
-				// An empty expected structure imposes no field requirements: the literal types plainly and
-				// unification decides, so `({name:1} : {})` and an abstract `from {}` both accept any
-				// object.
-				(a != null && !a.fields.keys().hasNext()) ? null : a;
+				switch (expectedAnonFromType(t, [])) {
+					// An empty expected structure imposes no field requirements: the literal types plainly
+					// and unification decides, so `({name:1} : {})` and an abstract `from {}` both accept
+					// any object.
+					case ODKStructure(a) if (a.fields.keys().hasNext()): a;
+					case _: null;
+				}
 			case _: null;
 		}
 	}
 
-	static function expectedAnonFromType(t:T, seen:Array<T>):Null<TAnon> {
+	static function expectedAnonFromType(t:T, seen:Array<T>):ObjectDeclKind {
 		return switch (TypeFunctions.follow(t)) {
 			case TAnon(a):
-				a;
+				ODKStructure(a);
 			case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
-				for (old in seen) if (TypeUnification.shallowEq(t, old)) return null;
-				var hits:Array<TAnon> = [];
+				for (old in seen) if (TypeUnification.shallowEq(t, old)) return ODKPlain;
+				// Every non-plain candidate counts, INCLUDING a nested ambiguity: a from-type that is
+				// itself an abstract with several structure candidates keeps the outer level ambiguous
+				// (EitherType<Range, EitherType<A, B>> types its literal plainly).
+				var hits:Array<ObjectDeclKind> = [];
 				var nextSeen = seen.concat([t]);
-				for (fromType in a.from) {
-					var hit = expectedAnonFromType(TypeFunctions.applyParams(a.params, params, fromType), nextSeen);
-					if (hit != null) hits.push(hit);
+				function consider(ft:T):Void {
+					switch (expectedAnonFromType(ft, nextSeen)) {
+						case ODKPlain:
+						case odk: hits.push(odk);
+					}
 				}
-				// @:from function argument types are candidates too; more than one structure candidate
-				// means the literal types plainly and unification decides. + ODKFailed.
+				for (fromType in a.from)
+					consider(TypeFunctions.applyParams(a.params, params, fromType));
 				for (c in a.fromField) {
 					switch (TypeFunctions.follow(c.cf.type)) {
 						case TFun(sig) if (sig.args.length == 1):
-							var hit = expectedAnonFromType(TypeFunctions.applyParams(a.params, params, sig.args[0].t), nextSeen);
-							if (hit != null) hits.push(hit);
+							consider(TypeFunctions.applyParams(a.params, params, sig.args[0].t));
 						case _:
 					}
 				}
-				hits.length == 1 ? hits[0] : null;
+				switch (hits) {
+					case []: ODKPlain;
+					case [one]: one;
+					case _: ODKFailed;
+				}
 			case _:
-				null;
+				ODKPlain;
 		}
 	}
 
@@ -1264,7 +1278,13 @@ class Typer {
 				switch (c.kind) {
 					case KGenericBuild(fields):
 						var t = hxc.eval.EvalMacro.runGenericBuild(ctx.com, c, [], fields, p);
-						var built = try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(t)) catch (_:Dynamic) throw new TypingError("Invalid module type", p);
+						var built = try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(t)) catch (_:Dynamic) {
+							// A Dynamic build result references the Dynamic type itself.
+							switch (TypeFunctions.follow(t)) {
+								case TDynamic(_): ctx.com.getType({pack: [], name: "Dynamic"}, p, null);
+								case _: throw new TypingError("Invalid module type", p);
+							}
+						}
 						buildGenericValueType(ctx, built, p);
 					case _: mt;
 				}
@@ -2040,7 +2060,7 @@ class Typer {
 		return TypeFunctions.mk(TIf(e0, e1, e2), t, p);
 	}
 
-	static function typeReturn(ctx:TyperContext, e:Null<Expr>, withType:WithType, p:Position):TExpr {
+	static function typeReturn(ctx:TyperContext, e:Null<Expr>, withType:WithType, p:Position, implicit:Bool = false):TExpr {
 		switch (e) {
 			case null:
 				var v = ctx.com.basic.tvoid;
@@ -2056,7 +2076,10 @@ class Typer {
 				};
 				return TypeFunctions.mk(TReturn(null), expectVoid ? v : monoOrDynamic(ctx, withType, p), p);
 			case ex:
-				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue : WithTypeTools.withType(ctx.ret);
+				// An arrow function's implicit return carries the ImplicitReturn source so a switch body
+				// can settle an open return mono from a bare `return;` arm.
+				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue
+					: implicit ? WithTypeTools.ofImplicitReturn(ctx.ret) : WithTypeTools.withType(ctx.ret);
 				var teRaw = typeExpr(ctx, ex, withExpected);
 				// Returning a value from a Void function discards the value rather than unifying it.
 				// ctx.ret may only just have settled to Void while typing teRaw (an inner `return` in an
@@ -2656,4 +2679,11 @@ class Typer {
 			case TTry(e1, catches): hasSideEffect(e1) || Lambda.exists(catches, c -> hasSideEffect(c.expr));
 		};
 	}
+}
+
+// Object-literal expected-type classification; the struct-init class case is handled separately.
+enum ObjectDeclKind {
+	ODKPlain;
+	ODKFailed;
+	ODKStructure(a:TAnon);
 }

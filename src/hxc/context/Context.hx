@@ -18,6 +18,9 @@ class Context {
 	 */
 	public var stdPath:Array<String>;
 
+	/** The compiler arguments after hxml expansion, for Compiler.getConfiguration(). */
+	public var args:Array<String> = [];
+
 	public var classPath:Array<String>;
 
 	/**

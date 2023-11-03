@@ -338,6 +338,7 @@ class EvalMacro {
 			else com.defines.rawDefineValue(k, strOf(a[1]));
 			return VNull;
 		});
+		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com));
 		reg2("getMessages", "get_messages", function(a) return encodeArray(macroMessages.copy()));
 		reg2("filterMessages", "filter_messages", function(a) {
 			var pred = a[0];
@@ -519,8 +520,13 @@ class EvalMacro {
 		var entries = collectBuildEntries(c);
 		if (entries.length == 0) return;
 		builtClasses.set(key, true);
-		// A build failure must not abort the whole compile; the class keeps its declared fields.
-		for (entry in entries) try runBuild(com, c, entry) catch (_:haxe.Exception) {}
+		// A build failure is recorded rather than raised so the rest of the module still types,
+		// but the compile fails; the class keeps its declared fields.
+		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
+			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
+		} catch (e:haxe.Exception) {
+			com.addDiagnostic("Build failure: " + e.message, entry.pos);
+		}
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
@@ -690,6 +696,51 @@ class EvalMacro {
 
 	public static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
 		return encodeExpr(ec, valueToExpr(ec, v, Position.nullPos));
+	}
+
+	public static function getConfigurationValue(com:Context):EvalValue {
+		function obj(fields:Array<{name:String, value:EvalValue}>):EvalValue {
+			var m:Map<Int, EvalValue> = new Map();
+			for (f in fields) m.set(EvalHash.hash(f.name), f.value);
+			return VObject(new VObject([], ODictionary(m)));
+		}
+		function str(s:String):EvalValue return mkString(s);
+		function strArray(a:Array<String>):EvalValue {
+			var vals:Array<EvalValue> = [for (s in a) str(s)];
+			return VArray(new VArray(vals, vals.length));
+		}
+		var pc = com.platformConfig;
+		var platformConfig = obj([
+			{name: "staticTypeSystem", value: pc.isStatic ? VTrue : VFalse},
+			{name: "sys", value: pc.sys ? VTrue : VFalse},
+			{name: "padNulls", value: pc.padNulls ? VTrue : VFalse},
+			{name: "addFinalReturn", value: pc.addFinalReturn ? VTrue : VFalse},
+			{name: "overloadFunctions", value: pc.supportsOverload ? VTrue : VFalse},
+			{name: "canSkipNonNullableArgument", value: pc.canSkipNonNullableArgument ? VTrue : VFalse},
+			{name: "supportsFunctionEquality", value: VTrue},
+			{name: "usesUtf16", value: pc.usesUtf16 ? VTrue : VFalse},
+			{name: "thisBeforeSuper", value: VFalse},
+			{name: "supportsThreads", value: pc.supportsThreads ? VTrue : VFalse},
+			{name: "supportsUnicode", value: pc.supportsUnicode ? VTrue : VFalse},
+			{name: "supportsRestArgs", value: pc.supportsRestArgs ? VTrue : VFalse},
+			{name: "supportsAtomics", value: VFalse},
+		]);
+		var mainClass = com.mainClass == null ? VNull : obj([
+			{name: "pack", value: strArray(com.mainClass.pack)},
+			{name: "name", value: str(com.mainClass.name)},
+		]);
+		return obj([
+			{name: "version", value: VInt(4307)},
+			{name: "args", value: strArray(com.args)},
+			{name: "debug", value: com.debug ? VTrue : VFalse},
+			{name: "verbose", value: VFalse},
+			{name: "foptimize", value: com.foptimize ? VTrue : VFalse},
+			{name: "platform", value: str(hxc.core.Globals.platformName(com.platform))},
+			{name: "platformConfig", value: platformConfig},
+			{name: "stdPath", value: strArray(com.stdPath)},
+			{name: "mainClass", value: mainClass},
+			{name: "packageRules", value: obj([])},
+		]);
 	}
 
 	static function identChar(c:Int):Bool {

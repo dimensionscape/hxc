@@ -765,34 +765,58 @@ class Typeload {
 	}
 
 	static function genericSubstituteType(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, p:Position, t:T):T {
+		// An untouched subtree keeps its PHYSICAL node: a cloned signature's own method type parameters
+		// must stay identical to their type so a call site's applyParams still matches them (it
+		// compares
+		// by identity).
+		function loopList(tl:Array<T>, loop:T->T):Null<Array<T>> {
+			var changed = false;
+			var out = [for (x in tl) { var y = loop(x); if (y != x) changed = true; y; }];
+			return changed ? out : null;
+		}
 		function loop(t:T):T {
 			var hit = findGenericSubst(gsubst, t);
 			if (hit != null) return loop(hit.to);
 			return switch (t) {
 				case TInst(gc, tl):
-					var tl2 = [for (x in tl) loop(x)];
+					var tl2 = loopList(tl, loop);
 					switch (gc.kind) {
-						case KGeneric if (gc != c && canSpecializeGeneric(tl2)):
-							TInst(specializeGenericClass(ctx, gc, tl2, p), []);
+						case KGeneric if (gc != c && canSpecializeGeneric(tl2 != null ? tl2 : tl)):
+							TInst(specializeGenericClass(ctx, gc, tl2 != null ? tl2 : tl, p), []);
 						case _:
-							TInst(gc, tl2);
+							tl2 == null ? t : TInst(gc, tl2);
 					}
 				case TEnum(e, tl):
-					TEnum(e, [for (x in tl) loop(x)]);
+					var tl2 = loopList(tl, loop);
+					tl2 == null ? t : TEnum(e, tl2);
 				case TType(td, tl):
-					TType(td, [for (x in tl) loop(x)]);
+					var tl2 = loopList(tl, loop);
+					tl2 == null ? t : TType(td, tl2);
 				case TAbstract(a, tl):
-					TAbstract(a, [for (x in tl) loop(x)]);
+					var tl2 = loopList(tl, loop);
+					tl2 == null ? t : TAbstract(a, tl2);
 				case TFun(sig):
-					TFun({args: [for (a in sig.args) {name: a.name, opt: a.opt, t: loop(a.t)}], ret: loop(sig.ret)});
+					var changed = false;
+					var args = [for (a in sig.args) { var y = loop(a.t); if (y != a.t) changed = true; {name: a.name, opt: a.opt, t: y}; }];
+					var ret = loop(sig.ret);
+					if (ret != sig.ret) changed = true;
+					changed ? TFun({args: args, ret: ret}) : t;
 				case TAnon(a):
+					var changed = false;
 					var fields = new StringMap<TClassField>();
 					for (k in a.fields.keys()) {
-						var nf = TypeFunctions.copyField(a.fields.get(k));
-						nf.type = loop(nf.type);
-						fields.set(k, nf);
+						var of = a.fields.get(k);
+						var nt = loop(of.type);
+						if (nt != of.type) {
+							changed = true;
+							var nf = TypeFunctions.copyField(of);
+							nf.type = nt;
+							fields.set(k, nf);
+						} else {
+							fields.set(k, of);
+						}
 					}
-					TAnon({fields: fields, status: a.status});
+					changed ? TAnon({fields: fields, status: a.status}) : t;
 				case TLazy(f):
 					loop(TypeFunctions.lazyType(f));
 				case TMono(r):
@@ -800,20 +824,53 @@ class Typeload {
 						case null: t;
 						case some: loop(some);
 					}
-				case TDynamic(t):
-					TDynamic(t == null ? null : loop(t));
+				case TDynamic(t1):
+					if (t1 == null) t else {
+						var y = loop(t1);
+						y == t1 ? t : TDynamic(y);
+					}
 			}
 		}
 		return loop(t);
 	}
 
 	static function cloneField(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, f:TClassField):TClassField {
-		var subst = function(t:T) return genericSubstituteType(ctx, c, gsubst, f.pos, t);
+		// The method's own type parameters are cloned so their constraints can be substituted without
+		// touching the originals; the clone maps into the substitution so occurrences in the signature and
+		// body follow.
+		var gsubst2 = gsubst;
+		var newParams:TypeParams = [];
+		if (f.params.length > 0) {
+			gsubst2 = gsubst.copy();
+			for (tp in f.params) {
+				switch (TypeFunctions.follow(tp.type)) {
+					case TInst(pc, tl):
+						var pc2 = TypeFunctions.mkClass(pc.module, pc.path, pc.pos, pc.namePos);
+						pc2.kind = pc.kind;
+						var t2 = TInst(pc2, tl);
+						gsubst2.push({from: tp.type, to: t2, expr: null});
+						newParams.push(new TypedTypeParam(tp.name, t2, tp.defaultType));
+					case _:
+						newParams.push(tp);
+				}
+			}
+		}
+		var subst = function(t:T) return genericSubstituteType(ctx, c, gsubst2, f.pos, t);
+		// Constraints substitute only after the full substitution list is built.
+		for (tp in newParams) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(pc2, _):
+				switch (pc2.kind) {
+					case KTypeParameter(tl1): pc2.kind = KTypeParameter([for (x in tl1) subst(x)]);
+					case _:
+				}
+			case _:
+		}
 		if (f.expr == null) TypeFields.forceFieldBody(ctx, c, f);
 		var cf = TypeFunctions.copyField(f);
+		if (f.params.length > 0) cf.params = newParams;
 		cf.type = subst(f.type);
-		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map(), gsubst);
-		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst);
+		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map(), gsubst2);
+		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
 		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o)];
 		return cf;
 	}

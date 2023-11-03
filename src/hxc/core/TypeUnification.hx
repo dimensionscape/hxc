@@ -14,7 +14,7 @@ class Meta {
 	public static inline var CoreType = ":coreType";
 	public static inline var Transitive = ":transitive";
 	public static inline var MultiType = ":multiType";
-	public static inline var ForwardVariance = ":forwardVariance";
+	public static inline var ForwardVariance = ":forward.variance";
 	public static inline var FlatEnum = ":flatEnum";
 	public static inline var Runtime = ":runtime";
 	public static inline var MaybeUsed = ":maybeUsed";
@@ -1253,7 +1253,7 @@ class TypeUnification {
 
 	static function unifiesWithAbstract(uctx:UnificationContext, a:T, b:T, f:UnificationContext->Bool):Bool {
 		return recStackDefault(abstractCastStack, {a: a, b: b},
-			function(p) return fastEqAbstractHeadPair(a, b, p.a, p.b),
+			function(p) return fastEqPair(a, b, p.a, p.b),
 			function() return (uctx.allowTransitiveCast && f(uctx.withAllowTransitiveCast(false))) || f(uctx),
 			false);
 	}
@@ -1367,7 +1367,7 @@ class TypeUnification {
 		function unifiesAbstract(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, ats:Array<T>):Bool {
 			return try {
 				var uctx2 = get_abstract_context(uctx, a, b, ab);
-				recStackDefault(abstractCastStack, {a: a, b: b}, function(p) return fastEqAbstractHeadPair(a, b, p.a, p.b),
+				recStackDefault(abstractCastStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
 					function() return Lambda.exists(ats, function(at) return doesFuncUnifyArg(function(at) {
 						var at2 = TypeFunctions.applyParams(ab.params, tl, at);
 						if (ats == ab.to) withVariance(uctx2, f, at2, b);

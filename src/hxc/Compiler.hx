@@ -32,6 +32,7 @@ class Compiler {
 	public static function run(args:Array<String>):Void {
 		args = expandArgs(args);
 		var ctx = new Context();
+		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
 
@@ -205,9 +206,10 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
-		// Eval normally runs the program even with recorded (often spurious) diagnostics; -D hxc-diagnostics
-		// opts into report-and-abort so tests/misc diagnostic output can be diffed against haxe. Warnings
-		// and info ($type) are still surfaced under plain --interp; only the spurious errors are held back.
+		// Eval still runs the program with recorded diagnostics while two known spurious records
+		// remain (Issue6430 inline-generic, Issue9366 multi-type with-type); once those clear, the
+		// discard goes away and --interp fails on errors like the reference. -D hxc-diagnostics
+		// opts into strict report-and-abort now.
 		if (platform == Eval && !ctx.defines.rawDefined("hxc_diagnostics")) {
 			var keep = [for (d in ctx.diagnostics) if (d.severity != hxc.core.Globals.MessageSeverity.Error) d];
 			ctx.diagnostics = keep;
