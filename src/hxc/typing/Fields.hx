@@ -580,7 +580,7 @@ class Fields {
 	}
 
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
-		for (u in typeUsings(e.type)) {
+		for (u in typeUsings(e.type, i)) {
 			var r = tryUsingClass(ctx, u.c, e, i, p);
 			if (r != null) return r;
 		}
@@ -643,13 +643,19 @@ class Fields {
 
 	// The type-own using list is collected on the UNFOLLOWED type: a typedef contributes its own
 	// @:using before the type it aliases, one follow step at a time.
-	static function typeUsings(t:T):Array<TClassUsing> {
+	static function typeUsings(t:T, i:String):Array<TClassUsing> {
 		return switch (t) {
-			case TMono(r): r.type == null ? [] : typeUsings(r.type);
-			case TLazy(f): typeUsings(TypeFunctions.lazyType(f));
-			case TType(td, tl): td.usings.concat(typeUsings(TypeFunctions.applyParams(td.params, tl, td.type)));
+			case TMono(r): r.type == null ? [] : typeUsings(r.type, i);
+			case TLazy(f): typeUsings(TypeFunctions.lazyType(f), i);
+			case TType(td, tl): td.usings.concat(typeUsings(TypeFunctions.applyParams(td.params, tl, td.type), i));
 			case TInst(c, _): collectClassUsings(c, []);
 			case TEnum(e, _): e.usings;
+			case TAbstract(a, [t1]) if (a.path.pack.length == 0 && a.path.name == "Null"):
+				// Null is unwrapped before the extension walk.
+				typeUsings(t1, i);
+			case TAbstract(a, tl) if (forwardAllows(a, i) && !TypeFunctions.hasMeta(":coreType", a.meta)):
+				// @:forward abstracts also expose the underlying type's usings.
+				a.usings.concat(typeUsings(TypeFunctions.applyParams(a.params, tl, a.thisType), i));
 			case TAbstract(a, _): a.usings;
 			case TAnon(a): switch (a.status.get()) {
 				case Statics(c): c.usings;
@@ -659,6 +665,21 @@ class Fields {
 			}
 			case _: [];
 		};
+	}
+
+	// @:forward with arguments only forwards the named fields.
+	static function forwardAllows(a:TAbstract, i:String):Bool {
+		for (meta in a.meta) {
+			if (meta.name != ":forward") continue;
+			if (meta.params.length == 0) return true;
+			for (param in meta.params) switch (param.expr) {
+				case EConst(CIdent(n)) if (n == i): return true;
+				case EConst(CString(n, _)) if (n == i): return true;
+				case _:
+			}
+			return false;
+		}
+		return false;
 	}
 
 	// A class inherits @:using from its base classes and interfaces: own usings first, then

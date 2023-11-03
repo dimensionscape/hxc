@@ -709,8 +709,13 @@ class EvalMacro {
 	static function enumPathExpr(ec:EvalContext, pathHash:Int, p:Position):Expr {
 		var mt = ec.typeCache.get(pathHash);
 		if (mt == null) throw "value_to_expr: enum type not found";
-		var path = TypeFunctions.tInfos(mt).path;
-		var segs = path.pack.concat([path.name]);
+		var infos = TypeFunctions.tInfos(mt);
+		var path = infos.path;
+		// A sub-type spells out Module.SubType so the path resolves from any context.
+		var mpath = infos.module != null ? infos.module.path : path;
+		var segs = (mpath.pack.join(".") == path.pack.join(".") && mpath.name == path.name)
+			? path.pack.concat([path.name])
+			: mpath.pack.concat([mpath.name, path.name]);
 		var e = new Expr(EConst(CIdent(segs[0])), p);
 		for (i in 1...segs.length) e = new Expr(EField(e, segs[i], EFNormal), p);
 		return e;

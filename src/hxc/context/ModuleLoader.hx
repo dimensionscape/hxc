@@ -797,7 +797,9 @@ class ModuleLoader {
 		if (imports != null) {
 			var named = imports.names.get(name);
 			if (named != null) {
-				var sub = named.sub != null ? named.sub : name;
+				// Alias/sub or module-name exact binding. An aliased module import binds the module's
+				// main type, not a type named after the alias.
+				var sub = named.sub != null ? named.sub : named.modulePath.name;
 				var r = tryLoadSub(ctx, named.modulePath, sub, p);
 				if (r != null) return r;
 			}
