@@ -2076,6 +2076,20 @@ class Typer {
 		var args:Array<TFuncArg> = [];
 		var sigArgs:Array<TSignatureArg> = [];
 		var body:Array<TExpr> = [];
+		// A field declared with a default value (`var x:Int = 100`) becomes an optional constructor
+		// argument, and its assignment is guarded so an omitted arg keeps the declared default. The
+		// default is detected from the AST field list.
+		var hasDefault = new haxe.ds.StringMap<Bool>();
+		var entry = ctx.com.declOfType.get(hxc.context.Context.pathKey(c.path));
+		if (entry != null) switch (entry.decl) {
+			case EClass(d):
+				for (f in d.dData) switch (f.cffKind) {
+					case FVar(_, e) if (e != null): hasDefault.set(f.cffName.name, true);
+					case FProp(_, _, _, e) if (e != null): hasDefault.set(f.cffName.name, true);
+					case _:
+				}
+			case _:
+		}
 		for (cf in c.orderedFields) {
 			var physical = switch (cf.kind) {
 				case Var(k): switch (k.read) { case AccCall | AccInline | AccRequire(_, _): false; case _: switch (k.write) { case AccCall: false; case _: true; } };
@@ -2083,14 +2097,22 @@ class Typer {
 			};
 			if (!physical) continue;
 			switch (cf.type) { case TLazy(r): cf.type = TypeFunctions.lazyType(r); case _: }
-			var opt = TypeFunctions.hasMeta(":optional", cf.meta);
+			var dflt = hasDefault.exists(cf.name);
+			var opt = dflt || TypeFunctions.hasMeta(":optional", cf.meta);
 			var at = opt ? ctx.com.basic.tnull(cf.type) : cf.type;
 			var v = TypeFunctions.allocVar(VGenerated, cf.name, at, cf.namePos);
 			args.push({v: v});
 			sigArgs.push({name: cf.name, opt: opt, t: at});
 			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, cf.pos);
 			var ev = TypeFunctions.mk(TLocal(v), v.type, cf.pos);
-			body.push(TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, cf.pos));
+			var assign = TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, cf.pos);
+			if (dflt) {
+				// If (arg != null) this.field = arg -- the field keeps its declared default otherwise
+				var cond = TypeFunctions.mk(TBinop(OpNotEq, ev, TypeFunctions.mk(TConst(TNull), at, cf.pos)), ctx.com.basic.tbool, cf.pos);
+				body.push(TypeFunctions.mk(TIf(cond, assign, null), tvoid, cf.pos));
+			} else {
+				body.push(assign);
+			}
 		}
 		if (c.superClass != null) {
 			ensureStructInitCtor(ctx, c.superClass.c);
