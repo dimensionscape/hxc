@@ -1396,6 +1396,21 @@ class Typer {
 		// MyMacroHelper) leaves the main-type lookup empty; keep going so the sub-type lookup below
 		// can still resolve the path rather than bailing to a field access.
 		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) null;
+		// pack.SubType where SubType is a module-level type brought in by `import pack.Module` (so it
+		// has no module file of its own, e.g. scripthost.Issue5351_2 from `import scripthost.Issue5351`):
+		// find an imported module in the same package that declares it as a sub-type.
+		if (mt == null) {
+			var m = ctx.com.currentModule;
+			var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+			if (imports != null) {
+				for (imp in imports.names) {
+					if (imp.modulePath.pack.join(".") == pack.join(".") && imp.modulePath.name != name) {
+						var cand = try ctx.com.getType(imp.modulePath, p, name) catch (_:Dynamic) null;
+						if (cand != null) { mt = cand; break; }
+					}
+				}
+			}
+		}
 		// pack.Module.SubType.field: when the next segment names a sub-type of the module, resolve it as
 		// the type (module + sub) rather than a field access on the module's main type.
 		if (rest.length > 0) {
