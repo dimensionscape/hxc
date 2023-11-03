@@ -248,6 +248,29 @@ class EvalMacro {
 			var once = a.length > 1 && a[1] != VNull && boolOf(a[1]);
 			return encodeType(ec, once ? TypeFunctions.followOnce(t) : TypeFunctions.follow(t));
 		});
+		// The once variant also unwraps one non-core abstract layer, and a multi-type abstract resolves to
+		// its concrete specialization.
+		reg2("followWithAbstracts", "follow_with_abstracts", function(a) {
+			var t = decodeType(ec, a[0]);
+			var once = a.length > 1 && a[1] != VNull && boolOf(a[1]);
+			function underlying(ab:hxc.core.Type.TAbstract, tl:hxc.core.Type.TParams):hxc.core.Type.T {
+				if (TypeFunctions.hasMeta(":multiType", ab.meta)) {
+					try return hxc.typing.Typer.resolveMultiTypeConcrete(ab, tl, Position.nullPos) catch (e:Dynamic) {}
+				}
+				return TypeFunctions.getUnderlyingType(ab, tl);
+			}
+			function fwa(t:hxc.core.Type.T):hxc.core.Type.T {
+				return switch (TypeFunctions.follow(t)) {
+					case TAbstract(ab, tl) if (!TypeFunctions.hasMeta(":coreType", ab.meta)): fwa(underlying(ab, tl));
+					case t2: t2;
+				}
+			}
+			var t1 = if (once) switch (t) {
+				case TAbstract(ab, tl) if (!TypeFunctions.hasMeta(":coreType", ab.meta)): underlying(ab, tl);
+				case _: TypeFunctions.followOnce(t);
+			} else fwa(t);
+			return encodeType(ec, t1);
+		});
 		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
 		reg2("defineType", "define_type", function(a) {
 			defineMacroType(ec, com, a[0], a.length > 1 ? a[1] : VNull);
@@ -832,14 +855,16 @@ class EvalMacro {
 	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
 	// copy into the macro context. The host parses every module without macro, which drops the #if macro
 	// members a macro function's body relies on. reference:
-	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false):Void {
+	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
 		if (macroCom == null) {
 			macroCom = host.cloneForMacro();
 			hxc.context.ModuleLoader.attach(macroCom);
 			hxc.context.ModuleLoader.initBasicTypes(macroCom);
 		}
 		try {
-			var m = hxc.context.ModuleLoader.loadModule(macroCom, macroLoadPath(path), Position.nullPos);
+			// A sub-type's module file has a different name than the class; the caller passes the declaring
+			// module's path. .
+			var m = hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos);
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
 			for (mt in m.types) switch (mt) {
@@ -960,14 +985,15 @@ class EvalMacro {
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		curPos = p;
 		var isInstance = false;
-		var path = switch (fa.host) {
-			case FHStatic(c): c.path;
-			case FHAbstract(_, _, c): c.path;
+		var hostClass = switch (fa.host) {
+			case FHStatic(c): c;
+			case FHAbstract(_, _, c): c;
 			case FHInstance(c, _):
 				isInstance = true;
-				c.path;
+				c;
 			case _: throw new TypingError("Only static or member macro functions are supported", p);
 		};
+		var path = hostClass.path;
 		var callModule = moduleForPosition(tctx.com, p);
 		var ec = getContext(tctx.com);
 		var proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
@@ -975,7 +1001,7 @@ class EvalMacro {
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
-			loadMacroClass(tctx.com, path, fa.field.name);
+			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null);
 			ec = getContext(tctx.com);
 			proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
