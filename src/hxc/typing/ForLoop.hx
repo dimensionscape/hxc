@@ -145,9 +145,37 @@ class ForLoop {
 		var callArgs = [for (v in loopVars) TexprTools.makeLocal(v, p)];
 		return TypeFunctions.mk(TCall(closure, callArgs), basic.tvoid, p);
 	}
+	// The iterator contract unifies hasNext/next signatures with the loop's element type; an
+	// unannotated method whose return is still an open mono must type its body first so the contract
+	// does not bind the declaration mono to the loop's type and break the later body typing (the same
+	// ordering fix as super-constructor forcing).
+	static function forceOpenMethod(ctx:TyperContext, acc:AccessKind):Void {
+		var fa = switch (acc) {
+			case AKField(fa): fa;
+			case AKUsingField(se): se.access;
+			case _: return;
+		};
+		var cf = fa.field;
+		if (!cf.kind.match(Method(_)) || cf.expr != null) return;
+		switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig):
+				switch (TypeFunctions.follow(sig.ret)) {
+					case TMono(r) if (r.type == null):
+						switch (fa.host) {
+							case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c):
+								try TypeFields.forceFieldBody(ctx.com, c, cf) catch (_:Dynamic) {}
+							case _:
+						}
+					case _:
+				}
+			case _:
+		}
+	}
+
 	// Resolve a method access `e.name` for a 0-argument call, returning the callee texpr.
 	static function methodCallee(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
 		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
+		forceOpenMethod(ctx, acc);
 		return switch (acc) {
 			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FCall);
 			case AKUsingField(se): FieldAccessTools.getFieldExpr(se.access, FCall);
@@ -160,6 +188,7 @@ class ForLoop {
 	// supplied by an abstract method (e.g. Map.iterator via its _Impl_) resolves like any other call.
 	static function call0(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
 		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
+		forceOpenMethod(ctx, acc);
 		return Calls.buildCall(ctx, acc, [], WithTypeTools.value, p);
 	}
 

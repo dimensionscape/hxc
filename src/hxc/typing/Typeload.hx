@@ -580,7 +580,10 @@ class Typeload {
 	}
 
 	static function genericKey(c:TClass, params:TParams):String {
-		return Context.pathKey(c.path) + "_" + genericSuffix(params);
+		// The module id separates the host and macro worlds: each types its own copy of the class,
+		// and a specialization from the other world has no prototypes in this one.
+		var world = c.module != null ? Std.string(c.module.id) : "";
+		return Context.pathKey(c.path) + "#" + world + "_" + genericSuffix(params);
 	}
 
 	static function genericSuffix(params:TParams):String {

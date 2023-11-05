@@ -2382,7 +2382,12 @@ class Typer {
 								switch (TypeFunctions.follow(wt)) {
 									case TInst(gc2, tl2):
 										switch (gc2.kind) {
-											case KGenericInstance(base, _) if (base == c): TypeFunctions.mk(TNew(gc2, tl2, r.el), TInst(gc2, tl2), p);
+											// The base compares by path: the macro context types its own copy of
+											// the class, so a specialization cached from the other world has a
+											// physically different base.
+											case KGenericInstance(base, _) if (base == c
+													|| (base.path.name == c.path.name && base.path.pack.join(".") == c.path.pack.join("."))):
+												TypeFunctions.mk(TNew(gc2, tl2, r.el), TInst(gc2, tl2), p);
 											case _: null;
 										}
 									case _: null;

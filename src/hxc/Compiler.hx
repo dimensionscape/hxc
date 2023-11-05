@@ -206,17 +206,6 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
-		// Eval still runs the program with recorded diagnostics while two known spurious records
-		// remain (Issue6430 inline-generic, Issue9366 multi-type with-type); once those clear, the
-		// discard goes away and --interp fails on errors like the reference. -D hxc-diagnostics
-		// opts into strict report-and-abort now.
-		if (platform == Eval && !ctx.defines.rawDefined("hxc_diagnostics")) {
-			var keep = [for (d in ctx.diagnostics) if (d.severity != hxc.core.Globals.MessageSeverity.Error) d];
-			ctx.diagnostics = keep;
-			if (keep.length > 0) hxc.compiler.Messages.display(ctx);
-			ctx.diagnostics = [];
-			return;
-		}
 		// Display validates -D message.reporting (adding an error for an invalid mode) even with no other
 		// messages, so an unknown reporting mode is reported on an otherwise clean compile.
 		hxc.compiler.Messages.display(ctx);
