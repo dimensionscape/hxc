@@ -748,8 +748,27 @@ class TypeResolve {
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
 				var args:Array<TSignatureArg> = [];
-				for (fa in fd.fArgs) {
+				for (i in 0...fd.fArgs.length) {
+					var fa = fd.fArgs[i];
 					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+					// A haxe.Rest argument must be last, non-optional and defaultless (checked at signature
+					// build, so
+					// externs check too).
+					// The syntactic name gates the follow: following every argument's lazy hint at resolve
+					// time recurses
+					// into resolution.
+					var restHint = switch (fa.type != null ? fa.type.ct : null) {
+						case CTPath(tp) if (tp.tname == "Rest" || tp.tsub == "Rest"): true;
+						case _: false;
+					};
+					if (restHint) switch (TypeFunctions.follow(at)) {
+						case TAbstract(ra, rp) if (rp.length == 1 && ra.path.pack.length == 1 && ra.path.pack[0] == "haxe" && ra.path.name == "Rest"):
+							// Recorded, not raised: resolveModule's recovery would swallow a raise.
+							if (fa.opt) ctx.addDiagnostic("Rest argument cannot be optional", fa.name.pos);
+							else if (fa.value != null) ctx.addDiagnostic("Rest argument cannot have default value", fa.value.pos);
+							else if (i != fd.fArgs.length - 1) ctx.addDiagnostic("Rest should only be used for the last function argument", fa.name.pos);
+						case _:
+					}
 					if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 					var sigOpt = fa.opt || fa.value != null;
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
