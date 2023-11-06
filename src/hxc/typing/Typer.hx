@@ -1499,10 +1499,18 @@ class Typer {
 		if (mt == null) return null;
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
-		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p));
+		// Each chain link's source span ends at its own segment (reconstructed from the right edge), so
+		// field errors narrow to the field name like the reference's per-EField positions do pfield).
+		var ends:Array<Int> = [];
+		var endAcc = p.max;
+		var ei = rest.length - 1;
+		while (ei >= 0) { ends[ei] = endAcc; endAcc -= rest[ei].length + 1; ei--; }
+		var basePos = rest.length == 0 ? p : new Position(p.file, p.min, endAcc);
+		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), basePos));
 		for (i in 0...rest.length) {
 			var isLast = i == rest.length - 1;
-			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], p, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+			var segP = new Position(p.file, p.min, ends[i]);
+			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
 		}
 		return acc;
 	}

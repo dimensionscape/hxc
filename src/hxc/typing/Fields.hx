@@ -126,9 +126,28 @@ class Fields {
 			checkFieldAccess(ctx, a.impl, f, true, p);
 	}
 
+	// A @:noClosure method (or any method of a @:noClosure class) cannot be read as a value.
+	static function checkNoClosureMeta(ctx:TyperContext, f:TClassField, fh:FieldHost, mode:AccessMode, p:Position):Void {
+		switch (mode) {
+			case MGet | MSet(_):
+				switch (f.kind) {
+					case Method(_):
+						var clMeta = switch (fh) {
+							case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): c.meta;
+							case _: [];
+						};
+						if (TypeFunctions.hasMeta(":noClosure", clMeta) || TypeFunctions.hasMeta(":noClosure", f.meta))
+							throw new TypingError("Method " + f.name + " cannot be used as a value", p);
+					case _:
+				}
+			case _:
+		}
+	}
+
 	public static function fieldAccess(ctx:TyperContext, mode:AccessMode, f:TClassField, fh:FieldHost, e:TExpr, pfield:Position):AccessKind {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
+		checkNoClosureMeta(ctx, f, fh, mode, pfield);
 		forceFieldType(ctx, f, fh);
 		// Visibility. An overloaded method call is checked after the actual overload is resolved, so
 		// skip it here; an instance access uses the actual (potential child) class from the receiver
@@ -280,7 +299,9 @@ class Fields {
 	}
 
 	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
-		var pfield = p;
+		// The field's own position is the trailing name-length slice of the access span.
+		var pfield = (e.pos.file == p.file && e.pos.min == p.min && e.pos.max == p.max)
+			? p : new Position(p.file, p.max - i.length, p.max);
 		return switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, tl):
 				try classFieldWithAccess(ctx, mode, e, c, tl, i, pfield) catch (_:NotFound) {
