@@ -148,7 +148,30 @@ class ForLoop {
 	// The iterator contract unifies hasNext/next signatures with the loop's element type; an
 	// unannotated method whose return is still an open mono must type its body first so the contract
 	// does not bind the declaration mono to the loop's type and break the later body typing (the same
-	// ordering fix as super-constructor forcing).
+	// ordering as super-constructor forcing). Force the not-yet-typed iterator-protocol methods of a
+	// class before STRUCTURALLY unifying it against Iterator/KeyValueIterator: the class-to-anon
+	// unification reads raw field types and would bind an open inferred return (e.g. an inline next())
+	// to the contract's type, breaking the later body typing at its declaration.
+	public static function forceOpenIteratorFields(ctx:TyperContext, t:T):Void {
+		switch (TypeFunctions.follow(t)) {
+			case TInst(c, _):
+				for (name in ["hasNext", "next", "iterator", "keyValueIterator"]) {
+					var cf = c.fields.get(name);
+					if (cf == null || !cf.kind.match(Method(_)) || cf.expr != null) continue;
+					switch (TypeFunctions.follow(cf.type)) {
+						case TFun(sig):
+							switch (TypeFunctions.follow(sig.ret)) {
+								case TMono(r) if (r.type == null):
+									try TypeFields.forceFieldBody(ctx.com, c, cf) catch (_:Dynamic) {}
+								case _:
+							}
+						case _:
+					}
+				}
+			case _:
+		}
+	}
+
 	static function forceOpenMethod(ctx:TyperContext, acc:AccessKind):Void {
 		var fa = switch (acc) {
 			case AKField(fa): fa;
@@ -502,6 +525,7 @@ class ForLoopFaithful {
 	static function checkIterator(ctx:TyperContext, s:String, e:TExpr, p:Position, ?lastResort:Void->TExpr):{e:TExpr, pt:T} {
 		var it = tIterator(ctx);
 		var dynamicIterator:Null<TExpr> = null;
+		ForLoop.forceOpenIteratorFields(ctx, e.type);
 		var e1 = try {
 			var e2 = Typer.castOrUnify(ctx, it.t, e, p);
 			switch (TypeFunctions.followWithAbstracts(e2.type)) {
@@ -519,6 +543,7 @@ class ForLoopFaithful {
 			}
 			function tryAcc(acc:AccessKind):TExpr {
 				var accExpr = Calls.buildCall(ctx, acc, [], WithTypeTools.value, e.pos);
+				ForLoop.forceOpenIteratorFields(ctx, accExpr.type);
 				return try {
 					hxc.core.TypeUnification.unifyDefault(accExpr.type, it.t);
 					accExpr;
