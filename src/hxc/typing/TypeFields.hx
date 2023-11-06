@@ -321,8 +321,10 @@ class TypeFields {
 		tctx.curfun = isAbstractMember ? FunMemberAbstract : (isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember));
 		if (isAbstractMember) tctx.typeParams = abstractParams;
 		else if (isStatic && !isAbsImpl) tctx.typeParams = [];
-		// The method's own type parameters are in scope within its body.
-		if (cf.params.length > 0) tctx.typeParams = tctx.typeParams.concat(cf.params);
+		// The method's own type parameters are in scope within its body, PREPENDED so a method parameter
+		// shadowing a class parameter of the same name wins the first-match lookup (Vector.copy<T> on
+		// Vector<T>).
+		if (cf.params.length > 0) tctx.typeParams = cf.params.concat(tctx.typeParams);
 		function cleanup() {
 			tctx.curfield = oldField;
 			tctx.curfun = oldFun;
