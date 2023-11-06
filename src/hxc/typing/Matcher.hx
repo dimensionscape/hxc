@@ -1376,10 +1376,15 @@ class Match {
 		return c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), ctx.com.basic.tvoid, c.pos);
 	}
 
-	static function inferSwitchType(ctx:TyperContext, withType:WithType, cases:Array<MatchCase>):T {
+	static function inferSwitchType(ctx:TyperContext, withType:WithType, cases:Array<MatchCase>, allowMinVoid:Bool):T {
 		return switch (withType) {
 			case NoValue: ctx.com.basic.tvoid;
-			case Value(_): cases.length == 0 ? ctx.com.basic.tvoid : Typer.unifyMin(ctx, [for (mc in cases) bodyExpr(ctx, mc.c)]);
+			case Value(_):
+				if (cases.length == 0) ctx.com.basic.tvoid
+				// In an implicit-return context a Void branch collapses the whole switch to Void so a
+				// sibling value branch is discarded rather than fought over.
+				else if (allowMinVoid) Typer.unifyMinForTypeSource(ctx, [for (mc in cases) bodyExpr(ctx, mc.c)], ImplicitReturn);
+				else Typer.unifyMin(ctx, [for (mc in cases) bodyExpr(ctx, mc.c)]);
 			case WithType(t, _): t;
 		};
 	}
@@ -1452,7 +1457,7 @@ class Match {
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
 			}
 		}
-		var tSwitch = inferSwitchType(ctx, withType, matchCases);
+		var tSwitch = inferSwitchType(ctx, withType, matchCases, allowMinVoid);
 		if (tmono != null) {
 			var skip = allowMinVoid && switch (TypeFunctions.follow(tmono)) {
 				case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
