@@ -511,14 +511,18 @@ class Filters {
 		}
 	}
 
-	// The XML payload needs the genxml port; error loudly rather than emit a wrong string.
+	// Attach the __rtti static carrying the genxml type string.
 	public static function addRtti(com:Context, t:ModuleType):Void {
 		function hasRtti(c:TClass):Bool {
 			return TypeFunctions.hasMeta(":rtti", c.meta) || (c.superClass != null && hasRtti(c.superClass.c));
 		}
 		switch (t) {
 			case TClassDecl(c) if (hasRtti(c) && !c.statics.exists("__rtti")):
-				throw new TypingError("@:rtti is not supported yet (genxml is not ported)", c.pos);
+				var f = TypeFunctions.mkField("__rtti", com.basic.tstring, c.pos, Position.nullPos, false, true);
+				var str = hxc.codegen.GenXml.genTypeString(com, t);
+				f.expr = TypeFunctions.mk(TConst(TString(str)), f.type, c.pos);
+				c.orderedStatics.unshift(f);
+				c.statics.set(f.name, f);
 			case _:
 		}
 	}
