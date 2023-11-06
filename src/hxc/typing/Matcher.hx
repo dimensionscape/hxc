@@ -1328,6 +1328,11 @@ class TexprConverter {
 					case ConArray(_): arrayLengthExpr(ctx, subject);
 					case _: subject;
 				};
+				// A finite, complete switch whose default was dropped marks its subject @:exhaustive so the
+				// init checker credits assignments made in every branch. (Meta.Exhaustive on the subject
+				// when finiteness is finite and default is None).
+				if (defE == null)
+					swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
 				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
 				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
