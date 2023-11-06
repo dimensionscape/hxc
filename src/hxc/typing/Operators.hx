@@ -761,9 +761,12 @@ class Operators {
 		function compound(te1:TExpr):TExpr {
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
-			// native op stays as a compound TBinop the evaluator applies in place.
+			// native op stays as a compound TBinop the evaluator applies in place. The target is only
+			// checked writable when the result actually reassigns: a dedicated @:op(A += B) overload is its
+			// own assignment and is legal on a final.
 			return switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
 				case BinopSpecial(_, true):
+					checkAssign(ctx, te1);
 					// A plain @:op(A + B) reused for `+=` reassigns `a = a.op(b)`, which names the target twice;
 					// bind its side-effecting parts to temps and re-dispatch so it is evaluated once.
 					var st = stabilizeLvalue(te1);
@@ -777,6 +780,7 @@ class Operators {
 					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
 					opCall;
 				case _:
+					checkAssign(ctx, te1);
 					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
 			};
 		}
