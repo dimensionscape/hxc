@@ -118,6 +118,9 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		ModuleLoader.initBasicTypes(ctx);
+		// -D no-deprecation-warnings disables WDeprecated globally.
+		if (ctx.defines.rawDefined("no_deprecation_warnings"))
+			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
 		hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 
 		if (mainClass == null) {
@@ -142,6 +145,7 @@ class Compiler {
 			abortOnDiagnostics(ctx, platform);
 			hxc.typing.ExceptionFilters.run(ctx);
 			hxc.typing.UnusedPure.run(ctx);
+			hxc.filters.DeprecationCheck.run(ctx);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
