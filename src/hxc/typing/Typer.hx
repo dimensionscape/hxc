@@ -1348,18 +1348,23 @@ class Typer {
 		if (m == null) return null;
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports == null) return null;
-		function tryType(mt:ModuleType, lookupName:String):Null<AccessKind> {
+		// A wildcard `import Class.*` skips @:noImportGlobal fields and constructors; an explicit field
+		// import is not filtered.
+		function tryType(mt:ModuleType, lookupName:String, wildcard:Bool = false):Null<AccessKind> {
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 			switch (mt) {
 				case TClassDecl(c):
 					hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
 					var cf = c.statics.get(lookupName);
+					if (cf != null && wildcard && TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) cf = null;
 					if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
 				case TAbstractDecl(a) if (a.impl != null):
 					var cf = a.impl.statics.get(lookupName);
+					if (cf != null && wildcard && TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) cf = null;
 					if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
 						return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 				case TEnumDecl(en) if (en.constrs.exists(lookupName)):
+					if (wildcard && TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(lookupName).meta)) return null;
 					return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), lookupName, p);
 				case _:
 			}
@@ -1382,7 +1387,7 @@ class Typer {
 		}
 		for (w in imports.wildcards) {
 			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt, i); if (r != null) return r; }
+			if (mt != null) { var r = tryType(mt, i, true); if (r != null) return r; }
 		}
 		return null;
 	}
