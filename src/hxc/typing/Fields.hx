@@ -126,6 +126,21 @@ class Fields {
 			checkFieldAccess(ctx, a.impl, f, true, p);
 	}
 
+	// The @:require failure text: names the flag, with special phrasing for sys and flash
+	// versions, or a generic line when the flag is unknown.
+	static function errorRequire(r:String):String {
+		if (r == "") return "This field is not available with the current compilation flags";
+		var what = if (r == "sys") {
+			"a system platform (php,neko,cpp,etc.)";
+		} else if (StringTools.startsWith(r, "flash") && r.length > 5) {
+			var v = StringTools.replace(r.substr(5), "_", ".");
+			"flash version " + v + " (use -swf-version " + v + ")";
+		} else {
+			"'" + r + "' to be enabled";
+		}
+		return "Accessing this field requires " + what;
+	}
+
 	// A @:noClosure method (or any method of a @:noClosure class) cannot be read as a value.
 	static function checkNoClosureMeta(ctx:TyperContext, f:TClassField, fh:FieldHost, mode:AccessMode, p:Position):Void {
 		switch (mode) {
@@ -238,7 +253,7 @@ class Fields {
 								AKAccessor(makeAccess(false));
 						}
 					case AccRequire(r, msg):
-						throw new TypingError(msg != null ? msg : ("Field " + f.name + " is not available"), pfield);
+						throw new TypingError(msg != null ? msg : errorRequire(r), pfield);
 				}
 		};
 	}

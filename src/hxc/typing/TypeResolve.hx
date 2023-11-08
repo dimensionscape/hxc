@@ -147,6 +147,33 @@ class TypeResolve {
 		TypeFields.addImplicitInterfaceFields(c);
 	}
 
+	// @:require(cond...) gates a field behind compiler flags: with no condition satisfied both accessors
+	// become AccRequire, whose use errors with the flag name (or the trailing string message).
+	static function checkRequire(ctx:Context, meta:Metadata):Null<{r:String, msg:Null<String>}> {
+		for (entry in meta) {
+			if (entry.name != ":require") continue;
+			for (idx in 0...entry.params.length) {
+				var e = entry.params[idx];
+				var sc = switch (e.expr) {
+					case EConst(CIdent(s)): s;
+					case EBinop(op = OpEq | OpNotEq | OpGt | OpGte | OpLt | OpLte, {expr: EConst(CIdent(s))}, {expr: EConst(cst = CInt(_, _) | CFloat(_, _) | CString(_, _))}):
+						s + Ast.sBinop(op) + Ast.sConstant(cst);
+					case _: "";
+				};
+				if (!hxc.parser.Preprocess.isTrueExpr(ctx.defines, e)) {
+					var rest = entry.params.slice(idx + 1);
+					var msg = rest.length > 0 ? switch (rest[rest.length - 1].expr) {
+						case EConst(CString(m, _)): m;
+						case _: null;
+					} : null;
+					return {r: sc, msg: msg};
+				}
+			}
+			// All conditions of this entry hold; a later @:require may still fail.
+		}
+		return null;
+	}
+
 	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro
 	// rewrites the field list but not the heritage, so it re-runs this without redoing extends.
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
@@ -180,6 +207,10 @@ class TypeResolve {
 				else
 					c.params;
 				resolveFieldType(ctx, params, target, cff);
+				// A field-level @:require wins; a class-level one covers statics and the constructor.
+				var req = checkRequire(ctx, cff.cffMeta);
+				if (req == null && (isStatic || cff.cffName.name == "new")) req = checkRequire(ctx, c.meta);
+				if (req != null) target.kind = Var({read: AccRequire(req.r, req.msg), write: AccRequire(req.r, req.msg)});
 				// A non-static override with no explicit `public`/`private` inherits the overridden field's
 				// visibility; registerFields defaulted it to private before superClass was resolved.
 				if (!isStatic && cff.cffName.name != "new") {

@@ -25,6 +25,12 @@ class Preprocess {
 		return p.process();
 	}
 
+	// Evaluate a conditional expression against the defines, as #if does. Used by @:require.
+	public static function isTrueExpr(defines:Define, e:Expr):Bool {
+		var p = new Preprocess([], defines);
+		return isTrue(p.eval(e));
+	}
+
 	inline function peekTok():Token return i < toks.length ? toks[i].tok : Eof;
 	inline function cur():TokenInfo return toks[i < toks.length ? i : toks.length - 1];
 	inline function adv():TokenInfo { var t = toks[i]; i++; return t; }
