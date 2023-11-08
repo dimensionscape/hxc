@@ -173,7 +173,7 @@ class Typeload {
 
 			case CTIntersection(tl):
 				var resolved = [for (th in tl) loadComplexType(ctx, typeParams, th)];
-				makeExtensionType(resolved, p);
+				makeExtensionType(ctx, resolved, p);
 
 			case CTExtend(paths, fields):
 				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p);
@@ -225,14 +225,24 @@ class Typeload {
 		}
 	}
 
-	static function makeExtensionType(tl:Array<T>, p:Position):T {
-		// Minimal subset equivalent of make_extension_type: merge the resolved anons.
+	static function makeExtensionType(ctx:Context, tl:Array<T>, p:Position):T {
+		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A
+		// forward-referenced typedef in the same module resolves on demand first.
 		var merged = new StringMap<TClassField>();
-		for (t in tl) switch (TypeFunctions.follow(t)) {
-			case TAnon(a2):
-				for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
-			case _:
-				throw new ContextError("Can only extend structures", p);
+		for (t in tl) {
+			var ft = TypeFunctions.follow(t);
+			if (!ft.match(TAnon(_))) switch (t) {
+				case TType(td, _):
+					hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
+					ft = TypeFunctions.follow(t);
+				case _:
+			}
+			switch (ft) {
+				case TAnon(a2):
+					for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
+				case _:
+					throw new ContextError("Can only extend structures", p);
+			}
 		}
 		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend(tl)), merged);
 	}

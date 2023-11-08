@@ -229,6 +229,7 @@ class ModuleLoader {
 						case HFinal: TypeFunctions.addClassFlag(c, CFinal);
 						case _:
 					}
+					if (TypeFunctions.hasMeta(":final", c.meta)) TypeFunctions.addClassFlag(c, CFinal);
 					// KGenericBuild retains syntax fields for getBuildFields; ordinary @:generic classes use
 					// KGeneric.
 					if (TypeFunctions.hasMeta(":genericBuild", c.meta)) {
@@ -472,6 +473,8 @@ class ModuleLoader {
 				case AOverload: overloadPos = a.pos;
 				case _:
 			}
+			if (TypeFunctions.hasMeta(":final", cff.cffMeta)) isFinalField = true;
+			if (TypeFunctions.hasMeta(":extern", cff.cffMeta)) isExtern = true;
 			var isAbstractImplMember = false;
 			if (!isStatic) switch (c.kind) {
 				case KAbstractImpl(_): isStatic = true; isAbstractImplMember = true;

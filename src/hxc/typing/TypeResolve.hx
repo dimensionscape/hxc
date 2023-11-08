@@ -25,6 +25,14 @@ class TypeResolve {
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
 			try {
 				resolveType(ctx, mt, entry.decl, entry.pos);
+			} catch (e:ContextError) {
+				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of
+				// the module still resolves but the compile fails.
+				ctx.addDiagnostic(e.message, e.pos);
+				ctx.currentModule = m;
+			} catch (e:hxc.core.TypingError) {
+				ctx.addDiagnostic(e.message, e.pos);
+				ctx.currentModule = m;
 			} catch (_:Dynamic) {
 				ctx.currentModule = m;
 			}
@@ -43,6 +51,21 @@ class TypeResolve {
 			resolveModule(ctx, ctx.modules[i]);
 			i++;
 		}
+	}
+
+	// On-demand resolution of one type (a forward-referenced typedef used in an intersection
+	// while its module is still mid-resolution). Guarded against re-entry.
+	static var onDemand:StringMap<Bool> = new StringMap();
+
+	public static function resolveTypeOnDemand(ctx:Context, mt:ModuleType):Void {
+		var info = TypeFunctions.tInfos(mt);
+		var key = Context.pathKey(info.path);
+		if (onDemand.exists(key)) return;
+		var entry = ctx.declOfType.get(key);
+		if (entry == null) return;
+		onDemand.set(key, true);
+		try resolveType(ctx, mt, entry.decl, entry.pos) catch (_:Dynamic) {}
+		onDemand.remove(key);
 	}
 
 	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
@@ -137,7 +160,7 @@ class TypeResolve {
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
 				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, false);
-				checkHerit(ctx, c, t, true, pt.pos);
+				checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
 				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, false);
 				checkHerit(ctx, c, t, false, pt.pos);
@@ -304,11 +327,18 @@ class TypeResolve {
 		if (!isAbsImpl) loop(c.fields);
 	}
 
-	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position):Void {
+	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position):Void {
 		if (isExtends) {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
 				case TInst(csup, params):
+					// A final class or interface cannot be extended; @:hack lifts the check for an extern
+					// super, and a
+					// type-parameter class is exempt.
+					if (TypeFunctions.hasClassFlag(csup, CFinal)
+							&& !((TypeFunctions.hasClassFlag(csup, CExtern) && TypeFunctions.hasMeta(":hack", c.meta))
+								|| c.kind.match(KTypeParameter(_))))
+						throw new ContextError("Cannot extend a final " + (TypeFunctions.hasClassFlag(c, CInterface) ? "interface" : "class"), declP != null ? declP : p);
 					if (TypeFunctions.hasClassFlag(c, CInterface)) {
 						if (!TypeFunctions.hasClassFlag(csup, CInterface))
 							throw new ContextError("Cannot extend by using a class", p);

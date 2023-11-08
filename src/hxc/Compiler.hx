@@ -30,6 +30,7 @@ class Compiler {
 	public static function main() run(Sys.args());
 
 	public static function run(args:Array<String>):Void {
+		hxc.core.BinaryStdio.set();
 		args = expandArgs(args);
 		var ctx = new Context();
 		ctx.args = args.copy();
