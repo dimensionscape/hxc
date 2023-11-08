@@ -698,6 +698,8 @@ class TypeResolve {
 
 	static function resolveTypedef(ctx:Context, td:TDef, d:Definition<EnumFlag, TypeHint>, p:Position):Void {
 		var tt = Typeload.loadComplexType(ctx, td.params, d.dData);
+		// @:eager follows the typedef immediately instead of leaving the alias to resolve lazily. .
+		if (TypeFunctions.hasMeta(":eager", td.meta)) tt = TypeFunctions.follow(tt);
 		switch (td.type) {
 			case TMono(r) if (r.type == null):
 				r.type = tt;

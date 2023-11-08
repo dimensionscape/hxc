@@ -2920,7 +2920,8 @@ class EvalStdLib {
 				for (i in 0...va.alength) parts.push(stringOf(va.avalues[i]));
 			case _:
 		}
-		return fileName + ":" + lineNumber + ": " + parts.join(",") + "\n";
+		// Trace appends the platform line end like println. .
+		return fileName + ":" + lineNumber + ": " + parts.join(",") + (Sys.systemName() == "Windows" ? "\r\n" : "\n");
 	}
 
 	static function writeStdoutString(s:String, newline:Bool):Void {
@@ -2936,7 +2937,9 @@ class EvalStdLib {
 			i++;
 		}
 		if (start < s.length) Sys.print(s.substr(start));
-		if (newline) Sys.println("");
+		// Eval's println appends the PLATFORM line end explicitly (stdout itself is binary), so
+		// interpreted output keeps \r\n on Windows.
+		if (newline) Sys.print(Sys.systemName() == "Windows" ? "\r\n" : "\n");
 	}
 
 	static function flushStdout():Void {
