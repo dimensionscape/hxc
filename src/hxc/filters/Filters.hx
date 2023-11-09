@@ -143,7 +143,11 @@ class Filters {
 						if (outsideVars.exists(v.id)) {
 							var msg = v.name == "this" ? "this might be used before assigning a value to it"
 								: "Local variable " + v.name + " might be used before being initialized";
-							ctx.com.warning(WVarInit, [], msg, e.pos);
+							// @:haxe.warning("-WVarInit") on the field or class silences this (the warning
+							// options come from
+							// the enclosing metas).
+							var opts = hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta));
+							ctx.com.warning(WVarInit, opts, msg, e.pos);
 						} else {
 							if (v.name == "this") throw new TypingError("Missing this = value", e.pos);
 							throw new TypingError("Local variable " + v.name + " used without being initialized", e.pos);
