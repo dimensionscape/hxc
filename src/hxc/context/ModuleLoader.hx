@@ -360,7 +360,52 @@ class ModuleLoader {
 		}
 
 		m.types = decls;
+		applyGlobalMetadata(ctx, m, decls);
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
+	}
+
+	static function applyGlobalMetadata(ctx:Context, m:ModuleDef, decls:Array<ModuleType>):Void {
+		if (ctx.globalMetadata.length == 0) return;
+		function isLower(s:String):Bool {
+			var c = s.charCodeAt(0);
+			return !(c >= "A".code && c <= "Z".code);
+		}
+		function matchPath(recursive:Bool, sl:Array<String>, pattern:Array<String>):Bool {
+			function loop(top:Bool, i1:Int, i2:Int):Bool {
+				var r1 = sl.length - i1, r2 = pattern.length - i2;
+				if (r1 == 0 && r2 == 0) return true;
+				// Package-path patterns also match types within that package.
+				if (r1 >= 2 && r2 == 1 && isLower(pattern[i2]) && !isLower(sl[i1 + 1]))
+					return sl[i1] == pattern[i2];
+				if (r1 == 1 && r2 == 0 && top) return true;
+				if (r2 == 0) return recursive;
+				if (r1 == 0) return false;
+				return sl[i1] == pattern[i2] && loop(false, i1 + 1, i2 + 1);
+			}
+			return loop(true, 0, 0);
+		}
+		function fullDotPath(tpath:Path):Array<String> {
+			return (m.path.pack.join(".") == tpath.pack.join(".") && m.path.name == tpath.name)
+				? tpath.pack.concat([tpath.name])
+				: m.path.pack.concat([m.path.name, tpath.name]);
+		}
+		for (mt in decls) {
+			var info = TypeFunctions.tInfos(mt);
+			var sl1 = fullDotPath(info.path);
+			for (g in ctx.globalMetadata)
+				if (g.toTypes && matchPath(g.recursive, sl1, g.filter)) info.meta.unshift(g.meta);
+			switch (mt) {
+				case TClassDecl(c):
+					function applyField(cf:TClassField):Void {
+						for (g in ctx.globalMetadata)
+							if (g.toFields && matchPath(g.recursive, sl1.concat([cf.name]), g.filter)) cf.meta.unshift(g.meta);
+					}
+					for (cf in c.orderedFields) applyField(cf);
+					for (cf in c.orderedStatics) applyField(cf);
+					if (c.constructor != null) applyField(c.constructor);
+				case _:
+			}
+		}
 	}
 
 	public static function rebuildFields(c:TClass, fields:Array<ClassField>):Void {

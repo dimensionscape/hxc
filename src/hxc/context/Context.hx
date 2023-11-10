@@ -21,6 +21,16 @@ class Context {
 	/** The compiler arguments after hxml expansion, for Compiler.getConfiguration(). */
 	public var args:Array<String> = [];
 
+	/**
+	 * Global metadata registrations: dot-path filter and recursive, type and field flags.
+	 */
+	public var globalMetadata:Array<{filter:Array<String>, meta:hxc.ast.Ast.MetadataEntry, recursive:Bool, toTypes:Bool, toFields:Bool}> = [];
+
+	/**
+	 * Registered null-safety callbacks receive errors instead of failing compilation.
+	 */
+	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];
+
 	public var classPath:Array<String>;
 
 	/**

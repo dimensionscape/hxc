@@ -122,7 +122,15 @@ class Compiler {
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
-		hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+		try {
+			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
+			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
+			Sys.exit(1);
+		} catch (e:hxc.core.TypingError) {
+			printPositionMessage(e.message, e.pos);
+			Sys.exit(1);
+		}
 
 		if (mainClass == null) {
 			Sys.println("hxc " + Globals.sVersion + " (" + Globals.platformName(platform) + ", no -main)");
@@ -147,6 +155,7 @@ class Compiler {
 			hxc.typing.ExceptionFilters.run(ctx);
 			hxc.typing.UnusedPure.run(ctx);
 			hxc.filters.DeprecationCheck.run(ctx);
+			hxc.filters.NullSafety.run(ctx, ctx.types);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();

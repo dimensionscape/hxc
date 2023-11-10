@@ -339,6 +339,23 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com));
+		reg2("addGlobalMetadataImpl", "add_global_metadata_impl", function(a) return addGlobalMetadataValue(com, a));
+		// The name of the method the macro was called from.
+		reg2("getLocalMethod", "get_local_method", function(a) {
+			return mkString(curTctx != null && curTctx.curfield != null ? curTctx.curfield.name : "null");
+		});
+		// Context.load(name, nargs): the raw macro-API lookup that std helpers (Compiler.nullSafety,
+		// addGlobalMetadata, ...) route through. Every underscore-named Context builtin is a candidate;
+		// names only the eval.vm surface serves fall through to callMacroApi.
+		regBuiltin(ec, "haxe.macro.Context", "load", function(a) {
+			var name = strOf(a[0]);
+			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
+			if (list != null) {
+				var h = EvalHash.hash(name);
+				for (b in list) if (b.name == h && name != "load") return b.v;
+			}
+			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
+		});
 		reg2("getMessages", "get_messages", function(a) return encodeArray(macroMessages.copy()));
 		reg2("filterMessages", "filter_messages", function(a) {
 			var pred = a[0];
@@ -663,19 +680,57 @@ class EvalMacro {
 		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
 	}
 
+	// An init-macro argument for a plain function call: literal constants, plus bare idents for
+	// enum-abstract values (whose runtime value is the constructor name).
+	static function initMacroConstArg(ec:EvalContext, e:Expr):EvalValue {
+		return switch (e.expr) {
+			case EConst(CString(v, _)): mkString(v);
+			case EConst(CInt(v, _)): VInt(Std.parseInt(v));
+			case EConst(CFloat(v, _)): VFloat(Std.parseFloat(v));
+			case EConst(CIdent("true")): VTrue;
+			case EConst(CIdent("false")): VFalse;
+			case EConst(CIdent("null")): VNull;
+			case EConst(CIdent(name)): mkString(name);
+			case EParenthesis(e1): initMacroConstArg(ec, e1);
+			case _: throw new TypingError("Argument should be a constant", e.pos);
+		}
+	}
+
 	public static function runInitMacros(com:Context, exprs:Array<String>):Void {
 		if (exprs.length == 0) return;
 		for (s in exprs) {
 			var e = hxc.parser.Parser.parseExprString(s, "<macro>", com.defines);
 			switch (e.expr) {
 				case ECall(callee, args):
+					// A bare method name defaults to haxe.macro.Compiler.
+					switch (callee.expr) {
+						case EConst(CIdent(meth)) if (meth.charCodeAt(0) >= "a".code && meth.charCodeAt(0) <= "z".code):
+							var haxeE = new Expr(EConst(CIdent("haxe")), callee.pos);
+							var macroE = new Expr(EField(haxeE, "macro", EFNormal), callee.pos);
+							var compilerE = new Expr(EField(macroE, "Compiler", EFNormal), callee.pos);
+							callee = new Expr(EField(compilerE, meth, EFNormal), callee.pos);
+						case _:
+					}
 					var t = macroTarget(callee);
 					if (t == null) throw new TypingError("--macro target must be a static call", e.pos);
 					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true);
 					var ec = getContext(com);
 					var savedPos = curPos;
 					curPos = e.pos;
-					resolveMacroFn(ec, callee, e.pos)([for (a in args) encodeExpr(ec, a)]);
+					// A macro method receives its arguments as expressions; a plain function (like
+					// Compiler.nullSafety) receives constants. .
+					var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module});
+						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
+					var vargs = isMacroFn
+						? [for (a in args) encodeExpr(ec, a)]
+						: [for (a in args) initMacroConstArg(ec, a)];
+					// Missing optional arguments pad to the arity; the typed prologue applies the declared
+					// defaults. .
+					if (cf != null) switch (TypeFunctions.follow(cf.type)) {
+						case TFun(sig): while (vargs.length < sig.args.length) vargs.push(VNull);
+						case _:
+					}
+					resolveMacroFn(ec, callee, e.pos)(vargs);
 					curPos = savedPos;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
@@ -696,6 +751,25 @@ class EvalMacro {
 
 	public static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
 		return encodeExpr(ec, valueToExpr(ec, v, Position.nullPos));
+	}
+
+	// Compiler.addGlobalMetadata: parse the meta string (an expression carrying leading metadata) and
+	// record the path-filtered entry.
+	public static function addGlobalMetadataValue(com:Context, a:Array<EvalValue>):EvalValue {
+		var filter = strOf(a[0]);
+		var metaSrc = strOf(a[1]);
+		var recursive = a[2] == VTrue;
+		var toTypes = a[3] == VTrue;
+		var toFields = a[4] == VTrue;
+		var e = hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines);
+		function collect(e:Expr):Void switch (e.expr) {
+			case EMeta(m, e1):
+				com.globalMetadata.unshift({filter: filter == "" ? [] : filter.split("."), meta: m, recursive: recursive, toTypes: toTypes, toFields: toFields});
+				collect(e1);
+			case _:
+		}
+		collect(e);
+		return VNull;
 	}
 
 	public static function getConfigurationValue(com:Context):EvalValue {
@@ -822,7 +896,12 @@ class EvalMacro {
 		return switch (cf.kind) { case Method(MethMacro): true; case _: false; };
 	}
 
+	// The host compilation context, for macro-world builtins that must mutate host state
+	// (defines, global metadata) while running inside the macro interpreter.
+	public static var hostCom:Null<Context>;
+
 	static function getContext(com:Context):EvalContext {
+		hostCom = com;
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) {
@@ -2138,7 +2217,7 @@ class EvalMacro {
 		return VString(new VString(ns, EvalStdLib.stringLength(ns)));
 	}
 
-	static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {
+	public static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {
 		var ed = encodeExprDef(ec, e.expr);
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("expr"), ed);

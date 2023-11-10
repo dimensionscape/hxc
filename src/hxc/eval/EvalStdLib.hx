@@ -4141,9 +4141,15 @@ class EvalStdLib {
 			sys.FileSystem.exists(file) ? VNull : EvalExceptions.excString(ctx, "Could not find file " + file);
 		}));
 		reg(s, "eval.vm.Context", "breakHere", vfn(a -> VNull));
-		reg(s, "eval.vm.Context", "callMacroApi", vfn(a -> {
-			var name = stringOf(arg(a, 0));
-			switch (name) {
+		reg(s, "eval.vm.Context", "callMacroApi", vfn(a -> callMacroApiValue(ctx, stringOf(arg(a, 0)))));
+		registerAfterMacroApi(ctx, s);
+	}
+
+	// The load(name) macro-API surface, shared by eval.vm.Context.callMacroApi and the direct
+	// haxe.macro.Context.load builtin registered for the macro world.
+	public static function callMacroApiValue(ctx:EvalContext, name:String):EvalValue {
+		{
+			return switch (name) {
 				case "define":
 					VFunction(function(args) {
 						var key = externalDefineKey(stringOf(arg(args, 0)));
@@ -4226,8 +4232,34 @@ class EvalStdLib {
 					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
 				case "make_expr":
 					VFunction(function(args) return EvalMacro.makeExprValue(ctx, arg(args, 0)), true);
+				case "add_global_metadata_impl":
+					VFunction(function(args) return EvalMacro.addGlobalMetadataValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...5) arg(args, i)]), true);
+				case "format_string":
+					// MacroStringTools.formatString: single-quote interpolation desugared to concatenation.
+					VFunction(function(args) {
+						var s = stringOf(arg(args, 0));
+						var p = switch (EvalValueTools.vresolve(arg(args, 1))) {
+							case VInstance(vi): switch (vi.ikind) { case IPos(pp): pp; case _: Position.nullPos; }
+							case _: Position.nullPos;
+						};
+						var host = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return EvalMacro.encodeExpr(ctx, hxc.typing.Typer.formatString(s, p, host != null ? host.defines : null));
+					}, true);
+				case "on_null_safety_report":
+					VFunction(function(args) {
+						var f = arg(args, 0);
+						var host = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						host.nullSafetyReportCallbacks.push(function(errors) {
+							var items:Array<EvalValue> = [for (e in errors) mkObject([
+								{name: "msg", value: mkStr(e.msg)},
+								{name: "pos", value: mkPos(ctx, e.pos)}
+							])];
+							callValueOn(VNull, f, [VArray(new VArray(items, items.length))]);
+						});
+						return VNull;
+					}, true);
 				case "get_configuration":
-					VFunction(function(args) return EvalMacro.getConfigurationValue(ctx.com), true);
+					VFunction(function(args) return EvalMacro.getConfigurationValue(ctx.com != null ? ctx.com : EvalMacro.hostCom), true);
 				case "make_position":
 					VFunction(function(args) return mkPos(ctx, new Position(stringOf(arg(args, 2)), toInt(arg(args, 0)), toInt(arg(args, 1)))), true);
 				case "get_pos_infos":
@@ -4241,7 +4273,10 @@ class EvalStdLib {
 				case _:
 					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
 			}
-		}));
+		}
+	}
+
+	static function registerAfterMacroApi(ctx:EvalContext, s:Map<Int, Array<BuiltinField>>):Void {
 		reg(s, "eval.vm.Context", "loadPlugin", vfn(a ->
 			EvalExceptions.excString(ctx, "error loading shared library: " + nativeStringOf(arg(a, 0)))));
 
