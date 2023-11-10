@@ -148,6 +148,14 @@ class FieldAccessTools {
 	}
 
 	public static function makeStaticExtensionAccess(c:TClass, cf:TClassField, eThis:TExpr, isInline:Bool, p:Position):StaticExtensionAccess {
+		// A super receiver flows into the extension as a plain call argument, which no target can
+		// emit (`super` may only appear in a direct super field access); it becomes a cast of
+		// `this`.
+		switch (eThis.expr) {
+			case TConst(TSuper):
+				eThis = TypeFunctions.mk(TCast(TypeFunctions.mk(TConst(TThis), eThis.type, eThis.pos), null), eThis.type, eThis.pos);
+			case _:
+		}
 		var eStatic = TexprTools.makeStaticThis(c, p);
 		return {thisExpr: eThis, access: create(eStatic, cf, FHStatic(c), isInline, p)};
 	}
