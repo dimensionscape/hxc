@@ -140,7 +140,7 @@ class TypeFields {
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
 			if (!hasFieldBody(cff)) continue;
-			if (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
@@ -228,7 +228,7 @@ class TypeFields {
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
 			if (!hasFieldBody(cff)) continue;
-			if (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			try {
@@ -259,7 +259,7 @@ class TypeFields {
 		if (cff == null) return;
 		if (!hasFieldBody(cff)) return;
 		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
-		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField) return;
+		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField && cf.name != "__init__") return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var isStatic = false;
