@@ -1266,7 +1266,13 @@ class Typer {
 			// as $__mk_pos__ (recognized by the interpreter) pass typing. A name that is a package root on
 			// the class path stays unresolved instead, so the enclosing field chain resolves it as a type
 			// path .
-			if (ctx.untypedMode && !isPackageRoot(ctx, i)) return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
+			if (ctx.untypedMode && !isPackageRoot(ctx, i)) {
+			// The magic __this__ is the raw receiver in untyped code: a plain TConst(TThis), deliberately
+			// not the captured `this local, so the js std can name the enclosing object inside a nested
+			// function.
+			if (i == "__this__") return AKExpr(TypeFunctions.mk(TConst(TThis), ctx.tthis, p));
+			return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
+		}
 			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
