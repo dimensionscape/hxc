@@ -710,6 +710,37 @@ class Filters {
 
 	// The ordered filter driver. Stage slots that have their own rows (Tre, InlineConstructors,
 	// Exceptions, analyzer, RenameVars, DCE) are marked below and join this order as they land.
+	// Env-gated phase-boundary memory probe for hunting allocation runaways (HXC_DBG_MEM=1). hxc's
+	// typer defers a @:multiType construction whose selector is still an open monomorph by emitting
+	// TNew of the abstract impl (Typer.typeNew, multiTypeHasOpenSelector). By filter time the
+	// monomorphs have settled, so pick the concrete implementation the reference would have chosen at
+	// the delayed resolution multitype via find_multitype_specialization).
+	static function resolveDeferredMultiType(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TNew(c, tl, el):
+				switch (c.kind) {
+					case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
+						var concrete = hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos);
+						switch (TypeFunctions.follow(concrete)) {
+							case TInst(cc, ctl): TypeFunctions.mk(TNew(cc, ctl, el), e.type, e.pos);
+							case _: e;
+						}
+					case _: e;
+				}
+			case _: e;
+		}
+	}
+
+	public static function memProbe(tag:String):Void {
+		if (Sys.getEnv("HXC_DBG_MEM") == null) return;
+		// Forced major collection first: separates LIVE heap from garbage-awaiting-collection.
+		cpp.vm.Gc.run(true);
+		var o = Sys.stderr();
+		o.writeString("[mem] " + tag + " used=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0)) + "MB reserved=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_RESERVED) / 1048576.0)) + "MB
+");
+		o.flush();
+	}
+
 	public static function run(tctx:TyperContext):Void {
 		var com = tctx.com;
 		var newTypes = com.types;
@@ -720,11 +751,14 @@ class Filters {
 				if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
 			case _:
 		}
+		memProbe("filters:start");
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			// Slot: ForRemap (the typer lowers for loops; GenJS handles residual TFor)
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
+			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
+		memProbe("pass1:done");
 		var exceptionsFilter = hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "local_statics", f: function(e) return localStatics(tctx, e)},
@@ -738,8 +772,10 @@ class Filters {
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
+		memProbe("pass1b:done");
 		// The analyzer runs between the pre-analyzer type filters and RenameVars
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
+		memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
@@ -751,8 +787,10 @@ class Filters {
 			}},
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
+		memProbe("pass2:done");
 		// Slot: onGenerate callbacks + save_class_state (server cache; single-shot hxc skips)
 		destruction(tctx, renameLocals);
+		memProbe("destruction:done");
 	}
 
 	// The type filters around DCE
@@ -781,7 +819,9 @@ class Filters {
 		};
 		hxc.optimization.Dce.stdPath = com.stdPath;
 		if (com.defines.rawDefined("dce_debug")) com.print = function(s) Sys.stderr().writeString(s);
+		memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
+		memProbe("dce:done");
 		// PASS 3: type filters post-DCE
 		// slot: Exceptions.insert_save_stacks, Exceptions.patch_constructors
 		for (t in com.types) {
