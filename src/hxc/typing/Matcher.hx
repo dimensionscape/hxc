@@ -1299,7 +1299,8 @@ class TexprConverter {
 				// The default converts and reports first so a missing constructor at this switch is the
 				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that
 				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
-				var defE = (topLevel && complete && runtimeFinite) ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
+				var droppedCompleteDefault = topLevel && complete && runtimeFinite;
+				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
 				if (defE == null && !complete && !withType.match(NoValue)) reportUnmatched();
 				// Group: cases that share a decision emit one case with several values, sorted by constructor
 				// order
@@ -1328,10 +1329,11 @@ class TexprConverter {
 					case ConArray(_): arrayLengthExpr(ctx, subject);
 					case _: subject;
 				};
-				// A finite, complete switch whose default was dropped marks its subject @:exhaustive so the
-				// init checker credits assignments made in every branch. (Meta.Exhaustive on the subject
-				// when finiteness is finite and default is None).
-				if (defE == null)
+				// A FINITE COMPLETE switch whose default was dropped marks its subject @:exhaustive so the init
+				// checker credits assignments made in every branch . A merely default-less switch (a String
+				// subject falling through) must not be marked: downstream analysis would treat it as
+				// always-terminating and drop the fall-through code.
+				if (droppedCompleteDefault && defE == null)
 					swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
 				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 			case Guard(e, dt1, dt2):
