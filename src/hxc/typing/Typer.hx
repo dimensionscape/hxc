@@ -760,7 +760,14 @@ class Typer {
 					if (fa.value != null) args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
 					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
 				}
-				var tf = typeFunction(ctx, args, ret, ctx.curfun, f.fExpr, p);
+				// A local function of a member types as FunMemberClassLocal (abstract members as
+				// FunMemberAbstractLocal) so `this` inside it resolves to the captured `this local.
+				var localMode:CurrentFun = switch (ctx.curfun) {
+					case FunStatic: FunStatic;
+					case FunMemberAbstract | FunMemberAbstractLocal: FunMemberAbstractLocal;
+					case _: FunMemberClassLocal;
+				};
+				var tf = typeFunction(ctx, args, ret, localMode, f.fExpr, p);
 				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
 				namedVar != null ? TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p) : fnExpr;
@@ -1144,7 +1151,7 @@ class Typer {
 			case "null": return AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
 			case "true": return AKExpr(TexprTools.makeBool(ctx.com.basic, true, p));
 			case "false": return AKExpr(TexprTools.makeBool(ctx.com.basic, false, p));
-			case "this": return AKExpr(TypeFunctions.mk(TConst(TThis), ctx.tthis, p));
+			case "this": return AKExpr(getThis(ctx, p));
 			case _:
 		}
 		if (ctx.curclass != TypeFunctions.nullClass) {
@@ -1154,7 +1161,7 @@ class Typer {
 			if (!ctx.curfun.match(FunStatic)) {
 				var found = try TypeFunctions.rawClassField(function(f) return TypeFunctions.fieldType(f), ctx.curclass, TypeFunctions.extractParamTypes(ctx.curclass.params), i) catch (_:hxc.core.NotFound) null;
 				if (found != null) {
-					var thisExpr = TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
+					var thisExpr = getThis(ctx, p);
 					var host:FieldHost = switch (found.c2) { case null: FHAnon; case cw: FHInstance(cw.c, cw.params); };
 					// Dispatch on the field kind so a property read/write goes through its accessor
 					// (get_/set_), not a raw field access.
@@ -2121,11 +2128,46 @@ class Typer {
 		}
 	}
 
+	// Inside a member's local function `this` becomes a generated `this local captured from the
+	// enclosing member (materialized by typeFunction below and renamed _gthis by RenameVars); a plain
+	// member/constructor uses TConst(TThis) directly.
+	public static function getThis(ctx:TyperContext, p:Position):TExpr {
+		return switch (ctx.curfun) {
+			case FunStatic:
+				throw new TypingError("Cannot access this from a static function", p);
+			case FunMemberClassLocal | FunMemberAbstractLocal:
+				var v = if (ctx.vthis == null) {
+					var v2 = if (ctx.curfun == FunMemberAbstractLocal) {
+						var lv = ctx.locals.get("this");
+						if (lv == null) throw new TypingError("Cannot reference this abstract here", p);
+						lv;
+					} else addLocal(ctx, VGenerated, "`this", ctx.tthis, p);
+					ctx.vthis = v2;
+					v2;
+				} else {
+					ctx.locals.set(ctx.vthis.name, ctx.vthis);
+					ctx.vthis;
+				}
+				TypeFunctions.mk(TLocal(v), ctx.tthis, p);
+			case FunMemberAbstract:
+				var v = ctx.locals.get("this");
+				if (v == null) throw new TypingError("Cannot reference this abstract here", p);
+				TypeFunctions.mk(TLocal(v), v.type, p);
+			case FunConstructor | FunMember:
+				TypeFunctions.mk(TConst(TThis), ctx.tthis, p);
+		}
+	}
+
 	public static function typeFunction(ctx:TyperContext, args:Array<TFuncArg>, ret:T, fmode:CurrentFun, bodyExpr:Null<Expr>, p:Position):TFunc {
 		var oldInFunction = ctx.inFunction;
 		var oldCurfun = ctx.curfun;
 		var oldRet = ctx.ret;
 		var oldLoop = ctx.inLoop;
+		// A fresh member/constructor/static gets its own captured-this slot; a local function shares the
+		// enclosing member's (each field is typed in its own context).
+		var isLocalFn = fmode.match(FunMemberClassLocal | FunMemberAbstractLocal);
+		var oldVthis = ctx.vthis;
+		if (!isLocalFn) ctx.vthis = null;
 		var restore = saveLocals(ctx);
 		ctx.inFunction = true;
 		ctx.curfun = fmode;
@@ -2134,6 +2176,7 @@ class Typer {
 		for (a in args) ctx.locals.set(a.v.name, a.v);
 		function reset() {
 			restore();
+			if (!isLocalFn) ctx.vthis = oldVthis;
 			ctx.inFunction = oldInFunction;
 			ctx.curfun = oldCurfun;
 			ctx.ret = oldRet;
@@ -2152,6 +2195,34 @@ class Typer {
 			case TMono(_) if (!hasReturn(te)):
 				try TypeUnification.unifyDefault(ctx.com.basic.tvoid, ret) catch (_:UnifyError) {}
 			case _:
+		}
+		// A member whose local functions captured `this` declares the `this local, inserted before its
+		// first use so a constructor's super() call stays first when possible.
+		if (!isLocalFn && ctx.vthis != null) {
+			var v = ctx.vthis;
+			var ev = TypeFunctions.mk(TVarExpr(v, TypeFunctions.mk(TConst(TThis), ctx.tthis, p)), ctx.com.basic.tvoid, p);
+			function usesV(e:TExpr):Bool {
+				var found = false;
+				function walk(e2:TExpr):Void {
+					if (found) return;
+					switch (e2.expr) { case TLocal(v2) if (v2 == v): found = true; case _: TexprTools.iter(walk, e2); }
+				}
+				walk(e);
+				return found;
+			}
+			te = switch (te.expr) {
+				case TBlock(el):
+					var out:Array<TExpr> = [];
+					var inserted = false;
+					for (x in el) {
+						if (!inserted && usesV(x)) { out.push(ev); inserted = true; }
+						out.push(x);
+					}
+					if (!inserted) out.unshift(ev);
+					TypeFunctions.mk(TBlock(out), te.type, te.pos);
+				case _:
+					TypeFunctions.mk(TBlock([ev, te]), te.type, te.pos);
+			}
 		}
 		reset();
 		return new TFunc(args, ret, te);
