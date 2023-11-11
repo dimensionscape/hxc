@@ -689,6 +689,7 @@ class GenJS {
 	}
 
 	// Each expression records a source mapping while generating
+	static var genCount = 0;
 	public function genExpr(e:TExpr):Void {
 		var clearMapping = addMapping(e);
 		genExprBody(e);
@@ -1691,8 +1692,15 @@ class GenJS {
 				if (p == "Std" && c.orderedStatics.length == 0) {
 					// Nothing
 				} else if (!TypeFunctions.hasClassFlag(c, CExtern)) {
-					if (!TypeFunctions.hasClassFlag(c, CInterface) || needToGenerateInterface(c))
+					if (!TypeFunctions.hasClassFlag(c, CInterface) || needToGenerateInterface(c)) {
+						// Collect periodically; the probe is diagnostics-only.
+						genCount++;
+						if (genCount % 200 == 0) {
+							cpp.vm.Gc.run(true);
+							hxc.filters.Filters.memProbe("gen:" + Std.string(genCount) + ":" + hxc.core.Globals.sTypePath(c.path));
+						}
 						generateClass(c);
+					}
 				} else if (TypeFunctions.hasMeta(":jsRequire", c.meta) && com.isDirectlyUsed(c.meta)) {
 					generateRequire(getGeneratedClassPath(c), c.meta);
 				} else if (!jsFlatten && TypeFunctions.hasMeta(":initPackage", c.meta)) {
@@ -1713,6 +1721,13 @@ class GenJS {
 			throw new TypingError("es6 output is not ported yet", Position.nullPos);
 		var ctx = allocCtx(com, esVersion);
 		hxc.codegen.Codegen.mapSourceHeader(com, function(s) ctx.print("// " + s + "\n"));
+		// Raw files spliced by haxe.macro.Compiler.includeFile: placement "top" prints before everything,
+		// "closure" just before the closure wrapper below.
+		var includeFiles = com.includeFiles.copy();
+		includeFiles.reverse();
+		for (inc in includeFiles) if (inc.position == "top")
+			ctx.print(sys.io.File.getContent(inc.file) + "
+;");
 		if (ctx.hasFeature("Class") || ctx.hasFeature("Type.getClassName")) ctx.addFeature("js.Boot.isClass");
 		if (ctx.hasFeature("Enum") || ctx.hasFeature("Type.getEnumName")) ctx.addFeature("js.Boot.isEnum");
 
@@ -1774,6 +1789,9 @@ class GenJS {
 		var varExports = {name: "$hx_exports", value: typeofJoin(definedGlobal ? ["exports", definedGlobalValue] : ["exports", "window", "self", "this"])};
 		var varGlobal = {name: "$global", value: typeofJoin(definedGlobal ? [definedGlobalValue] : ["window", "global", "self", "this"])};
 
+		for (inc in includeFiles) if (inc.position == "closure")
+			ctx.print(sys.io.File.getContent(inc.file) + "
+;");
 		var closureArgs = [varGlobal];
 		if (anyExposed && !com.defines.rawDefined("shallow_expose"))
 			closureArgs.unshift(varExports);
@@ -1921,9 +1939,9 @@ class GenJS {
 		var initsRev = ctx.inits.copy();
 		initsRev.reverse();
 		for (e in initsRev) ctx.genBlockElement(e, true, ctx.esVersion >= 6);
-		var staticsRev = ctx.statics.copy();
-		staticsRev.reverse();
-		for (s in staticsRev) ctx.generateStatic(s.c, s.f, s.e);
+		// ctx.statics is APPENDED in declaration order, so it emits as-is: a static initializer may read an
+		// earlier one.
+		for (s in ctx.statics) ctx.generateStatic(s.c, s.f, s.e);
 		if (com.main != null) {
 			ctx.genExpr(com.main);
 			ctx.newline();
