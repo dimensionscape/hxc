@@ -80,6 +80,23 @@ class EvalMacro {
 			if (snake != camel) regBuiltin(ec, "haxe.macro.Context", snake, f);
 		}
 		reg2("defined", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
+		// Resolve against cwd then the class path; the generator splices the raw contents at the requested
+		// position.
+		reg2("includeFile", "include_file", function(a) {
+			var file = strOf(a[0]);
+			var position = strOf(a[1]);
+			var resolved = if (sys.FileSystem.exists(file)) file else {
+				var found = null;
+				for (cp in com.classPath) {
+					var cand = cp + file;
+					if (sys.FileSystem.exists(cand)) { found = cand; break; }
+				}
+				if (found == null) throw new TypingError("unable to find file for inclusion: " + file, curPos);
+				found;
+			};
+			com.includeFiles.push({file: resolved, position: position});
+			return VNull;
+		});
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
 		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
 		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
@@ -1947,7 +1964,14 @@ class EvalMacro {
 	}
 
 	static function decodeObjField(ec:EvalContext, v:EvalValue, dp:Position):ObjectField {
-		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: dp, quotes: NoQuotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		// Quotes is an optional QuoteStatus (Unquoted = 0, Quoted = 1); a quoted key must survive the
+		// macro round-trip or the generator emits its raw name (issue seen via the utest TestBuilder
+		// build macro re-encoding every test body).
+		var quotes:QuoteStatus = switch (EvalField.field(ec, v, EvalHash.hash("quotes"))) {
+			case VEnumValue(ev) if (ev.eindex == 1): DoubleQuotes;
+			case _: NoQuotes;
+		};
+		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: dp, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
 	}
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {

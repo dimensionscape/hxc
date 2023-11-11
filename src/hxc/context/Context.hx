@@ -32,6 +32,8 @@ class Context {
 	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];
 
 	public var classPath:Array<String>;
+	// Compiler.includeFile entries: resolved path and top, inline or closure placement.
+	public var includeFiles:Array<{file:String, position:String}> = [];
 
 	/**
 	 * Compile-time defines populated by command-line flags and platform setup.
