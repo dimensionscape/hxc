@@ -550,6 +550,9 @@ class Filters {
 					var ctor = TypeFunctions.mkField("new", ct, c.pos, Position.nullPos);
 					ctor.kind = Method(MethNormal);
 					ctor.expr = ce;
+					// A constructor synthesized purely to hold field initializers is compiler-generated,
+					// so a subclass with its own empty constructor gets an auto super() call.
+					ctor.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
 					ctor;
 				} else {
 					var cf = c.constructor;
@@ -845,6 +848,45 @@ class Filters {
 			checkVoidField(t);
 			commitFeaturesOf(com, t);
 			checkReservedTypePaths(tctx, t);
+		}
+		// After field inits have materialized the compiler-generated super constructors, insert an
+		// auto super() into any explicit constructor that omits it.
+		for (t in com.types) switch (t) {
+			case TClassDecl(c): insertMissingSuper(com, c);
+			case _:
+		}
+	}
+
+	// A class with an explicit constructor whose body never calls super, when the superclass has a
+	// compiler-generated (no required argument) constructor, gets an auto super() prepended so the
+	// inherited field initializers run was_forced branch).
+	static function bodyCallsSuper(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TCall({expr: TConst(TSuper)}, _): true;
+			case TFunction(_): false;
+			case _:
+				var found = false;
+				TexprTools.iter(function(x) if (!found && bodyCallsSuper(x)) found = true, e);
+				found;
+		}
+	}
+
+	static function insertMissingSuper(com:Context, c:TClass):Void {
+		if (c.constructor == null || c.superClass == null) return;
+		var sup = try TypeFunctions.getConstructorClass(c.superClass.c, [for (x in c.superClass.params) x]) catch (_:hxc.core.NotFound) return;
+		if (!TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)) return;
+		switch (TypeFunctions.follow(sup.cf.type)) {
+			case TFun(sig) if (Lambda.exists(sig.args, function(a) return !a.opt)): return;
+			case _:
+		}
+		var cf = c.constructor;
+		switch (cf.expr) {
+			case {expr: TFunction(f)} if (!bodyCallsSuper(f.expr)):
+				var tvoid = com.basic.tvoid;
+				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos), []), tvoid, c.pos);
+				var body = TypeFunctions.concat(superCall, f.expr);
+				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.pos);
+			case _:
 		}
 	}
 
