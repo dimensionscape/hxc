@@ -231,6 +231,9 @@ class GenXml {
 		s = StringTools.replace(s, "&", "&amp;");
 		s = StringTools.replace(s, "<", "&lt;");
 		s = StringTools.replace(s, ">", "&gt;");
+		// Escape double quotes in PCData as xml-light does, including string defaults in attribute
+		// values.
+		s = StringTools.replace(s, "\"", "&quot;");
 		return s;
 	}
 
