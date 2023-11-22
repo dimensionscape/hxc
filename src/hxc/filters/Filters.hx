@@ -736,12 +736,14 @@ class Filters {
 
 	public static function memProbe(tag:String):Void {
 		if (Sys.getEnv("HXC_DBG_MEM") == null) return;
+		#if cpp
 		// Forced major collection first: separates LIVE heap from garbage-awaiting-collection.
 		cpp.vm.Gc.run(true);
 		var o = Sys.stderr();
 		o.writeString("[mem] " + tag + " used=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0)) + "MB reserved=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_RESERVED) / 1048576.0)) + "MB
 ");
 		o.flush();
+		#end
 	}
 
 	public static function run(tctx:TyperContext):Void {

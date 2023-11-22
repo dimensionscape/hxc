@@ -1699,7 +1699,7 @@ class GenJS {
 						// Collect periodically; the probe is diagnostics-only.
 						genCount++;
 						if (genCount % 200 == 0) {
-							cpp.vm.Gc.run(true);
+							#if cpp cpp.vm.Gc.run(true); #end
 							hxc.filters.Filters.memProbe("gen:" + Std.string(genCount) + ":" + hxc.core.Globals.sTypePath(c.path));
 						}
 						generateClass(c);
