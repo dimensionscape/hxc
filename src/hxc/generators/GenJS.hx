@@ -216,8 +216,11 @@ class GenJS {
 	}
 
 	public static function flatPath(p:Path):String {
-		// Path.flat_path: pack joined with '_'; a leading '_' marks a private package part
-		return p.pack.length == 0 ? p.name : p.pack.join("_") + "_" + p.name;
+		// Flat path: every segment escapes '_' to '_$' to prevent name collisions, then package parts and
+		// the name join with '_'. So a private module part `_Foo` becomes `_$Foo`.
+		inline function escape(str:String):String return str.split("_").join("_$");
+		return p.pack.length == 0 ? escape(p.name)
+			: [for (seg in p.pack) escape(seg)].join("_") + "_" + escape(p.name);
 	}
 
 	public function sPath(p:Path):String {
