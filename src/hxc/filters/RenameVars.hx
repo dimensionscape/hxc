@@ -77,9 +77,27 @@ class RenameVars {
 	 */
 	function reserveAllTypes(types:Array<ModuleType>):Void {
 		for (mt in types) {
-			var path = TypeFunctions.tInfos(mt).path;
-			reserveInit(flatPath(path));
-			if (path.pack.length == 0) reserveInit(path.name);
+			var info = TypeFunctions.tInfos(mt);
+			reserveInit(flatPath(info.path));
+			if (info.path.pack.length == 0) reserveInit(info.path.name);
+			// @:native("X") renames the emitted global; applyNativePaths runs after this, so the type still
+			// carries its original path here. Reserve the native name too so a local cannot shadow it.
+			function reserveNative(meta:hxc.ast.Ast.Metadata):Void {
+				for (m in meta) if (m.name == ":native" && m.params.length == 1) switch (m.params[0].expr) {
+					case EConst(CString(nn, _)) if (nn != ""):
+						var parts = nn.split(".");
+						var np:Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+						reserveInit(flatPath(np));
+						if (np.pack.length == 0) reserveInit(np.name);
+					case _:
+				}
+			}
+			reserveNative(info.meta);
+			// A @:native static field emits a global too (an extern binding), so reserve it as well.
+			switch (mt) {
+				case TClassDecl(c): for (cf in c.orderedStatics) reserveNative(cf.meta);
+				case _:
+			}
 		}
 	}
 }
