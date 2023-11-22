@@ -2237,7 +2237,45 @@ class Typer {
 	// A class without its own constructor inherits the nearest superclass constructor, with the superclass
 	// type arguments substituted along the inheritance chain. Generate a constructor for a @:structInit
 	// class that lacks one, from its physical var fields (one argument per field, assigned to it),
-	// threading the superclass constructor for inheritance. / get_struct_init_super_info.
+	// threading the superclass constructor for inheritance. / get_struct_init_super_info. a non-extern
+	// class with no constructor of its own but a superclass constructor inherits a forwarding one
+	// (`function(args) super(args)`), so the generator emits the super call instead of an empty body.
+	// Default values collapse to null on a non-static target (js), matching the reference. Runs for every
+	// class before generation.
+	public static function ensureInheritedCtor(ctx:TyperContext, c:TClass):Void {
+		if (c.constructor != null) return;
+		if (TypeFunctions.hasClassFlag(c, CExtern) || c.superClass == null) return;
+		var found = try TypeFunctions.getConstructorClass(c, TypeFunctions.extractParamTypes(c.params)) catch (_:hxc.core.NotFound) null;
+		if (found == null) return;
+		var tvoid = ctx.com.basic.tvoid;
+		TypeFields.forceFieldBody(ctx.com, found.c, found.cf);
+		var st = TypeFunctions.applyParams(found.c.params, found.tl, found.cf.type);
+		switch (TypeFunctions.follow(st)) {
+			case TFun(sig):
+				var args:Array<TFuncArg> = [];
+				var sigArgs:Array<TSignatureArg> = [];
+				var superLocals:Array<TExpr> = [];
+				for (sa in sig.args) {
+					var v = TypeFunctions.allocVar(VUser(TVOArgument), sa.name, sa.t, c.pos);
+					// A non-static target drops the copied default to null (the super call still carries
+					// it); the arg stays optional.
+					args.push({v: v, c: sa.opt ? TypeFunctions.mk(TConst(TNull), sa.t, c.pos) : null});
+					sigArgs.push({name: sa.name, opt: sa.opt, t: sa.t});
+					superLocals.push(TypeFunctions.mk(TLocal(v), sa.t, c.pos));
+				}
+				var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
+				var body = TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos);
+				var ctorType = TFun({args: sigArgs, ret: tvoid});
+				var tf = new TFunc(args, tvoid, body);
+				var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
+				cfCtor.kind = Method(MethNormal);
+				cfCtor.params = found.cf.params;
+				cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
+				c.constructor = cfCtor;
+			case _:
+		}
+	}
+
 	static function ensureStructInitCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (!TypeFunctions.hasMeta(":structInit", c.meta)) return;

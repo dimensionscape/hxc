@@ -744,6 +744,14 @@ class Filters {
 	public static function run(tctx:TyperContext):Void {
 		var com = tctx.com;
 		var newTypes = com.types;
+		// A class without its own constructor inherits a forwarding one from its super, so the generator
+		// emits the super call rather than an empty body. Done before the filters so the synthesized body
+		// is
+		// processed too.
+		for (t in newTypes) switch (t) {
+			case TClassDecl(cls): hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
+			case _:
+		}
 		// Register the inheritance graph first; DCE walks descendants to keep overrides of used fields
 		for (t in newTypes) switch (t) {
 			case TClassDecl(cls):
