@@ -207,9 +207,10 @@ class RenameVarsRun {
 			name = baseName + count;
 		}
 		v.name = name;
-		// NoShadowing / VCaptured reservation es6 only; noShadowing is always false for hxc, so this
-		// never fires. Deferred.
-		if (noShadowing) reserve(reserved, v.name);
+		// NoShadowing / VCaptured reservation: a CAPTURED var under hoisting reserves its renamed name so a
+		// same-named sibling in the shared function scope renames away from it; otherwise closures over an
+		// unrolled/hoisted loop var all read the last one.
+		if (noShadowing || (TypeFunctions.hasVarFlag(v, VCaptured) && hoisting)) reserve(reserved, v.name);
 	}
 
 	// Reserve foreign names, then rename own vars, then recurse into children.
