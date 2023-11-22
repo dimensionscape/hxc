@@ -190,17 +190,38 @@ class Operators {
 			var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, e.pos);
 			return TypeFunctions.mk(TBlock([decl, iff]), tstring, e.pos);
 		}
+		// Wrap `e` in a Std.string(e) call: any non-primitive, non-abstract operand of a string
+		// concatenation is stringified through Std.string so it gets Haxe semantics (an Array prints as
+		// [a,b,c], not the native comma-join).
+		function stdString(e:TExpr):TExpr {
+			var std = try ctx.com.getType({pack: [], name: "Std"}, p, null) catch (_:Dynamic) null;
+			switch (std) {
+				case TClassDecl(c):
+					var cf = c.statics.get("string");
+					if (cf == null) return e;
+					hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+					var stdExpr = TexprTools.makeTypeExpr(TClassDecl(c), e.pos);
+					var acc = hxc.typing.Fields.fieldAccess(ctx, MCall([]), cf, FHStatic(c), stdExpr, e.pos);
+					var callee = Typer.accGet(ctx, acc);
+					return hxc.typing.Calls.makeCall(ctx, callee, [e], tstring, e.pos);
+				case _: return e;
+			}
+		}
 		function toString(e:TExpr):TExpr {
 			// An abstract operand in a string concatenation whose impl defines toString is converted by
 			// calling it (null-checked); other operands are stringified by the runtime.
 			return switch (classify(e.type)) {
 				case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
 					callToString(e);
+				case KInt | KFloat | KString: e;
+				case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther:
+					// A non-primitive operand (Array, an enum, an anon, ...) stringifies through
+					// Std.string, not the target's native coercion.
+					stdString(e);
 				case KAbstract(_, _):
 					// An abstract with no toString is converted to String by its @:to String cast when it
 					// has one; otherwise it stringifies as its underlying value.
 					try Typer.castOrUnify(ctx, tstring, e, p) catch (_:Dynamic) e;
-				case _: e;
 			};
 		}
 		function mkOp(a:TExpr, b:TExpr, t:T):BinopResult {
