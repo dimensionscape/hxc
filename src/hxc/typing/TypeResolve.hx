@@ -243,11 +243,18 @@ class TypeResolve {
 						case APublic | APrivate: explicitVis = true;
 						case _:
 					}
-					if (isOverride && !explicitVis) {
+					if (isOverride) {
 						var parent = getParentField(c, cff.cffName.name);
 						if (parent != null) {
-							if (TypeFunctions.hasClassFieldFlag(parent, CfPublic)) TypeFunctions.addClassFieldFlag(target, CfPublic);
-							else TypeFunctions.removeClassFieldFlag(target, CfPublic);
+							if (!explicitVis) {
+								if (TypeFunctions.hasClassFieldFlag(parent, CfPublic)) TypeFunctions.addClassFieldFlag(target, CfPublic);
+								else TypeFunctions.removeClassFieldFlag(target, CfPublic);
+							}
+							// An override without its own @:native inherits the overridden field's, so it
+							// is emitted under the
+							// same runtime name.
+							if (!TypeFunctions.hasMeta(":native", target.meta) && TypeFunctions.hasMeta(":native", parent.meta))
+								target.meta = [TypeFunctions.getMeta(":native", parent.meta)].concat(target.meta);
 						}
 					}
 				}
