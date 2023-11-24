@@ -60,16 +60,100 @@ class Inline {
 		// An abstract instance member (CfImpl) is an impl static whose first arg is the abstract `this`;
 		// a mutation of `this` must write back to an lvalue receiver.
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		// The type-substitution config. An abstract implementation static maps through the abstract's
+		// parameters taken from the receiver argument everything else through inline_default_config on
+		// the receiver type.
+		var cfg = if (absMember && c != null && c.kind.match(KAbstractImpl(_))) {
+			var t = cf.name == "_new" ? tret : (params.length == 0 ? null : TypeFunctions.follow(params[0].type));
+			switch (t) {
+				case TAbstract(a, pl):
+					var monos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
+					{
+						hasParams: a.params.length > 0 || cf.params.length > 0,
+						mapType: function(t2:T):T return TypeFunctions.applyParams(a.params, pl, TypeFunctions.applyParams(cf.params, monos, t2))
+					};
+				case _:
+					inlineDefaultConfig(cf, ethis == null ? TypeFunctions.tDynamic : ethis.type);
+			}
+		} else inlineDefaultConfig(cf, ethis == null ? TypeFunctions.tDynamic : ethis.type);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
+		var r = try doInline(ctx, cf, cfg, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
 		depth--;
 		return r;
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, p:Position):TExpr {
+	// The receiver class's parameters including the superclass chain, paired with the actual types
+	// they are applied to.
+	static function getChainParams(c:TClass, pl:TParams):{params:TypeParams, tl:TParams} {
+		if (c.superClass == null) return {params: c.params, tl: pl};
+		var spl = switch (TypeFunctions.applyParams(c.params, pl, TInst(c.superClass.c, c.superClass.params))) {
+			case TInst(_, pl2): pl2;
+			case _: throw new InlineBail();
+		};
+		var up = getChainParams(c.superClass.c, spl);
+		return {params: c.params.concat(up.params), tl: pl.concat(up.tl)};
+	}
+
+	static function configLoop(t:T):{params:TypeParams, tl:TParams} {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst({kind: KTypeParameter(constraints)}, _):
+				var ps:TypeParams = [];
+				var ts:TParams = [];
+				for (ct in constraints) {
+					var r = configLoop(ct);
+					ps = r.params.concat(ps);
+					ts = r.tl.concat(ts);
+				}
+				{params: ps, tl: ts};
+			case TInst(c, pl): getChainParams(c, pl);
+			case _: {params: [], tl: []};
+		};
+	}
+
+	// Substitute both the receiver class's and the callee's own type parameters; the callee's get
+	// fresh monomorphs which the argument unification later binds to the call site's concrete types.
+	static function inlineDefaultConfig(cf:TClassField, t:T):{hasParams:Bool, mapType:T->T} {
+		var tp = configLoop(t);
+		var pmonos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
+		var tmonos = tp.tl.concat(pmonos);
+		var tparams = tp.params.concat(cf.params);
+		return {
+			hasParams: tparams.length > 0,
+			mapType: function(t2:T):T return TypeFunctions.applyParams(tparams, tmonos, t2)
+		};
+	}
+
+	// / 620 map_expr_type: apply the bound substitution to every type in the inlined tree. The passed
+	// argument expressions keep their call-site types, so any subtree that is one of them is returned
+	// untouched . Only variables the inliner itself created map (the reference's i_outside guard); a
+	// caller variable reachable through a bound receiver expression keeps its type. Each variable maps
+	// once (all occurrences share the object).
+	static function mapExprType(mapType:T->T, args:Array<TExpr>, varWatermark:Int, mappedVars:Map<Int, Bool>, e:TExpr):TExpr {
+		for (a in args) if (a == e) return e;
+		function mapVar(v:TVar):Void {
+			if (v.id >= varWatermark && !mappedVars.exists(v.id)) {
+				mappedVars.set(v.id, true);
+				v.type = mapType(v.type);
+			}
+		}
+		switch (e.expr) {
+			case TVarExpr(v, _): mapVar(v);
+			case TFor(v, _, _): mapVar(v);
+			case TLocal(v): mapVar(v);
+			case TNew(_, tl, _): for (i in 0...tl.length) tl[i] = mapType(tl[i]);
+			case _:
+		}
+		var e2 = TexprTools.mapExpr(function(x) return mapExprType(mapType, args, varWatermark, mappedVars, x), e);
+		e2.type = mapType(e2.type);
+		return e2;
+	}
+
+	static function doInline(ctx:TyperContext, cf:TClassField, cfg:{hasParams:Bool, mapType:T->T}, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, p:Position):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
+		// Every variable allocated from here on belongs to this inline expansion
+		var varWatermark = TypeFunctions.allocVar(VGenerated, "_hx_mark", TypeFunctions.tDynamic, p).id;
 		var vthis:Null<TVar> = null;
 		if (!isStatic) {
 			if (ethis == null) throw new InlineBail();
@@ -124,15 +208,7 @@ class Inline {
 			} else if (!(absMember && i == 0) && substitutable) {
 				subst.set(av.id, param);
 			} else {
-				// The reference inliner re-types the body (map_expr_type), so a parameter typed as a bare
-				// type parameter binds to a temp of the concrete argument type. Approximate that here so a
-				// later field access resolves against the concrete class (e.g. DCE marks the argument
-				// type's method rather than leaving it on the type parameter).
-				var vt = switch (TypeFunctions.follow(av.type)) {
-					case TInst({kind: KTypeParameter(_)}, _): param.type;
-					case _: av.type;
-				};
-				var nv = TypeFunctions.allocVar(VGenerated, av.name, vt, p);
+				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
@@ -147,7 +223,26 @@ class Inline {
 			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
-		return TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		var result = TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		if (cfg.hasParams) {
+			// Bind the callee's fresh type-parameter monomorphs by unifying the mapped field type against
+			// the actual argument and return types; an abstract implementation member's first argument
+			// unifies against the mapped abstract this.
+			var mt = cfg.mapType(TypeFunctions.follow(cf.type));
+			var argTl:Array<TSignatureArg> = [for (prm in params) {name: "", opt: false, t: prm.type}];
+			if (absMember && cf.name != "_new" && argTl.length > 0) {
+				switch (TypeFunctions.follow(params[0].type)) {
+					case TAbstract(a, _): argTl[0] = {name: "", opt: false, t: cfg.mapType(a.thisType)};
+					case _:
+				}
+			}
+			var tb:T = TFun({args: argTl, ret: tret});
+			try hxc.core.TypeUnification.unifyDefault(mt, tb)
+			catch (_:hxc.core.TypeUnification.UnifyError) throw new InlineBail();
+			result = mapExprType(cfg.mapType, params, varWatermark, new Map<Int, Bool>(), result);
+			result.type = tret;
+		}
+		return result;
 	}
 
 	// The body-map pass flags a side effect on assignments, increments,
