@@ -1415,7 +1415,11 @@ class Match {
 			subjects = [for (se in tupleEls) Typer.typeExpr(ctx, se, WithTypeTools.value)];
 			subjectTypes = [for (s in subjects) s.type];
 		} else {
-			var subjectE = Typer.typeExpr(ctx, e, WithTypeTools.value);
+			// The subject syntax is unwrapped of parentheses before typing so a `switch (33)` types the
+			// bare constant, not a TParenthesis: the entry then keeps it as a subject without a temp and a
+			// constant switch folds pre-analyzer. .
+			function stripParens(ex:Expr):Expr return switch (ex.expr) { case EParenthesis(e1): stripParens(e1); case _: ex; };
+			var subjectE = Typer.typeExpr(ctx, stripParens(e), WithTypeTools.value);
 			subjects = [subjectE];
 			subjectTypes = [subjectE.type];
 		}
