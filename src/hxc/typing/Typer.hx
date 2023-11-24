@@ -2530,7 +2530,11 @@ class Typer {
 				}
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
 				switch (c.kind) {
-					case KGeneric if (!TypeFunctions.hasMono(TInst(c, tl))):
+					case KGeneric if (Typeload.canSpecializeGeneric(tl)):
+						// Only specialize when every parameter is concrete (no open monomorph and no type
+						// parameter): `new Stack<S>()` inside a generic method keeps S abstract and must
+						// build a normal instance, else it would specialize on the bare S and lose the
+						// field initializers. .
 						var gc = Typeload.specializeGenericClass(ctx.com, c, tl, p);
 						TypeFunctions.mk(TNew(gc, [], r.el), TInst(gc, []), p);
 					case KGeneric:

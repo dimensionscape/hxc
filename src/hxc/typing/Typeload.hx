@@ -585,7 +585,7 @@ class Typeload {
 		return false;
 	}
 
-	static function canSpecializeGeneric(params:TParams):Bool {
+	public static function canSpecializeGeneric(params:TParams):Bool {
 		return !hasOpenMono(params) && !hasTypeParameterParams(params);
 	}
 
