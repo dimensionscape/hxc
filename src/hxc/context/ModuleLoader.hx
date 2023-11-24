@@ -1033,6 +1033,9 @@ class ModuleLoader {
 	}
 
 	public static function buildEnumAbstract(basic:BasicTypes, a:TAbstract, aT:TypeHint, fields:Array<ClassField>):Void {
+		// The implementation class (extern for an extern abstract) decides whether value-less members
+		// keep a synthesized value.
+		var c = a.impl;
 		var modeInt = hxc.core.TypeUnification.doesUnify(a.thisType, basic.tint);
 		var modeString = !modeInt && hxc.core.TypeUnification.doesUnify(a.thisType, basic.tstring);
 		var intCounter = 0;                  
@@ -1078,7 +1081,12 @@ class ModuleLoader {
 
 					switch (eo) {
 						case null:
-							if (modeString) {
+							// On an extern implementation a value-less member keeps no synthesized value:
+							// it stays a real extern property so it compiles to a native field access (its
+							// value comes from the platform), rather than getting an inline ordinal/string.
+							if (TypeFunctions.hasClassFlag(c, CExtern)) {
+								field.cffKind = FProp({name: "default", pos: Position.nullPos}, {name: "never", pos: Position.nullPos}, effCt, null);
+							} else if (modeString) {
 								setField(field, effCt, new Expr(EConst(CString(field.cffName.name, SDoubleQuotes)), field.cffPos));
 							} else if (modeInt) {
 								setField(field, effCt, new Expr(EConst(CInt(Std.string(intCounter), null)), field.cffPos));

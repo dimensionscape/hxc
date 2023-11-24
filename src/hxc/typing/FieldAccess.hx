@@ -88,6 +88,14 @@ class FieldAccessTools {
 			case FHAbstract(a, tl, c):
 				faAcc = FStatic(c, cf);
 				t = TypeFunctions.applyParams(a.params, tl, t);
+				// A static access reached through the abstract's own type name emits the implementation
+				// class as the receiver, so codegen uses the implementation's (possibly @:native) name
+				// rather than the abstract's. A value receiver (an abstract instance) is left untouched.
+				switch (fa.on.expr) {
+					case TTypeExpr(_):
+						return TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), fa.pos), faAcc), t, fa.pos);
+					case _:
+				}
 			case FHAnon:
 				faAcc = switch (cf.kind) {
 					case Method(_) if (mode.match(FRead)): FClosure(null, cf);

@@ -401,6 +401,10 @@ class TypeResolve {
 				a.thisType = at;
 				isType = true;
 			case AbExtern:
+				// An extern abstract's implementation class is extern too, so a value-less enum-abstract
+				// member
+				// stays a real extern field rather than getting a synthesized ordinal value.
+				if (a.impl != null) TypeFunctions.addClassFlag(a.impl, CExtern);
 			case AbPrivate | AbEnum:
 		}
 
