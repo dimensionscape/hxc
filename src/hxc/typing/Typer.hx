@@ -2242,11 +2242,38 @@ class Typer {
 	// (`function(args) super(args)`), so the generator emits the super call instead of an empty body.
 	// Default values collapse to null on a non-static target (js), matching the reference. Runs for every
 	// class before generation.
+	static function hasInstanceFieldInit(c:TClass):Bool {
+		for (f in c.orderedFields) switch (f.kind) {
+			case Var(_) if (f.expr != null): return true;
+			case _:
+		}
+		return false;
+	}
+
 	public static function ensureInheritedCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
-		if (TypeFunctions.hasClassFlag(c, CExtern) || c.superClass == null) return;
-		var found = try TypeFunctions.getConstructorClass(c, TypeFunctions.extractParamTypes(c.params)) catch (_:hxc.core.NotFound) null;
-		if (found == null) return;
+		if (TypeFunctions.hasClassFlag(c, CExtern)) return;
+		// Process the super first so its (possibly synthesized) constructor exists before this class
+		// looks it up, matching the reference's dependency-ordered add_constructor pass.
+		if (c.superClass != null) ensureInheritedCtor(ctx, c.superClass.c);
+		var found = if (c.superClass == null) null
+			else try TypeFunctions.getConstructorClass(c, TypeFunctions.extractParamTypes(c.params)) catch (_:hxc.core.NotFound) null;
+		if (found == null) {
+			// No ancestor constructor to forward to: a class with an instance field initializer still needs
+			// an (empty, compiler-generated) constructor so add_field_inits can fill it and a subclass can
+			// forward. .
+			if (hasInstanceFieldInit(c)) {
+				var tvoid0 = ctx.com.basic.tvoid;
+				var ct0 = TFun({args: [], ret: tvoid0});
+				var tf0 = new TFunc([], tvoid0, TypeFunctions.mk(TBlock([]), tvoid0, c.pos));
+				var cf0 = TypeFunctions.mkField("new", ct0, c.pos, c.pos);
+				cf0.kind = Method(MethNormal);
+				cf0.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
+				cf0.expr = TypeFunctions.mk(TFunction(tf0), ct0, c.pos);
+				c.constructor = cf0;
+			}
+			return;
+		}
 		var tvoid = ctx.com.basic.tvoid;
 		TypeFields.forceFieldBody(ctx.com, found.c, found.cf);
 		var st = TypeFunctions.applyParams(found.c.params, found.tl, found.cf.type);
@@ -2270,6 +2297,10 @@ class Typer {
 				var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
 				cfCtor.kind = Method(MethNormal);
 				cfCtor.params = found.cf.params;
+				// An inherited forwarding constructor is compiler-generated, so a further subclass with an
+				// explicit constructor still gets an auto super() (insertMissingSuper checks this meta).
+				// copies CompilerGenerated from the parent.
+				cfCtor.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
 				cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
 				c.constructor = cfCtor;
 			case _:
