@@ -553,6 +553,17 @@ class Fields {
 	}
 
 	static function usingAccepts(cf:TClassField, recv:T, first:T):Bool {
+		// A Dynamic receiver only takes extensions whose first argument is exactly Dynamic: Dynamic
+		// unifies with anything, so a String-first extension would otherwise claim any dynamic field
+		// access.
+		switch (TypeFunctions.follow(recv)) {
+			case TDynamic(null):
+				switch (TypeFunctions.follow(first)) {
+					case TDynamic(null):
+					case _: return false;
+				}
+			case _:
+		}
 		if (!hxc.eval.EvalMacro.isMacroField(cf))
 			return usingDoesUnify(recv, first);
 		var exprOf = exprOfParam(first);
