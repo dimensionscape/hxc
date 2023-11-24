@@ -76,10 +76,53 @@ class Inline {
 					inlineDefaultConfig(cf, ethis == null ? TypeFunctions.tDynamic : ethis.type);
 			}
 		} else inlineDefaultConfig(cf, ethis == null ? TypeFunctions.tDynamic : ethis.type);
+		// Collapse the arguments matching a trailing haxe.Rest parameter into a single value before
+		// binding
+		params = inlineRestParams(ctx, tf, params, cfg.mapType, p);
+		if (tf.args.length != params.length) return null;
 		depth++;
 		var r = try doInline(ctx, cf, cfg, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
 		depth--;
 		return r;
+	}
+
+	// On a platform with native rest support each trailing argument arrives as its own value, but an
+	// inlined body's single rest variable must bind to one value. Collapse the arguments matching a
+	// trailing haxe.Rest parameter into a single haxe.Rest.of([...]) (a lone spread passes its source
+	// array through).
+	static function inlineRestParams(ctx:TyperContext, tf:TFunc, params:Array<TExpr>, mapType:T->T, p:Position):Array<TExpr> {
+		if (!ctx.com.platformConfig.supportsRestArgs) return params;
+		var args = tf.args;
+		if (args.length == 0) return params;
+		var last = args[args.length - 1].v;
+		var restT = TypeFunctions.follow(mapType(last.type));
+		switch (restT) {
+			case TAbstract(a, [elem]) if (a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest"):
+				if (params.length < args.length - 1) return params;
+				var out = params.slice(0, args.length - 1);
+				var remaining = params.slice(args.length - 1);
+				if (remaining.length == 1) switch (remaining[0].expr) {
+					case TUnop(Spread, Prefix, e): out.push(e); return out;
+					case _:
+				}
+				if (a.impl == null || !a.impl.statics.exists("of")) return params;
+				// An unknown element type (e.g. a field type parameter) recovers a common type from the
+				// arguments via unifyMin
+				var tParams = switch (TypeFunctions.follow(elem)) {
+					case TMono(_): remaining.length == 0 ? elem : Typer.unifyMin(ctx, remaining);
+					case _: elem;
+				};
+				var array = TypeFunctions.mk(TArrayDecl(remaining), ctx.com.basic.tarray(tParams), p);
+				var ofCf = a.impl.statics.get("of");
+				var ofType = ofCf.params.length == 1
+					? TypeFunctions.applyParams(ofCf.params, [tParams], TypeFunctions.follow(ofCf.type))
+					: TypeFunctions.follow(ofCf.type);
+				var fieldE = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(a.impl), p), FStatic(a.impl, ofCf)), ofType, p);
+				out.push(TypeFunctions.mk(TCall(fieldE, [array]), TAbstract(a, [tParams]), p));
+				return out;
+			case _:
+				return params;
+		}
 	}
 
 	// The receiver class's parameters including the superclass chain, paired with the actual types
