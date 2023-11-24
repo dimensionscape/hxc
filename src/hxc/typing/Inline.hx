@@ -183,11 +183,38 @@ class Inline {
 			case TVarExpr(v, _): mapVar(v);
 			case TFor(v, _, _): mapVar(v);
 			case TLocal(v): mapVar(v);
-			case TNew(_, tl, _): for (i in 0...tl.length) tl[i] = mapType(tl[i]);
 			case _:
 		}
 		var e2 = TexprTools.mapExpr(function(x) return mapExprType(mapType, args, varWatermark, mappedVars, x), e);
 		e2.type = mapType(e2.type);
+		switch (e2.expr) {
+			case TField(e1, fa):
+				// TField: the access re-resolves against the mapped receiver type, so a body access typed
+				// against the callee's type parameter points at the receiver's own (possibly base generic)
+				// field after substitution
+				var name = switch (fa) {
+					case FClosure(_, _): null;
+					case FAnon(f) | FInstance(_, _, f) | FStatic(_, f): f.name;
+					case FEnum(_, ef): ef.name;
+					case FDynamic(n): n;
+				};
+				if (name != null) {
+					try e2.expr = TField(e1, TypeFunctions.quickField(e1.type, name))
+					catch (_:hxc.core.NotFound) {}
+				}
+			case TNew(c, pl, el):
+				// TNew: the constructed class and parameters re-derive from the replaced type
+				var t = switch (c.kind) {
+					case KTypeParameter(_) | KGeneric: e2.type;
+					case _: mapType(TInst(c, pl));
+				};
+				switch (TypeFunctions.follow(t)) {
+					case TInst(c2, pl2): e2.expr = TNew(c2, pl2, el);
+					case TAbstract(a, pl2) if (a.impl != null): e2.expr = TNew(a.impl, pl2, el);
+					case _:
+				}
+			case _:
+		}
 		return e2;
 	}
 
