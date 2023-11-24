@@ -124,7 +124,15 @@ class Inline {
 			} else if (!(absMember && i == 0) && substitutable) {
 				subst.set(av.id, param);
 			} else {
-				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
+				// The reference inliner re-types the body (map_expr_type), so a parameter typed as a bare
+				// type parameter binds to a temp of the concrete argument type. Approximate that here so a
+				// later field access resolves against the concrete class (e.g. DCE marks the argument
+				// type's method rather than leaving it on the type parameter).
+				var vt = switch (TypeFunctions.follow(av.type)) {
+					case TInst({kind: KTypeParameter(_)}, _): param.type;
+					case _: av.type;
+				};
+				var nv = TypeFunctions.allocVar(VGenerated, av.name, vt, p);
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
