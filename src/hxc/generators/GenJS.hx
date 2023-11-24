@@ -246,15 +246,21 @@ class GenJS {
 		throw new TypingError("This expression cannot be compiled to Javascript", p);
 	}
 
+	// Spr / print. StringBuf has no random access, so the buffer's last character is tracked here
+	// rather than paying a full buf.toString() copy per newline/newprop/semicolon (quadratic on the
+	// whole output).
+	var lastChar:String = "";
 	public function spr(s:String):Void {
 		separator = false;
 		if (smap != null) smap.handleNewlines(s);
+		if (s.length > 0) lastChar = s.charAt(s.length - 1);
 		buf.add(s);
 	}
 
 	public function print(s:String):Void {
 		separator = false;
 		if (smap != null) smap.handleNewlines(s);
+		if (s.length > 0) lastChar = s.charAt(s.length - 1);
 		buf.add(s);
 	}
 
@@ -307,9 +313,7 @@ class GenJS {
 
 	// A separator-aware statement break
 	public function newline():Void {
-		var s = buf.toString();
-		var last = s.length > 0 ? s.charAt(s.length - 1) : "";
-		switch (last) {
+		switch (lastChar) {
 			case "}" | "{" | ":" | ";" if (!separator):
 				print("\n" + tabs);
 			case _:
@@ -318,18 +322,14 @@ class GenJS {
 	}
 
 	public function newprop():Void {
-		var s = buf.toString();
-		var last = s.length > 0 ? s.charAt(s.length - 1) : "";
-		switch (last) {
+		switch (lastChar) {
 			case "{": print("\n" + tabs);
 			case _: print("\n" + tabs + ",");
 		}
 	}
 
 	public function semicolon():Void {
-		var s = buf.toString();
-		var last = s.length > 0 ? s.charAt(s.length - 1) : "";
-		switch (last) {
+		switch (lastChar) {
 			case "}" if (!separator):
 			case _: spr(";");
 		}
@@ -1698,7 +1698,7 @@ class GenJS {
 					if (!TypeFunctions.hasClassFlag(c, CInterface) || needToGenerateInterface(c)) {
 						// Collect periodically; the probe is diagnostics-only.
 						genCount++;
-						if (genCount % 200 == 0) {
+							if (genCount % 200 == 0) {
 							#if cpp cpp.vm.Gc.run(true); #end
 							hxc.filters.Filters.memProbe("gen:" + Std.string(genCount) + ":" + hxc.core.Globals.sTypePath(c.path));
 						}
