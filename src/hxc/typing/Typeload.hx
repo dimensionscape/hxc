@@ -689,6 +689,20 @@ class Typeload {
 			case TLocal(v): TLocal(cloneVar(v, subst, vars));
 			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
 			case TBinop(op, e1, e2): TBinop(op, cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
+			case TField(e1, FInstance(fc, ftl, fcf)) if (gsubst != null && fc.kind.match(KGeneric)):
+				// A field access on the @:generic base is re-resolved against the specialized instance, so it
+				// points at the specialized class's own field (which DCE then marks; the base field is swept
+				// with the base). The base-not-expanded case keeps the default remap (avoids a recursion).
+				var ce1 = cloneExpr(e1, subst, vars, gsubst);
+				var stl = [for (t in ftl) subst(t)];
+				var cg2 = canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+				if (cg2 == null || cg2 == fc) {
+					TField(ce1, fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1));
+				} else {
+					var fa2 = try TypeFunctions.quickField(TInst(cg2, []), fcf.name)
+						catch (_:hxc.core.NotFound) fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1);
+					TField(ce1, fa2);
+				}
 			case TField(e1, fa):
 				var ce1 = cloneExpr(e1, subst, vars, gsubst);
 				TField(ce1, fieldAccessForReceiver(fa, ce1));
