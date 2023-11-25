@@ -1413,7 +1413,15 @@ class Match {
 			subjects = [for (se in tupleEls) Typer.typeExpr(ctx, se, WithTypeTools.value)];
 			subjectTypes = [for (s in subjects) s.type];
 		} else {
-			var subjectE = Typer.typeExpr(ctx, e, WithTypeTools.value);
+			// The subject's parentheses strip syntactically so a plain local subject stays a TLocal and
+			// needs no generated temp.
+			var unwrapped = e;
+			var stripping = true;
+			while (stripping) switch (unwrapped.expr) {
+				case EParenthesis(e1): unwrapped = e1;
+				case _: stripping = false;
+			}
+			var subjectE = Typer.typeExpr(ctx, unwrapped, WithTypeTools.value);
 			subjects = [subjectE];
 			subjectTypes = [subjectE.type];
 		}

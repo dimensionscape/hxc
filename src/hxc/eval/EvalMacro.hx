@@ -98,11 +98,21 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
-		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		// Error/fatal_error abort at the given position. "error"/"fatal_error" (vfun3 msg p depth ->
+		// raise (Error.Fatal_error (located msg p, depth))).
+		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
+		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
 		reg2("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
-		reg2("warning", "warning", function(a) { macroMessages.push(macroMessage(ec, "Warning", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
-		reg2("info", "info", function(a) { macroMessages.push(macroMessage(ec, "Info", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
+		// Warning/info report through the compiler's message list; get_messages/filter_messages read and
+		// filter that same list.
+		reg2("warning", "warning", function(a) {
+			com.addDiagnostic(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, hxc.core.Globals.MessageSeverity.Warning);
+			return VNull;
+		});
+		reg2("info", "info", function(a) {
+			com.addDiagnostic(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, hxc.core.Globals.MessageSeverity.Information);
+			return VNull;
+		});
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		reg2("getExpectedType", "get_expected_type", function(a) {
 			if (expectedTypeStack.length == 0) return VNull;
@@ -373,10 +383,16 @@ class EvalMacro {
 			}
 			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
-		reg2("getMessages", "get_messages", function(a) return encodeArray(macroMessages.copy()));
+		inline function encodeComMessage(d:hxc.context.Context.CompilerDiagnostic):EvalValue {
+			return macroMessage(ec, d.severity.match(Warning) ? "Warning" : "Info", mkString(d.message), encPos(d.pos));
+		}
+		reg2("getMessages", "get_messages", function(a) {
+			return encodeArray([for (d in com.diagnostics) if (!d.severity.match(Error)) encodeComMessage(d)]);
+		});
 		reg2("filterMessages", "filter_messages", function(a) {
 			var pred = a[0];
-			macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(ec, pred, [msg]))) msg];
+			com.diagnostics = [for (d in com.diagnostics)
+				if (d.severity.match(Error) || EvalMisc.isTrue(applyFn(ec, pred, [encodeComMessage(d)]))) d];
 			return VNull;
 		});
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
@@ -963,6 +979,10 @@ class EvalMacro {
 	}
 
 	static var macroCom:Context = null;
+
+	// The macro-world context, when one exists; the unification force-hook uses it to type a
+	// macro-world field body in its own context.
+	public static function getMacroCom():Null<Context> return macroCom;
 	static var staleMacroCtx:Null<EvalContext> = null;
 
 	// Copy every static var value from a retired macro context into its replacement so mutable
@@ -2301,7 +2321,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("doc"), VNull);
 		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
-		fields.set(EvalHash.hash("pos"), VNull);
+		fields.set(EvalHash.hash("pos"), encPos(f.cffPos));
 		fields.set(EvalHash.hash("meta"), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}

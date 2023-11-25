@@ -4182,22 +4182,33 @@ class EvalStdLib {
 						EvalMacro.reportError(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()));
 						return VNull;
 					}, true);
+				// Warning/info/get_messages/filter_messages share the compiler's message list.
 				case "warning":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						com.addDiagnostic(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()), 0, hxc.core.Globals.MessageSeverity.Warning);
 						return VNull;
 					}, true);
 				case "info":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Info", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						com.addDiagnostic(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()), 0, hxc.core.Globals.MessageSeverity.Information);
 						return VNull;
 					}, true);
 				case "get_messages":
-					VFunction(function(args) return VArray(new VArray(macroMessages.copy(), macroMessages.length)), true);
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var msgs = [for (d in com.diagnostics) if (!d.severity.match(Error)) macroMessage(ctx, d.severity.match(Warning) ? "Warning" : "Info", VString(new VString(d.message, d.message.length)), mkPos(ctx, d.pos))];
+						return VArray(new VArray(msgs, msgs.length));
+					}, true);
 				case "filter_messages":
 					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
 						var pred = arg(args, 0);
-						macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(pred, [msg]))) msg];
+						com.diagnostics = [for (d in com.diagnostics)
+							if (d.severity.match(Error) || EvalMisc.isTrue(applyFn(pred, [macroMessage(ctx, d.severity.match(Warning) ? "Warning" : "Info", VString(new VString(d.message, d.message.length)), mkPos(ctx, d.pos))]))) d];
 						return VNull;
 					}, true);
 				case "init_macros_done":
@@ -4249,12 +4260,21 @@ class EvalStdLib {
 					VFunction(function(args) {
 						var f = arg(args, 0);
 						var host = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						// The callback executes in its eval world (like generate callbacks do).
 						host.nullSafetyReportCallbacks.push(function(errors) {
 							var items:Array<EvalValue> = [for (e in errors) mkObject([
 								{name: "msg", value: mkStr(e.msg)},
 								{name: "pos", value: mkPos(ctx, e.pos)}
 							])];
-							callValueOn(VNull, f, [VArray(new VArray(items, items.length))]);
+							var saved = EvalContext.getCtx();
+							EvalContext.setCtx(ctx);
+							try {
+								callValueOn(VNull, f, [VArray(new VArray(items, items.length))]);
+								EvalContext.setCtx(saved);
+							} catch (e:Dynamic) {
+								EvalContext.setCtx(saved);
+								throw e;
+							}
 						});
 						return VNull;
 					}, true);

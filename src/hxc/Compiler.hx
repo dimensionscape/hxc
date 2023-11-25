@@ -36,9 +36,18 @@ class Compiler {
 		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
+		// Close a still-open inferred method return before structural unification reads it; the field
+		// types in whichever world (main or macro) owns its module.
+		hxc.core.TypeUnification.forceOpenMethodHook = function(c, cf) {
+			var com = ctx;
+			var mc = hxc.eval.EvalMacro.getMacroCom();
+			if (mc != null && c.module != null && mc.moduleLut.get(Context.pathKey(c.module.path)) == c.module) com = mc;
+			try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+		};
 
 		var userCp:Array<String> = [];
 		var mainClass:Null<String> = null;
+		var extraClasses:Array<String> = [];
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 
@@ -98,13 +107,16 @@ class Compiler {
 					var wpos = new Position("-w " + spec, 0, 0);
 					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
-					// A bare positional argument whose type name starts uppercase is a class to compile
-					// (haxe allows the startup class without -main).
-					if (mainClass == null && !StringTools.startsWith(a, "-")) {
+					// Every bare uppercase argument is a compilation root; the first doubles as the startup
+					// class when -main is absent.
+					if (!StringTools.startsWith(a, "-")) {
 						var nm = a.split(".").pop();
 						if (nm != null && nm.length > 0) {
 							var c0 = nm.charCodeAt(0);
-							if (c0 >= "A".code && c0 <= "Z".code) mainClass = a;
+							if (c0 >= "A".code && c0 <= "Z".code) {
+								if (mainClass == null) mainClass = a;
+								else extraClasses.push(a);
+							}
 						}
 					}
 			}
@@ -125,9 +137,11 @@ class Compiler {
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
+			flushPendingMessages(ctx);
 			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
 			Sys.exit(1);
 		} catch (e:hxc.core.TypingError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		}
@@ -142,6 +156,7 @@ class Compiler {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			tLoad();
 			var tType = hxc.core.Timer.timer(["typing"]);
 			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
@@ -152,10 +167,12 @@ class Compiler {
 			tFields();
 			tType();
 			abortOnDiagnostics(ctx, platform);
-			hxc.typing.ExceptionFilters.run(ctx);
-			hxc.typing.UnusedPure.run(ctx);
+			// Null safety runs before every expression filter and elimination so it sees the exprs as
+			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
+			hxc.typing.ExceptionFilters.run(ctx);
+			hxc.typing.UnusedPure.run(ctx);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
@@ -175,7 +192,7 @@ class Compiler {
 			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
-				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
+				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
 				var tInterp = hxc.core.Timer.timer(["interp"]);
 				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
 				hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
@@ -188,6 +205,7 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			// An uncaught exception escaping the interpreted program: render the thrown value and its
 			// position, as the canonical eval target does, rather than the bare wrapper message.
+			flushPendingMessages(ctx);
 			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
 			for (p in ex.callPositions) printPositionMessage("Called from here", p);
 			Sys.exit(1);
@@ -198,9 +216,11 @@ class Compiler {
 			printPositionMessage(hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 			Sys.exit(1);
 		} catch (e:hxc.context.Context.ContextError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:hxc.core.TypingError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:Dynamic) {
@@ -217,6 +237,13 @@ class Compiler {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	// A fatal error still reports the messages accumulated before it (warnings from macros, ...): the
+	// message list is flushed on abort.
+	static function flushPendingMessages(ctx:Context):Void {
+		hxc.compiler.Messages.display(ctx);
+		ctx.diagnostics = [];
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {

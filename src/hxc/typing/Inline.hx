@@ -16,8 +16,9 @@ private class InlineBail extends haxe.Exception {
 // Compile-time expansion of inline-function calls, a safe subset ported It handles expression-bodied inline
 // functions (single or final return, no early returns, no nested switch/try/closures, no type parameters):
 // arguments and `this` bind to fresh locals and the body is substituted in place. Anything else bails and
-// the caller emits a normal call. Types in the inlined body are left as-is (the evaluator runs the result
-// without re-typing, so values stay correct).
+// the caller emits a normal call. Class/method type parameters are substituted throughout the inlined tree
+// so declaration-side parameters do not leak into caller ASTs / inline_default_config, finalize's
+// map_expr_type).
 class Inline {
 	static var depth = 0;
 
@@ -60,13 +61,132 @@ class Inline {
 		// An abstract instance member (CfImpl) is an impl static whose first arg is the abstract `this`;
 		// a mutation of `this` must write back to an lvalue receiver.
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		var mapType = buildMapType(c, cf, ethis, params, tret);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, p) catch (_:InlineBail) null;
+		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
 		depth--;
 		return r;
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, p:Position):TExpr {
+	// The type substitution for an inline expansion; null when there is nothing to substitute.
+	static function buildMapType(c:Null<TClass>, cf:TClassField, ethis:Null<TExpr>, params:Array<TExpr>, tret:T):Null<T->T> {
+		if (c != null && c.kind.match(KAbstractImpl(_)) && TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
+			var t = cf.name == "_new" ? tret : (params.length > 0 ? params[0].type : null);
+			if (t == null) return null;
+			return switch (TypeFunctions.follow(t)) {
+				case TAbstract(a, pl) if (a.params.length > 0 || cf.params.length > 0):
+					var aParams = a.params, cfParams = cf.params;
+					var monos:TParams = [for (_ in cfParams) TypeFunctions.mkMono()];
+					function(tt:T):T return TypeFunctions.applyParams(aParams, pl, TypeFunctions.applyParams(cfParams, monos, tt));
+				case _: null;
+			}
+		}
+		var ps:TypeParams = [];
+		var ts:TParams = [];
+		function collect(c2:TClass, pl:TParams):Void {
+			ps = ps.concat(c2.params);
+			ts = ts.concat(pl);
+			if (c2.superClass != null) {
+				var spl = switch (TypeFunctions.applyParams(c2.params, pl, TInst(c2.superClass.c, c2.superClass.params))) {
+					case TInst(_, pl2): pl2;
+					case _: [];
+				};
+				collect(c2.superClass.c, spl);
+			}
+		}
+		if (ethis != null) switch (TypeFunctions.follow(ethis.type)) {
+			case TInst(c2, pl):
+				switch (c2.kind) {
+					case KTypeParameter(ctl):
+						for (ct in ctl) switch (TypeFunctions.follow(ct)) {
+							case TInst(c3, pl3): collect(c3, pl3);
+							case _:
+						}
+					case _: collect(c2, pl);
+				}
+			case _:
+		}
+		if (cf.params.length > 0) {
+			ps = ps.concat(cf.params);
+			ts = ts.concat(([for (_ in cf.params) TypeFunctions.mkMono()] : TParams));
+		}
+		if (ps.length == 0) return null;
+		var psf = ps, tsf = ts;
+		return function(tt:T):T return TypeFunctions.applyParams(psf, tsf, tt);
+	}
+
+	// Substitute the callee's type parameters throughout an inlined tree; original call-argument
+	// expressions keep their caller-side types.
+	static function mapInlinedTypes(mt:T->T, skip:Array<TExpr>, root:TExpr):TExpr {
+		var mappedVars:Map<Int, Bool> = new Map();
+		function fv(v:TVar):TVar {
+			if (!mappedVars.exists(v.id)) {
+				mappedVars.set(v.id, true);
+				v.type = mt(v.type);
+			}
+			return v;
+		}
+		function f(e:TExpr):TExpr {
+			for (s in skip) if (s == e) return e;
+			var et = mt(e.type);
+			var ne:TExprExpr = switch (e.expr) {
+				case TConst(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_): e.expr;
+				case TLocal(v): TLocal(fv(v));
+				case TArray(e1, e2): TArray(f(e1), f(e2));
+				case TBinop(op, e1, e2): TBinop(op, f(e1), f(e2));
+				case TFor(v, e1, e2): TFor(fv(v), f(e1), f(e2));
+				case TWhile(e1, e2, flag): TWhile(f(e1), f(e2), flag);
+				case TThrow(e1): TThrow(f(e1));
+				case TEnumParameter(e1, ef, i): TEnumParameter(f(e1), ef, i);
+				case TEnumIndex(e1): TEnumIndex(f(e1));
+				case TField(e1, fa):
+					var m1 = f(e1);
+					var nfa = switch (fa) {
+						case FClosure(_, _): fa;
+						case FAnon(cf2) | FInstance(_, _, cf2) | FStatic(_, cf2):
+							try TypeFunctions.quickField(m1.type, cf2.name) catch (_:hxc.core.NotFound) fa;
+						case FEnum(_, ef):
+							try TypeFunctions.quickField(m1.type, ef.name) catch (_:hxc.core.NotFound) fa;
+						case FDynamic(n):
+							try TypeFunctions.quickField(m1.type, n) catch (_:hxc.core.NotFound) fa;
+					};
+					TField(m1, nfa);
+				case TParenthesis(e1): TParenthesis(f(e1));
+				case TUnop(op, pre, e1): TUnop(op, pre, f(e1));
+				case TArrayDecl(el): TArrayDecl([for (x in el) f(x)]);
+				case TNew(nc, pl, el):
+					// Re-derive the constructed class/params against the substituted type.
+					var derived = switch (nc.kind) {
+						case KTypeParameter(_) | KGeneric: et;
+						case _: mt(TInst(nc, pl));
+					};
+					switch (TypeFunctions.follow(derived)) {
+						case TInst(c2, pl2): TNew(c2, pl2, [for (x in el) f(x)]);
+						case TAbstract(a2, pl2) if (a2.impl != null): TNew(a2.impl, pl2, [for (x in el) f(x)]);
+						case _: TNew(nc, [for (t0 in pl) mt(t0)], [for (x in el) f(x)]);
+					}
+				case TBlock(el): TBlock([for (x in el) f(x)]);
+				case TObjectDecl(fl): TObjectDecl([for (fd in fl) {key: fd.key, expr: f(fd.expr)}]);
+				case TCall(e1, el): TCall(f(e1), [for (x in el) f(x)]);
+				case TVarExpr(v, eo): TVarExpr(fv(v), eo == null ? null : f(eo));
+				case TFunction(fu):
+					for (a in fu.args) fv(a.v);
+					TFunction(new TFunc(fu.args, mt(fu.type), f(fu.expr)));
+				case TIf(ec, e1, e2): TIf(f(ec), f(e1), e2 == null ? null : f(e2));
+				case TCast(e1, mtRef): TCast(f(e1), mtRef);
+				case TMeta(entry, e1): TMeta(entry, f(e1));
+				case TReturn(eo): TReturn(eo == null ? null : f(eo));
+				case TSwitch(e1, cases, def):
+					TSwitch(f(e1), [for (cse in cases) {values: [for (v in cse.values) f(v)], expr: f(cse.expr)}], def == null ? null : f(def));
+				case TTry(e1, catches):
+					TTry(f(e1), [for (ct in catches) {v: fv(ct.v), expr: f(ct.expr)}]);
+			};
+			return TypeFunctions.mk(ne, et, e.pos);
+		}
+		return f(root);
+	}
+
+	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
@@ -139,7 +259,13 @@ class Inline {
 			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis);
-		return TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		var result = TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		if (mapType != null) {
+			var skipExprs = params.copy();
+			if (ethis != null) skipExprs.push(ethis);
+			result = mapInlinedTypes(mapType, skipExprs, result);
+		}
+		return result;
 	}
 
 	// The body-map pass flags a side effect on assignments, increments,

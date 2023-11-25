@@ -640,6 +640,10 @@ class Typer {
 					TexprTools.duplicateTvars(function(te) {
 						return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te.pos) : te;
 					}, ctx.com.storedTypedExprs.get(id));
+				case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
+					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
+					var te = typeExpr(ctx, e1, withType);
+					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):

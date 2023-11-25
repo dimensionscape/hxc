@@ -105,8 +105,9 @@ class SafetyScope {
 	public var safeLocals:Map<String, TExpr>;
 	public var neverSafe:Map<String, TExpr>;
 	var declarations:Map<Int, TVar> = new Map();
-	// Key -> parsed subject side table (keys are strings; the enum is needed for matching).
-	public var parsedSubjects:Map<String, SafetySubject> = new Map();
+	// Key -> parsed subject table, shared across scopes: scopes share safeLocals maps, so a nested scope
+	// must classify keys an outer scope recorded.
+	public static var parsedSubjects:Map<String, SafetySubject> = new Map();
 
 	public function new(mode:SafetyMode, scopeType:ScopeType, safeLocals:Map<String, TExpr>, neverSafe:Map<String, TExpr>) {
 		this.mode = mode;
