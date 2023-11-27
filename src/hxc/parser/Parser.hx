@@ -963,6 +963,10 @@ class Parser {
 				var save = idx;
 				var p1 = next().pos;
 				switch (peek()) {
+					case Kwd(KwdVar):
+						// Redundant `var` check
+						var p2 = next().pos;
+						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case Const(CIdent(_)), Dollar(_), At:
 						var vl = parseVarDecls(true);
 						var p2 = semicolon();
@@ -1865,6 +1869,10 @@ class Parser {
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
 				switch (peek()) {
+					case Kwd(KwdVar):
+						// Redundant `var` check
+						var p2 = next().pos;
+						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case Const(CIdent(_)), Dollar(_), Question:
 						var q = questionableDollarIdent();
 						name = q.name;

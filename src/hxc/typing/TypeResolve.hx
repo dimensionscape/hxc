@@ -327,11 +327,19 @@ class TypeResolve {
 		if (!isAbsImpl) loop(c.fields);
 	}
 
+	// Whether c's inheritance chain (itself, supers, implemented interfaces) reaches target.
+	static function extendsChain(c:TClass, target:TClass):Bool {
+		if (c == target) return true;
+		for (i in c.interfaces) if (extendsChain(i.c, target)) return true;
+		return c.superClass != null && extendsChain(c.superClass.c, target);
+	}
+
 	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position):Void {
 		if (isExtends) {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
 				case TInst(csup, params):
+					if (extendsChain(csup, c)) throw new ContextError("Recursive class", p);
 					// A final class or interface cannot be extended; @:hack lifts the check for an extern
 					// super, and a
 					// type-parameter class is exempt.
@@ -366,6 +374,8 @@ class TypeResolve {
 						throw new ContextError("Interfaces cannot implement another interface (use extends instead)", p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
+					// Reject cycles between implemented interfaces.
+					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					c.interfaces.push({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
 				case TDynamic(dt):
@@ -385,9 +395,11 @@ class TypeResolve {
 			return Typeload.loadComplexType(ctx, a.params, th);
 		}
 
+		var fromPos:Array<Position> = [];
+		var toPos:Array<Position> = [];
 		for (f in d.dFlags) switch (f) {
-			case AbFrom(th): a.from.push(loadType(th));
-			case AbTo(th): a.to.push(loadType(th));
+			case AbFrom(th): a.from.push(loadType(th)); fromPos.push(th.pos);
+			case AbTo(th): a.to.push(loadType(th)); toPos.push(th.pos);
 			case AbOver(th):
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
 				var at = Typeload.loadComplexType(ctx, a.params, th);
@@ -400,15 +412,16 @@ class TypeResolve {
 		// From/to declarations must unify with the underlying type (the unification also marks
 		// structure-matched class fields @:?used for DCE)
 		if (!isCore && isType) {
-			for (t in a.from) {
-				try hxc.core.TypeUnification.unifyDefault(t, a.thisType)
+			// Report the error at the from/to type hint.
+			for (i in 0...a.from.length) {
+				try hxc.core.TypeUnification.unifyDefault(a.from[i], a.thisType)
 				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+					throw new ContextError("You can only declare from/to with compatible types", i < fromPos.length ? fromPos[i] : a.pos);
 			}
-			for (t in a.to) {
-				try hxc.core.TypeUnification.unifyDefault(a.thisType, t)
+			for (i in 0...a.to.length) {
+				try hxc.core.TypeUnification.unifyDefault(a.thisType, a.to[i])
 				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+					throw new ContextError("You can only declare from/to with compatible types", i < toPos.length ? toPos[i] : a.pos);
 			}
 		}
 

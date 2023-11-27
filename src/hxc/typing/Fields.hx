@@ -246,11 +246,14 @@ class Fields {
 							if (!TypeFunctions.isPhysicalField(f))
 								throw new TypingError("This field cannot be accessed because it is not a real variable", pfield);
 							AKField(makeAccess(false));
-						} else switch (fh) {
-							case FHAbstract(a, tl, c):
-								AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
-							case _:
-								AKAccessor(makeAccess(false));
+						} else {
+							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
+							switch (fh) {
+								case FHAbstract(a, tl, c):
+									AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
+								case _:
+									AKAccessor(makeAccess(false));
+							}
 						}
 					case AccRequire(r, msg):
 						throw new TypingError(msg != null ? msg : errorRequire(r), pfield);

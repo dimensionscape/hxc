@@ -104,6 +104,21 @@ class Compiler {
 					ctx.defines.rawDefine("debug");
 				case "--dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
+				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
+					| "-java" | "--java" | "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
+					| "-hl" | "--hl" | "-cppia" | "--cppia":
+					// Targets without a generator here; the output-file value must still be consumed
+					// so it does not parse as a compilation root.
+					i++;
+				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
+					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
+					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
+					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--display":
+					// Options without an implementation here; the value must still be consumed.
+					i++;
+				case "--cwd" | "-C":
+					// Cwd (Sys.chdir before anything resolves).
+					Sys.setCwd(args[i++]);
 				case "--cmd" | "-cmd":
 					cmds.push(unquote(args[i++]));
 				case "--version" | "-version":
@@ -122,16 +137,14 @@ class Compiler {
 					var wpos = new Position("-w " + spec, 0, 0);
 					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
-					// Every bare uppercase argument is a compilation root; the first doubles as the startup
-					// class when -main is absent.
+					// A bare uppercase argument is a compilation root (never the startup class: only -main
+					// sets that); a bare lowercase argument includes the package.
 					if (!StringTools.startsWith(a, "-")) {
 						var nm = a.split(".").pop();
 						if (nm != null && nm.length > 0) {
 							var c0 = nm.charCodeAt(0);
-							if (c0 >= "A".code && c0 <= "Z".code) {
-								if (mainClass == null) mainClass = a;
-								else extraClasses.push(a);
-							}
+							if (c0 >= "A".code && c0 <= "Z".code) extraClasses.push(a);
+							else ctx.initMacros.push("include('" + a + "', true, null, null, true)");
 						}
 					}
 			}
