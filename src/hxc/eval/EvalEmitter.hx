@@ -603,6 +603,24 @@ class EvalEmitter {
 	static function lateInstanceMethod(ctx:EvalContext, recv:EvalValue, cf:TClassField):EvalValue {
 		return switch (recv) {
 			case VInstance(vi):
+				// A method of a lazily loaded module may not have its body typed yet (a macro-world
+				// module pulled in during body typing only forces reachable statics); type it now.
+				if (cf.expr == null) switch (ctx.typeCache.get(vi.iproto.ppath)) {
+					case TClassDecl(c):
+						var com = ctx.com;
+						var mc = hxc.eval.EvalMacro.getMacroCom();
+						if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
+						if (com == null) com = hxc.eval.EvalMacro.hostCom;
+						if (com != null) {
+							var savedMod = com.currentModule;
+							com.currentModule = c.module;
+							try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+							com.currentModule = savedMod;
+							// Typing the body may have pulled new modules into the macro world.
+							if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
+						}
+					case _:
+				}
 				switch (cf.expr) {
 					case {expr: TFunction(tf)}:
 						var name = EvalHash.hash(cf.name);

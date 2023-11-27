@@ -5245,8 +5245,15 @@ class EvalStdLib {
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
 		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
-		reg(s, "sys.io.File", "getBytes", vfn(a -> mkBytes(ctx, sys.io.File.getBytes(stringOf(arg(a, 0))))));
-		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
+		// An unreadable file raises "Could not read file <path>".
+		reg(s, "sys.io.File", "getBytes", vfn(a -> {
+			var path = stringOf(arg(a, 0));
+			try mkBytes(ctx, sys.io.File.getBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+		}));
+		reg(s, "sys.io.File", "getContent", vfn(a -> {
+			var path = stringOf(arg(a, 0));
+			try mkStr(sys.io.File.getContent(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+		}));
 		reg(s, "sys.io.File", "read", vfn(a -> mkFileInput(ctx, sys.io.File.read(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
 		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));

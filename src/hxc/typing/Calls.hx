@@ -188,6 +188,20 @@ class Calls {
 	}
 
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
+		// ctx.inCallArgs is set around the argument loop.
+		var savedInCallArgs = ctx.inCallArgs;
+		ctx.inCallArgs = true;
+		try {
+			var r2 = unifyCallArgsInner(ctx, el, args, r, callp);
+			ctx.inCallArgs = savedInCallArgs;
+			return r2;
+		} catch (e:haxe.Exception) {
+			ctx.inCallArgs = savedInCallArgs;
+			throw e;
+		}
+	}
+
+	static function unifyCallArgsInner(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
 		function typeAgainst(name:String, t:T, e:Expr):TExpr {
 			var te = Typer.typeExpr(ctx, e, WithTypeTools.withArgument(t, name));
 			DebugDump.unify("call-arg " + name, te.type, t, te.pos);

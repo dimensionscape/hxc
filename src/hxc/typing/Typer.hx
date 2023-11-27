@@ -906,6 +906,12 @@ class Typer {
 					// field and nothing more. Recorded, not raised, so every violation is reported (and a
 					// macro Context.typeof raises through the record).
 					if (expected != null && !ctx.untypedMode) {
+						// Inside call arguments the violation raises so the caller annotates it with the
+						// parameter name; outside it is recorded.
+						inline function reportOrRaise(msg:String, pos:Position):Void {
+							if (ctx.inCallArgs) throw new TypingError(msg, pos);
+							ctx.com.addDiagnostic(msg, pos);
+						}
 						var missing:Array<String> = [];
 						for (n in expected.fields.keys()) {
 							var ef = expected.fields.get(n);
@@ -913,11 +919,11 @@ class Typer {
 						}
 						// Missing fields are listed in descending name order.
 						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
-						if (missing.length == 1) ctx.com.addDiagnostic("Object requires field " + missing[0], p);
-						else if (missing.length > 1) ctx.com.addDiagnostic("Object requires fields: " + missing.join(", "), p);
+						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
+						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
 						for (f in fields) {
 							if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
-								ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
+								reportOrRaise(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
 						}
 					}
 					TypeFunctions.mk(TObjectDecl(tfields), t, p);

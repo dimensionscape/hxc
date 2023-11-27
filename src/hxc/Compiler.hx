@@ -48,6 +48,10 @@ class Compiler {
 		var userCp:Array<String> = [];
 		var mainClass:Null<String> = null;
 		var extraClasses:Array<String> = [];
+		var cmds:Array<String> = [];
+		var noOutput = false;
+		var helpUserDefines = false;
+		var helpUserMetas = false;
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 
@@ -100,6 +104,17 @@ class Compiler {
 					ctx.defines.rawDefine("debug");
 				case "--dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
+				case "--cmd" | "-cmd":
+					cmds.push(unquote(args[i++]));
+				case "--version" | "-version":
+					// Version (com.info s_version_full).
+					Sys.stderr().writeString(Globals.sVersionFull + "\n");
+				case "--help-user-defines":
+					helpUserDefines = true;
+				case "--help-user-metas":
+					helpUserMetas = true;
+				case "--no-output":
+					noOutput = true;
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
 				case "-w":
@@ -121,6 +136,11 @@ class Compiler {
 					}
 			}
 		}
+
+		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
+		// works without a std. (did_something with no inputs).
+		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
+			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross) return;
 
 		// User -cp is searched before the std (it stays in front of the per-target overlay). Prepends
 		// each -cp individually, so the last -cp on the command line ends up first; reverse the
@@ -146,16 +166,26 @@ class Compiler {
 			Sys.exit(1);
 		}
 
-		if (mainClass == null) {
-			Sys.println("hxc " + Globals.sVersion + " (" + Globals.platformName(platform) + ", no -main)");
+		// Help-user-defines/--help-user-metas print after the init macros registered the entries, then
+		// stop. (add_after_init_macros + Abort).
+		if (helpUserDefines || helpUserMetas) {
+			if (helpUserDefines) printUserDocs([
+				for (k in ctx.userDefines.keys()) {name: k.split("_").join("-"), entry: ctx.userDefines.get(k), isMeta: false}
+			]);
+			if (helpUserMetas) printUserDocs([
+				for (k in ctx.userMetas.keys()) {name: "@" + k, entry: ctx.userMetas.get(k), isMeta: true}
+			]);
 			return;
 		}
-		var path = parseTypePath(mainClass);
+
+		// A compile without -main still loads its roots, runs macros and filters, and generates; it just
+		// has no entry call (nothing is printed).
+		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
-			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			tLoad();
 			var tType = hxc.core.Timer.timer(["typing"]);
@@ -181,7 +211,7 @@ class Compiler {
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			// The filter pipeline runs for generated targets eval keeps its unfiltered path until the switch
 			// is coordinated with the eval gate
-			if (platform == Js) {
+			if (platform == Js && !noOutput) {
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
@@ -194,13 +224,21 @@ class Compiler {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
 				var tInterp = hxc.core.Timer.timer(["interp"]);
-				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
-				hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
-				hxc.eval.EvalMain.runMain(ectx, path);
+				if (path != null) {
+					var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
+					hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
+					hxc.eval.EvalMain.runMain(ectx, path);
+				}
 				tInterp();
-			} else if (ctx.defines.rawDefined("verbose")) {
+			} else if (ctx.defines.rawDefined("verbose") && path != null) {
 				// Compile-status line is a verbose-only aid; haxe prints nothing here on a successful compile.
 				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
+			}
+			// --cmd commands run in order after a successful compile; a `cd ` command changes the working
+			// directory, any other spawns a shell command.
+			if (!noOutput) for (c in cmds) {
+				var r = runCommand(c);
+				if (r != 0) throw "Command failed with error " + r;
 			}
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			// An uncaught exception escaping the interpreted program: render the thrown value and its
@@ -231,6 +269,52 @@ class Compiler {
 			hxc.core.Timer.closeTimes();
 			hxc.core.Timer.reportTimes(function(s) Sys.stderr().writeString(s + "\n"));
 		}
+	}
+
+	// One line per entry: " name: params doc (platform only) (from source)", wrapped at 80 columns.
+	static function printUserDocs(entries:Array<{name:String, entry:hxc.context.Context.UserDocEntry, isMeta:Bool}>):Void {
+		entries.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		var maxLen = 0;
+		for (en in entries) if (en.name.length > maxLen) maxLen = en.name.length;
+		for (en in entries) {
+			var d = en.entry;
+			var params = d.params.length == 0 ? "" : (en.isMeta ? "(<" + d.params.join(">, <") + ">) " : "<" + d.params.join(">, <") + "> ");
+			var pfs = switch (d.platforms.length) {
+				case 0: "";
+				case 1: " (" + d.platforms[0] + " only)";
+				case _: " (for " + d.platforms.join(",") + ")";
+			};
+			var origin = d.source == null ? "" : " (from " + d.source + ")";
+			Sys.println(" " + StringTools.rpad(en.name, " ", maxLen) + ": " + limitString(params + d.doc + pfs + origin, maxLen + 3));
+		}
+	}
+
+	// Word-wraps at 80 columns, continuing lines indented to the given offset.
+	static function limitString(s:String, offset:Int):String {
+		var rest = 80 - offset;
+		var out = new StringBuf();
+		var col = 0;
+		for (word in s.split(" ")) {
+			if (word.length + col + 1 > rest) {
+				out.add("\n");
+				for (_ in 0...offset) out.add(" ");
+				out.add(word);
+				col = word.length;
+			} else {
+				if (col != 0) out.add(" ");
+				out.add(word);
+				col = col + 1 + word.length;
+			}
+		}
+		return out.toString();
+	}
+
+	static function runCommand(cmd:String):Int {
+		if (StringTools.startsWith(cmd, "cd ")) {
+			Sys.setCwd(cmd.substr(3));
+			return 0;
+		}
+		return Sys.command(cmd);
 	}
 
 	static function parseTypePath(s:String):Path {
