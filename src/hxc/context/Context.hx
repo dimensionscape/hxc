@@ -105,6 +105,10 @@ class Context {
 
 	public var callArgumentStack:Array<Array<Expr>>;
 
+	// Custom define and metadata documentation, keyed by name.
+	public var userDefines:StringMap<UserDocEntry>;
+	public var userMetas:StringMap<UserDocEntry>;
+
 	public var storedTypedExprs:Map<Int, TExpr>;
 
 	public var nextStoredTypedExprId:Int = 0;
@@ -161,6 +165,8 @@ class Context {
 		this.warningOptions = [[for (w in hxc.core.WarningList.disabledWarnings) {warning: w, mode: WMDisable}]];
 		this.moduleImports = new StringMap();
 		this.callArgumentStack = [];
+		this.userDefines = new StringMap();
+		this.userMetas = new StringMap();
 		this.storedTypedExprs = new Map();
 		// Keep basic types non-null until ModuleLoader.initBasicTypes loads their declarations.
 		this.basic = TypeFunctions.makeStubBasicTypes();
@@ -193,8 +199,9 @@ class Context {
 		macroCp = macroCp.concat([for (p in this.stdPath) p + "eval/_std/"]).concat(this.stdPath);
 		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();
-		c.platform = Eval;
-		c.platformConfig = PlatformConfig.eval();
+		// Initialize eval platform defines in the macro world so sys-dependent APIs remain available even
+		// with a non-sys host target.
+		hxc.context.Setup.initPlatform(c, Eval);
 		c.isMacro = true;
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
@@ -321,6 +328,14 @@ class Context {
 		for (d in diagnostics) if (d.severity == Error) return true;
 		return false;
 	}
+}
+
+// Custom define or metadata registration: documentation, parameters, platforms and source library.
+typedef UserDocEntry = {
+	var doc:String;
+	var params:Array<String>;
+	var platforms:Array<String>;
+	var source:Null<String>;
 }
 
 typedef CompilerDiagnostic = {
