@@ -27,7 +27,7 @@ class ModuleLoader {
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
 			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return full;
 		}
-		throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 	}
 
 	static function skipEvalOverlayFile(ctx:Context, dir:String, relPath:String):Bool {
@@ -674,14 +674,14 @@ class ModuleLoader {
 		var existing = ctx.moduleLut.get(key);
 		if (existing != null) return existing;
 		if (ctx.moduleNonexistentLut.exists(key))
-			throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 
 		var file:String;
 		try {
 			file = resolveModuleFile(ctx, m, p);
 		} catch (e:ContextError) {
 			ctx.moduleNonexistentLut.set(key, true);
-			throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 		}
 
 		var src = Position.getFileContent(file);

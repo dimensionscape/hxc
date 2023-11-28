@@ -172,7 +172,7 @@ class Typeload {
 				throw new ContextError("Named type not allowed here", p);
 
 			case CTIntersection(tl):
-				var resolved = [for (th in tl) loadComplexType(ctx, typeParams, th)];
+				var resolved = [for (th in tl) {t: loadComplexType(ctx, typeParams, th), pos: th.pos}];
 				makeExtensionType(ctx, resolved, p);
 
 			case CTExtend(paths, fields):
@@ -181,9 +181,9 @@ class Typeload {
 					case TAnon(a):
 						var il = [for (pt in paths) loadInstance(ctx, typeParams, pt.path, pt.pos, false)];
 						if (il.length == 1) {
-							mkExtension(a, il[0], p);
+							mkExtension(ctx, a, il[0], p);
 						} else {
-							for (it in il) extendLoop(a, it, p);
+							for (it in il) extendLoop(ctx, a, it, p);
 							a.status.set(Extend(il));
 							anonT;
 						}
@@ -200,8 +200,21 @@ class Typeload {
 	}
 
 	// CTExtend helpers do not check is_redefined.
-	static function mkExtension(a:TAnon, it:T, p:Position):T {
-		return switch (TypeFunctions.follow(it)) {
+
+	// A forward-referenced typedef in the same module resolves on demand before its follow.
+	static function followOnDemand(ctx:Context, it:T):T {
+		var ft = TypeFunctions.follow(it);
+		if (!ft.match(TAnon(_))) switch (it) {
+			case TType(td, _):
+				hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
+				ft = TypeFunctions.follow(it);
+			case _:
+		}
+		return ft;
+	}
+
+	static function mkExtension(ctx:Context, a:TAnon, it:T, p:Position):T {
+		return switch (followOnDemand(ctx, it)) {
 			case TInst(c, _) if (isTypeParameter(c)):
 				throw new ContextError("Cannot structurally extend type parameters", p);
 			case TMono(_):
@@ -216,8 +229,8 @@ class Typeload {
 		}
 	}
 
-	static function extendLoop(a:TAnon, it:T, p:Position):Void {
-		switch (TypeFunctions.follow(it)) {
+	static function extendLoop(ctx:Context, a:TAnon, it:T, p:Position):Void {
+		switch (followOnDemand(ctx, it)) {
 			case TAnon(a2):
 				for (k in a2.fields.keys()) if (!a.fields.exists(k)) a.fields.set(k, a2.fields.get(k));
 			case _:
@@ -225,26 +238,27 @@ class Typeload {
 		}
 	}
 
-	static function makeExtensionType(ctx:Context, tl:Array<T>, p:Position):T {
-		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A
-		// forward-referenced typedef in the same module resolves on demand first.
+	static function makeExtensionType(ctx:Context, tl:Array<{t:T, pos:Position}>, p:Position):T {
+		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A forward-referenced
+		// typedef in the same module resolves on demand first. A non-structure component errors at its own
+		// hint keeps per-component pos).
 		var merged = new StringMap<TClassField>();
-		for (t in tl) {
-			var ft = TypeFunctions.follow(t);
-			if (!ft.match(TAnon(_))) switch (t) {
+		for (e in tl) {
+			var ft = TypeFunctions.follow(e.t);
+			if (!ft.match(TAnon(_))) switch (e.t) {
 				case TType(td, _):
 					hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
-					ft = TypeFunctions.follow(t);
+					ft = TypeFunctions.follow(e.t);
 				case _:
 			}
 			switch (ft) {
 				case TAnon(a2):
 					for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
 				case _:
-					throw new ContextError("Can only extend structures", p);
+					throw new ContextError("Can only extend structures", e.pos);
 			}
 		}
-		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend(tl)), merged);
+		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend([for (e in tl) e.t])), merged);
 	}
 
 	static function isTypeParameter(c:TClass):Bool {

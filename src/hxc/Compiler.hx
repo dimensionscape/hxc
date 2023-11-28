@@ -170,9 +170,7 @@ class Compiler {
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
-			flushPendingMessages(ctx);
-			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
-			Sys.exit(1);
+			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.TypingError) {
 			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
@@ -209,6 +207,8 @@ class Compiler {
 			TypeFields.typeAllModules(ctx);
 			tFields();
 			tType();
+			TypeFields.checkFinalVars(ctx);
+			TypeFields.checkRecursiveAbstracts(ctx);
 			abortOnDiagnostics(ctx, platform);
 			// Null safety runs before every expression filter and elimination so it sees the exprs as
 			// typed.
@@ -254,12 +254,7 @@ class Compiler {
 				if (r != 0) throw "Command failed with error " + r;
 			}
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
-			// An uncaught exception escaping the interpreted program: render the thrown value and its
-			// position, as the canonical eval target does, rather than the bare wrapper message.
-			flushPendingMessages(ctx);
-			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
-			for (p in ex.callPositions) printPositionMessage("Called from here", p);
-			Sys.exit(1);
+			printUncaughtException(ctx, ex, Position.nullPos);
 		} catch (e:hxc.parser.LexerError) {
 			printPositionMessage(hxc.parser.LexerError.errorMsg(e.msg), e.pos);
 			Sys.exit(1);
@@ -334,6 +329,27 @@ class Compiler {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	// An uncaught interpreted exception prints its value at the throw position when one exists (dropping
+	// the innermost duplicate stack frame), else at the catch position, then each stack frame
+	// outermost-first as Called from here.
+	static function printUncaughtException(ctx:Context, ex:hxc.eval.EvalExceptions.EvalRunTimeException, catchPos:Position):Void {
+		if (catchPos == null) catchPos = Position.nullPos;
+		// Frames run innermost first; an explicit throw position drops the innermost frame it
+		// duplicates, and the catch position closes the stack (the reference's api-call env).
+		var frames = [for (env in ex.envStack) hxc.eval.EvalExceptions.envPosition(env)];
+		frames = [for (p in frames) if (p != null && p.file != "?") p];
+		var explicit = ex.pos != null && !(ex.pos.file == "?" && ex.pos.min < 0);
+		if (explicit && frames.length > 0) frames.shift();
+		if (!(catchPos.file == "?" && catchPos.min < 0)) frames.push(catchPos);
+		var p1 = explicit ? ex.pos : catchPos;
+		// Reported through the message list so every -D message.reporting formatter renders it.
+		var stack = [{message: "Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), pos: p1}];
+		for (p in frames) stack.push({message: "Called from here", pos: p});
+		ctx.addDiagnosticStack(stack);
+		flushPendingMessages(ctx);
+		Sys.exit(1);
 	}
 
 	// A fatal error still reports the messages accumulated before it (warnings from macros, ...): the

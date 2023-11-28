@@ -193,8 +193,21 @@ class Inline {
 		var vthis:Null<TVar> = null;
 		if (!isStatic) {
 			if (ethis == null) throw new InlineBail();
-			vthis = TypeFunctions.allocVar(VGenerated, "_hx_this", ethis.type, p);
-			binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
+			// A body that never reads `this` gets no receiver binding when the receiver is a plain
+			// value; the reference's usage analysis treats this like an unread argument.
+			var usesThis = false;
+			function scanThis(e:TExpr):Void {
+				if (usesThis) return;
+				switch (e.expr) {
+					case TConst(TThis): usesThis = true;
+					case _: TexprTools.iter(scanThis, e);
+				}
+			}
+			scanThis(tf.expr);
+			if (usesThis || !ethis.expr.match(TConst(TThis) | TLocal(_))) {
+				vthis = TypeFunctions.allocVar(VGenerated, "_hx_this", ethis.type, p);
+				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
+			}
 		}
 		// A side-effecting argument always binds to a temp; once anything had a side effect (an argument
 		// or the mapped body: assignments, calls, news), any argument that might be affected and lacks

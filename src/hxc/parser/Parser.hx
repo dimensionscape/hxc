@@ -308,6 +308,7 @@ class Parser {
 			try {
 				v = f();
 			} catch (e:ParserError) {
+				if (idx != save) throw e;
 				idx = save;
 				break;
 			}
@@ -829,7 +830,10 @@ class Parser {
 	}
 
 	function parseCallParamsList():Array<Expr> {
-		return psepTrailing(expr);
+		var el = psepTrailing(expr);
+		if (!tokEq(peek(), PClose))
+			throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
+		return el;
 	}
 
 	function parseSwitchCases():{cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>} {
@@ -1057,6 +1061,12 @@ class Parser {
 	}
 
 	function secureExpr():Expr {
+		// A token that cannot start an expression reports Expected expression there. .
+		switch (peek()) {
+			case PClose | BrClose | BkClose | Semicolon | Comma | Eof:
+				throw new ParserError(Expected(["expression"]), peekInfo().pos);
+			case _:
+		}
 		return expr();
 	}
 

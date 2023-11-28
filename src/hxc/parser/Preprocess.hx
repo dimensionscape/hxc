@@ -68,8 +68,9 @@ class Preprocess {
 					enterMacro(true, p);
 				case Sharp("error"):
 					i++;
+					// The error points at the message string.
 					switch (peekTok()) {
-						case Const(CString(s, _)): throw new ParserError(Custom(s), ti.pos);
+						case Const(CString(s, _)): throw new ParserError(Custom(s), cur().pos);
 						case _: throw new ParserError(Unimplemented, ti.pos);
 					}
 				case Sharp("line"):
