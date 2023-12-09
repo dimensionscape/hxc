@@ -221,6 +221,9 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
+			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
+			// runs in the shared filter pipeline).
+			hxc.filters.LocalVarsInit.run(ctx);
 			hxc.typing.ExceptionFilters.run(ctx);
 			hxc.typing.UnusedPure.run(ctx);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
