@@ -256,7 +256,7 @@ class TypeResolve {
 				ctx.unresolvedFields++;
 			}
 		}
-		linkPropertyAccessors(c, isAbsImpl);
+		linkPropertyAccessors(ctx, c, isAbsImpl);
 	}
 
 	// The same-named instance field on the nearest superclass.
@@ -273,7 +273,17 @@ class TypeResolve {
 	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_
 	// return or value argument would otherwise be a free monomorph that can unify with an unrelated sibling
 	// type during inference. accessor checks.
-	static function linkPropertyAccessors(c:TClass, isAbsImpl:Bool):Void {
+	static function linkPropertyAccessors(ctx:Context, c:TClass, isAbsImpl:Bool):Void {
+		// A property accessor placed with the wrong staticness (a member accessor for a static property, or
+		// vice versa) is reported.
+		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+		function checkAccessor(accName:String, propName:String, ownColl:StringMap<TClassField>, otherColl:StringMap<TClassField>, propIsStatic:Bool):Void {
+			if (isExtern || TypeFunctions.hasClassFlag(c, CInterface)) return;
+			if (ownColl.get(accName) != null) return;
+			var other = otherColl.get(accName);
+			if (other != null)
+				ctx.addDiagnostic("Method " + accName + " is no valid accessor for " + propName + " because it is " + (propIsStatic ? "not " : "") + "static", other.pos);
+		}
 		function usePropertyType(slot:T, pt:T):Void {
 			switch (TypeFunctions.follow(slot)) {
 				case TMono(r) if (r.type == null):
@@ -282,7 +292,7 @@ class TypeResolve {
 					try TypeUnification.unifyDefault(slot, pt) catch (_:Dynamic) {};
 			}
 		}
-		function loop(fields:StringMap<TClassField>):Void {
+		function loop(fields:StringMap<TClassField>, other:StringMap<TClassField>, propIsStatic:Bool):Void {
 			var generated:Array<TClassField> = [];
 			inline function genAccessor(accName:String, propType:T, isSetter:Bool):TClassField {
 				// Generate the virtual accessor for an interface property.
@@ -305,6 +315,7 @@ class TypeResolve {
 								case _:
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("get_" + name, pt, false));
+							else checkAccessor("get_" + name, name, fields, other, propIsStatic);
 						}
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
@@ -315,6 +326,7 @@ class TypeResolve {
 								case _:
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("set_" + name, pt, true));
+							else checkAccessor("set_" + name, name, fields, other, propIsStatic);
 						}
 					case _:
 				}
@@ -324,8 +336,8 @@ class TypeResolve {
 				c.orderedFields.push(acc);
 			}
 		}
-		loop(c.statics);
-		if (!isAbsImpl) loop(c.fields);
+		loop(c.statics, c.fields, true);
+		if (!isAbsImpl) loop(c.fields, c.statics, false);
 	}
 
 	// Whether c's inheritance chain (itself, supers, implemented interfaces) reaches target.
