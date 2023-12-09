@@ -644,6 +644,11 @@ class Typer {
 					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
 					var te = typeExpr(ctx, e1, withType);
 					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
+				case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
+					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
+					// expression (a macro body reifies these before typing).
+					ctx.com.addDiagnostic("Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression", m.pos);
+					typeExpr(ctx, e1, withType);
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
