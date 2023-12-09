@@ -378,7 +378,15 @@ class Fields {
 									}
 								case _:
 									var u = tryUsing(ctx, e, i, pfield);
-									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield))
+									// Reaching for an instance field through the class value (Class<C>) is
+									// a
+									// static-access error, not a missing field.
+									else switch (a.status.get()) {
+										case Statics(c) if (c.fields.exists(i)):
+											throw new TypingError("Static access to instance field " + i + " is not allowed", pfield);
+										case _: throw fieldNotFound(e.type, i, pfield);
+									}
 							}
 						}
 				}
