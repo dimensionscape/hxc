@@ -2202,15 +2202,26 @@ class Typer {
 			reset();
 			throw new TypingError("Function body required", p);
 		}
+		var errorsBefore = ctx.com.errorCount();
 		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:TypingError) {
 			reset();
 			throw e;
 		}
-		// An inferred return type with no value-return settles to Void.
+		var bodyHadError = ctx.com.errorCount() > errorsBefore;
+		// An inferred return type with no value-return settles to Void; a resolved non-Void return requires
+		// every path to return, throw, or dead-end.
 		switch (TypeFunctions.follow(ret)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Void"):
 			case TMono(_) if (!hasReturn(te)):
 				try TypeUnification.unifyDefault(ctx.com.basic.tvoid, ret) catch (_:UnifyError) {}
+			case TMono(_):
+			// A dynamic method is reassignable, so its inferred return is linked to Void at body typing
+			// before any reassignment binds it; hxc's field order can bind it first, so a dynamic method is
+			// exempt from the flow check.
+			case _ if (!isLocalFn && ctx.curfield != null && ctx.curfield.kind.match(Method(MethDynamic))):
+			case _ if (bodyHadError):
 			case _:
+				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
 		}
 		// A member whose local functions captured `this` declares the `this local, inserted before its
 		// first use so a constructor's super() call stays first when possible.
@@ -2745,6 +2756,56 @@ class Typer {
 		}) catch (_:UnifyError) false;
 	}
 
+	// A non-Void function body must return, throw, or dead-end on every path; the first path that falls
+	// through reports "Missing return: <type>".
+	static function returnFlow(ctx:TyperContext, ret:T, e:TExpr):Void {
+		inline function error():Void {
+			ctx.com.addDiagnostic("Missing return: " + hxc.core.TPrinting.sTypeStr(ret), e.pos);
+			throw new ReturnFlowExit();
+		}
+		switch (e.expr) {
+			case TReturn(_) | TThrow(_):
+			case TParenthesis(e1) | TMeta(_, e1): returnFlow(ctx, ret, e1);
+			case TBlock(el):
+				if (el.length == 0) error();
+				else {
+					var i = 0;
+					while (i < el.length) {
+						if (i == el.length - 1) { returnFlow(ctx, ret, el[i]); break; }
+						if (TexprTools.hasDeadEnd(el[i])) break;
+						i++;
+					}
+				}
+			case TIf(_, e1, e2) if (e2 != null):
+				returnFlow(ctx, ret, e1);
+				returnFlow(ctx, ret, e2);
+			case TSwitch(_, cases, edef) if (edef != null):
+				for (c in cases) returnFlow(ctx, ret, c.expr);
+				returnFlow(ctx, ret, edef);
+			case TSwitch({expr: TMeta(m, _)}, cases, null) if (m.name == ":exhaustive"):
+				for (c in cases) returnFlow(ctx, ret, c.expr);
+			case TTry(e1, catches):
+				returnFlow(ctx, ret, e1);
+				for (c in catches) returnFlow(ctx, ret, c.expr);
+			case TWhile({expr: TConst(TBool(true))}, body, _):
+				// An infinite while(true) with no break of its own always returns. A break of a nested loop
+				// does not count.
+				var broke = false;
+				function loop(e2:TExpr):Void {
+					if (broke) return;
+					switch (e2.expr) {
+						case TWhile(_, _, _) | TFor(_, _, _):
+						case TBreak: broke = true;
+						case _: TexprTools.iter(loop, e2);
+					}
+				}
+				loop(body);
+				if (broke) error();
+			case _:
+				if (!TexprTools.hasDeadEnd(e)) error();
+		}
+	}
+
 	static function hasReturn(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TReturn(eo): eo != null;
@@ -2791,4 +2852,9 @@ enum ObjectDeclKind {
 	ODKPlain;
 	ODKFailed;
 	ODKStructure(a:TAnon);
+}
+
+// Unwinds returnFlow once a fall-through path has been reported.
+private class ReturnFlowExit extends haxe.Exception {
+	public function new() super("return-flow-exit");
 }

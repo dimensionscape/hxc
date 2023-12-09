@@ -331,6 +331,12 @@ class Context {
 		for (d in diagnostics) if (d.severity == Error) return true;
 		return false;
 	}
+
+	public function errorCount():Int {
+		var n = 0;
+		for (d in diagnostics) if (d.severity == Error) n++;
+		return n;
+	}
 }
 
 // Custom define or metadata registration: documentation, parameters, platforms and source library.
