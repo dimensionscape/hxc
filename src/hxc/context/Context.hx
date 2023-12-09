@@ -88,6 +88,9 @@ class Context {
 
 	public var initMacros:Array<String>;
 
+	// Set after init macros complete; init-only Compiler APIs warn beyond this stage.
+	public var initMacrosDone:Bool = false;
+
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
 
 	/**

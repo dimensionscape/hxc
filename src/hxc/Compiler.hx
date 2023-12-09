@@ -177,6 +177,10 @@ class Compiler {
 			Sys.exit(1);
 		}
 
+		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=
+		// CInitMacrosDone). /
+		ctx.initMacrosDone = true;
+
 		// Help-user-defines/--help-user-metas print after the init macros registered the entries, then
 		// stop. (add_after_init_macros + Abort).
 		if (helpUserDefines || helpUserMetas) {

@@ -4212,7 +4212,10 @@ class EvalStdLib {
 						return VNull;
 					}, true);
 				case "init_macros_done":
-					VFunction(function(args) return VTrue, true);
+					VFunction(function(args) {
+						var com = EvalMacro.hostCom != null ? EvalMacro.hostCom : ctx.com;
+						return (com != null && com.initMacrosDone) ? VTrue : VFalse;
+					}, true);
 				case "current_pos":
 					VFunction(function(args) return mkPos(ctx, EvalMacro.currentPosition()), true);
 				case "get_macro_stack":
