@@ -231,7 +231,7 @@ class EvalMacro {
 		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
-			var tpath:TypePath = {tpackage: path.pack, tname: path.name, tparams: [], tsub: null};
+			var tpath:TypePath = hxc.ast.Ast.mkTypePath(path);
 			return encodeType(ec, Typeload.loadInstance(com, [], tpath, curPos, true));
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));

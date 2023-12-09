@@ -503,11 +503,11 @@ class TypeResolve {
 				// Assignment / null-coalescing / ternary overloads
 				// are explicitly rejected.
 				case EBinop(OpAssign, _, _):
-					throw new ContextError("Assignment overloading is not supported", opExpr.pos);
+					throw new ContextError("Assignment overloading is not supported", cf.pos);
 				case EBinop(OpNullCoal, _, _) | EBinop(OpAssignOp(OpNullCoal), _, _):
-					throw new ContextError("Null coalescing overloading is not supported", opExpr.pos);
+					throw new ContextError("Null coalescing overloading is not supported", cf.pos);
 				case ETernary(_, _, _):
-					throw new ContextError("Ternary overloading is not supported", opExpr.pos);
+					throw new ContextError("Ternary overloading is not supported", cf.pos);
 				case EBinop(op, _, _):
 					a.ops.push({op: op, cf: cf});
 				// `@:op(unop A)` / `@:op(A unop)`: register
