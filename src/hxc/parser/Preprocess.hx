@@ -80,7 +80,7 @@ class Preprocess {
 						case _: throw new ParserError(Custom("Could not parse line number"), ti.pos);
 					}
 				case Sharp(s):
-					throw new ParserError(Custom("Unknown token #" + s), ti.pos);
+					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos);
 				case _:
 					out.push(ti);
 					i++;
@@ -141,7 +141,7 @@ class Preprocess {
 				case Sharp("error"), Sharp("line"):
 					i++;
 				case Sharp(s):
-					throw new ParserError(Custom("Unknown token #" + s), ti.pos);
+					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos);
 				case _:
 					i++;
 			}

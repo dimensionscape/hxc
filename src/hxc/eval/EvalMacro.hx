@@ -1388,7 +1388,7 @@ class EvalMacro {
 
 	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position):T {
 		var entry = findMeta(c.meta, ":genericBuild");
-		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta", p);
+		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta. Was it removed by a macro?", p);
 		if (entry.params.length != 1) throw new TypingError("genericBuild requires a single expression call parameter", p);
 		var callExpr = entry.params[0];
 		switch (callExpr.expr) {
