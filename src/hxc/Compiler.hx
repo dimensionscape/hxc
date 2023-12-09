@@ -221,6 +221,8 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
+			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
+			hxc.filters.InterfaceCheck.run(ctx);
 			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
 			// runs in the shared filter pipeline).
 			hxc.filters.LocalVarsInit.run(ctx);

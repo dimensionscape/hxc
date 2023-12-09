@@ -685,7 +685,7 @@ class TypeUnification {
 		}
 	}
 
-	static function unifyKind(k1:FieldKind, k2:FieldKind):Bool {
+	public static function unifyKind(k1:FieldKind, k2:FieldKind):Bool {
 		if (fieldKindEq(k1, k2)) return true;
 		return switch [k1, k2] {
 			case [Var(v1), Var(v2)]:
