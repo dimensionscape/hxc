@@ -164,6 +164,9 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		ModuleLoader.initBasicTypes(ctx);
+		// The startup class is known from -main during argument handling, so an init macro's
+		// Context.getMainExpr / Compiler.getConfiguration already sees it.
+		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
