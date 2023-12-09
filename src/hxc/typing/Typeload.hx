@@ -19,8 +19,12 @@ class Typeload {
 	static var genericInstanceId:Int = 0;
 	static var genericInstances:Map<String, TClass> = new Map();
 
-	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam):TypedTypeParam {
+	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType):TypedTypeParam {
 		var n = tp.tpName.name;
+		// A default type parameter is only allowed on a type declaration, not on a constructor, method, or
+		// enum constructor.
+		if (tp.tpDefault != null && host != TPHType)
+			ctx.addDiagnostic("Default type parameters are only supported on types", tp.tpDefault.pos);
 		var c = TypeFunctions.mkClass(TypeFunctions.nullModule, {pack: declPath.pack.concat([declPath.name]), name: n}, tp.tpName.pos, tp.tpName.pos);
 		c.kind = KTypeParameter([]);
 		c.meta = tp.tpMeta;
@@ -119,7 +123,7 @@ class Typeload {
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 
-	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams):TypeParams {
+	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType):TypeParams {
 		// Returns the sibling params so a
 		// first, then hand each param a thunk closing over it.
 		var params:TypeParams = [];
@@ -131,7 +135,7 @@ class Typeload {
 			if (names.indexOf(tp.tpName.name) >= 0)
 				ctx.addDiagnostic("Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
 			names.push(tp.tpName.name);
-			params.push(typeTypeParam(ctx, declPath, getParams, tp));
+			params.push(typeTypeParam(ctx, declPath, getParams, tp, host));
 		}
 		return params;
 	}
@@ -944,4 +948,13 @@ class Typeload {
 		TypeFunctions.addDependency(mg, c.module);
 		return cg;
 	}
+}
+
+// Where a set of type parameters is declared, distinguishing a type declaration (defaults allowed)
+// from a constructor, method, or enum constructor (defaults rejected).
+enum TypeParamHost {
+	TPHType;
+	TPHConstructor;
+	TPHMethod;
+	TPHEnumConstructor;
 }

@@ -110,7 +110,9 @@ class Parser {
 				true;
 			case Kwd(KwdReturn) | Kwd(KwdThrow) | Kwd(KwdCase) | Kwd(KwdElse) | Kwd(KwdIn)
 				| Kwd(KwdVar) | Kwd(KwdFinal) | Kwd(KwdMacro) | Kwd(KwdUntyped) | Kwd(KwdCast)
-				| Kwd(KwdNew) | Kwd(KwdIf) | Kwd(KwdWhile) | Kwd(KwdDo) | Kwd(KwdFor)
+				// `new` is followed by a type path, never markup; `function new<T>` needs the `<`
+				// lexed as a type-parameter open, not a markup literal.
+				| Kwd(KwdIf) | Kwd(KwdWhile) | Kwd(KwdDo) | Kwd(KwdFor)
 				| Kwd(KwdSwitch) | Kwd(KwdTry):
 				true;
 			case _:

@@ -9,6 +9,7 @@ import hxc.core.TypeUnification;
 import hxc.core.Ref;
 import hxc.context.Context;
 import hxc.context.Context.ContextError;
+import hxc.typing.Typeload.TypeParamHost;
 import haxe.ds.StringMap;
 
 class TypeResolve {
@@ -605,7 +606,7 @@ class TypeResolve {
 					var methodParams:TypeParams = [];
 					var localParams = a.params;
 					if (fd.fParams.length > 0) {
-						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams);
+						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams, null, cff.cffName.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = methodParams.concat(a.params);
 					}
 					// In the host context a macro function's signature degrades every type to Dynamic, with
@@ -765,7 +766,7 @@ class TypeResolve {
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
 			if (c.ecParams.length > 0)
-				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams);
+				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams, null, TPHEnumConstructor);
 			var localParams = ctorParams.concat(e.params);
 			var rt = switch (c.ecType) {
 				case null:
@@ -818,7 +819,7 @@ class TypeResolve {
 				var methodParams:TypeParams = [];
 				if (fd.fParams.length > 0) {
 					// Add method type params so arg/return hints referencing them resolve.
-					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams, outerParams);
+					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams, outerParams, cf.name == "new" ? TPHConstructor : TPHMethod);
 					localParams = methodParams.concat(outerParams);
 				}
 				var isMacroField = false;
@@ -878,7 +879,7 @@ class TypeResolve {
 					var localParams = typeParams;
 					var ovParams:TypeParams = [];
 					if (f.fParams.length > 0) {
-						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams);
+						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams, null, cf.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = ovParams.concat(typeParams);
 					}
 					var args:Array<TSignatureArg> = [];
