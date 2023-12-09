@@ -2570,6 +2570,9 @@ class Typer {
 				// constructor.
 				var enew = constructForwarded(ctx, TypeFunctions.applyParams(a.params, atl, a.thisType), el, withType, p);
 				TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
+			case TAbstract(a, _) if (a.impl != null):
+				// An abstract with an implementation but no _new constructor cannot be built.
+				throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " does not have a constructor", p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};
