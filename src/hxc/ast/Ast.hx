@@ -386,7 +386,7 @@ enum ImportMode {
 	IAll;
 }
 
-typedef Import = {path:Array<PlacedName>, mode:ImportMode};
+typedef Import = {path:Array<PlacedName>, mode:ImportMode, ?pos:Position};
 
 enum TypeDef {
 	EClass(d:Definition<ClassFlag, Array<ClassField>>);

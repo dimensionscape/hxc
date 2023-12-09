@@ -2099,7 +2099,8 @@ class Parser {
 				return err("Expected identifier after import");
 		}
 		var p2 = expect(Semicolon);
-		return {decl: EImport({path: path, mode: mode}), pos: Position.union(p1, p2)};
+		var ipos = Position.union(p1, p2);
+		return {decl: EImport({path: path, mode: mode, pos: ipos}), pos: ipos};
 	}
 
 	function parseUsing(p1:Position):TypeDecl {

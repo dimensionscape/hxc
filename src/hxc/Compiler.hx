@@ -221,6 +221,8 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
+			// Report a missing imported field or type with a suggestion.
+			hxc.filters.ImportCheck.run(ctx);
 			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
 			hxc.filters.InterfaceCheck.run(ctx);
 			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
