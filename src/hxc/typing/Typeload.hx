@@ -183,12 +183,12 @@ class Typeload {
 				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p);
 				switch (anonT) {
 					case TAnon(a):
-						var il = [for (pt in paths) loadInstance(ctx, typeParams, pt.path, pt.pos, false)];
+						var il = [for (pt in paths) {t: loadInstance(ctx, typeParams, pt.path, pt.pos, false), pos: pt.pos}];
 						if (il.length == 1) {
-							mkExtension(ctx, a, il[0], p);
+							mkExtension(ctx, a, il[0].t, il[0].pos);
 						} else {
-							for (it in il) extendLoop(ctx, a, it, p);
-							a.status.set(Extend(il));
+							for (e in il) extendLoop(ctx, a, e.t, e.pos);
+							a.status.set(Extend([for (e in il) e.t]));
 							anonT;
 						}
 					case _:

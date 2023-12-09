@@ -892,7 +892,7 @@ class Typer {
 						var te = typeExpr(ctx, f.expr, fwt);
 						// Against an expected field type, coerce the value to it so an implicit abstract cast
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
-						if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
+						if (ef != null) te = castOrUnify(ctx, ef.type, te, te.pos);
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 						// Against an expected structure the field takes the expected type (the value was
 						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
