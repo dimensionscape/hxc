@@ -15,6 +15,9 @@ class PlatformConfig {
 	public var usesUtf16:Bool;
 	public var supportsUnicode:Bool;
 	public var supportsThreads:Bool;                // Per-thread event loops
+	// A captured `this local declares at the top of the member (js es5, cpp, eval); es6 classes and
+	// java/cs cannot touch `this` before super() so they insert it before its first use instead
+	public var thisBeforeSuper:Bool = true;
 	// Exception lowering config; set per target after construction since most targets share the
 	// defaults
 	public var nativeThrows:Array<String> = [];     // Dotted paths throwable without wrapping

@@ -2243,6 +2243,9 @@ class Typer {
 				return found;
 			}
 			te = switch (te.expr) {
+				case TBlock(el) if (ctx.com.platformConfig.thisBeforeSuper):
+					// The platform can touch `this` before super(), so the declaration goes first
+					TypeFunctions.mk(TBlock([ev].concat(el)), te.type, te.pos);
 				case TBlock(el):
 					var out:Array<TExpr> = [];
 					var inserted = false;
