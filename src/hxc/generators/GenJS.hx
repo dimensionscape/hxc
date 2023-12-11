@@ -1902,8 +1902,7 @@ class GenJS {
 		var includeFiles = com.includeFiles.copy();
 		includeFiles.reverse();
 		for (inc in includeFiles) if (inc.position == "top")
-			ctx.print(sys.io.File.getContent(inc.file) + "
-;");
+			ctx.print(sys.io.File.getContent(inc.file) + "\n;");
 		if (ctx.hasFeature("Class") || ctx.hasFeature("Type.getClassName")) ctx.addFeature("js.Boot.isClass");
 		if (ctx.hasFeature("Enum") || ctx.hasFeature("Type.getEnumName")) ctx.addFeature("js.Boot.isEnum");
 
@@ -1966,8 +1965,7 @@ class GenJS {
 		var varGlobal = {name: "$global", value: typeofJoin(definedGlobal ? [definedGlobalValue] : ["window", "global", "self", "this"])};
 
 		for (inc in includeFiles) if (inc.position == "closure")
-			ctx.print(sys.io.File.getContent(inc.file) + "
-;");
+			ctx.print(sys.io.File.getContent(inc.file) + "\n;");
 		var closureArgs = [varGlobal];
 		if (anyExposed && !com.defines.rawDefined("shallow_expose"))
 			closureArgs.unshift(varExports);
