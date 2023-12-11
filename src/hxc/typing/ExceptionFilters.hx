@@ -19,14 +19,20 @@ class ExceptionFilters {
 		if (excCls == null) return;
 		var shiftCf = excCls.fields.get("__shiftStack");
 		if (shiftCf == null) return;
+		var tctx = new TyperContext(ctx);
 		for (m in ctx.modules) for (mt in m.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern) && c != excCls && TypeFunctions.extendsClass(c, excCls)):
-				patchConstructor(ctx, c, excCls, shiftCf);
+				patchConstructor(tctx, c, excCls, shiftCf);
 			case _:
 		}
 	}
 
-	static function patchConstructor(ctx:Context, c:TClass, excCls:TClass, shiftCf:TClassField):Void {
+	static function patchConstructor(tctx:TyperContext, c:TClass, excCls:TClass, shiftCf:TClassField):Void {
+		var ctx = tctx.com;
+		// A subclass with no constructor of its own gets its forwarding constructor synthesized here,
+		// before
+		// patching, so it too shifts the stack.
+		Typer.ensureInheritedCtor(tctx, c);
 		var ctor = c.constructor;
 		if (ctor == null) return;
 		if (ctor.expr == null) TypeFields.forceFieldBody(ctx, c, ctor);
