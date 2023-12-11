@@ -640,6 +640,15 @@ class Typer {
 					TexprTools.duplicateTvars(function(te) {
 						return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te.pos) : te;
 					}, ctx.com.storedTypedExprs.get(id));
+				case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
+					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
+					var te = typeExpr(ctx, e1, withType);
+					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
+				case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
+					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
+					// expression (a macro body reifies these before typing).
+					ctx.com.addDiagnostic("Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression", m.pos);
+					typeExpr(ctx, e1, withType);
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
@@ -883,7 +892,7 @@ class Typer {
 						var te = typeExpr(ctx, f.expr, fwt);
 						// Against an expected field type, coerce the value to it so an implicit abstract cast
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
-						if (ef != null) te = castOrUnify(ctx, ef.type, te, f.pos);
+						if (ef != null) te = castOrUnify(ctx, ef.type, te, te.pos);
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 						// Against an expected structure the field takes the expected type (the value was
 						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
@@ -902,6 +911,12 @@ class Typer {
 					// field and nothing more. Recorded, not raised, so every violation is reported (and a
 					// macro Context.typeof raises through the record).
 					if (expected != null && !ctx.untypedMode) {
+						// Inside call arguments the violation raises so the caller annotates it with the
+						// parameter name; outside it is recorded.
+						inline function reportOrRaise(msg:String, pos:Position):Void {
+							if (ctx.inCallArgs) throw new TypingError(msg, pos);
+							ctx.com.addDiagnostic(msg, pos);
+						}
 						var missing:Array<String> = [];
 						for (n in expected.fields.keys()) {
 							var ef = expected.fields.get(n);
@@ -909,11 +924,11 @@ class Typer {
 						}
 						// Missing fields are listed in descending name order.
 						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
-						if (missing.length == 1) ctx.com.addDiagnostic("Object requires field " + missing[0], p);
-						else if (missing.length > 1) ctx.com.addDiagnostic("Object requires fields: " + missing.join(", "), p);
+						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
+						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
 						for (f in fields) {
 							if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
-								ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
+								reportOrRaise(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
 						}
 					}
 					TypeFunctions.mk(TObjectDecl(tfields), t, p);
@@ -2192,15 +2207,26 @@ class Typer {
 			reset();
 			throw new TypingError("Function body required", p);
 		}
+		var errorsBefore = ctx.com.errorCount();
 		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:TypingError) {
 			reset();
 			throw e;
 		}
-		// An inferred return type with no value-return settles to Void.
+		var bodyHadError = ctx.com.errorCount() > errorsBefore;
+		// An inferred return type with no value-return settles to Void; a resolved non-Void return requires
+		// every path to return, throw, or dead-end.
 		switch (TypeFunctions.follow(ret)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Void"):
 			case TMono(_) if (!hasReturn(te)):
 				try TypeUnification.unifyDefault(ctx.com.basic.tvoid, ret) catch (_:UnifyError) {}
+			case TMono(_):
+			// A dynamic method is reassignable, so its inferred return is linked to Void at body typing
+			// before any reassignment binds it; hxc's field order can bind it first, so a dynamic method is
+			// exempt from the flow check.
+			case _ if (!isLocalFn && ctx.curfield != null && ctx.curfield.kind.match(Method(MethDynamic))):
+			case _ if (bodyHadError):
 			case _:
+				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
 		}
 		// A member whose local functions captured `this` declares the `this local, inserted before its
 		// first use so a constructor's super() call stays first when possible.
@@ -2617,6 +2643,9 @@ class Typer {
 				// constructor.
 				var enew = constructForwarded(ctx, TypeFunctions.applyParams(a.params, atl, a.thisType), el, withType, p);
 				TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
+			case TAbstract(a, _) if (a.impl != null):
+				// An abstract with an implementation but no _new constructor cannot be built.
+				throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " does not have a constructor", p);
 			case _:
 				throw new TypingError("This type cannot be constructed", p);
 		};
@@ -2808,6 +2837,56 @@ class Typer {
 		}) catch (_:UnifyError) false;
 	}
 
+	// A non-Void function body must return, throw, or dead-end on every path; the first path that falls
+	// through reports "Missing return: <type>".
+	static function returnFlow(ctx:TyperContext, ret:T, e:TExpr):Void {
+		inline function error():Void {
+			ctx.com.addDiagnostic("Missing return: " + hxc.core.TPrinting.sTypeStr(ret), e.pos);
+			throw new ReturnFlowExit();
+		}
+		switch (e.expr) {
+			case TReturn(_) | TThrow(_):
+			case TParenthesis(e1) | TMeta(_, e1): returnFlow(ctx, ret, e1);
+			case TBlock(el):
+				if (el.length == 0) error();
+				else {
+					var i = 0;
+					while (i < el.length) {
+						if (i == el.length - 1) { returnFlow(ctx, ret, el[i]); break; }
+						if (TexprTools.hasDeadEnd(el[i])) break;
+						i++;
+					}
+				}
+			case TIf(_, e1, e2) if (e2 != null):
+				returnFlow(ctx, ret, e1);
+				returnFlow(ctx, ret, e2);
+			case TSwitch(_, cases, edef) if (edef != null):
+				for (c in cases) returnFlow(ctx, ret, c.expr);
+				returnFlow(ctx, ret, edef);
+			case TSwitch({expr: TMeta(m, _)}, cases, null) if (m.name == ":exhaustive"):
+				for (c in cases) returnFlow(ctx, ret, c.expr);
+			case TTry(e1, catches):
+				returnFlow(ctx, ret, e1);
+				for (c in catches) returnFlow(ctx, ret, c.expr);
+			case TWhile({expr: TConst(TBool(true))}, body, _):
+				// An infinite while(true) with no break of its own always returns. A break of a nested loop
+				// does not count.
+				var broke = false;
+				function loop(e2:TExpr):Void {
+					if (broke) return;
+					switch (e2.expr) {
+						case TWhile(_, _, _) | TFor(_, _, _):
+						case TBreak: broke = true;
+						case _: TexprTools.iter(loop, e2);
+					}
+				}
+				loop(body);
+				if (broke) error();
+			case _:
+				if (!TexprTools.hasDeadEnd(e)) error();
+		}
+	}
+
 	static function hasReturn(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TReturn(eo): eo != null;
@@ -2854,4 +2933,9 @@ enum ObjectDeclKind {
 	ODKPlain;
 	ODKFailed;
 	ODKStructure(a:TAnon);
+}
+
+// Unwinds returnFlow once a fall-through path has been reported.
+private class ReturnFlowExit extends haxe.Exception {
+	public function new() super("return-flow-exit");
 }

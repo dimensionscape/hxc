@@ -180,7 +180,7 @@ class TPrinting {
 		}
 	}
 
-	static function sKind(k:FieldKind):String {
+	public static function sKind(k:FieldKind):String {
 		return switch (k) {
 			case Var(v) if (v.read == AccNormal && v.write == AccNormal): "var";
 			case Var(v): "(" + sAccessK(true, v.read) + "," + sAccessK(false, v.write) + ")";

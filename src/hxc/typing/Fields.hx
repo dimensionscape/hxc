@@ -246,11 +246,14 @@ class Fields {
 							if (!TypeFunctions.isPhysicalField(f))
 								throw new TypingError("This field cannot be accessed because it is not a real variable", pfield);
 							AKField(makeAccess(false));
-						} else switch (fh) {
-							case FHAbstract(a, tl, c):
-								AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
-							case _:
-								AKAccessor(makeAccess(false));
+						} else {
+							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
+							switch (fh) {
+								case FHAbstract(a, tl, c):
+									AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
+								case _:
+									AKAccessor(makeAccess(false));
+							}
 						}
 					case AccRequire(r, msg):
 						throw new TypingError(msg != null ? msg : errorRequire(r), pfield);
@@ -375,7 +378,15 @@ class Fields {
 									}
 								case _:
 									var u = tryUsing(ctx, e, i, pfield);
-									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield))
+									// Reaching for an instance field through the class value (Class<C>) is
+									// a
+									// static-access error, not a missing field.
+									else switch (a.status.get()) {
+										case Statics(c) if (c.fields.exists(i)):
+											throw new TypingError("Static access to instance field " + i + " is not allowed", pfield);
+										case _: throw fieldNotFound(e.type, i, pfield);
+									}
 							}
 						}
 				}

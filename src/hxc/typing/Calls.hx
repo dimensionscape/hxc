@@ -188,10 +188,34 @@ class Calls {
 	}
 
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
+		// ctx.inCallArgs is set around the argument loop.
+		var savedInCallArgs = ctx.inCallArgs;
+		ctx.inCallArgs = true;
+		try {
+			var r2 = unifyCallArgsInner(ctx, el, args, r, callp);
+			ctx.inCallArgs = savedInCallArgs;
+			return r2;
+		} catch (e:haxe.Exception) {
+			ctx.inCallArgs = savedInCallArgs;
+			throw e;
+		}
+	}
+
+	static function unifyCallArgsInner(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
 		function typeAgainst(name:String, t:T, e:Expr):TExpr {
 			var te = Typer.typeExpr(ctx, e, WithTypeTools.withArgument(t, name));
 			DebugDump.unify("call-arg " + name, te.type, t, te.pos);
 			return Typer.castOrUnify(ctx, t, te, te.pos);
+		}
+		// Optional parameters skipped while fitting a later argument, oldest first, each with the
+		// error it produced. When a subsequent argument cannot be placed, the first skipped
+		// parameter's error is reported instead.
+		var skipped:Array<{name:String, msg:String, pos:Position, depth:Int}> = [];
+		// Annotate the argument's error with the parameter name; the have/want rendering drops the
+		// trailing annotation.
+		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
+			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
+			return new TypingError(msg + "\nFor " + (opt ? "optional " : "") + "function argument '" + name + "'", pos, depth);
 		}
 		var out:Array<TExpr> = [];
 		var ei = 0, ai = 0;
@@ -282,6 +306,8 @@ class Calls {
 				for (te in tailLoop(ai)) out.push(te);
 				ai = args.length;
 			} else if (ai >= args.length) {
+				// A skipped optional parameter's error takes precedence over "Too many arguments".
+				if (skipped.length > 0) throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
 				throw new TypingError("Too many arguments", el[ei].pos);
 			} else {
 				var a = args[ai];
@@ -292,9 +318,15 @@ class Calls {
 				var te:Null<TExpr> = null;
 				var skip = false;
 				try te = typeAgainst(a.name, a.t, el[ei]) catch (err:TypingError) {
-					if (a.opt && mightSkip) skip = true;
-					// arg_error annotate the argument's error with the parameter name.
-					else throw new TypingError(err.message + "\nFor " + (a.opt ? "optional " : "") + "function argument '" + a.name + "'", err.pos, err.depth);
+					if (a.opt && mightSkip) {
+						skip = true;
+						skipped.push({name: a.name, msg: err.message, pos: err.pos, depth: err.depth});
+					} else if (skipped.length > 0) {
+						// Report the first skipped parameter's own error, not this one.
+						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
+					} else {
+						throw argError(err.message, a.name, a.opt, err.pos, err.depth);
+					}
 				}
 				if (skip) {
 					var pi = makePosInfosArg(ctx, a.t, callp);
@@ -686,7 +718,8 @@ class Calls {
 
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType):TExpr {
 		var candidates = [fa.field].concat(fa.field.overloads);
-		var firstError:Null<Dynamic> = null;
+		// Each failed candidate: the overload field, its rendered error, and the error position.
+		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
 		// With several candidates an argument error must RAISE so the next overload is tried: a lambda
 		// body error inside a block would otherwise be recorded as a batch diagnostic and the first
 		// candidate would win with a poisoned result. Trial diagnostics roll back per attempt.
@@ -726,17 +759,32 @@ class Calls {
 				return r;
 			} catch (e:UnifyError) {
 				restore();
-				if (firstError == null) firstError = e;
+				failures.push({cf: cf, msg: hxc.core.TPrinting.betterErrorMessage(e.errors), pos: p, depth: 0});
 			} catch (e:TypingError) {
 				restore();
-				if (firstError == null) firstError = e;
+				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth});
 			} catch (e:haxe.Exception) {
 				restore();
 				throw e;
 			}
 		}
-		if (firstError != null) throw firstError;
-		throw new TypingError("No matching overload", p);
+		if (failures.length == 0) throw new TypingError("No matching overload", p);
+		// A single candidate (or several failing identically) raises the one error; distinct failures
+		// report each overload with its own reason (duplicates removed by message, then either the one
+		// located error or the "reasons follow" block).
+		var distinct:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
+		for (f in failures) {
+			var seen = false;
+			for (d in distinct) if (d.msg == f.msg) { seen = true; break; }
+			if (!seen) distinct.push(f);
+		}
+		if (distinct.length == 1) throw new TypingError(distinct[0].msg, distinct[0].pos, distinct[0].depth);
+		ctx.com.addDiagnostic("Could not find a suitable overload, reasons follow", p);
+		for (f in distinct) {
+			ctx.com.addDiagnostic("Overload resolution failed for " + hxc.core.TPrinting.sTypeStr(f.cf.type), p, 1);
+			ctx.com.addDiagnostic(f.msg, f.pos, 2);
+		}
+		throw new TypingError("End of overload failure reasons", p, 1);
 	}
 
 	// A generic method's own type parameters become fresh monomorphs for the call. The host's class

@@ -36,9 +36,22 @@ class Compiler {
 		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
+		// Close a still-open inferred method return before structural unification reads it; the field
+		// types in whichever world (main or macro) owns its module.
+		hxc.core.TypeUnification.forceOpenMethodHook = function(c, cf) {
+			var com = ctx;
+			var mc = hxc.eval.EvalMacro.getMacroCom();
+			if (mc != null && c.module != null && mc.moduleLut.get(Context.pathKey(c.module.path)) == c.module) com = mc;
+			try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+		};
 
 		var userCp:Array<String> = [];
 		var mainClass:Null<String> = null;
+		var extraClasses:Array<String> = [];
+		var cmds:Array<String> = [];
+		var noOutput = false;
+		var helpUserDefines = false;
+		var helpUserMetas = false;
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 
@@ -91,6 +104,32 @@ class Compiler {
 					ctx.defines.rawDefine("debug");
 				case "--dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
+				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
+					| "-java" | "--java" | "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
+					| "-hl" | "--hl" | "-cppia" | "--cppia":
+					// Targets without a generator here; the output-file value must still be consumed
+					// so it does not parse as a compilation root.
+					i++;
+				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
+					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
+					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
+					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--display":
+					// Options without an implementation here; the value must still be consumed.
+					i++;
+				case "--cwd" | "-C":
+					// Cwd (Sys.chdir before anything resolves).
+					Sys.setCwd(args[i++]);
+				case "--cmd" | "-cmd":
+					cmds.push(unquote(args[i++]));
+				case "--version" | "-version":
+					// Version (com.info s_version_full).
+					Sys.stderr().writeString(Globals.sVersionFull + "\n");
+				case "--help-user-defines":
+					helpUserDefines = true;
+				case "--help-user-metas":
+					helpUserMetas = true;
+				case "--no-output":
+					noOutput = true;
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
 				case "-w":
@@ -98,17 +137,23 @@ class Compiler {
 					var wpos = new Position("-w " + spec, 0, 0);
 					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
-					// A bare positional argument whose type name starts uppercase is a class to compile
-					// (haxe allows the startup class without -main).
-					if (mainClass == null && !StringTools.startsWith(a, "-")) {
+					// A bare uppercase argument is a compilation root (never the startup class: only -main
+					// sets that); a bare lowercase argument includes the package.
+					if (!StringTools.startsWith(a, "-")) {
 						var nm = a.split(".").pop();
 						if (nm != null && nm.length > 0) {
 							var c0 = nm.charCodeAt(0);
-							if (c0 >= "A".code && c0 <= "Z".code) mainClass = a;
+							if (c0 >= "A".code && c0 <= "Z".code) extraClasses.push(a);
+							else ctx.initMacros.push("include('" + a + "', true, null, null, true)");
 						}
 					}
 			}
 		}
+
+		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
+		// works without a std. (did_something with no inputs).
+		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
+			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross) return;
 
 		// User -cp is searched before the std (it stays in front of the per-target overlay). Prepends
 		// each -cp individually, so the last -cp on the command line ends up first; reverse the
@@ -119,29 +164,47 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		ModuleLoader.initBasicTypes(ctx);
+		// The startup class is known from -main during argument handling, so an init macro's
+		// Context.getMainExpr / Compiler.getConfiguration already sees it.
+		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
-			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
-			Sys.exit(1);
+			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.TypingError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		}
 
-		if (mainClass == null) {
-			Sys.println("hxc " + Globals.sVersion + " (" + Globals.platformName(platform) + ", no -main)");
+		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=
+		// CInitMacrosDone). /
+		ctx.initMacrosDone = true;
+
+		// Help-user-defines/--help-user-metas print after the init macros registered the entries, then
+		// stop. (add_after_init_macros + Abort).
+		if (helpUserDefines || helpUserMetas) {
+			if (helpUserDefines) printUserDocs([
+				for (k in ctx.userDefines.keys()) {name: k.split("_").join("-"), entry: ctx.userDefines.get(k), isMeta: false}
+			]);
+			if (helpUserMetas) printUserDocs([
+				for (k in ctx.userMetas.keys()) {name: "@" + k, entry: ctx.userMetas.get(k), isMeta: true}
+			]);
 			return;
 		}
-		var path = parseTypePath(mainClass);
+
+		// A compile without -main still loads its roots, runs macros and filters, and generates; it just
+		// has no entry call (nothing is printed).
+		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
-			var m = ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
+			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			tLoad();
 			var tType = hxc.core.Timer.timer(["typing"]);
 			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
@@ -151,11 +214,22 @@ class Compiler {
 			TypeFields.typeAllModules(ctx);
 			tFields();
 			tType();
+			TypeFields.checkFinalVars(ctx);
+			TypeFields.checkRecursiveAbstracts(ctx);
 			abortOnDiagnostics(ctx, platform);
-			hxc.typing.ExceptionFilters.run(ctx);
-			hxc.typing.UnusedPure.run(ctx);
+			// Null safety runs before every expression filter and elimination so it sees the exprs as
+			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
+			// Report a missing imported field or type with a suggestion.
+			hxc.filters.ImportCheck.run(ctx);
+			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
+			hxc.filters.InterfaceCheck.run(ctx);
+			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
+			// runs in the shared filter pipeline).
+			hxc.filters.LocalVarsInit.run(ctx);
+			hxc.typing.ExceptionFilters.run(ctx);
+			hxc.typing.UnusedPure.run(ctx);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks();
@@ -164,7 +238,7 @@ class Compiler {
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			// The filter pipeline runs for generated targets eval keeps its unfiltered path until the switch
 			// is coordinated with the eval gate
-			if (platform == Js) {
+			if (platform == Js && !noOutput) {
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
@@ -175,22 +249,26 @@ class Compiler {
 			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
-				// utest, ...) is the only thing on stdout, matching the canonical haxe oracle.
+				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
 				var tInterp = hxc.core.Timer.timer(["interp"]);
-				var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
-				hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
-				hxc.eval.EvalMain.runMain(ectx, path);
+				if (path != null) {
+					var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
+					hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
+					hxc.eval.EvalMain.runMain(ectx, path);
+				}
 				tInterp();
-			} else if (ctx.defines.rawDefined("verbose")) {
+			} else if (ctx.defines.rawDefined("verbose") && path != null) {
 				// Compile-status line is a verbose-only aid; haxe prints nothing here on a successful compile.
 				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 			}
+			// --cmd commands run in order after a successful compile; a `cd ` command changes the working
+			// directory, any other spawns a shell command.
+			if (!noOutput) for (c in cmds) {
+				var r = runCommand(c);
+				if (r != 0) throw "Command failed with error " + r;
+			}
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
-			// An uncaught exception escaping the interpreted program: render the thrown value and its
-			// position, as the canonical eval target does, rather than the bare wrapper message.
-			printPositionMessage("Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), ex.pos);
-			for (p in ex.callPositions) printPositionMessage("Called from here", p);
-			Sys.exit(1);
+			printUncaughtException(ctx, ex, Position.nullPos);
 		} catch (e:hxc.parser.LexerError) {
 			printPositionMessage(hxc.parser.LexerError.errorMsg(e.msg), e.pos);
 			Sys.exit(1);
@@ -198,9 +276,11 @@ class Compiler {
 			printPositionMessage(hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 			Sys.exit(1);
 		} catch (e:hxc.context.Context.ContextError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:hxc.core.TypingError) {
+			flushPendingMessages(ctx);
 			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		} catch (e:Dynamic) {
@@ -213,10 +293,84 @@ class Compiler {
 		}
 	}
 
+	// One line per entry: " name: params doc (platform only) (from source)", wrapped at 80 columns.
+	static function printUserDocs(entries:Array<{name:String, entry:hxc.context.Context.UserDocEntry, isMeta:Bool}>):Void {
+		entries.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		var maxLen = 0;
+		for (en in entries) if (en.name.length > maxLen) maxLen = en.name.length;
+		for (en in entries) {
+			var d = en.entry;
+			var params = d.params.length == 0 ? "" : (en.isMeta ? "(<" + d.params.join(">, <") + ">) " : "<" + d.params.join(">, <") + "> ");
+			var pfs = switch (d.platforms.length) {
+				case 0: "";
+				case 1: " (" + d.platforms[0] + " only)";
+				case _: " (for " + d.platforms.join(",") + ")";
+			};
+			var origin = d.source == null ? "" : " (from " + d.source + ")";
+			Sys.println(" " + StringTools.rpad(en.name, " ", maxLen) + ": " + limitString(params + d.doc + pfs + origin, maxLen + 3));
+		}
+	}
+
+	// Word-wraps at 80 columns, continuing lines indented to the given offset.
+	static function limitString(s:String, offset:Int):String {
+		var rest = 80 - offset;
+		var out = new StringBuf();
+		var col = 0;
+		for (word in s.split(" ")) {
+			if (word.length + col + 1 > rest) {
+				out.add("\n");
+				for (_ in 0...offset) out.add(" ");
+				out.add(word);
+				col = word.length;
+			} else {
+				if (col != 0) out.add(" ");
+				out.add(word);
+				col = col + 1 + word.length;
+			}
+		}
+		return out.toString();
+	}
+
+	static function runCommand(cmd:String):Int {
+		if (StringTools.startsWith(cmd, "cd ")) {
+			Sys.setCwd(cmd.substr(3));
+			return 0;
+		}
+		return Sys.command(cmd);
+	}
+
 	static function parseTypePath(s:String):Path {
 		var parts = s.split(".");
 		var name = parts.pop();
 		return {pack: parts, name: name};
+	}
+
+	// An uncaught interpreted exception prints its value at the throw position when one exists (dropping
+	// the innermost duplicate stack frame), else at the catch position, then each stack frame
+	// outermost-first as Called from here.
+	static function printUncaughtException(ctx:Context, ex:hxc.eval.EvalExceptions.EvalRunTimeException, catchPos:Position):Void {
+		if (catchPos == null) catchPos = Position.nullPos;
+		// Frames run innermost first; an explicit throw position drops the innermost frame it
+		// duplicates, and the catch position closes the stack (the reference's api-call env).
+		var frames = [for (env in ex.envStack) hxc.eval.EvalExceptions.envPosition(env)];
+		frames = [for (p in frames) if (p != null && p.file != "?") p];
+		var explicit = ex.pos != null && !(ex.pos.file == "?" && ex.pos.min < 0);
+		if (explicit && frames.length > 0) frames.shift();
+		if (!(catchPos.file == "?" && catchPos.min < 0)) frames.push(catchPos);
+		var p1 = explicit ? ex.pos : catchPos;
+		// Reported through the message list so every -D message.reporting formatter renders it.
+		var stack = [{message: "Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), pos: p1}];
+		for (p in frames) stack.push({message: "Called from here", pos: p});
+		ctx.addDiagnosticStack(stack);
+		flushPendingMessages(ctx);
+		Sys.exit(1);
+	}
+
+	// A fatal error still reports the messages accumulated before it (warnings from macros, ...): the
+	// message list is flushed on abort.
+	static function flushPendingMessages(ctx:Context):Void {
+		hxc.compiler.Messages.display(ctx);
+		ctx.diagnostics = [];
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {

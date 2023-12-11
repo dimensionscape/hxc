@@ -138,6 +138,10 @@ class UnificationMatrix {
 }
 
 class TypeUnification {
+	// Types a method body before its signature is read in structural unification, so a still-open inferred
+	// return cannot bind to the anon's field type.
+	public static var forceOpenMethodHook:Null<(c:TClass, cf:TClassField)->Void> = null;
+
 	static var eqStack:RecStack<{a:T, b:T}> = new RecStack();
 	static var unifyStack:RecStack<{a:T, b:T}> = new RecStack();
 	static var varianceStack:RecStack<{a:T, b:T}> = new RecStack();
@@ -681,7 +685,7 @@ class TypeUnification {
 		}
 	}
 
-	static function unifyKind(k1:FieldKind, k2:FieldKind):Bool {
+	public static function unifyKind(k1:FieldKind, k2:FieldKind):Bool {
 		if (fieldKindEq(k1, k2)) return true;
 		return switch [k1, k2] {
 			case [Var(v1), Var(v2)]:
@@ -1032,6 +1036,20 @@ class TypeUnification {
 						}
 						var rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
 						var f1 = rcf.f;
+						// An unannotated method return is an open mono until its body types; close it before the
+						// signature is read (and re-read the signature so the param application sees the bound type).
+						if (forceOpenMethodHook != null && f1.expr == null && f1.kind.match(Method(_))) switch (TypeFunctions.follow(f1.type)) {
+							case TFun(sig1):
+								switch (TypeFunctions.follow(sig1.ret)) {
+									case TMono(r) if (r.type == null):
+										forceOpenMethodHook(rcf.c2 != null ? rcf.c2.c : c, f1);
+										monos = [];
+										rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
+										f1 = rcf.f;
+									case _:
+								}
+							case _:
+						}
 						var ft = TypeFunctions.applyParams(c.params, tl, rcf.t);
 						if (!unifyKind(f1.kind, f2.kind)) error([invalidKind(n, f1.kind, f2.kind)]);
 						if (TypeFunctions.hasClassFieldFlag(f2, CfPublic) && !TypeFunctions.hasClassFieldFlag(f1, CfPublic))

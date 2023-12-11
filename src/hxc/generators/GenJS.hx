@@ -1538,6 +1538,165 @@ class GenJS {
 		}
 	}
 
+	function generateClassEs6(c:TClass):Void {
+		var clPath = getGeneratedClassPath(c);
+		var p = sPath(clPath);
+		var dotp = dotPath(clPath);
+
+		var clsName:String;
+		if (!jsFlatten && clPath.pack.length > 0) {
+			generatePackageCreate(clPath);
+			print(p + " = ");
+			clsName = flatPath(clPath);
+		} else {
+			clsName = p;
+		}
+		print("class " + clsName);
+
+		if (c.superClass != null)
+			print(" extends " + typeAccessor(TClassDecl(c.superClass.c)));
+
+		spr(" {");
+		var closeBlock = openBlock();
+
+		var ctor = c.constructor;
+		if (ctor != null && ctor.expr != null) switch (ctor.expr.expr) {
+			case TFunction(f):
+				newline();
+				genFunction(f, ctor.expr.pos, "constructor");
+				separator = false;
+			case _:
+		}
+
+		function methodDefName(cf:TClassField):String
+			return validJsIdent(cf.name) ? cf.name : "\"" + cf.name + "\"";
+
+		var nonmethodFields:Array<TClassField> = [];
+		for (cf in c.orderedFields) {
+			var emitted = false;
+			if (cf.kind.match(Method(_)) && cf.expr != null) switch (cf.expr.expr) {
+				case TFunction(f):
+					checkFieldName(c, cf);
+					newline();
+					genFunction(f, cf.expr.pos, methodDefName(cf));
+					separator = false;
+					emitted = true;
+				case _:
+			}
+			if (!emitted) nonmethodFields.push(cf);
+		}
+
+		var exposedStaticMethods:Array<{path:String, name:String}> = [];
+		var nonmethodStatics:Array<TClassField> = [];
+		for (cf in c.orderedStatics) {
+			var emitted = false;
+			if (cf.kind.match(Method(_)) && cf.expr != null) switch (cf.expr.expr) {
+				case TFunction(f):
+					checkFieldName(c, cf);
+					newline();
+					genFunction(f, cf.expr.pos, "static " + methodDefName(cf));
+					separator = false;
+					var name = cf.name;
+					processExpose(com, cf.meta, function() return dotp + "." + name, function(s) exposedStaticMethods.unshift({path: s, name: name}));
+					emitted = true;
+				case _:
+			}
+			if (!emitted) nonmethodStatics.push(cf);
+		}
+
+		closeBlock();
+		newline();
+		spr("}");
+		newline();
+
+		for (m in exposedStaticMethods) {
+			print("$hx_exports" + pathToBrackets(m.path) + " = " + p + "." + m.name + ";");
+			newline();
+		}
+
+		for (f in nonmethodStatics) genClassStaticField(c, clPath, f);
+
+		var abstractImpl = isAbstractImpl(c);
+
+		var added = false;
+		if (hasResolveClass && !abstractImpl) {
+			added = true;
+			print("$hxClasses[\"" + dotp + "\"] = ");
+		}
+		processExpose(com, c.meta, function() return dotp, function(s) {
+			added = true;
+			print("$hx_exports" + pathToBrackets(s) + " = ");
+		});
+		if (added) {
+			spr(p);
+			newline();
+		}
+
+		if (!abstractImpl) {
+			generateClassName(clPath);
+			generateClassIsInterface(c);
+		}
+
+		if (hasInterfaceCheck && c.interfaces.length > 0) {
+			print(p + ".__interfaces__ = [" + [for (i in c.interfaces) typeAccessor(TClassDecl(i.c))].join(",") + "]");
+			newline();
+		}
+
+		var hasPropertyReflection = hasFeature("Reflect.getProperty") || hasFeature("Reflect.setProperty");
+		// The es6 props writer puts a space after the colon, the es3 one does not
+		function genPropsEs6(props:Array<{name:String, value:String}>):String
+			return [for (pr in props) pr.name + ": \"" + pr.value + "\""].join(",");
+
+		if (hasPropertyReflection) {
+			var props = hxc.codegen.Codegen.getProperties(nonmethodStatics);
+			if (props.length > 0) {
+				print(p + ".__properties__ = {" + genPropsEs6(props) + "}");
+				separator = true;
+				newline();
+			}
+		}
+
+		if (c.superClass != null && (hasInterfaceCheck || hasFeature("Type.getSuperClass"))) {
+			var psup = typeAccessor(TClassDecl(c.superClass.c));
+			print(p + ".__super__ = " + psup);
+			newline();
+		}
+
+		var hasClass = hasFeature("js.Boot.getClass") && (c.superClass != null || c.orderedFields.length > 0 || c.constructor != null);
+		var propsToGenerate = hasPropertyReflection ? hxc.codegen.Codegen.getProperties(c.orderedFields) : [];
+		var fieldsToGenerate = if (hasFeature("Type.getInstanceFields")) {
+			TypeFunctions.hasClassFlag(c, CInterface)
+				? [for (f in c.orderedFields) if (TypeFunctions.isPhysicalField(f)) f]
+				: [for (f in nonmethodFields) if (TypeFunctions.isPhysicalVarField(f)) f];
+		} else [];
+
+		if (hasClass || propsToGenerate.length > 0 || fieldsToGenerate.length > 0) {
+			print("Object.assign(" + p + ".prototype, {");
+			var bend = openBlock();
+
+			if (hasClass) {
+				newprop();
+				print("__class__: " + p);
+			}
+
+			for (f in fieldsToGenerate) genClassField(c, f);
+
+			if (propsToGenerate.length > 0) {
+				newprop();
+				if (c.superClass != null && hxc.codegen.Codegen.hasProperties(c.superClass.c)) {
+					var psup = typeAccessor(TClassDecl(c.superClass.c));
+					print("__properties__: Object.assign({}, " + psup + ".prototype.__properties__, {" + genPropsEs6(propsToGenerate) + "})");
+				} else {
+					print("__properties__: {" + genPropsEs6(propsToGenerate) + "}");
+				}
+			}
+
+			bend();
+			print("\n})");
+			newline();
+		}
+	}
+
 	function generateClass(c:TClass):Void {
 		current = c;
 		idCounter = 0;
@@ -1548,8 +1707,9 @@ class GenJS {
 				genModuleFields(m, c, c.orderedStatics);
 			case _:
 				if (esVersion >= 6)
-					throw new TypingError("es6 class generation is not ported yet", c.pos);
-				generateClassEs3(c);
+					generateClassEs6(c)
+				else
+					generateClassEs3(c);
 		}
 	}
 
@@ -1721,7 +1881,7 @@ class GenJS {
 	public static function generate(com:Context):Void {
 		var esVersion = com.getEsVersion();
 		if (esVersion >= 6)
-			throw new TypingError("es6 output is not ported yet", Position.nullPos);
+			hxc.filters.ES6Ctors.rewriteCtors(com);
 		var ctx = allocCtx(com, esVersion);
 		hxc.codegen.Codegen.mapSourceHeader(com, function(s) ctx.print("// " + s + "\n"));
 		// Raw files spliced by haxe.macro.Compiler.includeFile: placement "top" prints before everything,

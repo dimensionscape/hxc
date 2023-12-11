@@ -9,6 +9,7 @@ import hxc.core.TypeUnification;
 import hxc.core.Ref;
 import hxc.context.Context;
 import hxc.context.Context.ContextError;
+import hxc.typing.Typeload.TypeParamHost;
 import haxe.ds.StringMap;
 
 class TypeResolve {
@@ -262,7 +263,7 @@ class TypeResolve {
 				ctx.unresolvedFields++;
 			}
 		}
-		linkPropertyAccessors(c, isAbsImpl);
+		linkPropertyAccessors(ctx, c, isAbsImpl);
 	}
 
 	// The same-named instance field on the nearest superclass.
@@ -279,7 +280,17 @@ class TypeResolve {
 	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_
 	// return or value argument would otherwise be a free monomorph that can unify with an unrelated sibling
 	// type during inference. accessor checks.
-	static function linkPropertyAccessors(c:TClass, isAbsImpl:Bool):Void {
+	static function linkPropertyAccessors(ctx:Context, c:TClass, isAbsImpl:Bool):Void {
+		// A property accessor placed with the wrong staticness (a member accessor for a static property, or
+		// vice versa) is reported.
+		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+		function checkAccessor(accName:String, propName:String, ownColl:StringMap<TClassField>, otherColl:StringMap<TClassField>, propIsStatic:Bool):Void {
+			if (isExtern || TypeFunctions.hasClassFlag(c, CInterface)) return;
+			if (ownColl.get(accName) != null) return;
+			var other = otherColl.get(accName);
+			if (other != null)
+				ctx.addDiagnostic("Method " + accName + " is no valid accessor for " + propName + " because it is " + (propIsStatic ? "not " : "") + "static", other.pos);
+		}
 		function usePropertyType(slot:T, pt:T):Void {
 			switch (TypeFunctions.follow(slot)) {
 				case TMono(r) if (r.type == null):
@@ -288,7 +299,7 @@ class TypeResolve {
 					try TypeUnification.unifyDefault(slot, pt) catch (_:Dynamic) {};
 			}
 		}
-		function loop(fields:StringMap<TClassField>):Void {
+		function loop(fields:StringMap<TClassField>, other:StringMap<TClassField>, propIsStatic:Bool):Void {
 			var generated:Array<TClassField> = [];
 			inline function genAccessor(accName:String, propType:T, isSetter:Bool):TClassField {
 				// Generate the virtual accessor for an interface property.
@@ -311,6 +322,7 @@ class TypeResolve {
 								case _:
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("get_" + name, pt, false));
+							else checkAccessor("get_" + name, name, fields, other, propIsStatic);
 						}
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
@@ -321,6 +333,7 @@ class TypeResolve {
 								case _:
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("set_" + name, pt, true));
+							else checkAccessor("set_" + name, name, fields, other, propIsStatic);
 						}
 					case _:
 				}
@@ -330,8 +343,15 @@ class TypeResolve {
 				c.orderedFields.push(acc);
 			}
 		}
-		loop(c.statics);
-		if (!isAbsImpl) loop(c.fields);
+		loop(c.statics, c.fields, true);
+		if (!isAbsImpl) loop(c.fields, c.statics, false);
+	}
+
+	// Whether c's inheritance chain (itself, supers, implemented interfaces) reaches target.
+	static function extendsChain(c:TClass, target:TClass):Bool {
+		if (c == target) return true;
+		for (i in c.interfaces) if (extendsChain(i.c, target)) return true;
+		return c.superClass != null && extendsChain(c.superClass.c, target);
 	}
 
 	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position):Void {
@@ -339,6 +359,7 @@ class TypeResolve {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
 				case TInst(csup, params):
+					if (extendsChain(csup, c)) throw new ContextError("Recursive class", p);
 					// A final class or interface cannot be extended; @:hack lifts the check for an extern
 					// super, and a
 					// type-parameter class is exempt.
@@ -373,6 +394,8 @@ class TypeResolve {
 						throw new ContextError("Interfaces cannot implement another interface (use extends instead)", p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
+					// Reject cycles between implemented interfaces.
+					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					c.interfaces.push({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
 				case TDynamic(dt):
@@ -392,9 +415,11 @@ class TypeResolve {
 			return Typeload.loadComplexType(ctx, a.params, th);
 		}
 
+		var fromPos:Array<Position> = [];
+		var toPos:Array<Position> = [];
 		for (f in d.dFlags) switch (f) {
-			case AbFrom(th): a.from.push(loadType(th));
-			case AbTo(th): a.to.push(loadType(th));
+			case AbFrom(th): a.from.push(loadType(th)); fromPos.push(th.pos);
+			case AbTo(th): a.to.push(loadType(th)); toPos.push(th.pos);
 			case AbOver(th):
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
 				var at = Typeload.loadComplexType(ctx, a.params, th);
@@ -411,15 +436,16 @@ class TypeResolve {
 		// From/to declarations must unify with the underlying type (the unification also marks
 		// structure-matched class fields @:?used for DCE)
 		if (!isCore && isType) {
-			for (t in a.from) {
-				try hxc.core.TypeUnification.unifyDefault(t, a.thisType)
+			// Report the error at the from/to type hint.
+			for (i in 0...a.from.length) {
+				try hxc.core.TypeUnification.unifyDefault(a.from[i], a.thisType)
 				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+					throw new ContextError("You can only declare from/to with compatible types", i < fromPos.length ? fromPos[i] : a.pos);
 			}
-			for (t in a.to) {
-				try hxc.core.TypeUnification.unifyDefault(a.thisType, t)
+			for (i in 0...a.to.length) {
+				try hxc.core.TypeUnification.unifyDefault(a.thisType, a.to[i])
 				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", a.pos);
+					throw new ContextError("You can only declare from/to with compatible types", i < toPos.length ? toPos[i] : a.pos);
 			}
 		}
 
@@ -488,11 +514,11 @@ class TypeResolve {
 				// Assignment / null-coalescing / ternary overloads
 				// are explicitly rejected.
 				case EBinop(OpAssign, _, _):
-					throw new ContextError("Assignment overloading is not supported", opExpr.pos);
+					throw new ContextError("Assignment overloading is not supported", cf.pos);
 				case EBinop(OpNullCoal, _, _) | EBinop(OpAssignOp(OpNullCoal), _, _):
-					throw new ContextError("Null coalescing overloading is not supported", opExpr.pos);
+					throw new ContextError("Null coalescing overloading is not supported", cf.pos);
 				case ETernary(_, _, _):
-					throw new ContextError("Ternary overloading is not supported", opExpr.pos);
+					throw new ContextError("Ternary overloading is not supported", cf.pos);
 				case EBinop(op, _, _):
 					a.ops.push({op: op, cf: cf});
 				// `@:op(unop A)` / `@:op(A unop)`: register
@@ -603,7 +629,7 @@ class TypeResolve {
 					var methodParams:TypeParams = [];
 					var localParams = a.params;
 					if (fd.fParams.length > 0) {
-						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams);
+						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams, null, cff.cffName.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = methodParams.concat(a.params);
 					}
 					// In the host context a macro function's signature degrades every type to Dynamic, with
@@ -763,7 +789,7 @@ class TypeResolve {
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
 			if (c.ecParams.length > 0)
-				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams);
+				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams, null, TPHEnumConstructor);
 			var localParams = ctorParams.concat(e.params);
 			var rt = switch (c.ecType) {
 				case null:
@@ -816,7 +842,7 @@ class TypeResolve {
 				var methodParams:TypeParams = [];
 				if (fd.fParams.length > 0) {
 					// Add method type params so arg/return hints referencing them resolve.
-					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams, outerParams);
+					methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, fd.fParams, outerParams, cf.name == "new" ? TPHConstructor : TPHMethod);
 					localParams = methodParams.concat(outerParams);
 				}
 				var isMacroField = false;
@@ -876,7 +902,7 @@ class TypeResolve {
 					var localParams = typeParams;
 					var ovParams:TypeParams = [];
 					if (f.fParams.length > 0) {
-						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams);
+						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams, null, cf.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = ovParams.concat(typeParams);
 					}
 					var args:Array<TSignatureArg> = [];

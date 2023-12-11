@@ -542,12 +542,16 @@ class EvalEmitter {
 	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position):EvalValue {
 		return switch (fa) {
 			case FStatic(c, cf):
-				// A static field missing from the prototype means its owning body failed to type and was
-				// dropped (a known hxc typing gap). Surface it as a catchable interpreted exception so the
-				// running program (e.g. the utest runner) records an error for that test and keeps going,
-				// rather than a host NotFound escaping the interpreter and aborting the whole run.
+				// A static field missing from the prototype means its owning body was not typed and
+				// installed (a module pulled into the macro world after the interpreter was built only
+				// force-types its reachable statics). Type it on demand and install it, then retry; a
+				// genuine gap surfaces as a catchable interpreted exception so the running program keeps
+				// going rather than a host NotFound aborting the whole run.
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name))
-				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
+				catch (_:hxc.core.NotFound) {
+					var late = lateStaticMethod(ctx, c, cf);
+					late != null ? late : EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
+				}
 			case FEnum(en, ef):
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
 				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)", p);
@@ -600,9 +604,64 @@ class EvalEmitter {
 		};
 	}
 
+	// Types a static method's body on demand and installs it into the class's static prototype,
+	// returning the callable value; null when the field has no method body to install. Mirrors
+	// lateInstanceMethod for statics (a lazily added macro module force-types only reachable statics).
+	static function lateStaticMethod(ctx:EvalContext, c:TClass, cf:TClassField):Null<EvalValue> {
+		if (cf.expr == null) {
+			var com = ctx.com;
+			var mc = hxc.eval.EvalMacro.getMacroCom();
+			if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
+			if (com == null) com = hxc.eval.EvalMacro.hostCom;
+			if (com != null) {
+				var savedMod = com.currentModule;
+				com.currentModule = c.module;
+				try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+				com.currentModule = savedMod;
+				if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
+			}
+		}
+		return switch (cf.expr) {
+			case {expr: TFunction(tf)}:
+				var key = EvalHash.pathHash(c.path);
+				var proto = ctx.staticPrototypes.get(key);
+				if (proto == null) return null;
+				var name = EvalHash.hash(cf.name);
+				var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, name), 0, 0);
+				var vf = VFunction(EvalPrototype.makeFunction(ctx, tf, false, info), true);
+				var idx = proto.pnames.get(name);
+				if (idx == null) {
+					proto.pnames.set(name, proto.pfields.length);
+					proto.pfields.push(vf);
+				} else {
+					proto.pfields[idx] = vf;
+				}
+				vf;
+			case _: null;
+		}
+	}
+
 	static function lateInstanceMethod(ctx:EvalContext, recv:EvalValue, cf:TClassField):EvalValue {
 		return switch (recv) {
 			case VInstance(vi):
+				// A method of a lazily loaded module may not have its body typed yet (a macro-world
+				// module pulled in during body typing only forces reachable statics); type it now.
+				if (cf.expr == null) switch (ctx.typeCache.get(vi.iproto.ppath)) {
+					case TClassDecl(c):
+						var com = ctx.com;
+						var mc = hxc.eval.EvalMacro.getMacroCom();
+						if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
+						if (com == null) com = hxc.eval.EvalMacro.hostCom;
+						if (com != null) {
+							var savedMod = com.currentModule;
+							com.currentModule = c.module;
+							try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+							com.currentModule = savedMod;
+							// Typing the body may have pulled new modules into the macro world.
+							if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
+						}
+					case _:
+				}
 				switch (cf.expr) {
 					case {expr: TFunction(tf)}:
 						var name = EvalHash.hash(cf.name);

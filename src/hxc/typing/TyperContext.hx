@@ -14,6 +14,9 @@ class TyperContext {
 	public var inLoop:Bool;
 	public var inFunction:Bool;
 	public var untypedMode:Bool;
+	// True while call arguments type; a structure mismatch then raises (annotated with the
+	// parameter name by the caller) instead of recording.
+	public var inCallArgs:Bool = false;
 	/** Newest first. */
 	public var monomorphs:Array<{m:TMono, p:Position}>;
 	/** Expected return type of the function being typed. */

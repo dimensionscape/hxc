@@ -53,7 +53,7 @@ typedef CompilerMessage = {
 
 class Globals {
 	// Version components use integer division and remainder.
-	public static final version:Int = 4300;
+	public static final version:Int = 4307;
 	public static final versionMajor:Int = Std.int(version / 1000); // Version / 1000
 	public static final versionMinor:Int = Std.int((version % 1000) / 100); // (version mod 1000) / 100
 	public static final versionRevision:Int = version % 100; // Version mod 100
@@ -166,6 +166,8 @@ class Globals {
 	}
 
 	public static var getErrorPosRef:(String->Int->String)->Position->String = function(printer, p) {
+		// Min = -1 prints as "(unknown)".
+		if (p.min == -1) return "(unknown)";
 		var info = Position.getInfos(p);
 		if (info.line <= 0) return '${p.file}: (unknown)';
 		if (info.line != info.endLine) return printer(p.file, info.line) + ' lines ${info.line}-${info.endLine}';

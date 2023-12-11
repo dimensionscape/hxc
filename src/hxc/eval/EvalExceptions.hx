@@ -88,7 +88,8 @@ class EvalExceptions {
 	}
 
 	public static function exc(ctx:EvalContext, v:EvalValue, ?p:Position):Dynamic {
-		if (p == null || p.min < 0) p = EvalContext.getEval(ctx).currentPos;
+		// A builtin throw keeps the null position: the reporting then renders the exception at the catch
+		// position and keeps every stack frame.
 		return throwValue(ctx, v, p == null ? Position.nullPos : p);
 	}
 

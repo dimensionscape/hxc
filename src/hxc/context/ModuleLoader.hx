@@ -27,7 +27,7 @@ class ModuleLoader {
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
 			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return full;
 		}
-		throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 	}
 
 	static function skipEvalOverlayFile(ctx:Context, dir:String, relPath:String):Bool {
@@ -509,6 +509,7 @@ class ModuleLoader {
 			var isFinalField = false;
 			var explicitPublic = false, explicitPrivate = false;
 			var overloadPos:Null<Position> = null;
+			var abstractPos:Null<Position> = null;
 			for (a in cff.cffAccess) switch (a.access) {
 				case AStatic: isStatic = true;
 				case AExtern: isExtern = true;
@@ -516,6 +517,7 @@ class ModuleLoader {
 				case APublic: explicitPublic = true;
 				case APrivate: explicitPrivate = true;
 				case AOverload: overloadPos = a.pos;
+				case AAbstract: abstractPos = a.pos;
 				case _:
 			}
 			if (TypeFunctions.hasMeta(":final", cff.cffMeta)) isFinalField = true;
@@ -580,6 +582,10 @@ class ModuleLoader {
 					throw new ContextError("Invalid modifier: overload is only supported on extern functions", overloadPos);
 				}
 			}
+				if (abstractPos != null && cf.name == "new")
+					throw new ContextError("Invalid modifier: abstract on constructor", abstractPos);
+				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl) && cf.kind.match(Method(MethDynamic)))
+					throw new ContextError("Invalid modifier: dynamic on method of abstract", cff.cffPos);
 			// Keep the first overload method as primary and prepend subsequent methods and their overloads.
 			// Both primary and incoming methods must carry CfOverload.
 			var dupTable = isStatic ? c.statics : c.fields;
@@ -674,14 +680,14 @@ class ModuleLoader {
 		var existing = ctx.moduleLut.get(key);
 		if (existing != null) return existing;
 		if (ctx.moduleNonexistentLut.exists(key))
-			throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 
 		var file:String;
 		try {
 			file = resolveModuleFile(ctx, m, p);
 		} catch (e:ContextError) {
 			ctx.moduleNonexistentLut.set(key, true);
-			throw new ContextError("Module not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 		}
 
 		var src = Position.getFileContent(file);

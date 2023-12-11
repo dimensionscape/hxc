@@ -35,6 +35,16 @@ class DeprecationCheck {
 		}
 	}
 
+	// A property access resolves to its accessor at typing, so the property field never appears
+	// in the typed tree the run() walker visits; the use is checked at resolution instead.
+	public static function checkPropertyUse(ctx:hxc.typing.TyperContext, cf:TClassField, p:Position):Void {
+		if (ctx.com.isMacro) return;
+		var classMeta = ctx.curclass != null ? ctx.curclass.meta : [];
+		var fieldMeta = ctx.curfield != null ? ctx.curfield.meta : [];
+		if (TypeFunctions.hasMeta(":deprecated", classMeta) || TypeFunctions.hasMeta(":deprecated", fieldMeta)) return;
+		checkMeta(ctx.com, classMeta, fieldMeta, cf.meta, "field", p);
+	}
+
 	public static function run(com:Context):Void {
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasMeta(":deprecated", c.meta)):

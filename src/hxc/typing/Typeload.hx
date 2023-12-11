@@ -19,8 +19,12 @@ class Typeload {
 	static var genericInstanceId:Int = 0;
 	static var genericInstances:Map<String, TClass> = new Map();
 
-	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam):TypedTypeParam {
+	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType):TypedTypeParam {
 		var n = tp.tpName.name;
+		// A default type parameter is only allowed on a type declaration, not on a constructor, method, or
+		// enum constructor.
+		if (tp.tpDefault != null && host != TPHType)
+			ctx.addDiagnostic("Default type parameters are only supported on types", tp.tpDefault.pos);
 		var c = TypeFunctions.mkClass(TypeFunctions.nullModule, {pack: declPath.pack.concat([declPath.name]), name: n}, tp.tpName.pos, tp.tpName.pos);
 		c.kind = KTypeParameter([]);
 		c.meta = tp.tpMeta;
@@ -119,7 +123,7 @@ class Typeload {
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 
-	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams):TypeParams {
+	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType):TypeParams {
 		// Returns the sibling params so a
 		// first, then hand each param a thunk closing over it.
 		var params:TypeParams = [];
@@ -131,7 +135,7 @@ class Typeload {
 			if (names.indexOf(tp.tpName.name) >= 0)
 				ctx.addDiagnostic("Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
 			names.push(tp.tpName.name);
-			params.push(typeTypeParam(ctx, declPath, getParams, tp));
+			params.push(typeTypeParam(ctx, declPath, getParams, tp, host));
 		}
 		return params;
 	}
@@ -172,19 +176,19 @@ class Typeload {
 				throw new ContextError("Named type not allowed here", p);
 
 			case CTIntersection(tl):
-				var resolved = [for (th in tl) loadComplexType(ctx, typeParams, th)];
+				var resolved = [for (th in tl) {t: loadComplexType(ctx, typeParams, th), pos: th.pos}];
 				makeExtensionType(ctx, resolved, p);
 
 			case CTExtend(paths, fields):
 				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p);
 				switch (anonT) {
 					case TAnon(a):
-						var il = [for (pt in paths) loadInstance(ctx, typeParams, pt.path, pt.pos, false)];
+						var il = [for (pt in paths) {t: loadInstance(ctx, typeParams, pt.path, pt.pos, false), pos: pt.pos}];
 						if (il.length == 1) {
-							mkExtension(a, il[0], p);
+							mkExtension(ctx, a, il[0].t, il[0].pos);
 						} else {
-							for (it in il) extendLoop(a, it, p);
-							a.status.set(Extend(il));
+							for (e in il) extendLoop(ctx, a, e.t, e.pos);
+							a.status.set(Extend([for (e in il) e.t]));
 							anonT;
 						}
 					case _:
@@ -200,8 +204,21 @@ class Typeload {
 	}
 
 	// CTExtend helpers do not check is_redefined.
-	static function mkExtension(a:TAnon, it:T, p:Position):T {
-		return switch (TypeFunctions.follow(it)) {
+
+	// A forward-referenced typedef in the same module resolves on demand before its follow.
+	static function followOnDemand(ctx:Context, it:T):T {
+		var ft = TypeFunctions.follow(it);
+		if (!ft.match(TAnon(_))) switch (it) {
+			case TType(td, _):
+				hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
+				ft = TypeFunctions.follow(it);
+			case _:
+		}
+		return ft;
+	}
+
+	static function mkExtension(ctx:Context, a:TAnon, it:T, p:Position):T {
+		return switch (followOnDemand(ctx, it)) {
 			case TInst(c, _) if (isTypeParameter(c)):
 				throw new ContextError("Cannot structurally extend type parameters", p);
 			case TMono(_):
@@ -216,8 +233,8 @@ class Typeload {
 		}
 	}
 
-	static function extendLoop(a:TAnon, it:T, p:Position):Void {
-		switch (TypeFunctions.follow(it)) {
+	static function extendLoop(ctx:Context, a:TAnon, it:T, p:Position):Void {
+		switch (followOnDemand(ctx, it)) {
 			case TAnon(a2):
 				for (k in a2.fields.keys()) if (!a.fields.exists(k)) a.fields.set(k, a2.fields.get(k));
 			case _:
@@ -225,26 +242,27 @@ class Typeload {
 		}
 	}
 
-	static function makeExtensionType(ctx:Context, tl:Array<T>, p:Position):T {
-		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A
-		// forward-referenced typedef in the same module resolves on demand first.
+	static function makeExtensionType(ctx:Context, tl:Array<{t:T, pos:Position}>, p:Position):T {
+		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A forward-referenced
+		// typedef in the same module resolves on demand first. A non-structure component errors at its own
+		// hint keeps per-component pos).
 		var merged = new StringMap<TClassField>();
-		for (t in tl) {
-			var ft = TypeFunctions.follow(t);
-			if (!ft.match(TAnon(_))) switch (t) {
+		for (e in tl) {
+			var ft = TypeFunctions.follow(e.t);
+			if (!ft.match(TAnon(_))) switch (e.t) {
 				case TType(td, _):
 					hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
-					ft = TypeFunctions.follow(t);
+					ft = TypeFunctions.follow(e.t);
 				case _:
 			}
 			switch (ft) {
 				case TAnon(a2):
 					for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
 				case _:
-					throw new ContextError("Can only extend structures", p);
+					throw new ContextError("Can only extend structures", e.pos);
 			}
 		}
-		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend(tl)), merged);
+		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend([for (e in tl) e.t])), merged);
 	}
 
 	static function isTypeParameter(c:TClass):Bool {
@@ -944,4 +962,13 @@ class Typeload {
 		TypeFunctions.addDependency(mg, c.module);
 		return cg;
 	}
+}
+
+// Where a set of type parameters is declared, distinguishing a type declaration (defaults allowed)
+// from a constructor, method, or enum constructor (defaults rejected).
+enum TypeParamHost {
+	TPHType;
+	TPHConstructor;
+	TPHMethod;
+	TPHEnumConstructor;
 }

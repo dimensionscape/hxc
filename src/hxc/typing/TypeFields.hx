@@ -337,6 +337,7 @@ class TypeFields {
 					if (eo != null) {
 						setValueMeta(cf, [eo]);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+						if (!isStatic) checkThisInVarInit(tctx, te);
 						cf.expr = checkCast(te, sigType);
 					}
 				case FFun(fd):
@@ -353,6 +354,7 @@ class TypeFields {
 					if (eo != null) {
 						setValueMeta(cf, [eo]);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+						if (!isStatic) checkThisInVarInit(tctx, te);
 						cf.expr = checkCast(te, sigType);
 					}
 			}
@@ -361,6 +363,92 @@ class TypeFields {
 			throw e;
 		}
 		cleanup();
+	}
+
+	// A member variable initializer cannot reach this (issue #1958); the first occurrence reports and the
+	// walk stops. .
+	static function checkThisInVarInit(tctx:TyperContext, e:TExpr):Void {
+		var found = false;
+		function check(e2:TExpr):Void {
+			if (found) return;
+			switch (e2.expr) {
+				case TConst(TThis):
+					tctx.com.addDiagnostic("Cannot access this or other member field in variable initialization", e2.pos);
+					found = true;
+				case TLocal(v) if (tctx.vthis != null && v == tctx.vthis):
+					tctx.com.addDiagnostic("Cannot access this or other member field in variable initialization", e2.pos);
+					found = true;
+				case _:
+					hxc.core.TexprTools.iter(check, e2);
+			}
+		}
+		check(e);
+	}
+
+	// An abstract's underlying type must not cycle back through other abstracts. Runs after resolution so
+	// every thisType is loaded (delayed to PForce).
+	public static function checkRecursiveAbstracts(ctx:Context):Void {
+		for (mt in ctx.types) switch (mt) {
+			case TAbstractDecl(a) if (a.thisType != null && !TypeFunctions.hasMeta(":coreType", a.meta)):
+				var stack:Array<TAbstract> = [a];
+				var t = a.thisType;
+				var guard = 0;
+				while (guard++ < 100) {
+					switch (TypeFunctions.follow(t)) {
+						case TAbstract(a2, _) if (!TypeFunctions.hasMeta(":coreType", a2.meta)):
+							if (stack.indexOf(a2) >= 0) {
+								ctx.addDiagnostic("Abstract underlying type cannot be recursive", a2.pos);
+								break;
+							}
+							stack.push(a2);
+							if (a2.thisType == null) break;
+							t = a2.thisType;
+						case _:
+							break;
+					}
+				}
+			case _:
+		}
+	}
+
+	// Every final var (of the class and of constructor-less abstract supers) must be assigned in the
+	// constructor. Runs after all fields typed, so sibling initializers are visible. .
+	public static function checkFinalVars(ctx:Context):Void {
+		if (ctx.hasError()) return;
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c) if (c.constructor != null && c.constructor.expr != null && !TypeFunctions.hasClassFlag(c, CExtern)):
+				var body = switch (c.constructor.expr.expr) { case TFunction(tf): tf.expr; case _: null; };
+				if (body == null) continue;
+				var finalVars:Map<String, Bool> = new Map();
+				var ordered:Array<TClassField> = [];
+				function collect(c2:TClass):Void {
+					for (cf in c2.orderedFields)
+						if (cf.kind.match(Var(_)) && TypeFunctions.hasClassFieldFlag(cf, CfFinal) && cf.expr == null && !finalVars.exists(cf.name)) {
+							finalVars.set(cf.name, false);
+							ordered.push(cf);
+						}
+					if (c2.superClass != null && TypeFunctions.hasClassFlag(c2.superClass.c, CAbstract) && c2.superClass.c.constructor == null)
+						collect(c2.superClass.c);
+				}
+				collect(c);
+				if (!finalVars.keys().hasNext()) continue;
+				function findInits(e:TExpr):Void {
+					switch (e.expr) {
+						case TBinop(OpAssign, {expr: TField({expr: TConst(TThis)}, fa)}, rhs):
+							finalVars.remove(TypeFunctions.fieldName(fa));
+							findInits(rhs);
+						case _:
+							hxc.core.TexprTools.iter(findInits, e);
+					}
+				}
+				findInits(body);
+				var remaining = [for (cf in ordered) if (finalVars.exists(cf.name)) cf];
+				if (remaining.length > 0) {
+					ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
+					for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
+				}
+			case _:
+		}
 	}
 
 	static function setValueMeta(cf:TClassField, params:Array<Expr>):Void {
@@ -391,8 +479,19 @@ class TypeFields {
 
 	static function promoteLocalStatic(tctx:TyperContext, lut:Map<Int, TClassField>, v:TVar, eo:Null<TExpr>):Void {
 		var name = tctx.curfield.name + "_" + v.name;
-		if (tctx.curclass.statics.exists(name))
-			throw new TypingError("The expanded name of this local (" + name + ") conflicts with another static field", v.pos);
+		if (tctx.curclass.statics.exists(name)) {
+			var other = tctx.curclass.statics.get(name);
+			// A repeat typing pass of the same body finds its own promoted static (same declaration
+			// position): reuse it. A different local expanding to the same name is a real conflict.
+			if (TypeFunctions.hasClassFieldFlag(other, CfNoLookup)
+					&& other.namePos.file == v.pos.file && other.namePos.min == v.pos.min) {
+				lut.set(v.id, other);
+				return;
+			}
+			tctx.com.addDiagnostic("The expanded name of this local (" + name + ") conflicts with another static field", v.pos);
+			tctx.com.addDiagnostic("Conflicting field was found here", other.namePos, 1);
+			return;
+		}
 		if (eo != null) checkLocalStaticInit(eo);
 		var cf = TypeFunctions.mkField(name, v.type, v.pos, v.pos, false, true);
 		cf.meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(v.meta);

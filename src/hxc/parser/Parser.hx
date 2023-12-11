@@ -110,7 +110,9 @@ class Parser {
 				true;
 			case Kwd(KwdReturn) | Kwd(KwdThrow) | Kwd(KwdCase) | Kwd(KwdElse) | Kwd(KwdIn)
 				| Kwd(KwdVar) | Kwd(KwdFinal) | Kwd(KwdMacro) | Kwd(KwdUntyped) | Kwd(KwdCast)
-				| Kwd(KwdNew) | Kwd(KwdIf) | Kwd(KwdWhile) | Kwd(KwdDo) | Kwd(KwdFor)
+				// `new` is followed by a type path, never markup; `function new<T>` needs the `<`
+				// lexed as a type-parameter open, not a markup literal.
+				| Kwd(KwdIf) | Kwd(KwdWhile) | Kwd(KwdDo) | Kwd(KwdFor)
 				| Kwd(KwdSwitch) | Kwd(KwdTry):
 				true;
 			case _:
@@ -308,6 +310,7 @@ class Parser {
 			try {
 				v = f();
 			} catch (e:ParserError) {
+				if (idx != save) throw e;
 				idx = save;
 				break;
 			}
@@ -829,7 +832,10 @@ class Parser {
 	}
 
 	function parseCallParamsList():Array<Expr> {
-		return psepTrailing(expr);
+		var el = psepTrailing(expr);
+		if (!tokEq(peek(), PClose))
+			throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
+		return el;
 	}
 
 	function parseSwitchCases():{cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>} {
@@ -963,6 +969,10 @@ class Parser {
 				var save = idx;
 				var p1 = next().pos;
 				switch (peek()) {
+					case Kwd(KwdVar):
+						// Redundant `var` check
+						var p2 = next().pos;
+						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case Const(CIdent(_)), Dollar(_), At:
 						var vl = parseVarDecls(true);
 						var p2 = semicolon();
@@ -1053,6 +1063,12 @@ class Parser {
 	}
 
 	function secureExpr():Expr {
+		// A token that cannot start an expression reports Expected expression there. .
+		switch (peek()) {
+			case PClose | BrClose | BkClose | Semicolon | Comma | Eof:
+				throw new ParserError(Expected(["expression"]), peekInfo().pos);
+			case _:
+		}
 		return expr();
 	}
 
@@ -1865,6 +1881,10 @@ class Parser {
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
 				switch (peek()) {
+					case Kwd(KwdVar):
+						// Redundant `var` check
+						var p2 = next().pos;
+						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case Const(CIdent(_)), Dollar(_), Question:
 						var q = questionableDollarIdent();
 						name = q.name;
@@ -2079,7 +2099,8 @@ class Parser {
 				return err("Expected identifier after import");
 		}
 		var p2 = expect(Semicolon);
-		return {decl: EImport({path: path, mode: mode}), pos: Position.union(p1, p2)};
+		var ipos = Position.union(p1, p2);
+		return {decl: EImport({path: path, mode: mode, pos: ipos}), pos: ipos};
 	}
 
 	function parseUsing(p1:Position):TypeDecl {

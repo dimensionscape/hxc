@@ -4182,26 +4182,40 @@ class EvalStdLib {
 						EvalMacro.reportError(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()));
 						return VNull;
 					}, true);
+				// Warning/info/get_messages/filter_messages share the compiler's message list.
 				case "warning":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Warning", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						com.addDiagnostic(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()), 0, hxc.core.Globals.MessageSeverity.Warning);
 						return VNull;
 					}, true);
 				case "info":
 					VFunction(function(args) {
-						macroMessages.push(macroMessage(ctx, "Info", arg(args, 0), args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition())));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
+						com.addDiagnostic(stringOf(arg(args, 0)), macroPosOf(posValue, EvalMacro.currentPosition()), 0, hxc.core.Globals.MessageSeverity.Information);
 						return VNull;
 					}, true);
 				case "get_messages":
-					VFunction(function(args) return VArray(new VArray(macroMessages.copy(), macroMessages.length)), true);
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var msgs = [for (d in com.diagnostics) if (!d.severity.match(Error)) macroMessage(ctx, d.severity.match(Warning) ? "Warning" : "Info", VString(new VString(d.message, d.message.length)), mkPos(ctx, d.pos))];
+						return VArray(new VArray(msgs, msgs.length));
+					}, true);
 				case "filter_messages":
 					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
 						var pred = arg(args, 0);
-						macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(pred, [msg]))) msg];
+						com.diagnostics = [for (d in com.diagnostics)
+							if (d.severity.match(Error) || EvalMisc.isTrue(applyFn(pred, [macroMessage(ctx, d.severity.match(Warning) ? "Warning" : "Info", VString(new VString(d.message, d.message.length)), mkPos(ctx, d.pos))]))) d];
 						return VNull;
 					}, true);
 				case "init_macros_done":
-					VFunction(function(args) return VTrue, true);
+					VFunction(function(args) {
+						var com = EvalMacro.hostCom != null ? EvalMacro.hostCom : ctx.com;
+						return (com != null && com.initMacrosDone) ? VTrue : VFalse;
+					}, true);
 				case "current_pos":
 					VFunction(function(args) return mkPos(ctx, EvalMacro.currentPosition()), true);
 				case "get_macro_stack":
@@ -4249,12 +4263,21 @@ class EvalStdLib {
 					VFunction(function(args) {
 						var f = arg(args, 0);
 						var host = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						// The callback executes in its eval world (like generate callbacks do).
 						host.nullSafetyReportCallbacks.push(function(errors) {
 							var items:Array<EvalValue> = [for (e in errors) mkObject([
 								{name: "msg", value: mkStr(e.msg)},
 								{name: "pos", value: mkPos(ctx, e.pos)}
 							])];
-							callValueOn(VNull, f, [VArray(new VArray(items, items.length))]);
+							var saved = EvalContext.getCtx();
+							EvalContext.setCtx(ctx);
+							try {
+								callValueOn(VNull, f, [VArray(new VArray(items, items.length))]);
+								EvalContext.setCtx(saved);
+							} catch (e:Dynamic) {
+								EvalContext.setCtx(saved);
+								throw e;
+							}
 						});
 						return VNull;
 					}, true);
@@ -5225,8 +5248,15 @@ class EvalStdLib {
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
 		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
-		reg(s, "sys.io.File", "getBytes", vfn(a -> mkBytes(ctx, sys.io.File.getBytes(stringOf(arg(a, 0))))));
-		reg(s, "sys.io.File", "getContent", vfn(a -> mkStr(sys.io.File.getContent(stringOf(arg(a, 0))))));
+		// An unreadable file raises "Could not read file <path>".
+		reg(s, "sys.io.File", "getBytes", vfn(a -> {
+			var path = stringOf(arg(a, 0));
+			try mkBytes(ctx, sys.io.File.getBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+		}));
+		reg(s, "sys.io.File", "getContent", vfn(a -> {
+			var path = stringOf(arg(a, 0));
+			try mkStr(sys.io.File.getContent(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
+		}));
 		reg(s, "sys.io.File", "read", vfn(a -> mkFileInput(ctx, sys.io.File.read(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), thisBytes([arg(a, 1)])); VNull; }));
 		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));

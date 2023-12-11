@@ -193,6 +193,9 @@ class NullSafety {
 		return switch (t) {
 			case TMono(r): r.type == null ? t : unfoldNull(r.type);
 			case TAbstract(a, [t1]) if (isNullPath(a)): unfoldNull(t1);
+			// A non-core abstract unfolds to its underlying type.
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				unfoldNull(TypeFunctions.applyParams(a.params, tl, a.thisType));
 			case TLazy(f): unfoldNull(TypeFunctions.lazyType(f));
 			case TType(td, tl): unfoldNull(TypeFunctions.applyTypedef(td, tl));
 			case _: t;
@@ -323,11 +326,26 @@ class NullSafety {
 // Can a value of type a be passed where b is expected, null-safety-wise. Throws SafetyError.
 class Unificator {
 	var stack:Array<{a:T, b:T}> = [];
+	// Typedef application builds fresh nodes, so a recursive type cannot end the recursion by node
+	// identity; a depth cap backstops it.
+	var depth:Int = 0;
 
 	public function new() {}
 
 	public function unify(a:T, b:T):Void {
 		if (a == b) return;
+		if (depth > 100) return;
+		depth++;
+		try {
+			unifyInner(a, b);
+			depth--;
+		} catch (e:Dynamic) {
+			depth--;
+			throw e;
+		}
+	}
+
+	function unifyInner(a:T, b:T):Void {
 		switch ([a, b]) {
 			case [_, TAbstract(ab, [_])] if (ab.path.pack.length == 0 && ab.path.name == "Null"):
 			case [TAbstract(ab, [_]), _] if (ab.path.pack.length == 0 && ab.path.name == "Null" && !NullSafety.isNullableType(b)):

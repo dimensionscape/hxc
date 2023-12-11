@@ -98,11 +98,21 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
-		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
-		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), curPos); });
+		// Error/fatal_error abort at the given position. "error"/"fatal_error" (vfun3 msg p depth ->
+		// raise (Error.Fatal_error (located msg p, depth))).
+		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
+		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
 		reg2("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
-		reg2("warning", "warning", function(a) { macroMessages.push(macroMessage(ec, "Warning", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
-		reg2("info", "info", function(a) { macroMessages.push(macroMessage(ec, "Info", a[0], a.length > 1 ? a[1] : encPos(curPos))); return VNull; });
+		// Warning/info report through the compiler's message list; get_messages/filter_messages read and
+		// filter that same list.
+		reg2("warning", "warning", function(a) {
+			com.addDiagnostic(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, hxc.core.Globals.MessageSeverity.Warning);
+			return VNull;
+		});
+		reg2("info", "info", function(a) {
+			com.addDiagnostic(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, hxc.core.Globals.MessageSeverity.Information);
+			return VNull;
+		});
 		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
 		reg2("getExpectedType", "get_expected_type", function(a) {
 			if (expectedTypeStack.length == 0) return VNull;
@@ -221,7 +231,7 @@ class EvalMacro {
 		});
 		reg2("getType", "get_type", function(a) {
 			var path = pathFromDotted(strOf(a[0]));
-			var tpath:TypePath = {tpackage: path.pack, tname: path.name, tparams: [], tsub: null};
+			var tpath:TypePath = hxc.ast.Ast.mkTypePath(path);
 			return encodeType(ec, Typeload.loadInstance(com, [], tpath, curPos, true));
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
@@ -357,6 +367,29 @@ class EvalMacro {
 		});
 		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com));
 		reg2("addGlobalMetadataImpl", "add_global_metadata_impl", function(a) return addGlobalMetadataValue(com, a));
+		// Compiler.registerCustomDefine / registerCustomMetadata store user documentation entries. /
+		// register_metadata_impl.
+		inline function decodeUserDoc(o:EvalValue, src:EvalValue):hxc.context.Context.UserDocEntry {
+			function strField(n:String):Null<String> {
+				var v = EvalField.field(ec, o, EvalHash.hash(n));
+				return v == VNull ? null : strOf(v);
+			}
+			function arrField(n:String):Array<String> {
+				var v = EvalField.field(ec, o, EvalHash.hash(n));
+				return v == VNull ? [] : [for (x in arrOf(v)) strOf(x)];
+			}
+			return {doc: strField("doc"), params: arrField("params"), platforms: arrField("platforms"), source: src == VNull ? null : strOf(src)};
+		}
+		reg2("registerDefineImpl", "register_define_impl", function(a) {
+			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("define")));
+			com.userDefines.set(name, decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull));
+			return VNull;
+		});
+		reg2("registerMetadataImpl", "register_metadata_impl", function(a) {
+			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("metadata")));
+			com.userMetas.set(name, decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull));
+			return VNull;
+		});
 		// The name of the method the macro was called from.
 		reg2("getLocalMethod", "get_local_method", function(a) {
 			return mkString(curTctx != null && curTctx.curfield != null ? curTctx.curfield.name : "null");
@@ -373,10 +406,16 @@ class EvalMacro {
 			}
 			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
-		reg2("getMessages", "get_messages", function(a) return encodeArray(macroMessages.copy()));
+		inline function encodeComMessage(d:hxc.context.Context.CompilerDiagnostic):EvalValue {
+			return macroMessage(ec, d.severity.match(Warning) ? "Warning" : "Info", mkString(d.message), encPos(d.pos));
+		}
+		reg2("getMessages", "get_messages", function(a) {
+			return encodeArray([for (d in com.diagnostics) if (!d.severity.match(Error)) encodeComMessage(d)]);
+		});
 		reg2("filterMessages", "filter_messages", function(a) {
 			var pred = a[0];
-			macroMessages = [for (msg in macroMessages) if (EvalMisc.isTrue(applyFn(ec, pred, [msg]))) msg];
+			com.diagnostics = [for (d in com.diagnostics)
+				if (d.severity.match(Error) || EvalMisc.isTrue(applyFn(ec, pred, [encodeComMessage(d)]))) d];
 			return VNull;
 		});
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
@@ -697,6 +736,26 @@ class EvalMacro {
 		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
 	}
 
+	// A typed constant argument reduced to its runtime value.
+	static function makeConst(ec:EvalContext, e:TExpr):EvalValue {
+		return switch (e.expr) {
+			case TConst(TInt(i)): VInt(i);
+			case TConst(TFloat(s)): VFloat(Std.parseFloat(s));
+			case TConst(TString(s)): mkString(s);
+			case TConst(TBool(b)): b ? VTrue : VFalse;
+			case TConst(TNull): VNull;
+			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, null): makeConst(ec, e1);
+			case TObjectDecl(fields):
+				var m:Map<Int, EvalValue> = new Map();
+				for (f in fields) m.set(EvalHash.hash(f.key.name), makeConst(ec, f.expr));
+				VObject(new VObject([], ODictionary(m)));
+			case TArrayDecl(al):
+				var vals = [for (x in al) makeConst(ec, x)];
+				VArray(new VArray(vals, vals.length));
+			case _: throw new TypingError("Argument should be a constant", e.pos);
+		}
+	}
+
 	// An init-macro argument for a plain function call: literal constants, plus bare idents for
 	// enum-abstract values (whose runtime value is the constructor name).
 	static function initMacroConstArg(ec:EvalContext, e:Expr):EvalValue {
@@ -716,7 +775,15 @@ class EvalMacro {
 	public static function runInitMacros(com:Context, exprs:Array<String>):Void {
 		if (exprs.length == 0) return;
 		for (s in exprs) {
-			var e = hxc.parser.Parser.parseExprString(s, "<macro>", com.defines);
+			// Every position inside an init-macro expression is the one "--macro <expr>" position with min
+			// -1 (printed "(unknown)"): a non-inline parse flattens sub-positions to p.
+			var macroPos = new Position("--macro " + s, -1, -1);
+			var e = hxc.parser.Parser.parseExprString(s, macroPos.file, com.defines);
+			function flatten(e2:Expr):Expr {
+				var m = Ast.mapExpr(flatten, e2);
+				return new Expr(m.expr, macroPos);
+			}
+			e = flatten(e);
 			switch (e.expr) {
 				case ECall(callee, args):
 					// A bare method name defaults to haxe.macro.Compiler.
@@ -735,18 +802,22 @@ class EvalMacro {
 					var savedPos = curPos;
 					curPos = e.pos;
 					// A macro method receives its arguments as expressions; a plain function (like
-					// Compiler.nullSafety) receives constants. .
+					// Compiler.nullSafety) receives constants: the arguments type against the function's
+					// signature (so a malformed object literal errors here) and the typed constants convert
+					// to values.
 					var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module});
-						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
-					var vargs = isMacroFn
-						? [for (a in args) encodeExpr(ec, a)]
-						: [for (a in args) initMacroConstArg(ec, a)];
-					// Missing optional arguments pad to the arity; the typed prologue applies the declared
-					// defaults. .
-					if (cf != null) switch (TypeFunctions.follow(cf.type)) {
-						case TFun(sig): while (vargs.length < sig.args.length) vargs.push(VNull);
-						case _:
+					var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
+					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
+					var vargs = if (isMacroFn) {
+						[for (a in args) encodeExpr(ec, a)];
+					} else if (sig != null) {
+						var tctx = new hxc.typing.TyperContext(macroCom);
+						var r = hxc.typing.Calls.unifyCallArgs(tctx, args, sig.args, sig.ret, e.pos);
+						[for (te in r.el) makeConst(ec, te)];
+					} else {
+						[for (a in args) initMacroConstArg(ec, a)];
 					}
+					if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
 					resolveMacroFn(ec, callee, e.pos)(vargs);
 					curPos = savedPos;
 				case _:
@@ -963,6 +1034,22 @@ class EvalMacro {
 	}
 
 	static var macroCom:Context = null;
+
+	// The macro-world context, when one exists; the unification force-hook uses it to type a
+	// macro-world field body in its own context.
+	public static function getMacroCom():Null<Context> return macroCom;
+
+	// Adds modules loaded into the macro world after the interpreter was built (e.g. a module
+	// pulled in by typing a method body on demand mid-eval) to the running interpreter.
+	public static function syncMacroModules():Void {
+		if (macroCtx == null || macroCom == null || building) return;
+		if (macroCom.modules.length > lastModuleCount) {
+			hxc.typing.TypeResolve.resolveAll(macroCom);
+			hxc.typing.TypeFields.installLazy(macroCom);
+			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+			lastModuleCount = macroCom.modules.length;
+		}
+	}
 	static var staleMacroCtx:Null<EvalContext> = null;
 
 	// Copy every static var value from a retired macro context into its replacement so mutable
@@ -1301,7 +1388,7 @@ class EvalMacro {
 
 	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position):T {
 		var entry = findMeta(c.meta, ":genericBuild");
-		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta", p);
+		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta. Was it removed by a macro?", p);
 		if (entry.params.length != 1) throw new TypingError("genericBuild requires a single expression call parameter", p);
 		var callExpr = entry.params[0];
 		switch (callExpr.expr) {
@@ -2301,7 +2388,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("doc"), VNull);
 		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
-		fields.set(EvalHash.hash("pos"), VNull);
+		fields.set(EvalHash.hash("pos"), encPos(f.cffPos));
 		fields.set(EvalHash.hash("meta"), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
