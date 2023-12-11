@@ -499,8 +499,21 @@ class GenJS {
 		com.warning(WDeprecated, [], msg, p);
 	}
 
-	static function unwrapRestArgs(el:Array<TExpr>):Array<TExpr> {
+	// The typer packs a trailing haxe.Rest<T> into its @:from Array cast (eval needs the value form); JS
+	// keeps rest args flat, so the array literal is unpacked back into plain call args.
+	// True when a function type's last parameter is a haxe.Rest<T>: only such a call flattens a packed rest
+	// argument. A plain parameter that happens to receive a rest value (e.g. a RestIterator constructor
+	// taking the rest as one value) keeps the argument intact.
+	static function calleeLastParamIsRest(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TFun(sig) if (sig.args.length > 0): isRestT(sig.args[sig.args.length - 1].t);
+			case _: false;
+		};
+	}
+
+	static function unwrapRestArgs(el:Array<TExpr>, calleeType:T):Array<TExpr> {
 		if (el.length == 0) return el;
+		if (!calleeLastParamIsRest(calleeType)) return el;
 		var last = el[el.length - 1];
 		if (!isRestT(last.type)) return el;
 		function arrayItems(x:TExpr):Null<Array<TExpr>> {
@@ -517,7 +530,7 @@ class GenJS {
 	}
 
 	function genCall(e:TExpr, el:Array<TExpr>, inValueCtx:Bool):Void {
-		var el = unwrapRestArgs(el);
+		var el = unwrapRestArgs(el, e.type);
 		var r = applyArgs(el);
 		var apply = r.apply;
 		var el = r.el;
@@ -866,7 +879,7 @@ class GenJS {
 			case TNew({path: {pack: [], name: "Array"}}, _, []):
 				print("[]");
 			case TNew(c, _, el):
-				var r = applyArgs(unwrapRestArgs(el), true);
+				var r = applyArgs(unwrapRestArgs(el, c.constructor == null ? TypeFunctions.tDynamic : c.constructor.type), true);
 				var isSelfCall = c.constructor != null && TypeFunctions.hasMeta(":selfCall", c.constructor.meta);
 				if (!isSelfCall) print(r.apply ? "(new" : "new ");
 				var cls = typeAccessor(TClassDecl(c));
