@@ -431,4 +431,47 @@ class Exceptions {
 			return containsThrowOrTry(e) ? run(e) : e;
 		};
 	}
+
+	// A catch that keeps the exception stack calls haxe.NativeStackTrace.saveStack(e) first. Runs
+	// post-DCE so the feature flag is accurate.
+	public static function insertSaveStacks(tctx:TyperContext):TExpr->TExpr {
+		var com = tctx.com;
+		function nop(e:TExpr):TExpr return e;
+		if (!com.hasFeature("haxe.NativeStackTrace.exceptionStack")) return nop;
+		var nst:Null<TClass> = switch (com.getType({pack: ["haxe"], name: "NativeStackTrace"}, Position.nullPos)) {
+			case TClassDecl(c): try hxc.typing.TypeResolve.resolveModule(com, c.module) catch (_:Dynamic) {}; c;
+			case TAbstractDecl(a) if (a.impl != null): a.impl;
+			case _: null;
+		};
+		if (nst == null) return nop;
+		var saveCf = nst.statics.get("saveStack");
+		if (saveCf == null) return nop;
+		function saveStack(v:TVar):TExpr {
+			hxc.typing.TypeFields.forceFieldBody(com, nst, saveCf);
+			var ret = switch (TypeFunctions.follow(saveCf.type)) { case TFun(sig): sig.ret; case _: com.basic.tvoid; };
+			var catchLocal = TypeFunctions.mk(TLocal(v), v.type, v.pos);
+			var fe = TexprTools.makeStaticField(nst, saveCf, v.pos);
+			// makeCall inlines saveStack (an inline function) in place, so it becomes the field write
+			return hxc.typing.Calls.makeCall(tctx, fe, [catchLocal], ret, v.pos);
+		}
+		function run(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TTry(e1, catches):
+					var nc = [for (c in catches) {
+						var body = run(c.expr);
+						if (TypeFunctions.hasMeta(":needsExceptionStack", c.v.meta)) {
+							var stmts = switch (body.expr) {
+								case TBlock(el): [saveStack(c.v)].concat(el);
+								case _: [saveStack(c.v), body];
+							};
+							{v: c.v, expr: TypeFunctions.mk(TBlock(stmts), body.type, body.pos)};
+						} else {v: c.v, expr: body};
+					}];
+					TypeFunctions.mk(TTry(run(e1), nc), e.type, e.pos);
+				case _:
+					TexprTools.mapExpr(run, e);
+			};
+		}
+		return run;
+	}
 }
