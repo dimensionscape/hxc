@@ -57,6 +57,49 @@ class Filters {
 		};
 	}
 
+	// A residual TFor left by the typer re-lowers now that the iterated type is concrete; when it still
+	// lowers to a TFor, rewrite it to the plain iterator while loop.
+	public static function forRemap(tctx:TyperContext, e:TExpr):TExpr {
+		var basic = tctx.com.basic;
+		function remapFallback(v:TVar, e1:TExpr, e2:TExpr, p:Position):TExpr {
+			var v2 = TypeFunctions.allocVar(v.kind, v.name, e1.type, e1.pos);
+			var ev2 = TypeFunctions.mk(TLocal(v2), e1.type, e1.pos);
+			var t1 = TypeFunctions.followWithAbstracts(e1.type);
+			var faHas = try TypeFunctions.quickField(t1, "hasNext")
+				catch (_:hxc.core.NotFound) throw new TypingError(hxc.core.TPrinting.sTypeStr(t1) + " has no field hasNext()", p);
+			var eHasNext = TypeFunctions.mk(TField(ev2, faHas), TypeFunctions.tfun([], basic.tbool), e1.pos);
+			eHasNext = TypeFunctions.mk(TCall(eHasNext, []), basic.tbool, eHasNext.pos);
+			var eNext = TypeFunctions.mk(TField(ev2, TypeFunctions.quickField(t1, "next")), TypeFunctions.tfun([], v.type), e1.pos);
+			eNext = TypeFunctions.mk(TCall(eNext, []), v.type, e1.pos);
+			var eAssign = TypeFunctions.mk(TVarExpr(v, eNext), basic.tvoid, p);
+			var eBody = hxc.typing.ForLoop.ForLoopFaithful.concat(eAssign, e2);
+			return TypeFunctions.mk(TBlock([
+				TypeFunctions.mk(TVarExpr(v2, e1), basic.tvoid, e1.pos),
+				TypeFunctions.mk(TWhile(TypeFunctions.mk(TParenthesis(eHasNext), eHasNext.type, eHasNext.pos), eBody, NormalWhile), basic.tvoid, e1.pos)
+			]), basic.tvoid, p);
+		}
+		function loop(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TFor(v, e1, e2):
+					var e1 = loop(e1);
+					var e2 = loop(e2);
+					var restore = Typer.saveLocals(tctx);
+					var lowered = try {
+						var iterator = hxc.typing.ForLoop.ForLoopFaithful.ofTexpr(tctx, e1, null, e.pos);
+						hxc.typing.ForLoop.ForLoopFaithful.toTexpr(tctx, v, iterator, e2, e.pos);
+					} catch (_:Dynamic) TypeFunctions.mk(TFor(v, e1, e2), tctx.com.basic.tvoid, e.pos);
+					restore();
+					switch (lowered.expr) {
+						case TFor(_, _, _): remapFallback(v, e1, e2, e.pos);
+						case _: lowered;
+					}
+				case _:
+					TexprTools.mapExpr(loop, e);
+			};
+		}
+		return loop(e);
+	}
+
 	// Promote `static var` locals to class statics
 	public static function localStatics(ctx:TyperContext, e:TExpr):TExpr {
 		var lut = new Map<Int, TClassField>();
@@ -766,7 +809,7 @@ class Filters {
 		}
 		memProbe("filters:start");
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
-			// Slot: ForRemap (the typer lowers for loops; GenJS handles residual TFor)
+			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
 			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},

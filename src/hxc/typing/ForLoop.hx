@@ -423,7 +423,7 @@ class ForLoopFaithful {
 		return Typer.addLocal(ctx, VGenerated, "`", t, p);
 	}
 
-	static function concat(e1:TExpr, e2:TExpr):TExpr {
+	public static function concat(e1:TExpr, e2:TExpr):TExpr {
 		var e = switch [e1.expr, e2.expr] {
 			case [TBlock(el1), TBlock(el2)]: TBlock(el1.concat(el2));
 			case [TBlock(el1), _]: TBlock(el1.concat([e2]));

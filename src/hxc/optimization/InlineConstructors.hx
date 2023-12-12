@@ -209,6 +209,20 @@ private class InlineConstructorsRun {
 		};
 	}
 
+	// The constructor's typed function, forcing the lazily typed body first; null when there is
+	// no constructor or no function body.
+	function ctorTf(c:TClass):Null<{cf:TClassField, tf:TFunc}> {
+		var cf = c.constructor;
+		if (cf == null) return null;
+		hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+		TypeFunctions.follow(cf.type);
+		if (cf.expr == null) return null;
+		return switch (cf.expr.expr) {
+			case TFunction(tf): {cf: cf, tf: tf};
+			case _: null;
+		};
+	}
+
 	static function isValidStructureField(s:String):Bool {
 		if (s.length == 0) return false;
 		for (i in 0...s.length) {
@@ -230,11 +244,8 @@ private class InlineConstructorsRun {
 				isCtor = true;
 			case TNew(_, _, _) if (forceInline):
 				isCtor = true;
-			case TNew(c, _, _) if (c.constructor != null
-					&& c.constructor.kind.match(Method(MethInline))
-					&& c.constructor.expr != null
-					&& c.constructor.expr.expr.match(TFunction(_))):
-				isCtor = Inline.needsInline(ctx, c, c.constructor);
+			case TNew(c, _, _) if (c.constructor != null && c.constructor.kind.match(Method(MethInline))):
+				isCtor = ctorTf(c) != null && Inline.needsInline(ctx, c, c.constructor);
 			case _:
 		}
 		return isCtor || TexprTools.checkExpr(function(x) return checkForCtors(isMetaInline, x), e);
@@ -259,11 +270,8 @@ private class InlineConstructorsRun {
 				mark();
 			case TNew(_, _, _) if (forceInline):
 				mark();
-			case TNew(c, _, _) if (c.constructor != null
-					&& c.constructor.kind.match(Method(MethInline))
-					&& c.constructor.expr != null
-					&& c.constructor.expr.expr.match(TFunction(_))):
-				Inline.needsInline(ctx, c, c.constructor) ? mark() : e;
+			case TNew(c, _, _) if (c.constructor != null && c.constructor.kind.match(Method(MethInline))):
+				(ctorTf(c) != null && Inline.needsInline(ctx, c, c.constructor)) ? mark() : e;
 			case _:
 				e;
 		};
@@ -284,11 +292,15 @@ private class InlineConstructorsRun {
 				case IOKCtor(ctor):
 					var f = ctor.c.fields.get(fname);
 					if (f == null) null
-					else switch [f.params, f.kind, f.expr] {
-						case [[], Method(MethInline), fe] if (fe != null && fe.expr.match(TFunction(_))):
-							var tf = switch (fe.expr) { case TFunction(tf2): tf2; case _: null; };
-							Inline.needsInline(ctx, ctor.c, f) ? {c: ctor.c, tl: ctor.tl, cf: f, tf: tf} : null;
-						case _: null;
+					else {
+						hxc.typing.TypeFields.forceFieldBody(ctx.com, ctor.c, f);
+						TypeFunctions.follow(f.type);
+						switch [f.params, f.kind, f.expr] {
+							case [[], Method(MethInline), fe] if (fe != null && fe.expr.match(TFunction(_))):
+								var tf = switch (fe.expr) { case TFunction(tf2): tf2; case _: null; };
+								Inline.needsInline(ctx, ctor.c, f) ? {c: ctor.c, tl: ctor.tl, cf: f, tf: tf} : null;
+							case _: null;
+						}
 					}
 				case _: null;
 			};
@@ -374,10 +386,10 @@ private class InlineConstructorsRun {
 
 		function handleInlineObjectCase(ioId:Int, forceInline:Bool, e:TExpr):Null<InlineVar> {
 			switch [e.expr, e.type] {
-				case [TNew(c, tl, pl), _] if (captured && c.constructor != null && c.constructor.expr != null
-						&& c.constructor.expr.expr.match(TFunction(_)) && seenCtors.indexOf(c.constructor) < 0):
+				case [TNew(c, tl, pl), _] if (captured && c.constructor != null && ctorTf(c) != null
+						&& seenCtors.indexOf(c.constructor) < 0):
 					var cf = c.constructor;
-					var tf = switch (cf.expr.expr) { case TFunction(tf2): tf2; case _: null; };
+					var tf = ctorTf(c).tf;
 					var args = analyzeCallArgs(pl);
 					var v = TypeFunctions.allocVar(VGenerated, "inl" + c.path.name, e.type, e.pos);
 					var ethis = TypeFunctions.mk(TLocal(v), TInst(c, tl), e.pos);
