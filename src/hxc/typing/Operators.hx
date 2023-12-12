@@ -800,9 +800,18 @@ class Operators {
 				case BinopSpecial(opCall, false):
 					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
 					opCall;
-				case _:
+				case r:
 					checkAssign(ctx, te1);
-					TypeFunctions.mk(TBinop(OpAssignOp(sub), te1, te2), te1.type, p);
+					// The binop result carries the typed operands (a string concatenation wraps a
+					// non-string operand in Std.string), so the compound form reuses them; a right side
+					// that no longer starts from the target falls back to a plain assignment.
+					var eRhs = Typer.castOrUnify(ctx, te1.type, toTexpr(r), p);
+					switch (eRhs.expr) {
+						case TBinop(op2, a, b) if (Type.enumEq(op2, sub) && TexprTools.equal(te1, a)):
+							TypeFunctions.mk(TBinop(OpAssignOp(op2), a, b), te1.type, p);
+						case _:
+							TypeFunctions.mk(TBinop(OpAssign, te1, eRhs), te1.type, p);
+					}
 			};
 		}
 		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
