@@ -178,12 +178,11 @@ class Operators {
 				return hxc.typing.Calls.buildCall(ctx, accS, [], WithTypeTools.withType(tstring), x.pos);
 			}
 			var strNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
-			var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };
-			if (simple) {
+			if (!hxc.typing.Calls.needsTempVar(e)) {
 				var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
 				return TypeFunctions.mk(TIf(check, strNull, gen(e)), tstring, e.pos);
 			}
-			var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", e.type, e.pos);
+			var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, e.pos);
 			var tmpLocal = TexprTools.makeLocal(tmp, e.pos);
 			var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
 			var iff = TypeFunctions.mk(TIf(check, strNull, gen(tmpLocal)), tstring, e.pos);

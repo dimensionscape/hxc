@@ -454,6 +454,16 @@ class Calls {
 		return buildCallAccess(ctx, acc, el, withType, p);
 	}
 
+	// Only a compound expression must be bound to a temp so the null guard evaluates it once; a
+	// local, type expr, const or a field/parenthesis chain over one is duplicated in place.
+	public static function needsTempVar(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TLocal(_) | TTypeExpr(_) | TConst(_): false;
+			case TField(e1, _) | TParenthesis(e1): needsTempVar(e1);
+			case _: true;
+		};
+	}
+
 	static function abstractToString(ctx:TyperContext, e:TExpr, p:Position):Null<TExpr> {
 		switch (TypeFunctions.follow(e.type)) {
 			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
@@ -465,12 +475,11 @@ class Calls {
 					return buildCall(ctx, accS, [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
 				}
 				var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
-				var simple = switch (e.expr) { case TLocal(_) | TConst(_): true; case _: false; };
-				if (simple) {
+				if (!needsTempVar(e)) {
 					var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
 					return TypeFunctions.mk(TIf(check, strNull, call(e)), ctx.com.basic.tstring, p);
 				}
-				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", e.type, p);
+				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, p);
 				var tmpLocal = TexprTools.makeLocal(tmp, p);
 				var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, p);
 				var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
