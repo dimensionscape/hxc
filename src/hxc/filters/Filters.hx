@@ -781,7 +781,7 @@ class Filters {
 			// Slot: Tre (tail recursion elimination, gated on analyzer-optimize)
 			{name: "reduce_expression", f: function(e) return Optimizer.reduceExpression(tctx, e)},
 			{name: "AbstractCast.handle_abstract_casts_after_reduce", f: function(e) return handleAbstractCasts(tctx, e)},
-			// Slot: inline_constructors
+			{name: "inline_constructors", f: function(e) return hxc.optimization.InlineConstructors.apply(tctx, e)},
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);

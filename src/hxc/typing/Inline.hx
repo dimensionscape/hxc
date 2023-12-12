@@ -70,6 +70,44 @@ class Inline {
 		return r;
 	}
 
+	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
+		return cf.kind.match(Method(MethInline)) && ctx.com.foptimize;
+	}
+
+	// The inliner entry with an explicit callee: class, field, function and receiver expression
+	// (the call-site resolution is the caller's).
+	public static function typeInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField, tf:TFunc, ethis:Null<TExpr>, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
+		if (depth > 32) return null;
+		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		var mapType = buildMapType(c, cf, ethis, params, tret);
+		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
+		if (tf.args.length != params.length) return null;
+		depth++;
+		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
+		depth--;
+		return r;
+	}
+
+	// Prepend the class's field initializers to the constructor body, then inline it against the
+	// receiver.
+	public static function typeInlineCtor(ctx:TyperContext, c:TClass, cf:TClassField, tf:TFunc, ethis:TExpr, el:Array<TExpr>, po:Position):Null<TExpr> {
+		var cparams = TypeFunctions.extractParamTypes(c.params);
+		var eFieldThis = TypeFunctions.mk(TConst(TThis), TInst(c, cparams), c.pos);
+		var fieldInits:Array<TExpr> = [];
+		for (fld in c.orderedFields) switch (fld.kind) {
+			case Var(_) if (fld.expr != null):
+				var fe = fld.expr;
+				var lhs = TypeFunctions.mk(TField(eFieldThis, FInstance(c, cparams, fld)), fld.type, fe.pos);
+				fieldInits.push(TypeFunctions.mk(TBinop(OpAssign, lhs, fe), fld.type, fe.pos));
+			case _:
+		}
+		var tf2 = if (fieldInits.length == 0) tf else {
+			var bl = switch (tf.expr.expr) { case TBlock(b): b; case _: [tf.expr]; };
+			new TFunc(tf.args, tf.type, TypeFunctions.mk(TBlock(fieldInits.concat(bl)), ctx.com.basic.tvoid, c.pos));
+		};
+		return typeInline(ctx, c, cf, tf2, ethis, el, ctx.com.basic.tvoid, po);
+	}
+
 	// On a platform with native rest support each trailing argument arrives as its own value, but
 	// an inlined body's single rest variable must bind to one value. Collapse the arguments
 	// matching a trailing haxe.Rest parameter into a single haxe.Rest.of([...]).
@@ -308,7 +346,7 @@ class Inline {
 				}
 			}
 		}
-		var value = inlineBody(ctx, tf.expr, subst, vthis);
+		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis);
 		var result = TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
 		if (mapType != null) {
 			var skipExprs = params.copy();
@@ -381,33 +419,52 @@ class Inline {
 	}
 
 	// The body reduced to its result value: a single or final return's value, else the body itself.
-	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>):TExpr {
+	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>):TExpr {
 		switch (body.expr) {
 			case TReturn(eo):
-				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, body.pos) : mapExpr(ctx, eo, subst, vthis);
+				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, body.pos) : mapExpr(ctx, eo, subst, vthis, ethis);
 			case TBlock(stmts):
 				if (stmts.length == 0) return body;
 				var out:Array<TExpr> = [];
 				for (i in 0...stmts.length) {
 					var s = stmts[i];
 					if (i == stmts.length - 1) switch (s.expr) {
-						case TReturn(eo): out.push(eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, s.pos) : mapExpr(ctx, eo, subst, vthis));
-						case _: out.push(mapExpr(ctx, s, subst, vthis));
-					} else out.push(mapExpr(ctx, s, subst, vthis));
+						case TReturn(eo): out.push(eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, s.pos) : mapExpr(ctx, eo, subst, vthis, ethis));
+						case _: out.push(mapExpr(ctx, s, subst, vthis, ethis));
+					} else out.push(mapExpr(ctx, s, subst, vthis, ethis));
 				}
 				return TypeFunctions.mk(TBlock(out), body.type, body.pos);
 			case _:
-				return mapExpr(ctx, body, subst, vthis);
+				return mapExpr(ctx, body, subst, vthis, ethis);
 		}
 	}
 
 	// Substitutes argument/this locals; bails on anything outside the handled subset.
-	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>):TExpr {
-		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis);
+	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>):TExpr {
+		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis);
 		var ne:TExprExpr = switch (e.expr) {
 			case TConst(TThis):
 				if (vthis == null) throw new InlineBail();
 				TLocal(vthis);
+			case TCall(es = {expr: TConst(TSuper)}, el):
+				// A super constructor call inside an inlined constructor inlines recursively, bringing
+				// the parent's field initializers; a parent the inliner cannot expand aborts the whole
+				// inline.
+				switch (TypeFunctions.follow(es.type)) {
+					case TInst(sc, _) if (sc.constructor != null && sc.constructor.kind.match(Method(MethInline))
+							&& sc.constructor.expr != null && sc.constructor.expr.expr.match(TFunction(_))):
+						var scf = sc.constructor;
+						var stf = switch (scf.expr.expr) { case TFunction(f): f; case _: null; };
+						var recv = ethis != null ? ethis
+							: (vthis != null ? TypeFunctions.mk(TLocal(vthis), vthis.type, e.pos) : throw new InlineBail());
+						var r = typeInlineCtor(ctx, sc, scf, stf, recv, el, e.pos);
+						if (r == null) throw new InlineBail();
+						return m(r);
+					case _:
+						throw new InlineBail();
+				}
+			case TConst(TSuper):
+				throw new InlineBail();
 			case TConst(_): e.expr;
 			case TLocal(v):
 				if (subst.exists(v.id)) return subst.get(v.id);
