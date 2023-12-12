@@ -335,10 +335,15 @@ class Optimizer {
 		return sanitizeExpr(ctx.com, switch (e.expr) {
 			case TCall(e1, el):
 				switch (TexprTools.skip(e1).expr) {
-					case TFunction(_):
-						// An immediately-called closure inlines through type_inline in the reference; that needs the
-						// full inliner, so keep the call
-						reduceExpr(ctx, e);
+					case TFunction(fn):
+						// An immediately-called closure inlines against a synthetic field and a this receiver, so
+						// `(f)(x)` folds to the function body with x bound.
+						var ef = TexprTools.skip(e1);
+						var rt = switch (TypeFunctions.follow(ef.type)) { case TFun(sig): sig.ret; case _: e.type; };
+						var cf = TypeFunctions.mkField("", ef.type, e.pos, e.pos);
+						var ethis = TypeFunctions.mk(TConst(TThis), TypeFunctions.tDynamic, e.pos);
+						var inl = try hxc.typing.Inline.typeInline(ctx, null, cf, fn, ethis, el, rt, e.pos) catch (_:Dynamic) null;
+						if (inl == null) reduceExpr(ctx, e) else reduceLoop(ctx, inl);
 					case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (cf.kind.match(Method(MethInline)) && !stackHas(cf)):
 						var inl = hxc.typing.Inline.tryInline(ctx, TexprTools.skip(e1), el, e.type, e.pos);
 						if (inl == null) reduceExpr(ctx, e)
