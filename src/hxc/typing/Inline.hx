@@ -291,18 +291,10 @@ class Inline {
 		var vthis:Null<TVar> = null;
 		if (!isStatic) {
 			if (ethis == null) throw new InlineBail();
-			// A body that never reads `this` gets no receiver binding when the receiver is a plain
-			// value; the reference's usage analysis treats this like an unread argument.
-			var usesThis = false;
-			function scanThis(e:TExpr):Void {
-				if (usesThis) return;
-				switch (e.expr) {
-					case TConst(TThis): usesThis = true;
-					case _: TexprTools.iter(scanThis, e);
-				}
-			}
-			scanThis(tf.expr);
-			if (usesThis || !ethis.expr.match(TConst(TThis) | TLocal(_))) {
+			// A plain local or this receiver substitutes into the body directly, like any unwritten local
+			// argument; anything else evaluates once into a receiver binding. (the this argument goes
+			// through the same substitution analysis as the others).
+			if (!ethis.expr.match(TConst(TThis) | TLocal(_))) {
 				vthis = TypeFunctions.allocVar(VGenerated, "_hx_this", ethis.type, p);
 				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
@@ -370,12 +362,18 @@ class Inline {
 			}
 		}
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis);
-		var result = TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		// Unwrap a single-expression block.
+		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
+		var result = binds.length == 0 ? value : TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
 		if (mapType != null) {
 			var skipExprs = params.copy();
 			if (ethis != null) skipExprs.push(ethis);
 			result = mapInlinedTypes(mapType, skipExprs, result);
 		}
+		// With no bindings the value stands alone: it keeps its own (substituted) type when that equals the
+		// expected return, and gets a cast otherwise. .
+		if (binds.length == 0 && !hxc.core.TypeUnification.typeIseqStrict(result.type, tret))
+			result = TypeFunctions.mk(TCast(result, null), tret, p);
 		return result;
 	}
 
@@ -467,8 +465,9 @@ class Inline {
 		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis);
 		var ne:TExprExpr = switch (e.expr) {
 			case TConst(TThis):
-				if (vthis == null) throw new InlineBail();
-				TLocal(vthis);
+				if (vthis != null) TLocal(vthis)
+				else if (ethis != null) return ethis
+				else throw new InlineBail();
 			case TCall(es = {expr: TConst(TSuper)}, el):
 				// A super constructor call inside an inlined constructor inlines recursively, bringing
 				// the parent's field initializers; a parent the inliner cannot expand aborts the whole
