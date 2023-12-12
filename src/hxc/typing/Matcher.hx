@@ -1484,6 +1484,10 @@ class Match {
 		var dt = DtCompile.compileEntry(ctx, false, subjects, matchCases, p);
 		var te = TexprConverter.toTexpr(ctx, tSwitch, withType, dt);
 		if (te == null) throw new TypingError("Unmatched patterns: _", p);
+		// The decision tree shares a subtree reached from several branches, so the converted expression can
+		// contain the same node twice. Duplicate the variables so every declaration site is its own var and
+		// no subtree is shared.
+		te = TexprTools.duplicateTvars(function(x) return x, te);
 		return varLazify(te);
 	}
 
