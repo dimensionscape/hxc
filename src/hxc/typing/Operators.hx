@@ -639,7 +639,7 @@ class Operators {
 		// back through the original storage (a static field, array element or field chain).
 		return if (Inline.isStableLvalue(recv)) {expr: recv, init: null} else switch (recv.expr) {
 			case _:
-				var v = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+				var v = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
 				{expr: TexprTools.makeLocal(v, p), init: TypeFunctions.mk(TVarExpr(v, recv), ctx.com.basic.tvoid, p)};
 		}
 	}
@@ -764,18 +764,20 @@ class Operators {
 		function stabilizeLvalue(te1:TExpr):{init:Array<TExpr>, lv:TExpr} {
 			var tvoid = ctx.com.basic.tvoid;
 			var init:Array<TExpr> = [];
-			function temp(e:TExpr):TExpr {
+			// A value_reference names the bound part after its position: a field host is fh, an array base
+			// and index are base and index.
+			function temp(e:TExpr, name:String):TExpr {
 				return switch (e.expr) {
 					case TLocal(_) | TConst(_) | TTypeExpr(_): e;
 					case _:
-						var v = TypeFunctions.allocVar(VGenerated, "`t", e.type, e.pos);
+						var v = TypeFunctions.allocVar(VGenerated, name, e.type, e.pos);
 						init.push(TypeFunctions.mk(TVarExpr(v, e), tvoid, e.pos));
 						TexprTools.makeLocal(v, e.pos);
 				};
 			}
 			var lv = switch (te1.expr) {
-				case TArray(base, key): TypeFunctions.mk(TArray(temp(base), temp(key)), te1.type, te1.pos);
-				case TField(recv, fa): TypeFunctions.mk(TField(temp(recv), fa), te1.type, te1.pos);
+				case TArray(base, key): TypeFunctions.mk(TArray(temp(base, "base"), temp(key, "index")), te1.type, te1.pos);
+				case TField(recv, fa): TypeFunctions.mk(TField(temp(recv, "fh"), fa), te1.type, te1.pos);
 				case _: te1;
 			};
 			return {init: init, lv: lv};
@@ -890,7 +892,7 @@ class Operators {
 				if (aw == null || aw.a.write == null)
 					throw new TypingError("This compound assignment target is not yet ported", p);
 				var basic = ctx.com.basic;
-				var vr = TypeFunctions.allocVar(VGenerated, "`fh", se.thisExpr.type, se.thisExpr.pos);
+				var vr = TypeFunctions.allocVar(VGenerated, "fh", se.thisExpr.type, se.thisExpr.pos);
 				var recv = TexprTools.makeLocal(vr, p);
 				if (aw.a.read == null)
 					throw new TypingError("This compound assignment target is not yet ported", p);
@@ -1167,7 +1169,7 @@ class Operators {
 		var recv = fa.on;
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
-		var vr = TypeFunctions.allocVar(VGenerated, "`r", recv.type, p);
+		var vr = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
 		var er = TexprTools.makeLocal(vr, p);
 		var readVal = accessorReadOn(ctx, er, fa);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
