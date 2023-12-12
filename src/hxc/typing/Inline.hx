@@ -295,7 +295,8 @@ class Inline {
 			// argument; anything else evaluates once into a receiver binding. (the this argument goes
 			// through the same substitution analysis as the others).
 			if (!ethis.expr.match(TConst(TThis) | TLocal(_))) {
-				vthis = TypeFunctions.allocVar(VGenerated, "_hx_this", ethis.type, p);
+				// The receiver binding _this with the VInlined kind.
+				vthis = TypeFunctions.allocVar(VInlined, "_this", ethis.type, p);
 				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
 		}
