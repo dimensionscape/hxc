@@ -1325,18 +1325,49 @@ class TexprConverter {
 				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite) && !withType.match(NoValue))
 					reportUnmatched();
 				// An enum switch dispatches on the constructor index.
+				var isNullableSubject = TypeFunctions.isExplicitNull(subject.type);
 				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
 					case ConEnum(_, _): TypeFunctions.mk(TEnumIndex(subject), basic.tint, subject.pos);
 					case ConArray(_): arrayLengthExpr(ctx, subject);
 					case _: subject;
 				};
-				// A FINITE COMPLETE switch whose default was dropped marks its subject @:exhaustive so the init
-				// checker credits assignments made in every branch . A merely default-less switch (a String
-				// subject falling through) must not be marked: downstream analysis would treat it as
-				// always-terminating and drop the fall-through code.
-				if (droppedCompleteDefault && defE == null)
-					swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
-				TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
+				// A small switch is reduced before emitting TSwitch: a single unconditional finite case
+				// becomes its own body; a single case with a default (or in a no-value context) becomes an
+				// if, fusing a nested if that shares the default with &&; two bool cases become an if on
+				// the subject.
+				var single = swCases.length == 1 && swCases[0].values.length == 1;
+				var reduced:Null<TExpr> = null;
+				if (swCases.length == 1 && defE == null && complete && runtimeFinite && !isNullableSubject) {
+					var b = swCases[0].expr;
+					reduced = TypeFunctions.mk(b.expr, tSwitch, b.pos);
+				} else if (single && (defE != null || withType.match(NoValue))) {
+					var e1 = swCases[0].values[0];
+					var e2 = swCases[0].expr;
+					var eOp = TypeFunctions.mk(TBinop(OpEq, swSubject, e1), basic.tbool, swSubject.pos);
+					reduced = switch (e2.expr) {
+						case TIf(eOp2, e3, edef2) if (defE != null && edef2 != null && edef2 == defE):
+							var eand = TypeFunctions.mk(TBinop(OpBoolAnd, eOp, eOp2), basic.tbool, Position.union(eOp.pos, eOp2.pos));
+							TypeFunctions.mk(TIf(eand, e3, defE), tSwitch, dt.pos);
+						case _:
+							TypeFunctions.mk(TIf(eOp, e2, defE), tSwitch, dt.pos);
+					};
+				} else if (defE == null && swCases.length == 2 && swCases[0].values.length == 1 && swCases[1].values.length == 1) {
+					inline function boolOf(e:TExpr):Null<Bool> return switch (e.expr) { case TConst(TBool(b)): b; case _: null; };
+					var b0 = boolOf(swCases[0].values[0]), b1 = boolOf(swCases[1].values[0]);
+					if (b0 == true && b1 == false)
+						reduced = TypeFunctions.mk(TIf(swSubject, swCases[0].expr, swCases[1].expr), tSwitch, dt.pos);
+					else if (b0 == false && b1 == true)
+						reduced = TypeFunctions.mk(TIf(swSubject, swCases[1].expr, swCases[0].expr), tSwitch, dt.pos);
+				}
+				if (reduced != null) reduced else {
+					// A FINITE COMPLETE switch whose default was dropped marks its subject @:exhaustive so the
+					// init checker credits assignments made in every branch . A merely default-less switch (a
+					// String subject falling through) must not be marked: downstream analysis would treat it as
+					// always-terminating and drop the fall-through code.
+					if (droppedCompleteDefault && defE == null)
+						swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
+					TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
+				}
 			case Guard(e, dt1, dt2):
 				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
 				if (eThen == null) null else {
