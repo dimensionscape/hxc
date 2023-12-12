@@ -655,9 +655,9 @@ class Operators {
 					var tvoid = ctx.com.basic.tvoid;
 					var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
 					var tv = Typer.castOrUnify(ctx, kv.v, Typer.typeExpr(ctx, e2, WithTypeTools.withType(kv.v)), p);
-					var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
-					var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
-					var vv = TypeFunctions.allocVar(VGenerated, "`v", tv.type, p);
+					var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
+					var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
+					var vv = TypeFunctions.allocVar(VGenerated, "`", tv.type, p);
 					var eb = TexprTools.makeLocal(vb, p);
 					var ek = TexprTools.makeLocal(vk, p);
 					var ev = TexprTools.makeLocal(vv, p);
@@ -731,8 +731,8 @@ class Operators {
 					case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
 						var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
 						var tvoid = ctx.com.basic.tvoid;
-						var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
-						var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+						var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
+						var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
 						var eb = TexprTools.makeLocal(vb, p);
 						var ek = TexprTools.makeLocal(vk, p);
 						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
@@ -740,7 +740,7 @@ class Operators {
 						switch (get.key.expr) {
 							case TLocal(v) if (v == vk):
 							case _:
-								var vkc = TypeFunctions.allocVar(VGenerated, "`k", get.key.type, p);
+								var vkc = TypeFunctions.allocVar(VGenerated, "`", get.key.type, p);
 								keyInit = TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p);
 								get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
 						}
@@ -988,8 +988,8 @@ class Operators {
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
 		var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
-		var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
-		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+		var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
+		var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
 		var eb = TexprTools.makeLocal(vb, p);
 		var ek = TexprTools.makeLocal(vk, p);
 		var getExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "get", p, MGet, WithTypeTools.value));
@@ -1021,8 +1021,8 @@ class Operators {
 		var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
-		var vb = TypeFunctions.allocVar(VGenerated, "`b", tb.type, p);
-		var vk = TypeFunctions.allocVar(VGenerated, "`k", tk.type, p);
+		var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
+		var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
 		var eb = TexprTools.makeLocal(vb, p);
 		var ek = TexprTools.makeLocal(vk, p);
 		var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
@@ -1032,7 +1032,7 @@ class Operators {
 		switch (get.key.expr) {
 			case TLocal(v) if (v == vk):
 			case _:
-				var vkc = TypeFunctions.allocVar(VGenerated, "`k", get.key.type, p);
+				var vkc = TypeFunctions.allocVar(VGenerated, "`", get.key.type, p);
 				stmts.push(TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p));
 				get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
 		}
