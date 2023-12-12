@@ -347,7 +347,7 @@ class Calls {
 	static function typeBind(ctx:TyperContext, fe:TExpr, sig:TSignature, params:Array<Expr>, p:Position):TExpr {
 		var tvoid = ctx.com.basic.tvoid;
 		var decls:Array<TExpr> = [];
-		var fv = TypeFunctions.allocVar(VGenerated, "`f", fe.type, p);
+		var fv = TypeFunctions.allocVar(VGenerated, "`", fe.type, p);
 		decls.push(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, p));
 		var feLocal = TexprTools.makeLocal(fv, p);
 		var callArgs:Array<TExpr> = [];

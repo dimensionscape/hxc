@@ -428,8 +428,8 @@ class Operators {
 				// uses isAssignOp (bodyless @:op wants underlying-type assignment semantics).
 				if (swapped) {
 					var tvoid = ctx.com.basic.tvoid;
-					var vlhs = TypeFunctions.allocVar(VGenerated, "`lhs", me2.type, me2.pos);
-					var vrhs = TypeFunctions.allocVar(VGenerated, "`rhs", me1.type, me1.pos);
+					var vlhs = TypeFunctions.allocVar(VGenerated, "lhs", me2.type, me2.pos);
+					var vrhs = TypeFunctions.allocVar(VGenerated, "rhs", me1.type, me1.pos);
 					var elhs = TexprTools.makeLocal(vlhs, me2.pos);
 					var erhs = TexprTools.makeLocal(vrhs, me1.pos);
 					var e = TypeFunctions.mk(TBlock([
@@ -443,8 +443,8 @@ class Operators {
 			} else if (swapped) {
 				// Preserve evaluation order after the commutative swap by binding both operands to temps.
 				var tvoid = ctx.com.basic.tvoid;
-				var vlhs = TypeFunctions.allocVar(VGenerated, "`lhs", me2.type, me2.pos);
-				var vrhs = TypeFunctions.allocVar(VGenerated, "`rhs", me1.type, me1.pos);
+				var vlhs = TypeFunctions.allocVar(VGenerated, "lhs", me2.type, me2.pos);
+				var vrhs = TypeFunctions.allocVar(VGenerated, "rhs", me1.type, me1.pos);
 				var elhs = TexprTools.makeLocal(vlhs, me2.pos);
 				var erhs = TexprTools.makeLocal(vrhs, me1.pos);
 				var call = makeStaticOpCall(ctx, implC, cf, [erhs, elhs], tret, p);
@@ -608,7 +608,9 @@ class Operators {
 					};
 				var tvoid = ctx.com.basic.tvoid;
 				var tmpType = ctx.com.basic.tnull(tmin);
-				var tmp = TypeFunctions.allocVar(VGenerated, "`tmp", tmpType, p);
+				// The value-reference temp keeps its plain name (not a gen local), so it renders as tmp,
+				// not _gtmp.
+				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", tmpType, p);
 				var tmpLocal = TexprTools.makeLocal(tmp, p);
 				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p)), ctx.com.basic.tbool, p);
 				var iff = Typer.makeIfThenElse(ctx, check, tmpLocal, te2, WithTypeTools.withType(t), p);

@@ -831,9 +831,10 @@ class DtCompile {
 		};
 	}
 
-	// A fresh generated local (unique id from allocVar).
+	// A fresh generated local: a bare escape-char name that RenameVars turns into _g, not a distinct _hx_g
+	// prefix.
 	static function genLocal(ctx:TyperContext, t:T, p:Position):TVar {
-		return TypeFunctions.allocVar(VGenerated, "_hx_g", t, p);
+		return TypeFunctions.allocVar(VGenerated, "`", t, p);
 	}
 
 	static function isNullConst(con:Con):Bool {

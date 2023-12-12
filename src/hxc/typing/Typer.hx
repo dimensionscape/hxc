@@ -1936,7 +1936,7 @@ class Typer {
 				switch (base.expr) {
 					case TLocal(_) | TTypeExpr(_) | TConst(_):
 					case _:
-						var v = TypeFunctions.allocVar(VGenerated, "`tmp", base.type, base.pos);
+						var v = TypeFunctions.allocVar(VGenerated, "tmp", base.type, base.pos);
 						temp = TypeFunctions.mk(TVarExpr(v, base), ctx.com.basic.tvoid, base.pos);
 						safeBase = TexprTools.makeLocal(v, base.pos);
 				}
@@ -2703,7 +2703,8 @@ class Typer {
 		var impl = a.impl;
 		if (impl == null) throw new TypingError("Map has no implementation", p);
 		var tmap = TAbstract(a, [tkey, tval]);
-		var tmp = TypeFunctions.allocVar(VUser(TVOLocalVariable), "`map", tmap, p);
+		// A bare escape-char gen local (renamed to _g), not a named temp.
+		var tmp = TypeFunctions.allocVar(VGenerated, "`", tmap, p);
 		var local = TypeFunctions.mk(TLocal(tmp), tmap, p);
 		var newMap = TypeFunctions.mk(TNew(impl, [tkey, tval], []), tmap, p);
 		var setCf = impl.statics.get("set");
