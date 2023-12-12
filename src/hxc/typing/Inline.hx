@@ -21,6 +21,9 @@ private class InlineBail extends haxe.Exception {
 // map_expr_type).
 class Inline {
 	static var depth = 0;
+	// A field already being inlined does not inline again inside its own expansion, so a
+	// self-recursive inline function stays a call.
+	static var cfStack:Array<TClassField> = [];
 
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
 		if (depth > 32) return null;
@@ -63,11 +66,28 @@ class Inline {
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		// Collapse the arguments matching a trailing haxe.Rest parameter into one value.
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
+		// An omitted trailing optional argument binds to null and falls back to its default; the call
+		// already type-checked, so a missing trailing argument is optional.
+		if (params.length < tf.args.length) {
+			var padded = params.copy();
+			for (i in params.length...tf.args.length) {
+				if (tf.args[i].c == null && !isOptionalArg(tf.args[i].v)) return null;
+				padded.push(TypeFunctions.mk(TConst(TNull), tf.args[i].v.type, p));
+			}
+			params = padded;
+		}
 		if (tf.args.length != params.length) return null;
+		if (cfStack.indexOf(cf) >= 0) return null;
+		cfStack.push(cf);
 		depth++;
 		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
 		depth--;
+		cfStack.pop();
 		return r;
+	}
+
+	static function isOptionalArg(v:TVar):Bool {
+		return TypeFunctions.hasMeta(":optional", v.meta) || TypeFunctions.isNullable(v.type);
 	}
 
 	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
@@ -82,9 +102,12 @@ class Inline {
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
 		if (tf.args.length != params.length) return null;
+		if (cfStack.indexOf(cf) >= 0) return null;
+		cfStack.push(cf);
 		depth++;
 		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
 		depth--;
+		cfStack.pop();
 		return r;
 	}
 
