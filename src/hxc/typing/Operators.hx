@@ -1144,23 +1144,23 @@ class Operators {
 		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
+		// As with a class property, the setter call is the value; only a postfix used as a value needs the
+		// old value in a postfix temp.
 		var stmts = tmp.init == null ? [] : [tmp.init];
-		if (flag.match(Postfix)) {
-			var vold = TypeFunctions.allocVar(VGenerated, "`o", readVal.type, p);
-			var eold = TexprTools.makeLocal(vold, p);
-			stmts.push(TypeFunctions.mk(TVarExpr(vold, readVal), tvoid, p));
-			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+		if (flag.match(Postfix) && !withType.match(NoValue)) {
+			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", readVal.type, p);
+			var epost = TexprTools.makeLocal(vpost, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vpost, readVal), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, epost, one, false, withType, p));
 			stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p));
-			stmts.push(eold);
-			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+			stmts.push(epost);
+			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
-		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
-		var enew = TexprTools.makeLocal(vnew, p);
-		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), enew, p)], retOf(setterCf), p));
-		stmts.push(enew);
-		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
+		var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p);
+		if (stmts.length == 0) return setCall;
+		stmts.push(setCall);
+		return TypeFunctions.mk(TBlock(stmts), setCall.type, p);
 	}
 
 	// Increment/decrement of a class property via its accessors: read once, apply +/-1, write back; postfix
