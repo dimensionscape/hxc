@@ -1169,28 +1169,34 @@ class Operators {
 		var recv = fa.on;
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
-		var vr = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
-		var er = TexprTools.makeLocal(vr, p);
-		var readVal = accessorReadOn(ctx, er, fa);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		var stmts = [TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p)];
-		if (flag.match(Postfix)) {
-			var vold = TypeFunctions.allocVar(VGenerated, "`o", readVal.type, p);
-			var eold = TexprTools.makeLocal(vold, p);
-			stmts.push(TypeFunctions.mk(TVarExpr(vold, readVal), tvoid, p));
-			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
+		// Increment/Decrement: bind the receiver to fh only when it is not a plain local/const
+		// (value_reference get_expr_part "fh"); the setter call is itself the value, so prefix and
+		// value-discarded forms need no extra temp; a postfix used as a value binds the old value to
+		// postfix.
+		var recvInit:Null<TExpr> = null;
+		var er = recv;
+		if (!recv.expr.match(TLocal(_) | TTypeExpr(_) | TConst(_))) {
+			var vr = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
+			er = TexprTools.makeLocal(vr, p);
+			recvInit = TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p);
+		}
+		var readVal = accessorReadOn(ctx, er, fa);
+		if (flag.match(Postfix) && !withType.match(NoValue)) {
+			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", readVal.type, p);
+			var epost = TexprTools.makeLocal(vpost, p);
+			var newv = toTexpr(makeBinop(ctx, binop, epost, one, false, withType, p));
+			var stmts:Array<TExpr> = [];
+			if (recvInit != null) stmts.push(recvInit);
+			stmts.push(TypeFunctions.mk(TVarExpr(vpost, readVal), tvoid, p));
 			stmts.push(accessorWriteOn(ctx, er, fa, newv, p));
-			stmts.push(eold);
-			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+			stmts.push(epost);
+			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
-		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
-		var enew = TexprTools.makeLocal(vnew, p);
-		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		stmts.push(accessorWriteOn(ctx, er, fa, enew, p));
-		stmts.push(enew);
-		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
+		var setCall = accessorWriteOn(ctx, er, fa, newv, p);
+		return recvInit == null ? setCall : TypeFunctions.mk(TBlock([recvInit, setCall]), setCall.type, p);
 	}
 
 	// An abstract that overloads this unary operator dispatches to its @:op impl method.
