@@ -31,12 +31,6 @@ class Typeload {
 		var t = TInst(c, []);
 		var p = tp.tpName.pos;
 		var declModulePath:Path = {pack: declPath.pack, name: declPath.name};
-		// A method-level type param has a synthetic declPath ({[], methodName}) that names no module, so
-		// moduleLut cannot recover its declaring module at force time. Capture the module being processed
-		// now (constraints are set up while the declaring type's fields are loaded) so a constraint that
-		// resolves through the declaring module's imports (e.g. a @:multiType @:to K:Int64 in cpp's
-		// haxe.ds.Map, which imports haxe.Int64) still resolves when forced from another module later.
-		var declaringModule = ctx.currentModule;
 		function defaultType():Null<T> {
 			if (tp.tpDefault == null) return null;
 			var r:Ref<TLazy> = new Ref(TypeFunctions.lazyWait(function():T {
@@ -73,7 +67,6 @@ class Typeload {
 			r.set(TypeFunctions.lazyProcessing(function():T return t));
 			var savedMod = ctx.currentModule;
 			var declMod = ctx.moduleLut.get(Context.pathKey(declModulePath));
-			if (declMod == null) declMod = declaringModule;
 			if (declMod != null) ctx.currentModule = declMod;
 			try {
 				// The type parameters in scope, extended with the declaration's own (getParams).
