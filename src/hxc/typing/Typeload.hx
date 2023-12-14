@@ -31,6 +31,13 @@ class Typeload {
 		var t = TInst(c, []);
 		var p = tp.tpName.pos;
 		var declModulePath:Path = {pack: declPath.pack, name: declPath.name};
+		// A method/constructor/enum-constructor type param has a synthetic declPath ({[], name}) that
+		// names no module, so moduleLut cannot recover its declaring module when the constraint is forced
+		// later from another module. Capture the module being processed now (field resolution runs with
+		// currentModule set to the owning module) so a constraint that resolves through the declaring
+		// module's imports still resolves. Only used for non-type params: a type param already has a real
+		// module path in moduleLut, and its constraint is forced where the type is visible.
+		var declaringModule = host != TPHType ? ctx.currentModule : null;
 		function defaultType():Null<T> {
 			if (tp.tpDefault == null) return null;
 			var r:Ref<TLazy> = new Ref(TypeFunctions.lazyWait(function():T {
@@ -67,6 +74,7 @@ class Typeload {
 			r.set(TypeFunctions.lazyProcessing(function():T return t));
 			var savedMod = ctx.currentModule;
 			var declMod = ctx.moduleLut.get(Context.pathKey(declModulePath));
+			if (declMod == null) declMod = declaringModule;
 			if (declMod != null) ctx.currentModule = declMod;
 			try {
 				// The type parameters in scope, extended with the declaration's own (getParams).
