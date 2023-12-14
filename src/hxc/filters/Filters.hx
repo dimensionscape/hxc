@@ -835,7 +835,11 @@ class Filters {
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp));
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
-			// add_final_return: addFinalReturn is false for js
+			// add_final_return: adds a trailing default-valued return to a non-Void function that can fall
+			// off
+			// its end, so a static backend (cpp) emits a value on every path. Gated on addFinalReturn
+			// (false for js/eval).
+			{name: "add_final_return", f: com.platformConfig.addFinalReturn ? addFinalReturn : function(e) return e},
 			{name: "RenameVars", f: function(e) {
 				try hxc.filters.RenameVarsRun.run(renameLocals, e)
 				catch (err:Dynamic) throw new TypingError(Std.string(err) + " in " + tctx.curclass.path.name + "." + tctx.curfield.name, e.pos);
