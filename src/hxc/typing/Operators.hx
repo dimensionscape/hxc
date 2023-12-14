@@ -177,6 +177,11 @@ class Operators {
 				ctx.privateAccess--;
 				return hxc.typing.Calls.buildCall(ctx, accS, [], WithTypeTools.withType(tstring), x.pos);
 			}
+			// A static-platform non-nullable operand never takes the null branch, and the `e == null` check
+			// below would type a null at the operand's non-nullable basic type, which trips the static-null
+			// check. this path with the same isStatic test.
+			if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
+				return gen(e);
 			var strNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
 			if (!hxc.typing.Calls.needsTempVar(e)) {
 				var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
