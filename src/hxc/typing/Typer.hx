@@ -2146,11 +2146,10 @@ class Typer {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
 				}
-				switch (ex.expr) {
-					case EUntyped(_):
-						return TypeFunctions.mk(TReturn(TypeFunctions.mk(TCast(teRaw, null), ctx.ret, teRaw.pos)), monoOrDynamic(ctx, withType, p), p);
-					case _:
-				}
+				// The value from `untyped e` is a fresh monomorph (EUntyped), so cast_or_unify binds it to
+				// the return type without error; type_return has no special case for it. Special-casing it
+				// with an unbound TCast leaves the inner monomorph open, which a static generator cannot
+				// resolve (e.g. `untyped new C()` retypes to Dynamic).
 				var te = castOrUnify(ctx, ctx.ret, teRaw, p);
 				if (isVoid(TypeFunctions.follow(te.type))) {
 					switch (te.expr) {
