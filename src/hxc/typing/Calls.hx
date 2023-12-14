@@ -474,7 +474,12 @@ class Calls {
 					ctx.privateAccess--;
 					return buildCall(ctx, accS, [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
 				}
-				var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
+				// A static-platform non-nullable operand never takes the null branch, and the `e == null`
+					// check would type a null at the operand's non-nullable basic type, tripping the
+					// static-null check. this path with the same isStatic test.
+					if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
+						return call(e);
+					var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
 				if (!needsTempVar(e)) {
 					var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
 					return TypeFunctions.mk(TIf(check, strNull, call(e)), ctx.com.basic.tstring, p);
@@ -597,6 +602,11 @@ class Calls {
 			ctx.privateAccess--;
 			return buildCall(ctx, acc, [], WithTypeTools.withType(tstring), x.pos);
 		}
+		// A static-platform non-nullable operand never takes the null branch, and the `e == null` check
+		// below would type a null at the operand's non-nullable basic type, tripping the static-null
+		// check.
+		if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
+			return genToString(e);
 		var stringNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
 		var simple = switch (e.expr) { case TLocal(_) | TConst(_) | TTypeExpr(_): true; case _: false; };
 		if (!simple) {
