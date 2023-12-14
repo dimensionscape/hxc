@@ -852,7 +852,12 @@ class Typeload {
 				case TInst(gc, tl):
 					var tl2 = loopList(tl, loop);
 					switch (gc.kind) {
-						case KGeneric if (gc != c && canSpecializeGeneric(tl2 != null ? tl2 : tl)):
+						case KGeneric if (canSpecializeGeneric(tl2 != null ? tl2 : tl)):
+							// The instance is built for any KGeneric reference, including a self-reference (a field like
+							// `next:GenericCell<T>` inside GenericCell<T>): the specialized class is
+							// registered in the cache before its fields are substituted, so specializeGenericClass
+							// returns the cached instance instead of recursing, and the field points at GenericCell_Int
+							// rather than the base GenericCell.
 							TInst(specializeGenericClass(ctx, gc, tl2 != null ? tl2 : tl, p), []);
 						case _:
 							tl2 == null ? t : TInst(gc, tl2);
