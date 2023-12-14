@@ -161,6 +161,14 @@ class Compiler {
 		var cps = [for (p in userCp) Setup.addTrailingSlash(p)];
 		cps.reverse();
 		ctx.classPath = cps.concat(ctx.classPath);
+		// The Cpp target defaults hxcpp_api_level=430 before adding its std (std/cpp gates APIs such as
+		// cpp.EnumBase.getIndex behind it), and smart (unicode) strings are used unless explicitly
+		// disabled. Set before addStd so the std #if guards read them.
+		if (platform == Cpp) {
+			if (!ctx.defines.rawDefined("hxcpp_api_level")) ctx.defines.rawDefineValue("hxcpp_api_level", "430");
+			if (!ctx.defines.rawDefined("disable_unicode_strings") && !ctx.defines.rawDefined("hxcpp_smart_strings"))
+				ctx.defines.rawDefine("hxcpp_smart_strings");
+		}
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		ModuleLoader.initBasicTypes(ctx);

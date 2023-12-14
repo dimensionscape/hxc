@@ -512,11 +512,28 @@ class Calls {
 		// typing drops the field assignment on a unification failure.
 		if (c.constructor != null && c.constructor.expr == null)
 			TypeFields.forceFieldBody(ctx.com, c, c.constructor);
-		var sig = if (c.constructor == null) {args: [], ret: ctx.com.basic.tvoid} else switch (TypeFunctions.follow(TypeFunctions.applyParams(c.params, sup.params, c.constructor.type))) {
-			case TFun(s): s;
-			case _: {args: [], ret: ctx.com.basic.tvoid};
-		};
-		var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+		// The super constructor resolves through overloads, trying every @:overload variant. Gather the
+		// constructor signatures (primary + overloads, walking up and applying the super's type
+		// params) and try each, first success wins (like typeNew's overload retry).
+		var ctorTypes = Typer.findConstructorTypes(ctx, c, sup.params);
+		if (ctorTypes.length == 0) ctorTypes = [TFun({args: [], ret: ctx.com.basic.tvoid})];
+		var r:Dynamic = null;
+		var firstError:Null<Dynamic> = null;
+		for (ctorType in ctorTypes) {
+			var sig = switch (TypeFunctions.follow(ctorType)) {
+				case TFun(s): s;
+				case _: {args: [], ret: ctx.com.basic.tvoid};
+			};
+			try {
+				r = TypeUnification.withMonoRollback(function() return unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+				break;
+			} catch (e:hxc.core.TypeUnification.UnifyError) {
+				if (firstError == null) firstError = e;
+			} catch (e:TypingError) {
+				if (firstError == null) firstError = e;
+			}
+		}
+		if (r == null) throw (firstError != null ? firstError : new TypingError("No matching super constructor overload", p));
 		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), p);
 		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
 	}
@@ -680,7 +697,13 @@ class Calls {
 				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
 			case AKSafeNav(sn):
 				Typer.accGet(ctx, buildCallAccess(ctx, acc, el, withType, p));
-			case _: throw new TypingError("This call form is not yet ported (overloads / abstract ops / using)", p);
+			case AKUsingAccessor(_):
+				// Calling an abstract property whose value is itself callable: read it through the impl
+				// accessor (with the receiver), then call the resulting value.
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+			case AKAccess(_, _, _, _, _):
+				// An array access on an abstract cannot be called.
+				throw new TypingError("This expression cannot be called", p);
 		};
 	}
 

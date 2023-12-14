@@ -2417,7 +2417,7 @@ class Typer {
 
 	// The primary constructor type plus its @:overload variants, class params applied (overloads are
 	// expanded for the call-site retry).
-	static function findConstructorTypes(ctx:TyperContext, c:TClass, tl:TParams):Array<T> {
+	public static function findConstructorTypes(ctx:TyperContext, c:TClass, tl:TParams):Array<T> {
 		var cur = c;
 		var curTl = tl;
 		while (cur != null) {
