@@ -873,12 +873,27 @@ class Typer {
 						}
 						fi--;
 					}
+					// A field the literal omits takes the constructor's declared default value for that
+					// argument; only an argument with no default falls back to null.
+					var ctorTf:Null<TFunc> = null;
+					{
+						var ctorCf = try TypeFunctions.getConstructorClass(scHit.c, scHit.tl).cf catch (_:Dynamic) null;
+						if (ctorCf != null) {
+							if (ctorCf.expr == null) try TypeFields.forceFieldBody(ctx.com, scHit.c, ctorCf) catch (_:Dynamic) {};
+							if (ctorCf.expr != null) switch (ctorCf.expr.expr) { case TFunction(tf): ctorTf = tf; case _: }
+						}
+					}
 					var el:Array<TExpr> = [];
 					for (arg in scSig.args) {
 						var te = byName.get(arg.name);
 						if (te != null) el.push(te);
-						else if (arg.opt) el.push(TexprTools.makeNull(arg.t, p));
-						else throw new TypingError("Object requires field " + arg.name, p);
+						else {
+							var dflt:Null<TExpr> = null;
+							if (ctorTf != null) for (a in ctorTf.args) if (a.v.name == arg.name && a.c != null) { dflt = a.c; break; }
+							if (dflt != null) el.push(dflt);
+							else if (arg.opt) el.push(TexprTools.makeNull(arg.t, p));
+							else throw new TypingError("Object requires field " + arg.name, p);
+						}
 					}
 					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
 					if (evars.length == 0) enew else TypeFunctions.mk(TBlock(evars.concat([enew])), scHit.t, p);
