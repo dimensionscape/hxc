@@ -401,6 +401,16 @@ class Typeload {
 				if (TypeFunctions.tInfos(mt).path.name == path.name) return mt;
 			}
 		}
+		// Implicit `import StdTypes` (Void/Int/Float/Bool/Single/Dynamic/Iterator/...) outranks a
+		// same-package sibling, so a core type is never shadowed by a same-package type of the same name:
+		// bare `Void` in package cpp is the core Void, not cpp.Void. .
+		if (sub == null && path.pack.length == 0) {
+			var std = try hxc.context.ModuleLoader.loadModule(ctx, {pack: [], name: "StdTypes"}, p) catch (_:Dynamic) null;
+			if (std != null) {
+				var stdT = hxc.context.ModuleLoader.findTypeInModuleOpt(std, path.name);
+				if (stdT != null) return stdT;
+			}
+		}
 		if (sub == null && path.pack.length == 0 && ctx.currentModule != null
 				&& ctx.currentModule.path.pack.length > 0) {
 			var sib = hxc.context.ModuleLoader.resolveSamePackageSibling(ctx, ctx.currentModule, path.name, p);
