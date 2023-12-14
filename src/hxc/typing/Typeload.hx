@@ -789,8 +789,16 @@ class Typeload {
 		}
 	}
 
+	// A type parameter is matched by identity, not through follow: the substitution is keyed on the
+	// physical type-param node and otherwise recurses structurally. Only transparent indirections (a
+	// resolved monomorph or a lazy type) are chased; a type-changing wrapper like Null<T> is not,
+	// since follow would collapse it to its inner T and replace the whole Null<T>, dropping the
+	// nullable wrapper (the structural TAbstract case then handles Null<T> by recursing into its
+	// parameter).
 	static function typeParamClass(t:T):Null<TClass> {
-		return switch (TypeFunctions.follow(t)) {
+		return switch (t) {
+			case TMono(r) if (r.type != null): typeParamClass(r.type);
+			case TLazy(f): typeParamClass(TypeFunctions.lazyType(f));
 			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): c;
 			case _: null;
 		}
