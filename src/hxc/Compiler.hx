@@ -247,6 +247,15 @@ class Compiler {
 				hxc.generators.GenJS.generate(ctx);
 				tGen();
 			}
+			if (platform == Cpp && !noOutput) {
+				var tFilter = hxc.core.Timer.timer(["filters"]);
+				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
+				tFilter();
+				abortOnDiagnostics(ctx, platform);
+				var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
+				hxc.generators.GenCpp.generate(ctx);
+				tGen();
+			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
