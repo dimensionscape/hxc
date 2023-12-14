@@ -355,7 +355,11 @@ class Inline {
 				// An optional argument with a non-null default falls back when the passed value is null at
 				// runtime: if (v == null) v = default. (i_default_value) and
 				var dflt = tf.args[i].c;
-				if (dflt != null && !dflt.expr.match(TConst(TNull))) {
+				// On a static platform a non-nullable arg can never be null, so the default check is
+				// skipped; emitting it would type a null at the non-nullable arg type and trip the
+				// static-null check.
+				if (dflt != null && !dflt.expr.match(TConst(TNull))
+						&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type))) {
 					var ve = TypeFunctions.mk(TLocal(nv), nv.type, p);
 					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, p)), ctx.com.basic.tbool, p);
 					binds.push(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dflt), nv.type, p), null), tvoid, p));
