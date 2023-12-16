@@ -164,11 +164,13 @@ class CppReferenced {
 							case TClassDecl(c) if (CppTypeOf.isNativeGenClass(c)): addNativeGenClass(c);
 							case TClassDecl(c) if (CppTypeOf.isExternClass(c)): addExternType(TClassDecl(c));
 							case TEnumDecl(en) if (CppTypeOf.isExternEnum(en)): addExternType(TEnumDecl(en));
-							// A static access on an abstract (haxe.CallStack.callStack()) keeps the abstract as
-							// the TTypeExpr in hxc, but the reference AST carries the abstract's impl class (an
-							// abstract emits no file of its own, only its _Impl_). Resolve to the impl class so
-							// the include list names the file that actually exists, mirroring the reference.
-							case TAbstractDecl(a) if (a.impl != null):
+							// A static access on an abstract (haxe.CallStack.callStack()) keeps the
+							// abstract as the TTypeExpr, but an abstract emits no file of its own, only its
+							// _Impl_. Resolve to the impl class so the include list names the file that
+							// actually exists. A @:coreType abstract (cpp.Int64) has no generated impl
+							// file; it is a native type pulled in through its own include, so it is not
+							// resolved to an _Impl_ file here.
+							case TAbstractDecl(a) if (a.impl != null && !TypeFunctions.hasMeta(":coreType", a.meta)):
 								var c = a.impl;
 								if (CppTypeOf.isNativeGenClass(c)) addNativeGenClass(c);
 								else if (CppTypeOf.isExternClass(c)) addExternType(TClassDecl(c));
