@@ -559,6 +559,13 @@ private class RetypeSession {
 			if (CppTypeText.isInternalMember(member.name)) return {def: CppFunction(FuncInstance(retypedObj, InstPtr, member), funcReturn), t: exprType};
 			return {def: CppDynamicField(retypedObj, member.name), t: TCppVariant};
 		}
+		// The receiver is an interface reference but the member resolved to a concrete class (a
+		// multi-type Map field stored as its IMap interface, whose member re-resolves to the concrete
+		// map when the inlined call site has concrete key/value types). The runtime object is some
+		// implementation, not necessarily that class, so a direct member call is invalid; dispatch
+		// dynamically on the interface reference.
+		if (retypedObj.ctype.match(TCppInterface(_)) && !TypeFunctions.hasClassFlag(clazz, CInterface))
+			return {def: CppDynamicField(retypedObj, member.name), t: TCppVariant};
 		if (CppTypeOf.cppIsStructAccess(retypedObj.ctype)) return switch (retypedObj.expr) {
 			case CppThis(ThisReal): {def: CppVar(VarThis(member, retypedObj.ctype)), t: exprType};
 			case CppSuper(thiz): {def: CppFunction(FuncSuper(thiz, retypedObj.ctype, member), funcReturn), t: exprType};
