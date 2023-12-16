@@ -969,7 +969,15 @@ class Typer {
 					tcatches.push({v: v, expr: cbody});
 					bodies.push(cbody);
 				}
-				TypeFunctions.mk(TTry(te, tcatches), unifyMin(ctx, bodies), p);
+				// Result type: against an expected monomorph or Void the source decides (an implicit-return
+				// arrow with any Void branch is Void, so no value is forced out of the other branches);
+				// otherwise the branches unify to a common type.
+				var tryT = switch (withType) {
+					case WithType(wt, src) if (switch (TypeFunctions.follow(wt)) { case TMono(_): true; case wtf: isVoid(wtf); }):
+						unifyMinForTypeSource(ctx, bodies, src);
+					case _: unifyMin(ctx, bodies);
+				};
+				TypeFunctions.mk(TTry(te, tcatches), tryT, p);
 			case ECast(e1, ct):
 				var te = typeExpr(ctx, e1, WithTypeTools.value);
 				if (ct == null) {
