@@ -32,7 +32,12 @@ class Filters {
 		function loop(e:TExpr, t:T):TExpr {
 			return switch (e.expr) {
 				case TBlock(el):
-					if (el.length == 0) e
+					// An empty body still needs a value on a static platform. A non-Void return can be
+					// inferred for an
+					// empty-bodied reassignable dynamic method, so emit the default return rather than an
+					// empty block
+					// the C++ compiler rejects.
+					if (el.length == 0) TypeFunctions.mk(TBlock([defReturn(t, e.pos)]), e.type, e.pos)
 					else {
 						var last = loop(el[el.length - 1], t);
 						var rest = el.slice(0, el.length - 1);
