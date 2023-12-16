@@ -343,7 +343,11 @@ class TypeFields {
 				case FFun(fd):
 					setFunctionValueMeta(cf, fd);
 					var sig = switch (TypeFunctions.follow(sigType)) { case TFun(s): s; case _: null; };
-					var ret = sig != null ? sig.ret : tctx.t.tvoid;
+					// A constructor never returns a value: its body types in void context (FunConstructor).
+					// Otherwise its inferred return monomorph can stay open (a bare `return;` keeps it
+					// non-Void), and the final-return insertion then appends a value return to a void C++
+					// constructor.
+					var ret = tctx.curfun.match(FunConstructor) ? tctx.t.tvoid : (sig != null ? sig.ret : tctx.t.tvoid);
 					var args = buildArgs(tctx, sig, fd);
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, cff.cffPos);
 					tf.expr = localStatics(tctx, tf.expr);
