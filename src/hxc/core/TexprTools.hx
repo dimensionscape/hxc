@@ -447,7 +447,21 @@ class TexprTools {
 		return found;
 	}
 
-	// Apply f to each direct sub-expression of e.
+	// True when `e` reads or assigns the local variable `v` anywhere in its tree (used to detect a
+	// self-recursive named local function).
+	public static function referencesLocal(e:TExpr, v:TVar):Bool {
+		var found = false;
+		function loop(e2:TExpr):Void {
+			if (found) return;
+			switch (e2.expr) {
+				case TLocal(v2) if (v2 == v): found = true;
+				case _: iter(loop, e2);
+			}
+		}
+		loop(e);
+		return found;
+	}
+
 	public static function iter(f:TExpr->Void, e:TExpr):Void {
 		switch (e.expr) {
 			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):

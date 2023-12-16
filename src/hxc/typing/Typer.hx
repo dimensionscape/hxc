@@ -783,7 +783,21 @@ class Typer {
 				var tf = typeFunction(ctx, args, ret, localMode, f.fExpr, p);
 				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
-				namedVar != null ? TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p) : fnExpr;
+				if (namedVar == null) fnExpr;
+					else {
+						// A recursive named local function is bound in two steps: `var f = null; f = <fn>`,
+						// so the closure captures the (mutable) slot and a self-call sees the assigned
+						// value rather than the null it was constructed with. is_rec.
+						var isRec = TexprTools.referencesLocal(fnExpr, namedVar);
+						if (!isRec) TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p);
+						else {
+							var tvoid = ctx.com.basic.tvoid;
+							var decl = TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p);
+							var assign = TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p);
+							var block = TypeFunctions.mk(TBlock([decl, assign]), tvoid, p);
+							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, block), tvoid, p);
+						}
+					}
 			case EArrayDecl(el):
 				switch (el) {
 					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
