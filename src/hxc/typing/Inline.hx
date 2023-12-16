@@ -205,8 +205,20 @@ class Inline {
 			case _:
 		}
 		if (cf.params.length > 0) {
+			var methodMonos:TParams = [for (_ in cf.params) TypeFunctions.mkMono()];
 			ps = ps.concat(cf.params);
-			ts = ts.concat(([for (_ in cf.params) TypeFunctions.mkMono()] : TParams));
+			ts = ts.concat(methodMonos);
+			// Bind the method's own type parameters from the actual arguments: a using/static call like
+			// address<T>(Array<T>) infers T from its argument, so map cf.type's arg types through the
+			// substitution so far and unify each against the passed argument. Without this the method
+			// type params stay open monomorphs and render as Dynamic (a Pointer<T> becomes Pointer<Dynamic>).
+			var mapSoFar = function(tt:T):T return TypeFunctions.applyParams(ps, ts, tt);
+			switch (TypeFunctions.follow(cf.type)) {
+				case TFun(sig):
+					for (i in 0...params.length) if (i < sig.args.length)
+						try hxc.core.TypeUnification.unifyDefault(params[i].type, mapSoFar(sig.args[i].t)) catch (_:haxe.Exception) {};
+				case _:
+			}
 		}
 		if (ps.length == 0) return null;
 		var psf = ps, tsf = ts;
