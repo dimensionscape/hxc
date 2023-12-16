@@ -694,7 +694,11 @@ class Typer {
 					}
 				}
 				function maybeUnifyRet(t2:T):Void {
-					if (!expectVoid(t2)) switch (TypeFunctions.follow(ret)) {
+					// A Void expected return is not forced onto a non-arrow function (its body infers the return),
+					// but an arrow does take Void so its body types in void context (its value is discarded, no
+					// value-return synthesized).
+					var isArrow = switch (kind) { case FKArrow: true; case _: false; };
+					if (!expectVoid(t2) || isArrow) switch (TypeFunctions.follow(ret)) {
 						case TMono(_): try TypeUnification.unifyDefault(ret, t2) catch (_:Dynamic) {}
 						case _:
 					}
