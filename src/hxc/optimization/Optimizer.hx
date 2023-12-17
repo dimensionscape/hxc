@@ -304,8 +304,15 @@ class Optimizer {
 				if (ef1 == ef2 && checkEnumConstructionArgs(el, i)):
 				i < el.length ? el[i] : e;
 			case TCast(_, null):
-				// require_cast is target-specific; js and eval never require it
-				TexprTools.reduceUnsafeCasts(e, e.type, false);
+				// requireCast is target-specific: cpp/flash always keep the reification cast so a
+				// monomorph-typed value is materialized to its static type.
+				var requireCast = switch (com.platform) {
+					case Cpp | Flash: true;
+					case Java: com.defines.rawDefined("jvm");
+					case Cs: com.defines.rawDefined("erase_generics") || com.defines.rawDefined("fast_cast");
+					case _: false;
+				};
+				TexprTools.reduceUnsafeCasts(e, e.type, requireCast);
 			case _:
 				e;
 		};

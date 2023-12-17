@@ -1037,7 +1037,10 @@ class Typer {
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
 				var te2 = castOrUnify(ctx, t, te, p);
-				TypeUnification.fastEq(te2.type, t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
+				// PHYSICAL identity, not structural. A monomorph bound to t is still a distinct TMono
+				// object, so the reification cast is kept (matters on cpp where throwing (getNull():Int)
+				// must materialize the int).
+				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
 		return typed;
