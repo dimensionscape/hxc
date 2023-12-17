@@ -472,10 +472,27 @@ class ConstPropagation {
 		function isSpecialVar(v:TVar):Bool {
 			return TypeFunctions.hasVarFlag(v, VCaptured) || AnalyzerFusion.ExtTypeSemantics.hasVariableSemantics(v.type);
 		}
+		// A local passed to an untyped __global__ call may be mutated by reference (a cpp out-param such
+		// as __hxcpp_string_of_bytes(b, result, pos, len)). Such a local must never be const-inlined
+		// (neither at the call arg nor at a later read), or the pre-call value replaces the mutated one.
+		// Collecting these escaped locals keeps them multi-use, so fusion also leaves them alone.
+		var escaped = new IntMap<Bool>();
+		function scanEscaped(e:TExpr):Void {
+			switch (e.expr) {
+				case TCall(callee, args) if (switch (callee.expr) { case TField(o, _): o.expr.match(TIdent("__global__")); case _: false; }):
+					for (a in args) switch (a.expr) { case TLocal(v): escaped.set(v.id, true); case _: }
+				case _:
+			}
+			TexprTools.iter(scanEscaped, e);
+		}
+		ctx.graph.iterDomTree(function(bb) {
+			for (e in bb.el) scanEscaped(e);
+			BasicBlock.terminatorMap(function(e) { scanEscaped(e); return e; }, bb.terminator);
+		});
 		var commit:TExpr->TExpr = null;
 		commit = function(e:TExpr):TExpr {
 			return switch (e.expr) {
-				case TLocal(v) if (!isSpecialVar(v)):
+				case TLocal(v) if (!isSpecialVar(v) && !escaped.exists(v.id)):
 					try inlineCell(e, v.id) catch (_:NotFound) e;
 				case TBinop(op = OpAssign | OpAssignOp(_), e1 = {expr: TLocal(v)}, e2):
 					var e2 = try {
