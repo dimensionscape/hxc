@@ -84,7 +84,9 @@ class Setup {
 		ctx.platformConfig = PlatformConfig.get(pf);
 		var cfg = ctx.platformConfig;
 		var name = Globals.platformName(pf);
-		if (cfg.isStatic) ctx.defines.rawDefine("target.static");
+		// A static target raises both target.static and the legacy `static` define that many std #if
+		// static blocks test.
+		if (cfg.isStatic) { ctx.defines.rawDefine("target.static"); ctx.defines.rawDefine("static"); }
 		if (cfg.sys) { ctx.defines.rawDefine("target.sys"); ctx.defines.rawDefine("sys"); }
 		if (pf == Eval || pf == Cpp) ctx.defines.rawDefine("target.threaded");
 		// A utf16 target raises both target.utf16 and the plain utf16 define that the std's #if utf16
