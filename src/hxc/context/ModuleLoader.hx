@@ -582,8 +582,13 @@ class ModuleLoader {
 					throw new ContextError("Invalid modifier: overload is only supported on extern functions", overloadPos);
 				}
 			}
-				if (abstractPos != null && cf.name == "new")
-					throw new ContextError("Invalid modifier: abstract on constructor", abstractPos);
+				if (abstractPos != null) {
+					if (cf.name == "new")
+						throw new ContextError("Invalid modifier: abstract on constructor", abstractPos);
+					// CfAbstract makes the C++ method virtual with a default body; without it, calls can target a
+					// null function field.
+					if (cf.kind.match(Method(_))) TypeFunctions.addClassFieldFlag(cf, CfAbstract);
+				}
 				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl) && cf.kind.match(Method(MethDynamic)))
 					throw new ContextError("Invalid modifier: dynamic on method of abstract", cff.cffPos);
 			// Keep the first overload method as primary and prepend subsequent methods and their overloads.
