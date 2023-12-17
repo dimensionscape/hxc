@@ -2352,18 +2352,36 @@ class Typer {
 		var tvoid = ctx.com.basic.tvoid;
 		TypeFields.forceFieldBody(ctx.com, found.c, found.cf);
 		var st = TypeFunctions.applyParams(found.c.params, found.tl, found.cf.type);
+		var superTfArgs:Null<Array<TFuncArg>> = found.cf.expr == null ? null
+			: switch (found.cf.expr.expr) { case TFunction(tf): tf.args; case _: null; };
+		var isStaticPf = ctx.com.platformConfig.isStatic;
+		var isCppPf = ctx.com.platform.match(Cpp);
 		switch (TypeFunctions.follow(st)) {
 			case TFun(sig):
 				var args:Array<TFuncArg> = [];
 				var sigArgs:Array<TSignatureArg> = [];
 				var superLocals:Array<TExpr> = [];
-				for (sa in sig.args) {
-					var v = TypeFunctions.allocVar(VUser(TVOArgument), sa.name, sa.t, c.pos);
-					// A non-static target drops the copied default to null (the super call still carries
-					// it); the arg stays optional.
-					args.push({v: v, c: sa.opt ? TypeFunctions.mk(TConst(TNull), sa.t, c.pos) : null});
-					sigArgs.push({name: sa.name, opt: sa.opt, t: sa.t});
-					superLocals.push(TypeFunctions.mk(TLocal(v), sa.t, c.pos));
+				for (ai in 0...sig.args.length) {
+					var sa = sig.args[ai];
+					// Copy the super arg, carrying the default only when the platform needs it. A non-static
+					// target drops it to null (the super call fills it). On cpp a String default is kept; any
+					// other cpp default makes the arg Null<T> with a null default so the super's own v.Default(x)
+					// fills it when null is passed.
+					var def = superTfArgs != null && ai < superTfArgs.length ? superTfArgs[ai].c : null;
+					var argType = sa.t;
+					var argDefault:Null<TExpr> = null;
+					if (def != null) {
+						if (!isStaticPf) argDefault = TypeFunctions.mk(TConst(TNull), sa.t, c.pos);
+						else if (isCppPf && def.expr.match(TConst(TString(_)))) argDefault = def;
+						else if (isCppPf) { argType = ctx.com.basic.tnull(sa.t); argDefault = TypeFunctions.mk(TConst(TNull), argType, c.pos); }
+						else argDefault = def;
+					} else if (sa.opt) {
+						argDefault = TypeFunctions.mk(TConst(TNull), sa.t, c.pos);
+					}
+					var v = TypeFunctions.allocVar(VUser(TVOArgument), sa.name, argType, c.pos);
+					args.push({v: v, c: argDefault});
+					sigArgs.push({name: sa.name, opt: sa.opt, t: argType});
+					superLocals.push(TypeFunctions.mk(TLocal(v), argType, c.pos));
 				}
 				var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
 				var body = TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos);
