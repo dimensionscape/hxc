@@ -377,16 +377,6 @@ class AnalyzerTexprTransformer {
 						} else e;
 				};
 			}
-			// An untyped __global__ call can mutate a local argument by reference (a cpp out-param such as
-			// __hxcpp_string_of_bytes(b, result, pos, len)); its callee type is Dynamic so the param types
-			// are unknown and the reference-semantics check cannot see the by-ref parameter. Mark each local
-			// argument captured so the analyzer does not const-propagate its pre-call value away (the oracle
-			// keeps the local). js/eval do not use __global__.
-			switch (e1.expr) {
-				case TField({expr: TIdent("__global__")}, _):
-					for (a in el) switch (a.expr) { case TLocal(v): TypeFunctions.addVarFlag(v, VCaptured); case _: }
-				case _:
-			}
 			var el = unificationCheckCall(check, el, e1.type);
 			var r = orderedValueList(bbRef, [e1].concat(el));
 			return switch (r.el) {
