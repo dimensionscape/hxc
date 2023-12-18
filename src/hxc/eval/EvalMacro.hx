@@ -132,9 +132,19 @@ class EvalMacro {
 			if (imports == null) return encodeArray([]);
 			return encodeArray([for (imp in imports.rawImports) encodeImportExpr(ec, imp)]);
 		});
-		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). .
-		reg2("do_parse", "do_parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, a.length > 2 && a[2] == VTrue)));
-		reg2("parse", "parse", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines)));
+		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). When not
+		// inlined, every sub-expression position is rewritten to the given pos, so a parsed macro result
+		// reports the call site, not line 1 of the parsed string.
+		reg2("do_parse", "do_parse", function(a) {
+			var p = posArg(ec, a, 1, curPos);
+			var inlined = a.length > 2 && a[2] == VTrue;
+			var e = hxc.parser.Parser.parseExprString(strOf(a[0]), p.file, com.defines, inlined);
+			return encodeExpr(ec, inlined ? e : reanchorExpr(e, p));
+		});
+		reg2("parse", "parse", function(a) {
+			var p = posArg(ec, a, 1, curPos);
+			return encodeExpr(ec, reanchorExpr(hxc.parser.Parser.parseExprString(strOf(a[0]), p.file, com.defines), p));
+		});
 		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, true)));
 		reg2("formatString", "format_string", function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), curPos, com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
@@ -1770,6 +1780,13 @@ class EvalMacro {
 			try return currentCom.getType(path, curPos, null) catch (_:Dynamic) {}
 		}
 		throw new TypingError("Macro decode: type not found " + Context.pathKey(path), curPos);
+	}
+
+	// Set every sub-expression's position to p (bottom-up), so a non-inline parse result is fully anchored
+	// to the call site.
+	static function reanchorExpr(e:Expr, p:Position):Expr {
+		var mapped = Ast.mapExpr(function(c) return reanchorExpr(c, p), e);
+		return new Expr(mapped.expr, p);
 	}
 
 	static function decodeExpr(ec:EvalContext, v:EvalValue, dp:Position):Expr {
