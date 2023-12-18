@@ -349,7 +349,12 @@ class TypeFields {
 					// constructor.
 					var ret = tctx.curfun.match(FunConstructor) ? tctx.t.tvoid : (sig != null ? sig.ret : tctx.t.tvoid);
 					var args = buildArgs(tctx, sig, fd);
-					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, cff.cffPos);
+					// Binding a method takes the function body position, falling back to the field position
+					// (cffPos) only for an abstract/no-body method. Function typing uses it for the synthesized
+					// `var this = this` so a macro-built method's _gthis capture lands on the body line,
+					// not the decl.
+					var funcPos = fd.fExpr != null ? fd.fExpr.pos : cff.cffPos;
+					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, funcPos);
 					tf.expr = localStatics(tctx, tf.expr);
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
 				case FProp(_, _, _, eo):

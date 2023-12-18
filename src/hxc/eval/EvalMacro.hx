@@ -2074,10 +2074,14 @@ class EvalMacro {
 
 	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
 		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
-		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: dp} : PlacedAccess)];
-		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), dp);
-		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp);
-		return new ClassField({name: name, pos: dp}, null, dp, meta, access, kind);
+		// The field's own pos (used for the field position and, unless the field gives its own name_pos,
+		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
+		// when the field omits pos.
+		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
+		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: pos} : PlacedAccess)];
+		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), pos);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
+		return new ClassField({name: name, pos: pos}, null, pos, meta, access, kind);
 	}
 
 	static function decodeMetadata(ec:EvalContext, v:EvalValue, dp:Position):Metadata {
