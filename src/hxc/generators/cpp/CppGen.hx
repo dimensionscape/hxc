@@ -80,8 +80,8 @@ class CppGen {
 				// Cpp is generated before the header so interface-glue forwarders accumulated during the cpp
 				// pass are available when the header is emitted.
 				var cppText = nativeGen ? gc.genNativeGenCpp() : gc.genCpp();
-				writeFile(base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
-				writeFile(base + "/src/" + p + ".cpp", cppText);
+				writeSourceFile(com, base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
+				writeSourceFile(com, base + "/src/" + p + ".cpp", cppText);
 				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
 				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
 				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
@@ -92,8 +92,8 @@ class CppGen {
 				var p = CppGenClass.joinPath(e.path, "/");
 				ensureDir(base + "/include/" + dirOf(p));
 				ensureDir(base + "/src/" + dirOf(p));
-				writeFile(base + "/include/" + p + ".h", ge.genHeader());
-				writeFile(base + "/src/" + p + ".cpp", ge.genCpp());
+				writeSourceFile(com, base + "/include/" + p + ".h", ge.genHeader());
+				writeSourceFile(com, base + "/src/" + p + ".cpp", ge.genCpp());
 				var erefs = CppReferenced.findReferencedTypesFlags(com, TEnumDecl(e), "*", CppGenClass.superDeps, CppGenClass.constructorDeps, false, false).deps;
 				erefs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
 				exeClasses.unshift({path: e.path, deps: erefs});
@@ -175,7 +175,7 @@ class CppGen {
 		bootCls.reverse();
 		for (p in bootCls) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__boot();\n");
 		b.add("}\n\n");
-		writeFile(base + "/src/__boot__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__boot__.cpp", b.toString());
 	}
 
 	// __hxcpp_main runs the entry call; __lib__ is the library form.
@@ -198,7 +198,7 @@ class CppGen {
 					function(gc) CppGenClass.hxStackPush(com, w, "hxcpp", "__hxcpp_main", mainFile, mainLine, gc));
 			}
 			w.write("\t}\n\nvoid __hxcpp_lib_main() {\n\tHX_TOP_OF_STACK\n\t::hx::Boot();\n\t__boot_all();\n\t__hxcpp_main();\n\t}\n");
-			writeFile(base + "/src/" + name + ".cpp", w.getHeader() + w.getBody());
+			writeSourceFile(com, base + "/src/" + name + ".cpp", w.getHeader() + w.getBody());
 		}
 	}
 
@@ -258,7 +258,7 @@ class CppGen {
 		b.add("#endif\n 0 };\n");
 		b.add("} // namespace hx\n");
 		b.add("void __files__boot() { __hxcpp_set_debugger_info(::hx::__hxcpp_all_classes, ::hx::__hxcpp_all_files_fullpath); }\n");
-		writeFile(base + "/src/__files__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__files__.cpp", b.toString());
 	}
 
 	// Each embedded resource becomes a src/resources/__res_N.cpp byte blob (a 4-byte header then the data
@@ -281,7 +281,7 @@ class CppGen {
 			}
 			rb.add("0x00 };\n");
 			rb.add("}\n");
-			writeFile(base + "/src/resources/" + id + ".cpp", rb.toString());
+			writeSourceFile(com, base + "/src/resources/" + id + ".cpp", rb.toString());
 		}
 		var smartStrings = com.defines.rawDefined("hxcpp_smart_strings");
 		var b = new StringBuf();
@@ -294,7 +294,7 @@ class CppGen {
 			b.add("\t{ " + CppTypeText.strq(smartStrings, names[idx]) + "," + com.resources.get(names[idx]).length + ",::hx::__res_" + idx + " + 4 },\n");
 		b.add("\t{ ::String(null()),0,0 }\n};\n\n");
 		b.add("namespace hx { Resource *GetResources() { return __Resources; } }\n");
-		writeFile(base + "/src/__resources__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__resources__.cpp", b.toString());
 	}
 
 	// The hxcpp Build.xml manifest the hxcpp Build.xml manifest (file list + depends + std includes)
@@ -366,12 +366,9 @@ class CppGen {
 		writeFile(base + "/Options.txt", b.toString());
 	}
 
-	// Quote only when the value contains shell-significant characters. hxcpp's build options are
-	// simple tokens, so this is the identity for them.
 	static function escapeCommand(s:String):String {
 		if (s == null) return "";
-		if (~/[ \t"'\\$]/.match(s)) return "\"" + s.split("\\").join("\\\\").split("\"").join("\\\"") + "\"";
-		return s;
+		return s.split("\\").join("\\\\").split("\"").join("\\\"");
 	}
 
 	// The exe name is the main class's own name (com.mainClass), not the first type referenced from the
@@ -394,5 +391,11 @@ class CppGen {
 		// double-CR.
 		if (Sys.systemName() == "Windows") content = content.split("\n").join("\r\n");
 		sys.io.File.saveContent(path, content);
+	}
+
+	static function writeSourceFile(com:Context, path:String, content:String):Void {
+		var sourceHeader = com.defines.rawDefinedValueSafe("source_header", "");
+		if (sourceHeader != "") content = "// " + sourceHeader + "\n" + content;
+		writeFile(path, content);
 	}
 }
