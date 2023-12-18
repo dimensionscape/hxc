@@ -25,7 +25,7 @@ class Inline {
 	// self-recursive inline function stays a call.
 	static var cfStack:Array<TClassField> = [];
 
-	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
+	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
@@ -45,6 +45,7 @@ class Inline {
 		}
 		switch (cf.kind) {
 			case Method(MethInline):
+			case _ if (forceInline):
 			case _: return null;
 		}
 		// A method's own type parameters do not affect the inlined value: the evaluator runs the body

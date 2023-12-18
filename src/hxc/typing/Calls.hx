@@ -16,9 +16,9 @@ import hxc.typing.FieldAccess;
 import hxc.typing.Matcher.Match;
 
 class Calls {
-	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position):TExpr {
+	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false):TExpr {
 		// A call to an inline function expands in place; on any unhandled construct it falls back here.
-		var inlined = Inline.tryInline(ctx, e, params, t, p);
+		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline);
 		if (inlined != null) return inlined;
 		return TypeFunctions.mk(TCall(e, params), t, p);
 	}
@@ -402,7 +402,7 @@ class Calls {
 		return Typer.accGet(ctx, typeCallAccess(ctx, callee, el, withType, p));
 	}
 
-	public static function typeCallAccess(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position):AccessKind {
+	public static function typeCallAccess(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position, forceInline = false):AccessKind {
 		switch (callee.expr) {
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
 				return AKExpr(typeTrace(ctx, el, withType, p));
@@ -458,7 +458,7 @@ class Calls {
 			case _:
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
-		return buildCallAccess(ctx, acc, el, withType, p);
+		return buildCallAccess(ctx, acc, el, withType, p, forceInline);
 	}
 
 	// Only a compound expression must be bound to a temp so the null guard evaluates it once; a
@@ -667,26 +667,26 @@ class Calls {
 		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [mkToStringMeta(v), infos]), p), WithTypeTools.noValue);
 	}
 
-	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):AccessKind {
+	public static function buildCallAccess(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position, forceInline = false):AccessKind {
 		return switch (acc) {
 			case AKSafeNav(sn):
 				AKSafeNav({
 					pos: sn.pos,
 					base: sn.base,
 					tempVar: sn.tempVar,
-					access: buildCallAccess(ctx, sn.access, el, withType, p)
+				access: buildCallAccess(ctx, sn.access, el, withType, p, forceInline)
 				});
 			case _:
-				AKExpr(buildCall(ctx, acc, el, withType, p));
+				AKExpr(buildCall(ctx, acc, el, withType, p, forceInline));
 		};
 	}
 
-	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position, forceInline = false):TExpr {
 		return switch (acc) {
-			case AKExpr(ce): callExpr(ctx, ce, el, p);
+			case AKExpr(ce): callExpr(ctx, ce, el, p, forceInline);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
-			case AKField(fa): callFieldAccess(ctx, fa, el, p, withType);
+			case AKField(fa): callFieldAccess(ctx, fa, el, p, withType, forceInline);
 			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
 				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):
@@ -700,7 +700,7 @@ class Calls {
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						makeCall(ctx, ce, [se.thisExpr].concat(r.el), ret, p);
+						makeCall(ctx, ce, [se.thisExpr].concat(r.el), ret, p, forceInline || faCall.isInline);
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
@@ -708,16 +708,16 @@ class Calls {
 				// Calling a property whose value is itself callable: read it through the getter, then call
 				// the
 				// resulting value.
-				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p, forceInline);
 			case AKResolve(_, _):
 				// Calling a resolve field reads it through the resolve method, then calls the result.
-				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p, forceInline);
 			case AKSafeNav(sn):
-				Typer.accGet(ctx, buildCallAccess(ctx, acc, el, withType, p));
+				Typer.accGet(ctx, buildCallAccess(ctx, acc, el, withType, p, forceInline));
 			case AKUsingAccessor(_):
 				// Calling an abstract property whose value is itself callable: read it through the impl
 				// accessor (with the receiver), then call the resulting value.
-				callExpr(ctx, Typer.accGet(ctx, acc), el, p);
+				callExpr(ctx, Typer.accGet(ctx, acc), el, p, forceInline);
 			case AKAccess(_, _, _, _, _):
 				// An array access on an abstract cannot be called.
 				throw new TypingError("This expression cannot be called", p);
@@ -765,7 +765,7 @@ class Calls {
 		return FieldAccessTools.getFieldExpr(fa, FCall);
 	}
 
-	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType):TExpr {
+	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false):TExpr {
 		var candidates = [fa.field].concat(fa.field.overloads);
 		// Each failed candidate: the overload field, its rendered error, and the error position.
 		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
@@ -799,7 +799,7 @@ class Calls {
 							};
 							if (DebugDump.enabled("select", p))
 								DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
-							makeCall(ctx, ce, r.el, ret, p);
+							makeCall(ctx, ce, r.el, ret, p, forceInline || faCall.isInline);
 						case _:
 							callExpr(ctx, ce, el, p);
 					}
@@ -1178,22 +1178,22 @@ class Calls {
 		};
 	}
 
-	static function callExpr(ctx:TyperContext, ce0:TExpr, el:Array<Expr>, p:Position):TExpr {
+	static function callExpr(ctx:TyperContext, ce0:TExpr, el:Array<Expr>, p:Position, forceInline = false):TExpr {
 		var ce = monomorphizeLocalParams(ctx, ce0);
 		return switch (TypeFunctions.follow(ce.type)) {
 			case TFun(sig):
 				var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				if (DebugDump.enabled("select", p))
 					DebugDump.selected("call", p, "function -> " + DebugDump.typeString(sig.ret));
-				makeCall(ctx, ce, r.el, sig.ret, p);
+				makeCall(ctx, ce, r.el, sig.ret, p, forceInline);
 			case TMono(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				DebugDump.selected("call", p, "mono function");
-				makeCall(ctx, ce, args, TypeFunctions.mkMono(), p);
+				makeCall(ctx, ce, args, TypeFunctions.mkMono(), p, forceInline);
 			case TDynamic(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				DebugDump.selected("call", p, "dynamic function");
-				makeCall(ctx, ce, args, TDynamic(null), p);
+				makeCall(ctx, ce, args, TDynamic(null), p, forceInline);
 			case TAbstract(a, tl) if (a.call != null && a.impl != null):
 				// @:op(a()) call operator: dispatch to the impl call field with the abstract value as its
 				// first (`this`) argument. (call branch).
