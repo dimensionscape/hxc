@@ -245,6 +245,10 @@ class TypeResolve {
 						case _:
 					}
 					if (isOverride) {
+						// An `override` field carries CfOverride, which the cpp generator reads to suppress
+						// a redundant
+						// _dyn() wrapper on the override.
+						TypeFunctions.addClassFieldFlag(target, CfOverride);
 						var parent = getParentField(c, cff.cffName.name);
 						if (parent != null) {
 							if (!explicitVis) {
