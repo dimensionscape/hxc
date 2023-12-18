@@ -593,6 +593,8 @@ class Typer {
 			case EUntyped(e1):
 				var old = ctx.untypedMode;
 				ctx.untypedMode = true;
+				if (!TypeFunctions.hasMeta(":has_untyped", ctx.curfield.meta))
+					ctx.curfield.meta = ([{name: ":has_untyped", params: [], pos: p}] : Metadata).concat(ctx.curfield.meta);
 				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
 				ctx.untypedMode = old;
 				TypeFunctions.mk(te.expr, spawnMonomorph(ctx, te.pos), te.pos);
@@ -2176,17 +2178,6 @@ class Typer {
 				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))) {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
-				}
-				switch (ex.expr) {
-					case EUntyped(_):
-						// The untyped value is a fresh monomorph; bind it to the return type so a static
-						// generator can resolve the node's type (e.g. `untyped new C()` would otherwise retype
-						// to Dynamic), while still wrapping in a cast so the untyped value flows unchecked (js
-						// std lib.hx/Boot.hx/Browser.hx returns castOrUnify would reject). Binding a monomorph
-						// never fails, so this stays lenient like the reference.
-						try TypeUnification.unifyDefault(teRaw.type, ctx.ret) catch (_:haxe.Exception) {};
-						return TypeFunctions.mk(TReturn(TypeFunctions.mk(TCast(teRaw, null), ctx.ret, teRaw.pos)), monoOrDynamic(ctx, withType, p), p);
-					case _:
 				}
 				var te = castOrUnify(ctx, ctx.ret, teRaw, p);
 				if (isVoid(TypeFunctions.follow(te.type))) {
