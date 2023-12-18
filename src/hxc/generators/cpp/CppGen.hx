@@ -100,6 +100,30 @@ class CppGen {
 		genResources(com, base);
 		genBuildXml(com, base, exeClasses);
 		genOptions(com, base);
+		compileNative(com, base);
+	}
+
+	// Invoke hxcpp after the project files have been written.
+	static function compileNative(com:Context, base:String):Void {
+		var args = ["run", "hxcpp", "Build.xml", "haxe"];
+		if (com.debug) args.push("-Ddebug");
+		var skip = ["true", "sys", "dce", "cpp", "debug"];
+		var names = [for (k in com.defines.values.keys()) k];
+		names.sort(function(a, b) return a < b ? -1 : (a > b ? 1 : 0));
+		for (name in names) {
+			if (skip.indexOf(name) < 0) args.push("-D" + name + "=" + com.defines.values.get(name));
+		}
+		for (path in com.classPath) args.push("-I" + path);
+		var oldDir = Sys.getCwd();
+		try {
+			Sys.setCwd(base);
+			var result = Sys.command("haxelib", args);
+			Sys.setCwd(oldDir);
+			if (result != 0) throw "Build failed";
+		} catch (e:Dynamic) {
+			Sys.setCwd(oldDir);
+			throw e;
+		}
 	}
 
 	static function shouldEmit(c:TClass):Bool {
