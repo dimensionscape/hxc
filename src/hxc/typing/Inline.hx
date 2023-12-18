@@ -379,7 +379,8 @@ class Inline {
 				}
 			}
 		}
-		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis);
+		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
+		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions);
 		// Unwrap a single-expression block.
 		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		var result = binds.length == 0 ? value : TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
@@ -458,29 +459,29 @@ class Inline {
 	}
 
 	// The body reduced to its result value: a single or final return's value, else the body itself.
-	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>):TExpr {
+	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position, keepPositions:Bool):TExpr {
 		switch (body.expr) {
 			case TReturn(eo):
-				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, body.pos) : mapExpr(ctx, eo, subst, vthis, ethis);
+				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? body.pos : inlinePos) : mapExpr(ctx, eo, subst, vthis, ethis, inlinePos, keepPositions);
 			case TBlock(stmts):
 				if (stmts.length == 0) return body;
 				var out:Array<TExpr> = [];
 				for (i in 0...stmts.length) {
 					var s = stmts[i];
 					if (i == stmts.length - 1) switch (s.expr) {
-						case TReturn(eo): out.push(eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, s.pos) : mapExpr(ctx, eo, subst, vthis, ethis));
-						case _: out.push(mapExpr(ctx, s, subst, vthis, ethis));
-					} else out.push(mapExpr(ctx, s, subst, vthis, ethis));
+						case TReturn(eo): out.push(eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? s.pos : inlinePos) : mapExpr(ctx, eo, subst, vthis, ethis, inlinePos, keepPositions));
+						case _: out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
+					} else out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
 				}
-				return TypeFunctions.mk(TBlock(out), body.type, body.pos);
+				return TypeFunctions.mk(TBlock(out), body.type, keepPositions ? body.pos : inlinePos);
 			case _:
-				return mapExpr(ctx, body, subst, vthis, ethis);
+				return mapExpr(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
 		}
 	}
 
 	// Substitutes argument/this locals; bails on anything outside the handled subset.
-	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>):TExpr {
-		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis);
+	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position, keepPositions:Bool):TExpr {
+		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
 		var ne:TExprExpr = switch (e.expr) {
 			case TConst(TThis):
 				if (vthis != null) TLocal(vthis)
@@ -551,6 +552,6 @@ class Inline {
 			case TReturn(_) | TFunction(_) | TSwitch(_, _, _) | TTry(_, _):
 				throw new InlineBail();
 		};
-		return TypeFunctions.mk(ne, e.type, e.pos);
+		return TypeFunctions.mk(ne, e.type, keepPositions ? e.pos : inlinePos);
 	}
 }
