@@ -2266,20 +2266,23 @@ class EvalMacro {
 
 	static function decodeTypeDefinition(ec:EvalContext, v:EvalValue, dp:Position):TypeDecl {
 		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
-		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalHash.hash("fields")))) decodeField(ec, fv, dp)];
+		// The definition's own pos becomes the type's pos (so a synthesized constructor lands on the
+		// defining macro's position, not a null "?" frame).
+		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
+		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalHash.hash("fields")))) decodeField(ec, fv, pos)];
 		var kind = EvalField.field(ec, v, EvalHash.hash("kind"));
 		var isExtern = boolOf(EvalField.field(ec, v, EvalHash.hash("isExtern")));
-		var params = decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp);
-		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp);
+		var params = decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), pos);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
 		return switch (ctorName(ec, kind)) {
 			case "TDClass":
-				var flags = decodeClassFlags(ec, kind, isExtern, dp);
-				var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
-				{decl: EClass(def), pos: dp};
+				var flags = decodeClassFlags(ec, kind, isExtern, pos);
+				var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				{decl: EClass(def), pos: pos};
 			case "TDAbstract":
-				var flags = decodeAbstractFlags(ec, kind, isExtern, dp);
-				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: dp}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
-				{decl: EAbstract(def), pos: dp};
+				var flags = decodeAbstractFlags(ec, kind, isExtern, pos);
+				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				{decl: EAbstract(def), pos: pos};
 			case other:
 				throw new TypingError("defineType supports only TDClass/TDAbstract, got " + other, dp);
 		};
