@@ -586,7 +586,9 @@ class CppEmit {
 		topSetvar = "";
 		topPrologue = function(gc) {
 			cppGenDefaultValues(closure.closeArgs, "__o_");
-			CppGenClass.hxStackPush(com, writer, emitClassName, emitFuncName, closure.closeExpr.pos.file, lineOf(closure.closeExpr.pos), gc, null, debugLevel, forHeader);
+			// gen_closure uses the tree's output_i (spacer + write_i), so the closure frame is indented by
+			// the closure body depth .
+			CppGenClass.hxStackPush(com, writer, emitClassName, emitFuncName, closure.closeExpr.pos.file, lineOf(closure.closeExpr.pos), gc, null, debugLevel, forHeader, true);
 		};
 		genWithInjection(closure.closeExpr, true);
 		topPrologue = saved;

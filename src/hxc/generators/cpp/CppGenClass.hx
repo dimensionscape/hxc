@@ -778,7 +778,7 @@ class CppGenClass {
 	// __hxcpp_all_files / __hxcpp_all_files_fullpath.
 	public static var fileInfo:Map<String, String> = new Map();
 
-	public static function hxStackPush(com:Context, w:CppWriter, dotName:String, funcName:String, file:String, line:Int, gcStack:Bool = false, ?fileId:{v:Int}, debug:Int = 1, isHeader:Bool = false):Void {
+	public static function hxStackPush(com:Context, w:CppWriter, dotName:String, funcName:String, file:String, line:Int, gcStack:Bool = false, ?fileId:{v:Int}, debug:Int = 1, isHeader:Bool = false, indented:Bool = false):Void {
 		// A @:noDebug method (debug<=0) emits no debug frame, so its own frame does not pollute the
 		// captured call/exception stack (haxe.NativeStackTrace.callStack); it still gets
 		// HX_JUST_GC_STACKFRAME when the body allocates.
@@ -809,9 +809,12 @@ class CppGenClass {
 			w.writeHUnique(frameMacro + "(" + varName + ",\"" + dotName + "\",\"" + funcName + "\"," + hashClassFunc
 				+ ",\"" + fullName + "\",\"" + escFile + "\"," + line + "," + hashFile + ")\n");
 		}
-		// output_i: the debug spacer prefix + HX_STACKFRAME, or HX_GC_STACKFRAME when the body allocates >
-		// HX_GC_STACKFRAME)
-		w.write("            \t" + (gcStack ? "HX_GC_STACKFRAME" : "HX_STACKFRAME") + "(&" + varName + ")\n");
+		// A method-body prologue writes at the fixed spacer with no writer indent, so the frame sits at the
+		// fixed 12-space + tab spacer. A closure prologue adds the writer's indent to the spacer, so its
+		// frame is additionally indented by the closure body's depth.
+		var frame = (gcStack ? "HX_GC_STACKFRAME" : "HX_STACKFRAME") + "(&" + varName + ")\n";
+		if (indented) { w.write("            \t"); w.writeI(frame); }
+		else w.write("            \t" + frame);
 	}
 
 	// A @:noDebug field (or class) drops the debug level to 0 for its body.
