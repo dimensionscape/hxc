@@ -53,6 +53,12 @@ class CppGen {
 		CppGenClass.superDeps = CppReferenced.createSuperDependencies(com);
 		CppGenClass.constructorDeps = CppReferenced.createConstructorDependencies(com);
 		CppGenClass.fileInfo = new Map();
+		var generatedHeaders = new Map<String, Bool>();
+		for (mt in com.types) switch (mt) {
+			case TClassDecl(c) if (shouldEmit(c)): generatedHeaders.set(Context.pathKey(c.path), true);
+			case TEnumDecl(e) if (shouldEmitEnum(e)): generatedHeaders.set(Context.pathKey(e.path), true);
+			case _:
+		}
 
 		// exe_classes: (path, deps) in reverse com.types order . deps = the Build.xml <depend> list = self
 		// header + referenced headers (same order as the .cpp includes).
@@ -77,7 +83,7 @@ class CppGen {
 				writeFile(base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
 				writeFile(base + "/src/" + p + ".cpp", cppText);
 				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
-				var refs = [c.path].concat(gc.referencedPaths());
+				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
 				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
 				exeClasses.unshift({path: c.path, deps: refs});
 			case TEnumDecl(e) if (shouldEmitEnum(e)):
