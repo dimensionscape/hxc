@@ -368,9 +368,12 @@ class Calls {
 				continue;
 			}
 			if (pi >= params.length || isUnderscore) {
-				var v = TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p);
+				// The missing arg keeps its position on the closure. An optional arg becomes Null<t> so the
+				// bound closure can pass null through to the original function's default.
+				var vt = arg.opt ? ctx.com.basic.tnull(arg.t) : arg.t;
+				var v = TypeFunctions.allocVar(VGenerated, arg.name, vt, p);
 				missingVl.push(v);
-				missingArgs.push({name: arg.name, opt: arg.opt, t: arg.t});
+				missingArgs.push({name: arg.name, opt: arg.opt, t: vt});
 				callArgs.push(TexprTools.makeLocal(v, p));
 				if (isUnderscore) pi++;
 			} else {
@@ -384,7 +387,11 @@ class Calls {
 		if (pi < params.length) throw new TypingError("Too many callback arguments", p);
 		var call = makeCall(ctx, feLocal, callArgs, sig.ret, p);
 		var body = TypeFunctions.mk(TReturn(call), sig.ret, p);
-		var tf = new TFunc([for (v in missingVl) {v: v}], sig.ret, body);
+		// An optional closure arg defaults to null so a no-arg call reaches the original function as
+		// null and triggers its own default.
+		var tfArgs:Array<TFuncArg> = [for (i in 0...missingVl.length)
+			{v: missingVl[i], c: missingArgs[i].opt ? TexprTools.makeNull(missingVl[i].type, Position.nullPos) : null}];
+		var tf = new TFunc(tfArgs, sig.ret, body);
 		var ft = TFun({args: missingArgs, ret: sig.ret});
 		decls.push(TypeFunctions.mk(TFunction(tf), ft, p));
 		return TypeFunctions.mk(TBlock(decls), ft, p);
