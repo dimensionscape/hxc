@@ -2179,8 +2179,9 @@ class Typer {
 					case EUntyped(_):
 						// The untyped value is a fresh monomorph; bind it to the return type so a static
 						// generator can resolve the node's type (e.g. `untyped new C()` would otherwise retype
-						// to Dynamic), while still wrapping in a cast so the untyped value flows unchecked.
-						// Binding a monomorph never fails, so this stays lenient like the reference.
+						// to Dynamic), while still wrapping in a cast so the untyped value flows unchecked (js
+						// std lib.hx/Boot.hx/Browser.hx returns castOrUnify would reject). Binding a monomorph
+						// never fails, so this stays lenient like the reference.
 						try TypeUnification.unifyDefault(teRaw.type, ctx.ret) catch (_:haxe.Exception) {};
 						return TypeFunctions.mk(TReturn(TypeFunctions.mk(TCast(teRaw, null), ctx.ret, teRaw.pos)), monoOrDynamic(ctx, withType, p), p);
 					case _:
