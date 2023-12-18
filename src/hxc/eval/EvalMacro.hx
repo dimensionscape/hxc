@@ -895,7 +895,7 @@ class EvalMacro {
 			{name: "supportsThreads", value: pc.supportsThreads ? VTrue : VFalse},
 			{name: "supportsUnicode", value: pc.supportsUnicode ? VTrue : VFalse},
 			{name: "supportsRestArgs", value: pc.supportsRestArgs ? VTrue : VFalse},
-			{name: "supportsAtomics", value: VFalse},
+			{name: "supportsAtomics", value: pc.supportsAtomics ? VTrue : VFalse},
 		]);
 		var mainClass = com.mainClass == null ? VNull : obj([
 			{name: "pack", value: strArray(com.mainClass.pack)},
