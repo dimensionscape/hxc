@@ -25,9 +25,23 @@ class ModuleLoader {
 		for (dir in ctx.classPath) {
 			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
-			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return full;
+			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return canonicalFileName(full);
 		}
 		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+	}
+
+	static function canonicalFileName(file:String):String {
+		var slash = file.lastIndexOf("/");
+		var backslash = file.lastIndexOf("\\");
+		if (backslash > slash) slash = backslash;
+		if (slash < 0) return file;
+		var dir = file.substr(0, slash + 1);
+		var name = file.substr(slash + 1);
+		try {
+			for (entry in FileSystem.readDirectory(dir))
+				if (entry.toLowerCase() == name.toLowerCase()) return dir + entry;
+		} catch (_:Dynamic) {}
+		return file;
 	}
 
 	static function skipEvalOverlayFile(ctx:Context, dir:String, relPath:String):Bool {
