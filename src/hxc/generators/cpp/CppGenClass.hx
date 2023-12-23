@@ -1262,6 +1262,8 @@ class CppGenClass {
 			genInterfaceFuncs(w, iface, implnameFull, interfaceImplName(iface), alreadyGlued, cppGlue);
 			w.write("};\n\n");
 		}
+		cppGlue.sort(glueOrder);
+		headerGlue.sort(glueOrder);
 		// The glue forwarder bodies precede the _hx_getInterface dispatch. Each body already ends in
 		// "\n}\n", and the bodies are joined with a single "\n".
 		if (cppGlue.length > 0) w.write(cppGlue.join("\n"));
@@ -1277,6 +1279,17 @@ class CppGenClass {
 		else
 			w.write("\treturn super::_hx_getInterface(inHash);\n");
 		w.write("}\n\n");
+	}
+
+	function glueOrder(a:String, b:String):Int {
+		function nameOf(text:String):String {
+			var end = text.indexOf("(");
+			var prefix = text.substr(0, end);
+			var space = prefix.lastIndexOf(" ");
+			var scope = prefix.lastIndexOf("::");
+			return scope > space ? prefix.substr(scope + 2) : prefix.substr(space + 1);
+		}
+		return Reflect.compare(nameOf(a), nameOf(b));
 	}
 
 	// The member-function-pointer cast text for a function type.
