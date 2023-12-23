@@ -550,12 +550,23 @@ private class RetypeSession {
 	// objc, and the array-method return-type fixups.
 	function fieldInstance(obj:TExpr, clazz:TClass, params:Array<T>, member:TClassField, expr:TExpr):{def:CppExprDef, t:CppType} {
 		var funcReturn = CppTypeOf.cppMemberReturnType(member);
-		var clazzType = CppTypeOf.cppInstanceTypeOf(clazz, params);
+		var owner = clazz;
+		var ownerParams = params;
+		switch (TypeFunctions.follow(obj.type)) {
+			case TInst(c, _): switch (c.kind) {
+				case KGenericInstance(base, _) if (base == clazz):
+					owner = c;
+					ownerParams = [];
+				case _:
+			}
+			case _:
+		}
+		var clazzType = CppTypeOf.cppInstanceTypeOf(owner, ownerParams);
 		var retypedObj = retype(clazzType, obj);
 		var exprType = CppTypeOf.cppTypeOf(member.type);
 		var isObjc = CppTypeOf.isCppObjcType(retypedObj.ctype);
 		if (retypedObj.ctype.match(TCppNull)) return {def: CppNullAccess, t: TCppDynamic};
-		if (retypedObj.ctype.match(TCppDynamic) && !TypeFunctions.hasClassFlag(clazz, CInterface)) {
+		if (retypedObj.ctype.match(TCppDynamic) && !TypeFunctions.hasClassFlag(owner, CInterface)) {
 			if (CppTypeText.isInternalMember(member.name)) return {def: CppFunction(FuncInstance(retypedObj, InstPtr, member), funcReturn), t: exprType};
 			return {def: CppDynamicField(retypedObj, member.name), t: TCppVariant};
 		}
@@ -564,7 +575,7 @@ private class RetypeSession {
 		// map when the inlined call site has concrete key/value types). The runtime object is some
 		// implementation, not necessarily that class, so a direct member call is invalid; dispatch
 		// dynamically on the interface reference.
-		if (retypedObj.ctype.match(TCppInterface(_)) && !TypeFunctions.hasClassFlag(clazz, CInterface))
+		if (retypedObj.ctype.match(TCppInterface(_)) && !TypeFunctions.hasClassFlag(owner, CInterface))
 			return {def: CppDynamicField(retypedObj, member.name), t: TCppVariant};
 		if (CppTypeOf.cppIsStructAccess(retypedObj.ctype)) return switch (retypedObj.expr) {
 			case CppThis(ThisReal): {def: CppVar(VarThis(member, retypedObj.ctype)), t: exprType};
@@ -590,7 +601,7 @@ private class RetypeSession {
 				}
 			};
 		}
-		if (TypeFunctions.hasClassFlag(clazz, CInterface) && !isObjc) return {def: CppFunction(FuncInterface(retypedObj, clazz, member), funcReturn), t: exprType};
+		if (TypeFunctions.hasClassFlag(owner, CInterface) && !isObjc) return {def: CppFunction(FuncInterface(retypedObj, owner, member), funcReturn), t: exprType};
 		var isArrayObj = switch (retypedObj.ctype) { case TCppDynamicArray | TCppObjectArray(_) | TCppScalarArray(_): true; case _: false; };
 		var mReturn = if (isArrayObj) switch (member.name) {
 			case "map": TCppDynamicArray;

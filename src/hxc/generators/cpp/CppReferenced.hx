@@ -185,9 +185,17 @@ class CppReferenced {
 					case TVarExpr(v, _): visitType(v.type);
 					case TEnumParameter(_, ef, _): visitType(TypeFunctions.follow(ef.type));
 					case TFunction(fd): for (a in fd.args) visitType(a.v.type);
-					case TField(_, fa):
+					case TField(receiver, fa):
 						switch (fa) {
-							case FInstance(clazz, params, _): visitType(TInst(clazz, params));
+							case FInstance(clazz, params, _):
+								var owner = switch (TypeFunctions.follow(receiver.type)) {
+									case TInst(c, _): switch (c.kind) {
+										case KGenericInstance(base, _) if (base == clazz): c;
+										case _: clazz;
+									}
+									case _: clazz;
+								};
+								visitType(TInst(owner, owner == clazz ? params : []));
 							case FClosure(cwp, _) if (cwp != null): visitType(TInst(cwp.c, cwp.params));
 							case _:
 						}

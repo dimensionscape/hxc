@@ -745,6 +745,10 @@ class CppGenClass {
 		if (tf == null) return true;
 		var allowed = new Map<String, Bool>();
 		allowed.set(joinPath(classDef.path, "."), true);
+		switch (classDef.kind) {
+			case KGenericInstance(base, _): allowed.set(joinPath(base.path, "."), true);
+			case _:
+		}
 		var sup = classDef.superClass;
 		while (sup != null) { allowed.set(joinPath(sup.c.path, "."), true); sup = sup.c.superClass; }
 		var ok = true;

@@ -731,7 +731,13 @@ class Typeload {
 				// with the base). The base-not-expanded case keeps the default remap (avoids a recursion).
 				var ce1 = cloneExpr(e1, subst, vars, gsubst);
 				var stl = [for (t in ftl) subst(t)];
-				var cg2 = canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+				var cg2 = switch (TypeFunctions.follow(ce1.type)) {
+					case TInst(c2, _): switch (c2.kind) {
+						case KGenericInstance(base, _) if (base == fc): c2;
+						case _: canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+					}
+					case _: canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+				};
 				if (cg2 == null || cg2 == fc) {
 					TField(ce1, fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1));
 				} else {
