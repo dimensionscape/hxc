@@ -468,14 +468,41 @@ class Inline {
 				var out:Array<TExpr> = [];
 				for (i in 0...stmts.length) {
 					var s = stmts[i];
-					if (i == stmts.length - 1) switch (s.expr) {
-						case TReturn(eo): out.push(eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? s.pos : inlinePos) : mapExpr(ctx, eo, subst, vthis, ethis, inlinePos, keepPositions));
-						case _: out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
-					} else out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
+					if (i == stmts.length - 1) out.push(mapTerminal(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
+					else out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
 				}
-				return TypeFunctions.mk(TBlock(out), body.type, keepPositions ? body.pos : inlinePos);
+				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? body.pos : inlinePos);
 			case _:
-				return mapExpr(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
+				return mapTerminal(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
+		}
+	}
+
+	static function mapTerminal(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position,
+			keepPositions:Bool):TExpr {
+		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
+		function terminal(x:TExpr):TExpr return mapTerminal(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
+		function sharedType(values:Array<TExpr>):T {
+			for (value in values) if (value.type != ctx.com.basic.tvoid) return value.type;
+			return e.type;
+		}
+		switch (e.expr) {
+			case TReturn(eo):
+				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? e.pos : inlinePos) : terminal(eo);
+			case TBlock(stmts) if (stmts.length > 0):
+				var out = [for (i in 0...stmts.length) i == stmts.length - 1 ? terminal(stmts[i]) : m(stmts[i])];
+				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? e.pos : inlinePos);
+			case TIf(c, a, b) if (b != null):
+				var thenExpr = terminal(a);
+				var elseExpr = terminal(b);
+				return TypeFunctions.mk(TIf(m(c), thenExpr, elseExpr), sharedType([thenExpr, elseExpr]), keepPositions ? e.pos : inlinePos);
+			case TSwitch(c, cases, def):
+				var mappedCases = [for (caseDef in cases) {values: [for (v in caseDef.values) m(v)], expr: terminal(caseDef.expr)}];
+				var mappedDefault = def == null ? null : terminal(def);
+				var values = [for (caseDef in mappedCases) caseDef.expr];
+				if (mappedDefault != null) values.push(mappedDefault);
+				return TypeFunctions.mk(TSwitch(m(c), mappedCases, mappedDefault), sharedType(values), keepPositions ? e.pos : inlinePos);
+			case _:
+				return m(e);
 		}
 	}
 
