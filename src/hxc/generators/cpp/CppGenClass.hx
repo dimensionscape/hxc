@@ -424,6 +424,38 @@ class CppGenClass {
 		}
 	}
 
+	function virtualFieldsOf(root:TClass):Array<TClassField> {
+		var fields:Array<TClassField> = [];
+		function add(c:TClass):Void {
+			if (c.superClass != null) add(c.superClass.c);
+			else if (TypeFunctions.hasClassFlag(c, CInterface) && c.interfaces.length > 0)
+				// The typer represents interface `extends` entries as interfaces, while hxcpp
+				// stores the final entry in superClass. Match that C++ inheritance chain here.
+				add(c.interfaces[c.interfaces.length - 1].c);
+			for (f in c.orderedFields) switch ([TypeFunctions.follow(f.type), f.kind]) {
+				case [TFun(_), Method(MethDynamic)]:
+				case [TFun(_), Method(_)]:
+					var index = -1;
+					for (i in 0...fields.length) if (fields[i].name == f.name) { index = i; break; }
+					if (TypeFunctions.hasClassFieldFlag(f, CfOverride) && index >= 0) fields[index] = f;
+					else if (index < 0) fields.push(f);
+				case _:
+			}
+		}
+		add(root);
+		return fields;
+	}
+
+	function virtualFields():Array<TClassField> return virtualFieldsOf(classDef);
+
+	function cppSuper():Null<TClassWithParams> {
+		if (classDef.superClass != null) return classDef.superClass;
+		// See virtualFields: interface extends relations live in interfaces in this IR.
+		return TypeFunctions.hasClassFlag(classDef, CInterface) && classDef.interfaces.length > 0
+			? classDef.interfaces[classDef.interfaces.length - 1]
+			: null;
+	}
+
 	static function isOverride(field:TClassField):Bool {
 		return TypeFunctions.hasClassFieldFlag(field, CfOverride);
 	}
@@ -472,11 +504,12 @@ class CppGenClass {
 		genOpenNamespace(w);
 		w.write("\n\n");
 		w.write(getClassCode(classDef, ":headerNamespaceCode"));
-		// /super: an interface has no base, a normal class extends its super's _obj type, a root class
-		// extends ::hx::Object.
+		// Parent/super: normal classes extend their super's _obj type, interfaces use their final extends
+		// entry, and roots use ::hx::Object.
 		var isInterface = TypeFunctions.hasClassFlag(classDef, CInterface);
-		var superName = classDef.superClass != null
-			? CppTypeText.tcppToStringSuffix("_obj", CppTypeOf.cppInstanceTypeOf(classDef.superClass.c, classDef.superClass.params))
+		var superDef = cppSuper();
+		var superName = superDef != null
+			? CppTypeText.tcppToStringSuffix("_obj", CppTypeOf.cppInstanceTypeOf(superDef.c, superDef.params))
 			: "::hx::Object";
 		if (isInterface) {
 			w.write("class HXCPP_CLASS_ATTRIBUTES " + className + " {\n\tpublic:\n");
@@ -581,7 +614,8 @@ class CppGenClass {
 		// The __boot declaration when the class has static initializers.
 		if (hasBootField(classDef)) w.write("\t\tstatic void __boot();\n");
 		for (f in staticsExceptMeta()) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, true, f);
-		for (f in classDef.orderedFields) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, false, f);
+		var instanceFields = isInterface ? virtualFields() : classDef.orderedFields;
+		for (f in instanceFields) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, false, f);
 		// @:headerClassCode is injected verbatim just before the class closing brace.
 		w.write(getClassCode(classDef, ":headerClassCode"));
 		w.write("};\n\n");
@@ -1268,8 +1302,7 @@ class CppGenClass {
 	// once and registered in the vtable in place of the raw pointer.
 	function genInterfaceFuncs(w:CppWriter, iface:TClass, implnameFull:String, interfaceName:String,
 			alreadyGlued:Map<String, Bool>, cppGlue:Array<String>):Void {
-		if (iface.superClass != null) genInterfaceFuncs(w, iface.superClass.c, implnameFull, interfaceName, alreadyGlued, cppGlue);
-		for (field in iface.orderedFields) switch [TypeFunctions.follow(field.type), field.kind] {
+		for (field in virtualFieldsOf(iface)) switch [TypeFunctions.follow(field.type), field.kind] {
 			case [_, Method(MethDynamic)]:
 			case [TFun(sig), Method(_)]:
 				var castSig = cppTfunSig(sig.ret, sig.args);
