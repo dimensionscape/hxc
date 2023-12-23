@@ -580,8 +580,8 @@ class CppGenClass {
 		}
 		// The __boot declaration when the class has static initializers.
 		if (hasBootField(classDef)) w.write("\t\tstatic void __boot();\n");
-		for (f in staticsExceptMeta()) genMemberDefHeader(w, true, f);
-		for (f in classDef.orderedFields) genMemberDefHeader(w, false, f);
+		for (f in staticsExceptMeta()) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, true, f);
+		for (f in classDef.orderedFields) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, false, f);
 		// @:headerClassCode is injected verbatim just before the class closing brace.
 		w.write(getClassCode(classDef, ":headerClassCode"));
 		w.write("};\n\n");
@@ -941,8 +941,8 @@ class CppGenClass {
 		// The class-init block: `void C::__init__() { <init> }`.
 		genClassInit(w);
 		// Members first, then statics (staticsExceptMeta).
-		for (f in classDef.orderedFields) genFieldCpp(w, false, f);
-		for (f in staticsExceptMeta()) genFieldCpp(w, true, f);
+		for (f in classDef.orderedFields) if (TypeFunctions.isPhysicalField(f)) genFieldCpp(w, false, f);
+		for (f in staticsExceptMeta()) if (TypeFunctions.isPhysicalField(f)) genFieldCpp(w, true, f);
 		// A "\n" after the field loops (before the non-inline constructor bodies).
 		w.write("\n");
 		// Non-inline constructor emits its __new/__alloc bodies in the cpp, right before the default
