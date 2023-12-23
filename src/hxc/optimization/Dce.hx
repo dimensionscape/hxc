@@ -6,6 +6,7 @@ import hxc.core.TypeUnification;
 import hxc.context.Context;
 import hxc.ast.Ast;
 import hxc.ast.Position;
+import hxc.core.Globals.Platform;
 import haxe.ds.StringMap;
 
 /**
@@ -979,6 +980,16 @@ class Dce {
 		}
 	}
 
+	function keepCppInterfaceSlots():Void {
+		if (com.platform != Cpp) return;
+		for (t in com.types) switch (t) {
+			case TClassDecl(c) if (c.path.pack.length == 1 && c.path.pack[0] == "haxe" && c.path.name == "IMap"):
+				var field = c.fields.get("toString");
+				if (field != null) markField(c, field, false);
+			case _:
+		}
+	}
+
 	function mark():Void {
 		var loop = true;
 		while (loop) {
@@ -1150,6 +1161,7 @@ class Dce {
 
 		// 1) entry points (com.main + @:keep/@:keepSub/@:expose + used types/fields).
 		dce.collectEntryPoints();
+		dce.keepCppInterfaceSlots();
 		// 2) mark, keep going until no new fields are added.
 		dce.mark();
 		// 3) sweep, filter types (only if mode != DceNo).
