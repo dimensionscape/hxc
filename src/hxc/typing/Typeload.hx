@@ -633,37 +633,46 @@ class Typeload {
 	}
 
 	static function genericSuffix(params:TParams):String {
-		return [for (p in params) sanitizeGenericName(genericParamName(p))].join("_");
+		return [for (p in params) genericParamName(p)].join("_");
 	}
 
 	static function genericParamName(t:T):String {
-		return switch (t) {
-			case TInst(c, []): c.path.name;
-			case TInst(c, params): c.path.name + "_" + genericSuffix(params);
-			case TEnum(e, []): e.path.name;
-			case TEnum(e, params): e.path.name + "_" + genericSuffix(params);
-			case TAbstract(a, []): a.path.name;
-			case TAbstract(a, params): a.path.name + "_" + genericSuffix(params);
-			case TType(td, []): td.path.name;
-			case TType(td, params): td.path.name + "_" + genericSuffix(params);
-			case TDynamic(_): "Dynamic";
-			case TFun(_): "Function";
-			case TAnon(_): "Anon";
-			case TLazy(f): genericParamName(TypeFunctions.lazyType(f));
-			case TMono(r):
-				switch (r.type) {
-					case null: "Unknown";
-					case some: genericParamName(some);
-				}
-		}
+		return genericTypeName(t, true);
 	}
 
-	static function sanitizeGenericName(s:String):String {
+	static function genericTypePath(path:Path):String {
+		return path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name;
+	}
+
+	static function genericTypeTail(params:TParams, top:Bool):String {
+		return params.length == 0 ? "" : "_" + [for (p in params) genericTypeName(p, top)].join("_");
+	}
+
+	static function genericTypeName(t:T, top:Bool):String {
+		return switch (t) {
+			case TInst(c, params): switch (c.kind) {
+				case KExpr(e): genericIdentSafe(hxc.ast.Printer.sExpr(e));
+				case _: genericTypePath(c.path) + genericTypeTail(params, top);
+			}
+			case TEnum(e, params): genericTypePath(e.path) + genericTypeTail(params, top);
+			case TAbstract(a, params): genericTypePath(a.path) + genericTypeTail(params, top);
+			case TType(td, params): genericTypePath(td.path) + genericTypeTail(params, top);
+			case TAnon(a):
+				var fields = [for (name in a.fields.keys()) name + "_" + genericTypeName(a.fields.get(name).type, false)];
+				"anon_" + fields.join("_");
+			case TFun(sig): "func_" + [for (arg in sig.args) genericTypeName(arg.t, false)].concat([genericTypeName(sig.ret, false)]).join("_");
+			case TDynamic(_): "Dynamic";
+			case TLazy(f): genericTypeName(TypeFunctions.lazyType(f), top);
+			case TMono(r): r.type == null ? "Unknown" : genericTypeName(r.type, top);
+		};
+	}
+
+	static function genericIdentSafe(s:String):String {
 		var out = new StringBuf();
 		for (i in 0...s.length) {
 			var c = s.charCodeAt(i);
 			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
-			out.addChar(ok ? c : "_".code);
+			if (ok) out.addChar(c) else out.add("_" + c + "_");
 		}
 		return out.toString();
 	}
