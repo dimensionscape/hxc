@@ -380,7 +380,7 @@ class Inline {
 			}
 		}
 		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
-		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions);
+		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
 		// Unwrap a single-expression block.
 		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		var result = binds.length == 0 ? value : TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
@@ -459,12 +459,22 @@ class Inline {
 	}
 
 	// The body reduced to its result value: a single or final return's value, else the body itself.
-	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position, keepPositions:Bool):TExpr {
+	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position,
+			keepPositions:Bool, abstractMember:Bool):TExpr {
 		switch (body.expr) {
 			case TReturn(eo):
 				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? body.pos : inlinePos) : mapExpr(ctx, eo, subst, vthis, ethis, inlinePos, keepPositions);
 			case TBlock(stmts):
 				if (stmts.length == 0) return body;
+				if (abstractMember && stmts.length == 2) switch (stmts[0].expr) {
+					case TIf(condition, thenExpr, null) if (endsInReturn(thenExpr)):
+						var thenValue = mapTerminal(ctx, thenExpr, subst, vthis, ethis, inlinePos, keepPositions);
+						var elseValue = mapTerminal(ctx, stmts[1], subst, vthis, ethis, inlinePos, keepPositions);
+						var valueType = thenValue.type != ctx.com.basic.tvoid ? thenValue.type : elseValue.type;
+						return TypeFunctions.mk(TIf(mapExpr(ctx, condition, subst, vthis, ethis, inlinePos, keepPositions), thenValue, elseValue), valueType,
+							keepPositions ? body.pos : inlinePos);
+					case _:
+				}
 				var out:Array<TExpr> = [];
 				for (i in 0...stmts.length) {
 					var s = stmts[i];
@@ -475,6 +485,14 @@ class Inline {
 			case _:
 				return mapTerminal(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
 		}
+	}
+
+	static function endsInReturn(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TReturn(_): true;
+			case TBlock(stmts): stmts.length > 0 && endsInReturn(stmts[stmts.length - 1]);
+			case _: false;
+		};
 	}
 
 	static function mapTerminal(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position,
