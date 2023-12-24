@@ -696,7 +696,7 @@ class CppGenClass {
 
 	// A data member (var or dynamic method) is marked/visited by name.
 	function dumpFieldIterator(w:CppWriter, iterMacro:String, field:TClassField):Void {
-		if (CppTypeOf.isVarField(field))
+		if (isMemberVar(field))
 			w.write("\t" + iterMacro + "(" + CppTypeText.keywordRemap(field.name) + ",\"" + field.name + "\");\n");
 	}
 
@@ -720,7 +720,7 @@ class CppGenClass {
 	// collector must mark).
 	static function hasNewGcReferences(c:TClass):Bool {
 		for (f in c.orderedFields)
-			if (TypeFunctions.isPhysicalField(f) && CppTypeOf.isVarField(f) && !CppTypeOf.cppTypeOf(f.type).match(TCppScalar(_)))
+			if (TypeFunctions.isPhysicalField(f) && (CppTypeOf.isVarField(f) || isDynamicFieldIn(c, f)) && !CppTypeOf.cppTypeOf(f.type).match(TCppScalar(_)))
 				return true;
 		return false;
 	}
