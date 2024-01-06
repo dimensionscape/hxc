@@ -219,9 +219,31 @@ class CppReferenced {
 			if (!headerOnly) switch (f.expr) { case null: case ex: visitParams(ex); }
 		}
 
+		// Interface headers use inherited method declarations.
+		// Skip an unmarked covariant redeclaration, the parent header supplies it.
+		function interfaceHeaderFields(c:TClass):Array<TClassField> {
+			var inherited = new Map<String, Bool>();
+			function collect(parent:TClass):Void {
+				for (f in parent.orderedFields) inherited.set(f.name, true);
+				if (parent.superClass != null) collect(parent.superClass.c);
+				for (imp in parent.interfaces) collect(imp.c);
+			}
+			if (c.superClass != null) collect(c.superClass.c);
+			for (imp in c.interfaces) collect(imp.c);
+			var fields:Array<TClassField> = [];
+			for (f in c.orderedFields) switch [TypeFunctions.follow(f.type), f.kind] {
+				case [TFun(_), Method(k)] if (k != MethDynamic):
+					if (!inherited.exists(f.name) || TypeFunctions.hasClassFieldFlag(f, CfOverride)) fields.push(f);
+				case _:
+					// Interface vars still contribute reflected header types.
+					fields.push(f);
+			}
+			return fields.concat(c.orderedStatics);
+		}
+
 		switch (obj) {
 			case TClassDecl(c):
-				var fields = c.orderedFields.concat(c.orderedStatics);
+				var fields = headerOnly && TypeFunctions.hasClassFlag(c, CInterface) ? interfaceHeaderFields(c) : c.orderedFields.concat(c.orderedStatics);
 				var all = c.constructor != null ? fields.concat([c.constructor]) : fields;
 				if (fieldName != "*") all = [for (f in all) if (f.name == fieldName) f];
 				for (f in all) visitField(f);
