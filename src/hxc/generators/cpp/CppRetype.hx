@@ -476,6 +476,7 @@ private class RetypeSession {
 						var cppType = CppTypeOf.cppTypeOf(expr.type);
 						switch (retypedFunc.expr) {
 							case CppFunction(funcLoc, functionReturnType): callFunction(funcLoc, functionReturnType, returnType, args, expr);
+							case CppEnumIndex(_): {def: retypedFunc.expr, t: retypedFunc.ctype};
 							case CppExtern(name, isGlobal):
 								{def: CppCall(FuncExtern(name, isGlobal), [for (a in args) retype(TCppUnchanged, a)]), t: cppType};
 							// A call on an enum constructor value builds that constructor directly.
