@@ -475,7 +475,7 @@ private class RetypeSession {
 					case _:
 						var cppType = CppTypeOf.cppTypeOf(expr.type);
 						switch (retypedFunc.expr) {
-							case CppFunction(funcLoc, returnType): callFunction(funcLoc, returnType, args, expr);
+							case CppFunction(funcLoc, functionReturnType): callFunction(funcLoc, functionReturnType, returnType, args, expr);
 							case CppExtern(name, isGlobal):
 								{def: CppCall(FuncExtern(name, isGlobal), [for (a in args) retype(TCppUnchanged, a)]), t: cppType};
 							// A call on an enum constructor value builds that constructor directly.
@@ -496,7 +496,7 @@ private class RetypeSession {
 	}
 
 	// Dispatch a retyped CppFunction callee to a CppCall.
-	function callFunction(funcLoc:CppFuncLoc, returnType:CppType, args:Array<TExpr>, expr:TExpr):{def:CppExprDef, t:CppType} {
+	function callFunction(funcLoc:CppFuncLoc, functionReturnType:CppType, returnType:CppType, args:Array<TExpr>, expr:TExpr):{def:CppExprDef, t:CppType} {
 		return switch (funcLoc) {
 			// cpp.Function.fromStaticFunction(f): the single retyped arg must be a static
 			// function; the call collapses to a CppFunctionAddress of that member.
@@ -518,7 +518,7 @@ private class RetypeSession {
 					// The array kind is keyed off the requested return type; the call's own cpp type
 					// (::Array< int > here) is that type, so an Object/Scalar array uses
 					// ::Array_obj<T>::__new.
-					var callType = CppTypeOf.cppTypeOf(expr.type);
+				var callType = returnType;
 				var arrType = switch (callType) { case TCppObjectArray(_) | TCppScalarArray(_): callType; case _: TCppDynamicArray; };
 				{def: CppCall(FuncNew(arrType), retypedArgs), t: callType};
 			// @:templatedCall takes its leading Class argument as a C++ template parameter.
@@ -526,9 +526,18 @@ private class RetypeSession {
 				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
 				if (retypedArgs.length == 0) throw new hxc.core.TypingError("First parameter of template function must be a Class", expr.pos);
 				switch (retypedArgs[0].expr) {
-					case CppClassOf(path, native): {def: CppCall(FuncTemplate(clazz, member, path, native), retypedArgs.slice(1)), t: returnType};
+					case CppClassOf(path, native): {def: CppCall(FuncTemplate(clazz, member, path, native), retypedArgs.slice(1)), t: functionReturnType};
 					case _: throw new hxc.core.TypingError("First parameter of template function must be a Class", expr.pos);
 				}
+			// Unused typed-array splice calls remove elements in place.
+			case FuncInstance(obj, InstPtr, member) if (!forCppia && returnType.match(TCppVoid) && isArraySpliceCall(obj, member)):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+				var arrayMember = TypeFunctions.copyField(member);
+				arrayMember.name = "removeRange";
+				{def: CppCall(FuncInstance(obj, InstPtr, arrayMember), retypedArgs), t: TCppVoid};
+			// Typed-array concat keeps its concrete element type for every argument.
+			case FuncInstance(obj, InstPtr, member) if (isArrayConcatCall(obj, member)):
+				{def: CppCall(FuncInstance(obj, InstPtr, member), [for (a in args) retype(obj.ctype, a)]), t: returnType};
 			// Use typed getters for scalar and String values.
 			case FuncInstance(obj, InstPtr, member) if (isMapGetCall(obj, member)):
 				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
@@ -558,10 +567,10 @@ private class RetypeSession {
 					var arg = retype(TCppUnchanged, args[0]);
 					var rawType = switch (arg.ctype) { case TCppStar(x, _): x; case x: x; };
 					{def: CppDereference(arg), t: TCppReference(rawType)};
-				case FuncInstance(_, _, cf) | FuncStatic(_, _, cf) | FuncThis(cf, _) if (isTFun(cf.type)):
-					{def: CppCall(funcLoc, retypeFunctionArgs(args, tfunArgCppTypes(cf.type), expr)), t: returnType};
+			case FuncInstance(_, _, cf) | FuncStatic(_, _, cf) | FuncThis(cf, _) if (isTFun(cf.type)):
+				{def: CppCall(funcLoc, retypeFunctionArgs(args, tfunArgCppTypes(cf.type), expr)), t: functionReturnType};
 			case _:
-				{def: CppCall(funcLoc, [for (a in args) retype(TCppDynamic, a)]), t: returnType};
+				{def: CppCall(funcLoc, [for (a in args) retype(TCppDynamic, a)]), t: functionReturnType};
 		}
 	}
 
@@ -572,6 +581,20 @@ private class RetypeSession {
 				case [["cpp"], "Int64Map"] | [["haxe", "ds"], "IntMap"] | [["haxe", "ds"], "StringMap"] | [["haxe", "ds"], "ObjectMap"]: true;
 				case _: false;
 			};
+			case _: false;
+		}
+	}
+
+	static function isArraySpliceCall(obj:CppExpr, member:TClassField):Bool {
+		return member.name == "splice" && switch (obj.ctype) {
+			case TCppScalarArray(_) | TCppObjectArray(_): true;
+			case _: false;
+		}
+	}
+
+	static function isArrayConcatCall(obj:CppExpr, member:TClassField):Bool {
+		return member.name == "concat" && switch (obj.ctype) {
+			case TCppScalarArray(_) | TCppObjectArray(_): true;
 			case _: false;
 		}
 	}
