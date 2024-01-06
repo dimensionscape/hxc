@@ -529,6 +529,20 @@ private class RetypeSession {
 					case CppClassOf(path, native): {def: CppCall(FuncTemplate(clazz, member, path, native), retypedArgs.slice(1)), t: returnType};
 					case _: throw new hxc.core.TypingError("First parameter of template function must be a Class", expr.pos);
 				}
+			// Use typed getters for scalar and String values.
+			case FuncInstance(obj, InstPtr, member) if (isMapGetCall(obj, member)):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+				var getter:{name:String, type:CppType} = switch (returnType) {
+					case TCppVoid | TCppScalar("bool"): {name: forCppia ? "getBool" : "get_bool", type: returnType};
+					case TCppScalar("int"): {name: forCppia ? "getInt" : "get_int", type: returnType};
+					case TCppScalar("::cpp::Int64"): {name: forCppia ? "getInt64" : "get_int64", type: returnType};
+					case TCppScalar("Float"): {name: forCppia ? "getFloat" : "get_float", type: returnType};
+					case TCppString: {name: forCppia ? "getString" : "get_string", type: returnType};
+					case _: {name: "get", type: TCppDynamic};
+				};
+				var mapMember = TypeFunctions.copyField(member);
+				mapMember.name = getter.name;
+				{def: CppCall(FuncInstance(obj, InstPtr, mapMember), retypedArgs), t: getter.type};
 			// The &/* pointer intrinsics: cpp.Native.addressOf/star/star's native names
 				// (::hx::AddressOf/StarOf/Dereference) lower to CppAddressOf/CppDereference, not a call to a
 				// nonexistent hxcpp function.
@@ -548,6 +562,17 @@ private class RetypeSession {
 					{def: CppCall(funcLoc, retypeFunctionArgs(args, tfunArgCppTypes(cf.type), expr)), t: returnType};
 			case _:
 				{def: CppCall(funcLoc, [for (a in args) retype(TCppDynamic, a)]), t: returnType};
+		}
+	}
+
+	static function isMapGetCall(obj:CppExpr, member:TClassField):Bool {
+		if (member.name != "get") return false;
+		return switch (obj.ctype) {
+			case TCppInst(c, _): switch [c.path.pack, c.path.name] {
+				case [["cpp"], "Int64Map"] | [["haxe", "ds"], "IntMap"] | [["haxe", "ds"], "StringMap"] | [["haxe", "ds"], "ObjectMap"]: true;
+				case _: false;
+			};
+			case _: false;
 		}
 	}
 
