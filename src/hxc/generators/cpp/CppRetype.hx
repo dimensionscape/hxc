@@ -485,6 +485,15 @@ private class RetypeSession {
 							// A call on `super` is a superclass constructor chain.
 							case CppSuper(_):
 								{def: CppCall(FuncSuperConstruct(retypedFunc.ctype), [for (a in args) retype(TCppDynamic, a)]), t: TCppVoid};
+							case CppDynamicField(obj, name):
+								var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+								switch ([obj.ctype, name]) {
+									case [TCppGlobal, _]: {def: CppCall(FuncExtern(name, true), [for (a in args) retype(TCppUnchanged, a)]), t: cppType};
+									case [TCppString, _]: {def: CppCall(FuncInternal(obj, name, "."), retypedArgs), t: cppType};
+									case [_, "__Tag"]: {def: CppCall(FuncInternal(obj, "_hx_getTag", "->"), retypedArgs), t: cppType};
+									case [_, _] if (CppTypeText.isInternalMember(name)): {def: CppCall(FuncInternal(obj, name, "->"), retypedArgs), t: cppType};
+									case _: {def: CppCall(FuncExpression(retypedFunc), retypedArgs), t: TCppDynamic};
+								}
 							case _:
 								{def: CppCall(FuncExpression(retypedFunc), [for (a in args) retype(TCppDynamic, a)]), t: TCppDynamic};
 						}
