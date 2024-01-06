@@ -303,7 +303,7 @@ class CppTypeText {
 		return (rename != null && rename != "") ? rename : keywordRemap(v.name);
 	}
 
-	static function tcppObjcBlockStruct(argTypes:Array<CppType>, retType:CppType):String {
+	public static function tcppObjcBlockStruct(argTypes:Array<CppType>, retType:CppType):String {
 		var args = argTypes.map(tcppToString).join(",");
 		var ret = tcppToString(retType);
 		var suffix = Std.string(argTypes.length);

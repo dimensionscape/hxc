@@ -1,6 +1,7 @@
 package hxc.generators.cpp;
 
 import hxc.core.Type;
+import hxc.core.TypeFunctions;
 import hxc.context.Context;
 import hxc.generators.cpp.CppType;
 import hxc.generators.cpp.CppExpr;
@@ -208,6 +209,15 @@ class CppEmit {
 					case TCppDynamic: gen(e); out(".StaticCast< " + CppTypeText.tcppToString(toType) + " >()");
 					case _: out("Dynamic( "); gen(e); out(").StaticCast< " + CppTypeText.tcppToString(toType) + " >()");
 				}
+			case CppCastObjC(e, klass):
+				var path = CppTypeText.joinClassPathRemap(klass.path, "::");
+				var toType = TypeFunctions.hasClassFlag(klass, CInterface) ? "id < " + path + ">" : path + " *";
+				out("( (" + toType + ") (id) ("); gen(e); out(") )");
+			case CppCastObjCBlock(e, args, ret):
+				out(CppTypeText.tcppObjcBlockStruct(args, ret) + "::create( "); gen(e); out(")");
+			case CppCastProtocol(e, klass):
+				out(CppTypeText.joinClassPathRemap(klass.path, "::") + "_obj::_hx_toProtocol( "); gen(e); out(")");
+			case CppCastNative(e): out("("); gen(e); out(").mPtr");
 			// CppNewNative: a raw C++ `new` of a native/extern type.
 			case CppNewNative(e): out("new "); gen(e);
 			// CppAddressOf/CppDereference: the &/* pointer operators.
