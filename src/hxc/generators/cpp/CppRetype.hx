@@ -862,7 +862,16 @@ private class RetypeSession {
 	// The autocast tail: coerce the retyped node to the requested C++ type.
 	function autocast(returnType:CppType, cppExpr:CppExpr, retypedExpr:CppExprDef, pos:Position):CppExpr {
 		if (returnType.match(TCppVoid)) return mk(retypedExpr, TCppVoid, pos);
-		if (returnType.match(TCppVarArg)) throw new hxc.core.TypingError("retype: TCppVarArg autocast not ported yet", pos);
+		if (returnType.match(TCppVarArg)) {
+			return switch (CppTypeOf.cppVariantTypeOf(cppExpr.ctype)) {
+				case TCppVoidStar | TCppScalar(_): cppExpr;
+				case TCppString: mk(CppVar(VarInternal(cppExpr, ".", "raw_ptr()")), TCppPointer("ConstPointer", TCppScalar("char")), pos);
+				case TCppDynamic: mk(CppCastNative(cppExpr), TCppVoidStar, pos);
+				case _:
+					var toDynamic = mk(CppCast(cppExpr, TCppDynamic), TCppDynamic, pos);
+					mk(CppCastNative(toDynamic), TCppVoidStar, pos);
+			}
+		}
 		var ct = cppExpr.ctype;
 		if (isDynamicish(ct)) {
 			return switch (returnType) {
