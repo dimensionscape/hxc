@@ -640,6 +640,15 @@ class CppEmit {
 
 	// The generic CppCall(func, args) path (native/objc/quick-alloc specials come later)
 	function genCall(func:CppFuncLoc, args:Array<CppExpr>, expr:CppExpr):Void {
+		switch (func) {
+			case FuncStatic(clazz, true, field):
+				genObjcCall(CppTypeText.joinClassPathRemap(clazz.path, "::"), field, args, expr);
+				return;
+			case FuncInstance(obj, InstObjC, field):
+				genObjcCall(null, field, args, expr, obj);
+				return;
+			case _:
+		}
 		// A `new C(args)` on a quick-allocatable class lowers to the fast __alloc path `C_obj::__alloc(
 		// HX_CTX ,args)` instead of a __new call
 		switch (func) {
@@ -718,6 +727,32 @@ class CppEmit {
 			for (arg in argsRef) { out(sep); sep = ","; gen(arg); }
 			out(")" + closeCall);
 		}
+	}
+
+	function genObjcCall(staticReceiver:Null<String>, field:TClassField, args:Array<CppExpr>, expr:CppExpr, ?instanceReceiver:CppExpr):Void {
+		out("[ ");
+		if (staticReceiver != null) out(staticReceiver); else gen(instanceReceiver);
+		var names = field.name.split(":");
+		var fieldName = names.shift();
+		if (fieldName == null) throw new hxc.core.TypingError("Invalid Objective-C method name", expr.pos);
+		out(" " + fieldName);
+		if (args.length == 1) {
+			out(": ");
+			gen(args[0]);
+		} else if (args.length > 1) {
+			if (args.length - 1 != names.length) {
+				throw new hxc.core.TypingError("The function called here with name " + field.name
+					+ " does not contain the right amount of arguments' names as required by the objective-c calling / naming convention: expected "
+					+ args.length + " and found " + names.length, expr.pos);
+			}
+			out(": ");
+			gen(args[0]);
+			for (i in 1...args.length) {
+				out(" " + names[i - 1] + ": ");
+				gen(args[i]);
+			}
+		}
+		out(" ]");
 	}
 
 	static function cppTemplateParam(path:hxc.core.Globals.Path, native:Bool):String {

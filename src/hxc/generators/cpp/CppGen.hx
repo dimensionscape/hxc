@@ -12,6 +12,7 @@ import hxc.generators.cpp.CppType;
 class CppGen {
 	public static function generate(com:Context):Void {
 		var base = com.file;
+		var sourceExtension = sourceFileExtension(com);
 		ensureDir(base);
 		ensureDir(base + "/src");
 		ensureDir(base + "/include");
@@ -81,7 +82,7 @@ class CppGen {
 				// pass are available when the header is emitted.
 				var cppText = nativeGen ? gc.genNativeGenCpp() : gc.genCpp();
 				writeSourceFile(com, base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
-				writeSourceFile(com, base + "/src/" + p + ".cpp", cppText);
+				writeSourceFile(com, base + "/src/" + p + sourceExtension, cppText);
 				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
 				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
 				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
@@ -93,20 +94,27 @@ class CppGen {
 				ensureDir(base + "/include/" + dirOf(p));
 				ensureDir(base + "/src/" + dirOf(p));
 				writeSourceFile(com, base + "/include/" + p + ".h", ge.genHeader());
-				writeSourceFile(com, base + "/src/" + p + ".cpp", ge.genCpp());
+				writeSourceFile(com, base + "/src/" + p + sourceExtension, ge.genCpp());
 				var erefs = CppReferenced.findReferencedTypesFlags(com, TEnumDecl(e), "*", CppGenClass.superDeps, CppGenClass.constructorDeps, false, false).deps;
 				erefs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
 				exeClasses.unshift({path: e.path, deps: erefs});
 			case _:
 		}
 
-		genBoot(com, base);
-		genMain(com, base);
-		genFiles(com, base);
-		genResources(com, base);
-		genBuildXml(com, base, exeClasses);
+		genBoot(com, base, sourceExtension);
+		genMain(com, base, sourceExtension);
+		genFiles(com, base, sourceExtension);
+		genResources(com, base, sourceExtension);
+		genBuildXml(com, base, exeClasses, sourceExtension);
 		genOptions(com, base);
 		compileNative(com, base);
+	}
+
+	// Objc always selects Objective-C++, otherwise -D file_extension supplies the suffix, defaulting
+	// to C++.
+	static function sourceFileExtension(com:Context):String {
+		if (com.defines.rawDefined("objc")) return ".mm";
+		return "." + com.defines.rawDefinedValueSafe("file_extension", "cpp");
 	}
 
 	// Invoke hxcpp after the project files have been written.
@@ -152,7 +160,7 @@ class CppGen {
 
 	// __boot_all registers every class. Include + register order is boot enums ++ boot classes ++ nonboot
 	// classes (each list is reverse com.types order).
-	static function genBoot(com:Context, base:String):Void {
+	static function genBoot(com:Context, base:String, sourceExtension:String):Void {
 		var order = CppGenClass.bootEnums.concat(CppGenClass.bootClasses).concat(CppGenClass.nonbootClasses);
 		var b = new StringBuf();
 		b.add("#include <hxcpp.h>\n\n");
@@ -175,11 +183,11 @@ class CppGen {
 		bootCls.reverse();
 		for (p in bootCls) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__boot();\n");
 		b.add("}\n\n");
-		writeSourceFile(com, base + "/src/__boot__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__boot__" + sourceExtension, b.toString());
 	}
 
 	// __hxcpp_main runs the entry call; __lib__ is the library form.
-	static function genMain(com:Context, base:String):Void {
+	static function genMain(com:Context, base:String, sourceExtension:String):Void {
 		for (isMain in [true, false]) {
 			var name = isMain ? "__main__" : "__lib__";
 			var w = new CppWriter();
@@ -198,7 +206,7 @@ class CppGen {
 					function(gc) CppGenClass.hxStackPush(com, w, "hxcpp", "__hxcpp_main", mainFile, mainLine, gc));
 			}
 			w.write("\t}\n\nvoid __hxcpp_lib_main() {\n\tHX_TOP_OF_STACK\n\t::hx::Boot();\n\t__boot_all();\n\t__hxcpp_main();\n\t}\n");
-			writeSourceFile(com, base + "/src/" + name + ".cpp", w.getHeader() + w.getBody());
+			writeSourceFile(com, base + "/src/" + name + sourceExtension, w.getHeader() + w.getBody());
 		}
 	}
 
@@ -230,7 +238,7 @@ class CppGen {
 	// The debugger's file + class tables (empty unless HXCPP_DEBUGGER). __hxcpp_all_files is the sorted set
 	// of stripped source files touched by stack frames; _fullpath is each one's absolute path; and
 	// __hxcpp_all_classes is every non-extern, non-interface class in com.types order.
-	static function genFiles(com:Context, base:String):Void {
+	static function genFiles(com:Context, base:String, sourceExtension:String):Void {
 		var b = new StringBuf();
 		b.add("#include <hxcpp.h>\n\n");
 		b.add("namespace hx {\n");
@@ -258,13 +266,13 @@ class CppGen {
 		b.add("#endif\n 0 };\n");
 		b.add("} // namespace hx\n");
 		b.add("void __files__boot() { __hxcpp_set_debugger_info(::hx::__hxcpp_all_classes, ::hx::__hxcpp_all_files_fullpath); }\n");
-		writeSourceFile(com, base + "/src/__files__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__files__" + sourceExtension, b.toString());
 	}
 
 	// Each embedded resource becomes a src/resources/__res_N.cpp byte blob (a 4-byte header then the data
 	// then a null), and __resources__.cpp declares them extern and lists them in the __Resources table
 	// (name, length, blob+4). With no resource the table is just the terminator.
-	static function genResources(com:Context, base:String):Void {
+	static function genResources(com:Context, base:String, sourceExtension:String):Void {
 		var names = [for (k in com.resources.keys()) k];
 		// One data blob per resource.
 		if (names.length > 0) ensureDir(base + "/src/resources");
@@ -281,7 +289,7 @@ class CppGen {
 			}
 			rb.add("0x00 };\n");
 			rb.add("}\n");
-			writeSourceFile(com, base + "/src/resources/" + id + ".cpp", rb.toString());
+			writeSourceFile(com, base + "/src/resources/" + id + sourceExtension, rb.toString());
 		}
 		var smartStrings = com.defines.rawDefined("hxcpp_smart_strings");
 		var b = new StringBuf();
@@ -294,18 +302,18 @@ class CppGen {
 			b.add("\t{ " + CppTypeText.strq(smartStrings, names[idx]) + "," + com.resources.get(names[idx]).length + ",::hx::__res_" + idx + " + 4 },\n");
 		b.add("\t{ ::String(null()),0,0 }\n};\n\n");
 		b.add("namespace hx { Resource *GetResources() { return __Resources; } }\n");
-		writeSourceFile(com, base + "/src/__resources__.cpp", b.toString());
+		writeSourceFile(com, base + "/src/__resources__" + sourceExtension, b.toString());
 	}
 
 	// The hxcpp Build.xml manifest the hxcpp Build.xml manifest (file list + depends + std includes)
-	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>}>):Void {
+	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>}>, sourceExtension:String):Void {
 		var api = com.defines.rawDefinedValueSafe("hxcpp_api_level", "430");
 		var exe = com.main != null ? mainClassName(com) : "output";
 		var mainDeps = com.main != null ? mainRefs(com) : [];
 		var b = new StringBuf();
 		// One <file> per class, with a <depend> per non-internal dep
 		function fileEntry(name:String, deps:Array<Path>, fileXml:String):Void {
-			b.add("  <file name=\"src/" + name + ".cpp\" ");
+			b.add("  <file name=\"src/" + name + sourceExtension + "\" ");
 			if (fileXml != "") b.add(fileXml);
 			b.add(">\n");
 			for (p in deps)
@@ -330,7 +338,7 @@ class CppGen {
 		b.add("</files>\n");
 		b.add("<files id=\"__resources__\">\n");
 		var resCount = [for (k in com.resources.keys()) k].length;
-		for (idx in 0...resCount) b.add("  <file name=\"src/resources/__res_" + idx + ".cpp\" />\n");
+		for (idx in 0...resCount) b.add("  <file name=\"src/resources/__res_" + idx + sourceExtension + "\" />\n");
 		b.add("</files>\n");
 		b.add("<files id=\"__externs__\">\n</files>\n");
 		b.add("<set name=\"HAXE_OUTPUT\" value=\"" + exe + "\" />\n");
