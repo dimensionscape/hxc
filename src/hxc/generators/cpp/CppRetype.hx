@@ -582,6 +582,8 @@ private class RetypeSession {
 				var cppType = CppTypeOf.cppTypeOf(expr.type);
 				var call = mk(CppCall(funcLoc, retypedArgs), functionReturnType, expr.pos);
 				{def: CppCastStatic(call, cppType), t: cppType};
+			case FuncInstance(_, InstStruct, cf) if (isTFun(cf.type)):
+				{def: CppCall(funcLoc, retypeFunctionArgs(args, structTfunArgCppTypes(cf.type, args), expr)), t: returnType};
 			case FuncInstance(_, _, cf) | FuncStatic(_, _, cf) | FuncThis(cf, _) if (isTFun(cf.type)):
 				{def: CppCall(funcLoc, retypeFunctionArgs(args, tfunArgCppTypes(cf.type), expr)), t: functionReturnType};
 			case _:
@@ -852,6 +854,13 @@ private class RetypeSession {
 	static function tfunArgCppTypes(t:T):Array<CppType> {
 		return switch (t) {
 			case TFun(sig): [for (a in sig.args) CppTypeOf.cppTfunArgTypeOf(a.opt, a.t)];
+			case _: [];
+		}
+	}
+
+	static function structTfunArgCppTypes(t:T, args:Array<TExpr>):Array<CppType> {
+		return switch (t) {
+			case TFun(sig): [for (i in 0...args.length) CppTypeOf.cppTfunArgTypeOf(sig.args[i].opt, args[i].type)];
 			case _: [];
 		}
 	}
