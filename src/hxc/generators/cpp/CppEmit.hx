@@ -320,6 +320,13 @@ class CppEmit {
 					case DoWhile: out("do "); lastLine = -1; genWithInjection(block, false); out(" while("); gen(cond); out(");\n");
 				}
 				if (loopId > -1) outI(labelName(loopId) + ":");
+			case CppFor(v, init, loop):
+				var varType = CppTypeText.tcppToString(CppTypeOf.cppTypeOf(v.type));
+				out("for(::cpp::FastIterator_obj< " + varType + " > *__it = ::cpp::CreateFastIterator< " + varType + " >(");
+				gen(init);
+				out(");  __it->hasNext(); )");
+				topPrologue = function(_) outI(varType + " " + CppTypeText.cppVarNameOf(v) + " = __it->next();\n");
+				genWithInjection(loop, true);
 			// CppEnumField: a reference to an enum constructor as a dynamic value.
 			case CppEnumField(en, ef):
 				out("::" + CppTypeText.joinClassPathRemap(en.path, "::") + "_obj::" + cppEnumNameOf(ef) + "_dyn()");
