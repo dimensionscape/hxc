@@ -187,8 +187,6 @@ class CppEmit {
 			// Raw C++ from __cpp__, with {N} interpolated to argument N.
 			case CppCode(code, exprs): emitCppCode(code, exprs);
 			case CppFunction(func, _): genFunctionValue(func, expr);
-			// Scalar/variant casts; CppCast/CppCastStatic pass through for now (their per-target wrapper
-			// emission is refined in a later tranche)
 			case CppCastScalar(e, scalar): out("( (" + scalar + ")("); gen(e); out(") )");
 			case CppCastVariant(e): out(" ::Dynamic("); gen(e); out(")");
 			// CppCast: `( (toType)(expr) )` in the general case, with a few special forms
@@ -205,7 +203,11 @@ class CppEmit {
 					case _:
 						out("( (" + CppTypeText.tcppToString(toType) + ")("); gen(e); out(") )");
 				}
-			case CppCastStatic(e, _): gen(e);
+			case CppCastStatic(e, toType):
+				switch (e.ctype) {
+					case TCppDynamic: gen(e); out(".StaticCast< " + CppTypeText.tcppToString(toType) + " >()");
+					case _: out("Dynamic( "); gen(e); out(").StaticCast< " + CppTypeText.tcppToString(toType) + " >()");
+				}
 			// CppNewNative: a raw C++ `new` of a native/extern type.
 			case CppNewNative(e): out("new "); gen(e);
 			// CppAddressOf/CppDereference: the &/* pointer operators.

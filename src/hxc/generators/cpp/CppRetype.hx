@@ -265,9 +265,6 @@ private class RetypeSession {
 				var closures = localClosures.copy();
 				closures.reverse();
 				{def: CppBlock(cppExprs, closures, gcStack), t: TCppVoid};
-			// TNew (2887): construct an instance. NOTE the @:overload constructor selection
-			// (OverloadResolution.maybe_resolve_constructor_overload) is not ported yet; this uses the
-			// declared constructor directly, correct for the common non-overloaded case.
 			case TNew(classDef, tl, args):
 				var ctor = selectConstructor(classDef, tl, args);
 				var argTypes = ctor == null ? [] : CppTypeOf.cppFunctionArgsRet(ctor.type).args;
@@ -498,9 +495,6 @@ private class RetypeSession {
 								{def: CppCall(FuncExpression(retypedFunc), [for (a in args) retype(TCppDynamic, a)]), t: TCppDynamic};
 						}
 				}
-			// Arms still to port (M3.2b+): TLocal, TField, TCall, TNew, TFunction, TArray, TBinop, TUnop,
-			// TFor, TWhile, TBlock, TObjectDecl, TVarExpr, TIf, TSwitch, TTry, TCast, TEnumParameter,
-			// TEnumIndex, TTypeExpr. Loud so a -cpp compile fails at the exact unported node.
 			case _: throw new hxc.core.TypingError("retype: TExpr arm not ported yet: " + expr.expr.getName(), expr.pos);
 		}
 	}
