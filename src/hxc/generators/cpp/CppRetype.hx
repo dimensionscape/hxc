@@ -573,10 +573,15 @@ private class RetypeSession {
 					var arg = retype(TCppUnchanged, args[0]);
 					var rawType = switch (arg.ctype) { case TCppReference(x): x; case x: x; };
 					{def: CppAddressOf(arg), t: TCppStar(rawType, false)};
-				case FuncStatic(_, false, member) if (hxc.ast.Ast.getMetaString(member.meta, ":native") == "::hx::Dereference"):
-					var arg = retype(TCppUnchanged, args[0]);
-					var rawType = switch (arg.ctype) { case TCppStar(x, _): x; case x: x; };
-					{def: CppDereference(arg), t: TCppReference(rawType)};
+			case FuncStatic(_, false, member) if (hxc.ast.Ast.getMetaString(member.meta, ":native") == "::hx::Dereference"):
+				var arg = retype(TCppUnchanged, args[0]);
+				var rawType = switch (arg.ctype) { case TCppStar(x, _): x; case x: x; };
+				{def: CppDereference(arg), t: TCppReference(rawType)};
+			case FuncInstance(_, InstPtr, _) if (CppTypeText.cppCanStaticCast(functionReturnType, CppTypeOf.cppTypeOf(expr.type))):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+				var cppType = CppTypeOf.cppTypeOf(expr.type);
+				var call = mk(CppCall(funcLoc, retypedArgs), functionReturnType, expr.pos);
+				{def: CppCastStatic(call, cppType), t: cppType};
 			case FuncInstance(_, _, cf) | FuncStatic(_, _, cf) | FuncThis(cf, _) if (isTFun(cf.type)):
 				{def: CppCall(funcLoc, retypeFunctionArgs(args, tfunArgCppTypes(cf.type), expr)), t: functionReturnType};
 			case _:
