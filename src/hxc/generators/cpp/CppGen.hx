@@ -63,7 +63,7 @@ class CppGen {
 
 		// exe_classes: (path, deps) in reverse com.types order . deps = the Build.xml <depend> list = self
 		// header + referenced headers (same order as the .cpp includes).
-		var exeClasses:Array<{path:Path, deps:Array<Path>}> = [];
+		var exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}> = [];
 		// -D cppgen-trace: log each type to stderr (flushed) right before it is emitted, so a hard crash
 		// during generation names the culprit as the last line printed instead of failing silently.
 		var trace = com.defines.rawDefined("cppgen-trace");
@@ -86,7 +86,8 @@ class CppGen {
 				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
 				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
 				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
-				exeClasses.unshift({path: c.path, deps: refs});
+				if (!(TypeFunctions.hasClassFlag(c, CInterface) && CppTypeOf.isNativeGenClass(c)))
+					exeClasses.unshift({path: c.path, deps: refs, mt: mt});
 			case TEnumDecl(e) if (shouldEmitEnum(e)):
 				traceType("enum", e.path);
 				var ge = new CppGenEnum(com, e);
@@ -97,7 +98,7 @@ class CppGen {
 				writeSourceFile(com, base + "/src/" + p + sourceExtension, ge.genCpp());
 				var erefs = CppReferenced.findReferencedTypesFlags(com, TEnumDecl(e), "*", CppGenClass.superDeps, CppGenClass.constructorDeps, false, false).deps;
 				erefs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
-				exeClasses.unshift({path: e.path, deps: erefs});
+				exeClasses.unshift({path: e.path, deps: erefs, mt: mt});
 			case _:
 		}
 
@@ -105,9 +106,10 @@ class CppGen {
 		genMain(com, base, sourceExtension);
 		genFiles(com, base, sourceExtension);
 		genResources(com, base, sourceExtension);
+		genExportClassesInfo(com, exeClasses);
 		genBuildXml(com, base, exeClasses, sourceExtension);
 		genOptions(com, base);
-		compileNative(com, base);
+		if (!com.defines.rawDefined("no_compilation")) compileNative(com, base);
 	}
 
 	// Objc always selects Objective-C++, otherwise -D file_extension supplies the suffix, defaulting
@@ -305,8 +307,41 @@ class CppGen {
 		writeSourceFile(com, base + "/src/__resources__" + sourceExtension, b.toString());
 	}
 
-	// The hxcpp Build.xml manifest the hxcpp Build.xml manifest (file list + depends + std includes)
-	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>}>, sourceExtension:String):Void {
+	// Write the generated class and source-file list for scriptable and DLL builds.
+	static function genExportClassesInfo(com:Context, exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}>):Void {
+		if (!com.defines.rawDefined("scriptable") && !com.defines.rawDefined("dll_export")) return;
+		var filename = com.defines.rawDefinedValueSafe("dll_export", "export_classes.info");
+		if (filename == "1") filename = "export_classes.info";
+		if (filename == "") return;
+		function escape(s:String):String {
+			return StringTools.replace(StringTools.replace(StringTools.replace(s, "\\", "\\\\"), " ", "\\s"), "\n", "\\n");
+		}
+		function fullPath(file:String):String {
+			var resolved = file;
+			if (!sys.FileSystem.exists(resolved) || sys.FileSystem.isDirectory(resolved)) {
+				for (dir in com.classPath) {
+					var candidate = dir + file;
+					if (sys.FileSystem.exists(candidate) && !sys.FileSystem.isDirectory(candidate)) {
+						resolved = candidate;
+						break;
+					}
+				}
+			}
+			return try sys.FileSystem.fullPath(resolved) catch (_:Dynamic) file;
+		}
+		var b = new StringBuf();
+		for (entry in exeClasses) switch (entry.mt) {
+			case TClassDecl(c): b.add((TypeFunctions.hasClassFlag(c, CInterface) ? "interface " : "class ") + CppGenClass.joinPath(entry.path, ".") + "\n");
+			case TEnumDecl(_): b.add("enum " + CppGenClass.joinPath(entry.path, ".") + "\n");
+			case _:
+		}
+		var files = [for (file in CppGenClass.fileInfo.keys()) file];
+		files.sort(Reflect.compare);
+		for (file in files) if (file != "?") b.add("file " + escape(file) + " " + escape(fullPath(file)) + "\n");
+		writeFile(filename, b.toString());
+	}
+
+	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}>, sourceExtension:String):Void {
 		var api = com.defines.rawDefinedValueSafe("hxcpp_api_level", "430");
 		var exe = com.main != null ? mainClassName(com) : "output";
 		var mainDeps = com.main != null ? mainRefs(com) : [];
