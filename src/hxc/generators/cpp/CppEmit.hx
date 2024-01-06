@@ -661,6 +661,16 @@ class CppEmit {
 				} else {
 					out(CppTypeText.cppClassName(clazz)); out("::" + CppTypeText.cppMemberNameOf(field));
 				}
+			// @:templatedCall emits the leading Class argument between angle brackets.
+			case FuncTemplate(clazz, field, path, native):
+				var rename = hxc.ast.Ast.getMetaString(field.meta, ":native");
+				if (rename != null && rename != "") {
+					if (rename.indexOf(" ") >= 0) { out("("); closeCall = ")"; }
+					out(rename);
+				} else {
+					out(CppTypeText.cppClassName(clazz)); out("::" + CppTypeText.cppMemberNameOf(field));
+				}
+				out("< " + cppTemplateParam(path, native) + "  >");
 			case FuncNew(newType): out(newTarget(newType, expr));
 			case FuncInternal(f, name, join): gen(f); out(join + name);
 			case FuncExtern(name, isGlobal): if (isGlobal) out(" ::"); out(name);
@@ -688,6 +698,17 @@ class CppEmit {
 			out("(");
 			for (arg in argsRef) { out(sep); sep = ","; gen(arg); }
 			out(")" + closeCall);
+		}
+	}
+
+	static function cppTemplateParam(path:hxc.core.Globals.Path, native:Bool):String {
+		var p = "::" + CppTypeText.joinClassPathRemap(path, "::");
+		if (native) return p;
+		return switch (p) {
+			case "::Array": "::hx::ArrayBase";
+			case "::Int": "int";
+			case "::Bool": "bool";
+			case _: p;
 		}
 	}
 

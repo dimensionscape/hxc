@@ -495,9 +495,7 @@ private class RetypeSession {
 		}
 	}
 
-	// A retyped CppFunction callee to a CppCall. The array-splice/concat, map get/set,
-	// AddressOf/StarOf, and templated specials (2737-2818) follow in a later tranche; the FuncInstance
-	// InstStruct passed-arg-type refinement (2823) is deferred to the common TFun path.
+	// Dispatch a retyped CppFunction callee to a CppCall.
 	function callFunction(funcLoc:CppFuncLoc, returnType:CppType, args:Array<TExpr>, expr:TExpr):{def:CppExprDef, t:CppType} {
 		return switch (funcLoc) {
 			// cpp.Function.fromStaticFunction(f): the single retyped arg must be a static
@@ -515,17 +513,25 @@ private class RetypeSession {
 				// dynamic
 				// VirtualArray), so it emits ::Array_obj<T>::__new(len) instead of a bare (undeclared)
 				// call.
-				case FuncStatic(_, false, member) if (member.name == "_hx_create_array_length"):
-					var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+			case FuncStatic(_, false, member) if (member.name == "_hx_create_array_length"):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
 					// The array kind is keyed off the requested return type; the call's own cpp type
 					// (::Array< int > here) is that type, so an Object/Scalar array uses
 					// ::Array_obj<T>::__new.
 					var callType = CppTypeOf.cppTypeOf(expr.type);
-					var arrType = switch (callType) { case TCppObjectArray(_) | TCppScalarArray(_): callType; case _: TCppDynamicArray; };
-					{def: CppCall(FuncNew(arrType), retypedArgs), t: callType};
-				// &/* pointer intrinsics: cpp.Native.addressOf/star/star's native names
-				// (::hx::AddressOf/StarOf/Dereference) lower to CppAddressOf/CppDereference, not a call to
-				// a nonexistent hxcpp function.
+				var arrType = switch (callType) { case TCppObjectArray(_) | TCppScalarArray(_): callType; case _: TCppDynamicArray; };
+				{def: CppCall(FuncNew(arrType), retypedArgs), t: callType};
+			// @:templatedCall takes its leading Class argument as a C++ template parameter.
+			case FuncStatic(clazz, false, member) if (TypeFunctions.hasMeta(":templatedCall", member.meta)):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+				if (retypedArgs.length == 0) throw new hxc.core.TypingError("First parameter of template function must be a Class", expr.pos);
+				switch (retypedArgs[0].expr) {
+					case CppClassOf(path, native): {def: CppCall(FuncTemplate(clazz, member, path, native), retypedArgs.slice(1)), t: returnType};
+					case _: throw new hxc.core.TypingError("First parameter of template function must be a Class", expr.pos);
+				}
+			// The &/* pointer intrinsics: cpp.Native.addressOf/star/star's native names
+				// (::hx::AddressOf/StarOf/Dereference) lower to CppAddressOf/CppDereference, not a call to a
+				// nonexistent hxcpp function.
 				case FuncStatic(_, false, member) if (hxc.ast.Ast.getMetaString(member.meta, ":native") == "::hx::AddressOf"):
 					var arg = retype(TCppUnchanged, args[0]);
 					var rawType = switch (arg.ctype) { case TCppReference(x): x; case x: x; };
