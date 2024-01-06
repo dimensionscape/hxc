@@ -245,6 +245,19 @@ class CppTypeText {
 		return b.toString();
 	}
 
+	static function genNarrowString(s:String):String {
+		var hexed = specialToHex(sEscape(s));
+		if (hexed.length <= 16000) return "HX_(\"" + hexed + "\"," + genQStringHash(s) + ")";
+		return "(" + splitNarrowString(s, "") + ")";
+	}
+
+	static function splitNarrowString(s:String, plus:String):String {
+		var hexed = specialToHex(sEscape(s));
+		if (hexed.length <= 16000) return plus + " HX_CSTRING(\"" + hexed + "\")";
+		var half = s.length >> 1;
+		return splitNarrowString(s.substr(0, half), plus) + splitNarrowString(s.substr(half), "+");
+	}
+
 	// The per-code-point escaping inside HX_W(u"..."). The Haxe string exposes UTF-16 code
 	// units through fastCodeAt, so combine a surrogate pair into one code point before escaping
 	// (control chars named, >=127 as \uXXXX, astral as \UXXXXXXXX).
@@ -282,9 +295,7 @@ class CppTypeText {
 			// each (control chars named, everything >=127 as \uXXXX / \UXXXXXXXX)
 			return "HX_W(u\"" + escapeWideString(s) + "\"," + genWQStringHash(s) + ")";
 		}
-		var hexed = specialToHex(sEscape(s));
-		// The >16000-char split path is deferred; no probe needs it yet
-		return "HX_(\"" + hexed + "\"," + genQStringHash(s) + ")";
+		return genNarrowString(s);
 	}
 
 	public static function cppClassName(klass:TClass):String {
