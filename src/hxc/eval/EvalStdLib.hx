@@ -4281,6 +4281,26 @@ class EvalStdLib {
 					}, true);
 				case "get_display_pos":
 					VFunction(function(args) return VNull, true);
+				case "get_main_expr":
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return com.main == null ? VNull : EvalMacro.encodeTypedExpr(ctx, com.main);
+					}, true);
+				case "get_module_types":
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var types = [for (t in com.types) EvalMacro.encodeModuleType(ctx, t)];
+						return VArray(new VArray(types, types.length));
+					}, true);
+				case "s_expr":
+					VFunction(function(args) {
+						var e = EvalMacro.decodeTypedExpr(ctx, arg(args, 0));
+						var pretty = arg(args, 1) == VTrue;
+						var s = pretty
+							? hxc.core.TPrinting.sExprPretty(false, "", false, hxc.core.TPrinting.sTypeStr, e)
+							: hxc.core.TPrinting.sExpr(hxc.core.TPrinting.sTypeStr, e);
+						return mkStr(s);
+					}, true);
 				case "format_string":
 					// MacroStringTools.formatString: single-quote interpolation desugared to concatenation.
 					VFunction(function(args) {

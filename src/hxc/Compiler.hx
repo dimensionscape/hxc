@@ -221,6 +221,7 @@ class Compiler {
 			var tFields = hxc.core.Timer.timer(["typing", "fields"]);
 			TypeFields.typeAllModules(ctx);
 			tFields();
+			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx);
 			tType();
 			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
@@ -240,10 +241,10 @@ class Compiler {
 			hxc.typing.UnusedPure.run(ctx);
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
-			hxc.eval.EvalMacro.runGenerateCallbacks();
-			abortOnDiagnostics(ctx, platform);
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
+			hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
+			abortOnDiagnostics(ctx, platform);
 			// The filter pipeline runs for generated targets eval keeps its unfiltered path until the switch
 			// is coordinated with the eval gate
 			if (platform == Js && !noOutput) {
@@ -264,6 +265,7 @@ class Compiler {
 				hxc.generators.GenCpp.generate(ctx);
 				tGen();
 			}
+			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.

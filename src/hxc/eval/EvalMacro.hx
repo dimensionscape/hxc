@@ -35,7 +35,9 @@ class EvalMacro {
 	static var currentCom:Null<Context> = null;
 	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
+	static var onAfterTypingCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
+	static var onAfterGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var macroMonoId:Int = 0;
 	static var macroMonos:Map<Int, TMono> = new Map();
 
@@ -433,6 +435,14 @@ class EvalMacro {
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
 		reg2("onGenerate", "on_generate", function(a) {
 			onGenerateCallbacks.push({ec: ec, fn: a[0]});
+			return VNull;
+		});
+		reg2("onAfterGenerate", "on_after_generate", function(a) {
+			onAfterGenerateCallbacks.push({ec: ec, fn: a[0]});
+			return VNull;
+		});
+		reg2("onAfterTyping", "on_after_typing", function(a) {
+			onAfterTypingCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
 		});
 		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
@@ -853,12 +863,36 @@ class EvalMacro {
 		}
 	}
 
-	public static function runGenerateCallbacks():Void {
+	public static function runGenerateCallbacks(com:Context):Void {
 		for (cb in onGenerateCallbacks) {
 			EvalContext.setCtx(cb.ec);
+			var types = [for (t in com.types) encodeModuleType(cb.ec, t)];
 			switch (cb.fn) {
-				case VFunction(f, _): f([VArray(new VArray([], 0))]);
-				case VFieldClosure(recv, f): f([recv, VArray(new VArray([], 0))]);
+				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
+				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
+				case _:
+			}
+		}
+	}
+
+	public static function runAfterTypingCallbacks(com:Context):Void {
+		for (cb in onAfterTypingCallbacks) {
+			EvalContext.setCtx(cb.ec);
+			var types = [for (t in com.types) encodeModuleType(cb.ec, t)];
+			switch (cb.fn) {
+				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
+				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
+				case _:
+			}
+		}
+	}
+
+	public static function runAfterGenerateCallbacks():Void {
+		for (cb in onAfterGenerateCallbacks) {
+			EvalContext.setCtx(cb.ec);
+			switch (cb.fn) {
+				case VFunction(f, _): f([]);
+				case VFieldClosure(recv, f): f([recv]);
 				case _:
 			}
 		}
@@ -1957,7 +1991,7 @@ class EvalMacro {
 		return new TFunc(fnArgs, decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t"))), decodeTypedExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr"))));
 	}
 
-	static function decodeTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
+	public static function decodeTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
 		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
 		var t = decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t")));
 		var ed = decodeTypedExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
@@ -2805,7 +2839,7 @@ class EvalMacro {
 		};
 	}
 
-	static function encodeTypedExpr(ec:EvalContext, e:TExpr):EvalValue {
+	public static function encodeTypedExpr(ec:EvalContext, e:TExpr):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("expr"), encodeTypedExprDef(ec, e.expr));
 		fields.set(EvalHash.hash("pos"), encPos(e.pos));
@@ -2876,7 +2910,7 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function encodeModuleType(ec:EvalContext, mt:ModuleType):EvalValue {
+	public static function encodeModuleType(ec:EvalContext, mt:ModuleType):EvalValue {
 		return switch (mt) {
 			case TClassDecl(c): mkEnumValue(ec, "ModuleType", "TClassDecl", [encodeClassRef(ec, c)]);
 			case TEnumDecl(e): mkEnumValue(ec, "ModuleType", "TEnumDecl", [encodeEnumRef(ec, e)]);
