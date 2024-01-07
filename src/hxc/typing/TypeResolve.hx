@@ -171,6 +171,16 @@ class TypeResolve {
 		TypeFields.addImplicitInterfaceFields(c);
 	}
 
+	// Inherited @:autoBuild entries become @:build entries on the derived type.
+	static function inheritAutoBuild(ctx:Context, c:TClass, parent:TClass):Void {
+		var meta = parent.meta.copy();
+		if (ctx.defines.rawDefined("haxe_next")) meta.reverse();
+		for (m in meta) if (m.name == ":autoBuild") {
+			var pos = new Position(c.pos.file, c.pos.min, c.pos.min);
+			c.meta = [{name: ":build", params: m.params, pos: pos}, m].concat(c.meta);
+		}
+	}
+
 	// @:require(cond...) gates a field behind compiler flags: with no condition satisfied both accessors
 	// become AccRequire, whose use errors with the flag name (or the trailing string message).
 	static function checkRequire(ctx:Context, meta:Metadata):Null<{r:String, msg:Null<String>}> {
@@ -384,6 +394,7 @@ class TypeResolve {
 						c.superClass = {c: csup, params: params};
 						TypeFunctions.addDescendant(csup, c);
 					}
+					inheritAutoBuild(ctx, c, csup);
 				case _:
 					throw new ContextError("Should extend by using a class", p);
 			}
@@ -402,6 +413,7 @@ class TypeResolve {
 					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					c.interfaces.push({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
+					inheritAutoBuild(ctx, c, intf);
 				case TDynamic(dt):
 					if (c.dynamicType != null) throw new ContextError("Cannot have several dynamics", p);
 					c.dynamicType = (dt == null) ? TypeFunctions.tDynamic : dt;

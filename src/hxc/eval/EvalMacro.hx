@@ -625,22 +625,7 @@ class EvalMacro {
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
-		var entries:Array<MetadataEntry> = [];
-		var own = findMeta(c.meta, ":build");
-		if (own != null) entries.push(own);
-		var seen:Map<String, Bool> = new Map();
-		function visit(t:TClass):Void {
-			var k = t.path.pack.join(".") + "." + t.path.name;
-			if (seen.exists(k)) return;
-			seen.set(k, true);
-			var ab = findMeta(t.meta, ":autoBuild");
-			if (ab != null) entries.push(ab);
-			if (t.superClass != null) visit(t.superClass.c);
-			for (i in t.interfaces) visit(i.c);
-		}
-		if (c.superClass != null) visit(c.superClass.c);
-		for (i in c.interfaces) visit(i.c);
-		return entries;
+		return [for (m in c.meta) if (m.name == ":build") m];
 	}
 
 	static function findMeta(meta:Metadata, name:String):Null<MetadataEntry> {

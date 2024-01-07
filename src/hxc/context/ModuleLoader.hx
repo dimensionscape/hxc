@@ -55,8 +55,11 @@ class ModuleLoader {
 	}
 
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
-		var composePath = (m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name) + ".hx";
-		return findFile(ctx, composePath, m, p);
+		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
+		try return findFile(ctx, prefix + ".hx", m, p) catch (e:ContextError) {
+			if (ctx.isMacro) return findFile(ctx, prefix + ".macro.hx", m, p);
+			throw e;
+		}
 	}
 
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
