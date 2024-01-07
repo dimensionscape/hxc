@@ -669,7 +669,13 @@ class EvalMacro {
 			curBuildParams = TypeFunctions.extractParamTypes(c.params);
 			curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
 			var result = switch (callExpr.expr) {
-				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
+				case ECall(callee, args):
+					var target = macroTarget(callee);
+					var cf = target == null ? null : macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+					var values = macroArgs(ec, args, sig == null ? null : sig.args);
+					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
+					resolveMacroFn(ec, callee, callExpr.pos)(values);
 				case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
 			};
 			curTctx = savedTctx;
@@ -1506,7 +1512,13 @@ class EvalMacro {
 			curBuildParams = params;
 			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
 			var result = switch (callExpr.expr) {
-				case ECall(callee, args): resolveMacroFn(ec, callee, callExpr.pos)([for (a in args) encodeExpr(ec, a)]);
+				case ECall(callee, args):
+					var target = macroTarget(callee);
+					var cf = target == null ? null : macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+					var values = macroArgs(ec, args, sig == null ? null : sig.args);
+					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
+					resolveMacroFn(ec, callee, callExpr.pos)(values);
 				case _: throw new TypingError("genericBuild requires a single expression call parameter", callExpr.pos);
 			};
 			if (result == VNull) {
