@@ -743,6 +743,15 @@ class EvalMacro {
 		var t = macroTarget(callee);
 		if (t == null) throw new TypingError("@:build target must be a static call", p);
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash({pack: t.pack, name: t.name}));
+		if (proto == null || !proto.pnames.exists(EvalHash.hash(t.method))) {
+			var m = try hxc.context.ModuleLoader.loadModule(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+			if (m != null) for (mt in m.types) switch (mt) {
+				case TClassDecl(c) if (c.statics.exists(t.method)):
+					proto = ec.staticPrototypes.get(EvalHash.pathHash(c.path));
+					if (proto != null) break;
+				case _:
+			}
+		}
 		if (proto == null) throw new TypingError("@:build macro class not loaded: " + t.name, p);
 		var idx = proto.pnames.get(EvalHash.hash(t.method));
 		if (idx == null) throw new TypingError("@:build macro not found: " + t.method, p);
@@ -1087,11 +1096,7 @@ class EvalMacro {
 		hostCom = com;
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
-		if (macroCom == null) {
-			macroCom = com.cloneForMacro();
-			hxc.context.ModuleLoader.attach(macroCom);
-			hxc.context.ModuleLoader.initBasicTypes(macroCom);
-		}
+		if (macroCom == null) initMacroContext(com);
 		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length)) {
 			building = true;
 			try {
@@ -1129,6 +1134,14 @@ class EvalMacro {
 	}
 
 	static var macroCom:Context = null;
+
+	static function initMacroContext(com:Context):Void {
+		macroCom = com.cloneForMacro();
+		hxc.context.ModuleLoader.attach(macroCom);
+		hxc.context.ModuleLoader.initBasicTypes(macroCom);
+		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Expr"}, Position.nullPos);
+		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Type"}, Position.nullPos);
+	}
 
 	// The macro-world context, when one exists; the unification force-hook uses it to type a
 	// macro-world field body in its own context.
@@ -1190,11 +1203,7 @@ class EvalMacro {
 	// copy into the macro context. The host parses every module without macro, which drops the #if macro
 	// members a macro function's body relies on. reference:
 	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
-		if (macroCom == null) {
-			macroCom = host.cloneForMacro();
-			hxc.context.ModuleLoader.attach(macroCom);
-			hxc.context.ModuleLoader.initBasicTypes(macroCom);
-		}
+		if (macroCom == null) initMacroContext(host);
 		try {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
@@ -1204,32 +1213,33 @@ class EvalMacro {
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.
-				case TClassDecl(c) if ((c.path.name == path.name || (fieldName != null && c.statics.exists(fieldName))) && c.path.pack.join(".") == path.pack.join(".")):
-					if (forceAll || fieldName == null)
-						hxc.typing.TypeFields.forceClassFields(macroCom, c);
-					else {
-						var cf = c.statics.get(fieldName);
-						if (cf == null) cf = c.fields.get(fieldName);
-						if (cf != null) {
-							hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-							var needsRebuild = forceReachableStatics(macroCom, c, cf);
-							if (macroCtx != null) {
-								var key = EvalHash.pathHash(c.path);
-								var fieldHash = EvalHash.hash(fieldName);
-								var sp = macroCtx.staticPrototypes.get(key);
-								var ip = macroCtx.instancePrototypes.get(key);
-								if ((sp != null && !sp.pnames.exists(fieldHash)) || (ip != null && !ip.pnames.exists(fieldHash)))
-									needsRebuild = true;
-							}
-							// A dependency or requested field typed only now, after its class's prototype
-							// was built, leaves that prototype without a live slot; rebuild (state migrates).
-							if (needsRebuild && macroCtx != null) {
-								staleMacroCtx = macroCtx;
-								macroCtx = null;
-								lastModuleCount = -1;
+				case TClassDecl(c):
+					if ((c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) || (fieldName != null && c.statics.exists(fieldName)))
+						if (forceAll || fieldName == null)
+							hxc.typing.TypeFields.forceClassFields(macroCom, c);
+						else {
+							var cf = c.statics.get(fieldName);
+							if (cf == null) cf = c.fields.get(fieldName);
+							if (cf != null) {
+								hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
+								var needsRebuild = forceReachableStatics(macroCom, c, cf);
+								if (macroCtx != null) {
+									var key = EvalHash.pathHash(c.path);
+									var fieldHash = EvalHash.hash(fieldName);
+									var sp = macroCtx.staticPrototypes.get(key);
+									var ip = macroCtx.instancePrototypes.get(key);
+									if ((sp != null && !sp.pnames.exists(fieldHash)) || (ip != null && !ip.pnames.exists(fieldHash)))
+										needsRebuild = true;
+								}
+								// A dependency or requested field typed only now, after its class's prototype
+								// was built, leaves that prototype without a live slot; rebuild (state migrates).
+								if (needsRebuild && macroCtx != null) {
+									staleMacroCtx = macroCtx;
+									macroCtx = null;
+									lastModuleCount = -1;
+								}
 							}
 						}
-					}
 				case _:
 			}
 		} catch (_:Dynamic) {}
@@ -1383,7 +1393,7 @@ class EvalMacro {
 		if (macroCom == null) return null;
 		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) return null;
 		for (mt in m.types) switch (mt) {
-			case TClassDecl(c) if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")):
+			case TClassDecl(c) if ((c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) || c.statics.exists(fieldName)):
 				var cf = c.statics.get(fieldName);
 				if (cf == null) cf = c.fields.get(fieldName);
 				if (cf != null) return cf;
