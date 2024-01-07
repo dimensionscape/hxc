@@ -376,6 +376,8 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com));
+		reg2("typePatch", "type_patch", function(a) return typePatchValue(com, a));
+		reg2("metaPatch", "meta_patch", function(a) return metaPatchValue(com, a));
 		reg2("addGlobalMetadataImpl", "add_global_metadata_impl", function(a) return addGlobalMetadataValue(com, a));
 		// Compiler.registerCustomDefine / registerCustomMetadata store user documentation entries. /
 		// register_metadata_impl.
@@ -807,6 +809,21 @@ class EvalMacro {
 					}
 					var t = macroTarget(callee);
 					if (t == null) throw new TypingError("--macro target must be a static call", e.pos);
+					// Compiler.addMetadata is a std wrapper around meta_patch, not a macro method.
+					if (t.pack.join(".") == "haxe.macro" && t.name == "Compiler" && t.method == "addMetadata") {
+						var ec = getContext(com);
+						var savedPos = curPos;
+						curPos = e.pos;
+						var values = [for (a in args) initMacroConstArg(ec, a)];
+						while (values.length < 4) values.push(VNull);
+						var className = strOf(values[1]);
+						var field = values[2] == VNull ? null : strOf(values[2]);
+						if (!~/^[A-Za-z_][A-Za-z0-9_.]*$/.match(className)) throw new TypingError("Invalid " + className, e.pos);
+						if (field != null && !~/^[A-Za-z_][A-Za-z0-9_]*$/.match(field)) throw new TypingError("Invalid " + field, e.pos);
+						metaPatchValue(com, values);
+						curPos = savedPos;
+						continue;
+					}
 					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true);
 					var ec = getContext(com);
 					var savedPos = curPos;
@@ -867,6 +884,49 @@ class EvalMacro {
 			case _:
 		}
 		collect(e);
+		return VNull;
+	}
+
+	// Compiler.addMetadata. Store its patch until the target module is loaded.
+	public static function metaPatchValue(com:Context, a:Array<EvalValue>):EvalValue {
+		var metaSrc = strOf(a[0]);
+		var className = strOf(a[1]);
+		var field = a.length < 3 || a[2] == VNull ? null : strOf(a[2]);
+		var isStatic = a.length > 3 && a[3] == VTrue;
+		var e = hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines);
+		var entries:Array<MetadataEntry> = [];
+		function collect(e:Expr):Void switch (e.expr) {
+			case EMeta(m, e1):
+				entries.push(m);
+				collect(e1);
+			case _:
+		}
+		collect(e);
+		var parts = className.split(".");
+		var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+		com.typePatches.push({path: path, field: field, isStatic: isStatic, meta: entries, remove: false, typeHint: null});
+		return VNull;
+	}
+
+	public static function typePatchValue(com:Context, a:Array<EvalValue>):EvalValue {
+		var className = strOf(a[0]);
+		var field = strOf(a[1]);
+		var isStatic = a.length > 2 && a[2] == VTrue;
+		var typeSrc = a.length < 4 || a[3] == VNull ? null : strOf(a[3]);
+		var parts = className.split(".");
+		var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+		var typeHint:Null<TypeHint> = null;
+		if (typeSrc != null) {
+			var pkg = hxc.parser.Parser.parseModuleString("class __HxcTypePatch { var value:" + typeSrc + "; }", "--macro", com.defines);
+			switch (pkg.decls[0].decl) {
+				case EClass(d): switch (d.dData[0].cffKind) {
+					case FVar(t, _): typeHint = t;
+					case _: throw new TypingError("Invalid field type patch", curPos);
+				}
+				case _: throw new TypingError("Invalid field type patch", curPos);
+			}
+		}
+		com.typePatches.push({path: path, field: field, isStatic: isStatic, meta: [], remove: typeSrc == null, typeHint: typeHint});
 		return VNull;
 	}
 

@@ -69,6 +69,39 @@ class ModuleLoader {
 		};
 	}
 
+	static function applyTypePatches(ctx:Context, path:Path, meta:Metadata, ?fields:Array<ClassField>):{meta:Metadata, fields:Array<ClassField>} {
+		if (ctx.typePatches.length == 0) return {meta: meta, fields: fields};
+		function samePath(a:Path, b:Path):Bool return a.name == b.name && sameArray(a.pack, b.pack);
+		var classMeta = meta;
+		var result = fields;
+		for (patch in ctx.typePatches) {
+			if (!samePath(path, patch.path)) continue;
+			if (patch.field == null) {
+				classMeta = classMeta.concat(patch.meta);
+				continue;
+			}
+			if (result == null) continue;
+			var next:Array<ClassField> = [];
+			for (field in result) {
+				var isStatic = false;
+				for (access in field.cffAccess) if (access.access == AStatic) isStatic = true;
+				if (field.cffName.name != patch.field || isStatic != patch.isStatic) {
+					next.push(field);
+					continue;
+				}
+				field.cffMeta = field.cffMeta.concat(patch.meta);
+				if (patch.typeHint != null) switch (field.cffKind) {
+					case FVar(_, e): field.cffKind = FVar(patch.typeHint, e);
+					case FProp(get, set, _, e): field.cffKind = FProp(get, set, patch.typeHint, e);
+					case FFun(f): field.cffKind = FFun({fParams: f.fParams, fArgs: f.fArgs, fType: patch.typeHint, fExpr: f.fExpr});
+				}
+				if (!patch.remove) next.push(field);
+			}
+			result = next;
+		}
+		return {meta: classMeta, fields: result};
+	}
+
 	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
@@ -226,6 +259,9 @@ class ModuleLoader {
 					hasDeclaration = true;
 					var priv = hasClassFlag(d.dFlags, HPrivate);
 					var path = makePath(name, priv, d.dName.pos);
+					var patch = applyTypePatches(ctx, path, d.dMeta, d.dData);
+					d.dMeta = patch.meta;
+					d.dData = patch.fields;
 					var c = TypeFunctions.mkClass(m, path, p, d.dName.pos);
 					// Classes are built eagerly during module resolution; structural unification must not trigger
 					// a placeholder build failure.
@@ -262,6 +298,10 @@ class ModuleLoader {
 					hasDeclaration = true;
 					var priv = hasEnumFlag(d.dFlags, EPrivate);
 					var path = makePath(name, priv, p);
+					var patch = applyTypePatches(ctx, path, d.dMeta);
+					for (p in ctx.typePatches) if (p.path.name == path.name && sameArray(p.path.pack, path.pack) && p.field != null)
+						throw new ContextError("Field type patch not supported for enums", d.dName.pos);
+					d.dMeta = patch.meta;
 					var e:TEnum = {
 						path: path,
 						module: m,
@@ -287,6 +327,8 @@ class ModuleLoader {
 					hasDeclaration = true;
 					var priv = hasEnumFlag(d.dFlags, EPrivate); // ETypedef uses EnumFlag in the AST
 					var path = makePath(name, priv, p);
+					var patch = applyTypePatches(ctx, path, d.dMeta);
+					d.dMeta = patch.meta;
 					var t = TypeFunctions.mkTypedef(m, path, p, d.dName.pos, TypeFunctions.mkMono());
 					t.doc = d.dDoc;
 					t.isPrivate = priv;
@@ -300,6 +342,9 @@ class ModuleLoader {
 					checkName(name, d.dName.pos);
 					var priv = hasAbstractFlag(d.dFlags, AbPrivate);
 					var path = makePath(name, priv, p);
+					var patch = applyTypePatches(ctx, path, d.dMeta, d.dData);
+					d.dMeta = patch.meta;
+					d.dData = patch.fields;
 					var a:TAbstract = {
 						path: path, module: m, pos: p, namePos: d.dName.pos,
 						isPrivate: priv, doc: d.dDoc, meta: d.dMeta, params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams), usings: [],

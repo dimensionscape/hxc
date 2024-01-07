@@ -27,6 +27,12 @@ class Context {
 	public var globalMetadata:Array<{filter:Array<String>, meta:hxc.ast.Ast.MetadataEntry, recursive:Bool, toTypes:Bool, toFields:Bool}> = [];
 
 	/**
+	 * Deprecated Compiler type patches, keyed by type and optional field, applied during module
+	 * loading.
+	 */
+	public var typePatches:Array<{path:Path, field:Null<String>, isStatic:Bool, meta:hxc.ast.Ast.Metadata, remove:Bool, typeHint:Null<hxc.ast.Ast.TypeHint>}> = [];
+
+	/**
 	 * Registered null-safety callbacks receive errors instead of failing compilation.
 	 */
 	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];

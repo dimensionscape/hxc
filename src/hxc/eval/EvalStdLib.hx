@@ -4248,6 +4248,39 @@ class EvalStdLib {
 					VFunction(function(args) return EvalMacro.makeExprValue(ctx, arg(args, 0)), true);
 				case "add_global_metadata_impl":
 					VFunction(function(args) return EvalMacro.addGlobalMetadataValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...5) arg(args, i)]), true);
+				case "type_patch":
+					VFunction(function(args) return EvalMacro.typePatchValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...4) arg(args, i)]), true);
+				case "meta_patch":
+					VFunction(function(args) return EvalMacro.metaPatchValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...4) arg(args, i)]), true);
+				case "allow_package":
+					// Hxc has no forbidden package rules, so this is the same no-op as Common.allow_package when
+					// the requested package has no rule.
+					VFunction(function(args) return VNull, true);
+				case "add_class_path":
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var cp = stringOf(arg(args, 0));
+						if (!StringTools.endsWith(cp, "/") && !StringTools.endsWith(cp, "\\")) cp += "/";
+						com.classPath.unshift(cp);
+						var mcom = EvalMacro.getMacroCom();
+						if (mcom != null) mcom.classPath.unshift(cp);
+						com.moduleNonexistentLut = new haxe.ds.StringMap();
+						if (mcom != null) mcom.moduleNonexistentLut = new haxe.ds.StringMap();
+						return VNull;
+					}, true);
+				case "get_output":
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return mkStr(com.file);
+					}, true);
+				case "set_output":
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						com.file = stringOf(arg(args, 0));
+						return VNull;
+					}, true);
+				case "get_display_pos":
+					VFunction(function(args) return VNull, true);
 				case "format_string":
 					// MacroStringTools.formatString: single-quote interpolation desugared to concatenation.
 					VFunction(function(args) {
