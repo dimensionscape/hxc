@@ -1984,8 +1984,11 @@ class Parser {
 	// Optional leading `?` then dollarIdent
 	function questionableDollarIdent():{opt:Bool, name:PlacedName} {
 		var opt = false;
-		if (tokEq(peek(), Question)) { junk(); opt = true; }
+		var qpos:Null<Position> = null;
+		if (tokEq(peek(), Question)) { qpos = next().pos; opt = true; }
 		var n = dollarIdent();
+		if (qpos != null && qpos.max != n.pos.min)
+			throw new ParserError(Custom("Invalid usage of ?, use ?" + n.name + " instead"), qpos);
 		return {opt: opt, name: n};
 	}
 

@@ -3,6 +3,7 @@ package hxc.typing;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypingError;
 import hxc.core.TexprTools;
 import hxc.typing.TyperContext;
 import hxc.typing.TypeFields;
@@ -573,6 +574,7 @@ class Inline {
 			case TNew(c, tp, args): TNew(c, tp, [for (x in args) m(x)]);
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
+				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
 				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
 				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
 				TVarExpr(nv, eo == null ? null : m(eo));

@@ -157,7 +157,7 @@ class EvalEmitter {
 			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), true);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
-			case TNew(c, params, newArgs): evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos);
+			case TNew(c, params, newArgs): evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos, newArgs.length == 0 ? null : newArgs[0].pos);
 			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef);
 			case TEnumParameter(e1, _, index):
 				switch (eval(ctx, e1)) {
@@ -829,7 +829,7 @@ class EvalEmitter {
 		};
 	}
 
-	static function evalNew(ctx:EvalContext, c:TClass, params:TParams, args:Array<EvalValue>, p:Position):EvalValue {
+	static function evalNew(ctx:EvalContext, c:TClass, params:TParams, args:Array<EvalValue>, p:Position, ?argPos:Position):EvalValue {
 		switch (c.kind) {
 			case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
 				switch (TypeFunctions.follow(hxc.typing.Typer.resolveMultiTypeConcrete(a, params, p))) {
@@ -841,7 +841,15 @@ class EvalEmitter {
 		}
 		var key = EvalHash.pathHash(c.path);
 		var special = ctx.builtins.constructorBuiltins.get(key);
-		if (special != null) return callAt(ctx, p, special, args);
+		if (special != null) {
+			var ev = EvalContext.getEval(ctx);
+			var oldPos = ev.currentPos;
+			if (argPos != null) ev.currentPos = argPos;
+			var result:EvalValue;
+			try result = callAt(ctx, p, special, args) catch (ex:Dynamic) { ev.currentPos = oldPos; throw ex; }
+			ev.currentPos = oldPos;
+			return result;
+		}
 		return constructClass(ctx, c, key, args, p);
 	}
 

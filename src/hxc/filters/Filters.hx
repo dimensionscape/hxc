@@ -820,7 +820,7 @@ class Filters {
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		memProbe("pass1:done");
-		var exceptionsFilter = hxc.filters.Exceptions.filter(tctx);
+		var exceptionsFilter = com.platform.match(Eval) ? function(e) return e : hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "local_statics", f: function(e) return localStatics(tctx, e)},
 			{name: "fix_return_dynamic_from_void_function", f: function(e) return fixReturnDynamicFromVoidFunction(tctx, true, e)},

@@ -245,6 +245,7 @@ class TypeFields {
 	// from the call site, so locate the syntactic field and run its body typing here.
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
+		if (bodyTyped.exists(cf)) return;
 		switch (cf.type) {
 			case TLazy(r):
 				try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
@@ -355,6 +356,19 @@ class TypeFields {
 					// not the decl.
 					var funcPos = fd.fExpr != null ? fd.fExpr.pos : cff.cffPos;
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, funcPos);
+					if (cf.kind.match(Method(MethInline))) {
+						function staticLocalPos(e:TExpr):Null<Position> {
+							return switch (e.expr) {
+								case TVarExpr(v, _) if (TypeFunctions.hasVarFlag(v, VStatic)): v.pos;
+								case _:
+									var found:Null<Position> = null;
+									TexprTools.iter(function(child) if (found == null) found = staticLocalPos(child), e);
+									found;
+							};
+						}
+						var staticPos = staticLocalPos(tf.expr);
+						if (staticPos != null) throw new TypingError("Inline functions cannot have static locals", staticPos);
+					}
 					tf.expr = localStatics(tctx, tf.expr);
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
 				case FProp(_, _, _, eo):

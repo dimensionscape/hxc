@@ -296,6 +296,16 @@ class PatternMaker {
 		var ctx = pctx.ctx;
 		var p = e.pos;
 		var basic = ctx.com.basic;
+		function hasStringInterpolation(s:String):Bool {
+			var i = 0;
+			while (i + 1 < s.length) {
+				if (s.charAt(i) != "$") { i++; continue; }
+				var next = s.charAt(i + 1);
+				if (next == "{" || ((next >= "A" && next <= "Z") || (next >= "a" && next <= "z") || next == "_")) return true;
+				i += 2;
+			}
+			return false;
+		}
 		function unifyExpected(t2:T) unify(ctx, t2, t, p);
 
 		var kind:PatKind = switch (e.expr) {
@@ -309,6 +319,9 @@ class PatternMaker {
 				var r = make(pctx, toplevel, t, e1);
 				pctx.inReification = old;
 				return r;
+			case EConst(CString(s, SSingleQuotes)) if (hasStringInterpolation(s)):
+				var stringPos = p.max > p.min + 1 ? new Position(p.file, p.min + 1, p.max - 1) : p;
+				throw new TypingError("String interpolation is not allowed in case patterns", stringPos);
 			case EConst(CInt(_, _)) | EConst(CFloat(_, _)) | EConst(CString(_, _)) | EConst(CIdent("true")) | EConst(CIdent("false")) | EConst(CIdent("null")):
 				var ce = TexprTools.typeConstant(basic, switch (e.expr) { case EConst(c): c; case _: throw "unreachable"; }, p);
 				unifyExpected(ce.type);

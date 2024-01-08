@@ -5206,7 +5206,11 @@ class EvalStdLib {
 		emptyCtors.set(EvalHash.hash("Array"), function() return VArray(new VArray([], 0)));
 		ctors.set(EvalHash.hash("haxe.iterators.ArrayIterator"), function(a) return arrayIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
-		ctors.set(EvalHash.hash("eval.Vector"), function(a) return VVector([for (_ in 0...toInt(arg(a, 0))) VNull]));
+		ctors.set(EvalHash.hash("eval.Vector"), function(a) {
+			var length = toInt(arg(a, 0));
+			if (length < 0) EvalExceptions.excString(ctx, "Vector size must be >= 0", EvalContext.getEval(ctx).currentPos);
+			return VVector([for (_ in 0...length) VNull]);
+		});
 		emptyCtors.set(EvalHash.hash("eval.Vector"), function() return VVector([]));
 		ctors.set(EvalHash.hash("haxe.ds.List"), function(a) return mkList(ctx));
 		ctors.set(EvalHash.hash("haxe.crypto.Hmac"), function(a) return mkHmac(ctx, arg(a, 0)));

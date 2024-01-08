@@ -247,25 +247,22 @@ class Compiler {
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
 			abortOnDiagnostics(ctx, platform);
-			// The filter pipeline runs for generated targets eval keeps its unfiltered path until the switch
-			// is coordinated with the eval gate
-			if (platform == Js && !noOutput) {
+			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
+			// exception lowering, and closure/local passes before interpretation.
+			if ((platform == Js || platform == Cpp || platform == Eval) && !noOutput) {
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
 				abortOnDiagnostics(ctx, platform);
-				var tGen = hxc.core.Timer.timer(["generate", "js"]);
-				hxc.generators.GenJS.generate(ctx);
-				tGen();
-			}
-			if (platform == Cpp && !noOutput) {
-				var tFilter = hxc.core.Timer.timer(["filters"]);
-				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
-				tFilter();
-				abortOnDiagnostics(ctx, platform);
-				var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
-				hxc.generators.GenCpp.generate(ctx);
-				tGen();
+				if (platform == Js) {
+					var tGen = hxc.core.Timer.timer(["generate", "js"]);
+					hxc.generators.GenJS.generate(ctx);
+					tGen();
+				} else if (platform == Cpp) {
+					var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
+					hxc.generators.GenCpp.generate(ctx);
+					tGen();
+				}
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			if (platform == Eval) {
