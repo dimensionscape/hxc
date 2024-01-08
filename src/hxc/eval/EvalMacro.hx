@@ -264,6 +264,12 @@ class EvalMacro {
 			var ct = typeToComplexType(decodeType(ec, a[0]));
 			return ct == null ? VNull : encodeComplexType(ec, ct);
 		});
+		reg2("typeToModuleType", "type_to_module_type", function(a) {
+			return encodeModuleType(ec, TypeFunctions.moduleTypeOfType(decodeType(ec, a[0])));
+		});
+		reg2("moduleTypeToType", "module_type_to_type", function(a) {
+			return encodeType(ec, TypeFunctions.typeOfModuleType(decodeModuleTypeValue(ec, a[0])));
+		});
 		reg2("withImports", "with_imports", function(a) {
 			var m = com.currentModule;
 			if (m == null) throw new TypingError("withImports outside a module", curPos);
