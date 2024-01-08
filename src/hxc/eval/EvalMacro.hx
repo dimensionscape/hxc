@@ -872,7 +872,7 @@ class EvalMacro {
 	public static function runGenerateCallbacks(com:Context):Void {
 		for (cb in onGenerateCallbacks) {
 			EvalContext.setCtx(cb.ec);
-			var types = [for (t in com.types) encodeModuleType(cb.ec, t)];
+			var types = [for (t in com.types) encodeType(cb.ec, TypeFunctions.typeOfModuleType(t))];
 			switch (cb.fn) {
 				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
 				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
