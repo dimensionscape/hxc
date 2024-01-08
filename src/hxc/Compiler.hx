@@ -102,6 +102,8 @@ class Compiler {
 					// --debug also raises the debug define
 					ctx.debug = true;
 					ctx.defines.rawDefine("debug");
+				case "--no-opt":
+					ctx.foptimize = false;
 				case "--dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
 				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
