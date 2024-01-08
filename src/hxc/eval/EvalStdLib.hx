@@ -4335,7 +4335,7 @@ class EvalStdLib {
 						return VNull;
 					}, true);
 				case "get_configuration":
-					VFunction(function(args) return EvalMacro.getConfigurationValue(ctx.com != null ? ctx.com : EvalMacro.hostCom), true);
+					VFunction(function(args) return EvalMacro.getConfigurationValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, ctx), true);
 				case "make_position":
 					VFunction(function(args) return mkPos(ctx, new Position(stringOf(arg(args, 2)), toInt(arg(args, 0)), toInt(arg(args, 1)))), true);
 				case "get_pos_infos":

@@ -383,7 +383,7 @@ class EvalMacro {
 			else com.defines.rawDefineValue(k, strOf(a[1]));
 			return VNull;
 		});
-		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com));
+		reg2("getConfiguration", "get_configuration", function(a) return getConfigurationValue(com, ec));
 		reg2("typePatch", "type_patch", function(a) return typePatchValue(com, a));
 		reg2("metaPatch", "meta_patch", function(a) return metaPatchValue(com, a));
 		reg2("addGlobalMetadataImpl", "add_global_metadata_impl", function(a) return addGlobalMetadataValue(com, a));
@@ -970,7 +970,7 @@ class EvalMacro {
 		return VNull;
 	}
 
-	public static function getConfigurationValue(com:Context):EvalValue {
+	public static function getConfigurationValue(com:Context, ec:EvalContext):EvalValue {
 		function obj(fields:Array<{name:String, value:EvalValue}>):EvalValue {
 			var m:Map<Int, EvalValue> = new Map();
 			for (f in fields) m.set(EvalHash.hash(f.name), f.value);
@@ -980,6 +980,28 @@ class EvalMacro {
 		function strArray(a:Array<String>):EvalValue {
 			var vals:Array<EvalValue> = [for (s in a) str(s)];
 			return VArray(new VArray(vals, vals.length));
+		}
+		function packageRules():EvalValue {
+			var entries:Array<EvalValue> = [];
+			var current = hxc.core.Globals.platformName(com.platform);
+			var names = ["python", "php", "neko", "lua", "jvm", "java", "js", "hl", "flash", "cs", "cpp", "eval"];
+			if (!com.platformConfig.sys) names = ["sys"].concat(names);
+			for (name in names)
+				if (name != current) {
+					var entry:Map<Int, EvalValue> = new Map();
+					entry.set(EvalHash.hash("key"), mkString(name));
+					entry.set(EvalHash.hash("value"), mkEnumValue(ec, "PackageRule", "Forbidden", []));
+					entries.push(VObject(new VObject([], ODictionary(entry))));
+				}
+			var fields:Map<Int, EvalValue> = new Map();
+			fields.set(EvalHash.hash("keyValueIterator"), VFunction(function(_) {
+				var i = 0;
+				var iteratorFields:Map<Int, EvalValue> = new Map();
+				iteratorFields.set(EvalHash.hash("hasNext"), VFunction(function(_) return i < entries.length ? VTrue : VFalse, true));
+				iteratorFields.set(EvalHash.hash("next"), VFunction(function(_) return entries[i++], true));
+				return VObject(new VObject([], ODictionary(iteratorFields)));
+			}, true));
+			return VObject(new VObject([], ODictionary(fields)));
 		}
 		var pc = com.platformConfig;
 		var platformConfig = obj([
@@ -1011,7 +1033,7 @@ class EvalMacro {
 			{name: "platformConfig", value: platformConfig},
 			{name: "stdPath", value: strArray(com.stdPath)},
 			{name: "mainClass", value: mainClass},
-			{name: "packageRules", value: obj([])},
+			{name: "packageRules", value: packageRules()},
 		]);
 	}
 
@@ -1145,6 +1167,7 @@ class EvalMacro {
 		macroCom = com.cloneForMacro();
 		hxc.context.ModuleLoader.attach(macroCom);
 		hxc.context.ModuleLoader.initBasicTypes(macroCom);
+		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "ds"], name: "StringMap"}, Position.nullPos);
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Expr"}, Position.nullPos);
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Type"}, Position.nullPos);
 	}
