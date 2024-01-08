@@ -745,6 +745,20 @@ class EvalMacro {
 		return {pack: typeSegs.slice(0, typeIdx), module: typeSegs[typeIdx], name: typeSegs[typeSegs.length - 1], method: segs[segs.length - 1]};
 	}
 
+	static function macroPrototype(ec:EvalContext, path:hxc.core.Globals.Path, field:String, modulePath:Null<hxc.core.Globals.Path>, isInstance:Bool):Null<VPrototype> {
+		var p = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
+		if (p != null && p.pnames.exists(EvalHash.hash(field))) return p;
+		if (isInstance || macroCom == null) return p;
+		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) null;
+		if (m != null) for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.statics.exists(field)):
+				var candidate = ec.staticPrototypes.get(EvalHash.pathHash(c.path));
+				if (candidate != null) return candidate;
+			case _:
+		}
+		return p;
+	}
+
 	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
 		var t = macroTarget(callee);
 		if (t == null) throw new TypingError("@:build target must be a static call", p);
@@ -1369,14 +1383,14 @@ class EvalMacro {
 		var path = hostClass.path;
 		var callModule = moduleForPosition(tctx.com, p);
 		var ec = getContext(tctx.com);
-		var proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
+		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
 			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null);
 			ec = getContext(tctx.com);
-			proto = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
+			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
@@ -2942,7 +2956,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("capture"), VFalse);
 		fields.set(EvalHash.hash("extra"), VNull);
 		fields.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return v.meta, function(m) v.meta = m));
-		fields.set(EvalHash.hash("isStatic"), VFalse);
+		fields.set(EvalHash.hash("isStatic"), TypeFunctions.hasVarFlag(v, VStatic) ? VTrue : VFalse);
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 

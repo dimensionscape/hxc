@@ -56,10 +56,10 @@ class ModuleLoader {
 
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
 		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
-		try return findFile(ctx, prefix + ".hx", m, p) catch (e:ContextError) {
-			if (ctx.isMacro) return findFile(ctx, prefix + ".macro.hx", m, p);
-			throw e;
+		if (ctx.isMacro) {
+			try return findFile(ctx, prefix + ".macro.hx", m, p) catch (_:ContextError) {}
 		}
+		return findFile(ctx, prefix + ".hx", m, p);
 	}
 
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
