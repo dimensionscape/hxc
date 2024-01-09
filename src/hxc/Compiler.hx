@@ -225,6 +225,7 @@ class Compiler {
 			tFields();
 			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx);
 			tType();
+			TypeFields.checkAbstractInheritance(ctx);
 			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
 			abortOnDiagnostics(ctx, platform);

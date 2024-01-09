@@ -18,7 +18,14 @@ import hxc.typing.Matcher.Match;
 class Calls {
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false):TExpr {
 		if (forceInline) switch (e.expr) {
-			case TField(_, FInstance(c, _, cf)):
+			case TField(base, FInstance(c, _, cf)):
+				if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) switch (base.expr) {
+					case TConst(TSuper):
+						throw new TypingError("abstract method " + cf.name + " cannot be accessed directly", p);
+					case _:
+				}
+				if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract) && !cf.kind.match(Method(MethInline)))
+					throw new TypingError("Cannot force inline on abstract method", p);
 				function hasOverride(c2:TClass):Bool {
 					if (c2.fields.exists(cf.name)) return true;
 					for (d in c2.descendants) if (hasOverride(d)) return true;
@@ -26,6 +33,14 @@ class Calls {
 				}
 				for (d in c.descendants) if (hasOverride(d))
 					throw new TypingError("Cannot force inline-call to " + cf.name + " because it is overridden", p);
+			case _:
+		}
+		if (!forceInline) switch (e.expr) {
+			case TField(base, FInstance(_, _, cf)):
+				if (TypeFunctions.hasClassFieldFlag(cf, CfAbstract)) switch (base.expr) {
+					case TConst(TSuper): throw new TypingError("abstract method " + cf.name + " cannot be accessed directly", p);
+					case _:
+				}
 			case _:
 		}
 		// A call to an inline function expands in place; on any unhandled construct it falls back here.
