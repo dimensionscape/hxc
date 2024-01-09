@@ -17,6 +17,17 @@ import hxc.typing.Matcher.Match;
 
 class Calls {
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false):TExpr {
+		if (forceInline) switch (e.expr) {
+			case TField(_, FInstance(c, _, cf)):
+				function hasOverride(c2:TClass):Bool {
+					if (c2.fields.exists(cf.name)) return true;
+					for (d in c2.descendants) if (hasOverride(d)) return true;
+					return false;
+				}
+				for (d in c.descendants) if (hasOverride(d))
+					throw new TypingError("Cannot force inline-call to " + cf.name + " because it is overridden", p);
+			case _:
+		}
 		// A call to an inline function expands in place; on any unhandled construct it falls back here.
 		var inlined = Inline.tryInline(ctx, e, params, t, p, forceInline);
 		if (inlined != null) return inlined;
