@@ -149,6 +149,11 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			switch (cff.cffKind) {
+				case FVar(_, null) if (isStatic && TypeFunctions.hasClassFieldFlag(cf, CfFinal)):
+					ctx.addDiagnostic("Static final variable must be initialized", cff.cffPos);
+				case _:
+			}
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
 				switch (cff.cffKind) {
 					case FFun(fd): checkExternDefaults(ctx, tctx, cf, fd, isStatic);
@@ -455,9 +460,13 @@ class TypeFields {
 	public static function checkFinalVars(ctx:Context):Void {
 		if (ctx.hasError()) return;
 		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c) if (c.constructor != null && c.constructor.expr != null && !TypeFunctions.hasClassFlag(c, CExtern)):
-				var body = switch (c.constructor.expr.expr) { case TFunction(tf): tf.expr; case _: null; };
-				if (body == null) continue;
+			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)
+				&& !TypeFunctions.hasClassFlag(c, CInterface)
+				&& !TypeFunctions.hasClassFlag(c, CAbstract)):
+				var body:Null<TExpr> = c.constructor == null || c.constructor.expr == null ? null : switch (c.constructor.expr.expr) {
+					case TFunction(tf): tf.expr;
+					case _: null;
+				};
 				var finalVars:Map<String, Bool> = new Map();
 				var ordered:Array<TClassField> = [];
 				function collect(c2:TClass):Void {
@@ -480,11 +489,16 @@ class TypeFields {
 							hxc.core.TexprTools.iter(findInits, e);
 					}
 				}
-				findInits(body);
+				if (body != null) findInits(body);
 				var remaining = [for (cf in ordered) if (finalVars.exists(cf.name)) cf];
 				if (remaining.length > 0) {
-					ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
-					for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
+					if (c.constructor == null) {
+						ctx.addDiagnostic("This class has uninitialized final vars, which requires a constructor", c.pos);
+						ctx.addDiagnostic("Example of an uninitialized final var", remaining[0].namePos, 1);
+					} else {
+						ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
+						for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
+					}
 				}
 			case _:
 		}
