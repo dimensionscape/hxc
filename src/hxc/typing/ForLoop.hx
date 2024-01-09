@@ -125,6 +125,21 @@ class ForLoop {
 		}
 	}
 
+	static function checkLoopVarModification(vl:Array<TVar>, e:TExpr):Void {
+		function loop(e:TExpr):Void {
+			switch (e.expr) {
+				case TBinop(OpAssign, {expr: TLocal(l)}, _)
+					| TBinop(OpAssignOp(_), {expr: TLocal(l)}, _)
+					| TUnop(Increment, _, {expr: TLocal(l)})
+					| TUnop(Decrement, _, {expr: TLocal(l)}) if (vl.indexOf(l) >= 0):
+					throw new TypingError("Loop variable cannot be modified", e.pos);
+				case _:
+					TexprTools.iter(loop, e);
+			}
+		}
+		loop(e);
+	}
+
 	// True when the active capture policy needs per-iteration loop-var freshness. CPNone relies on
 	// native block scoping for fresh bindings; every other policy runs the frame-based model.
 	static function needsLoopVarWrap(ctx:TyperContext):Bool {
@@ -297,6 +312,7 @@ class ForLoop {
 		var eIndex = TexprTools.makeLocal(vIndex, p);
 		var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, basic.tint, p);
 		var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
+		checkLoopVarModification([v], body);
 		ctx.inLoop = oldLoop;
 		oldLocals();
 
