@@ -4,6 +4,7 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypingError;
 import hxc.context.Context;
 import hxc.core.Globals.Path;
 import hxc.core.Globals.Platform;
@@ -705,10 +706,34 @@ class ModuleLoader {
 		}
 	}
 
+	static function handleImportHx(ctx:Context, m:ModuleDef, decls:Array<TypeDecl>):Array<TypeDecl> {
+		var file = m.extra.file;
+		if (file == null || file == "" || !FileSystem.exists(file)) return decls;
+		var dir = StringTools.replace(file, "\\", "/");
+		var slash = dir.lastIndexOf("/");
+		dir = slash < 0 ? "" : dir.substr(0, slash);
+		var imports:Array<TypeDecl> = [];
+		var count = m.path.pack.length + 1;
+		for (_ in 0...count) {
+			var candidate = dir == "" ? "import.hx" : dir + "/import.hx";
+			if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate)) {
+				var pkg = hxc.parser.Parser.parseModuleString(Position.getFileContent(candidate), candidate, ctx.defines);
+				for (decl in pkg.decls) switch (decl.decl) {
+					case EImport(_) | EUsing(_):
+					case _: throw new TypingError("Only import and using is allowed in import.hx files", decl.pos);
+				}
+				imports = pkg.decls.concat(imports);
+			}
+			var parent = dir.lastIndexOf("/");
+			dir = parent < 0 ? "" : dir.substr(0, parent);
+		}
+		return imports.concat(decls);
+	}
+
 	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
 		// Register the module before creating its types; register those types after building.
-		createModuleTypes(ctx, m, tdecls);
+		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
 		addModule(ctx, m);
 		return m;
 	}
