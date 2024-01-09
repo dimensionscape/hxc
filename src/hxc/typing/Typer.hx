@@ -460,7 +460,9 @@ class Typer {
 
 	public static function unifyMin(ctx:TyperContext, el:Array<TExpr>):T {
 		return try unifyMinRaise(ctx, el) catch (e:TypingError) {
-			if (!ctx.untypedMode && StringTools.startsWith(e.message, "error: ")) ctx.com.addDiagnostic(e.message, e.pos, e.depth);
+			if (!ctx.untypedMode && (StringTools.startsWith(e.message, "error: ")
+				|| e.message == "Could not determine common type, please add a type-hint"))
+				ctx.com.addDiagnostic(e.message, e.pos, e.depth);
 			el[0].type;
 		};
 	}
