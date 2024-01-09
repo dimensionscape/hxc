@@ -1247,6 +1247,8 @@ class EvalMacro {
 	// members a macro function's body relies on. reference:
 	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
 		if (macroCom == null) initMacroContext(host);
+		var oldRaise = macroCom.raiseTypingErrors;
+		macroCom.raiseTypingErrors = true;
 		try {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
@@ -1285,7 +1287,13 @@ class EvalMacro {
 						}
 				case _:
 			}
-		} catch (_:Dynamic) {}
+		} catch (e:TypingError) {
+			macroCom.raiseTypingErrors = oldRaise;
+			throw e;
+		} catch (_:Dynamic) {
+			macroCom.raiseTypingErrors = oldRaise;
+		}
+		macroCom.raiseTypingErrors = oldRaise;
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
