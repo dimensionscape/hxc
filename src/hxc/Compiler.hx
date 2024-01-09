@@ -32,6 +32,33 @@ class Compiler {
 	public static function run(args:Array<String>):Void {
 		hxc.core.BinaryStdio.set();
 		args = expandArgs(args);
+		var nextAt = args.indexOf("--next");
+		if (nextAt >= 0) {
+			var sections:Array<Array<String>> = [];
+			var start = 0;
+			while (start <= args.length) {
+				var end = args.indexOf("--next", start);
+				if (end < 0) end = args.length;
+				sections.push(args.slice(start, end));
+				if (end == args.length) break;
+				start = end + 1;
+			}
+			var exitCode = 0;
+			for (section in sections) {
+				var proc = new Process(Sys.programPath(), section);
+				var stdout = proc.stdout.readAll();
+				var stderr = proc.stderr.readAll();
+				var code = proc.exitCode();
+				proc.close();
+				if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
+				if (stderr.length > 0) Sys.stderr().writeString(stderr.toString());
+				if (code != 0) {
+					exitCode = code;
+					break;
+				}
+			}
+			Sys.exit(exitCode);
+		}
 		var ctx = new Context();
 		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
