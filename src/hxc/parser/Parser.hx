@@ -315,7 +315,11 @@ class Parser {
 				break;
 			}
 			acc.push(v);
-			if (tokEq(peek(), Comma)) { junk(); continue; }
+			if (tokEq(peek(), Comma)) {
+				junk();
+				if (tokEq(peek(), Comma)) throw new ParserError(Unexpected(Comma), peekInfo().pos);
+				continue;
+			}
 			break;
 		}
 		return acc;

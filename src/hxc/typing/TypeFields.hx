@@ -153,8 +153,8 @@ class TypeFields {
 				case AFinal: hasFinal = true;
 				case _:
 			}
-			if (hasOverride && hasStatic) ctx.addDiagnostic("Invalid modifier combination: override + static", cff.cffPos);
-			if (hasDynamic && hasInline) ctx.addDiagnostic("Invalid modifier combination: dynamic + inline", cff.cffPos);
+			if (hasOverride && hasStatic) addDiagnosticOnce(ctx, "Invalid modifier combination: override + static", cff.cffPos);
+			if (hasDynamic && hasInline) addDiagnosticOnce(ctx, "Invalid modifier combination: dynamic + inline", cff.cffPos);
 			if (hasAbstract && hasDynamic) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + dynamic", cff.cffPos);
 			if (hasAbstract && hasFinal) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + final", cff.cffName.pos);
 			if (hasAbstract && hasInline) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + inline", cff.cffName.pos);
@@ -177,7 +177,7 @@ class TypeFields {
 			}
 			switch (cff.cffKind) {
 				case FVar(_, null) if (isStatic && TypeFunctions.hasClassFieldFlag(cf, CfFinal)):
-					ctx.addDiagnostic("Static final variable must be initialized", cff.cffPos);
+					addDiagnosticOnce(ctx, "Static final variable must be initialized", cff.cffPos);
 				case _:
 			}
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
