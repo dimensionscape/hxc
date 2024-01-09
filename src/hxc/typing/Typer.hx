@@ -615,6 +615,10 @@ class Typer {
 					var oldBypass = ctx.bypassAccessor;
 					ctx.bypassAccessor = oldBypass + 1;
 					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
+					var hasFieldAccess = false;
+					TexprTools.iter(function(e) switch (e.expr) { case TField(_, _): hasFieldAccess = true; case _: }, teBypass);
+					if (ctx.bypassAccessor != oldBypass && (!hasFieldAccess || ctx.bypassAccessor - oldBypass > 1))
+						throw new TypingError("Field access expression expected after @:bypassAccessor metadata", m.pos);
 					ctx.bypassAccessor = oldBypass;
 					teBypass;
 			case EMeta(m, e1) if (m.name == ":mergeBlock"):
