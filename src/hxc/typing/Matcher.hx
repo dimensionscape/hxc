@@ -457,7 +457,13 @@ class PatternMaker {
 				switch (skipValue(te).expr) {
 					case TConst(ct): unifyExpected(te.type); PatConstructor(Constructor.make(ConConst(ct), p), []);
 					case TField(_, FEnum(en, ef)): unifyExpected(te.type); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
-					case TField(_, FStatic(c, cf)): unifyExpected(te.type); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+					case TField(_, FStatic(c, cf)):
+						switch (cf.kind) {
+							case Var(v) if (v.read == AccInline || (v.read == AccNormal && v.write == AccNever)):
+							case _: throw new TypingError("Only inline or read-only (default, never) fields can be used as a pattern", p);
+						}
+						unifyExpected(te.type);
+						PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
 					case TTypeExpr(mt): unifyTypePattern(ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
