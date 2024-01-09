@@ -656,7 +656,7 @@ class Typer {
 					var te = typeExpr(ctx, e1, withType);
 					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
 				case EMeta(m, {expr: ECall(callee, args)}) if (m.name == ":inline"):
-					accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, p, true));
+					accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, m.pos, true));
 				case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
 					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
 					// expression (a macro body reifies these before typing).

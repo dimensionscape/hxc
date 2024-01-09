@@ -126,11 +126,17 @@ class TypeFields {
 		for (imp in c.interfaces) walk(imp.c, imp.params);
 	}
 
+	static function addDiagnosticOnce(ctx:Context, message:String, pos:Position, depth:Int = 0):Void {
+		for (d in ctx.diagnostics)
+			if (d.message == message && d.depth == depth && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
+		ctx.addDiagnostic(message, pos, depth);
+	}
+
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
 		if (TypeFunctions.hasClassFlag(c, CAbstract) && TypeFunctions.hasClassFlag(c, CFinal))
-			ctx.addDiagnostic("An abstract class may not be final", c.namePos);
+			addDiagnosticOnce(ctx, "An abstract class may not be final", c.namePos);
 		if (TypeFunctions.hasClassFlag(c, CInterface) && TypeFunctions.hasClassFlag(c, CAbstract))
-			ctx.addDiagnostic("An interface may not be abstract", c.namePos);
+			addDiagnosticOnce(ctx, "An interface may not be abstract", c.namePos);
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
 		tctx.typeParams = c.params;
@@ -149,12 +155,12 @@ class TypeFields {
 			}
 			if (hasOverride && hasStatic) ctx.addDiagnostic("Invalid modifier combination: override + static", cff.cffPos);
 			if (hasDynamic && hasInline) ctx.addDiagnostic("Invalid modifier combination: dynamic + inline", cff.cffPos);
-			if (hasAbstract && hasDynamic) ctx.addDiagnostic("Invalid modifier combination: abstract + dynamic", cff.cffPos);
-			if (hasAbstract && hasFinal) ctx.addDiagnostic("Invalid modifier combination: abstract + final", cff.cffName.pos);
-			if (hasAbstract && hasInline) ctx.addDiagnostic("Invalid modifier combination: abstract + inline", cff.cffName.pos);
-			if (hasAbstract && hasStatic) ctx.addDiagnostic("Invalid modifier combination: abstract + static", cff.cffName.pos);
+			if (hasAbstract && hasDynamic) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + dynamic", cff.cffPos);
+			if (hasAbstract && hasFinal) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + final", cff.cffName.pos);
+			if (hasAbstract && hasInline) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + inline", cff.cffName.pos);
+			if (hasAbstract && hasStatic) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + static", cff.cffName.pos);
 			if (hasAbstract) switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr != null): ctx.addDiagnostic("Abstract methods may not have an expression", cff.cffPos);
+				case FFun(fd) if (fd.fExpr != null): addDiagnosticOnce(ctx, "Abstract methods may not have an expression", cff.cffPos);
 				case _:
 			}
 			var isStatic = false;
@@ -165,8 +171,8 @@ class TypeFields {
 			if (cf == null) continue;
 			if (hasAbstract && !TypeFunctions.hasClassFlag(c, CAbstract)
 				&& !TypeFunctions.hasClassFlag(c, CInterface) && !hasStatic && !hasFinal && !hasInline) {
-				ctx.addDiagnostic("This class should be declared abstract because it has at least one abstract field", c.namePos);
-				ctx.addDiagnostic("First abstract field was here", cff.cffName.pos, 1);
+				addDiagnosticOnce(ctx, "This class should be declared abstract because it has at least one abstract field", c.namePos);
+				addDiagnosticOnce(ctx, "First abstract field was here", cff.cffName.pos, 1);
 				TypeFunctions.addClassFlag(c, CAbstract);
 			}
 			switch (cff.cffKind) {
