@@ -4,6 +4,8 @@ import hxc.ast.Position;
 import hxc.ast.Ast;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypingError;
+import hxc.core.TypeUnification;
 import hxc.core.WithType.WithTypeTools;
 import hxc.core.NotFound;
 import hxc.core.Ref;
@@ -837,7 +839,7 @@ class Typeload {
 		return null;
 	}
 
-	static function makeGenericSubst(ctx:Context, c:TClass, params:TParams):Array<GenericSubstEntry> {
+	static function makeGenericSubst(ctx:Context, c:TClass, params:TParams, p:Position):Array<GenericSubstEntry> {
 		var out:Array<GenericSubstEntry> = [];
 		for (i in 0...c.params.length) {
 			var from = switch (c.params[i].type) {
@@ -846,6 +848,27 @@ class Typeload {
 			}
 			var checked = genericCheckConstExpr(ctx, params[i]);
 			out.push({from: from, to: checked.to, expr: checked.expr});
+		}
+		for (i in 0...c.params.length) switch (TypeFunctions.follow(out[i].from)) {
+			case TInst(pc, _) if (out[i].to != out[i].from):
+				switch (pc.kind) {
+					case KTypeParameter(constraints):
+						for (constraint in constraints) {
+							if (hasTypeParameter(constraint)) continue;
+							var expected = genericSubstituteType(ctx, c, out, p, constraint);
+							try TypeUnification.unifyDefault(out[i].to, expected) catch (e:hxc.core.TypeUnification.UnifyError) {
+								var name = c.path.name + "." + c.params[i].name;
+								var actual = switch (TypeFunctions.follow(params[i])) {
+									case TInst({kind: KExpr(e)}, _): hxc.ast.Printer.sExpr(e);
+									case _: hxc.core.TPrinting.sTypeStr(out[i].to);
+								};
+								var msg = "Constraint check failure for " + name + "\n" + actual + " should be " + hxc.core.TPrinting.sTypeStr(expected);
+								throw new TypingError(msg, out[i].expr == null ? p : out[i].expr.pos);
+							}
+						}
+					case _:
+				}
+			case _:
 		}
 		return out;
 	}
@@ -983,7 +1006,7 @@ class Typeload {
 		cg.flags = c.flags;
 		cg.usings = c.usings;
 		genericInstances.set(key, cg);
-		var gsubst = makeGenericSubst(ctx, c, params);
+		var gsubst = makeGenericSubst(ctx, c, params, p);
 		cg.superClass = c.superClass == null ? null : switch (genericSubstituteType(ctx, c, gsubst, p, TInst(c.superClass.c, c.superClass.params))) {
 			case TInst(cs, pl): {c: cs, params: pl};
 			case _: null;
