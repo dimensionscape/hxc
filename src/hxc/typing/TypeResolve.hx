@@ -271,6 +271,11 @@ class TypeResolve {
 							if (!TypeFunctions.hasMeta(":native", target.meta) && TypeFunctions.hasMeta(":native", parent.meta))
 								target.meta = [TypeFunctions.getMeta(":native", parent.meta)].concat(target.meta);
 						}
+					} else {
+						var parent = getParentField(c, cff.cffName.name);
+						if (parent != null && !TypeFunctions.hasClassFieldFlag(parent, CfAbstract)
+							&& !TypeFunctions.hasClassFlag(c, CExtern))
+							ctx.addDiagnostic("Field " + cff.cffName.name + " should be declared with 'override' since it is inherited from superclass " + Context.sTypePath(c.superClass.c.path), target.namePos);
 					}
 				}
 			} catch (e:ContextError) {

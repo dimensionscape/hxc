@@ -2695,6 +2695,9 @@ class Typer {
 				// parameters applied so a generic abstract threads them (a rigid type parameter would
 				// otherwise fail to unify against the arguments).
 				var newCf = a.impl.statics.get("_new");
+				if (!ctx.untypedMode && !TypeFunctions.hasClassFieldFlag(newCf, CfPublic)
+					&& !TypeFunctions.extendsClass(ctx.curclass, a.impl))
+					ctx.com.addDiagnostic("Cannot access private constructor of " + hxc.core.Globals.sTypePath(a.path), p);
 				TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(a, atl, a.impl), false, p);

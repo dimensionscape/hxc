@@ -133,6 +133,16 @@ class TypeFields {
 		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		for (cff in d.dData) {
+			var hasStatic = false, hasOverride = false, hasDynamic = false, hasInline = false;
+			for (a in cff.cffAccess) switch (a.access) {
+				case AStatic: hasStatic = true;
+				case AOverride: hasOverride = true;
+				case ADynamic: hasDynamic = true;
+				case AInline: hasInline = true;
+				case _:
+			}
+			if (hasOverride && hasStatic) ctx.addDiagnostic("Invalid modifier combination: override + static", cff.cffPos);
+			if (hasDynamic && hasInline) ctx.addDiagnostic("Invalid modifier combination: dynamic + inline", cff.cffPos);
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
