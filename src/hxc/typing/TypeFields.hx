@@ -149,8 +149,14 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
+				switch (cff.cffKind) {
+					case FFun(fd): checkExternDefaults(ctx, tctx, cf, fd, isStatic);
+					case _:
+				}
+				continue;
+			}
 			if (!hasFieldBody(cff)) continue;
-			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
@@ -659,5 +665,19 @@ class TypeFields {
 			result.push({v: v, c: def});
 		}
 		return result;
+	}
+
+	static function checkExternDefaults(ctx:Context, tctx:TyperContext, cf:TClassField, fd:Func, isStatic:Bool):Void {
+		var sig = switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+		if (sig == null) return;
+		var oldFun = tctx.curfun;
+		tctx.curfun = isStatic ? FunStatic : FunMember;
+		for (i in 0...fd.fArgs.length) {
+			var value = fd.fArgs[i].value;
+			if (value == null || i >= sig.args.length) continue;
+			try Typer.castOrUnify(tctx, sig.args[i].t, Typer.typeExpr(tctx, value, WithTypeTools.withType(sig.args[i].t)), value.pos)
+			catch (e:Dynamic) recordFieldError(ctx, e);
+		}
+		tctx.curfun = oldFun;
 	}
 }
