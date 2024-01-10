@@ -2022,7 +2022,7 @@ class EvalStdLib {
 	static function mkThreadEventLoop(ctx:EvalContext):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.EventLoop"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		threadEventLoops.set(vi, newEvalLoop());
+		threadEventLoops.set(vi, newEvalLoop(false));
 		return VInstance(vi);
 	}
 
@@ -2030,8 +2030,7 @@ class EvalStdLib {
 		return threadEventLoops.get(thisInstance(a, "EventLoop"));
 	}
 
-	static function newEvalLoop():EvalLoopState {
-		var isMain = !evalLoopCreated;
+	static function newEvalLoop(?isMain:Bool = false):EvalLoopState {
 		evalLoopCreated = true;
 		return {pending: [], timers: [], promised: 0, started: false, isMainThread: isMain, mainLoopNext: null};
 	}
@@ -2320,7 +2319,7 @@ class EvalStdLib {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
 		ensureInstanceField(proto, "events");
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		var events = threadEventLoopObject(ctx, newEvalLoop());
+		var events = threadEventLoopObject(ctx, newEvalLoop(job == null));
 		setInstanceFieldIfExists(vi, "events", events);
 		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: events});
 		if (job != null && job != VNull) {
@@ -2355,7 +2354,7 @@ class EvalStdLib {
 		var thread = nativeThreads.get(vi);
 		if (thread == null) return VNull;
 		if (thread.events == VNull) {
-			thread.events = threadEventLoopObject(ctx, newEvalLoop());
+			thread.events = threadEventLoopObject(ctx, newEvalLoop(nativeThreadSelf == null));
 			setInstanceFieldIfExists(vi, "events", thread.events);
 		}
 		return thread.events;
@@ -5551,7 +5550,10 @@ class EvalStdLib {
 			switch (nativeThreadSelfValue(ctx)) {
 				case VInstance(vi):
 					var events = nativeThreadEventLoop(ctx, vi);
-					applyFn(EvalField.dynamicField(ctx, events, EvalHash.hash("loop")), []);
+					switch (eventLoopOfValue(events)) {
+						case loop if (loop != null): evalLoopDrain(ctx, loop, null);
+						case _: applyFn(EvalField.dynamicField(ctx, events, EvalHash.hash("loop")), []);
+					}
 				case _:
 			}
 			VNull;
@@ -5561,9 +5563,14 @@ class EvalStdLib {
 		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { nativeThreadData(a).messages.add(arg(a, 1)); VNull; }));
 		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> nativeThreadEventLoop(ctx, thisInstance(a, "NativeThread"))));
 		reg(inst, "eval.vm.NativeThread", "set_events", vmethod(a -> {
+			var owner = thisInstance(a, "NativeThread");
 			var events = arg(a, 1);
 			nativeThreadData(a).events = events;
-			setInstanceFieldIfExists(thisInstance(a, "NativeThread"), "events", events);
+			switch (eventLoopOfValue(events)) {
+				case loop if (loop != null && nativeThreadSelf != null && owner == nativeThreadSelf): loop.isMainThread = true;
+				case _:
+			}
+			setInstanceFieldIfExists(owner, "events", events);
 			arg(a, 1);
 		}));
 		reg(s, "eval._NativeString.NativeString_Impl_", "fromBytes", vfn(a -> {
