@@ -61,13 +61,13 @@ class TypeFields {
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e) + (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : ""));
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
-			ctx.addDiagnostic(te.message, te.pos);
+			addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
 		} else if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
-			ctx.addDiagnostic(ce.message, ce.pos);
+			addDiagnosticOnce(ctx, ce.message, ce.pos);
 		} else if (Std.isOfType(e, EvalRunTimeException)) {
 			var re:EvalRunTimeException = cast e;
-			ctx.addDiagnostic(EvalStdLib.stringOf(re.value), re.pos);
+			addDiagnosticOnce(ctx, EvalStdLib.stringOf(re.value), re.pos);
 		} else if (Std.isOfType(e, haxe.Exception)) {
 			ctx.unresolvedFields++;
 		} else {

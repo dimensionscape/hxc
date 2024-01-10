@@ -620,10 +620,13 @@ class Typer {
 					var oldBypass = ctx.bypassAccessor;
 					ctx.bypassAccessor = oldBypass + 1;
 					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
-					var hasFieldAccess = false;
-					TexprTools.iter(function(e) switch (e.expr) { case TField(_, _): hasFieldAccess = true; case _: }, teBypass);
-					if (ctx.bypassAccessor != oldBypass && (!hasFieldAccess || ctx.bypassAccessor - oldBypass > 1))
-						throw new TypingError("Field access expression expected after @:bypassAccessor metadata", m.pos);
+					function bypassDepth(x:Expr):Int return switch (x.expr) {
+						case EMeta(m2, inner) if (m2.name == ":bypassAccessor"): 1 + bypassDepth(inner);
+						case _: 0;
+					};
+					var nestedBypass = bypassDepth(e1);
+					if (ctx.bypassAccessor > oldBypass && nestedBypass != 1)
+						ctx.com.addDiagnostic("Field access expression expected after @:bypassAccessor metadata", m.pos);
 					ctx.bypassAccessor = oldBypass;
 					teBypass;
 			case EMeta(m, e1) if (m.name == ":mergeBlock"):
@@ -2272,6 +2275,7 @@ class Typer {
 			case TMono(_) if (!hasReturn(te)):
 				try TypeUnification.unifyDefault(ctx.com.basic.tvoid, ret) catch (_:UnifyError) {}
 			case TMono(_):
+				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
 			// A dynamic method is reassignable, so its inferred return is linked to Void at body typing
 			// before any reassignment binds it; hxc's field order can bind it first, so a dynamic method is
 			// exempt from the flow check.

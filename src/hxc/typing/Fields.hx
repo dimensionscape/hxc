@@ -110,8 +110,11 @@ class Fields {
 
 	// Recorded, not raised, so typing continues and a batch compile reports every access violation.
 	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, stat:Bool, p:Position):Void {
-		if (!ctx.untypedMode && !canAccess(ctx, c, f, stat))
-			ctx.com.addDiagnostic("Cannot access private field " + f.name, p);
+		if (!ctx.untypedMode && !canAccess(ctx, c, f, stat)) {
+			var msg = "Cannot access private field " + f.name;
+			for (d in ctx.com.diagnostics) if (d.message == msg && d.pos.file == p.file && d.pos.min == p.min && d.pos.max == p.max) return;
+			ctx.com.addDiagnostic(msg, p);
+		}
 	}
 
 	// Recorded (not raised) so typing continues; a missing constructor is left to the caller (a null
@@ -802,10 +805,10 @@ class Fields {
 	public static function enumConstructor(ctx:TyperContext, en:TEnum, e:TExpr, i:String, p:Position):AccessKind {
 		var ef = en.constrs.get(i);
 		if (ef == null) throw fieldNotFound(e.type, i, p);
-		var monos = [for (_ in en.params) TypeFunctions.mkMono()];
+		var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, en.params);
 		var t = TypeFunctions.applyParams(en.params, monos, ef.type);
 		if (ef.params.length > 0) {
-			var monos2 = [for (_ in ef.params) TypeFunctions.mkMono()];
+			var monos2 = TypeUnification.spawnConstrainedMonos(function(t2) return TypeFunctions.applyParams(en.params, monos, t2), ef.params);
 			t = TypeFunctions.applyParams(ef.params, monos2, t);
 		}
 		return AKExpr(TypeFunctions.mk(TField(e, FEnum(en, ef)), t, p));

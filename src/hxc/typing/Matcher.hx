@@ -1314,7 +1314,11 @@ class TexprConverter {
 						unmatched.sort(Reflect.compare);
 						unmatched.join(" | ");
 					};
-					throw new TypingError("Unmatched patterns: " + sSubject(s, subject), subject.pos);
+					var errorPos = switch (subject.expr) {
+						case TField(_, FEnum(_, _)): dt.pos;
+						case _: subject.pos;
+					};
+					throw new TypingError("Unmatched patterns: " + sSubject(s, subject), errorPos);
 				}
 				// The default converts and reports first so a missing constructor at this switch is the
 				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that

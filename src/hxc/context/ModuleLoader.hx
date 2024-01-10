@@ -717,7 +717,8 @@ class ModuleLoader {
 		for (_ in 0...count) {
 			var candidate = dir == "" ? "import.hx" : dir + "/import.hx";
 			if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate)) {
-				var pkg = hxc.parser.Parser.parseModuleString(Position.getFileContent(candidate), candidate, ctx.defines);
+				var absoluteCandidate = FileSystem.fullPath(candidate);
+				var pkg = hxc.parser.Parser.parseModuleString(Position.getFileContent(absoluteCandidate), absoluteCandidate, ctx.defines);
 				for (decl in pkg.decls) switch (decl.decl) {
 					case EImport(_) | EUsing(_):
 					case _: throw new TypingError("Only import and using is allowed in import.hx files", decl.pos);

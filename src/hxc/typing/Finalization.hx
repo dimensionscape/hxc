@@ -34,6 +34,15 @@ class Finalization {
 		}
 		if (f == null) {
 			var t = try ModuleLoader.findTypeInModule(m, path.name, Position.nullPos) catch (_:ContextError) null;
+			if (t == null) {
+				for (candidate in m.types) {
+					switch (candidate) {
+						case TClassDecl(c2):
+							if (c2.statics.exists("main")) { t = candidate; break; }
+						case _:
+					}
+				}
+			}
 			switch (t) {
 				case null:
 				case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):

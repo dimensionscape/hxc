@@ -345,6 +345,7 @@ class Parser {
 	function parseMetaEntry():MetadataEntry {
 		var p1 = expect(At);
 		var name = parseMetaName(p1);
+		var pEnd = tokens[idx - 1].pos;
 		var params:Array<Expr> = [];
 		// A `(...)` is metadata ARGS only when the `(` is IMMEDIATELY adjacent to the name (POpen.min ==
 		// name.max, i.e. no whitespace). With a space,
@@ -352,9 +353,9 @@ class Parser {
 		if (tokEq(peek(), POpen) && peekInfo().pos.min == tokens[idx - 1].pos.max) {
 			junk();
 			params = parseCallParamsList();
-			expect(PClose);
+			pEnd = expect(PClose);
 		}
-		return {name: name, params: params, pos: p1};
+		return {name: name, params: params, pos: Position.union(p1, pEnd)};
 	}
 
 	function parseMetaName(p1:Position):String {
