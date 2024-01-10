@@ -142,6 +142,7 @@ class TypeFields {
 		tctx.typeParams = c.params;
 		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		for (cff in d.dData) {
 			var hasStatic = false, hasOverride = false, hasDynamic = false, hasInline = false, hasAbstract = false, hasFinal = false;
 			for (a in cff.cffAccess) switch (a.access) {
@@ -166,6 +167,18 @@ class TypeFields {
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
+			var isOverload = false;
+			for (a in cff.cffAccess) if (a.access == AOverload) isOverload = true;
+			if (isOverload) switch (cff.cffKind) {
+				case FFun(fd):
+					var key = (isStatic ? "s:" : "i:") + cff.cffName.name + ":" + [for (a in fd.fArgs) a.type == null ? "" : hxc.ast.Ast.Printer.sComplexType("", a.type.ct)].join(",");
+					var previous = overloadSeen.get(key);
+					if (previous != null) {
+						addDiagnosticOnce(ctx, "Another overloaded field of same signature was already declared : " + cff.cffName.name, previous.cffPos);
+						addDiagnosticOnce(ctx, "... The second field is declared here", cff.cffPos, 1);
+					} else overloadSeen.set(key, cff);
+				case _:
+			}
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
