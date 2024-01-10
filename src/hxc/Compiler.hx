@@ -9,6 +9,11 @@ import hxc.core.Globals;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.Path;
 import hxc.ast.Position;
+import hxc.eval.EvalContext;
+import hxc.eval.EvalField;
+import hxc.eval.EvalHash;
+import hxc.eval.EvalValue;
+import hxc.eval.EvalValue.EvalValueTools;
 import sys.FileSystem;
 import sys.io.File;
 import sys.io.Process;
@@ -396,6 +401,31 @@ class Compiler {
 	// outermost-first as Called from here.
 	static function printUncaughtException(ctx:Context, ex:hxc.eval.EvalExceptions.EvalRunTimeException, catchPos:Position):Void {
 		if (catchPos == null) catchPos = Position.nullPos;
+		var evalCtx = try EvalContext.getCtx() catch (_:Dynamic) null;
+		if (evalCtx != null) switch (EvalValueTools.vresolve(ex.value)) {
+			case VInstance(vi):
+				var msg = hxc.eval.EvalStdLib.stringOf(EvalField.field(evalCtx, ex.value, EvalHash.hash("message")));
+				if (msg == "null") msg = hxc.eval.EvalStdLib.stringOf(ex.value);
+				var posValue = EvalField.field(evalCtx, ex.value, EvalHash.hash("pos"));
+				var errorPos = switch (EvalValueTools.vresolve(posValue)) {
+					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
+					case VObject(obj): switch (obj.oproto) {
+						case ODictionary(fields):
+							var file = hxc.eval.EvalStdLib.stringOf(fields.get(EvalHash.hash("file")));
+							var min = switch (fields.get(EvalHash.hash("min"))) { case VInt(i): i; case _: -1; };
+							var max = switch (fields.get(EvalHash.hash("max"))) { case VInt(i): i; case _: -1; };
+							new hxc.ast.Position(file, min, max);
+						case _: Position.nullPos;
+					};
+					case _: Position.nullPos;
+				};
+				if (errorPos.min >= 0) {
+					ctx.addDiagnostic(msg, errorPos);
+					flushPendingMessages(ctx);
+					Sys.exit(1);
+				}
+			case _:
+		}
 		// Frames run innermost first; an explicit throw position drops the innermost frame it
 		// duplicates, and the catch position closes the stack (the reference's api-call env).
 		var frames = [for (env in ex.envStack) hxc.eval.EvalExceptions.envPosition(env)];

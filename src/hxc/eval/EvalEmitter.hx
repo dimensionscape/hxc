@@ -258,6 +258,7 @@ class EvalEmitter {
 	// haxe.Exception.thrown returning (value:Exception).native.
 	static function unwrapThrown(ctx:EvalContext, v:EvalValue):EvalValue {
 		return switch (v) {
+			case VInstance(vi) if (vi.iproto.ppath == EvalHash.hash("haxe.macro.Expr.Error") || vi.iproto.ppath == EvalHash.hash("haxe.macro.Error")): v;
 			case VInstance(_) if (EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)):
 				var native = EvalField.field(ctx, v, EvalHash.keyNativeException);
 				native == VNull ? v : native;
