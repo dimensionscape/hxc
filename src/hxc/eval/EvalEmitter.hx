@@ -4,6 +4,7 @@ import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.Globals;
 import hxc.eval.EvalValue;
 import hxc.eval.EvalValue.EvalValueTools;
 import hxc.eval.EvalContext;
@@ -41,6 +42,22 @@ class EvalEmitter {
 			case _: false;
 		};
 	}
+
+	static function isUIntType(t:T):Bool return isAbstractPath(t, [], "UInt");
+
+	static function isUIntExpr(e:TExpr):Bool return if (isUIntType(e.type)) true else switch (e.expr) {
+		case TLocal(v): isUIntType(v.type);
+		case TCast(inner, _): isUIntExpr(inner);
+		case TMeta(_, inner) | TParenthesis(inner): isUIntExpr(inner);
+		case _: false;
+	};
+
+	static function unsignedValue(v:EvalValue):EvalValue return switch (v) {
+		case VInt(i): VFloat(i < 0 ? 4294967296.0 + i : i + 0.0);
+		case _: v;
+	};
+
+	static inline function isEvalTarget(ctx:EvalContext):Bool return !ctx.isMacro && ctx.com != null && ctx.com.platform.match(Eval);
 
 	static function evalCast(ctx:EvalContext, e:TExpr, target:T):EvalValue {
 		var v = eval(ctx, e);
@@ -297,6 +314,10 @@ class EvalEmitter {
 	}
 
 	static function evalBinop(ctx:EvalContext, op:Binop, e1:TExpr, e2:TExpr, p:Position):EvalValue {
+		function unsigned(v:EvalValue):EvalValue return switch (v) {
+			case VInt(i): VFloat(i < 0 ? 4294967296.0 + i : i + 0.0);
+			case _: v;
+		};
 		return switch (op) {
 			case OpBoolAnd: EvalMisc.isTrue(eval(ctx, e1)) ? eval(ctx, e2) : VFalse;
 			case OpBoolOr: EvalMisc.isTrue(eval(ctx, e1)) ? VTrue : eval(ctx, e2);
@@ -337,6 +358,11 @@ class EvalEmitter {
 						}
 					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target", p);
 				}
+			case OpEq | OpNotEq | OpGt | OpGte | OpLt | OpLte:
+				var left = eval(ctx, e1);
+				var right = eval(ctx, e2);
+				var unsignedCompare = switch (op) { case OpGt | OpGte | OpLt | OpLte: true; case _: false; };
+				binopValue(ctx, op, isEvalTarget(ctx) && unsignedCompare && isUIntExpr(e1) ? unsigned(left) : left, isEvalTarget(ctx) && unsignedCompare && isUIntExpr(e2) ? unsigned(right) : right, p);
 			case _: binopValue(ctx, op, eval(ctx, e1), eval(ctx, e2), p);
 		};
 	}
@@ -761,10 +787,39 @@ class EvalEmitter {
 		}
 		var fn = EvalValueTools.vresolve(eval(ctx, callee));
 		var args = [for (a in argExprs) eval(ctx, a)];
+		var isTrace = switch (callee.expr) {
+			case TField(_, FStatic(c, cf)) if (c.path.pack.join(".") == "haxe" && c.path.name == "Log" && cf.name == "trace"): true;
+			case _: false;
+		};
+		if (isEvalTarget(ctx) && isTrace && argExprs.length > 0 && isUIntExpr(argExprs[0]))
+			args[0] = unsignedValue(args[0]);
+		if (isEvalTarget(ctx) && isTrace && argExprs.length > 1)
+			args[1] = normalizeTraceValue(argExprs[1], args[1]);
 		return switch (fn) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(recv, f): callAt(ctx, p, f, [recv].concat(args));
 			case v: EvalExceptions.unexpectedValue(ctx, v, "function", p);
+		};
+	}
+
+	static function normalizeTraceValue(e:TExpr, v:EvalValue):EvalValue {
+		if (isUIntExpr(e)) return unsignedValue(v);
+		return switch [e.expr, v] {
+			case [TCast(inner, _) | TMeta(_, inner) | TParenthesis(inner), value]: normalizeTraceValue(inner, value);
+			case [TArrayDecl(el), VArray(va)]:
+				for (i in 0...el.length) if (i < va.avalues.length) va.avalues[i] = normalizeTraceValue(el[i], va.avalues[i]);
+				v;
+			case [TObjectDecl(fields), VObject(o)]:
+				switch (o.oproto) {
+					case ODictionary(m):
+						for (field in fields) {
+							var key = EvalHash.hash(field.key.name);
+							if (m.exists(key)) m.set(key, normalizeTraceValue(field.expr, m.get(key)));
+						}
+					case _:
+				}
+				v;
+			case _: v;
 		};
 	}
 
