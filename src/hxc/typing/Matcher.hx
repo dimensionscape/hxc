@@ -288,6 +288,8 @@ class PatternMaker {
 			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
 			if (pat != null) return pat;
 		} catch (_:Dynamic) {}
+		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90)
+			throw new TypingError("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
 		var v = addLocal(pctx, false, i, t, p);
 		return PatVariable(v);
 	}
