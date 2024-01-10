@@ -1589,7 +1589,12 @@ class Typer {
 				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
 			}
 		}
-		if (mt == null) return null;
+		if (mt == null) {
+			// A qualified type path has its own missing-type diagnostic. Keep the
+			// package prefix in the message instead of reporting the first segment
+			// as an unknown value.
+			throw new TypingError("Type not found : " + segs.join("."), p);
+		}
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
 		// Each chain link's source span ends at its own segment (reconstructed from the right edge), so
