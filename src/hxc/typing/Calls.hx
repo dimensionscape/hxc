@@ -800,6 +800,16 @@ class Calls {
 		// body error inside a block would otherwise be recorded as a batch diagnostic and the first
 		// candidate would win with a poisoned result. Trial diagnostics roll back per attempt.
 		var multi = candidates.length > 1;
+		var receiverExtern = switch (fa.host) {
+			case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFunctions.hasClassFlag(c, CExtern);
+			case FHAnon: false;
+		};
+		if (!receiverExtern) switch (TypeFunctions.follow(fa.on.type)) {
+			case TInst(c, _): receiverExtern = TypeFunctions.hasClassFlag(c, CExtern);
+			case _:
+		}
+		var allExtern = multi && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
+		var successes:Array<{cf:TClassField, expr:TExpr}> = [];
 		for (cf in candidates) {
 			var diagBefore = ctx.com.diagnostics.length;
 			var oldRaise = ctx.com.raiseTypingErrors;
@@ -832,7 +842,8 @@ class Calls {
 					}
 				});
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
-				return r;
+				if (!allExtern) return r;
+				successes.push({cf: cf, expr: r});
 			} catch (e:UnifyError) {
 				restore();
 				failures.push({cf: cf, msg: hxc.core.TPrinting.betterErrorMessage(e.errors), pos: p, depth: 0});
@@ -844,6 +855,25 @@ class Calls {
 				throw e;
 			}
 		}
+		if (successes.length == 1) return successes[0].expr;
+		var externAmbiguous = successes.length > 1 && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
+		if (externAmbiguous) {
+			var minArgs = 0x7fffffff;
+			for (s in successes) switch (TypeFunctions.follow(s.cf.type)) {
+				case TFun(sig) if (sig.args.length < minArgs): minArgs = sig.args.length;
+				case _:
+			}
+			var narrow = [for (s in successes) switch (TypeFunctions.follow(s.cf.type)) {
+				case TFun(sig) if (sig.args.length == minArgs): s;
+				case _: null;
+			}].filter(function(s) return s != null);
+			if (narrow.length == 1) return narrow[0].expr;
+			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
+			for (s in successes)
+				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sTypeStr(s.cf.type), s.cf.namePos, 1);
+			return successes[0].expr;
+		}
+		if (successes.length > 1) return successes[0].expr;
 		if (failures.length == 0) throw new TypingError("No matching overload", p);
 		// A single candidate (or several failing identically) raises the one error; distinct failures
 		// report each overload with its own reason (duplicates removed by message, then either the one
