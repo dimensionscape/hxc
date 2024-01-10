@@ -104,9 +104,9 @@ class TPrinting {
 				'$args -> ${sFun(ctx, sig.ret, false)}';
 			case TAnon(a):
 				switch (a.status.get()) {
-					case Statics(c): "{ Statics " + Globals.sTypePath(c.path) + " }";
-					case EnumStatics(e): "{ EnumStatics " + Globals.sTypePath(e.path) + " }";
-					case AbstractStatics(ab): "{ AbstractStatics " + Globals.sTypePath(ab.path) + " }";
+					case Statics(c): "Class<" + Globals.sTypePath(c.path) + ">";
+					case EnumStatics(e): "Enum<" + Globals.sTypePath(e.path) + ">";
+					case AbstractStatics(ab): "Abstract<" + Globals.sTypePath(ab.path) + ">";
 					case _:
 						// The fields render in descending name order.
 						var names = [for (k in a.fields.keys()) k];
