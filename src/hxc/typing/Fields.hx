@@ -191,6 +191,16 @@ class Fields {
 		function makeAccess(isInline:Bool):FieldAccess {
 			return FieldAccessTools.create(e, f, fh, isInline, pfull);
 		}
+		switch [f.kind, fh, e.expr] {
+			case [Var(v), FHInstance(_, _), TConst(TSuper)]:
+				switch (mode) {
+					case MGet | MCall(_) if (v.read == AccCall):
+					case MSet(_) if (v.write == AccCall):
+					case _:
+						ctx.com.addDiagnostic("Normal variables cannot be accessed with 'super', use 'this' instead", pfield);
+				}
+			case _:
+		}
 		return switch (f.kind) {
 			case Method(m):
 				if (isSet && !m.match(MethDynamic) && !ctx.untypedMode)
@@ -204,8 +214,8 @@ class Fields {
 					case _:
 						AKField(methodAccess());
 				}
-			case Var(vk):
-				var acc = isSet ? vk.write : vk.read;
+				case Var(vk):
+					var acc = isSet ? vk.write : vk.read;
 				// An AccNo/AccNever access outside the owner resolves to AKNo, which errors only when the
 				// value is actually read, written or called.
 				function normalFailure():AccessKind return AKNo(AKField(makeAccess(false)), pfield);
@@ -311,7 +321,7 @@ class Fields {
 				case Statics(c): "Class<" + hxc.core.Globals.sTypePath(c.path) + ">";
 				case EnumStatics(e): "Enum<" + hxc.core.Globals.sTypePath(e.path) + ">";
 				case AbstractStatics(ab): "Abstract<" + hxc.core.Globals.sTypePath(ab.path) + ">";
-				case _: "<structure>";
+				case _: hxc.core.TPrinting.sTypeStr(t);
 			};
 			case _: "Type";
 		};

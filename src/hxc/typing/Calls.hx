@@ -243,6 +243,7 @@ class Calls {
 		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
+			if (msg.indexOf(" has no field ") >= 0) return new TypingError(msg, pos, depth);
 			if (msg.indexOf("For function argument '") >= 0) return new TypingError(msg, pos, depth);
 			return new TypingError(msg + "\nFor " + (opt ? "optional " : "") + "function argument '" + name + "'", pos, depth);
 		}
@@ -475,7 +476,14 @@ class Calls {
 				if (hasEnumMatch(et.type)) {
 					var cases:Array<SwitchCase> = [{values: [el[0]], guard: null, expr: new Expr(EConst(CIdent("true")), p), pos: p}];
 					var def = {e: new Expr(EConst(CIdent("false")), p), pos: p};
-					return AKExpr(Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p));
+					var matched = Match.matchExpr(ctx, e1, cases, def, WithTypeTools.withType(ctx.com.basic.tbool), true, p);
+					var matchedVoid = switch (TypeFunctions.follow(matched.type)) {
+						case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Void"): true;
+						case _: false;
+					};
+					return AKExpr(matchedVoid
+						? TypeFunctions.mk(matched.expr, ctx.com.basic.tbool, matched.pos)
+						: matched);
 				}
 			case EField(e1, "bind", _):
 				// `f.bind(args)` partial application: when f is a function, bind the given args and return

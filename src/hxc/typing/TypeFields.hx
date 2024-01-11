@@ -471,6 +471,7 @@ class TypeFields {
 	// An abstract's underlying type must not cycle back through other abstracts. Runs after resolution so
 	// every thisType is loaded (delayed to PForce).
 	public static function checkRecursiveAbstracts(ctx:Context):Void {
+		var reported = new Map<String, Bool>();
 		for (mt in ctx.types) switch (mt) {
 			case TAbstractDecl(a) if (a.thisType != null && !TypeFunctions.hasMeta(":coreType", a.meta)):
 				var stack:Array<TAbstract> = [a];
@@ -480,7 +481,13 @@ class TypeFields {
 					switch (TypeFunctions.follow(t)) {
 						case TAbstract(a2, _) if (!TypeFunctions.hasMeta(":coreType", a2.meta)):
 							if (stack.indexOf(a2) >= 0) {
-								ctx.addDiagnostic("Abstract underlying type cannot be recursive", a2.pos);
+								var names = [for (x in stack) x.path.pack.concat([x.path.name]).join(".")];
+								names.sort(Reflect.compare);
+								var key = names.join("|");
+								if (!reported.exists(key)) {
+									reported.set(key, true);
+									ctx.addDiagnostic("Abstract underlying type cannot be recursive", a2.pos);
+								}
 								break;
 							}
 							stack.push(a2);

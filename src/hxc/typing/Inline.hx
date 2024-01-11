@@ -382,6 +382,7 @@ class Inline {
 		}
 		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
+		if (absMember) checkAbstractWrite(value);
 		// Unwrap a single-expression block.
 		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		var result = binds.length == 0 ? value : TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
@@ -395,6 +396,34 @@ class Inline {
 		if (binds.length == 0 && !hxc.core.TypeUnification.typeIseqStrict(result.type, tret))
 			result = TypeFunctions.mk(TCast(result, null), tret, p);
 		return result;
+	}
+
+	// Abstract operator bodies may write through their abstract receiver. Preserve the reference
+	// check_write diagnostics after receiver substitution, in particular for final fields and locals
+	// passed to the inline operator.
+	static function checkAbstractWrite(root:TExpr):Void {
+		function check(e:TExpr):Void {
+			switch (e.expr) {
+				case TBinop(OpAssign | OpAssignOp(_), lhs, _):
+					switch (lhs.expr) {
+						case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)):
+							throw new TypingError("Cannot modify abstract value of final local", lhs.pos);
+						case TField(_, fa):
+							var cf = switch (fa) {
+								case FInstance(_, _, f) | FStatic(_, f) | FAnon(f) | FClosure(_, f): f;
+								case FEnum(_, _) | FDynamic(_): null;
+							};
+							if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfFinal))
+								throw new TypingError("Cannot modify abstract value of final field", lhs.pos);
+						case _:
+					}
+					check(lhs);
+					TexprTools.iter(check, e);
+				case _:
+					TexprTools.iter(check, e);
+			}
+		}
+		check(root);
 	}
 
 	// The body-map pass flags a side effect on assignments, increments,

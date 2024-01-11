@@ -13,6 +13,7 @@ import hxc.typing.Typeload.TypeParamHost;
 import haxe.ds.StringMap;
 
 class TypeResolve {
+	static var heritagePositions:Map<String,Position> = new Map();
 	static final pNull = Position.nullPos;
 
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
@@ -160,10 +161,18 @@ class TypeResolve {
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
-				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false);
+				heritagePositions.set(Context.pathKey(c.path), pt.pos);
+				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
+					throw err;
+				};
 				checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
-				var t = Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false);
+				heritagePositions.set(Context.pathKey(c.path), pt.pos);
+				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
+					throw err;
+				};
 				checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
@@ -378,7 +387,7 @@ class TypeResolve {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
 				case TInst(csup, params):
-					if (extendsChain(csup, c)) throw new ContextError("Recursive class", p);
+					if (extendsChain(csup, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(csup.path)) != null ? heritagePositions.get(Context.pathKey(csup.path)) : p);
 					// A final class or interface cannot be extended; @:hack lifts the check for an extern
 					// super, and a
 					// type-parameter class is exempt.
@@ -412,7 +421,7 @@ class TypeResolve {
 				case TInst(intf, params):
 					if (TypeFunctions.hasClassFlag(c, CInterface))
 						throw new ContextError("Interfaces cannot implement another interface (use extends instead)", p);
-					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
+					if (extendsChain(intf, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(intf.path)) != null ? heritagePositions.get(Context.pathKey(intf.path)) : p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
 					c.interfaces.push({c: intf, params: params});
@@ -788,8 +797,21 @@ class TypeResolve {
 		if (th == null) {
 			return Typeload.loadInstance(ctx, typeParams, exprPath, hxc.ast.Position.nullPos, false);
 		}
-		switch (th.ct) {
+		 switch (th.ct) {
 			case CTPath(tp):
+				if (tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null && ctx.currentModule != null) {
+					var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(ctx.currentModule.path));
+					var imported = false;
+					if (imports != null) for (imp in imports.rawImports) switch (imp.mode) {
+						case INormal | IAsName(_):
+							var names = [for (pn in imp.path) pn.name];
+							if (names.length == 3 && names[0] == "haxe" && names[1] == "macro" && names[2] == "Expr") imported = true;
+						case IAll:
+							var names = [for (pn in imp.path) pn.name];
+							if (names.length == 2 && names[0] == "haxe" && names[1] == "macro") imported = true;
+					};
+					if (!imported) throw new hxc.context.Context.ContextError("Type not found : Expr", th.pos);
+				}
 				var isExprOf =
 					(tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
 						&& tp.tname == "Expr" && tp.tsub == "ExprOf")
@@ -799,6 +821,25 @@ class TypeResolve {
 			case _:
 		}
 		return Typeload.loadTypeHint(ctx, typeParams, th, false);
+	}
+
+	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>):Void {
+		if (th == null || ctx.currentModule == null) return;
+		switch (th.ct) {
+			case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null):
+				var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(ctx.currentModule.path));
+				var imported = false;
+			if (imports != null) for (imp in imports.rawImports) switch (imp.mode) {
+				case INormal | IAsName(_):
+					var names = [for (pn in imp.path) pn.name];
+					if (names.length == 3 && names[0] == "haxe" && names[1] == "macro" && names[2] == "Expr") imported = true;
+				case IAll:
+					var names = [for (pn in imp.path) pn.name];
+					if (names.length == 2 && names[0] == "haxe" && names[1] == "macro") imported = true;
+			}
+				if (!imported) throw new hxc.context.Context.ContextError("Type not found : Expr", th.pos);
+			case _:
+		}
 	}
 
 	static function resolveEnum(ctx:Context, e:TEnum, d:Definition<EnumFlag, Array<EnumConstructor>>, p:Position):Void {
@@ -867,6 +908,10 @@ class TypeResolve {
 				}
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
+				if (isMacroField) {
+					for (fa in fd.fArgs) checkMacroExprHint(ctx, fa.type);
+					checkMacroExprHint(ctx, fd.fType);
+				}
 				var args:Array<TSignatureArg> = [];
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];

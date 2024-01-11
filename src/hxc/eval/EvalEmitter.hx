@@ -116,7 +116,9 @@ class EvalEmitter {
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
-			case TThrow(e1): EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), e.pos);
+		case TThrow(e1):
+				var throwPos = new Position(e.pos.file, e.pos.min, e.pos.min + 5);
+			EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), throwPos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
 			case TObjectDecl(fields):
 				var m = new Map<Int, EvalValue>();
@@ -829,10 +831,7 @@ class EvalEmitter {
 		// its active call site rather than its function entry.
 		var ev = EvalContext.getEval(ctx);
 		if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
-		return try f(args) catch (ex:EvalRunTimeException) {
-			EvalExceptions.addCallSite(ex, p);
-			throw ex;
-		};
+		return f(args);
 	}
 
 	// Resolve a method by hashed name from the given prototype up its parent chain (used for super

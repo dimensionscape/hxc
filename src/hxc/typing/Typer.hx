@@ -1058,7 +1058,15 @@ class Typer {
 			case ECheckType(e1, th):
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
-				var te2 = castOrUnify(ctx, t, te, p);
+				var te2 = try castOrUnify(ctx, t, te, p) catch (err:TypingError) {
+					switch (TypeFunctions.follow(t)) {
+						case TAnon(_) if (err.message.indexOf(" should ") >= 0):
+							ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+							te;
+						case _:
+							throw err;
+					}
+				};
 				// PHYSICAL identity, not structural. A monomorph bound to t is still a distinct TMono
 				// object, so the reification cast is kept (matters on cpp where throwing (getNull():Int)
 				// must materialize the int).
@@ -1253,6 +1261,10 @@ class Typer {
 			}
 			var smf = ctx.curclass.statics.get(i);
 			if (smf != null) {
+				if (TypeFunctions.hasClassFieldFlag(smf, CfImpl)
+					&& !TypeFunctions.hasClassFieldFlag(ctx.curfield, CfImpl)
+					&& !TypeFunctions.hasClassFieldFlag(smf, CfEnum))
+					throw new TypingError("Cannot access non-static field " + smf.name + " from static method", p);
 				// Inside an abstract impl method, a bare call to a sibling member method threads `this`.
 				var absImpl = switch (ctx.curclass.kind) { case KAbstractImpl(ab): ab; case _: null; };
 				if (absImpl != null && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
@@ -2114,21 +2126,28 @@ class Typer {
 		for (ev in vl) {
 			var n = ev.evName.name;
 			var pv = ev.evName.pos;
-			var t = Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
-			var e:Null<TExpr> = switch (ev.evExpr) {
-				case null: null;
-				case ex:
-					var oldLoop = ctx.inLoop;
-					if (ev.evStatic) ctx.inLoop = false;
-					var te = typeExpr(ctx, ex, WithTypeTools.withType(t));
-					ctx.inLoop = oldLoop;
-					castOrUnify(ctx, t, te, p);
-			};
-			var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, t, pv);
-			v.meta = ev.evMeta;
-			if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
-			if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
-			out.push({v: v, e: e});
+			var t:T = ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
+			try {
+				var e:Null<TExpr> = switch (ev.evExpr) {
+					case null: null;
+					case ex:
+						var oldLoop = ctx.inLoop;
+						if (ev.evStatic) ctx.inLoop = false;
+						var te = try typeExpr(ctx, ex, WithTypeTools.withType(t)) catch (err:TypingError) { ctx.inLoop = oldLoop; throw err; };
+						ctx.inLoop = oldLoop;
+						castOrUnify(ctx, t, te, p);
+				};
+				var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, t, pv);
+				v.meta = ev.evMeta;
+				if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
+				if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
+				out.push({v: v, e: e});
+			} catch (err:TypingError) {
+				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+				var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, TypeFunctions.tDynamic, pv);
+				v.meta = ev.evMeta;
+				out.push({v: v, e: null});
+			}
 		}
 		for (ve in out) {
 			if (isVoid(TypeFunctions.follow(ve.v.type)))
@@ -2198,6 +2217,7 @@ class Typer {
 				};
 				return TypeFunctions.mk(TReturn(null), expectVoid ? v : monoOrDynamic(ctx, withType, p), p);
 			case ex:
+				try {
 				// An arrow function's implicit return carries the ImplicitReturn source so a switch body
 				// can settle an open return mono from a bare `return;` arm.
 				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue
@@ -2222,6 +2242,12 @@ class Typer {
 					return TypeFunctions.mk(TBlock([te, TypeFunctions.mk(TReturn(null), t, p)]), t, te.pos);
 				}
 				return TypeFunctions.mk(TReturn(te), monoOrDynamic(ctx, withType, p), p);
+				} catch (err:TypingError) {
+					if (ctx.com.isMacro) throw err;
+					ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
+					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
+				}
 		}
 	}
 

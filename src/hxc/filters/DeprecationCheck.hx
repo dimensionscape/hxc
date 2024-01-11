@@ -13,6 +13,7 @@ class DeprecationCheck {
 	static var warnedPositions:Map<String, Bool> = new Map();
 	static var typedefConstructionPositions:Map<String, Bool> = new Map();
 	static var typedefTypePositions:Map<String, Bool> = new Map();
+	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
 
 	static function warnDeprecation(com:Context, classMeta:Metadata, fieldMeta:Metadata, s:String, p:Position):Void {
 		var key = p.file + ":" + p.min;
@@ -63,8 +64,10 @@ class DeprecationCheck {
 	static function isTypedefType(p:Position):Bool return typedefTypePositions.exists(p.file + ":" + p.min);
 
 	public static function checkEnumUse(ctx:hxc.typing.TyperContext, en:TEnum, ef:TEnumField, p:Position):Void {
+		var enumDeprecated = TypeFunctions.hasMeta(":deprecated", en.meta) || deprecatedEnums.exists(en);
+		if (TypeFunctions.hasMeta(":deprecated", en.meta)) deprecatedEnums.set(en, true);
 		checkMeta(ctx.com, ctx.curclass == null ? [] : ctx.curclass.meta, ctx.curfield == null ? [] : ctx.curfield.meta, en.meta, "enum", p);
-		if (!TypeFunctions.hasMeta(":deprecated", en.meta))
+		if (!enumDeprecated)
 			checkMeta(ctx.com, ctx.curclass == null ? [] : ctx.curclass.meta, ctx.curfield == null ? [] : ctx.curfield.meta, ef.meta, "enum field", p);
 	}
 
@@ -120,17 +123,19 @@ class DeprecationCheck {
 							checkCf(cf, e.pos);
 						case FEnum(en, ef):
 							if (!viaTypedef) {
-								checkMeta(com, classMeta, fieldMeta, en.meta, "enum", e.pos);
-								if (!TypeFunctions.hasMeta(":deprecated", en.meta)) checkMeta(com, classMeta, fieldMeta, ef.meta, "enum field", e.pos);
+								var enumTypeExpr = switch (e1.expr) { case TTypeExpr(TEnumDecl(_)): true; case _: false; };
+								if (TypeFunctions.hasMeta(":deprecated", en.meta)) deprecatedEnums.set(en, true);
+								if (!enumTypeExpr) checkMeta(com, classMeta, fieldMeta, en.meta, "enum", e.pos);
+								if (!deprecatedEnums.exists(en)) checkMeta(com, classMeta, fieldMeta, ef.meta, "enum field", e.pos);
 							}
 						case _:
 					}
 				case TNew(c, _, el):
 					for (x in el) expr(x);
 					var abstractImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
-					if (!typedefConstructionPositions.exists(e.pos.file + ":" + e.pos.min) && !TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl) checkClass(c, e.pos);
+					if (!TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl) checkClass(c, e.pos);
 					// The AST doesn't carry the correct overload for TNew (#8557).
-					if (!typedefConstructionPositions.exists(e.pos.file + ":" + e.pos.min) && !TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl && c.constructor != null && c.constructor.overloads.length == 0)
+					if (!TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl && c.constructor != null && c.constructor.overloads.length == 0)
 						checkCf(c.constructor, e.pos);
 				case TTypeExpr(mt):
 					checkModuleType(mt, e.pos);

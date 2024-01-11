@@ -274,7 +274,7 @@ class Operators {
 					case [KFloat, KAbstract(_, _)]: unify(ctx, e2.type, tfloat, e2.pos); tfloat;
 					case [KAbstract(_, _), KInt]: unify(ctx, e1.type, tint, e1.pos); tint;
 					case [KInt, KAbstract(_, _)]: unify(ctx, e2.type, tint, e2.pos); tint;
-					case _: throw new TypingError("Cannot add the given types", p);
+					case _: throw new TypingError("Cannot add " + hxc.core.TPrinting.sTypeStr(e1.type) + " and " + hxc.core.TPrinting.sTypeStr(e2.type), p);
 				};
 				mkOp(e1, e2, t);
 			case OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
@@ -310,6 +310,17 @@ class Operators {
 						// casts). .
 						try c1 = Typer.castOrUnify(ctx, c2.type, c1, c1.pos) catch (_:TypingError) c2 = Typer.castOrUnify(ctx, c1.type, c2, c2.pos);
 					}
+				}
+				switch [TypeFunctions.follow(c1.type), TypeFunctions.follow(c2.type)] {
+					case [TEnum(en, _), _] | [_, TEnum(en, _)]:
+						var hasArgs = false;
+						for (name in en.constrs.keys()) switch (TypeFunctions.follow(en.constrs.get(name).type)) {
+							case TFun(sig) if (sig.args.length > 0): hasArgs = true;
+							case _:
+						}
+						if (hasArgs && p.file.indexOf("/haxe/") < 0 && p.file.indexOf("\\haxe\\") < 0)
+							ctx.com.warning(hxc.core.WarningList.Warning.WUnsafeEnumEquality, [], "Equality operations on this enum might lead to unexpected results because some constructors have arguments", p);
+					case _:
 				}
 				mkOp(c1, c2, tbool);
 			case OpGt | OpGte | OpLt | OpLte:

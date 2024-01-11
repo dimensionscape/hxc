@@ -1209,7 +1209,9 @@ class TypeUnification {
 
 	static function unifyAnons(uctx:UnificationContext, a:T, b:T, a1:TAnon, a2:TAnon):Void {
 		try {
-			for (n in a2.fields.keys()) {
+			var targetNames = [for (n in a2.fields.keys()) n];
+			targetNames.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
+			for (n in targetNames) {
 				var f2 = a2.fields.get(n);
 				if (a1.fields.exists(n)) {
 					var f1 = a1.fields.get(n);

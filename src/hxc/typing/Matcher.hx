@@ -267,8 +267,14 @@ class PatternMaker {
 		function checkTyped(e:TExpr):Null<PatKind> {
 			return switch (skipValue(e).expr) {
 				case TConst(ct): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConConst(ct), p), []);
-				case TField(_, FEnum(en, ef)):
-					hxc.filters.DeprecationCheck.checkEnumUse(pctx.ctx, en, ef, p);
+					case TField(_, FEnum(en, ef)):
+						hxc.filters.DeprecationCheck.checkEnumUse(pctx.ctx, en, ef, p);
+						switch (TypeFunctions.follow(e.type)) {
+							case TFun(_):
+								pctx.ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(e.type) + " should be " + hxc.core.TPrinting.sTypeStr(t), p);
+								throw new TypingError("Invalid match: Not enough patterns", p);
+						case _:
+					}
 					unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
 				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
@@ -279,7 +285,9 @@ class PatternMaker {
 			var e = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
 			var pat = checkTyped(e);
 			if (pat != null) return pat;
-		} catch (_:TypingError) {}
+		} catch (err:TypingError) {
+			if (err.message == "Invalid match: Not enough patterns") throw err;
+		}
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
 		// when that fails too. .
@@ -290,8 +298,10 @@ class PatternMaker {
 			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
 			if (pat != null) return pat;
 		} catch (_:Dynamic) {}
-		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90)
-			throw new TypingError("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
+		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90) {
+			pctx.ctx.com.addDiagnostic("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
+			return PatAny;
+		}
 		var v = addLocal(pctx, false, i, t, p);
 		return PatVariable(v);
 	}
@@ -598,6 +608,8 @@ class CaseMaker {
 					[for (i in 0...mappedTypes.length) PatternMaker.make(pctx, true, mappedTypes[i], elems[i])];
 				case EConst(CIdent("_")):
 					[for (i in 0...mappedTypes.length) ({pat: PatAny, pos: el[0].pos} : Pattern)];
+				case EConst(CIdent(_)):
+					throw new TypingError("Cannot bind matched tuple to variable, use _ instead", el[0].pos);
 				case _:
 					throw new TypingError("tuple switch case must be a [..] pattern of arity " + mappedTypes.length, p);
 			};
@@ -1473,6 +1485,7 @@ class Match {
 			case WithType(t, _): t;
 		};
 	}
+
 
 	public static function matchExpr(ctx:TyperContext, e:Expr, cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>, withType:WithType, postfix:Bool, p:Position):TExpr {
 		// `switch [a, b]` (a bracket literal, possibly parenthesized) is a tuple match: each element is its
