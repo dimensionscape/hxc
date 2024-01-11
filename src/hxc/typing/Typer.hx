@@ -918,6 +918,7 @@ class Typer {
 						}
 					}
 					var el:Array<TExpr> = [];
+					var missing:Array<String> = [];
 					for (arg in scSig.args) {
 						var te = byName.get(arg.name);
 						if (te != null) el.push(te);
@@ -926,8 +927,13 @@ class Typer {
 							if (ctorTf != null) for (a in ctorTf.args) if (a.v.name == arg.name && a.c != null) { dflt = a.c; break; }
 							if (dflt != null) el.push(dflt);
 							else if (arg.opt) el.push(TexprTools.makeNull(arg.t, p));
-							else throw new TypingError("Object requires field " + arg.name, p);
+							else { missing.push(arg.name); el.push(TexprTools.makeNull(arg.t, p)); }
 						}
+					}
+					if (missing.length > 0) {
+						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						var msg = missing.length == 1 ? "Object requires field " + missing[0] : "Object requires fields: " + missing.join(", ");
+						if (ctx.inCallArgs) throw new TypingError(msg, p) else ctx.com.addDiagnostic(msg, p);
 					}
 					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
 					if (evars.length == 0) enew else TypeFunctions.mk(TBlock(evars.concat([enew])), scHit.t, p);
@@ -1139,6 +1145,8 @@ class Typer {
 						else sb.addChar(cj);
 						j++;
 					}
+					if (StringTools.trim(sb.toString()) == "")
+						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + i + 3, p.min + j));
 					parts.push(hxc.parser.Parser.parseExprString(sb.toString(), p.file, defines));
 					i = j;
 				} else if (isIdentStart(d)) {
@@ -1350,6 +1358,10 @@ class Typer {
 		}
 			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
 			throw new TypingError("Unknown identifier : " + i, p);
+		}
+		switch (mt) {
+			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
+			case _:
 		}
 		// Hxc resolves field types in a separate pass; resolve the referenced module so its
 		// statics have real types (idempotent via processed).
@@ -1594,6 +1606,10 @@ class Typer {
 			// package prefix in the message instead of reporting the first segment
 			// as an unknown value.
 			throw new TypingError("Type not found : " + segs.join("."), p);
+		}
+		switch (mt) {
+			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
+			case _:
 		}
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
@@ -2573,6 +2589,10 @@ class Typer {
 	}
 
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		try switch (ctx.com.getType({pack: tp.path.tpackage, name: tp.path.tname}, tp.pos, tp.path.tsub)) {
+			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx.com, td, tp.pos); hxc.filters.DeprecationCheck.markTypedefConstruction(p); hxc.filters.DeprecationCheck.markTypedefConstruction(tp.pos);
+			case _:
+		} catch (_:Dynamic) {}
 		var t:T;
 		if (tp.path.tparams.length == 0) {
 			ctx.com.callArgumentStack.unshift(el);
@@ -2633,7 +2653,11 @@ class Typer {
 					} catch (e:hxc.core.TypeUnification.UnifyError) {
 						if (firstError == null) firstError = e;
 					} catch (e:TypingError) {
-						if (firstError == null) firstError = e;
+						if (StringTools.startsWith(e.message, "Unknown identifier :") && e.message.indexOf("\n") >= 0)
+							e = new TypingError(e.message.split("\n")[0], e.pos, e.depth);
+						var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
+						var prevMsg = prevError == null ? "" : prevError.message;
+						if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
 					}
 				}
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));

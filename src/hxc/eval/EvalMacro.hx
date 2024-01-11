@@ -998,7 +998,7 @@ class EvalMacro {
 		function packageRules():EvalValue {
 			var entries:Array<EvalValue> = [];
 			var current = hxc.core.Globals.platformName(com.platform);
-			var names = ["python", "php", "neko", "lua", "jvm", "java", "js", "hl", "flash", "cs", "cpp", "eval"];
+			var names = ["python", "php", "neko", "lua", "jvm", "js", "java", "hl", "flash", "cs", "cpp", "eval"];
 			if (!com.platformConfig.sys) names = ["sys"].concat(names);
 			for (name in names)
 				if (name != current) {

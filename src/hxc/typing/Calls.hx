@@ -242,6 +242,8 @@ class Calls {
 		// trailing annotation.
 		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
+			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
+			if (msg.indexOf("For function argument '") >= 0) return new TypingError(msg, pos, depth);
 			return new TypingError(msg + "\nFor " + (opt ? "optional " : "") + "function argument '" + name + "'", pos, depth);
 		}
 		var out:Array<TExpr> = [];
@@ -431,6 +433,8 @@ class Calls {
 
 	public static function typeCallAccess(ctx:TyperContext, callee:Expr, el:Array<Expr>, withType:WithType, p:Position, forceInline = false, forcePos:Null<Position> = null):AccessKind {
 		switch (callee.expr) {
+			case EConst(CIdent("null")):
+				throw new TypingError("This expression cannot be called", callee.pos);
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
 				return AKExpr(typeTrace(ctx, el, withType, p));
 			case EConst(CIdent("$type")) if (el.length == 1):

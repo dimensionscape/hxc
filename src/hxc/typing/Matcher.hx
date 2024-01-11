@@ -267,7 +267,9 @@ class PatternMaker {
 		function checkTyped(e:TExpr):Null<PatKind> {
 			return switch (skipValue(e).expr) {
 				case TConst(ct): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConConst(ct), p), []);
-				case TField(_, FEnum(en, ef)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
+				case TField(_, FEnum(en, ef)):
+					hxc.filters.DeprecationCheck.checkEnumUse(pctx.ctx, en, ef, p);
+					unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
 				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
 				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 				case _: null;
@@ -948,13 +950,13 @@ class DtCompile {
 		return [for (e in rest) TypeFunctions.mk(e.expr, mapType(e.type), e.pos)];
 	}
 
-	static function getColumnSigma(subject:TExpr, cases:Array<MatchCase>):{sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}>, nullCases:Array<MatchCase>} {
-		var sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>}> = [];
+	static function getColumnSigma(subject:TExpr, cases:Array<MatchCase>):{sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>, casePos:Position}>, nullCases:Array<MatchCase>} {
+		var sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>, casePos:Position}> = [];
 		var unguarded:Array<Con> = [];
 		var nullCases:Array<MatchCase> = [];
-		function addSigma(con:Con, argPositions:Array<Position>) {
+		function addSigma(con:Con, argPositions:Array<Position>, casePos:Position) {
 			for (s in sigma) if (Constructor.equal(s.con, con)) { s.argPositions = argPositions; return; }
-			sigma.push({con: con, unguarded: false, argPositions: argPositions});
+			sigma.push({con: con, unguarded: false, argPositions: argPositions, casePos: casePos});
 		}
 		function markUnguarded(con:Con) {
 			for (c in unguarded) if (Constructor.equal(c, con)) return;
@@ -967,7 +969,7 @@ class DtCompile {
 						nullCases.push({c: mc.c, bindings: bindings, patterns: mc.patterns.slice(1)});
 					case PatConstructor(con, patterns):
 						if (mc.c.guard == null) markUnguarded(con);
-						addSigma(con, [for (pp in patterns) pp.pos]);
+						addSigma(con, [for (pp in patterns) pp.pos], mc.c.pos);
 					case PatBind(v, pat1):
 						loop([{v: v, p: pat.pos, e: subject}].concat(bindings), pat1);
 					case PatVariable(_) | PatAny:
@@ -982,6 +984,24 @@ class DtCompile {
 		for (s in sigma) for (c in unguarded) if (Constructor.equal(c, s.con)) { s.unguarded = true; break; }
 		sigma.sort(function(a, b) return a.con.pos.min - b.con.pos.min);
 		return {sigma: sigma, nullCases: nullCases};
+	}
+
+	static function checkCompatiblePatterns(subject:TExpr, sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>, casePos:Position}>):Void {
+		if (sigma.length == 0) return;
+		var kind = switch (TypeFunctions.follow(subject.type)) {
+			case TInst(c, _) if (c.path.pack.length == 0 && c.path.name == "Array"): "length";
+			case TEnum(_, _): "enum";
+			case TDynamic(_) | TMono(_): switch (sigma[0].con.kind) { case ConArray(_): "length"; case ConEnum(_, _): "enum"; case _: "value"; };
+			case TAbstract(a, _) if (a.impl != null && a.isEnum): "value";
+			case _: "value";
+		};
+		for (s in sigma) switch [kind, s.con.kind] {
+			case ["length", ConArray(_)]:
+			case ["enum", ConEnum(_, _)]:
+			case ["value", ConArray(_)] | ["length", _] | ["enum", _]:
+				throw new TypingError("Incompatible pattern", s.casePos);
+			case _:
+		}
 	}
 
 	public static function compile(mctx:MatcherContext, subjects:Array<TExpr>, cases:Array<MatchCase>):Dt {
@@ -1042,6 +1062,7 @@ class DtCompile {
 		var subject = subjects[0];
 		var rest = subjects.slice(1);
 		var sig = getColumnSigma(subject, cases);
+		checkCompatiblePatterns(subject, sig.sigma);
 		var switchCases:Array<{con:Con, unguarded:Bool, dt:Dt}> = [];
 		for (s in sig.sigma) {
 			var subSubjects = getSubSubjects(mctx, subject, s.con, s.argPositions);

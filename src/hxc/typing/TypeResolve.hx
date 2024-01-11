@@ -412,10 +412,9 @@ class TypeResolve {
 				case TInst(intf, params):
 					if (TypeFunctions.hasClassFlag(c, CInterface))
 						throw new ContextError("Interfaces cannot implement another interface (use extends instead)", p);
+					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
-					// Reject cycles between implemented interfaces.
-					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					c.interfaces.push({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
 					inheritAutoBuild(ctx, c, intf);

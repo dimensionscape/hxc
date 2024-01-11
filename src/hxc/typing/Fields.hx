@@ -234,6 +234,7 @@ class Fields {
 						};
 						ok ? AKField(makeAccess(false)) : normalFailure();
 					case AccInline:
+						hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
 						AKField(makeAccess(true));
 					case AccCall:
 						// Reading/writing a property through its own accessor (or under @:bypassAccessor)
@@ -306,7 +307,12 @@ class Fields {
 			case TInst(c, _): hxc.core.Globals.sTypePath(c.path);
 			case TAbstract(a, _): hxc.core.Globals.sTypePath(a.path);
 			case TEnum(e, _): hxc.core.Globals.sTypePath(e.path);
-			case TAnon(_): "<structure>";
+			case TAnon(a): switch (a.status.get()) {
+				case Statics(c): "Class<" + hxc.core.Globals.sTypePath(c.path) + ">";
+				case EnumStatics(e): "Enum<" + hxc.core.Globals.sTypePath(e.path) + ">";
+				case AbstractStatics(ab): "Abstract<" + hxc.core.Globals.sTypePath(ab.path) + ">";
+				case _: "<structure>";
+			};
 			case _: "Type";
 		};
 	}

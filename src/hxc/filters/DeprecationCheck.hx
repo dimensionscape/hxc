@@ -11,6 +11,8 @@ import hxc.context.Context;
 class DeprecationCheck {
 	// One warning per usage position.
 	static var warnedPositions:Map<String, Bool> = new Map();
+	static var typedefConstructionPositions:Map<String, Bool> = new Map();
+	static var typedefTypePositions:Map<String, Bool> = new Map();
 
 	static function warnDeprecation(com:Context, classMeta:Metadata, fieldMeta:Metadata, s:String, p:Position):Void {
 		var key = p.file + ":" + p.min;
@@ -33,6 +35,37 @@ class DeprecationCheck {
 			printDeprecationMessage(com, classMeta, fieldMeta, entry, s, p);
 			return;
 		}
+	}
+
+	public static function checkTypedefUse(com:Context, td:TDef, p:Position):Void {
+		typedefTypePositions.set(p.file + ":" + p.min, true);
+		for (entry in td.meta) if (entry.name == ":deprecated") {
+			printDeprecationMessage(com, [], [], entry, "typedef", p);
+			return;
+		}
+	}
+
+	public static function checkTypedefConstruction(com:Context, td:TDef, p:Position):Void {
+		for (entry in td.meta) if (entry.name == ":deprecated") {
+			var msg = switch (entry.params) {
+				case [{expr: EConst(CString(m, _))}]: m;
+				case _: "This typedef is deprecated in favor of " + hxc.core.TPrinting.sTypeStr(td.type);
+			};
+			warnDeprecation(com, [], [], msg, p);
+			return;
+		}
+	}
+
+	public static function markTypedefConstruction(p:Position):Void {
+		typedefConstructionPositions.set(p.file + ":" + p.min, true);
+	}
+
+	static function isTypedefType(p:Position):Bool return typedefTypePositions.exists(p.file + ":" + p.min);
+
+	public static function checkEnumUse(ctx:hxc.typing.TyperContext, en:TEnum, ef:TEnumField, p:Position):Void {
+		checkMeta(ctx.com, ctx.curclass == null ? [] : ctx.curclass.meta, ctx.curfield == null ? [] : ctx.curfield.meta, en.meta, "enum", p);
+		if (!TypeFunctions.hasMeta(":deprecated", en.meta))
+			checkMeta(ctx.com, ctx.curclass == null ? [] : ctx.curclass.meta, ctx.curfield == null ? [] : ctx.curfield.meta, ef.meta, "enum field", p);
 	}
 
 	// A property access resolves to its accessor at typing, so the property field never appears
@@ -68,12 +101,14 @@ class DeprecationCheck {
 		function checkModuleType(mt:ModuleType, p:Position):Void switch (mt) {
 			case TClassDecl(c): checkClass(c, p);
 			case TEnumDecl(en): checkMeta(com, classMeta, fieldMeta, en.meta, "enum", p);
+			case TTypeDecl(td): checkTypedefUse(com, td, p);
 			case _:
 		}
 		function expr(e:TExpr):Void {
 			switch (e.expr) {
 				case TField(e1, fa):
 					expr(e1);
+					var viaTypedef = isTypedefType(e1.pos) || switch (e1.expr) { case TTypeExpr(TTypeDecl(_)): true; case _: false; };
 					switch (fa) {
 						case FStatic(c, cf) | FInstance(c, _, cf):
 							checkClass(c, e.pos);
@@ -84,15 +119,18 @@ class DeprecationCheck {
 							if (co != null) checkClass(co.c, e.pos);
 							checkCf(cf, e.pos);
 						case FEnum(en, ef):
-							checkMeta(com, classMeta, fieldMeta, en.meta, "enum", e.pos);
-							checkMeta(com, classMeta, fieldMeta, ef.meta, "enum field", e.pos);
+							if (!viaTypedef) {
+								checkMeta(com, classMeta, fieldMeta, en.meta, "enum", e.pos);
+								if (!TypeFunctions.hasMeta(":deprecated", en.meta)) checkMeta(com, classMeta, fieldMeta, ef.meta, "enum field", e.pos);
+							}
 						case _:
 					}
 				case TNew(c, _, el):
 					for (x in el) expr(x);
-					checkClass(c, e.pos);
+					var abstractImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+					if (!typedefConstructionPositions.exists(e.pos.file + ":" + e.pos.min) && !TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl) checkClass(c, e.pos);
 					// The AST doesn't carry the correct overload for TNew (#8557).
-					if (c.constructor != null && c.constructor.overloads.length == 0)
+					if (!typedefConstructionPositions.exists(e.pos.file + ":" + e.pos.min) && !TypeFunctions.hasClassFlag(c, CAbstract) && !abstractImpl && c.constructor != null && c.constructor.overloads.length == 0)
 						checkCf(c.constructor, e.pos);
 				case TTypeExpr(mt):
 					checkModuleType(mt, e.pos);
