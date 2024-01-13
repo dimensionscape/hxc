@@ -16,6 +16,31 @@ import hxc.typing.FieldAccess;
 import hxc.typing.Matcher.Match;
 
 class Calls {
+	static function checkAbstractCallWrite(ctx:TyperContext, receiver:TExpr, fa:FieldAccess, p:Position):Void {
+		var cf = fa.field;
+		if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) return;
+		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:Dynamic) null;
+		if (host == null) return;
+		hxc.typing.TypeFields.forceFieldBody(ctx.com, host, cf);
+		var body = cf.expr;
+		if (body == null) return;
+		var arg:TVar = null;
+		switch (body.expr) { case TFunction(tf) if (tf.args.length > 0): arg = tf.args[0].v; case _: return; }
+		var writes = false;
+		function visit(e:TExpr):Void switch (e.expr) {
+			case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _) if (v == arg): writes = true;
+			case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (v == arg): writes = true;
+			case _: TexprTools.iter(visit, e);
+		};
+		visit(body);
+		if (!writes) return;
+		switch (receiver.expr) {
+			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)):
+				throw new TypingError("Cannot modify abstract value of final local", p);
+			case _:
+		}
+	}
+
 	public static function makeCall(ctx:TyperContext, e:TExpr, params:Array<TExpr>, t:T, p:Position, forceInline = false, forcePos:Null<Position> = null):TExpr {
 		var inlinePos = forcePos == null ? p : forcePos;
 		if (forceInline) switch (e.expr) {
@@ -731,6 +756,7 @@ class Calls {
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument. A generic
 				// method specializes here like a plain field call does.
+				checkAbstractCallWrite(ctx, se.thisExpr, se.access, p);
 				var mono = monomorphizeParamsWith(ctx, se.access.field, callFieldExpr(ctx, se.access), se.access);
 				var ce = mono.expr;
 				switch (TypeFunctions.follow(ce.type)) {

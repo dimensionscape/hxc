@@ -65,6 +65,74 @@ class Operators {
 		}
 	}
 
+	static function checkAbstractFinalTarget(e:TExpr, ?errorPos:Position):Void {
+		var ep = errorPos == null ? e.pos : errorPos;
+		switch (e.expr) {
+			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)):
+				throw new TypingError("Cannot modify abstract value of final local", ep);
+			case TField(_, fa):
+				var cf = switch (fa) {
+					case FInstance(_, _, f) | FStatic(_, f) | FAnon(f) | FClosure(_, f): f;
+					case FEnum(_, _) | FDynamic(_): null;
+				};
+				if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfFinal))
+					throw new TypingError("Cannot modify abstract value of final field", ep);
+			case _:
+		}
+	}
+
+	static function abstractOpWrites(ctx:TyperContext, t:T, op:Binop):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _):
+				var writes = false;
+				for (aop in a.ops) {
+					if (!(Type.enumEq(aop.op, op) || Type.enumEq(aop.op, OpAssignOp(op)))) continue;
+					hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, aop.cf);
+					var body = aop.cf.expr;
+					if (body != null) {
+						var arg:TVar = switch (body.expr) { case TFunction(tf) if (tf.args.length > 0): tf.args[0].v; case _: null; };
+						function visit(e:TExpr):Void {
+							switch (e.expr) {
+								case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _) if (v == arg): writes = true;
+								case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (v == arg): writes = true;
+								case _: TexprTools.iter(visit, e);
+							}
+						}
+						visit(body);
+					}
+				}
+				writes;
+			case _: false;
+		};
+	}
+
+	static function abstractUnopWrites(ctx:TyperContext, t:T, op:Unop):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _) if (a.impl != null):
+				var writes = false;
+				for (au in a.unops) if (au.op == op) {
+					hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
+					var body = au.cf.expr;
+					if (body != null) {
+						var arg:TVar = switch (body.expr) { case TFunction(tf) if (tf.args.length > 0): tf.args[0].v; case _: null; };
+						function visit(e:TExpr):Void switch (e.expr) {
+							case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _) if (v == arg): writes = true;
+							case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (v == arg): writes = true;
+							case _: TexprTools.iter(visit, e);
+						};
+						visit(body);
+					}
+				}
+				writes;
+			case _: false;
+		};
+	}
+
+	static function abstractHasUnop(t:T, op:Unop):Bool return switch (TypeFunctions.follow(t)) {
+		case TAbstract(a, _): [for (au in a.unops) if (au.op == op) au].length > 0;
+		case _: false;
+	};
+
 	static function isSameAssignTarget(e1:TExpr, e2:TExpr):Bool {
 		return switch [e1.expr, e2.expr] {
 			case [TLocal(v1), TLocal(v2)] if (v1 == v2): true;
@@ -799,6 +867,7 @@ class Operators {
 			return {init: init, lv: lv};
 		}
 		function compound(te1:TExpr):TExpr {
+			if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
 			// native op stays as a compound TBinop the evaluator applies in place. The target is only
@@ -888,6 +957,7 @@ class Operators {
 					case AKField(fa) | AKAccessor(fa): FieldAccessTools.getFieldExpr(fa, FWrite);
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
 				};
+				if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 				switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
 					case BinopSpecial(opCall, false): opCall;
@@ -951,6 +1021,13 @@ class Operators {
 			case Spread:
 				throw new TypingError("Spread unary operator is only allowed for unpacking the last argument in a call with rest arguments", p);
 			case Increment | Decrement:
+				var pre = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (_:Dynamic) null;
+			if (pre != null && !abstractHasUnop(pre.type, op) && !abstractUnopWrites(ctx, pre.type, op)) switch (pre.expr) {
+				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)): checkAssign(ctx, pre);
+				case TField(_, _):
+					try checkAssign(ctx, pre) catch (err:TypingError) { throw err; }
+				case _:
+			}
 				// `a[k]++` / `--a[k]` on an abstract @:arrayAccess: bind base+key to temps, then get, op
 				// with 1, and set, yielding the old value for postfix and the new value for prefix.
 				switch (e.expr) {
@@ -968,12 +1045,14 @@ class Operators {
 				}
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MSet(null), withType)) {
 					case AKExpr(te):
+						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 					case AKField(fa):
 						var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
 						if (accCall) accessorIncr(ctx, op, flag, fa, withType, p) else {
 							var te = FieldAccessTools.getFieldExpr(fa, FWrite);
+							if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 							var abs = tryAbstractUnop(ctx, op, flag, te, p);
 							if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 						}
@@ -985,10 +1064,12 @@ class Operators {
 						var te = switch (acc2) {
 							case AKExpr(te2): te2;
 							case AKField(fa) | AKAccessor(fa): FieldAccessTools.getFieldExpr(fa, FWrite);
+							case AKNo(_, _): Typer.typeExpr(ctx, e, WithTypeTools.value);
 							case _: throw new TypingError("This expression cannot be accessed for writing", np);
 						};
+						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
-						if (abs != null) abs else throw new TypingError("This expression cannot be accessed for writing", np);
+						if (abs != null) abs else { checkAssign(ctx, te); throw new TypingError("This expression cannot be accessed for writing", np); }
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:

@@ -199,6 +199,7 @@ private class TypeParameterFrame {
 }
 
 class PatternMaker {
+	public static var matchSubjectPos:Null<Position> = null;
 	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
 		try TypeUnification.unifyDefault(a, b) catch (e:UnifyError) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 	}
@@ -221,6 +222,20 @@ class PatternMaker {
 		pctx.currentLocals.set(name, {v: v, p: p});
 		pctx.ctx.locals.set(name, v);
 		return v;
+	}
+
+	static function reportPatternTypo(t:T, field:String, pctx:PatternContext, p:Position):Void {
+		var path = "", names:Array<String> = [];
+		switch (TypeFunctions.follow(t)) {
+			case TEnum(en, _): path = hxc.core.Globals.sTypePath(en.path); names = en.names;
+			case TAbstract(a, _) if (a.isEnum && a.impl != null):
+				path = hxc.core.Globals.sTypePath(a.path);
+				names = [for (cf in a.impl.orderedStatics) if (TypeFunctions.hasClassFieldFlag(cf, CfImpl) && TypeFunctions.hasClassFieldFlag(cf, CfEnum)) cf.name];
+			case _:
+		}
+		var similar = hxc.core.StringError.getSimilar(field, names);
+		if (similar.length > 0)
+			pctx.ctx.com.warning(hxc.core.WarningList.Warning.WTyper, [], "Potential typo detected (expected similar values are " + [for (s in similar) path + "." + s].join(", ") + ")", p);
 	}
 
 	static function getGeneralModuleType(ctx:TyperContext, mt:ModuleType, p:Position):T {
@@ -272,7 +287,7 @@ class PatternMaker {
 						switch (TypeFunctions.follow(e.type)) {
 							case TFun(_):
 								pctx.ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(e.type) + " should be " + hxc.core.TPrinting.sTypeStr(t), p);
-								throw new TypingError("Invalid match: Not enough patterns", p);
+								throw new TypingError("Invalid match: Not enough patterns", matchSubjectPos == null ? ef.pos : matchSubjectPos);
 						case _:
 					}
 					unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
@@ -376,6 +391,12 @@ class PatternMaker {
 			case EBinop(OpArrow, e1, e2):
 				// Extractor pattern `expr => subpattern`: bind `_` to the subject, type the extractor
 				// expression, then match subpattern against its result type.
+				switch (e1.expr) {
+					case EBinop(OpEq, {expr: EConst(CIdent(name))}, _) if (pctx.currentLocals.exists(name)):
+						var ep = switch (e1.expr) { case EBinop(_, left, _): left.pos; case _: e1.pos; };
+						throw new TypingError("Unknown identifier : " + name, ep);
+					case _:
+				}
 				var restore = Typer.saveLocals(ctx);
 				ctx.locals = pctx.ctxLocals.copy();
 				var v = Typer.addLocal(ctx, VGenerated, "_", t, p);
@@ -464,10 +485,13 @@ class PatternMaker {
 						}
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
-			case EField(_, _, _):
+			case EField(_, field, _):
 				// A qualified value pattern (Type.Const / Type.EnumCtor / static const) matches by value.
 				var te = try Typer.typeExpr(ctx, e, WithTypeTools.withType(t)) catch (_:TypingError) null;
-				if (te == null) throw new TypingError("This pattern is not yet ported", p);
+				if (te == null) {
+					reportPatternTypo(t, field, pctx, p);
+					throw new TypingError("Only inline or read-only (default, never) fields can be used as a pattern", p);
+				}
 				switch (skipValue(te).expr) {
 					case TConst(ct): unifyExpected(te.type); PatConstructor(Constructor.make(ConConst(ct), p), []);
 					case TField(_, FEnum(en, ef)): unifyExpected(te.type); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
@@ -1281,7 +1305,7 @@ class TexprConverter {
 
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
 		vLookup = new Map();
-		return toTexprRec(ctx, tSwitch, withType, dt, DRToplevel);
+		return toTexprRec(ctx, tSwitch, withType, dt, DRToplevel, false);
 	}
 
 	static function fieldAccessNameOf(fa:TFieldAccess):String {
@@ -1318,17 +1342,18 @@ class TexprConverter {
 		return d1 == d2 || DtEquality.kindEquals(d1.t, d2.t);
 	}
 
-	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion):Null<TExpr> {
+	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion, hasDefault:Bool):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
 		var e:Null<TExpr> = switch (dt.t) {
 			case Leaf(c):
 				c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), basic.tvoid, c.pos);
 			case Switch(subject, cases, def):
+				var branchHasDefault = switch (def.t) { case Fail: false; case _: true; };
 				if (cases.length == 1) {
 					switch (cases[0].con.kind) {
 						case ConFields(_):
-							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, rec);
+							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, rec == DRToplevel ? DRAfterSwitch : rec, branchHasDefault);
 						case _:
 					}
 				}
@@ -1355,12 +1380,52 @@ class TexprConverter {
 					};
 					throw new TypingError("Unmatched patterns: " + sSubject(s, subject), errorPos);
 				}
+				function hasFail(d:Dt):Bool return switch (d.t) {
+					case Fail: true;
+					case Bind(_, d1): hasFail(d1);
+					case Guard(_, _, d2) | GuardNull(_, _, d2): hasFail(d2);
+					case Switch(_, _, dflt): hasFail(dflt);
+					case Leaf(_): false;
+				};
+				var enumParamRoot = switch (subject.expr) {
+					case TEnumParameter(e1, _, _): switch (e1.expr) { case TField(_, _): false; case _: true; };
+					case _: false;
+				};
+				var constructorBound = switch (subject.expr) {
+					case TLocal(v): switch (vLookup.get(v.id)) { case {expr: TCall(_, _)}: true; case _: false; };
+					case _: false;
+				};
+				var reportPartial = withType.match(NoValue) && !branchHasDefault && (enumParamRoot || (topLevel && constructorBound));
+				if (reportPartial && def.t.match(Fail)) switch (TypeFunctions.follow(subject.type)) {
+					case TEnum(_, _):
+						for (sc in cases) switch (sc.con.kind) {
+							case ConEnum(_, ef) if (Constructor.arity(sc.con) > 0 && hasFail(sc.dt)):
+								throw new TypingError("Unmatched patterns: " + ef.name + "(_)", sc.dt.pos);
+							case _:
+						}
+					case _:
+				}
 				// The default converts and reports first so a missing constructor at this switch is the
 				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that
 				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
 				var droppedCompleteDefault = topLevel && complete && runtimeFinite;
-				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec);
-				if (defE == null && !complete && !withType.match(NoValue)) reportUnmatched();
+				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, branchHasDefault);
+				var nullaryMissing = switch (TypeFunctions.follow(subject.type)) {
+					case TEnum(en, _):
+						var ok = true;
+						var missingNames = unmatched == null ? [] : unmatched;
+						for (name in missingNames) {
+							var ef = en.constrs.get(name);
+							switch (ef == null ? null : TypeFunctions.follow(ef.type)) {
+								case TFun(sig) if (sig.args.length > 0): ok = false;
+								case _:
+							}
+						}
+						ok;
+					case _: false;
+				};
+				var reportFiniteNoValue = topLevel && runtimeFinite && !branchHasDefault && nullaryMissing;
+				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue)) reportUnmatched();
 				// Group: cases that share a decision emit one case with several values, sorted by constructor
 				// order
 				var groups:Array<{cons:Array<Con>, dt:Dt}> = [];
@@ -1374,13 +1439,20 @@ class TexprConverter {
 				var caseFailed = false;
 				var swCases:Array<TSwitchCase> = [];
 				for (g in groups) {
-					var ce = toTexprRec(ctx, tSwitch, withType, g.dt, nextRec);
+					var ce = toTexprRec(ctx, tSwitch, withType, g.dt, nextRec, branchHasDefault);
 					if (ce != null) {
 						g.cons.sort(Constructor.compare);
 						swCases.push({values: [for (c in g.cons) Constructor.toTexpr(ctx, false, c)], expr: ce});
 					} else caseFailed = true;
 				}
-				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite) && !withType.match(NoValue))
+				var enumParameterSubject = switch (subject.expr) {
+					case TEnumParameter(_, _, _): true;
+					case _: false;
+				};
+				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
+					&& (!withType.match(NoValue) || (enumParameterSubject && !hasDefault)))
+				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
+					&& (!withType.match(NoValue) || (enumParameterSubject && !hasDefault)))
 					reportUnmatched();
 				// An enum switch dispatches on the constructor index.
 				var isNullableSubject = TypeFunctions.isExplicitNull(subject.type);
@@ -1427,9 +1499,9 @@ class TexprConverter {
 					TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 				}
 			case Guard(e, dt1, dt2):
-				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec, hasDefault);
 				if (eThen == null) null else {
-					var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec);
+					var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
 					if (eElse != null) TypeFunctions.mk(TIf(e, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
 					else if (withType.match(NoValue) && (rec.match(DRToplevel) || rec.match(DRAfterSwitch)))
 						TypeFunctions.mk(TIf(e, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
@@ -1437,8 +1509,8 @@ class TexprConverter {
 				}
 			case GuardNull(e, dt1, dt2):
 				var topLevel = rec.match(DRToplevel);
-				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec);
-				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec);
+				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec, hasDefault);
+				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
 				if (eThen == null) {
 					if (topLevel || withType.match(NoValue)) eElse else throw new TypingError("Unmatched patterns: null", e.pos);
 				} else if (eElse == null) {
@@ -1454,7 +1526,7 @@ class TexprConverter {
 				}
 			case Bind(bl, dt2):
 				for (b in bl) vLookup.set(b.v.id, b.e);
-				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec);
+				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
 					el.push(inner);
@@ -1518,6 +1590,7 @@ class Match {
 			subjects = [subjectE];
 			subjectTypes = [subjectE.type];
 		}
+		PatternMaker.matchSubjectPos = subjects.length > 0 ? subjects[0].pos : p;
 		// An unbound monomorph expected type gives the case bodies nothing to check against; the first body
 		// would bind it and every sibling branch would then have to unify with that one type. Type the
 		// bodies as plain values, infer the common type, and unify it back into the monomorph. An

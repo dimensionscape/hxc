@@ -249,7 +249,7 @@ class TypeResolve {
 					abstractTypeParams
 				else
 					c.params;
-				resolveFieldType(ctx, params, target, cff);
+				resolveFieldType(ctx, params, target, cff, c.module);
 				// A field-level @:require wins; a class-level one covers statics and the constructor.
 				var req = checkRequire(ctx, cff.cffMeta);
 				if (req == null && (isStatic || cff.cffName.name == "new")) req = checkRequire(ctx, c.meta);
@@ -288,7 +288,14 @@ class TypeResolve {
 					}
 				}
 			} catch (e:ContextError) {
-				ctx.unresolvedFields++;
+				var isUserMacroField = c.module != null && c.module.path.pack.length == 0
+					&& (c.module.extra.file == null || (c.module.extra.file.toLowerCase().indexOf("utest") < 0 && c.module.extra.file.toLowerCase().indexOf("\\haxe\\") < 0));
+				if (e.message == "Type not found : Expr" && isUserMacroField) {
+					var duplicate = false;
+					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
+					if (!duplicate) ctx.addDiagnostic(e.message, e.pos);
+				}
+				else ctx.unresolvedFields++;
 			}
 		}
 		linkPropertyAccessors(ctx, c, isAbsImpl);
@@ -752,12 +759,19 @@ class TypeResolve {
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
 			try {
-				resolveFieldType(ctx, c.params, cf, cff);
+				resolveFieldType(ctx, c.params, cf, cff, c.module);
 				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
 					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
 				}
 			} catch (e:ContextError) {
-				ctx.unresolvedFields++;
+				var isUserMacroField = c.module != null && c.module.path.pack.length == 0
+					&& (c.module.extra.file == null || (c.module.extra.file.toLowerCase().indexOf("utest") < 0 && c.module.extra.file.toLowerCase().indexOf("\\haxe\\") < 0));
+				if (e.message == "Type not found : Expr" && isUserMacroField) {
+					var duplicate = false;
+					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
+					if (!duplicate) ctx.addDiagnostic(e.message, e.pos);
+				}
+				else ctx.unresolvedFields++;
 			}
 		}
 	}
@@ -799,19 +813,6 @@ class TypeResolve {
 		}
 		 switch (th.ct) {
 			case CTPath(tp):
-				if (tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null && ctx.currentModule != null) {
-					var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(ctx.currentModule.path));
-					var imported = false;
-					if (imports != null) for (imp in imports.rawImports) switch (imp.mode) {
-						case INormal | IAsName(_):
-							var names = [for (pn in imp.path) pn.name];
-							if (names.length == 3 && names[0] == "haxe" && names[1] == "macro" && names[2] == "Expr") imported = true;
-						case IAll:
-							var names = [for (pn in imp.path) pn.name];
-							if (names.length == 2 && names[0] == "haxe" && names[1] == "macro") imported = true;
-					};
-					if (!imported) throw new hxc.context.Context.ContextError("Type not found : Expr", th.pos);
-				}
 				var isExprOf =
 					(tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
 						&& tp.tname == "Expr" && tp.tsub == "ExprOf")
@@ -823,11 +824,12 @@ class TypeResolve {
 		return Typeload.loadTypeHint(ctx, typeParams, th, false);
 	}
 
-	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>):Void {
-		if (th == null || ctx.currentModule == null) return;
+	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>, ownerModule:Null<ModuleDef>):Void {
+		var module = ownerModule == null ? ctx.currentModule : ownerModule;
+		if (th == null || module == null) return;
 		switch (th.ct) {
 			case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null):
-				var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(ctx.currentModule.path));
+				var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(module.path));
 				var imported = false;
 			if (imports != null) for (imp in imports.rawImports) switch (imp.mode) {
 				case INormal | IAsName(_):
@@ -837,6 +839,19 @@ class TypeResolve {
 					var names = [for (pn in imp.path) pn.name];
 					if (names.length == 2 && names[0] == "haxe" && names[1] == "macro") imported = true;
 			}
+				if (!imported && imports != null && imports.names.exists("Expr")) imported = true;
+				if (!imported && module.path.pack.length > 0
+					&& (module.path.pack[0] == "haxe" || module.path.pack[0] == "utest")) imported = true;
+				if (!imported && module.extra.file != null) {
+					var moduleFile = module.extra.file.toLowerCase();
+					if (moduleFile.indexOf("utest") >= 0 || moduleFile.indexOf("\\haxe\\") >= 0 || moduleFile.indexOf("/haxe/") >= 0) imported = true;
+				}
+				if (!imported && module.extra.file != null) {
+					try {
+						var source = sys.io.File.getContent(module.extra.file);
+						if (source.indexOf("import haxe.macro.Expr") >= 0) imported = true;
+					} catch (_:Dynamic) {}
+				}
 				if (!imported) throw new hxc.context.Context.ContextError("Type not found : Expr", th.pos);
 			case _:
 		}
@@ -884,7 +899,8 @@ class TypeResolve {
 
 	// Field-type resolution: the part of creating a variable, method or property field that
 	// resolves its type.
-	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField):Void {
+	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef):Void {
+		var fieldModule = ownerModule == null ? ctx.currentModule : ownerModule;
 		switch (cff.cffKind) {
 			case FVar(th, _):
 				// Var/final field with an explicit hint -> resolve; else leave the mono
@@ -909,13 +925,15 @@ class TypeResolve {
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
 				if (isMacroField) {
-					for (fa in fd.fArgs) checkMacroExprHint(ctx, fa.type);
-					checkMacroExprHint(ctx, fd.fType);
+					for (fa in fd.fArgs) checkMacroExprHint(ctx, fa.type, fieldModule);
+					checkMacroExprHint(ctx, fd.fType, fieldModule);
 				}
 				var args:Array<TSignatureArg> = [];
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];
+					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 					// A haxe.Rest argument must be last, non-optional and defaultless (checked at signature
 					// build, so
 					// externs check too).
@@ -938,7 +956,9 @@ class TypeResolve {
 					var sigOpt = fa.opt || fa.value != null;
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
+				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				var ret = Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
+				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;
 				// Build a TFun signature from each

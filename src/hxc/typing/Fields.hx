@@ -332,7 +332,12 @@ class Fields {
 			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
 			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 		}
-		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve);
+		try return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
+		catch (err:FieldNotFoundError) {
+			for (d in ctx.com.diagnostics) if (d.message == "Type not found : Expr")
+				return AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
+			throw err;
+		}
 	}
 
 	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {

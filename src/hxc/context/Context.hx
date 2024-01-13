@@ -304,6 +304,8 @@ class Context {
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
+		if (message == "Type not found : Expr") for (d in diagnostics)
+			if (d.message == message && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 
