@@ -688,9 +688,18 @@ class Filters {
 
 	static function handleAbstractCasts(ctx:TyperContext, e:TExpr):TExpr {
 		function underlying(a:TAbstract, pl:Array<T>, p:Position):T {
-			return TypeFunctions.hasMeta(":multiType", a.meta)
-				? Typer.resolveMultiTypeConcrete(a, pl, p)
-				: TypeFunctions.applyParams(a.params, pl, a.thisType);
+			if (!TypeFunctions.hasMeta(":multiType", a.meta))
+				return TypeFunctions.applyParams(a.params, pl, a.thisType);
+			var open = false;
+			function check(t:T):Void if (!open) switch (TypeFunctions.follow(t)) {
+				case TMono(_): open = true;
+				case TInst(c, _) if (c.kind.match(KTypeParameter(_))): open = true;
+				case TAbstract(_, tl) | TEnum(_, tl) | TInst(_, tl): for (x in tl) check(x);
+				case TFun(sig): for (x in sig.args) check(x.t); check(sig.ret);
+				case _:
+			};
+			for (t in pl) check(t);
+			return open ? TypeFunctions.applyParams(a.params, pl, a.thisType) : Typer.resolveMultiTypeConcrete(a, pl, p);
 		}
 		function maybeCast(e:TExpr, t:T, p:Position):TExpr {
 			return TypeUnification.typeIseqDefault(e.type, t) ? e : TypeFunctions.mk(TCast(e, null), t, p);
@@ -771,8 +780,15 @@ class Filters {
 			case TNew(c, tl, el):
 				switch (c.kind) {
 					case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
-						var concrete = hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos);
-						switch (TypeFunctions.follow(concrete)) {
+						var open = false;
+						for (x in tl) switch (TypeFunctions.follow(x)) {
+							case TMono(_): open = true;
+							case TInst(tc, _) if (tc.kind.match(KTypeParameter(_))): open = true;
+							case _:
+						}
+						if (open) return e;
+						var concrete = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos) catch (_:Dynamic) null;
+						switch (concrete == null ? null : TypeFunctions.follow(concrete)) {
 							case TInst(cc, ctl): TypeFunctions.mk(TNew(cc, ctl, el), e.type, e.pos);
 							case _: e;
 						}

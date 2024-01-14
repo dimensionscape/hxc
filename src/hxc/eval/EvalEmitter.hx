@@ -578,6 +578,8 @@ class EvalEmitter {
 				// going rather than a host NotFound aborting the whole run.
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name))
 				catch (_:hxc.core.NotFound) {
+					var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
+					if (builtins != null) for (b in builtins) if (b.name == EvalHash.hash(cf.name)) return b.v;
 					var late = lateStaticMethod(ctx, c, cf);
 					late != null ? late : EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
 				}
@@ -887,10 +889,31 @@ class EvalEmitter {
 	static function evalNew(ctx:EvalContext, c:TClass, params:TParams, args:Array<EvalValue>, p:Position, ?argPos:Position):EvalValue {
 		switch (c.kind) {
 			case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
-				switch (TypeFunctions.follow(hxc.typing.Typer.resolveMultiTypeConcrete(a, params, p))) {
-					case TInst(tc, _):
-						return evalNew(ctx, tc, params, args, p);
+				var concrete:Null<T> = try hxc.typing.Typer.resolveMultiTypeConcrete(a, params, p) catch (_:Dynamic) null;
+				switch (concrete == null ? null : TypeFunctions.follow(concrete)) {
+					case TInst(tc, ctl): return evalNew(ctx, tc, ctl, args, p);
 					case _:
+						// A generic body can retain an open selector even after its concrete
+						// instance is emitted. The value is available now, so select the same
+						// @:to constructor by its argument shape.
+						for (entry in a.toField) {
+							var ft = TypeFunctions.applyParams(a.params, params, entry.cf.type);
+								switch (TypeFunctions.follow(ft)) {
+								case TFun(sig) if (sig.args.length == args.length + 1):
+									var ok = true;
+					for (i in 0...args.length) {
+										var matched = try runtimeTypeMatches(sig.args[i + 1].t, args[i]) catch (err:Dynamic) {
+											false;
+										};
+										if (!matched) ok = false;
+									}
+									if (ok) switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, params, entry.t))) {
+										case TInst(tc, ctl): return evalNew(ctx, tc, ctl, args, p);
+										case _:
+									}
+								case _:
+							}
+						}
 				}
 			case _:
 		}
@@ -906,6 +929,35 @@ class EvalEmitter {
 			return result;
 		}
 		return constructClass(ctx, c, key, args, p);
+	}
+
+	static function runtimeTypeMatches(t:T, v:EvalValue):Bool return runtimeTypeMatchesDepth(t, v, 0);
+
+	static function runtimeTypeMatchesDepth(t:T, v:EvalValue, depth:Int):Bool {
+		if (depth > 8) return true;
+		return switch (TypeFunctions.follow(t)) {
+			case TDynamic(_): true;
+			case TMono(_): true;
+			case TType(td, tl): runtimeTypeMatchesDepth(TypeFunctions.applyParams(td.params, tl, td.type), v, depth + 1);
+			case TAbstract(a, tl):
+				switch (a.path.name) {
+					case "Int": switch (v) { case VInt(_): true; case _: false; }
+					case "Float": switch (v) { case VFloat(_) | VInt(_): true; case _: false; }
+					case "String": switch (v) { case VString(_) | VNativeString(_): true; case _: false; }
+					case "Bool": switch (v) { case VTrue | VFalse: true; case _: false; }
+					case _: runtimeTypeMatchesDepth(TypeFunctions.applyParams(a.params, tl, a.thisType), v, depth + 1);
+				}
+			case TInst(c, _):
+				switch (c.path.pack.join(".") + "." + c.path.name) {
+					case "builtins.Int": switch (v) { case VInt(_): true; case _: false; }
+					case "Float": switch (v) { case VFloat(_) | VInt(_): true; case _: false; }
+					case "String": switch (v) { case VString(_) | VNativeString(_): true; case _: false; }
+					case "Array": switch (v) { case VArray(_): true; case _: false; }
+					case _: switch (v) { case VInstance(_): true; case VNull: true; case _: false; }
+				}
+			case TEnum(_, _): switch (v) { case VEnumValue(_): true; case _: false; }
+			case _: true;
+		};
 	}
 
 	public static function constructClass(ctx:EvalContext, c:TClass, key:Int, args:Array<EvalValue>, p:Position):EvalValue {

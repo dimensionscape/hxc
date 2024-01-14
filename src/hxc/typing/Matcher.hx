@@ -157,6 +157,107 @@ enum PatKind {
 typedef Pattern = {pat:PatKind, pos:Position};
 typedef UnappliedTypeParam = {m:TMono, old:Null<T>};
 
+private enum PatternUse {
+	UnusedCase;
+	UnusedPattern(p:Position);
+	Used;
+}
+
+private class UnusedPatternCheck {
+	static function copyMatrix(m:Array<Array<Pattern>>):Array<Array<Pattern>> return [for (_ in m) []];
+
+	static function anyPatterns(n:Int, p:Position):Array<Pattern> return [for (_ in 0...n) ({pat: PatAny, pos: p} : Pattern)];
+
+	static function specialize(isTuple:Bool, con:Con, m:Array<Array<Pattern>>):Array<Array<Pattern>> {
+		var out:Array<Array<Pattern>> = [];
+		for (row in m) {
+			if (row.length == 0) continue;
+			var head = row[0];
+			var rest = row.slice(1);
+			function loop(pat:Pattern):Void switch (pat.pat) {
+				case PatConstructor(c, subs) if (!isTuple && Constructor.equal(con, c)):
+					out.push(subs.concat(rest));
+				case PatTuple(subs) if (isTuple):
+					out.push(subs.concat(rest));
+				case PatVariable(_) | PatAny:
+					out.push(anyPatterns(Constructor.arity(con), pat.pos).concat(rest));
+				case PatBind(_, inner):
+					loop(inner);
+				case PatOr(a, b):
+					loop(a); loop(b);
+				case _:
+			}
+			loop(head);
+		}
+		return out;
+	}
+
+	static function defaults(m:Array<Array<Pattern>>):Array<Array<Pattern>> {
+		var out:Array<Array<Pattern>> = [];
+		for (row in m) if (row.length > 0) switch (row[0].pat) {
+			case PatVariable(_) | PatAny: out.push(row.slice(1));
+			case PatBind(_, inner):
+				var one:Array<Pattern> = [inner];
+				out = out.concat(defaults([one.concat(row.slice(1))]));
+			case _:
+		}
+		return out;
+	}
+
+	static function covered(m:Array<Array<Pattern>>, q:Array<Pattern>):Bool {
+		if (q.length == 0) return m.length > 0 && [for (row in m) if (row.length == 0) true].length > 0;
+		if (m.length == 0) return false;
+		var head = q[0], tail = q.slice(1);
+		return switch (head.pat) {
+			case PatConstructor(con, subs): covered(specialize(false, con, m), subs.concat(tail));
+			case PatTuple(subs): covered(specialize(true, Constructor.make(ConArray(subs.length), head.pos), m), subs.concat(tail));
+			case PatVariable(_) | PatAny: covered(defaults(m), tail);
+			case PatOr(a, b): covered(m, [a].concat(tail)) && covered(m, [b].concat(tail));
+			case PatBind(_, inner): covered(m, [inner].concat(tail));
+			case PatExtractor(_, _, _): true;
+		};
+	}
+
+	static function usefulness(prior:Array<Array<Pattern>>, row:Array<Pattern>):PatternUse {
+		for (i in 0...row.length) switch (row[i].pat) {
+			case PatOr(a, b):
+				var before = prior.copy();
+				var unused = 0, first:Null<Position> = null;
+				for (alt in [a, b]) {
+					var candidate = row.copy();
+					candidate[i] = alt;
+					if (covered(before, candidate)) {
+						unused++;
+						if (first == null) first = alt.pos;
+					} else {
+						before.push(candidate);
+					}
+				}
+				return unused == 2 ? UnusedCase : (first == null ? Used : UnusedPattern(first));
+			case _:
+		}
+		return covered(prior, row) ? UnusedCase : Used;
+	}
+
+	public static function check(ctx:TyperContext, cases:Array<MatchCase>):Void {
+		var prior:Array<Array<Pattern>> = [];
+		for (mc in cases) {
+			switch (usefulness(prior, mc.patterns)) {
+				case UnusedCase:
+					var casePos = mc.c.pos;
+					var patternPos = mc.warningPos == null ? mc.patterns[0].pos : mc.warningPos;
+					if (mc.patterns.length == 1 && Position.getInfos(casePos).line != Position.getInfos(patternPos).line)
+						ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This pattern is unused", patternPos);
+					else
+						ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This case is unused", casePos);
+				case UnusedPattern(pos): ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This pattern is unused", pos);
+				case Used:
+			}
+			if (mc.c.guard == null) prior.push(mc.patterns);
+		}
+	}
+}
+
 class PatternContext {
 	public var ctx:TyperContext;
 	public var orLocals:Null<Map<String, {v:TVar, p:Position}>>;
@@ -315,6 +416,7 @@ class PatternMaker {
 		} catch (_:Dynamic) {}
 		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90) {
 			pctx.ctx.com.addDiagnostic("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
+			if (pctx.orLocals != null) return PatVariable(addLocal(pctx, false, i, t, p));
 			return PatAny;
 		}
 		var v = addLocal(pctx, false, i, t, p);
@@ -699,7 +801,7 @@ enum DtKind {
 typedef Binding = {v:TVar, p:Position, e:TExpr};
 
 // One row of the pattern matrix during compilation: (case, accumulated bindings, the row patterns).
-typedef MatchCase = {c:Case, bindings:Array<Binding>, patterns:Array<Pattern>};
+typedef MatchCase = {c:Case, bindings:Array<Binding>, patterns:Array<Pattern>, ?warningPos:Position};
 
 class MatcherContext {
 	public var ctx:TyperContext;
@@ -1629,13 +1731,14 @@ class Match {
 				for (v in cas.values) flattenOr(v);
 				for (v in alts) {
 					var r = CaseMaker.makeTuple(ctx, subjectTypes, [v], cas.guard, cas.expr, withType, postfix, cas.pos);
-					matchCases.push({c: r.c, bindings: [], patterns: r.pats});
+					matchCases.push({c: r.c, bindings: [], patterns: r.pats, warningPos: v.pos});
 				}
 			} else {
 				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
 			}
 		}
+		UnusedPatternCheck.check(ctx, matchCases);
 		var tSwitch = inferSwitchType(ctx, withType, matchCases, allowMinVoid);
 		if (tmono != null) {
 			var skip = allowMinVoid && switch (TypeFunctions.follow(tmono)) {

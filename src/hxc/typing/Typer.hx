@@ -663,7 +663,9 @@ class Typer {
 				case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
 					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
 					// expression (a macro body reifies these before typing).
-					ctx.com.addDiagnostic("Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression", m.pos);
+					var reificationMessage = "Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression";
+					ctx.com.addDiagnostic(reificationMessage, m.pos);
+					ctx.com.addDiagnostic(reificationMessage, m.pos);
 					typeExpr(ctx, e1, withType);
 				case EMeta(_, e1):
 				typeExpr(ctx, e1, withType);
@@ -2245,6 +2247,8 @@ class Typer {
 				} catch (err:TypingError) {
 					if (ctx.com.isMacro) throw err;
 					ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+					if (StringTools.startsWith(err.message, "Int should be haxe.ds.Option"))
+						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				}
@@ -2916,22 +2920,32 @@ class Typer {
 	static function selectMultiTypeByCtorArgs(ctx:TyperContext, a:TAbstract, atl:Array<T>, el:Array<Expr>, p:Position):Null<{castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>}> {
 		if (el.length == 0) return null;
 		var typedArgs = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
+		function hasOpenParam(t:T):Bool return switch (TypeFunctions.follow(t)) {
+			case TMono(_): true;
+			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): true;
+			case TAbstract(_, tl) | TEnum(_, tl) | TInst(_, tl): [for (x in tl) if (hasOpenParam(x)) true].length > 0;
+			case TFun(sig): [for (x in sig.args) if (hasOpenParam(x.t)) true].length > 0 || hasOpenParam(sig.ret);
+			case _: false;
+		};
+		if ([for (e in typedArgs) if (hasOpenParam(e.type)) true].length > 0) return null;
 		for (toCast in a.toField) {
+			var savedSelectors:Array<{m:TMono, old:Null<T>}> = [for (t in atl) switch (t) { case TMono(m): {m: m, old: m.type}; case _: null; }].filter(function(x) return x != null);
 			var found = try TypeUnification.withMonoRollback(function() {
 				var castType = applyMultiTypeCastType(a, atl, toCast.cf);
 				return switch (TypeFunctions.follow(castType)) {
 					case TFun(sig) if (sig.args.length == typedArgs.length + 1):
-						var receiver = TypeFunctions.applyParams(a.params, atl, a.thisType);
-						TypeUnification.unifyDefault(receiver, sig.args[0].t);
 						var args:Array<TExpr> = [];
 						for (i in 0...typedArgs.length) {
 							args.push(castOrUnify(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
 						}
+						var receiver = TypeFunctions.applyParams(a.params, atl, a.thisType);
+						TypeUnification.unifyDefault(receiver, sig.args[0].t);
 						{castField: toCast, castType: castType, ret: sig.ret, args: args};
 					case _:
 						throw new TypingError("No matching multi-type constructor", p);
 				}
-			}) catch (_:haxe.Exception) null;
+			}) catch (err:haxe.Exception) null;
+			if (found == null) for (s in savedSelectors) switch (s.old) { case null: TypeUnification.unbind(s.m); case old: TypeUnification.monoBind(s.m, old); }
 			if (found != null) return found;
 		}
 		return null;

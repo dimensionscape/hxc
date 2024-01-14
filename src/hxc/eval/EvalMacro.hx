@@ -134,6 +134,10 @@ class EvalMacro {
 			if (imports == null) return encodeArray([]);
 			return encodeArray([for (imp in imports.rawImports) encodeImportExpr(ec, imp)]);
 		});
+		reg2("getLocalModule", "get_local_module", function(a) {
+			var m = currentModule();
+			return mkString(m == null ? "" : Context.sTypePath(m.path));
+		});
 		// Context.parse / parseInlineString both call load("do_parse")(expr, pos, inline). When not
 		// inlined, every sub-expression position is rewritten to the given pos, so a parsed macro result
 		// reports the call site, not line 1 of the parsed string.
@@ -326,16 +330,28 @@ class EvalMacro {
 		reg2("defineModule", "define_module", function(a) {
 			var parts = strOf(a[0]).split(".");
 			var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
-			if (!com.moduleLut.exists(Context.pathKey(path))) {
-				var dp = Position.nullPos;
-				var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, dp)];
-				var imports = (a.length > 2 && a[2] != VNull) ? [for (iv in arrOf(a[2])) decodeImport(ec, iv, dp)] : [];
-				var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
+			var dp = Position.nullPos;
+			var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, dp)];
+			var imports = (a.length > 2 && a[2] != VNull) ? [for (iv in arrOf(a[2])) decodeImport(ec, iv, dp)] : [];
+			var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
+			var existing = com.moduleLut.get(Context.pathKey(path));
+			if (existing != null) {
+				var added = hxc.context.ModuleLoader.addTypeDeclsToModule(com, existing, types, imports, usings, dp);
+				for (mt in added) switch (mt) {
+					case TClassDecl(c):
+						var def = com.declOfType.get(Context.pathKey(c.path));
+						if (def != null) switch (def.decl) {
+							case EClass(d): hxc.typing.TypeResolve.resolveClass(com, c, d, def.pos);
+							case _:
+						}
+						hxc.typing.TypeFields.forceClassFields(com, c);
+					case _:
+				}
+			} else {
 				var m = hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp);
 				hxc.typing.TypeResolve.resolveModule(com, m);
 				for (mt in m.types) switch (mt) {
-					case TClassDecl(c):
-						hxc.typing.TypeFields.forceClassFields(com, c);
+					case TClassDecl(c): hxc.typing.TypeFields.forceClassFields(com, c);
 					case _:
 				}
 			}
@@ -625,9 +641,17 @@ class EvalMacro {
 		// but the compile fails; the class keeps its declared fields.
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
 			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
+		} catch (e:EvalExceptions.EvalRunTimeException) {
+			var info = runtimeMacroError(e);
+			if (info != null) com.addDiagnostic(info.message, info.pos);
+			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		} catch (e:haxe.Exception) {
-			com.addDiagnostic("Build failure: " + e.message, entry.pos);
+			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
+		// The reference applies all @:build field transformations before typing field bodies. Doing
+		// this once also keeps a later build macro from invalidating the field table while the previous
+		// macro's bodies are still being forced.
+		hxc.typing.TypeFields.forceClassFields(com, c);
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
@@ -681,7 +705,8 @@ class EvalMacro {
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-					resolveMacroFn(ec, callee, callExpr.pos)(values);
+					var result = resolveMacroFn(ec, callee, callExpr.pos)(values);
+					result;
 				case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
 			};
 			curTctx = savedTctx;
@@ -708,8 +733,6 @@ class EvalMacro {
 			// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
 			// just the field signatures (resolveClass would re-process extends and reject the set super).
 			hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
-			// Type the freshly added field bodies so their expr is set for the interpreter.
-			hxc.typing.TypeFields.forceClassFields(com, c);
 			com.currentModule = savedResolveMod;
 		} catch (e:haxe.Exception) {
 			curBuildClass = savedBuildClass;
@@ -1299,6 +1322,14 @@ class EvalMacro {
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
 			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 			lastModuleCount = macroCom.modules.length;
+			if (fieldName != null) {
+				var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
+				if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
+					staleMacroCtx = macroCtx;
+					macroCtx = null;
+					lastModuleCount = -1;
+				}
+			}
 		} else if (macroCtx != null && fieldName != null) {
 			var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
 			if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
@@ -3200,6 +3231,30 @@ class EvalMacro {
 
 	public static function reportError(msg:String, pos:Position):Void {
 		if (currentCom != null) currentCom.addDiagnostic(msg, pos);
+	}
+
+	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position}> {
+		var ec = try EvalContext.getCtx() catch (_:Dynamic) null;
+		if (ec == null) return null;
+		return switch (EvalValueTools.vresolve(ex.value)) {
+			case VInstance(_):
+				var msg = EvalStdLib.stringOf(EvalField.field(ec, ex.value, EvalHash.hash("message")));
+				var pv = EvalField.field(ec, ex.value, EvalHash.hash("pos"));
+				var pos = switch (EvalValueTools.vresolve(pv)) {
+					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
+					case VObject(o): switch (o.oproto) {
+						case ODictionary(fields):
+							var file = EvalStdLib.stringOf(fields.get(EvalHash.hash("file")));
+							var min = switch (fields.get(EvalHash.hash("min"))) { case VInt(i): i; case _: -1; };
+							var max = switch (fields.get(EvalHash.hash("max"))) { case VInt(i): i; case _: -1; };
+							new Position(file, min, max);
+						case _: Position.nullPos;
+					};
+					case _: Position.nullPos;
+				};
+				{message: msg, pos: pos};
+			case _: null;
+		};
 	}
 
 	// haxe.macro.Type.MetaAccess: get/has/add/extract/remove over a mutable list.

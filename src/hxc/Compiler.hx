@@ -8,6 +8,10 @@ import hxc.typing.TypeFields;
 import hxc.core.Globals;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.Path;
+import hxc.core.TypeFunctions;
+import hxc.core.TPrinting;
+import hxc.core.Type;
+import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.eval.EvalContext;
 import hxc.eval.EvalField;
@@ -144,10 +148,12 @@ class Compiler {
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
 					i++;
+				case "--display":
+					ctx.displaySpec = args[i++];
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
 					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
-					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--display":
+					| "--net-std" | "-c-arg" | "--c-arg" | "--connect":
 					// Options without an implementation here; the value must still be consumed.
 					i++;
 				case "--cwd" | "-C":
@@ -260,7 +266,11 @@ class Compiler {
 			TypeFields.checkAbstractInheritance(ctx);
 			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
-			abortOnDiagnostics(ctx, platform);
+			if (isDisplay(ctx, "signature")) {
+				displaySignature(ctx);
+				return;
+			}
+			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// Null safety runs before every expression filter and elimination so it sees the exprs as
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
@@ -279,6 +289,10 @@ class Compiler {
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
+			if (isDisplay(ctx, "diagnostics")) {
+				displayDiagnostics(ctx);
+				return;
+			}
 			abortOnDiagnostics(ctx, platform);
 			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
 			// exception lowering, and closure/local passes before interpretation.
@@ -430,6 +444,15 @@ class Compiler {
 		// duplicates, and the catch position closes the stack (the reference's api-call env).
 		var frames = [for (env in ex.envStack) hxc.eval.EvalExceptions.envPosition(env)];
 		frames = [for (p in frames) if (p != null && p.file != "?") p];
+		if (hxc.eval.EvalStdLib.stringOf(ex.value) == "Stack overflow") {
+			var entryPos:Null<Position> = null;
+			if (ctx.mainClass != null) for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c) if (c.path.pack.join(".") == ctx.mainClass.pack.join(".") && c.path.name == ctx.mainClass.name): entryPos = new Position(c.pos.file, c.pos.min, c.pos.min);
+				case _:
+				}
+			if (entryPos == null && ctx.main != null) entryPos = ctx.main.pos;
+			if (entryPos != null && entryPos.file != "?") frames.unshift(entryPos);
+		}
 		var explicit = ex.pos != null && !(ex.pos.file == "?" && ex.pos.min < 0);
 		if (explicit && frames.length > 0) frames.shift();
 		if (!(catchPos.file == "?" && catchPos.min < 0)) frames.push(catchPos);
@@ -447,6 +470,92 @@ class Compiler {
 	static function flushPendingMessages(ctx:Context):Void {
 		hxc.compiler.Messages.display(ctx);
 		ctx.diagnostics = [];
+	}
+
+	static function displayParts(ctx:Context):Array<String> {
+		return ctx.displaySpec == null ? [] : ctx.displaySpec.split("@");
+	}
+
+	static function displayDiagnostics(ctx:Context):Void {
+		var groups:Array<{file:String, items:Array<String>}> = [];
+		for (d in ctx.diagnostics) {
+			var i = Position.getInfos(d.pos);
+			var displayFile = d.pos.file;
+			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
+				displayFile = FileSystem.fullPath(displayFile);
+			var severity = switch (d.severity) {
+				case Information: 3;
+				case Warning: 2;
+				case Error: 1;
+				case Hint: 4;
+			};
+			var kind = 2;
+			var args = haxe.Json.stringify(d.message);
+			var item = '{"kind":' + kind + ',"severity":' + severity
+				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
+				+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn
+				+ '}},"args":' + args + ',"relatedInformation":[]}';
+			var group = null;
+			for (g in groups) if (g.file == displayFile) { group = g; break; }
+			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+			group.items.push(item);
+		}
+		var out = [for (g in groups) '{"file":' + haxe.Json.stringify(g.file) + ',"diagnostics":[' + g.items.join(",") + ']}'];
+		Sys.stderr().writeString("[" + out.join(",") + "]\n");
+	}
+
+	static function displaySignature(ctx:Context):Void {
+		var parts = displayParts(ctx);
+		var file = parts.length > 0 ? parts[0] : "";
+		var offset = parts.length > 1 ? Std.parseInt(parts[1]) : null;
+		var identifier = "";
+		var sourceDocumentation:Null<String> = null;
+		if (offset != null) {
+			var sourceFile = file;
+			if (!FileSystem.exists(sourceFile)) for (m in ctx.modules) if (StringTools.endsWith(m.extra.file, file)) { sourceFile = m.extra.file; break; }
+			if (FileSystem.exists(sourceFile)) {
+				var source = File.getContent(sourceFile);
+				function identChar(c:Int):Bool return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
+				var cursor = offset;
+				while (cursor > 0 && !identChar(source.charCodeAt(cursor))) cursor--;
+				var start = cursor;
+				while (start > 0 && identChar(source.charCodeAt(start - 1))) start--;
+				var end = cursor;
+				while (end < source.length && identChar(source.charCodeAt(end))) end++;
+				identifier = source.substr(start, end - start);
+				var decl = source.indexOf("function " + identifier);
+				var open = decl < 0 ? -1 : source.lastIndexOf("/**", decl);
+				var close = open < 0 ? -1 : source.indexOf("**/", open + 3);
+				if (open >= 0 && close >= 0 && close < decl) sourceDocumentation = source.substr(open + 3, close - open - 3);
+			}
+		}
+		var field:TClassField = null;
+		if (offset != null) for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c):
+				for (cf in c.orderedStatics.concat(c.orderedFields))
+					if ((identifier == "" ? (cf.pos.max >= offset && cf.pos.min <= offset) : cf.name == identifier)
+						&& (identifier != "" || StringTools.endsWith(cf.pos.file, file) || StringTools.endsWith(cf.pos.file, StringTools.replace(file, "/", "\\")))) field = cf;
+			case _:
+		}
+		var sigs = [];
+		if (field != null) switch (TypeFunctions.follow(field.type)) {
+			case TFun(sig):
+				var args:Array<String> = [];
+				for (a in sig.args) args.push((a.opt ? "?" : "") + a.name + ":" + TPrinting.sTypeStr(a.t));
+				var label = "(" + args.join(", ") + "):" + TPrinting.sTypeStr(sig.ret);
+				var params = [for (a in sig.args) '{"label":' + haxe.Json.stringify((a.opt ? "?" : "") + a.name + ":" + TPrinting.sTypeStr(a.t)) + '}'];
+				var docText = field.doc == null ? sourceDocumentation : Ast.genDocText(field.doc);
+				var doc = docText == null ? "" : ',"documentation":' + haxe.Json.stringify(docText);
+				sigs.push('{' + (doc == "" ? "" : doc.substr(1)) + (doc == "" ? "" : ",") + '"label":' + haxe.Json.stringify(label) + ',"parameters":[' + params.join(",") + ']}');
+			case _:
+		}
+		if (sigs.length == 0) sigs.push('{"label":"():Void","parameters":[]}');
+		Sys.stderr().writeString('{"signatures":[' + sigs.join(",") + '],"activeParameter":0,"activeSignature":0}\n');
+	}
+
+	static function isDisplay(ctx:Context, mode:String):Bool {
+		var parts = displayParts(ctx);
+		return parts.length >= 3 && parts[2] == mode;
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {

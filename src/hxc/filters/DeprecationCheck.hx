@@ -14,6 +14,7 @@ class DeprecationCheck {
 	static var typedefConstructionPositions:Map<String, Bool> = new Map();
 	static var typedefTypePositions:Map<String, Bool> = new Map();
 	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
+	static var pendingPropertyWarnings:Array<{com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position}> = [];
 
 	static function warnDeprecation(com:Context, classMeta:Metadata, fieldMeta:Metadata, s:String, p:Position):Void {
 		var key = p.file + ":" + p.min;
@@ -78,7 +79,7 @@ class DeprecationCheck {
 		var classMeta = ctx.curclass != null ? ctx.curclass.meta : [];
 		var fieldMeta = ctx.curfield != null ? ctx.curfield.meta : [];
 		if (TypeFunctions.hasMeta(":deprecated", classMeta) || TypeFunctions.hasMeta(":deprecated", fieldMeta)) return;
-		checkMeta(ctx.com, classMeta, fieldMeta, cf.meta, "field", p);
+		pendingPropertyWarnings.push({com: ctx.com, classMeta: classMeta, fieldMeta: fieldMeta, cf: cf, p: p});
 	}
 
 	public static function run(com:Context):Void {
@@ -88,6 +89,17 @@ class DeprecationCheck {
 				for (cf in c.orderedStatics) runOnField(com, c.meta, cf);
 				for (cf in c.orderedFields) runOnField(com, c.meta, cf);
 			case _:
+		}
+		var pending = pendingPropertyWarnings;
+		pendingPropertyWarnings = [];
+		pending.sort(function(a, b) return a.p.min - b.p.min);
+		for (entry in pending) if (entry.com == com) {
+			var oldLength = com.diagnostics.length;
+			checkMeta(entry.com, entry.classMeta, entry.fieldMeta, entry.cf.meta, "field", entry.p);
+			var added = com.diagnostics.splice(oldLength, com.diagnostics.length - oldLength);
+			var target = com.diagnostics.length;
+			for (i in 0...com.diagnostics.length) if (com.diagnostics[i].pos.file == entry.p.file && com.diagnostics[i].pos.min > entry.p.min) { target = i; break; }
+			for (i in 0...added.length) com.diagnostics.insert(target + i, added[i]);
 		}
 	}
 

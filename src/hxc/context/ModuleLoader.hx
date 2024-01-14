@@ -747,6 +747,28 @@ class ModuleLoader {
 		return m;
 	}
 
+	/** Add macro-created declarations to an existing module without replacing its types. */
+	public static function addTypeDeclsToModule(ctx:Context, m:ModuleDef, types:Array<TypeDecl>, imports:Array<Import>, usings:Array<PlacedTypePath>, pos:Position):Array<ModuleType> {
+		var decls:Array<TypeDecl> = [];
+		for (imp in imports) decls.push({decl: EImport(imp), pos: pos});
+		for (u in usings) {
+			var names = u.path.tpackage.concat([u.path.tname]);
+			if (u.path.tsub != null) names.push(u.path.tsub);
+			decls.push({decl: EUsing([for (n in names) ({name: n, pos: u.pos} : PlacedName)]), pos: u.pos});
+		}
+		decls = decls.concat(types);
+		var old = m.types;
+		createModuleTypes(ctx, m, handleImportHx(ctx, m, decls));
+		var added = m.types;
+		m.types = old.concat(added);
+		for (mt in added) {
+			m.types.push(mt);
+			ctx.types.push(mt);
+			ctx.typeToModule.set(Context.pathKey(TypeFunctions.tPath(mt)), m.path);
+		}
+		return added;
+	}
+
 	/** Register a macro-created module (`Context.defineModule`) from decoded AST declarations. */
 	public static function defineModuleDecls(ctx:Context, mpath:Path, types:Array<TypeDecl>, imports:Array<Import>, usings:Array<PlacedTypePath>, pos:Position):ModuleDef {
 		var decls:Array<TypeDecl> = [];

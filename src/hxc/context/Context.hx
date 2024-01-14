@@ -55,6 +55,8 @@ class Context {
 
 	public var mainClass:Null<Path>;
 
+	public var displaySpec:Null<String>;
+
 	/** Key = `pathKey`. */
 	public var moduleLut:StringMap<ModuleDef>;
 
@@ -160,6 +162,7 @@ class Context {
 		this.classPath = classPath == null ? [] : classPath;
 		this.defines = defines == null ? new Define() : defines;
 		this.mainClass = null;
+		this.displaySpec = null;
 		this.moduleLut = new StringMap();
 		this.typeToModule = new StringMap();
 		this.moduleNonexistentLut = new StringMap();

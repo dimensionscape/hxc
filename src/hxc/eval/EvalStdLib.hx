@@ -1832,6 +1832,22 @@ class EvalStdLib {
 
 	static function mkOutput(ctx:EvalContext, output:haxe.io.Output, file:Null<sys.io.FileOutput>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileOutput"));
+		var com = ctx.com != null ? ctx.com : hxc.eval.EvalMacro.getMacroCom();
+		if (com == null) com = hxc.eval.EvalMacro.hostCom;
+		if ((proto == null || proto.pparent == null) && com != null) try {
+			var out = hxc.context.ModuleLoader.loadModule(com, {pack: ["haxe", "io"], name: "Output"}, Position.nullPos);
+			var m = hxc.context.ModuleLoader.loadModule(com, {pack: ["sys", "io"], name: "FileOutput"}, Position.nullPos);
+			hxc.typing.TypeResolve.resolveAll(com);
+			hxc.typing.TypeFields.installLazy(com);
+			EvalMain.addModules(ctx, [out, m]);
+			proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileOutput"));
+			var outputProto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Output"));
+			if (proto != null && proto.pparent == null) proto.pparent = outputProto;
+		} catch (_:Dynamic) {}
+		if (proto == null) {
+			proto = new VPrototype(EvalHash.hash("sys.io.FileOutput"), [], new Map(), [], new Map(), null, PClass([]), VNull);
+			ctx.instancePrototypes.set(EvalHash.hash("sys.io.FileOutput"), proto);
+		}
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		fileOutputs.set(vi, {output: output, file: file});
 		return VInstance(vi);
@@ -5365,6 +5381,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> VInt(thisFileOutput(a).file.tell())));
 		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { thisFileOutput(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "sys.io.FileOutput", "writeString", vmethod(a -> { thisFileOutput(a).output.writeString(stringOf(arg(a, 1))); VNull; }));
 		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(thisFileOutput(a).output.writeBytes(
 			thisBytes([arg(a, 1)]), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "sys.io._Process.NativeProcess", "close", vmethod(a -> {
