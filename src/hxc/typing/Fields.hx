@@ -637,10 +637,11 @@ class Fields {
 	// build the using access. Its own type parameters are monomorphized so a generic first argument
 	// (e.g. Iterable<A>) can accept the receiver.
 	static function tryUsingClass(ctx:TyperContext, uc:TClass, e:TExpr, i:String, p:Position):Null<AccessKind> {
-		try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
+		var isMacroPackage = uc.path.pack.length == 2 && uc.path.pack[0] == "haxe" && uc.path.pack[1] == "macro";
+		if (!isMacroPackage) try TypeResolve.resolveModule(ctx.com, uc.module) catch (_:Dynamic) {}
 		var cf0 = uc.statics.get(i);
 		if (cf0 == null) return null;
-		switch (cf0.type) {
+		if (!isMacroPackage) switch (cf0.type) {
 			case TMono(r) if (r.type == null):
 				var entry = ctx.com.declOfType.get(hxc.context.Context.pathKey(uc.path));
 				if (entry != null) switch (entry.decl) {

@@ -202,7 +202,7 @@ class TypeFields {
 			}
 			if (!hasFieldBody(cff)) continue;
 			installField(ctx, tctx, m, cf, cff, isStatic);
-			pending.push(cf);
+			if (!skipMacroModuleBody(ctx, m)) pending.push(cf);
 		}
 	}
 
@@ -210,6 +210,14 @@ class TypeFields {
 		return switch (cff.cffKind) {
 			case FVar(_, eo) | FProp(_, _, _, eo): eo != null;
 			case FFun(fd): fd.fExpr != null;
+		};
+	}
+
+	static function skipMacroModuleBody(ctx:Context, m:ModuleDef):Bool {
+		if (ctx.isMacro || m.path.pack.length != 2 || m.path.pack[0] != "haxe" || m.path.pack[1] != "macro") return false;
+		return switch (m.path.name) {
+			case "ExprTools" | "ComplexTypeTools" | "TypeTools" | "MacroStringTools" | "TypedExprTools" | "PositionTools" | "Printer": true;
+			case _: false;
 		};
 	}
 

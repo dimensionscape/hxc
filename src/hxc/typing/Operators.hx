@@ -31,6 +31,11 @@ enum BinopResult {
 }
 
 class Operators {
+	static function storedSyntax(ctx:TyperContext, e:TExpr):Expr {
+		var id = ctx.com.nextStoredTypedExprId++;
+		ctx.com.storedTypedExprs.set(id, e);
+		return new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, new Expr(EConst(CInt(Std.string(id), null)), e.pos)), e.pos);
+	}
 	static function unify(ctx:TyperContext, a:T, b:T, p:Position):Void {
 		DebugDump.unify("operator", a, b, p);
 		try {
@@ -790,6 +795,13 @@ class Operators {
 			case AKResolve(se, name):
 				// `e.name = value` on an abstract with a resolve-write (@:op(a.b) taking name and value)
 				// calls resolveWrite(this, name, value).
+				if (se.access.field.kind.match(Method(MethMacro))) {
+					var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
+					var sig = switch (TypeFunctions.follow(ce.type)) { case TFun(s) if (s.args.length >= 3): s; case _: throw new TypingError("Resolve target is not a function", se.access.pos); };
+					var eName = new Expr(EConst(CString(name, SDoubleQuotes)), se.access.pos);
+					var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
+					return hxc.eval.EvalMacro.run(ctx, se.access, [storedSyntax(ctx, se.thisExpr), eName, storedSyntax(ctx, te2)], WithTypeTools.value, se.access.pos);
+				}
 				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length >= 3):
@@ -1004,9 +1016,9 @@ class Operators {
 						var write = switch (TypeFunctions.follow(writeCe.type)) {
 							case TFun(ws) if (ws.args.length >= 3):
 								var nm2 = TexprTools.makeString(basic, name, p);
-								var nameArg = Typer.castOrUnify(ctx, ws.args[1].t, nm2, p);
-								var valArg = Typer.castOrUnify(ctx, ws.args[2].t, opResult, p);
-								Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [recv, nameArg, valArg], p), ws.ret, p);
+								se.access.field.kind.match(Method(MethMacro))
+									? hxc.eval.EvalMacro.run(ctx, se.access, [Calls.typedExprToSyntax(ctx, se.thisExpr), new Expr(EConst(CString(name, SDoubleQuotes)), p), storedSyntax(ctx, opResult)], WithTypeTools.value, p)
+									: Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [recv, Typer.castOrUnify(ctx, ws.args[1].t, nm2, p), Typer.castOrUnify(ctx, ws.args[2].t, opResult, p)], p), ws.ret, p);
 							case _: throw new TypingError("Resolve target is not a function", p);
 						};
 						TypeFunctions.mk(TBlock([tempInit, write]), write.type, p);
