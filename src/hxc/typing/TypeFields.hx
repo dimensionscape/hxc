@@ -424,6 +424,7 @@ class TypeFields {
 					// not the decl.
 					var funcPos = fd.fExpr != null ? fd.fExpr.pos : cff.cffPos;
 					var tf = Typer.typeFunction(tctx, args, ret, tctx.curfun, fd.fExpr, funcPos);
+					if (!isStatic && cff.cffName.name != "new") TypeloadCheck.checkOverriding(tctx.com, tctx.curclass, cf);
 					if (cf.kind.match(Method(MethInline))) {
 						function staticLocalPos(e:TExpr):Null<Position> {
 							return switch (e.expr) {

@@ -280,11 +280,15 @@ class TypeResolve {
 							if (!TypeFunctions.hasMeta(":native", target.meta) && TypeFunctions.hasMeta(":native", parent.meta))
 								target.meta = [TypeFunctions.getMeta(":native", parent.meta)].concat(target.meta);
 						}
-					} else {
+					} else if (!explicitVis) {
 						var parent = getParentField(c, cff.cffName.name);
-						if (parent != null && !TypeFunctions.hasClassFieldFlag(parent, CfAbstract)
-							&& !TypeFunctions.hasClassFlag(c, CExtern))
-							ctx.addDiagnostic("Field " + cff.cffName.name + " should be declared with 'override' since it is inherited from superclass " + Context.sTypePath(c.superClass.c.path), target.namePos);
+						var isPublic = parent != null ? TypeFunctions.hasClassFieldFlag(parent, CfPublic)
+							: (TypeFunctions.hasClassFlag(c, CExtern)
+								|| TypeFunctions.hasClassFlag(c, CInterface)
+								|| extendsPublic(c)
+								|| (switch (c.kind) { case KModuleFields(_): true; case _: false; }));
+						if (isPublic) TypeFunctions.addClassFieldFlag(target, CfPublic);
+						else TypeFunctions.removeClassFieldFlag(target, CfPublic);
 					}
 				}
 			} catch (e:ContextError) {
@@ -310,6 +314,11 @@ class TypeResolve {
 			s = s.c.superClass;
 		}
 		return null;
+	}
+
+	static function extendsPublic(c:TClass):Bool {
+		if (TypeFunctions.hasMeta(":publicFields", c.meta)) return true;
+		return c.superClass != null && extendsPublic(c.superClass.c);
 	}
 
 	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_

@@ -93,7 +93,7 @@ class InterfaceCheck {
 	}
 
 	// Child = f1/t1, parent = f2/t2.
-	static function validRedefinition(map1:T->T, map2:T->T, f1:TClassField, t1:T, f2:TClassField, t2:T):Void {
+	public static function validRedefinition(map1:T->T, map2:T->T, f1:TClassField, t1:T, f2:TClassField, t2:T):Void {
 		function valid(a:T, b:T):Void {
 			TypeUnification.unifyDefault(a, b);
 			if (TypeFunctions.isNull(a) != TypeFunctions.isNull(b)
