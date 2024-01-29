@@ -177,6 +177,10 @@ class GenJS {
 
 	public static function checkVarDeclaration(v:TVar):Void {
 		if (kwds2.exists(v.name)) v.name = "$" + v.name;
+		// Internal generated locals (notably the anonymous-function receiver) may use a backtick
+		// placeholder; the variable-renaming pass normally gives them a legal name. Keep the emitter valid
+		// if that rename has not happened yet.
+		if (!validJsIdent(v.name)) v.name = "$" + Std.string(v.id);
 	}
 
 	public static function anonField(s:String):String {
@@ -894,7 +898,7 @@ class GenJS {
 				}
 			case TIf(cond, eif, eelse):
 				spr("if");
-				genValue(cond);
+				genCondition(cond);
 				spr(" ");
 				genExpr(TypeFunctions.mkBlock(eif));
 				if (eelse != null) {
@@ -916,7 +920,7 @@ class GenJS {
 				var oldInLoop = inLoop;
 				inLoop = true;
 				spr("while");
-				genValue(cond);
+				genCondition(cond);
 				spr(" ");
 				genExpr(body);
 				inLoop = oldInLoop;
@@ -927,7 +931,7 @@ class GenJS {
 				genExpr(body);
 				semicolon();
 				spr(" while");
-				genValue(cond);
+				genCondition(cond);
 				inLoop = oldInLoop;
 			case TObjectDecl(fields):
 				spr("{ ");
@@ -976,7 +980,7 @@ class GenJS {
 				throw new TypingError("Unhandled try/catch, please report", e.pos);
 			case TSwitch(cond, cases, def):
 				spr("switch");
-				genValue(cond);
+				genCondition(cond);
 				spr(" {");
 				newline();
 				for (c in cases) {
@@ -1017,6 +1021,21 @@ class GenJS {
 				spr(")");
 			case TIdent(s):
 				spr(s);
+		}
+	}
+
+	// A single JavaScript condition delimiter around the typed value. Keep an existing AST parenthesis
+	// as that delimiter instead of duplicating it.
+	function genCondition(e:TExpr):Void {
+		switch (e.expr) {
+			case TParenthesis(e1):
+				spr("(");
+				genValue(e1);
+				spr(")");
+			case _:
+				spr("(");
+				genValue(e);
+				spr(")");
 		}
 	}
 
@@ -1068,7 +1087,12 @@ class GenJS {
 			}];
 		}
 		print(keyword + "(" + args.join(",") + ") ");
-		genExpr(funBlock(f, pos));
+		var body = funBlock(f, pos);
+		body = switch (body.expr) {
+			case TBlock(_): body;
+			case _: TypeFunctions.mk(TBlock([body]), body.type, body.pos);
+		};
+		genExpr(body);
 		valueVar = old.v;
 		inLoop = old.l;
 		separator = true;

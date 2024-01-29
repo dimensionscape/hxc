@@ -189,7 +189,9 @@ class TypeFields {
 				TypeFunctions.addClassFlag(c, CAbstract);
 			}
 			switch (cff.cffKind) {
-				case FVar(_, null) if (isStatic && TypeFunctions.hasClassFieldFlag(cf, CfFinal)):
+				case FVar(_, null) if (isStatic && TypeFunctions.hasClassFieldFlag(cf, CfFinal)
+					&& !TypeFunctions.hasClassFlag(c, CExtern)
+					&& !TypeFunctions.hasClassFieldFlag(cf, CfExtern)):
 					addDiagnosticOnce(ctx, "Static final variable must be initialized", cff.cffPos);
 				case _:
 			}

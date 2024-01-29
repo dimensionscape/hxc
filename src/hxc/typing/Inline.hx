@@ -393,8 +393,16 @@ class Inline {
 		}
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that equals the
 		// expected return, and gets a cast otherwise. .
-		if (binds.length == 0 && !hxc.core.TypeUnification.typeIseqStrict(result.type, tret))
-			result = TypeFunctions.mk(TCast(result, null), tret, p);
+		if (binds.length == 0) {
+			// An untyped expression keeps an open mono and must be cast to the declared return type instead
+			// of being accepted by typeEq.
+			var needsCast = switch (TypeFunctions.follow(result.type)) {
+				case TMono(_): true;
+				case TInst(c2, _) if (switch (c2.kind) { case KTypeParameter(_): true; case _: false; }): true;
+				case _: !hxc.core.TypeUnification.typeIseqStrict(result.type, tret);
+			};
+			if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
+		}
 		return result;
 	}
 
