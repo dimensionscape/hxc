@@ -262,6 +262,7 @@ class Compiler {
 			TypeFields.typeAllModules(ctx);
 			tFields();
 			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx);
+			TypeFields.typeAllModules(ctx);
 			tType();
 			TypeFields.checkAbstractInheritance(ctx);
 			TypeFields.checkFinalVars(ctx);
