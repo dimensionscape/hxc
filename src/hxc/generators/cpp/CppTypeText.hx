@@ -311,7 +311,12 @@ class CppTypeText {
 
 	public static function cppVarNameOf(v:TVar):String {
 		var rename = Ast.getMetaString(v.meta, ":native");
-		return (rename != null && rename != "") ? rename : keywordRemap(v.name);
+		if (rename != null && rename != "") return rename;
+		// The shared filter pass turns generated escape-prefixed locals into _g names. Macro-loaded
+		// types can arrive after that pass, so apply that same legal C++ spelling
+		// at the final variable boundary while retaining the TVar identity for references.
+		if (v.name.length > 0 && v.name.charAt(0) == "`") return "_g" + Std.string(v.id);
+		return keywordRemap(v.name);
 	}
 
 	public static function tcppObjcBlockStruct(argTypes:Array<CppType>, retType:CppType):String {
