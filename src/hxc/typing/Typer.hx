@@ -2741,6 +2741,19 @@ class Typer {
 						}
 					case _:
 				}
+				// An explicitly requested specialization whose selector is still an unresolved mono is
+				// rejected. Keep an untyped `new Map()` available for later inference, but report the
+				// diagnostic when the expected Map type supplied the open parameter (the generic empty-map
+				// case).
+				var selector = usedAtl.length > 0 ? TypeFunctions.followWithAbstracts(usedAtl[0]) : TypeFunctions.tDynamic;
+				var expectedOpen = switch (withType) {
+					case WithType(_, FunctionArgument(_)): true;
+					case _: false;
+				};
+				if (expectedOpen && TypeFunctions.hasMono(selector)) {
+					var at = TypeFunctions.applyParams(a.params, usedAtl, a.thisType);
+					throw new TypingError("Type parameters of multi type abstracts must be known (for " + hxc.core.TPrinting.sTypeStr(at) + ")", p);
+				}
 				var ctorSelection = selectMultiTypeByCtorArgs(ctx, a, usedAtl, el, p);
 				if (ctorSelection != null) {
 					return buildMultiTypeCastCall(ctx, a, usedAtl, ctorSelection.castField, ctorSelection.castType, ctorSelection.ret, ctorSelection.args, p);

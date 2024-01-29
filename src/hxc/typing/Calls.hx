@@ -267,6 +267,7 @@ class Calls {
 		// trailing annotation.
 		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
+			if (StringTools.startsWith(msg, "Type parameters of multi type abstracts must be known")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
 			if (msg.indexOf(" has no field ") >= 0) return new TypingError(msg, pos, depth);
 			if (msg.indexOf("For function argument '") >= 0) return new TypingError(msg, pos, depth);
