@@ -677,7 +677,11 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method);
+				if (t != null) {
+					var targetPath = {pack: t.pack, name: t.name};
+					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule);
+				}
 			case _:
 		}
 		var ec = getContext(com);
@@ -701,7 +705,9 @@ class EvalMacro {
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
-					var cf = target == null ? null : macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+					var targetPath = target == null ? null : {pack: target.pack, name: target.name};
+					var targetModule = targetPath == null ? null : com.typeToModule.get(Context.pathKey(targetPath));
+					var cf = target == null ? null : macroWorldField(targetPath, target.method, targetModule);
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
@@ -1510,15 +1516,15 @@ class EvalMacro {
 			var arrayT = arrayExprElemType(last);
 			if (arrayT != null) return macroRestArgs(ec, el, sigArgs, arrayT);
 		}
-		return [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null)];
+		return [for (i in 0...el.length) macroArg(ec, el[i], (sigArgs != null && i < sigArgs.length) ? sigArgs[i].t : null, (sigArgs != null && i < sigArgs.length) ? sigArgs[i].name : null)];
 	}
 
 	static function macroRestArgs(ec:EvalContext, el:Array<Expr>, sigArgs:Array<TSignatureArg>, restT:T):Array<EvalValue> {
 		var fixed = sigArgs.length - 1;
 		var out:Array<EvalValue> = [];
-		for (i in 0...fixed) out.push(i < el.length ? macroArg(ec, el[i], sigArgs[i].t) : VNull);
+		for (i in 0...fixed) out.push(i < el.length ? macroArg(ec, el[i], sigArgs[i].t, sigArgs[i].name) : VNull);
 		var rest:Array<EvalValue> = [];
-		for (i in fixed...el.length) rest.push(macroArg(ec, el[i], restT));
+		for (i in fixed...el.length) rest.push(macroArg(ec, el[i], restT, sigArgs[sigArgs.length - 1].name));
 		out.push(VArray(new VArray(rest, rest.length)));
 		return out;
 	}
@@ -1526,12 +1532,23 @@ class EvalMacro {
 	// An Expr (or ExprOf) macro parameter receives the reified expression; any other parameter type
 	// receives the argument's constant value. Non-constant value arguments fall back to the reified
 	// expression.
-	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>):EvalValue {
+	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>, name:Null<String>):EvalValue {
 		if (pt != null && !isExprParam(pt)) {
 			var c = macroConstArg(ec, e);
 			if (c.ok) return c.value;
+			var isFunction = switch (TypeFunctions.follow(pt)) { case TFun(_): true; case _: false; };
+			if (isFunction && !isFunctionExpr(e))
+				throw new TypingError("haxe.macro.Expr should be " + hxc.core.TPrinting.sTypeStr(pt) + "\nFor function argument '" + (name == null ? "?" : name) + "'", e.pos);
 		}
 		return encodeExpr(ec, e);
+	}
+
+	static function isFunctionExpr(e:Expr):Bool {
+		return switch (e.expr) {
+			case EFunction(_, _): true;
+			case EParenthesis(e1) | ECast(e1, _) | EMeta(_, e1): isFunctionExpr(e1);
+			case _: false;
+		};
 	}
 
 	static function macroConstArg(ec:EvalContext, e:Expr):{ok:Bool, value:EvalValue} {
