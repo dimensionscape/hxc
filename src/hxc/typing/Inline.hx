@@ -305,11 +305,10 @@ class Inline {
 		var vthis:Null<TVar> = null;
 		if (!isStatic) {
 			if (ethis == null) throw new InlineBail();
-			// A plain local or this receiver substitutes into the body directly, like any unwritten local
-			// argument; anything else evaluates once into a receiver binding. (the this argument goes
-			// through the same substitution analysis as the others).
-			if (!ethis.expr.match(TConst(TThis) | TLocal(_))) {
-				// The receiver binding _this with the VInlined kind.
+			var thisReads = countThisUses(tf.expr);
+			var directThis = ethis.expr.match(TConst(TThis) | TLocal(_))
+				|| (thisReads <= 1 && !hxc.optimization.OptimizerTexpr.hasSideEffect(ethis));
+			if (!directThis) {
 				vthis = TypeFunctions.allocVar(VInlined, "_this", ethis.type, p);
 				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
@@ -404,6 +403,18 @@ class Inline {
 			if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
 		}
 		return result;
+	}
+
+	static function countThisUses(root:TExpr):Int {
+		var count = 0;
+		function loop(e:TExpr):Void {
+			switch (e.expr) {
+				case TConst(TThis): count++;
+				case _: TexprTools.iter(loop, e);
+			}
+		}
+		loop(root);
+		return count;
 	}
 
 	// Abstract operator bodies may write through their abstract receiver. Preserve the reference
