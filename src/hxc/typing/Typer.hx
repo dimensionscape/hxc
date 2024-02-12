@@ -2259,16 +2259,21 @@ class Typer {
 	// enclosing member (materialized by typeFunction below and renamed _gthis by RenameVars); a plain
 	// member/constructor uses TConst(TThis) directly.
 	public static function getThis(ctx:TyperContext, p:Position):TExpr {
+		function abstractThisLocal():Null<TVar> {
+			var direct = ctx.locals.get("this");
+			if (direct != null) return direct;
+			for (name in ctx.locals.keys()) {
+				var candidate = ctx.locals.get(name);
+				if (candidate != null && TypeFunctions.hasMeta(":this", candidate.meta)) return candidate;
+			}
+			return null;
+		}
 		return switch (ctx.curfun) {
 			case FunStatic:
 				throw new TypingError("Cannot access this from a static function", p);
-			case FunMemberClassLocal | FunMemberAbstractLocal:
+			case FunMemberClassLocal:
 				var v = if (ctx.vthis == null) {
-					var v2 = if (ctx.curfun == FunMemberAbstractLocal) {
-						var lv = ctx.locals.get("this");
-						if (lv == null) throw new TypingError("Cannot reference this abstract here", p);
-						lv;
-					} else addLocal(ctx, VGenerated, "`this", ctx.tthis, p);
+					var v2 = addLocal(ctx, VGenerated, "`this", ctx.tthis, p);
 					ctx.vthis = v2;
 					v2;
 				} else {
@@ -2276,8 +2281,12 @@ class Typer {
 					ctx.vthis;
 				}
 				TypeFunctions.mk(TLocal(v), ctx.tthis, p);
+			case FunMemberAbstractLocal:
+				var v = abstractThisLocal();
+				if (v == null) throw new TypingError("Cannot reference this abstract here", p);
+				TypeFunctions.mk(TLocal(v), v.type, p);
 			case FunMemberAbstract:
-				var v = ctx.locals.get("this");
+				var v = abstractThisLocal();
 				if (v == null) throw new TypingError("Cannot reference this abstract here", p);
 				TypeFunctions.mk(TLocal(v), v.type, p);
 			case FunConstructor | FunMember:
