@@ -26,7 +26,7 @@ enum ConKind {
 	ConArray(i:Int);
 }
 
-typedef Con = {kind:ConKind, pos:Position};
+typedef Con = {kind:ConKind, pos:Position, ?subPos:Position};
 
 class Constructor {
 	public static inline function make(kind:ConKind, pos:Position):Con {
@@ -582,7 +582,7 @@ class PatternMaker {
 								}
 								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
 								TypeParameterFrame.unapply(ef.params, monos);
-								PatConstructor(Constructor.make(ConEnum(en, ef), p), subs);
+								PatConstructor(Constructor.make(ConEnum(en, ef), ec.pos), subs);
 							case _: throw new TypingError("This pattern is not yet ported", p);
 						}
 					case _: throw new TypingError("This pattern is not yet ported", p);
@@ -1093,7 +1093,14 @@ class DtCompile {
 		var unguarded:Array<Con> = [];
 		var nullCases:Array<MatchCase> = [];
 		function addSigma(con:Con, argPositions:Array<Position>, casePos:Position) {
-			for (s in sigma) if (Constructor.equal(s.con, con)) { s.argPositions = argPositions; return; }
+			for (s in sigma) if (Constructor.equal(s.con, con)) {
+				s.argPositions = argPositions;
+				s.casePos = casePos;
+				s.con.pos = con.pos;
+				s.con.subPos = argPositions.length == 0 ? null : argPositions[0];
+				return;
+			}
+			con.subPos = argPositions.length == 0 ? null : argPositions[0];
 			sigma.push({con: con, unguarded: false, argPositions: argPositions, casePos: casePos});
 		}
 		function markUnguarded(con:Con) {
@@ -1452,10 +1459,11 @@ class TexprConverter {
 				c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), basic.tvoid, c.pos);
 			case Switch(subject, cases, def):
 				var branchHasDefault = switch (def.t) { case Fail: false; case _: true; };
+				var inheritedDefault = hasDefault || branchHasDefault;
 				if (cases.length == 1) {
 					switch (cases[0].con.kind) {
 						case ConFields(_):
-							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, rec == DRToplevel ? DRAfterSwitch : rec, branchHasDefault);
+							return toTexprRec(ctx, tSwitch, withType, cases[0].dt, rec == DRToplevel ? DRAfterSwitch : rec, inheritedDefault);
 						case _:
 					}
 				}
@@ -1497,13 +1505,15 @@ class TexprConverter {
 					case TLocal(v): switch (vLookup.get(v.id)) { case {expr: TCall(_, _)}: true; case _: false; };
 					case _: false;
 				};
-				var reportPartial = withType.match(NoValue) && !branchHasDefault && (enumParamRoot || (topLevel && constructorBound));
+				var reportPartial = withType.match(NoValue) && !branchHasDefault && !hasDefault && (enumParamRoot || (topLevel && constructorBound));
 				if (reportPartial && def.t.match(Fail)) switch (TypeFunctions.follow(subject.type)) {
 					case TEnum(_, _):
-						for (sc in cases) switch (sc.con.kind) {
+						for (sc in cases) {
+							switch (sc.con.kind) {
 							case ConEnum(_, ef) if (Constructor.arity(sc.con) > 0 && hasFail(sc.dt)):
-								throw new TypingError("Unmatched patterns: " + ef.name + "(_)", sc.dt.pos);
+								throw new TypingError("Unmatched patterns: " + ef.name + "(_)", sc.con.subPos == null ? sc.con.pos : sc.con.subPos);
 							case _:
+							}
 						}
 					case _:
 				}
@@ -1511,13 +1521,14 @@ class TexprConverter {
 				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that
 				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
 				var droppedCompleteDefault = topLevel && complete && runtimeFinite;
-				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, branchHasDefault);
+				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, inheritedDefault);
 				var nullaryMissing = switch (TypeFunctions.follow(subject.type)) {
-					case TEnum(en, _):
+					case TEnum(en, _) if (unmatched != null):
 						var ok = true;
 						var missingNames = unmatched == null ? [] : unmatched;
 						for (name in missingNames) {
 							var ef = en.constrs.get(name);
+							if (ef == null) ok = false;
 							switch (ef == null ? null : TypeFunctions.follow(ef.type)) {
 								case TFun(sig) if (sig.args.length > 0): ok = false;
 								case _:
@@ -1541,20 +1552,14 @@ class TexprConverter {
 				var caseFailed = false;
 				var swCases:Array<TSwitchCase> = [];
 				for (g in groups) {
-					var ce = toTexprRec(ctx, tSwitch, withType, g.dt, nextRec, branchHasDefault);
+					var ce = toTexprRec(ctx, tSwitch, withType, g.dt, nextRec, inheritedDefault);
 					if (ce != null) {
 						g.cons.sort(Constructor.compare);
 						swCases.push({values: [for (c in g.cons) Constructor.toTexpr(ctx, false, c)], expr: ce});
 					} else caseFailed = true;
 				}
-				var enumParameterSubject = switch (subject.expr) {
-					case TEnumParameter(_, _, _): true;
-					case _: false;
-				};
 				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
-					&& (!withType.match(NoValue) || (enumParameterSubject && !hasDefault)))
-				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
-					&& (!withType.match(NoValue) || (enumParameterSubject && !hasDefault)))
+					&& !withType.match(NoValue))
 					reportUnmatched();
 				// An enum switch dispatches on the constructor index.
 				var isNullableSubject = TypeFunctions.isExplicitNull(subject.type);

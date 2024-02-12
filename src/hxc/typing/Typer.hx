@@ -1269,8 +1269,8 @@ class Typer {
 					throw new TypingError("Cannot access non-static field " + smf.name + " from static method", p);
 				// Inside an abstract impl method, a bare call to a sibling member method threads `this`.
 				var absImpl = switch (ctx.curclass.kind) { case KAbstractImpl(ab): ab; case _: null; };
-				if (absImpl != null && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && ctx.locals.exists("this")) {
-					var thisExpr = TexprTools.makeLocal(ctx.locals.get("this"), p);
+				if (absImpl != null && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && !TypeFunctions.hasClassFieldFlag(smf, CfEnum)) {
+					var thisExpr = getThis(ctx, p);
 					// A bare reference to a sibling abstract member threads `this`: a method becomes a
 					// static extension call, a var/property dispatches through its accessor (get_/set_)
 					// rather than emitting a raw static field access.

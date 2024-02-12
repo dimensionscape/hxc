@@ -16,7 +16,7 @@ typedef ProtoDelay = VPrototype->Void;
 class EvalPrototype {
 	// An instance method or constructor receives the receiver as the first call argument and binds
 	// it as this; a static method binds its arguments directly.
-	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo):VFunc {
+	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo, abstractThis:Bool = false):VFunc {
 		return function(args:Array<EvalValue>):EvalValue {
 			var offset = isInstance ? 1 : 0;
 			var bound:Array<{vid:Int, value:EvalValue}> = [];
@@ -24,7 +24,7 @@ class EvalPrototype {
 				var j = i + offset;
 				bound.push({vid: tf.args[i].v.id, value: EvalEmitter.argValue(ctx, tf.args[i], j < args.length ? args[j] : VNull)});
 			}
-			var vthis = isInstance ? (args.length > 0 ? args[0] : VNull) : null;
+			var vthis = (isInstance || abstractThis) ? (args.length > 0 ? args[0] : VNull) : null;
 			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis, info);
 		};
 	}
@@ -483,7 +483,7 @@ class EvalPrototype {
 							pnames.set(EvalHash.hash(cf.name), idx);
 							addNameAlias(pnames, cf, idx);
 							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
-							pfields.push(VFunction(makeFunction(ctx, tf, false, info), true));
+							pfields.push(VFunction(makeFunction(ctx, tf, false, info, TypeFunctions.hasClassFieldFlag(cf, CfImpl)), true));
 						}
 					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
