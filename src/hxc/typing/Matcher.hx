@@ -1505,7 +1505,8 @@ class TexprConverter {
 					case TLocal(v): switch (vLookup.get(v.id)) { case {expr: TCall(_, _)}: true; case _: false; };
 					case _: false;
 				};
-				var reportPartial = withType.match(NoValue) && !branchHasDefault && !hasDefault && (enumParamRoot || (topLevel && constructorBound));
+				var reportPartial = withType.match(NoValue) && !branchHasDefault && !hasDefault
+					&& (enumParamRoot || (topLevel && (constructorBound || cases.length > 1)));
 				if (reportPartial && def.t.match(Fail)) switch (TypeFunctions.follow(subject.type)) {
 					case TEnum(_, _):
 						for (sc in cases) {
