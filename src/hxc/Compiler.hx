@@ -435,7 +435,7 @@ class Compiler {
 					case _: Position.nullPos;
 				};
 				if (errorPos.min >= 0) {
-					ctx.addDiagnostic(msg, errorPos);
+					ctx.addDiagnostic(msg, qualifyStdPosition(ctx, errorPos));
 					flushPendingMessages(ctx);
 					Sys.exit(1);
 				}
@@ -443,7 +443,7 @@ class Compiler {
 		}
 		// Frames run innermost first; an explicit throw position drops the innermost frame it
 		// duplicates, and the catch position closes the stack (the reference's api-call env).
-		var frames = [for (env in ex.envStack) hxc.eval.EvalExceptions.envPosition(env)];
+		var frames = [for (env in ex.envStack) qualifyStdPosition(ctx, hxc.eval.EvalExceptions.envPosition(env))];
 		frames = [for (p in frames) if (p != null && p.file != "?") p];
 		if (hxc.eval.EvalStdLib.stringOf(ex.value) == "Stack overflow") {
 			var entryPos:Null<Position> = null;
@@ -464,6 +464,15 @@ class Compiler {
 		ctx.addDiagnosticStack(stack);
 		flushPendingMessages(ctx);
 		Sys.exit(1);
+	}
+
+	static function qualifyStdPosition(ctx:Context, p:Null<Position>):Null<Position> {
+		if (p == null || p.file == null || p.file == "" || FileSystem.exists(p.file)) return p;
+		for (root in ctx.stdPath) {
+			var file = StringTools.endsWith(root, "\\") || StringTools.endsWith(root, "/") ? root + p.file : root + "/" + p.file;
+			if (FileSystem.exists(file)) return new Position(file, p.min, p.max);
+		}
+		return p;
 	}
 
 	// A fatal error still reports the messages accumulated before it (warnings from macros, ...): the
