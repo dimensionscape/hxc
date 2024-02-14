@@ -1157,6 +1157,11 @@ class Typer {
 		function isIdentChar(c:Int):Bool return isIdentStart(c) || (c >= "0".code && c <= "9".code);
 		var parts:Array<Expr> = [];
 		var buf = new StringBuf();
+		function spaces(n:Int):String {
+			var out = new StringBuf();
+			for (_ in 0...n) out.addChar(" ".code);
+			return out.toString();
+		}
 		function flush() { var t = buf.toString(); if (t.length > 0) { parts.push(strLit(t)); buf = new StringBuf(); } }
 		var i = 0;
 		var n = str.length;
@@ -1179,7 +1184,12 @@ class Typer {
 					}
 					if (StringTools.trim(sb.toString()) == "")
 						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + i + 3, p.min + j));
-					parts.push(hxc.parser.Parser.parseExprString(sb.toString(), p.file, defines));
+					try {
+						var exprStart = p.min + i + 3;
+						parts.push(hxc.parser.Parser.parseExprString(spaces(exprStart) + sb.toString(), p.file, defines));
+					} catch (err:hxc.parser.ParserError) {
+						throw new TypingError(hxc.parser.ParserError.errorMsg(err.msg), err.pos);
+					}
 					i = j;
 				} else if (isIdentStart(d)) {
 					flush();
