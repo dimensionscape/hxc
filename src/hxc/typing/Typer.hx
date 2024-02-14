@@ -18,6 +18,8 @@ import hxc.typing.TyperContext.CurrentFun;
 import hxc.typing.Typeload;
 
 class Typer {
+	// The stack of cast fields being applied, for macro @:from recursion.
+	static var abstractCastStack:Array<TClassField> = [];
 
 	// A fresh mono, recorded in the per-function list. A valid Haxe identifier: an initial letter or `_`,
 	// then letters, digits or `_`. A quoted object field like "x-bar" is not one.
@@ -163,7 +165,27 @@ class Typer {
 		if (a.path.pack.length == 0 && a.path.name == "Any" && castField.cf.name == "__promote") return TypeFunctions.mk(TCast(e, null), t, p);
 		if (TypeFunctions.hasClassFieldFlag(castField.cf, CfExtern)) return TypeFunctions.mk(TCast(e, null), t, p);
 		if (a.impl == null) throw new NotFound();
-		return callImplCast(ctx, a.impl, castField.cf, e, t, p);
+		// Macro @:from recursion probe.
+		if (hxc.eval.EvalMacro.isMacroField(castField.cf) && abstractCastStack.length > 0
+			&& abstractCastStack[0] == castField.cf) {
+			try {
+				TypeUnification.unifyDefault(e.type, t);
+			} catch (_:UnifyError) {
+				throw new NotFound();
+			}
+		}
+		if (castField.cf == ctx.curfield || abstractCastStack.indexOf(castField.cf) >= 0)
+			throw new TypingError("Recursive implicit cast", p);
+		abstractCastStack.push(castField.cf);
+		var result:TExpr;
+		try {
+			result = callImplCast(ctx, a.impl, castField.cf, e, t, p);
+		} catch (err:Dynamic) {
+			abstractCastStack.pop();
+			throw err;
+		}
+		abstractCastStack.pop();
+		return result;
 	}
 
 	// A trailing optional ?p:haxe.PosInfos on a cast method receives the call-site info.
