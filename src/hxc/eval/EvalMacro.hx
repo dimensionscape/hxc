@@ -35,6 +35,7 @@ class EvalMacro {
 	static var currentCom:Null<Context> = null;
 	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
+	static var onAfterInitMacrosCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterTypingCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
@@ -457,6 +458,10 @@ class EvalMacro {
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
 		reg2("onGenerate", "on_generate", function(a) {
 			onGenerateCallbacks.push({ec: ec, fn: a[0]});
+			return VNull;
+		});
+		reg2("onAfterInitMacros", "on_after_init_macros", function(a) {
+			onAfterInitMacrosCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
 		});
 		reg2("onAfterGenerate", "on_after_generate", function(a) {
@@ -912,6 +917,17 @@ class EvalMacro {
 		}
 	}
 
+	public static function runAfterInitMacrosCallbacks():Void {
+		for (cb in onAfterInitMacrosCallbacks) {
+			EvalContext.setCtx(cb.ec);
+			switch (cb.fn) {
+				case VFunction(f, _): f([]);
+				case VFieldClosure(recv, f): f([recv]);
+				case _:
+			}
+		}
+	}
+
 	public static function runGenerateCallbacks(com:Context):Void {
 		for (cb in onGenerateCallbacks) {
 			EvalContext.setCtx(cb.ec);
@@ -1258,14 +1274,6 @@ class EvalMacro {
 				var pack = path.pack.copy();
 				pack.pop();
 				return {pack: pack, name: moduleName};
-			}
-		}
-		if (path.pack.length > 0) {
-			var last = path.pack[path.pack.length - 1];
-			if (last.length > 1 && last.charAt(0) == "_") {
-				var pack = path.pack.copy();
-				pack.pop();
-				return {pack: pack, name: last.substr(1)};
 			}
 		}
 		return path;

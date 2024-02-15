@@ -791,6 +791,7 @@ class ModuleLoader {
 	 * `ContextError(ModuleNotFound)` when no source file exists.
 	 */
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
+		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
 		if (existing != null) return existing;

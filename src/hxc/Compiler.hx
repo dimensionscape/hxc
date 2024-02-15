@@ -98,6 +98,11 @@ class Compiler {
 				case "-cp" | "-p" | "--class-path": userCp.push(args[i++]);
 				case "-main" | "-m" | "--main": mainClass = args[i++];
 				case "--resource": addResource(ctx, args[i++]);
+				case "--remap":
+					var spec = args[i++];
+					var sep = spec.indexOf(":");
+					if (sep <= 0 || sep == spec.length - 1) throw "Invalid remap format, expected source:target";
+					ctx.packageRemaps.set(spec.substr(0, sep), spec.substr(sep + 1));
 				case "-D" | "--define":
 					var kv = args[i++];
 					var eq = kv.indexOf("=");
@@ -220,6 +225,9 @@ class Compiler {
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+			// The init-macro callbacks run after the stage changes and before root modules type.
+			ctx.initMacrosDone = true;
+			hxc.eval.EvalMacro.runAfterInitMacrosCallbacks();
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.TypingError) {
@@ -229,11 +237,8 @@ class Compiler {
 		}
 
 		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=
-		// CInitMacrosDone). /
-		ctx.initMacrosDone = true;
-
-		// Help-user-defines/--help-user-metas print after the init macros registered the entries, then
-		// stop. (add_after_init_macros + Abort).
+		// CInitMacrosDone). / -help-user-defines/--help-user-metas print after the init macros registered
+		// the entries, then stop. (add_after_init_macros + Abort).
 		if (helpUserDefines || helpUserMetas) {
 			if (helpUserDefines) printUserDocs([
 				for (k in ctx.userDefines.keys()) {name: k.split("_").join("-"), entry: ctx.userDefines.get(k), isMeta: false}

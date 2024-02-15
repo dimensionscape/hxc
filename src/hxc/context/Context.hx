@@ -38,6 +38,9 @@ class Context {
 	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];
 
 	public var classPath:Array<String>;
+
+	/** Command-line package remaps, keyed by the first package segment. */
+	public var packageRemaps:StringMap<String>;
 	// Compiler.includeFile entries: resolved path and top, inline or closure placement.
 	public var includeFiles:Array<{file:String, position:String}> = [];
 
@@ -160,6 +163,7 @@ class Context {
 	public function new(?classPath:Array<String>, ?defines:Define) {
 		this.stdPath = [];
 		this.classPath = classPath == null ? [] : classPath;
+		this.packageRemaps = new StringMap();
 		this.defines = defines == null ? new Define() : defines;
 		this.mainClass = null;
 		this.displaySpec = null;
@@ -211,6 +215,7 @@ class Context {
 		macroCp = macroCp.concat([for (p in this.stdPath) p + "eval/_std/"]).concat(this.stdPath);
 		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();
+		for (source in this.packageRemaps.keys()) c.packageRemaps.set(source, this.packageRemaps.get(source));
 		// Initialize eval platform defines in the macro world so sys-dependent APIs remain available even
 		// with a non-sys host target.
 		hxc.context.Setup.initPlatform(c, Eval);
@@ -310,6 +315,15 @@ class Context {
 		if (message == "Type not found : Expr") for (d in diagnostics)
 			if (d.message == message && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
+	}
+
+	public function remapPath(path:Path):Path {
+		if (path.pack.length == 0) return path;
+		var target = packageRemaps.get(path.pack[0]);
+		if (target == null) return path;
+		var pack = path.pack.copy();
+		pack[0] = target;
+		return {pack: pack, name: path.name};
 	}
 
 	public function addDiagnosticStack(stack:Array<{message:String, pos:Position}>, depth:Int = 0, ?severity:MessageSeverity):Void {
