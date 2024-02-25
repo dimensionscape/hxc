@@ -2077,7 +2077,8 @@ class Typer {
 				switch (e1.expr) {
 					case EConst(CString(s, _)) if (field == "code"):
 						var cp = singleCodePoint(s);
-						if (cp != null) return AKExpr(TypeFunctions.mk(TConst(TInt(cp)), ctx.com.basic.tint, p));
+						if (cp == null) throw new TypingError("String must be a single UTF8 char", e1.pos);
+						return AKExpr(TypeFunctions.mk(TConst(TInt(cp)), ctx.com.basic.tint, p));
 					case EConst(CIdent("super")):
 						// `super.field` resolves the field against the superclass with a TSuper receiver, so
 						// the call dispatches to the inherited definition rather than an override.

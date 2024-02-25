@@ -730,6 +730,10 @@ class Ast {
 				if (c == "\\".code) {
 					esc = true;
 					i = i + 1;
+				} else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length && s.charCodeAt(i + 1) >= 0xDC00 && s.charCodeAt(i + 1) < 0xE000) {
+					// Copy an astral character whole; hxcpp's StringBuf.addChar corrupts lone surrogates.
+					b.addChar(0x10000 + ((c - 0xD800) << 10) + (s.charCodeAt(i + 1) - 0xDC00));
+					i = i + 2;
 				} else {
 					b.addChar(c);
 					i = i + 1;

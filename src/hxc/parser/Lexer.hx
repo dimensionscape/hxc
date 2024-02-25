@@ -36,6 +36,23 @@ class Lexer {
 	inline function text(start:Int):String
 		return src.substr(start, pos - start);
 
+	// StringBuf.addChar mangles a lone surrogate half on hxcpp (it becomes U+FFFD),
+	// so an astral char must be copied as one code point for the literal to
+	// round-trip the source exactly.
+	function copyChar(buf:StringBuf):Void {
+		var c = peek();
+		if (c >= 0xD800 && c <= 0xDBFF) {
+			var n = peek(1);
+			if (n >= 0xDC00 && n <= 0xDFFF) {
+				buf.addChar(0x10000 + ((c - 0xD800) << 10) + (n - 0xDC00));
+				pos += 2;
+				return;
+			}
+		}
+		buf.addChar(c);
+		pos++;
+	}
+
 	inline function mk(start:Int, t:Token):TokenInfo
 		return new TokenInfo(t, mkPos(start, pos));
 
@@ -307,8 +324,7 @@ class Lexer {
 				pos++;
 				continue;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 		return mk(start, Const(CString(unescapeAt(buf.toString(), start), SDoubleQuotes)));
 	}
@@ -354,8 +370,7 @@ class Lexer {
 				pos++;
 				continue;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 		return mk(start, Const(CString(unescapeAt(buf.toString(), start), SSingleQuotes)));
 	}
@@ -411,18 +426,15 @@ class Lexer {
 					buf.addChar("/".code);
 					buf.addChar("/".code);
 					pos += 2;
-					while (pos < len && peek() != "\n".code && peek() != "\r".code) {
-						buf.addChar(peek());
-						pos++;
-					}
+					while (pos < len && peek() != "\n".code && peek() != "\r".code)
+						copyChar(buf);
 					continue;
 				}
 				buf.addChar("/".code);
 				pos++;
 				continue;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 	}
 
@@ -446,8 +458,7 @@ class Lexer {
 				pos++;
 				continue;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 	}
 
@@ -490,8 +501,7 @@ class Lexer {
 				pos++;
 				continue;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 	}
 
@@ -561,8 +571,7 @@ class Lexer {
 				pos++;
 				break;
 			}
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 		var opt = new StringBuf();
 		while (true) {
@@ -807,8 +816,7 @@ class Lexer {
 				continue;
 			}
 			// Single '/' | '>' or any other run: store one char (inOpen preserved)
-			buf.addChar(c);
-			pos++;
+			copyChar(buf);
 		}
 	}
 }
