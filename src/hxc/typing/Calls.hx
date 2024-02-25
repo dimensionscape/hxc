@@ -987,6 +987,10 @@ class Calls {
 
 	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T, ?withType:WithType):FieldAccess {
 		if (cf.params.length == 0 || !TypeFunctions.hasClassFieldFlag(cf, CfGeneric)) return fa;
+		// A constructor is never specialized: typeNew builds a constructor call, which bypasses the
+		// CfGeneric dispatch of an ordinary field call, so a @:generic (abstract) constructor keeps its
+		// open method params and simply inlines.
+		if (cf.name == "new" || cf.name == "_new") return fa;
 		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
 		TypeFields.forceFieldBody(ctx.com, host, cf);
 		if (cf.expr == null) return fa;
@@ -1215,7 +1219,12 @@ class Calls {
 	}
 
 	static function resolveGenericMonos(t:T):T {
-		return switch (TypeFunctions.follow(t)) {
+		// Flattens bound monos to their targets so the clone shares nothing with the call site, but keeps
+		// the type structure itself: dispatching on follow(t) here would strip Null<...> wrappers and
+		// expand typedefs (the substitution maps structurally).
+		return switch (t) {
+			case TMono(r):
+				switch (r.type) { case null: t; case some: resolveGenericMonos(some); }
 			case TFun(sig):
 				TFun({args: [for (a in sig.args) {name: a.name, opt: a.opt, t: resolveGenericMonos(a.t)}], ret: resolveGenericMonos(sig.ret)});
 			case TInst(c, params):
@@ -1231,7 +1240,7 @@ class Calls {
 			case TLazy(f):
 				resolveGenericMonos(TypeFunctions.lazyType(f));
 			case _:
-				TypeFunctions.follow(t);
+				t;
 		}
 	}
 

@@ -1611,10 +1611,16 @@ class TexprConverter {
 				}
 				if (reduced != null) reduced else {
 					// A FINITE COMPLETE switch whose default was dropped marks its subject @:exhaustive so the
-					// init checker credits assignments made in every branch . A merely default-less switch (a
-					// String subject falling through) must not be marked: downstream analysis would treat it as
-					// always-terminating and drop the fall-through code.
-					if (droppedCompleteDefault && defE == null)
+					// init checker credits assignments made in every branch. This covers RunTimeFinite (enums,
+					// Bool) and CompileTimeFinite (a complete enum-abstract switch, whose default the conversion
+					// drops the same way). A merely default-less switch (a String subject falling through) must
+					// not be marked: downstream analysis would treat it as always-terminating and drop the
+					// fall-through code.
+					var compileTimeFinite = complete && switch (TypeFunctions.follow(subject.type)) {
+						case TAbstract(a, _): a.impl != null && a.isEnum;
+						case _: false;
+					};
+					if ((droppedCompleteDefault || compileTimeFinite) && defE == null)
 						swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
 					TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
 				}
