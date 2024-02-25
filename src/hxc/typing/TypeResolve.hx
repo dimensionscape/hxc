@@ -734,6 +734,13 @@ class TypeResolve {
 					if (isTo) {
 						// @:to: stored type = the return type (concrete specialization).
 						a.toField.push({t: ret, cf: cf});
+						// A @:to method gets CfImpl even when static so an instance-style call like
+						// `bytes.toArrayBuffer()` resolves it through the abstract. Flag the impl class's
+						// real field, not just the synthetic cast entry.
+						if (a.impl != null) {
+							var real = a.impl.statics.get(cff.cffName.name);
+							if (real != null) TypeFunctions.addClassFieldFlag(real, CfImpl);
+						}
 					}
 				case _:
 			}
