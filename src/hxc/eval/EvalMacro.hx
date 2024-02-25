@@ -1647,14 +1647,17 @@ class EvalMacro {
 				com.currentModule = savedMod;
 				return TypeFunctions.mkMono();
 			}
-			var ct = decodeComplexType(ec, result, p);
+			// A MacroType macro may return the legacy Type result as well as a ComplexType result; only a
+			// value that fails to decode as a ComplexType falls back to Type decoding, and load errors
+			// still surface.
+			var ct:Null<ComplexType> = try decodeComplexType(ec, result, p) catch (e:TypingError) null;
+			var ret:T = ct != null ? hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p}) : decodeType(ec, result);
 			curBuildClass = savedBuildClass;
 			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;
 			curTctx = savedTctx;
 			curPos = savedPos;
 			com.currentModule = savedMod;
-			var ret = hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p});
 			return ret;
 		} catch (e:haxe.Exception) {
 			curBuildClass = savedBuildClass;
