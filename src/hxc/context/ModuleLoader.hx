@@ -955,6 +955,43 @@ class ModuleLoader {
 		return null;
 	}
 
+	// Named imports: `import M.Sub` / `import M as X` bind their short name; `import M` also exposes every
+	// sub-type of M by its own name. An aliased import binds only its alias, never the module's own type
+	// names.
+	public static function resolveNamedImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
+		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
+		if (imports == null) return null;
+		var named = imports.names.get(name);
+		if (named != null) {
+			// Alias/sub or module-name exact binding. An aliased module import binds the module's
+			// main type, not a type named after the alias.
+			var sub = named.sub != null ? named.sub : named.modulePath.name;
+			var r = tryLoadSub(ctx, named.modulePath, sub, p);
+			if (r != null) return r;
+		}
+		for (key in imports.names.keys()) {
+			var ni = imports.names.get(key);
+			if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
+			var r = tryLoadSub(ctx, ni.modulePath, name, p);
+			if (r != null) return r;
+		}
+		return null;
+	}
+
+	// Wildcard imports: `import pack.*` resolves `name` as pack.name's type or pack.name module's main
+	// type.
+	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
+		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
+		if (imports == null) return null;
+		for (wp in imports.wildcards) {
+			var r = tryLoadSub(ctx, wp, name, p);
+			if (r != null) return r;
+			r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
+			if (r != null) return r;
+		}
+		return null;
+	}
+
 	public static function resolveBareType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
 		if (cur == null) return null;
 
@@ -962,30 +999,11 @@ class ModuleLoader {
 			if (TypeFunctions.tInfos(mt).path.name == name) return mt;
 		}
 
-		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
-
-		if (imports != null) {
-			var named = imports.names.get(name);
-			if (named != null) {
-				// Alias/sub or module-name exact binding. An aliased module import binds the module's
-				// main type, not a type named after the alias.
-				var sub = named.sub != null ? named.sub : named.modulePath.name;
-				var r = tryLoadSub(ctx, named.modulePath, sub, p);
-				if (r != null) return r;
-			}
-			// Whole-module imports expose subtypes; aliased imports bind only their alias.
-			for (key in imports.names.keys()) {
-				var ni = imports.names.get(key);
-				if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
-				var r = tryLoadSub(ctx, ni.modulePath, name, p);
-				if (r != null) return r;
-			}
-			for (wp in imports.wildcards) {
-				var r = tryLoadSub(ctx, wp, name, p);
-				if (r != null) return r;
-				r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
-				if (r != null) return r;
-			}
+		{
+			var r = resolveNamedImportType(ctx, cur, name, p);
+			if (r != null) return r;
+			r = resolveWildcardImportType(ctx, cur, name, p);
+			if (r != null) return r;
 		}
 
 		var pack = cur.path.pack;

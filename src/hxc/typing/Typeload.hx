@@ -411,15 +411,25 @@ class Typeload {
 				if (TypeFunctions.tInfos(mt).path.name == path.name) return mt;
 			}
 		}
-		// Implicit `import StdTypes` (Void/Int/Float/Bool/Single/Dynamic/Iterator/...) outranks a
-		// same-package sibling, so a core type is never shadowed by a same-package type of the same name:
-		// bare `Void` in package cpp is the core Void, not cpp.Void. .
+		// Unqualified resolution order: current module, then explicit imports (latest first), then the
+		// implicit StdTypes import at the tail of that list, then wildcard imports, then modules from the
+		// current package up to the root. A plain `import lime.app.Application` therefore shadows a
+		// same-package Application, and a core type (Void/Int/...) is never shadowed by a same-package type
+		// of the same name.
+		if (sub == null && path.pack.length == 0 && ctx.currentModule != null) {
+			var imp = hxc.context.ModuleLoader.resolveNamedImportType(ctx, ctx.currentModule, path.name, p);
+			if (imp != null) return imp;
+		}
 		if (sub == null && path.pack.length == 0) {
 			var std = try hxc.context.ModuleLoader.loadModule(ctx, {pack: [], name: "StdTypes"}, p) catch (_:Dynamic) null;
 			if (std != null) {
 				var stdT = hxc.context.ModuleLoader.findTypeInModuleOpt(std, path.name);
 				if (stdT != null) return stdT;
 			}
+		}
+		if (sub == null && path.pack.length == 0 && ctx.currentModule != null) {
+			var imp = hxc.context.ModuleLoader.resolveWildcardImportType(ctx, ctx.currentModule, path.name, p);
+			if (imp != null) return imp;
 		}
 		if (sub == null && path.pack.length == 0 && ctx.currentModule != null
 				&& ctx.currentModule.path.pack.length > 0) {
