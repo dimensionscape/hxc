@@ -762,11 +762,37 @@ class Calls {
 				var ce = mono.expr;
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length > 0):
+						// The receiver unifies against the first parameter before the syntactic args, so a method
+						// type param binds from the receiver, not from a later lambda argument. An abstract impl
+						// receiver unifies as the applied underlying type, except _new. A @:multiType receiver goes
+						// through the abstract cast and replaces the receiver expression.
+						var recvThis = se.thisExpr;
+						function isMultiType(t:T):Bool
+							return switch (TypeFunctions.follow(t)) {
+								case TAbstract(a, _): TypeFunctions.hasMeta(":multiType", a.meta);
+								case _: false;
+							}
+						switch (se.access.host) {
+							case FHAbstract(a, atl, _) if (se.access.field.name != "_new"):
+								try {
+									hxc.core.TypeUnification.unifyDefault(TypeFunctions.applyParams(a.params, atl, a.thisType), sig.args[0].t);
+								} catch (ue:hxc.core.TypeUnification.UnifyError) {
+									throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
+								}
+							case _ if (isMultiType(recvThis.type) || isMultiType(sig.args[0].t)):
+								recvThis = Typer.castOrUnify(ctx, sig.args[0].t, recvThis, recvThis.pos);
+							case _:
+								try {
+									hxc.core.TypeUnification.unifyDefault(recvThis.type, sig.args[0].t);
+								} catch (ue:hxc.core.TypeUnification.UnifyError) {
+									throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
+								}
+						}
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						makeCall(ctx, ce, [se.thisExpr].concat(r.el), ret, p, forceInline || faCall.isInline, forcePos);
+						makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline || faCall.isInline, forcePos);
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
