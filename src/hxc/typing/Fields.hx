@@ -120,8 +120,11 @@ class Fields {
 	// Recorded (not raised) so typing continues; a missing constructor is left to the caller (a null
 	// constructor is handled there).
 	public static function checkConstructorAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
-		if (!ctx.untypedMode && !(canAccess(ctx, c, f, true) || TypeFunctions.extendsClass(ctx.curclass, c)))
-			ctx.com.addDiagnostic("Cannot access private constructor of " + hxc.core.Globals.sTypePath(c.path), p);
+		if (!ctx.untypedMode && !(canAccess(ctx, c, f, true) || TypeFunctions.extendsClass(ctx.curclass, c))) {
+			// An abstract impl reports the abstract's path.
+			var path = switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };
+			ctx.com.addDiagnostic("Cannot access private constructor of " + hxc.core.Globals.sTypePath(path), p);
+		}
 	}
 
 	static function checkAbstractFieldAccess(ctx:TyperContext, a:TAbstract, f:TClassField, p:Position):Void {
