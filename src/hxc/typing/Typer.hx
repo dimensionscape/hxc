@@ -827,15 +827,25 @@ class Typer {
 					else {
 						// A recursive named local function is bound in two steps: `var f = null; f = <fn>`,
 						// so the closure captures the (mutable) slot and a self-call sees the assigned
-						// value rather than the null it was constructed with. is_rec.
+						// value rather than the null it was constructed with. In value position the
+						// declaration is followed by a TLocal read so the whole expression evaluates to the
+						// function.
 						var isRec = TexprTools.referencesLocal(fnExpr, namedVar);
-						if (!isRec) TypeFunctions.mk(TVarExpr(namedVar, fnExpr), ctx.com.basic.tvoid, p);
+						var isInline = switch (kind) { case FKNamed(_, inl): inl; case _: false; };
+						var tvoid = ctx.com.basic.tvoid;
+						var exprs:Array<TExpr> = [];
+						if (isRec) {
+							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p));
+							exprs.push(TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p));
+						} else {
+							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, fnExpr), tvoid, p));
+						}
+						if (!withType.match(NoValue) && !isInline)
+							exprs.push(TypeFunctions.mk(TLocal(namedVar), namedVar.type, p));
+						if (exprs.length == 1) exprs[0];
 						else {
-							var tvoid = ctx.com.basic.tvoid;
-							var decl = TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p);
-							var assign = TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p);
-							var block = TypeFunctions.mk(TBlock([decl, assign]), tvoid, p);
-							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, block), tvoid, p);
+							var block = TypeFunctions.mk(TBlock(exprs), namedVar.type, p);
+							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, block), namedVar.type, p);
 						}
 					}
 			case EArrayDecl(el):
@@ -1273,7 +1283,23 @@ class Typer {
 			return AKExpr(TexprTools.makeLocal(ctx.locals.get(i), p));
 		}
 		switch (i) {
-			case "null": return AKExpr(TypeFunctions.mk(TConst(TNull), ctx.com.basic.tnull(spawnMonomorph(ctx, p)), p));
+			case "null":
+				// With an expected type the null literal adopts it directly; an expected unbound monomorph
+				// is raw-bound to Null<?> (no constraint close) unless already nullable. The literal
+				// reusing the expected type instance keeps the equality unify a no-op, so a constrained
+				// mono is not closed by a null comparison.
+				var tnull:T = switch (withType) {
+					case WithType(wt, _):
+						switch (TypeFunctions.follow(wt)) {
+							case TMono(r) if (!TypeFunctions.isNullable(wt)):
+								TypeUnification.doBind(r, ctx.com.basic.tnull(spawnMonomorph(ctx, p)));
+							case _:
+						}
+						wt;
+					case _:
+						ctx.com.basic.tnull(spawnMonomorph(ctx, p));
+				};
+				return AKExpr(TypeFunctions.mk(TConst(TNull), tnull, p));
 			case "true": return AKExpr(TexprTools.makeBool(ctx.com.basic, true, p));
 			case "false": return AKExpr(TexprTools.makeBool(ctx.com.basic, false, p));
 			case "this": return AKExpr(getThis(ctx, p));

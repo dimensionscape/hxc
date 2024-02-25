@@ -397,7 +397,7 @@ class TypeUnification {
 		}
 	}
 
-	static function doBind(m:TMono, t:T):Void {
+	public static function doBind(m:TMono, t:T):Void {
 		journalMono(m);
 		m.type = t;
 		m.downConstraints = [];
