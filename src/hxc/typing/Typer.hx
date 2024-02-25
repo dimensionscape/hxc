@@ -1449,7 +1449,7 @@ class Typer {
 			case TClassDecl(c):
 				switch (c.kind) {
 					case KGenericBuild(fields):
-						var t = hxc.eval.EvalMacro.runGenericBuild(ctx.com, c, [], fields, p);
+						var t = hxc.eval.EvalMacro.runGenericBuild(ctx.com, c, [], fields, p, ctx.typeParams);
 						var built = try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(t)) catch (_:Dynamic) {
 							// A Dynamic build result references the Dynamic type itself.
 							switch (TypeFunctions.follow(t)) {

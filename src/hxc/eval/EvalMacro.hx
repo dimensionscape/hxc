@@ -1598,7 +1598,7 @@ class EvalMacro {
 		}
 	}
 
-	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position):T {
+	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position, ?callerTypeParams:TypeParams):T {
 		var entry = findMeta(c.meta, ":genericBuild");
 		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta. Was it removed by a macro?", p);
 		if (entry.params.length != 1) throw new TypingError("genericBuild requires a single expression call parameter", p);
@@ -1620,7 +1620,10 @@ class EvalMacro {
 		try {
 			var buildTctx = new TyperContext(com);
 			buildTctx.curclass = c;
-			buildTctx.typeParams = c.params;
+			// The macro runs in the CALLER's typing context (a generic build leaves ctx untouched), so
+			// Context.resolveType and toComplexType round-trips resolve a bare method type param (e.g. `T`
+			// from `of<T>(e:Event<T->Void>)`) to the call site's param, not the genericBuild class's own.
+			buildTctx.typeParams = callerTypeParams != null ? callerTypeParams : c.params;
 			buildTctx.tthis = TInst(c, params);
 			com.currentModule = c.module;
 			curTctx = buildTctx;
@@ -1651,7 +1654,7 @@ class EvalMacro {
 			// value that fails to decode as a ComplexType falls back to Type decoding, and load errors
 			// still surface.
 			var ct:Null<ComplexType> = try decodeComplexType(ec, result, p) catch (e:TypingError) null;
-			var ret:T = ct != null ? hxc.typing.Typeload.loadComplexType(com, c.params, {ct: ct, pos: p}) : decodeType(ec, result);
+			var ret:T = ct != null ? hxc.typing.Typeload.loadComplexType(com, buildTctx.typeParams, {ct: ct, pos: p}) : decodeType(ec, result);
 			curBuildClass = savedBuildClass;
 			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;

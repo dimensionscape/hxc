@@ -516,7 +516,7 @@ class Typeload {
 		ensureResolved(ctx, TypeFunctions.tInfos(mt).module);
 		var types = TypeFunctions.tInfos(mt).params;
 		var declPath = TypeFunctions.tPath(mt);
-		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric);
+		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams);
 		var isGenericBuild = switch (mt) {
 			case TClassDecl(c): switch (c.kind) { case KGenericBuild(_): true; case _: false; }
 			case _: false;
@@ -586,7 +586,7 @@ class Typeload {
 	// Do_build_instance (subset): for the non-generic case it is just
 	// `apply_params decl_params actual_params (type_of_module_type mt)`-style construction.
 	// TInst/TEnum/TType/TAbstract with the given params. We build directly.
-	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool):T {
+	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool, ?callerTypeParams:TypeParams):T {
 		return switch (mt) {
 			case TClassDecl(c):
 				switch (c.kind) {
@@ -601,7 +601,7 @@ class Typeload {
 						}));
 						TLazy(r);
 					case KGenericBuild(fields):
-						hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p);
+						hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p, callerTypeParams);
 					case _:
 						TInst(c, params);
 				}
