@@ -398,7 +398,15 @@ class PatternMaker {
 			};
 		}
 		try {
-			var e = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
+			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
+			// from another module.
+			var oldUntyped = pctx.ctx.untypedMode;
+			pctx.ctx.untypedMode = true;
+			var e = try Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t)) catch (ex:Dynamic) {
+				pctx.ctx.untypedMode = oldUntyped;
+				throw ex;
+			};
+			pctx.ctx.untypedMode = oldUntyped;
 			var pat = checkTyped(e);
 			if (pat != null) return pat;
 		} catch (err:TypingError) {
@@ -589,7 +597,11 @@ class PatternMaker {
 				}
 			case EField(_, field, _):
 				// A qualified value pattern (Type.Const / Type.EnumCtor / static const) matches by value.
+				// It is typed in untyped mode so private constants match.
+				var oldUntyped = ctx.untypedMode;
+				ctx.untypedMode = true;
 				var te = try Typer.typeExpr(ctx, e, WithTypeTools.withType(t)) catch (_:TypingError) null;
+				ctx.untypedMode = oldUntyped;
 				if (te == null) {
 					reportPatternTypo(t, field, pctx, p);
 					throw new TypingError("Only inline or read-only (default, never) fields can be used as a pattern", p);
