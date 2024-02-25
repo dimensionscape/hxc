@@ -2842,7 +2842,21 @@ class Typer {
 					return TypeFunctions.mk(TNew(a.impl, usedAtl, r.el), TAbstract(a, usedAtl), p);
 				}
 				var selection = resolveMultiType(ctx, a, usedAtl, p);
-				return buildMultiTypeCastCall(ctx, a, usedAtl, selection.castField, selection.castType, selection.ret, [], p);
+				// The cast call takes the receiver plus the full constructor argument list: TNew is typed
+				// against _new (padding omitted optionals with nulls) and the abstract-cast filter appends
+				// those args after the null receiver, so the @:to signature (t, ...ctor args) is always
+				// saturated.
+				var ctorArgs:Array<TExpr> = [];
+				if (a.impl != null) switch (a.impl.statics.get("_new")) {
+					case null:
+					case newCf:
+						TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
+						switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, usedAtl, newCf.type))) {
+							case TFun(s): ctorArgs = Calls.unifyCallArgs(ctx, el, s.args, s.ret, p).el;
+							case _:
+						}
+				}
+				return buildMultiTypeCastCall(ctx, a, usedAtl, selection.castField, selection.castType, selection.ret, ctorArgs, p);
 			case TAbstract(a, atl) if (a.impl != null && a.impl.statics.exists("_new")):
 				// An abstract is constructed by calling its impl _new static, with the abstract type
 				// parameters applied so a generic abstract threads them (a rigid type parameter would
@@ -2951,7 +2965,7 @@ class Typer {
 	// Select a @:multiType abstract's concrete implementation: the first @:to cast whose key
 	// type-parameter constraint is satisfied by the actual key type, with the concrete return
 	// type specialized to the actual type parameters.
-	static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
+	public static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
 		return resolveMultiTypeSelection(a, atl, p);
 	}
 
@@ -3030,7 +3044,7 @@ class Typer {
 		return null;
 	}
 
-	static function buildMultiTypeCastCall(ctx:TyperContext, a:TAbstract, atl:Array<T>, castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>, p:Position):TExpr {
+	public static function buildMultiTypeCastCall(ctx:TyperContext, a:TAbstract, atl:Array<T>, castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>, p:Position):TExpr {
 		if (a.impl == null) throw new TypingError("Cannot construct multi-type abstract " + a.path.name, p);
 		var cf = a.impl.statics.exists(castField.cf.name) ? a.impl.statics.get(castField.cf.name) : castField.cf;
 		TypeFields.forceFieldBody(ctx.com, a.impl, cf);

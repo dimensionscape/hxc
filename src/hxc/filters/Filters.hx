@@ -775,7 +775,7 @@ class Filters {
 	// TNew of the abstract impl (Typer.typeNew, multiTypeHasOpenSelector). By filter time the
 	// monomorphs have settled, so pick the concrete implementation the reference would have chosen at
 	// the delayed resolution multitype via find_multitype_specialization).
-	static function resolveDeferredMultiType(e:TExpr):TExpr {
+	static function resolveDeferredMultiType(tctx:TyperContext, e:TExpr):TExpr {
 		return switch (e.expr) {
 			case TNew(c, tl, el):
 				switch (c.kind) {
@@ -786,7 +786,14 @@ class Filters {
 							case TInst(tc, _) if (tc.kind.match(KTypeParameter(_))): open = true;
 							case _:
 						}
-						if (open) return e;
+						if (open) {
+							// A construction whose selector is still a type parameter (a generic body kept
+							// as a field) picks its @:to cast by constraint unification and becomes the
+							// cast's static call, which then inlines TNew / find_multitype_specialization).
+							var sel = try hxc.typing.Typer.resolveMultiType(tctx, a, tl, e.pos) catch (_:Dynamic) null;
+							if (sel == null) return e;
+							return hxc.typing.Typer.buildMultiTypeCastCall(tctx, a, tl, sel.castField, sel.castType, sel.ret, el, e.pos);
+						}
 						var concrete = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos) catch (_:Dynamic) null;
 						switch (concrete == null ? null : TypeFunctions.follow(concrete)) {
 							case TInst(cc, ctl): TypeFunctions.mk(TNew(cc, ctl, el), e.type, e.pos);
@@ -832,7 +839,7 @@ class Filters {
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
-			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(TexprTools.mapExpr(walk, e2)); walk(e); }},
+			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		memProbe("pass1:done");
