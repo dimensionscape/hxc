@@ -171,7 +171,7 @@ class ModuleLoader {
 						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
 						return;
 					}
-					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub});
+					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub, aliased: true});
 			}
 		}
 
@@ -973,10 +973,10 @@ class ModuleLoader {
 				var r = tryLoadSub(ctx, named.modulePath, sub, p);
 				if (r != null) return r;
 			}
-			// Whole-module imports may resolve a subtype by its name.
+			// Whole-module imports expose subtypes; aliased imports bind only their alias.
 			for (key in imports.names.keys()) {
 				var ni = imports.names.get(key);
-				if (ni.sub != null) continue; // Sub-imports only bind their own short name (handled above)
+				if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
 				var r = tryLoadSub(ctx, ni.modulePath, name, p);
 				if (r != null) return r;
 			}
