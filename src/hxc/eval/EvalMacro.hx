@@ -639,6 +639,10 @@ class EvalMacro {
 	public static function ensureBuilt(com:Context, c:TClass):Void {
 		var key = c.path.pack.join(".") + "." + c.path.name;
 		if (builtClasses.exists(key)) return;
+		// The super chain and interfaces build first so a child's build macro sees the parent's macro-added
+		// fields.
+		if (c.superClass != null) ensureBuilt(com, c.superClass.c);
+		for (i in c.interfaces) ensureBuilt(com, i.c);
 		var entries = collectBuildEntries(c);
 		if (entries.length == 0) return;
 		builtClasses.set(key, true);
@@ -766,7 +770,7 @@ class EvalMacro {
 
 	// The first capitalized segment is the module; the last segment before the method is the class (a
 	// Module.SubType.method path addresses a secondary module type).
-	static function macroTarget(callee:Expr):Null<{pack:Array<String>, module:String, name:String, method:String}> {
+	static function macroTarget(callee:Expr):Null<{pack:Array<String>, module:String, name:String, method:String, moduleOnly:Bool}> {
 		var segs = flattenExprPath(callee);
 		if (segs == null || segs.length < 2) return null;
 		var typeSegs = segs.slice(0, segs.length - 1);
@@ -776,7 +780,10 @@ class EvalMacro {
 			if (ch >= "A".code && ch <= "Z".code) { typeIdx = i; break; }
 		}
 		if (typeIdx < 0) return null;
-		return {pack: typeSegs.slice(0, typeIdx), module: typeSegs[typeIdx], name: typeSegs[typeSegs.length - 1], method: segs[segs.length - 1]};
+		// moduleOnly: `Module.method` (a single type segment) can target a module-level
+		// static, which wins over a same-named class's static; `Module.Class.method`
+		// always targets the class.
+		return {pack: typeSegs.slice(0, typeIdx), module: typeSegs[typeIdx], name: typeSegs[typeSegs.length - 1], method: segs[segs.length - 1], moduleOnly: typeSegs.length - typeIdx == 1};
 	}
 
 	static function macroPrototype(ec:EvalContext, path:hxc.core.Globals.Path, field:String, modulePath:Null<hxc.core.Globals.Path>, isInstance:Bool):Null<VPrototype> {
@@ -797,6 +804,14 @@ class EvalMacro {
 		var t = macroTarget(callee);
 		if (t == null) throw new TypingError("@:build target must be a static call", p);
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash({pack: t.pack, name: t.name}));
+		// `Module.method` prefers the module-level static over a same-named class's static.
+		if (t.moduleOnly) {
+			var mm = try hxc.context.ModuleLoader.loadModule(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+			if (mm != null && mm.statics != null && mm.statics.statics.exists(t.method)) {
+				var sproto = ec.staticPrototypes.get(EvalHash.pathHash(mm.statics.path));
+				if (sproto != null && sproto.pnames.exists(EvalHash.hash(t.method))) proto = sproto;
+			}
+		}
 		if (proto == null || !proto.pnames.exists(EvalHash.hash(t.method))) {
 			var m = try hxc.context.ModuleLoader.loadModule(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
 			if (m != null) for (mt in m.types) switch (mt) {
@@ -896,7 +911,7 @@ class EvalMacro {
 					// Compiler.nullSafety) receives constants: the arguments type against the function's
 					// signature (so a malformed object literal errors here) and the typed constants convert
 					// to values.
-					var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module});
+					var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module}, t.moduleOnly);
 					var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
 					var vargs = if (isMacroFn) {
@@ -1485,9 +1500,14 @@ class EvalMacro {
 
 	// The macro-world class field for a host-context field, carrying the real (Expr-typed)
 	// signature. Null when the macro world has no such class or field.
-	static function macroWorldField(path:hxc.core.Globals.Path, fieldName:String, modulePath:Null<hxc.core.Globals.Path>):Null<TClassField> {
+	static function macroWorldField(path:hxc.core.Globals.Path, fieldName:String, modulePath:Null<hxc.core.Globals.Path>, preferModuleStatics:Bool = false):Null<TClassField> {
 		if (macroCom == null) return null;
 		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) return null;
+		// A `Module.method` target prefers the module-level static over a class's.
+		if (preferModuleStatics && m.statics != null) {
+			var cf = m.statics.statics.get(fieldName);
+			if (cf != null) return cf;
+		}
 		for (mt in m.types) switch (mt) {
 			case TClassDecl(c) if ((c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) || c.statics.exists(fieldName)):
 				var cf = c.statics.get(fieldName);

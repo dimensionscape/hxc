@@ -1097,6 +1097,13 @@ class Typer {
 				throw new TypingError("Display is not yet ported", p);
 			case ECheckType(e1, th):
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
+				// A `(v : C)` hint in a body forces C's build macros like any class reference does
+				// (building an instance runs the class build past PBuildClass); expression typing is late
+				// enough.
+				switch (TypeFunctions.follow(t)) {
+					case TInst(hc, _): hxc.eval.EvalMacro.ensureBuilt(ctx.com, hc);
+					case _:
+				}
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
 				var te2 = try castOrUnify(ctx, t, te, p) catch (err:TypingError) {
 					switch (TypeFunctions.follow(t)) {
@@ -1552,16 +1559,48 @@ class Typer {
 		if (g != null) {
 			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
 			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) return r; }
+			// `import M.field` where field is a MODULE-LEVEL static: the module may have no main type at
+			// all; resolve against its statics holder.
+			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, g.ownerPath, p) catch (_:Dynamic) null;
+			if (mod != null && mod.statics != null) {
+				try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+				var sc = mod.statics;
+				var cf = sc.statics.get(g.field != null ? g.field : i);
+				if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+			}
 		}
 		// `import M.X` with an uppercase trailing X was recorded as a sub-type import; when M has no
 		// sub-type X, it falls back to a static field X of M's main type (an uppercase static).
 		var n = imports.names.get(i);
-		if (n != null && n.sub == i) {
+		if (n != null && n.sub != null) {
 			var subMt = try ctx.com.getType(n.modulePath, p, n.sub) catch (_:Dynamic) null;
 			if (subMt == null) {
 				var mainMt = try ctx.com.getType(n.modulePath, p, null) catch (_:Dynamic) null;
-				if (mainMt != null) { var r = tryType(mainMt, i); if (r != null) return r; }
+				if (mainMt != null) { var r = tryType(mainMt, n.sub); if (r != null) return r; }
+				// An uppercase module-level static (`import M.UpperCase [as X]`) is recorded as a sub-type
+				// import; when no such type exists it is a field of statics.
+				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, n.modulePath, p) catch (_:Dynamic) null;
+				if (mod != null && mod.statics != null) {
+					try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+					var sc = mod.statics;
+					var cf = sc.statics.get(n.sub);
+					if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+				}
 			}
+		}
+		// A plain module import (`import M;`) exposes every PUBLIC module-level static of M as a bare
+		// identifier INormal: md.statics' public fields enter module_globals). An aliased or sub-type
+		// import does not.
+		for (key in imports.names.keys()) {
+			var ni = imports.names.get(key);
+			if (ni.sub != null || ni.aliased == true) continue;
+			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
+			if (mod.statics == null) continue;
+			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+			var sc = mod.statics;
+			var cf = sc.statics.get(i);
+			if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfPublic))
+				return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
 		}
 		for (w in imports.wildcards) {
 			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
@@ -1578,6 +1617,48 @@ class Typer {
 		var cf = c.statics.get(i);
 		if (cf == null) return null;
 		return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
+	}
+
+	// `Module.field` where Module is not a type bound in the current module context: the unqualified
+	// module
+	// walk resolves the module's statics field before its types.
+	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode):Null<AccessKind> {
+		if (ctx.locals.exists(modName)) return null;
+		var m = ctx.com.currentModule;
+		if (m == null) return null;
+		for (mt in m.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports != null) {
+			if (imports.names.exists(modName)) return null;
+			for (key in imports.names.keys()) {
+				var ni = imports.names.get(key);
+				if (ni.sub != null || ni.aliased == true) continue;
+				var im = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
+				for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
+			}
+		}
+		function statics(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
+			if (mod == null || mod.statics == null) return null;
+			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+			var sc = mod.statics;
+			var cf = sc.statics.get(field);
+			if (cf == null) return null;
+			return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+		}
+		if (imports != null) for (w in imports.wildcards) {
+			var r = statics(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: modName}, p) catch (_:Dynamic) null);
+			if (r != null) return r;
+		}
+		var mpack = m.path.pack;
+		var pi = mpack.length;
+		while (pi >= 0) {
+			if (!(pi == mpack.length && modName == m.path.name)) {
+				var r = statics(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: modName}, p) catch (_:Dynamic) null);
+				if (r != null) return r;
+			}
+			pi--;
+		}
+		return null;
 	}
 
 	// A bare identifier that names a constructor of an enum, or a member of an enum abstract, declared
@@ -1679,11 +1760,64 @@ class Typer {
 				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
 			}
 		}
+		// Module-level static reached through the module name (RootMod2.lowerCase, or
+		// pack.Mod2.lowerCasePack where the main type lacks the field): resolve the chain against the
+		// module's statics holder module fields via statics).
+		function staticsChain(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
+			if (mod == null || mod.statics == null || rest.length == 0) return null;
+			if (!mod.statics.statics.exists(rest[0])) return null;
+			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+			var sc = mod.statics;
+			var sEnds:Array<Int> = [];
+			var sEndAcc = p.max;
+			var si = rest.length - 1;
+			while (si >= 0) { sEnds[si] = sEndAcc; sEndAcc -= rest[si].length + 1; si--; }
+			var sAcc:AccessKind = AKExpr(TexprTools.makeTypeExpr(TClassDecl(sc), new Position(p.file, p.min, sEndAcc)));
+			for (i in 0...rest.length) {
+				var isLast = i == rest.length - 1;
+				var segP = new Position(p.file, p.min, sEnds[i]);
+				sAcc = Fields.typeField(ctx, accGet(ctx, sAcc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+			}
+			return sAcc;
+		}
 		if (mt == null) {
+			var r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null);
+			// The statics-only module may be visible through a named or wildcard import
+			// (`import pack.inner.*;` then `InnerMod.lowerCase`).
+			if (r == null && pack.length == 0) {
+				var curM = ctx.com.currentModule;
+				var mImports = curM == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curM.path));
+				if (mImports != null) {
+					var ni = mImports.names.get(name);
+					if (ni != null && ni.sub == null)
+						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
+					if (r == null) for (w in mImports.wildcards) {
+						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null);
+						if (r != null) break;
+					}
+				}
+				// Search from the current package up to the root.
+				if (r == null && curM != null) {
+					var mpack = curM.path.pack;
+					var pi = mpack.length;
+					while (r == null && pi >= 1) {
+						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: name}, p) catch (_:Dynamic) null);
+						pi--;
+					}
+				}
+			}
+			if (r != null) return r;
 			// A qualified type path has its own missing-type diagnostic. Keep the
 			// package prefix in the message instead of reporting the first segment
 			// as an unknown value.
 			throw new TypingError("Type not found : " + segs.join("."), p);
+		}
+		if (rest.length > 0) {
+			// A module-level static wins over a same-named static of the module's main
+			// class for `Module.field` access (resolution suite
+			// testUnimportedModuleStaticBeforeMainClassStatic).
+			var r = staticsChain(TypeFunctions.tInfos(mt).module);
+			if (r != null) return r;
 		}
 		switch (mt) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
@@ -2118,6 +2252,12 @@ class Typer {
 						if (sup == null) throw new TypingError("Current class does not have a super class", p);
 						var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(sup.c, sup.params), e1.pos);
 						return Fields.typeField(ctx, superExpr, field, p, mode, withType);
+					case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
+						// An uppercase ident not bound in the current module context (its own types, imports)
+						// resolves as a module, whose module-level statics win over the module's types >
+						// resolve_in_module: resolve_module_field runs first).
+						var acc = unqualifiedModuleStaticField(ctx, modName, field, p, mode);
+						if (acc != null) return acc;
 					case _:
 				}
 				try {
