@@ -198,6 +198,12 @@ class Typer {
 
 	static function callImplCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
 		if (hxc.eval.EvalMacro.isMacroField(cf)) return callMacroCast(ctx, implC, cf, e, t, p);
+		// The from/to entry may be the synthetic selection field; the call goes to the impl class's real
+		// static, whose body must be forced before makeCall consumes expr, or an inline cast survives to
+		// the generators pointing at a function that is never emitted.
+		var realCf = implC.statics.get(cf.name);
+		if (realCf != null) cf = realCf;
+		TypeFields.forceFieldBody(ctx.com, implC, cf);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var staticExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
 		return Calls.makeCall(ctx, staticExpr, castArgs(ctx, cf, e, p), t, p);

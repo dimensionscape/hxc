@@ -725,6 +725,23 @@ class TypeFields {
 			var def:Null<TExpr> = if (fa.value != null) Typer.castOrUnify(tctx, at, Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at)), fa.value.pos)
 				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
 				else null;
+			// The STORED default is the reduced constant: a cast unwraps to its inner expr, so an
+			// enum-abstract default (m:M = AUTO) reaches the generators as TConst/TField rather than TCast
+			// loop).
+			if (def != null) {
+				function constDef(e:TExpr):Null<TExpr> return switch (e.expr) {
+					case TConst(_): e;
+					case TField(_, FEnum(_, _)): e;
+					case TField(_, FStatic(c2, cf2)) if (switch (c2.kind) {
+						case KAbstractImpl(ab): ab.isEnum && TypeFunctions.hasClassFieldFlag(cf2, CfEnum);
+						case _: false;
+					}): e;
+					case TCast(e1, null): constDef(e1);
+					case _: null;
+				}
+				var reduced = constDef(def);
+				if (reduced != null) def = reduced;
+			}
 			result.push({v: v, c: def});
 		}
 		return result;
