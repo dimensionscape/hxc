@@ -247,8 +247,22 @@ class EvalMacro {
 			return encodeType(ec, TypeFunctions.applyParams(tpl, tl, mapT(decodeType(ec, a[2]))));
 		});
 		reg2("getType", "get_type", function(a) {
-			var path = pathFromDotted(strOf(a[0]));
-			var tpath:TypePath = hxc.ast.Ast.mkTypePath(path);
+			// When the segment before the last is uppercase it is the module and the last segment is a
+			// sub-type (Module.Sub / pack.Module.Sub).
+			var parts = strOf(a[0]).split(".");
+			var last = parts[parts.length - 1];
+			var packParts = parts.slice(0, parts.length - 1);
+			var tpath:TypePath;
+			if (packParts.length > 0) {
+				var prev = packParts[packParts.length - 1];
+				var c0 = prev.charCodeAt(0);
+				if (c0 >= "A".code && c0 <= "Z".code)
+					tpath = {tpackage: packParts.slice(0, packParts.length - 1), tname: prev, tsub: last, tparams: []};
+				else
+					tpath = {tpackage: packParts, tname: last, tsub: null, tparams: []};
+			} else {
+				tpath = {tpackage: [], tname: last, tsub: null, tparams: []};
+			}
 			return encodeType(ec, Typeload.loadInstance(com, [], tpath, curPos, true));
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));

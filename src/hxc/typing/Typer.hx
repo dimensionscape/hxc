@@ -1637,23 +1637,37 @@ class Typer {
 				for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
 			}
 		}
-		function statics(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
-			if (mod == null || mod.statics == null) return null;
+		function resolveMod(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
+			if (mod == null) return null;
 			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
-			var sc = mod.statics;
-			var cf = sc.statics.get(field);
-			if (cf == null) return null;
-			return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+			if (mod.statics != null) {
+				var sc = mod.statics;
+				var cf = sc.statics.get(field);
+				if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+			}
+			// An uppercase part after the module name resolves as one of its types
+			// (resolve_in_module -> resolve_module_type), beating the main class's static.
+			var c0 = field.charCodeAt(0);
+			if (c0 >= "A".code && c0 <= "Z".code) {
+				for (mt2 in mod.types) {
+					var ti = TypeFunctions.tInfos(mt2);
+					if (ti.path.name == field && !(ti.isPrivate && mod != ctx.com.currentModule)) {
+						switch (mt2) { case TClassDecl(c2): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c2); case _: }
+						return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p));
+					}
+				}
+			}
+			return null;
 		}
 		if (imports != null) for (w in imports.wildcards) {
-			var r = statics(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: modName}, p) catch (_:Dynamic) null);
+			var r = resolveMod(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: modName}, p) catch (_:Dynamic) null);
 			if (r != null) return r;
 		}
 		var mpack = m.path.pack;
 		var pi = mpack.length;
 		while (pi >= 0) {
 			if (!(pi == mpack.length && modName == m.path.name)) {
-				var r = statics(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: modName}, p) catch (_:Dynamic) null);
+				var r = resolveMod(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: modName}, p) catch (_:Dynamic) null);
 				if (r != null) return r;
 			}
 			pi--;
@@ -1760,39 +1774,65 @@ class Typer {
 				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
 			}
 		}
-		// Module-level static reached through the module name (RootMod2.lowerCase, or
-		// pack.Mod2.lowerCasePack where the main type lacks the field): resolve the chain against the
-		// module's statics holder module fields via statics).
+		// Resolution against a module the module-level static field first, then (for an uppercase part) a
+		// sub-type, then the main type (the main type falls to the normal path). The remaining segments
+		// chain as field accesses with per-segment positions.
+		function chainFrom(base:AccessKind, fromIdx:Int, ends:Array<Int>):AccessKind {
+			var acc = base;
+			for (i in fromIdx...rest.length) {
+				var isLast = i == rest.length - 1;
+				var segP = new Position(p.file, p.min, ends[i]);
+				acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+			}
+			return acc;
+		}
+		function segEnds():Array<Int> {
+			var ends:Array<Int> = [];
+			var endAcc = p.max;
+			var ei = rest.length - 1;
+			while (ei >= 0) { ends[ei] = endAcc; endAcc -= rest[ei].length + 1; ei--; }
+			return ends;
+		}
+		function resolveInModule(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
+			if (mod == null || rest.length == 0) return null;
+			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
+			var ends = segEnds();
+			var basePos = new Position(p.file, p.min, ends.length > 0 ? ends[0] - rest[0].length - 1 : p.max);
+			if (mod.statics != null && mod.statics.statics.exists(rest[0]))
+				return chainFrom(AKExpr(TexprTools.makeTypeExpr(TClassDecl(mod.statics), basePos)), 0, ends);
+			var c0 = rest[0].charCodeAt(0);
+			if (c0 >= "A".code && c0 <= "Z".code) {
+				for (mt2 in mod.types) {
+					var ti = TypeFunctions.tInfos(mt2);
+					if (ti.path.name == rest[0] && !(ti.isPrivate && mod != ctx.com.currentModule)) {
+						switch (mt2) { case TClassDecl(c2): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c2); case _: }
+						return rest.length == 1
+							? AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p))
+							: chainFrom(AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), new Position(p.file, p.min, ends[0]))), 1, ends);
+					}
+				}
+			}
+			return null;
+		}
 		function staticsChain(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
 			if (mod == null || mod.statics == null || rest.length == 0) return null;
 			if (!mod.statics.statics.exists(rest[0])) return null;
 			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
-			var sc = mod.statics;
-			var sEnds:Array<Int> = [];
-			var sEndAcc = p.max;
-			var si = rest.length - 1;
-			while (si >= 0) { sEnds[si] = sEndAcc; sEndAcc -= rest[si].length + 1; si--; }
-			var sAcc:AccessKind = AKExpr(TexprTools.makeTypeExpr(TClassDecl(sc), new Position(p.file, p.min, sEndAcc)));
-			for (i in 0...rest.length) {
-				var isLast = i == rest.length - 1;
-				var segP = new Position(p.file, p.min, sEnds[i]);
-				sAcc = Fields.typeField(ctx, accGet(ctx, sAcc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
-			}
-			return sAcc;
+			return chainFrom(AKExpr(TexprTools.makeTypeExpr(TClassDecl(mod.statics), p)), 0, segEnds());
 		}
 		if (mt == null) {
-			var r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null);
-			// The statics-only module may be visible through a named or wildcard import
-			// (`import pack.inner.*;` then `InnerMod.lowerCase`).
+			var r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null);
+			// The module may be visible through a named or wildcard import
+			// (`import pack.inner.*;` then `InnerMod.lowerCase` / `InnerMod.SubType`).
 			if (r == null && pack.length == 0) {
 				var curM = ctx.com.currentModule;
 				var mImports = curM == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curM.path));
 				if (mImports != null) {
 					var ni = mImports.names.get(name);
 					if (ni != null && ni.sub == null)
-						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
+						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
 					if (r == null) for (w in mImports.wildcards) {
-						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null);
+						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null);
 						if (r != null) break;
 					}
 				}
@@ -1801,7 +1841,7 @@ class Typer {
 					var mpack = curM.path.pack;
 					var pi = mpack.length;
 					while (r == null && pi >= 1) {
-						r = staticsChain(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: name}, p) catch (_:Dynamic) null);
+						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: name}, p) catch (_:Dynamic) null);
 						pi--;
 					}
 				}

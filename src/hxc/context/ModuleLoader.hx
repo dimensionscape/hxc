@@ -153,8 +153,8 @@ class ModuleLoader {
 			switch (imp.mode) {
 				case IAll:
 					var split = splitImportPath(parts);
-					if (split != null) imports.wildcards.push(split.modulePath);
-					else if (parts.length > 0) imports.wildcards.push({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
+					if (split != null) imports.wildcards.unshift(split.modulePath);
+					else if (parts.length > 0) imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
 				case INormal:
 					var split = splitImportPath(parts);
 					if (split == null) return;
