@@ -145,7 +145,7 @@ class Compiler {
 					ctx.defines.rawDefine("debug");
 				case "--no-opt":
 					ctx.foptimize = false;
-				case "--dce":
+				case "--dce" | "-dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
 				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
 					| "-java" | "--java" | "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"

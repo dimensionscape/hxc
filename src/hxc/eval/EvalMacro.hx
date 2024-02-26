@@ -486,6 +486,26 @@ class EvalMacro {
 			onAfterTypingCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
 		});
+		reg2("getOutput", "get_output", function(a) return mkString(com.file));
+		reg2("setOutput", "set_output", function(a) { com.file = strOf(a[0]); return VNull; });
+		reg2("positionToRange", "position_to_range", function(a) {
+			var p = posOf(ec, a[0], curPos);
+			var infos = hxc.ast.Position.getInfos(p);
+			function obj(fields:Array<{name:String, value:EvalValue}>):EvalValue {
+				var m:Map<Int, EvalValue> = new Map();
+				for (f in fields) m.set(EvalHash.hash(f.name), f.value);
+				return VObject(new VObject([], ODictionary(m)));
+			}
+			function mkP(line:Int, character:Int):EvalValue
+				return obj([{name: "line", value: VInt(line)}, {name: "character", value: VInt(character)}]);
+			return obj([
+				{name: "file", value: mkString(p.file)},
+				{name: "range", value: obj([
+					{name: "start", value: mkP(infos.line, infos.column)},
+					{name: "end", value: mkP(infos.endLine, infos.endColumn)}
+				])}
+			]);
+		});
 		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
 			var name = strOf(a[0]);
