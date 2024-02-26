@@ -384,6 +384,10 @@ class TypeFields {
 		tctx.curfun = isAbstractMember ? FunMemberAbstract : (isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember));
 		if (isAbstractMember) tctx.typeParams = abstractParams;
 		else if (isStatic && !isAbsImpl) tctx.typeParams = [];
+		// A member body sees its class's params regardless of what the shared context currently holds: a
+		// lazy force fired from inside a static body would otherwise type this member with the static's
+		// empty params (type params are derived per field from the class).
+		else tctx.typeParams = tctx.curclass.params;
 		// The method's own type parameters are in scope within its body, PREPENDED so a method parameter
 		// shadowing a class parameter of the same name wins the first-match lookup (Vector.copy<T> on
 		// Vector<T>).
