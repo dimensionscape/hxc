@@ -248,6 +248,32 @@ class TexprTools {
 		return body <= max;
 	}
 
+	static function hexDigitValue(c:Int):Int {
+		if (c >= "0".code && c <= "9".code) return c - "0".code;
+		if (c >= "a".code && c <= "f".code) return c - "a".code + 10;
+		if (c >= "A".code && c <= "F".code) return c - "A".code + 10;
+		return -1;
+	}
+
+	// 32-bit literal semantics: a hex literal takes its bits (up to 8 digits, so
+	// 0xFFFFFFFF is -1), a decimal one must fit the signed 32-bit range. Null on failure.
+	public static function parseInt32Literal(s:String):Null<Int> {
+		if (s.length >= 2 && s.substr(0, 2) == "0x") {
+			if (s.length > 10 || s.length == 2) return null;
+			var v = 0;
+			for (ci in 2...s.length) {
+				var d = hexDigitValue(s.charCodeAt(ci));
+				if (d < 0) return null;
+				v = (v << 4) | d;
+			}
+			return v;
+		}
+		if (!decimalFitsInt32(s)) return null;
+		var i = Std.parseInt(s);
+		if (i == null || i < -2147483648 || i > 2147483647) return null;
+		return i;
+	}
+
 	public static function typeConstant(basic:BasicTypes, c:Constant, p:Position):TExpr {
 		return switch (c) {
 			case CInt(s, _):
@@ -255,9 +281,21 @@ class TexprTools {
 				// computing the value.
 				var s = StringTools.replace(s, "_", "");
 				if (s.length > 10 && s.substr(0, 2) == "0x") throw new TypingError("Invalid hexadecimal integer", p);
-				var i = decimalFitsInt32(s) ? Std.parseInt(s) : null;
-				if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
-				else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
+				if (s.length >= 2 && s.substr(0, 2) == "0x") {
+					// A hex literal takes its BITS: 0xFFFFFFFF is -1 (the 32-bit parse wraps;
+					// Std.parseInt on hxcpp saturates instead).
+					var v = 0;
+					for (ci in 2...s.length) {
+						var d = hexDigitValue(s.charCodeAt(ci));
+						if (d < 0) throw new TypingError("Invalid hexadecimal integer", p);
+						v = (v << 4) | d;
+					}
+					TypeFunctions.mk(TConst(TInt(v)), basic.tint, p);
+				} else {
+					var i = decimalFitsInt32(s) ? Std.parseInt(s) : null;
+					if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
+					else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
+				}
 			case CFloat(f, _): TypeFunctions.mk(TConst(TFloat(StringTools.replace(f, "_", ""))), basic.tfloat, p);
 			case CString(s, _): TypeFunctions.mk(TConst(TString(s)), basic.tstring, p);
 			case CIdent("true"): TypeFunctions.mk(TConst(TBool(true)), basic.tbool, p);

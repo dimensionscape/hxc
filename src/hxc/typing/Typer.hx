@@ -1242,7 +1242,10 @@ class Typer {
 				if (suffix == null) TexprTools.typeConstant(basic, c, p);
 				else switch (suffix) {
 					case "i32":
-						var i = Std.parseInt(StringTools.replace(s, "_", ""));
+						// A 32-bit literal: hex takes its bits (0xFFFFFFFFi32 = -1), decimal
+						// must fit the signed 32-bit range.
+						var s2 = StringTools.replace(s, "_", "");
+						var i:Null<Int> = TexprTools.parseInt32Literal(s2);
 						if (i == null) throw new TypingError("Cannot represent " + s + " with a 32 bit integer", p);
 						TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 					case "i64":
