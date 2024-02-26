@@ -263,6 +263,7 @@ class Compiler {
 			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
 			TypeResolve.resolveAll(ctx);
 			tResolve();
+			if (hxc.filters.ImportCheck.run(ctx)) abortOnDiagnostics(ctx, platform);
 			var tFields = hxc.core.Timer.timer(["typing", "fields"]);
 			TypeFields.typeAllModules(ctx);
 			tFields();
@@ -281,8 +282,6 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
-			// Report a missing imported field or type with a suggestion.
-			hxc.filters.ImportCheck.run(ctx);
 			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
 			hxc.filters.InterfaceCheck.run(ctx);
 			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target

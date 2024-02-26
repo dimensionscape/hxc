@@ -1442,6 +1442,13 @@ class Typer {
 			return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
 		}
 			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
+			// An existing module that defines no type of its own name reports the module error, not an
+			// unknown identifier.
+			if (i.charCodeAt(0) >= "A".code && i.charCodeAt(0) <= "Z".code) {
+				var mod = findUnqualifiedModule(ctx, i, p);
+				if (mod != null && hxc.context.ModuleLoader.findTypeInModuleOpt(mod, i) == null)
+					throw new TypingError("Module " + hxc.core.Globals.sTypePath(mod.path) + " does not define type " + i, p);
+			}
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
 		switch (mt) {
@@ -1617,6 +1624,28 @@ class Typer {
 		var cf = c.statics.get(i);
 		if (cf == null) return null;
 		return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
+	}
+
+	// The unqualified module walk (wildcard imports, then current package up to root):
+	// the first existing module with the given name.
+	static function findUnqualifiedModule(ctx:TyperContext, name:String, p:Position):Null<hxc.core.Type.ModuleDef> {
+		var m = ctx.com.currentModule;
+		if (m == null) return null;
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports != null) for (w in imports.wildcards) {
+			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null;
+			if (mod != null) return mod;
+		}
+		var mpack = m.path.pack;
+		var pi = mpack.length;
+		while (pi >= 0) {
+			if (!(pi == mpack.length && name == m.path.name)) {
+				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: name}, p) catch (_:Dynamic) null;
+				if (mod != null) return mod;
+			}
+			pi--;
+		}
+		return null;
 	}
 
 	// `Module.field` where Module is not a type bound in the current module context: the unqualified
@@ -1847,6 +1876,11 @@ class Typer {
 				}
 			}
 			if (r != null) return r;
+			// An existing module with no type of the looked-up name reports the module error Type_not_found
+			// Not_defined).
+			var missMod = try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null;
+			if (missMod != null && hxc.context.ModuleLoader.findTypeInModuleOpt(missMod, name) == null && rest.length == 0)
+				throw new TypingError("Module " + hxc.core.Globals.sTypePath(missMod.path) + " does not define type " + name, p);
 			// A qualified type path has its own missing-type diagnostic. Keep the
 			// package prefix in the message instead of reporting the first segment
 			// as an unknown value.
@@ -2314,6 +2348,33 @@ class Typer {
 							Fields.typeField(ctx, accGet(ctx, acc), field, p, mode, withType);
 					}
 				} catch (err:TypingError) {
+					// The dot-path route only applies when the path COULD be a package-led type path (leading
+					// lowercase segment) or when the base itself failed to resolve; a resolved base whose field is
+					// missing keeps its own error the route up front, no fallback).
+					var segs0 = flattenIdentPath(EField(e1, field, EFNormal));
+					var baseUnresolved = StringTools.startsWith(err.message, "Unknown identifier :")
+						|| StringTools.startsWith(err.message, "Type not found :")
+						|| (StringTools.startsWith(err.message, "Module ") && err.message.indexOf(" does not define type ") >= 0);
+					var lowerLed = segs0 != null && segs0.length > 0 && {
+						var c0 = segs0[0].charCodeAt(0);
+						c0 >= "a".code && c0 <= "z".code;
+					};
+					// A base bound in the current module context (own types, NAMED imports)
+					// falls back to the module walk on a field miss (resolve_unqualified's
+					// type_field ~resume -> find_in_unqualified_modules); a wildcard- or
+					// package-resolved base keeps its field error.
+					var contextBound = false;
+					if (!lowerLed && !baseUnresolved && segs0 != null && segs0.length > 0) {
+						var curM2 = ctx.com.currentModule;
+						if (curM2 != null) {
+							for (mt2 in curM2.types) if (TypeFunctions.tInfos(mt2).path.name == segs0[0]) { contextBound = true; break; }
+							if (!contextBound) {
+								var imps2 = ctx.com.moduleImports.get(hxc.context.Context.pathKey(curM2.path));
+								if (imps2 != null && imps2.names.exists(segs0[0])) contextBound = true;
+							}
+						}
+					}
+					if (!lowerLed && !baseUnresolved && !contextBound) throw err;
 					var acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
 					if (acc == null) throw err;
 					acc;

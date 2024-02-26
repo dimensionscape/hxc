@@ -194,14 +194,20 @@ class ModuleLoader {
 			imports.usings.push(usingPath(split.modulePath));
 		}
 
+		// Record the duplicate-name error, then raise Previous declaration here one level deeper at the
+		// original declaration.
 		function checkName(name:String, p:Position):Void {
+			function err(prevPos:Position):Void {
+				ctx.addDiagnostic("Name " + name + " is already defined in this module", p);
+				throw new ContextError("... Previous declaration here", prevPos);
+			}
 			for (t2 in decls) {
 				if (TypeFunctions.tPath(t2).name == name)
-					throw new ContextError("Name " + name + " is already defined in this module", p);
+					err(TypeFunctions.tInfos(t2).namePos);
 			}
 			for (s in statics) {
 				if (s.d.dName.name == name)
-					throw new ContextError("Name " + name + " is already defined in this module", p);
+					err(s.d.dName.pos);
 			}
 		}
 
@@ -961,18 +967,22 @@ class ModuleLoader {
 	public static function resolveNamedImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
 		if (imports == null) return null;
+		// A PRIVATE type never binds through an import from another module: the import itself is the error,
+		// and the name stays unbound.
+		inline function visible(r:Null<ModuleType>):Null<ModuleType>
+			return r == null ? null : (TypeFunctions.tInfos(r).isPrivate && TypeFunctions.tInfos(r).module != cur ? null : r);
 		var named = imports.names.get(name);
 		if (named != null) {
 			// Alias/sub or module-name exact binding. An aliased module import binds the module's
 			// main type, not a type named after the alias.
 			var sub = named.sub != null ? named.sub : named.modulePath.name;
-			var r = tryLoadSub(ctx, named.modulePath, sub, p);
+			var r = visible(tryLoadSub(ctx, named.modulePath, sub, p));
 			if (r != null) return r;
 		}
 		for (key in imports.names.keys()) {
 			var ni = imports.names.get(key);
 			if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
-			var r = tryLoadSub(ctx, ni.modulePath, name, p);
+			var r = visible(tryLoadSub(ctx, ni.modulePath, name, p));
 			if (r != null) return r;
 		}
 		return null;
