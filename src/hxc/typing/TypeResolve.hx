@@ -833,7 +833,8 @@ class TypeResolve {
 					(tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
 						&& tp.tname == "Expr" && tp.tsub == "ExprOf")
 					|| (tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null);
-				if (isExprOf)
+				var isBareExpr = tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null;
+				if (isExprOf || isBareExpr)
 					return Typeload.loadInstance(ctx, typeParams, exprPath, th.pos, false);
 			case _:
 		}
@@ -973,7 +974,7 @@ class TypeResolve {
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-				var ret = Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
+				var ret = isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;

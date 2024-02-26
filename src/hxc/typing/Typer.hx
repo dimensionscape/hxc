@@ -806,7 +806,7 @@ class Typer {
 				// A named local function binds its name (in scope before the body, so it can recurse)
 				// and evaluates to a TVar assignment; an anonymous one is just the function value.
 				var namedVar:Null<TVar> = switch (kind) {
-					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalVariable), n.name, ft, n.pos);
+					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
 					case _: null;
 				};
 				// A named generic local function stores its type params so a later call can monomorphize them.
