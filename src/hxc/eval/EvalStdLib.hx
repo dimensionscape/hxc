@@ -3177,7 +3177,9 @@ class EvalStdLib {
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
-		buf.add(String.fromCharCode(c));
+		// fromCharCode caps at the BMP on this host runtime, turning an astral code
+		// point into U+FFFD; addChar encodes the full range.
+		buf.addChar(c);
 	}
 
 	static function addUtf8EncodedChar(buf:StringBuf, c:Int):Void {

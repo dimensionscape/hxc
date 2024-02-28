@@ -48,7 +48,8 @@ class StringHelper {
 
 	public static function sEscape(s:String, hex:Bool = true):String {
 		var b = new StringBuf();
-		for (i in 0...s.length) {
+		var i = 0;
+		while (i < s.length) {
 			var c = s.charCodeAt(i);
 			switch (c) {
 				case "\n".code: b.add("\\n");
@@ -57,8 +58,20 @@ class StringHelper {
 				case '"'.code: b.add("\\\"");
 				case "\\".code: b.add("\\\\");
 				case _ if (c < 32 && hex): b.add("\\x" + StringTools.hex(c, 2));
-				case _: b.addChar(c);
+				case _:
+					// A surrogate pair joins into one code point: addChar on a lone half
+					// yields U+FFFD on this host runtime.
+					if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+						var lo = s.charCodeAt(i + 1);
+						if (lo >= 0xDC00 && lo <= 0xDFFF) {
+							b.addChar(0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00));
+							i += 2;
+							continue;
+						}
+					}
+					b.addChar(c);
 			}
+			i++;
 		}
 		return b.toString();
 	}
