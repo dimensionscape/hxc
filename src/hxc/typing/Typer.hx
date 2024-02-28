@@ -1120,7 +1120,46 @@ class Typer {
 				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
+		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
 		return typed;
+	}
+
+	// Legacy --display @position: the innermost typed expression enclosing the display offset yields its
+	// declaration position; post-order typing makes the first enclosing match the innermost.
+	public static var displayDefinition:Bool = false;
+	// First (innermost) hit wins; recorded rather than raised so the surrounding
+	// call-argument recovery cannot swallow it.
+	public static var displayFound:Null<Array<Position>> = null;
+
+	static function atDisplayPos(p:Position):Bool {
+		var df = hxc.parser.Parser.displayFile;
+		var off = hxc.parser.Parser.displayOffset;
+		if (df == null || off < 0) return false;
+		if (!(p.min <= off && off <= p.max)) return false;
+		var f = StringTools.replace(p.file, "\\", "/");
+		var d = StringTools.replace(df, "\\", "/");
+		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+	}
+
+	static function checkDisplayDefinition(te:TExpr):Void {
+		if (displayFound != null) return;
+		// A sub-expression that still encloses the offset is the more precise match: the
+		// receiver of a field access types outside this wrapper, so recurse first.
+		switch (te.expr) {
+			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1) if (atDisplayPos(e1.pos)):
+				checkDisplayDefinition(e1);
+				if (displayFound != null) return;
+			case _:
+		}
+		var pl:Array<Position> = switch (te.expr) {
+			case TField(_, FEnum(_, ef)): [ef.namePos];
+			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): [cf.namePos];
+			case TLocal(v) | TVarExpr(v, _): [v.pos];
+			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
+			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
+			case _: [];
+		};
+		if (pl.length > 0) displayFound = pl;
 	}
 
 	static function expectedAnonFromWithType(withType:WithType):Null<TAnon> {

@@ -11,6 +11,14 @@ typedef DisplayField = {
 	?sort:Int,
 }
 
+class DisplayPositions {
+	public final positions:Array<hxc.ast.Position>;
+
+	public function new(positions:Array<hxc.ast.Position>) {
+		this.positions = positions;
+	}
+}
+
 class DisplayXml {
 	public static function htmlescape(s:String):String {
 		s = StringTools.replace(s, "&", "&amp;");
@@ -38,13 +46,17 @@ class DisplayXml {
 		return b.toString();
 	}
 
-	// <pos>file:line: characters a-b</pos> per position.
+	// <pos>file:line: characters a-b</pos> per position, with the real (absolute) file path and no newline
+	// after the closing tag.
 	public static function printPositions(positions:Array<hxc.ast.Position>):String {
 		var b = new StringBuf();
 		b.add("<list>\n");
-		for (p in positions)
-			b.add("<pos>" + hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', p) + "</pos>\n");
-		b.add("</list>\n");
+		for (p in positions) {
+			var full = try sys.FileSystem.fullPath(p.file) catch (_:Dynamic) p.file;
+			var ap = new hxc.ast.Position(full, p.min, p.max);
+			b.add("<pos>" + hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', ap) + "</pos>\n");
+		}
+		b.add("</list>");
 		return b.toString();
 	}
 

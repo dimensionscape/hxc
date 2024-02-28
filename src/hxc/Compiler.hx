@@ -263,11 +263,12 @@ class Compiler {
 		{
 			var dparts = displayParts(ctx);
 			var dmode = dparts.length >= 3 ? dparts[2] : "";
-			if (dparts.length >= 2 && dmode == "") {
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
 					hxc.parser.Parser.displayOffset = doff;
+					hxc.typing.Typer.displayDefinition = dmode == "position";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -297,6 +298,11 @@ class Compiler {
 			TypeFields.checkAbstractInheritance(ctx);
 			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
+			if (hxc.typing.Typer.displayDefinition) {
+				var found = hxc.typing.Typer.displayFound;
+				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found == null ? [] : found) + "\n");
+				return;
+			}
 			if (isDisplay(ctx, "signature")) {
 				displaySignature(ctx);
 				return;
@@ -366,6 +372,9 @@ class Compiler {
 			}
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
 			handleTypePathCompletion(ctx, tc);
+			return;
+		} catch (dp:hxc.compiler.DisplayXml.DisplayPositions) {
+			Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
