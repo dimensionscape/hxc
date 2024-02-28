@@ -486,6 +486,10 @@ class EvalMacro {
 			onAfterTypingCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
 		});
+		reg2("getClassPath", "class_path", function(a) {
+			var vals:Array<EvalValue> = [for (cp in com.classPath) mkString(cp)];
+			return VArray(new VArray(vals, vals.length));
+		});
 		reg2("getOutput", "get_output", function(a) return mkString(com.file));
 		reg2("setOutput", "set_output", function(a) { com.file = strOf(a[0]); return VNull; });
 		reg2("positionToRange", "position_to_range", function(a) {
