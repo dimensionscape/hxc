@@ -72,7 +72,9 @@ class TypeFields {
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
 		// A display result is the compile's answer, not a field error.
 		if (Std.isOfType(e, hxc.compiler.DisplayXml.DisplayPositions)) throw e;
-		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e) + (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : ""));
+		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e)
+			+ (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : "")
+			+ (Std.isOfType(e, hxc.parser.ParserError) ? " " + hxc.parser.ParserError.errorMsg((cast e : hxc.parser.ParserError).msg) + " at " + Std.string((cast e : hxc.parser.ParserError).pos) : ""));
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
 			addDiagnosticOnce(ctx, te.message, te.pos, te.depth);

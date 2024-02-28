@@ -988,6 +988,9 @@ class Parser {
 			try {
 				e = parseBlockElt();
 			} catch (er:ParserError) {
+				// A missing semicolon is a hard error; recovery here would silently drop the parsed element
+				// instead of reporting.
+				if (er.msg.match(Missing_semicolon)) throw er;
 				idx = save;
 				if (!tokEq(peek(), BrClose) && !tokEq(peek(), Eof)
 					&& !tokEq(peek(), Kwd(KwdCase)) && !tokEq(peek(), Kwd(KwdDefault)))
@@ -1050,6 +1053,11 @@ class Parser {
 				var e = parseFunction(p1, false);
 				semicolon();
 				return e;
+			case At if (peek(1).match(DblDot) && peek(2).match(Const(CIdent("markup")))):
+				// A block-level markup literal accepts but does not require a semicolon.
+				var e = expr();
+				if (tokEq(peek(), Semicolon)) junk();
+				return e;
 			case _:
 		}
 		var e = expr();
@@ -1072,7 +1080,8 @@ class Parser {
 		var last = (li >= 0 && li < tokens.length) ? tokens[li] : null;
 		if (last != null && tokEq(last.tok, BrClose))
 			return last.pos;
-		return cur().pos;
+		// Outside the closing-brace exemption a missing semicolon is a parse error at the next token.
+		throw new ParserError(Missing_semicolon, cur().pos);
 	}
 
 	function parseField(e1:Expr, efk:EFieldKind, p:Position):Expr {
