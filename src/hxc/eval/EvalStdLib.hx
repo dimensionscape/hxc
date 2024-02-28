@@ -3016,7 +3016,14 @@ class EvalStdLib {
 	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
-			case VString(s): normalizeString(s.sstring);
+			case VString(s):
+				// Two host strings with equal units can still hash apart when their internal
+				// representations differ (byte string vs wide string); rebuild per unit so
+				// every equal key shares one concrete form.
+				var n = normalizeString(s.sstring);
+				var b = new StringBuf();
+				for (i in 0...n.length) b.addChar(n.charCodeAt(i));
+				b.toString();
 			case VInt(i): Std.string(i);
 			case VEnumValue(ev): "e:" + ev.epath + ":" + ev.eindex + ":" + [for (a in ev.eargs) mapKey(a)].join(",");
 			case VObject(o): "o:" + objId(o);
@@ -3177,9 +3184,9 @@ class EvalStdLib {
 	}
 
 	static function addUtf8Char(buf:StringBuf, c:Int):Void {
-		// fromCharCode caps at the BMP on this host runtime, turning an astral code
-		// point into U+FFFD; addChar encodes the full range.
-		buf.addChar(c);
+		// fromCharCode encodes the BMP correctly but caps there (astral becomes U+FFFD);
+		// addChar handles the astral range but writes small values as raw bytes.
+		if (c > 0xFFFF) buf.addChar(c) else buf.add(String.fromCharCode(c));
 	}
 
 	static function addUtf8EncodedChar(buf:StringBuf, c:Int):Void {
