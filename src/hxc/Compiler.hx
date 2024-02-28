@@ -198,7 +198,8 @@ class Compiler {
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
 		// works without a std. (did_something with no inputs).
 		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
-			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross) return;
+			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross
+			&& ctx.displaySpec == null) return;
 
 		// User -cp is searched before the std (it stays in front of the per-target overlay). Prepends
 		// each -cp individually, so the last -cp on the command line ends up first; reverse the
@@ -256,9 +257,29 @@ class Compiler {
 		// has no entry call (nothing is printed).
 		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
+		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
+		// which also joins the compile roots + process_display_file DFPAlso).
+		var displayRoot:Null<Path> = null;
+		{
+			var dparts = displayParts(ctx);
+			var dmode = dparts.length >= 3 ? dparts[2] : "";
+			if (dparts.length >= 2 && dmode == "") {
+				var doff = Std.parseInt(dparts[1]);
+				if (doff != null) {
+					hxc.parser.Parser.displayFile = dparts[0];
+					hxc.parser.Parser.displayOffset = doff;
+					var base = dparts[0];
+					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
+					if (slash >= 0) base = base.substr(slash + 1);
+					if (StringTools.endsWith(base, ".hx")) base = base.substr(0, base.length - 3);
+					displayRoot = {pack: [], name: base};
+				}
+			}
+		}
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
+			if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
 			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			tLoad();
@@ -343,6 +364,9 @@ class Compiler {
 				var r = runCommand(c);
 				if (r != 0) throw "Command failed with error " + r;
 			}
+		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
+			handleTypePathCompletion(ctx, tc);
+			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
 		} catch (e:hxc.parser.LexerError) {
@@ -571,6 +595,54 @@ class Compiler {
 		}
 		if (sigs.length == 0) sigs.push('{"label":"():Void","parameters":[]}');
 		Sys.stderr().writeString('{"signatures":[' + sigs.join(",") + '],"activeParameter":0,"activeSignature":0}\n');
+	}
+
+	// List the module's public types, plus the main type's public statics when completing an import.
+	static function handleTypePathCompletion(ctx:Context, tc:hxc.parser.Parser.TypePathCompletion):Void {
+		// Reset the display position so loading the module does not raise again (#6558).
+		hxc.parser.Parser.displayOffset = -1;
+		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		if (tc.module != null) {
+			// An uppercase last pack segment names the module and tc.module a subtype of it
+			// sl_pack/s_module split).
+			var pack = tc.pack.copy();
+			var sModule = tc.module;
+			if (pack.length > 0) {
+				var lastPack = pack[pack.length - 1];
+				if (lastPack.charCodeAt(0) >= "A".code && lastPack.charCodeAt(0) <= "Z".code) {
+					sModule = lastPack;
+					pack = pack.slice(0, pack.length - 1);
+				}
+			}
+			var m = try ModuleLoader.loadModule(ctx, {pack: pack, name: sModule}, Position.nullPos) catch (e:Dynamic) {
+				printPositionMessage("Could not load module " + Context.sTypePath({pack: tc.pack, name: tc.module}), Position.nullPos);
+				Sys.exit(1);
+				return;
+			};
+			try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
+			for (mt in m.types) {
+				var info = hxc.core.TypeFunctions.tInfos(mt);
+				if (info.isPrivate) continue;
+				if (tc.module == sModule)
+					fields.push({kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null});
+				if (tc.isImport && info.path.name == tc.module) switch (mt) {
+					case TClassDecl(c):
+						for (cf in c.orderedStatics) {
+							if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
+							var kind = cf.kind.match(Method(_)) ? "method" : "var";
+							fields.push({kind: kind, name: cf.name, type: TPrinting.sTypeStr(cf.type), doc: cf.doc == null ? null : Ast.genDocText(cf.doc)});
+						}
+					case TEnumDecl(en):
+						for (name in en.constrs.keys()) {
+							var ef = en.constrs.get(name);
+							var kind = hxc.core.TypeFunctions.follow(ef.type).match(TFun(_)) ? "method" : "var";
+							fields.push({kind: kind, name: ef.name, type: TPrinting.sTypeStr(ef.type), doc: ef.doc == null ? null : Ast.genDocText(ef.doc)});
+						}
+					case _:
+				}
+			}
+		}
+		Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(fields));
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {

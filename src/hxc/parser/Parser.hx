@@ -6,6 +6,20 @@ import hxc.core.Define;
 
 using hxc.ast.Position;
 
+// The display position sits right after a dot in a type path or import; carries the segments consumed so
+// far.
+class TypePathCompletion {
+	public final pack:Array<String>;
+	public final module:Null<String>;
+	public final isImport:Bool;
+
+	public function new(pack:Array<String>, module:Null<String>, isImport:Bool) {
+		this.pack = pack;
+		this.module = module;
+		this.isImport = isImport;
+	}
+}
+
 class Parser {
 	final tokens:Array<TokenInfo>;
 	var idx:Int;
@@ -23,6 +37,28 @@ class Parser {
 	// True when parsing under the macro defines: reification then encodes positions via the $__mk_pos__
 	// eval builtin.
 	var inMacro:Bool;
+
+	// Legacy --display: file and byte offset of the completion point; the parser raises TypePathCompletion
+	// when the offset falls right after a dot in a type path of that file.
+	public static var displayFile:Null<String> = null;
+	public static var displayOffset:Int = -1;
+
+	function atDisplayDot(dotPos:Position):Bool {
+		if (displayFile == null || displayOffset < 0) return false;
+		var f = StringTools.replace(file, "\\", "/");
+		var df = StringTools.replace(displayFile, "\\", "/");
+		if (!(f == df || StringTools.endsWith(f, "/" + df) || StringTools.endsWith(df, "/" + f))) return false;
+		// The skipped region: from the dot's end to the next token's end.
+		return displayOffset >= dotPos.max && displayOffset <= peekInfo().pos.max;
+	}
+
+	// An uppercase last segment names the module, the rest is the pack.
+	static function raiseTypePath(segments:Array<String>, isImport:Bool):Dynamic {
+		var last = segments.length == 0 ? null : segments[segments.length - 1];
+		if (last != null && last.charCodeAt(0) >= "A".code && last.charCodeAt(0) <= "Z".code)
+			throw new TypePathCompletion(segments.slice(0, segments.length - 1), last, isImport);
+		throw new TypePathCompletion(segments.copy(), null, isImport);
+	}
 
 	function new(tokens:Array<TokenInfo>, file:String, inMacro:Bool = false) {
 		this.tokens = tokens;
@@ -598,7 +634,8 @@ class Parser {
 	function parseTypePath2(p0:Null<Position>, pack:Array<String>, name:String, p1:Position):PlacedTypePath {
 		if (isLowerIdent(name)) {
 			if (tokEq(peek(), Dot)) {
-				junk();
+				var dp = next().pos;
+				if (atDisplayDot(dp)) raiseTypePath(pack.concat([name]), false);
 				return parseTypePath1(p0 == null ? p1 : p0, pack.concat([name]));
 			} else {
 				return err("Type name should start with an uppercase letter");
@@ -607,7 +644,8 @@ class Parser {
 		var sub:Null<String> = null;
 		var p2 = p1;
 		if (tokEq(peek(), Dot)) {
-			junk();
+			var dp = next().pos;
+			if (atDisplayDot(dp)) raiseTypePath(pack.concat([name]), false);
 			switch (peek()) {
 				case Const(CIdent(sn)) if (!isLowerIdent(sn)):
 					p2 = next().pos;
@@ -2082,7 +2120,8 @@ class Parser {
 				while (!done) {
 					switch (peek()) {
 						case Dot:
-							junk();
+							var dp = next().pos;
+							if (atDisplayDot(dp)) raiseTypePath([for (pn in path) pn.name], true);
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});
