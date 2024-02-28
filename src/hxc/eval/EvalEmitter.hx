@@ -145,7 +145,7 @@ class EvalEmitter {
 					ev.env = savedEnv;
 					ev.exceptionStack = hostExceptionStack(ev);
 					var s = Std.string(ex);
-					var v = VString(new VString(s, s.length));
+					var v = VString(hxc.eval.EvalValue.VString.createUnknown(s));
 					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
 				}
 				result;
@@ -219,7 +219,7 @@ class EvalEmitter {
 		return switch (c) {
 			case TInt(i): VInt(i);
 			case TFloat(s): VFloat(Std.parseFloat(s));
-			case TString(s): VString(new VString(s, s.length));
+			case TString(s): VString(hxc.eval.EvalValue.VString.createUnknown(s));
 			case TBool(b): b ? VTrue : VFalse;
 			case TNull: VNull;
 			case TThis: VNull;

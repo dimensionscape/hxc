@@ -9,7 +9,7 @@ import hxc.eval.EvalExceptions;
 
 class EvalMisc {
 	static inline function mkString(s:String):EvalValue {
-		return VString(new VString(s, s.length));
+		return VString(hxc.eval.EvalValue.VString.createUnknown(s));
 	}
 
 	public static inline function fcmp(a:Float, b:Float):Cmp {

@@ -45,6 +45,17 @@ class VString {
 		this.sstring = sstring;
 		this.slength = slength;
 	}
+
+	// Length equals the unit count, for known-ASCII data.
+	public static inline function createAscii(s:String):VString {
+		return new VString(s, s.length);
+	}
+
+	// The length is the CODE POINT count, so a macro-time astral literal has length 1 like the
+	// reference interpreter.
+	public static function createUnknown(s:String):VString {
+		return new VString(s, hxc.eval.EvalStdLib.stringLength(s));
+	}
 }
 
 // Dynamic array. alength tracks the live length independently of the backing array.

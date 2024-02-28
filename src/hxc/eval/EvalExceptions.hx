@@ -94,7 +94,7 @@ class EvalExceptions {
 	}
 
 	public static function excString(ctx:EvalContext, str:String, ?p:Position):Dynamic {
-		return exc(ctx, VString(new VString(str, str.length)), p);
+		return exc(ctx, VString(hxc.eval.EvalValue.VString.createUnknown(str)), p);
 	}
 
 	public static function sValueKind(v:EvalValue):String {

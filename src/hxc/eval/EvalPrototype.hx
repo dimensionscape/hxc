@@ -148,7 +148,7 @@ class EvalPrototype {
 				var i = Std.parseInt(s);
 				(i == null || i < -2147483648 || i > 2147483647) ? VFloat(Std.parseFloat(s)) : VInt(i);
 			case CFloat(f, _): VFloat(Std.parseFloat(f));
-			case CString(s, _): VString(new VString(s, s.length));
+			case CString(s, _): VString(hxc.eval.EvalValue.VString.createUnknown(s));
 			case CIdent("true"): VTrue;
 			case CIdent("false"): VFalse;
 			case CIdent("null"): VNull;
@@ -231,7 +231,7 @@ class EvalPrototype {
 
 	static inline function addStaticString(name:String, s:String, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
 		pnames.set(EvalHash.hash(name), pfields.length);
-		pfields.push(VString(new VString(s, s.length)));
+		pfields.push(VString(hxc.eval.EvalValue.VString.createUnknown(s)));
 	}
 
 	static function hasRtti(c:TClass):Bool {
