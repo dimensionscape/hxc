@@ -461,6 +461,17 @@ class EvalPrototype {
 		return buildMeta(en.meta, fields, []);
 	}
 
+	// Pick the world a class's decl lives in: a macro-world class must be forced against the
+	// macro Context (the host parse drops its macro-only fields), and the macro interpreter's
+	// ctx.com is null, so fall back through macroCom to hostCom.
+	static function worldCom(ctx:EvalContext, c:TClass):Null<hxc.context.Context> {
+		var com = ctx.com;
+		var mc = hxc.eval.EvalMacro.getMacroCom();
+		if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
+		if (com == null) com = hxc.eval.EvalMacro.hostCom;
+		return com;
+	}
+
 	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>} {
 		var key = EvalHash.pathHash(c.path);
 		var pparent = c.superClass == null ? null : ctx.staticPrototypes.get(EvalHash.pathHash(c.superClass.c.path));
@@ -485,7 +496,31 @@ class EvalPrototype {
 							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
 							pfields.push(VFunction(makeFunction(ctx, tf, false, info, TypeFunctions.hasClassFieldFlag(cf, CfImpl)), true));
 						}
-					case Var(_) if (cf.expr != null):
+					case Var(_) if (cf.expr != null || {
+						// Statics are typed lazily; an initializer never forced (reachable only
+						// through a stored closure, say) would otherwise become a silent null slot.
+						// Enum-abstract members and inline vars are exempt (reads are inlined, the
+						// slot is never consulted), as are std classes (their inits were never
+						// evaluated here, and some cannot run while the context is mid-build).
+						var plainVar = !TypeFunctions.hasClassFieldFlag(cf, CfEnum) && switch (cf.kind) {
+							case Var({read: AccNormal | AccNo, write: AccNormal | AccNo | AccNever | AccCtor}): true;
+							case _: false;
+						};
+						if (plainVar) {
+							var com = worldCom(ctx, c);
+							var isStd = com != null && c.module != null && {
+								var f = StringTools.replace(c.module.extra.file, "\\", "/");
+								var std = false;
+								for (p in com.stdPath) if (StringTools.startsWith(f, StringTools.replace(p, "\\", "/"))) { std = true; break; }
+								std;
+							};
+							if (com != null && !isStd) {
+								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[varforce] " + c.path.name + "." + cf.name);
+								hxc.typing.TypeFields.forceFieldBody(com, c, cf);
+							}
+						}
+						cf.expr != null;
+					}):
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
 						addNameAlias(pnames, cf, idx);
@@ -499,6 +534,8 @@ class EvalPrototype {
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
 								ctxEval.env = prev;
+								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+									Sys.println("[staticinit] " + c.path.name + "." + cf.name + " threw: " + Std.string(e));
 								// A static initializer that fails while building the macro context (a separate,
 								// eagerly initialized interpreter) must not abort the macro; leave it null and go on.
 								if (!ctx.isMacro) throw e;

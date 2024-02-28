@@ -501,8 +501,8 @@ class EvalMacro {
 			return obj([
 				{name: "file", value: mkString(p.file)},
 				{name: "range", value: obj([
-					{name: "start", value: mkP(infos.line, infos.column)},
-					{name: "end", value: mkP(infos.endLine, infos.endColumn)}
+					{name: "start", value: mkP(infos.line, infos.column + 1)},
+					{name: "end", value: mkP(infos.endLine, infos.endColumn + 1)}
 				])}
 			]);
 		});
@@ -1003,7 +1003,10 @@ class EvalMacro {
 
 	public static function runAfterGenerateCallbacks():Void {
 		for (cb in onAfterGenerateCallbacks) {
-			EvalContext.setCtx(cb.ec);
+			// The registering context may have been retired by a macro-context rebuild; run in the current
+			// one so statics (migrated forward) and late-registered modules are visible, as if a single
+			// interpreter stayed alive for the whole compilation.
+			EvalContext.setCtx(macroCtx != null ? macroCtx : cb.ec);
 			switch (cb.fn) {
 				case VFunction(f, _): f([]);
 				case VFieldClosure(recv, f): f([recv]);
@@ -1270,6 +1273,10 @@ class EvalMacro {
 	}
 
 	static var macroCom:Context = null;
+
+	// The macro-world compilation context, when one exists (a class evaluated at macro
+	// time belongs to it, not to the host Context).
+	public static function macroWorld():Null<Context> return macroCom;
 
 	static function initMacroContext(com:Context):Void {
 		macroCom = com.cloneForMacro();

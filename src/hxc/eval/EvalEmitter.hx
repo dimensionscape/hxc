@@ -334,7 +334,7 @@ class EvalEmitter {
 						fe.locals[s] = r;
 						r;
 					case TField(_, FStatic(c, cf)):
-						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p);
+						var proto = ensureStaticProto(ctx, c, p);
 						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
 						var r = binopValue(ctx, sub, proto.pfields[idx], eval(ctx, e2), p);
 						proto.pfields[idx] = r;
@@ -409,7 +409,7 @@ class EvalEmitter {
 				fe.locals[slot(fe, v.id)] = value;
 				return value;
 			case TField(_, FStatic(c, cf)):
-				var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), lhs.pos);
+				var proto = ensureStaticProto(ctx, c, lhs.pos);
 				var value = eval(ctx, ve);
 				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
 				return value;
@@ -468,7 +468,7 @@ class EvalEmitter {
 						fe.locals[s] = next;
 						flag == Prefix ? next : old;
 					case TField(_, FStatic(c, cf)):
-						var proto = EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p);
+						var proto = ensureStaticProto(ctx, c, p);
 						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
 						var old = proto.pfields[idx];
 						var delta = op == Increment ? 1 : -1;
@@ -576,7 +576,7 @@ class EvalEmitter {
 				// force-types its reachable statics). Type it on demand and install it, then retry; a
 				// genuine gap surfaces as a catchable interpreted exception so the running program keeps
 				// going rather than a host NotFound aborting the whole run.
-				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p), EvalHash.hash(cf.name))
+				try EvalField.protoFieldRaise(ensureStaticProto(ctx, c, p), EvalHash.hash(cf.name))
 				catch (_:hxc.core.NotFound) {
 					var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
 					if (builtins != null) for (b in builtins) if (b.name == EvalHash.hash(cf.name)) return b.v;
@@ -960,7 +960,59 @@ class EvalEmitter {
 		};
 	}
 
+	// Force a class's field bodies in the WORLD it belongs to (a macro-world class's decl
+	// lives in the macro Context; the host skips macro bodies).
+	public static function forceInWorld(ctx:EvalContext, cls:TClass):Void {
+		var initCom = ctx.com;
+		var mw = hxc.eval.EvalMacro.macroWorld();
+		if (mw != null && mw.moduleLut.get(hxc.context.Context.pathKey(cls.module.path)) == cls.module) initCom = mw;
+		if (Sys.getEnv("HXC_DEBUG_INITS") != null) {
+			var key = hxc.context.Context.pathKey(cls.path);
+			Sys.println("[force] " + cls.path.name
+				+ " world=" + (initCom == mw ? "macro" : "host")
+				+ " decl=" + (initCom != null && initCom.declOfType.get(key) != null)
+				+ " mwHasDecl=" + (mw != null && mw.declOfType.get(key) != null));
+		}
+		if (initCom != null) try hxc.typing.TypeFields.forceClassFields(initCom, cls) catch (_:Dynamic) {}
+	}
+
+	// Register a class reached only after the main prototype build pass (a macro dependency
+	// constructed from an after-generate callback): super chain first, then instance/static
+	// prototypes, static-init delays, and the constructor - the same recipe EvalMain.buildClass
+	// applies during startup.
+	static function registerLazyClass(ctx:EvalContext, c:TClass):Void {
+		var key = EvalHash.pathHash(c.path);
+		var haveInst = ctx.instancePrototypes.exists(key);
+		var haveStat = ctx.staticPrototypes.exists(key);
+		if (haveInst && haveStat) return;
+		if (c.superClass != null) registerLazyClass(ctx, c.superClass.c);
+		forceInWorld(ctx, c);
+		if (!ctx.typeCache.exists(key)) ctx.typeCache.set(key, TClassDecl(c));
+		if (!haveInst) {
+			var iproto = hxc.eval.EvalPrototype.buildInstance(ctx, c);
+			ctx.instancePrototypes.set(key, iproto);
+			var ctor = hxc.eval.EvalPrototype.makeConstructor(ctx, c);
+			if (ctor != null) ctx.constructors.set(key, ctor);
+		}
+		if (!haveStat) {
+			var r = hxc.eval.EvalPrototype.buildStatic(ctx, c);
+			ctx.staticPrototypes.set(r.proto.ppath, r.proto);
+			for (d in r.delays) d(r.proto);
+		}
+	}
+
+	// Static prototype lookup that registers a lazily-reached class on demand.
+	static function ensureStaticProto(ctx:EvalContext, c:TClass, p:Position):VPrototype {
+		if (ctx.staticPrototypes.get(EvalHash.pathHash(c.path)) == null)
+			try registerLazyClass(ctx, c) catch (_:Dynamic) {}
+		return EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(c.path), p);
+	}
+
 	public static function constructClass(ctx:EvalContext, c:TClass, key:Int, args:Array<EvalValue>, p:Position):EvalValue {
+		if (ctx.instancePrototypes.get(key) == null)
+			try registerLazyClass(ctx, c) catch (e:Dynamic) {
+				if (Sys.getEnv("HXC_DEBUG_INITS") != null) Sys.println("[lazy] register failed " + c.path.name + ": " + Std.string(e));
+			}
 		var proto = EvalContext.getInstancePrototype(ctx, key, p);
 		var inst = new VInstance(proto.pinstanceFields.copy(), proto, INormal);
 		var instVal = VInstance(inst);
@@ -997,6 +1049,10 @@ class EvalEmitter {
 		var i = chain.length - 1;
 		while (i >= 0) {
 			var cls = chain[i];
+			// A lazily-reached class (a macro dependency constructed mid-callback) may not
+			// have had its field initializers typed yet; expr == null would silently
+			// skip them.
+			forceInWorld(ctx, cls);
 			for (cf in cls.orderedFields) {
 				switch (cf.kind) {
 					case Var(_) if (cf.expr != null):
