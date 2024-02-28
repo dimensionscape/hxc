@@ -1319,8 +1319,13 @@ class Calls {
 				makeCall(ctx, ce, r.el, sig.ret, p, forceInline, forcePos);
 			case TMono(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
+				var ret = TypeFunctions.mkMono();
+				// The mono callee binds to a function of the typed argument types, so later passes see a
+				// TFun and
+				// the analyzer keeps a field access on its receiver.
+				TypeUnification.unifyDefault(TFun({args: [for (a in args) {name: "", opt: false, t: a.type}], ret: ret}), ce.type);
 				DebugDump.selected("call", p, "mono function");
-				makeCall(ctx, ce, args, TypeFunctions.mkMono(), p, forceInline, forcePos);
+				makeCall(ctx, ce, args, ret, p, forceInline, forcePos);
 			case TDynamic(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				DebugDump.selected("call", p, "dynamic function");

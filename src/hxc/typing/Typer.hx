@@ -2643,6 +2643,9 @@ class Typer {
 	}
 
 	public static function typeFunction(ctx:TyperContext, args:Array<TFuncArg>, ret:T, fmode:CurrentFun, bodyExpr:Null<Expr>, p:Position):TFunc {
+		// Monomorphs spawned while typing this function close at its conclusion (the newest sit at the
+		// front of the registry).
+		var monoDepth = ctx.monomorphs.length;
 		var oldInFunction = ctx.inFunction;
 		var oldCurfun = ctx.curfun;
 		var oldRet = ctx.ret;
@@ -2722,6 +2725,17 @@ class Typer {
 				case _:
 					TypeFunctions.mk(TBlock([ev, te]), te.type, te.pos);
 			}
+		}
+		// Close this function's monomorphs, materializing structural constraints into their anon (a close
+		// failure reports, not aborts). Closed entries leave the registry so an enclosing function does not
+		// re-close them.
+		var newCount = ctx.monomorphs.length - monoDepth;
+		if (newCount > 0) {
+			for (i in 0...newCount) {
+				var mp = ctx.monomorphs[i];
+				try TypeUnification.close(mp.m) catch (e:UnifyError) ctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(e.errors), mp.p);
+			}
+			ctx.monomorphs.splice(0, newCount);
 		}
 		reset();
 		return new TFunc(args, ret, te);
