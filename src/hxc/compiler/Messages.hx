@@ -87,7 +87,8 @@ class Messages {
 	public static function prettyString(ctx:Context, ectx:PrettyCtx, cm:CompilerDiagnostic):Null<String> {
 		if (cm.message == "End of overload failure reasons") return null;
 		ectx.lastPositions.set(cm.depth, cm.pos);
-		var nullpos = isNullPos(cm.pos);
+		// Pretty counts any min -1 position as null and shows the raw file as the heading.
+		var nullpos = cm.pos.min == -1;
 
 		var info = Position.getInfos(cm.pos);
 		var l1 = info.line, p1 = info.column + 1, l2 = info.endLine, p2 = info.endColumn + 1;

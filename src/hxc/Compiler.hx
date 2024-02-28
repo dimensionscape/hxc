@@ -231,8 +231,11 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.TypingError) {
+			// Through the message store, so -D message.reporting picks the formatter and a
+			// compound message renders its sub-lines as depth children.
+			ctx.raiseTypingErrors = false;
+			ctx.addDiagnostic(e.message, e.pos, e.depth);
 			flushPendingMessages(ctx);
-			printPositionMessage(e.message, e.pos);
 			Sys.exit(1);
 		}
 
@@ -680,13 +683,10 @@ class Compiler {
 	static function printPositionMessage(msg:String, pos:Position):Void {
 		// Classic message formatter: each continuation line gets a "... " prefix and repeats the position.
 		var epos = Globals.getErrorPosRef(function(file, line) return '$file:$line:', pos);
-		var lines = msg.split("
-");
+		var lines = msg.split("\n");
 		var parts = [lines[0]];
 		for (i in 1...lines.length) parts.push("... " + lines[i]);
-		Sys.stderr().writeString(epos + " : " + parts.join("
-" + epos + " : ") + "
-");
+		Sys.stderr().writeString(epos + " : " + parts.join("\n" + epos + " : ") + "\n");
 	}
 
 	static function addResource(ctx:Context, spec:String):Void {
