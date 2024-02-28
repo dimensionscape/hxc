@@ -1686,6 +1686,13 @@ class Match {
 
 
 	public static function matchExpr(ctx:TyperContext, e:Expr, cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>, withType:WithType, postfix:Bool, p:Position):TExpr {
+		// An empty switch types only its subject: as a statement it is the subject's evaluation, as a value
+		// it is Void (no exhaustiveness runs, the reader of the value reports).
+		if (cases.length == 0 && def == null) {
+			var te = Typer.typeExpr(ctx, e, WithTypeTools.value);
+			if (withType.match(NoValue)) return te;
+			return TypeFunctions.mk(TBlock([te]), ctx.com.basic.tvoid, p);
+		}
 		// `switch [a, b]` (a bracket literal, possibly parenthesized) is a tuple match: each element is its
 		// own subject with its own type, and the case patterns match column by column. A single
 		// comprehension element is a real array, not a tuple.
