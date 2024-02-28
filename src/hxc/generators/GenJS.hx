@@ -301,7 +301,8 @@ class GenJS {
 
 	static function sEscape(s:String):String {
 		var b = new StringBuf();
-		for (i in 0...s.length) {
+		var i = 0;
+		while (i < s.length) {
 			var c = s.charCodeAt(i);
 			switch (c) {
 				case "\n".code: b.add("\\n");
@@ -309,8 +310,20 @@ class GenJS {
 				case "\r".code: b.add("\\r");
 				case "\"".code: b.add("\\\"");
 				case "\\".code: b.add("\\\\");
-				case _: b.addChar(c);
+				case _:
+					// A surrogate pair joins into one code point: addChar on a lone half
+					// yields U+FFFD on this host runtime (same handling as the lexer).
+					if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+						var lo = s.charCodeAt(i + 1);
+						if (lo >= 0xDC00 && lo <= 0xDFFF) {
+							b.addChar(0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00));
+							i += 2;
+							continue;
+						}
+					}
+					b.addChar(c);
 			}
+			i++;
 		}
 		return b.toString();
 	}
