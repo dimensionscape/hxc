@@ -55,6 +55,18 @@ class TypeFields {
 				case _:
 			}
 		}
+		// An annotated var's initializer has a concrete signature, so the lazy force above never types its
+		// body.
+		var i = 0;
+		while (i < ctx.modules.length) {
+			for (mt in ctx.modules[i].types) switch (mt) {
+				case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)):
+					for (cf in c.orderedFields) if (cf.expr == null && cf.kind.match(Var(_))) forceFieldBody(ctx, c, cf);
+					for (cf in c.orderedStatics) if (cf.expr == null && cf.kind.match(Var(_))) forceFieldBody(ctx, c, cf);
+				case _:
+			}
+			i++;
+		}
 	}
 
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
@@ -271,7 +283,7 @@ class TypeFields {
 	// Force the field bodies of a single class whose fields were just rewritten by a @:build macro.
 	// A full installAndForce per build is O(builds x modules) and re-enters through lazy typing; this
 	// types only the rewritten class, so the cost stays proportional to the fields actually added.
-	public static function forceClassFields(ctx:Context, c:TClass):Void {
+	public static function forceClassFields(ctx:Context, c:TClass, skipMemberVars:Bool = false):Void {
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
@@ -289,6 +301,10 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
+			// A member var with a null expr after filters had its initializer moved into
+			// the constructor by patch_constructors; re-typing it would rebuild the raw init
+			// without the filter pipeline.
+			if (skipMemberVars && !isStatic && cf.kind.match(Var(_))) continue;
 			if (!hasFieldBody(cff)) continue;
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
@@ -319,7 +335,10 @@ class TypeFields {
 		// return type is inferred before its result is consumed by the caller.
 		for (f in _forcing) if (f == cf) return;
 		var cff = findFieldDecl(ctx, c, cf);
-		if (cff == null) return;
+		if (cff == null) {
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fforce] no decl for " + c.path.name + "." + cf.name);
+			return;
+		}
 		if (!hasFieldBody(cff)) return;
 		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
 		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField && cf.name != "__init__") return;

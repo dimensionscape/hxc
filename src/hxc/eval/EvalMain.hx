@@ -168,7 +168,7 @@ class EvalMain {
 				// type any remaining bodies now so the prototype does not hold a bodyless method (every
 				// field body
 				// is typed before generation).
-				if (runDce && ctx.com != null) hxc.typing.TypeFields.forceClassFields(ctx.com, c);
+				if (runDce && ctx.com != null) hxc.typing.TypeFields.forceClassFields(ctx.com, c, true);
 				if (runDce) dropPureStatementsClass(c);
 				var key = EvalHash.pathHash(c.path);
 				if (!ctx.typeCache.exists(key)) ctx.typeCache.set(key, mt);

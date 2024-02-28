@@ -323,7 +323,10 @@ class Compiler {
 				var tInterp = hxc.core.Timer.timer(["interp"]);
 				if (path != null) {
 					var ectx = hxc.eval.EvalMain.create(false, ctx.resources, ctx.defines, ctx.classPath, ctx);
-					hxc.eval.EvalMain.addModules(ectx, ctx.modules, true);
+					// ctx.types is in sorted type order, so a static initializer reading another class's
+					// static finds it already evaluated; ctx.modules is sorted by path and would run
+					// initializers alphabetically.
+					hxc.eval.EvalMain.addTypes(ectx, ctx.types, true);
 					hxc.eval.EvalMain.runMain(ectx, path);
 				}
 				tInterp();

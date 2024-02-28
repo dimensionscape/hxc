@@ -639,6 +639,15 @@ class EvalEmitter {
 	// returning the callable value; null when the field has no method body to install. Mirrors
 	// lateInstanceMethod for statics (a lazily added macro module force-types only reachable statics).
 	static function lateStaticMethod(ctx:EvalContext, c:TClass, cf:TClassField):Null<EvalValue> {
+		// The field access may carry a clone (a multiType cast field is rebuilt with the
+		// abstract's parameters applied); forcing needs the canonical field, whose identity
+		// matches the parsed decl.
+		switch (ctx.typeCache.get(EvalHash.pathHash(c.path))) {
+			case TClassDecl(realC):
+				var real = realC.statics.get(cf.name);
+				if (real != null && real != cf) { c = realC; cf = real; }
+			case _:
+		}
 		if (cf.expr == null) {
 			var com = ctx.com;
 			var mc = hxc.eval.EvalMacro.getMacroCom();
@@ -647,7 +656,10 @@ class EvalEmitter {
 			if (com != null) {
 				var savedMod = com.currentModule;
 				com.currentModule = c.module;
-				try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+				try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (e:Dynamic) {
+					if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+						Sys.println("[latestatic] force " + c.path.name + "." + cf.name + " threw: " + Std.string(e));
+				}
 				com.currentModule = savedMod;
 				if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
 			}
@@ -1049,10 +1061,14 @@ class EvalEmitter {
 		var i = chain.length - 1;
 		while (i >= 0) {
 			var cls = chain[i];
-			// A lazily-reached class (a macro dependency constructed mid-callback) may not
-			// have had its field initializers typed yet; expr == null would silently
-			// skip them.
-			forceInWorld(ctx, cls);
+			// A lazily-reached macro-world class (a dependency constructed mid-callback) may
+			// not have had its field initializers typed yet; expr == null would silently
+			// skip them. Host-world classes are exempt: their initializers were moved into
+			// the constructor by patchConstructors, and re-typing here would rebuild them
+			// without the filter pipeline (inlining in particular).
+			var mw = hxc.eval.EvalMacro.macroWorld();
+			if (mw != null && cls.module != null && mw.moduleLut.get(hxc.context.Context.pathKey(cls.module.path)) == cls.module)
+				forceInWorld(ctx, cls);
 			for (cf in cls.orderedFields) {
 				switch (cf.kind) {
 					case Var(_) if (cf.expr != null):
