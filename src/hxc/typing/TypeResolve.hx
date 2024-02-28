@@ -949,7 +949,10 @@ class TypeResolve {
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+					var implicitThis = false;
+					for (m in fa.meta) if (m.name == ":implicitThis") implicitThis = true;
+					var argParams = implicitThis ? outerParams : localParams;
+					var at = isMacroField ? loadMacroHint(ctx, argParams, fa.type) : Typeload.loadTypeHint(ctx, argParams, fa.type, false);
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 					// A haxe.Rest argument must be last, non-optional and defaultless (checked at signature
 					// build, so

@@ -1167,7 +1167,7 @@ class ModuleLoader {
 				for (acc in f.cffAccess) if (acc.access == AMacro) isMacroField = true;
 				var newArgs = isMacroField
 					? fu.fArgs
-					: [({name: {name: "this", pos: p}, opt: false, meta: [], type: thisT, value: null} : FunctionArg)].concat(fu.fArgs);
+					: [({name: {name: "this", pos: p}, opt: false, meta: [{name: ":implicitThis", params: [], pos: p}], type: thisT, value: null} : FunctionArg)].concat(fu.fArgs);
 				var fu2:Func = {fParams: fu.fParams, fArgs: newArgs, fType: fu.fType, fExpr: fu.fExpr};
 				// Is_abstract_member): tells registerFields to flag this static as an abstract member impl so
 				// the typer prepends the receiver as `this` (`v.m(a)` ->
