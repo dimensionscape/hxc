@@ -125,7 +125,8 @@ class Context {
 
 	public var storedTypedExprs:Map<Int, TExpr>;
 
-	public var nextStoredTypedExprId:Int = 0;
+	// One id sequence across every context, host and macro alike.
+	public static var nextStoredTypedExprId:Int = 0;
 
 	/**
 	 * Initialize from loaded StdTypes, String and Array declarations; retain safe placeholders until

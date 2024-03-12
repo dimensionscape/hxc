@@ -838,7 +838,7 @@ class Calls {
 			case TField(e1, fa):
 				new Expr(EField(typedExprToSyntax(ctx, e1), TypeFunctions.fieldName(fa), EFNormal), p);
 			case _:
-				var id = ctx.com.nextStoredTypedExprId++;
+				var id = hxc.context.Context.nextStoredTypedExprId++;
 				ctx.com.storedTypedExprs.set(id, e);
 				var eid = new Expr(EConst(CInt(Std.string(id), null)), p);
 				new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), p);

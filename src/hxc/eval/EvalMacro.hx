@@ -196,7 +196,7 @@ class EvalMacro {
 		reg2("storeTypedExpr", "store_typed_expr", function(a) {
 			if (curTctx == null) throw new TypingError("storeTypedExpr outside a macro", curPos);
 			var te = decodeStoredTypedExpr(ec, a[0]);
-			var id = curTctx.com.nextStoredTypedExprId++;
+			var id = hxc.context.Context.nextStoredTypedExprId++;
 			curTctx.com.storedTypedExprs.set(id, te);
 			var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
 			return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
