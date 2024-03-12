@@ -2359,7 +2359,7 @@ class EvalMacro {
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
 		return {
-			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), dp)},
 			evFinal: boolOf(EvalField.field(ec, v, EvalHash.hash("isFinal"))),
 			evStatic: boolOf(EvalField.field(ec, v, EvalHash.hash("isStatic"))),
 			evType: { var tv = EvalField.field(ec, v, EvalHash.hash("type")); tv == VNull ? null : decodeTypeHint(ec, tv, dp); },
@@ -2677,6 +2677,7 @@ class EvalMacro {
 	static function encodeVar(ec:EvalContext, ev:EVar):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(ev.evName.name));
+		fields.set(EvalHash.hash("namePos"), encPos(ev.evName.pos));
 		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
 		fields.set(EvalHash.hash("isStatic"), ev.evStatic ? VTrue : VFalse);
 		fields.set(EvalHash.hash("type"), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType.ct));
