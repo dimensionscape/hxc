@@ -379,19 +379,13 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
 		} catch (e:hxc.parser.LexerError) {
-			printPositionMessage(hxc.parser.LexerError.errorMsg(e.msg), e.pos);
-			Sys.exit(1);
+			abortWithMessage(ctx, hxc.parser.LexerError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.parser.ParserError) {
-			printPositionMessage(hxc.parser.ParserError.errorMsg(e.msg), e.pos);
-			Sys.exit(1);
+			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.context.Context.ContextError) {
-			flushPendingMessages(ctx);
-			printPositionMessage(e.message, e.pos);
-			Sys.exit(1);
+			abortWithMessage(ctx, e.message, e.pos);
 		} catch (e:hxc.core.TypingError) {
-			flushPendingMessages(ctx);
-			printPositionMessage(e.message, e.pos);
-			Sys.exit(1);
+			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
 			Sys.exit(1);
@@ -759,6 +753,15 @@ class Compiler {
 		var p = StringTools.replace(path, "\\", "/");
 		var i = p.lastIndexOf("/");
 		return i < 0 ? "" : p.substr(0, i);
+	}
+
+	// A fatal error joins the message store before printing, so -D message.reporting picks the configured
+	// formatter (every abort prints through it).
+	static function abortWithMessage(ctx:Context, msg:String, pos:Position, depth:Int = 0):Void {
+		ctx.raiseTypingErrors = false;
+		ctx.addDiagnostic(msg, pos, depth);
+		flushPendingMessages(ctx);
+		Sys.exit(1);
 	}
 
 	static function printPositionMessage(msg:String, pos:Position):Void {

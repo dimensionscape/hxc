@@ -83,8 +83,14 @@ class TypeFields {
 			addDiagnosticOnce(ctx, ce.message, ce.pos);
 		} else if (Std.isOfType(e, EvalRunTimeException)) {
 			// A macro-time uncaught exception reports with its eval call stack, the same shape the
-			// interpreter prints .
+			// interpreter prints. A Context.error abort carries its own message and position and prints
+			// plain.
 			var re:EvalRunTimeException = cast e;
+			var info = hxc.eval.EvalMacro.runtimeMacroError(re);
+			if (info != null) {
+				addDiagnosticOnce(ctx, info.message, info.pos);
+				return;
+			}
 			var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
 			frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
 			var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
