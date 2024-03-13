@@ -82,8 +82,19 @@ class TypeFields {
 			var ce:ContextError = cast e;
 			addDiagnosticOnce(ctx, ce.message, ce.pos);
 		} else if (Std.isOfType(e, EvalRunTimeException)) {
+			// A macro-time uncaught exception reports with its eval call stack, the same shape the
+			// interpreter prints .
 			var re:EvalRunTimeException = cast e;
-			addDiagnosticOnce(ctx, EvalStdLib.stringOf(re.value), re.pos);
+			var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
+			frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
+			var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
+			if (explicit && frames.length > 0) frames.shift();
+			var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: explicit ? re.pos : Position.nullPos}];
+			for (p in frames) stack.push({message: "Called from here", pos: p});
+			// The macro invocation site closes the stack (the reference's api-call env).
+			var callPos = hxc.eval.EvalMacro.currentPosition();
+			if (callPos != null && callPos.file != "?" && callPos.min >= 0) stack.push({message: "Called from here", pos: callPos});
+			ctx.addDiagnosticStack(stack);
 		} else if (Std.isOfType(e, haxe.Exception)) {
 			ctx.unresolvedFields++;
 		} else {
