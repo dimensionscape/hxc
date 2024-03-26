@@ -3351,7 +3351,7 @@ class EvalMacro {
 					case VNull: EvalStdLib.stringOf(ex.value);
 					case _: EvalStdLib.stringOf(msgRaw);
 				};
-				var pv = EvalField.field(ec, ex.value, EvalHash.hash("pos"));
+					var pv = EvalField.field(ec, ex.value, EvalHash.hash("pos"));
 				var pos = switch (EvalValueTools.vresolve(pv)) {
 					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
 					case VObject(o): switch (o.oproto) {

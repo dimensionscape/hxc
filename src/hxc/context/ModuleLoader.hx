@@ -293,6 +293,8 @@ class ModuleLoader {
 						case _:
 					}
 					if (TypeFunctions.hasMeta(":final", c.meta)) TypeFunctions.addClassFlag(c, CFinal);
+					if (TypeFunctions.hasClassFlag(c, CInterface) && TypeFunctions.hasMeta(":structInit", c.meta))
+						ctx.addDiagnostic("@:structInit is not allowed on interfaces", TypeFunctions.getMeta(":structInit", c.meta).pos);
 					// KGenericBuild retains syntax fields for getBuildFields; ordinary @:generic classes use
 					// KGeneric.
 					if (TypeFunctions.hasMeta(":genericBuild", c.meta)) {

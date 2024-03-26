@@ -947,10 +947,14 @@ class Typer {
 					};
 					case _: null;
 				};
-				var scSig = scHit == null ? null : switch (findConstructorType(ctx, scHit.c, scHit.tl)) {
+				var scSig = scHit == null ? null : switch (try findConstructorType(ctx, scHit.c, scHit.tl) catch (_:Dynamic) null) {
 					case null: null;
 					case ct: switch (TypeFunctions.follow(ct)) { case TFun(sig): sig; case _: null; };
 				};
+				// A @:structInit target without a constructor (an interface carrying the meta) reports at
+				// the literal and types plainly.
+				if (scHit != null && scSig == null)
+					ctx.com.addDiagnostic(scHit.c.path.name + " does not have a constructor", p);
 				if (scHit != null && scSig != null) {
 					// Type each provided field against its constructor-arg type in the object literal
 					// source order; build the call in the constructor declared arg order, hoisting a field
