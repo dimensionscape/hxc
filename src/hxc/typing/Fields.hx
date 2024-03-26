@@ -312,7 +312,30 @@ class Fields {
 	}
 
 	static function fieldNotFound(t:T, i:String, p:Position):TypingError {
-		return new FieldNotFoundError(typeName(t) + " has no field " + i, p);
+		// The APPLIED type prints, with a suggestion over the type's own field names.
+		// (StringError.string_error over .
+		var shown = switch (TypeFunctions.follow(t)) {
+			case TInst(_, _) | TAbstract(_, _) | TEnum(_, _): hxc.core.TPrinting.sTypeStr(TypeFunctions.follow(t));
+			case _: typeName(t);
+		};
+		var msg = shown + " has no field " + i;
+		if (i != "") {
+			var names:Array<String> = switch (TypeFunctions.follow(t)) {
+				case TInst(c, _):
+					var acc = [];
+					var cur = c;
+					while (cur != null) {
+						for (cf in cur.orderedFields) acc.push(cf.name);
+						cur = cur.superClass == null ? null : cur.superClass.c;
+					}
+					acc;
+				case TAnon(an): [for (cf in an.fields) cf.name];
+				case TAbstract(a, _) if (a.impl != null): [for (cf in a.impl.orderedStatics) cf.name];
+				case _: [];
+			};
+			msg = hxc.core.StringError.stringError(i, names, msg);
+		}
+		return new FieldNotFoundError(msg, p);
 	}
 
 	static function typeName(t:T):String {

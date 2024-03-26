@@ -1467,6 +1467,8 @@ class Typer {
 	// Type_ident (subset): locals and the literal idents. Member/static fields, types,
 	// imports, and globals resolve in the fields-dispatch unit.
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		// A reified $i{""} produces an empty ident.
+		if (i == "") throw new TypingError("Identifier name must not be empty", p);
 		if (i == "abstract") {
 			return switch [mode, ctx.curclass.kind] {
 				case [MSet(_), KAbstractImpl(_)]: throw new TypingError("Property 'abstract' is read-only", p);

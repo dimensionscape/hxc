@@ -1146,6 +1146,8 @@ class ModuleLoader {
 		var p = f.cffPos;
 		switch (f.cffKind) {
 			case FFun(fu) if (f.cffName.name == "new" && !stat):
+				for (acc in f.cffAccess) if (acc.access == AMacro)
+					throw new ContextError("Invalid modifier: macro on abstract constructor", acc.pos);
 				var thisVar:EVar = {
 					evName: {name: "this", pos: p}, evFinal: false, evStatic: false,
 					evType: thisT, evExpr: null, evMeta: [{name: ":this", params: [], pos: p}]

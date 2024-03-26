@@ -188,11 +188,16 @@ class Compiler {
 					// A bare uppercase argument is a compilation root (never the startup class: only -main
 					// sets that); a bare lowercase argument includes the package.
 					if (!StringTools.startsWith(a, "-")) {
+						if (StringTools.endsWith(a, ".hx")) {
+							// A bare .hx file path is a compilation class, not a package strips the suffix).
+							extraClasses.push(a);
+						} else {
 						var nm = a.split(".").pop();
 						if (nm != null && nm.length > 0) {
 							var c0 = nm.charCodeAt(0);
 							if (c0 >= "A".code && c0 <= "Z".code) extraClasses.push(a);
 							else ctx.initMacros.push("include('" + a + "', true, null, null, true)");
+						}
 						}
 					}
 			}
@@ -372,6 +377,14 @@ class Compiler {
 						tGen();
 					}
 				}
+			}
+			// A targetless compile still checks value misuse the filter stage would catch; the reference's
+			// filters run regardless of output. .
+			if (platform == Cross) {
+				for (t in ctx.types) hxc.filters.FiltersCommon.runExpressionFilters(new hxc.typing.TyperContext(ctx), [
+					{name: "check_abstract_as_value", f: hxc.filters.Filters.checkAbstractAsValue},
+				], t);
+				abortOnDiagnostics(ctx, platform);
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			if (platform == Eval) {
