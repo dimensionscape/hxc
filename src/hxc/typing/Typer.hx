@@ -509,11 +509,16 @@ class Typer {
 		};
 	}
 
+	// Side effect of the expected walk: seeing Dynamic anywhere allows a mixed literal to degrade to
+	// Array<Dynamic> even when the walk itself resolves nothing.
+	static var expectedArrayAllowDynamic:Bool = false;
+
 	static function arrayElementFromType(t:T):Null<T> {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, [et]) if (c.path.pack.length == 0 && c.path.name == "Array"):
 				switch (TypeFunctions.follow(et)) {
 					case TMono(_): null;
+					case TDynamic(_): expectedArrayAllowDynamic = true; et;
 					case _: et;
 				}
 			case _:
@@ -549,6 +554,7 @@ class Typer {
 					}
 					hits.length == 1 ? hits[0] : null;
 				case TDynamic(_):
+					expectedArrayAllowDynamic = true;
 					t;
 				case _:
 					null;
@@ -884,10 +890,12 @@ class Typer {
 							case _:
 						}
 						if (emptyMap != null) emptyMap else {
+							expectedArrayAllowDynamic = false;
 							var expectedEt:Null<T> = switch (withType) {
 								case WithType(wt, _): expectedArrayElement(ctx, wt);
 								case _: null;
 							};
+							var allowDyn = expectedArrayAllowDynamic;
 							var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
 							// An element that does not unify with the expected element type coerces through
 							// an implicit abstract cast.
@@ -899,7 +907,17 @@ class Typer {
 								}
 								te;
 							}];
-							var et = expectedEt != null ? expectedEt : (tl.length == 0 ? spawnMonomorph(ctx, p) : unifyMin(ctx, tl));
+							// Without an expected element type the elements must share one; a mixed literal is an error
+							// unless forced to Array<Dynamic> or in untyped code.
+							var et = if (expectedEt != null) expectedEt
+								else if (tl.length == 0) spawnMonomorph(ctx, p)
+								else try unifyMinRaise(ctx, tl) catch (te:TypingError) {
+									if (allowDyn || ctx.untypedMode) TypeFunctions.tDynamic;
+									else {
+										ctx.com.addDiagnostic("Arrays of mixed types are only allowed if the type is forced to Array<Dynamic>", te.pos);
+										throw te;
+									}
+								};
 							TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
 						}
 				}
