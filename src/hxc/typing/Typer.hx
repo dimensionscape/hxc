@@ -219,7 +219,13 @@ class Typer {
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
-		return castOrUnify(ctx, t, hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p), p);
+		var result = hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p);
+		// A macro result that fails to unify makes the CAST not found; the caller then reports the plain
+		// unify of the ORIGINAL value. (Error Unify -> NotFound).
+		return try castOrUnify(ctx, t, result, p) catch (te:TypingError) {
+			if (te.message == "Recursive implicit cast") throw te;
+			throw new NotFound();
+		};
 	}
 
 	static function isVoid(t:T):Bool {

@@ -380,8 +380,8 @@ class Operators {
 					try unify(ctx, c2.type, c1.type, p) catch (_:TypingError) {
 						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an
 						// abstract compares against its underlying type (plain unify does not chase method
-						// casts). .
-						try c1 = Typer.castOrUnify(ctx, c2.type, c1, c1.pos) catch (_:TypingError) c2 = Typer.castOrUnify(ctx, c1.type, c2, c2.pos);
+						// casts); the failure reports at the BINOP position. (cast_or_unify ... p).
+						try c1 = Typer.castOrUnify(ctx, c2.type, c1, p) catch (_:TypingError) c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
 					}
 				}
 				switch [TypeFunctions.follow(c1.type), TypeFunctions.follow(c2.type)] {
