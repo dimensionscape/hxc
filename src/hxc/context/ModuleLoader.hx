@@ -238,6 +238,11 @@ class ModuleLoader {
 						throw new ContextError("Name " + d.dName.name + " is already defined in this module", d.dName.pos);
 				}
 			} else {
+				// Duplicate module fields use the field-duplicate error; collisions with module types use the
+				// module-name error.
+				for (s in statics) if (s.d.dName.name == d.dName.name)
+					throw new ContextError("Duplicate module field declaration : "
+						+ Context.sTypePath(m.path) + "." + d.dName.name, d.dName.pos);
 				checkName(d.dName.name, d.dName.pos);
 			}
 		}

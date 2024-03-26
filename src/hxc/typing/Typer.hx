@@ -2504,7 +2504,9 @@ class Typer {
 		// (target class, its params, the value type of `new`, an optional cast target for an abstract)
 		var target:Null<{c:TClass, tl:TParams, vt:T, castTo:Null<T>}> = switch (te1.expr) {
 			case TTypeExpr(TClassDecl(c)):
-				var monos:TParams = [for (_ in c.params) TypeFunctions.mkMono()];
+				// Constrained monos so a class param's constraint still checks when the closure's call
+				// binds it.
+				var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, c.params);
 				{c: c, tl: monos, vt: TInst(c, monos), castTo: null};
 			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				var atl:TParams = [for (_ in a.params) TypeFunctions.mkMono()];
