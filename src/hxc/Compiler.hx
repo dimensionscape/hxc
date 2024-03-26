@@ -40,6 +40,9 @@ class Compiler {
 
 	public static function run(args:Array<String>):Void {
 		hxc.core.BinaryStdio.set();
+		// The mono seams (create, bind, classify) route through TypeUnification; without this
+		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
+		hxc.core.TypeUnification.install();
 		args = expandArgs(args);
 		var nextAt = args.indexOf("--next");
 		if (nextAt >= 0) {

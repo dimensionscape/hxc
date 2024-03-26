@@ -1117,14 +1117,21 @@ class TypeUnification {
 				}
 			case [TAnon(a1), TAnon(a2)]:
 				unifyAnons(uctx, a, b, a1, a2);
+			// A class value's type wraps every nested failure with cannotUnify(a, b), as a typedef on the
+			// left does. hxc's statics anons are not wrapped in a typedef, so the wrap sits on the case
+			// itself.
 			case [TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Class")):
 				switch (an.status.get()) {
-					case Statics(cl): unify(uctx, TInst(cl, [for (_ in cl.params) TypeFunctions.mkMono()]), pt);
+					case Statics(cl):
+						try unify(uctx, TInst(cl, [for (_ in cl.params) TypeFunctions.mkMono()]), pt)
+						catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
 					case _: error([cannotUnify(a, b)]);
 				}
 			case [TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Enum")):
 				switch (an.status.get()) {
-					case EnumStatics(e): unify(uctx, TEnum(e, [for (_ in e.params) TypeFunctions.mkMono()]), pt);
+					case EnumStatics(e):
+						try unify(uctx, TEnum(e, [for (_ in e.params) TypeFunctions.mkMono()]), pt)
+						catch (err:UnifyError) error([cannotUnify(a, b)].concat(err.errors));
 					case _: error([cannotUnify(a, b)]);
 				}
 			case [TEnum(_, _), TAbstract(ab, [])] if (isEmptyPath(ab.path, "EnumValue")):
