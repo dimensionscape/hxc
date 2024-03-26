@@ -679,6 +679,18 @@ class ModuleLoader {
 				mainf.overloads = [cf].concat(cf.overloads).concat(mainf.overloads);
 				continue;
 			}
+			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern)) for (acc in cff.cffAccess) {
+				var bad = switch [acc.access, cff.cffKind] {
+					case [APublic | APrivate | AStatic | AFinal | AExtern, _]: null;
+					case [ADynamic | AOverride | AMacro | AInline | AAbstract | AOverload, FFun(_)]: null;
+					case [AInline, FVar(_, _)]: null;
+					case [a, FVar(_, _)]: {name: accessName(a), kind: "variable"};
+					case [a, FProp(_, _, _, _)]: {name: accessName(a), kind: "property"};
+					case _: null;
+				};
+				if (bad != null)
+					ctx.addDiagnostic("Invalid accessor '" + bad.name + "' for " + bad.kind + " " + cff.cffName.name, acc.pos);
+			}
 			// Reject duplicate names by declaring kind except overload methods and bodyless abstract
 			// operation declarations.
 			if (ctx != null && classFieldHasBody(cff) && cf.name != "new" && dupTable.exists(cf.name)) {
@@ -700,6 +712,15 @@ class ModuleLoader {
 				c.orderedFields.push(cf);
 			}
 		}
+	}
+
+	static function accessName(a:Access):String {
+		return switch (a) {
+			case APublic: "public"; case APrivate: "private"; case AStatic: "static";
+			case AOverride: "override"; case ADynamic: "dynamic"; case AInline: "inline";
+			case AMacro: "macro"; case AFinal: "final"; case AExtern: "extern";
+			case AAbstract: "abstract"; case AOverload: "overload";
+		};
 	}
 
 	// Map property accessor names to VarAccess. Unknown custom accessors retain AccCall behavior after
