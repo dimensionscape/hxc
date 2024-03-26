@@ -379,8 +379,9 @@ class Compiler {
 				}
 			}
 			// A targetless compile still checks value misuse the filter stage would catch; the reference's
-			// filters run regardless of output. .
+			// filters run regardless of output. . Main resolution (privacy, signature) also still applies.
 			if (platform == Cross) {
+				hxc.typing.Finalization.getMain(ctx, ctx.types);
 				for (t in ctx.types) hxc.filters.FiltersCommon.runExpressionFilters(new hxc.typing.TyperContext(ctx), [
 					{name: "check_abstract_as_value", f: hxc.filters.Filters.checkAbstractAsValue},
 				], t);

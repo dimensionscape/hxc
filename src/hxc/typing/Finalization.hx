@@ -47,6 +47,9 @@ class Finalization {
 				case null:
 				case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 					throw new TypingError("Invalid -main : " + Context.sTypePath(path) + " is not a class", Position.nullPos);
+				case TClassDecl(c2) if (c2.isPrivate):
+					// The main class resolves from outside its module. (Type_not_found Private_type).
+					throw new TypingError("Cannot access private type " + path.name + " in module " + Context.sTypePath(m.path), Position.nullPos);
 				case TClassDecl(c2):
 					errPos = c2.namePos;
 					var cf = c2.statics.get("main");

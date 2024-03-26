@@ -14,6 +14,7 @@ import sys.FileSystem;
 class ModuleLoader {
 	public static function attach(ctx:Context):Void {
 		ctx.getType = function(path:Path, p:Position, ?sub:String):ModuleType {
+			if (path.name == "") throw new ContextError("Empty module name is not allowed", p);
 			return loadTypeDef(ctx, path, p, sub);
 		};
 		ctx.defineType = function(mt:ModuleType):Void {

@@ -674,6 +674,18 @@ class TypeResolve {
 			var isAbstractMember = !isStatic;
 			switch (cff.cffKind) {
 				case FFun(fd):
+					// A @:to cast's arity is fixed: a static one takes the value, a member one takes only the
+					// implicit this; one trailing optional argument is allowed either way. (are_valid_args).
+					if (isTo && !TypeFunctions.hasMeta(":multiType", a.meta)) {
+						inline function optAt(k:Int):Bool return fd.fArgs[k].opt || fd.fArgs[k].value != null;
+						var declared = fd.fArgs.length;
+						var validStatic = declared == 1 || (declared == 2 && optAt(1));
+						var validMember = declared == 0 || (declared == 1 && optAt(0));
+						if (!isAbstractMember && !validStatic)
+							ctx.addDiagnostic("static @:to method should have one argument", cff.cffPos);
+						else if (isAbstractMember && !validMember)
+							ctx.addDiagnostic("@:to method should have no arguments", cff.cffPos);
+					}
 					// Method-local type params + abstract params in scope for the signature.
 					var methodParams:TypeParams = [];
 					var localParams = a.params;
