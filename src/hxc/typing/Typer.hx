@@ -1554,6 +1554,10 @@ class Typer {
 			return AKExpr(TypeFunctions.mk(TIdent(i), spawnMonomorph(ctx, p), p));
 		}
 			if (resolvedToTypeParameter) throw new TypingError("Only @:const type parameters on @:generic classes can be used as value", p);
+			// An unresolved ident naming an instance field of the current class from a static function
+			// reports the access error, not an unknown identifier.
+			if (ctx.curfun.match(FunStatic) && ctx.curclass != TypeFunctions.nullClass && ctx.curclass.fields.exists(i))
+				throw new TypingError("Cannot access " + i + " in static function", p);
 			// An existing module that defines no type of its own name reports the module error, not an
 			// unknown identifier.
 			if (i.charCodeAt(0) >= "A".code && i.charCodeAt(0) <= "Z".code) {

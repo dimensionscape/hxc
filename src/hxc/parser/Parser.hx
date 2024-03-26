@@ -1080,7 +1080,9 @@ class Parser {
 		var last = (li >= 0 && li < tokens.length) ? tokens[li] : null;
 		if (last != null && tokEq(last.tok, BrClose))
 			return last.pos;
-		// Outside the closing-brace exemption a missing semicolon is a parse error at the next token.
+		// Outside the closing-brace exemption a missing semicolon is a parse error at the next token. In
+		// display mode a syntax error records without aborting the parse inDisplay).
+		if (displayFile != null) return cur().pos;
 		throw new ParserError(Missing_semicolon, cur().pos);
 	}
 
@@ -1109,7 +1111,12 @@ class Parser {
 				switch (e1.expr) {
 					case EConst(CInt(v, null)):
 						return exprNext(new Expr(EConst(CFloat(v + ".", null)), Position.union(p, e1.pos)));
-					case _: return serror();
+					case _:
+						// A dangling dot at the display position is a field-completion request: keep an
+						// empty field access so typing resolves (and reports on) the receiver.
+						// (display_expr EDisplay DKDot).
+						if (atDisplayDot(p)) return exprNext(new Expr(EField(e1, "", EFNormal), Position.union(e1.pos, p)));
+						return serror();
 				}
 		}
 	}
