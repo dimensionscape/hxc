@@ -1482,6 +1482,9 @@ class EvalMacro {
 		return staleProto;
 	}
 
+	// The outermost expansion of the most recent macro run, for the assign lvalue check.
+	public static var lastExpansionAst:Null<Expr> = null;
+
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		curPos = p;
 		var isInstance = false;
@@ -1533,7 +1536,11 @@ class EvalMacro {
 			curTctx = savedTctx;
 			curPos = savedPos;
 			curModule = savedModule;
-			return Typer.typeExpr(tctx, astExpr, withType);
+			var typed = Typer.typeExpr(tctx, astExpr, withType);
+			// Recorded after the inner typing so nested macro runs cannot overwrite the OUTERMOST expansion;
+			// the assign check reads it to judge a macro call lvalue.
+			lastExpansionAst = astExpr;
+			return typed;
 		} catch (e:haxe.Exception) {
 			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
 			curTctx = savedTctx;

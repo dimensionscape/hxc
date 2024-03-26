@@ -2618,7 +2618,25 @@ class Typer {
 						Calls.arrayAccess(ctx, accGet(ctx, a1), te2, mode, p);
 				}
 			case ECall(e1, params):
-				Calls.typeCallAccess(ctx, e1, params, withType, p);
+				hxc.eval.EvalMacro.lastExpansionAst = null;
+				var acc = Calls.typeCallAccess(ctx, e1, params, withType, p);
+				// A call result is not an lvalue; a MACRO call defers to its EXPANSION, which reports at
+				// its own position when it is itself a call (an inline call would otherwise reduce to an
+				// assignable field first).
+				if (mode.match(MSet(_)) && !ctx.untypedMode) {
+					var expansion = hxc.eval.EvalMacro.lastExpansionAst;
+					if (expansion == null) {
+						throw new TypingError("Invalid assign", p);
+					} else {
+						var inner = expansion;
+						while (true) switch (inner.expr) {
+							case EParenthesis(e2) | EMeta(_, e2): inner = e2;
+							case _: break;
+						}
+						if (inner.expr.match(ECall(_, _))) throw new TypingError("Invalid assign", inner.pos);
+					}
+				}
+				acc;
 			case _:
 				AKExpr(typeExpr(ctx, new Expr(edef, p), withType));
 		};
