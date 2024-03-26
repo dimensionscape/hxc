@@ -2634,7 +2634,16 @@ class Typer {
 		for (ev in vl) {
 			var n = ev.evName.name;
 			var pv = ev.evName.pos;
-			var t:T = ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
+			// A bad hint reports and recovers as Dynamic so the var and the rest of the body still type. .
+			var t:T = try {
+				ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
+			} catch (ce:hxc.context.Context.ContextError) {
+				ctx.com.addDiagnostic(ce.message, ce.pos);
+				TypeFunctions.tDynamic;
+			} catch (te:TypingError) {
+				ctx.com.addDiagnostic(te.message, te.pos, te.depth);
+				TypeFunctions.tDynamic;
+			};
 			try {
 				var e:Null<TExpr> = switch (ev.evExpr) {
 					case null: null;

@@ -601,8 +601,9 @@ class Typeload {
 				params.push(def);
 				i2++;
 			} else {
-				// T:: tl, [] -> too many
-				throw new ContextError("Too many type parameters for " + Context.sTypePath(declPath), p);
+				// Too many arguments: reported at the first EXCESS argument.
+				var pt = switch (t.tparams[i1]) { case TPType(th): th.pos; case TPExpr(e): e.pos; };
+				throw new ContextError("Too many type parameters for " + Context.sTypePath(declPath), pt);
 			}
 		}
 		if (checks.length > 0) {

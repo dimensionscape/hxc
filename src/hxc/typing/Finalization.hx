@@ -68,7 +68,9 @@ class Finalization {
 			case _:
 				throw new TypingError("Invalid -main : " + Context.sTypePath(path) + " has invalid main function", c.pos);
 		}
-		if (!isVoid(TypeFunctions.follow(r)))
+		// A ret still open because the body typing aborted stays quiet: the body's error is fatal and
+		// already reported.
+		if (!isVoid(TypeFunctions.follow(r)) && !(ctx.hasError() && TypeFunctions.follow(r).match(TMono(_))))
 			throw new TypingError("Return type of main function should be Void (found " + hxc.core.TPrinting.sTypeStr(r) + ")", f.namePos);
 		// Keep main against DCE.
 		f.meta = [{name: ":keep", params: [], pos: Globals.mkZeroRangePos(f.pos)}].concat(f.meta);
