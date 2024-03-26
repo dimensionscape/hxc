@@ -1122,6 +1122,7 @@ class Typer {
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
 		if (displayHover && atHoverPos(e.pos)) checkDisplayHover(typed);
+		if (displayUsage && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
 
@@ -1170,20 +1171,59 @@ class Typer {
 		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
 	}
 
-	static function checkDisplayDefinition(te:TExpr):Void {
-		if (displayFound != null) return;
-		// A sub-expression that still encloses the offset is the more precise match: the
-		// receiver of a field access types outside this wrapper, so recurse first.
+	// Legacy --display @usage: the symbol at the display offset is captured by identity during typing; the
+	// compiler then scans every typed expression for references to it.
+	public static var displayUsage:Bool = false;
+	public static var usageTargetField:Null<TClassField> = null;
+	public static var usageTargetVar:Null<TVar> = null;
+	public static var usageTargetEnumField:Null<TEnumField> = null;
+
+	static function captureUsageTarget(te:TExpr):Void {
+		if (usageTargetField != null || usageTargetVar != null || usageTargetEnumField != null) return;
+		TexprTools.iter(function(child) {
+			if (atDisplayPos(child.pos)
+				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max))
+				captureUsageTarget(child);
+		}, te);
+		if (usageTargetField != null || usageTargetVar != null || usageTargetEnumField != null) return;
 		switch (te.expr) {
-			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1) if (atDisplayPos(e1.pos)):
-				checkDisplayDefinition(e1);
-				if (displayFound != null) return;
+			case TField(_, FEnum(_, ef)): usageTargetEnumField = ef;
+			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): usageTargetField = cf;
+			case TLocal(v) | TVarExpr(v, _): usageTargetVar = v;
+			case TNew(c, _, _) if (c.constructor != null): usageTargetField = c.constructor;
 			case _:
 		}
+	}
+
+	// A call whose ARGUMENTS fail to unify still resolves its callee; the definition records
+	// from the resolved access before argument typing can abort the call.
+	public static function noteDisplayAccess(acc:AccessKind, pos:Position):Void {
+		if (!displayDefinition || displayFound != null || !atDisplayPos(pos)) return;
+		switch (acc) {
+			case AKExpr(te): checkDisplayDefinition(te);
+			case AKField(fa) | AKAccessor(fa): displayFound = [fa.field.namePos];
+			case _:
+		}
+	}
+
+	static function checkDisplayDefinition(te:TExpr):Void {
+		if (displayFound != null) return;
+		// A sub-expression that still encloses the offset is the more precise match: recurse
+		// into any PROPER enclosing sub-range first (an assignment target or call argument
+		// types inside a wrapper whose own node carries no declaration).
+		TexprTools.iter(function(child) {
+			if (displayFound == null && atDisplayPos(child.pos)
+				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max))
+				checkDisplayDefinition(child);
+		}, te);
+		if (displayFound != null) return;
 		var pl:Array<Position> = switch (te.expr) {
 			case TField(_, FEnum(_, ef)): [ef.namePos];
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): [cf.namePos];
-			case TLocal(v) | TVarExpr(v, _): [v.pos];
+			case TLocal(v): [v.pos];
+			// A declaration reports itself, but only when the cursor sits on the name; an offset inside the
+			// initializer whose own extraction found nothing must not claim it.
+			case TVarExpr(v, _) if (atDisplayPos(v.pos)): [v.pos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
 			case _: [];
@@ -2192,7 +2232,12 @@ class Typer {
 	public static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
 		return switch (acc) {
 			case AKExpr(e): e;
-			case AKField(fa): fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
+			case AKField(fa):
+				// An inline read replaces the field access with its constant, losing the field;
+				// the definition position records here where the field is still known.
+				if (fa.isInline && displayDefinition && displayFound == null && atDisplayPos(fa.pos))
+					displayFound = [fa.field.namePos];
+				fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MGet)) {

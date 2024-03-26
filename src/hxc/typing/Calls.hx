@@ -523,6 +523,7 @@ class Calls {
 			case _:
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
+		Typer.noteDisplayAccess(acc, callee.pos);
 		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
 	}
 

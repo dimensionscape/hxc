@@ -231,13 +231,18 @@ class Compiler {
 		{
 			var dparts = displayParts(ctx);
 			var dmode = dparts.length >= 3 ? dparts[2] : "";
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type")) {
+			if (dmode == "package" && dparts.length >= 2) {
+				Sys.stderr().writeString(displayFilePackage(ctx, dparts[0]) + "\n");
+				return;
+			}
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
 					hxc.parser.Parser.displayOffset = doff;
 					hxc.typing.Typer.displayDefinition = dmode == "position";
 					hxc.typing.Typer.displayHover = dmode == "type";
+					hxc.typing.Typer.displayUsage = dmode == "usage";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -309,6 +314,10 @@ class Compiler {
 				var h = hxc.typing.Typer.hoverFound;
 				if (h == null) h = hoverOnFieldName(ctx);
 				Sys.stderr().writeString(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
+				return;
+			}
+			if (hxc.typing.Typer.displayUsage) {
+				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(collectUsages(ctx)) + "\n");
 				return;
 			}
 			if (isDisplay(ctx, "signature")) {
@@ -529,6 +538,62 @@ class Compiler {
 
 	static function displayParts(ctx:Context):Array<String> {
 		return ctx.displaySpec == null ? [] : ctx.displaySpec.split("@");
+	}
+
+	// Legacy --display @package: the display file's package is its path relative to the classpath that
+	// contains it, keeping the SHORTEST module path across classpaths. .
+	static function displayFilePackage(ctx:Context, file:String):String {
+		var real = try FileSystem.fullPath(file) catch (_:Dynamic) file;
+		function norm(s:String):String {
+			var n = StringTools.replace(s, "\\", "/");
+			return Sys.systemName() == "Windows" ? n.toLowerCase() : n;
+		}
+		var realN = norm(real);
+		var best:Null<Array<String>> = null;
+		for (cp in ctx.classPath.concat(ctx.stdPath)) {
+			var cpReal = try FileSystem.fullPath(cp == "" ? "." : cp) catch (_:Dynamic) continue;
+			var cpN = norm(cpReal);
+			if (!StringTools.endsWith(cpN, "/")) cpN += "/";
+			if (realN.length <= cpN.length || realN.substr(0, cpN.length) != cpN) continue;
+			var rest = StringTools.replace(real, "\\", "/").substr(cpN.length);
+			var segs = rest.split("/");
+			if (segs.length == 0) continue;
+			segs.pop();
+			if (best == null || segs.join(".").length < best.join(".").length) best = segs;
+		}
+		return best == null ? "" : best.join(".");
+	}
+
+	// Scan every typed field body for references to the captured @usage target. positions sort in source
+	// order.
+	static function collectUsages(ctx:Context):Array<Position> {
+		var cf = hxc.typing.Typer.usageTargetField;
+		var v = hxc.typing.Typer.usageTargetVar;
+		var ef = hxc.typing.Typer.usageTargetEnumField;
+		if (cf == null && v == null && ef == null) return [];
+		var out:Array<Position> = [];
+		function walk(e:hxc.core.Type.TExpr):Void {
+			switch (e.expr) {
+				case TField(_, FAnon(cf2) | FInstance(_, _, cf2) | FStatic(_, cf2) | FClosure(_, cf2)) if (cf != null && cf2 == cf): out.push(e.pos);
+				case TField(_, FEnum(_, ef2)) if (ef != null && ef2 == ef): out.push(e.pos);
+				case TLocal(v2) if (v != null && v2 == v): out.push(e.pos);
+				case TNew(c2, _, _) if (cf != null && c2.constructor == cf): out.push(e.pos);
+				case _:
+			}
+			hxc.core.TexprTools.iter(walk, e);
+		}
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c):
+				var all = c.orderedFields.concat(c.orderedStatics);
+				if (c.constructor != null) all.push(c.constructor);
+				for (f in all) if (f.expr != null) walk(f.expr);
+			case _:
+		}
+		out.sort(function(a, b) {
+			if (a.file != b.file) return a.file < b.file ? -1 : 1;
+			return a.min - b.min;
+		});
+		return out;
 	}
 
 	// A hover on a field declaration name has no enclosing expression; the typed field's signature is
