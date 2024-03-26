@@ -343,7 +343,7 @@ class ModuleLoader {
 
 				case ETypedef(d):
 					var name = d.dName.name;
-					checkName(name, d.dName.pos);
+					checkName(name, p);
 					hasDeclaration = true;
 					var priv = hasEnumFlag(d.dFlags, EPrivate); // ETypedef uses EnumFlag in the AST
 					var path = makePath(name, priv, p);

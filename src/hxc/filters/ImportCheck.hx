@@ -22,6 +22,34 @@ class ImportCheck {
 		return fatal;
 	}
 
+	// A PLAIN module import loads eagerly (after build macros are ready) so declaration errors in the
+	// imported module surface even when nothing uses it. .
+	static var plainImportsTried:haxe.ds.StringMap<Bool> = new haxe.ds.StringMap();
+
+	public static function loadPlainImports(ctx:Context):Void {
+		var i = 0;
+		while (i < ctx.modules.length) {
+			var m = ctx.modules[i++];
+			var imports = ctx.moduleImports.get(Context.pathKey(m.path));
+			if (imports == null) continue;
+			for (imp in imports.rawImports) {
+				switch (imp.mode) { case IAll: continue; case _: }
+				if (imp.pos == null) continue;
+				var parts = imp.path;
+				var mi = -1;
+				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
+				if (mi < 0 || parts.length - mi != 1) continue;
+				var pack = [for (k in 0...mi) parts[k].name];
+				var key = pack.join(".") + "." + parts[mi].name;
+				if (plainImportsTried.exists(key)) continue;
+				plainImportsTried.set(key, true);
+				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, imp.pos)
+				catch (e:hxc.context.Context.ContextError) ctx.addDiagnostic(e.message, e.pos)
+				catch (_:Dynamic) {}
+			}
+		}
+	}
+
 	static function isUpper(s:String):Bool {
 		var c = s.charCodeAt(0);
 		return c >= "A".code && c <= "Z".code;
@@ -38,8 +66,8 @@ class ImportCheck {
 		if (mi < 0) return false;
 		var pack = [for (i in 0...mi) parts[i].name];
 		var moduleName = parts[mi].name;
-		// Exactly one trailing segment after the module name is validated here (`import M.X`); a plain
-		// module import or a deeper path is left alone.
+		// Exactly one trailing segment after the module name is validated here (`import M.X`); a
+		// deeper path is left alone (plain module imports load via loadPlainImports).
 		if (parts.length - mi != 2) return false;
 		var x = parts[mi + 1].name;
 
