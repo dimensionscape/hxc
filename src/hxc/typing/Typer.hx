@@ -624,7 +624,12 @@ class Typer {
 				c = castOrUnify(ctx, basic.tbool, c, c.pos);
 				TypeFunctions.mk(TWhile(c, b, DoWhile), basic.tvoid, p);
 			case EReturn(re):
-				if (!ctx.inFunction) throw new TypingError("Return outside function", p);
+				if (!ctx.inFunction) {
+					// Reported and RECOVERED as the returned value so the initializer still types (and its
+					// own mismatches still report).
+					ctx.com.addDiagnostic("Return outside function", p);
+					return re == null ? TypeFunctions.mk(TConst(TNull), spawnMonomorph(ctx, p), p) : typeExpr(ctx, re, withType);
+				}
 				typeReturn(ctx, re, withType, p);
 			case EBreak:
 				if (!ctx.inLoop) throw new TypingError("Break outside loop", p);

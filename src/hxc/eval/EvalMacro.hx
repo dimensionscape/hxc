@@ -3342,7 +3342,15 @@ class EvalMacro {
 		if (ec == null) return null;
 		return switch (EvalValueTools.vresolve(ex.value)) {
 			case VInstance(_):
-				var msg = EvalStdLib.stringOf(EvalField.field(ec, ex.value, EvalHash.hash("message")));
+				// A user built haxe.macro.Error keeps message behind the Exception property
+				// whose backing slot is __exceptionMessage; the raw message slot is null.
+				var msgRaw = EvalField.field(ec, ex.value, EvalHash.hash("message"));
+				if (EvalValueTools.vresolve(msgRaw).match(VNull))
+					msgRaw = EvalField.field(ec, ex.value, EvalHash.keyExceptionMessage);
+				var msg = switch (EvalValueTools.vresolve(msgRaw)) {
+					case VNull: EvalStdLib.stringOf(ex.value);
+					case _: EvalStdLib.stringOf(msgRaw);
+				};
 				var pv = EvalField.field(ec, ex.value, EvalHash.hash("pos"));
 				var pos = switch (EvalValueTools.vresolve(pv)) {
 					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };

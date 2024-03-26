@@ -1146,6 +1146,9 @@ class ModuleLoader {
 		for (acc in f.cffAccess) if (acc.access == AStatic) stat = true;
 		var p = f.cffPos;
 		switch (f.cffKind) {
+			case FVar(_, _) if (!stat && !a.isEnum):
+				// A plain member var has no storage on an abstract; enum abstract constants stay legal.
+				throw new ContextError("Cannot declare member variable in abstract", p);
 			case FFun(fu) if (f.cffName.name == "new" && !stat):
 				for (acc in f.cffAccess) if (acc.access == AMacro)
 					throw new ContextError("Invalid modifier: macro on abstract constructor", acc.pos);

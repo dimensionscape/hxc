@@ -451,7 +451,10 @@ class TypeFields {
 				case FVar(_, eo):
 					if (eo != null) {
 						setValueMeta(cf, [eo]);
+						// A field initializer is outside any function (a return in it reports).
+						tctx.inFunction = false;
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+						tctx.inFunction = true;
 						if (!isStatic) checkThisInVarInit(tctx, te);
 						var checked = checkCast(te, sigType);
 						// An inline var stores its FOLDED constant (224 | (1<<30) becomes the int) so an
