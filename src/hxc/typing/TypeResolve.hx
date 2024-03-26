@@ -674,7 +674,9 @@ class TypeResolve {
 					var methodParams:TypeParams = [];
 					var localParams = a.params;
 					if (fd.fParams.length > 0) {
-						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams, null, cff.cffName.name == "new" ? TPHConstructor : TPHMethod);
+						// The abstract's own params are in scope for a method param's constraint loads
+						// constraints with ctx.typeParams).
+						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams, a.params, cff.cffName.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = methodParams.concat(a.params);
 					}
 					// In the host context a macro function's signature degrades every type to Dynamic, with
@@ -1007,7 +1009,8 @@ class TypeResolve {
 					var localParams = typeParams;
 					var ovParams:TypeParams = [];
 					if (f.fParams.length > 0) {
-						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams, null, cf.name == "new" ? TPHConstructor : TPHMethod);
+						// Enclosing params stay in scope for an overload param's constraint.
+						ovParams = Typeload.typeTypeParams(ctx, {pack: [], name: cf.name}, f.fParams, typeParams, cf.name == "new" ? TPHConstructor : TPHMethod);
 						localParams = ovParams.concat(typeParams);
 					}
 					var args:Array<TSignatureArg> = [];

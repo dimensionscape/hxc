@@ -35,6 +35,14 @@ class TypeFields {
 			n = ctx.modules.length;
 			installAndForce(ctx);
 		}
+		// PCheckConstraint delays run after fields are typed; a check can itself type a KExpr argument and
+		// queue more checks, so drain to a fixed point.
+		var guard = 0;
+		while (ctx.pendingConstraintChecks.length > 0 && guard++ < 100) {
+			var checks = ctx.pendingConstraintChecks;
+			ctx.pendingConstraintChecks = [];
+			for (f in checks) f();
+		}
 	}
 
 	// Install lazy field typers for every loaded module and force them. Separate from the build

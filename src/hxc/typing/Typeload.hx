@@ -37,8 +37,8 @@ class Typeload {
 		// names no module, so moduleLut cannot recover its declaring module when the constraint is forced
 		// later from another module. Capture the module being processed now (field resolution runs with
 		// currentModule set to the owning module) so a constraint that resolves through the declaring
-		// module's imports still resolves. Only used for non-type params: a type param already has a real
-		// module path in moduleLut, and its constraint is forced where the type is visible.
+		// module's imports still resolves. Only used for non-type params: a type param recovers its
+		// module through moduleLut or typeToModule at force time.
 		var declaringModule = host != TPHType ? ctx.currentModule : null;
 		function defaultType():Null<T> {
 			if (tp.tpDefault == null) return null;
@@ -76,6 +76,12 @@ class Typeload {
 			r.set(TypeFunctions.lazyProcessing(function():T return t));
 			var savedMod = ctx.currentModule;
 			var declMod = ctx.moduleLut.get(Context.pathKey(declModulePath));
+			if (declMod == null) {
+				// A SUB-TYPE decl (typedef T2 inside module M) has no module of its own path;
+				// typeToModule recovers the defining module so its sibling types stay visible.
+				var mp = ctx.typeToModule.get(Context.pathKey(declModulePath));
+				if (mp != null) declMod = ctx.moduleLut.get(Context.pathKey(mp));
+			}
 			if (declMod == null) declMod = declaringModule;
 			if (declMod != null) ctx.currentModule = declMod;
 			try {
@@ -118,6 +124,8 @@ class Typeload {
 				// problems (recursion, genuine unify failures) still propagate.
 				if (StringTools.startsWith(e.message, "Module not found")
 					|| StringTools.startsWith(e.message, "Type not found")) {
+					if (Sys.getEnv("HXC_DEBUG_CONSTRAINT") != null)
+						Sys.println("[cdegrade] " + n + " on " + Context.sTypePath(c.path) + ": " + e.message);
 					c.kind = KTypeParameter([]);
 					r.set(TypeFunctions.lazyAvailable(t));
 					ctx.currentModule = savedMod;
@@ -355,7 +363,7 @@ class Typeload {
 				case FFun(fd):
 					// Function field: TFun(args, ret) from hints (subset: no type-param scope
 					// extension for method-local params, annotations only).
-					if (fd.fParams.length > 0) params = typeTypeParams(ctx, {pack: [], name: n}, fd.fParams);
+					if (fd.fParams.length > 0) params = typeTypeParams(ctx, {pack: [], name: n}, fd.fParams, typeParams);
 					var localTypeParams = params.length > 0 ? params.concat(typeParams) : typeParams;
 					function ftopt(th:Null<TypeHint>):T {
 						if (th != null) return loadComplexType(ctx, localTypeParams, th);
@@ -521,6 +529,10 @@ class Typeload {
 			case TClassDecl(c): switch (c.kind) { case KGenericBuild(_): true; case _: false; }
 			case _: false;
 		};
+		var isGeneric = switch (mt) {
+			case TClassDecl(c): c.kind.match(KGeneric);
+			case _: false;
+		};
 		var isRestGenericBuild = isGenericBuild && types.length == 1 && types[0].name == "Rest";
 
 		// Allow_no_params && no syntactic params -> spawn constrained monos for each param.
@@ -561,10 +573,23 @@ class Typeload {
 			return build([for (tp in t.tparams) loadParam(tp)]);
 
 		var params:TParams = [];
+		var checks:Array<{t:T, c:TClass, p:Position}> = [];
 		var i1 = 0, i2 = 0;
 		while (true) {
 			if (i1 < t.tparams.length && i2 < types.length) {
-				params.push(loadParam(t.tparams[i1]));
+				var loaded = loadParam(t.tparams[i1]);
+				var pt = switch (t.tparams[i1]) {
+					case TPType(th): th.pos;
+					case TPExpr(e): e.pos;
+				};
+				// Following the declaration param forces its constraint lazy; an unconstrained param of a
+				// non-generic type needs no check.
+				switch (TypeFunctions.follow(types[i2].type)) {
+					case TInst({kind: KTypeParameter([])}, []) if (!isGeneric):
+					case TInst(c2, []): checks.push({t: loaded, c: c2, p: pt});
+					case _:
+				}
+				params.push(loaded);
 				i1++; i2++;
 			} else if (i1 >= t.tparams.length && i2 >= types.length) {
 				break;
@@ -580,7 +605,64 @@ class Typeload {
 				throw new ContextError("Too many type parameters for " + Context.sTypePath(declPath), p);
 			}
 		}
+		if (checks.length > 0) {
+			// Substitute the declaration params with the applied ones; a KGeneric constraint is replaced by
+			// its
+			// actual generic instance before unifying.
+			var map = function(tt:T):T {
+				var t2 = TypeFunctions.applyParams(types, params, tt);
+				return switch (TypeFunctions.follow(t2)) {
+					case TInst(c2 = {kind: KGeneric}, pl): buildInstance(ctx, TClassDecl(c2), pl, p, true, typeParams);
+					case _: t2;
+				};
+			};
+			for (chk in checks)
+				ctx.pendingConstraintChecks.push(function() checkParamConstraints(ctx, chk.t, map, chk.c, chk.p));
+		}
 		return build(params);
+	}
+
+	static function checkParamConstraints(ctx:Context, t:T, map:T->T, c:TClass, p:Position):Void {
+		switch (TypeFunctions.follow(t)) {
+			case TMono(_): return;
+			case _:
+		}
+		var ctl = switch (c.kind) { case KTypeParameter(l): l; case _: []; };
+		if (Sys.getEnv("HXC_DEBUG_CONSTRAINT") != null) {
+			var info = switch (TypeFunctions.follow(t)) {
+				case TInst(ca, _): "applied=" + Context.sTypePath(ca.path) + " kind=" + Std.string(ca.kind);
+				case other: "applied follow=" + Std.string(other);
+			};
+			Sys.println("[cchk] decl=" + Context.sTypePath(c.path) + " ctl=" + ctl.length + " " + info);
+		}
+		for (ti0 in ctl) {
+			var ti = map(ti0);
+			var err:Null<hxc.core.TypeUnification.UnifyError> = null;
+			try TypeUnification.unifyDefault(t, ti) catch (e:hxc.core.TypeUnification.UnifyError) err = e;
+			if (err == null) continue;
+			var errors = err.errors;
+			function fail():Void {
+				var msg = hxc.core.TPrinting.betterErrorMessage(
+					([hxc.core.TypeUnification.UnifyErrorKind.Constraint_failure(Context.sTypePath(c.path))]).concat(errors));
+				// A failed eager generic build has already been reported and typing continues, so a check
+				// that
+				// repeats that failure at the same site (the eager report anchors inside the same hint)
+				// stays
+				// silent.
+				for (d in ctx.diagnostics)
+					if (d.message == msg && d.pos != null && d.pos.file == p.file
+						&& d.pos.min <= p.max && d.pos.max >= p.min) return;
+				ctx.addDiagnostic(msg, p);
+			}
+			switch (TypeFunctions.follow(t)) {
+				case TInst({kind: KExpr(e)}, _):
+					// A constant argument is typed against the constraint.
+					var tctx = new TyperContext(ctx);
+					var te = Typer.typeExpr(tctx, e, WithTypeTools.withType(ti));
+					try TypeUnification.unifyDefault(te.type, ti) catch (_:hxc.core.TypeUnification.UnifyError) fail();
+				case _: fail();
+			}
+		}
 	}
 
 	// Do_build_instance (subset): for the non-generic case it is just
@@ -783,7 +865,14 @@ class Typeload {
 						if (Sys.getEnv("HXC_DEBUG_TNEW") != null) Sys.println("[tnew] c=" + c.path.pack.join(".") + "." + c.path.name + " etype=" + hxc.core.TPrinting.sTypeStr(e.type) + " subst=" + hxc.core.TPrinting.sTypeStr(TypeFunctions.follow(subst(e.type))));
 						 switch (TypeFunctions.follow(subst(e.type))) {
 							case TInst(c2, pl2): TNew(c2, pl2, arr(args));
-							case TAbstract(a, pl2) if (a.impl != null && a.impl.constructor != null): TNew(a.impl, pl2, arr(args));
+							case TAbstract(a, pl2) if (a.impl != null && !TypeFunctions.hasMeta(":multiType", a.meta)):
+								// A @:generic expansion with a { new } constraint constructs the underlying
+								// type.
+								switch (TypeFunctions.follow(TypeFunctions.getUnderlyingType(a, pl2))) {
+									case TInst(cu, tlu): TNew(cu, tlu, arr(args));
+									case _: throw new TypingError("Cannot construct " + hxc.core.TPrinting.sTypeStr(TAbstract(a, pl2)), e.pos);
+								}
+							case TAbstract(a, pl2) if (a.impl != null): TNew(a.impl, pl2, arr(args));
 							case mapped: throw new TypingError("Cannot construct " + hxc.core.TPrinting.sTypeStr(mapped), e.pos);
 						 }
 					case _: TNew(c, [for (t in params) subst(t)], arr(args));
@@ -859,27 +948,8 @@ class Typeload {
 			var checked = genericCheckConstExpr(ctx, params[i]);
 			out.push({from: from, to: checked.to, expr: checked.expr});
 		}
-		for (i in 0...c.params.length) switch (TypeFunctions.follow(out[i].from)) {
-			case TInst(pc, _) if (out[i].to != out[i].from):
-				switch (pc.kind) {
-					case KTypeParameter(constraints):
-						for (constraint in constraints) {
-							if (hasTypeParameter(constraint)) continue;
-							var expected = genericSubstituteType(ctx, c, out, p, constraint);
-							try TypeUnification.unifyDefault(out[i].to, expected) catch (e:hxc.core.TypeUnification.UnifyError) {
-								var name = c.path.name + "." + c.params[i].name;
-								var actual = switch (TypeFunctions.follow(params[i])) {
-									case TInst({kind: KExpr(e)}, _): hxc.ast.Printer.sExpr(e);
-									case _: hxc.core.TPrinting.sTypeStr(out[i].to);
-								};
-								var msg = "Constraint check failure for " + name + "\n" + actual + " should be " + hxc.core.TPrinting.sTypeStr(expected);
-								throw new TypingError(msg, out[i].expr == null ? p : out[i].expr.pos);
-							}
-						}
-					case _:
-				}
-			case _:
-		}
+		// No constraint check here: the delayed PCheckConstraint queued by loadInstance is the only
+		// enforcement point.
 		return out;
 	}
 

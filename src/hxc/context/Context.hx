@@ -128,6 +128,10 @@ class Context {
 	// One id sequence across every context, host and macro alike.
 	public static var nextStoredTypedExprId:Int = 0;
 
+	// Constraint checks deferred by loadInstance until all module fields are typed, at
+	// PCheckConstraint.
+	public var pendingConstraintChecks:Array<Void->Void> = [];
+
 	/**
 	 * Initialize from loaded StdTypes, String and Array declarations; retain safe placeholders until
 	 * loading completes.
