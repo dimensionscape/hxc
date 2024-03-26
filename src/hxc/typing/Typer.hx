@@ -1045,10 +1045,11 @@ class Typer {
 					tcatches.push({v: v, expr: cbody});
 					bodies.push(cbody);
 				}
-				// Result type: against an expected monomorph or Void the source decides (an implicit-return
-				// arrow with any Void branch is Void, so no value is forced out of the other branches);
-				// otherwise the branches unify to a common type.
+				// Result type: a STATEMENT try is Void with no branch unification (a catch calling a
+				// not-yet-inferred method must not bind that method's open return mono); against an expected
+				// monomorph or Void the source decides; otherwise the branches unify to a common type.
 				var tryT = switch (withType) {
+					case NoValue: ctx.com.basic.tvoid;
 					case WithType(wt, src) if (switch (TypeFunctions.follow(wt)) { case TMono(_): true; case wtf: isVoid(wtf); }):
 						unifyMinForTypeSource(ctx, bodies, src);
 					case _: unifyMin(ctx, bodies);
