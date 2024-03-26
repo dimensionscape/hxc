@@ -141,7 +141,9 @@ class Parser {
 	static function canStartMarkup(prev:Null<Token>, lastWasMarkup:Bool):Bool {
 		if (lastWasMarkup || prev == null) return true;
 		return switch (prev) {
-			case POpen | BkOpen | BrOpen | Comma | Semicolon | DblDot | Question | QuestionDot | Arrow
+			// BrClose: a markup literal may open a STATEMENT after a closed block; the XML
+			// name-start requirement keeps `{...} < b` comparisons lexing as operators.
+			case POpen | BkOpen | BrOpen | BrClose | Comma | Semicolon | DblDot | Question | QuestionDot | Arrow
 				| At | TSpread | TBinop(_) | TUnop(_):
 				true;
 			case Kwd(KwdReturn) | Kwd(KwdThrow) | Kwd(KwdCase) | Kwd(KwdElse) | Kwd(KwdIn)

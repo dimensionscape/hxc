@@ -643,6 +643,9 @@ class Typer {
 				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
 				ctx.untypedMode = old;
 				TypeFunctions.mk(te.expr, spawnMonomorph(ctx, te.pos), te.pos);
+			case EMeta(m, _) if (m.name == ":markup"):
+				// A markup literal surviving to typing was not consumed.
+				throw new TypingError("Markup literals must be processed by a macro", p);
 			case EMeta(m, e1) if (m.name == ":privateAccess"):
 				ctx.privateAccess++;
 				var rPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess--; throw err; };
