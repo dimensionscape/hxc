@@ -278,7 +278,7 @@ class Preprocess {
 			case EBinop(op, e1, e2):
 				var v1 = eval(e1);
 				var v2 = eval(e2);
-				return evalCompare(op, v1, v2, e.pos);
+				return evalCompare(op, v1, v2, e.pos, e1.pos, e2.pos);
 			case EField(_, _, _):
 				var path = fieldPath(e);
 				if (path == null) throw new ParserError(Custom("Invalid condition expression"), e.pos);
@@ -298,7 +298,7 @@ class Preprocess {
 		}
 	}
 
-	function evalCompare(op:Binop, v1:SmallType, v2:SmallType, p:Position):SmallType {
+	function evalCompare(op:Binop, v1:SmallType, v2:SmallType, p:Position, ?p1:Position, ?p2:Position):SmallType {
 		// Auto-cast string<->float like eval_binop_exprs
 		switch ([v1, v2]) {
 			case [TString(s1), TFloat(_)]:
@@ -309,7 +309,7 @@ class Preprocess {
 				if (f != null) v2 = TFloat(f);
 			case _:
 		}
-		var c = cmp(v1, v2, p);
+		var c = cmp(v1, v2, p, p1 == null ? p : p1, p2 == null ? p : p2);
 		return switch (op) {
 			case OpEq: TBool(c != null && c == 0);
 			case OpNotEq: TBool(!(c != null && c == 0));
@@ -323,17 +323,17 @@ class Preprocess {
 
 	// Incompatible type pairing is a HARD error. Version comparisons parse the
 	// string side (parseVersion errors become a ParserError at the condition position).
-	static function cmp(v1:SmallType, v2:SmallType, p:Position):Null<Int> {
+	static function cmp(v1:SmallType, v2:SmallType, p:Position, p1:Position, p2:Position):Null<Int> {
 		return switch ([v1, v2]) {
 			case [TNull, _] | [_, TNull]: null;
 			case [TFloat(a), TFloat(b)]: a < b ? -1 : (a > b ? 1 : 0);
 			case [TString(a), TString(b)]: a < b ? -1 : (a > b ? 1 : 0);
 			case [TBool(a), TBool(b)]: (a == b) ? 0 : (!a ? -1 : 1);
 			case [TVersion(a), TVersion(b)] | [TVersion(a), TString(b)] | [TString(a), TVersion(b)]:
-				try
-					Semver.compareVersion(Semver.parseVersion(a), Semver.parseVersion(b))
-				catch (e:haxe.Exception)
-					throw new ParserError(Custom(e.message), p);
+				// A version string that fails to parse reports at its own side of the compare.
+				var av = try Semver.parseVersion(a) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p1);
+				var bv = try Semver.parseVersion(b) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p2);
+				Semver.compareVersion(av, bv);
 			case _:
 				throw new ParserError(Custom("Cannot compare " + sValue(v1) + " and " + sValue(v2)), p);
 		}
