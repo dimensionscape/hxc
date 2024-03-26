@@ -939,6 +939,7 @@ class Operators {
 			var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
+			Calls.checkModifiesThisDirect(ctx, implC, setterCf, recv, p);
 			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
 			return tmp.init == null ? setCall : TypeFunctions.mk(TBlock([tmp.init, setCall]), retOf(setterCf), p);
 		}

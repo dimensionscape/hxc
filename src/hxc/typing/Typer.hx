@@ -1467,8 +1467,20 @@ class Typer {
 		};
 	}
 
-	// Type_ident (subset): locals and the literal idents. Member/static fields, types,
-	// imports, and globals resolve in the fields-dispatch unit.
+	// Type_ident (subset): locals and the literal idents. Member/static fields, types, imports, and globals
+	// resolve in the fields-dispatch unit.
+	public static function assignToThisIsAllowed(ctx:TyperContext):Bool {
+		return switch (ctx.curclass.kind) {
+			case KAbstractImpl(_):
+				switch (ctx.curfield.kind) {
+					case Method(MethInline): true;
+					case Method(_): ctx.curfield.name == "_new" || ctx.curfield.name == "new";
+					case _: false;
+				}
+			case _: false;
+		};
+	}
+
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		// A reified $i{""} produces an empty ident.
 		if (i == "") throw new TypingError("Identifier name must not be empty", p);
@@ -1483,6 +1495,13 @@ class Typer {
 				case _:
 					throw new TypingError("Property 'abstract' is reserved and only available in abstracts", p);
 			}
+		}
+		// Assigning the abstract's this marks the method as modifying it and requires an inline (or
+		// constructor) context.
+		if (i == "this" && mode.match(MSet(_)) && ctx.locals.exists("this") && ctx.curclass.kind.match(KAbstractImpl(_))) {
+			TypeFunctions.addClassFieldFlag(ctx.curfield, CfModifiesThis);
+			if (!assignToThisIsAllowed(ctx))
+				throw new TypingError("Abstract 'this' value can only be modified inside an inline function", p);
 		}
 		if (ctx.locals.exists(i)) {
 			return AKExpr(TexprTools.makeLocal(ctx.locals.get(i), p));

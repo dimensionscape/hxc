@@ -758,6 +758,31 @@ class Calls {
 		};
 	}
 
+	// Calling a sibling impl method that reassigns `this` from a non inline context spreads the
+	// modification illegally; an allowed context inherits the flag instead.
+	static function checkModifiesThis(ctx:TyperContext, se:StaticExtensionAccess, p:Position):Void {
+		var host = try FieldAccessTools.getHostClassRaise(se.access.host) catch (_:Dynamic) null;
+		if (host == null) return;
+		checkModifiesThisDirect(ctx, host, se.access.field, se.thisExpr, p);
+	}
+
+	public static function checkModifiesThisDirect(ctx:TyperContext, host:TClass, f:TClassField, receiver:TExpr, p:Position):Void {
+		if (f.name == "_new" || f.name == "new") return;
+		if (!ctx.curclass.kind.match(KAbstractImpl(_))) return;
+		var receiverIsThis = switch (receiver.expr) {
+			case TLocal(v): v.name == "this" || TypeFunctions.hasMeta(":this", v.meta) || TypeFunctions.hasMeta(":implicitThis", v.meta);
+			case _: false;
+		};
+		if (!receiverIsThis) return;
+		if (host != ctx.curclass) return;
+		TypeFields.forceFieldBody(ctx.com, host, f);
+		if (!TypeFunctions.hasClassFieldFlag(f, CfModifiesThis)) return;
+		if (Typer.assignToThisIsAllowed(ctx))
+			TypeFunctions.addClassFieldFlag(ctx.curfield, CfModifiesThis);
+		else
+			throw new TypingError("Abstract 'this' value can only be modified inside an inline function. '" + f.name + "' modifies 'this'", p);
+	}
+
 	public static function buildCall(ctx:TyperContext, acc:AccessKind, el:Array<Expr>, withType:WithType, p:Position, forceInline = false, forcePos:Null<Position> = null):TExpr {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p, forceInline, forcePos);
@@ -769,6 +794,7 @@ class Calls {
 			case AKUsingField(se):
 				// Static-extension / abstract impl call: the receiver is the first argument. A generic
 				// method specializes here like a plain field call does.
+				checkModifiesThis(ctx, se, p);
 				checkAbstractCallWrite(ctx, se.thisExpr, se.access, p);
 				var mono = monomorphizeParamsWith(ctx, se.access.field, callFieldExpr(ctx, se.access), se.access);
 				var ce = mono.expr;
