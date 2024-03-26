@@ -350,20 +350,23 @@ class Compiler {
 			}
 			abortOnDiagnostics(ctx, platform);
 			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
-			// exception lowering, and closure/local passes before interpretation.
-			if ((platform == Js || platform == Cpp || platform == Eval) && !noOutput) {
+			// exception lowering, and closure/local passes before interpretation. Filters run even under
+			// --no-output only generation on no_output), so analyzer value checks still report.
+			if (platform == Js || platform == Cpp || platform == Eval || platform == Neko) {
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
 				abortOnDiagnostics(ctx, platform);
-				if (platform == Js) {
-					var tGen = hxc.core.Timer.timer(["generate", "js"]);
-					hxc.generators.GenJS.generate(ctx);
-					tGen();
-				} else if (platform == Cpp) {
-					var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
-					hxc.generators.GenCpp.generate(ctx);
-					tGen();
+				if (!noOutput) {
+					if (platform == Js) {
+						var tGen = hxc.core.Timer.timer(["generate", "js"]);
+						hxc.generators.GenJS.generate(ctx);
+						tGen();
+					} else if (platform == Cpp) {
+						var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
+						hxc.generators.GenCpp.generate(ctx);
+						tGen();
+					}
 				}
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
@@ -463,7 +466,15 @@ class Compiler {
 	}
 
 	static function parseTypePath(s:String):Path {
-		var parts = s.split(".");
+		// A .hx file path is accepted where a class is expected (haxe -x Main.hx): strip the suffix and
+		// split on slashes instead of dots.
+		var parts:Array<String>;
+		if (s.length > 3 && StringTools.endsWith(s, ".hx")) {
+			var f = StringTools.replace(s.substr(0, s.length - 3), "\\", "/");
+			parts = [for (p in f.split("/")) if (p != "") p];
+		} else {
+			parts = s.split(".");
+		}
 		var name = parts.pop();
 		return {pack: parts, name: name};
 	}
