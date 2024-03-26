@@ -171,6 +171,8 @@ class ModuleLoader {
 						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
 						return;
 					}
+					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
+						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
 					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub, aliased: true});
 			}
 		}

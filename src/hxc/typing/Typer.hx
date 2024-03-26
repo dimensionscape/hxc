@@ -2280,6 +2280,13 @@ class Typer {
 	}
 
 	public static function accGet(ctx:TyperContext, acc:AccessKind):TExpr {
+		// A using-extension access never surfaces as a plain TField the definition extractor sees; record
+		// it from the access itself.
+		if (displayDefinition && displayFound == null) switch (acc) {
+			case AKUsingField(se) | AKUsingAccessor(se) if (atDisplayPos(se.access.pos)):
+				displayFound = [se.access.field.namePos];
+			case _:
+		}
 		return switch (acc) {
 			case AKExpr(e): e;
 			case AKField(fa):

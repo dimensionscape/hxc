@@ -453,7 +453,15 @@ class TypeFields {
 						setValueMeta(cf, [eo]);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						if (!isStatic) checkThisInVarInit(tctx, te);
-						cf.expr = checkCast(te, sigType);
+						var checked = checkCast(te, sigType);
+						// An inline var stores its FOLDED constant (224 | (1<<30) becomes the int) so an
+						// inline read substitutes a matchable constant. (require_constant_expression on
+						// inline vars).
+						if (cf.kind.match(Var({read: AccInline}))) {
+							var folded = hxc.optimization.Optimizer.makeConstantExpression(tctx, checked);
+							if (folded != null) checked = folded;
+						}
+						cf.expr = checked;
 					}
 				case FFun(fd):
 					setFunctionValueMeta(cf, fd);
