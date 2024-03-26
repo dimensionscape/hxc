@@ -788,7 +788,14 @@ class Calls {
 			case AKExpr(ce): callExpr(ctx, ce, el, p, forceInline, forcePos);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
-			case AKField(fa): callFieldAccess(ctx, fa, el, p, withType, forceInline, forcePos);
+			case AKField(fa):
+				// A super call to a dynamic method is rejected.
+				switch [fa.on.expr, fa.field.kind] {
+					case [TConst(TSuper), Method(MethDynamic)]:
+						throw new TypingError("Cannot call super." + fa.field.name + " since it's a dynamic method", p);
+					case _:
+				}
+				callFieldAccess(ctx, fa, el, p, withType, forceInline, forcePos);
 			case AKUsingField(se) if (hxc.eval.EvalMacro.isMacroField(se.access.field)):
 				hxc.eval.EvalMacro.run(ctx, se.access, [typedExprToSyntax(ctx, se.thisExpr)].concat(el), withType, p);
 			case AKUsingField(se):

@@ -723,6 +723,12 @@ class Operators {
 
 	static function assignTo(ctx:TyperContext, te1:TExpr, e2:Expr, p:Position):TExpr {
 		var te2 = Typer.castOrUnify(ctx, te1.type, Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type)), p);
+		// A named local function is not writable.
+		switch (te1.expr) {
+			case TLocal(v) if (v.kind.match(VUser(TVOLocalFunction)) && !ctx.untypedMode):
+				throw new TypingError("Cannot access function " + v.name + " for writing", p);
+			case _:
+		}
 		checkAssign(ctx, te1);
 		if (isSameAssignTarget(te1, te2)) throw new TypingError("Assigning a value to itself", p);
 		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
