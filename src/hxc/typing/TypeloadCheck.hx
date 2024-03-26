@@ -1,6 +1,7 @@
 package hxc.typing;
 
 import hxc.ast.Position;
+import hxc.ast.Ast;
 import hxc.core.NotFound;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
@@ -10,6 +11,27 @@ import hxc.filters.InterfaceCheck;
 
 // Checks class method redefinitions.
 class TypeloadCheck {
+	// The @:native string argument, with its own position.
+	static function getNativeName(meta:Metadata):Null<{name:String, pos:Position}> {
+		for (m in meta) if (m.name == ":native") switch (m.params) {
+			case [{expr: EConst(CString(s, _)), pos: p}]: return {name: s, pos: p};
+			case _: return null;
+		}
+		return null;
+	}
+
+	// An override must carry the same @:native value as its base (a base without one counts as
+	// different).
+	static function checkNativeNameOverride(ctx:Context, child:TClassField, base:TClassField):Void {
+		var cn = getNativeName(child.meta);
+		if (cn == null) return;
+		var bn = getNativeName(base.meta);
+		var basePos = bn == null ? base.namePos : bn.pos;
+		if (bn != null && bn.name == cn.name) return;
+		ctx.addDiagnostic("Field " + child.name + " has different @:native value than in superclass", cn.pos);
+		ctx.addDiagnostic("... Base field is defined here", basePos, 1);
+	}
+
 	public static function checkOverriding(ctx:Context, c:TClass, f:TClassField):Void {
 		var sup = c.superClass;
 		if (sup == null) {
@@ -26,6 +48,7 @@ class TypeloadCheck {
 		}
 
 		var f2 = parent.f;
+		checkNativeNameOverride(ctx, f, f2);
 		var fHasOverride = TypeFunctions.hasClassFieldFlag(f, CfOverride);
 		var f2Abstract = TypeFunctions.hasClassFieldFlag(f2, CfAbstract);
 		if (f2Abstract) {
