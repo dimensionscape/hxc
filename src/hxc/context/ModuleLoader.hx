@@ -301,7 +301,7 @@ class ModuleLoader {
 					} else if (TypeFunctions.hasMeta(":generic", c.meta) && c.params.length > 0)
 						c.kind = KGeneric;
 					// Register field shells before resolving their types and bodies.
-					registerFields(c, d.dData);
+					registerFields(c, d.dData, ctx);
 					decls.push(TClassDecl(c));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -393,7 +393,7 @@ class ModuleLoader {
 						c.isPrivate = true;
 						c.kind = KAbstractImpl(a);
 						TypeFunctions.addClassFlag(c, CFinal);
-						registerFields(c, implFields);
+						registerFields(c, implFields, ctx);
 						decls.push(TClassDecl(c));
 						ctx.declOfType.set(Context.pathKey(implPath), {decl: implDecl, pos: p});
 						a.impl = c;
@@ -564,7 +564,7 @@ class ModuleLoader {
 		return [];
 	}
 
-	public static function registerFields(c:TClass, fields:Array<ClassField>):Void {
+	public static function registerFields(c:TClass, fields:Array<ClassField>, ?ctx:Context):Void {
 		function checkIfFeature(meta:Metadata):Array<String> {
 			for (m in meta) if (m.name == ":ifFeature")
 				return [for (p in m.params) switch (p.expr) {
@@ -669,6 +669,17 @@ class ModuleLoader {
 					&& dupTable.exists(cf.name)) {
 				var mainf = dupTable.get(cf.name);
 				mainf.overloads = [cf].concat(cf.overloads).concat(mainf.overloads);
+				continue;
+			}
+			// Reject duplicate names by declaring kind except overload methods and bodyless abstract
+			// operation declarations.
+			if (ctx != null && classFieldHasBody(cff) && cf.name != "new" && dupTable.exists(cf.name)) {
+				var kindPath = switch (c.kind) {
+					case KAbstractImpl(a): {kind: "abstract", path: a.path};
+					case _: {kind: "class", path: c.path};
+				};
+				ctx.addDiagnostic("Duplicate " + kindPath.kind + " field declaration : "
+					+ hxc.core.Globals.sTypePath(kindPath.path) + "." + cf.name, cf.namePos);
 				continue;
 			}
 			if (isStatic) {

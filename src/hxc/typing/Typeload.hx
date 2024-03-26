@@ -1077,6 +1077,10 @@ class Typeload {
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path = {pack: c.path.pack, name: c.path.name + suffix};
+		// A user type already claiming the generated name blocks specialization; our own instances hit the
+		// cache above and never reach here. .
+		if (ctx.typeToModule.exists(Context.pathKey(path)))
+			throw new TypingError("Cannot specialize @:generic because the generated type name is already used: " + path.name, p);
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
 		mg.extra.processed = 2;
 		var cg = TypeFunctions.mkClass(mg, path, c.pos, c.namePos);
