@@ -710,6 +710,11 @@ class Typer {
 			case ENew(tp, el):
 				typeNew(ctx, tp, el, withType, p);
 			case EFunction(kind, f):
+				// An anonymous function as a plain STATEMENT has no receiver for its value.
+				if (withType.match(NoValue)) switch (kind) {
+					case FKNamed(_, _):
+					case _: ctx.com.addDiagnostic("Unnamed lvalue functions are not supported", p);
+				}
 				var savedTypeParams = ctx.typeParams;
 				var localParams:TypeParams = [];
 				if (f.fParams.length > 0) {
@@ -1604,6 +1609,24 @@ class Typer {
 			// reports the access error, not an unknown identifier.
 			if (ctx.curfun.match(FunStatic) && ctx.curclass != TypeFunctions.nullClass && ctx.curclass.fields.exists(i))
 				throw new TypingError("Cannot access " + i + " in static function", p);
+			// An expected enum-like type turns an unknown ident into a suggestion over the type's
+			// constructors. (StringError.string_error).
+			switch (withType) {
+				case WithType(wt, _):
+					var cand:Null<{path:hxc.core.Globals.Path, names:Array<String>}> = switch (TypeFunctions.follow(wt)) {
+						case TEnum(en, _): {path: en.path, names: [for (k in en.constrs.keys()) k]};
+						case TAbstract(a, _) if (a.isEnum && a.impl != null):
+							{path: a.path, names: [
+								for (k in a.impl.statics.keys())
+									if (TypeFunctions.hasClassFieldFlag(a.impl.statics.get(k), CfEnum)) k
+							]};
+						case _: null;
+					};
+					if (cand != null)
+						throw new TypingError(hxc.core.StringError.stringError(i, cand.names,
+							"Identifier '" + i + "' is not part of " + hxc.core.Globals.sTypePath(cand.path)), p);
+				case _:
+			}
 			// An existing module that defines no type of its own name reports the module error, not an
 			// unknown identifier.
 			if (i.charCodeAt(0) >= "A".code && i.charCodeAt(0) <= "Z".code) {

@@ -494,6 +494,10 @@ class TypeResolve {
 			}
 		}
 
+		// The check hangs off LOADING a from/to type hint: a core abstract with neither is fine with
+		// @:callable (cpp NativeThreadHandle).
+		if (isCore && (a.from.length > 0 || a.to.length > 0) && TypeFunctions.hasMeta(":callable", a.meta))
+			throw new ContextError("@:coreType abstracts cannot be @:callable", a.pos);
 		if (!isType) {
 			if (isCore)
 				a.thisType = TAbstract(a, TypeFunctions.extractParamTypes(a.params));

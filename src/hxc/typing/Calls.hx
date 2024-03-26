@@ -522,7 +522,18 @@ class Calls {
 				}
 			case _:
 		}
-		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), withType);
+		// An immediately invoked function is a value in callee position even when the call itself is a
+		// statement call targets with WithType.value).
+		var calleeWt = withType;
+		{
+			var inner = callee.expr;
+			while (true) switch (inner) {
+				case EParenthesis(e1): inner = e1.expr;
+				case EFunction(_, _): calleeWt = WithTypeTools.value; break;
+				case _: break;
+			}
+		}
+		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt);
 		Typer.noteDisplayAccess(acc, callee.pos);
 		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
 	}
