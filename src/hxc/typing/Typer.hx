@@ -1196,6 +1196,51 @@ class Typer {
 		}
 	}
 
+	// Legacy field completion at a dangling display dot: a type lists its public statics CONCATENATED
+	// with the module's other types. Recorded, not raised, so the surrounding catch Dynamic recovery
+	// cannot swallow it (same rule as displayFound).
+	public static var fieldCompletionFound:Null<Array<hxc.compiler.DisplayXml.DisplayField>> = null;
+
+	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
+		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
+		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
+			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
+		};
+		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		if (typed != null) switch (typed.expr) {
+			case TTypeExpr(TClassDecl(c)):
+				for (cf in c.orderedStatics) {
+					if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
+					var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+					fields.push({
+						kind: cf.kind.match(Method(_)) ? "method" : "var",
+						name: cf.name,
+						type: hxc.core.TPrinting.sTypeStr(t),
+						doc: null
+					});
+				}
+			case _:
+		}
+		// The statics list CONCATENATES the module's other types (the same-named main type
+		// excluded), whether or not any statics exist.
+		if (identName != null) {
+			var ml = moduleTypeList(ctx, identName);
+			if (ml != null) fields = fields.concat(ml);
+		}
+		if (fieldCompletionFound == null) fieldCompletionFound = fields;
+		return TypeFunctions.mk(TConst(TNull), spawnMonomorph(ctx, p), p);
+	}
+
+	static function moduleTypeList(ctx:TyperContext, name:String):Null<Array<hxc.compiler.DisplayXml.DisplayField>> {
+		var m = try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: [], name: name}, Position.nullPos) catch (_:Dynamic) null;
+		if (m == null) return null;
+		return [for (mt in m.types) {
+			var path = TypeFunctions.tPath(mt);
+			if (path.name == name) continue;
+			{kind: "type", name: path.name, type: path.name, doc: null};
+		}];
+	}
+
 	// A call whose ARGUMENTS fail to unify still resolves its callee; the definition records
 	// from the resolved access before argument typing can abort the call.
 	public static function noteDisplayAccess(acc:AccessKind, pos:Position):Void {
@@ -2432,6 +2477,9 @@ class Typer {
 				AKSafeNav({pos: p, base: safeBase, tempVar: temp, access: Fields.typeField(ctx, safeBase, field, p, mode, withType)});
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
+				// The dangling display dot (EField with an empty name from parseField) asks for the legacy
+				// field-completion list. (display on dot paths).
+				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, p));
 				if (field == "new") {
 					var cv = constructorValue(ctx, e1, mode, p);
 					if (cv != null) return cv;

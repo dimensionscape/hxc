@@ -323,6 +323,10 @@ class Compiler {
 				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(collectUsages(ctx)) + "\n");
 				return;
 			}
+			if (hxc.typing.Typer.fieldCompletionFound != null) {
+				Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound) + "\n");
+				return;
+			}
 			if (isDisplay(ctx, "signature")) {
 				displaySignature(ctx);
 				return;
