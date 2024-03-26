@@ -378,10 +378,15 @@ class Operators {
 				var c1 = e1, c2 = e2;
 				try unify(ctx, c1.type, c2.type, p) catch (_:TypingError) {
 					try unify(ctx, c2.type, c1.type, p) catch (_:TypingError) {
-						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an
-						// abstract compares against its underlying type (plain unify does not chase method
-						// casts); the failure reports at the BINOP position. (cast_or_unify ... p).
-						try c1 = Typer.castOrUnify(ctx, c2.type, c1, p) catch (_:TypingError) c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
+						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an abstract
+						// compares against its underlying type (plain unify does not chase method casts); the failure
+						// reports at the BINOP position without aborting, so a boolean context around the comparison
+						// still checks. (AbstractCast.cast_or_unify ... p).
+						try c1 = Typer.castOrUnify(ctx, c2.type, c1, p) catch (_:TypingError) {
+							try c2 = Typer.castOrUnify(ctx, c1.type, c2, p) catch (te:TypingError) {
+								ctx.com.addDiagnostic(te.message, te.pos, te.depth);
+							}
+						}
 					}
 				}
 				switch [TypeFunctions.follow(c1.type), TypeFunctions.follow(c2.type)] {
