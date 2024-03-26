@@ -1121,6 +1121,7 @@ class Typer {
 		};
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
+		if (displayHover && atHoverPos(e.pos)) checkDisplayHover(typed);
 		return typed;
 	}
 
@@ -1131,7 +1132,35 @@ class Typer {
 	// call-argument recovery cannot swallow it.
 	public static var displayFound:Null<Array<Position>> = null;
 
-	static function atDisplayPos(p:Position):Bool {
+	// Legacy --display @type: the innermost typed expression enclosing the display offset reports its type;
+	// post-order typing makes the first enclosing hit the innermost.
+	public static var displayHover:Bool = false;
+	public static var hoverFound:Null<{t:T, p:Position}> = null;
+
+	public static function atHoverPos(p:Position):Bool {
+		return atDisplayPos(p);
+	}
+
+	static function checkDisplayHover(te:TExpr):Void {
+		switch (te.expr) {
+			// Recurse only into a PROPER sub-range: a synthetic receiver (the module type expr
+			// under an unqualified enum constructor) reuses the whole ident's position and must
+			// not shadow the field the cursor is on.
+			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1)
+				if (atHoverPos(e1.pos) && (e1.pos.min > te.pos.min || e1.pos.max < te.pos.max)):
+				checkDisplayHover(e1);
+			case _:
+		}
+		// The SMALLEST enclosing range wins: a desugared part (an interpolated string literal) reuses the
+		// whole expression's position, so first-completed is not always innermost. The typed expr's own
+		// position must still enclose the offset; a match-compiled body carries a rewritten position
+		// unrelated to the syntactic node the gate saw.
+		if (!atHoverPos(te.pos)) return;
+		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
+			hoverFound = {t: te.type, p: te.pos};
+	}
+
+	public static function atDisplayPos(p:Position):Bool {
 		var df = hxc.parser.Parser.displayFile;
 		var off = hxc.parser.Parser.displayOffset;
 		if (df == null || off < 0) return false;
@@ -1258,7 +1287,8 @@ class Typer {
 					var j = i + 1;
 					var sb = new StringBuf();
 					while (j < n && isIdentChar(str.charCodeAt(j))) { sb.addChar(str.charCodeAt(j)); j++; }
-					parts.push(new Expr(EConst(CIdent(sb.toString())), p));
+					// The ident's own source range: content starts one past the opening quote.
+					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + i + 2, p.min + j + 1)));
 					i = j;
 				} else { buf.addChar(c); i++; }
 			} else { buf.addChar(c); i++; }

@@ -60,10 +60,16 @@ class DisplayXml {
 		return b.toString();
 	}
 
-	// <type p="pos">escaped type</type>.
+	// Print the full path in p; omit p for a null position.
 	public static function printType(t:String, p:hxc.ast.Position):String {
-		var pos = hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', p);
-		return '<type p="' + htmlescape(pos) + '">' + htmlescape(t) + "</type>\n";
+		var head = if (p == null || p.min == -1) {
+			"<type";
+		} else {
+			var full = try sys.FileSystem.fullPath(p.file) catch (_:Dynamic) p.file;
+			var ap = new hxc.ast.Position(full, p.min, p.max);
+			'<type p="' + htmlescape(hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', ap)) + '"';
+		}
+		return head + ">\n" + htmlescape(t) + "\n</type>\n";
 	}
 
 	static function legacySort(f:DisplayField):Int {

@@ -224,6 +224,28 @@ class Compiler {
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
+		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
+		// which also joins the compile roots. The statics install before the init macros so a display
+		// position typed during a --macro run records.
+		var displayRoot:Null<Path> = null;
+		{
+			var dparts = displayParts(ctx);
+			var dmode = dparts.length >= 3 ? dparts[2] : "";
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type")) {
+				var doff = Std.parseInt(dparts[1]);
+				if (doff != null) {
+					hxc.parser.Parser.displayFile = dparts[0];
+					hxc.parser.Parser.displayOffset = doff;
+					hxc.typing.Typer.displayDefinition = dmode == "position";
+					hxc.typing.Typer.displayHover = dmode == "type";
+					var base = dparts[0];
+					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
+					if (slash >= 0) base = base.substr(slash + 1);
+					if (StringTools.endsWith(base, ".hx")) base = base.substr(0, base.length - 3);
+					displayRoot = {pack: [], name: base};
+				}
+			}
+		}
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 			// The init-macro callbacks run after the stage changes and before root modules type.
@@ -257,26 +279,6 @@ class Compiler {
 		// has no entry call (nothing is printed).
 		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
-		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
-		// which also joins the compile roots + process_display_file DFPAlso).
-		var displayRoot:Null<Path> = null;
-		{
-			var dparts = displayParts(ctx);
-			var dmode = dparts.length >= 3 ? dparts[2] : "";
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position")) {
-				var doff = Std.parseInt(dparts[1]);
-				if (doff != null) {
-					hxc.parser.Parser.displayFile = dparts[0];
-					hxc.parser.Parser.displayOffset = doff;
-					hxc.typing.Typer.displayDefinition = dmode == "position";
-					var base = dparts[0];
-					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
-					if (slash >= 0) base = base.substr(slash + 1);
-					if (StringTools.endsWith(base, ".hx")) base = base.substr(0, base.length - 3);
-					displayRoot = {pack: [], name: base};
-				}
-			}
-		}
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
@@ -301,6 +303,12 @@ class Compiler {
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
 				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found == null ? [] : found) + "\n");
+				return;
+			}
+			if (hxc.typing.Typer.displayHover) {
+				var h = hxc.typing.Typer.hoverFound;
+				if (h == null) h = hoverOnFieldName(ctx);
+				Sys.stderr().writeString(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
 				return;
 			}
 			if (isDisplay(ctx, "signature")) {
@@ -521,6 +529,26 @@ class Compiler {
 
 	static function displayParts(ctx:Context):Array<String> {
 		return ctx.displaySpec == null ? [] : ctx.displaySpec.split("@");
+	}
+
+	// A hover on a field declaration name has no enclosing expression; the typed field's signature is
+	// the result.
+	static function hoverOnFieldName(ctx:Context):Null<{t:T, p:Position}> {
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c):
+				var all = c.orderedFields.concat(c.orderedStatics);
+				if (c.constructor != null) all.push(c.constructor);
+				for (cf in all) {
+					if (!hxc.typing.Typer.atHoverPos(cf.namePos)) continue;
+					var t = switch (cf.type) {
+						case TLazy(r): TypeFunctions.lazyType(r);
+						case t: t;
+					};
+					return {t: t, p: cf.namePos};
+				}
+			case _:
+		}
+		return null;
 	}
 
 	static function displayDiagnostics(ctx:Context):Void {
