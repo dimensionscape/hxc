@@ -3002,8 +3002,19 @@ class Typer {
 				var cf = cur.constructor;
 				var curTl2 = curTl;
 				var curCl = cur;
-				inline function apply(t:T):T return TypeFunctions.applyParams(curCl.params, curTl2, t);
-				return [apply(cf.type)].concat([for (o in cf.overloads) apply(o.type)]);
+				function apply(t:T):T return TypeFunctions.applyParams(curCl.params, curTl2, t);
+				// The constructor's own type params instantiate as constrained monomorphs, the same way a field
+				// call treats method params; a constraint naming a still open class param defers through the
+				// mono up-constraints.
+				function instantiate(cfi:TClassField):T {
+					var t = cfi.type;
+					if (cfi.params.length > 0) {
+						var monos = TypeUnification.spawnConstrainedMonos(apply, cfi.params);
+						t = TypeFunctions.applyParams(cfi.params, monos, t);
+					}
+					return apply(t);
+				}
+				return [instantiate(cf)].concat([for (o in cf.overloads) instantiate(o)]);
 			}
 			if (cur.superClass == null) return [];
 			hxc.eval.EvalMacro.ensureBuilt(ctx.com, cur.superClass.c);
