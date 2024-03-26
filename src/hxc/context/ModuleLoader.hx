@@ -384,7 +384,7 @@ class ModuleLoader {
 						var aT:TypeHint = {ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p};
 						var thisT:TypeHint = aT;
 						for (fl in d.dFlags) switch (fl) { case AbOver(t): thisT = t; break; case _: }
-						var implFields:Array<ClassField> = [for (f in d.dData) transformAbstractField(thisT, aT, a, f)];
+						var implFields:Array<ClassField> = [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
 						// Process the synthetic private implementation through the ordinary class pipeline, including
 						// structural registration, type resolution and body typing.
 						var implName = d.dName.name + "_Impl_";
@@ -1148,7 +1148,7 @@ class ModuleLoader {
 		return basic;
 	}
 
-	static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField):ClassField {
+	static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField, ?com:Context):ClassField {
 		var stat = false;
 		for (acc in f.cffAccess) if (acc.access == AStatic) stat = true;
 		var p = f.cffPos;
@@ -1208,7 +1208,7 @@ class ModuleLoader {
 		}
 	}
 
-	public static function buildEnumAbstract(basic:BasicTypes, a:TAbstract, aT:TypeHint, fields:Array<ClassField>):Void {
+	public static function buildEnumAbstract(basic:BasicTypes, a:TAbstract, aT:TypeHint, fields:Array<ClassField>, ?com:Context):Void {
 		// The implementation class (extern for an extern abstract) decides whether value-less members
 		// keep a synthesized value.
 		var c = a.impl;
@@ -1241,16 +1241,20 @@ class ModuleLoader {
 					// APrivate / APublic (recorded; conflict -> error). Result drives cffAccess.
 					// VUnknown -> default APublic.
 					var visibility:Null<PlacedAccess> = null; // Null => VUnknown
-					var conflict = false;
 					for (acc in field.cffAccess) switch (acc.access) {
 						case AExtern:
 							throw new ContextError("Invalid modifier: extern on field of enum abstract", acc.pos);
 						case APrivate | APublic:
-							if (visibility != null) conflict = true;
+							// A second visibility reports against the previous one, then becomes the
+							// tracked visibility itself.
+							if (visibility != null && com != null) {
+								var name = switch (visibility.access) { case APublic: "public"; case _: "private"; };
+								com.addDiagnostic("Conflicting access modifier " + name, acc.pos);
+								com.addDiagnostic("Conflicts with this", visibility.pos, 1);
+							}
 							visibility = acc;
 						case _:
 					}
-					if (conflict) throw new ContextError("Conflicting access modifier", field.cffPos);
 					field.cffAccess = [visibility != null ? visibility : {access: APublic, pos: Position.nullPos}];
 					field.cffMeta = [{name: ":enum", params: [], pos: Position.nullPos}].concat(field.cffMeta);
 					var effCt:TypeHint = ct != null ? ct : aT;

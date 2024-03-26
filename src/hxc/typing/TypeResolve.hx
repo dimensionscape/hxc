@@ -774,7 +774,7 @@ class TypeResolve {
 			for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 		];
 		var aT:TypeHint = {ct: CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: aTParams, tsub: null}), pos: p};
-		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData);
+		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData, ctx);
 		// Member-var objects are the same references we just mutated, so they now carry the
 		// static-inline-`@:enum` shape. Rebuild statics/fields/cl_ordered_* from it.
 		var implEntry = ctx.declOfType.get(Context.pathKey(c.path));
