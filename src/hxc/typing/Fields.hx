@@ -582,8 +582,16 @@ class Fields {
 		}
 		var a2 = multi(a); if (a2 != null) a = a2;
 		var b2 = multi(b); if (b2 != null) b = b2;
+		// The receiver never coerces through Dynamic to claim an extension (allowDynamicToCast =
+		// false).
 		return try TypeUnification.withMonoRollback(function() {
-			TypeUnification.unifyDefault(a, b);
+			TypeUnification.unify({
+				allowTransitiveCast: true,
+				allowAbstractCast: true,
+				allowDynamicToCast: false,
+				equalityKind: hxc.core.TypeUnification.EqKind.EqStrict,
+				equalityUnderlying: false
+			}, a, b);
 			return true;
 		}) catch (_:hxc.core.TypeUnification.UnifyError) false;
 	}
