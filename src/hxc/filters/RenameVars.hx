@@ -23,6 +23,7 @@ class RenameVars {
 	public var noShadowing:Bool;
 	public var noCatchVarShadowing:Bool;
 	public var switchCasesNoBlocks:Bool;
+	public var blockScope:Bool;
 	public var reserved:StringMap<Bool>;
 
 	function new() {
@@ -30,6 +31,7 @@ class RenameVars {
 		this.noShadowing = false;
 		this.noCatchVarShadowing = false;
 		this.switchCasesNoBlocks = false;
+		this.blockScope = false;
 		this.reserved = new StringMap<Bool>();
 	}
 
@@ -42,7 +44,7 @@ class RenameVars {
 		`types` = com.types, every module-type name is reserved (ReserveAllTypesFlat) so a local can never
 		shadow a type/global.
 	**/
-	public static function init(types:Array<ModuleType>, ?cpp:Bool = false):RenameVars {
+	public static function init(types:Array<ModuleType>, ?cpp:Bool = false, ?es6:Bool = false):RenameVars {
 		var ri = new RenameVars();
 		ri.reserveInit("this"); // Init reserves "this" first.
 		if (cpp) {
@@ -53,6 +55,16 @@ class RenameVars {
 			ri.hoisting = false;
 			ri.noCatchVarShadowing = false;
 			ri.switchCasesNoBlocks = false;
+			return ri;
+		}
+		if (es6) {
+			// ES6 config: block scope, with the flags NoShadowing and SwitchCasesNoBlocks.
+			ri.hoisting = false;
+			ri.noCatchVarShadowing = false;
+			ri.noShadowing = true;
+			ri.switchCasesNoBlocks = true;
+			ri.blockScope = true;
+			ri.reserveAllTypes(types);
 			return ri;
 		}
 		// JS Function/Block scope flags for the non-es6 path.

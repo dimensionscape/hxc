@@ -22,6 +22,7 @@ class RenameVarsRun {
 	var noShadowing:Bool;
 	var noCatchVarShadowing:Bool;
 	var switchCasesNoBlocks:Bool;
+	var blockScope:Bool;
 	var reserved:StringMap<Bool>;
 
 	function new(ri:RenameVars) {
@@ -29,6 +30,7 @@ class RenameVarsRun {
 		this.noShadowing = ri.noShadowing;
 		this.noCatchVarShadowing = ri.noCatchVarShadowing;
 		this.switchCasesNoBlocks = ri.switchCasesNoBlocks;
+		this.blockScope = ri.blockScope;
 		this.reserved = ri.reserved;
 	}
 
@@ -139,9 +141,19 @@ class RenameVarsRun {
 					collectVars(scope, wrapped, true);
 					if (noCatchVarShadowing) useVar(scope, c.v);
 				}
-			// TSwitch with SwitchCasesNoBlocks es6 only; deferred. switchCasesNoBlocks is always
-			// false for hxc, so switch falls through to the default `iter` below (correct for ES5). TBlock
-			// under BlockScope deferred (we are FunctionScope). TWhile
+			// TSwitch with SwitchCasesNoBlocks: sibling case bodies share the switch scope so their lets
+			// get distinct names.
+			case TSwitch(target, cases, edef) if (switchCasesNoBlocks):
+				collectVars(scope, target, isBlockLike(target));
+				for (c in cases) {
+					for (val in c.values) collectVars(scope, val, isBlockLike(val));
+					collectIgnoreBlock(scope, c.expr);
+				}
+				if (edef != null) collectIgnoreBlock(scope, edef);
+			// TBlock under BlockScope: a bare block opens a scope.
+			case TBlock(exprs) if (blockScope && !in_block):
+				var child = new RenameScope(scope);
+				for (x in exprs) collectVars(child, x, true);
 			case TWhile(condition, body, flag):
 				collectLoop(scope, function() {
 					if (flag == NormalWhile) collectVars(scope, condition, false);
@@ -159,6 +171,14 @@ class RenameVarsRun {
 			// Default: iter over sub-exprs.
 			case _:
 				iterSub(e, function(sub) collectVars(scope, sub, isBlockLike(sub)));
+		}
+	}
+
+	// Iterate a block's elements into the current scope without opening one.
+	function collectIgnoreBlock(scope:RenameScope, e:TExpr):Void {
+		switch (e.expr) {
+			case TBlock(el): for (x in el) collectVars(scope, x, true);
+			case _: collectVars(scope, e, true);
 		}
 	}
 
