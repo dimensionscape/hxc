@@ -11,7 +11,13 @@ import hxc.typing.TypeFields;
 // Falling back to a normal TCall whenever a construct is outside the handled subset. Exact
 // in result for what it handles, safe otherwise.
 private class InlineBail extends haxe.Exception {
-	public function new() super("inline-bail");
+	// A bail caused by a return in non-terminal position; a FORCED inline reports this case
+	// instead of falling back.
+	public var notFinalReturn:Bool;
+	public function new(notFinalReturn = false) {
+		super("inline-bail");
+		this.notFinalReturn = notFinalReturn;
+	}
 }
 
 // Compile-time expansion of inline-function calls, a safe subset ported It handles expression-bodied inline
@@ -82,7 +88,16 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
+		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p) catch (b:InlineBail) {
+			// A forced inline of a normal method with an early return cannot fall back to a
+			// call; it is reported at the call.
+			if (forceInline && b.notFinalReturn && !cf.kind.match(Method(MethInline))) {
+				depth--;
+				cfStack.pop();
+				throw new TypingError("Function " + cf.name + " cannot be inlined because of a not final return", p);
+			}
+			null;
+		};
 		depth--;
 		cfStack.pop();
 		return r;
@@ -540,10 +555,14 @@ class Inline {
 					case _:
 				}
 				var out:Array<TExpr> = [];
-				for (i in 0...stmts.length) {
+				var i = 0;
+				while (i < stmts.length) {
 					var s = stmts[i];
+					var folded = foldEarlyReturnIf(stmts, i);
+					if (folded != null) { out.push(mapTerminal(ctx, folded, subst, vthis, ethis, inlinePos, keepPositions)); break; }
 					if (i == stmts.length - 1) out.push(mapTerminal(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
 					else out.push(mapExpr(ctx, s, subst, vthis, ethis, inlinePos, keepPositions));
+					i++;
 				}
 				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? body.pos : inlinePos);
 			case _:
@@ -559,6 +578,49 @@ class Inline {
 		};
 	}
 
+	// The expression is guaranteed to run a return when evaluated; constructs that may not
+	// execute their body do not count.
+	static function hasTermReturn(e:TExpr):Bool {
+		switch (e.expr) {
+			case TReturn(_): return true;
+			case TFunction(_): return false;
+			case TIf(_, _, null): return false;
+			case TSwitch(_, _, null): return false;
+			case TFor(_, _, _) | TWhile(_, _, NormalWhile): return false;
+			case TTry(a, catches):
+				var all = hasTermReturn(a);
+				for (c in catches) all = all && hasTermReturn(c.expr);
+				return all;
+			case TIf(cond, a, b):
+				return hasTermReturn(cond) || (hasTermReturn(a) && hasTermReturn(b));
+			case TSwitch(cond, cases, def):
+				if (hasTermReturn(cond)) return true;
+				var all = hasTermReturn(def);
+				for (c in cases) all = all && hasTermReturn(c.expr);
+				return all;
+			case TBinop(OpBoolAnd, a, b):
+				return hasTermReturn(a) && hasTermReturn(b);
+			case _:
+				var found = false;
+				hxc.core.TexprTools.iter(function(x) { if (!found) found = hasTermReturn(x); }, e);
+				return found;
+		}
+	}
+
+	// A `if (cond) <guaranteed return>;` statement folds the block's tail into its else branch so
+	// the early return becomes terminal.
+	static function foldEarlyReturnIf(stmts:Array<TExpr>, i:Int):Null<TExpr> {
+		if (i >= stmts.length - 1) return null;
+		return switch (stmts[i].expr) {
+			case TIf(cond, e1, null) if (hasTermReturn(e1)):
+				var s = stmts[i];
+				var rest = stmts.slice(i + 1);
+				var restBlock = TypeFunctions.mk(TBlock(rest), s.type, rest[rest.length - 1].pos);
+				TypeFunctions.mk(TIf(cond, e1, restBlock), s.type, s.pos);
+			case _: null;
+		};
+	}
+
 	static function mapTerminal(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position,
 			keepPositions:Bool):TExpr {
 		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
@@ -571,7 +633,14 @@ class Inline {
 			case TReturn(eo):
 				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? e.pos : inlinePos) : terminal(eo);
 			case TBlock(stmts) if (stmts.length > 0):
-				var out = [for (i in 0...stmts.length) i == stmts.length - 1 ? terminal(stmts[i]) : m(stmts[i])];
+				var out:Array<TExpr> = [];
+				var i = 0;
+				while (i < stmts.length) {
+					var folded = foldEarlyReturnIf(stmts, i);
+					if (folded != null) { out.push(terminal(folded)); break; }
+					out.push(i == stmts.length - 1 ? terminal(stmts[i]) : m(stmts[i]));
+					i++;
+				}
 				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? e.pos : inlinePos);
 			case TIf(c, a, b) if (b != null):
 				var thenExpr = terminal(a);
@@ -659,9 +728,29 @@ class Inline {
 			case TEnumParameter(e1, ef, idx): TEnumParameter(m(e1), ef, idx);
 			case TEnumIndex(e1): TEnumIndex(m(e1));
 			case TTypeExpr(_) | TIdent(_) | TBreak | TContinue: e.expr;
-			case TReturn(_) | TFunction(_) | TSwitch(_, _, _) | TTry(_, _):
+			case TReturn(_):
+				throw new InlineBail(true);
+			case TSwitch(_, _, _) | TTry(_, _):
+				throw new InlineBail(containsReturn(e));
+			case TFunction(_):
 				throw new InlineBail();
 		};
 		return TypeFunctions.mk(ne, e.type, keepPositions ? e.pos : inlinePos);
+	}
+
+	// A return anywhere in the statement, not descending into local functions (a return inside a closure
+	// belongs to the closure). (state#in_local_fun guard).
+	static function containsReturn(e:TExpr):Bool {
+		var found = false;
+		function loop(x:TExpr):Void {
+			if (found) return;
+			switch (x.expr) {
+				case TReturn(_): found = true;
+				case TFunction(_):
+				case _: hxc.core.TexprTools.iter(loop, x);
+			}
+		}
+		loop(e);
+		return found;
 	}
 }
