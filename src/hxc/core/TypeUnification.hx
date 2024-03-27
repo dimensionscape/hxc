@@ -458,7 +458,12 @@ class TypeUnification {
 							function loop(t:T):T {
 								return switch (t) {
 									case TMono(m2) if (m == m2):
-										var s = sType(t) + " appears in { " + cf.name + ": " + sType(cf.type) + " }";
+										// One shared print context, and the right-hand side prints first: the containing type
+										// registers the mono (with its constraint) so the leading occurrence prints bare.
+										var pctx = TPrinting.printContext();
+										var rightS = TPrinting.sType(pctx, cf.type);
+										var leftS = TPrinting.sType(pctx, t);
+										var s = leftS + " appears in { " + cf.name + ": " + rightS + " }";
 										throw new UnifyError([Unify_custom("Recursive type"), Unify_custom(s)]);
 									case _:
 										TypeFunctions.map(loop, t);
