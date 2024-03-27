@@ -843,9 +843,38 @@ class ModuleLoader {
 		}
 		decls = decls.concat(types);
 		var m = typeModule(ctx, mpath, "<macro>", decls);
+		// The path check reports at the first decoded type's position.
+		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
+	}
+
+	// A created module validates its name after its declarations type.
+	static function checkModulePath(ctx:Context, mpath:Path, p:Position):Void {
+		var name = mpath.name;
+		var full = hxc.core.StringHelper.sEscape(mpath.pack.length == 0 ? name : mpath.pack.join(".") + "." + name);
+		var prepend = "Module \"" + full + "\" does not have a valid name. ";
+		if (name.length == 0)
+			ctx.addDiagnostic(prepend + "Module name must not be empty.", p);
+		else if (hxc.ast.Ast.isLowerIdent(name))
+			ctx.addDiagnostic(prepend + "Module name should start with an uppercase letter: \"" + name + "\"", p);
+		else if (StringTools.startsWith(name, "$"))
+			ctx.addDiagnostic(prepend + "Module names starting with a dollar are not allowed: \"" + name + "\"", p);
+		else if (!isValidIdentName(name))
+			ctx.addDiagnostic(prepend + "\"" + hxc.core.StringHelper.sEscape(name) + "\" is not a valid module name.", p);
+	}
+
+	// Identifier validity by character shape only; keyword names cannot reach a module path.
+	static function isValidIdentName(s:String):Bool {
+		if (s.length == 0) return false;
+		inline function isAlphaUnderscore(c:Int) return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
+		if (!isAlphaUnderscore(s.charCodeAt(0))) return false;
+		for (i in 1...s.length) {
+			var c = s.charCodeAt(i);
+			if (!isAlphaUnderscore(c) && !(c >= "0".code && c <= "9".code)) return false;
+		}
+		return true;
 	}
 
 	/**
