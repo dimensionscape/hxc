@@ -683,6 +683,17 @@ class ModuleLoader {
 				mainf.overloads = [cf].concat(cf.overloads).concat(mainf.overloads);
 				continue;
 			}
+			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern) && cff.cffKind.match(FFun(_))) {
+				var finalAcc:Null<PlacedAccess> = null;
+				var staticAcc = false;
+				for (acc in cff.cffAccess) switch (acc.access) {
+					case AFinal: finalAcc = acc;
+					case AStatic: staticAcc = true;
+					case _:
+				}
+				if (finalAcc != null && staticAcc)
+					ctx.addDiagnostic("Invalid modifier combination: final + static", finalAcc.pos);
+			}
 			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern)) for (acc in cff.cffAccess) {
 				var bad = switch [acc.access, cff.cffKind] {
 					case [APublic | APrivate | AStatic | AFinal | AExtern, _]: null;

@@ -570,6 +570,17 @@ class TypeFields {
 	// Every final var (of the class and of constructor-less abstract supers) must be assigned in the
 	// constructor. Runs after all fields typed, so sibling initializers are visible. .
 	public static function checkFinalVars(ctx:Context):Void {
+		// A declared constructor whose immediate super constructor is final is rejected. (FKConstructor).
+		// Runs before the error gate below so it still reports alongside other modifier diagnostics.
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c) if (c.superClass != null && c.constructor != null):
+				var sup = c.superClass.c;
+				if (!TypeFunctions.hasClassFlag(sup, CExtern) && sup.constructor != null
+					&& sup.constructor != c.constructor
+					&& TypeFunctions.hasClassFieldFlag(sup.constructor, CfFinal))
+					ctx.addDiagnostic("Cannot override final constructor", c.constructor.pos);
+			case _:
+		}
 		if (ctx.hasError()) return;
 		for (mt in ctx.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)
