@@ -469,6 +469,18 @@ class TypeFields {
 						if (cf.kind.match(Var({read: AccInline}))) {
 							var folded = hxc.optimization.Optimizer.makeConstantExpression(tctx, checked);
 							if (folded != null) checked = folded;
+							// An enum abstract member's value must be of the underlying type: the
+							// synthesized cast unwraps and the value unifies against thisType, reported over
+							// the initializer's own extent (the synthesized cast carries the value's
+							// position). (KAbstractImpl, CfEnum).
+							switch (tctx.curclass != null ? tctx.curclass.kind : KNormal) {
+								case KAbstractImpl(a) if (a.isEnum && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
+									var e1 = switch (checked.expr) { case TCast(inner, null): inner; case _: checked; };
+									try hxc.core.TypeUnification.unifyDefault(e1.type, a.thisType)
+									catch (ue:hxc.core.TypeUnification.UnifyError)
+										tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), eo.pos);
+								case _:
+							}
 						}
 						cf.expr = checked;
 					}
