@@ -82,6 +82,17 @@ class Compiler {
 		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
+		// A cast-field candidate check must see the INFERRED signature; force the abstract's cast fields on
+		// lookup.
+		hxc.core.TypeUnification.buildAbstractRef = function(a:hxc.core.Type.TAbstract) {
+			if (a.impl == null) return;
+			inline function forceReal(cf:hxc.core.Type.TClassField):Void {
+				var real = a.impl.statics.get(cf.name);
+				if (real != null && real.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx, a.impl, real);
+			}
+			for (c in a.fromField) forceReal(c.cf);
+			for (c in a.toField) forceReal(c.cf);
+		};
 		// Close a still-open inferred method return before structural unification reads it; the field
 		// types in whichever world (main or macro) owns its module.
 		hxc.core.TypeUnification.forceOpenMethodHook = function(c, cf) {

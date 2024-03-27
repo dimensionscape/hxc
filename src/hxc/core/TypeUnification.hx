@@ -1348,13 +1348,30 @@ class TypeUnification {
 		return doesFuncUnify(function() {
 			switch (TypeFunctions.follow(cf.type)) {
 				case TFun(sig):
-					var r = sig.ret;
+					// The candidate types are read from the impl's LIVE field when its shape matches: the
+					// stored (t, cf) pair is a resolve-time snapshot whose unhinted parameter is an open
+					// monomorph the body inference never binds, and an open snapshot would accept anything.
+					// The from-slot index comes from the snapshot.
+					var idx = 0;
+					for (i in 0...sig.args.length) if (sig.args[i].t == t) { idx = i; break; }
+					// Only an UNHINTED parameter (snapshot still an open monomorph) reads the
+					// live field; a macro @:from keeps its snapshot, which accepts any value
+					// expression by design.
+					var snapshotOpen = TypeFunctions.follow(t).match(TMono(_)) && !cf.kind.match(Method(MethMacro));
+					var liveCf = snapshotOpen && ab.impl != null ? ab.impl.statics.get(cf.name) : null;
+					var liveSig = liveCf == null ? null : switch (TypeFunctions.follow(liveCf.type)) {
+						case TFun(s2) if (s2.args.length == sig.args.length && liveCf.params.length == cf.params.length): s2;
+						case _: null;
+					};
+					var params = liveSig != null ? liveCf.params : cf.params;
+					var t2 = liveSig != null ? liveSig.args[idx].t : t;
+					var r = liveSig != null ? liveSig.ret : sig.ret;
 					function map0(x:T):T return TypeFunctions.applyParams(ab.params, tl, x);
-					var monos = spawnConstrainedMonos(map0, cf.params);
-					function map2(x:T):T return map0(TypeFunctions.applyParams(cf.params, monos, x));
+					var monos = spawnConstrainedMonos(map0, params);
+					function map2(x:T):T return map0(TypeFunctions.applyParams(params, monos, x));
 					var uctx2 = get_abstract_context(uctx, a, b, ab);
 					var unify_func = get_abstract_unify_func(uctx2, EqStrict);
-					unify_func(a, map2(t));
+					unify_func(a, map2(t2));
 					unify_func(map2(r), b);
 				case _:
 					throw "unifies_from_field: expected TFun";
@@ -1512,8 +1529,17 @@ class TypeUnification {
 	}
 
 	// Uctx a ab tl: relate a concrete `a` to the abstract `ab` (the @:from direction). Returns the
-	// matching @:from cast field.
+	// matching @:from cast field. Forces the abstract's cast fields so their unhinted signatures are
+	// inferred before a candidate check reads them (an open parameter mono would accept anything);
+	// findFrom, findTo and findToFrom all build the abstract first.
+	public static var buildAbstractRef:Null<TAbstract->Void> = null;
+
+	static inline function buildAbstract(ab:TAbstract):Void {
+		if (buildAbstractRef != null) buildAbstractRef(ab);
+	}
+
 	public static function findFrom(uctx:UnificationContext, a:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		buildAbstract(ab);
 		if (TypeFunctions.follow(a) == TypeFunctions.tDynamic) {
 			for (c in ab.fromField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
 			throw new NotFound();
@@ -1527,6 +1553,7 @@ class TypeUnification {
 
 	// Uctx b ab tl: relate the abstract `ab` to a concrete `b` (the @:to
 	public static function findTo(uctx:UnificationContext, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		buildAbstract(ab);
 		if (TypeFunctions.follow(b) == TypeFunctions.tDynamic) {
 			for (c in ab.toField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
 			throw new NotFound();
@@ -1541,6 +1568,8 @@ class TypeUnification {
 	// Returns the chosen abstract + tl + the cast field, or null when a plain unify suffices
 	// (unifiesAbstracts true) - the caller then needs no cast.
 	public static function findToFrom(uctx:UnificationContext, a:T, b:T, a1:TAbstract, tl1:Array<T>, a2:TAbstract, tl2:Array<T>):Null<{a:TAbstract, tl:Array<T>, castField:TAbstractCast}> {
+		buildAbstract(a1);
+		buildAbstract(a2);
 		var side:{a:TAbstract, tl:Array<T>} = null;
 		var found:Null<TAbstractCast> = null;
 		var noCast = false;

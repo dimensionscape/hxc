@@ -929,6 +929,18 @@ class Calls {
 	}
 
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null):TExpr {
+		// An unhinted parameter's type is inferred from the body; force it before argument unification
+		// so the signature is complete. Only an open signature forces, keeping diagnostic order.
+		if (fa.field.expr == null) switch (TypeFunctions.follow(fa.field.type)) {
+			case TFun(sig):
+				var hasOpenArg = false;
+				for (a in sig.args) if (TypeFunctions.follow(a.t).match(TMono(_))) hasOpenArg = true;
+				if (hasOpenArg) switch (fa.host) {
+					case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFields.forceFieldBody(ctx.com, c, fa.field);
+					case FHAnon:
+				}
+			case _:
+		}
 		var candidates = [fa.field].concat(fa.field.overloads);
 		// Each failed candidate: the overload field, its rendered error, and the error position.
 		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
