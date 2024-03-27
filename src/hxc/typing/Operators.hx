@@ -1158,10 +1158,14 @@ class Operators {
 				get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
 		}
 		var eget = get.expr;
-		function fallback(e:TypingError):TExpr {
-			if (e.message != "No matching @:arrayAccess setter") throw e;
+		// No matching setter: an @:op(A++)-style unop on the read value covers the increment,
+		// else re-run the setter resolution to raise its own diagnostic.
+		function fallback(value:TExpr):TExpr {
 			var abs = tryAbstractUnop(ctx, op, flag, eget, p);
-			if (abs == null) throw e;
+			if (abs == null) {
+				Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return value, p);
+				throw new TypingError("No matching @:arrayAccess setter", p);
+			}
 			var out = stmts.copy();
 			out.push(abs);
 			return TypeFunctions.mk(TBlock(out), abs.type, p);
@@ -1171,11 +1175,9 @@ class Operators {
 			var eold = TexprTools.makeLocal(vold, p);
 			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
 			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
-			try {
-				stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return newv, p));
-			} catch (e:TypingError) {
-				return fallback(e);
-			}
+			var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return newv, p, false);
+			if (eset == null) return fallback(newv);
+			stmts.push(eset);
 			stmts.push(eold);
 			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
 		}
@@ -1183,11 +1185,9 @@ class Operators {
 		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
 		var enew = TexprTools.makeLocal(vnew, p);
 		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		try {
-			stmts.push(Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return enew, p));
-		} catch (e:TypingError) {
-			return fallback(e);
-		}
+		var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return enew, p, false);
+		if (eset == null) return fallback(enew);
+		stmts.push(eset);
 		stmts.push(enew);
 		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
 	}

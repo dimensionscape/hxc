@@ -183,23 +183,39 @@ class Calls {
 		return t;
 	}
 
+	// The type the candidate's first (this) parameter must accept: the underlying type for an
+	// instance-style member, the abstract itself for a static @:op([]) form.
+	static function arrayAccessThisType(a:TAbstract, tl:TParams, cf:TClassField):T {
+		return TypeFunctions.hasClassFieldFlag(cf, CfImpl)
+			? TypeFunctions.applyParams(a.params, tl, a.thisType)
+			: TAbstract(a, tl);
+	}
+
 	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr} {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
 				case TFun(sig) if (sig.args.length == 2 || (sig.args.length == 3 && sig.args[2].opt)):
 					try {
+						// The first parameter is the abstract itself; a candidate whose declared this-type
+						// does not
+						// unify with this instantiation is skipped.
+						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key};
-					} catch (_:TypingError) {}
+					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
 				case _:
 			}
 		}
-		throw new TypingError("@:arrayAccess getter not resolved", p);
+		// One shared print context, key side first.
+		var pctx = hxc.core.TPrinting.printContext();
+		var keyS = hxc.core.TPrinting.sType(pctx, ekey.type);
+		var aS = hxc.core.TPrinting.sType(pctx, TAbstract(a, tl));
+		throw new TypingError("No @:arrayAccess function for " + aS + " accepts argument of " + keyS, p);
 	}
 
 	// Abstract @:arrayAccess write: call the impl setter taking (this, key, value). .
@@ -209,14 +225,18 @@ class Calls {
 
 	// Setter call with an already-computed value; valueFn receives the setter's value-parameter type so a
 	// plain write can infer its literal, while a compound write supplies the precomputed op result.
-	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position):TExpr {
+	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position, throwOnFail:Bool = true):Null<TExpr> {
+		var lastVal:Null<TExpr> = null;
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
 				case TFun(sig) if (sig.args.length == 3 || (sig.args.length == 4 && sig.args[3].opt)):
 					try {
+						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
 						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
-						var val = Typer.castOrUnify(ctx, sig.args[2].t, valueFn(sig.args[2].t), p);
+						var val = valueFn(sig.args[2].t);
+						lastVal = val;
+						val = Typer.castOrUnify(ctx, sig.args[2].t, val, p);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
 							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
@@ -224,11 +244,17 @@ class Calls {
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 						return makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key, val], p), sig.ret, p);
-					} catch (_:TypingError) {}
+					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
 				case _:
 			}
 		}
-		throw new TypingError("No matching @:arrayAccess setter", p);
+		if (!throwOnFail) return null;
+		// Value side prints first, then key, then the abstract (one shared context).
+		var pctx = hxc.core.TPrinting.printContext();
+		var valS = hxc.core.TPrinting.sType(pctx, lastVal != null ? lastVal.type : TypeFunctions.tDynamic);
+		var keyS = hxc.core.TPrinting.sType(pctx, ekey.type);
+		var aS = hxc.core.TPrinting.sType(pctx, TAbstract(a, tl));
+		throw new TypingError("No @:arrayAccess function for " + aS + " accepts arguments of " + keyS + " and " + valS, p);
 	}
 
 	// The element type of a haxe.Rest<T>, or null if `t` is not a rest type.
