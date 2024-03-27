@@ -83,6 +83,12 @@ class TypeFields {
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e)
 			+ (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : "")
 			+ (Std.isOfType(e, hxc.parser.ParserError) ? " " + hxc.parser.ParserError.errorMsg((cast e : hxc.parser.ParserError).msg) + " at " + Std.string((cast e : hxc.parser.ParserError).pos) : ""));
+		// An intermediate `catch (e:haxe.Exception)` re-throw wraps a plain error object in a
+		// ValueException; classify by the carried value or the error is silently dropped.
+		if (Std.isOfType(e, haxe.ValueException)) {
+			var inner = (cast e : haxe.ValueException).value;
+			if (inner != null && inner != e) return recordFieldError(ctx, inner);
+		}
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
 			addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
