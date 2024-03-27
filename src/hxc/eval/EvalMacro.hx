@@ -2520,9 +2520,12 @@ class EvalMacro {
 		switch (ctorName(ec, kind)) {
 			case "TDClass":
 				var a = eargs(kind);
+				// An interface's implements-slot entries are its extended interfaces.
+				var isInterface = a.length > 2 && boolOf(a[2]);
 				if (a.length > 0 && a[0] != VNull) flags.push(HExtends({path: decodeTypePath(ec, a[0]), pos: dp}));
-				if (a.length > 1 && a[1] != VNull) for (iv in arrOf(a[1])) flags.push(HImplements({path: decodeTypePath(ec, iv), pos: dp}));
-				if (a.length > 2 && boolOf(a[2])) flags.push(HInterface);
+				if (a.length > 1 && a[1] != VNull) for (iv in arrOf(a[1]))
+					flags.push(isInterface ? HExtends({path: decodeTypePath(ec, iv), pos: dp}) : HImplements({path: decodeTypePath(ec, iv), pos: dp}));
+				if (isInterface) flags.push(HInterface);
 				if (a.length > 3 && boolOf(a[3])) flags.push(HFinal);
 				if (a.length > 4 && boolOf(a[4])) flags.push(HAbstract);
 			case other: throw new TypingError("defineModule supports only TDClass, got " + other, dp);
