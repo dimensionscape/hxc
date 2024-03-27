@@ -266,6 +266,10 @@ class Fields {
 						} else {
 							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
 							switch (fh) {
+								// A static access to a member property (already reported) has no receiver to thread; the
+								// plain accessor call then reports its own missing-this error.
+								case FHAbstract(_, _, _) if (e.expr.match(TTypeExpr(_))):
+									AKAccessor(makeAccess(false));
 								case FHAbstract(a, tl, c):
 									AKUsingAccessor(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
 								case _:
@@ -404,8 +408,10 @@ class Fields {
 					case _:
 						var f = a.fields.get(i);
 						if (f != null) {
+							// Recorded, not raised: resolution continues and the accessor call then
+							// reports its own missing-this error.
 							if (TypeFunctions.hasClassFieldFlag(f, CfImpl) && !TypeFunctions.hasClassFieldFlag(f, CfEnum))
-								throw new TypingError("Cannot access non-static abstract field statically", pfield);
+								ctx.com.addDiagnostic("Cannot access non-static abstract field statically", pfield);
 							switch (a.status.get()) {
 								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
 								case AbstractStatics(ab) if (ab.impl != null):

@@ -414,7 +414,9 @@ class PatternMaker {
 		}
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
-		// when that fails too. .
+		// when that fails too. The probe is speculative: diagnostics it records roll back unless it yields
+		// a pattern.
+		var diagBefore = pctx.ctx.com.diagnostics.length;
 		try {
 			var mt = TypeFunctions.moduleTypeOfType(t);
 			var emt = TexprTools.makeTypeExpr(mt, p);
@@ -422,6 +424,7 @@ class PatternMaker {
 			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
 			if (pat != null) return pat;
 		} catch (_:Dynamic) {}
+		if (pctx.ctx.com.diagnostics.length > diagBefore) pctx.ctx.com.diagnostics.resize(diagBefore);
 		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90) {
 			pctx.ctx.com.addDiagnostic("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
 			if (pctx.orLocals != null) return PatVariable(addLocal(pctx, false, i, t, p));

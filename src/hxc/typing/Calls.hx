@@ -293,6 +293,9 @@ class Calls {
 		// trailing annotation.
 		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
+			// A call error from typing the argument itself is not an argument-unification failure; it
+			// reports plain. (handle_errors keeps Call_error out of WithTypeError).
+			if (StringTools.startsWith(msg, "Not enough arguments") || StringTools.startsWith(msg, "Too many arguments")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Type parameters of multi type abstracts must be known")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
 			if (msg.indexOf(" has no field ") >= 0) return new TypingError(msg, pos, depth);
