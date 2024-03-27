@@ -1067,9 +1067,13 @@ class Typer {
 						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
 						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
 						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
-						for (f in fields) {
+						// Extra fields accumulate by prepending, so they report in reverse source order.
+						var i = fields.length - 1;
+						while (i >= 0) {
+							var f = fields[i];
 							if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
 								reportOrRaise(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
+							i--;
 						}
 					}
 					TypeFunctions.mk(TObjectDecl(tfields), t, p);
