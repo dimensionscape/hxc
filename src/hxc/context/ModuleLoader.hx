@@ -61,6 +61,10 @@ class ModuleLoader {
 		if (ctx.isMacro) {
 			try return findFile(ctx, prefix + ".macro.hx", m, p) catch (_:ContextError) {}
 		}
+		// A target suffixed file (Name.<target>.hx) shadows the plain one for its platform.
+		if (ctx.platform != Cross) {
+			try return findFile(ctx, prefix + "." + hxc.core.Globals.platformName(ctx.platform) + ".hx", m, p) catch (_:ContextError) {}
+		}
 		return findFile(ctx, prefix + ".hx", m, p);
 	}
 

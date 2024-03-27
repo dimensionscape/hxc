@@ -55,6 +55,13 @@ class Compiler {
 				if (end == args.length) break;
 				start = end + 1;
 			}
+			// Everything before --each in the first section repeats for every section. (each_params).
+			var eachAt = sections[0].indexOf("--each");
+			if (eachAt >= 0) {
+				var common = sections[0].slice(0, eachAt);
+				sections[0] = sections[0].slice(eachAt + 1);
+				for (i in 0...sections.length) sections[i] = common.concat(sections[i]);
+			}
 			var exitCode = 0;
 			for (section in sections) {
 				var proc = new Process(Sys.programPath(), section);
@@ -676,7 +683,8 @@ class Compiler {
 			group.items.push(item);
 		}
 		var out = [for (g in groups) '{"file":' + haxe.Json.stringify(g.file) + ',"diagnostics":[' + g.items.join(",") + ']}'];
-		Sys.stderr().writeString("[" + out.join(",") + "]\n");
+		// Print raw diagnostics without a trailing newline.
+		Sys.stderr().writeString("[" + out.join(",") + "]");
 	}
 
 	static function displaySignature(ctx:Context):Void {
