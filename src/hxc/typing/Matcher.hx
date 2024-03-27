@@ -1349,7 +1349,7 @@ class TexprConverter {
 	// The unmatched constructor names of a finite subject (empty when fully covered), or null when the
 	// subject's constructor universe is not finite. The names feed the non-exhaustiveness error: constants
 	// of an enum abstract render as the declaring static's name; the list is sorted and joined with " | ".
-	static function unmatchedFiniteCoverage(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Null<Array<String>> {
+	static function unmatchedFiniteCoverage(com:hxc.context.Context, subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Null<Array<String>> {
 		function constKey(ct:TConstant):String {
 			return switch (ct) {
 				case TInt(v): "i:" + v;
@@ -1399,8 +1399,14 @@ class TexprConverter {
 				var missing:Array<String> = [];
 				for (cf in a.impl.statics) if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
 					total++;
+					// Force the member so its inline value is present before extraction.
+					TypeFunctions.follow(cf.type);
+					if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(com, a.impl, cf);
 					var ct = fieldConst(cf);
-					if (!found.exists(cf.name) && (ct == null || !foundConst.exists(constKey(ct)))) missing.push(cf.name);
+					if (!found.exists(cf.name) && (ct == null || !foundConst.exists(constKey(ct))))
+						// A member without an extractable value (an extern enum abstract) is a static
+						// constructor and prints qualified; a constant maps back to the bare field name.
+						missing.push(ct == null ? hxc.core.Globals.sTypePath(a.path) + "." + cf.name : cf.name);
 				}
 				return total > 0 ? missing : null;
 			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"):
@@ -1481,7 +1487,7 @@ class TexprConverter {
 				}
 				var topLevel = rec.match(DRToplevel);
 				var nextRec = topLevel ? DRAfterSwitch : DRDeep;
-				var unmatched = unmatchedFiniteCoverage(subject, cases);
+				var unmatched = unmatchedFiniteCoverage(ctx.com, subject, cases);
 				var complete = unmatched != null && unmatched.length == 0;
 				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
 				// abstract is compile-time finite, so a runtime value can be out of range and a user
@@ -1551,7 +1557,14 @@ class TexprConverter {
 					case _: false;
 				};
 				var reportFiniteNoValue = topLevel && runtimeFinite && !branchHasDefault && nullaryMissing;
-				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue)) reportUnmatched();
+				// An enum abstract is compile-time finite: a missing member reports even for a statement
+				// switch. (only NoValue+Infinite stays silent; CompileTimeFinite is silent only when
+				// unmatched is empty).
+				var compileTimeFiniteUnmatched = unmatched != null && unmatched.length > 0 && switch (TypeFunctions.follow(subject.type)) {
+					case TAbstract(a, _) if (a.isEnum && a.impl != null): true;
+					case _: false;
+				};
+				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue || compileTimeFiniteUnmatched)) reportUnmatched();
 				// Group: cases that share a decision emit one case with several values, sorted by constructor
 				// order
 				var groups:Array<{cons:Array<Con>, dt:Dt}> = [];
