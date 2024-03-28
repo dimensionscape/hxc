@@ -8,6 +8,8 @@ class Setup {
 		var env = Sys.getEnv("HAXE_STD_PATH");
 		if (env != null) {
 			var r = [""];
+			// The raw environment value is preserved, separators included: the spelling it was given is
+			// kept.
 			for (p in splitDriveAware(env)) r.push(addTrailingSlash(p));
 			return r;
 		}
