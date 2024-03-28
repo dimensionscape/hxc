@@ -1408,26 +1408,48 @@ class Typer {
 
 	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.
 	public static function formatString(str:String, p:Position, ?defines:hxc.core.Define):Expr {
-		function strLit(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), p);
 		function isIdentStart(c:Int):Bool return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
 		function isIdentChar(c:Int):Bool return isIdentStart(c) || (c >= "0".code && c <= "9".code);
 		var parts:Array<Expr> = [];
-		var buf = new StringBuf();
 		function spaces(n:Int):String {
 			var out = new StringBuf();
 			for (_ in 0...n) out.addChar(" ".code);
 			return out.toString();
 		}
-		function flush() { var t = buf.toString(); if (t.length > 0) { parts.push(strLit(t)); buf = new StringBuf(); } }
 		var i = 0;
 		var n = str.length;
+		// Each fragment carries its own CONTENT span (one past the opening quote); a plain string fragment
+		// spans the source it consumed, built from SUBSTRINGS so multi-byte content passes through
+		// untouched.
+		var frag = "";
+		var fragStart = 0;
+		var segStart = 0;
+		function flush(forceEmpty:Bool = false) {
+			if (frag == "" && i > segStart) fragStart = segStart;
+			frag += str.substring(segStart, i);
+			segStart = i;
+			if (frag != "") {
+				parts.push(new Expr(EConst(CString(frag, SDoubleQuotes)), new Position(p.file, p.min + 1 + fragStart, p.min + 1 + i)));
+				frag = "";
+			} else if (forceEmpty && parts.length == 0) {
+				// A string STARTING with an interpolation leads with an empty literal so the chain
+				// concatenates as String.
+				parts.push(new Expr(EConst(CString("", SDoubleQuotes)), new Position(p.file, p.min + 1 + i, p.min + 1 + i)));
+			}
+		}
 		while (i < n) {
 			var c = str.charCodeAt(i);
 			if (c == "$".code && i + 1 < n) {
 				var d = str.charCodeAt(i + 1);
-				if (d == "$".code) { buf.addChar("$".code); i += 2; }
+				if (d == "$".code) {
+					// One dollar stays; the segment split skips its twin.
+					if (frag == "") fragStart = segStart;
+					frag += str.substring(segStart, i + 1);
+					segStart = i + 2;
+					i += 2;
+				}
 				else if (d == "{".code) {
-					flush();
+					flush(true);
 					var depth = 1;
 					var j = i + 2;
 					var sb = new StringBuf();
@@ -1447,22 +1469,24 @@ class Typer {
 						throw new TypingError(hxc.parser.ParserError.errorMsg(err.msg), err.pos);
 					}
 					i = j;
+					segStart = i;
 				} else if (isIdentStart(d)) {
-					flush();
+					flush(true);
 					var j = i + 1;
 					var sb = new StringBuf();
 					while (j < n && isIdentChar(str.charCodeAt(j))) { sb.addChar(str.charCodeAt(j)); j++; }
 					// The ident's own source range: content starts one past the opening quote.
 					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + i + 2, p.min + j + 1)));
 					i = j;
-				} else { buf.addChar(c); i++; }
-			} else { buf.addChar(c); i++; }
+					segStart = i;
+				} else i++;
+			} else i++;
 		}
 		flush();
-		if (parts.length == 0) return strLit("");
-		// Lead with an empty string literal so the whole chain concatenates as String.
-		var acc = strLit("");
-		for (part in parts) acc = new Expr(EBinop(OpAdd, acc, part), p);
+		// The first fragment stands alone; pairs union their spans (no leading empty literal).
+		if (parts.length == 0) return new Expr(EConst(CString("", SDoubleQuotes)), p);
+		var acc = parts[0];
+		for (k in 1...parts.length) acc = new Expr(EBinop(OpAdd, acc, parts[k]), Position.union(acc.pos, parts[k].pos));
 		return acc;
 	}
 
@@ -1503,7 +1527,10 @@ class Typer {
 					case "f64": TexprTools.typeConstant(basic, CFloat(s, null), p);
 					case other: throw new TypingError(other + " is not a valid float suffix", p);
 				}
-			case CString(str, SSingleQuotes) if (str.indexOf("$") >= 0):
+			// Every non-empty single-quoted string routes through the interpolation builder, not just
+			// $-containing ones: the resulting constant carries the CONTENT span (quotes excluded), which
+			// downstream errors report.
+			case CString(str, SSingleQuotes) if (str != ""):
 				typeExpr(ctx, formatString(str, p), withType);
 			case CString(_, _):
 				TexprTools.typeConstant(basic, c, p);
