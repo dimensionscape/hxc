@@ -1208,6 +1208,12 @@ class Parser {
 				return new Expr(EVars(vl), p1);
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
+				switch (peek()) {
+					case Kwd(KwdVar):
+						var p2 = next().pos;
+						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
+					case _:
+				}
 				var vl = parseVarDecls(true);
 				return new Expr(EVars(vl), p1);
 			case Const(c):
