@@ -196,6 +196,12 @@ class Messages {
 		return m;
 	}
 
+	// Validate both formatter modes without printing messages yet.
+	public static function validateModes(ctx:Context):Void {
+		validateMode(ctx, "message.reporting", "classic");
+		validateMode(ctx, "message.log_format", "indent");
+	}
+
 	public static function display(ctx:Context):Void {
 		// Validate both screen and log formats, even when one will not be printed.
 		var mode = validateMode(ctx, "message.reporting", "classic");
@@ -218,7 +224,11 @@ class Messages {
 	static function validateMode(ctx:Context, key:String, def:String):String {
 		var mode = ctx.defines.rawDefinedValueSafe(key, def);
 		if (mode != "pretty" && mode != "indent" && mode != "classic") {
-			ctx.addDiagnostic('Invalid message reporting mode: "$mode", expected classic | pretty | indent (for -D $key).', Position.nullPos);
+			// Validation runs at multiple abort and flush points; record its error only once.
+			var msg = 'Invalid message reporting mode: "$mode", expected classic | pretty | indent (for -D $key).';
+			var dup = false;
+			for (d in ctx.diagnostics) if (d.message == msg) dup = true;
+			if (!dup) ctx.addDiagnostic(msg, Position.nullPos);
 			return def;
 		}
 		return mode;

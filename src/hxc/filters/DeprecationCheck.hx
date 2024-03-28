@@ -92,6 +92,9 @@ class DeprecationCheck {
 	}
 
 	public static function run(com:Context):Void {
+		// Pending property warnings interleave into the WALK-phase diagnostics only; the
+		// messages accumulated before this filter stay ahead of them.
+		var walkStart = com.diagnostics.length;
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasMeta(":deprecated", c.meta)):
 				if (c.constructor != null) runOnField(com, c.meta, c.constructor);
@@ -107,7 +110,7 @@ class DeprecationCheck {
 			checkMeta(entry.com, entry.classMeta, entry.fieldMeta, entry.cf.meta, "field", entry.p);
 			var added = com.diagnostics.splice(oldLength, com.diagnostics.length - oldLength);
 			var target = com.diagnostics.length;
-			for (i in 0...com.diagnostics.length) if (com.diagnostics[i].pos.file == entry.p.file && com.diagnostics[i].pos.min > entry.p.min) { target = i; break; }
+			for (i in walkStart...com.diagnostics.length) if (com.diagnostics[i].pos.file == entry.p.file && com.diagnostics[i].pos.min > entry.p.min) { target = i; break; }
 			for (i in 0...added.length) com.diagnostics.insert(target + i, added[i]);
 		}
 	}

@@ -199,8 +199,9 @@ class Compiler {
 				case "--cmd" | "-cmd":
 					cmds.push(unquote(args[i++]));
 				case "--version" | "-version":
-					// Version (com.info s_version_full).
-					Sys.stderr().writeString(Globals.sVersionFull + "\n");
+					// Recorded as an info message, not printed directly: macros can see and filter it through
+					// Context.getMessages.
+					ctx.addDiagnostic(Globals.sVersionFull, Position.nullPos, 0, MessageSeverity.Information);
 				case "--help-user-defines":
 					helpUserDefines = true;
 				case "--help-user-metas":
@@ -423,6 +424,9 @@ class Compiler {
 				abortOnDiagnostics(ctx, platform);
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
+			// The single success-path flush: everything recorded up to and including the
+			// after-generate callbacks prints once, before interpreter output or --cmd runs.
+			flushPendingMessages(ctx);
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
@@ -815,12 +819,14 @@ class Compiler {
 	}
 
 	static function abortOnDiagnostics(ctx:Context, platform:Platform):Void {
-		// Display validates -D message.reporting (adding an error for an invalid mode) even with no other
-		// messages, so an unknown reporting mode is reported on an otherwise clean compile.
+		// Messages accumulate to one flush at the end, so a later macro callback can still read and
+		// filter them; an abort prints what has accumulated and exits. Validation of -D message.reporting
+		// adds an error for an invalid mode even with no other messages.
+		hxc.compiler.Messages.validateModes(ctx);
+		if (!ctx.hasError()) return;
 		hxc.compiler.Messages.display(ctx);
-		var hadError = ctx.hasError();
 		ctx.diagnostics = [];
-		if (hadError) Sys.exit(1);
+		Sys.exit(1);
 	}
 
 	static function expandArgs(args:Array<String>):Array<String> {
