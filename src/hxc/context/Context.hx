@@ -225,6 +225,8 @@ class Context {
 		// with a non-sys host target.
 		hxc.context.Setup.initPlatform(c, Eval);
 		c.isMacro = true;
+		// Forward macro-world warnings to the main context; keep macro recovery diagnostics local.
+		c.forwardWarningsTo = this;
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
 		for (name in this.resources.keys()) c.resources.set(name, this.resources.get(name));
@@ -313,12 +315,18 @@ class Context {
 	// During macro expression typing, raise errors immediately so the macro can catch and annotate
 	// them.
 	public var raiseTypingErrors:Bool = false;
+	// Forward diagnostics to this context, normally from the macro world to its host.
+	public var forwardWarningsTo:Null<Context> = null;
 
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
 		if (message == "Type not found : Expr") for (d in diagnostics)
 			if (d.message == message && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
+		if (forwardWarningsTo != null && severity != null && severity != Error) {
+			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
+			return;
+		}
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 
@@ -344,7 +352,8 @@ class Context {
 			case WMEnable:
 				var obj = hxc.core.WarningList.warningObj(w);
 				var msg = obj.generic ? message : "(" + obj.name + ") " + message;
-				diagnostics.push({message: msg, pos: pos, depth: depth, severity: MessageSeverity.Warning});
+				if (forwardWarningsTo != null) forwardWarningsTo.diagnostics.push({message: msg, pos: pos, depth: depth, severity: MessageSeverity.Warning});
+				else diagnostics.push({message: msg, pos: pos, depth: depth, severity: MessageSeverity.Warning});
 			case WMDisable:
 		}
 	}

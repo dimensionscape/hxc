@@ -689,7 +689,11 @@ class Typeload {
 						TInst(c, params);
 				}
 			case TEnumDecl(e): TEnum(e, params);
-			case TTypeDecl(td): TType(td, params);
+			case TTypeDecl(td):
+				// Loading a deprecated typedef warns at the load position, in any context including macro
+				// typing.
+				hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx, td, p);
+				TType(td, params);
 			case TAbstractDecl(a): TAbstract(a, params);
 		}
 	}

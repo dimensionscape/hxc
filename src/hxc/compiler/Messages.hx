@@ -208,16 +208,19 @@ class Messages {
 		validateMode(ctx, "message.log_format", "indent");
 		var msgs = ctx.diagnostics;
 		var ectx:PrettyCtx = {lastPositions: new Map(), previous: null, gutter: new Map(), maxLines: maxLines(msgs)};
-		var buf = new StringBuf();
+		// Information routes to stdout, warnings/errors/hints to stderr.
+		var outBuf = new StringBuf();
+		var errBuf = new StringBuf();
 		for (cm in msgs) {
 			var s = switch (mode) {
 				case "pretty": prettyString(ctx, ectx, cm);
 				case "indent": indentedString(cm);
 				case _: classicString(cm);
 			};
-			if (s != null) buf.add(s + "\n");
+			if (s != null) (cm.severity == Information ? outBuf : errBuf).add(s + "\n");
 		}
-		Sys.stderr().writeString(buf.toString());
+		if (outBuf.length > 0) Sys.stdout().writeString(outBuf.toString());
+		if (errBuf.length > 0) Sys.stderr().writeString(errBuf.toString());
 	}
 
 	// Report an unknown mode using its canonical define key, then use the default.
