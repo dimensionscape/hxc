@@ -666,9 +666,21 @@ class EvalMacro {
 
 
 	public static function runBuildMacros(com:Context):Void {
-		for (m in com.modules) for (mt in m.types) switch (mt) {
-			case TClassDecl(c): ensureBuilt(com, c);
-			case _:
+		// Build macros trigger through delays which run newest-first, so the last registered
+		// class builds first (the reference's PBuildClass delay order); dependency order is
+		// still guaranteed by ensureBuilt's super/interface recursion.
+		var mi = com.modules.length - 1;
+		while (mi >= 0) {
+			var types = com.modules[mi].types;
+			var ti = types.length - 1;
+			while (ti >= 0) {
+				switch (types[ti]) {
+					case TClassDecl(c): ensureBuilt(com, c);
+					case _:
+				}
+				ti--;
+			}
+			mi--;
 		}
 	}
 
