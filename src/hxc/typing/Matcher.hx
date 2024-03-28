@@ -620,6 +620,11 @@ class PatternMaker {
 						unifyExpected(te.type);
 						PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
 					case TTypeExpr(mt): unifyTypePattern(ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
+					case TField(_, fa):
+						// Any other field shape (an untyped-mode dynamic access, a method) is not a
+						// matchable constant; suggest near-miss values first.
+						reportPatternTypo(t, TypeFunctions.fieldName(fa), pctx, p);
+						throw new TypingError("Only inline or read-only (default, never) fields can be used as a pattern", p);
 					case _: throw new TypingError("This pattern is not yet ported", p);
 				}
 			case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
