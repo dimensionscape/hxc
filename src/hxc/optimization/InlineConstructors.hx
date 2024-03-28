@@ -106,7 +106,7 @@ private class InlineConstructorsRun {
 				for (v in io.dependentVars) if (v.id < 0) cancelV(v, p);
 				if (ioc.forced) {
 					ctx.com.addDiagnostic("Forced inline constructor could not be inlined", io.pos);
-					ctx.com.addDiagnostic("Cancellation happened here", p, 1);
+					ctx.com.addDiagnostic("... Cancellation happened here", p, 1);
 				}
 			case _:
 		}

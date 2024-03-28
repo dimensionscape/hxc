@@ -189,8 +189,13 @@ class Compiler {
 					// Options without an implementation here; the value must still be consumed.
 					i++;
 				case "--cwd" | "-C":
-					// Cwd (Sys.chdir before anything resolves).
-					Sys.setCwd(args[i++]);
+					// A nonexistent directory aborts with the argument error "Invalid directory".
+					var dir = args[i++];
+					if (!sys.FileSystem.exists(dir) || !sys.FileSystem.isDirectory(dir)) {
+						Sys.stderr().writeString("Error: Invalid directory: " + dir + "\n");
+						Sys.exit(1);
+					}
+					Sys.setCwd(dir);
 				case "--cmd" | "-cmd":
 					cmds.push(unquote(args[i++]));
 				case "--version" | "-version":

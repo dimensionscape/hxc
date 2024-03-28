@@ -728,7 +728,11 @@ class Typer {
 					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
 				case EMeta(m, {expr: ECall(callee, args)}) if (m.name == ":inline"):
 					accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, p, true, m.pos));
-				case EMeta(m, e1) if (m.name == ":inline" && !e1.expr.match(ENew(_, _))):
+				case EMeta(m, {expr: ENew(tp, el)}) if (m.name == ":inline"):
+					// A forced-inline construction keeps the marker for the inline-constructor filter.
+					var te = typeNew(ctx, tp, el, withType, p);
+					TypeFunctions.mk(TMeta({name: ":inline", params: [], pos: Position.nullPos}, te), te.type, te.pos);
+				case EMeta(m, e1) if (m.name == ":inline"):
 					// Only a call or constructor may follow the inline keyword; anything else (an anonymous
 					// function, a plain value) reports and types without inlining.
 					ctx.com.addDiagnostic("Call or function expected after inline keyword", p);
@@ -981,8 +985,9 @@ class Typer {
 				};
 				// A @:structInit target without a constructor (an interface carrying the meta) reports at
 				// the literal and types plainly.
+				// RAISED so the var-initializer recovery records it and no further unify runs.
 				if (scHit != null && scSig == null)
-					ctx.com.addDiagnostic(scHit.c.path.name + " does not have a constructor", p);
+					throw new TypingError(scHit.c.path.name + " does not have a constructor", p);
 				if (scHit != null && scSig != null) {
 					// Type each provided field against its constructor-arg type in the object literal
 					// source order; build the call in the constructor declared arg order, hoisting a field
@@ -3129,6 +3134,9 @@ class Typer {
 	static function ensureStructInitCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (!TypeFunctions.hasMeta(":structInit", c.meta)) return;
+		// An interface never gets the synthesized constructor (it already reported); the struct literal
+		// then reports the missing constructor.
+		if (TypeFunctions.hasClassFlag(c, CInterface)) return;
 		var params = TypeFunctions.extractParamTypes(c.params);
 		var tvoid = ctx.com.basic.tvoid;
 		var tthis = TypeFunctions.mk(TConst(TThis), TInst(c, params), c.pos);
