@@ -817,8 +817,6 @@ class Fields {
 
 	// The type-own using list is collected on the UNFOLLOWED type: a typedef contributes its own
 	// @:using before the type it aliases, one follow step at a time.
-	static var usingsStack:Array<TAbstract> = [];
-
 	static function typeUsings(t:T, i:String):Array<TClassUsing> {
 		return switch (t) {
 			case TMono(r): r.type == null ? [] : typeUsings(r.type, i);
@@ -830,18 +828,9 @@ class Fields {
 				// Null is unwrapped before the extension walk.
 				typeUsings(t1, i);
 			case TAbstract(a, tl) if (forwardAllows(a, i) && !TypeFunctions.hasMeta(":coreType", a.meta)):
-				// A @:forward abstract also exposes its underlying type's usings. . A recursive underlying
-				// chain (reported elsewhere) must not loop here.
-				if (usingsStack.indexOf(a) >= 0) a.usings
-				else {
-					usingsStack.push(a);
-					var r = try a.usings.concat(typeUsings(TypeFunctions.applyParams(a.params, tl, a.thisType), i)) catch (e:Dynamic) {
-						usingsStack.pop();
-						throw e;
-					};
-					usingsStack.pop();
-					r;
-				}
+				// A @:forward abstract also exposes its underlying type's usings, one guarded
+				// step at a time; the guarded traversal raises on a recursive chain.
+				a.usings.concat(typeUsings(TypeFunctions.getUnderlyingTypeFirst(a, tl), i));
 			case TAbstract(a, _): a.usings;
 			case TAnon(a): switch (a.status.get()) {
 				case Statics(c): c.usings;

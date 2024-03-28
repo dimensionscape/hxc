@@ -709,7 +709,8 @@ class TypeFunctions {
 			case TAbstract(a, _) if (hasMeta(":coreType", a.meta)):
 				!hasMeta(":notNull", a.meta);
 			case TAbstract(a, tl):
-				// A recursive underlying chain (reported elsewhere) must not loop here.
+				// Unguarded; the reference aborts fatally on the chain error before is_nullable can see a
+				// cycle, while hxc records it and continues, so the recovery path needs the stop.
 				if (nullableStack.indexOf(a) >= 0) false
 				else {
 					nullableStack.push(a);
