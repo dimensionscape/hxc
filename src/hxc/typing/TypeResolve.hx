@@ -470,6 +470,25 @@ class TypeResolve {
 				var at = Typeload.loadComplexType(ctx, a.params, th);
 				a.thisType = at;
 				isType = true;
+				// A recursive underlying chain reports once the involved abstracts have resolved (a PForce
+				// delay over a stack of the abstracts visited). Prepended: delays run newest-first, so the last
+				// declared abstract's check reports the cycle (at the FIRST declared abstract's pos).
+				ctx.pendingConstraintChecks.unshift(function() {
+					var stack:Array<TAbstract> = [];
+					function walk(t:T):Void switch (TypeFunctions.follow(t)) {
+						case TAbstract(a2, _) if (!TypeFunctions.hasMeta(":coreType", a2.meta)):
+							if (stack.indexOf(a2) >= 0)
+								// Fatal: the remaining queued checks are skipped, so the cycle reports
+								// once.
+								throw new hxc.core.TypingError("Abstract underlying type cannot be recursive", a2.pos);
+							else {
+								stack.push(a2);
+								walk(a2.thisType);
+							}
+						case _:
+					}
+					walk(at);
+				});
 			case AbExtern:
 				// An extern abstract's implementation class is extern too, so a value-less enum-abstract
 				// member

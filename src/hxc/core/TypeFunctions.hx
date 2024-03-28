@@ -627,9 +627,29 @@ class TypeFunctions {
 		return path.pack.length == 0 && path.name == "Null";
 	}
 
+	// Abstracts traversed by the current getUnderlyingType chain; a repeat is a recursive chain and reports
+	// instead of looping.
+	static var underlyingTypeStack:Array<T> = [];
+
+	// The first underlying level, still running the full traversal so a mutually recursive chain reports.
+	public static function getUnderlyingTypeFirst(a:TAbstract, pl:TParams):T {
+		if (hasMeta(":coreType", a.meta)) return tDynamic;
+		var t = applyParams(a.params, pl, a.thisType);
+		underlyingTypeStack.push(TAbstract(a, pl));
+		try maybeRecurseUnderlying(t) catch (e:Dynamic) { underlyingTypeStack.pop(); throw e; }
+		underlyingTypeStack.pop();
+		return t;
+	}
+
 	public static function getUnderlyingType(a:TAbstract, pl:TParams):T {
 		if (hasMeta(":coreType", a.meta)) return tDynamic;
-		return maybeRecurseUnderlying(applyParams(a.params, pl, a.thisType));
+		underlyingTypeStack.push(TAbstract(a, pl));
+		var r = try maybeRecurseUnderlying(applyParams(a.params, pl, a.thisType)) catch (e:Dynamic) {
+			underlyingTypeStack.pop();
+			throw e;
+		};
+		underlyingTypeStack.pop();
+		return r;
 	}
 
 	static function maybeRecurseUnderlying(t:T):T {
@@ -643,6 +663,15 @@ class TypeFunctions {
 			case TType(td, tl):
 				maybeRecurseUnderlying(applyTypedef(td, tl));
 			case TAbstract(a, tl) if (!hasMeta(":coreType", a.meta)):
+				for (s in underlyingTypeStack) switch (s) {
+					case TAbstract(a2, _) if (a2 == a):
+						// The chain prints oldest first, the repeat last.
+						var pctx = hxc.core.TPrinting.printContext();
+						var parts = [for (x in underlyingTypeStack) hxc.core.TPrinting.sType(pctx, x)];
+						parts.push(hxc.core.TPrinting.sType(pctx, t));
+						throw new hxc.core.TypingError("Abstract chain detected: " + parts.join(" -> "), a.pos);
+					case _:
+				}
 				getUnderlyingType(a, tl);
 			case _: t;
 		}
@@ -680,11 +709,20 @@ class TypeFunctions {
 			case TAbstract(a, _) if (hasMeta(":coreType", a.meta)):
 				!hasMeta(":notNull", a.meta);
 			case TAbstract(a, tl):
-				!hasMeta(":notNull", a.meta) && isNullable(applyParams(a.params, tl, a.thisType));
+				// A recursive underlying chain (reported elsewhere) must not loop here.
+				if (nullableStack.indexOf(a) >= 0) false
+				else {
+					nullableStack.push(a);
+					var r = !hasMeta(":notNull", a.meta) && isNullable(applyParams(a.params, tl, a.thisType));
+					nullableStack.pop();
+					r;
+				}
 			case _:
 				true;
 		}
 	}
+
+	static var nullableStack:Array<TAbstract> = [];
 
 	public static function isNull(t:T, no_lazy:Bool = false):Bool {
 		return switch (t) {
