@@ -780,6 +780,13 @@ class EvalEmitter {
 							}
 						} else {
 							var ctor = ctx.constructors.get(key);
+							if (ctor == null && c.constructor != null) {
+								// Same lazy-registration gap as constructClass: the parent's
+								// proto may predate its typed bodies.
+								forceInWorld(ctx, c);
+								var made = hxc.eval.EvalPrototype.makeConstructor(ctx, c);
+								if (made != null) { ctx.constructors.set(key, made); ctor = made; }
+							}
 							if (ctor != null) callAt(ctx, p, ctor, [vthis].concat(args));
 						}
 					case _:
@@ -1030,6 +1037,15 @@ class EvalEmitter {
 		var instVal = VInstance(inst);
 		applyFieldInits(ctx, c, instVal);
 		var ctor = ctx.constructors.get(key);
+		if (ctor == null && c.constructor != null) {
+			// A prototype registered before the class's bodies were typed has no constructor
+			// entry (registerLazyClass skips a registered proto); force the class in its world
+			// and build the constructor now, so e.g. a macro-world `new haxe.macro.Expr.Error`
+			// runs its constructor and carries message and pos.
+			forceInWorld(ctx, c);
+			var made = hxc.eval.EvalPrototype.makeConstructor(ctx, c);
+			if (made != null) { ctx.constructors.set(key, made); ctor = made; }
+		}
 		var cc = c;
 		while (ctor == null && cc.superClass != null) {
 			cc = cc.superClass.c;
