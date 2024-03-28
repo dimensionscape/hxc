@@ -2878,7 +2878,13 @@ class Typer {
 	}
 
 	static function typeReturn(ctx:TyperContext, e:Null<Expr>, withType:WithType, p:Position, implicit:Bool = false):TExpr {
+		var isAbstractCtor = ctx.curfun.match(FunMemberAbstract) && ctx.curfield != null && ctx.curfield.name == "_new";
 		switch (e) {
+			case null if (isAbstractCtor):
+				// An early `return;` in an abstract constructor returns `cast this`, so the
+				// definite-assignment filter sees the read and reports a missing `this = value`.
+				var ecast = TypeFunctions.mk(TCast(getThis(ctx, p), null), ctx.ret, p);
+				return TypeFunctions.mk(TReturn(ecast), monoOrDynamic(ctx, withType, p), p);
 			case null:
 				var v = ctx.com.basic.tvoid;
 				try {
@@ -2893,6 +2899,12 @@ class Typer {
 				};
 				return TypeFunctions.mk(TReturn(null), expectVoid ? v : monoOrDynamic(ctx, withType, p), p);
 			case ex:
+				// A value return in an abstract constructor reports unless it is the synthesized `cast
+				// this`.
+				if (isAbstractCtor) switch (ex.expr) {
+					case ECast({expr: EConst(CIdent("this"))}, null):
+					case _: ctx.com.addDiagnostic("Cannot return a value from constructor", p);
+				}
 				try {
 				// An arrow function's implicit return carries the ImplicitReturn source so a switch body
 				// can settle an open return mono from a bare `return;` arm.
