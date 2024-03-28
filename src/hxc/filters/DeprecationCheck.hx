@@ -72,6 +72,15 @@ class DeprecationCheck {
 			checkMeta(ctx.com, ctx.curclass == null ? [] : ctx.curclass.meta, ctx.curfield == null ? [] : ctx.curfield.meta, ef.meta, "enum field", p);
 	}
 
+	// A macro call expands before the typed-tree walker runs, so the macro field's
+	// deprecation is checked at the call.
+	public static function checkFieldUse(ctx:hxc.typing.TyperContext, cf:TClassField, p:Position):Void {
+		if (ctx.com.isMacro) return;
+		var classMeta = ctx.curclass != null ? ctx.curclass.meta : [];
+		var fieldMeta = ctx.curfield != null ? ctx.curfield.meta : [];
+		checkMeta(ctx.com, classMeta, fieldMeta, cf.meta, "field", p);
+	}
+
 	// A property access resolves to its accessor at typing, so the property field never appears
 	// in the typed tree the run() walker visits; the use is checked at resolution instead.
 	public static function checkPropertyUse(ctx:hxc.typing.TyperContext, cf:TClassField, p:Position):Void {

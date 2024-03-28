@@ -816,6 +816,8 @@ class Calls {
 		return switch (acc) {
 			case AKExpr(ce): callExpr(ctx, ce, el, p, forceInline, forcePos);
 			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
+				// Deprecation check on the static macro call path.
+				hxc.filters.DeprecationCheck.checkFieldUse(ctx, fa.field, p);
 				hxc.eval.EvalMacro.run(ctx, fa, el, withType, p);
 			case AKField(fa):
 				// A super call to a dynamic method is rejected.
