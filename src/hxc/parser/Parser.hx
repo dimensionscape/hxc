@@ -391,7 +391,8 @@ class Parser {
 		if (tokEq(peek(), POpen) && peekInfo().pos.min == tokens[idx - 1].pos.max) {
 			junk();
 			params = parseCallParamsList();
-			pEnd = expect(PClose);
+			expect(PClose);
+			// The entry position spans the name only; the arguments are excluded.
 		}
 		return {name: name, params: params, pos: Position.union(p1, pEnd)};
 	}

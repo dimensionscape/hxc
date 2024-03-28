@@ -340,8 +340,12 @@ class ForLoop {
 		var vName:String;
 		var e1Expr:Expr;
 		switch (it.expr) {
-			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than `=>`.
-			case EBinop(OpArrow, {expr: EConst(CIdent(ki))}, {expr: EBinop(OpIn, {expr: EConst(CIdent(vi))}, rhs)}):
+			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than
+			// `=>`; a macro-built head may carry the OpIn(OpArrow(k, v), e) shape instead.
+			case EBinop(OpArrow, kexpr = {expr: EConst(CIdent(ki))}, {expr: EBinop(OpIn, vexpr = {expr: EConst(CIdent(vi))}, rhs)})
+				| EBinop(OpIn, {expr: EBinop(OpArrow, kexpr = {expr: EConst(CIdent(ki))}, vexpr = {expr: EConst(CIdent(vi))})}, rhs):
+				Typer.checkLocalVariableName(ctx, ki, TVOForVariable, kexpr.pos);
+				Typer.checkLocalVariableName(ctx, vi, TVOForVariable, vexpr.pos);
 				return ctx.com.platform.match(Eval)
 					? typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p)
 					: ForLoopFaithful.typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p);
@@ -350,6 +354,7 @@ class ForLoop {
 					case EConst(CIdent(i)): i;
 					case _: throw new TypingError("Identifier expected", lhs.pos);
 				};
+				Typer.checkLocalVariableName(ctx, vName, TVOForVariable, lhs.pos);
 				e1Expr = rhs;
 			case _:
 				throw new TypingError("For expression should be 'v in expr'", it.pos);

@@ -425,7 +425,9 @@ class PatternMaker {
 			if (pat != null) return pat;
 		} catch (_:Dynamic) {}
 		if (pctx.ctx.com.diagnostics.length > diagBefore) pctx.ctx.com.diagnostics.resize(diagBefore);
-		if (i.length > 0 && i.charCodeAt(0) >= 65 && i.charCodeAt(0) <= 90) {
+		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
+		// generated-local and `_` prefixes are excluded.
+		if (i.length > 0 && !hxc.ast.Ast.isLowerIdent(i) && i.charCodeAt(0) != "`".code && i.charCodeAt(0) != "_".code) {
 			pctx.ctx.com.addDiagnostic("Unknown identifier : " + i + ", pattern variables must be lower-case or with `var ` prefix", p);
 			if (pctx.orLocals != null) return PatVariable(addLocal(pctx, false, i, t, p));
 			return PatAny;

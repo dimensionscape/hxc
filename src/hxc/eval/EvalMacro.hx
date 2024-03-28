@@ -745,7 +745,9 @@ class EvalMacro {
 			buildTctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
 			com.currentModule = c.module;
 			curTctx = buildTctx;
-			curPos = callExpr.pos;
+			// Context.currentPos() in a build macro is the @:build meta's own position, not
+			// the inner call.
+			curPos = entry.pos;
 			curBuildClass = c;
 			curBuildParams = TypeFunctions.extractParamTypes(c.params);
 			curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
@@ -1699,7 +1701,9 @@ class EvalMacro {
 			buildTctx.tthis = TInst(c, params);
 			com.currentModule = c.module;
 			curTctx = buildTctx;
-			curPos = callExpr.pos;
+			// Context.currentPos() in a build macro is the @:build meta's own position, not
+			// the inner call.
+			curPos = entry.pos;
 			curBuildClass = c;
 			curBuildParams = params;
 			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
@@ -2572,8 +2576,33 @@ class EvalMacro {
 				var flags = decodeAbstractFlags(ec, kind, isExtern, pos);
 				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
 				{decl: EAbstract(def), pos: pos};
+			case "TDEnum":
+				// Each field converts to an enum constructor: a variable keeps no arguments, a function
+				// requires typed arguments.
+				var ctors:Array<hxc.ast.Ast.EnumConstructor> = [for (f in fields) {
+					var eargs:Array<{name:String, opt:Bool, type:TypeHint}> = [];
+					var eparams:Array<TypeParam> = [];
+					var etype:Null<TypeHint> = null;
+					switch (f.cffKind) {
+						case FVar(t, null): etype = t;
+						case FFun(fd):
+							for (a in fd.fArgs) {
+								if (a.type == null) throw new TypingError("Invalid expression", dp);
+								eargs.push({name: a.name.name, opt: a.opt, type: a.type});
+							}
+							eparams = fd.fParams;
+							etype = fd.fType;
+						case _: throw new TypingError("Invalid expression", dp);
+					}
+					({ecName: f.cffName, ecDoc: null, ecMeta: f.cffMeta, ecArgs: eargs, ecPos: f.cffPos, ecParams: eparams, ecType: etype} : hxc.ast.Ast.EnumConstructor);
+				}];
+				var def:Definition<hxc.ast.Ast.EnumFlag, Array<hxc.ast.Ast.EnumConstructor>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: ctors};
+				{decl: EEnum(def), pos: pos};
+			case "TDStructure":
+				var def:Definition<hxc.ast.Ast.EnumFlag, TypeHint> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: {ct: CTAnonymous(fields), pos: pos}};
+				{decl: ETypedef(def), pos: pos};
 			case other:
-				throw new TypingError("defineType supports only TDClass/TDAbstract, got " + other, dp);
+				throw new TypingError("defineType supports only TDClass/TDAbstract/TDEnum/TDStructure, got " + other, dp);
 		};
 	}
 

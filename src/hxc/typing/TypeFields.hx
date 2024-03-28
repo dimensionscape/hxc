@@ -191,6 +191,15 @@ class TypeFields {
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		for (cff in d.dData) {
+			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
+			// build-macro fields are covered. via typeloadFields (create_field).
+			if (cff.cffName.name != "new") {
+				var fname = cff.cffName.name;
+				if (StringTools.startsWith(fname, "$"))
+					addDiagnosticOnce(ctx, "Field names starting with a dollar are not allowed: \"" + fname + "\"", cff.cffName.pos);
+				else if (!hxc.core.StringHelper.isValidIdentifier(fname))
+					addDiagnosticOnce(ctx, "\"" + hxc.core.StringHelper.sEscape(fname) + "\" is not a valid field name.", cff.cffName.pos);
+			}
 			var hasStatic = false, hasOverride = false, hasDynamic = false, hasInline = false, hasAbstract = false, hasFinal = false;
 			for (a in cff.cffAccess) switch (a.access) {
 				case AStatic: hasStatic = true;
@@ -810,6 +819,7 @@ class TypeFields {
 			var fa = fd.fArgs[i];
 			var at = (sig != null && i < sig.args.length) ? sig.args[i].t : TypeFunctions.mkMono();
 			var kind = if (tctx.curfun.match(FunMemberAbstract) && i == 0 && fa.name.name == "this") VAbstractThis else VUser(TVOArgument);
+			if (!kind.match(VAbstractThis)) Typer.checkLocalVariableName(tctx, fa.name.name, TVOArgument, fa.name.pos);
 			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);

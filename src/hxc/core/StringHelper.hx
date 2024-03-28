@@ -39,6 +39,27 @@ class StringHelper {
 		return loop(0);
 	}
 
+	// Identifier shape and not a keyword.
+	static var keywords:Map<String, Bool> = [for (k in [
+		"function", "class", "static", "var", "if", "else", "while", "do", "for",
+		"break", "continue", "return", "extends", "implements", "import", "switch",
+		"case", "default", "private", "public", "try", "catch", "new", "this",
+		"throw", "extern", "enum", "in", "interface", "untyped", "cast", "override",
+		"typedef", "dynamic", "package", "inline", "using", "null", "true", "false",
+		"abstract", "macro", "final", "operator", "overload"
+	]) k => true];
+
+	public static function isValidIdentifier(s:String):Bool {
+		if (s.length == 0) return false;
+		inline function alpha(c:Int) return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
+		if (!alpha(s.charCodeAt(0))) return false;
+		for (i in 1...s.length) {
+			var c = s.charCodeAt(i);
+			if (!alpha(c) && !(c >= "0".code && c <= "9".code)) return false;
+		}
+		return !keywords.exists(s);
+	}
+
 	public static function checkUppercase(x:String):Void {
 		if (x.length == 0)
 			throw new haxe.Exception("empty part");

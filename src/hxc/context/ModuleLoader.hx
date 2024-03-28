@@ -254,6 +254,12 @@ class ModuleLoader {
 		// Private types live under the module's package plus `_<Module>`.
 		function makePath(name:String, priv:Bool, p:Position):Path {
 			checkName(name, p);
+			if (name != m.path.name) {
+				if (name.length == 0) ctx.addDiagnostic("Type name must not be empty.", p);
+				else if (hxc.ast.Ast.isLowerIdent(name)) ctx.addDiagnostic("Type name should start with an uppercase letter: \"" + name + "\"", p);
+				else if (StringTools.startsWith(name, "$")) ctx.addDiagnostic("Type names starting with a dollar are not allowed: \"" + name + "\"", p);
+				else if (!hxc.core.StringHelper.isValidIdentifier(name)) ctx.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(name) + "\" is not a valid type name.", p);
+			}
 			return priv ? {pack: m.path.pack.concat(["_" + m.path.name]), name: name}
 			            : {pack: m.path.pack, name: name};
 		}
@@ -392,6 +398,8 @@ class ModuleLoader {
 						// Process the synthetic private implementation through the ordinary class pipeline, including
 						// structural registration, type resolution and body typing.
 						var implName = d.dName.name + "_Impl_";
+						if (!hxc.core.StringHelper.isValidIdentifier(implName) && !StringTools.startsWith(implName, "$") && implName.length > 0 && !hxc.ast.Ast.isLowerIdent(implName))
+							ctx.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(implName) + "\" is not a valid type name.", p);
 						var implPath:Path = {pack: m.path.pack.concat(["_" + m.path.name]), name: implName};
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
 							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: d.dMeta,
@@ -805,6 +813,8 @@ class ModuleLoader {
 	/** Register a macro-created type definition (`Context.defineType`) as a fake module. */
 	public static function defineTypeDecl(ctx:Context, mpath:Path, decl:TypeDef, pos:Position):ModuleDef {
 		var m = typeModule(ctx, mpath, "<macro>", [{decl: decl, pos: pos}]);
+		// The path check applies to Context.defineType too.
+		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
@@ -863,6 +873,29 @@ class ModuleLoader {
 			ctx.addDiagnostic(prepend + "Module names starting with a dollar are not allowed: \"" + name + "\"", p);
 		else if (!isValidIdentName(name))
 			ctx.addDiagnostic(prepend + "\"" + hxc.core.StringHelper.sEscape(name) + "\" is not a valid module name.", p);
+		// Each package part validates; the first failure reports as a pair.
+		for (part in mpath.pack) {
+			var err = packagePartError(part);
+			if (err != null) {
+				ctx.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(mpath.pack.join(".")) + "\" is not a valid package name:", p);
+				ctx.addDiagnostic(err, p);
+				break;
+			}
+		}
+	}
+
+	// The package name check, invalid characters included.
+	static function packagePartError(x:String):Null<String> {
+		if (x.length == 0) return "Package name must not be empty";
+		var c0 = x.charCodeAt(0);
+		if ((c0 < "a".code || c0 > "z".code) && c0 != "_".code) return "Package name must start with a lowercase letter";
+		for (i in 1...x.length) {
+			var c = x.charCodeAt(i);
+			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)
+				|| (c >= "0".code && c <= "9".code) || c == "_".code || c == ".".code;
+			if (!ok) return "Invalid character: " + hxc.core.StringHelper.sEscape(x.charAt(i));
+		}
+		return null;
 	}
 
 	// Identifier validity by character shape only; keyword names cannot reach a module path.

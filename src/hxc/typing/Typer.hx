@@ -51,6 +51,26 @@ class Typer {
 		return v;
 	}
 
+	// A named local validates like any identifier, with its origin naming the message; a variable literally
+	// named "this" is tolerated.
+	public static function checkLocalVariableName(ctx:TyperContext, name:String, origin:TVarOrigin, p:Position):Void {
+		if (name == "this") return;
+		var kind = switch (origin) {
+			case TVOLocalVariable: "variable";
+			case TVOArgument: "function argument";
+			case TVOForVariable: "for variable";
+			case TVOPatternVariable: "pattern variable";
+			case TVOCatchVariable: "catch variable";
+			case TVOLocalFunction: "function";
+		};
+		if (StringTools.startsWith(name, "$"))
+			ctx.com.addDiagnostic(hxc.core.StringHelper.capitalize(kind) + " names starting with a dollar are not allowed: \"" + name + "\"", p);
+		else if (!hxc.core.StringHelper.isValidIdentifier(name))
+			ctx.com.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(name) + "\" is not a valid " + kind + " name.", p);
+	}
+
+	// The name check runs at each creation site with the name position (some call sites carry a
+	// broader position).
 	public static function addLocalWithOrigin(ctx:TyperContext, origin:TVarOrigin, n:String, t:T, p:Position):TVar {
 		return addLocal(ctx, VUser(origin), n, t, p);
 	}
@@ -752,6 +772,7 @@ class Typer {
 				var args:Array<TFuncArg> = [];
 				for (fa in f.fArgs) {
 					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
+					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
 					args.push({v: TypeFunctions.allocVar(VUser(TVOLocalVariable), fa.name.name, at, fa.name.pos), c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
@@ -836,7 +857,9 @@ class Typer {
 				// A named local function binds its name (in scope before the body, so it can recurse)
 				// and evaluates to a TVar assignment; an anonymous one is just the function value.
 				var namedVar:Null<TVar> = switch (kind) {
-					case FKNamed(n, _): addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
+					case FKNamed(n, _):
+						checkLocalVariableName(ctx, n.name, TVOLocalFunction, n.pos);
+						addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
 					case _: null;
 				};
 				// A named generic local function stores its type params so a later call can monomorphize them.
@@ -1088,6 +1111,7 @@ class Typer {
 					var normalizedCatchType = normalizeCatchType(ctx, catchType, th.pos);
 					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
+					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
 					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.pos);
 					var cbody = typeExpr(ctx, c.expr, withType);
 					v.type = normalizedCatchType;
@@ -2735,6 +2759,7 @@ class Typer {
 				ctx.com.addDiagnostic(te.message, te.pos, te.depth);
 				TypeFunctions.tDynamic;
 			};
+			checkLocalVariableName(ctx, n, TVOLocalVariable, pv);
 			try {
 				var e:Null<TExpr> = switch (ev.evExpr) {
 					case null: null;
