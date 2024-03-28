@@ -2758,8 +2758,19 @@ class Typer {
 			}
 		}
 		for (ve in out) {
-			if (isVoid(TypeFunctions.follow(ve.v.type)))
-				throw new TypingError("Variables of type Void are not allowed", ve.v.pos);
+			switch (TypeFunctions.follow(ve.v.type)) {
+				case TMono(_):
+					// A still-open var type re-checks once inference settles; a later binding to Void (e.g.
+					// through an assignment) still reports.
+					var v = ve.v;
+					ctx.com.pendingConstraintChecks.push(function() {
+						if (isVoid(TypeFunctions.follow(v.type)))
+							ctx.com.addDiagnostic("Variables of type Void are not allowed", v.pos);
+					});
+				case ft:
+					if (isVoid(ft))
+						throw new TypingError("Variables of type Void are not allowed", ve.v.pos);
+			}
 		}
 		if (out.length == 1) {
 			return TypeFunctions.mk(TVarExpr(out[0].v, out[0].e), basic.tvoid, p);
