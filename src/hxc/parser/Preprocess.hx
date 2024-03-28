@@ -266,7 +266,12 @@ class Preprocess {
 				switch (c.expr) {
 					case EConst(CIdent("version")) if (args.length == 1):
 						switch (args[0].expr) {
-							case EConst(CString(s, _)): return TVersion(s);
+							case EConst(CString(s, _)):
+								// Parsed eagerly so a malformed string reports at the literal even when the
+								// version is never
+								// compared.
+								try Semver.parseVersion(s) catch (ex:haxe.Exception) throw new ParserError(Custom(ex.message), args[0].pos);
+								return TVersion(s);
 							case _: throw new ParserError(Custom("Invalid version()"), e.pos);
 						}
 					case _: throw new ParserError(Custom("Invalid condition expression"), e.pos);
