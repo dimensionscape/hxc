@@ -94,7 +94,7 @@ class TypeFields {
 			addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
 		} else if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
-			addDiagnosticOnce(ctx, ce.message, ce.pos);
+			addDiagnosticOnce(ctx, ce.message, ce.pos, ce.depth);
 		} else if (Std.isOfType(e, EvalRunTimeException)) {
 			// A macro-time uncaught exception reports with its eval call stack, the same shape the
 			// interpreter prints. A Context.error abort carries its own message and position and prints
@@ -635,7 +635,8 @@ class TypeFields {
 				if (remaining.length > 0) {
 					if (c.constructor == null) {
 						ctx.addDiagnostic("This class has uninitialized final vars, which requires a constructor", c.pos);
-						ctx.addDiagnostic("Example of an uninitialized final var", remaining[0].namePos, 1);
+						// Report a separate error rather than a sub-message.
+						ctx.addDiagnostic("Example of an uninitialized final var", remaining[0].namePos);
 					} else {
 						ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
 						for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);

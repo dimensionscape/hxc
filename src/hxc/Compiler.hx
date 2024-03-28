@@ -111,6 +111,7 @@ class Compiler {
 		var helpUserMetas = false;
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
+		var javaOutSeen = false;
 
 		var i = 0;
 		while (i < args.length) {
@@ -168,8 +169,13 @@ class Compiler {
 					ctx.foptimize = false;
 				case "--dce" | "-dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
+				case "-java" | "--java":
+					// No generator, but the deprecated --java + -D jvm spelling still warns after the
+					// arguments are known.
+					javaOutSeen = true;
+					i++;
 				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
-					| "-java" | "--java" | "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
+					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl" | "-cppia" | "--cppia":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
@@ -247,6 +253,9 @@ class Compiler {
 		// The startup class is known from -main during argument handling, so an init macro's
 		// Context.getMainExpr / Compiler.getConfiguration already sees it.
 		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
+		// The --java target with -D jvm and no --jvm flag.
+		if (javaOutSeen && ctx.defines.rawDefined("jvm"))
+			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], "--java out.jar -D jvm is deprecated; use --jvm out.jar directly", Position.nullPos);
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
@@ -445,7 +454,7 @@ class Compiler {
 		} catch (e:hxc.parser.ParserError) {
 			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.context.Context.ContextError) {
-			abortWithMessage(ctx, e.message, e.pos);
+			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.TypingError) {
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:Dynamic) {

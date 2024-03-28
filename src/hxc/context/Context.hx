@@ -388,11 +388,13 @@ class ContextError {
 	public var message:String;
 	public var pos:Position;
 	public var kind:ContextErrorKind;
+	public var depth:Int;
 
-	public function new(message:String, pos:Position, ?kind:ContextErrorKind) {
+	public function new(message:String, pos:Position, ?kind:ContextErrorKind, depth:Int = 0) {
 		this.message = message;
 		this.pos = pos;
 		this.kind = kind == null ? Other : kind;
+		this.depth = depth;
 	}
 
 	public function toString():String {

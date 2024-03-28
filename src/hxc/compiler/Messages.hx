@@ -79,7 +79,8 @@ class Messages {
 			var hd = out[0];
 			var indent = 0;
 			while (indent < hd.s.length - 1 && (hd.s.charCodeAt(indent) == " ".code || hd.s.charCodeAt(indent) == "\t".code)) indent++;
-			out = [hd, {n: 0, s: repeat(" ", indent + 1) + "[...]"}, out[out.length - 1]];
+			// The crop marker indents one character beyond the first line's leading whitespace.
+			out = [hd, {n: 0, s: repeat(" ", indent + 2) + "[...]"}, out[out.length - 1]];
 		}
 		return out;
 	}

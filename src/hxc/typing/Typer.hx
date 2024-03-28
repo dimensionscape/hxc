@@ -2729,7 +2729,7 @@ class Typer {
 			var t:T = try {
 				ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
 			} catch (ce:hxc.context.Context.ContextError) {
-				ctx.com.addDiagnostic(ce.message, ce.pos);
+				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
 				TypeFunctions.tDynamic;
 			} catch (te:TypingError) {
 				ctx.com.addDiagnostic(te.message, te.pos, te.depth);

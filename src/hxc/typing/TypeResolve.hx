@@ -30,10 +30,10 @@ class TypeResolve {
 			} catch (e:ContextError) {
 				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of
 				// the module still resolves but the compile fails.
-				ctx.addDiagnostic(e.message, e.pos);
+				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (e:hxc.core.TypingError) {
-				ctx.addDiagnostic(e.message, e.pos);
+				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (_:Dynamic) {
 				ctx.currentModule = m;
@@ -297,7 +297,7 @@ class TypeResolve {
 				if (e.message == "Type not found : Expr" && isUserMacroField) {
 					var duplicate = false;
 					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
-					if (!duplicate) ctx.addDiagnostic(e.message, e.pos);
+					if (!duplicate) ctx.addDiagnostic(e.message, e.pos, e.depth);
 				}
 				else ctx.unresolvedFields++;
 			}
@@ -822,7 +822,7 @@ class TypeResolve {
 				if (e.message == "Type not found : Expr" && isUserMacroField) {
 					var duplicate = false;
 					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
-					if (!duplicate) ctx.addDiagnostic(e.message, e.pos);
+					if (!duplicate) ctx.addDiagnostic(e.message, e.pos, e.depth);
 				}
 				else ctx.unresolvedFields++;
 			}

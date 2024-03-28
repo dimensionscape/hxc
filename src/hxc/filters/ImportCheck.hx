@@ -44,7 +44,7 @@ class ImportCheck {
 				if (plainImportsTried.exists(key)) continue;
 				plainImportsTried.set(key, true);
 				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, imp.pos)
-				catch (e:hxc.context.Context.ContextError) ctx.addDiagnostic(e.message, e.pos)
+				catch (e:hxc.context.Context.ContextError) ctx.addDiagnostic(e.message, e.pos, e.depth)
 				catch (_:Dynamic) {}
 			}
 		}

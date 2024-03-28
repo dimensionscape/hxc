@@ -206,7 +206,7 @@ class ModuleLoader {
 		function checkName(name:String, p:Position):Void {
 			function err(prevPos:Position):Void {
 				ctx.addDiagnostic("Name " + name + " is already defined in this module", p);
-				throw new ContextError("... Previous declaration here", prevPos);
+				throw new ContextError("... Previous declaration here", prevPos, 1);
 			}
 			for (t2 in decls) {
 				if (TypeFunctions.tPath(t2).name == name)
