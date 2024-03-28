@@ -2174,19 +2174,21 @@ class Typer {
 		var init = mapped.isMap
 			? new Expr(ENew({path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p}, []), p)
 			: new Expr(EArrayDecl([]), p);
-		var decl = new Expr(EVars([{evName: {name: acc, pos: p}, evFinal: false, evStatic: false, evType: null, evExpr: init, evMeta: []}]), p);
-		var te = typeExpr(ctx, new Expr(EBlock([decl, mapped.expr, new Expr(EConst(CIdent(acc)), p)]), p), withType);
-		switch (te.expr) {
-			case TBlock(el) if (el.length > 0):
-				switch (el[0].expr) {
-					case TVarExpr(v, _) if (v.name == acc):
-						v.name = "`";
-						v.kind = VGenerated;
-					case _:
-				}
-			case _:
-		}
-		return te;
+		// The empty accumulator types WITH the expectation first, so the loop body's push checks each
+		// element against the known element type (a mismatched literal reports at its own position, not as
+		// a whole-array unify). A map accumulator keeps the plain value context: the multiType Map
+		// constructor cannot take an expectation whose parameters are still open monomorphs.
+		var tea = typeExpr(ctx, init, mapped.isMap ? WithTypeTools.value : withType);
+		var v = TypeFunctions.allocVar(VGenerated, "`", tea.type, p);
+		var restore = saveLocals(ctx);
+		ctx.locals.set(acc, v);
+		var efor = typeExpr(ctx, mapped.expr, WithTypeTools.noValue);
+		restore();
+		return TypeFunctions.mk(TBlock([
+			TypeFunctions.mk(TVarExpr(v, tea), ctx.com.basic.tvoid, p),
+			efor,
+			TypeFunctions.mk(TLocal(v), v.type, p),
+		]), v.type, p);
 	}
 
 	// Lowers a comprehension body so each tail expression updates the accumulator.
@@ -2210,6 +2212,9 @@ class Typer {
 				var last = comprehensionPush(acc, nl[nl.length - 1]);
 				nl[nl.length - 1] = last.expr;
 				same(new Expr(EBlock(nl), e.pos), last.isMap);
+			case EBlock([]):
+				// An empty block body is an empty object literal.
+				comprehensionPush(acc, new Expr(EObjectDecl([]), e.pos));
 			case EParenthesis(e1):
 				var b = comprehensionPush(acc, e1);
 				same(new Expr(EParenthesis(b.expr), e.pos), b.isMap);
