@@ -101,6 +101,19 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
+		// The live eval call stack's positions, newest first, skipping the API call frame itself.
+		reg2("getMacroStack", "get_macro_stack", function(a) {
+			var envs:Array<EvalValue> = [];
+			// The reference skips the getMacroStack call frame; hxc's native builtins push no
+			// frame, so the chain already starts at the caller.
+			var env = EvalContext.getEval(ec).env;
+			while (env != null) {
+				envs.push(encPos(hxc.eval.EvalExceptions.envPosition(env)));
+				env = env.parent;
+			}
+			return encodeArray(envs);
+		});
+		reg2("initMacrosDone", "init_macros_done", function(a) return initMacrosDoneFlag ? VTrue : VFalse);
 		// Error/fatal_error abort at the given position. "error"/"fatal_error" (vfun3 msg p depth ->
 		// raise (Error.Fatal_error (located msg p, depth))).
 		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
@@ -157,14 +170,18 @@ class EvalMacro {
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
 		reg2("typeof", "typeof", function(a) {
-			if (curTctx == null) throw new TypingError("typeof outside a macro", curPos);
-			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
+			// An init macro has no expression typer yet; type in the macro world like the reference's
+			// macro-context typer does API over mctx).
+			var tctx = curTctx != null ? curTctx : (macroCom != null ? new TyperContext(macroCom) : null);
+			if (tctx == null) throw new TypingError("typeof outside a macro", curPos);
+			var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
 			settleOpenReturns(te);
 			return encodeType(ec, te.type);
 		});
 		reg2("typeExpr", "type_expr", function(a) {
-			if (curTctx == null) throw new TypingError("typeExpr outside a macro", curPos);
-			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
+			var tctx = curTctx != null ? curTctx : (macroCom != null ? new TyperContext(macroCom) : null);
+			if (tctx == null) throw new TypingError("typeExpr outside a macro", curPos);
+			var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
 			settleOpenReturns(te);
 			return encodeTypedExpr(ec, te);
 		});
@@ -843,8 +860,10 @@ class EvalMacro {
 		if (p != null && p.pnames.exists(EvalHash.hash(field))) return p;
 		if (isInstance || macroCom == null) return p;
 		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) null;
+		// Only the REQUESTED class (or the module-statics carrier) may satisfy the lookup; a same-module
+		// sibling with a same-named static must not shadow it (macros resolve by exact path + method).
 		if (m != null) for (mt in m.types) switch (mt) {
-			case TClassDecl(c) if (c.statics.exists(field)):
+			case TClassDecl(c) if ((c.path.name == path.name || (m.statics != null && c == m.statics)) && c.statics.exists(field)):
 				var candidate = ec.staticPrototypes.get(EvalHash.pathHash(c.path));
 				if (candidate != null) return candidate;
 			case _:
@@ -984,13 +1003,28 @@ class EvalMacro {
 		}
 	}
 
+	static var initMacrosDoneFlag = false;
+
 	public static function runAfterInitMacrosCallbacks():Void {
+		// The stage advances before the callbacks run, so an init-only API used inside one warns.
+		// (CInitMacrosDone precedes after_init_macros callbacks).
+		initMacrosDoneFlag = true;
 		for (cb in onAfterInitMacrosCallbacks) {
 			EvalContext.setCtx(cb.ec);
-			switch (cb.fn) {
+			// A Context.error inside one callback records and the remaining callbacks still
+			// run (the reference's callback runner catches per callback).
+			try switch (cb.fn) {
 				case VFunction(f, _): f([]);
 				case VFieldClosure(recv, f): f([recv]);
 				case _:
+			} catch (te:hxc.core.TypingError) {
+				var mainCom = macroCom != null && macroCom.forwardWarningsTo != null ? macroCom.forwardWarningsTo : macroCom;
+				if (mainCom != null) mainCom.addDiagnostic(te.message, te.pos, te.depth);
+			} catch (re:hxc.eval.EvalExceptions.EvalRunTimeException) {
+				var mainCom = macroCom != null && macroCom.forwardWarningsTo != null ? macroCom.forwardWarningsTo : macroCom;
+				var info = runtimeMacroError(re);
+				if (mainCom != null && info != null) mainCom.addDiagnostic(info.message, info.pos);
+				else if (mainCom != null) mainCom.addDiagnostic(EvalStdLib.stringOf(re.value), Position.nullPos);
 			}
 		}
 	}
