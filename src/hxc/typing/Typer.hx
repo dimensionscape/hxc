@@ -2931,7 +2931,9 @@ class Typer {
 				}
 				return TypeFunctions.mk(TReturn(te), monoOrDynamic(ctx, withType, p), p);
 				} catch (err:TypingError) {
-					if (ctx.com.isMacro) throw err;
+					// Inside call arguments the failure raises so the argument boundary annotates it with the
+					// parameter name .
+					if (ctx.com.isMacro || ctx.inCallArgs) throw err;
 					ctx.com.addDiagnostic(err.message, err.pos, err.depth);
 					if (StringTools.startsWith(err.message, "Int should be haxe.ds.Option"))
 						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
