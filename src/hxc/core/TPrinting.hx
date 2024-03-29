@@ -223,10 +223,45 @@ class TPrinting {
 		}
 	}
 
-	// better_error_message turn a unify-error list into either a simple "X should be Y" or, when the
-	// mismatch is nested in a field/argument/return/type-parameter, the "error: <cause>\nhave:
-	// <actual>\nwant: <expected>" form (the have/want lines are rendered as message continuations by the
-	// formatters).
+	// Turn a unify-error list into either a simple "X should be Y" or, when the mismatch is nested in a
+	// field/argument/return/type-parameter, the "error: <cause>\nhave: <actual>\nwant: <expected>" form
+	// (the have/want lines are rendered as message continuations by the formatters).
+	// The chain terminal prints anon fields as names only (optional marked ?), function arguments elided,
+	// and type parameters as <...>; unbound monomorphs share the outer print context numbering.
+	static function beShallowType(ctx:Ref<Array<{m:TMono, id:Int}>>, t:T):String {
+		return switch (t) {
+			case TMono(r): switch (r.type) { case null: sType(ctx, t); case some: beShallowType(ctx, some); };
+			case TEnum(e, tl): Globals.sTypePath(e.path) + beShallowParams(tl);
+			case TInst(c, tl): switch (c.kind) {
+				case KExpr(_): sType(ctx, t);
+				case _: Globals.sTypePath(c.path) + beShallowParams(tl);
+			};
+			case TType(d, tl): Globals.sTypePath(d.path) + beShallowParams(tl);
+			case TAbstract(a, tl): Globals.sTypePath(a.path) + beShallowParams(tl);
+			case TFun({args: []}): "() -> ...";
+			case TFun({args: [{name: ""}]}): "... -> ...";
+			case TFun(sig): "(" + [for (a in sig.args) (a.opt ? "?" : "") + "..."].join(", ") + ") -> ...";
+			case TAnon(a): switch (a.status.get()) {
+				case Statics(c): "{ Statics " + Globals.sTypePath(c.path) + " }";
+				case EnumStatics(e): "{ EnumStatics " + Globals.sTypePath(e.path) + " }";
+				case AbstractStatics(ab): "{ AbstractStatics " + Globals.sTypePath(ab.path) + " }";
+				case _:
+					// Prepending in ascending key order prints fields in descending order.
+					var names = [for (n in a.fields.keys()) n];
+					names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+					var fl = [for (n in names) (TypeFunctions.hasMeta(":optional", a.fields.get(n).meta) ? " ?" : " ") + n];
+					"{" + fl.join(",") + " }";
+			};
+			case TDynamic(null): "Dynamic";
+			case TDynamic(t2): "Dynamic" + beShallowParams([t2]);
+			case TLazy(f): beShallowType(ctx, TypeFunctions.lazyType(f));
+		};
+	}
+
+	static function beShallowParams(tl:Array<T>):String {
+		return tl.length == 0 ? "" : "<" + [for (_ in tl) "..."].join(", ") + ">";
+	}
+
 	public static function betterErrorMessage(errors:Array<UnifyErrorKind>):String {
 		var ctx = printContext();
 		// Collapse a run of consecutive Cannot_unify down to its first entry.
@@ -257,10 +292,7 @@ class TPrinting {
 			function deep():{a:String, e:String} {
 				if (access.next != null) return loopAccess(access.next, access);
 				if (access.messages.length > 0) buffer.add(unifyErrorMsgOne(ctx, access.messages[0]));
-				shortParams = true;
-				var r = {a: sType(ctx, access.actual), e: sType(ctx, access.expected)};
-				shortParams = false;
-				return r;
+				return {a: beShallowType(ctx, access.actual), e: beShallowType(ctx, access.expected)};
 			}
 			return switch (access.kind) {
 				case BField(s):
