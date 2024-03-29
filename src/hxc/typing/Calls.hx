@@ -970,7 +970,14 @@ class Calls {
 			inline function restore() {
 				if (multi) {
 					ctx.com.raiseTypingErrors = oldRaise;
-					if (ctx.com.diagnostics.length > diagBefore) ctx.com.diagnostics.resize(diagBefore);
+					if (ctx.com.diagnostics.length > diagBefore) {
+						// A failed attempt's WARNINGS stay (a $type inside a lambda reports once per typing
+						// attempt);
+						// only trial ERRORS roll back.
+						var kept = [for (i in diagBefore...ctx.com.diagnostics.length) if (ctx.com.diagnostics[i].severity != hxc.core.Globals.MessageSeverity.Error) ctx.com.diagnostics[i]];
+						ctx.com.diagnostics.resize(diagBefore);
+						for (d in kept) ctx.com.diagnostics.push(d);
+					}
 				}
 			}
 			try {
