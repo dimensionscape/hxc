@@ -280,7 +280,19 @@ class EvalMacro {
 			} else {
 				tpath = {tpackage: [], tname: last, tsub: null, tparams: []};
 			}
-			return encodeType(ec, Typeload.loadInstance(com, [], tpath, curPos, true));
+			var t = Typeload.loadInstance(com, [], tpath, curPos, true);
+			// The loaded type's build macros run inside the call, like the reference's
+			// PBuildClass delays flushing during get_type (an @:autoBuild subclass in the
+			// same module reports from here).
+			switch (TypeFunctions.follow(t)) {
+				case TInst(c, _) if (c.module != null):
+					for (mt in c.module.types) switch (mt) {
+						case TClassDecl(c2): ensureBuilt(com, c2);
+						case _:
+					}
+				case _:
+			}
+			return encodeType(ec, t);
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
 		reg2("unify", "unify", function(a) {
@@ -683,21 +695,25 @@ class EvalMacro {
 
 
 	public static function runBuildMacros(com:Context):Void {
-		// Build macros trigger through delays which run newest-first, so the last registered
-		// class builds first (the reference's PBuildClass delay order); dependency order is
-		// still guaranteed by ensureBuilt's super/interface recursion.
-		var mi = com.modules.length - 1;
-		while (mi >= 0) {
-			var types = com.modules[mi].types;
-			var ti = types.length - 1;
-			while (ti >= 0) {
-				switch (types[ti]) {
-					case TClassDecl(c): ensureBuilt(com, c);
-					case _:
+		// Build macros trigger through delays which run newest-first, so the last registered class builds
+		// first; dependency order is still guaranteed by ensureBuilt's super/interface recursion. A build
+		// can load more modules, so sweep to a fixed point (builtClasses keeps revisits cheap).
+		var done = -1;
+		while (com.modules.length != done) {
+			done = com.modules.length;
+			var mi = done - 1;
+			while (mi >= 0) {
+				var types = com.modules[mi].types;
+				var ti = types.length - 1;
+				while (ti >= 0) {
+					switch (types[ti]) {
+						case TClassDecl(c): ensureBuilt(com, c);
+						case _:
+					}
+					ti--;
 				}
-				ti--;
+				mi--;
 			}
-			mi--;
 		}
 	}
 
@@ -3412,7 +3428,11 @@ class EvalMacro {
 	}
 
 	public static function reportError(msg:String, pos:Position):Void {
-		if (currentCom != null) currentCom.addDiagnostic(msg, pos);
+		// A macro's reported error is a USER compiler message: it lands on the main compile
+		// even when raised from the macro world (whose own error diagnostics do not forward).
+		var com = currentCom;
+		if (com != null && com.forwardWarningsTo != null) com = com.forwardWarningsTo;
+		if (com != null) com.addDiagnostic(msg, pos);
 	}
 
 	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position}> {
