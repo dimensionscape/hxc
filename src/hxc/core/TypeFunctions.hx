@@ -357,6 +357,27 @@ class TypeFunctions {
 	public static function lazyProcessing(f:Void->T):TLazy return LProcessing(f);
 	public static function lazyWait(f:Void->T):TLazy return LWait(f);
 
+	// Copies a type, replacing each distinct unbound monomorph with a fresh one (memoized so shared monos
+	// stay shared).
+	public static function duplicate(t:T):T {
+		var monos:Array<{src:TMono, copy:T}> = [];
+		function loop(t:T):T {
+			return switch (t) {
+				case TMono(r) if (r.type == null):
+					var found:Null<T> = null;
+					for (m in monos) if (m.src == r) { found = m.copy; break; }
+					if (found != null) found else {
+						var m = mkMono();
+						monos.push({src: r, copy: m});
+						m;
+					}
+				case _:
+					map(loop, t);
+			}
+		}
+		return loop(t);
+	}
+
 	// Map loop t - applies loop to component types, rebuilding t (sharing-preserving on []).
 	public static function map(loop:T->T, t:T):T {
 		return switch (t) {

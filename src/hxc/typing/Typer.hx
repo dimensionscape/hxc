@@ -555,22 +555,9 @@ class Typer {
 				case TAbstract(a, tl):
 					for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return null;
 					var hits:Array<T> = [];
-					function addHit(ft:T):Void {
+					for (ft in getAbstractFroms(ctx, a, tl)) {
 						var et = loop(seen.concat([t]), ft);
 						if (et != null) hits.push(et);
-					}
-					for (ft in a.from) addHit(TypeFunctions.applyParams(a.params, tl, ft));
-					for (fc in a.fromField) {
-						switch (TypeFunctions.follow(fc.cf.type)) {
-							case TFun(sig) if (sig.args.length > 0):
-								var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
-								function map(x:T):T return TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(fc.cf.params, monos, x));
-								try {
-									TypeUnification.unifyDefault(map(sig.ret), t);
-									addHit(map(sig.args[0].t));
-								} catch (_:UnifyError) {}
-							case _:
-						}
 					}
 					hits.length == 1 ? hits[0] : null;
 				case TDynamic(_):
@@ -583,25 +570,51 @@ class Typer {
 		return loop([], t);
 	}
 
+	// A @:from field with @:from(ignoredByInference) is skipped when inferring an expected type from an
+	// abstract's froms.
+	static function fromIgnoredByInference(ml:Metadata):Bool {
+		var ignored = false;
+		for (m in ml) if (m.name == ":from") for (e in m.params) switch (e.expr) {
+			case EConst(CIdent("ignoredByInference")):
+				ignored = true;
+			case EBinop(OpAssign, {expr: EConst(CIdent("ignoredByInference"))}, {expr: EConst(CIdent(v))}) if (v == "true" || v == "false"):
+				ignored = v == "true";
+			case _:
+		}
+		return ignored;
+	}
+
+	// The from types an expected abstract offers for inference: direct from entries with params applied,
+	// plus each single-argument @:from field whose monomorphized return matches the abstract strictly (a
+	// macro @:from degrades to Dynamic and fails this check, so it never leaks a Dynamic expectation).
+	// Duplicated params keep the probe from binding the real expected parameters.
+	static function getAbstractFroms(ctx:TyperContext, a:TAbstract, pl:Array<T>):Array<T> {
+		var acc:Array<T> = [for (t in a.from) TypeFunctions.applyParams(a.params, pl, t)];
+		for (fc in a.fromField) {
+			var f = fc.cf;
+			if (f == ctx.curfield) continue;
+			if (fromIgnoredByInference(f.meta)) continue;
+			var ftype = f.params.length == 0 ? f.type : {
+				var monos:Array<T> = [for (_ in f.params) TypeFunctions.mkMono()];
+				TypeFunctions.applyParams(f.params, monos, f.type);
+			};
+			switch (TypeFunctions.follow(ftype)) {
+				case TFun(sig) if (sig.args.length == 1):
+					try {
+						TypeUnification.typeEqKind(EqStrict, sig.ret, TAbstract(a, [for (x in pl) TypeFunctions.duplicate(x)]));
+						acc = [sig.args[0].t].concat(acc);
+					} catch (_:UnifyError) {}
+				case _:
+			}
+		}
+		return acc;
+	}
+
 	static function abstractFromTypes(ctx:TyperContext, t:T):Array<T> {
 		t = TypeFunctions.follow(t);
 		return switch (t) {
 			case TAbstract(a, tl):
-				var hits:Array<T> = [];
-				for (ft in a.from) hits.push(TypeFunctions.applyParams(a.params, tl, ft));
-				for (fc in a.fromField) {
-					switch (TypeFunctions.follow(fc.cf.type)) {
-						case TFun(sig) if (sig.args.length == 1):
-							var monos = [for (_ in fc.cf.params) TypeFunctions.mkMono()];
-							function map(x:T):T return TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(fc.cf.params, monos, x));
-							try {
-								TypeUnification.unifyDefault(map(sig.ret), t);
-								hits.push(map(sig.args[0].t));
-							} catch (_:UnifyError) {}
-						case _:
-					}
-				}
-				hits;
+				getAbstractFroms(ctx, a, tl);
 			case _:
 				[];
 		}
