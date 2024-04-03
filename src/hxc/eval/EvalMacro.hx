@@ -1763,9 +1763,9 @@ class EvalMacro {
 			buildTctx.tthis = TInst(c, params);
 			com.currentModule = c.module;
 			curTctx = buildTctx;
-			// Context.currentPos() in a build macro is the @:build meta's own position, not
-			// the inner call.
-			curPos = entry.pos;
+			// Context.currentPos() in a genericBuild macro is the INSTANTIATION position, unlike @:build
+			// which uses the meta position.
+			curPos = p;
 			curBuildClass = c;
 			curBuildParams = params;
 			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
