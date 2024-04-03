@@ -859,26 +859,23 @@ class TypeResolve {
 		return switch (td.type) { case TMono(r) if (r.type == null): false; case _: true; };
 	}
 
-	// The host side of a macro function degrades every hint to Dynamic without resolving it (the
-	// declaring file may lack the macro-only imports); ExprOf<T> keeps its T and haxe.PosInfos is
-	// rejected. (to_dyn).
 	static function loadMacroHint(ctx:Context, typeParams:TypeParams, th:Null<TypeHint>):T {
-		if (th != null) switch (th.ct) {
+		var exprPath:TypePath = {tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: null};
+		if (th == null) {
+			return Typeload.loadInstance(ctx, typeParams, exprPath, hxc.ast.Position.nullPos, false);
+		}
+		 switch (th.ct) {
 			case CTPath(tp):
 				var isExprOf =
 					(tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
 						&& tp.tname == "Expr" && tp.tsub == "ExprOf")
 					|| (tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null);
-				if (isExprOf && tp.tparams.length == 1) switch (tp.tparams[0]) {
-					case TPType(inner): return Typeload.loadComplexType(ctx, typeParams, inner);
-					case _:
-				}
-				if (tp.tpackage.length == 1 && tp.tpackage[0] == "haxe" && tp.tname == "PosInfos"
-						&& tp.tsub == null && tp.tparams.length == 0)
-					throw new hxc.core.TypingError("haxe.PosInfos is not allowed on macro functions, use Context.currentPos() instead", th.pos);
+				var isBareExpr = tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null;
+				if (isExprOf || isBareExpr)
+					return Typeload.loadInstance(ctx, typeParams, exprPath, th.pos, false);
 			case _:
 		}
-		return TypeFunctions.tDynamic;
+		return Typeload.loadTypeHint(ctx, typeParams, th, false);
 	}
 
 	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>, ownerModule:Null<ModuleDef>):Void {
