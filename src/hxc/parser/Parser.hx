@@ -1110,6 +1110,20 @@ class Parser {
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, "$" + v, efk), Position.union(e1.pos, p2)));
 			case _:
+				// The display position sits right after the dot of an unfinished dot-path (e.g. a metadata
+				// argument `@:access(pack.`): raise the type-path completion the way an import at the
+				// position does. (would_skip_display_position in the dot-path continuation).
+				if (atDisplayDot(p)) {
+					var segments:Array<String> = [];
+					function collect(e:Expr):Bool {
+						return switch (e.expr) {
+							case EConst(CIdent(s)): segments.push(s); true;
+							case EField(e2, f, _): if (collect(e2)) { segments.push(f); true; } else false;
+							case _: false;
+						}
+					}
+					if (collect(e1)) raiseTypePath(segments, false);
+				}
 				// Integer followed by dot -> float
 				switch (e1.expr) {
 					case EConst(CInt(v, null)):

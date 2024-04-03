@@ -836,6 +836,28 @@ class Compiler {
 					case _:
 				}
 			}
+		} else {
+			// A pure package prefix lists the package's modules and sub-packages across the classpaths. .
+			var seen = new haxe.ds.StringMap<Bool>();
+			for (cp in ctx.classPath) {
+				var dir = cp + tc.pack.join("/");
+				if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir)) continue;
+				for (entry in try FileSystem.readDirectory(dir) catch (_:Dynamic) []) {
+					if (seen.exists(entry)) continue;
+					var full = dir + "/" + entry;
+					if (StringTools.endsWith(entry, ".hx")) {
+						var name = entry.substr(0, entry.length - 3);
+						if (name.length > 0 && name.charCodeAt(0) >= "A".code && name.charCodeAt(0) <= "Z".code) {
+							seen.set(entry, true);
+							fields.push({kind: "type", name: name, type: "", doc: null});
+						}
+					} else if (FileSystem.isDirectory(full) && entry.length > 0
+							&& entry.charCodeAt(0) >= "a".code && entry.charCodeAt(0) <= "z".code) {
+						seen.set(entry, true);
+						fields.push({kind: "package", name: entry, type: "", doc: null});
+					}
+				}
+			}
 		}
 		Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(fields));
 	}

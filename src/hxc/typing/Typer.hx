@@ -975,6 +975,24 @@ class Typer {
 						}
 				}
 			case EObjectDecl(fields):
+				// The display position sits inside the literal on no field: complete the EXPECTED
+				// structure's fields. (CRStructureField via display_expr on an object declaration).
+				if (hxc.parser.Parser.displayFile != null && fieldCompletionFound == null && atDisplayPos(p)) {
+					var covered = false;
+					for (f in fields) if (atDisplayPos(f.expr.pos)) { covered = true; break; }
+					var an = covered ? null : expectedAnonFromWithType(withType);
+					if (an != null) {
+						fieldCompletionFound = [for (name in an.fields.keys()) {
+							var cf = an.fields.get(name);
+							{
+								kind: cf.kind.match(Method(_)) ? "method" : "var",
+								name: cf.name,
+								type: hxc.core.TPrinting.sTypeStr(cf.type),
+								doc: Ast.genDocTextOpt(cf.doc)
+							}
+						}];
+					}
+				}
 				// A field may appear only once in an object literal.
 				{
 					var seen = new haxe.ds.StringMap<Bool>();
