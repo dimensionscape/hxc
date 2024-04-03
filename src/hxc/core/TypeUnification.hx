@@ -1384,16 +1384,30 @@ class TypeUnification {
 			switch (TypeFunctions.follow(cf.type)) {
 				case TFun(sig) if (sig.args.length >= 1):
 					var ta = sig.args[0].t;
+					// The reference follow on cf.type resolves the lazily built signature, so an
+					// unhinted cast target reads its inferred return; the recorded pair here can be a
+					// pre-build snapshot whose return is still an open monomorph, which would unify with
+					// anything. Read the built impl field instead, the same live read unifiesFromField
+					// does. (follow cf.type).
+					var snapshotOpen = TypeFunctions.follow(t).match(TMono(_)) && !cf.kind.match(Method(MethMacro));
+					var liveCf = snapshotOpen && ab.impl != null ? ab.impl.statics.get(cf.name) : null;
+					var liveSig = liveCf == null ? null : switch (TypeFunctions.follow(liveCf.type)) {
+						case TFun(s2) if (s2.args.length == sig.args.length && liveCf.params.length == cf.params.length): s2;
+						case _: null;
+					};
+					var params = liveSig != null ? liveCf.params : cf.params;
+					var ta2 = liveSig != null ? liveSig.args[0].t : ta;
+					var t2 = liveSig != null ? liveSig.ret : t;
 					function map0(x:T):T return TypeFunctions.applyParams(ab.params, tl, x);
-					var monos = spawnConstrainedMonos(map0, cf.params);
-					function map2(x:T):T return map0(TypeFunctions.applyParams(cf.params, monos, x));
+					var monos = spawnConstrainedMonos(map0, params);
+					function map2(x:T):T return map0(TypeFunctions.applyParams(params, monos, x));
 					var uctx2 = get_abstract_context(uctx, a, b, ab);
 					var unify_func = get_abstract_unify_func(uctx2, EqStrict);
 					var athis = map2(ab.thisType);
 					// Cannot allow implicit casts when the this type is not completely known yet
 					if (TypeFunctions.hasMeta(Meta.MultiType, ab.meta) && TypeFunctions.hasMono(athis)) throw new UnifyError([]);
-					withVariance(uctx2, function(x, y) typeEq(uctx2.withEqualityKind(EqStrict), x, y), athis, map2(ta));
-					unify_func(map2(t), b);
+					withVariance(uctx2, function(x, y) typeEq(uctx2.withEqualityKind(EqStrict), x, y), athis, map2(ta2));
+					unify_func(map2(t2), b);
 				case _:
 					throw "unifies_to_field: expected TFun";
 			}
@@ -1519,11 +1533,19 @@ class TypeUnification {
 	}
 
 	public static function findFieldFrom(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		// The cast field is forced lazily by following cf.type, so an unhinted cast target resolves
+		// before the candidate unifies against it; an unforced target is an open monomorph that matches
+		// anything without constraining the call.
+		buildAbstract(ab);
 		for (c in ab.fromField) if (unifiesFromField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
 		throw new NotFound();
 	}
 
 	public static function findFieldTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		// Same forcing as findFieldFrom.
+		buildAbstract(ab);
+		if (Sys.getEnv("HXC_DEBUG_MONO") != null && ab.path.name.substr(0,3) == "Vec")
+			for (c in ab.toField) Sys.println("[findto] " + c.cf.name + " t=" + TPrinting.sTypeStr(c.t) + " cftype=" + TPrinting.sTypeStr(c.cf.type) + " expr=" + (c.cf.expr != null));
 		for (c in ab.toField) if (unifiesToField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
 		throw new NotFound();
 	}
