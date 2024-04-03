@@ -459,12 +459,18 @@ class Compiler {
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
 		} catch (e:hxc.parser.LexerError) {
+			// A failure under diagnostics reporting emits the JSON report instead of the plain message;
+			// parser and lexer failures use DKParserError.
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, hxc.parser.LexerError.errorMsg(e.msg), e.pos, 4);
 			abortWithMessage(ctx, hxc.parser.LexerError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.parser.ParserError) {
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos, 4);
 			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.context.Context.ContextError) {
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.TypingError) {
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
@@ -687,9 +693,25 @@ class Compiler {
 		return null;
 	}
 
+	// The report covers only the requested display file (plus fileless positions).
+	static function isDiagnosticsFile(ctx:Context, pfile:String):Bool {
+		var parts = displayParts(ctx);
+		if (parts.length == 0) return true;
+		if (pfile == "?") return true;
+		var want = try FileSystem.fullPath(parts[0]) catch (_:Dynamic) parts[0];
+		var got = try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
+		return want.toLowerCase() == got.toLowerCase();
+	}
+
+	static function diagnosticsAbort(ctx:Context, message:String, pos:Position, kind:Int, depth:Int = 0):Void {
+		ctx.diagnostics.push({message: message, pos: pos, depth: depth, severity: MessageSeverity.Error, kind: kind});
+		displayDiagnostics(ctx);
+	}
+
 	static function displayDiagnostics(ctx:Context):Void {
 		var groups:Array<{file:String, items:Array<String>}> = [];
 		for (d in ctx.diagnostics) {
+			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
 			var i = Position.getInfos(d.pos);
 			var displayFile = d.pos.file;
 			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
@@ -700,7 +722,7 @@ class Compiler {
 				case Error: 1;
 				case Hint: 4;
 			};
-			var kind = 2;
+			var kind = d.kind == null ? 2 : d.kind;
 			var args = haxe.Json.stringify(d.message);
 			var item = '{"kind":' + kind + ',"severity":' + severity
 				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column

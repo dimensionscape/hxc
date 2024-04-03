@@ -391,6 +391,8 @@ typedef CompilerDiagnostic = {
 	var pos:Position;
 	var depth:Int;
 	var severity:MessageSeverity;
+	// MessageKind for diagnostics-mode JSON output; null reads as DKCompilerMessage.
+	var ?kind:Int;
 };
 
 class ContextError {
