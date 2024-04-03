@@ -276,7 +276,7 @@ class Compiler {
 				Sys.stderr().writeString(displayFilePackage(ctx, dparts[0]) + "\n");
 				return;
 			}
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage")) {
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
@@ -284,6 +284,7 @@ class Compiler {
 					hxc.typing.Typer.displayDefinition = dmode == "position";
 					hxc.typing.Typer.displayHover = dmode == "type";
 					hxc.typing.Typer.displayUsage = dmode == "usage";
+					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -455,6 +456,10 @@ class Compiler {
 			return;
 		} catch (dp:hxc.compiler.DisplayXml.DisplayPositions) {
 			Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
+			return;
+		} catch (tl:hxc.compiler.DisplayXml.ToplevelCompletion) {
+			// No trailing newline: the completion string prints verbatim.
+			Sys.stderr().writeString(hxc.compiler.DisplayXml.printToplevel(tl.items));
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);

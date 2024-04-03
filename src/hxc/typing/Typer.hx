@@ -1254,6 +1254,102 @@ class Typer {
 			hoverFound = {t: te.type, p: te.pos};
 	}
 
+	// Legacy --display file@pos@toplevel: an identifier at the display position raises the
+	// visible-identifier collection instead of resolving.
+	public static var displayToplevel = false;
+
+	static function collectToplevel(ctx:TyperContext):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		inline function sType(t:T):String return hxc.core.TPrinting.sTypeStr(t);
+		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
+		// Locals in scope
+		for (name in ctx.locals.keys()) {
+			var v = ctx.locals.get(name);
+			if (name.length > 0 && name.charCodeAt(0) != "`".code)
+				items.push({kind: "local", name: name, type: sType(v.type)});
+		}
+		var c = ctx.curclass;
+		// Member fields, including inherited ones
+		if (c != null && ctx.curfun != FunStatic) {
+			var cur = c;
+			while (cur != null) {
+				for (name in cur.fields.keys()) {
+					var cf = cur.fields.get(name);
+					if (!noCompletion(cf.meta)) items.push({kind: "member", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+				}
+				cur = cur.superClass == null ? null : cur.superClass.c;
+			}
+		}
+		// Statics; on an abstract impl the CfImpl fields read as members
+		if (c != null) switch (c.kind) {
+			case KAbstractImpl(a) if (a.impl != null):
+				for (cf in a.impl.orderedStatics) {
+					if (noCompletion(cf.meta)) continue;
+					if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
+						if (ctx.curfun != FunStatic) items.push({kind: "member", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+					} else items.push({kind: "static", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+				}
+			case _:
+				for (cf in c.orderedStatics)
+					if (!noCompletion(cf.meta)) items.push({kind: "static", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+		}
+		// Enum constructors of the current module's enums and enum abstracts
+		var m = c == null ? null : c.module;
+		if (m != null) for (mt in m.types) switch (mt) {
+			case TEnumDecl(en):
+				for (name in en.constrs.keys()) {
+					var ef = en.constrs.get(name);
+					items.push({kind: "enum", name: ef.name, type: sType(ef.type), doc: Ast.genDocTextOpt(ef.doc)});
+				}
+			case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl != c):
+				for (cf in a.impl.orderedStatics)
+					if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
+						items.push({kind: "enumabstract", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+			case _:
+		}
+		// Literals
+		items.push({kind: "literal", name: "null"});
+		items.push({kind: "literal", name: "true"});
+		items.push({kind: "literal", name: "false"});
+		switch (ctx.curfun) {
+			case FunMember | FunConstructor | FunMemberClassLocal:
+				items.push({kind: "literal", name: "this"});
+				if (c != null && c.superClass != null) items.push({kind: "literal", name: "super"});
+			case FunMemberAbstract:
+				items.push({kind: "literal", name: "abstract"});
+			case _:
+		}
+		items.push({kind: "literal", name: "trace"});
+		// Type params
+		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(pc, _): items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path)});
+			case _:
+		}
+		// Module types, then the implicit StdTypes import (newest first, matching the reversed
+		// module_imports print). Abstract impl and module-fields carriers are excluded. (add_type).
+		var seenPaths = new haxe.ds.StringMap<Bool>();
+		function addType(mt:ModuleType):Void {
+			switch (mt) {
+				case TClassDecl({kind: KAbstractImpl(_) | KModuleFields(_)}): return;
+				case _:
+			}
+			var inf = TypeFunctions.tInfos(mt);
+			if (noCompletion(inf.meta)) return;
+			var key = hxc.core.Globals.sTypePath(inf.path);
+			if (seenPaths.exists(key)) return;
+			seenPaths.set(key, true);
+			items.push({kind: "type", name: inf.path.name, path: key});
+		}
+		if (m != null) for (mt in m.types) addType(mt);
+		var std = ctx.com.moduleLut.get("StdTypes");
+		if (std != null) {
+			var l = std.types.copy();
+			l.reverse();
+			for (mt in l) addType(mt);
+		}
+		return items;
+	}
+
 	public static function atDisplayPos(p:Position):Bool {
 		var df = hxc.parser.Parser.displayFile;
 		var off = hxc.parser.Parser.displayOffset;
@@ -1507,6 +1603,8 @@ class Typer {
 		var basic = ctx.com.basic;
 		return switch (c) {
 			case CIdent(s):
+				if (displayToplevel && atDisplayPos(p))
+					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
 			case CInt(s, suffix):
@@ -2761,6 +2859,18 @@ class Typer {
 	}
 
 	static function typeBlock(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		// The display position sits inside this block but on no statement (whitespace or an empty body):
+		// the reference parser marks the spot and completion raises with an empty subject. Statements
+		// before the cursor type first so their locals are in scope. (collect_and_raise, empty subject).
+		if (displayToplevel && atDisplayPos(p)) {
+			var covered = false;
+			for (e in el) if (atDisplayPos(e.pos)) { covered = true; break; }
+			if (!covered) {
+				var off = hxc.parser.Parser.displayOffset;
+				for (e in el) if (e.pos.max < off) try typeExpr(ctx, e, WithTypeTools.noValue) catch (_:TypingError) {}
+				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
+			}
+		}
 		var acc:Array<TExpr> = [];
 		function merge(e:TExpr) {
 			switch (e.expr) {

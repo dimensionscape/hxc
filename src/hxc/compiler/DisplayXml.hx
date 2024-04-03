@@ -19,6 +19,24 @@ class DisplayPositions {
 	}
 }
 
+// Completion kind values include local, member, static, enum, enumabstract, type, package and
+// literal. type, path and doc fill the t, p and d attributes.
+typedef ToplevelItem = {
+	kind:String,
+	name:String,
+	?type:String,
+	?path:String,
+	?doc:String,
+}
+
+class ToplevelCompletion {
+	public final items:Array<ToplevelItem>;
+
+	public function new(items:Array<ToplevelItem>) {
+		this.items = items;
+	}
+}
+
 class DisplayXml {
 	public static function htmlescape(s:String):String {
 		s = StringTools.replace(s, "&", "&amp;");
@@ -43,6 +61,34 @@ class DisplayXml {
 			b.add('<i n="' + f.name + '" k="' + f.kind + '"><t>' + htmlescape(f.type) + "</t><d>" + htmlescape(d) + "</d></i>\n");
 		}
 		b.add("</list>\n");
+		return b.toString();
+	}
+
+	// Preserve collection order. Deduplicate value identifiers, retain types and packages, and omit
+	// keywords and metadata from legacy output.
+	public static function printToplevel(items:Array<ToplevelItem>):String {
+		var b = new StringBuf();
+		b.add("<il>\n");
+		var seen = new haxe.ds.StringMap<Bool>();
+		inline function checkIdent(s:String):Bool {
+			return if (seen.exists(s)) false else { seen.set(s, true); true; }
+		}
+		inline function sDoc(d:Null<String>):String {
+			return d == null ? "" : ' d="' + htmlescape(d) + '"';
+		}
+		for (it in items) switch (it.kind) {
+			case "local" | "member" | "static" | "enum" | "enumabstract":
+				if (checkIdent(it.name))
+					b.add('<i k="' + it.kind + '" t="' + htmlescape(it.type == null ? "" : it.type) + '"' + sDoc(it.doc) + ">" + it.name + "</i>\n");
+			case "type":
+				b.add('<i k="type" p="' + htmlescape(it.path == null ? it.name : it.path) + '"' + ">" + it.name + "</i>\n");
+			case "package":
+				b.add('<i k="package">' + it.name + "</i>\n");
+			case "literal":
+				b.add('<i k="literal">' + it.name + "</i>\n");
+			case _:
+		}
+		b.add("</il>");
 		return b.toString();
 	}
 
