@@ -1395,19 +1395,49 @@ class Typer {
 			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		var seen = new haxe.ds.StringMap<Bool>();
+		function push(cf:TClassField):Void {
+			if (seen.exists(cf.name)) return;
+			seen.set(cf.name, true);
+			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+			fields.push({
+				kind: cf.kind.match(Method(_)) ? "method" : "var",
+				name: cf.name,
+				type: hxc.core.TPrinting.sTypeStr(t),
+				doc: Ast.genDocTextOpt(cf.doc)
+			});
+		}
+		// A single-character string constant offers the compile-time `code` field first.
+		switch (e1.expr) {
+			case EConst(CString(s, _)) if (s.length == 1):
+				seen.set("code", true);
+				fields.push({kind: "var", name: "code", type: "Int",
+					doc: "The character code of this character (inlined at compile-time)."});
+			case _:
+		}
 		if (typed != null) switch (typed.expr) {
 			case TTypeExpr(TClassDecl(c)):
-				for (cf in c.orderedStatics) {
-					if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
-					var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
-					fields.push({
-						kind: cf.kind.match(Method(_)) ? "method" : "var",
-						name: cf.name,
-						type: hxc.core.TPrinting.sTypeStr(t),
-						doc: null
-					});
-				}
+				for (cf in c.orderedStatics)
+					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
 			case _:
+				// Fields of the value's type: class instance fields walk the inheritance chain, structures list
+				// their members, and a function value has only the magic bind. .
+				switch (TypeFunctions.follow(typed.type)) {
+					case TInst(c, _):
+						var cur = c;
+						while (cur != null) {
+							for (name in cur.fields.keys()) {
+								var cf = cur.fields.get(name);
+								if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
+							}
+							cur = cur.superClass == null ? null : cur.superClass.c;
+						}
+					case TAnon(an):
+						for (name in an.fields.keys()) push(an.fields.get(name));
+					case TFun(sig):
+						fields.push({kind: "method", name: "bind", type: hxc.core.TPrinting.sTypeStr(TFun(sig)), doc: null});
+					case _:
+				}
 		}
 		// The statics list CONCATENATES the module's other types (the same-named main type
 		// excluded), whether or not any statics exist.
