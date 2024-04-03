@@ -1496,9 +1496,16 @@ class Parser {
 				return parseField(e1, EFSafe, p);
 			case POpen:
 				var p1 = next().pos;
-				var el = parseCallParamsList();
-				var p2 = expect(PClose);
-				return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
+				var el = psepTrailing(expr);
+				if (tokEq(peek(), PClose)) {
+					var p2 = next().pos;
+					return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
+				}
+				// An unfinished call argument list containing the display position keeps the parsed prefix
+				// so completion can fire inside an argument. (display-mode resume in parse_call_params).
+				if (displayFile != null && displayOffset >= p1.min && displayOffset <= peekInfo().pos.max)
+					return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, peekInfo().pos)));
+				throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 			case BkOpen:
 				junk();
 				var e2 = secureExpr();
@@ -1919,6 +1926,10 @@ class Parser {
 			if (tokEq(peek(), BrClose) || tokEq(peek(), Eof)) break;
 			acc.push(parseClassField(tdecl));
 		}
+		// A display-mode parse tolerates a body left unclosed by an earlier recovery (the file ends before
+		// the closing brace).
+		if (tokEq(peek(), Eof) && displayFile != null)
+			return {fields: acc, pos: peekInfo().pos};
 		var p2 = expect(BrClose);
 		return {fields: acc, pos: p2};
 	}

@@ -2758,10 +2758,16 @@ class EvalStdLib {
 	}
 
 	static function resolveMacroPath(ctx:EvalContext, file:String):EvalValue {
+		// An absolute path resolves to itself; the classpath walk falls back to the raw relative path when
+		// no empty classpath was listed.
+		if (haxe.io.Path.isAbsolute(file)) return mkStr(file);
+		var hadEmpty = false;
 		for (cp in ctx.classPath) {
+			if (cp == "") hadEmpty = true;
 			var path = cp == "" ? file : cp + file;
 			if (sys.FileSystem.exists(path)) return mkStr(path);
 		}
+		if (!hadEmpty && sys.FileSystem.exists(file)) return mkStr(file);
 		return EvalExceptions.excString(ctx, "File not found '" + file + "'");
 	}
 
