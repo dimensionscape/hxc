@@ -1410,6 +1410,27 @@ class Typer {
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
 		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
+			// An unresolvable receiver that spells an existing package directory is a dot-path prefix (a
+			// metadata argument like @:access(pack.); complete the package instead of reporting. .
+			var segments:Array<String> = [];
+			function collect(e:Expr):Bool {
+				return switch (e.expr) {
+					case EConst(CIdent(s)): segments.push(s); true;
+					case EField(e2, f, _): if (collect(e2)) { segments.push(f); true; } else false;
+					case _: false;
+				}
+			}
+			var allLower = collect(e1);
+			if (allLower) for (s in segments) if (s.length == 0 || !(s.charCodeAt(0) >= "a".code && s.charCodeAt(0) <= "z".code)) { allLower = false; break; }
+			if (allLower) {
+				var rel = segments.join("/");
+				var hit = false;
+				for (cp in ctx.com.classPath) {
+					var dir = cp + rel;
+					if (sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir)) { hit = true; break; }
+				}
+				if (hit) throw new hxc.parser.Parser.TypePathCompletion(segments, null, false);
+			}
 			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
@@ -1462,6 +1483,25 @@ class Typer {
 		if (identName != null) {
 			var ml = moduleTypeList(ctx, identName);
 			if (ml != null) fields = fields.concat(ml);
+		} else {
+			// A dotted receiver naming a module lists all the module's types with their dotted paths.
+			var segs:Array<String> = [];
+			function collect(e:Expr):Bool {
+				return switch (e.expr) {
+					case EConst(CIdent(s)): segs.push(s); true;
+					case EField(e2, f, _): if (collect(e2)) { segs.push(f); true; } else false;
+					case _: false;
+				}
+			}
+			if (collect(e1) && segs.length >= 2) {
+				var mpath = {pack: segs.slice(0, segs.length - 1), name: segs[segs.length - 1]};
+				var m = try hxc.context.ModuleLoader.loadModule(ctx.com, mpath, Position.nullPos) catch (_:Dynamic) null;
+				if (m != null) for (mt in m.types) {
+					var info = TypeFunctions.tInfos(mt);
+					if (info.isPrivate) continue;
+					fields.push({kind: "type", name: info.path.name, type: hxc.core.Globals.sTypePath(info.path), doc: null});
+				}
+			}
 		}
 		if (fieldCompletionFound == null) fieldCompletionFound = fields;
 		return TypeFunctions.mk(TConst(TNull), spawnMonomorph(ctx, p), p);

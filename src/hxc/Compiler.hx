@@ -350,6 +350,9 @@ class Compiler {
 			TypeFields.checkAbstractInheritance(ctx);
 			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
+			// A metadata argument containing the display position types as an expression so completion can
+			// fire inside it (e.g. @:access(pack.| ). .
+			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
 				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found == null ? [] : found) + "\n");
@@ -860,6 +863,36 @@ class Compiler {
 			}
 		}
 		Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(fields));
+	}
+
+	// Each metadata argument whose span encloses the display position types as an expression; failures
+	// are ignored so a half-written path still reaches its completion raise.
+	static function checkDisplayMetadata(ctx:Context):Void {
+		for (key in ctx.moduleLut.keys()) {
+			var m = ctx.moduleLut.get(key);
+			for (mt in m.types) {
+				var inf = hxc.core.TypeFunctions.tInfos(mt);
+				var metas = [inf.meta];
+				switch (mt) {
+					case TClassDecl(c):
+						for (cf in c.orderedStatics) metas.push(cf.meta);
+						for (name in c.fields.keys()) metas.push(c.fields.get(name).meta);
+					case _:
+				}
+				for (ml in metas) for (entry in ml) for (arg in entry.params) {
+					if (!hxc.typing.Typer.atDisplayPos(arg.pos)) continue;
+					var tctx = new hxc.typing.TyperContext(ctx);
+					switch (mt) {
+						case TClassDecl(c):
+							tctx.curclass = c;
+							tctx.typeParams = c.params;
+						case _:
+					}
+					try hxc.typing.Typer.typeExpr(tctx, arg, hxc.core.WithType.WithTypeTools.value)
+					catch (_:hxc.core.TypingError) {} catch (_:hxc.context.Context.ContextError) {}
+				}
+			}
+		}
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {
