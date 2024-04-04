@@ -1456,8 +1456,9 @@ class Typer {
 		}
 		if (typed != null) switch (typed.expr) {
 			case TTypeExpr(TClassDecl(c)):
+				// Private statics complete inside their declaring class.
 				for (cf in c.orderedStatics)
-					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
+					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == c) push(cf);
 			case _:
 				// Fields of the value's type: class instance fields walk the inheritance chain, structures list
 				// their members, and a function value has only the magic bind. .

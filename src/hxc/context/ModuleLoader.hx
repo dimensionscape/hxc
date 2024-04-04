@@ -56,6 +56,26 @@ class ModuleLoader {
 			|| relPath == "sys/thread/Semaphore.hx";
 	}
 
+	// Read display-stdin once and register its contents for diagnostics as well as parsing.
+	static var stdinConsumed = false;
+	static var stdinContent:Null<String> = null;
+
+	public static function moduleFileContent(ctx:Context, file:String):String {
+		var df = hxc.parser.Parser.displayFile;
+		if (df != null && ctx.defines.rawDefined("display_stdin")) {
+			var f = StringTools.replace(file, "\\", "/");
+			var d = StringTools.replace(df, "\\", "/");
+			if (f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f)) {
+				if (!stdinConsumed) {
+					stdinConsumed = true;
+					stdinContent = try Sys.stdin().readAll().toString() catch (_:Dynamic) null;
+				}
+				if (stdinContent != null) return Position.registerFileContent(file, stdinContent);
+			}
+		}
+		return Position.getFileContent(file);
+	}
+
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
 		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
 		if (ctx.isMacro) {
@@ -931,7 +951,7 @@ class ModuleLoader {
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 		}
 
-		var src = Position.getFileContent(file);
+		var src = moduleFileContent(ctx, file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
