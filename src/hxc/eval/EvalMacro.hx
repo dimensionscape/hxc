@@ -3653,6 +3653,12 @@ class EvalMacro {
 		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
 		f.set(EvalHash.hash("init"), VNull);
 		f.set(EvalHash.hash("overrides"), encodeArray([]));
+		// Exclude() makes the class extern and drops its init.
+		f.set(EvalHash.hash("exclude"), VFunction(function(_) {
+			TypeFunctions.addClassFlag(c, CExtern);
+			c.init = null;
+			return VNull;
+		}, true));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -3667,6 +3673,8 @@ class EvalMacro {
 		f.set(EvalHash.hash("doc"), VNull);
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in e.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("isExtern"), e.isExtern ? VTrue : VFalse);
+		// Exclude() makes the enum extern.
+		f.set(EvalHash.hash("exclude"), VFunction(function(_) { e.isExtern = true; return VNull; }, true));
 		var constrs:Map<Int, EvalValue> = new Map();
 		for (name in e.names) {
 			var ef = e.constrs.get(name);
