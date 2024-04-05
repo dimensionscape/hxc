@@ -96,6 +96,7 @@ class Context {
 	 * Finalization's entry expression: main() call plus entry-point or event-loop tail.
 	 */
 	public var main:Null<TExpr> = null;
+	public var jsGen:Null<Void->Void> = null;
 
 	public var initMacros:Array<String>;
 

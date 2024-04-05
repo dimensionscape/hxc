@@ -503,6 +503,62 @@ class EvalMacro {
 			onGenerateCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
 		});
+		// The callback runs at generate time with a JSGenApi bound to a fresh GenJS context, replacing the
+		// normal output.
+		reg2("setCustomJSGenerator", "set_custom_js_generator", function(a) {
+			var fn = a[0];
+			com.jsGen = function() {
+				EvalContext.setCtx(ec);
+				var dir = haxe.io.Path.directory(com.file);
+				if (dir != "" && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+				var jsCtx = hxc.generators.GenJS.allocCtx(com, com.getEsVersion());
+				hxc.generators.GenJS.setupKwds(com);
+				inline function fnv(f:Array<EvalValue>->EvalValue):EvalValue return VFunction(f, true);
+				var fields:Map<Int, EvalValue> = new Map();
+				fields.set(EvalHash.hash("outputFile"), mkString(com.file));
+				fields.set(EvalHash.hash("types"), encodeArray([for (t in com.types) encodeType(ec, TypeFunctions.typeOfModuleType(t))]));
+				fields.set(EvalHash.hash("main"), com.main == null ? VNull : encodeTypedExpr(ec, com.main));
+				fields.set(EvalHash.hash("generateValue"), fnv(function(a2) {
+					return mkString(hxc.generators.GenJS.genSingleExpr(jsCtx, decodeStoredTypedExpr(ec, a2[0]), false));
+				}));
+				fields.set(EvalHash.hash("generateStatement"), fnv(function(a2) {
+					return mkString(hxc.generators.GenJS.genSingleExpr(jsCtx, decodeStoredTypedExpr(ec, a2[0]), true));
+				}));
+				fields.set(EvalHash.hash("isKeyword"), fnv(function(a2) {
+					return hxc.generators.GenJS.isKeyword(strOf(a2[0])) ? VTrue : VFalse;
+				}));
+				fields.set(EvalHash.hash("hasFeature"), fnv(function(a2) {
+					return com.hasFeature(strOf(a2[0])) ? VTrue : VFalse;
+				}));
+				fields.set(EvalHash.hash("addFeature"), fnv(function(a2) {
+					com.addFeature(strOf(a2[0]));
+					return VNull;
+				}));
+				fields.set(EvalHash.hash("quoteString"), fnv(function(a2) {
+					return mkString('"' + hxc.core.StringHelper.sEscape(strOf(a2[0])) + '"');
+				}));
+				fields.set(EvalHash.hash("buildMetaData"), fnv(function(a2) {
+					var meta = hxc.core.TexprTools.buildMetadata(com.basic, moduleTypeFromRef(ec, a2[0]));
+					return meta == null ? VNull : encodeTypedExpr(ec, meta);
+				}));
+				fields.set(EvalHash.hash("setTypeAccessor"), fnv(function(a2) {
+					var cb = a2[0];
+					jsCtx.typeAccessor = function(t:ModuleType):String {
+						return strOf(applyFn(ec, cb, [encodeType(ec, TypeFunctions.typeOfModuleType(t))]));
+					};
+					return VNull;
+				}));
+				fields.set(EvalHash.hash("setCurrentClass"), fnv(function(a2) {
+					switch (moduleTypeFromRef(ec, a2[0])) {
+						case TClassDecl(c): jsCtx.current = c;
+						case _:
+					}
+					return VNull;
+				}));
+				applyFn(ec, fn, [VObject(new VObject([], ODictionary(fields)))]);
+			};
+			return VNull;
+		});
 		reg2("onAfterInitMacros", "on_after_init_macros", function(a) {
 			onAfterInitMacrosCallbacks.push({ec: ec, fn: a[0]});
 			return VNull;
@@ -3633,6 +3689,8 @@ class EvalMacro {
 	// without infinite recursion.
 	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		// The hidden ref handle round-trips the decl through decode.
+		stashModuleTypeRef(f, TClassDecl(c));
 		f.set(EvalHash.hash("pack"), encodeArray([for (s in c.path.pack) mkString(s)]));
 		f.set(EvalHash.hash("name"), mkString(c.path.name));
 		f.set(EvalHash.hash("module"), mkString(c.module == null ? c.path.name : Context.pathKey(c.module.path)));
@@ -3664,6 +3722,7 @@ class EvalMacro {
 
 	static function encodeEnumType(ec:EvalContext, e:TEnum):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TEnumDecl(e));
 		f.set(EvalHash.hash("pack"), encodeArray([for (s in e.path.pack) mkString(s)]));
 		f.set(EvalHash.hash("name"), mkString(e.path.name));
 		f.set(EvalHash.hash("module"), mkString(e.module == null ? e.path.name : Context.pathKey(e.module.path)));
@@ -3695,6 +3754,7 @@ class EvalMacro {
 
 	static function encodeDefType(ec:EvalContext, d:TDef):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TTypeDecl(d));
 		f.set(EvalHash.hash("pack"), encodeArray([for (s in d.path.pack) mkString(s)]));
 		f.set(EvalHash.hash("name"), mkString(d.path.name));
 		f.set(EvalHash.hash("module"), mkString(d.module == null ? d.path.name : Context.pathKey(d.module.path)));
@@ -3709,6 +3769,7 @@ class EvalMacro {
 
 	static function encodeAbstractType(ec:EvalContext, a:TAbstract):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
+		stashModuleTypeRef(f, TAbstractDecl(a));
 		f.set(EvalHash.hash("pack"), encodeArray([for (s in a.path.pack) mkString(s)]));
 		f.set(EvalHash.hash("name"), mkString(a.path.name));
 		f.set(EvalHash.hash("module"), mkString(a.module == null ? a.path.name : Context.pathKey(a.module.path)));

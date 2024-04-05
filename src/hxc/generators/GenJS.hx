@@ -175,6 +175,20 @@ class GenJS {
 		return kwds.exists(s) ? "$" + s : s;
 	}
 
+	public static function isKeyword(s:String):Bool {
+		return kwds.exists(s);
+	}
+
+	// One expression printed to a string: value or statement form, then the buffer and id counter reset for
+	// the next call.
+	public static function genSingleExpr(ctx:GenJS, e:TExpr, expr:Bool):String {
+		if (expr) ctx.genExpr(e) else ctx.genValue(e);
+		var str = ctx.buf.toString();
+		ctx.buf = new StringBuf();
+		ctx.idCounter = 0;
+		return str;
+	}
+
 	public static function checkVarDeclaration(v:TVar):Void {
 		if (kwds2.exists(v.name)) v.name = "$" + v.name;
 		// Internal generated locals (notably the anonymous-function receiver) may use a backtick
@@ -1929,6 +1943,11 @@ class GenJS {
 	}
 
 	public static function generate(com:Context):Void {
+		// A custom generator installed by a macro replaces the whole output.
+		if (com.jsGen != null) {
+			com.jsGen();
+			return;
+		}
 		var esVersion = com.getEsVersion();
 		if (esVersion >= 6)
 			hxc.filters.ES6Ctors.rewriteCtors(com);
