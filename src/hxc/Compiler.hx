@@ -234,10 +234,13 @@ class Compiler {
 		}
 
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
-		// works without a std. (did_something with no inputs).
+		// works without a std. The accumulated messages (the -version info line) still print.
 		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
 			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross
-			&& ctx.displaySpec == null) return;
+			&& ctx.displaySpec == null) {
+			flushPendingMessages(ctx);
+			return;
+		}
 
 		// User -cp is searched before the std (it stays in front of the per-target overlay). Prepends
 		// each -cp individually, so the last -cp on the command line ends up first; reverse the
