@@ -2426,7 +2426,7 @@ class Typer {
 		// Uses a gen local; the syntactic name must stay unique for resolution, so the typed var is
 		// renamed to the backtick form afterwards (RenameVars then produces _g like the reference)
 		var acc = "_hx_comp";
-		var mapped = comprehensionPush(acc, e);
+		var mapped = comprehensionPush(new Expr(EConst(CIdent(acc)), p), e);
 		var init = mapped.isMap
 			? new Expr(ENew({path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p}, []), p)
 			: new Expr(EArrayDecl([]), p);
@@ -2436,6 +2436,10 @@ class Typer {
 		// constructor cannot take an expectation whose parameters are still open monomorphs.
 		var tea = typeExpr(ctx, init, mapped.isMap ? WithTypeTools.value : withType);
 		var v = TypeFunctions.allocVar(VGenerated, "`", tea.type, p);
+		// The reference stores the accumulator local and references it through the @:storedTypedExpr
+		// marker; the ID is consumed either way, which keeps the stored-expression id stream aligned. .
+		var refId = ++hxc.context.Context.nextStoredTypedExprId;
+		ctx.com.storedTypedExprs.set(refId, TypeFunctions.mk(TLocal(v), v.type, p));
 		var restore = saveLocals(ctx);
 		ctx.locals.set(acc, v);
 		var efor = typeExpr(ctx, mapped.expr, WithTypeTools.noValue);
@@ -2447,11 +2451,23 @@ class Typer {
 		]), v.type, p);
 	}
 
-	// Lowers a comprehension body so each tail expression updates the accumulator.
-	static function comprehensionPush(acc:String, e:Expr):{expr:Expr, isMap:Bool} {
+	// Lowers a comprehension body so each tail expression updates the accumulator. Whether the
+	// comprehension tail is a map (key => value) form; decides the accumulator without rewriting, so
+	// the rewrite can wait for the stored ref.
+	static function comprehensionIsMap(e:Expr):Bool {
+		return switch (e.expr) {
+			case EFor(_, body) | EWhile(_, body, _) | EParenthesis(body): comprehensionIsMap(body);
+			case EIf(_, e1, e2): comprehensionIsMap(e1) || (e2 != null && comprehensionIsMap(e2));
+			case EBlock(l) if (l.length > 0): comprehensionIsMap(l[l.length - 1]);
+			case EBinop(OpArrow, _, _): true;
+			case _: false;
+		};
+	}
+
+	static function comprehensionPush(acc:Expr, e:Expr):{expr:Expr, isMap:Bool} {
 		inline function same(expr:Expr, isMap:Bool) return {expr: expr, isMap: isMap};
 		inline function call(name:String, args:Array<Expr>):Expr
-			return new Expr(ECall(new Expr(EField(new Expr(EConst(CIdent(acc)), e.pos), name, EFNormal), e.pos), args), e.pos);
+			return new Expr(ECall(new Expr(EField(new Expr(acc.expr, e.pos), name, EFNormal), e.pos), args), e.pos);
 		return switch (e.expr) {
 			case EFor(it, body):
 				var b = comprehensionPush(acc, body);

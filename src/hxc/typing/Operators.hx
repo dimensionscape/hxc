@@ -32,7 +32,7 @@ enum BinopResult {
 
 class Operators {
 	static function storedSyntax(ctx:TyperContext, e:TExpr):Expr {
-		var id = hxc.context.Context.nextStoredTypedExprId++;
+		var id = ++hxc.context.Context.nextStoredTypedExprId;
 		ctx.com.storedTypedExprs.set(id, e);
 		return new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, new Expr(EConst(CInt(Std.string(id), null)), e.pos)), e.pos);
 	}

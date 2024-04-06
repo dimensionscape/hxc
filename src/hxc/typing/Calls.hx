@@ -892,6 +892,9 @@ class Calls {
 		};
 	}
 
+	// A primitive constant passes as plain syntax; EVERYTHING else stores and passes the
+	// @:storedTypedExpr marker, so the macro sees the typed expression by id. The counter is
+	// incr-first (the first id is 1).
 	public static function typedExprToSyntax(ctx:TyperContext, e:TExpr):Expr {
 		var p = e.pos;
 		return switch (e.expr) {
@@ -903,18 +906,8 @@ class Calls {
 				new Expr(EConst(CString(s, SDoubleQuotes)), p);
 			case TConst(TBool(b)):
 				new Expr(EConst(CIdent(b ? "true" : "false")), p);
-			case TConst(TNull):
-				new Expr(EConst(CIdent("null")), p);
-			case TConst(TThis):
-				new Expr(EConst(CIdent("this")), p);
-			case TLocal(v):
-				new Expr(EConst(CIdent(v.name)), p);
-			case TParenthesis(e1):
-				new Expr(EParenthesis(typedExprToSyntax(ctx, e1)), p);
-			case TField(e1, fa):
-				new Expr(EField(typedExprToSyntax(ctx, e1), TypeFunctions.fieldName(fa), EFNormal), p);
 			case _:
-				var id = hxc.context.Context.nextStoredTypedExprId++;
+				var id = ++hxc.context.Context.nextStoredTypedExprId;
 				ctx.com.storedTypedExprs.set(id, e);
 				var eid = new Expr(EConst(CInt(Std.string(id), null)), p);
 				new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), p);
