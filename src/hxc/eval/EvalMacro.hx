@@ -190,14 +190,14 @@ class EvalMacro {
 		reg2("storeExpr", "store_expr", function(a) {
 			if (curTctx == null) throw new TypingError("storeExpr outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
-			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
+			return encodeExpr(ec, Calls.texprToSyntax(curTctx, te));
 		});
 		// Type the expression and retain its type.
 		reg2("typeAndStoreExpr", "type_and_store_expr", function(a) {
 			if (curTctx == null) throw new TypingError("typeAndStoreExpr outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			var fields:Map<Int, EvalValue> = new Map();
-			fields.set(EvalHash.hash("expr"), encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te)));
+			fields.set(EvalHash.hash("expr"), encodeExpr(ec, Calls.texprToSyntax(curTctx, te)));
 			fields.set(EvalHash.hash("type"), encodeType(ec, te.type));
 			return VObject(new VObject([], ODictionary(fields)));
 		});
@@ -206,7 +206,7 @@ class EvalMacro {
 		reg2("getTypedExpr", "get_typed_expr", function(a) {
 			if (curTctx == null) throw new TypingError("getTypedExpr outside a macro", curPos);
 			var te = decodeStoredTypedExpr(ec, a[0]);
-			return encodeExpr(ec, Calls.typedExprToSyntax(curTctx, te));
+			return encodeExpr(ec, Calls.texprToSyntax(curTctx, te));
 		});
 		// store_typed_expr(te): store the decoded typed expression and return the syntax marker
 		// `@:storedTypedExpr(id)` that re-types to it.

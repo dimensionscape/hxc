@@ -892,6 +892,26 @@ class Calls {
 		};
 	}
 
+	// The texpr-to-syntax CONVERTER (getTypedExpr, pattern rebuilding): common shapes reconstruct as plain
+	// syntax, the rest stores. (convert_expr, approximated).
+	public static function texprToSyntax(ctx:TyperContext, e:TExpr):Expr {
+		var p = e.pos;
+		return switch (e.expr) {
+			case TConst(TNull):
+				new Expr(EConst(CIdent("null")), p);
+			case TConst(TThis):
+				new Expr(EConst(CIdent("this")), p);
+			case TLocal(v):
+				new Expr(EConst(CIdent(v.name)), p);
+			case TParenthesis(e1):
+				new Expr(EParenthesis(texprToSyntax(ctx, e1)), p);
+			case TField(e1, fa):
+				new Expr(EField(texprToSyntax(ctx, e1), TypeFunctions.fieldName(fa), EFNormal), p);
+			case _:
+				typedExprToSyntax(ctx, e);
+		}
+	}
+
 	// A primitive constant passes as plain syntax; EVERYTHING else stores and passes the
 	// @:storedTypedExpr marker, so the macro sees the typed expression by id. The counter is
 	// incr-first (the first id is 1).

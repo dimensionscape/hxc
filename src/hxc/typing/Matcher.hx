@@ -636,7 +636,7 @@ class PatternMaker {
 				var te = TexprTools.duplicateTvars(function(te2) {
 					return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te2.pos) : te2;
 				}, ctx.com.storedTypedExprs.get(id));
-				return make(pctx, toplevel, t, Calls.typedExprToSyntax(ctx, te));
+				return make(pctx, toplevel, t, Calls.texprToSyntax(ctx, te));
 			case _:
 				throw new TypingError("This pattern is not yet ported", p);
 		};
