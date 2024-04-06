@@ -1644,7 +1644,12 @@ class EvalMacro {
 			var sigCf = macroWorldField(path, fa.field.name, hostClass.module != null ? hostClass.module.path : null);
 			var sigArgs = switch (TypeFunctions.follow((sigCf != null ? sigCf : fa.field).type)) { case TFun(s): s.args; case _: null; };
 			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
-			var args = macroArgs(ec, callEl, sigArgs);
+			// The member-macro receiver stays on the legacy encode path; the reference routes it through
+			// push_this outside the argument pipeline . An abstract-hosted macro threads its receiver
+			// through the impl signature the same way, so only plain static macros run the full pipeline
+			// for now.
+			var isPlainStatic = fa.host.match(FHStatic(_));
+			var args = isPlainStatic ? typeMacroArgs(ec, tctx, callEl, sigArgs, p) : macroArgs(ec, callEl, sigArgs);
 			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
@@ -1706,6 +1711,118 @@ class EvalMacro {
 
 	static function normalizeFile(file:String):String {
 		return StringTools.replace(file, "\\", "/").toLowerCase();
+	}
+
+	// The macro call argument pipeline: the macro-world signature classifies each parameter against
+	// haxe.macro.Expr; Expr parameters accept any value and receive the raw argument AST, function
+	// parameters type in the macro context and pass the evaluated closure, and other parameters must
+	// be constants whose typed value passes. The [e][index] wrapping runs everything through
+	// unifyCallArgs so arity checking and optional padding behave exactly like a normal call. A
+	// trailing Array<Expr> parameter collects the surplus arguments.
+	static function typeMacroArgs(ec:EvalContext, tctx:hxc.typing.TyperContext, el:Array<Expr>, sigArgs:Null<Array<TSignatureArg>>, p:Position):Array<EvalValue> {
+		if (sigArgs == null) return [for (e in el) encodeExpr(ec, e)];
+		var mctx = macroCom != null ? new hxc.typing.TyperContext(macroCom) : tctx;
+		var basic = mctx.com.basic;
+		// Rest<Expr> in a macro signature reads as Array<Expr>.
+		var margs = sigArgs.copy();
+		if (margs.length > 0) {
+			var lastT = margs[margs.length - 1].t;
+			switch (TypeFunctions.follow(lastT)) {
+				case TAbstract(ra, [t1]) if (ra.path.pack.length == 1 && ra.path.pack[0] == "haxe" && ra.path.name == "Rest"):
+					var last = margs[margs.length - 1];
+					margs[margs.length - 1] = {name: last.name, opt: last.opt, t: basic.tarray(t1)};
+				case _:
+			}
+		}
+		var exprPath:TypePath = {tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: null};
+		var exprT = hxc.typing.Typeload.loadInstance(mctx.com, [], exprPath, p, false);
+		// A trailing Array<Expr> parameter splits the surplus arguments off; running out of arguments with
+		// only the array parameter left still passes the empty-array placeholder so unifyCallArgs accepts
+		// the call.
+		var el2:Array<Expr> = [];
+		var callEl = el;
+		if (margs.length > 0) {
+			switch (TypeFunctions.follow(margs[margs.length - 1].t)) {
+				case TInst(c, [et]) if (c.path.pack.length == 0 && c.path.name == "Array"
+						&& (try { TypeUnification.typeEqKind(EqStrict, et, exprT); true; } catch (_:UnifyError) false)):
+					if (el.length >= margs.length - 1) {
+						callEl = el.slice(0, margs.length - 1);
+						el2 = el.slice(margs.length - 1);
+						callEl.push(new Expr(EArrayDecl([]), p));
+					}
+				case _:
+			}
+		}
+		// Classification: an Expr-compatible parameter degrades to Dynamic for the call check (any value
+		// encodes); a function or value parameter keeps its type.
+		var kinds:Array<Int> = []; // 0 = expr, 1 = function, 2 = other
+		var checkArgs:Array<TSignatureArg> = [for (ma in margs) {
+			var isExpr = try { TypeUnification.unifyDefault(ma.t, exprT); true; } catch (_:UnifyError) false;
+			if (isExpr) {
+				kinds.push(0);
+				{name: ma.name, opt: ma.opt, t: TypeFunctions.tDynamic};
+			} else {
+				switch (TypeFunctions.follow(ma.t)) {
+					case TFun(_): kinds.push(1);
+					case _: kinds.push(2);
+				}
+				ma;
+			}
+		}];
+		// Constants pass raw (single-quoted strings lose their interpolation kind), functions type later,
+		// and anything else types as (null : Expr) for the error report; the [e][index] wrapping keeps the
+		// original recoverable.
+		function requote(e:Expr):Expr {
+			return switch (e.expr) {
+				case EConst(CString(cs, SSingleQuotes)): new Expr(EConst(CString(cs, SDoubleQuotes)), e.pos);
+				case _: Ast.mapExpr(requote, e);
+			}
+		}
+		var constants:Array<Expr> = [for (i in 0...callEl.length) {
+			var e = callEl[i];
+			var wrapped = if (try { hxc.core.TexprTools.typeConstantValue(basic, e); true; } catch (_:Dynamic) false)
+				requote(e);
+			else if (isFunctionExpr(e))
+				new Expr(EConst(CIdent("null")), e.pos);
+			else
+				new Expr(ECheckType(new Expr(EConst(CIdent("null")), e.pos), {ct: CTPath(exprPath), pos: e.pos}), e.pos);
+			new Expr(EArray(new Expr(EArrayDecl([wrapped]), e.pos), new Expr(EConst(CInt(Std.string(i), null)), e.pos)), e.pos);
+		}];
+		var elt = Calls.unifyCallArgs(mctx, constants, checkArgs, TypeFunctions.tDynamic, p).el;
+		var args:Array<EvalValue> = [];
+		for (i in 0...elt.length) {
+			var te = elt[i];
+			var origE:Null<Expr> = null;
+			var et = te;
+			switch (te.expr) {
+				case TArray({expr: TArrayDecl([inner])}, {expr: TConst(TInt(idx))}):
+					origE = callEl[idx];
+					et = inner;
+				case TConst(TNull):
+					origE = new Expr(EConst(CIdent("null")), te.pos);
+				case _:
+					origE = new Expr(EConst(CIdent("null")), te.pos);
+			}
+			var kind = i < kinds.length ? kinds[i] : 0;
+			args.push(switch (kind) {
+				case 0:
+					encodeExpr(ec, origE);
+				case 1:
+					var ma = margs[i];
+					var typed = typeMacroExpr(mctx, origE);
+					try TypeUnification.unifyDefault(typed.type, ma.t) catch (ue:UnifyError)
+						throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), origE.pos);
+					hxc.eval.EvalEmitter.eval(ec, typed);
+				case _:
+					hxc.eval.EvalEmitter.eval(ec, et);
+			});
+		}
+		// The surplus arguments encode as the trailing Array<Expr>.
+		if (el2.length > 0) {
+			args.pop();
+			args.push(encodeArray([for (e in el2) encodeExpr(ec, e)]));
+		}
+		return args;
 	}
 
 	static function macroArgs(ec:EvalContext, el:Array<Expr>, sigArgs:Null<Array<TSignatureArg>>):Array<EvalValue> {
