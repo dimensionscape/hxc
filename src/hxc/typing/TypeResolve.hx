@@ -763,10 +763,36 @@ class TypeResolve {
 					TypeFunctions.addClassFieldFlag(cf, CfImpl);
 					if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfGeneric);
 					if (isFrom) {
-						// @:from: stored type = the single (non-`this`/non-PosInfos) argument type i.e. the value
-						// being converted into the abstract. For a member @:from
+						// @:from: the stored type resolves LAZILY. Forcing it first checks the declared
+						// return is the abstract itself (against fresh param monos), then reads the built
+						// signature's single argument, so an unhinted or since-inferred signature is seen
+						// live. (the @:from exc_protect) and (ta).
 						var fromIdx = isAbstractMember ? 1 : 0;
-						if (args.length > fromIdx) a.fromField.push({t: args[fromIdx].t, cf: cf});
+						if (args.length > fromIdx) {
+							var declaredRet = ret;
+							var fromMacro = isMacro;
+							var regPos = cff.cffPos;
+							var r:Ref<TLazy> = new Ref(null);
+							r.set(TypeFunctions.lazyWait(function():T {
+								// The return type of a from-function must be the abstract, not the underlying type
+								if (!fromMacro) {
+									try TypeUnification.typeEqKind(EqStrict, declaredRet, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
+									catch (ue:hxc.core.TypeUnification.UnifyError)
+										throw new hxc.core.TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), regPos);
+								}
+								var t2:T = switch (TypeFunctions.follow(cf.type)) {
+									case TFun(sig) if (sig.args.length == fromIdx + 1):
+										sig.args[fromIdx].t;
+									case TFun(sig) if (sig.args.length == fromIdx + 2 && sig.args[fromIdx + 1].opt && isPosInfos(sig.args[fromIdx + 1].t)):
+										sig.args[fromIdx].t;
+									case _:
+										throw new hxc.core.TypingError("@:from cast functions must accept exactly one argument", regPos);
+								};
+								r.set(TypeFunctions.lazyAvailable(t2));
+								return t2;
+							}));
+							a.fromField.push({t: TLazy(r), cf: cf});
+						}
 					}
 					if (isTo) {
 						// @:to: stored type = the return type (concrete specialization).
