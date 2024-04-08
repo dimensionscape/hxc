@@ -634,7 +634,7 @@ class PatternMaker {
 				var id = switch (e1.expr) { case EConst(CInt(s, _)): Std.parseInt(s); case _: null; };
 				if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
 				var te = TexprTools.duplicateTvars(function(te2) {
-					return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te2.pos) : te2;
+					return Typer.getThis(ctx, te2.pos);
 				}, ctx.com.storedTypedExprs.get(id));
 				return make(pctx, toplevel, t, Calls.texprToSyntax(ctx, te));
 			case _:

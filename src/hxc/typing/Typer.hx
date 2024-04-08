@@ -748,7 +748,7 @@ class Typer {
 					// Fresh tvars on every retrieval so the expression does not share variable slots with
 					// its original (macro-time) context; this rebinds to the enclosing context.
 					TexprTools.duplicateTvars(function(te) {
-						return ctx.tthis != null ? TypeFunctions.mk(TConst(TThis), ctx.tthis, te.pos) : te;
+						return getThis(ctx, te.pos);
 					}, ctx.com.storedTypedExprs.get(id));
 				case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
 					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
