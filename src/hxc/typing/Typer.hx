@@ -603,7 +603,11 @@ class Typer {
 		var acc:Array<T> = [for (t in a.from) TypeFunctions.applyParams(a.params, pl, t)];
 		for (fc in a.fromField) {
 			var f = fc.cf;
+			// The cast entry and the impl class's real static are separate objects here, so the
+			// self-exclusion also matches by name against the current impl field.
 			if (f == ctx.curfield) continue;
+			if (ctx.curfield != null && f.name == ctx.curfield.name
+					&& a.impl != null && a.impl.statics.get(ctx.curfield.name) == ctx.curfield) continue;
 			if (fromIgnoredByInference(f.meta)) continue;
 			var ftype = f.params.length == 0 ? f.type : {
 				var monos:Array<T> = [for (_ in f.params) TypeFunctions.mkMono()];
