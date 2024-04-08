@@ -271,6 +271,16 @@ class Compiler {
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
+		// A JSON payload on --display selects the JSON-RPC display protocol it to DisplayJson.parse_input);
+		// the response travels the Completion channel and ends the run.
+		if (ctx.displaySpec != null && StringTools.startsWith(ctx.displaySpec, "{")) {
+			try {
+				hxc.context.DisplayJson.parseInput(ctx, ctx.displaySpec);
+			} catch (out:hxc.context.DisplayJson.JsonDisplayOutput) {
+				Sys.stderr().writeString(out.output + "\n");
+			}
+			return;
+		}
 		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
 		// which also joins the compile roots. The statics install before the init macros so a display
 		// position typed during a --macro run records.
