@@ -33,6 +33,9 @@ import sys.io.Process;
 	<compilerflag value="-DMATCH_LIMIT_DEPTH=4294967295U"/>
 	<compilerflag value="/USUPPORT_JIT" if="windows"/>
 </files>
+<linker id="exe" exe="link.exe" if="windows">
+	<flag value="-LARGEADDRESSAWARE"/>
+</linker>
 ')
 class Compiler {
 	public function new() run(Sys.args());
