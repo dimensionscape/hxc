@@ -932,7 +932,19 @@ class EvalStdLib {
 	static var threadEventHandlerNextId = 1;
 	static var nativeThreads = new haxe.ds.ObjectMap<VInstance, {id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue}>();
 	static var nativeTimers = new haxe.ds.ObjectMap<VInstance, {loop:EvalLoopState, handler:Dynamic}>();
-	static var nativeThreadSelf:Null<VInstance> = null;
+	// The global interpreter lock: interpreted code runs one thread at a time; blocking natives
+	// release it around the OS wait so other interpreter threads can run.
+	public static var gil:sys.thread.Mutex = new sys.thread.Mutex();
+
+	// Runs a blocking native outside the interpreter lock.
+	static function gilBlocking(f:Void->EvalValue):EvalValue {
+		gil.release();
+		var r = try f() catch (e:Dynamic) { gil.acquire(); throw e; };
+		gil.acquire();
+		return r;
+	}
+
+	static var nativeThreadSelfTls:sys.thread.Tls<VInstance> = new sys.thread.Tls();
 	static var nativeThreadNextId = 1;
 	static var evalLoopCreated = false;
 	static var entryPointThreadCount = 0;
@@ -957,7 +969,7 @@ class EvalStdLib {
 		var ctx = evalContext;
 		var timers = [for (vi in nativeTimers.keys()) nativeTimers.get(vi)];
 		for (timer in timers) if (timer != null) evalLoopDrain(ctx, timer.loop, null);
-		var self = nativeThreadSelf;
+		var self = nativeThreadSelfTls.value;
 		if (ctx == null || self == null) return;
 		var thread = nativeThreads.get(self);
 		if (thread == null || thread.events == VNull) return;
@@ -2339,27 +2351,33 @@ class EvalStdLib {
 		setInstanceFieldIfExists(vi, "events", events);
 		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: events});
 		if (job != null && job != VNull) {
-			var old = nativeThreadSelf;
-			nativeThreadSelf = vi;
-			try {
-				applyFn(job, []);
-			} catch (e) {
-				nativeThreadSelf = old;
-				throw e;
-			}
-			nativeThreadSelf = old;
+			// A real OS thread runs the job under the interpreter lock; its per-thread self and environment
+			// stack come from thread-locals. An uncaught interpreted exception reports on stderr like the
+			// reference thread wrapper.
+			var j = job;
+			sys.thread.Thread.create(function() {
+				gil.acquire();
+				nativeThreadSelfTls.value = vi;
+				try {
+					applyFn(j, []);
+				} catch (e:Dynamic) {
+					try Sys.stderr().writeString(Std.string(e) + "
+") catch (_:Dynamic) {}
+				}
+				gil.release();
+			});
 		}
 		return VInstance(vi);
 	}
 
 	static function nativeThreadSelfValue(ctx:EvalContext):EvalValue {
-		if (nativeThreadSelf == null) {
+		if (nativeThreadSelfTls.value == null) {
 			switch (mkNativeThread(ctx)) {
-				case VInstance(vi): nativeThreadSelf = vi;
+				case VInstance(vi): nativeThreadSelfTls.value = vi;
 				case v: return v;
 			}
 		}
-		return VInstance(nativeThreadSelf);
+		return VInstance(nativeThreadSelfTls.value);
 	}
 
 	static function nativeThreadData(a:Array<EvalValue>):{id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue} {
@@ -2370,7 +2388,7 @@ class EvalStdLib {
 		var thread = nativeThreads.get(vi);
 		if (thread == null) return VNull;
 		if (thread.events == VNull) {
-			thread.events = threadEventLoopObject(ctx, newEvalLoop(nativeThreadSelf == null));
+			thread.events = threadEventLoopObject(ctx, newEvalLoop(nativeThreadSelfTls.value == null));
 			setInstanceFieldIfExists(vi, "events", thread.events);
 		}
 		return thread.events;
@@ -4022,7 +4040,7 @@ class EvalStdLib {
 	public static function init(ctx:EvalContext):Void {
 		evalContext = ctx;
 		nativeThreads = new haxe.ds.ObjectMap();
-		nativeThreadSelf = null;
+		nativeThreadSelfTls.value = null;
 		nativeThreadNextId = 1;
 		threadEventLoops = new haxe.ds.ObjectMap();
 		eventLoopObjects = new haxe.ds.ObjectMap();
@@ -4128,7 +4146,7 @@ class EvalStdLib {
 		reg(s, "Sys", "putEnv", vfn(a -> { Sys.putEnv(stringOf(arg(a, 0)), arg(a, 1) == VNull ? null : stringOf(arg(a, 1))); VNull; }));
 		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
-		reg(s, "Sys", "sleep", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
+		reg(s, "Sys", "sleep", vfn(a -> { var t = toFloat(arg(a, 0)); gilBlocking(function() { Sys.sleep(t); return VNull; }); }));
 		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, Sys.stderr(), null)));
 		reg(s, "Sys", "stdin", vfn(a -> mkInput(ctx, Sys.stdin(), null)));
 		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
@@ -5432,7 +5450,7 @@ class EvalStdLib {
 			if (mutex.owner != null && mutex.owner == thread) {
 				mutex.count++;
 			} else {
-				mutex.mutex.acquire();
+				gilBlocking(function() { mutex.mutex.acquire(); return VNull; });
 				mutex.owner = thread;
 				mutex.count = 1;
 			}
@@ -5464,8 +5482,11 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "sys.thread.Lock", "release", vmethod(a -> { thisThreadLock(a).release(); VNull; }));
-		reg(inst, "sys.thread.Lock", "wait", vmethod(a -> EvalValueTools.vbool(
-			arg(a, 1) == VNull ? thisThreadLock(a).wait() : thisThreadLock(a).wait(toFloat(arg(a, 1))))));
+		reg(inst, "sys.thread.Lock", "wait", vmethod(a -> {
+			var lk = thisThreadLock(a);
+			var to = arg(a, 1);
+			gilBlocking(function() return EvalValueTools.vbool(to == VNull ? lk.wait() : lk.wait(toFloat(to))));
+		}));
 		reg(inst, "sys.thread.Tls", "get_value", vmethod(a -> {
 			var v = thisThreadTls(a).value;
 			v == null ? VNull : v;
@@ -5477,8 +5498,9 @@ class EvalStdLib {
 		reg(inst, "sys.thread.Deque", "add", vmethod(a -> { thisThreadDeque(a).add(arg(a, 1)); VNull; }));
 		reg(inst, "sys.thread.Deque", "push", vmethod(a -> { thisThreadDeque(a).push(arg(a, 1)); VNull; }));
 		reg(inst, "sys.thread.Deque", "pop", vmethod(a -> {
-			var v = thisThreadDeque(a).pop(arg(a, 1) == VTrue);
-			v == null ? VNull : v;
+			var dq = thisThreadDeque(a);
+			var v = arg(a, 1) == VTrue ? gilBlocking(function() { var r = dq.pop(true); return r == null ? VNull : r; }) : { var r = dq.pop(false); r == null ? VNull : r; };
+			v;
 		}));
 		reg(inst, "haxe.Timer", "stop", vmethod(a -> { stopTimer(a); VNull; }));
 		reg(inst, "sys.thread.EventLoop", "repeat", vmethod(a -> {
@@ -5511,7 +5533,7 @@ class EvalStdLib {
 			if (cond.owner != null && cond.owner == thread) {
 				cond.count++;
 			} else {
-				cond.cond.acquire();
+				gilBlocking(function() { cond.cond.acquire(); return VNull; });
 				cond.owner = thread;
 				cond.count = 1;
 			}
@@ -5548,14 +5570,17 @@ class EvalStdLib {
 			var count = cond.count <= 0 ? 1 : cond.count;
 			cond.owner = null;
 			cond.count = 0;
-			cond.cond.wait();
+			gilBlocking(function() { cond.cond.wait(); return VNull; });
 			cond.owner = thread;
 			cond.count = count;
 			VNull;
 		}));
 		reg(inst, "sys.thread.Condition", "signal", vmethod(a -> { thisThreadCondition(a).cond.signal(); VNull; }));
 		reg(inst, "sys.thread.Condition", "broadcast", vmethod(a -> { thisThreadCondition(a).cond.broadcast(); VNull; }));
-		reg(inst, "sys.thread.Semaphore", "acquire", vmethod(a -> { thisThreadSemaphore(a).acquire(); VNull; }));
+		reg(inst, "sys.thread.Semaphore", "acquire", vmethod(a -> {
+			var sem = thisThreadSemaphore(a);
+			gilBlocking(function() { sem.acquire(); return VNull; });
+		}));
 		reg(inst, "sys.thread.Semaphore", "tryAcquire", vmethod(a -> EvalValueTools.vbool(
 			arg(a, 1) == VNull ? thisThreadSemaphore(a).tryAcquire() : thisThreadSemaphore(a).tryAcquire(toFloat(arg(a, 1))))));
 		reg(inst, "sys.thread.Semaphore", "release", vmethod(a -> { thisThreadSemaphore(a).release(); VNull; }));
@@ -5599,7 +5624,7 @@ class EvalStdLib {
 			var events = arg(a, 1);
 			nativeThreadData(a).events = events;
 			switch (eventLoopOfValue(events)) {
-				case loop if (loop != null && nativeThreadSelf != null && owner == nativeThreadSelf): loop.isMainThread = true;
+				case loop if (loop != null && nativeThreadSelfTls.value != null && owner == nativeThreadSelfTls.value): loop.isMainThread = true;
 				case _:
 			}
 			setInstanceFieldIfExists(owner, "events", events);

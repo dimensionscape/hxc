@@ -115,6 +115,7 @@ class EvalContext {
 	public var vectorPrototype:Null<VPrototype>;
 	public var toplevel:EvalValue;
 	public var eval:Eval;
+	public var evalTls:sys.thread.Tls<Eval>;
 	public var maxStackDepth:Int;
 	public var maxPrintDepth:Int;
 	public var resources:StringMap<haxe.io.Bytes>;
