@@ -596,13 +596,15 @@ class EvalMacro {
 				])}
 			]);
 		});
-		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that key.
+		// eval.vm.Context.callMacroApi("<snake>") returns the builtin registered under that
+		// key; names only the eval-std surface serves (resolve_path, add_resource, ...)
+		// fall through to its switch, which throws its own not-implemented.
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
 			var name = strOf(a[0]);
 			var key = EvalHash.hash(name);
 			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
 			if (list != null) for (e in list) if (e.name == key) return e.v;
-			throw new TypingError("Macro API not implemented: " + name, curPos);
+			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
 		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
 	}
