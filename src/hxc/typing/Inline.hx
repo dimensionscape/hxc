@@ -652,14 +652,36 @@ class Inline {
 				var values = [for (caseDef in mappedCases) caseDef.expr];
 				if (mappedDefault != null) values.push(mappedDefault);
 				return TypeFunctions.mk(TSwitch(m(c), mappedCases, mappedDefault), sharedType(values), keepPositions ? e.pos : inlinePos);
+			case TTry(e1, catches):
+				// A terminal try maps its body and catch branches as terminal; the node takes the branches'
+				// shared type (return_type).
+				var body = terminal(e1);
+				var mappedCatches = [for (c in catches) {
+					var nv = TypeFunctions.allocVar(VGenerated, c.v.name, c.v.type, c.v.pos);
+					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
+					{v: nv, expr: terminal(c.expr)};
+				}];
+				var values = [body].concat([for (c in mappedCatches) c.expr]);
+				return TypeFunctions.mk(TTry(body, mappedCatches), sharedType(values), keepPositions ? e.pos : inlinePos);
+			case TParenthesis(e1):
+				// Parentheses forward the term flag.
+				var inner = terminal(e1);
+				return TypeFunctions.mk(TParenthesis(inner), inner.type, keepPositions ? e.pos : inlinePos);
+			case TMeta(entry, e1):
+				// Metadata forwards the term flag and takes the
+				// mapped expression's type.
+				var inner = terminal(e1);
+				return TypeFunctions.mk(TMeta(entry, inner), inner.type, keepPositions ? e.pos : inlinePos);
 			case _:
 				return m(e);
 		}
 	}
 
-	// Substitutes argument/this locals; bails on anything outside the handled subset.
-	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position, keepPositions:Bool):TExpr {
-		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
+	// The non-terminal mapping lane: substitutes argument/this locals; a non-final return
+	// aborts the inline. inLocalFun is set inside a closure, whose returns map through.
+	static function mapExpr(ctx:TyperContext, e:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position, keepPositions:Bool,
+			inLocalFun:Bool = false):TExpr {
+		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions, inLocalFun);
 		var ne:TExprExpr = switch (e.expr) {
 			case TConst(TThis):
 				if (vthis != null) TLocal(vthis)
@@ -728,29 +750,28 @@ class Inline {
 			case TEnumParameter(e1, ef, idx): TEnumParameter(m(e1), ef, idx);
 			case TEnumIndex(e1): TEnumIndex(m(e1));
 			case TTypeExpr(_) | TIdent(_) | TBreak | TContinue: e.expr;
-			case TReturn(_):
-				throw new InlineBail(true);
-			case TSwitch(_, _, _) | TTry(_, _):
-				throw new InlineBail(containsReturn(e));
+			case TReturn(eo):
+				// A return inside a local function belongs to the closure and maps through;
+				// anywhere else in non-terminal position the inline gives up.
+				if (!inLocalFun) throw new InlineBail(true);
+				TReturn(eo == null ? null : m(eo));
+			case TSwitch(subject, cases, def):
+				// A non-terminal switch maps structurally; only a return inside one still aborts. (the
+				// Type.map_expr catch-all; TSwitch is special-cased only `when term`).
+				TSwitch(m(subject), [for (c in cases) {values: [for (v in c.values) m(v)], expr: m(c.expr)}], def == null ? null : m(def));
+			case TTry(e1, catches):
+				// Try branches map with the current term flag (non-terminal here); each catch variable
+				// re-declares as a fresh local (state#declare).
+				var me1 = m(e1);
+				TTry(me1, [for (c in catches) {
+					var nv = TypeFunctions.allocVar(VGenerated, c.v.name, c.v.type, c.v.pos);
+					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
+					{v: nv, expr: m(c.expr)};
+				}]);
 			case TFunction(_):
 				throw new InlineBail();
 		};
 		return TypeFunctions.mk(ne, e.type, keepPositions ? e.pos : inlinePos);
 	}
 
-	// A return anywhere in the statement, not descending into local functions (a return inside a closure
-	// belongs to the closure). (state#in_local_fun guard).
-	static function containsReturn(e:TExpr):Bool {
-		var found = false;
-		function loop(x:TExpr):Void {
-			if (found) return;
-			switch (x.expr) {
-				case TReturn(_): found = true;
-				case TFunction(_):
-				case _: hxc.core.TexprTools.iter(loop, x);
-			}
-		}
-		loop(e);
-		return found;
-	}
 }
