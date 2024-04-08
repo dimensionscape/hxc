@@ -372,7 +372,12 @@ class Compiler {
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
-				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found == null ? [] : found) + "\n");
+				if (found == null) found = [];
+				// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
+				if (ctx.jsonRpcId != null)
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
+				else
+					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayHover) {
@@ -382,7 +387,11 @@ class Compiler {
 				return;
 			}
 			if (hxc.typing.Typer.displayUsage) {
-				Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(collectUsages(ctx)) + "\n");
+				var usages = collectUsages(ctx);
+				if (ctx.jsonRpcId != null)
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in usages) jsonLocation(p)].join(",") + "]"))
+				else
+					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(usages) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.fieldCompletionFound != null) {
@@ -666,12 +675,25 @@ class Compiler {
 		return best == null ? "" : best.join(".");
 	}
 
+	// A display position on a field declaration name makes the declared field itself the usage target.
+	static function usageFieldAtDeclaration(ctx:Context):Null<hxc.core.Type.TClassField> {
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c):
+				var all = c.orderedFields.concat(c.orderedStatics);
+				if (c.constructor != null) all.push(c.constructor);
+				for (f in all) if (hxc.typing.Typer.atHoverPos(f.namePos)) return f;
+			case _:
+		}
+		return null;
+	}
+
 	// Scan every typed field body for references to the captured @usage target. positions sort in source
 	// order.
 	static function collectUsages(ctx:Context):Array<Position> {
 		var cf = hxc.typing.Typer.usageTargetField;
 		var v = hxc.typing.Typer.usageTargetVar;
 		var ef = hxc.typing.Typer.usageTargetEnumField;
+		if (cf == null && v == null && ef == null) cf = usageFieldAtDeclaration(ctx);
 		if (cf == null && v == null && ef == null) return [];
 		var out:Array<Position> = [];
 		function walk(e:hxc.core.Type.TExpr):Void {
@@ -728,6 +750,24 @@ class Compiler {
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
+	// + generate_pos_as_location; a synthetic position serializes as null. The file canonicalizes to the
+	// platform form (Path.get_real_path).
+	static function jsonLocation(p:Position):String {
+		if (p.min == -1) return "null";
+		var i = Position.getInfos(p);
+		var file = p.file;
+		if (file != "?")
+			file = try FileSystem.fullPath(file) catch (_:Dynamic) file;
+		return '{"file":' + haxe.Json.stringify(file)
+			+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
+			+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn + '}}}';
+	}
+
+	// The protocol envelope around a report-time answer.
+	static function jsonRpcAnswer(ctx:Context, resultJson:String):String {
+		return '{"jsonrpc":"2.0","id":' + ctx.jsonRpcId + ',"result":{"result":' + resultJson + ',"timestamp":' + Sys.time() + '}}';
+	}
+
 	static function diagnosticsAbort(ctx:Context, message:String, pos:Position, kind:Int, depth:Int = 0):Void {
 		ctx.diagnostics.push({message: message, pos: pos, depth: depth, severity: MessageSeverity.Error, kind: kind});
 		displayDiagnostics(ctx);
@@ -763,7 +803,7 @@ class Compiler {
 		// A JSON-RPC-initiated diagnostics run answers with the protocol envelope; the legacy arg prints
 		// the raw array. No trailing newline: the raw print.
 		if (ctx.jsonRpcId != null)
-			raw = '{"jsonrpc":"2.0","id":' + ctx.jsonRpcId + ',"result":{"result":' + raw + ',"timestamp":' + Sys.time() + '}}';
+			raw = jsonRpcAnswer(ctx, raw);
 		Sys.stderr().writeString(raw);
 	}
 

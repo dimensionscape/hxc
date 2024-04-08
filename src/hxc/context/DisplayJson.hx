@@ -32,9 +32,25 @@ class DisplayJson {
 		throw new JsonDisplayOutput(Json.stringOfJson(json));
 	}
 
+	// Configure the display file and offset, preserving the request ID for the later response.
+	static function setDisplayFile(hctx:HandlerContext, mode:String):Void {
+		var file = hctx.jsonrpc.getStringParam("file");
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var offset = hctx.jsonrpc.getIntParam("offset");
+		hctx.com.displaySpec = full + "@" + offset + "@" + mode;
+		hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
+	}
+
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/definition", f: function(hctx) {
+				setDisplayFile(hctx, "position");
+			}},
+			{name: "display/references", f: function(hctx) {
+				// Only normal reference search is implemented; descendant variants are not collected yet.
+				setDisplayFile(hctx, "usage");
+			}},
 			{name: "display/diagnostics", f: function(hctx) {
 				// Answer diagnostics only after compilation, using the stored request ID.
 				var file = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("file"), null);
