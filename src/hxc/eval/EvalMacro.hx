@@ -104,9 +104,10 @@ class EvalMacro {
 		// The live eval call stack's positions, newest first, skipping the API call frame itself.
 		reg2("getMacroStack", "get_macro_stack", function(a) {
 			var envs:Array<EvalValue> = [];
-			// The reference skips the getMacroStack call frame; hxc's native builtins push no
-			// frame, so the chain already starts at the caller.
+			// The first frame is the typed Context.getMacroStack wrapper itself, which is excluded
+			// ("excluding the call to Context.getMacroStack()").
 			var env = EvalContext.getEval(ec).env;
+			if (env != null) env = env.parent;
 			while (env != null) {
 				envs.push(encPos(hxc.eval.EvalExceptions.envPosition(env)));
 				env = env.parent;

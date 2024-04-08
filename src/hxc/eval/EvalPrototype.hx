@@ -107,14 +107,14 @@ class EvalPrototype {
 	}
 
 	// Install native builtins for a type (extern stdlib classes get their fields from here).
-	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
+	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>, preferTyped:Bool = false):Void {
 		if (list == null) return;
 		for (b in list) {
 			var idx = pnames.get(b.name);
 			if (idx == null) {
 				pnames.set(b.name, pfields.length);
 				pfields.push(b.v);
-			} else {
+			} else if (!preferTyped) {
 				pfields[idx] = b.v;
 			}
 		}
@@ -487,7 +487,13 @@ class EvalPrototype {
 				if (isRemovable(cf)) continue;
 				switch (cf.kind) {
 					case Method(_):
-						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
+						// The body forces against the world the class lives in; a macro-world
+						// class forced with the host com silently finds no declaration and the
+						// builtin shadows the typed wrapper.
+						if (cf.expr == null) {
+							var wcom = worldCom(ctx, c);
+							if (wcom != null) hxc.typing.TypeFields.forceFieldBody(wcom, c, cf);
+						}
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							var idx = pfields.length;
@@ -552,7 +558,13 @@ class EvalPrototype {
 				}
 			}
 		}
-		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames);
+		// The macro API classes keep their typed std wrappers (init-macro asserts, doc text, deprecation
+		// gates) and reach the natives through load/callMacroApi; the builtins fill only the gaps.
+		// Everywhere else a registered builtin replaces the typed body, which targets another platform's
+		// externs. (the natives are exposed only through load).
+		var preferTyped = c.path.pack.length == 2 && c.path.pack[0] == "haxe" && c.path.pack[1] == "macro"
+			&& (c.path.name == "Context" || c.path.name == "Compiler");
+		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames, preferTyped);
 		addRtti(c, pfields, pnames);
 		addMeta(classMeta(c), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
