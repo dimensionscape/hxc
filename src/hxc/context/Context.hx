@@ -328,6 +328,8 @@ class Context {
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
 			return;
 		}
+		if (Sys.getEnv("HXC_DEBUG_DIAG") != null && message.indexOf("fromV.T") >= 0)
+			Sys.println("[diag] pos=" + pos.min + "-" + pos.max + " sev=" + severity + " :: " + message);
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 

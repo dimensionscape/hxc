@@ -237,15 +237,26 @@ class Typer {
 	}
 
 	static function callMacroCast(ctx:TyperContext, implC:TClass, cf:TClassField, e:TExpr, t:T, p:Position):TExpr {
+		// The whole attempt is SPECULATIVE: a failing macro cast raises NotFound and leaves no diagnostics
+		// behind, so anything the macro run or its result's retype recorded rolls back.
+		var before = ctx.com.diagnostics.length;
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
-		var result = hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p);
-		// A macro result that fails to unify makes the CAST not found; the caller then reports the plain
-		// unify of the ORIGINAL value. (Error Unify -> NotFound).
-		return try castOrUnify(ctx, t, result, p) catch (te:TypingError) {
-			if (te.message == "Recursive implicit cast") throw te;
-			throw new NotFound();
-		};
+		try {
+			var result = hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p);
+			return try castOrUnify(ctx, t, result, p) catch (te:TypingError) {
+				if (te.message == "Recursive implicit cast") throw te;
+				throw new NotFound();
+			};
+		} catch (err:haxe.Exception) {
+			if (ctx.com.diagnostics.length > before) {
+				// Warnings recorded during the trial survive; only trial ERRORS roll back.
+				var kept = [for (i in before...ctx.com.diagnostics.length) ctx.com.diagnostics[i]];
+				ctx.com.diagnostics.resize(before);
+				for (d in kept) if (!d.severity.match(Error)) ctx.com.diagnostics.push(d);
+			}
+			throw err;
+		}
 	}
 
 	static function isVoid(t:T):Bool {
@@ -980,7 +991,7 @@ class Typer {
 				if (hxc.parser.Parser.displayFile != null && fieldCompletionFound == null && atDisplayPos(p)) {
 					var covered = false;
 					for (f in fields) if (atDisplayPos(f.expr.pos)) { covered = true; break; }
-					var an = covered ? null : expectedAnonFromWithType(withType);
+					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
 					if (an != null) {
 						fieldCompletionFound = [for (name in an.fields.keys()) {
 							var cf = an.fields.get(name);
@@ -1085,7 +1096,7 @@ class Typer {
 				} else {
 					var tfields:Array<TObjectField> = [];
 					var anonFields = new haxe.ds.StringMap<TClassField>();
-					var expected = expectedAnonFromWithType(withType);
+					var expected = expectedAnonFromWithType(ctx, withType);
 					for (f in fields) {
 						var ef = expected != null ? expected.fields.get(f.name) : null;
 						var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
@@ -1554,10 +1565,10 @@ class Typer {
 		if (pl.length > 0) displayFound = pl;
 	}
 
-	static function expectedAnonFromWithType(withType:WithType):Null<TAnon> {
+	static function expectedAnonFromWithType(ctx:TyperContext, withType:WithType):Null<TAnon> {
 		return switch (withType) {
 			case WithType(t, _):
-				switch (expectedAnonFromType(t, [])) {
+				switch (expectedAnonFromType(ctx, t, [])) {
 					// An empty expected structure imposes no field requirements: the literal types plainly
 					// and unification decides, so `({name:1} : {})` and an abstract `from {}` both accept
 					// any object.
@@ -1568,7 +1579,7 @@ class Typer {
 		}
 	}
 
-	static function expectedAnonFromType(t:T, seen:Array<T>):ObjectDeclKind {
+	static function expectedAnonFromType(ctx:TyperContext, t:T, seen:Array<T>):ObjectDeclKind {
 		return switch (TypeFunctions.follow(t)) {
 			case TAnon(a):
 				ODKStructure(a);
@@ -1580,20 +1591,15 @@ class Typer {
 				var hits:Array<ObjectDeclKind> = [];
 				var nextSeen = seen.concat([t]);
 				function consider(ft:T):Void {
-					switch (expectedAnonFromType(ft, nextSeen)) {
+					switch (expectedAnonFromType(ctx, ft, nextSeen)) {
 						case ODKPlain:
 						case odk: hits.push(odk);
 					}
 				}
-				for (fromType in a.from)
-					consider(TypeFunctions.applyParams(a.params, params, fromType));
-				for (c in a.fromField) {
-					switch (TypeFunctions.follow(c.cf.type)) {
-						case TFun(sig) if (sig.args.length == 1):
-							consider(TypeFunctions.applyParams(a.params, params, sig.args[0].t));
-						case _:
-					}
-				}
+				// The candidates come from getAbstractFroms, so a from-field's own type parameters are
+				// fresh monomorphs rather than raw parameter types leaking into field expectations.
+				for (ft in getAbstractFroms(ctx, a, params))
+					consider(ft);
 				switch (hits) {
 					case []: ODKPlain;
 					case [one]: one;
