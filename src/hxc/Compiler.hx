@@ -271,15 +271,16 @@ class Compiler {
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
-		// A JSON payload on --display selects the JSON-RPC display protocol it to DisplayJson.parse_input);
-		// the response travels the Completion channel and ends the run.
+		// A JSON payload on --display selects the JSON-RPC display protocol it to DisplayJson.parse_input).
+		// An immediate response travels the Completion channel and ends the run; a handler that only
+		// configures state (diagnostics) lets compilation continue and answers at report time.
 		if (ctx.displaySpec != null && StringTools.startsWith(ctx.displaySpec, "{")) {
 			try {
 				hxc.context.DisplayJson.parseInput(ctx, ctx.displaySpec);
 			} catch (out:hxc.context.DisplayJson.JsonDisplayOutput) {
 				Sys.stderr().writeString(out.output + "\n");
+				return;
 			}
-			return;
 		}
 		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
 		// which also joins the compile roots. The statics install before the init macros so a display
@@ -758,8 +759,12 @@ class Compiler {
 			group.items.push(item);
 		}
 		var out = [for (g in groups) '{"file":' + haxe.Json.stringify(g.file) + ',"diagnostics":[' + g.items.join(",") + ']}'];
-		// Print raw diagnostics without a trailing newline.
-		Sys.stderr().writeString("[" + out.join(",") + "]");
+		var raw = "[" + out.join(",") + "]";
+		// A JSON-RPC-initiated diagnostics run answers with the protocol envelope; the legacy arg prints
+		// the raw array. No trailing newline: the raw print.
+		if (ctx.jsonRpcId != null)
+			raw = '{"jsonrpc":"2.0","id":' + ctx.jsonRpcId + ',"result":{"result":' + raw + ',"timestamp":' + Sys.time() + '}}';
+		Sys.stderr().writeString(raw);
 	}
 
 	static function displaySignature(ctx:Context):Void {

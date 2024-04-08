@@ -60,6 +60,9 @@ class Context {
 
 	public var displaySpec:Null<String>;
 
+	// Serialized JSON-RPC request ID used when reporting the display response.
+	public var jsonRpcId:Null<String>;
+
 	/** Key = `pathKey`. */
 	public var moduleLut:StringMap<ModuleDef>;
 

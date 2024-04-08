@@ -35,6 +35,17 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/diagnostics", f: function(hctx) {
+				// Answer diagnostics only after compilation, using the stored request ID.
+				var file = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("file"), null);
+				if (file != null) {
+					var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+					hctx.com.displaySpec = full + "@0@diagnostics";
+				} else {
+					hctx.com.displaySpec = "?@0@diagnostics";
+				}
+				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
+			}},
 			{name: "initialize", f: function(hctx) {
 				supportsResolve = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("supportsResolve"), false);
 				var methods = [for (h in handlers()) JString(h.name)];
