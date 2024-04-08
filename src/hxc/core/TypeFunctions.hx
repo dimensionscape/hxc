@@ -731,10 +731,12 @@ class TypeFunctions {
 				!hasMeta(":notNull", a.meta);
 			case TAbstract(a, tl):
 				// Unguarded; the reference aborts fatally on the chain error before is_nullable can see a
-				// cycle, while hxc records it and continues, so the recovery path needs the stop.
-				if (nullableStack.indexOf(a) >= 0) false
+				// cycle, while hxc records it and continues, so the recovery path needs the stop. Keyed on the
+				// applied (abstract, params) pair: nested self-application such as C<C<String>> revisits the
+				// abstract with new params and must keep recursing.
+				if (nullableSeen(a, tl)) false
 				else {
-					nullableStack.push(a);
+					nullableStack.push({a: a, tl: tl});
 					var r = !hasMeta(":notNull", a.meta) && isNullable(applyParams(a.params, tl, a.thisType));
 					nullableStack.pop();
 					r;
@@ -744,7 +746,22 @@ class TypeFunctions {
 		}
 	}
 
-	static var nullableStack:Array<TAbstract> = [];
+	static var nullableStack:Array<{a:TAbstract, tl:Array<T>}> = [];
+
+	static function nullableSeen(a:TAbstract, tl:Array<T>):Bool {
+		for (entry in nullableStack) {
+			if (entry.a != a || entry.tl.length != tl.length) continue;
+			var same = true;
+			for (i in 0...tl.length) {
+				if (entry.tl[i] != tl[i]) {
+					same = false;
+					break;
+				}
+			}
+			if (same) return true;
+		}
+		return false;
+	}
 
 	public static function isNull(t:T, no_lazy:Bool = false):Bool {
 		return switch (t) {
