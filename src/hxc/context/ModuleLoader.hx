@@ -27,7 +27,17 @@ class ModuleLoader {
 		for (dir in ctx.classPath) {
 			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
-			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) return canonicalFileName(full);
+			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) {
+				// Require exact spelling from the directory listing even on case-insensitive filesystems.
+				var canon = canonicalFileName(full);
+				var reqBase = { var i = relPath.lastIndexOf("/"); relPath.substr(i + 1); };
+				var gotBase = {
+					var i = canon.lastIndexOf("/");
+					var j = canon.lastIndexOf("\\");
+					canon.substr((j > i ? j : i) + 1);
+				};
+				if (gotBase == reqBase) return canon;
+			}
 		}
 		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 	}
@@ -36,7 +46,13 @@ class ModuleLoader {
 		var slash = file.lastIndexOf("/");
 		var backslash = file.lastIndexOf("\\");
 		if (backslash > slash) slash = backslash;
-		if (slash < 0) return file;
+		if (slash < 0) {
+			try {
+				for (entry in FileSystem.readDirectory("."))
+					if (entry.toLowerCase() == file.toLowerCase()) return entry;
+			} catch (_:Dynamic) {}
+			return file;
+		}
 		var dir = file.substr(0, slash + 1);
 		var name = file.substr(slash + 1);
 		try {
