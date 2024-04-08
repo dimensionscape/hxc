@@ -578,6 +578,12 @@ class EvalEmitter {
 				// going rather than a host NotFound aborting the whole run.
 				try EvalField.protoFieldRaise(ensureStaticProto(ctx, c, p), EvalHash.hash(cf.name))
 				catch (_:hxc.core.NotFound) {
+					// A macro API class's DECLARED static late-types (its typed wrapper must run); the
+					// builtin backs only genuine gaps. (natives through load).
+					if (hxc.eval.EvalPrototype.isMacroApiClass(ctx, c)) {
+						var late0 = lateStaticMethod(ctx, c, cf);
+						if (late0 != null) return late0;
+					}
 					var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
 					if (builtins != null) for (b in builtins) if (b.name == EvalHash.hash(cf.name)) return b.v;
 					var late = lateStaticMethod(ctx, c, cf);

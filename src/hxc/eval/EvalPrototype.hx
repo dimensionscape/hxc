@@ -107,14 +107,15 @@ class EvalPrototype {
 	}
 
 	// Install native builtins for a type (extern stdlib classes get their fields from here).
-	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>, preferTyped:Bool = false):Void {
+	static function addBuiltins(list:Null<Array<BuiltinField>>, pfields:Array<EvalValue>, pnames:Map<Int, Int>, ?skipNames:Map<Int, Bool>):Void {
 		if (list == null) return;
 		for (b in list) {
+			if (skipNames != null && skipNames.exists(b.name)) continue;
 			var idx = pnames.get(b.name);
 			if (idx == null) {
 				pnames.set(b.name, pfields.length);
 				pfields.push(b.v);
-			} else if (!preferTyped) {
+			} else {
 				pfields[idx] = b.v;
 			}
 		}
@@ -461,6 +462,13 @@ class EvalPrototype {
 		return buildMeta(en.meta, fields, []);
 	}
 
+	// The classes whose statics stay typed in the macro world (their natives are exposed only through
+	// load).
+	public static function isMacroApiClass(ctx:EvalContext, c:TClass):Bool {
+		return ctx.isMacro && c.path.pack.length == 2 && c.path.pack[0] == "haxe" && c.path.pack[1] == "macro"
+			&& (c.path.name == "Context" || c.path.name == "Compiler");
+	}
+
 	// Pick the world a class's decl lives in: a macro-world class must be forced against the
 	// macro Context (the host parse drops its macro-only fields), and the macro interpreter's
 	// ctx.com is null, so fall back through macroCom to hostCom.
@@ -487,13 +495,7 @@ class EvalPrototype {
 				if (isRemovable(cf)) continue;
 				switch (cf.kind) {
 					case Method(_):
-						// The body forces against the world the class lives in; a macro-world
-						// class forced with the host com silently finds no declaration and the
-						// builtin shadows the typed wrapper.
-						if (cf.expr == null) {
-							var wcom = worldCom(ctx, c);
-							if (wcom != null) hxc.typing.TypeFields.forceFieldBody(wcom, c, cf);
-						}
+						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							var idx = pfields.length;
@@ -559,12 +561,15 @@ class EvalPrototype {
 			}
 		}
 		// The macro API classes keep their typed std wrappers (init-macro asserts, doc text, deprecation
-		// gates) and reach the natives through load/callMacroApi; the builtins fill only the gaps.
-		// Everywhere else a registered builtin replaces the typed body, which targets another platform's
-		// externs. (the natives are exposed only through load).
-		var preferTyped = c.path.pack.length == 2 && c.path.pack[0] == "haxe" && c.path.pack[1] == "macro"
-			&& (c.path.name == "Context" || c.path.name == "Compiler");
-		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames, preferTyped);
+		// checks) and reach the natives through load/callMacroApi: no builtin installs over a DECLARED
+		// static; an unforced body late-types on first access instead. Everywhere else a registered
+		// builtin replaces the typed body, which targets another platform's externs.
+		var skipNames:Null<Map<Int, Bool>> = null;
+		if (isMacroApiClass(ctx, c)) {
+			skipNames = new Map();
+			for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skipNames.set(EvalHash.hash(cf.name), true);
+		}
+		addBuiltins(ctx.builtins.staticBuiltins.get(key), pfields, pnames, skipNames);
 		addRtti(c, pfields, pnames);
 		addMeta(classMeta(c), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
