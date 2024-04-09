@@ -489,6 +489,13 @@ class Compiler {
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
 				abortOnDiagnostics(ctx, platform);
+				// Typer/compiledTypes: every compiled type serializes after the filters.
+				if (ctx.jsonRpcId != null && isDisplay(ctx, "compiledTypes")) {
+					var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+					var l = [for (mt in ctx.types) hxc.core.Json.Json.stringOfJson(gen.generateModuleType(mt))];
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + l.join(",") + "]"));
+					return;
+				}
 				if (!noOutput) {
 					if (platform == Js) {
 						var tGen = hxc.core.Timer.timer(["generate", "js"]);

@@ -44,6 +44,10 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "typer/compiledTypes", f: function(hctx) {
+				hctx.com.displaySpec = "?@0@compiledTypes";
+				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
+			}},
 			{name: "display/metadata", f: function(hctx) {
 				// Compiler metadata is available directly; custom metadata requires init-macro registration.
 				var includeCompiler = hctx.jsonrpc.getBoolParam("compiler");
