@@ -589,6 +589,10 @@ class Filters {
 			case TClassDecl(c):
 				var ethis = TypeFunctions.mk(TConst(TThis), TInst(c, TypeFunctions.extractParamTypes(c.params)), c.pos);
 				var inits = [for (cf in c.orderedFields) if (cf.kind.match(Var(_)) && cf.expr != null) cf];
+				// The init list by PREPENDING (cf :: inits) over the ordered fields with no re-reversal at , so
+				// the assignments emit in REVERSE declaration order (verified against the oracle's utest_Runner
+				// constructor on js and Socket's on cpp).
+				inits.reverse();
 				if (inits.length == 0) return;
 				var el = [for (cf in inits) {
 					var lhs = TypeFunctions.mk(TField(TypeFunctions.mk(ethis.expr, ethis.type, cf.pos), FInstance(c, TypeFunctions.extractParamTypes(c.params), cf)), cf.type, cf.pos);
@@ -882,7 +886,10 @@ class Filters {
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
 		memProbe("pass2:done");
-		// Slot: onGenerate callbacks + save_class_state (server cache; single-shot hxc skips)
+		// onGenerate callbacks run after the expression passes and before save_class_state/destruction, so
+		// macro-side type mutation (e.g. cpp.cppia.HostClasses marking host classes extern) is invisible to
+		// the expression filters. (save_class_state itself is server cache; single-shot hxc skips it.)
+		hxc.eval.EvalMacro.runGenerateCallbacks(com);
 		destruction(tctx, renameLocals);
 		memProbe("destruction:done");
 	}
