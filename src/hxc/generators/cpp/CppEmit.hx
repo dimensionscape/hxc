@@ -151,8 +151,24 @@ class CppEmit {
 			// An assignment used as a value (non-void cpptype, e.g. nested inside `a + (b = c)`) is wrapped
 			// in parentheses so C++ precedence keeps the assignment together; a statement is not.
 			case CppSet(lvalue, value):
+				// CppSet dispatches per location: dynamic arrays store through __SetItem, implemented
+				// arrays through __set, virtual arrays through set, and dynamic fields through __SetField;
+				// the reference/IndexRef forms serve only the crement and modify contexts (genLValue).
 				var close = expr.ctype.match(TCppVoid) ? "" : { out("("); ")"; };
-				genLValue(lvalue); out(" = "); gen(value);
+				switch (lvalue) {
+					case CppArrayRef(ArrayVirtual(obj, idx)):
+						gen(obj); out("->set("); gen(idx); out(","); gen(value); out(")");
+					case CppArrayRef(ArrayDynamic(obj, idx)):
+						gen(obj); out("->__SetItem("); gen(idx); out(","); gen(value); out(")");
+					case CppArrayRef(ArrayImplements(_, obj, idx)):
+						gen(obj); out("->__set("); gen(idx); out(","); gen(value); out(")");
+					case CppArrayRef(ArrayObject(obj, idx, _)):
+						gen(obj); out("["); gen(idx); out("] = "); gen(value);
+					case CppDynamicRef(e, name):
+						gen(e); out("->__SetField(" + CppTypeText.strq(smartStrings, name) + ","); gen(value); out(",::hx::paccDynamic)");
+					case _:
+						genLValue(lvalue); out(" = "); gen(value);
+				}
 				out(close);
 			// CppBinop: UShr/Mod/Div-by-zero call runtime helpers, else (left op right)
 			case CppBinop(OpUShr, l, r): out("::hx::UShr("); gen(l); out(","); gen(r); out(")");
