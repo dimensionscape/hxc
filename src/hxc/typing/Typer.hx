@@ -750,6 +750,10 @@ class Typer {
 					TexprTools.duplicateTvars(function(te) {
 						return getThis(ctx, te.pos);
 					}, ctx.com.storedTypedExprs.get(id));
+				case EMeta(m, e1) if (m.name == ":fixed" && ctx.com.platform.match(Cpp)):
+					// @:fixed survives typing on cpp so the retyper builds the typed AnonStruct literal.
+					var te = typeExpr(ctx, e1, withType);
+					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
 				case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
 					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
 					var te = typeExpr(ctx, e1, withType);
