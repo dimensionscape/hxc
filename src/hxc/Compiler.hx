@@ -475,7 +475,9 @@ class Compiler {
 			hxc.debug.Dump.run(ctx);
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
-			hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
+			// onGenerate callbacks run inside Filters.run a targetless compile has no filter pipeline, so
+			// they fire here to keep macro tests observable.
+			if (platform == Cross) hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
 			if (isDisplay(ctx, "diagnostics")) {
 				displayDiagnostics(ctx);
 				return;
