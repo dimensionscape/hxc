@@ -935,12 +935,29 @@ class EvalStdLib {
 	// The global interpreter lock: interpreted code runs one thread at a time; blocking natives
 	// release it around the OS wait so other interpreter threads can run.
 	public static var gil:sys.thread.Mutex = new sys.thread.Mutex();
+	// Releasing an UNHELD lock is undefined behavior on the host, so each thread
+	// tracks whether it holds the lock; a blocking native on a non-holding thread
+	// just runs.
+	static var gilHeldTls:sys.thread.Tls<Bool> = new sys.thread.Tls();
+
+	public static function gilEnter():Void {
+		gil.acquire();
+		gilHeldTls.value = true;
+	}
+
+	public static function gilLeave():Void {
+		gilHeldTls.value = false;
+		gil.release();
+	}
 
 	// Runs a blocking native outside the interpreter lock.
 	static function gilBlocking(f:Void->EvalValue):EvalValue {
+		if (gilHeldTls.value != true) return f();
+		gilHeldTls.value = false;
 		gil.release();
-		var r = try f() catch (e:Dynamic) { gil.acquire(); throw e; };
+		var r = try f() catch (e:Dynamic) { gil.acquire(); gilHeldTls.value = true; throw e; };
 		gil.acquire();
+		gilHeldTls.value = true;
 		return r;
 	}
 
@@ -2356,7 +2373,7 @@ class EvalStdLib {
 			// reference thread wrapper.
 			var j = job;
 			sys.thread.Thread.create(function() {
-				gil.acquire();
+				gilEnter();
 				nativeThreadSelfTls.value = vi;
 				try {
 					applyFn(j, []);
@@ -2364,7 +2381,7 @@ class EvalStdLib {
 					try Sys.stderr().writeString(Std.string(e) + "
 ") catch (_:Dynamic) {}
 				}
-				gil.release();
+				gilLeave();
 			});
 		}
 		return VInstance(vi);

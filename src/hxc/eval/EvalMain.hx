@@ -243,9 +243,19 @@ class EvalMain {
 	// Evaluate the finalized entry expression: the call to main() plus the entry-point or
 	// event-loop tail built by Finalization.getMain.
 	public static function runMain(ctx:EvalContext, mainPath:Path):EvalValue {
-		runStaticInits(ctx);
-		if (ctx.com == null || ctx.com.main == null)
-			throw "No entry expression: Finalization.run must populate com.main before runMain";
-		return EvalEmitter.eval(ctx, ctx.com.main);
+		// The main thread interprets under the global interpreter lock so spawned
+		// threads serialize with it; blocking natives release it around waits.
+		EvalStdLib.gilEnter();
+		try {
+			runStaticInits(ctx);
+			if (ctx.com == null || ctx.com.main == null)
+				throw "No entry expression: Finalization.run must populate com.main before runMain";
+			var r = EvalEmitter.eval(ctx, ctx.com.main);
+			EvalStdLib.gilLeave();
+			return r;
+		} catch (e:haxe.Exception) {
+			EvalStdLib.gilLeave();
+			throw e;
+		}
 	}
 }
