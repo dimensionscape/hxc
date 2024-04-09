@@ -253,6 +253,55 @@ class Genjson {
 	}
 
 	public function generateClassField(scope:ClassFieldScope, cf:TClassField):JsonValue {
+		return jobject(generateClassFieldFields(scope, cf));
+	}
+
+	// The declared type swaps for the completion type, which lands first in the field list.
+	public function generateClassFieldWithType(scope:ClassFieldScope, cf:TClassField, typeJson:JsonValue):JsonValue {
+		var fields = [field("type", typeJson)];
+		for (f in generateClassFieldFields(scope, cf)) if (f.name != "type") fields.push(f);
+		return jobject(fields);
+	}
+
+	public function generateAnonStatusJson(status:AnonStatus):JsonValue return generateAnonStatus(status);
+	public function generateAnonJson(an:TAnon):JsonValue return generateAnon(an);
+
+	public function generateTVar(v:TVar):JsonValue {
+		var fields:Array<JsonField> = [];
+		switch (v.kind) {
+			case VUser(origin):
+				var i = switch (origin) {
+					case TVOLocalVariable: 0;
+					case TVOArgument: 1;
+					case TVOForVariable: 2;
+					case TVOPatternVariable: 3;
+					case TVOCatchVariable: 4;
+					case TVOLocalFunction: 5;
+				};
+				fields.push(field("origin", jint(i)));
+			case _:
+		}
+		var extra:JsonValue = JNull;
+		if (v.extra != null) {
+			var extraFields = [field("params", jarray([for (tp in v.extra.params) generateTypeParameter(tp)]))];
+			if (v.extra.expr != null)
+				extraFields.push(field("expr", jobject([field("string", jstring(hxc.core.TPrinting.sExprStr(v.extra.expr)))])));
+			extra = jobject(extraFields);
+		}
+		return jobject(fields.concat([
+			field("id", jint(v.id)),
+			field("name", jstring(v.name)),
+			field("type", generateType(v.type)),
+			field("capture", jbool(TypeFunctions.hasVarFlag(v, VCaptured))),
+			field("extra", extra),
+			field("meta", generateMetadata(v.meta)),
+			field("pos", generatePos(v.pos)),
+			field("isFinal", jbool(TypeFunctions.hasVarFlag(v, VFinal))),
+			field("isInline", jbool(v.extra != null && v.extra.expr != null))
+		]));
+	}
+
+	function generateClassFieldFields(scope:ClassFieldScope, cf:TClassField):Array<JsonField> {
 		var kind = switch (cf.kind) {
 			case Var(vk): generateAdt("FVar", jobject([
 				field("read", generateVarAccess(vk.read)),
@@ -270,7 +319,7 @@ class Genjson {
 				}
 			case _:
 		}
-		return jobject([
+		return [
 			field("name", jstring(fieldName(cf.name, cf.meta))),
 			field("type", generateType(cf.type)),
 			field("isPublic", jbool(TypeFunctions.hasClassFieldFlag(cf, CfPublic))),
@@ -284,7 +333,7 @@ class Genjson {
 			field("doc", generateDoc(cf.doc)),
 			field("overloads", jarray([for (o in cf.overloads) generateClassField(scope, o)])),
 			field("scope", jint(scope.getIndex()))
-		]);
+		];
 	}
 
 	public function generateEnumField(ef:TEnumField):JsonValue {
@@ -297,5 +346,155 @@ class Genjson {
 			field("doc", generateDoc(ef.doc)),
 			field("params", jarray([for (tp in ef.params) generateTypeParameter(tp)]))
 		]);
+	}
+
+	function generateBinopJson(op:Binop):JsonValue {
+		function adt(name:String, args:Null<JsonValue>):JsonValue return generateAdt(name, args);
+		return switch (op) {
+			case OpAdd: adt("OpAdd", null);
+			case OpMult: adt("OpMult", null);
+			case OpDiv: adt("OpDiv", null);
+			case OpSub: adt("OpSub", null);
+			case OpAssign: adt("OpAssign", null);
+			case OpEq: adt("OpEq", null);
+			case OpNotEq: adt("OpNotEq", null);
+			case OpGt: adt("OpGt", null);
+			case OpGte: adt("OpGte", null);
+			case OpLt: adt("OpLt", null);
+			case OpLte: adt("OpLte", null);
+			case OpAnd: adt("OpAnd", null);
+			case OpOr: adt("OpOr", null);
+			case OpXor: adt("OpXor", null);
+			case OpBoolAnd: adt("OpBoolAnd", null);
+			case OpBoolOr: adt("OpBoolOr", null);
+			case OpShl: adt("OpShl", null);
+			case OpShr: adt("OpShr", null);
+			case OpUShr: adt("OpUShr", null);
+			case OpMod: adt("OpMod", null);
+			case OpAssignOp(op2): adt("OpAssignOp", generateBinopJson(op2));
+			case OpInterval: adt("OpInterval", null);
+			case OpArrow: adt("OpArrow", null);
+			case OpIn: adt("OpIn", null);
+			case OpNullCoal: adt("OpNullCoal", null);
+		};
+	}
+
+	function generateUnopJson(op:Unop):JsonValue {
+		return jstring(switch (op) {
+			case Increment: "OpIncrement";
+			case Decrement: "OpDecrement";
+			case Not: "OpNot";
+			case Neg: "OpNeg";
+			case NegBits: "OpNegBits";
+			case Spread: "OpSpread";
+		});
+	}
+
+	static function classfieldRef(cf:TClassField):JsonValue {
+		return jstring(fieldName(cf.name, cf.meta));
+	}
+
+	function generateModuleTypeFields(inf:TInfos):Array<JsonField> {
+		return [
+			field("pack", jarray([for (p in inf.path.pack) jstring(p)])),
+			field("name", jstring(inf.path.name)),
+			field("moduleName", jstring(inf.module.path.name)),
+			field("pos", generatePos(inf.pos)),
+			field("isPrivate", jbool(inf.isPrivate)),
+			field("params", jarray([for (tp in inf.params) generateTypeParameter(tp)])),
+			field("meta", generateMetadata(inf.meta)),
+			field("doc", generateDoc(inf.doc))
+		];
+	}
+
+	function generateClass(c:TClass):Array<JsonField> {
+		function classKind(ck:TClassKind):JsonValue {
+			return switch (ck) {
+				case KNormal: generateAdt("KNormal", null);
+				case KTypeParameter(tl): generateAdt("KTypeParameter", generateTypes(tl));
+				case KExpr(_): generateAdt("KExpr", JNull);
+				case KGeneric: generateAdt("KGeneric", null);
+				case KGenericInstance(c2, tl): generateAdt("KGenericInstance", generateTypePathWithParams(c2.module.path, c2.path, tl, c2.meta));
+				case KMacroType: generateAdt("KMacroType", null);
+				case KGenericBuild(_): generateAdt("KGenericBuild", null);
+				case KAbstractImpl(a): generateAdt("KAbstractImpl", abstractRef(a));
+				case KModuleFields(m): generateAdt("KModuleFields", jobject(modulePathFields(m.path)));
+			};
+		}
+		function classRelation(c2:TClass, tl:Array<T>):JsonValue {
+			return jobject([
+				field("path", classRef(c2)),
+				field("params", generateTypes(tl))
+			]);
+		}
+		var overrides = [for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) classfieldRef(cf)];
+		return [
+			field("kind", classKind(c.kind)),
+			field("isInterface", jbool(TypeFunctions.hasClassFlag(c, CInterface))),
+			field("superClass", c.superClass == null ? JNull : classRelation(c.superClass.c, c.superClass.params)),
+			field("interfaces", jarray([for (i in c.interfaces) classRelation(i.c, i.params)])),
+			field("fields", jarray([for (cf in c.orderedFields) generateClassField(CFSMember, cf)])),
+			field("statics", jarray([for (cf in c.orderedStatics) generateClassField(CFSStatic, cf)])),
+			field("constructor", c.constructor == null ? JNull : generateClassField(CFSConstructor, c.constructor)),
+			field("init", JNull),
+			field("overrides", jarray(overrides)),
+			field("isExtern", jbool(TypeFunctions.hasClassFlag(c, CExtern))),
+			field("isFinal", jbool(TypeFunctions.hasClassFlag(c, CFinal))),
+			field("isAbstract", jbool(TypeFunctions.hasClassFlag(c, CAbstract)))
+		];
+	}
+
+	function generateEnum(en:TEnum):Array<JsonField> {
+		return [
+			field("constructors", jarray([for (name in en.names) generateEnumField(en.constrs.get(name))])),
+			field("isExtern", jbool(en.isExtern))
+		];
+	}
+
+	function generateTypedef(td:TDef):Array<JsonField> {
+		return [field("type", generateType(td.type))];
+	}
+
+	function generateAbstract(a:TAbstract):Array<JsonField> {
+		function castRelation(t:T, cf:Null<TClassField>):JsonValue {
+			return jobject([
+				field("t", generateType(t)),
+				field("field", cf == null ? JNull : classfieldRef(cf))
+			]);
+		}
+		function casts(fields:Array<TAbstractCast>, plain:Array<T>):JsonValue {
+			return jarray([for (c in fields) castRelation(c.t, c.cf)].concat([for (t in plain) castRelation(t, null)]));
+		}
+		return [
+			field("type", generateType(a.thisType)),
+			field("impl", a.impl == null ? JNull : classRef(a.impl)),
+			field("binops", jarray([for (o in a.ops) jobject([
+				field("op", generateBinopJson(o.op)),
+				field("field", classfieldRef(o.cf))
+			])])),
+			field("unops", jarray([for (o in a.unops) jobject([
+				field("op", generateUnopJson(o.op)),
+				field("postFix", jbool(o.flag.match(Postfix))),
+				field("field", classfieldRef(o.cf))
+			])])),
+			field("from", casts(a.fromField, a.from)),
+			field("to", casts(a.toField, a.to)),
+			field("array", jarray([for (cf in a.array) classfieldRef(cf)])),
+			field("read", a.read == null ? JNull : classfieldRef(a.read)),
+			field("write", a.write == null ? JNull : classfieldRef(a.write))
+		];
+	}
+
+	public function generateModuleType(mt:ModuleType):JsonValue {
+		var fields1 = generateModuleTypeFields(TypeFunctions.tInfos(mt));
+		var kind:String;
+		var fields2:Array<JsonField>;
+		switch (mt) {
+			case TClassDecl(c): kind = "class"; fields2 = generateClass(c);
+			case TEnumDecl(en): kind = "enum"; fields2 = generateEnum(en);
+			case TTypeDecl(td): kind = "typedef"; fields2 = generateTypedef(td);
+			case TAbstractDecl(a): kind = "abstract"; fields2 = generateAbstract(a);
+		}
+		return jobject([field("kind", jstring(kind))].concat(fields1).concat([field("args", jobject(fields2))]));
 	}
 }
