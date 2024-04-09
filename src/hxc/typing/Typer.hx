@@ -1424,6 +1424,15 @@ class Typer {
 	// cannot swallow it (same rule as displayFound).
 	public static var fieldCompletionFound:Null<Array<hxc.compiler.DisplayXml.DisplayField>> = null;
 
+	// The typed completion capture for the JSON protocol: each entry keeps the real field plus its origin
+	// so CompletionItem.toJson can serialize faithfully (the legacy XML lane above stringifies).
+	// receiver/insertPos feed CRField and replaceRange.
+	public static var jsonFieldCompletion:Null<{
+		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool}>,
+		receiver:Null<TExpr>,
+		insertPos:Position
+	}> = null;
+
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
 		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
@@ -1452,10 +1461,18 @@ class Typer {
 		};
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
+		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool}> = [];
+		function pushJson(cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool):Void {
+			jsonEntries.push({cf: cf, scope: scope, originClass: originClass, originAnon: originAnon, builtIn: builtIn});
+		}
+		var pushScope:hxc.core.Type.ClassFieldScope = CFSMember;
+		var pushOriginClass:Null<TClass> = null;
+		var pushOriginAnon:Null<TAnon> = null;
 		function push(cf:TClassField):Void {
 			if (seen.exists(cf.name)) return;
 			seen.set(cf.name, true);
 			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+			pushJson(cf, pushScope, pushOriginClass, pushOriginAnon, false);
 			fields.push({
 				kind: cf.kind.match(Method(_)) ? "method" : "var",
 				name: cf.name,
@@ -1474,6 +1491,8 @@ class Typer {
 		if (typed != null) switch (typed.expr) {
 			case TTypeExpr(TClassDecl(c)):
 				// Private statics complete inside their declaring class.
+				pushScope = CFSStatic;
+				pushOriginClass = c;
 				for (cf in c.orderedStatics)
 					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == c) push(cf);
 			case _:
@@ -1483,6 +1502,7 @@ class Typer {
 					case TInst(c, _):
 						var cur = c;
 						while (cur != null) {
+							pushOriginClass = cur;
 							for (name in cur.fields.keys()) {
 								var cf = cur.fields.get(name);
 								if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
@@ -1490,12 +1510,14 @@ class Typer {
 							cur = cur.superClass == null ? null : cur.superClass.c;
 						}
 					case TAnon(an):
+						pushOriginAnon = an;
 						for (name in an.fields.keys()) push(an.fields.get(name));
 					case TFun(sig):
 						fields.push({kind: "method", name: "bind", type: hxc.core.TPrinting.sTypeStr(TFun(sig)), doc: null});
 					case _:
 				}
 		}
+		jsonFieldCompletion = {entries: jsonEntries, receiver: typed, insertPos: p};
 		// The statics list CONCATENATES the module's other types (the same-named main type
 		// excluded), whether or not any statics exist.
 		if (identName != null) {
