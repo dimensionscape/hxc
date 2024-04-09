@@ -44,6 +44,63 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/metadata", f: function(hctx) {
+				// Compiler metadata is available directly; custom metadata requires init-macro registration.
+				var includeCompiler = hctx.jsonrpc.getBoolParam("compiler");
+				hctx.jsonrpc.getBoolParam("user");
+				var out:Array<JsonValue> = [];
+				if (includeCompiler) {
+					var all = MetaRegistry.metas();
+					all.sort(function(a, b) {
+						var n1 = MetaRegistry.stringField(a, "metadata", "");
+						var n2 = MetaRegistry.stringField(b, "metadata", "");
+						return n1 < n2 ? -1 : n1 > n2 ? 1 : 0;
+					});
+					for (m in all) {
+						// The Haxe 4.3.7 generated metadata list omits this newer meta.json entry.
+						if (MetaRegistry.stringField(m, "metadata", "") == ":inlineConstructorArgument") continue;
+						var params = MetaRegistry.arrayField(m, "params").copy();
+						params.reverse();
+						out.push(JObject([
+						{name: "name", value: JString(MetaRegistry.stringField(m, "metadata", ""))},
+						{name: "doc", value: JString(MetaRegistry.stringField(m, "doc", ""))},
+						{name: "parameters", value: JArray(params)},
+						{name: "platforms", value: JArray(MetaRegistry.arrayField(m, "platforms"))},
+						{name: "targets", value: JArray(MetaRegistry.arrayField(m, "targets"))},
+						{name: "internal", value: JBool(MetaRegistry.boolField(m, "internal"))},
+						{name: "origin", value: JString("haxe compiler")},
+						{name: "links", value: JArray(MetaRegistry.arrayField(m, "links"))}
+					]));
+					}
+				}
+				hctx.sendResult(JArray(out));
+			}},
+			{name: "display/defines", f: function(hctx) {
+				var includeCompiler = hctx.jsonrpc.getBoolParam("compiler");
+				hctx.jsonrpc.getBoolParam("user");
+				var out:Array<JsonValue> = [];
+				if (includeCompiler) {
+					var all = MetaRegistry.defines();
+					var named = [for (d in all) {
+						name: StringTools.replace(MetaRegistry.stringField(d, "define", ""), "-", "_"),
+						fields: d
+					}];
+					named.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+					for (d in named) {
+						var deprecated = MetaRegistry.field(d.fields, "deprecated");
+						out.push(JObject([
+							{name: "name", value: JString(d.name)},
+							{name: "doc", value: JString(MetaRegistry.stringField(d.fields, "doc", ""))},
+							{name: "parameters", value: JArray(MetaRegistry.arrayField(d.fields, "params"))},
+							{name: "platforms", value: JArray(MetaRegistry.arrayField(d.fields, "platforms"))},
+							{name: "origin", value: JString("haxe compiler")},
+							{name: "deprecated", value: deprecated == null ? JNull : deprecated},
+							{name: "links", value: JArray(MetaRegistry.arrayField(d.fields, "links"))}
+						]));
+					}
+				}
+				hctx.sendResult(JArray(out));
+			}},
 			{name: "display/signatureHelp", f: function(hctx) {
 				setDisplayFile(hctx, "signature");
 			}},

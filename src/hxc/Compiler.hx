@@ -285,7 +285,8 @@ class Compiler {
 			try {
 				hxc.context.DisplayJson.parseInput(ctx, ctx.displaySpec);
 			} catch (out:hxc.context.DisplayJson.JsonDisplayOutput) {
-				Sys.stderr().writeString(out.output + "\n");
+				// Print the response verbatim without a trailing newline.
+				Sys.stderr().writeString(out.output);
 				return;
 			}
 		}
@@ -366,6 +367,10 @@ class Compiler {
 			if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
 			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
+			// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots are
+			// typed in reverse insertion order).
+			if (platform == Cpp && ctx.defines.rawDefined("cppia"))
+				ModuleLoader.loadModule(ctx, {pack: ["cpp", "cppia"], name: "HostClasses"}, Position.nullPos);
 			tLoad();
 			var tType = hxc.core.Timer.timer(["typing"]);
 			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
