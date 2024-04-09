@@ -3003,15 +3003,15 @@ class EvalStdLib {
 	}
 
 	static function sysProgramPath(ctx:EvalContext):EvalValue {
-		for (mt in ctx.typeCache) switch (mt) {
+		// programPath: the main class's type, and the full path of its position's file.
+		var com = ctx.com;
+		if (com == null || com.mainClass == null) return VNull;
+		return switch (ctx.typeCache.get(EvalHash.pathHash(com.mainClass))) {
 			case TClassDecl(c):
-				if (c.statics.exists("main")) {
-					var file = c.pos.file;
-					return file == null || file == "?" ? VNull : mkStr(sys.FileSystem.fullPath(file));
-				}
-			case _:
+				var file = c.pos.file;
+				file == null || file == "?" ? VNull : mkStr(sys.FileSystem.fullPath(file));
+			case _: VNull;
 		}
-		return VNull;
 	}
 
 	static function hostIpString(ip:Int):String {
