@@ -137,6 +137,10 @@ class EvalContext {
 		this.vectorPrototype = null;
 		this.toplevel = VNull;
 		this.eval = new Eval();
+		// One eval per thread; the thread-local holds this thread's. Seed it with the creating thread's
+		// eval.
+		this.evalTls = new sys.thread.Tls();
+		this.evalTls.value = this.eval;
 		this.defines = defines == null ? new Define() : defines;
 		// Soft call-depth cap for the RUNNING program. Well above any legitimate runtime recursion in
 		// the corpus, but far below where the host's native stack is exhausted, so runaway interpreted
@@ -163,8 +167,15 @@ class EvalContext {
 		current = ctx;
 	}
 
-	public static inline function getEval(ctx:EvalContext):Eval {
-		return ctx.eval;
+	public static function getEval(ctx:EvalContext):Eval {
+		// Each new thread gets a fresh eval; a thread touching the interpreter for the first time gets its
+		// own environment stack.
+		var e = ctx.evalTls.value;
+		if (e == null) {
+			e = new Eval();
+			ctx.evalTls.value = e;
+		}
+		return e;
 	}
 
 	public static function createEnvInfo(isStatic:Bool, pos:Position, kind:EvalEnvKind, numLocals:Int, numCaptures:Int):EvalEnvInfo {
