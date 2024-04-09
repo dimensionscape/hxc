@@ -1388,6 +1388,7 @@ class Compiler {
 	static function expandArgsInner(args:Array<String>, seen:Array<String>):Array<String> {
 		var out:Array<String> = [];
 		var i = 0;
+		var libs:Array<String> = [];
 		while (i < args.length) {
 			var a = args[i++];
 			if (!StringTools.startsWith(a, "-") && StringTools.endsWith(a, ".hxml")) {
@@ -1396,11 +1397,14 @@ class Compiler {
 			}
 			if (a == "-lib" || a == "--library") {
 				if (i >= args.length) throw "Missing library name";
-				out = out.concat(expandHaxelib(args[i++], seen));
+				libs.push(args[i++]);
 				continue;
 			}
 			out.push(a);
 		}
+		// All libraries resolve through one haxelib call whose output appends after the other arguments.
+		// .
+		if (libs.length > 0) out = out.concat(expandHaxelibs(libs, seen));
 		return out;
 	}
 
@@ -1425,13 +1429,22 @@ class Compiler {
 		return path;
 	}
 
-	static function expandHaxelib(lib:String, seen:Array<String>):Array<String> {
-		var p = new Process("haxelib", ["path", lib]);
+	static function expandHaxelibs(libs:Array<String>, seen:Array<String>):Array<String> {
+		// The hxcpp host's spawn intermittently fails outright under load; one retry covers it.
+		var p = try new Process("haxelib", ["path"].concat(libs)) catch (_:Dynamic) {
+			Sys.sleep(0.1);
+			new Process("haxelib", ["path"].concat(libs));
+		};
 		var stdout = p.stdout.readAll().toString();
 		var stderr = p.stderr.readAll().toString();
 		var code = p.exitCode();
 		p.close();
-		if (code != 0) throw "haxelib path " + lib + " failed: " + stderr;
+		if (code != 0) {
+			// Distinguish a missing haxelib from its own error output.
+			if (StringTools.trim(stdout) == "" && StringTools.trim(stderr) == "")
+				throw "Failed to call haxelib (command not found ?)";
+			throw StringTools.trim(stdout + (stdout != "" && stderr != "" ? "\n" : "") + stderr);
+		}
 		var args:Array<String> = [];
 		for (line in stdout.split("\n")) {
 			var parsed = parseHxmlLine(line);
