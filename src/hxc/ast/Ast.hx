@@ -719,7 +719,8 @@ class Ast {
 						}
 						if (u >= 0xD800 && u < 0xE000)
 							throw new InvalidEscapeSequence(c, i, "UTF-16 surrogates are not allowed in strings.");
-						utf8AddUchar(b, u);
+						// Append code points directly; appending UTF-8 bytes would encode them twice.
+						b.addChar(u);
 						inext += a;
 					case _:
 						throw new InvalidEscapeSequence(c, i, null);
@@ -769,24 +770,6 @@ class Ast {
 				n = 0x110000; // past the max code point: stay above it without 32-bit wrap
 		}
 		return n;
-	}
-
-	static function utf8AddUchar(b:StringBuf, u:Int):Void {
-		if (u < 0x80) {
-			b.addChar(u);
-		} else if (u < 0x800) {
-			b.addChar(0xC0 | (u >> 6));
-			b.addChar(0x80 | (u & 0x3F));
-		} else if (u < 0x10000) {
-			b.addChar(0xE0 | (u >> 12));
-			b.addChar(0x80 | ((u >> 6) & 0x3F));
-			b.addChar(0x80 | (u & 0x3F));
-		} else {
-			b.addChar(0xF0 | (u >> 18));
-			b.addChar(0x80 | ((u >> 12) & 0x3F));
-			b.addChar(0x80 | ((u >> 6) & 0x3F));
-			b.addChar(0x80 | (u & 0x3F));
-		}
 	}
 
 	public static function mapExpr(loop:Expr->Expr, e:Expr):Expr {
