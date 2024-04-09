@@ -36,6 +36,11 @@ class CppRetype {
 			functionArgs:Array<TVar>, functionType:T, exprTree:TExpr, forInjection:Bool):CppExpr {
 		return new RetypeSession(com, realThisPtr, fileId, functionArgs, functionType, forInjection).retype(requestType, exprTree);
 	}
+
+	// The cppia writer resolves the constructor prototype the same way TNew retyping does.
+	public static function resolveConstructorOverload(c:TClass, tl:Array<T>, args:Array<TExpr>):Null<TClassField> {
+		return RetypeSession.selectConstructor(c, tl, args);
+	}
 }
 
 // One retypeExpression call's mutable state + the recursive lowering.
@@ -556,6 +561,20 @@ private class RetypeSession {
 				var mapMember = TypeFunctions.copyField(member);
 				mapMember.name = getter.name;
 				{def: CppCall(FuncInstance(obj, InstPtr, mapMember), retypedArgs), t: getter.type};
+			// Maps use typed setters for scalar and String values.
+			case FuncInstance(obj, InstPtr, member) if (forCppia && isMapSetCall(obj, member)):
+				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
+				var fname = switch (retypedArgs) {
+					case [_, {ctype: TCppScalar("bool")}]: "setBool";
+					case [_, {ctype: TCppScalar("int")}]: "setInt";
+					case [_, {ctype: TCppScalar("::cpp::Int64")}]: "setInt64";
+					case [_, {ctype: TCppScalar("Float")}]: "setFloat";
+					case [_, {ctype: TCppString}]: "setString";
+					case _: "set";
+				}
+				var mapMember = TypeFunctions.copyField(member);
+				mapMember.name = fname;
+				{def: CppCall(FuncInstance(obj, InstPtr, mapMember), retypedArgs), t: CppTypeOf.cppTypeOf(expr.type)};
 			// The &/* pointer intrinsics: cpp.Native.addressOf/star/star's native names
 				// (::hx::AddressOf/StarOf/Dereference) lower to CppAddressOf/CppDereference, not a call to a
 				// nonexistent hxcpp function.
@@ -587,6 +606,17 @@ private class RetypeSession {
 
 	static function isMapGetCall(obj:CppExpr, member:TClassField):Bool {
 		if (member.name != "get") return false;
+		return switch (obj.ctype) {
+			case TCppInst(c, _): switch [c.path.pack, c.path.name] {
+				case [["cpp"], "Int64Map"] | [["haxe", "ds"], "IntMap"] | [["haxe", "ds"], "StringMap"] | [["haxe", "ds"], "ObjectMap"]: true;
+				case _: false;
+			};
+			case _: false;
+		}
+	}
+
+	static function isMapSetCall(obj:CppExpr, member:TClassField):Bool {
+		if (member.name != "set") return false;
 		return switch (obj.ctype) {
 			case TCppInst(c, _): switch [c.path.pack, c.path.name] {
 				case [["cpp"], "Int64Map"] | [["haxe", "ds"], "IntMap"] | [["haxe", "ds"], "StringMap"] | [["haxe", "ds"], "ObjectMap"]: true;
@@ -765,7 +795,7 @@ private class RetypeSession {
 	// pick the overload whose parameter types unify with the actual arguments. A non-overloaded
 	// constructor is returned unchanged (the common case). Only the selected signature's argument
 	// types matter here, since a cpp `new` emits `Class_obj::__new(args)` with no named constructor.
-	static function selectConstructor(c:TClass, tl:Array<T>, args:Array<TExpr>):Null<TClassField> {
+	public static function selectConstructor(c:TClass, tl:Array<T>, args:Array<TExpr>):Null<TClassField> {
 		var cf = getConstructor(c);
 		if (cf == null) return null;
 		if (cf.overloads.length == 0 && !TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return cf;
