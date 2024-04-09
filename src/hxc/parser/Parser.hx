@@ -95,6 +95,7 @@ class Parser {
 		var toks:Array<TokenInfo> = [];
 		var lastSignificant:Null<Token> = null;
 		var lastWasMarkup = false;
+		var pendingDoc:Null<String> = null;
 		// Lexer progress invariant: every non-Eof token call must advance the
 		// stuck -> raise instead of spinning forever.
 		var lastOff = lex.offset();
@@ -118,9 +119,21 @@ class Parser {
 				case Eof:
 					toks.push(t);
 					break;
-				case Comment(_), CommentLine(_):
+				case Comment(content):
+					// Filtered from the stream, but a block comment is the doc of the next significant
+					// token reads the token source's last stored comment). The delimiting stars of a `/**
+					// .. **/` block strip off, matching the emitted doc text.
+					var d = content;
+					if (StringTools.startsWith(d, "*")) d = d.substr(1);
+					if (StringTools.endsWith(d, "*")) d = d.substr(0, d.length - 1);
+					pendingDoc = d;
+				case CommentLine(_):
 					// Filtered, like the reference token stream
 				case _:
+					if (pendingDoc != null) {
+						t.doc = pendingDoc;
+						pendingDoc = null;
+					}
 					toks.push(t);
 					lastSignificant = t.tok;
 					lastWasMarkup = false;
@@ -1813,7 +1826,11 @@ class Parser {
 		}
 	}
 
-	function getDoc():Documentation return null;
+	// The block comment stored on the declaration's first token.
+	function getDoc():Documentation {
+		var t = idx < tokens.length ? tokens[idx] : null;
+		return t == null || t.doc == null ? null : Ast.docFromString(t.doc);
+	}
 
 	function parseCommonFlags():Array<PlacedDeclFlag> {
 		var acc:Array<PlacedDeclFlag> = [];
