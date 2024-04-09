@@ -1248,7 +1248,7 @@ class Typer {
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
 		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(typed);
-		if (displayUsage && atDisplayPos(e.pos)) captureUsageTarget(typed);
+		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
 
@@ -1402,6 +1402,10 @@ class Typer {
 	// Legacy --display @usage: the symbol at the display offset is captured by identity during typing; the
 	// compiler then scans every typed expression for references to it.
 	public static var displayUsage:Bool = false;
+
+	// DMImplementation shares the usage capture; the report collects extenders, implementers and overriders
+	// instead of references.
+	public static var displayImplementation:Bool = false;
 	public static var usageTargetField:Null<TClassField> = null;
 	public static var usageTargetVar:Null<TVar> = null;
 	public static var usageTargetEnumField:Null<TEnumField> = null;
@@ -1419,9 +1423,12 @@ class Typer {
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): usageTargetField = cf;
 			case TLocal(v) | TVarExpr(v, _): usageTargetVar = v;
 			case TNew(c, _, _) if (c.constructor != null): usageTargetField = c.constructor;
+			case TTypeExpr(TClassDecl(c)): usageTargetClass = c;
 			case _:
 		}
 	}
+
+	public static var usageTargetClass:Null<TClass> = null;
 
 	// Legacy field completion at a dangling display dot: a type lists its public statics CONCATENATED
 	// with the module's other types. Recorded, not raised, so the surrounding catch Dynamic recovery

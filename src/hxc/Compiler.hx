@@ -300,7 +300,7 @@ class Compiler {
 				Sys.stderr().writeString(pack + "\n");
 				return;
 			}
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition")) {
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
@@ -310,6 +310,7 @@ class Compiler {
 					hxc.typing.Typer.displayUsage = dmode == "usage";
 					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
+					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -410,6 +411,14 @@ class Compiler {
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
 				if (h == null) h = hoverOnFieldName(ctx);
 				Sys.stderr().writeString(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
+				return;
+			}
+			if (hxc.typing.Typer.displayImplementation) {
+				var impls = collectImplementations(ctx);
+				if (ctx.jsonRpcId != null)
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in impls) jsonLocation(p)].join(",") + "]"))
+				else
+					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(impls) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayUsage) {
@@ -716,6 +725,65 @@ class Compiler {
 			case _:
 		}
 		return null;
+	}
+
+	// The classes extending or implementing the target class, or the fields overriding or implementing the
+	// target field, sorted by file then position.
+	static function collectImplementations(ctx:Context):Array<Position> {
+		var cf = hxc.typing.Typer.usageTargetField;
+		var targetClass = hxc.typing.Typer.usageTargetClass;
+		if (cf == null && targetClass == null) {
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c) if (hxc.typing.Typer.atHoverPos(c.namePos)): targetClass = c;
+				case _:
+			}
+		}
+		if (cf == null && targetClass == null) cf = usageFieldAtDeclaration(ctx);
+		var out:Array<Position> = [];
+		if (targetClass != null) {
+			// The implemented relation covers the full interface closure (own, inherited through supers,
+			// and interface extends).
+			function implementsTarget(c:hxc.core.Type.TClass):Bool {
+				var seen:Array<hxc.core.Type.TClass> = [];
+				function walk(c2:hxc.core.Type.TClass):Bool {
+					if (seen.indexOf(c2) >= 0) return false;
+					seen.push(c2);
+					for (i in c2.interfaces) if (i.c == targetClass || walk(i.c)) return true;
+					return c2.superClass != null && walk(c2.superClass.c);
+				}
+				return walk(c);
+			}
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c) if (c != targetClass):
+					if (c.superClass != null && c.superClass.c == targetClass) out.push(c.namePos)
+					else if (implementsTarget(c)) out.push(c.namePos);
+				case _:
+			}
+		} else if (cf != null) {
+			// A field in c implements or overrides the target when any ancestor reached through the super
+			// chain or the inherited interface closure declares the target field itself (the relations chain
+			// transitively).
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c):
+					var mine = c.fields.get(cf.name);
+					if (mine == null || mine == cf) continue;
+					var seen:Array<hxc.core.Type.TClass> = [];
+					function declaresTarget(c2:hxc.core.Type.TClass):Bool {
+						if (seen.indexOf(c2) >= 0) return false;
+						seen.push(c2);
+						if (c2 != c && c2.fields.get(cf.name) == cf) return true;
+						for (i in c2.interfaces) if (declaresTarget(i.c)) return true;
+						return c2.superClass != null && declaresTarget(c2.superClass.c);
+					}
+					if (declaresTarget(c)) out.push(mine.namePos);
+				case _:
+			}
+		}
+		out.sort(function(a, b) {
+			if (a.file != b.file) return a.file < b.file ? -1 : 1;
+			return a.min - b.min;
+		});
+		return out;
 	}
 
 	// Scan every typed field body for references to the captured @usage target. positions sort in source
