@@ -264,7 +264,8 @@ class CppiaWriter {
 		if (found != null) return found;
 		var size = identCount++;
 		identTable.set(name, size);
-		identBuffer.add(name.length + " " + name + "\n");
+		// The reader consumes the prefixed count in bytes
+		identBuffer.add(haxe.io.Bytes.ofString(name).length + " " + name + "\n");
 		return size;
 	}
 
@@ -278,7 +279,7 @@ class CppiaWriter {
 		if (found != null) return found;
 		var size = typeCount++;
 		typeTable.set(name, size);
-		typeBuffer.add(name.length + " " + name + "\n");
+		typeBuffer.add(haxe.io.Bytes.ofString(name).length + " " + name + "\n");
 		return size;
 	}
 
