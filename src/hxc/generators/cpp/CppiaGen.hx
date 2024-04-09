@@ -534,6 +534,30 @@ class CppiaGen {
 	public static function generate(com:Context):Void {
 		var debug = com.debug;
 		var trace = com.defines.rawDefined("cppgen-trace");
+		// A static `__init__` is the class-init block; move its body to init so it emits through
+		// voidFunc, the shape the script host runs at load. Same move as the cpp source path.
+		for (mt in com.types) switch (mt) {
+			case TClassDecl(c):
+				var initCf = null;
+				for (cf in c.orderedStatics) if (cf.name == "__init__") { initCf = cf; break; }
+				if (initCf != null) {
+					switch (initCf.expr) {
+						case {expr: TFunction(tf)}:
+							var trivial = switch (tf.expr.expr) {
+								case TBlock([]) | TConst(_) | TObjectDecl([]): true;
+								case TBlock([{expr: TConst(_)}]): true;
+								case _: false;
+							};
+							if (!trivial && c.init == null) c.init = tf.expr;
+						case _:
+					}
+					c.orderedStatics = c.orderedStatics.filter(function(f) return f != initCf);
+					c.statics.remove("__init__");
+				}
+			case _:
+		}
+		// Override fixing runs for the Cpp platform before either generator.
+		for (mt in com.types) CppFixOverrides.fixOverrides(com, mt);
 		mkdirFromPath(com.file);
 		var script = new CppiaWriter(com, com.file, com.debug);
 		script.stringId("");
