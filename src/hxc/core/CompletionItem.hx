@@ -177,7 +177,7 @@ class ClassFieldOriginTools {
 class CompletionItem {
 	// The ClassField arm: item = {kind, args:{field, origin, resolution}, type}.
 	public static function classFieldToJson(gen:Genjson, scope:ClassFieldScope, cf:TClassField, origin:ClassFieldOrigin,
-			isQualified:Bool, ct:CompletionType):JsonValue {
+			isQualified:Bool, ct:CompletionType, ?index:Int):JsonValue {
 		var qualifier:JsonValue = switch [scope, origin] {
 			case [CFSStatic, Self(mt) | Parent(mt) | StaticExtension(mt) | StaticImport(mt)]:
 				var infos = TypeFunctions.tInfos(mt);
@@ -201,7 +201,7 @@ class CompletionItem {
 				])}
 			])},
 			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
-		]);
+		].concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
 	// The Local item: {kind:"Local", args:generateTVar, type}.

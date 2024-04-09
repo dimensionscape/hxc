@@ -44,6 +44,10 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/completion", f: function(hctx) {
+				// Completion answers at report time. wasAutoTriggered sets the parser's trigger flag.
+				setDisplayFile(hctx, "");
+			}},
 			{name: "display/hover", f: function(hctx) {
 				setDisplayFile(hctx, "type");
 			}},
