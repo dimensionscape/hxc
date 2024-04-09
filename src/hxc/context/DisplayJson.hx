@@ -33,10 +33,10 @@ class DisplayJson {
 	}
 
 	// Configure the display file and offset, preserving the request ID for the later response.
-	static function setDisplayFile(hctx:HandlerContext, mode:String):Void {
+	static function setDisplayFile(hctx:HandlerContext, mode:String, requiresOffset:Bool = true):Void {
 		var file = hctx.jsonrpc.getStringParam("file");
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
-		var offset = hctx.jsonrpc.getIntParam("offset");
+		var offset = requiresOffset ? hctx.jsonrpc.getIntParam("offset") : 0;
 		hctx.com.displaySpec = full + "@" + offset + "@" + mode;
 		hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 	}
@@ -44,6 +44,12 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/typeDefinition", f: function(hctx) {
+				setDisplayFile(hctx, "typeDefinition");
+			}},
+			{name: "display/package", f: function(hctx) {
+				setDisplayFile(hctx, "package", false);
+			}},
 			{name: "display/completion", f: function(hctx) {
 				// Completion answers at report time. wasAutoTriggered sets the parser's trigger flag.
 				setDisplayFile(hctx, "");

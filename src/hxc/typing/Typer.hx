@@ -1247,7 +1247,7 @@ class Typer {
 		};
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
-		if (displayHover && atHoverPos(e.pos)) checkDisplayHover(typed);
+		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(typed);
 		if (displayUsage && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
@@ -1265,6 +1265,10 @@ class Typer {
 	// The typed expression is kept alongside so the JSON protocol can build the full hover item (field
 	// access, local, enum field).
 	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr}> = null;
+
+	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
+	// position.
+	public static var displayTypeDefinition:Bool = false;
 
 	public static function atHoverPos(p:Position):Bool {
 		return atDisplayPos(p);

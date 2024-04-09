@@ -290,10 +290,17 @@ class Compiler {
 			var dparts = displayParts(ctx);
 			var dmode = dparts.length >= 3 ? dparts[2] : "";
 			if (dmode == "package" && dparts.length >= 2) {
-				Sys.stderr().writeString(displayFilePackage(ctx, dparts[0]) + "\n");
+				var pack = displayFilePackage(ctx, dparts[0]);
+				// A package answer: a string array over the protocol.
+				if (ctx.jsonRpcId != null) {
+					var parts = pack == "" ? [] : pack.split(".");
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (s in parts) haxe.Json.stringify(s)].join(",") + "]"));
+					return;
+				}
+				Sys.stderr().writeString(pack + "\n");
 				return;
 			}
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel")) {
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
@@ -302,6 +309,7 @@ class Compiler {
 					hxc.typing.Typer.displayHover = dmode == "type";
 					hxc.typing.Typer.displayUsage = dmode == "usage";
 					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
+					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -378,6 +386,19 @@ class Compiler {
 					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
 				else
 					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found) + "\n");
+				return;
+			}
+			if (hxc.typing.Typer.displayTypeDefinition) {
+				// The captured expression's type resolves to its declaration name position.
+				var h = hxc.typing.Typer.hoverFound;
+				var hf = h == null ? hoverOnFieldName(ctx) : null;
+				var t:Null<T> = h != null ? h.t : (hf != null ? hf.t : null);
+				var p = t == null ? null : typeDefinitionPos(t);
+				var locs = p == null ? "[null]" : "[" + jsonLocation(p) + "]";
+				if (ctx.jsonRpcId != null)
+					Sys.stderr().writeString(jsonRpcAnswer(ctx, locs))
+				else
+					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayHover) {
@@ -778,6 +799,28 @@ class Compiler {
 		if (mt == null) return Unimported;
 		var got = TypeFunctions.tInfos(mt).path;
 		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
+	}
+
+	// Unwrap monomorphs, lazies and Null wrappers, then the named module type's declaration position;
+	// anything unnamed (functions, structures, unbound monomorphs) answers the null position.
+	static function typeDefinitionPos(t:T):Null<Position> {
+		function followNull(t:T):Null<T> {
+			return switch (t) {
+				case TMono(r): r.type == null ? null : followNull(r.type);
+				case TLazy(f): followNull(TypeFunctions.lazyType(f));
+				case TAbstract(a, [t1]) if (a.path.pack.length == 0 && a.path.name == "Null"): followNull(t1);
+				case _: t;
+			};
+		}
+		var t2 = followNull(t);
+		if (t2 == null) return null;
+		return switch (t2) {
+			case TInst(c, _): c.namePos;
+			case TEnum(en, _): en.namePos;
+			case TType(td, _): td.namePos;
+			case TAbstract(a, _): a.namePos;
+			case _: null;
+		};
 	}
 
 	// The completion response over the typed entries the field-completion collector recorded.
