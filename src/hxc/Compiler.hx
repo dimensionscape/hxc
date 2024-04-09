@@ -750,17 +750,9 @@ class Compiler {
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
-	// + generate_pos_as_location; a synthetic position serializes as null. The file canonicalizes to the
-	// platform form (Path.get_real_path).
+	// Through the ported serializer.
 	static function jsonLocation(p:Position):String {
-		if (p.min == -1) return "null";
-		var i = Position.getInfos(p);
-		var file = p.file;
-		if (file != "?")
-			file = try FileSystem.fullPath(file) catch (_:Dynamic) file;
-		return '{"file":' + haxe.Json.stringify(file)
-			+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
-			+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn + '}}}';
+		return hxc.core.Json.stringOfJson(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull).generatePosAsLocation(p));
 	}
 
 	// The protocol envelope around a report-time answer.
