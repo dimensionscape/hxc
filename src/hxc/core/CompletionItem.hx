@@ -212,4 +212,40 @@ class CompletionItem {
 			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
 		]);
 	}
+
+	// The EnumField item.
+	public static function enumFieldToJson(gen:Genjson, ef:TEnumField, origin:ClassFieldOrigin, isQualified:Bool,
+			ct:CompletionType):JsonValue {
+		var qualifier:JsonValue = switch (origin) {
+			case Self(mt) | StaticImport(mt):
+				var infos = TypeFunctions.tInfos(mt);
+				var pack = infos.module.path.pack;
+				var dot = pack.concat(infos.module.path.name == infos.path.name
+					? [infos.path.name]
+					: [infos.module.path.name, infos.path.name]);
+				JString(dot.join("."));
+			case _: JNull;
+		};
+		return JObject([
+			{name: "kind", value: JString("EnumField")},
+			{name: "args", value: JObject([
+				{name: "field", value: gen.generateEnumField(ef)},
+				{name: "origin", value: ClassFieldOriginTools.toJson(gen, origin)},
+				{name: "resolution", value: JObject([
+					{name: "isQualified", value: JBool(isQualified)},
+					{name: "qualifier", value: qualifier}
+				])}
+			])},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]);
+	}
+
+	// The Expression item: args would be the typed expression, which is not serialized (null).
+	public static function expressionToJson(gen:Genjson, ct:CompletionType):JsonValue {
+		return JObject([
+			{name: "kind", value: JString("Expression")},
+			{name: "args", value: JNull},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]);
+	}
 }

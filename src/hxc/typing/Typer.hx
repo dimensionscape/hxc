@@ -1262,7 +1262,9 @@ class Typer {
 	// Legacy --display @type: the innermost typed expression enclosing the display offset reports its type;
 	// post-order typing makes the first enclosing hit the innermost.
 	public static var displayHover:Bool = false;
-	public static var hoverFound:Null<{t:T, p:Position}> = null;
+	// The typed expression is kept alongside so the JSON protocol can build the full hover item (field
+	// access, local, enum field).
+	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr}> = null;
 
 	public static function atHoverPos(p:Position):Bool {
 		return atDisplayPos(p);
@@ -1284,7 +1286,7 @@ class Typer {
 		// unrelated to the syntactic node the gate saw.
 		if (!atHoverPos(te.pos)) return;
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: te.type, p: te.pos};
+			hoverFound = {t: te.type, p: te.pos, e: te};
 	}
 
 	// Legacy --display file@pos@toplevel: an identifier at the display position raises the

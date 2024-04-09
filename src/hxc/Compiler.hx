@@ -381,7 +381,12 @@ class Compiler {
 				return;
 			}
 			if (hxc.typing.Typer.displayHover) {
-				var h = hxc.typing.Typer.hoverFound;
+				if (ctx.jsonRpcId != null) {
+					var out = jsonHover(ctx);
+					Sys.stderr().writeString(out == null ? jsonRpcAnswer(ctx, "null") : out);
+					return;
+				}
+				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
 				if (h == null) h = hoverOnFieldName(ctx);
 				Sys.stderr().writeString(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
 				return;
@@ -722,22 +727,125 @@ class Compiler {
 
 	// A hover on a field declaration name has no enclosing expression; the typed field's signature is
 	// the result.
-	static function hoverOnFieldName(ctx:Context):Null<{t:T, p:Position}> {
+	static function hoverOnFieldName(ctx:Context):Null<{t:T, p:Position, cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass, scope:hxc.core.Type.ClassFieldScope}> {
 		for (mt in ctx.types) switch (mt) {
 			case TClassDecl(c):
-				var all = c.orderedFields.concat(c.orderedStatics);
-				if (c.constructor != null) all.push(c.constructor);
-				for (cf in all) {
-					if (!hxc.typing.Typer.atHoverPos(cf.namePos)) continue;
+				function found(cf:hxc.core.Type.TClassField, scope:hxc.core.Type.ClassFieldScope) {
 					var t = switch (cf.type) {
 						case TLazy(r): TypeFunctions.lazyType(r);
 						case t: t;
 					};
-					return {t: t, p: cf.namePos};
+					return {t: t, p: cf.namePos, cf: cf, c: c, scope: scope};
 				}
+				for (cf in c.orderedFields) if (hxc.typing.Typer.atHoverPos(cf.namePos)) return found(cf, CFSMember);
+				for (cf in c.orderedStatics) if (hxc.typing.Typer.atHoverPos(cf.namePos)) return found(cf, CFSStatic);
+				if (c.constructor != null && hxc.typing.Typer.atHoverPos(c.constructor.namePos)) return found(c.constructor, CFSConstructor);
 			case _:
 		}
 		return null;
+	}
+
+	// Import status: resolve the bare type name in the display file's module; the same path reads Imported,
+	// a different one Shadowed, none Unimported.
+	static function displayModule(ctx:Context):Null<hxc.core.Type.ModuleDef> {
+		var df = hxc.parser.Parser.displayFile;
+		if (df == null) return null;
+		function norm(f:String):String {
+			var full = try FileSystem.fullPath(f) catch (_:Dynamic) f;
+			return StringTools.replace(full, "\\", "/").toLowerCase();
+		}
+		var want = norm(df);
+		for (key in ctx.moduleLut.keys()) {
+			var m = ctx.moduleLut.get(key);
+			if (m.extra == null || m.extra.file == null) continue;
+			if (norm(m.extra.file) == want) return m;
+		}
+		return null;
+	}
+
+	static function importStatusFor(ctx:Context, curMod:Null<hxc.core.Type.ModuleDef>, path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus {
+		var mt = curMod == null ? null
+			: try hxc.context.ModuleLoader.resolveBareType(ctx, curMod, path.name, Position.nullPos) catch (_:Dynamic) null;
+		// The implicit StdTypes import and root modules resolve through the loader
+		// (ModuleLoader.loadTypeDef).
+		if (mt == null)
+			mt = try hxc.context.ModuleLoader.loadTypeDef(ctx, {pack: [], name: path.name}, Position.nullPos) catch (_:Dynamic) null;
+		if (mt == null) return Unimported;
+		var got = TypeFunctions.tInfos(mt).path;
+		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
+	}
+
+	// Hover as JSON: {documentation, range, item, expected}.
+	static function jsonHover(ctx:Context):Null<String> {
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var curMod = displayModule(ctx);
+		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
+			return importStatusFor(ctx, curMod, path);
+		function ct(t:T):hxc.core.CompletionItem.CompletionType
+			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t);
+		function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
+			return switch (c.kind) {
+				case KAbstractImpl(a): TAbstractDecl(a);
+				case _: TClassDecl(c);
+			};
+		}
+		var item:Null<hxc.core.Json.JsonValue> = null;
+		var rangePos:Null<Position> = null;
+		var doc:hxc.ast.Ast.Documentation = null;
+		var h = hxc.typing.Typer.hoverFound;
+		if (h != null) {
+			rangePos = h.p;
+			if (h.e != null) switch (h.e.expr) {
+				case TField(e1, fa):
+					switch (fa) {
+						case FStatic(c, cf):
+							doc = cf.doc;
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), true, ct(h.t));
+						case FInstance(c, _, cf):
+							doc = cf.doc;
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), true, ct(h.t));
+						case FClosure(cwp, cf):
+							doc = cf.doc;
+							var origin = if (cwp != null) hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c))
+								else switch (TypeFunctions.follow(e1.type)) {
+									case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
+									case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
+								};
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(h.t));
+						case FAnon(cf):
+							doc = cf.doc;
+							var origin = switch (TypeFunctions.follow(e1.type)) {
+								case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
+								case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
+							};
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(h.t));
+						case FEnum(en, ef):
+							doc = ef.doc;
+							item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), true, ct(h.t));
+						case FDynamic(_):
+					}
+				case TLocal(v):
+					item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(h.t));
+				case TNew(c, _, _) if (c.constructor != null):
+					doc = c.constructor.doc;
+					item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), true, ct(h.t));
+				case _:
+			}
+			if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
+		} else {
+			var hf = hoverOnFieldName(ctx);
+			if (hf == null) return null;
+			rangePos = hf.p;
+			doc = hf.cf.doc;
+			item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, hf.scope, hf.cf, Self(classDecl(hf.c)), true, ct(hf.t));
+		}
+		var result = hxc.core.Json.JsonValue.JObject([
+			{name: "documentation", value: doc == null ? hxc.core.Json.JsonValue.JNull : hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(doc))},
+			{name: "range", value: gen.generatePosAsRange(rangePos)},
+			{name: "item", value: item},
+			{name: "expected", value: hxc.core.Json.JsonValue.JNull}
+		]);
+		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
 
 	// The report covers only the requested display file (plus fileless positions).

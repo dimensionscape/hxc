@@ -44,6 +44,9 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/hover", f: function(hctx) {
+				setDisplayFile(hctx, "type");
+			}},
 			{name: "display/definition", f: function(hctx) {
 				setDisplayFile(hctx, "position");
 			}},
