@@ -1270,6 +1270,51 @@ class Typer {
 	// position.
 	public static var displayTypeDefinition:Bool = false;
 
+	// DMSignature: a call whose argument span contains the display position captures its callee's
+	// signatures and the active argument.
+	public static var displaySignature:Bool = false;
+	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
+
+	static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
+		// The display position must sit inside the argument span (after the callee).
+		var off = hxc.parser.Parser.displayOffset;
+		if (!atDisplayPos(p) || off <= e1.pos.max) return;
+		var callee = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
+		// Unwrap @:callable abstracts.
+		function followCallable(t:T):T {
+			return switch (TypeFunctions.follow(t)) {
+				case TAbstract(a, tl) if (TypeFunctions.hasMeta(":callable", a.meta)):
+					followCallable(TypeFunctions.applyParams(a.params, tl, a.thisType));
+				case t2: t2;
+			};
+		}
+		var doc:hxc.ast.Ast.Documentation = null;
+		var overloads:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		switch (callee.expr) {
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf)):
+				doc = cf.doc;
+				for (o in cf.overloads) switch (TypeFunctions.follow(o.type)) {
+					case TFun(sig): overloads.push({args: sig.args, ret: sig.ret, doc: o.doc});
+					case _:
+				}
+			case _:
+		}
+		switch (followCallable(callee.type)) {
+			case TFun(sig):
+				// The current signature lists first, overloads after.
+				var sigs = [{args: sig.args, ret: sig.ret, doc: doc}].concat(overloads);
+				// The active argument: the argument whose span contains the offset, else
+				// the count of arguments already completed before it.
+				var active = 0;
+				for (i in 0...params.length) {
+					if (off > params[i].pos.max) active = i + 1
+					else if (off >= params[i].pos.min) { active = i; break; }
+				}
+				signatureFound = {sigs: sigs, activeArg: active};
+			case _:
+		}
+	}
+
 	public static function atHoverPos(p:Position):Bool {
 		return atDisplayPos(p);
 	}
@@ -2984,6 +3029,7 @@ class Typer {
 						Calls.arrayAccess(ctx, accGet(ctx, a1), te2, mode, p);
 				}
 			case ECall(e1, params):
+				if (displaySignature && signatureFound == null) checkSignatureDisplay(ctx, e1, params, p);
 				hxc.eval.EvalMacro.lastExpansionAst = null;
 				var acc = Calls.typeCallAccess(ctx, e1, params, withType, p);
 				// A call result is not an lvalue; a MACRO call defers to its EXPANSION, which reports at

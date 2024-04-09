@@ -44,6 +44,9 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/signatureHelp", f: function(hctx) {
+				setDisplayFile(hctx, "signature");
+			}},
 			{name: "display/completionItem/resolve", f: function(hctx) {
 				// Completion resolution requires a prior server result; every index is invalid in a one-shot
 				// process.

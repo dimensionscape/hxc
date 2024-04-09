@@ -160,6 +160,13 @@ class Compiler {
 					platform = Cpp;
 					targetDir = "cpp";
 					ctx.file = args[i++];
+				case "-cppia" | "--cppia":
+					// Cppia is the cpp platform with the cppia define, and the output value is a file rather than
+					// a directory.
+					ctx.defines.rawDefine("cppia");
+					platform = Cpp;
+					targetDir = "cpp";
+					ctx.file = args[i++];
 				case "--macro":
 					ctx.initMacros.push(args[i++]);
 				case "-v" | "--verbose":
@@ -179,7 +186,7 @@ class Compiler {
 					i++;
 				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
 					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
-					| "-hl" | "--hl" | "-cppia" | "--cppia":
+					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
 					i++;
@@ -300,7 +307,7 @@ class Compiler {
 				Sys.stderr().writeString(pack + "\n");
 				return;
 			}
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation")) {
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation" || dmode == "signature")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
@@ -311,6 +318,7 @@ class Compiler {
 					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
+					hxc.typing.Typer.displaySignature = dmode == "signature";
 					var base = dparts[0];
 					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
 					if (slash >= 0) base = base.substr(slash + 1);
@@ -439,6 +447,10 @@ class Compiler {
 				return;
 			}
 			if (isDisplay(ctx, "signature")) {
+				if (ctx.jsonRpcId != null) {
+					Sys.stderr().writeString(jsonSignature(ctx));
+					return;
+				}
 				displaySignature(ctx);
 				return;
 			}
@@ -867,6 +879,57 @@ class Compiler {
 		if (mt == null) return Unimported;
 		var got = TypeFunctions.tInfos(mt).path;
 		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
+	}
+
+	// Signatures as JSON: {activeSignature, activeParameter (the argument index with the trailing-Rest
+	// clamp), signatures ([documentation?, args, ret] per signature), kind}.
+	static function jsonSignature(ctx:Context):String {
+		var sf = hxc.typing.Typer.signatureFound;
+		if (sf == null) return jsonRpcAnswer(ctx, "null");
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var curMod = displayModule(ctx);
+		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
+			return importStatusFor(ctx, curMod, path);
+		function ct(t:T):hxc.core.Json.JsonValue
+			return hxc.core.CompletionItem.CompletionTypeTools.toJson(gen,
+				hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t));
+		function isRest(t:T):Bool {
+			return switch (TypeFunctions.follow(t)) {
+				case TAbstract(a, _): a.path.pack.join(".") == "haxe" && a.path.name == "Rest";
+				case _: false;
+			};
+		}
+		function argIndex(args:Array<hxc.core.Type.TSignatureArg>, paramIndex:Int):Int {
+			var index = 0;
+			for (i in 0...args.length) {
+				if (index == paramIndex) return paramIndex;
+				if (i == args.length - 1 && index < paramIndex && isRest(args[i].t)) return index;
+				index++;
+			}
+			return paramIndex;
+		}
+		var signatures:Array<hxc.core.Json.JsonValue> = [];
+		for (s in sf.sigs) {
+			var fields:Array<hxc.core.Json.JsonField> = [];
+			if (s.doc != null) fields.push({name: "documentation", value: hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(s.doc))});
+			fields.push({name: "args", value: hxc.core.Json.JsonValue.JArray([for (a in s.args)
+				hxc.core.Json.JsonValue.JObject([
+					{name: "name", value: hxc.core.Json.JsonValue.JString(a.name)},
+					{name: "opt", value: hxc.core.Json.JsonValue.JBool(a.opt)},
+					{name: "t", value: ct(a.t)},
+					{name: "value", value: hxc.core.Json.JsonValue.JNull}
+				])])});
+			fields.push({name: "ret", value: ct(s.ret)});
+			signatures.push(hxc.core.Json.JsonValue.JObject(fields));
+		}
+		var active = sf.sigs.length == 0 ? sf.activeArg : argIndex(sf.sigs[0].args, sf.activeArg);
+		var result = hxc.core.Json.JsonValue.JObject([
+			{name: "activeSignature", value: hxc.core.Json.JsonValue.JInt(0)},
+			{name: "activeParameter", value: hxc.core.Json.JsonValue.JInt(active)},
+			{name: "signatures", value: hxc.core.Json.JsonValue.JArray(signatures)},
+			{name: "kind", value: hxc.core.Json.JsonValue.JInt(0)}
+		]);
+		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
 
 	// Unwrap monomorphs, lazies and Null wrappers, then the named module type's declaration position;
