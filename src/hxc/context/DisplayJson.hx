@@ -44,6 +44,12 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
+			{name: "display/completionItem/resolve", f: function(hctx) {
+				// Completion resolution requires a prior server result; every index is invalid in a one-shot
+				// process.
+				var i = hctx.jsonrpc.getIntParam("index");
+				hctx.sendError([JString("Invalid index: " + i)]);
+			}},
 			{name: "display/implementation", f: function(hctx) {
 				setDisplayFile(hctx, "implementation");
 			}},
