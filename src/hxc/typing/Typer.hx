@@ -898,7 +898,11 @@ class Typer {
 						addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
 					case _: null;
 				};
-				// A named generic local function stores its type params so a later call can monomorphize them.
+				// A named generic local function stores its type params so a later call can monomorphize
+				// them.
+				// An INLINE local function additionally stores its function expression on extra (set
+				// after the body types, below), which the identifier resolver turns into a fake inline
+				// field call.
 				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
 				// Type each argument default value against its (possibly inferred) type, binding an unbound
 				// monomorph and recording it for runtime default insertion. .
@@ -927,11 +931,27 @@ class Typer {
 						// function.
 						var isRec = TexprTools.referencesLocal(fnExpr, namedVar);
 						var isInline = switch (kind) { case FKNamed(_, inl): inl; case _: false; };
+						// The inline local function's body is stored on extra so calls inline it through
+						// the fake-field machinery.
+						if (isInline || localParams.length > 0) namedVar.extra = new TVarExtra(localParams, isInline ? fnExpr : null);
 						var tvoid = ctx.com.basic.tvoid;
 						var exprs:Array<TExpr> = [];
+						var declFileIsDisplay = {
+							var df = hxc.parser.Parser.displayFile;
+							if (df == null) false else {
+								var f = StringTools.replace(p.file, "\\", "/");
+								var d = StringTools.replace(df, "\\", "/");
+								f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+							}
+						};
 						if (isRec) {
+							// An inline local function cannot be recursive.
+							if (isInline) ctx.com.addDiagnostic("Inline function cannot be recursive", fnExpr.pos);
 							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p));
 							exprs.push(TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p));
+						} else if (isInline && !declFileIsDisplay) {
+							// No variable is declared, since every call inlines.
+							exprs.push(TypeFunctions.mk(TBlock([]), tvoid, p));
 						} else {
 							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, fnExpr), tvoid, p));
 						}
@@ -1873,7 +1893,33 @@ class Typer {
 				throw new TypingError("Abstract 'this' value can only be modified inside an inline function", p);
 		}
 		if (ctx.locals.exists(i)) {
-			return AKExpr(TexprTools.makeLocal(ctx.locals.get(i), p));
+			var v = ctx.locals.get(i);
+			// A local inline function resolves through a fake extern class holding an inline method, so a
+			// call reuses the regular inline machinery (outer locals referenced by the body pass through as
+			// captures-by-substitution). Reading or assigning the name is an error. (type_ident_raise,
+			// extra match).
+			if (v.extra != null && v.extra.expr != null) switch (v.extra.expr.expr) {
+				case TFunction(_):
+					switch (mode) {
+						case MCall(_):
+							var fnExpr = v.extra.expr;
+							var fake = TypeFunctions.mkClass(ctx.curclass.module, {pack: ["local"], name: v.name}, fnExpr.pos, Position.nullPos);
+							TypeFunctions.addClassFlag(fake, CExtern);
+							var cf = TypeFunctions.mkField(v.name, v.type, fnExpr.pos, Position.nullPos);
+							cf.params = v.extra.params;
+							cf.expr = fnExpr;
+							cf.kind = Method(MethInline);
+							fake.fields.set(cf.name, cf);
+							var eNull = TypeFunctions.mk(TConst(TNull), TInst(fake, []), p);
+							return AKField(FieldAccessTools.create(eNull, cf, FHInstance(fake, []), true, p));
+						case MSet(_):
+							throw new TypingError("Cannot set inline closure", p);
+						case MGet:
+							throw new TypingError("Cannot create closure on inline closure", p);
+					}
+				case _:
+			}
+			return AKExpr(TexprTools.makeLocal(v, p));
 		}
 		switch (i) {
 			case "null":
