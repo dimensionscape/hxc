@@ -812,13 +812,19 @@ class TypeResolve {
 
 	static function buildEnumAbstractFields(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position):Void {
 		var c = a.impl;
-		// At: the abstract self-type hint,
-		// `CTPath(pack.Name<params>)`. Built from a.path so loadComplexType resolves it back to
-		// this abstract.
+		// At: the abstract self-type hint, built the way TExprToExpr converts a type back to syntax: a
+		// PRIVATE type converts to its bare name, a secondary type to Module.Sub, so loadComplexType
+		// resolves it back to this abstract.
 		var aTParams:Array<TypeParamOrConst> = [
 			for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 		];
-		var aT:TypeHint = {ct: CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: aTParams, tsub: null}), pos: p};
+		var aCt = if (a.isPrivate)
+			CTPath({tpackage: [], tname: a.path.name, tparams: aTParams, tsub: null});
+		else if (a.path.name == a.module.path.name)
+			CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: aTParams, tsub: null});
+		else
+			CTPath({tpackage: a.module.path.pack, tname: a.module.path.name, tparams: aTParams, tsub: a.path.name});
+		var aT:TypeHint = {ct: aCt, pos: p};
 		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData, ctx);
 		// Member-var objects are the same references we just mutated, so they now carry the
 		// static-inline-`@:enum` shape. Rebuild statics/fields/cl_ordered_* from it.
