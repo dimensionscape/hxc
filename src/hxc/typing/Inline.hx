@@ -817,8 +817,19 @@ class Inline {
 					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
 					{v: nv, expr: m(c.expr)};
 				}]);
-			case TFunction(_):
-				throw new InlineBail();
+			case TFunction(f):
+				// A closure inside the inlined body maps non-terminal with inLocalFun set, its own
+				// arguments
+				// re-declared as fresh locals; outer substitutions apply inside so the closure references
+				// the
+				// inlined bindings rather than the callee's argument vars.
+				var nargs:Array<TFuncArg> = [for (a in f.args) {
+					var nv = TypeFunctions.allocVar(VGenerated, a.v.name, a.v.type, a.v.pos);
+					subst.set(a.v.id, TypeFunctions.mk(TLocal(nv), nv.type, a.v.pos));
+					{v: nv, c: a.c == null ? null : m(a.c)};
+				}];
+				var body = mapExpr(ctx, f.expr, subst, vthis, ethis, inlinePos, keepPositions, true);
+				TFunction(new TFunc(nargs, f.type, body));
 		};
 		return TypeFunctions.mk(ne, e.type, keepPositions ? e.pos : inlinePos);
 	}
