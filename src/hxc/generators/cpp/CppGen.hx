@@ -253,8 +253,14 @@ class CppGen {
 		b.add("const char *__hxcpp_all_files_fullpath[] = {\n");
 		b.add("#ifdef HXCPP_DEBUGGER\n");
 		for (k in keys) {
-			var raw = CppGenClass.fileInfo.get(k);
-			var full = try sys.FileSystem.fullPath(raw) catch (_:Dynamic) raw;
+			// Each name resolves through find_file (the classpath search) first; an unresolvable name (e.g.
+			// a macro-made position file) absolutizes as-is against the cwd.
+			var resolved = k;
+			for (dir in com.classPath) {
+				var candidate = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + k;
+				if (sys.FileSystem.exists(candidate) && !sys.FileSystem.isDirectory(candidate)) { resolved = candidate; break; }
+			}
+			var full = try sys.FileSystem.fullPath(resolved) catch (_:Dynamic) resolved;
 			b.add(CppGenClass.constCharStar(full) + ",\n");
 		}
 		b.add("#endif\n 0 };\n\n");
