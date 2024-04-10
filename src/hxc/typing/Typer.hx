@@ -1167,7 +1167,8 @@ class Typer {
 					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
 					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
-					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.pos);
+					// The catch var is declared at the var name's position, not the catch clause's.
+					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.name.pos);
 					var cbody = typeExpr(ctx, c.expr, withType);
 					v.type = normalizedCatchType;
 					restore();
