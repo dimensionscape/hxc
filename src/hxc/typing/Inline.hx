@@ -397,8 +397,11 @@ class Inline {
 		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
 		if (absMember) checkAbstractWrite(value, p);
-		// Unwrap a single-expression block.
-		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
+		// A single-expression block unwraps to its expression only when the body returned a
+		// value; a void body keeps its block.
+		var hasReturnValue = bodyHasReturnValue(tf.expr);
+		if (hasReturnValue)
+			value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		// With argument bindings present, a block body SPLICES its
 		// elements after the binds instead of nesting as one element.
 		var result = if (binds.length == 0) value else {
@@ -416,14 +419,23 @@ class Inline {
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that equals the
 		// expected return, and gets a cast otherwise. .
 		if (binds.length == 0) {
-			// An untyped expression keeps an open mono and must be cast to the declared return type instead
-			// of being accepted by typeEq.
-			var needsCast = switch (TypeFunctions.follow(result.type)) {
-				case TMono(_): true;
-				case TInst(c2, _) if (switch (c2.kind) { case KTypeParameter(_): true; case _: false; }): true;
-				case _: !hxc.core.TypeUnification.typeIseqStrict(result.type, tret);
-			};
-			if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
+			if (!hasReturnValue) {
+				// A body without a value return keeps its block, retyped to
+				// the return type; a bare statement gains one. No cast on this path.
+				result = switch (result.expr) {
+					case TBlock(_): TypeFunctions.mk(result.expr, tret, result.pos);
+					case _: TypeFunctions.mk(TBlock([result]), tret, result.pos);
+				};
+			} else {
+				// An untyped expression keeps an open mono and must be cast to the declared return type instead
+				// of being accepted by typeEq.
+				var needsCast = switch (TypeFunctions.follow(result.type)) {
+					case TMono(_): true;
+					case TInst(c2, _) if (switch (c2.kind) { case KTypeParameter(_): true; case _: false; }): true;
+					case _: !hxc.core.TypeUnification.typeIseqStrict(result.type, tret);
+				};
+				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
+			}
 		}
 		return result;
 	}
@@ -552,7 +564,14 @@ class Inline {
 			case TReturn(eo):
 				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? body.pos : inlinePos) : mapExpr(ctx, eo, subst, vthis, ethis, inlinePos, keepPositions);
 			case TBlock(stmts):
-				if (stmts.length == 0) return body;
+				if (stmts.length == 0) {
+					// An empty terminal body maps to a null value typed as a fresh monomorph; the position
+					// map
+					// puts the block at the call position too.
+					var t = TypeFunctions.mkMono();
+					var bp = keepPositions ? body.pos : inlinePos;
+					return TypeFunctions.mk(TBlock([TypeFunctions.mk(TConst(TNull), t, inlinePos)]), t, bp);
+				}
 				if (abstractMember && stmts.length == 2) switch (stmts[0].expr) {
 					case TIf(condition, thenExpr, null) if (endsInReturn(thenExpr)):
 						var thenValue = mapTerminal(ctx, thenExpr, subst, vthis, ethis, inlinePos, keepPositions);
@@ -576,6 +595,23 @@ class Inline {
 			case _:
 				return mapTerminal(ctx, body, subst, vthis, ethis, inlinePos, keepPositions);
 		}
+	}
+
+	// A `return e` in the body itself (not inside a nested closure) marks the inlined
+	// expression as value-producing; it is set when a terminal `return e` is mapped, and
+	// `return;` does not set it.
+	static function bodyHasReturnValue(e:TExpr):Bool {
+		var found = false;
+		function loop(x:TExpr):Void {
+			if (found) return;
+			switch (x.expr) {
+				case TReturn(eo): if (eo != null) found = true;
+				case TFunction(_):
+				case _: hxc.core.TexprTools.iter(loop, x);
+			}
+		}
+		loop(e);
+		return found;
 	}
 
 	static function endsInReturn(e:TExpr):Bool {
@@ -640,7 +676,12 @@ class Inline {
 		switch (e.expr) {
 			case TReturn(eo):
 				return eo == null ? TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, keepPositions ? e.pos : inlinePos) : terminal(eo);
-			case TBlock(stmts) if (stmts.length > 0):
+			case TBlock(stmts) if (stmts.length == 0):
+				// An empty terminal block maps to a null value at the call position; the position map
+				// repositions the block itself there as well.
+				var t = TypeFunctions.mkMono();
+				return TypeFunctions.mk(TBlock([TypeFunctions.mk(TConst(TNull), t, inlinePos)]), t, keepPositions ? e.pos : inlinePos);
+			case TBlock(stmts):
 				var out:Array<TExpr> = [];
 				var i = 0;
 				while (i < stmts.length) {
