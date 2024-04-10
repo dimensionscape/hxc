@@ -2576,11 +2576,12 @@ class EvalMacro {
 
 	static function decodeCatch(ec:EvalContext, v:EvalValue, dp:Position):Catch {
 		var tv = EvalField.field(ec, v, EvalHash.hash("type"));
+		// name_pos and pos back, falling back when a macro built the catch object without them.
 		return {
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
 			type: tv == VNull ? null : decodeTypeHint(ec, tv, dp),
 			expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			pos: dp
+			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp)
 		};
 	}
 
@@ -3107,11 +3108,15 @@ class EvalMacro {
 	static function encodeCatch(ec:EvalContext, c:Catch):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(c.name.name));
+		// name_pos and pos travel with the catch, so a build-macro round trip keeps the var-name and clause
+		// positions instead of the decoder fallback.
+		fields.set(EvalHash.hash("name_pos"), encPos(c.name.pos));
 		// Preserve the catch type hint so a build macro that reads and re-emits a try/catch keeps the
 		// declared catch type. Dropping it here made every round-tripped catch decode back to Dynamic,
 		// which then bound the raw thrown value instead of a haxe.ValueException wrapper.
 		fields.set(EvalHash.hash("type"), c.type == null ? VNull : encodeComplexType(ec, c.type.ct));
 		fields.set(EvalHash.hash("expr"), encodeExpr(ec, c.expr));
+		fields.set(EvalHash.hash("pos"), encPos(c.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
