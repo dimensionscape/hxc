@@ -923,10 +923,12 @@ class Filters {
 		memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
 		memProbe("dce:done");
-		// PASS 3: insert_save_stacks runs first (post-DCE so the feature flag is accurate), then the
-		// type filters. patch_constructors already ran pre-DCE (Compiler.run).
+		// PASS 3: insert_save_stacks runs first (post-DCE so the feature flag is accurate), then
+		// patchConstructors with the other type filters. Both run after the analyzer and
+		// sanitize, so the blocks their inlined calls produce reach the generator untouched.
 		var saveStacks = hxc.filters.Exceptions.insertSaveStacks(tctx);
 		for (t in com.types) FiltersCommon.runExpressionFilters(tctx, [{name: "insert_save_stacks", f: saveStacks}], t);
+		hxc.typing.ExceptionFilters.run(com);
 		for (t in com.types) {
 			switch (t) {
 				case TClassDecl(c): tctx.curclass = c;

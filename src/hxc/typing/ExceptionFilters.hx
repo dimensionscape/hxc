@@ -44,7 +44,9 @@ class ExceptionFilters {
 					function shiftStack(p:Position):TExpr {
 						var ethis = TypeFunctions.mk(TConst(TThis), TInst(c, TypeFunctions.extractParamTypes(c.params)), p);
 						var efield = TypeFunctions.mk(TField(ethis, FInstance(excCls, [], shiftCf)), shiftCf.type, p);
-						return TypeFunctions.mk(TCall(efield, []), tvoid, p);
+						var rt = switch (TypeFunctions.follow(shiftCf.type)) { case TFun(sig): sig.ret; case _: tvoid; };
+						// makeCall inlines __shiftStack in place, so the void body keeps its block.
+						return hxc.typing.Calls.makeCall(tctx, efield, [], rt, p);
 					}
 					// A shift runs before every return and once at the end; a nested function keeps
 					// its own returns untouched.
