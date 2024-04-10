@@ -3535,13 +3535,14 @@ class Typer {
 			var v = TypeFunctions.allocVar(VGenerated, cf.name, at, cf.namePos);
 			args.push({v: v});
 			sigArgs.push({name: cf.name, opt: opt, t: at});
-			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, cf.pos);
-			var ev = TypeFunctions.mk(TLocal(v), v.type, cf.pos);
-			var assign = TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, cf.pos);
+			// The synthesized assignments all carry the class position, not each field's own position.
+			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, c.pos);
+			var ev = TypeFunctions.mk(TLocal(v), v.type, c.pos);
+			var assign = TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, c.pos);
 			if (dflt) {
 				// If (arg != null) this.field = arg -- the field keeps its declared default otherwise
-				var cond = TypeFunctions.mk(TBinop(OpNotEq, ev, TypeFunctions.mk(TConst(TNull), at, cf.pos)), ctx.com.basic.tbool, cf.pos);
-				body.push(TypeFunctions.mk(TIf(cond, assign, null), tvoid, cf.pos));
+				var cond = TypeFunctions.mk(TBinop(OpNotEq, ev, TypeFunctions.mk(TConst(TNull), at, c.pos)), ctx.com.basic.tbool, c.pos);
+				body.push(TypeFunctions.mk(TIf(cond, assign, null), tvoid, c.pos));
 			} else {
 				body.push(assign);
 			}
