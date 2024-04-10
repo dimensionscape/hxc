@@ -58,9 +58,12 @@ class CppEmit {
 		rootPos = bodyExpr.pos;
 		emitClassName = className == null ? "" : className;
 		emitFuncName = funcName == null ? "" : funcName;
-		// /4372: the body is always wrapped in a block (idempotent for method bodies that are already
-		// blocks; wraps a bare entry call like com.main so it emits `{ call; }`)
-		var cppTree = CppRetype.retypeExpression(com, realThisPtr, fileId, TCppVoid, functionArgs, functionType, hxc.core.TypeFunctions.mkBlock(bodyExpr), false);
+		// The body is always wrapped in a block (idempotent for method bodies that are already blocks;
+		// wraps a bare entry call like com.main so it emits `{ call; }`)
+		// forInjection when a setvar is present, so the injected block's final element retypes at its own
+		// type (a Dynamic-typed meta object keeps its ::Dynamic wrap).
+		var forInjection = setvar != null && setvar != "";
+		var cppTree = CppRetype.retypeExpression(com, realThisPtr, fileId, TCppVoid, functionArgs, functionType, hxc.core.TypeFunctions.mkBlock(bodyExpr), forInjection);
 		lastLine = -1;
 		topPrologue = prologue;
 		topSetvar = setvar == null ? "" : setvar;
