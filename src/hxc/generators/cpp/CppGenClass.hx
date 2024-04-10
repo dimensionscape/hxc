@@ -983,11 +983,9 @@ class CppGenClass {
 		for (f in staticsExceptMeta()) if (TypeFunctions.isPhysicalField(f)) genFieldCpp(w, true, f);
 		// A "\n" after the field loops (before the non-inline constructor bodies).
 		w.write("\n");
-		// Non-inline constructor emits its __new/__alloc bodies in the cpp, right before the default
-		// constructor.
-		if (!canInlineConstructor()) outputConstructorCpp(w);
-		// Install a dynamic method's default closure if unset, then chain to the nearest super that also
-		// has dynamic member functions.
+		// __alloc_dynamic_functions: install a dynamic method's default closure if unset, then chain to the
+		// nearest super that also has dynamic member functions. Emitted right after the field bodies,
+		// before the __new/__alloc constructor bodies.
 		var dynFns = dynamicFunctions();
 		if (dynFns.length > 0) {
 			w.write("void " + className + "::__alloc_dynamic_functions(::hx::Ctx *_hx_ctx," + className + " *_hx_obj) {\n");
@@ -1004,6 +1002,9 @@ class CppGenClass {
 			}
 			w.write("}\n");
 		}
+		// Non-inline constructor emits its __new/__alloc bodies in the cpp, after
+		// __alloc_dynamic_functions and before the default constructor.
+		if (!canInlineConstructor()) outputConstructorCpp(w);
 		// The C++ default constructor installs each dynamic method's default closure.
 		w.write(className + "::" + className + "()\n{\n");
 		for (f in dynFns) {
