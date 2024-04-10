@@ -591,6 +591,15 @@ class EvalPrototype {
 			if (isRemovable(cf)) continue;
 			switch (cf.kind) {
 				case Method(_):
+					// An override with an untyped body must still claim its slot: the lookup
+					// would otherwise find the inherited method and never reach the late
+					// forcing path, so dispatch through a base-typed ref runs the base body.
+					// Macro world only: interp classes are fully typed before emission, and
+					// forcing across worlds here re-enters typing with mismatched contexts.
+					if (cf.expr == null && ctx.isMacro && TypeFunctions.hasClassFieldFlag(cf, CfOverride)) {
+						var com = worldCom(ctx, c);
+						if (com != null) try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
+					}
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
 						var idx = pfields.length;
