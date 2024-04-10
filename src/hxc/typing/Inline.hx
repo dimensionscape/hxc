@@ -399,7 +399,15 @@ class Inline {
 		if (absMember) checkAbstractWrite(value, p);
 		// Unwrap a single-expression block.
 		value = switch (value.expr) { case TBlock([one]): one; case _: value; };
-		var result = binds.length == 0 ? value : TypeFunctions.mk(TBlock(binds.concat([value])), tret, p);
+		// With argument bindings present, a block body SPLICES its
+		// elements after the binds instead of nesting as one element.
+		var result = if (binds.length == 0) value else {
+			var bodyEls = switch (value.expr) {
+				case TBlock(bl): bl;
+				case _: [value];
+			};
+			TypeFunctions.mk(TBlock(binds.concat(bodyEls)), tret, p);
+		};
 		if (mapType != null) {
 			var skipExprs = params.copy();
 			if (ethis != null) skipExprs.push(ethis);
