@@ -140,23 +140,26 @@ class ForLoop {
 		loop(e);
 	}
 
-	// True when the active capture policy needs per-iteration loop-var freshness. CPNone relies on
-	// native block scoping for fresh bindings; every other policy runs the frame-based model.
+	// True only for eval: its frame-based capture model reuses one slot per loop var, so the typer wraps.
+	// The generator targets get per-iteration freshness from the captured-vars FILTER for CPLoopVars, ref
+	// boxing for CPWrapRef), matching the reference, which never wraps in the typer.
 	static function needsLoopVarWrap(ctx:TyperContext):Bool {
-		return switch (ctx.com.platformConfig.capturePolicy) {
-			case CPNone: false;
-			case CPLoopVars, CPWrapRef: true;
-		};
+		return ctx.com.platform.match(Eval);
 	}
 
 	// Wrap `body` so it runs inside an IIFE taking the given loop vars as parameters, giving each
-	// iteration a fresh frame for its captured loop variables. Only called when safe (see guards).
+	// iteration a fresh frame for its captured loop variables. Only called when safe (see guards). The
+	// closure carries :loopCapture so the optimizer's immediately-called-closure inlining leaves it
+	// alone: in the reference, capture wrappers are built by the captured-vars filter after
+	// reduce_expression, so they are structurally never inline candidates.
 	static function wrapLoopVarsBody(ctx:TyperContext, loopVars:Array<TVar>, body:TExpr, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var args:Array<TFuncArg> = [for (v in loopVars) {v: v}];
 		var sigArgs:Array<TSignatureArg> = [for (v in loopVars) {name: v.name, opt: false, t: v.type}];
 		var tf = new TFunc(args, basic.tvoid, body);
-		var closure = TypeFunctions.mk(TFunction(tf), TFun({args: sigArgs, ret: basic.tvoid}), p);
+		var ft = TFun({args: sigArgs, ret: basic.tvoid});
+		var closure = TypeFunctions.mk(TFunction(tf), ft, p);
+		closure = TypeFunctions.mk(TMeta({name: ":loopCapture", params: [], pos: p}, closure), ft, p);
 		var callArgs = [for (v in loopVars) TexprTools.makeLocal(v, p)];
 		return TypeFunctions.mk(TCall(closure, callArgs), basic.tvoid, p);
 	}
