@@ -1621,6 +1621,9 @@ class EvalMacro {
 		};
 		var path = hostClass.path;
 		var callModule = moduleForPosition(tctx.com, p);
+		// A member receiver is pushed as `this` before the macro loads and types the macro world, so its
+		// stored id precedes the ids consumed by macro-context typing.
+		var receiverSyntax = isInstance ? Calls.typedExprToSyntax(tctx, fa.on) : null;
 		var ec = getContext(tctx.com);
 		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
@@ -1646,7 +1649,7 @@ class EvalMacro {
 			// method degrades its types to Dynamic, which would hide the Expr parameters.
 			var sigCf = macroWorldField(path, fa.field.name, hostClass.module != null ? hostClass.module.path : null);
 			var sigArgs = switch (TypeFunctions.follow((sigCf != null ? sigCf : fa.field).type)) { case TFun(s): s.args; case _: null; };
-			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
+			var callEl = isInstance ? [receiverSyntax].concat(el) : el;
 			// Static and member macros run the typed argument pipeline against the macro-world signature; a
 			// member macro keeps its receiver Expr as the first declared argument there (it is dropped
 			// host-side only), so the pushed receiver lines up with margs.
