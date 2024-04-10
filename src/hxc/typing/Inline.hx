@@ -352,6 +352,14 @@ class Inline {
 				case TConst(TNull): param = tf.args[i].c;
 				case _:
 			}
+			// A Null<T> value passed where a static platform expects a
+			// non-nullable T forces the local.
+			var nullMismatch = ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(av.type) && TypeFunctions.isNull(param.type);
+			// A Dynamic mismatch between argument and parameter casts once
+			// through the arg expression, so DCE and the read-count rules see a single cast.
+			var dynamicV = TypeFunctions.follow(av.type).match(TDynamic(null));
+			var dynamicE = TypeFunctions.follow(param.type).match(TDynamic(null));
+			if (dynamicV != dynamicE) param = TypeFunctions.mk(TCast(param, null), av.type, param.pos);
 			// The abstract `this` (first arg of an abstract member) binds to a local receiver directly, so
 			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
 			// A stable lvalue receiver (a local or a side-effect-free field chain) substitutes
@@ -362,6 +370,7 @@ class Inline {
 			// temp; any other expression substitutes when it is used at most once; a captured
 			// non-constant argument or one with a runtime default needs the local.
 			var forceTemp = paramSideEffect[i]
+				|| nullMismatch
 				|| (hadSideEffect && checker.mightBeAffected(param) && !valueSemantics(param.type));
 			var substitutable = !forceTemp && !hasRuntimeDefault
 				&& !(use.captured && !param.expr.match(TConst(_)))
