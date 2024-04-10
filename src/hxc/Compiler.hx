@@ -519,6 +519,11 @@ class Compiler {
 				abortOnDiagnostics(ctx, platform);
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
+			// A generator error (a printed error during generation, e.g. a bad @:native code placeholder)
+			// fails
+			// the compile like the final error check does, so a real target that printed an error does not
+			// exit 0.
+			abortOnDiagnostics(ctx, platform);
 			// The single success-path flush: everything recorded up to and including the
 			// after-generate callbacks prints once, before interpreter output or --cmd runs.
 			flushPendingMessages(ctx);
