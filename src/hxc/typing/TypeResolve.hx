@@ -887,21 +887,37 @@ class TypeResolve {
 
 	static function loadMacroHint(ctx:Context, typeParams:TypeParams, th:Null<TypeHint>):T {
 		var exprPath:TypePath = {tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: null};
-		if (th == null) {
-			return Typeload.loadInstance(ctx, typeParams, exprPath, hxc.ast.Position.nullPos, false);
-		}
-		 switch (th.ct) {
+		var isExprOf = th == null ? false : switch (th.ct) {
 			case CTPath(tp):
-				var isExprOf =
-					(tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
-						&& tp.tname == "Expr" && tp.tsub == "ExprOf")
-					|| (tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null);
-				var isBareExpr = tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null;
-				if (isExprOf || isBareExpr)
-					return Typeload.loadInstance(ctx, typeParams, exprPath, th.pos, false);
+				((tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
+					&& tp.tname == "Expr" && tp.tsub == "ExprOf")
+					|| (tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null))
+					&& tp.tparams.length == 1;
+			case _: false;
+		};
+		if (ctx.isMacro) {
+			// In the macro context a missing hint and ExprOf<T> both read as haxe.macro.Expr; other hints
+			// load
+			// normally.
+			if (th == null || isExprOf)
+				return Typeload.loadInstance(ctx, typeParams, exprPath, th == null ? hxc.ast.Position.nullPos : th.pos, false);
+			return Typeload.loadTypeHint(ctx, typeParams, th, false);
+		}
+		// The host sees a macro signature as Dynamic, keeping only ExprOf's inner type; haxe.PosInfos is
+		// rejected.
+		if (th == null) return TypeFunctions.tDynamic;
+		switch (th.ct) {
+			case CTPath(tp):
+				if (isExprOf) switch (tp.tparams[0]) {
+					case TPType(inner): return Typeload.loadTypeHint(ctx, typeParams, inner, false);
+					case _:
+				}
+				if (tp.tpackage.length == 1 && tp.tpackage[0] == "haxe" && tp.tname == "PosInfos"
+						&& tp.tsub == null && tp.tparams.length == 0)
+					throw new ContextError("haxe.PosInfos is not allowed on macro functions, use Context.currentPos() instead", th.pos);
 			case _:
 		}
-		return Typeload.loadTypeHint(ctx, typeParams, th, false);
+		return TypeFunctions.tDynamic;
 	}
 
 	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>, ownerModule:Null<ModuleDef>):Void {
