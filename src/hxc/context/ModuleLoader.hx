@@ -36,7 +36,12 @@ class ModuleLoader {
 					var j = canon.lastIndexOf("\\");
 					canon.substr((j > i ? j : i) + 1);
 				};
-				if (gotBase == reqBase) return canon;
+				if (gotBase == reqBase) {
+					// Cache files from the current directory by bare name so -cp . reports Main.hx, not ./Main.hx.
+					var k = { var i = canon.lastIndexOf("/"); var j = canon.lastIndexOf("\\"); j > i ? j : i; };
+					var dirPart = k < 0 ? "." : canon.substr(0, k);
+					return dirPart == "." ? gotBase : canon;
+				}
 			}
 		}
 		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
