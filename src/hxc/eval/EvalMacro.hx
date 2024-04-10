@@ -1647,12 +1647,17 @@ class EvalMacro {
 			var sigCf = macroWorldField(path, fa.field.name, hostClass.module != null ? hostClass.module.path : null);
 			var sigArgs = switch (TypeFunctions.follow((sigCf != null ? sigCf : fa.field).type)) { case TFun(s): s.args; case _: null; };
 			var callEl = isInstance ? [Calls.typedExprToSyntax(tctx, fa.on)].concat(el) : el;
-			// The member-macro receiver stays on the legacy encode path; the reference routes it through
-			// push_this outside the argument pipeline . An abstract-hosted macro threads its receiver
-			// through the impl signature the same way, so only plain static macros run the full pipeline
-			// for now.
-			var isPlainStatic = fa.host.match(FHStatic(_));
-			var args = isPlainStatic ? typeMacroArgs(ec, tctx, callEl, sigArgs, p) : macroArgs(ec, callEl, sigArgs);
+			// Static and member macros run the typed argument pipeline against the macro-world signature; a
+			// member macro keeps its receiver Expr as the first declared argument there (it is dropped
+			// host-side only), so the pushed receiver lines up with margs.
+			// An abstract-hosted macro threads its receiver through the impl signature (this:AbstractType,
+			// not Expr), which the pipeline does not model yet, so it stays on the legacy encode path.
+			var usePipeline = switch (fa.host) {
+				case FHStatic(_): true;
+				case FHInstance(_, _): sigCf != null;
+				case _: false;
+			};
+			var args = usePipeline ? typeMacroArgs(ec, tctx, callEl, sigArgs, p) : macroArgs(ec, callEl, sigArgs);
 			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
