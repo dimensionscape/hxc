@@ -42,6 +42,49 @@ class Compiler {
 	public function new() run(Sys.args());
 	public static function main() run(Sys.args());
 
+	// + the wait loop: length-prefixed request/response over stdin/stderr; each request is one compilation.
+	static function runWaitStdio():Void {
+		var stdin = Sys.stdin();
+		var stderr = Sys.stderr();
+		while (true) {
+			var len = try {
+				var b0 = stdin.readByte();
+				var b1 = stdin.readByte();
+				var b2 = stdin.readByte();
+				var b3 = stdin.readByte();
+				b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+			} catch (_:haxe.io.Eof) break;
+			var payload = try stdin.read(len).toString() catch (_:haxe.io.Eof) break;
+			var lines = payload.split("\n");
+			while (lines.length > 0 && lines[lines.length - 1] == "") lines.pop();
+			var out = new StringBuf();
+			try {
+				var proc = new Process(Sys.programPath(), lines);
+				var pout = proc.stdout.readAll().toString();
+				var perr = proc.stderr.readAll().toString();
+				var code = proc.exitCode();
+				proc.close();
+				if (perr.length > 0) {
+					out.add(perr);
+					if (!StringTools.endsWith(perr, "\n")) out.add("\n");
+				}
+				if (pout.length > 0) out.add("\x01" + StringTools.replace(pout, "\n", "\x01") + "\n");
+				if (code != 0) out.add("\x02\n");
+			} catch (e:Dynamic) {
+				out.add("Error: " + Std.string(e) + "\n\x02\n");
+			}
+			var body = haxe.io.Bytes.ofString(out.toString());
+			var head = haxe.io.Bytes.alloc(4);
+			head.set(0, body.length & 0xFF);
+			head.set(1, (body.length >> 8) & 0xFF);
+			head.set(2, (body.length >> 16) & 0xFF);
+			head.set(3, (body.length >> 24) & 0xFF);
+			stderr.write(head);
+			stderr.write(body);
+			stderr.flush();
+		}
+	}
+
 	public static function run(args:Array<String>):Void {
 		hxc.core.BinaryStdio.set();
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
@@ -81,6 +124,15 @@ class Compiler {
 				}
 			}
 			Sys.exit(exitCode);
+		}
+		// --wait stdio: the compilation-server loop. Requests arrive on stdin as 4-byte little-endian
+		// length-prefixed blocks of newline-separated argument lines; each response goes to stderr with the
+		// same framing. A line starting \x01 carries program stdout with embedded newlines encoded as \x01;
+		// a \x02 line flags failure; anything else is a compiler message line.
+		var waitAt = args.indexOf("--wait");
+		if (waitAt >= 0 && waitAt + 1 < args.length && args[waitAt + 1] == "stdio") {
+			runWaitStdio();
+			return;
 		}
 		var ctx = new Context();
 		ctx.args = args.copy();
