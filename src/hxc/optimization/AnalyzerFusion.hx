@@ -218,10 +218,21 @@ class Fusion {
 				case TLocal({kind: VUser(_)}): false;
 				case _: true;
 			};
-			return numUses <= 1 && numWrites == 0 && usable
+			var b = numUses <= 1 && numWrites == 0 && usable
 				&& !(hasVariableSemantics && isVariableExpression)
 				&& (isCompilerGenerated
 					|| (config.optimize && config.fusion && config.userVarFusion && !hasTypeParams && !impureExtern));
+			// -D fusionDebug / @:analyzer(fusionDebug) prints every
+			// canBeFused decision with each criterion's value.
+			if (config.fusionDebug) {
+				Sys.println("\nFUSION: " + (b ? "true" : "false") + "\n\tvar " + v.name + "<" + v.id + "> = " + hxc.core.TPrinting.sExprStr(e));
+				Sys.println("CONDITION:\n\tnum_uses:" + numUses + " <= 1 && num_writes:" + numWrites + " = 0 && can_be_used_as_value:" + usable
+					+ " && not (has_variable_semantics:" + hasVariableSemantics + " && e.eexpr=TLocal:" + isVariableExpression
+					+ ") (is_compiler_generated:" + isCompilerGenerated + " || config.optimize:" + config.optimize + " && config.fusion:" + config.fusion
+					+ " && config.user_var_fusion:" + config.userVarFusion + " && not has_type_params:" + hasTypeParams
+					+ " && not is_impuare_extern:" + impureExtern + ")");
+			}
+			return b;
 		}
 
 		// Forward substitution of `var v1 = e1`
