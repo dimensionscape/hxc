@@ -35,6 +35,7 @@ import sys.io.Process;
 </files>
 <linker id="exe" exe="link.exe" if="windows">
 	<flag value="-LARGEADDRESSAWARE"/>
+	<flag value="-STACK:134217728"/>
 </linker>
 ')
 class Compiler {
