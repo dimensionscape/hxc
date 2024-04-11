@@ -5,3 +5,6 @@ out/
 .aedifex/
 docs/
 tools/
+
+# hxia harness build output (driver writes to bin/hxia-harness; guard stray local runs)
+tests/**/bin/
