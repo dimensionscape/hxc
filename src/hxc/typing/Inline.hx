@@ -392,14 +392,19 @@ class Inline {
 					case TFunction(_): use.reads <= 1 && !use.writes;
 					case _: !use.writes && use.reads <= 1;
 				};
+			// Every READ of the abstract `this` substitutes wrapped in a TCast at the receiver type;
+			// assignment left-hand sides strip it again (inline_params, TCast when in_assignment). The cast
+			// keeps Texpr.equal from conflating the abstract this with its underlying value in later fusion.
+			inline function absThisCast(e:TExpr):TExpr
+				return absMember && i == 0 ? TypeFunctions.mk(TCast(e, null), av.type, e.pos) : e;
 			if (absMember && i == 0 && isStableLvalue(param)) {
-				subst.set(av.id, param);
+				subst.set(av.id, absThisCast(param));
 			} else if (!(absMember && i == 0) && substitutable) {
 				subst.set(av.id, param);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
 				nv.extra = new TVarExtra([], param);
-				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
+				subst.set(av.id, absThisCast(TypeFunctions.mk(TLocal(nv), nv.type, p)));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
@@ -804,6 +809,12 @@ class Inline {
 				if (subst.exists(v.id)) return subst.get(v.id);
 				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
+			case TBinop(op = OpAssign | OpAssignOp(_), e1, e2):
+				// inline_params a substitution cast unwraps on the assignment left-hand side so the write
+				// goes to the underlying lvalue.
+				var me1 = m(e1);
+				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
+				TBinop(op, me1, m(e2));
 			case TBinop(op, e1, e2): TBinop(op, m(e1), m(e2));
 			case TField(e1, fa): TField(m(e1), fa);
 			case TParenthesis(e1): TParenthesis(m(e1));
@@ -828,6 +839,11 @@ class Inline {
 				if (nested != null) return nested;
 				TCall(me1, mps);
 			case TNew(c, tp, args): TNew(c, tp, [for (x in args) m(x)]);
+			case TUnop(op = Increment | Decrement, fl, e1):
+				// Increment targets unwrap the substitution cast like assignment left-hand sides.
+				var me1 = m(e1);
+				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
+				TUnop(op, fl, me1);
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
