@@ -394,7 +394,7 @@ class Fields {
 					}
 					if (constrained != null) constrained else {
 						var u = tryUsing(ctx, e, i, pfield);
-						if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+						if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, pfield), pfield)) else throw fieldNotFound(e.type, i, pfield);
 					}
 				}
 			case TAnon(a):
@@ -403,7 +403,7 @@ class Fields {
 						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, pfield);
 						else {
 							var u = tryUsing(ctx, e, i, pfield);
-							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, pfield), pfield)) else throw fieldNotFound(e.type, i, pfield);
 						}
 					case _:
 						var f = a.fields.get(i);
@@ -430,11 +430,11 @@ class Fields {
 										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, pfield), i, pfield, mode, withType);
 									} catch (_:hxc.core.ExitException) {
 										var u = tryUsing(ctx, e, i, pfield);
-										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, pfield), pfield)) else throw fieldNotFound(e.type, i, pfield);
 									}
 								case _:
 									var u = tryUsing(ctx, e, i, pfield);
-									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield))
+									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, pfield), pfield))
 									// Reaching for an instance field through the class value (Class<C>) is
 									// a
 									// static-access error, not a missing field.
@@ -575,7 +575,7 @@ class Fields {
 				// A field not found on an enum or other value may come from a `using` static extension
 				// (e.g. the global EnumValueTools on an enum value).
 				var u = tryUsing(ctx, e, i, pfield);
-				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), pfield)) else throw fieldNotFound(e.type, i, pfield);
+				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, pfield), pfield)) else throw fieldNotFound(e.type, i, pfield);
 		};
 	}
 
