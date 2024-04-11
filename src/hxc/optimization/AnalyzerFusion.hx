@@ -416,8 +416,9 @@ class Fusion {
 			} catch (_:Exit) null;
 		}
 
-		// Both input and output element lists are reversed relative to source order (block_element flips
-		// them back)
+		// POLARITY: blockElement takes the reversed list and its prepend accumulation emits SOURCE order,
+		// so fuse receives SOURCE order and its own prepending emits reversed, which the following
+		// blockElement flips back.
 		var fuse:(Array<TExpr>, Array<TExpr>)->Array<TExpr> = null;
 		fuse = function(acc:Array<TExpr>, el:Array<TExpr>):Array<TExpr> {
 			while (el.length > 0) {

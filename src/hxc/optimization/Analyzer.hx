@@ -874,6 +874,17 @@ class Run {
 		var e = runOnExpr(actx, e);
 		e = reduceControlFlow(com, e);
 		cf.expr = e;
+		// @:analyzer(full_debug) prints every collected stage AST.
+		if (config.debugKind.match(DebugFull)) {
+			Sys.println("While analyzing " + identifier);
+			var stages = actx.debugExprs.copy();
+			stages.reverse();
+			for (st in stages) {
+				Sys.println("<" + st.s + ">");
+				Sys.println(hxc.core.TPrinting.sExprPretty(true, "", false, hxc.core.TPrinting.sTypeStr, st.e));
+				Sys.println("</" + st.s + ">");
+			}
+		}
 	}
 
 	public static function runOnField(com:Context, config:AnalyzerConfig, c:TClass, cf:TClassField):Void {
