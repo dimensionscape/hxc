@@ -318,21 +318,16 @@ class Inline {
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
 		var vthis:Null<TVar> = null;
-		if (!isStatic) {
-			if (ethis == null) throw new InlineBail();
-			var thisReads = countThisUses(tf.expr);
-			var directThis = ethis.expr.match(TConst(TThis) | TLocal(_))
-				|| (thisReads <= 1 && !hxc.optimization.OptimizerTexpr.hasSideEffect(ethis));
-			if (!directThis) {
-				vthis = TypeFunctions.allocVar(VInlined, "_this", ethis.type, p);
-				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
-			}
-		}
 		// A side-effecting argument always binds to a temp; once anything had a side effect (an argument
 		// or the mapped body: assignments, calls, news), any argument that might be affected and lacks
 		// @:semantics(value) binds too.
 		var checker = hxc.optimization.OptimizerTexpr.createAffectionChecker();
 		var hadSideEffect = bodyHasSideEffect(tf.expr);
+		var ethisSideEffect = !isStatic && ethis != null && hxc.optimization.OptimizerTexpr.hasSideEffect(ethis);
+		if (ethisSideEffect) {
+			checker.collectModifiedLocals(ethis);
+			hadSideEffect = true;
+		}
 		var paramSideEffect:Array<Bool> = [];
 		for (param in params) {
 			var se = hxc.optimization.OptimizerTexpr.hasSideEffect(param);
@@ -340,6 +335,23 @@ class Inline {
 			if (se) {
 				checker.collectModifiedLocals(param);
 				hadSideEffect = true;
+			}
+		}
+		if (!isStatic) {
+			if (ethis == null) throw new InlineBail();
+			// The receiver is just the first inlined var (named _this), so it follows the same substitution
+			// rules as arguments: a local or `this` substitutes; anything else substitutes only when read at
+			// most once and not forced to a temp by the side-effect rules.
+			var thisReads = countThisUses(tf.expr);
+			var forceTempThis = ethisSideEffect
+				|| (hadSideEffect && checker.mightBeAffected(ethis) && !hxc.optimization.AnalyzerFusion.ExtTypeSemantics.hasValueSemantics(ethis.type));
+			var directThis = !forceTempThis
+				&& (ethis.expr.match(TConst(TThis) | TLocal(_)) || thisReads <= 1);
+			if (!directThis) {
+				// The bound receiver behaves as compiler-generated in fusion, so
+				// a single-use receiver temp fuses back regardless of extern purity.
+				vthis = TypeFunctions.allocVar(VGenerated, "_this", ethis.type, p);
+				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
 		}
 		function valueSemantics(t:T):Bool {
@@ -389,6 +401,13 @@ class Inline {
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, TypeFunctions.mk(TLocal(nv), nv.type, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
+				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
+				// non-call reads keep the bound local, which local-dce drops when every read was a call.
+				switch (param.expr) {
+					case TFunction(_) if (!use.writes):
+						nv.meta = [{name: ":inlineIfCalled", params: [], pos: p}].concat(nv.meta);
+					case _:
+				}
 				// An optional argument with a non-null default falls back when the passed value is null at
 				// runtime: if (v == null) v = default. (i_default_value) and
 				var dflt = tf.args[i].c;
@@ -451,13 +470,21 @@ class Inline {
 
 	static function countThisUses(root:TExpr):Int {
 		var count = 0;
-		function loop(e:TExpr):Void {
+		// A read inside a loop body counts double, so a receiver used once in
+		// a loop still binds to a temp.
+		function loop(inLoop:Bool, e:TExpr):Void {
 			switch (e.expr) {
-				case TConst(TThis): count++;
-				case _: TexprTools.iter(loop, e);
+				case TConst(TThis): count += inLoop ? 2 : 1;
+				case TFor(_, e1, body):
+					loop(inLoop, e1);
+					loop(true, body);
+				case TWhile(cond, body, _):
+					loop(inLoop, cond);
+					loop(true, body);
+				case _: TexprTools.iter(function(x) loop(inLoop, x), e);
 			}
 		}
-		loop(root);
+		loop(false, root);
 		return count;
 	}
 
@@ -525,30 +552,38 @@ class Inline {
 	// whether a closure inside the body captures it.
 	static function argUsage(v:TVar, body:TExpr):{reads:Int, writes:Bool, captured:Bool} {
 		var reads = 0, writes = false, captured = false;
-		function loop(inClosure:Bool, e:TExpr):Void {
+		// A read inside a loop body counts double.
+		function loop(inClosure:Bool, inLoop:Bool, e:TExpr):Void {
+			inline function bump() reads += inLoop ? 2 : 1;
 			switch (e.expr) {
 				case TLocal(v2) if (v2 == v):
-					reads++;
+					bump();
 					if (inClosure) captured = true;
 				case TBinop(OpAssign, {expr: TLocal(v2)}, e2) if (v2 == v):
 					writes = true;
-					loop(inClosure, e2);
+					loop(inClosure, inLoop, e2);
 				case TBinop(OpAssignOp(_), {expr: TLocal(v2)}, e2) if (v2 == v):
-					reads++;
+					bump();
 					writes = true;
 					if (inClosure) captured = true;
-					loop(inClosure, e2);
+					loop(inClosure, inLoop, e2);
 				case TUnop(Increment | Decrement, _, {expr: TLocal(v2)}) if (v2 == v):
-					reads++;
+					bump();
 					writes = true;
 					if (inClosure) captured = true;
 				case TFunction(f):
-					loop(true, f.expr);
+					loop(true, inLoop, f.expr);
+				case TFor(_, e1, e2):
+					loop(inClosure, inLoop, e1);
+					loop(inClosure, true, e2);
+				case TWhile(cond, e2, _):
+					loop(inClosure, inLoop, cond);
+					loop(inClosure, true, e2);
 				case _:
-					TexprTools.iter(function(e2) loop(inClosure, e2), e);
+					TexprTools.iter(function(e2) loop(inClosure, inLoop, e2), e);
 			}
 		}
-		loop(false, body);
+		loop(false, false, body);
 		return {reads: reads, writes: writes, captured: captured};
 	}
 
@@ -779,6 +814,15 @@ class Inline {
 				// abstract this still writes back to the substituted receiver (the reference
 				// inliner expands inline calls inside inlined bodies).
 				var me1 = m(e1);
+				// finalize.inline_params VIInlineIfCalled: a call through a bound function-arg
+				// local inlines the function expression (fresh tvars per site); the immediate
+				// call then collapses in reduce.
+				switch (me1.expr) {
+					case TLocal(v2) if (v2.extra != null && v2.extra.expr != null
+							&& TypeFunctions.hasMeta(":inlineIfCalled", v2.meta)):
+						me1 = TexprTools.duplicateTvars(function(x) return x, v2.extra.expr);
+					case _:
+				}
 				var mps = [for (x in ps) m(x)];
 				var nested = tryInline(ctx, me1, mps, e.type, e.pos);
 				if (nested != null) return nested;
