@@ -785,7 +785,11 @@ class Typer {
 			case EUnop(op, flag, e1):
 				Operators.typeUnop(ctx, op, flag, e1, withType, p);
 			case ESwitch(e1, cases, def):
-				Match.matchExpr(ctx, e1, cases, def, withType, false, p);
+				// The matcher output wraps in @:ast carrying the original switch syntax. Downstream, the
+				// var-and-assign block unwrap does not cross the meta, so a value match keeps its subject
+				// binds inside the var init.
+				var me = Match.matchExpr(ctx, e1, cases, def, withType, false, p);
+				TypeFunctions.mk(TMeta({name: ":ast", params: [e], pos: p}, me), me.type, me.pos);
 			case EFor(it, body):
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(tp, el):
