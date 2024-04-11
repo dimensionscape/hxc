@@ -491,12 +491,15 @@ class Fusion {
 					case TVarExpr(v1, einit) if (einit != null && canBeFused(v1, einit)):
 						var handled = false;
 						if (next != null) switch (next.expr) {
-							case TUnop(op = Increment | Decrement, Prefix, {expr: TLocal(v2)}) if (v1 == v2):
+							// The increment may be on any local, not only v1 (e.g. `var num = a[_g]; ++_g;`), and
+							// replace hunts for that incremented local inside the var's init, once, not crossing
+							// branching constructs.
+							case TUnop(op = Increment | Decrement, Prefix, {expr: TLocal(v2)}):
 								var found = false;
 								var replace:TExpr->TExpr = null;
 								replace = function(e:TExpr):TExpr {
 									return switch (e.expr) {
-										case TLocal(v3) if (v1 == v3):
+										case TLocal(v3) if (v2 == v3):
 											if (found) throw new Exit();
 											found = true;
 											TypeFunctions.mk(TUnop(op, Postfix, e), e.type, e.pos);
