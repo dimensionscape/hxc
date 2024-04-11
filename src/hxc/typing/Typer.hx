@@ -1896,9 +1896,10 @@ class Typer {
 			var v = ctx.locals.get(i);
 			// A local inline function resolves through a fake extern class holding an inline method, so a
 			// call reuses the regular inline machinery (outer locals referenced by the body pass through as
-			// captures-by-substitution). Reading or assigning the name is an error. (type_ident_raise,
-			// extra match).
-			if (v.extra != null && v.extra.expr != null) switch (v.extra.expr.expr) {
+			// captures-by-substitution). Reading or assigning the name is an error.
+			// The inline-closure emulation is gated on dmsInline, which is false for every display mode:
+			// hover on the callee must see the closure's function type, not the inlined body.
+			if (v.extra != null && v.extra.expr != null && ctx.com.displaySpec == null) switch (v.extra.expr.expr) {
 				case TFunction(_):
 					switch (mode) {
 						case MCall(_):
