@@ -106,7 +106,22 @@ class Inline {
 		};
 		depth--;
 		cfStack.pop();
+		if (r != null) r = inlineMetadata(r, cf.meta);
 		return r;
+	}
+
+	// @:pure (except inferredPure) and @:deprecated travel on the inlined expression as metas;
+	// fusion's pure-element arms read them.
+	static function inlineMetadata(e:TExpr, meta:hxc.ast.Ast.Metadata):TExpr {
+		for (m in meta) switch (m.name) {
+			case ":pure":
+				var inferred = m.params.length == 1 && m.params[0].expr.match(hxc.ast.Ast.ExprDef.EConst(CIdent("inferredPure")));
+				if (!inferred) e = TypeFunctions.mk(TMeta(m, e), e.type, e.pos);
+			case ":deprecated":
+				e = TypeFunctions.mk(TMeta(m, e), e.type, e.pos);
+			case _:
+		}
+		return e;
 	}
 
 	static function isOptionalArg(v:TVar):Bool {
@@ -144,6 +159,7 @@ class Inline {
 		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
 		depth--;
 		cfStack.pop();
+		if (r != null) r = inlineMetadata(r, cf.meta);
 		return r;
 	}
 
