@@ -130,7 +130,9 @@ class Exceptions {
 		var mt = try TypeFunctions.moduleTypeOfType(t) catch (_:hxc.core.ExitException) throw new TypingError("Unexpected type for Std.isOfType", p);
 		var typeExpr = TypeFunctions.mk(TTypeExpr(mt), t, p);
 		var fe = TexprTools.makeStaticField(stdCls, cf, p);
-		return TypeFunctions.mk(TCall(fe, [e, typeExpr]), ret, p);
+		// The static call routes through the typer's makeCall, so the inline js Std.isOfType folds through
+		// apiInline to a typeof check.
+		return hxc.typing.Calls.makeCall(ctx.typer, fe, [e, typeExpr], ret, p);
 	}
 
 	// Paths compare as dotted strings

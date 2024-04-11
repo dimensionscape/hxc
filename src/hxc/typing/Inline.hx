@@ -55,6 +55,12 @@ class Inline {
 			case _ if (forceInline):
 			case _: return null;
 		}
+		// The platform api substitutions run before the body inline, so a js Std.isOfType(o, String)
+		// folds to a typeof check instead of its body.
+		if (c != null) {
+			var api = hxc.optimization.Optimizer.apiInline(ctx, c, cf.name, params, p);
+			if (api != null) return api;
+		}
 		// A method's own type parameters do not affect the inlined value: the evaluator runs the body
 		// without re-typing, so the substitution proceeds with the body types left as-is (the params
 		// would only matter for the return type, which the evaluator does not need).
@@ -115,6 +121,19 @@ class Inline {
 	// (the call-site resolution is the caller's).
 	public static function typeInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField, tf:TFunc, ethis:Null<TExpr>, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
 		if (depth > 32) return null;
+		// The platform api substitutions run before the body inline, so a js Std.isOfType(o, String)
+		// folds to a typeof check instead of its body.
+		if (ethis != null) {
+			var apiCls:Null<TClass> = switch (TypeFunctions.follow(ethis.type)) {
+				case TInst(c2, _): c2;
+				case TAnon(a): switch (a.status.get()) { case Statics(c2): c2; case _: null; };
+				case _: null;
+			};
+			if (apiCls != null) {
+				var r = hxc.optimization.Optimizer.apiInline(ctx, apiCls, cf.name, params, p);
+				if (r != null) return r;
+			}
+		}
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
