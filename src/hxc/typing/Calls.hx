@@ -432,9 +432,25 @@ class Calls {
 	static function typeBind(ctx:TyperContext, fe:TExpr, sig:TSignature, params:Array<Expr>, p:Position):TExpr {
 		var tvoid = ctx.com.basic.tvoid;
 		var decls:Array<TExpr> = [];
-		var fv = TypeFunctions.allocVar(VGenerated, "`", fe.type, p);
-		decls.push(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, p));
-		var feLocal = TexprTools.makeLocal(fv, p);
+		// A function literal, local function or immutable method value is called directly; an instance
+		// closure binds only its RECEIVER to a temp and calls the method through FInstance; anything else
+		// binds the whole function value.
+		inline function immutableMethod(cf:TClassField):Bool
+			return switch (cf.kind) { case Method(k): k != MethDynamic; case _: false; };
+		var feLocal = switch (fe.expr) {
+			case TFunction(_) | TLocal({kind: VUser(TVOLocalFunction)}):
+				fe;
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (immutableMethod(cf)):
+				fe;
+			case TField(eobj, FClosure(cwp, cf)) if (cwp != null && immutableMethod(cf)):
+				var vobj = TypeFunctions.allocVar(VGenerated, "`", eobj.type, eobj.pos);
+				decls.push(TypeFunctions.mk(TVarExpr(vobj, eobj), tvoid, eobj.pos));
+				TypeFunctions.mk(TField(TexprTools.makeLocal(vobj, eobj.pos), FInstance(cwp.c, cwp.params, cf)), fe.type, fe.pos);
+			case _:
+				var fv = TypeFunctions.allocVar(VGenerated, "`", fe.type, fe.pos);
+				decls.push(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, fe.pos));
+				TexprTools.makeLocal(fv, fe.pos);
+		};
 		var callArgs:Array<TExpr> = [];
 		var missingVl:Array<TVar> = [];
 		var missingArgs:Array<TSignatureArg> = [];
@@ -471,7 +487,12 @@ class Calls {
 		}
 		if (pi < params.length) throw new TypingError("Too many callback arguments", p);
 		var call = makeCall(ctx, feLocal, callArgs, sig.ret, p);
-		var body = TypeFunctions.mk(TReturn(call), sig.ret, p);
+		// A void-returning bound call stays a bare statement.
+		var isVoid = switch (TypeFunctions.follow(sig.ret)) {
+			case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
+			case _: false;
+		};
+		var body = isVoid ? call : TypeFunctions.mk(TReturn(call), sig.ret, p);
 		// An optional closure arg defaults to null so a no-arg call reaches the original function as
 		// null and triggers its own default.
 		var tfArgs:Array<TFuncArg> = [for (i in 0...missingVl.length)
