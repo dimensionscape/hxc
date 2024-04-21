@@ -1,13 +1,5 @@
 package hxia;
 
-typedef Manifest = {
-	profile:String,
-	requires:Array<String>,
-	formatVersion:Int,
-	abiLevel:Int,
-	?sdkSurfaceHash:String,
-}
-
 // A loaded script module. The shapes are the contract; bodies are stubs.
 class Module {
 	public var id(default, null):String;
