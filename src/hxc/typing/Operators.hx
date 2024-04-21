@@ -1106,21 +1106,23 @@ class Operators {
 	// Increment/decrement of a concrete map element `m[k]++` via its IMap get(k)/set(k, v) methods,
 	// binding base and key to temps so each evaluates once. Postfix yields the old value, prefix the new.
 	static function imapIncr(ctx:TyperContext, kv:{k:T, v:T}, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
+		// The concrete-IMap variant of the increment (hxc types some map bases at the resolved instance):
+		// same temp naming and shape as the abstract path produces through Map_Impl_.arrayWrite (key/read
+		// temps "tmp", the written value binds as arrayWrite's "v" parameter for prefix; the base feeds
+		// both calls directly).
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
 		var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
-		var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
-		var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
-		var eb = TexprTools.makeLocal(vb, p);
-		var ek = TexprTools.makeLocal(vk, p);
-		var getExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "get", p, MGet, WithTypeTools.value));
-		var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "set", p, MGet, WithTypeTools.value));
+		var vKey = TypeFunctions.allocVar(VGenerated, "tmp", tk.type, tk.pos);
+		var ek = TexprTools.makeLocal(vKey, p);
+		var getExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, tb, "get", p, MGet, WithTypeTools.value));
+		var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, tb, "set", p, MGet, WithTypeTools.value));
 		var eget = Calls.makeCall(ctx, getExpr, [ek], ctx.com.basic.tnull(kv.v), p);
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
+		var stmts = [TypeFunctions.mk(TVarExpr(vKey, tk), tvoid, p)];
 		if (flag.match(Postfix)) {
-			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
+			var vold = TypeFunctions.allocVar(VGenerated, "tmp", eget.type, p);
 			var eold = TexprTools.makeLocal(vold, p);
 			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
 			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
@@ -1129,7 +1131,7 @@ class Operators {
 			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
-		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
+		var vnew = TypeFunctions.allocVar(VGenerated, "v", newv.type, p);
 		var enew = TexprTools.makeLocal(vnew, p);
 		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
 		stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, enew, p)], tvoid, p));
@@ -1139,57 +1141,35 @@ class Operators {
 
 	// Increment/decrement of an abstract @:arrayAccess element via getter+setter.
 	static function arrayIncr(ctx:TyperContext, a:TAbstract, tl:TParams, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
-		var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
+		// Increment/decrement through @:arrayAccess: bind key and read value to "tmp" temps, apply the op
+		// inline, write through @:arrayAccess; the block yields the set-call result for prefix and the read
+		// temp for postfix. The base expression feeds both calls directly (no base temp is bound).
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
-		var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
-		var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
-		var eb = TexprTools.makeLocal(vb, p);
-		var ek = TexprTools.makeLocal(vk, p);
-		var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
-		var binop = op.match(Increment) ? OpAdd : OpSub;
+		var ekey = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
+		var vKey = TypeFunctions.allocVar(VGenerated, "tmp", ekey.type, ekey.pos);
+		var evarKey = TypeFunctions.mk(TVarExpr(vKey, ekey), tvoid, ekey.pos);
+		var ekeyL = TexprTools.makeLocal(vKey, ekey.pos);
+		var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, tb, ekeyL, p);
+		var eGet = get.expr;
+		var vGet = TypeFunctions.allocVar(VGenerated, "tmp", eGet.type, eGet.pos);
+		var evGet = TexprTools.makeLocal(vGet, p);
+		var evarGet = TypeFunctions.mk(TVarExpr(vGet, eGet), tvoid, p);
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		var stmts = [TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p), TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)];
-		switch (get.key.expr) {
-			case TLocal(v) if (v == vk):
-			case _:
-				var vkc = TypeFunctions.allocVar(VGenerated, "`", get.key.type, p);
-				stmts.push(TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p));
-				get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
-		}
-		var eget = get.expr;
-		// No matching setter: an @:op(A++)-style unop on the read value covers the increment,
-		// else re-run the setter resolution to raise its own diagnostic.
-		function fallback(value:TExpr):TExpr {
-			var abs = tryAbstractUnop(ctx, op, flag, eget, p);
+		var eOp = TypeFunctions.mk(TBinop(op.match(Increment) ? OpAdd : OpSub, evGet, one), evGet.type, p);
+		var eSet = Calls.arraySetValue(ctx, a, tl, a.impl, tb, ekeyL, function(_) return eOp, p, false);
+		if (eSet == null) {
+			// An @:op(A++)-style unop on the read value covers the increment, else the setter resolution
+			// raises its own diagnostic.
+			var abs = tryAbstractUnop(ctx, op, flag, eGet, p);
 			if (abs == null) {
-				Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return value, p);
+				Calls.arraySetValue(ctx, a, tl, a.impl, tb, ekeyL, function(_) return eOp, p);
 				throw new TypingError("No matching @:arrayAccess setter", p);
 			}
-			var out = stmts.copy();
-			out.push(abs);
-			return TypeFunctions.mk(TBlock(out), abs.type, p);
+			return TypeFunctions.mk(TBlock([evarKey, abs]), abs.type, p);
 		}
-		if (flag.match(Postfix)) {
-			var vold = TypeFunctions.allocVar(VGenerated, "`o", eget.type, p);
-			var eold = TexprTools.makeLocal(vold, p);
-			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
-			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
-			var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return newv, p, false);
-			if (eset == null) return fallback(newv);
-			stmts.push(eset);
-			stmts.push(eold);
-			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
-		}
-		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
-		var vnew = TypeFunctions.allocVar(VGenerated, "`n", newv.type, p);
-		var enew = TexprTools.makeLocal(vnew, p);
-		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return enew, p, false);
-		if (eset == null) return fallback(enew);
-		stmts.push(eset);
-		stmts.push(enew);
-		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
+		var el = [evarKey, evarGet, eSet].concat(flag.match(Postfix) ? [evGet] : []);
+		return TypeFunctions.mk(TBlock(el), flag.match(Postfix) ? evGet.type : eSet.type, p);
 	}
 
 	// Read a class property `er.p`: call its getter when the read accessor is AccCall, else read the stored
