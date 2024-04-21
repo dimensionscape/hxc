@@ -1286,23 +1286,39 @@ class DtCompile {
 		}
 		var patAny:Pattern = {pat: PatAny, pos: mctx.matchPos};
 		var exSubjects:Array<TExpr> = [];
-		var exBindings:Array<Binding> = [];
+		// Identical extractor expressions (after substituting the `_` binder with the subject) SHARE one
+		// _hx_tmp binding; the reused case's pattern targets the ORIGINAL extractor's column offsets while
+		// still occupying its own subject column.
+		var exBindings:Array<{v:TVar, p:Position, e:TExpr, left:Int, right:Int}> = [];
 		var newCases:Array<MatchCase> = [];
 		var left = 0;
+		var right = numEx;
 		for (i in 0...cases.length) {
 			var mc = cases[i];
 			var info = infos[i];
 			var restPatterns = mc.patterns.slice(1);
 			if (info != null) {
-				var e1 = info.e1;
-				var ev = TypeFunctions.allocVar(VExtractorVariable, "_hx_tmp", e1.type, e1.pos);
-				// Evaluate the extractor once: bind `_` to the subject, then the extractor var to its result.
-				exBindings.push({v: info.v, p: subject.pos, e: subject});
-				exBindings.push({v: ev, p: e1.pos, e: e1});
-				exSubjects.push(TexprTools.makeLocal(ev, e1.pos));
-				var patterns = makeOffsetList(1 + left, numEx - 1 - left, info.pat, patAny).concat(restPatterns);
+				// Occurrences of the `_` binder inside the extractor expression are replaced by the subject
+				// itself; no binding is emitted for it.
+				function substSubject(e:TExpr):TExpr {
+					return switch (e.expr) {
+						case TLocal(v2) if (v2 == info.v): subject;
+						case _: TexprTools.mapExpr(substSubject, e);
+					}
+				}
+				var e1 = substSubject(info.e1);
+				var found:Null<{v:TVar, p:Position, e:TExpr, left:Int, right:Int}> = null;
+				for (b in exBindings) if (TexprTools.equal(e1, b.e)) { found = b; break; }
+				if (found == null) {
+					var ev = TypeFunctions.allocVar(VExtractorVariable, "_hx_tmp", e1.type, e1.pos);
+					found = {v: ev, p: e1.pos, e: e1, left: left, right: right};
+					exBindings.push(found);
+				}
+				exSubjects.push(TexprTools.makeLocal(found.v, e1.pos));
+				var patterns = makeOffsetList(found.left + 1, found.right - 1, info.pat, patAny).concat(restPatterns);
 				newCases.push({c: mc.c, bindings: info.binds.concat(mc.bindings), patterns: patterns});
 				left++;
+				right--;
 			} else {
 				var patterns = makeOffsetList(0, numEx, mc.patterns[0], patAny).concat(restPatterns);
 				newCases.push({c: mc.c, bindings: mc.bindings, patterns: patterns});
@@ -1310,7 +1326,7 @@ class DtCompile {
 		}
 		var recompSubjects = [subject].concat(exSubjects).concat(rest);
 		var dt = compile(mctx, recompSubjects, newCases);
-		return exBindings.length == 0 ? dt : bind(mctx, exBindings, dt);
+		return exBindings.length == 0 ? dt : bind(mctx, [for (b in exBindings) {v: b.v, p: b.p, e: b.e}], dt);
 	}
 
 	static function makeOffsetList(left:Int, right:Int, x:Pattern, pad:Pattern):Array<Pattern> {
