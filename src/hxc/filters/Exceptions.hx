@@ -459,8 +459,10 @@ class Exceptions {
 		function run(e:TExpr):TExpr {
 			return switch (e.expr) {
 				case TTry(e1, catches):
+					// Only the TRY body recurses; catch bodies are used as-is, so a nested try inside a catch gets
+					// no stack save.
 					var nc = [for (c in catches) {
-						var body = run(c.expr);
+						var body = c.expr;
 						if (TypeFunctions.hasMeta(":needsExceptionStack", c.v.meta)) {
 							var stmts = switch (body.expr) {
 								case TBlock(el): [saveStack(c.v)].concat(el);
@@ -469,7 +471,7 @@ class Exceptions {
 							{v: c.v, expr: TypeFunctions.mk(TBlock(stmts), body.type, body.pos)};
 						} else {v: c.v, expr: body};
 					}];
-					TypeFunctions.mk(TTry(run(e1), nc), e.type, e.pos);
+					TypeFunctions.mk(TTry(TexprTools.mapExpr(run, e1), nc), e.type, e.pos);
 				case _:
 					TexprTools.mapExpr(run, e);
 			};
