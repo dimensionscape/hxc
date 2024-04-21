@@ -517,10 +517,6 @@ class Calls {
 					return AKExpr(TypeFunctions.mk(TCall(eUnprotect, [e]), e.type, e.pos));
 				}
 				return AKExpr(e);
-			case EField({expr: EConst(CIdent("Std"))}, "string", _) if (el.length == 1):
-				var e = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
-				var converted = abstractToString(ctx, e, p);
-				if (converted != null) return AKExpr(converted);
 			case EField(e1, "match", _) if (el.length == 1):
 				// `e.match(pattern)` on an enum is sugar for `switch e { case pattern: true; case _: false;
 				// }`.
@@ -575,37 +571,6 @@ class Calls {
 			case TField(e1, _) | TParenthesis(e1): needsTempVar(e1);
 			case _: true;
 		};
-	}
-
-	static function abstractToString(ctx:TyperContext, e:TExpr, p:Position):Null<TExpr> {
-		switch (TypeFunctions.follow(e.type)) {
-			case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
-				function call(x:TExpr):TExpr {
-					// Ignore the visibility of toString.
-					ctx.privateAccess++;
-					var accS = Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(ctx.com.basic.tstring));
-					ctx.privateAccess--;
-					return buildCall(ctx, accS, [], WithTypeTools.withType(ctx.com.basic.tstring), x.pos);
-				}
-				// A static-platform non-nullable operand never takes the null branch, and the `e == null`
-					// check would type a null at the operand's non-nullable basic type, tripping the
-					// static-null check. this path with the same isStatic test.
-					if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
-						return call(e);
-					var strNull = TypeFunctions.mk(TConst(TString("null")), ctx.com.basic.tstring, p);
-				if (!needsTempVar(e)) {
-					var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
-					return TypeFunctions.mk(TIf(check, strNull, call(e)), ctx.com.basic.tstring, p);
-				}
-				var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, p);
-				var tmpLocal = TexprTools.makeLocal(tmp, p);
-				var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, p);
-				var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, p);
-				var body = TypeFunctions.mk(TIf(check, strNull, call(tmpLocal)), ctx.com.basic.tstring, p);
-				return TypeFunctions.mk(TBlock([decl, body]), ctx.com.basic.tstring, p);
-			case _:
-				return null;
-		}
 	}
 
 	// True when `.match()` applies: the receiver is an enum, or a @:forward abstract over one that
