@@ -855,6 +855,13 @@ class Inline {
 			case TParenthesis(e1): TParenthesis(m(e1));
 			case TObjectDecl(fields): TObjectDecl([for (f in fields) {key: f.key, expr: m(f.expr)}]);
 			case TArrayDecl(vals): TArrayDecl([for (x in vals) m(x)]);
+			case TCall(se = {expr: TField(_, FStatic({path: {pack: [], name: "Std"}}, {name: "string"}))}, [sp]):
+				// When substitution changes the argument's type (an abstract flowing into a scalar param),
+				// cast it back so Std.string keeps the parameter's static-type semantics.
+				var msp = m(sp);
+				if (!hxc.core.TypeUnification.fastEq(TypeFunctions.follow(sp.type), TypeFunctions.follow(msp.type)))
+					msp = TypeFunctions.mk(TCast(msp, null), sp.type, msp.pos);
+				TCall(m(se), [msp]);
 			case TCall(e1, ps):
 				// A nested inline call in the body expands too, so a sibling call mutating the
 				// abstract this still writes back to the substituted receiver (the reference

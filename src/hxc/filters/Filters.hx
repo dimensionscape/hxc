@@ -739,6 +739,31 @@ class Filters {
 		}
 		function loop(e:TExpr):TExpr {
 			return switch (e.expr) {
+				// Std.string of an abstract whose impl has a toString static becomes
+				// `e1 == null ? "null" : Impl.toString(e1)`; the impl call routes through makeCall so an
+				// inline
+				// toString expands.
+				case TCall({expr: TField(_, FStatic({path: {pack: [], name: "Std"}}, {name: "string"}))}, [se1])
+						if (switch (TypeFunctions.follow(se1.type)) { case TAbstract(a, _): a.impl != null && a.impl.statics.exists("toString"); case _: false; }):
+					switch (TypeFunctions.follow(se1.type)) {
+						case TAbstract(a, _) if (a.impl != null):
+							var c = a.impl;
+							var cf = c.statics.get("toString");
+							var se1 = loop(se1);
+							var ret = ctx.com.basic.tstring;
+							inline function call():TExpr {
+								var fe = TexprTools.makeStaticField(c, cf, e.pos);
+								return Calls.makeCall(ctx, fe, [se1], ret, e.pos);
+							}
+							if (!TypeFunctions.isNullable(se1.type)) call()
+							else {
+								var p = e.pos;
+								var chkNull = TypeFunctions.mk(TBinop(OpEq, se1, TypeFunctions.mk(TConst(TNull), se1.type, p)), ctx.com.basic.tbool, p);
+								TypeFunctions.mk(TIf(chkNull, TypeFunctions.mk(TConst(TString("null")), ret, p), call()), ret, p);
+							}
+						case _:
+							TexprTools.mapExpr(loop, e);
+					}
 				case TCall(e1, el):
 					try {
 						function findField(ef:TExpr):TExpr {
