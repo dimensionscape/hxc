@@ -354,6 +354,10 @@ class Compiler {
 				// Print the response verbatim without a trailing newline.
 				Sys.stderr().writeString(out.output);
 				return;
+			} catch (e:hxc.core.JsonRpc.InvalidArgument) {
+				// An uncaught Invalid_argument prints bare on stderr and exits 1.
+				Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
+				Sys.exit(1);
 			}
 		}
 		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
@@ -401,6 +405,10 @@ class Compiler {
 			hxc.eval.EvalMacro.runAfterInitMacrosCallbacks();
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
+		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
+			// An uncaught Invalid_argument prints bare on stderr and exits 1.
+			Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
+			Sys.exit(1);
 		} catch (e:hxc.core.TypingError) {
 			// Through the message store, so -D message.reporting picks the formatter and a
 			// compound message renders its sub-lines as depth children.
@@ -642,6 +650,10 @@ class Compiler {
 		} catch (e:hxc.core.TypingError) {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
+		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
+			// An uncaught Invalid_argument prints bare on stderr and exits 1.
+			Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
+			Sys.exit(1);
 		} catch (e:Dynamic) {
 			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
 			Sys.exit(1);

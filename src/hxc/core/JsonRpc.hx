@@ -11,6 +11,17 @@ enum JsonRpcErrorKind {
 	Custom(id:JsonValue, code:Int, message:String);
 }
 
+// An uncaught invalid argument prints as Invalid_argument("<arg>") on stderr with exit 1 (bad request
+// params, a malformed hex digest).
+class InvalidArgument extends haxe.Exception {
+	public var arg:String;
+
+	public function new(arg:String) {
+		super("Invalid_argument(\"" + arg + "\")");
+		this.arg = arg;
+	}
+}
+
 class JsonRpcError extends haxe.Exception {
 	public var kind:JsonRpcErrorKind;
 
@@ -166,7 +177,7 @@ class JsonRpcHandler {
 	function getObjParams():Array<JsonField> {
 		return switch (params) {
 			case JObject(fl): fl;
-			case _: throw new hxc.core.TypingError("params", hxc.ast.Position.nullPos);
+			case _: throw new InvalidArgument("params");
 		};
 	}
 
