@@ -152,6 +152,18 @@ class EvalStdLib {
 		return h;
 	}
 
+	// String comparison: unsigned byte-wise over the UTF-8 representation.
+	static function byteStringCompare(a:String, b:String):Int {
+		var ba = haxe.io.Bytes.ofString(a);
+		var bb = haxe.io.Bytes.ofString(b);
+		var n = ba.length < bb.length ? ba.length : bb.length;
+		for (i in 0...n) {
+			var d = ba.get(i) - bb.get(i);
+			if (d != 0) return d;
+		}
+		return ba.length - bb.length;
+	}
+
 	static function seededStringHash(s:String):Int {
 		var cached = stringHashCache.get(s);
 		if (cached != null) return cached;
@@ -2714,12 +2726,9 @@ class EvalStdLib {
 				var order = nativeMapOrders.get(vi);
 				var entries = order == null ? [for (e in m) e] : [for (k in order) if (m.exists(k)) m.get(k)];
 				if (vi.iproto.ppath == EvalHash.hash("haxe.ds.StringMap")) {
-					entries.sort(function(a, b) {
-						var ak = stringOf(a.key);
-						var bk = stringOf(b.key);
-						var d = seededStringHash(ak) - seededStringHash(bk);
-						return d != 0 ? d : Reflect.compare(ak, bk);
-					});
+					// A StringMap is ordered by key, and its keys/values fold ascending while PREPENDING, so the
+					// exposed iteration order is descending byte-wise key order.
+					entries.sort(function(a, b) return -byteStringCompare(stringOf(a.key), stringOf(b.key)));
 				} else if (vi.iproto.ppath == EvalHash.hash("haxe.ds.IntMap")) {
 					var buckets = hashTableBucketCount(entries.length);
 					var positions = order == null ? [for (e in entries) mapKey(e.key)] : order;
