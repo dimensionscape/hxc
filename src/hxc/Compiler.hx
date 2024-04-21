@@ -175,6 +175,19 @@ class Compiler {
 			switch (a) {
 				case "-cp" | "-p" | "--class-path": userCp.push(args[i++]);
 				case "-main" | "-m" | "--main": mainClass = args[i++];
+				case "--hxia":
+					// The hxia profile mask: `--hxia core` (or sys). Masks the std surface at
+					// typing per hxc.hxia.CapabilityMask; atoms are added by --require.
+					ctx.defines.rawDefineValue("hxia", args[i++]);
+				case "--require":
+					// Grant capability atoms (comma-separated), accumulating across repeats.
+					var prev = ctx.defines.rawDefinedValueSafe("hxia_require", "");
+					var add = args[i++];
+					ctx.defines.rawDefineValue("hxia_require", prev == "" ? add : prev + "," + add);
+				case "--hxia-dump-atoms":
+					// Print the member->atom table and exit; the test lane reads this.
+					Sys.print(hxc.hxia.CapabilityMask.dump());
+					return;
 				case "--resource": addResource(ctx, args[i++]);
 				case "--remap":
 					var spec = args[i++];

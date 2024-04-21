@@ -189,6 +189,8 @@ class Fields {
 			case FHAbstract(_, _, c): maybeCheckVisibility(c, true);
 			case FHAnon:
 		}
+		// Hxia profile mask: a masked std member used without its capability atom is an error.
+		hxc.hxia.CapabilityMask.check(ctx, fh, f.name, pfield);
 		// Each field access consumes one @:bypassAccessor from the pending count.
 		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;
 		function makeAccess(isInline:Bool):FieldAccess {
