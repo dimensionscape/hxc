@@ -885,7 +885,6 @@ class Filters {
 			// Tre runs only with analyzer-optimize
 			{name: "Tre", f: com.defines.rawDefined("analyzer_optimize") ? hxc.filters.Tre.run(tctx) : function(e) return e},
 			{name: "reduce_expression", f: function(e) return Optimizer.reduceExpression(tctx, e)},
-			{name: "AbstractCast.handle_abstract_casts_after_reduce", f: function(e) return handleAbstractCasts(tctx, e)},
 			{name: "inline_constructors", f: function(e) return hxc.optimization.InlineConstructors.apply(tctx, e)},
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
