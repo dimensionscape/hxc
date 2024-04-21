@@ -414,7 +414,8 @@ class TypeResolve {
 					if (TypeFunctions.hasClassFlag(c, CInterface)) {
 						if (!TypeFunctions.hasClassFlag(csup, CInterface))
 							throw new ContextError("Cannot extend by using a class", p);
-						c.interfaces.push({c: csup, params: params});
+						// Prepended, so interfaces holds reverse source order
+						c.interfaces.unshift({c: csup, params: params});
 						// Record `c` as a descendant of its
 						// inheritance tree downward (keep overrides of reachable base methods).
 						TypeFunctions.addDescendant(csup, c);
@@ -440,7 +441,8 @@ class TypeResolve {
 					if (extendsChain(intf, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(intf.path)) != null ? heritagePositions.get(Context.pathKey(intf.path)) : p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
-					c.interfaces.push({c: intf, params: params});
+					// Prepended, so interfaces holds reverse source order
+					c.interfaces.unshift({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
 					inheritAutoBuild(ctx, c, intf);
 				case TDynamic(dt):
