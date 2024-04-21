@@ -424,8 +424,9 @@ class Inline {
 				&& switch (param.expr) {
 					case TConst(TNull): false;
 					case TLocal(_) | TConst(_): !use.writes;
+					// Calls do not count against a function argument.
 					case TFunction(_): use.reads <= 1 && !use.writes;
-					case _: !use.writes && use.reads <= 1;
+					case _: !use.writes && use.reads + use.called <= 1;
 				};
 			// Every READ of the abstract `this` substitutes wrapped in a TCast at the receiver type;
 			// assignment left-hand sides strip it again (inline_params, TCast when in_assignment). The cast
@@ -590,12 +591,18 @@ class Inline {
 
 	// Usage analysis for one argument variable: read count, write flag, and
 	// whether a closure inside the body captures it.
-	static function argUsage(v:TVar, body:TExpr):{reads:Int, writes:Bool, captured:Bool} {
-		var reads = 0, writes = false, captured = false;
+	static function argUsage(v:TVar, body:TExpr):{reads:Int, called:Int, writes:Bool, captured:Bool} {
+		var reads = 0, called = 0, writes = false, captured = false;
 		// A read inside a loop body counts double.
 		function loop(inClosure:Bool, inLoop:Bool, e:TExpr):Void {
 			inline function bump() reads += inLoop ? 2 : 1;
 			switch (e.expr) {
+				// A use in DIRECT callee position counts as a call, not a read; the TFunction substitution
+				// rule looks only at reads.
+				case TCall({expr: TLocal(v2)}, args) if (v2 == v):
+					called += inLoop ? 2 : 1;
+					if (inClosure) captured = true;
+					for (a in args) loop(inClosure, inLoop, a);
 				case TLocal(v2) if (v2 == v):
 					bump();
 					if (inClosure) captured = true;
@@ -624,7 +631,7 @@ class Inline {
 			}
 		}
 		loop(false, false, body);
-		return {reads: reads, writes: writes, captured: captured};
+		return {reads: reads, called: called, writes: writes, captured: captured};
 	}
 
 	// A side-effect-free lvalue: re-reading and assigning through it is equivalent to a bound
