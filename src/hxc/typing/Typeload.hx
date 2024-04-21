@@ -1033,7 +1033,8 @@ class Typeload {
 		return loop(t);
 	}
 
-	static function cloneField(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, f:TClassField):TClassField {
+	static function cloneField(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, f:TClassField,
+			fillQueue:Array<{cf:TClassField, f:TClassField, subst:T->T, gsubst2:Array<GenericSubstEntry>}>):TClassField {
 		// The method's own type parameters are cloned so their constraints can be substituted without
 		// touching the originals; the clone maps into the substitution so occurrences in the signature and
 		// body follow.
@@ -1068,9 +1069,13 @@ class Typeload {
 		var cf = TypeFunctions.copyField(f);
 		if (f.params.length > 0) cf.params = newParams;
 		cf.type = subst(f.type);
-		cf.expr = f.expr == null ? null : cloneExpr(f.expr, subst, new Map(), gsubst2);
-		cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
-		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o)];
+		// Expression substitution is DEFERRED (TLazy exc_protect) until the specialized class shell is
+		// complete, so field accesses inside bodies re-resolve against the registered specialized fields
+		// instead of falling back to the base's.
+		cf.expr = null;
+		cf.exprUnoptimized = null;
+		fillQueue.push({cf: cf, f: f, subst: subst, gsubst2: gsubst2});
+		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o, fillQueue)];
 		return cf;
 	}
 
@@ -1106,11 +1111,17 @@ class Typeload {
 		}];
 		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.dynamicType);
 		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.arrayAccess);
-		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor);
+		var fillQueue:Array<{cf:TClassField, f:TClassField, subst:T->T, gsubst2:Array<GenericSubstEntry>}> = [];
+		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, fillQueue);
 		for (f in c.orderedFields) {
-			var cf = cloneField(ctx, c, gsubst, f);
+			var cf = cloneField(ctx, c, gsubst, f, fillQueue);
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
+		}
+		// Fill the bodies only after every specialized field is registered above.
+		for (q in fillQueue) {
+			q.cf.expr = q.f.expr == null ? null : cloneExpr(q.f.expr, q.subst, new Map(), q.gsubst2);
+			q.cf.exprUnoptimized = q.f.exprUnoptimized == null ? null : cloneExpr(q.f.exprUnoptimized, q.subst, new Map(), q.gsubst2);
 		}
 		mg.types = [TClassDecl(cg)];
 		ctx.modules.push(mg);
