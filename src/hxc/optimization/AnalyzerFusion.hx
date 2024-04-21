@@ -437,7 +437,10 @@ class Fusion {
 							case TBinop(OpAssign, _, e2):
 								state.changed();
 								state.decWrites(v1);
-								el = [TypeFunctions.mk(TVarExpr(v1, e2), e1.type, e1.pos)].concat(el.slice(2));
+								// The merged var goes to the ACCUMULATOR, never re-examined as head, so a following
+								// increment pairs with the next statement instead of this var.
+								acc.unshift(TypeFunctions.mk(TVarExpr(v1, e2), e1.type, e1.pos));
+								el = el.slice(2);
 							case _: keep();
 						}
 					case TIf(_, _, eelse) if (eelse != null && AnalyzerTexpr.canBeUsedAsValue(com, e1) && !isVoidT(e1.type)
