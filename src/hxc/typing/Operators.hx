@@ -734,6 +734,27 @@ class Operators {
 		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
 	}
 
+	// #get_expr_aux: depth 0 keeps a field/array access SHAPE, binding only its non-simple parts ("fh"
+	// receiver, "base"/"index" operands); depth 1 binds any non-simple expression whole. Binds accumulate
+	// as TVar decls.
+	static function vrGetExprAux(ctx:TyperContext, vars:Array<TExpr>, depth:Int, name:String, e:TExpr):TExpr {
+		return switch (TexprTools.skip(e).expr) {
+			case TLocal(_) | TTypeExpr(_) | TConst(_):
+				e;
+			case TField(ef, fa) if (depth == 0):
+				var ef2 = vrGetExprAux(ctx, vars, 1, "fh", ef);
+				TypeFunctions.mk(TField(ef2, fa), e.type, e.pos);
+			case TArray(e1, e2) if (depth == 0):
+				var e1b = vrGetExprAux(ctx, vars, 1, "base", e1);
+				var e2b = vrGetExprAux(ctx, vars, 1, "index", e2);
+				TypeFunctions.mk(TArray(e1b, e2b), e.type, e.pos);
+			case _:
+				var v = TypeFunctions.allocVar(VGenerated, name, e.type, e.pos);
+				vars.push(TypeFunctions.mk(TVarExpr(v, e), ctx.com.basic.tvoid, v.pos));
+				TexprTools.makeLocal(v, v.pos);
+		}
+	}
+
 	static function maybeTempReceiver(ctx:TyperContext, recv:TExpr, p:Position):{expr:TExpr, init:Null<TExpr>} {
 		// A stable side-effect-free lvalue stays as-is so an inline setter assigning `this` writes
 		// back through the original storage (a static field, array element or field chain).
@@ -1233,8 +1254,11 @@ class Operators {
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
 		var recv = se.thisExpr;
-		var tmp = maybeTempReceiver(ctx, recv, p);
-		var er = tmp.expr;
+		// The lhs is processed as a value reference "fh": a field or array access keeps its shape with only
+		// the non-simple PARTS bound; the processed expression feeds both the getter and the setter
+		// dispatch.
+		var recvVars:Array<TExpr> = [];
+		var er = vrGetExprAux(ctx, recvVars, 0, "fh", recv);
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 		// The accessor keeps the abstract host so its signature gets the instance's type parameters
 		// applied.
@@ -1247,12 +1271,16 @@ class Operators {
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
 		// As with a class property, the setter call is the value; only a postfix used as a value needs the
 		// old value in a postfix temp.
-		var stmts = tmp.init == null ? [] : [tmp.init];
+		var stmts = recvVars;
 		if (flag.match(Postfix) && !withType.match(NoValue)) {
-			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", readVal.type, p);
+			// Postfix temp: the read passes through the value reference "lhs" (binding a complex read
+			// whole, or just its receiver part as "fh"), the postfix temp captures it, and the written
+			// value reuses that processed read expression rather than the postfix temp.
+			var eLhs = vrGetExprAux(ctx, stmts, 0, "lhs", readVal);
+			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", eLhs.type, p);
 			var epost = TexprTools.makeLocal(vpost, p);
-			stmts.push(TypeFunctions.mk(TVarExpr(vpost, readVal), tvoid, p));
-			var newv = toTexpr(makeBinop(ctx, binop, epost, one, false, withType, p));
+			stmts.push(TypeFunctions.mk(TVarExpr(vpost, eLhs), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eLhs, one, false, withType, p));
 			stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p));
 			stmts.push(epost);
 			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
@@ -1285,12 +1313,15 @@ class Operators {
 		}
 		var readVal = accessorReadOn(ctx, er, fa);
 		if (flag.match(Postfix) && !withType.match(NoValue)) {
-			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", readVal.type, p);
-			var epost = TexprTools.makeLocal(vpost, p);
-			var newv = toTexpr(makeBinop(ctx, binop, epost, one, false, withType, p));
+			// Postfix temp: a complex read binds as "lhs" first, the postfix temp captures it, and the
+			// written value reuses the read expression rather than the postfix temp.
 			var stmts:Array<TExpr> = [];
 			if (recvInit != null) stmts.push(recvInit);
-			stmts.push(TypeFunctions.mk(TVarExpr(vpost, readVal), tvoid, p));
+			var eLhs = vrGetExprAux(ctx, stmts, 0, "lhs", readVal);
+			var vpost = TypeFunctions.allocVar(VGenerated, "postfix", eLhs.type, p);
+			var epost = TexprTools.makeLocal(vpost, p);
+			stmts.push(TypeFunctions.mk(TVarExpr(vpost, eLhs), tvoid, p));
+			var newv = toTexpr(makeBinop(ctx, binop, eLhs, one, false, withType, p));
 			stmts.push(accessorWriteOn(ctx, er, fa, newv, p));
 			stmts.push(epost);
 			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
