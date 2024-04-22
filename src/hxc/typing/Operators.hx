@@ -1010,9 +1010,14 @@ class Operators {
 				}
 			case AKField(fa):
 				// A property with a call accessor on either side reads via its getter and writes via its
-				// setter; a plain field stays a raw compound.
+				// setter; a plain field binds its receiver part as "fh" and stays a raw compound.
 				var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
-				accCall ? accessorInstanceCompound(fa) : compound(FieldAccessTools.getFieldExpr(fa, FWrite));
+				if (accCall) accessorInstanceCompound(fa) else {
+					var recvVars:Array<TExpr> = [];
+					var ef = vrGetExprAux(ctx, recvVars, 1, "fh", fa.on);
+					var out = compound(FieldAccessTools.getFieldExpr({on: ef, field: fa.field, host: fa.host, isInline: fa.isInline, pos: fa.pos}, FWrite));
+					recvVars.length == 0 ? out : TypeFunctions.mk(TBlock(recvVars.concat([out])), out.type, p);
+				}
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
 				accessorCompound(se.thisExpr, se.access.host, se.access.field.name);
@@ -1096,10 +1101,14 @@ class Operators {
 					case AKField(fa):
 						var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
 						if (accCall) accessorIncr(ctx, op, flag, fa, withType, p) else {
-							var te = FieldAccessTools.getFieldExpr(fa, FWrite);
+							// The receiver part binds as "fh" before the unop applies to the field.
+							var recvVars:Array<TExpr> = [];
+							var ef = vrGetExprAux(ctx, recvVars, 1, "fh", fa.on);
+							var te = FieldAccessTools.getFieldExpr({on: ef, field: fa.field, host: fa.host, isInline: fa.isInline, pos: fa.pos}, FWrite);
 							if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 							var abs = tryAbstractUnop(ctx, op, flag, te, p);
-							if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
+							var out = if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
+							recvVars.length == 0 ? out : TypeFunctions.mk(TBlock(recvVars.concat([out])), out.type, p);
 						}
 					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
 					case AKUsingAccessor(se): usingAccessorIncr(ctx, op, flag, se, withType, p);
