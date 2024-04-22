@@ -3535,7 +3535,9 @@ class Typer {
 				var ctorType = TFun({args: sigArgs, ret: tvoid});
 				var tf = new TFunc(args, tvoid, body);
 				var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
-				cfCtor.kind = Method(MethNormal);
+				// The forwarder keeps the parent constructor's kind, so an inherited INLINE constructor stays
+				// inlinable (inline_constructors folds `new Child(...)` through the forwarded super call).
+				cfCtor.kind = found.cf.kind;
 				cfCtor.params = found.cf.params;
 				// An inherited forwarding constructor is compiler-generated, so a further subclass with an
 				// explicit constructor still gets an auto super() (insertMissingSuper checks this meta).
