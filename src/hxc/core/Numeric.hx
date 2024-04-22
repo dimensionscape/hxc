@@ -26,7 +26,12 @@ class Numeric {
 		#end
 	}
 
-	// The shortest of %.12g/%.15g/%.18g that round-trips
+	// floatRepres: the shortest of %.12g/%.15g/%.18g that round-trips.
+	// Numeric separators are accepted; TFloat literals keep them raw.
+	public static function parseFloatLit(s:String):Float {
+		return Std.parseFloat(StringTools.replace(s, "_", ""));
+	}
+
 	public static function floatRepres(f:Float):String {
 		if (Math.isNaN(f)) return "nan";
 		if (!Math.isFinite(f)) return f < 0.0 ? "neg_infinity" : "infinity";

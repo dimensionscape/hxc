@@ -296,7 +296,9 @@ class TexprTools {
 					if (i == null || i < -2147483648 || i > 2147483647) TypeFunctions.mk(TConst(TFloat(s)), basic.tfloat, p);
 					else TypeFunctions.mk(TConst(TInt(i)), basic.tint, p);
 				}
-			case CFloat(f, _): TypeFunctions.mk(TConst(TFloat(StringTools.replace(f, "_", ""))), basic.tfloat, p);
+			// The raw literal is kept (numeric separators included); consumers that need the value parse
+			// through parseFloatLit, which accepts underscores.
+			case CFloat(f, _): TypeFunctions.mk(TConst(TFloat(f)), basic.tfloat, p);
 			case CString(s, _): TypeFunctions.mk(TConst(TString(s)), basic.tstring, p);
 			case CIdent("true"): TypeFunctions.mk(TConst(TBool(true)), basic.tbool, p);
 			case CIdent("false"): TypeFunctions.mk(TConst(TBool(false)), basic.tbool, p);

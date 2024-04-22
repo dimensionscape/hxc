@@ -519,17 +519,17 @@ class Optimizer {
 					case _: null;
 				}
 			case ["Std", "int", [{expr: TConst(TFloat(fs))}]]:
-				var f = Std.parseFloat(fs);
+				var f = hxc.core.Numeric.parseFloatLit(fs);
 				if (Math.isNaN(f) || !Math.isFinite(f)) null;
 				else if (f <= -2147483648.0 - 1.0 || f >= 2147483647.0 + 1.0) null; // Out of range
 				else intConst(Std.int(f));
 			case ["Math", "ceil", [{expr: TConst(TFloat(fs))}]]:
-				var f = Std.parseFloat(fs);
+				var f = hxc.core.Numeric.parseFloatLit(fs);
 				if (Math.isNaN(f) || !Math.isFinite(f)) null;
 				else if (f <= -2147483648.0 - 1.0 || f >= 2147483647.0) null;
 				else intConst(Std.int(Math.fceil(f)));
 			case ["Math", "floor", [{expr: TConst(TFloat(fs))}]]:
-				var f = Std.parseFloat(fs);
+				var f = hxc.core.Numeric.parseFloatLit(fs);
 				if (Math.isNaN(f) || !Math.isFinite(f)) null;
 				else if (f <= -2147483648.0 || f >= 2147483647.0 + 1.0) null;
 				else intConst(Std.int(Math.ffloor(f)));

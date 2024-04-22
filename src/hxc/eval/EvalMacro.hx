@@ -977,7 +977,7 @@ class EvalMacro {
 	static function makeConst(ec:EvalContext, e:TExpr):EvalValue {
 		return switch (e.expr) {
 			case TConst(TInt(i)): VInt(i);
-			case TConst(TFloat(s)): VFloat(Std.parseFloat(s));
+			case TConst(TFloat(s)): VFloat(hxc.core.Numeric.parseFloatLit(s));
 			case TConst(TString(s)): mkString(s);
 			case TConst(TBool(b)): b ? VTrue : VFalse;
 			case TConst(TNull): VNull;

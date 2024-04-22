@@ -120,7 +120,7 @@ class OptimizerTexpr {
 	static function checkFloat(e:TExpr, op:(a:Float, b:Float)->Float, f1:Float, f2:Float):TExpr {
 		var f = op(f1, f2);
 		var fstr = Numeric.floatRepres(f);
-		if (!Math.isNaN(f) && Math.isFinite(f) && Std.parseFloat(fstr) == f)
+		if (!Math.isNaN(f) && Math.isFinite(f) && hxc.core.Numeric.parseFloatLit(fstr) == f)
 			return TypeFunctions.mk(TConst(TFloat(fstr)), e.type, e.pos);
 		return e;
 	}
@@ -130,8 +130,8 @@ class OptimizerTexpr {
 		return switch ([e1.expr, e2.expr]) {
 			case [TConst(TInt(i)), _] if (i == 0 && op.match(OpAdd) && isNumericT(e2.type)): e2;
 			case [TConst(TInt(i)), _] if (i == 1 && op.match(OpMult)): e2;
-			case [TConst(TFloat(v)), _] if (op.match(OpAdd) && Std.parseFloat(v) == 0.0 && isFloatT(e2.type)): e2;
-			case [TConst(TFloat(v)), _] if (op.match(OpMult) && Std.parseFloat(v) == 1.0 && isFloatT(e2.type)): e2;
+			case [TConst(TFloat(v)), _] if (op.match(OpAdd) && hxc.core.Numeric.parseFloatLit(v) == 0.0 && isFloatT(e2.type)): e2;
+			case [TConst(TFloat(v)), _] if (op.match(OpMult) && hxc.core.Numeric.parseFloatLit(v) == 1.0 && isFloatT(e2.type)): e2;
 			// Bits operations might cause overflow
 			case [_, TConst(TInt(i))] if (i == 0 && switch (op) {
 				case OpAdd: isNumericT(e1.type);
@@ -140,10 +140,10 @@ class OptimizerTexpr {
 			}): e1;
 			case [_, TConst(TInt(i))] if (i == 1 && op.match(OpMult)): e1;
 			case [_, TConst(TFloat(v))] if (switch (op) {
-				case OpAdd | OpSub: Std.parseFloat(v) == 0.0 && isFloatT(e1.type);
+				case OpAdd | OpSub: hxc.core.Numeric.parseFloatLit(v) == 0.0 && isFloatT(e1.type);
 				case _: false;
 			}): e1;
-			case [_, TConst(TFloat(v))] if (op.match(OpMult) && Std.parseFloat(v) == 1.0 && isFloatT(e1.type)): e1;
+			case [_, TConst(TFloat(v))] if (op.match(OpMult) && hxc.core.Numeric.parseFloatLit(v) == 1.0 && isFloatT(e1.type)): e1;
 			case [TConst(TNull), TConst(TNull)]:
 				switch (op) {
 					case OpEq: reconst(TBool(true));
@@ -187,12 +187,12 @@ class OptimizerTexpr {
 				}
 			case [TConst(ca = TFloat(_) | TInt(_)), TConst(cb = TFloat(_) | TInt(_))]:
 				var fa:Float = switch (ca) {
-					case TFloat(a): Std.parseFloat(a);
+					case TFloat(a): hxc.core.Numeric.parseFloatLit(a);
 					case TInt(a): a;
 					case _: throw new TypingError("Unexpected constant", e.pos);
 				}
 				var fb:Float = switch (cb) {
-					case TFloat(b): Std.parseFloat(b);
+					case TFloat(b): hxc.core.Numeric.parseFloatLit(b);
 					case TInt(b): b;
 					case _: throw new TypingError("Unexpected constant", e.pos);
 				}
@@ -225,7 +225,7 @@ class OptimizerTexpr {
 			case [TConst(a), TConst(b)] if (op.match(OpEq) || op.match(OpNotEq)):
 				inline function ebool(t:Bool):TExpr return reconst(TBool(op.match(OpEq) ? t : !t));
 				switch ([a, b]) {
-					case [TInt(x), TFloat(y)] | [TFloat(y), TInt(x)]: ebool(x == Std.parseFloat(y));
+					case [TInt(x), TFloat(y)] | [TFloat(y), TInt(x)]: ebool(x == hxc.core.Numeric.parseFloatLit(y));
 					case _: ebool(std.Type.enumEq(a, b));
 				}
 			case [TConst(TBool(a)), _]:
@@ -288,9 +288,9 @@ class OptimizerTexpr {
 			case [NegBits, TConst(TInt(i))]:
 				TypeFunctions.mk(TConst(TInt(~i)), e.type, e.pos);
 			case [Neg, TConst(TFloat(f))]:
-				var v = 0.0 - Std.parseFloat(f);
+				var v = 0.0 - hxc.core.Numeric.parseFloatLit(f);
 				var vstr = Numeric.floatRepres(v);
-				if (Std.parseFloat(vstr) == v)
+				if (hxc.core.Numeric.parseFloatLit(vstr) == v)
 					TypeFunctions.mk(TConst(TFloat(vstr)), e.type, e.pos);
 				else
 					e;

@@ -218,7 +218,7 @@ class EvalEmitter {
 	static function evalConst(c:TConstant):EvalValue {
 		return switch (c) {
 			case TInt(i): VInt(i);
-			case TFloat(s): VFloat(Std.parseFloat(s));
+			case TFloat(s): VFloat(hxc.core.Numeric.parseFloatLit(s));
 			case TString(s): VString(hxc.eval.EvalValue.VString.createUnknown(s));
 			case TBool(b): b ? VTrue : VFalse;
 			case TNull: VNull;

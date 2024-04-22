@@ -574,7 +574,7 @@ class CppEmit {
 	function defaultValueString(value:TExpr):String {
 		return switch (value.expr) {
 			case TConst(TInt(i)): Std.string(i);
-			case TConst(TFloat(f)): "((Float)" + f + ")";
+			case TConst(TFloat(f)): "((Float)" + StringTools.replace(f, "_", "") + ")";
 			case TConst(TString(s)): CppTypeText.strq(smartStrings, s);
 			case TConst(TBool(b)): b ? "true" : "false";
 			case TConst(TNull): "null()";
