@@ -1326,7 +1326,11 @@ class DtCompile {
 		}
 		var recompSubjects = [subject].concat(exSubjects).concat(rest);
 		var dt = compile(mctx, recompSubjects, newCases);
-		return exBindings.length == 0 ? dt : bind(mctx, [for (b in exBindings) {v: b.v, p: b.p, e: b.e}], dt);
+		// The extractor bindings accumulate by PREPENDING, so bind receives the extractor temps
+		// newest-first; the declaration order drives RenameVars numbering.
+		var bindList = [for (b in exBindings) {v: b.v, p: b.p, e: b.e}];
+		bindList.reverse();
+		return exBindings.length == 0 ? dt : bind(mctx, bindList, dt);
 	}
 
 	static function makeOffsetList(left:Int, right:Int, x:Pattern, pad:Pattern):Array<Pattern> {
