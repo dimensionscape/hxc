@@ -139,6 +139,16 @@ class Calls {
 		// type T and an Int index; the read/write both compile to a TArray the evaluator handles directly.
 		switch (TypeFunctions.follow(effType)) {
 			case TInst(c, tl):
+				// Array<Dynamic> element access stays Dynamic instead of spawning a monomorph (which a
+				// later
+				// access would bind, retyping the read).
+				if (c.path.pack.length == 0 && c.path.name == "Array") switch (tl) {
+					case [td] if (TypeFunctions.follow(td).match(TDynamic(null))):
+						try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
+						catch (_:UnifyError) throw new TypingError("Array index must be of type Int", e2.pos);
+						return AKExpr(TypeFunctions.mk(TArray(e1, e2), TypeFunctions.tDynamic, p));
+					case _:
+				}
 				var elem = arrayAccessElem(c, tl);
 				if (elem != null) {
 					try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
