@@ -176,6 +176,22 @@ class TypeResolve {
 				checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
+		// A non-static method whose inherited parent field is MethDynamic is dynamic itself even without
+		// the modifier. Applied here because the heritage above just resolved superClass (field shells were
+		// created earlier).
+		if (c.superClass != null) for (cf in c.orderedFields) switch (cf.kind) {
+			case Method(MethNormal):
+				var sup = c.superClass;
+				while (sup != null) {
+					var pf = sup.c.fields.get(cf.name);
+					if (pf != null) {
+						if (pf.kind.match(Method(MethDynamic))) cf.kind = Method(MethDynamic);
+						break;
+					}
+					sup = sup.c.superClass;
+				}
+			case _:
+		}
 		resolveClassFields(ctx, c, d, p);
 		TypeFields.addImplicitInterfaceFields(c);
 	}
