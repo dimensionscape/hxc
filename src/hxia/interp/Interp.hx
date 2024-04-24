@@ -120,6 +120,46 @@ class Interp {
 					var args = [for (c in argcs) c(f)];
 					return callStatic(typeName, member, args);
 				};
+			case "CALLMEMBER":
+				var member = mapMethodShim(strings[n.ints[1]]);
+				var recv = compile(n.kids[0]);
+				var argcs = [for (i in 1...n.kids.length) compile(n.kids[i])];
+				return function(f) {
+					var obj = recv(f);
+					var args = [for (c in argcs) c(f)];
+					return Reflect.callMethod(obj, Reflect.field(obj, member), args);
+				};
+			case "CALLTHIS":
+				var member = strings[n.ints[1]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) {
+					var obj = f.thisv;
+					var args = [for (c in argcs) c(f)];
+					return Reflect.callMethod(obj, Reflect.field(obj, member), args);
+				};
+			case "NEW":
+				var typeName = types[n.ints[0]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) {
+					var args = [for (c in argcs) c(f)];
+					return construct(typeName, args);
+				};
+			case "ADEF":
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) return [for (c in argcs) c(f)];
+			case "ARRAYI":
+				var arr = compile(n.kids[0]);
+				var idx = compile(n.kids[1]);
+				return function(f) return (arr(f) : Array<Dynamic>)[idx(f)];
+			case "FLINK", "FNAME":
+				var name = strings[n.ints[1]];
+				var obj = compile(n.kids[0]);
+				return function(f) return Reflect.field(obj(f), name);
+			case "FTHISINST":
+				var name = strings[n.ints[1]];
+				return function(f) return Reflect.field(f.thisv, name);
+			case "THIS":
+				return function(f) return f.thisv;
 			case "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", ">>", ">>>", "<<":
 				var l = compile(n.kids[0]);
 				var r = compile(n.kids[1]);
@@ -220,6 +260,21 @@ class Interp {
 		if (fun != null)
 			return invokeFun(fun, null, args);
 		return registry.staticCall(type, member, args);
+	}
+
+	function construct(type:String, args:Array<Dynamic>):Dynamic {
+		// TODO: script-class construction resolves here once instances land; host for now.
+		return registry.construct(type, args);
+	}
+
+	// The cppia map remap turns set/get on typed maps into setInt/getString etc.; the neutral
+	// host map has set/get, so translate back.
+	static function mapMethodShim(m:String):String {
+		return switch (m) {
+			case "setInt" | "setString" | "setFloat" | "setBool" | "setInt64" | "setObject": "set";
+			case "getInt" | "getString" | "getFloat" | "getBool" | "getInt64" | "getObject": "get";
+			case _: m;
+		};
 	}
 
 	static function binop(op:String, a:Dynamic, b:Dynamic):Dynamic {

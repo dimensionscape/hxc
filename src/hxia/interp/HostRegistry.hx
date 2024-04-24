@@ -6,8 +6,23 @@ package hxia.interp;
 class HostRegistry {
 	// Key "Type.member" -> (args)->result for static calls.
 	final statics:Map<String, Array<Dynamic>->Dynamic> = new Map();
+	// Dotted type path -> (args)->instance for `new`.
+	final ctors:Map<String, Array<Dynamic>->Dynamic> = new Map();
 
 	public function new() {}
+
+	public function bindNew(type:String, fn:Array<Dynamic>->Dynamic):Void
+		ctors.set(type, fn);
+
+	public function construct(type:String, args:Array<Dynamic>):Dynamic {
+		var fn = ctors.get(type);
+		if (fn == null)
+			throw new hxia.interp.InterpError("unbound host constructor " + type);
+		return fn(args);
+	}
+
+	public function hasNew(type:String):Bool
+		return ctors.exists(type);
 
 	public function bindStatic(type:String, member:String, fn:Array<Dynamic>->Dynamic):Void
 		statics.set(type + "." + member, fn);
