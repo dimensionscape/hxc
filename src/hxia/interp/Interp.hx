@@ -19,6 +19,8 @@ class Interp {
 	final tree:ModuleTree;
 	// "Type.method" -> the FUN op node of a script static method.
 	final scriptStatics:Map<String, OpNode> = new Map();
+	// "EnumType.Ctor" -> constructor index (position, = index; the writer sorts by it).
+	final enumCtorIndex:Map<String, Int> = new Map();
 	var mainCall:Null<OpNode>;
 
 	// Metering
@@ -58,8 +60,12 @@ class Interp {
 
 	function index():Void {
 		for (d in tree.decls) {
-			if (d.kind == "enum")
+			if (d.kind == "enum") {
+				var enumName = types[d.ints[0]];
+				for (i in 0...d.enumCtors.length)
+					enumCtorIndex.set(enumName + "." + strings[d.enumCtors[i][0]], i);
 				continue;
+			}
 			var className = types[d.ints[0]];
 			for (f in d.fields) {
 				if (f.kind != "function" || f.body == null)
@@ -164,6 +170,9 @@ class Interp {
 			case "CALLMEMBER":
 				var member = mapMethodShim(strings[n.ints[1]]);
 				var recv = compile(n.kids[0]);
+				// Enum runtime index (gencpp emits CALLMEMBER ::hx::EnumBase.__Index)
+				if (member == "__Index")
+					return function(f) return (recv(f) : EnumValue).index;
 				var argcs = [for (i in 1...n.kids.length) compile(n.kids[i])];
 				return function(f) {
 					burnFuel();
@@ -171,6 +180,19 @@ class Interp {
 					var args = [for (c in argcs) c(f)];
 					return mediator.callMethod(obj, member, args);
 				};
+			case "CREATEENUM":
+				var idx = enumIdxOf(n.ints[0], n.ints[1]);
+				var name = strings[n.ints[1]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) { countAlloc(16); return new EnumValue(idx, name, [for (c in argcs) c(f)]); };
+			case "FENUM":
+				var idx = enumIdxOf(n.ints[0], n.ints[1]);
+				var name = strings[n.ints[1]];
+				return function(f) return new EnumValue(idx, name, []);
+			case "ENUMI":
+				var pi = n.ints[1];
+				var e = compile(n.kids[0]);
+				return function(f) return (e(f) : EnumValue).params[pi];
 			case "CALLTHIS":
 				var member = strings[n.ints[1]];
 				var argcs = [for (k in n.kids) compile(k)];
@@ -390,6 +412,14 @@ class Interp {
 		return registry.construct(type, args);
 	}
 
+	function enumIdxOf(enumTypeId:Int, ctorNameId:Int):Int {
+		var key = types[enumTypeId] + "." + strings[ctorNameId];
+		var i = enumCtorIndex.get(key);
+		if (i == null)
+			throw new InterpError("hxia: unknown enum constructor " + key);
+		return i;
+	}
+
 	final classCache:Map<String, Class<Dynamic>> = new Map();
 
 	// A CLASSOF operand is a cpp-style path ("::String", "::haxe::Exception"); resolve to a
@@ -469,4 +499,14 @@ class BreakSignal extends haxe.Exception {
 class ScriptThrow extends haxe.Exception {
 	public var value:Dynamic;
 	public function new(value:Dynamic) { super("script-throw"); this.value = value; }
+}
+
+// A script enum value: constructor index (switch dispatches on it), name, and parameters.
+class EnumValue {
+	public var index:Int;
+	public var name:String;
+	public var params:Array<Dynamic>;
+	public function new(index:Int, name:String, params:Array<Dynamic>) {
+		this.index = index; this.name = name; this.params = params;
+	}
 }
