@@ -240,6 +240,15 @@ class CompletionItem {
 		]);
 	}
 
+	// {kind: Literal, args: {name}} plus the type.
+	public static function literalToJson(gen:Genjson, name:String, ct:CompletionType):JsonValue {
+		return JObject([
+			{name: "kind", value: JString("Literal")},
+			{name: "args", value: JObject([{name: "name", value: JString(name)}])},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]);
+	}
+
 	// The Expression item: args would be the typed expression, which is not serialized (null).
 	public static function expressionToJson(gen:Genjson, ct:CompletionType):JsonValue {
 		return JObject([

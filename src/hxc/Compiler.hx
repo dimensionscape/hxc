@@ -1160,12 +1160,52 @@ class Compiler {
 				}
 			case TLocal(v):
 				item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(t));
+			// This/super hover stays an Expression; any other constant reports as a Literal named by its
+			// printed form.
+			case TConst(TThis | TSuper):
+			case TConst(c):
+				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t));
 			case TNew(c, _, _) if (c.constructor != null):
 				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), true, ct(t));
 			case _:
 		}
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(t));
 		return item;
+	}
+
+	// The hover `expected` field encodes the with-type at the hover point: WithType(t, src) gives {type,
+	// name?}; a named Value gives {name}; anything else is null. ImplicitReturn never names itself.
+	static function hoverExpectedJson(gen:hxc.core.Genjson):hxc.core.Json.JsonValue {
+		var h = hxc.typing.Typer.hoverFound;
+		if (h == null || h.wt == null) return hxc.core.Json.JsonValue.JNull;
+		function nameJson(src:hxc.core.WithType.WithTypeSource):Null<hxc.core.Json.JsonValue> {
+			return switch (src) {
+				case FunctionArgument(si): hxc.core.Json.JsonValue.JObject([
+					{name: "name", value: JString(si.name)},
+					{name: "kind", value: JInt(0)},
+					{name: "doc", value: si.doc == null ? JNull : JString(si.doc)}
+				]);
+				case StructureField(si): hxc.core.Json.JsonValue.JObject([
+					{name: "name", value: JString(si.name)},
+					{name: "kind", value: JInt(1)},
+					{name: "doc", value: si.doc == null ? JNull : JString(si.doc)}
+				]);
+				case ImplicitReturn: null;
+			}
+		}
+		return switch (h.wt) {
+			case WithType(t, src):
+				var fields:Array<hxc.core.Json.JsonField> = [{name: "type", value: gen.generateType(t)}];
+				if (src != null) switch (nameJson(src)) {
+					case null:
+					case nj: fields.push({name: "name", value: nj});
+				}
+				hxc.core.Json.JsonValue.JObject(fields);
+			case Value(src) if (src != null && !src.match(ImplicitReturn)):
+				hxc.core.Json.JsonValue.JObject([{name: "name", value: nameJson(src)}]);
+			case _:
+				hxc.core.Json.JsonValue.JNull;
+		}
 	}
 
 	// Hover as JSON: {documentation, range, item, expected}.
@@ -1219,6 +1259,11 @@ class Compiler {
 					}
 				case TLocal(v):
 					item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(h.t));
+				// This/super hover stays an Expression; any other constant reports as a Literal named by its
+				// printed form.
+				case TConst(TThis | TSuper):
+				case TConst(c):
+					item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
 				case TNew(c, _, _) if (c.constructor != null):
 					doc = c.constructor.doc;
 					item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), true, ct(h.t));
@@ -1236,7 +1281,7 @@ class Compiler {
 			{name: "documentation", value: doc == null ? hxc.core.Json.JsonValue.JNull : hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(doc))},
 			{name: "range", value: gen.generatePosAsRange(rangePos)},
 			{name: "item", value: item},
-			{name: "expected", value: hxc.core.Json.JsonValue.JNull}
+			{name: "expected", value: hoverExpectedJson(gen)}
 		]);
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}

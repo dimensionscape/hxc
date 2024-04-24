@@ -42,6 +42,16 @@ class Parser {
 	// when the offset falls right after a dot in a type path of that file.
 	public static var displayFile:Null<String> = null;
 	public static var displayOffset:Int = -1;
+	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
+	// abort a display request.
+	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
+
+	function isDisplayFile():Bool {
+		if (displayFile == null) return false;
+		var f = StringTools.replace(file, "\\", "/");
+		var df = StringTools.replace(displayFile, "\\", "/");
+		return f == df || StringTools.endsWith(f, "/" + df) || StringTools.endsWith(df, "/" + f);
+	}
 
 	function atDisplayDot(dotPos:Position):Bool {
 		if (displayFile == null || displayOffset < 0) return false;
@@ -1009,6 +1019,14 @@ class Parser {
 			try {
 				e = parseBlockElt();
 			} catch (er:ParserError) {
+				// In the DISPLAY file a failed block element records its error and the block resumes from the
+				// stream position the failed attempt reached, so an incomplete construct under the cursor does
+				// not abort hover/definition requests elsewhere in the file.
+				if (isDisplayFile() && !er.msg.match(Missing_semicolon)) {
+					syntaxErrors.push({msg: er.msg, pos: er.pos});
+					if (idx == save) idx++;
+					continue;
+				}
 				// A missing semicolon is a hard error; recovery here would silently drop the parsed element
 				// instead of reporting.
 				if (er.msg.match(Missing_semicolon)) throw er;

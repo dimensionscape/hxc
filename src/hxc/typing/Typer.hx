@@ -1276,7 +1276,7 @@ class Typer {
 		};
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
-		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(typed);
+		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
@@ -1292,8 +1292,9 @@ class Typer {
 	// post-order typing makes the first enclosing hit the innermost.
 	public static var displayHover:Bool = false;
 	// The typed expression is kept alongside so the JSON protocol can build the full hover item (field
-	// access, local, enum field).
-	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr}> = null;
+	// access, local, enum field). hexpected: the with-type at the hover point passes Some with_type; it as
+	// `expected`).
+	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType}> = null;
 
 	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
 	// position.
@@ -1348,14 +1349,14 @@ class Typer {
 		return atDisplayPos(p);
 	}
 
-	static function checkDisplayHover(te:TExpr):Void {
+	static function checkDisplayHover(te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
 		switch (te.expr) {
 			// Recurse only into a PROPER sub-range: a synthetic receiver (the module type expr
 			// under an unqualified enum constructor) reuses the whole ident's position and must
 			// not shadow the field the cursor is on.
 			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1)
 				if (atHoverPos(e1.pos) && (e1.pos.min > te.pos.min || e1.pos.max < te.pos.max)):
-				checkDisplayHover(e1);
+				checkDisplayHover(e1, withType);
 			case _:
 		}
 		// The SMALLEST enclosing range wins: a desugared part (an interpolated string literal) reuses the
@@ -1364,7 +1365,7 @@ class Typer {
 		// unrelated to the syntactic node the gate saw.
 		if (!atHoverPos(te.pos)) return;
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: te.type, p: te.pos, e: te};
+			hoverFound = {t: te.type, p: te.pos, e: te, wt: withType};
 	}
 
 	// Legacy --display file@pos@toplevel: an identifier at the display position raises the
