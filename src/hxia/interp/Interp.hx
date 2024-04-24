@@ -23,6 +23,9 @@ class Interp {
 	final enumCtorIndex:Map<String, Int> = new Map();
 	// Type name -> its script-class descriptor (ctor + instance methods), for `new` and dispatch.
 	final scriptClasses:Map<String, ScriptClass> = new Map();
+	// "Class.field" -> current value of a script static var; its initializers run before main.
+	final scriptStaticVars:Map<String, Dynamic> = new Map();
+	final pendingStatics:Array<{key:String, body:Null<OpNode>}> = [];
 	var mainCall:Null<OpNode>;
 
 	// Metering
@@ -70,7 +73,18 @@ class Interp {
 			}
 			var className = types[d.ints[0]];
 			var sc = new ScriptClass(className);
+			var superId = d.ints[1];
+			if (superId >= 0 && superId < types.length)
+				sc.superName = types[superId];
 			for (f in d.fields) {
+				if (f.kind == "var") {
+					// Static var: remember its initializer to run before main (instance vars are
+					// set by the constructor body).
+					var isStatic = f.ints[0] == 1;
+					if (isStatic)
+						pendingStatics.push({key: className + "." + strings[f.ints[4]], body: f.body});
+					continue;
+				}
 				if (f.kind != "function" || f.body == null)
 					continue;
 				var isStatic = f.ints[0] == 1;
@@ -84,16 +98,28 @@ class Interp {
 				else
 					sc.methods.set(name, f.body);
 			}
-			if (sc.ctor != null || sc.methods.keys().hasNext())
-				scriptClasses.set(className, sc);
+			// A class with only static members is still registered so `new`/dispatch can find it.
+			scriptClasses.set(className, sc);
 		}
+		// Resolve super links now that every class is registered.
+		for (sc in scriptClasses)
+			if (sc.superName != null)
+				sc.superClass = scriptClasses.get(sc.superName);
+	}
+
+	// Evaluate static-var initializers once, before main. Declaration order across the module;
+	// good enough for the corpus (cross-static init dependencies are rare and forward-declared).
+	function initStatics():Void {
+		for (p in pendingStatics)
+			scriptStaticVars.set(p.key, p.body != null ? compile(p.body)(new Frame()) : null);
 	}
 
 	public function run():Void {
-		if (mainCall == null)
-			return;
 		fuel = fuelLimit;
 		alloc = 0;
+		initStatics();
+		if (mainCall == null)
+			return;
 		compile(mainCall)(new Frame());
 	}
 
@@ -237,6 +263,31 @@ class Interp {
 					var args = [for (c in argcs) c(f)];
 					return callMember(obj, member, args);
 				};
+			case "CALLSUPER":
+				// A non-virtual call to a named super method on `this` (super.m(...)).
+				var superType = types[n.ints[0]];
+				var member = strings[n.ints[1]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) {
+					burnFuel();
+					var args = [for (c in argcs) c(f)];
+					var sc = scriptClasses.get(superType);
+					var m = sc != null ? sc.lookup(member) : null;
+					if (m != null)
+						return invokeFun(m, f.thisv, args);
+					return mediator.callMethod(f.thisv, member, args);
+				};
+			case "CALLSUPERNEW":
+				// Run the super constructor against the instance under construction (this).
+				var superType = types[n.ints[0]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) {
+					var args = [for (c in argcs) c(f)];
+					var sc = scriptClasses.get(superType);
+					if (sc != null && sc.ctor != null)
+						invokeFun(sc.ctor, f.thisv, args);
+					return null;
+				};
 			case "NEW":
 				var typeName = types[n.ints[0]];
 				var argcs = [for (k in n.kids) compile(k)];
@@ -259,6 +310,10 @@ class Interp {
 			case "FTHISINST":
 				var name = strings[n.ints[1]];
 				return function(f) return getMember(f.thisv, name);
+			case "FSTATIC":
+				var key = types[n.ints[0]] + "." + strings[n.ints[1]];
+				var type = types[n.ints[0]], name = strings[n.ints[1]];
+				return function(f) return getStatic(key, type, name);
 			case "THIS":
 				return function(f) return f.thisv;
 			case "CLASSOF":
@@ -411,6 +466,10 @@ class Interp {
 					setMember(obj != null ? obj(f) : f.thisv, name, v);
 					return v;
 				};
+			case "FSTATIC":
+				var key = types[lv.ints[0]] + "." + strings[lv.ints[1]];
+				var type = types[lv.ints[0]], name = strings[lv.ints[1]];
+				return function(f) { var v = rhs(f); setStatic(key, type, name, v); return v; };
 			case _:
 				throw new InterpError("unimplemented SET lvalue '" + lv.op + "'");
 		}
@@ -448,6 +507,14 @@ class Interp {
 					setMember(o, name, nv);
 					return nv;
 				};
+			case "FSTATIC":
+				var key = types[lv.ints[0]] + "." + strings[lv.ints[1]];
+				var type = types[lv.ints[0]], name = strings[lv.ints[1]];
+				return function(f) {
+					var nv = binop(base, getStatic(key, type, name), rhs(f));
+					setStatic(key, type, name, nv);
+					return nv;
+				};
 			case _:
 				throw new InterpError("unimplemented modify lvalue '" + lv.op + "'");
 		}
@@ -476,6 +543,25 @@ class Interp {
 					var old:Dynamic = a[i];
 					var nv = numAdd(old, delta);
 					a[i] = nv;
+					return post ? old : nv;
+				};
+			case "FSTATIC":
+				var key = types[lv.ints[0]] + "." + strings[lv.ints[1]];
+				var type = types[lv.ints[0]], name = strings[lv.ints[1]];
+				return function(f) {
+					var old:Dynamic = getStatic(key, type, name);
+					var nv = numAdd(old, delta);
+					setStatic(key, type, name, nv);
+					return post ? old : nv;
+				};
+			case "FTHISINST", "FLINK", "FNAME":
+				var name = strings[lv.ints[1]];
+				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
+				return function(f) {
+					var o = obj != null ? obj(f) : f.thisv;
+					var old:Dynamic = getMember(o, name);
+					var nv = numAdd(old, delta);
+					setMember(o, name, nv);
 					return post ? old : nv;
 				};
 			case _:
@@ -517,7 +603,13 @@ class Interp {
 	function getMember(obj:Dynamic, name:String):Dynamic {
 		if (Std.isOfType(obj, ScriptObject))
 			return (obj : ScriptObject).fields.get(name);
-		return mediator.getField(obj, name);
+		var v = mediator.getField(obj, name);
+		// Reading `o.method` yields a bound closure in Haxe; host reflection (js) returns the
+		// method unbound, so calling it later would lose `this`. Rebind to the receiver. This
+		// is what makes `for (x in it)` work: the loop reads it.hasNext/it.next as closures.
+		if (Reflect.isFunction(v))
+			return Reflect.makeVarArgs(function(args:Array<Dynamic>) return mediator.callMethod(obj, name, args));
+		return v;
 	}
 
 	function setMember(obj:Dynamic, name:String, v:Dynamic):Void {
@@ -529,11 +621,28 @@ class Interp {
 
 	function callMember(obj:Dynamic, name:String, args:Array<Dynamic>):Dynamic {
 		if (Std.isOfType(obj, ScriptObject)) {
-			var m = (obj : ScriptObject).cls.methods.get(name);
+			var m = (obj : ScriptObject).cls.lookup(name);
 			if (m != null)
 				return invokeFun(m, obj, args);
 		}
 		return mediator.callMethod(obj, name, args);
+	}
+
+	// Read a static field: a script static var if we own it, else a host static (Reflect on
+	// the resolved class). Statics the interpreter does not know resolve through the mediator's
+	// class, keeping host access on the single mediated seam.
+	function getStatic(key:String, type:String, name:String):Dynamic {
+		if (scriptStaticVars.exists(key))
+			return scriptStaticVars.get(key);
+		var cls = resolveClass(type);
+		return mediator.getField(cls, name);
+	}
+
+	function setStatic(key:String, type:String, name:String, v:Dynamic):Void {
+		if (scriptStaticVars.exists(key))
+			scriptStaticVars.set(key, v);
+		else
+			mediator.setField(resolveClass(type), name, v);
 	}
 
 	function enumIdxOf(enumTypeId:Int, ctorNameId:Int):Int {
@@ -625,12 +734,27 @@ class ScriptThrow extends haxe.Exception {
 	public function new(value:Dynamic) { super("script-throw"); this.value = value; }
 }
 
-// A script class descriptor: its constructor and instance-method FUN nodes, keyed by name.
+// A script class descriptor: its constructor and instance-method FUN nodes, keyed by name,
+// plus a link to its super class so dispatch and `super` calls can walk the chain.
 class ScriptClass {
 	public var name:String;
+	public var superName:Null<String>;
+	public var superClass:Null<ScriptClass>;
 	public var ctor:Null<OpNode>;
 	public var methods:Map<String, OpNode> = new Map();
 	public function new(name:String) this.name = name;
+
+	// Resolve a method by name, walking up the super chain (virtual dispatch).
+	public function lookup(name:String):Null<OpNode> {
+		var c = this;
+		while (c != null) {
+			var m = c.methods.get(name);
+			if (m != null)
+				return m;
+			c = c.superClass;
+		}
+		return null;
+	}
 }
 
 // A script-class instance: its class descriptor plus a field map. Fields and methods on it

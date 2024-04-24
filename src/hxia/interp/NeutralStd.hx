@@ -23,6 +23,8 @@ class NeutralStd {
 			reg.bindMember(mapType, "exists", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).exists(a[0]));
 			reg.bindMember(mapType, "remove", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).remove(a[0]));
 			reg.bindMember(mapType, "keys", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).keys());
+			reg.bindMember(mapType, "iterator", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).iterator());
+			reg.bindMember(mapType, "keyValueIterator", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).keyValueIterator());
 		}
 
 		// StringBuf's non-inline methods are keyed by the shim's runtime type name (cppia inlines
