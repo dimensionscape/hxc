@@ -1,0 +1,271 @@
+package hxia.interp;
+
+import haxe.io.Bytes;
+import hxia.cppia.ModuleIR;
+import hxia.cppia.Decoder;
+import hxia.cppia.OpTree;
+
+// The sandboxed-tier interpreter: compiles a decoded module's op tree into Frame->Dynamic closures
+// and runs it. Script values are host values (shared heap). Static calls resolve to script methods
+// first, then to the host registry (the capability boundary). This is the core evaluator for the
+// first runnable programs; metering and Reflect/Dynamic mediation are later slices.
+class Interp {
+	final strings:Array<String>;
+	final types:Array<String>;
+	final registry:HostRegistry;
+	final tree:ModuleTree;
+	// "Type.method" -> the FUN op node of a script static method.
+	final scriptStatics:Map<String, OpNode> = new Map();
+	var mainCall:Null<OpNode>;
+
+	public function new(ir:ModuleIR, registry:HostRegistry) {
+		this.registry = registry;
+		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
+		this.types = [for (b in ir.types) b.getString(0, b.length)];
+		this.tree = Decoder.decode(ir);
+		index();
+		this.mainCall = tree.hasMain ? tree.main : null;
+	}
+
+	function index():Void {
+		for (d in tree.decls) {
+			if (d.kind == "enum")
+				continue;
+			var className = types[d.ints[0]];
+			for (f in d.fields) {
+				if (f.kind != "function" || f.body == null)
+					continue;
+				var isStatic = f.ints[0] == 1;
+				var name = strings[f.ints[2]];
+				if (isStatic)
+					scriptStatics.set(className + "." + name, f.body);
+			}
+		}
+	}
+
+	public function run():Void {
+		if (mainCall == null)
+			return;
+		compile(mainCall)(new Frame());
+	}
+
+	// Invoke a script static method (its FUN node) with args already evaluated.
+	function invokeFun(fun:OpNode, thisv:Dynamic, args:Array<Dynamic>):Dynamic {
+		var frame = new Frame(thisv);
+		// FUN ints: [type, argc, then per arg: nameId, id, captured, type, marker...]
+		var argc = fun.ints[1];
+		var idx = 2;
+		for (i in 0...argc) {
+			var vId = fun.ints[idx + 1];
+			frame.locals.set(vId, args[i]);
+			idx += 5;
+			// A marker==1 arg carries a default value kid, consumed during decode; skip here
+		}
+		var body = fun.kids[fun.kids.length - 1];
+		try {
+			compile(body)(frame);
+		} catch (r:ReturnSignal) {
+			return r.value;
+		}
+		return null;
+	}
+
+	// Compile an op node to a closure over a frame. Compiled once, then executed by call.
+	function compile(n:OpNode):Frame->Dynamic {
+		switch (n.op) {
+			case "BLOCK":
+				var kids = [for (k in n.kids) compile(k)];
+				return function(f) { var last:Dynamic = null; for (c in kids) last = c(f); return last; };
+			case "TVARS":
+				var kids = [for (k in n.kids) compile(k)];
+				return function(f) { for (c in kids) c(f); return null; };
+			case "VARDECLI":
+				var vId = n.ints[1];
+				var init = compile(n.kids[0]);
+				return function(f) { f.locals.set(vId, init(f)); return null; };
+			case "VARDECL":
+				var vId = n.ints[1];
+				return function(f) { f.locals.set(vId, null); return null; };
+			case "VAR":
+				var vId = n.ints[0];
+				return function(f) return f.locals.get(vId);
+			case "i":
+				var v = n.ints[0];
+				return function(f) return v;
+			case "s":
+				var v = strings[n.ints[0]];
+				return function(f) return v;
+			case "f":
+				var v = Std.parseFloat(strings[n.ints[0]]);
+				return function(f) return v;
+			case "true": return function(f) return true;
+			case "false": return function(f) return false;
+			case "NULL": return function(f) return null;
+			case "RETVAL":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic throw new ReturnSignal(e(f));
+			case "RETURN":
+				return function(f):Dynamic throw new ReturnSignal(null);
+			case "SET":
+				return compileSet(n);
+			case "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", ">>=", ">>>=", "<<=":
+				return compileModify(n);
+			case "++", "+++", "--", "---":
+				return compileCrement(n);
+			case "CALLSTATIC":
+				var typeName = types[n.ints[0]];
+				var member = strings[n.ints[1]];
+				var argcs = [for (k in n.kids) compile(k)];
+				return function(f) {
+					var args = [for (c in argcs) c(f)];
+					return callStatic(typeName, member, args);
+				};
+			case "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", ">>", ">>>", "<<":
+				var l = compile(n.kids[0]);
+				var r = compile(n.kids[1]);
+				var op = n.op;
+				return function(f) return binop(op, l(f), r(f));
+			case "&&":
+				var l = compile(n.kids[0]);
+				var r = compile(n.kids[1]);
+				return function(f):Dynamic return (l(f) : Bool) && (r(f) : Bool);
+			case "||":
+				var l = compile(n.kids[0]);
+				var r = compile(n.kids[1]);
+				return function(f):Dynamic return (l(f) : Bool) || (r(f) : Bool);
+			case "!":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return !(e(f) : Bool);
+			case "NEG":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return -(e(f) : Float);
+			case "IF":
+				var c = compile(n.kids[0]);
+				var t = compile(n.kids[1]);
+				return function(f):Dynamic { if ((c(f) : Bool)) t(f); return null; };
+			case "IFELSE":
+				var c = compile(n.kids[0]);
+				var t = compile(n.kids[1]);
+				var e = compile(n.kids[2]);
+				return function(f):Dynamic return (c(f) : Bool) ? t(f) : e(f);
+			case "WHILE":
+				var normal = n.ints[0] == 1;
+				var c = compile(n.kids[0]);
+				var b = compile(n.kids[1]);
+				return function(f):Dynamic {
+					if (normal) { while ((c(f) : Bool)) loopBody(b, f); }
+					else { do loopBody(b, f) while ((c(f) : Bool)); }
+					return null;
+				};
+			case _:
+				throw new InterpError("unimplemented op '" + n.op + "'");
+		}
+	}
+
+	static inline function loopBody(b:Frame->Dynamic, f:Frame):Void {
+		try b(f) catch (_:BreakSignal) {}
+	}
+
+	function compileSet(n:OpNode):Frame->Dynamic {
+		var lv = n.kids[0];
+		var rhs = compile(n.kids[1]);
+		switch (lv.op) {
+			case "VAR":
+				var vId = lv.ints[0];
+				return function(f) { var v = rhs(f); f.locals.set(vId, v); return v; };
+			case _:
+				throw new InterpError("unimplemented SET lvalue '" + lv.op + "'");
+		}
+	}
+
+	// A compound assignment "<op>=" on a local: read, apply the base op, store.
+	function compileModify(n:OpNode):Frame->Dynamic {
+		var lv = n.kids[0];
+		var rhs = compile(n.kids[1]);
+		var base = n.op.substr(0, n.op.length - 1);
+		switch (lv.op) {
+			case "VAR":
+				var vId = lv.ints[0];
+				return function(f) {
+					var nv = binop(base, f.locals.get(vId), rhs(f));
+					f.locals.set(vId, nv);
+					return nv;
+				};
+			case _:
+				throw new InterpError("unimplemented modify lvalue '" + lv.op + "'");
+		}
+	}
+
+	// ++/-- (prefix return new) and +++/--- (postfix return old) on a local.
+	function compileCrement(n:OpNode):Frame->Dynamic {
+		var lv = n.kids[0];
+		var delta = (n.op == "++" || n.op == "+++") ? 1 : -1;
+		var post = n.op.length == 3;
+		switch (lv.op) {
+			case "VAR":
+				var vId = lv.ints[0];
+				return function(f) {
+					var old:Dynamic = f.locals.get(vId);
+					var nv = numAdd(old, delta);
+					f.locals.set(vId, nv);
+					return post ? old : nv;
+				};
+			case _:
+				throw new InterpError("unimplemented crement lvalue '" + lv.op + "'");
+		}
+	}
+
+	function callStatic(type:String, member:String, args:Array<Dynamic>):Dynamic {
+		var fun = scriptStatics.get(type + "." + member);
+		if (fun != null)
+			return invokeFun(fun, null, args);
+		return registry.staticCall(type, member, args);
+	}
+
+	static function binop(op:String, a:Dynamic, b:Dynamic):Dynamic {
+		switch (op) {
+			case "+":
+				if (Std.isOfType(a, String) || Std.isOfType(b, String))
+					return Std.string(a) + Std.string(b);
+				return numAdd(a, b);
+			case "-": return num(a) - num(b);
+			case "*": return num(a) * num(b);
+			case "/": return num(a) / num(b);
+			case "%": return num(a) % num(b);
+			case "<": return num(a) < num(b);
+			case ">": return num(a) > num(b);
+			case "<=": return num(a) <= num(b);
+			case ">=": return num(a) >= num(b);
+			case "==": return a == b;
+			case "!=": return a != b;
+			case "&": return int(a) & int(b);
+			case "|": return int(a) | int(b);
+			case "^": return int(a) ^ int(b);
+			case ">>": return int(a) >> int(b);
+			case ">>>": return int(a) >>> int(b);
+			case "<<": return int(a) << int(b);
+			case _: throw new InterpError("unimplemented binop '" + op + "'");
+		}
+	}
+
+	static inline function numAdd(a:Dynamic, b:Dynamic):Dynamic {
+		if (Std.isOfType(a, Int) && Std.isOfType(b, Int))
+			return (a : Int) + (b : Int);
+		return num(a) + num(b);
+	}
+
+	static inline function num(x:Dynamic):Float
+		return (x : Float);
+
+	static inline function int(x:Dynamic):Int
+		return (x : Int);
+}
+
+class ReturnSignal extends haxe.Exception {
+	public var value:Dynamic;
+	public function new(value:Dynamic) { super("return"); this.value = value; }
+}
+
+class BreakSignal extends haxe.Exception {
+	public function new() super("break");
+}
