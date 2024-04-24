@@ -8,13 +8,22 @@ package hxia.interp;
 class Mediator {
 	// (hostTypeName, member) -> allowed?
 	final policy:(String, String) -> Bool;
+	// (typeName, member) -> typed instance binding, for methods reflection cannot reach.
+	final memberResolver:Null<(String, String) -> Null<(Dynamic, Array<Dynamic>) -> Dynamic>>;
 
-	public function new(?policy:(String, String) -> Bool) {
+	public function new(?policy:(String, String) -> Bool,
+			?memberResolver:(String, String) -> Null<(Dynamic, Array<Dynamic>) -> Dynamic>) {
 		this.policy = policy != null ? policy : function(_, _) return true;
+		this.memberResolver = memberResolver;
 	}
 
 	public function callMethod(obj:Dynamic, member:String, args:Array<Dynamic>):Dynamic {
 		check(obj, member);
+		if (memberResolver != null) {
+			var bound = memberResolver(typeName(obj), member);
+			if (bound != null)
+				return bound(obj, args);
+		}
 		return Reflect.callMethod(obj, Reflect.field(obj, member), args);
 	}
 

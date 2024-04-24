@@ -34,7 +34,7 @@ class Interp {
 
 	public function new(ir:ModuleIR, registry:HostRegistry, ?limits:Limits, ?mediator:Mediator) {
 		this.registry = registry;
-		this.mediator = mediator != null ? mediator : new Mediator();
+		this.mediator = mediator != null ? mediator : new Mediator(null, function(t, m) return registry.memberBinding(t, m));
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);

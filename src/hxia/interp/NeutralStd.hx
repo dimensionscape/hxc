@@ -13,6 +13,16 @@ class NeutralStd {
 		reg.bindNew("haxe.ds.ObjectMap", function(_) return new haxe.ds.ObjectMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new StringBuf());
 
+		// Map methods bound as typed IMap calls: on some targets (js) the map .set/.get are
+		// inlined and DCE'd, so reflective dispatch cannot reach them. Interface dispatch does.
+		for (mapType in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap"]) {
+			reg.bindMember(mapType, "set", function(o, a) { (o : haxe.Constraints.IMap<Dynamic, Dynamic>).set(a[0], a[1]); return null; });
+			reg.bindMember(mapType, "get", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).get(a[0]));
+			reg.bindMember(mapType, "exists", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).exists(a[0]));
+			reg.bindMember(mapType, "remove", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).remove(a[0]));
+			reg.bindMember(mapType, "keys", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).keys());
+		}
+
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Std", "string", function(a) return Std.string(a[0]));

@@ -8,8 +8,18 @@ class HostRegistry {
 	final statics:Map<String, Array<Dynamic>->Dynamic> = new Map();
 	// Dotted type path -> (args)->instance for `new`.
 	final ctors:Map<String, Array<Dynamic>->Dynamic> = new Map();
+	// "Type.member" -> (obj, args)->result: typed instance-method bindings for host types
+	// whose methods are inlined/DCE'd on some targets (e.g. haxe.ds map .set/.get on js), so
+	// reflective dispatch cannot reach them.
+	final members:Map<String, (Dynamic, Array<Dynamic>) -> Dynamic> = new Map();
 
 	public function new() {}
+
+	public function bindMember(type:String, member:String, fn:(Dynamic, Array<Dynamic>) -> Dynamic):Void
+		members.set(type + "." + member, fn);
+
+	public function memberBinding(type:String, member:String):Null<(Dynamic, Array<Dynamic>) -> Dynamic>
+		return members.get(type + "." + member);
 
 	public function bindNew(type:String, fn:Array<Dynamic>->Dynamic):Void
 		ctors.set(type, fn);
