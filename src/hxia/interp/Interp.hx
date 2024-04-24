@@ -317,8 +317,11 @@ class Interp {
 			case "THIS":
 				return function(f) return f.thisv;
 			case "CLASSOF":
-				var cls = resolveClass(types[n.ints[0]]);
-				return function(f) return cls;
+				// A script class resolves to its descriptor (the token used by the script-aware
+				// isOfType); a host class resolves to a runtime Class.
+				var typeName = types[n.ints[0]];
+				var token:Dynamic = scriptClasses.exists(typeName) ? scriptClasses.get(typeName) : resolveClass(typeName);
+				return function(f) return token;
 			case "OBJDEF":
 				var count = n.ints[0];
 				var names = [for (i in 0...count) strings[n.ints[1 + i]]];
@@ -573,6 +576,10 @@ class Interp {
 		var fun = scriptStatics.get(type + "." + member);
 		if (fun != null)
 			return invokeFun(fun, null, args);
+		// isOfType must understand script classes: their instances are all the same host class,
+		// so a host check cannot tell them apart; dispatch on the ScriptObject's descriptor.
+		if (type == "Std" && member == "isOfType")
+			return scriptIsOfType(args[0], args[1]);
 		// Script-level Reflect goes through the same mediated seam, so it cannot bypass the
 		// policy that gates direct member access.
 		if (type == "Reflect") {
@@ -584,6 +591,27 @@ class Interp {
 			}
 		}
 		return registry.staticCall(type, member, args);
+	}
+
+	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
+	// chain reaches it; anything else defers to the host check.
+	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
+		if (Std.isOfType(token, ScriptClass)) {
+			if (!Std.isOfType(v, ScriptObject))
+				return false;
+			var c = (v : ScriptObject).cls;
+			var target = (token : ScriptClass);
+			while (c != null) {
+				if (c == target)
+					return true;
+				c = c.superClass;
+			}
+			return false;
+		}
+		// A script object is not an instance of any host class (except Dynamic-ish checks).
+		if (Std.isOfType(v, ScriptObject))
+			return false;
+		return Std.isOfType(v, token);
 	}
 
 	function construct(type:String, args:Array<Dynamic>):Dynamic {
