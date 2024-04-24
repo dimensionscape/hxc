@@ -204,6 +204,9 @@ class Interp {
 				return function(f) return mediator.getField(f.thisv, name);
 			case "THIS":
 				return function(f) return f.thisv;
+			case "CLASSOF":
+				var cls = resolveClass(types[n.ints[0]]);
+				return function(f) return cls;
 			case "OBJDEF":
 				var count = n.ints[0];
 				var names = [for (i in 0...count) strings[n.ints[1 + i]]];
@@ -252,9 +255,64 @@ class Interp {
 					else { do { burnFuel(); loopBody(b, f); } while ((c(f) : Bool)); }
 					return null;
 				};
+			case "SWITCH":
+				return compileSwitch(n);
+			case "TRY":
+				return compileTry(n);
+			case "THROW":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic throw new ScriptThrow(e(f));
 			case _:
 				throw new InterpError("unimplemented op '" + n.op + "'");
 		}
+	}
+
+	// SWITCH ints=[caseCount, hasDefault, nValues per case...]; kids=[cond, (values, body) per
+	// case, optional default]. Guards are already lowered to IFs inside the case bodies.
+	function compileSwitch(n:OpNode):Frame->Dynamic {
+		var caseCount = n.ints[0];
+		var hasDefault = n.ints[1] == 1;
+		var cond = compile(n.kids[0]);
+		var ki = 1;
+		var cases:Array<{vals:Array<Frame->Dynamic>, body:Frame->Dynamic}> = [];
+		for (ci in 0...caseCount) {
+			var nv = n.ints[2 + ci];
+			var vals = [for (_ in 0...nv) compile(n.kids[ki++])];
+			var body = compile(n.kids[ki++]);
+			cases.push({vals: vals, body: body});
+		}
+		var def = hasDefault ? compile(n.kids[ki++]) : null;
+		return function(f):Dynamic {
+			var cv:Dynamic = cond(f);
+			for (c in cases)
+				for (v in c.vals)
+					if (v(f) == cv)
+						return c.body(f);
+			return def != null ? def(f) : null;
+		};
+	}
+
+	// TRY ints=[count, per catch: nameId id captured type]; kids=[block, catch bodies].
+	// First-catch binding (single typed catch is the common case; multi-type matching is a
+	// refinement). ReturnSignal and BudgetError are not ScriptThrow, so they propagate.
+	function compileTry(n:OpNode):Frame->Dynamic {
+		var block = compile(n.kids[0]);
+		var count = n.ints[0];
+		var catches:Array<{vId:Int, body:Frame->Dynamic}> = [];
+		for (ci in 0...count) {
+			var vId = n.ints[1 + ci * 4 + 1];
+			catches.push({vId: vId, body: compile(n.kids[1 + ci])});
+		}
+		return function(f):Dynamic {
+			try {
+				return block(f);
+			} catch (t:ScriptThrow) {
+				if (catches.length == 0)
+					throw t;
+				f.locals.set(catches[0].vId, t.value);
+				return catches[0].body(f);
+			}
+		};
 	}
 
 	static inline function loopBody(b:Frame->Dynamic, f:Frame):Void {
@@ -332,6 +390,22 @@ class Interp {
 		return registry.construct(type, args);
 	}
 
+	final classCache:Map<String, Class<Dynamic>> = new Map();
+
+	// A CLASSOF operand is a cpp-style path ("::String", "::haxe::Exception"); resolve to a
+	// runtime Class for isOfType/casts.
+	function resolveClass(name:String):Class<Dynamic> {
+		var c = classCache.get(name);
+		if (c != null)
+			return c;
+		var dotted = StringTools.replace(StringTools.startsWith(name, "::") ? name.substr(2) : name, "::", ".");
+		var rc = Type.resolveClass(dotted);
+		if (rc == null)
+			throw new InterpError("hxia: cannot resolve class '" + dotted + "'");
+		classCache.set(name, rc);
+		return rc;
+	}
+
 	// The cppia map remap turns set/get on typed maps into setInt/getString etc.; the neutral
 	// host map has set/get, so translate back.
 	static function mapMethodShim(m:String):String {
@@ -388,4 +462,11 @@ class ReturnSignal extends haxe.Exception {
 
 class BreakSignal extends haxe.Exception {
 	public function new() super("break");
+}
+
+// A value thrown by script `throw`; caught by script `try`. Distinct from ReturnSignal and
+// BudgetError so those flow past a catch.
+class ScriptThrow extends haxe.Exception {
+	public var value:Dynamic;
+	public function new(value:Dynamic) { super("script-throw"); this.value = value; }
 }

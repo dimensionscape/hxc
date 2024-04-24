@@ -26,6 +26,7 @@ class NeutralStd {
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Std", "string", function(a) return Std.string(a[0]));
+		reg.bindStatic("Std", "isOfType", function(a) return Std.isOfType(a[0], a[1]));
 		reg.bindStatic("Std", "int", function(a) return Std.int(a[0]));
 		reg.bindStatic("Std", "parseInt", function(a) return Std.parseInt(a[0]));
 		reg.bindStatic("Std", "parseFloat", function(a) return Std.parseFloat(a[0]));
