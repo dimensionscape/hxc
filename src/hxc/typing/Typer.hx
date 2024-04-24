@@ -17,6 +17,23 @@ import hxc.typing.Matcher.Match;
 import hxc.typing.TyperContext.CurrentFun;
 import hxc.typing.Typeload;
 
+// The typed toplevel-completion entries the JSON display lane collects; literals and keywords are appended
+// at report time.
+enum JsonToplevelEntry {
+	JTLocal(v:TVar);
+	JTField(cf:TClassField, c:TClass, isStatic:Bool);
+	JTType(mt:hxc.core.Type.ModuleType);
+}
+
+// The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
+class JsonToplevelCompletion extends haxe.Exception {
+	public var items:Array<JsonToplevelEntry>;
+	public function new(items:Array<JsonToplevelEntry>) {
+		super("json toplevel completion");
+		this.items = items;
+	}
+}
+
 class Typer {
 	// The stack of cast fields being applied, for macro @:from recursion.
 	static var abstractCastStack:Array<TClassField> = [];
@@ -1371,6 +1388,42 @@ class Typer {
 	// Legacy --display file@pos@toplevel: an identifier at the display position raises the
 	// visible-identifier collection instead of resolving.
 	public static var displayToplevel = false;
+	// The JSON completion lane's toplevel capture (CRToplevel): typed entries, recorded then answered at
+	// report time.
+	public static var displayToplevelJson = false;
+
+	// The one-shot subset: locals in scope, the enclosing class fields (statics always, members
+	// outside a static context), every type of every loaded module, the literal and keyword sets.
+	// Sorting happens at report time.
+	static function collectToplevelJson(ctx:TyperContext):Array<JsonToplevelEntry> {
+		var out:Array<JsonToplevelEntry> = [];
+		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
+		for (name in ctx.locals.keys()) {
+			var v = ctx.locals.get(name);
+			if (name.length > 0 && name.charCodeAt(0) != "`".code) out.push(JTLocal(v));
+		}
+		var c = ctx.curclass;
+		if (c != null) {
+			if (ctx.curfun != FunStatic) {
+				var cur = c;
+				while (cur != null) {
+					for (name in cur.fields.keys()) {
+						var cf = cur.fields.get(name);
+						if (!noCompletion(cf.meta)) out.push(JTField(cf, cur, false));
+					}
+					cur = cur.superClass == null ? null : cur.superClass.c;
+				}
+			}
+			for (cf in c.orderedStatics) if (!noCompletion(cf.meta)) out.push(JTField(cf, c, true));
+		}
+		for (m in ctx.com.modules) for (mt in m.types) {
+			var infos = TypeFunctions.tInfos(mt);
+			if (infos.isPrivate && m != (ctx.curclass == null ? null : ctx.curclass.module)) continue;
+			if (noCompletion(infos.meta)) continue;
+			out.push(JTType(mt));
+		}
+		return out;
+	}
 
 	static function collectToplevel(ctx:TyperContext):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
@@ -1812,6 +1865,8 @@ class Typer {
 		var basic = ctx.com.basic;
 		return switch (c) {
 			case CIdent(s):
+				if (displayToplevelJson && atDisplayPos(p))
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
 				if (displayToplevel && atDisplayPos(p))
 					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
@@ -3115,12 +3170,14 @@ class Typer {
 		// The display position sits inside this block but on no statement (whitespace or an empty body):
 		// the reference parser marks the spot and completion raises with an empty subject. Statements
 		// before the cursor type first so their locals are in scope. (collect_and_raise, empty subject).
-		if (displayToplevel && atDisplayPos(p)) {
+		if ((displayToplevel || displayToplevelJson) && atDisplayPos(p)) {
 			var covered = false;
 			for (e in el) if (atDisplayPos(e.pos)) { covered = true; break; }
 			if (!covered) {
 				var off = hxc.parser.Parser.displayOffset;
 				for (e in el) if (e.pos.max < off) try typeExpr(ctx, e, WithTypeTools.noValue) catch (_:TypingError) {}
+				if (displayToplevelJson)
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
 				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
 			}
 		}

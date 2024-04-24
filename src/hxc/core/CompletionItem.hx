@@ -205,12 +205,76 @@ class CompletionItem {
 	}
 
 	// The Local item: {kind:"Local", args:generateTVar, type}.
-	public static function localToJson(gen:Genjson, v:TVar, ct:CompletionType):JsonValue {
-		return JObject([
+	public static function localToJson(gen:Genjson, v:TVar, ct:CompletionType, ?index:Int):JsonValue {
+		return JObject(([
 			{name: "kind", value: JString("Local")},
 			{name: "args", value: gen.generateTVar(v)},
 			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
-		]);
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
+	// The Keyword item: {kind:"Keyword", args:{name}}.
+	public static function keywordToJson(name:String, ?index:Int):JsonValue {
+		return JObject(([
+			{name: "kind", value: JString("Keyword")},
+			{name: "args", value: JObject([{name: "name", value: JString(name)}])}
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
+	// + to_json (GMFull): the Type item with the module-kind int code, the ctor-derived
+	// extern/final/abstract flags and ast params.
+	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int):JsonValue {
+		var infos = TypeFunctions.tInfos(mt);
+		var kind:Int;
+		var isExtern = false, isFinal = false, isAbstract = false;
+		switch (mt) {
+			case TClassDecl(c):
+				isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+				isFinal = TypeFunctions.hasClassFlag(c, CFinal);
+				isAbstract = TypeFunctions.hasClassFlag(c, CAbstract);
+				kind = TypeFunctions.hasClassFlag(c, CInterface) ? 1 : 0;
+			case TEnumDecl(en):
+				isExtern = en.isExtern;
+				kind = 2;
+			case TTypeDecl(td):
+				kind = switch (TypeFunctions.follow(td.type)) {
+					case TAnon(_): 6;
+					case _: 5;
+				};
+			case TAbstractDecl(a):
+				kind = a.isEnum ? 4 : 3;
+		}
+		function astParam(tp:hxc.core.Type.TypedTypeParam):JsonValue {
+			var meta:hxc.ast.Ast.Metadata = switch (TypeFunctions.follow(tp.type)) {
+				case TInst(c, _): c.meta;
+				case _: [];
+			};
+			return JObject([
+				{name: "name", value: JString(tp.name)},
+				{name: "params", value: JArray([])},
+				{name: "constraints", value: JNull},
+				{name: "metadata", value: gen.generateMetadata(meta)}
+			]);
+		}
+		return JObject(([
+			{name: "kind", value: JString("Type")},
+			{name: "args", value: JObject([
+				{name: "path", value: JObject([
+					{name: "pack", value: JArray([for (x in infos.path.pack) JString(x)])},
+					{name: "moduleName", value: JString(infos.module.path.name)},
+					{name: "typeName", value: JString(infos.path.name)},
+					{name: "importStatus", value: JInt(importStatus)}
+				])},
+				{name: "kind", value: JInt(kind)},
+				{name: "meta", value: gen.generateMetadata(infos.meta)},
+				{name: "pos", value: gen.generatePos(infos.pos)},
+				{name: "params", value: JArray([for (tp in infos.params) astParam(tp)])},
+				{name: "isExtern", value: JBool(isExtern)},
+				{name: "isFinal", value: JBool(isFinal)},
+				{name: "isAbstract", value: JBool(isAbstract)},
+				{name: "doc", value: infos.doc == null ? JNull : JString(hxc.ast.Ast.genDocText(infos.doc))}
+			])}
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
 	// The EnumField item.
@@ -241,12 +305,12 @@ class CompletionItem {
 	}
 
 	// {kind: Literal, args: {name}} plus the type.
-	public static function literalToJson(gen:Genjson, name:String, ct:CompletionType):JsonValue {
-		return JObject([
+	public static function literalToJson(gen:Genjson, name:String, ct:CompletionType, ?index:Int):JsonValue {
+		return JObject(([
 			{name: "kind", value: JString("Literal")},
 			{name: "args", value: JObject([{name: "name", value: JString(name)}])},
 			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
-		]);
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
 	// The Expression item: args would be the typed expression, which is not serialized (null).

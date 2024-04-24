@@ -387,6 +387,8 @@ class Compiler {
 					hxc.typing.Typer.displayHover = dmode == "type";
 					hxc.typing.Typer.displayUsage = dmode == "usage";
 					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
+					// The JSON completion request at a non-dot position answers the toplevel item set.
+					hxc.typing.Typer.displayToplevelJson = ctx.jsonRpcId != null && dmode == "";
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					hxc.typing.Typer.displaySignature = dmode == "signature";
@@ -624,6 +626,10 @@ class Compiler {
 				var r = runCommand(c);
 				if (r != 0) throw "Command failed with error " + r;
 			}
+		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
+			var answer = jsonToplevelCompletion(ctx, tl.items);
+			if (answer != null) Sys.stderr().writeString(answer);
+			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
 			handleTypePathCompletion(ctx, tc);
 			return;
@@ -1050,7 +1056,76 @@ class Compiler {
 		};
 	}
 
-	// The completion response over the typed entries the field-completion collector recorded.
+	// The completion response over the typed entries the field-completion collector recorded. +
+	// displayException fields_to_json CRToplevel: locals, then the enclosing class fields, then every
+	// loaded type sorted by name, then the literal set and the keyword list; mode kind 2 with empty
+	// args.
+	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>):Null<String> {
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var curMod = displayModule(ctx);
+		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
+			return importStatusFor(ctx, curMod, path);
+		function ct(t:T):hxc.core.CompletionItem.CompletionType
+			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t);
+		function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
+			return switch (c.kind) {
+				case KAbstractImpl(a): TAbstractDecl(a);
+				case _: TClassDecl(c);
+			};
+		}
+		var locals:Array<hxc.core.Json.JsonValue->Void> = [];
+		var items:Array<hxc.core.Json.JsonValue> = [];
+		var idx = 0;
+		inline function push(f:Int->hxc.core.Json.JsonValue) { items.push(f(idx)); idx++; }
+		var fields:Array<{cf:TClassField, c:hxc.core.Type.TClass, stat:Bool}> = [];
+		var types:Array<hxc.core.Type.ModuleType> = [];
+		for (e in entries) switch (e) {
+			case JTLocal(v): push(function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(v.type), i));
+			case JTField(cf, c, stat): fields.push({cf: cf, c: c, stat: stat});
+			case JTType(mt): types.push(mt);
+		}
+		for (f in fields) {
+			var scope:hxc.core.Type.ClassFieldScope = f.stat ? CFSStatic : CFSMember;
+			var t = switch (f.cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+			push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, f.cf,
+				hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(f.c)), true, ct(t), i));
+		}
+		types.sort(function(a, b) {
+			var an = TypeFunctions.tInfos(a).path.name;
+			var bn = TypeFunctions.tInfos(b).path.name;
+			return an < bn ? -1 : an > bn ? 1 : 0;
+		});
+		for (mt in types) {
+			var path = TypeFunctions.tInfos(mt).path;
+			var st = importStatus(path).match(Imported) ? 0 : importStatus(path).match(Unimported) ? 1 : 2;
+			push(function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
+		}
+		// The literal set in alphabetical order; `trace` types as its magic single-argument signature.
+		var basic = ctx.basic;
+		var tTrace = TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: basic.tvoid});
+		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "false", ct(basic.tbool), i));
+		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "null", ct(TypeFunctions.tDynamic), i));
+		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "trace", ct(tTrace), i));
+		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "true", ct(basic.tbool), i));
+		for (kwd in ["break", "cast", "continue", "do", "else", "final", "for", "function", "if", "inline",
+				"new", "return", "switch", "throw", "try", "untyped", "var", "while"])
+			push(function(i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(kwd, i));
+		var off = hxc.parser.Parser.displayOffset;
+		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
+		var mode = hxc.core.Json.JsonValue.JObject([
+			{name: "kind", value: hxc.core.Json.JsonValue.JInt(2)},
+			{name: "args", value: hxc.core.Json.JsonValue.JObject([])}
+		]);
+		var result = hxc.core.Json.JsonValue.JObject([
+			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
+			{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
+			{name: "mode", value: mode},
+			{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
+			{name: "replaceRange", value: gen.generatePosAsRange(insertPos)}
+		]);
+		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
+	}
+
 	static function jsonCompletion(ctx:Context):Null<String> {
 		var jc = hxc.typing.Typer.jsonFieldCompletion;
 		if (jc == null) return null;
