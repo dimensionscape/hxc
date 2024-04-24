@@ -29,8 +29,12 @@ class Interp {
 	var depth:Int = 0;
 	var alloc:Int = 0;
 
-	public function new(ir:ModuleIR, registry:HostRegistry, ?limits:Limits) {
+	// The single mediated seam for all reflective host access
+	final mediator:Mediator;
+
+	public function new(ir:ModuleIR, registry:HostRegistry, ?limits:Limits, ?mediator:Mediator) {
 		this.registry = registry;
+		this.mediator = mediator != null ? mediator : new Mediator();
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);
@@ -162,17 +166,19 @@ class Interp {
 				var recv = compile(n.kids[0]);
 				var argcs = [for (i in 1...n.kids.length) compile(n.kids[i])];
 				return function(f) {
+					burnFuel();
 					var obj = recv(f);
 					var args = [for (c in argcs) c(f)];
-					return Reflect.callMethod(obj, Reflect.field(obj, member), args);
+					return mediator.callMethod(obj, member, args);
 				};
 			case "CALLTHIS":
 				var member = strings[n.ints[1]];
 				var argcs = [for (k in n.kids) compile(k)];
 				return function(f) {
+					burnFuel();
 					var obj = f.thisv;
 					var args = [for (c in argcs) c(f)];
-					return Reflect.callMethod(obj, Reflect.field(obj, member), args);
+					return mediator.callMethod(obj, member, args);
 				};
 			case "NEW":
 				var typeName = types[n.ints[0]];
@@ -192,12 +198,23 @@ class Interp {
 			case "FLINK", "FNAME":
 				var name = strings[n.ints[1]];
 				var obj = compile(n.kids[0]);
-				return function(f) return Reflect.field(obj(f), name);
+				return function(f) return mediator.getField(obj(f), name);
 			case "FTHISINST":
 				var name = strings[n.ints[1]];
-				return function(f) return Reflect.field(f.thisv, name);
+				return function(f) return mediator.getField(f.thisv, name);
 			case "THIS":
 				return function(f) return f.thisv;
+			case "OBJDEF":
+				var count = n.ints[0];
+				var names = [for (i in 0...count) strings[n.ints[1 + i]]];
+				var vals = [for (k in n.kids) compile(k)];
+				return function(f) {
+					countAlloc(16 + count * 8);
+					var o:Dynamic = {};
+					for (i in 0...count)
+						mediator.setField(o, names[i], vals[i](f));
+					return o;
+				};
 			case "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", ">>", ">>>", "<<":
 				var l = compile(n.kids[0]);
 				var r = compile(n.kids[1]);
@@ -297,6 +314,16 @@ class Interp {
 		var fun = scriptStatics.get(type + "." + member);
 		if (fun != null)
 			return invokeFun(fun, null, args);
+		// Script-level Reflect goes through the same mediated seam, so it cannot bypass the
+		// policy that gates direct member access.
+		if (type == "Reflect") {
+			switch (member) {
+				case "field": return mediator.getField(args[0], args[1]);
+				case "setField": mediator.setField(args[0], args[1], args[2]); return null;
+				case "fields": return mediator.fields(args[0]);
+				case _:
+			}
+		}
 		return registry.staticCall(type, member, args);
 	}
 
