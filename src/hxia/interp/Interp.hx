@@ -21,6 +21,8 @@ class Interp {
 	final scriptStatics:Map<String, OpNode> = new Map();
 	// "EnumType.Ctor" -> constructor index (position, = index; the writer sorts by it).
 	final enumCtorIndex:Map<String, Int> = new Map();
+	// Type name -> its script-class descriptor (ctor + instance methods), for `new` and dispatch.
+	final scriptClasses:Map<String, ScriptClass> = new Map();
 	var mainCall:Null<OpNode>;
 
 	// Metering
@@ -67,14 +69,23 @@ class Interp {
 				continue;
 			}
 			var className = types[d.ints[0]];
+			var sc = new ScriptClass(className);
 			for (f in d.fields) {
 				if (f.kind != "function" || f.body == null)
 					continue;
 				var isStatic = f.ints[0] == 1;
 				var name = strings[f.ints[2]];
-				if (isStatic)
+				// The constructor is emitted with the static flag but has a `this` body; key it
+				// by name so `new` allocates and runs it with the fresh instance as thisv.
+				if (name == "new")
+					sc.ctor = f.body;
+				else if (isStatic)
 					scriptStatics.set(className + "." + name, f.body);
+				else
+					sc.methods.set(name, f.body);
 			}
+			if (sc.ctor != null || sc.methods.keys().hasNext())
+				scriptClasses.set(className, sc);
 		}
 	}
 
@@ -202,7 +213,7 @@ class Interp {
 					burnFuel();
 					var obj = recv(f);
 					var args = [for (c in argcs) c(f)];
-					return mediator.callMethod(obj, member, args);
+					return callMember(obj, member, args);
 				};
 			case "CREATEENUM":
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
@@ -224,7 +235,7 @@ class Interp {
 					burnFuel();
 					var obj = f.thisv;
 					var args = [for (c in argcs) c(f)];
-					return mediator.callMethod(obj, member, args);
+					return callMember(obj, member, args);
 				};
 			case "NEW":
 				var typeName = types[n.ints[0]];
@@ -244,10 +255,10 @@ class Interp {
 			case "FLINK", "FNAME":
 				var name = strings[n.ints[1]];
 				var obj = compile(n.kids[0]);
-				return function(f) return mediator.getField(obj(f), name);
+				return function(f) return getMember(obj(f), name);
 			case "FTHISINST":
 				var name = strings[n.ints[1]];
-				return function(f) return mediator.getField(f.thisv, name);
+				return function(f) return getMember(f.thisv, name);
 			case "THIS":
 				return function(f) return f.thisv;
 			case "CLASSOF":
@@ -381,7 +392,7 @@ class Interp {
 				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
 				return function(f) {
 					var v = rhs(f);
-					mediator.setField(obj != null ? obj(f) : f.thisv, name, v);
+					setMember(obj != null ? obj(f) : f.thisv, name, v);
 					return v;
 				};
 			case _:
@@ -417,8 +428,8 @@ class Interp {
 				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
 				return function(f) {
 					var o = obj != null ? obj(f) : f.thisv;
-					var nv = binop(base, mediator.getField(o, name), rhs(f));
-					mediator.setField(o, name, nv);
+					var nv = binop(base, getMember(o, name), rhs(f));
+					setMember(o, name, nv);
 					return nv;
 				};
 			case _:
@@ -474,8 +485,39 @@ class Interp {
 	}
 
 	function construct(type:String, args:Array<Dynamic>):Dynamic {
-		// TODO: script-class construction resolves here once instances land; host for now.
+		var sc = scriptClasses.get(type);
+		if (sc != null) {
+			var so = new ScriptObject(sc);
+			if (sc.ctor != null)
+				invokeFun(sc.ctor, so, args);
+			return so;
+		}
 		return registry.construct(type, args);
+	}
+
+	// Member access that understands script instances: a ScriptObject stores its fields in a
+	// map and dispatches methods through its class descriptor; everything else falls through
+	// to the mediated host seam (the capability boundary).
+	function getMember(obj:Dynamic, name:String):Dynamic {
+		if (Std.isOfType(obj, ScriptObject))
+			return (obj : ScriptObject).fields.get(name);
+		return mediator.getField(obj, name);
+	}
+
+	function setMember(obj:Dynamic, name:String, v:Dynamic):Void {
+		if (Std.isOfType(obj, ScriptObject))
+			(obj : ScriptObject).fields.set(name, v);
+		else
+			mediator.setField(obj, name, v);
+	}
+
+	function callMember(obj:Dynamic, name:String, args:Array<Dynamic>):Dynamic {
+		if (Std.isOfType(obj, ScriptObject)) {
+			var m = (obj : ScriptObject).cls.methods.get(name);
+			if (m != null)
+				return invokeFun(m, obj, args);
+		}
+		return mediator.callMethod(obj, name, args);
 	}
 
 	function enumIdxOf(enumTypeId:Int, ctorNameId:Int):Int {
@@ -565,6 +607,23 @@ class BreakSignal extends haxe.Exception {
 class ScriptThrow extends haxe.Exception {
 	public var value:Dynamic;
 	public function new(value:Dynamic) { super("script-throw"); this.value = value; }
+}
+
+// A script class descriptor: its constructor and instance-method FUN nodes, keyed by name.
+class ScriptClass {
+	public var name:String;
+	public var ctor:Null<OpNode>;
+	public var methods:Map<String, OpNode> = new Map();
+	public function new(name:String) this.name = name;
+}
+
+// A script-class instance: its class descriptor plus a field map. Fields and methods on it
+// are resolved by the interpreter (getMember/setMember/callMember), never by raw host
+// reflection, so a script object stays inside the same mediated model as host values.
+class ScriptObject {
+	public var cls:ScriptClass;
+	public var fields:Map<String, Dynamic> = new Map();
+	public function new(cls:ScriptClass) this.cls = cls;
 }
 
 // A script enum value: constructor index (switch dispatches on it), name, and parameters.
