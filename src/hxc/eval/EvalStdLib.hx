@@ -3422,7 +3422,9 @@ class EvalStdLib {
 			case OProto(proto): instanceFieldKeys(proto);
 			case ODictionary(_): objectDictionaryKeys(fields);
 		};
-		for (k in keys) if (fields.exists(k)) parts.push(EvalHash.revHash(k) + ": " + stringOfDepth(fields.get(k), depth + 1));
+		// Fields print at the depth objectString received (the +1 happened at the VObject dispatch); a
+		// second increment here would truncate one level early.
+		for (k in keys) if (fields.exists(k)) parts.push(EvalHash.revHash(k) + ": " + stringOfDepth(fields.get(k), depth));
 		return "{" + parts.join(", ") + "}";
 	}
 

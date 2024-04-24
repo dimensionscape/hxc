@@ -150,7 +150,10 @@ class EvalContext {
 		var depthText = this.defines.rawDefinedValueSafe("eval_call_stack_depth", "20000");
 		var parsedDepth = Std.parseInt(depthText);
 		this.maxStackDepth = parsedDepth == null ? 20000 : parsedDepth;
-		this.maxPrintDepth = 100;
+		// Value printing truncates to <...> past this depth (default 5, overridable with -D
+		// eval.print.depth).
+		var printDepth = Std.parseInt(this.defines.rawDefinedValueSafe("eval_print_depth", "5"));
+		this.maxPrintDepth = printDepth == null ? 5 : printDepth;
 		this.resources = new StringMap();
 		this.classPath = classPath == null ? [] : classPath.copy();
 		this.com = com;
