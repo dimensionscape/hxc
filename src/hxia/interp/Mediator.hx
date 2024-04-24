@@ -24,7 +24,11 @@ class Mediator {
 			if (bound != null)
 				return bound(obj, args);
 		}
-		return Reflect.callMethod(obj, Reflect.field(obj, member), args);
+		var fn = Reflect.field(obj, member);
+		if (fn == null || !Reflect.isFunction(fn))
+			throw new InterpError("hxia: host member " + typeName(obj) + "." + member
+				+ " is not reflectively callable (inlined or DCE'd); bind it in the registry");
+		return Reflect.callMethod(obj, fn, args);
 	}
 
 	public function getField(obj:Dynamic, member:String):Dynamic {

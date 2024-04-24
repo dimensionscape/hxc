@@ -319,6 +319,22 @@ class Interp {
 			case "THROW":
 				var e = compile(n.kids[0]);
 				return function(f):Dynamic throw new ScriptThrow(e(f));
+			// Type coercions: identity on a dynamic shared heap (the value already is the host value; the
+			// writer's cast/interface wrappers carry no runtime representation here).
+			case "NOTNULL", "TCAST", "CAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
+				return compile(n.kids[0]);
+			case "ISNULL":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return e(f) == null;
+			case "~":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return ~(e(f) : Int);
+			case "CASTINT":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return Std.int(e(f));
+			case "CASTBOOL":
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return (e(f) : Bool);
 			case _:
 				throw new InterpError("unimplemented op '" + n.op + "'");
 		}
