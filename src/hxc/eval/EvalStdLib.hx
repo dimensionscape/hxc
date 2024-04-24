@@ -164,7 +164,7 @@ class EvalStdLib {
 		return ba.length - bb.length;
 	}
 
-	static function seededStringHash(s:String):Int {
+	public static function seededStringHash(s:String):Int {
 		var cached = stringHashCache.get(s);
 		if (cached != null) return cached;
 		var bytes = haxe.io.Bytes.ofString(s);
@@ -203,6 +203,16 @@ class EvalStdLib {
 		var buckets = 16;
 		while (size > buckets * 2) buckets *= 2;
 		return buckets;
+	}
+
+	// The eval object field order observable through $v{} and Reflect: ascending Ptmap (little-endian
+	// patricia) visit order of the field names' string hashes.
+	public static function sortNamesPtmap(names:Array<String>):Array<String> {
+		names.sort(function(a, b) {
+			var d = ptmapOrderKey(seededStringHash(a)) - ptmapOrderKey(seededStringHash(b));
+			return d != 0 ? d : Reflect.compare(a, b);
+		});
+		return names;
 	}
 
 	static inline function ptmapOrderKey(k:Int):Int {

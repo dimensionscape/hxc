@@ -1327,9 +1327,15 @@ class EvalMacro {
 					});
 					if (!isPos) fields.push({name: name, pos: p, quotes: isIdentName(name) ? NoQuotes : DoubleQuotes, expr: valueToExpr(ec, val, p)});
 				}
+				inline function camlOrder(names:Array<String>):Array<String>
+					return hxc.eval.EvalStdLib.sortNamesPtmap(names);
 				switch (o.oproto) {
-					case OProto(proto): for (k in proto.pinstanceNames.keys()) add(EvalHash.revHash(k), o.ofields[proto.pinstanceNames.get(k)]);
-					case ODictionary(m): for (k in m.keys()) add(EvalHash.revHash(k), m.get(k));
+					case OProto(proto):
+						for (n in camlOrder([for (k in proto.pinstanceNames.keys()) EvalHash.revHash(k)]))
+							add(n, o.ofields[proto.pinstanceNames.get(EvalHash.hash(n))]);
+					case ODictionary(m):
+						for (n in camlOrder([for (k in m.keys()) EvalHash.revHash(k)]))
+							add(n, m.get(EvalHash.hash(n)));
 				}
 				mk(EObjectDecl(fields));
 			case VEnumValue(ev):
