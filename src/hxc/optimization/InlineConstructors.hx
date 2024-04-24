@@ -98,6 +98,8 @@ private class InlineConstructorsRun {
 
 	function cancelIo(io:InlineObject, p:Position):Void {
 		if (io.cancelled) return;
+		if (Sys.getEnv("HXC_DBG_IC") != null)
+			Sys.println("[ic-cancel] io at " + io.pos.file + ":" + hxc.ast.Position.lineNumber(io.pos) + " from " + p.file + ":" + hxc.ast.Position.lineNumber(p));
 		io.cancelled = true;
 		for (iv in io.aliases) cancelIv(iv, p);
 		for (name in io.fields.keys()) cancelIv(io.fields.get(name), p);
@@ -349,6 +351,11 @@ private class InlineConstructorsRun {
 								if (!captured2) cancelIv(fiv, efield.pos);
 								IOFInlineVar(fiv);
 							} else {
+								if (Sys.getEnv("HXC_DBG_IC") != null)
+									Sys.println("[ic-reject] " + fname + " fiv=" + (fiv == null ? "null" : "found")
+										+ (fiv != null ? " strict=" + TypeUnification.typeIseqStrict(fiv.v.type, efield.type)
+										+ " closed=" + fiv.closed + " fivT=" + hxc.core.TPrinting.sTypeStr(fiv.v.type)
+										+ " efT=" + hxc.core.TPrinting.sTypeStr(efield.type) : ""));
 								cancelIv(iv, efield.pos);
 								IOFNone;
 							}
