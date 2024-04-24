@@ -1694,6 +1694,8 @@ class TexprConverter {
 					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
 				}
 			case Bind(bl, dt2):
+				if (Sys.getEnv("HXC_DBG_MATCH") != null)
+					for (b in bl) Sys.println("[match-bind] " + b.v.name + " kind=" + Std.string(b.v.kind) + " at " + b.p.file + ":" + hxc.ast.Position.lineNumber(b.p));
 				for (b in bl) vLookup.set(b.v.id, b.e);
 				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
 				if (inner == null) null else {
