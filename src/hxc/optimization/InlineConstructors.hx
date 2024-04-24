@@ -323,7 +323,20 @@ private class InlineConstructorsRun {
 						case _:
 							var fiv = io.fields.get(fname);
 							var ok = fiv != null;
-							if (ok && !TypeUnification.typeIseqStrict(fiv.v.type, efield.type)) ok = false;
+							// The reference's fold accepts a @:multiType-typed field read both at
+							// the abstract type and at its resolved specialization (hxc's abstract
+							// cast filter retypes such reads to the concrete; verified against the
+							// oracle on both node shapes). Accept the specialization alongside the
+							// strict equality so those reads keep the fold.
+							if (ok && !TypeUnification.typeIseqStrict(fiv.v.type, efield.type)) {
+								var multiOk = switch (TypeFunctions.follow(fiv.v.type)) {
+									case TAbstract(a, tl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
+										var m = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, efield.pos) catch (_:Dynamic) null;
+										m != null && TypeUnification.typeIseqStrict(m, efield.type);
+									case _: false;
+								};
+								if (!multiOk) ok = false;
+							}
 							var fivIsConst = ok && switch (fiv.kind) { case IVKField(_, _, ce): ce != null; case _: false; };
 							if (ok && isLvalue2 && fivIsConst) ok = false;
 							if (ok && fiv.closed) ok = false;
