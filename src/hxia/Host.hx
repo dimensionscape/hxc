@@ -14,8 +14,6 @@ enum LogLevel {
 	Error;
 }
 
-typedef ScriptPos = {file:String, line:Int};
-
 // An immutable description of what an application offers scripts. The shapes are
 // the contract; bodies are stubs.
 class HostBuilder {

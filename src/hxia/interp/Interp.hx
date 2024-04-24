@@ -4,11 +4,14 @@ import haxe.io.Bytes;
 import hxia.cppia.ModuleIR;
 import hxia.cppia.Decoder;
 import hxia.cppia.OpTree;
+import hxia.Runtime.Limits;
+import hxia.Errors;
 
 // The sandboxed-tier interpreter: compiles a decoded module's op tree into Frame->Dynamic closures
 // and runs it. Script values are host values (shared heap). Static calls resolve to script methods
-// first, then to the host registry (the capability boundary). This is the core evaluator for the
-// first runnable programs; metering and Reflect/Dynamic mediation are later slices.
+// first, then to the host registry (the capability boundary). Execution is metered (fuel at loop
+// back-edges and calls, call depth, allocation) for DoS resistance; the meter does not bound time
+// spent inside a host native (SECURITY.md 4).
 class Interp {
 	final strings:Array<String>;
 	final types:Array<String>;
@@ -18,13 +21,35 @@ class Interp {
 	final scriptStatics:Map<String, OpNode> = new Map();
 	var mainCall:Null<OpNode>;
 
-	public function new(ir:ModuleIR, registry:HostRegistry) {
+	// Metering
+	final fuelLimit:Int;
+	final maxDepth:Int;
+	final maxAlloc:Int;
+	var fuel:Int = 0;
+	var depth:Int = 0;
+	var alloc:Int = 0;
+
+	public function new(ir:ModuleIR, registry:HostRegistry, ?limits:Limits) {
 		this.registry = registry;
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);
 		index();
 		this.mainCall = tree.hasMain ? tree.main : null;
+		this.fuelLimit = limits != null && limits.fuelPerCall != null ? limits.fuelPerCall : 100000000;
+		this.maxDepth = limits != null && limits.maxCallDepth != null ? limits.maxCallDepth : 2000;
+		this.maxAlloc = limits != null && limits.maxAllocBytes != null ? limits.maxAllocBytes : 1000000000;
+	}
+
+	inline function burnFuel():Void {
+		if (--fuel < 0)
+			throw new BudgetError(Fuel, "?", {file: "?", line: 0});
+	}
+
+	inline function countAlloc(n:Int):Void {
+		alloc += n;
+		if (alloc > maxAlloc)
+			throw new BudgetError(AllocBytes, "?", {file: "?", line: 0});
 	}
 
 	function index():Void {
@@ -46,11 +71,18 @@ class Interp {
 	public function run():Void {
 		if (mainCall == null)
 			return;
+		fuel = fuelLimit;
+		alloc = 0;
 		compile(mainCall)(new Frame());
 	}
 
 	// Invoke a script static method (its FUN node) with args already evaluated.
 	function invokeFun(fun:OpNode, thisv:Dynamic, args:Array<Dynamic>):Dynamic {
+		burnFuel();
+		if (++depth > maxDepth) {
+			depth--;
+			throw new BudgetError(CallDepth, "?", {file: "?", line: 0});
+		}
 		var frame = new Frame(thisv);
 		// FUN ints: [type, argc, then per arg: nameId, id, captured, type, marker...]
 		var argc = fun.ints[1];
@@ -65,8 +97,13 @@ class Interp {
 		try {
 			compile(body)(frame);
 		} catch (r:ReturnSignal) {
+			depth--;
 			return r.value;
+		} catch (e:haxe.Exception) {
+			depth--;
+			throw e;
 		}
+		depth--;
 		return null;
 	}
 
@@ -141,12 +178,13 @@ class Interp {
 				var typeName = types[n.ints[0]];
 				var argcs = [for (k in n.kids) compile(k)];
 				return function(f) {
+					countAlloc(16);
 					var args = [for (c in argcs) c(f)];
 					return construct(typeName, args);
 				};
 			case "ADEF":
 				var argcs = [for (k in n.kids) compile(k)];
-				return function(f) return [for (c in argcs) c(f)];
+				return function(f) { countAlloc(8 + argcs.length * 8); return [for (c in argcs) c(f)]; };
 			case "ARRAYI":
 				var arr = compile(n.kids[0]);
 				var idx = compile(n.kids[1]);
@@ -193,8 +231,8 @@ class Interp {
 				var c = compile(n.kids[0]);
 				var b = compile(n.kids[1]);
 				return function(f):Dynamic {
-					if (normal) { while ((c(f) : Bool)) loopBody(b, f); }
-					else { do loopBody(b, f) while ((c(f) : Bool)); }
+					if (normal) { while ((c(f) : Bool)) { burnFuel(); loopBody(b, f); } }
+					else { do { burnFuel(); loopBody(b, f); } while ((c(f) : Bool)); }
 					return null;
 				};
 			case _:
