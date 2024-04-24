@@ -395,8 +395,15 @@ class Inline {
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
 			var param = params[i];
+			// A null argument (an omitted optional) takes the default CONSTANT directly, repositioned to the
+			// call site, with no runtime default check; only a possibly-null runtime value keeps the default
+			// temp.
+			var passedNull = false;
 			if (tf.args[i].c != null) switch (param.expr) {
-				case TConst(TNull): param = tf.args[i].c;
+				case TConst(TNull):
+					var c = tf.args[i].c;
+					param = TypeFunctions.mk(c.expr, c.type, param.pos);
+					passedNull = true;
 				case _:
 			}
 			// A Null<T> value passed where a static platform expects a
@@ -412,7 +419,10 @@ class Inline {
 			// A stable lvalue receiver (a local or a side-effect-free field chain) substitutes
 			// directly, so this-assignments write back through it.
 			var use = argUsage(av, tf.expr);
-			var hasRuntimeDefault = tf.args[i].c != null && !tf.args[i].c.expr.match(TConst(TNull));
+			// The runtime default applies only when the passed value was
+			// not the null constant and the platform can see a null there at runtime.
+			var hasRuntimeDefault = !passedNull && tf.args[i].c != null && !tf.args[i].c.expr.match(TConst(TNull))
+				&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type));
 			// An unwritten local or constant argument substitutes without a
 			// temp; any other expression substitutes when it is used at most once; a captured
 			// non-constant argument or one with a runtime default needs the local.
