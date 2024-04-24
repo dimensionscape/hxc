@@ -87,19 +87,23 @@ class Interp {
 	}
 
 	// Invoke a script static method (its FUN node) with args already evaluated.
-	function invokeFun(fun:OpNode, thisv:Dynamic, args:Array<Dynamic>):Dynamic {
+	function invokeFun(fun:OpNode, thisv:Dynamic, args:Array<Dynamic>):Dynamic
+		return runFun(fun, new Frame(thisv), args);
+
+	// Run a FUN body in a freshly entered frame (its parent, if any, is the captured scope).
+	// Binds args by their per-arg id, meters depth, and unwraps the return signal.
+	function runFun(fun:OpNode, frame:Frame, args:Array<Dynamic>):Dynamic {
 		burnFuel();
 		if (++depth > maxDepth) {
 			depth--;
 			throw new BudgetError(CallDepth, "?", {file: "?", line: 0});
 		}
-		var frame = new Frame(thisv);
 		// FUN ints: [type, argc, then per arg: nameId, id, captured, type, marker...]
 		var argc = fun.ints[1];
 		var idx = 2;
 		for (i in 0...argc) {
 			var vId = fun.ints[idx + 1];
-			frame.locals.set(vId, args[i]);
+			frame.declare(vId, i < args.length ? args[i] : null);
 			idx += 5;
 			// A marker==1 arg carries a default value kid, consumed during decode; skip here
 		}
@@ -129,13 +133,13 @@ class Interp {
 			case "VARDECLI":
 				var vId = n.ints[1];
 				var init = compile(n.kids[0]);
-				return function(f) { f.locals.set(vId, init(f)); return null; };
+				return function(f) { f.declare(vId, init(f)); return null; };
 			case "VARDECL":
 				var vId = n.ints[1];
-				return function(f) { f.locals.set(vId, null); return null; };
+				return function(f) { f.declare(vId, null); return null; };
 			case "VAR":
 				var vId = n.ints[0];
-				return function(f) return f.locals.get(vId);
+				return function(f) return f.get(vId);
 			case "i":
 				var v = n.ints[0];
 				return function(f) return v;
@@ -159,6 +163,26 @@ class Interp {
 				return compileModify(n);
 			case "++", "+++", "--", "---":
 				return compileCrement(n);
+			case "FUN":
+				// A function literal used as a value: capture the defining frame and return a
+				// host-callable closure. The captured frame is the live scope, so the closure
+				// reads and mutates enclosing locals through the parent chain.
+				return function(f) {
+					countAlloc(32);
+					var captured = f;
+					return Reflect.makeVarArgs(function(args:Array<Dynamic>):Dynamic
+						return runFun(n, new Frame(null, captured), args));
+				};
+			case "CALL":
+				// Invoke a closure value (kids[0]) with the remaining kids as args.
+				var fnE = compile(n.kids[0]);
+				var argcs = [for (i in 1...n.kids.length) compile(n.kids[i])];
+				return function(f) {
+					burnFuel();
+					var fn = fnE(f);
+					var args = [for (c in argcs) c(f)];
+					return Reflect.callMethod(null, fn, args);
+				};
 			case "CALLSTATIC":
 				var typeName = types[n.ints[0]];
 				var member = strings[n.ints[1]];
@@ -347,7 +371,19 @@ class Interp {
 		switch (lv.op) {
 			case "VAR":
 				var vId = lv.ints[0];
-				return function(f) { var v = rhs(f); f.locals.set(vId, v); return v; };
+				return function(f) { var v = rhs(f); f.assign(vId, v); return v; };
+			case "ARRAYI":
+				var arr = compile(lv.kids[0]);
+				var idx = compile(lv.kids[1]);
+				return function(f) { var v = rhs(f); (arr(f) : Array<Dynamic>)[idx(f)] = v; return v; };
+			case "FLINK", "FNAME", "FTHISINST":
+				var name = strings[lv.ints[1]];
+				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
+				return function(f) {
+					var v = rhs(f);
+					mediator.setField(obj != null ? obj(f) : f.thisv, name, v);
+					return v;
+				};
 			case _:
 				throw new InterpError("unimplemented SET lvalue '" + lv.op + "'");
 		}
@@ -362,8 +398,27 @@ class Interp {
 			case "VAR":
 				var vId = lv.ints[0];
 				return function(f) {
-					var nv = binop(base, f.locals.get(vId), rhs(f));
-					f.locals.set(vId, nv);
+					var nv = binop(base, f.get(vId), rhs(f));
+					f.assign(vId, nv);
+					return nv;
+				};
+			case "ARRAYI":
+				var arr = compile(lv.kids[0]);
+				var idx = compile(lv.kids[1]);
+				return function(f) {
+					var a:Array<Dynamic> = arr(f);
+					var i:Int = idx(f);
+					var nv = binop(base, a[i], rhs(f));
+					a[i] = nv;
+					return nv;
+				};
+			case "FLINK", "FNAME", "FTHISINST":
+				var name = strings[lv.ints[1]];
+				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
+				return function(f) {
+					var o = obj != null ? obj(f) : f.thisv;
+					var nv = binop(base, mediator.getField(o, name), rhs(f));
+					mediator.setField(o, name, nv);
 					return nv;
 				};
 			case _:
@@ -380,9 +435,20 @@ class Interp {
 			case "VAR":
 				var vId = lv.ints[0];
 				return function(f) {
-					var old:Dynamic = f.locals.get(vId);
+					var old:Dynamic = f.get(vId);
 					var nv = numAdd(old, delta);
-					f.locals.set(vId, nv);
+					f.assign(vId, nv);
+					return post ? old : nv;
+				};
+			case "ARRAYI":
+				var arr = compile(lv.kids[0]);
+				var idx = compile(lv.kids[1]);
+				return function(f) {
+					var a:Array<Dynamic> = arr(f);
+					var i:Int = idx(f);
+					var old:Dynamic = a[i];
+					var nv = numAdd(old, delta);
+					a[i] = nv;
 					return post ? old : nv;
 				};
 			case _:
