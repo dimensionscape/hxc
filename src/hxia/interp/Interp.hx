@@ -229,7 +229,7 @@ class Interp {
 					return callStatic(typeName, member, args);
 				};
 			case "CALLMEMBER":
-				var member = mapMethodShim(strings[n.ints[1]]);
+				var member = strings[n.ints[1]];
 				var recv = compile(n.kids[0]);
 				// Enum runtime index (gencpp emits CALLMEMBER ::hx::EnumBase.__Index)
 				if (member == "__Index")
@@ -653,6 +653,10 @@ class Interp {
 			if (m != null)
 				return invokeFun(m, obj, args);
 		}
+		// The cppia map remap (setString/getInt/...) only applies to map receivers; translating
+		// it unconditionally would clobber same-named methods elsewhere (e.g. Bytes.getString).
+		if (Std.isOfType(obj, haxe.Constraints.IMap))
+			name = mapMethodShim(name);
 		return mediator.callMethod(obj, name, args);
 	}
 

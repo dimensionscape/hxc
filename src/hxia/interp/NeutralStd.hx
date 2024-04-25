@@ -13,7 +13,22 @@ class NeutralStd {
 		reg.bindNew("haxe.ds.ObjectMap", function(_) return new haxe.ds.ObjectMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
-		reg.bindNew("haxe.io.Bytes", function(a) return haxe.io.Bytes.alloc(a[0]));
+
+		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
+		// factories return the shim and its non-inline methods are keyed by the shim type name.
+		reg.bindStatic("haxe.io.Bytes", "alloc", function(a) return NeutralBytes.alloc(a[0]));
+		reg.bindStatic("haxe.io.Bytes", "ofString", function(a) return NeutralBytes.ofString(a[0]));
+		reg.bindStatic("haxe.io.Bytes", "ofHex", function(a) return NeutralBytes.ofHex(a[0]));
+		var bytes = Type.getClassName(NeutralBytes);
+		reg.bindMember(bytes, "get", function(o, a) return (o : NeutralBytes).get(a[0]));
+		reg.bindMember(bytes, "set", function(o, a) { (o : NeutralBytes).set(a[0], a[1]); return null; });
+		reg.bindMember(bytes, "getString", function(o, a) return (o : NeutralBytes).getString(a[0], a[1]));
+		reg.bindMember(bytes, "toHex", function(o, a) return (o : NeutralBytes).toHex());
+		reg.bindMember(bytes, "toString", function(o, a) return (o : NeutralBytes).toString());
+		reg.bindMember(bytes, "blit", function(o, a) { (o : NeutralBytes).blit(a[0], a[1], a[2], a[3]); return null; });
+		reg.bindMember(bytes, "fill", function(o, a) { (o : NeutralBytes).fill(a[0], a[1], a[2]); return null; });
+		reg.bindMember(bytes, "sub", function(o, a) return (o : NeutralBytes).sub(a[0], a[1]));
+		reg.bindMember(bytes, "compare", function(o, a) return (o : NeutralBytes).compare(a[0]));
 
 		// Map methods bound as typed IMap calls: on some targets (js) the map .set/.get are
 		// inlined and DCE'd, so reflective dispatch cannot reach them. Interface dispatch does.
