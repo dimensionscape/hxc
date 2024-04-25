@@ -114,6 +114,7 @@ class NeutralStd {
 		reg.bindStatic(i64, "sub", function(a) return haxe.Int64.sub(a[0], a[1]));
 		reg.bindStatic(i64, "mul", function(a) return haxe.Int64.mul(a[0], a[1]));
 		reg.bindStatic(i64, "toStr", function(a) return haxe.Int64.toStr(a[0]));
+		reg.bindStatic(i64, "toString", function(a) return haxe.Int64.toStr(a[0]));
 		reg.bindStatic(i64, "toInt", function(a) return haxe.Int64.toInt(a[0]));
 
 		reg.bindStatic("Math", "abs", function(a) return Math.abs(a[0]));

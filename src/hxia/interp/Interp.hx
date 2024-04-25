@@ -326,9 +326,12 @@ class Interp {
 				return function(f) return f.thisv;
 			case "CLASSOF":
 				// A script class resolves to its descriptor (the token used by the script-aware
-				// isOfType); a host class resolves to a runtime Class.
+				// isOfType); primitives (Int/Float/Bool/...) have no runtime Class on js, so carry
+				// a marker the script-aware isOfType dispatches by name; a host class resolves to a
+				// runtime Class.
 				var typeName = types[n.ints[0]];
-				var token:Dynamic = scriptClasses.exists(typeName) ? scriptClasses.get(typeName) : resolveClass(typeName);
+				var token:Dynamic = scriptClasses.exists(typeName) ? scriptClasses.get(typeName)
+					: (PrimType.isPrimitive(typeName) ? new PrimType(typeName) : resolveClass(typeName));
 				return function(f) return token;
 			case "POSINFO":
 				// Builds the haxe.PosInfos auto-filled for ?pos args: [file, line, class, method].
@@ -615,6 +618,8 @@ class Interp {
 	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
 	// chain reaches it; anything else defers to the host check.
 	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
+		if (Std.isOfType(token, PrimType))
+			return (token : PrimType).matches(v);
 		if (Std.isOfType(token, ScriptClass)) {
 			if (!Std.isOfType(v, ScriptObject))
 				return false;
@@ -820,6 +825,30 @@ class ScriptObject {
 	public var cls:ScriptClass;
 	public var fields:Map<String, Dynamic> = new Map();
 	public function new(cls:ScriptClass) this.cls = cls;
+}
+
+// A CLASSOF token for a primitive type, which has no runtime Class on some targets (js). It
+// dispatches isOfType with literal type checks that compile correctly on every host.
+class PrimType {
+	public var name:String;
+	public function new(name:String) this.name = name;
+
+	public static function isPrimitive(name:String):Bool {
+		return switch (name) {
+			case "Int" | "Float" | "Bool" | "UInt" | "Single" | "Dynamic": true;
+			case _: false;
+		}
+	}
+
+	public function matches(v:Dynamic):Bool {
+		return switch (name) {
+			case "Int" | "UInt": Std.isOfType(v, Int);
+			case "Float" | "Single": Std.isOfType(v, Float);
+			case "Bool": Std.isOfType(v, Bool);
+			case "Dynamic": true;
+			case _: false;
+		}
+	}
 }
 
 // A script enum value: constructor index (switch dispatches on it), name, and parameters.
