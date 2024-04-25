@@ -1313,7 +1313,16 @@ class EvalMacro {
 			case VTrue: mk(EConst(CIdent("true")));
 			case VFalse: mk(EConst(CIdent("false")));
 			case VInt(i): mk(EConst(CInt(Std.string(i), null)));
-			case VFloat(f): mk(EConst(CFloat(Std.string(f), null)));
+			case VFloat(f):
+				// Infinities and NaN embed as std.Math field reads; a finite value embeds its float lexeme
+				// (e.g. "10.").
+				if (!Math.isFinite(f) || Math.isNaN(f)) {
+					var std = new Expr(EConst(CIdent("std")), p);
+					var math = new Expr(EField(std, "Math", EFNormal), p);
+					var name = Math.isNaN(f) ? "NaN" : f > 0 ? "POSITIVE_INFINITY" : "NEGATIVE_INFINITY";
+					new Expr(EField(math, name, EFNormal), p);
+				} else
+					mk(EConst(CFloat(hxc.core.Numeric.floatRepres(f), null)));
 			case VString(s): mk(EConst(CString(s.sstring, SDoubleQuotes)));
 			case VNativeString(s): mk(EConst(CString(s, SDoubleQuotes)));
 			case VArray(va): mk(EArrayDecl([for (i in 0...va.alength) valueToExpr(ec, va.avalues[i], p)]));

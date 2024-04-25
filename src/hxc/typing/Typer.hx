@@ -2915,7 +2915,9 @@ class Typer {
 							var locals:Array<TExpr> = [];
 							for (a in rest) {
 								var vt = a.opt ? ctx.com.basic.tnull(a.t) : a.t;
-								var name = a.name == "" ? "`arg" : a.name;
+								// An unnamed function-type argument gets a bare generated local (renamed
+								// _g), a named one keeps its name.
+								var name = a.name == "" ? "`" : a.name;
 								var v = TypeFunctions.allocVar(VGenerated, name, vt, p);
 								args.push({v: v, c: a.opt ? TypeFunctions.mk(TConst(TNull), vt, p) : null});
 								locals.push(TypeFunctions.mk(TLocal(v), vt, p));
