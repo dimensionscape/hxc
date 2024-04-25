@@ -459,13 +459,14 @@ class Inline {
 						nv.meta = [{name: ":inlineIfCalled", params: [], pos: p}].concat(nv.meta);
 					case _:
 				}
-				// An optional argument with a non-null default falls back when the passed value is null at
-				// runtime: if (v == null) v = default. (i_default_value) and
+				// An optional argument with a non-null default falls back when the passed value is null
+				// at runtime: if (v == null) v = default. A null argument already replaced by the default
+				// constant gets no such check.
 				var dflt = tf.args[i].c;
 				// On a static platform a non-nullable arg can never be null, so the default check is
 				// skipped; emitting it would type a null at the non-nullable arg type and trip the
 				// static-null check.
-				if (dflt != null && !dflt.expr.match(TConst(TNull))
+				if (hasRuntimeDefault && dflt != null && !dflt.expr.match(TConst(TNull))
 						&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type))) {
 					var ve = TypeFunctions.mk(TLocal(nv), nv.type, p);
 					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, p)), ctx.com.basic.tbool, p);
