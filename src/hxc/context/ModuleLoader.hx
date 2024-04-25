@@ -442,15 +442,23 @@ class ModuleLoader {
 						if (!hxc.core.StringHelper.isValidIdentifier(implName) && !StringTools.startsWith(implName, "$") && implName.length > 0 && !hxc.ast.Ast.isLowerIdent(implName))
 							ctx.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(implName) + "\" is not a valid type name.", p);
 						var implPath:Path = {pack: m.path.pack.concat(["_" + m.path.name]), name: implName};
+						// Copy only whitelisted abstract metadata to its implementation. Keep @:keep on the abstract
+						// so unused implementations can be removed.
+						var implMeta:Metadata = [for (mm in d.dMeta)
+							if (mm.name == ":using" || mm.name == ":build" || mm.name == ":coreApi"
+								|| mm.name == ":allow" || mm.name == ":access" || mm.name == ":enum"
+								|| mm.name == ":dce" || mm.name == ":native" || mm.name == ":hlNative"
+								|| mm.name == ":jsRequire" || mm.name == ":pythonImport" || mm.name == ":expose"
+								|| mm.name == ":deprecated" || mm.name == ":phpGlobal" || mm.name == ":publicFields") mm];
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
-							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: d.dMeta,
+							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: implMeta,
 							dFlags: [HPrivate], dData: implFields
 						};
 						var implDecl:TypeDef = EClass(implDef);
 						var c = TypeFunctions.mkClass(m, implPath, p, p);
 						c.build = function():BuildState return Built;
 						c.module = m;
-						c.meta = d.dMeta;
+						c.meta = implMeta;
 						c.isPrivate = true;
 						c.kind = KAbstractImpl(a);
 						TypeFunctions.addClassFlag(c, CFinal);
