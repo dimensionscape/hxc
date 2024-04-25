@@ -48,6 +48,44 @@ class DisplayJson {
 		return full.toLowerCase();
 	}
 
+	// Class paths for the active request, supplied to server/readClassPaths by the wait loop.
+	public static var requestClassPaths:Array<String> = [];
+
+	// Register class-path source files with their modification time, package and module name.
+	static function readClassPathsInto(cc:hxc.context.CompilationCache.CacheContext):Void {
+		function packOf(file:String):Array<String> {
+			return try {
+				var fh = sys.io.File.read(file, false);
+				var head = try fh.readString(512) catch (_:Dynamic) { fh.close(); return []; };
+				fh.close();
+				var re = ~/package[ 	]+([A-Za-z0-9_.]+)[ 	]*;/;
+				re.match(head) ? re.matched(1).split(".") : [];
+			} catch (_:Dynamic) [];
+		}
+		function walk(dir:String):Void {
+			var entries = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) return;
+			for (e in entries) {
+				var full = dir + "/" + e;
+				if (sys.FileSystem.isDirectory(full)) {
+					if (e.length > 0 && e.charCodeAt(0) != ".".code) walk(full);
+				} else if (StringTools.endsWith(e, ".hx")) {
+					var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+					cc.files.set(fileKey(full), {
+						path: full,
+						time: time,
+						pack: packOf(full),
+						moduleName: e.substr(0, e.length - 3)
+					});
+				}
+			}
+		}
+		for (cp in requestClassPaths) {
+			var dir = cp == "" ? "." : cp;
+			if (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\")) dir = dir.substr(0, dir.length - 1);
+			if (sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir)) walk(dir);
+		}
+	}
+
 	static function sendJson(json:JsonValue):Void {
 		throw new JsonDisplayOutput(Json.stringOfJson(json));
 	}
@@ -169,9 +207,11 @@ class DisplayJson {
 				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}},
 			{name: "server/readClassPaths", f: function(hctx) {
-				// Initialize the context and report cached files; one-shot runs cache none.
-				var cc = cache.getContext("current");
+				// Explore request class paths and report cached files. This version keys contexts by a
+				// class-path digest; one-shot requests have no paths and report zero.
+				var cc = cache.getContext(haxe.crypto.Md5.encode(requestClassPaths.join(";")));
 				cc.initialized = true;
+				readClassPathsInto(cc);
 				hctx.sendResult(JObject([{name: "files", value: JInt(cache.getFiles().length)}]));
 			}},
 			{name: "server/contexts", f: function(hctx) {
