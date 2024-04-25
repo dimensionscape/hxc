@@ -1146,13 +1146,34 @@ class Typer {
 					var tfields:Array<TObjectField> = [];
 					var anonFields = new haxe.ds.StringMap<TClassField>();
 					var expected = expectedAnonFromWithType(ctx, withType);
+					// A Dynamic<T> expectation types every field at T instead of a per-field lookup.
+					var dynParam:Null<T> = switch (withType) {
+						case WithType(wt, _): switch (expectedAnonFromType(ctx, wt, [])) {
+							case ODKDynamic(dt): dt;
+							case _: null;
+						};
+						case _: null;
+					};
 					for (f in fields) {
-						var ef = expected != null ? expected.fields.get(f.name) : null;
-						var fwt = ef != null ? WithTypeTools.withType(ef.type) : WithTypeTools.value;
+						var ef = dynParam == null && expected != null ? expected.fields.get(f.name) : null;
+						var ft:Null<T> = dynParam != null ? dynParam : (ef != null ? ef.type : null);
+						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name) : WithTypeTools.value;
 						var te = typeExpr(ctx, f.expr, fwt);
 						// Against an expected field type, coerce the value to it so an implicit abstract cast
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
-						if (ef != null) te = castOrUnify(ctx, ef.type, te, te.pos);
+						if (ft != null) {
+							te = castOrUnify(ctx, ft, te, te.pos);
+							// A non-null value against a nullable expectation wraps so the runtime
+							// representation stays nullable.
+							if (TypeFunctions.isNull(ft) && !TypeFunctions.isNull(te.type))
+								te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
+							// The stored field expr carries the EXPECTED type: a loose unify that is not
+							// strictly equal wraps in a plain cast, so e.g. a String value behind a
+							// Dynamic<Dynamic> field reads as Dynamic downstream (inline constructors fold
+							// on that strict equality).
+							try TypeUnification.typeEqKind(EqStrict, te.type, ft)
+							catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), ft, te.pos);
+						}
 						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
 						// Against an expected structure the field takes the expected type (the value was
 						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
@@ -1161,7 +1182,9 @@ class Typer {
 						// reflection-only field: it stays in the runtime object but not in the structure
 						// type, and never counts as an "extra field".
 						if (isValidIdentifier(f.name)) {
-							var anonField = TypeFunctions.mkField(f.name, ef != null ? ef.type : te.type, f.pos, f.pos);
+							// The anon field records the typed expr's type, which the strict-cast wrap
+							// above has already aligned to any expectation. (mk_field n e.type).
+							var anonField = TypeFunctions.mkField(f.name, te.type, f.pos, f.pos);
 							if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
 							anonFields.set(f.name, anonField);
 						}
@@ -1750,6 +1773,9 @@ class Typer {
 		return switch (TypeFunctions.follow(t)) {
 			case TAnon(a):
 				ODKStructure(a);
+			// Dynamic<T> types every field at T (an empty structure expectation with a dynamic parameter).
+			case TDynamic(dt) if (dt != null):
+				ODKDynamic(dt);
 			case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
 				for (old in seen) if (TypeUnification.shallowEq(t, old)) return ODKPlain;
 				// Every non-plain candidate counts, INCLUDING a nested ambiguity: a from-type that is
@@ -4271,6 +4297,8 @@ enum ObjectDeclKind {
 	ODKPlain;
 	ODKFailed;
 	ODKStructure(a:TAnon);
+	// A Dynamic<T> expectation types every field at T.
+	ODKDynamic(t:T);
 }
 
 // Unwinds returnFlow once a fall-through path has been reported.
