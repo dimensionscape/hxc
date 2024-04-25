@@ -80,10 +80,20 @@ class Parser {
 	}
 
 	public static function parseExprString(src:String, file:String = "?", ?defines:Define, registerContent:Bool = false):Expr {
-		var p = make(src, file, defines, registerContent);
-		var e = p.expr();
-		if (!p.tokEq(p.peek(), Eof)) p.serror();
-		return e;
+		// The file's line index is saved and restored so an inline parse under a real file's name
+		// (Context.parseInlineString at currentPos) does not corrupt the positions of expressions typed
+		// afterwards in that file.
+		var saved = registerContent ? hxc.ast.Position.saveFileEntry(file) : null;
+		try {
+			var p = make(src, file, defines, registerContent);
+			var e = p.expr();
+			if (!p.tokEq(p.peek(), Eof)) p.serror();
+			if (registerContent) hxc.ast.Position.restoreFileEntry(file, saved);
+			return e;
+		} catch (err:Dynamic) {
+			if (registerContent) hxc.ast.Position.restoreFileEntry(file, saved);
+			throw err;
+		}
 	}
 
 	/**

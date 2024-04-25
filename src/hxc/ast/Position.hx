@@ -24,6 +24,16 @@ class Position {
 		return content;
 	}
 
+	// Preserve the file's line index during an inline parse under the same name.
+	public static function saveFileEntry(file:String):Null<PositionFile> {
+		return fileCache.get(file);
+	}
+
+	public static function restoreFileEntry(file:String, entry:Null<PositionFile>):Void {
+		// Restore an existing entry; retain a new virtual file's table for later diagnostics.
+		if (entry != null) fileCache.set(file, entry);
+	}
+
 	public static function getFileContent(file:String):String {
 		var cached = fileCache.get(file);
 		if (cached != null) return cached.content;
