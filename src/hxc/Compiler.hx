@@ -58,6 +58,50 @@ class Compiler {
 			var lines = payload.split("\n");
 			while (lines.length > 0 && lines[lines.length - 1] == "") lines.pop();
 			var out = new StringBuf();
+			// The stateful cache methods answer in the server process itself so cache state (contexts,
+			// removed files, configure switches) persists across requests; compilations still run isolated
+			// per request.
+			var displayArg:Null<String> = null;
+			for (i in 0...lines.length)
+				if (lines[i] == "--display" && i + 1 < lines.length && StringTools.startsWith(lines[i + 1], "{"))
+					displayArg = lines[i + 1];
+			var parentMethod = false;
+			if (displayArg != null) {
+				var m = ~/"method"[ 	]*:[ 	]*"([^"]+)"/;
+				if (m.match(displayArg)) {
+					var name = m.matched(1);
+					parentMethod = name == "initialize" || StringTools.startsWith(name, "server/")
+						|| name == "display/metadata" || name == "display/defines";
+				}
+			}
+			if (parentMethod) {
+				try {
+					hxc.context.DisplayJson.parseInput(null, displayArg);
+				} catch (o:hxc.context.DisplayJson.JsonDisplayOutput) {
+					out.add(o.output);
+					if (!StringTools.endsWith(o.output, "
+")) out.add("
+");
+				} catch (e:hxc.core.JsonRpc.InvalidArgument) {
+					out.add("Invalid_argument(\"" + e.arg + "\")
+
+");
+				} catch (e:Dynamic) {
+					out.add("Error: " + Std.string(e) + "
+
+");
+				}
+				var body = haxe.io.Bytes.ofString(out.toString());
+				var head = haxe.io.Bytes.alloc(4);
+				head.set(0, body.length & 0xFF);
+				head.set(1, (body.length >> 8) & 0xFF);
+				head.set(2, (body.length >> 16) & 0xFF);
+				head.set(3, (body.length >> 24) & 0xFF);
+				stderr.write(head);
+				stderr.write(body);
+				stderr.flush();
+				continue;
+			}
 			try {
 				var proc = new Process(Sys.programPath(), lines);
 				var pout = proc.stdout.readAll().toString();
