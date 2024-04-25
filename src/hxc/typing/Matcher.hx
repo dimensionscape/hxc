@@ -643,7 +643,7 @@ class PatternMaker {
 		return {pat: kind, pos: p};
 	}
 
-	static function clone(pctx:PatternContext):PatternContext {
+	public static function clone(pctx:PatternContext):PatternContext {
 		var c = new PatternContext(pctx.ctx, pctx.ctxLocals);
 		c.orLocals = pctx.orLocals;
 		c.currentLocals = pctx.currentLocals;
@@ -729,7 +729,14 @@ class CaseMaker {
 	// becomes n element patterns against the n subject types, and a bare `_` becomes n wildcards.
 	public static function makeTuple(ctx:TyperContext, types:Array<T>, el:Array<Expr>, eg:Null<Expr>, eoAst:Null<Expr>, withType:WithType, postfixMatch:Bool, p:Position):{c:Case, pats:Array<Pattern>} {
 		if (el.length == 0) throw new TypingError("case without pattern", p);
-		if (el.length > 1) throw new TypingError("or-patterns over a tuple switch are not yet supported", p);
+		// Multiple case values fold into one OpOr chain so the whole case stays one pattern.
+		var caseE = el[el.length - 1];
+		var i = el.length - 2;
+		while (i >= 0) {
+			caseE = new Expr(EBinop(OpOr, el[i], caseE), Position.union(el[i].pos, caseE.pos));
+			i--;
+		}
+		el = [caseE];
 		var save = Typer.saveLocals(ctx);
 		var monos:TParams = [for (_ in ctx.typeParams) TypeFunctions.mkMono()];
 		function map(t:T):T return TypeFunctions.applyParams(ctx.typeParams, monos, t);
@@ -750,21 +757,43 @@ class CaseMaker {
 		pctx.unapplyTypeParameters = function() return TypeParameterFrame.unapply(ctx.typeParams, monos);
 		var mappedTypes = [for (t in types) map(t)];
 		// The case keeps one pattern: a [..] case is a single PatTuple (compile expands it after the
-		// all-wildcard leaf shortcut, so a tuple of plain binders still reaches compile_switch and its
-		// explicit-Null guard). + .
-		var pats:Array<Pattern>;
-		try {
-			pats = switch (el[0].expr) {
+		// all-wildcard leaf shortcut, so a tuple of plain binders still reaches compileSwitch and its
+		// explicit-Null guard), and `[..]|[..]` is a PatOr of tuples inside the same case, so both switch
+		// branches share one hashconsed leaf and the conversion merges their case values.
+		function mkTuplePat(pc:PatternContext, ex:Expr):Pattern {
+			return switch (ex.expr) {
+				case EParenthesis(e1):
+					mkTuplePat(pc, e1);
+				case EBinop(OpOr, e1, e2):
+					// Both alternatives must bind the same variables; the second reuses the first's vars
+					// through orLocals.
+					var pctx1 = PatternMaker.clone(pc);
+					pctx1.currentLocals = new Map();
+					var pat1 = mkTuplePat(pctx1, e1);
+					var pctx2 = PatternMaker.clone(pc);
+					pctx2.currentLocals = new Map();
+					pctx2.orLocals = pctx1.currentLocals;
+					var pat2 = mkTuplePat(pctx2, e2);
+					for (name in pctx1.currentLocals.keys()) {
+						var entry = pctx1.currentLocals.get(name);
+						if (!pctx2.currentLocals.exists(name) && name != "_") throw new TypingError("Variable " + name + " must appear exactly once in each sub-pattern", entry.p);
+						pc.currentLocals.set(name, entry);
+					}
+					{pat: PatOr(pat1, pat2), pos: ex.pos};
 				case EArrayDecl(elems) if (elems.length == mappedTypes.length):
-					[{pat: PatTuple([for (i in 0...mappedTypes.length) PatternMaker.make(pctx, true, mappedTypes[i], elems[i])]), pos: el[0].pos}];
+					{pat: PatTuple([for (i in 0...mappedTypes.length) PatternMaker.make(pc, true, mappedTypes[i], elems[i])]), pos: ex.pos};
 				case EConst(CIdent("_")):
 					// `_` over a tuple is a tuple of anys, keeping every row the same width.
-					[{pat: PatTuple([for (_ in 0...mappedTypes.length) ({pat: PatAny, pos: el[0].pos} : Pattern)]), pos: el[0].pos}];
+					{pat: PatTuple([for (_ in 0...mappedTypes.length) ({pat: PatAny, pos: ex.pos} : Pattern)]), pos: ex.pos};
 				case EConst(CIdent(_)):
-					throw new TypingError("Cannot bind matched tuple to variable, use _ instead", el[0].pos);
+					throw new TypingError("Cannot bind matched tuple to variable, use _ instead", ex.pos);
 				case _:
 					throw new TypingError("tuple switch case must be a [..] pattern of arity " + mappedTypes.length, p);
 			};
+		}
+		var pats:Array<Pattern>;
+		try {
+			pats = [mkTuplePat(pctx, el[0])];
 			TypeParameterFrame.unapply(ctx.typeParams, monos);
 		} catch (ex:Dynamic) {
 			cleanup();
@@ -1800,19 +1829,10 @@ class Match {
 		var matchCases:Array<MatchCase> = [];
 		for (cas in allCases) {
 			if (tupleEls != null) {
-				// `case [p..]|[q..]:` over a tuple is an or of tuple patterns; the parser folds the `|`
-				// alternatives into an OpOr expr. Flatten it and give each alternative its own case
-				// (sharing the guard and body), as the reference matcher does.
-				var alts:Array<Expr> = [];
-				function flattenOr(e:Expr):Void switch (e.expr) {
-					case EBinop(OpOr, a, b): flattenOr(a); flattenOr(b);
-					case _: alts.push(e);
-				}
-				for (v in cas.values) flattenOr(v);
-				for (v in alts) {
-					var r = CaseMaker.makeTuple(ctx, subjectTypes, [v], cas.guard, cas.expr, withType, postfix, cas.pos);
-					matchCases.push({c: r.c, bindings: [], patterns: r.pats, warningPos: v.pos});
-				}
+				// `case [p..]|[q..]:` over a tuple stays one case whose pattern is a PatOr of tuples, so
+				// both branches share one leaf and merge at conversion.
+				var r = CaseMaker.makeTuple(ctx, subjectTypes, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
+				matchCases.push({c: r.c, bindings: [], patterns: r.pats, warningPos: cas.values[0].pos});
 			} else {
 				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
