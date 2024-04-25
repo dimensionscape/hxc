@@ -6,11 +6,22 @@ package hxia.interp;
 // explicit bindings here. The `logSink` receives Sys.println / trace output.
 class NeutralStd {
 	public static function install(reg:HostRegistry, logSink:String->Void):Void {
+		// Authority-free std classes: their statics resolve reflectively when not explicitly
+		// bound (the explicit bindings above keep priority and stay DCE-safe on every host).
+		// Passing the Class handle also pins it through the host's DCE.
+		reg.markNeutralStatic("Math", Math);
+		reg.markNeutralStatic("Std", Std);
+		reg.markNeutralStatic("Lambda", Lambda);
+		reg.markNeutralStatic("StringTools", StringTools);
+		reg.markNeutralStatic("Reflect", Reflect);
+		reg.markNeutralStatic("Type", Type);
+
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
 		reg.bindNew("haxe.ds.StringMap", function(_) return new haxe.ds.StringMap<Dynamic>());
 		reg.bindNew("haxe.ds.IntMap", function(_) return new haxe.ds.IntMap<Dynamic>());
 		reg.bindNew("haxe.ds.ObjectMap", function(_) return new haxe.ds.ObjectMap<Dynamic, Dynamic>());
+		reg.bindNew("haxe.ds.EnumValueMap", function(_) return new haxe.ds.EnumValueMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
 
@@ -32,7 +43,7 @@ class NeutralStd {
 
 		// Map methods bound as typed IMap calls: on some targets (js) the map .set/.get are
 		// inlined and DCE'd, so reflective dispatch cannot reach them. Interface dispatch does.
-		for (mapType in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap"]) {
+		for (mapType in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap", "haxe.ds.EnumValueMap"]) {
 			reg.bindMember(mapType, "set", function(o, a) { (o : haxe.Constraints.IMap<Dynamic, Dynamic>).set(a[0], a[1]); return null; });
 			reg.bindMember(mapType, "get", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).get(a[0]));
 			reg.bindMember(mapType, "exists", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).exists(a[0]));
@@ -41,6 +52,31 @@ class NeutralStd {
 			reg.bindMember(mapType, "iterator", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).iterator());
 			reg.bindMember(mapType, "keyValueIterator", function(o, a) return (o : haxe.Constraints.IMap<Dynamic, Dynamic>).keyValueIterator());
 		}
+
+		// Array: several helper methods (remove/contains/insert/...) are inlined or Haxe-defined
+		// and not reflectively callable on js, so bind the surface as typed calls (dispatched by
+		// the runtime type name "Array"). Functional args are script closures, callable as-is.
+		reg.bindMember("Array", "push", function(o, a) return (o : Array<Dynamic>).push(a[0]));
+		reg.bindMember("Array", "pop", function(o, a) return (o : Array<Dynamic>).pop());
+		reg.bindMember("Array", "shift", function(o, a) return (o : Array<Dynamic>).shift());
+		reg.bindMember("Array", "unshift", function(o, a) { (o : Array<Dynamic>).unshift(a[0]); return null; });
+		reg.bindMember("Array", "remove", function(o, a) return (o : Array<Dynamic>).remove(a[0]));
+		reg.bindMember("Array", "contains", function(o, a) return (o : Array<Dynamic>).contains(a[0]));
+		reg.bindMember("Array", "indexOf", function(o, a) return (o : Array<Dynamic>).indexOf(a[0], a.length > 1 ? a[1] : 0));
+		reg.bindMember("Array", "lastIndexOf", function(o, a) return (o : Array<Dynamic>).lastIndexOf(a[0], a.length > 1 ? a[1] : (o : Array<Dynamic>).length - 1));
+		reg.bindMember("Array", "insert", function(o, a) { (o : Array<Dynamic>).insert(a[0], a[1]); return null; });
+		reg.bindMember("Array", "splice", function(o, a) return (o : Array<Dynamic>).splice(a[0], a[1]));
+		reg.bindMember("Array", "slice", function(o, a) return (o : Array<Dynamic>).slice(a[0], a.length > 1 ? a[1] : null));
+		reg.bindMember("Array", "concat", function(o, a) return (o : Array<Dynamic>).concat(a[0]));
+		reg.bindMember("Array", "join", function(o, a) return (o : Array<Dynamic>).join(a[0]));
+		reg.bindMember("Array", "reverse", function(o, a) { (o : Array<Dynamic>).reverse(); return null; });
+		reg.bindMember("Array", "sort", function(o, a) { (o : Array<Dynamic>).sort(a[0]); return null; });
+		reg.bindMember("Array", "copy", function(o, a) return (o : Array<Dynamic>).copy());
+		reg.bindMember("Array", "map", function(o, a) return (o : Array<Dynamic>).map(a[0]));
+		reg.bindMember("Array", "filter", function(o, a) return (o : Array<Dynamic>).filter(a[0]));
+		reg.bindMember("Array", "iterator", function(o, a) return (o : Array<Dynamic>).iterator());
+		reg.bindMember("Array", "keyValueIterator", function(o, a) return (o : Array<Dynamic>).keyValueIterator());
+		reg.bindMember("Array", "resize", function(o, a) { (o : Array<Dynamic>).resize(a[0]); return null; });
 
 		// StringBuf's non-inline methods are keyed by the shim's runtime type name (cppia inlines
 		// `add` into field ops on `b`/`charBuf`, which the shim exposes directly).
@@ -63,6 +99,7 @@ class NeutralStd {
 
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
+		reg.bindStatic("Sys", "print", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Std", "string", function(a) return Std.string(a[0]));
 		reg.bindStatic("Std", "isOfType", function(a) return Std.isOfType(a[0], a[1]));
 		reg.bindStatic("Std", "int", function(a) return Std.int(a[0]));
@@ -81,7 +118,25 @@ class NeutralStd {
 
 		reg.bindStatic("Math", "abs", function(a) return Math.abs(a[0]));
 		reg.bindStatic("Math", "floor", function(a) return Math.floor(a[0]));
+		reg.bindStatic("Math", "ceil", function(a) return Math.ceil(a[0]));
+		reg.bindStatic("Math", "round", function(a) return Math.round(a[0]));
+		reg.bindStatic("Math", "fceil", function(a) return Math.fceil(a[0]));
+		reg.bindStatic("Math", "ffloor", function(a) return Math.ffloor(a[0]));
+		reg.bindStatic("Math", "fround", function(a) return Math.fround(a[0]));
 		reg.bindStatic("Math", "max", function(a) return Math.max(a[0], a[1]));
 		reg.bindStatic("Math", "min", function(a) return Math.min(a[0], a[1]));
+		reg.bindStatic("Math", "sqrt", function(a) return Math.sqrt(a[0]));
+		reg.bindStatic("Math", "pow", function(a) return Math.pow(a[0], a[1]));
+		reg.bindStatic("Math", "sin", function(a) return Math.sin(a[0]));
+		reg.bindStatic("Math", "cos", function(a) return Math.cos(a[0]));
+		reg.bindStatic("Math", "tan", function(a) return Math.tan(a[0]));
+		reg.bindStatic("Math", "asin", function(a) return Math.asin(a[0]));
+		reg.bindStatic("Math", "acos", function(a) return Math.acos(a[0]));
+		reg.bindStatic("Math", "atan", function(a) return Math.atan(a[0]));
+		reg.bindStatic("Math", "atan2", function(a) return Math.atan2(a[0], a[1]));
+		reg.bindStatic("Math", "exp", function(a) return Math.exp(a[0]));
+		reg.bindStatic("Math", "log", function(a) return Math.log(a[0]));
+		reg.bindStatic("Math", "isNaN", function(a) return Math.isNaN(a[0]));
+		reg.bindStatic("Math", "isFinite", function(a) return Math.isFinite(a[0]));
 	}
 }

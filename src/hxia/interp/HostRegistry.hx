@@ -12,8 +12,20 @@ class HostRegistry {
 	// whose methods are inlined/DCE'd on some targets (e.g. haxe.ds map .set/.get on js), so
 	// reflective dispatch cannot reach them.
 	final members:Map<String, (Dynamic, Array<Dynamic>) -> Dynamic> = new Map();
+	// Authority-free std classes whose statics may resolve reflectively (Math/Lambda/StringTools
+	// /Reflect/Type/...). This is still an explicit allow-list: authority-bearing classes (Sys, File)
+	// are not marked, so they stay confined to their hand-bound, mediated surface. The value is the
+	// actual Class handle: passing it keeps the class alive through the host's DCE (a name string
+	// alone would let DCE drop a class the script needs) and avoids a lookup.
+	final neutralStatics:Map<String, Class<Dynamic>> = new Map();
 
 	public function new() {}
+
+	public function markNeutralStatic(type:String, cls:Class<Dynamic>):Void
+		neutralStatics.set(type, cls);
+
+	public function neutralStaticClass(type:String):Null<Class<Dynamic>>
+		return neutralStatics.get(type);
 
 	public function bindMember(type:String, member:String, fn:(Dynamic, Array<Dynamic>) -> Dynamic):Void
 		members.set(type + "." + member, fn);

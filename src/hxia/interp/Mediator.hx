@@ -31,6 +31,19 @@ class Mediator {
 		return Reflect.callMethod(obj, fn, args);
 	}
 
+	// A method read as a value (`o.method` used as a closure): if the registry binds this member
+	// as a typed call, return it bound to the receiver. Needed when the host method has no
+	// reflective field (inline methods on js), so `o.iterator` / `o.hasNext` resolve to a
+	// callable instead of undefined.
+	public function methodValue(obj:Dynamic, member:String):Null<Dynamic> {
+		if (memberResolver != null) {
+			var bound = memberResolver(typeName(obj), member);
+			if (bound != null)
+				return Reflect.makeVarArgs(function(args:Array<Dynamic>) return bound(obj, args));
+		}
+		return null;
+	}
+
 	public function getField(obj:Dynamic, member:String):Dynamic {
 		check(obj, member);
 		return Reflect.field(obj, member);

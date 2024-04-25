@@ -218,6 +218,8 @@ class Interp {
 					burnFuel();
 					var fn = fnE(f);
 					var args = [for (c in argcs) c(f)];
+					if (fn == null || !Reflect.isFunction(fn))
+						throw new InterpError("hxia: CALL target is not a function (a host method read as a value may be inlined/DCE'd on this target)");
 					return Reflect.callMethod(null, fn, args);
 				};
 			case "CALLSTATIC":
@@ -302,7 +304,13 @@ class Interp {
 			case "ARRAYI":
 				var arr = compile(n.kids[0]);
 				var idx = compile(n.kids[1]);
-				return function(f) return (arr(f) : Array<Dynamic>)[idx(f)];
+				// Out-of-bounds reads yield null per the Haxe spec; hxcpp returns 0 for value-typed
+				// arrays, so bounds-check explicitly to keep the interpreter target-neutral.
+				return function(f) {
+					var a:Array<Dynamic> = arr(f);
+					var i:Int = idx(f);
+					return (i >= 0 && i < a.length) ? a[i] : null;
+				};
 			case "FLINK", "FNAME":
 				var name = strings[n.ints[1]];
 				var obj = compile(n.kids[0]);
@@ -594,6 +602,13 @@ class Interp {
 				case _:
 			}
 		}
+		if (registry.hasStatic(type, member))
+			return registry.staticCall(type, member, args);
+		// Authority-free std class: resolve the static reflectively through the mediated seam
+		// (the policy still governs it; the class is the receiver Reflect.field reads from).
+		var neutral = registry.neutralStaticClass(type);
+		if (neutral != null)
+			return mediator.callMethod(neutral, member, args);
 		return registry.staticCall(type, member, args);
 	}
 
@@ -635,6 +650,11 @@ class Interp {
 	function getMember(obj:Dynamic, name:String):Dynamic {
 		if (Std.isOfType(obj, ScriptObject))
 			return (obj : ScriptObject).fields.get(name);
+		// A registry-bound method read as a value resolves to a bound closure (reliable when the
+		// host method has no reflective field, e.g. inline iterator methods on js).
+		var mv = mediator.methodValue(obj, name);
+		if (mv != null)
+			return mv;
 		var v = mediator.getField(obj, name);
 		// Reading `o.method` yields a bound closure in Haxe; host reflection (js) returns the
 		// method unbound, so calling it later would lose `this`. Rebind to the receiver. This
@@ -809,5 +829,19 @@ class EnumValue {
 	public var params:Array<Dynamic>;
 	public function new(index:Int, name:String, params:Array<Dynamic>) {
 		this.index = index; this.name = name; this.params = params;
+	}
+
+	// Haxe enum string form: `Name` for a no-arg constructor, `Name(p0,p1)` otherwise. Host
+	// Std.string calls this automatically, so script enums stringify like real ones everywhere.
+	public function toString():String {
+		if (params == null || params.length == 0)
+			return name;
+		var s = name + "(";
+		for (i in 0...params.length) {
+			if (i > 0)
+				s += ",";
+			s += Std.string(params[i]);
+		}
+		return s + ")";
 	}
 }
