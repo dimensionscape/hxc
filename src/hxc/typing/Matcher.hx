@@ -749,13 +749,17 @@ class CaseMaker {
 		pctx.isPostfixMatch = postfixMatch;
 		pctx.unapplyTypeParameters = function() return TypeParameterFrame.unapply(ctx.typeParams, monos);
 		var mappedTypes = [for (t in types) map(t)];
+		// The case keeps one pattern: a [..] case is a single PatTuple (compile expands it after the
+		// all-wildcard leaf shortcut, so a tuple of plain binders still reaches compile_switch and its
+		// explicit-Null guard). + .
 		var pats:Array<Pattern>;
 		try {
 			pats = switch (el[0].expr) {
 				case EArrayDecl(elems) if (elems.length == mappedTypes.length):
-					[for (i in 0...mappedTypes.length) PatternMaker.make(pctx, true, mappedTypes[i], elems[i])];
+					[{pat: PatTuple([for (i in 0...mappedTypes.length) PatternMaker.make(pctx, true, mappedTypes[i], elems[i])]), pos: el[0].pos}];
 				case EConst(CIdent("_")):
-					[for (i in 0...mappedTypes.length) ({pat: PatAny, pos: el[0].pos} : Pattern)];
+					// `_` over a tuple is a tuple of anys, keeping every row the same width.
+					[{pat: PatTuple([for (_ in 0...mappedTypes.length) ({pat: PatAny, pos: el[0].pos} : Pattern)]), pos: el[0].pos}];
 				case EConst(CIdent(_)):
 					throw new TypingError("Cannot bind matched tuple to variable, use _ instead", el[0].pos);
 				case _:
