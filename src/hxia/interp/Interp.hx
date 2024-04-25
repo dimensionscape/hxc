@@ -322,6 +322,10 @@ class Interp {
 				var typeName = types[n.ints[0]];
 				var token:Dynamic = scriptClasses.exists(typeName) ? scriptClasses.get(typeName) : resolveClass(typeName);
 				return function(f) return token;
+			case "POSINFO":
+				// Builds the haxe.PosInfos auto-filled for ?pos args: [file, line, class, method].
+				var file = strings[n.ints[0]], line = n.ints[1], cls = strings[n.ints[2]], meth = strings[n.ints[3]];
+				return function(f):Dynamic return {fileName: file, lineNumber: line, className: cls, methodName: meth};
 			case "OBJDEF":
 				var count = n.ints[0];
 				var names = [for (i in 0...count) strings[n.ints[1 + i]]];
