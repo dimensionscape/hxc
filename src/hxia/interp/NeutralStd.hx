@@ -15,6 +15,7 @@ class NeutralStd {
 		reg.markNeutralStatic("StringTools", StringTools);
 		reg.markNeutralStatic("Reflect", Reflect);
 		reg.markNeutralStatic("Type", Type);
+		reg.markNeutralStatic("Date", Date);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
@@ -24,6 +25,7 @@ class NeutralStd {
 		reg.bindNew("haxe.ds.EnumValueMap", function(_) return new haxe.ds.EnumValueMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
+		reg.bindNew("Date", function(a) return new Date(a[0], a[1], a[2], a[3], a[4], a[5]));
 
 		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
 		// factories return the shim and its non-inline methods are keyed by the shim type name.
