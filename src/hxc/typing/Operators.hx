@@ -954,8 +954,10 @@ class Operators {
 			var setterCf = implC.statics.get("set_" + name);
 			if (getterCf == null || setterCf == null) throw new TypingError("This compound assignment target is not yet ported", p);
 			var tvoid = ctx.com.basic.tvoid;
-			var tmp = maybeTempReceiver(ctx, recv, p);
-			var er = tmp.expr;
+			// The receiver stabilizes at depth 0, so an array-access receiver keeps its shape with
+			// "base"/"index" binds and duplicates as an expression in the get and set calls.
+			var recvVars:Array<TExpr> = [];
+			var er = vrGetExprAux(ctx, recvVars, 0, "fh", recv);
 			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
 			// The accessor keeps the abstract host so its signature gets the instance's type parameters
 			// applied.
@@ -968,7 +970,7 @@ class Operators {
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
 			Calls.checkModifiesThisDirect(ctx, implC, setterCf, recv, p);
 			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
-			return tmp.init == null ? setCall : TypeFunctions.mk(TBlock([tmp.init, setCall]), retOf(setterCf), p);
+			return recvVars.length == 0 ? setCall : TypeFunctions.mk(TBlock(recvVars.concat([setCall])), retOf(setterCf), p);
 		}
 		// A class property `a.p op= b` evaluates the receiver once, reads via its read access (the getter
 		// or
@@ -992,7 +994,14 @@ class Operators {
 		// The target resolves with a write access so a (default, set) property dispatches through its
 		// setter for the write half.
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
-			case AKExpr(te1): compound(te1);
+			case AKExpr(te1):
+				// The lvalue stabilizes through a value reference first: a depth-0 array access keeps its
+				// shape binding "base"/"index", a field keeps "fh", anything else binds whole as "lhs"; the
+				// binop and the write then reuse the stabilized shape.
+				var vrVars:Array<TExpr> = [];
+				var lv = vrGetExprAux(ctx, vrVars, 0, "lhs", te1);
+				var out = compound(lv);
+				vrVars.length == 0 ? out : TypeFunctions.mk(TBlock(vrVars.concat([out])), out.type, p);
 			case AKNo(acc2, np):
 				// A write-restricted target (a final field) still takes a compound op when the abstract
 				// declares a dedicated overload that needs no write-back; the write error is deferred to
@@ -1028,8 +1037,9 @@ class Operators {
 				if (aw == null || aw.a.write == null)
 					throw new TypingError("This compound assignment target is not yet ported", p);
 				var basic = ctx.com.basic;
-				var vr = TypeFunctions.allocVar(VGenerated, "fh", se.thisExpr.type, se.thisExpr.pos);
-				var recv = TexprTools.makeLocal(vr, p);
+				// The receiver stabilizes through a value reference (a simple local binds nothing).
+				var recvVars:Array<TExpr> = [];
+				var recv = vrGetExprAux(ctx, recvVars, 0, "fh", se.thisExpr);
 				if (aw.a.read == null)
 					throw new TypingError("This compound assignment target is not yet ported", p);
 				var readSe = FieldAccessTools.makeAbstractStaticExtensionAccess(aw.a, aw.tl, aw.c, aw.a.read, recv, false, p);
@@ -1041,25 +1051,26 @@ class Operators {
 					case _: throw new TypingError("Resolve target is not a function", se.access.pos);
 				};
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				var tempInit = TypeFunctions.mk(TVarExpr(vr, se.thisExpr), basic.tvoid, p);
 				switch (makeBinop(ctx, sub, read, te2, true, withType, p)) {
 					case BinopSpecial(opCall, false):
 						// A dedicated @:op(a -= b) overload is the assignment and returns its own result, so the
 						// value is not written back through resolveWrite.
-						TypeFunctions.mk(TBlock([tempInit, opCall]), opCall.type, p);
+						recvVars.length == 0 ? opCall : TypeFunctions.mk(TBlock(recvVars.concat([opCall])), opCall.type, p);
 					case br:
 						var opResult = toTexpr(br);
-						var writeSe = FieldAccessTools.makeAbstractStaticExtensionAccess(aw.a, aw.tl, aw.c, aw.a.write, recv, false, p);
+						// The write call passes the ORIGINAL receiver, not the stabilized read; only the
+						// read half reuses the bind.
+						var writeSe = FieldAccessTools.makeAbstractStaticExtensionAccess(aw.a, aw.tl, aw.c, aw.a.write, se.thisExpr, false, p);
 						var writeCe = FieldAccessTools.getFieldExpr(writeSe.access, FCall);
 						var write = switch (TypeFunctions.follow(writeCe.type)) {
 							case TFun(ws) if (ws.args.length >= 3):
 								var nm2 = TexprTools.makeString(basic, name, p);
 								se.access.field.kind.match(Method(MethMacro))
 									? hxc.eval.EvalMacro.run(ctx, se.access, [Calls.typedExprToSyntax(ctx, se.thisExpr), new Expr(EConst(CString(name, SDoubleQuotes)), p), storedSyntax(ctx, opResult)], WithTypeTools.value, p)
-									: Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [recv, Typer.castOrUnify(ctx, ws.args[1].t, nm2, p), Typer.castOrUnify(ctx, ws.args[2].t, opResult, p)], p), ws.ret, p);
+									: Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [se.thisExpr, Typer.castOrUnify(ctx, ws.args[1].t, nm2, p), Typer.castOrUnify(ctx, ws.args[2].t, opResult, p)], p), ws.ret, p);
 							case _: throw new TypingError("Resolve target is not a function", p);
 						};
-						TypeFunctions.mk(TBlock([tempInit, write]), write.type, p);
+						recvVars.length == 0 ? write : TypeFunctions.mk(TBlock(recvVars.concat([write])), write.type, p);
 				}
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
