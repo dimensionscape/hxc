@@ -804,13 +804,17 @@ class TypeFields {
 		return loop(e);
 	}
 
-	// An Int literal bound to a Float field is rewritten to a Float literal.
+	// An Int literal bound to a Float field is rewritten to a Float literal; any other init whose type
+	// differs from the explicit field type wraps in a cast so the field keeps its declared type (a
+	// function literal behind a Dynamic field is then not a bare TFunction, which genjs uses to defer
+	// the init to the statics section).
 	static function checkCast(te:TExpr, t:T):TExpr {
 		if (TypeUnification.typeIseqDefault(te.type, t)) return te;
 		return switch ([te.expr, TypeFunctions.follow(t)]) {
 			case [TConst(TInt(i)), TAbstract(a, _)] if (a.path.pack.length == 0 && a.path.name == "Float"):
 				TypeFunctions.mk(TConst(TFloat(Std.string(i))), t, te.pos);
-			case _: te;
+			case _:
+				TypeFunctions.mk(TCast(te, null), t, te.pos);
 		};
 	}
 

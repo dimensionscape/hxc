@@ -55,6 +55,10 @@ class Inline {
 			case _ if (forceInline):
 			case _: return null;
 		}
+		// The arguments reduce before the inline runs, so a constant-foldable argument reaches the
+		// platform api substitutions as a constant (Std.int(1 + 2.0) folds to 3 instead of lowering to
+		// `3. | 0`).
+		params = [for (x in params) hxc.optimization.Optimizer.reduceExpression(ctx, x)];
 		// The platform api substitutions run before the body inline, so a js Std.isOfType(o, String)
 		// folds to a typeof check instead of its body.
 		if (c != null) {
