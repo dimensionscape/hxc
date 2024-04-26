@@ -258,15 +258,23 @@ class Interp {
 					return callMember(obj, member, args);
 				};
 			case "CREATEENUM":
-				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				var name = strings[n.ints[1]];
 				var etype = types[n.ints[0]];
 				var argcs = [for (k in n.kids) compile(k)];
+				// A host enum (e.g. ValueType) must construct the real host value so it compares equal to
+				// values host functions return; a script-only enum builds our EnumValue.
+				var he = tryResolveEnumHost(etype);
+				if (he != null)
+					return function(f) { countAlloc(16); return Type.createEnum(he, name, [for (c in argcs) c(f)]); };
+				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				return function(f) { countAlloc(16); return new EnumValue(idx, name, [for (c in argcs) c(f)], etype); };
 			case "FENUM":
-				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				var name = strings[n.ints[1]];
 				var etype = types[n.ints[0]];
+				var he = tryResolveEnumHost(etype);
+				if (he != null)
+					return function(f) return Type.createEnum(he, name, []);
+				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				return function(f) return new EnumValue(idx, name, [], etype);
 			case "ENUMI":
 				var pi = n.ints[1];
@@ -349,7 +357,13 @@ class Interp {
 				var token:Dynamic = if (scriptClasses.exists(typeName)) scriptClasses.get(typeName);
 					else if (scriptEnums.exists(typeName)) scriptEnums.get(typeName);
 					else if (PrimType.isPrimitive(typeName)) new PrimType(typeName);
-					else resolveClass(typeName);
+					else {
+						// Prefer the real host class; a meta-type with no runtime Class on this target
+						// (Class/Enum on js) falls back to a name token so the type reference does not
+						// fail.
+						var rc = tryResolveClass(typeName);
+						rc != null ? (rc : Dynamic) : new PrimType(stripPath(typeName));
+					}
 				return function(f) return token;
 			case "POSINFO":
 				// Builds the haxe.PosInfos auto-filled for ?pos args: [file, line, class, method].
@@ -666,6 +680,7 @@ class Interp {
 				if (Std.isOfType(a0, EnumValue)) return null;
 			case "getClassName":
 				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).name;
+				if (Std.isOfType(a0, PrimType)) return (a0 : PrimType).name;
 			case "getEnumName":
 				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).name;
 			case "resolveClass":
@@ -701,6 +716,8 @@ class Interp {
 			case "typeof":
 				if (Std.isOfType(a0, ScriptObject)) return Type.ValueType.TClass(cast (a0 : ScriptObject).cls);
 				if (Std.isOfType(a0, EnumValue)) return Type.ValueType.TEnum(cast scriptEnums.get((a0 : EnumValue).enumType));
+				// A script class/enum referenced as a value is a plain object to the host: TObject.
+				if (Std.isOfType(a0, ScriptClass) || Std.isOfType(a0, ScriptEnum)) return Type.ValueType.TObject;
 			case _:
 		}
 		return NotHandled;
@@ -734,6 +751,8 @@ class Interp {
 	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
 		if (Std.isOfType(token, PrimType))
 			return (token : PrimType).matches(v);
+		if (Std.isOfType(token, ScriptEnum))
+			return Std.isOfType(v, EnumValue) && (v : EnumValue).enumType == (token : ScriptEnum).name;
 		if (Std.isOfType(token, ScriptClass)) {
 			if (!Std.isOfType(v, ScriptObject))
 				return false;
@@ -845,14 +864,38 @@ class Interp {
 
 	// A CLASSOF operand is a cpp-style path ("::String", "::haxe::Exception"); resolve to a
 	// runtime Class for isOfType/casts.
+	final enumCache:Map<String, Enum<Dynamic>> = new Map();
+
+	// Try to resolve a host enum type (cpp-pathed) to a runtime Enum; null if the host has no
+	// such enum (i.e. it is a script-defined enum). A std enum (e.g. ValueType) is embedded in
+	// the cppia as a decl but MUST behave as a host enum so its values interop with host
+	// functions (Type.typeof), so host resolution takes precedence over the script index.
+	function tryResolveEnumHost(name:String):Null<Enum<Dynamic>> {
+		if (enumCache.exists(name))
+			return enumCache.get(name);
+		var dotted = StringTools.replace(StringTools.startsWith(name, "::") ? name.substr(2) : name, "::", ".");
+		var re = Type.resolveEnum(dotted);
+		enumCache.set(name, re);
+		return re;
+	}
+
 	function resolveClass(name:String):Class<Dynamic> {
 		var c = classCache.get(name);
 		if (c != null)
 			return c;
-		var dotted = StringTools.replace(StringTools.startsWith(name, "::") ? name.substr(2) : name, "::", ".");
-		var rc = Type.resolveClass(dotted);
+		var rc = tryResolveClass(name);
 		if (rc == null)
-			throw new InterpError("hxia: cannot resolve class '" + dotted + "'");
+			throw new InterpError("hxia: cannot resolve class '" + stripPath(name) + "'");
+		return rc;
+	}
+
+	static inline function stripPath(name:String):String
+		return StringTools.replace(StringTools.startsWith(name, "::") ? name.substr(2) : name, "::", ".");
+
+	function tryResolveClass(name:String):Null<Class<Dynamic>> {
+		if (classCache.exists(name))
+			return classCache.get(name);
+		var rc = Type.resolveClass(stripPath(name));
 		classCache.set(name, rc);
 		return rc;
 	}
