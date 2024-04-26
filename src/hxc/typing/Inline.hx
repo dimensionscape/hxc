@@ -433,24 +433,29 @@ class Inline {
 			var forceTemp = paramSideEffect[i]
 				|| nullMismatch
 				|| (hadSideEffect && checker.mightBeAffected(param) && !valueSemantics(param.type));
-			var substitutable = !forceTemp && !hasRuntimeDefault
+			var isAbsThis = absMember && i == 0;
+			// A WRITTEN abstract `this` always substitutes so the assignment writes back through the
+			// caller's lvalue; otherwise an abstract `this` substitutes only when it is a plain local and
+			// any other receiver follows the ordinary read-count rules, so a multi-read field chain binds a
+			// `this` temp.
+			var substitutable = (isAbsThis && use.writes)
+				|| (!forceTemp && !hasRuntimeDefault
 				&& !(use.captured && !param.expr.match(TConst(_)))
 				&& switch (param.expr) {
+					case TLocal(_) if (isAbsThis): true;
 					case TConst(TNull): false;
 					case TLocal(_) | TConst(_): !use.writes;
 					// Calls do not count against a function argument.
 					case TFunction(_): use.reads <= 1 && !use.writes;
 					case _: !use.writes && use.reads + use.called <= 1;
-				};
+				});
 			// Every READ of the abstract `this` substitutes wrapped in a TCast at the receiver type;
 			// assignment left-hand sides strip it again (inline_params, TCast when in_assignment). The cast
 			// keeps Texpr.equal from conflating the abstract this with its underlying value in later fusion.
 			inline function absThisCast(e:TExpr):TExpr
-				return absMember && i == 0 ? TypeFunctions.mk(TCast(e, null), av.type, e.pos) : e;
-			if (absMember && i == 0 && isStableLvalue(param)) {
-				subst.set(av.id, absThisCast(param));
-			} else if (!(absMember && i == 0) && substitutable) {
-				subst.set(av.id, param);
+				return isAbsThis ? TypeFunctions.mk(TCast(e, null), av.type, e.pos) : e;
+			if (substitutable) {
+				subst.set(av.id, isAbsThis ? absThisCast(param) : param);
 			} else {
 				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
 				nv.extra = new TVarExtra([], param);
