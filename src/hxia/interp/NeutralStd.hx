@@ -27,6 +27,12 @@ class NeutralStd {
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
 		reg.bindNew("Date", function(a) return new Date(a[0], a[1], a[2], a[3], a[4], a[5]));
+		reg.bindNew("haxe.Serializer", function(_) return new haxe.Serializer());
+		reg.bindNew("haxe.Unserializer", function(a) return new haxe.Unserializer(a[0]));
+		reg.markNeutralStatic("haxe.Serializer", haxe.Serializer);
+		reg.markNeutralStatic("haxe.Unserializer", haxe.Unserializer);
+		reg.bindNew("List", function(_) return new List<Dynamic>());
+		reg.markNeutralStatic("List", List);
 
 		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
 		// factories return the shim and its non-inline methods are keyed by the shim type name.

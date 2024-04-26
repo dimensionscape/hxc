@@ -413,10 +413,18 @@ class Interp {
 				var c = compile(n.kids[0]);
 				var b = compile(n.kids[1]);
 				return function(f):Dynamic {
-					if (normal) { while ((c(f) : Bool)) { burnFuel(); loopBody(b, f); } }
-					else { do { burnFuel(); loopBody(b, f); } while ((c(f) : Bool)); }
+					// Break exits the whole loop (caught here); continue skips an iteration (caught per-iteration
+					// in loopBody).
+					try {
+						if (normal) { while ((c(f) : Bool)) { burnFuel(); loopBody(b, f); } }
+						else { do { burnFuel(); loopBody(b, f); } while ((c(f) : Bool)); }
+					} catch (_:BreakSignal) {}
 					return null;
 				};
+			case "BREAK":
+				return function(f):Dynamic throw BreakSignal.INSTANCE;
+			case "CONTINUE":
+				return function(f):Dynamic throw ContinueSignal.INSTANCE;
 			case "SWITCH":
 				return compileSwitch(n);
 			case "TRY":
@@ -494,7 +502,7 @@ class Interp {
 	}
 
 	static inline function loopBody(b:Frame->Dynamic, f:Frame):Void {
-		try b(f) catch (_:BreakSignal) {}
+		try b(f) catch (_:ContinueSignal) {}
 	}
 
 	function compileSet(n:OpNode):Frame->Dynamic {
@@ -954,8 +962,16 @@ class ReturnSignal extends haxe.Exception {
 	public function new(value:Dynamic) { super("return"); this.value = value; }
 }
 
+// Loop control signals. A shared instance avoids allocating on every break/continue (they carry no
+// payload); catching by type still works.
 class BreakSignal extends haxe.Exception {
+	public static final INSTANCE = new BreakSignal();
 	public function new() super("break");
+}
+
+class ContinueSignal extends haxe.Exception {
+	public static final INSTANCE = new ContinueSignal();
+	public function new() super("continue");
 }
 
 // A value thrown by script `throw`; caught by script `try`. Distinct from ReturnSignal and
