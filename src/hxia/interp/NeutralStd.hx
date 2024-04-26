@@ -16,6 +16,7 @@ class NeutralStd {
 		reg.markNeutralStatic("Reflect", Reflect);
 		reg.markNeutralStatic("Type", Type);
 		reg.markNeutralStatic("Date", Date);
+		reg.markNeutralStatic("Xml", Xml);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);

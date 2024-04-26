@@ -23,6 +23,8 @@ class Interp {
 	final enumCtorIndex:Map<String, Int> = new Map();
 	// Type name -> its script-class descriptor (ctor + instance methods), for `new` and dispatch.
 	final scriptClasses:Map<String, ScriptClass> = new Map();
+	// Enum type name -> its descriptor, for Type reflection over script enums.
+	final scriptEnums:Map<String, ScriptEnum> = new Map();
 	// "Class.field" -> current value of a script static var; its initializers run before main.
 	final scriptStaticVars:Map<String, Dynamic> = new Map();
 	final pendingStatics:Array<{key:String, body:Null<OpNode>}> = [];
@@ -67,8 +69,14 @@ class Interp {
 		for (d in tree.decls) {
 			if (d.kind == "enum") {
 				var enumName = types[d.ints[0]];
-				for (i in 0...d.enumCtors.length)
-					enumCtorIndex.set(enumName + "." + strings[d.enumCtors[i][0]], i);
+				var se = new ScriptEnum(enumName);
+				for (i in 0...d.enumCtors.length) {
+					var ctorName = strings[d.enumCtors[i][0]];
+					enumCtorIndex.set(enumName + "." + ctorName, i);
+					se.ctorNames.push(ctorName);
+					se.ctorArity.push(d.enumCtors[i][1]);
+				}
+				scriptEnums.set(enumName, se);
 				continue;
 			}
 			var className = types[d.ints[0]];
@@ -81,8 +89,13 @@ class Interp {
 					// Static var: remember its initializer to run before main (instance vars are
 					// set by the constructor body).
 					var isStatic = f.ints[0] == 1;
-					if (isStatic)
-						pendingStatics.push({key: className + "." + strings[f.ints[4]], body: f.body});
+					var vname = strings[f.ints[4]];
+					if (isStatic) {
+						pendingStatics.push({key: className + "." + vname, body: f.body});
+						sc.staticFields.push(vname);
+					} else {
+						sc.instanceVars.push(vname);
+					}
 					continue;
 				}
 				if (f.kind != "function" || f.body == null)
@@ -93,9 +106,10 @@ class Interp {
 				// by name so `new` allocates and runs it with the fresh instance as thisv.
 				if (name == "new")
 					sc.ctor = f.body;
-				else if (isStatic)
+				else if (isStatic) {
 					scriptStatics.set(className + "." + name, f.body);
-				else
+					sc.staticFields.push(name);
+				} else
 					sc.methods.set(name, f.body);
 			}
 			// A class with only static members is still registered so `new`/dispatch can find it.
@@ -246,12 +260,14 @@ class Interp {
 			case "CREATEENUM":
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				var name = strings[n.ints[1]];
+				var etype = types[n.ints[0]];
 				var argcs = [for (k in n.kids) compile(k)];
-				return function(f) { countAlloc(16); return new EnumValue(idx, name, [for (c in argcs) c(f)]); };
+				return function(f) { countAlloc(16); return new EnumValue(idx, name, [for (c in argcs) c(f)], etype); };
 			case "FENUM":
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				var name = strings[n.ints[1]];
-				return function(f) return new EnumValue(idx, name, []);
+				var etype = types[n.ints[0]];
+				return function(f) return new EnumValue(idx, name, [], etype);
 			case "ENUMI":
 				var pi = n.ints[1];
 				var e = compile(n.kids[0]);
@@ -330,8 +346,10 @@ class Interp {
 				// a marker the script-aware isOfType dispatches by name; a host class resolves to a
 				// runtime Class.
 				var typeName = types[n.ints[0]];
-				var token:Dynamic = scriptClasses.exists(typeName) ? scriptClasses.get(typeName)
-					: (PrimType.isPrimitive(typeName) ? new PrimType(typeName) : resolveClass(typeName));
+				var token:Dynamic = if (scriptClasses.exists(typeName)) scriptClasses.get(typeName);
+					else if (scriptEnums.exists(typeName)) scriptEnums.get(typeName);
+					else if (PrimType.isPrimitive(typeName)) new PrimType(typeName);
+					else resolveClass(typeName);
 				return function(f) return token;
 			case "POSINFO":
 				// Builds the haxe.PosInfos auto-filled for ?pos args: [file, line, class, method].
@@ -599,11 +617,29 @@ class Interp {
 		// policy that gates direct member access.
 		if (type == "Reflect") {
 			switch (member) {
-				case "field": return mediator.getField(args[0], args[1]);
-				case "setField": mediator.setField(args[0], args[1], args[2]); return null;
-				case "fields": return mediator.fields(args[0]);
+				case "field": return getMember(args[0], args[1]);
+				case "setField": setMember(args[0], args[1], args[2]); return null;
+				case "getProperty": return getMember(args[0], args[1]);
+				case "setProperty": setMember(args[0], args[1], args[2]); return null;
+				case "fields":
+					if (Std.isOfType(args[0], ScriptObject))
+						return [for (k in (args[0] : ScriptObject).fields.keys()) k];
+					return mediator.fields(args[0]);
+				case "hasField":
+					if (Std.isOfType(args[0], ScriptObject)) {
+						var so:ScriptObject = args[0];
+						return so.fields.exists(args[1]) || so.cls.lookup(args[1]) != null;
+					}
+					return Reflect.hasField(args[0], args[1]);
+				case "isEnumValue": return Std.isOfType(args[0], EnumValue) || Reflect.isEnumValue(args[0]);
 				case _:
 			}
+		}
+		// Type reflection must understand script classes and enums (they are not host types).
+		if (type == "Type") {
+			var handled = typeReflect(member, args);
+			if (handled != NotHandled)
+				return handled;
 		}
 		if (registry.hasStatic(type, member))
 			return registry.staticCall(type, member, args);
@@ -613,6 +649,84 @@ class Interp {
 		if (neutral != null)
 			return mediator.callMethod(neutral, member, args);
 		return registry.staticCall(type, member, args);
+	}
+
+	// Sentinel returned by typeReflect for a call it does not handle (distinct from a handled
+	// call that legitimately returns null).
+	static final NotHandled:Dynamic = {__notHandled: true};
+
+	// Type.* reflection that understands script classes/enums (which are not host types). Script
+	// tokens are ScriptClass/ScriptEnum descriptors; anything not involving a script type falls
+	// through (NotHandled) to the host Type via the neutral-static path.
+	function typeReflect(member:String, args:Array<Dynamic>):Dynamic {
+		var a0:Dynamic = args[0];
+		switch (member) {
+			case "getClass":
+				if (Std.isOfType(a0, ScriptObject)) return (a0 : ScriptObject).cls;
+				if (Std.isOfType(a0, EnumValue)) return null;
+			case "getClassName":
+				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).name;
+			case "getEnumName":
+				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).name;
+			case "resolveClass":
+				if (scriptClasses.exists(a0)) return scriptClasses.get(a0);
+			case "resolveEnum":
+				if (scriptEnums.exists(a0)) return scriptEnums.get(a0);
+			case "getSuperClass":
+				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).superClass;
+			case "getInstanceFields":
+				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).instanceFields();
+			case "getClassFields":
+				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).staticFields.copy();
+			case "createInstance":
+				if (Std.isOfType(a0, ScriptClass)) return instantiate(a0, args[1]);
+			case "createEmptyInstance":
+				if (Std.isOfType(a0, ScriptClass)) return new ScriptObject(a0);
+			case "getEnum":
+				if (Std.isOfType(a0, EnumValue)) return scriptEnums.get((a0 : EnumValue).enumType);
+			case "getEnumConstructs":
+				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).ctorNames.copy();
+			case "createEnum":
+				if (Std.isOfType(a0, ScriptEnum)) return makeEnum(a0, (a0 : ScriptEnum).indexOf(args[1]), args[1], args[2]);
+			case "createEnumIndex":
+				if (Std.isOfType(a0, ScriptEnum)) { var se:ScriptEnum = a0; return makeEnum(se, args[1], se.ctorNames[args[1]], args[2]); }
+			case "enumParameters":
+				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).params.copy();
+			case "enumConstructor":
+				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).name;
+			case "enumIndex":
+				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).index;
+			case "enumEq":
+				if (Std.isOfType(a0, EnumValue) || Std.isOfType(args[1], EnumValue)) return enumEq(a0, args[1]);
+			case "typeof":
+				if (Std.isOfType(a0, ScriptObject)) return Type.ValueType.TClass(cast (a0 : ScriptObject).cls);
+				if (Std.isOfType(a0, EnumValue)) return Type.ValueType.TEnum(cast scriptEnums.get((a0 : EnumValue).enumType));
+			case _:
+		}
+		return NotHandled;
+	}
+
+	function instantiate(sc:ScriptClass, args:Array<Dynamic>):Dynamic {
+		var so = new ScriptObject(sc);
+		if (sc.ctor != null)
+			invokeFun(sc.ctor, so, args != null ? args : []);
+		return so;
+	}
+
+	function makeEnum(se:ScriptEnum, index:Int, ctor:String, params:Array<Dynamic>):EnumValue
+		return new EnumValue(index, ctor, params != null ? params : [], se.name);
+
+	// Structural enum equality for script enums (host Type.enumEq cannot see them).
+	function enumEq(a:Dynamic, b:Dynamic):Bool {
+		if (!Std.isOfType(a, EnumValue) || !Std.isOfType(b, EnumValue))
+			return a == b;
+		var ea:EnumValue = a, eb:EnumValue = b;
+		if (ea.enumType != eb.enumType || ea.index != eb.index || ea.params.length != eb.params.length)
+			return false;
+		for (i in 0...ea.params.length)
+			if (!enumEq(ea.params[i], eb.params[i]) && ea.params[i] != eb.params[i])
+				return false;
+		return true;
 	}
 
 	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
@@ -653,8 +767,17 @@ class Interp {
 	// map and dispatches methods through its class descriptor; everything else falls through
 	// to the mediated host seam (the capability boundary).
 	function getMember(obj:Dynamic, name:String):Dynamic {
-		if (Std.isOfType(obj, ScriptObject))
-			return (obj : ScriptObject).fields.get(name);
+		if (Std.isOfType(obj, ScriptObject)) {
+			var so:ScriptObject = obj;
+			if (so.fields.exists(name))
+				return so.fields.get(name);
+			// Reading a method as a value yields a bound closure (so Reflect.field(obj, method)
+			// and `obj.method` used as a value both work).
+			var m = so.cls.lookup(name);
+			if (m != null)
+				return Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(m, so, args));
+			return null;
+		}
 		// A registry-bound method read as a value resolves to a bound closure (reliable when the
 		// host method has no reflective field, e.g. inline iterator methods on js).
 		var mv = mediator.methodValue(obj, name);
@@ -695,6 +818,10 @@ class Interp {
 	function getStatic(key:String, type:String, name:String):Dynamic {
 		if (scriptStaticVars.exists(key))
 			return scriptStaticVars.get(key);
+		// A static method of a script class read as a value: return a bound-free closure.
+		var fun = scriptStatics.get(type + "." + name);
+		if (fun != null)
+			return Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(fun, null, args));
 		var cls = resolveClass(type);
 		return mediator.getField(cls, name);
 	}
@@ -803,6 +930,8 @@ class ScriptClass {
 	public var superClass:Null<ScriptClass>;
 	public var ctor:Null<OpNode>;
 	public var methods:Map<String, OpNode> = new Map();
+	public var instanceVars:Array<String> = [];
+	public var staticFields:Array<String> = [];
 	public function new(name:String) this.name = name;
 
 	// Resolve a method by name, walking up the super chain (virtual dispatch).
@@ -816,6 +945,34 @@ class ScriptClass {
 		}
 		return null;
 	}
+
+	// Instance fields (vars + methods) for Type.getInstanceFields, in declaration order and
+	// walking up the super chain (super first, matching Haxe), deduplicated.
+	public function instanceFields():Array<String> {
+		var out:Array<String> = [];
+		var chain:Array<ScriptClass> = [];
+		var c = this;
+		while (c != null) { chain.unshift(c); c = c.superClass; }
+		for (k in chain) {
+			for (v in k.instanceVars)
+				if (out.indexOf(v) < 0) out.push(v);
+			for (m in k.methods.keys())
+				if (out.indexOf(m) < 0) out.push(m);
+		}
+		return out;
+	}
+}
+
+// A script enum descriptor: its constructors by name and index, for Type.resolveEnum /
+// createEnum / getEnumConstructs and enum reflection.
+class ScriptEnum {
+	public var name:String;
+	public var ctorNames:Array<String> = [];
+	public var ctorArity:Array<Int> = [];
+	public function new(name:String) this.name = name;
+
+	public function indexOf(ctor:String):Int
+		return ctorNames.indexOf(ctor);
 }
 
 // A script-class instance: its class descriptor plus a field map. Fields and methods on it
@@ -856,8 +1013,10 @@ class EnumValue {
 	public var index:Int;
 	public var name:String;
 	public var params:Array<Dynamic>;
-	public function new(index:Int, name:String, params:Array<Dynamic>) {
+	public var enumType:String;
+	public function new(index:Int, name:String, params:Array<Dynamic>, ?enumType:String) {
 		this.index = index; this.name = name; this.params = params;
+		this.enumType = enumType;
 	}
 
 	// Haxe enum string form: `Name` for a no-arg constructor, `Name(p0,p1)` otherwise. Host
