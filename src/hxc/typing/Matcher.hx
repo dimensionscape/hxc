@@ -1412,7 +1412,7 @@ class TexprConverter {
 	// The unmatched constructor names of a finite subject (empty when fully covered), or null when the
 	// subject's constructor universe is not finite. The names feed the non-exhaustiveness error: constants
 	// of an enum abstract render as the declaring static's name; the list is sorted and joined with " | ".
-	static function unmatchedFiniteCoverage(com:hxc.context.Context, subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Null<Array<String>> {
+	static function unmatchedFiniteCoverage(com:hxc.context.Context, subjT:T, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):Null<Array<String>> {
 		function constKey(ct:TConstant):String {
 			return switch (ct) {
 				case TInt(v): "i:" + v;
@@ -1435,7 +1435,7 @@ class TexprConverter {
 			}
 			return cf.expr == null ? null : loop(cf.expr);
 		}
-		switch (TypeFunctions.follow(subject.type)) {
+		switch (TypeFunctions.follow(subjT)) {
 			case TEnum(en, _):
 				var found = new Map<String, Bool>();
 				for (sc in cases) if (sc.unguarded) switch (sc.con.kind) {
@@ -1445,7 +1445,7 @@ class TexprConverter {
 				var missing:Array<String> = [];
 				for (name in en.constrs.keys()) {
 					var ef = en.constrs.get(name);
-					if (DtCompile.enumConstructorCompatible(subject.type, en, ef) && !found.exists(name)) missing.push(name);
+					if (DtCompile.enumConstructorCompatible(subjT, en, ef) && !found.exists(name)) missing.push(name);
 				}
 				return missing;
 			case TAbstract(a, _) if (a.isEnum && a.impl != null):
@@ -1532,6 +1532,23 @@ class TexprConverter {
 		return d1 == d2 || DtEquality.kindEquals(d1.t, d2.t);
 	}
 
+	// A Dynamic or monomorph subject takes its switch type from the first constructor, so an enum match
+	// behind a Dynamic still counts as run-time finite.
+	static function effectiveSubjectType(subject:TExpr, cases:Array<{con:Con, unguarded:Bool, dt:Dt}>):T {
+		return switch (TypeFunctions.follow(subject.type)) {
+			case TDynamic(_) | TMono(_) if (cases.length > 0):
+				switch (cases[0].con.kind) {
+					case ConEnum(en, _): TEnum(en, TypeFunctions.extractParamTypes(en.params));
+					case ConStatic(c, _): switch (c.kind) {
+						case KAbstractImpl(a): TAbstract(a, TypeFunctions.extractParamTypes(a.params));
+						case _: subject.type;
+					};
+					case _: subject.type;
+				};
+			case _: subject.type;
+		};
+	}
+
 	static function toTexprRec(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt, rec:DtRecursion, hasDefault:Bool):Null<TExpr> {
 		if (dt.texpr != null) return dt.texpr;
 		var basic = ctx.com.basic;
@@ -1550,12 +1567,13 @@ class TexprConverter {
 				}
 				var topLevel = rec.match(DRToplevel);
 				var nextRec = topLevel ? DRAfterSwitch : DRDeep;
-				var unmatched = unmatchedFiniteCoverage(ctx.com, subject, cases);
+				var effT = effectiveSubjectType(subject, cases);
+				var unmatched = unmatchedFiniteCoverage(ctx.com, effT, cases);
 				var complete = unmatched != null && unmatched.length == 0;
 				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
 				// abstract is compile-time finite, so a runtime value can be out of range and a user
 				// default must be kept.
-				var runtimeFinite = switch (TypeFunctions.follow(subject.type)) {
+				var runtimeFinite = switch (TypeFunctions.follow(effT)) {
 					case TEnum(_, _): true;
 					case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
 					case _: false;
@@ -1604,7 +1622,7 @@ class TexprConverter {
 				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
 				var droppedCompleteDefault = topLevel && complete && runtimeFinite;
 				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, inheritedDefault);
-				var nullaryMissing = switch (TypeFunctions.follow(subject.type)) {
+				var nullaryMissing = switch (TypeFunctions.follow(effT)) {
 					case TEnum(en, _) if (unmatched != null):
 						var ok = true;
 						var missingNames = unmatched == null ? [] : unmatched;
@@ -1623,7 +1641,7 @@ class TexprConverter {
 				// An enum abstract is compile-time finite: a missing member reports even for a statement
 				// switch. (only NoValue+Infinite stays silent; CompileTimeFinite is silent only when
 				// unmatched is empty).
-				var compileTimeFiniteUnmatched = unmatched != null && unmatched.length > 0 && switch (TypeFunctions.follow(subject.type)) {
+				var compileTimeFiniteUnmatched = unmatched != null && unmatched.length > 0 && switch (TypeFunctions.follow(effT)) {
 					case TAbstract(a, _) if (a.isEnum && a.impl != null): true;
 					case _: false;
 				};
@@ -1692,7 +1710,7 @@ class TexprConverter {
 					// drops the same way). A merely default-less switch (a String subject falling through) must
 					// not be marked: downstream analysis would treat it as always-terminating and drop the
 					// fall-through code.
-					var compileTimeFinite = complete && switch (TypeFunctions.follow(subject.type)) {
+					var compileTimeFinite = complete && switch (TypeFunctions.follow(effT)) {
 						case TAbstract(a, _): a.impl != null && a.isEnum;
 						case _: false;
 					};
