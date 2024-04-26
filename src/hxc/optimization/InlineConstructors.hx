@@ -361,6 +361,7 @@ private class InlineConstructorsRun {
 							}
 					}
 				case iv if (iv != null):
+					if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] field-nonalias " + fname);
 					cancelIv(iv, efield.pos);
 					IOFNone;
 				case _:
@@ -509,6 +510,7 @@ private class InlineConstructorsRun {
 						}
 						iv;
 					case iv if (iv != null):
+						if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] reassign");
 						cancelIv(iv, e.pos);
 						analyzeSub(false, rve);
 						null;
@@ -526,7 +528,7 @@ private class InlineConstructorsRun {
 				});
 			case TLocal(v) if (v.id < 0):
 				var iv = getIv(v.id);
-				if (iv.closed || !captured) cancelIv(iv, e.pos);
+				if (iv.closed || !captured) { if (Sys.getEnv("HXC_DBG_IC") != null) Sys.println("[ic-why] local closed=" + iv.closed + " captured=" + captured); cancelIv(iv, e.pos); }
 				iv;
 			case TBlock(el):
 				var r:Null<InlineVar> = null;
@@ -765,6 +767,8 @@ private class InlineConstructorsRun {
 
 	public function run(originalE:TExpr):TExpr {
 		if (!checkForCtors(false, originalE)) return originalE;
+		if (Sys.getEnv("HXC_DBG_IC") == "2")
+			Sys.println("[ic-input] " + ctx.curfield.name + "\n" + hxc.core.TPrinting.sExprPretty(true, "", false, hxc.core.TPrinting.sTypeStr, originalE));
 		var e = markCtors(false, originalE);
 		analyze([], false, false, e);
 		var allCancelled = true;

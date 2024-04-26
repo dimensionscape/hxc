@@ -859,30 +859,30 @@ class Operators {
 					case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
 						var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
 						var tvoid = ctx.com.basic.tvoid;
-						var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
-						var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
-						var eb = TexprTools.makeLocal(vb, p);
-						var ek = TexprTools.makeLocal(vk, p);
-						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, ek, p);
-						var keyInit:Null<TExpr> = null;
-						switch (get.key.expr) {
-							case TLocal(v) if (v == vk):
-							case _:
-								var vkc = TypeFunctions.allocVar(VGenerated, "`", get.key.type, p);
-								keyInit = TypeFunctions.mk(TVarExpr(vkc, get.key), tvoid, p);
-								get = Calls.abstractArrayGet(ctx, a, tl, a.impl, eb, TexprTools.makeLocal(vkc, p), p);
+						// The read access resolves first so the key carries any getter coercion, then each operand
+						// binds to a gen temp only when it is not a constant expression (a const key stays inline,
+						// keeping the element access foldable by inline_constructors); the key declaration emits
+						// before the base one. (find_array_read_access + maybe_bind_to_temp via
+						// Optimizer.make_constant_expression).
+						var probe = Calls.abstractArrayGet(ctx, a, tl, a.impl, tb, tk, p);
+						function maybeBind(e:TExpr):{e:TExpr, decl:Null<TExpr>} {
+							var c = hxc.optimization.Optimizer.makeConstantExpression(ctx, e);
+							return if (c != null) {e: c, decl: null} else {
+								var v = TypeFunctions.allocVar(VGenerated, "`", e.type, p);
+								{e: TexprTools.makeLocal(v, p), decl: TypeFunctions.mk(TVarExpr(v, e), tvoid, p)};
+							};
 						}
-						var eget = get.expr;
+						var bk = maybeBind(probe.key);
+						var bb = maybeBind(tb);
+						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, bb.e, bk.e, p);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-						var eop = toTexpr(makeBinop(ctx, sub, eget, te2, true, withType, p));
-						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, eb, get.key, function(_) return eop, p);
-						var block = [
-							TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p),
-							TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p)
-						];
-						if (keyInit != null) block.push(keyInit);
+						var eop = toTexpr(makeBinop(ctx, sub, get.expr, te2, true, withType, p));
+						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, bb.e, get.key, function(_) return eop, p);
+						var block:Array<TExpr> = [];
+						if (bk.decl != null) block.push(bk.decl);
+						if (bb.decl != null) block.push(bb.decl);
 						block.push(eset);
-						return TypeFunctions.mk(TBlock(block), eset.type, p);
+						return block.length == 1 ? eset : TypeFunctions.mk(TBlock(block), eset.type, p);
 					case _:
 				}
 			case _:
