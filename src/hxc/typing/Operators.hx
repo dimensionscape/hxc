@@ -568,7 +568,9 @@ class Operators {
 							// Fresh monos per attempt so a failed probe cannot bind the method's own params, and
 							// wrap the whole attempt in a mono-rollback so a failure restores every touched mono.
 							return TypeUnification.withMonoRollback(function() {
-								var monos = [for (_ in cf.params) TypeFunctions.mkMono()];
+								// The op method's own params spawn CONSTRAINED, so a Float operand cannot
+								// bind a T:Int param (UInt.equalsInt vs equalsFloat selection).
+								var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
 								function mapCf(t:T):T return map(TypeFunctions.applyParams(cf.params, monos, t));
 								var t1 = mapCf(bt1);
 								var t2 = mapCf(bt2);
