@@ -703,7 +703,8 @@ class TypeFields {
 		TypeFunctions.addClassFieldFlag(cf, CfNoLookup);
 		cf.expr = eo;
 		tctx.curclass.statics.set(name, cf);
-		tctx.curclass.orderedStatics.push(cf);
+		// The promoted local static is PREPENDED to the ordered statics.
+		tctx.curclass.orderedStatics.unshift(cf);
 		lut.set(v.id, cf);
 	}
 

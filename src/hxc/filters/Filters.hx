@@ -137,7 +137,8 @@ class Filters {
 				cf.expr = eo;
 			}
 			c.statics.set(cf.name, cf);
-			c.orderedStatics.push(cf);
+			// The promoted local static is PREPENDED to the ordered statics.
+			c.orderedStatics.unshift(cf);
 			lut.set(v.id, cf);
 		}
 		function run(e:TExpr):TExpr {
