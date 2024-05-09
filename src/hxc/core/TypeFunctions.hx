@@ -652,8 +652,19 @@ class TypeFunctions {
 	// instead of looping.
 	static var underlyingTypeStack:Array<T> = [];
 
+	// A @:multiType abstract's underlying type is its resolved specialization. The resolver lives in
+	// the typer; ModuleLoader.attach assigns it. A null result falls through to thisType.
+	public static var multiTypeResolver:Null<(TAbstract, TParams)->Null<T>> = null;
+
+	static function tryMultiType(a:TAbstract, pl:TParams):Null<T> {
+		if (multiTypeResolver == null || !hasMeta(":multiType", a.meta)) return null;
+		return multiTypeResolver(a, pl);
+	}
+
 	// The first underlying level, still running the full traversal so a mutually recursive chain reports.
 	public static function getUnderlyingTypeFirst(a:TAbstract, pl:TParams):T {
+		var mt = tryMultiType(a, pl);
+		if (mt != null) return mt;
 		if (hasMeta(":coreType", a.meta)) return tDynamic;
 		var t = applyParams(a.params, pl, a.thisType);
 		underlyingTypeStack.push(TAbstract(a, pl));
@@ -663,6 +674,8 @@ class TypeFunctions {
 	}
 
 	public static function getUnderlyingType(a:TAbstract, pl:TParams):T {
+		var mt = tryMultiType(a, pl);
+		if (mt != null) return mt;
 		if (hasMeta(":coreType", a.meta)) return tDynamic;
 		underlyingTypeStack.push(TAbstract(a, pl));
 		var r = try maybeRecurseUnderlying(applyParams(a.params, pl, a.thisType)) catch (e:Dynamic) {

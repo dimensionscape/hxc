@@ -13,6 +13,9 @@ import sys.FileSystem;
 
 class ModuleLoader {
 	public static function attach(ctx:Context):Void {
+		// Resolve a @:multiType abstract's concrete specialization through the typer first.
+		hxc.core.TypeFunctions.multiTypeResolver = function(a, pl)
+			return try hxc.typing.Typer.resolveMultiTypeConcrete(a, pl, Position.nullPos) catch (_:Dynamic) null;
 		ctx.getType = function(path:Path, p:Position, ?sub:String):ModuleType {
 			if (path.name == "") throw new ContextError("Empty module name is not allowed", p);
 			return loadTypeDef(ctx, path, p, sub);
