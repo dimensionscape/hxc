@@ -3680,7 +3680,9 @@ class EvalMacro {
 			var k = strOf(a[0]);
 			var params = (a.length > 1 && a[1] != VNull) ? [for (pv in arrOf(a[1])) decodeExpr(ec, pv, Position.nullPos)] : [];
 			var meta = getMeta();
-			meta.push({name: k, params: params, pos: Position.nullPos});
+			// The entry prepends with the caller's position.
+			var p = a.length > 2 ? posOf(ec, a[2], Position.nullPos) : Position.nullPos;
+			meta.unshift({name: k, params: params, pos: p});
 			setMeta(meta);
 			return VNull;
 		}, true));

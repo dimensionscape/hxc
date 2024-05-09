@@ -3625,10 +3625,9 @@ class Typer {
 				// inlinable (inline_constructors folds `new Child(...)` through the forwarded super call).
 				cfCtor.kind = found.cf.kind;
 				cfCtor.params = found.cf.params;
-				// An inherited forwarding constructor is compiler-generated, so a further subclass with an
-				// explicit constructor still gets an auto super() (insertMissingSuper checks this meta).
-				// copies CompilerGenerated from the parent.
-				cfCtor.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
+				// The inherited forwarding constructor keeps :compilerGenerated only when the PARENT ctor
+				// carries it, so a class inheriting a user-written ctor exposes a meta-free `new` (rtti).
+				cfCtor.meta = [for (m in found.cf.meta) if (m.name == ":compilerGenerated") m];
 				cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
 				c.constructor = cfCtor;
 			case _:

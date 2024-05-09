@@ -661,9 +661,11 @@ class TypeFields {
 	}
 
 	static function setFunctionValueMeta(cf:TClassField, fd:Func):Void {
+		// The values accumulate through a prepending fold, so the object lists the defaulted arguments in
+		// REVERSE declaration order.
 		var fields:Array<ObjectField> = [];
 		for (arg in fd.fArgs) if (arg.value != null)
-			fields.push({name: arg.name.name, pos: arg.name.pos, quotes: NoQuotes, expr: arg.value});
+			fields.unshift({name: arg.name.name, pos: arg.name.pos, quotes: NoQuotes, expr: arg.value});
 		if (fields.length > 0)
 			setValueMeta(cf, [new Expr(EObjectDecl(fields), cf.pos)]);
 	}
