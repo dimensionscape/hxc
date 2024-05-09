@@ -128,6 +128,22 @@ class Inline {
 		return e;
 	}
 
+	// Anything free of locals/this/object/array literals counts as constant, so a static function
+	// reference substitutes into a captured position (a closure).
+	static function isConstantForCapture(e:TExpr):Bool {
+		var constant = true;
+		function loop(x:TExpr):Void {
+			if (!constant) return;
+			switch (x.expr) {
+				case TLocal(_) | TConst(TThis) | TObjectDecl(_) | TArrayDecl(_): constant = false;
+				case TField(_, FEnum(_, _)) | TTypeExpr(_) | TConst(_):
+				case _: TexprTools.iter(loop, x);
+			}
+		}
+		loop(e);
+		return constant;
+	}
+
 	static function isOptionalArg(v:TVar):Bool {
 		return TypeFunctions.hasMeta(":optional", v.meta) || TypeFunctions.isNullable(v.type);
 	}
@@ -443,7 +459,7 @@ class Inline {
 			// `this` temp.
 			var substitutable = (isAbsThis && use.writes)
 				|| (!forceTemp && !hasRuntimeDefault
-				&& !(use.captured && !param.expr.match(TConst(_)))
+				&& !(use.captured && !isConstantForCapture(param))
 				&& switch (param.expr) {
 					case TLocal(_) if (isAbsThis): true;
 					case TConst(TNull): false;
