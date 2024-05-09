@@ -396,6 +396,9 @@ class Inline {
 		function valueSemantics(t:T):Bool {
 			return hxc.optimization.AnalyzerFusion.ExtTypeSemantics.hasValueSemantics(t);
 		}
+		// The runtime default checks emit after every argument declaration, in REVERSE argument order,
+		// and only for an argument the body actually reads.
+		var defaultChecks:Array<TExpr> = [];
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
 			var param = params[i];
@@ -476,13 +479,15 @@ class Inline {
 				// skipped; emitting it would type a null at the non-nullable arg type and trip the
 				// static-null check.
 				if (hasRuntimeDefault && dflt != null && !dflt.expr.match(TConst(TNull))
-						&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type))) {
+						&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type))
+						&& use.reads > 0) {
 					var ve = TypeFunctions.mk(TLocal(nv), nv.type, p);
 					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, p)), ctx.com.basic.tbool, p);
-					binds.push(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dflt), nv.type, p), null), tvoid, p));
+					defaultChecks.unshift(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dflt), nv.type, p), null), tvoid, p));
 				}
 			}
 		}
+		for (dc in defaultChecks) binds.push(dc);
 		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
 		if (absMember) checkAbstractWrite(value, p);
