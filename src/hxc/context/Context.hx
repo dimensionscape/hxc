@@ -82,6 +82,16 @@ class Context {
 	/** Embedded resources from `--resource file@name`. */
 	public var resources:StringMap<haxe.io.Bytes>;
 
+	/**
+	 * Resource insertion order used to reconstruct generator hash-table traversal.
+	 */
+	public var resourceOrder:Array<String>;
+
+	public function addResource(name:String, data:haxe.io.Bytes):Void {
+		if (!resources.exists(name)) resourceOrder.push(name);
+		resources.set(name, data);
+	}
+
 	public var debug:Bool = false;
 
 	/** False under --no-opt: expression reduction is skipped. */
@@ -182,6 +192,7 @@ class Context {
 		this.modules = [];
 		this.types = [];
 		this.resources = new StringMap();
+		this.resourceOrder = [];
 		this.features = new StringMap();
 		this.initMacros = [];
 		this.declOfType = new StringMap();
@@ -233,7 +244,7 @@ class Context {
 		c.forwardWarningsTo = this;
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
-		for (name in this.resources.keys()) c.resources.set(name, this.resources.get(name));
+		for (name in this.resourceOrder) c.addResource(name, this.resources.get(name));
 		c.initMacros = this.initMacros.copy();
 		return c;
 	}

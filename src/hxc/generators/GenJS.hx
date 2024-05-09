@@ -644,7 +644,14 @@ class GenJS {
 				}
 			case TIdent("__resources__") if (el.length == 0):
 				spr("[");
-				var names = [for (k in com.resources.keys()) k];
+				// Resources are listed in the order of a 16-bucket hash table read by a prepending fold:
+				// visit buckets 0..15 (no resize below 33 entries), each bucket newest-first, then the
+				// prepend reverses the visit order. Bucket index = the name's string hash land 15.
+				var cap = 16;
+				var buckets:Array<Array<String>> = [for (_ in 0...cap) []];
+				for (n in com.resourceOrder) buckets[hxc.eval.EvalStdLib.seededStringHash(n) & (cap - 1)].unshift(n);
+				var names:Array<String> = [];
+				for (b in buckets) for (n in b) names.push(n);
 				names.reverse();
 				concatWith(",", function(name:String) {
 					spr("{ ");

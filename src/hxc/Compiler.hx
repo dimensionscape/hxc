@@ -1766,6 +1766,6 @@ class Compiler {
 		var file = parts[0];
 		var name = parts.length == 1 ? file : parts[1];
 		if (ctx.resources.exists(name)) throw "Duplicate resource name " + name;
-		ctx.resources.set(name, sys.io.File.getBytes(file));
+		ctx.addResource(name, sys.io.File.getBytes(file));
 	}
 }
