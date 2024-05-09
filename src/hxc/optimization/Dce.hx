@@ -281,7 +281,7 @@ class Dce {
 	// Mark a class as kept. If the class has fields marked as @:?keep, make sure to keep them.
 	function markClass(c:TClass):Void {
 		if (!hasMeta(DceMeta.Used, c.meta)) {
-			if (debugMarks) Sys.println("[DCE] Marked class " + Context.sTypePath(c.path));
+			if (debugMarks) Sys.println("[DCE] Marked class " + Context.sTypePath(c.path) + " while processing " + (curclass == null ? "?" : Context.sTypePath(curclass.path)));
 			c.meta = ([mkUsedMeta(c.pos)] : Metadata).concat(c.meta);
 			checkFeature(Context.sTypePath(c.path) + ".*");
 			updateMarkedClassFields(c);
