@@ -25,6 +25,25 @@ class Define {
 		return values.exists(k) ? values.get(k) : (def == null ? "" : def);
 	}
 
+	// MD5 over sorted "k=v" pairs joined with "@", skipping the display/dump flags that do not affect
+	// compilation output. The signature is stored in hex form everywhere, so no consumer may hex it again.
+	public function getSignature():String {
+		if (definesSignature != null) return definesSignature;
+		var defines:Array<String> = [];
+		for (k => v in values) {
+			switch (k.split("-").join("_")) {
+				case "display" | "use_rtti_doc" | "macro_times" | "display_details" | "no_copt" | "display_stdin"
+					| "message.reporting" | "message.log_file" | "message.log_format" | "message.no_color"
+					| "dump" | "dump_dependencies" | "dump_ignore_var_ids":
+				case _:
+					defines.push(k + "=" + v);
+			}
+		}
+		defines.sort(Reflect.compare);
+		definesSignature = haxe.crypto.Md5.encode(defines.join("@"));
+		return definesSignature;
+	}
+
 	public function rawDefineValue(k:String, v:String):Void {
 		values.set(k, v);
 		definesSignature = null;

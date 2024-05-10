@@ -76,6 +76,42 @@ class CompilationCache {
 		}
 	}
 
+	// Register JSON to expose this context in server/contexts. List define keys in descending order.
+	public function addInfo(sign:String, desc:String, platform:hxc.core.Globals.Platform, classPath:Array<String>, defines:hxc.core.Define):Int {
+		var cc = getContext(sign);
+		var keys = [for (k in defines.values.keys()) k];
+		keys.sort(Reflect.compare);
+		keys.reverse();
+		cc.json = JObject([
+			{name: "index", value: JInt(cc.index)},
+			{name: "desc", value: JString(desc)},
+			{name: "platform", value: JString(hxc.core.Globals.platformName(platform))},
+			{name: "classPaths", value: JArray([for (s in classPath) JString(s)])},
+			{name: "signature", value: JString(sign)},
+			{name: "defines", value: JArray([for (k in keys) JObject([
+				{name: "key", value: JString(k)},
+				{name: "value", value: JString(defines.values.get(k))}
+			])])}
+		]);
+		return cc.index;
+	}
+
+	// Cache finished modules under their own signatures, including modules whose signature differs
+	// from the compilation's.
+	public function cacheContext(com:Context):Void {
+		var sign = com.defines.getSignature();
+		var cc = getContext(sign);
+		for (m in com.modules) {
+			var mcc = (m.extra != null && m.extra.sign != null && m.extra.sign != "" && m.extra.sign != sign)
+				? getContext(m.extra.sign) : cc;
+			mcc.modules.set(Context.sTypePath(m.path), m);
+		}
+	}
+
+	public function maybeAddContextSign(com:Context, desc:String):Void {
+		addInfo(com.defines.getSignature(), desc, com.platform, com.classPath, com.defines);
+	}
+
 	// Exactly 32 hex characters, or an invalid-argument error.
 	public static function digestFromHex(s:String):String {
 		if (s.length != 32) throw new hxc.core.JsonRpc.InvalidArgument("Digest.from_hex");

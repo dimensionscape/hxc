@@ -451,6 +451,10 @@ class Compiler {
 				}
 			}
 		}
+		// The context registers its descriptive json in the process cache before the init macros run, which
+		// is what makes server/contexts list it. (CommonCache.maybe_add_context_sign cs com
+		// "before_init_macros").
+		hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 			// The init-macro callbacks run after the stage changes and before root modules type.
@@ -601,6 +605,10 @@ class Compiler {
 			hxc.debug.Dump.run(ctx);
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
+			// A fully-typed non-display compile caches its modules into the process cache, activating
+			// server/module and server/type lookups for later requests in the same process.
+			// (maybe_cache_context: dms_full_typing + dms_populate_cache, both true outside display runs).
+			if (ctx.displaySpec == null) hxc.context.DisplayJson.cache.cacheContext(ctx);
 			// onGenerate callbacks run inside Filters.run a targetless compile has no filter pipeline, so
 			// they fire here to keep macro tests observable.
 			if (platform == Cross) hxc.eval.EvalMacro.runGenerateCallbacks(ctx);

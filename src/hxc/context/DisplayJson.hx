@@ -29,7 +29,7 @@ class DisplayJson {
 	static var supportsResolve = false;
 
 	// Process-lifetime compilation cache; a one-shot process starts fresh.
-	static var cache = new hxc.context.CompilationCache.CompilationCache();
+	public static var cache = new hxc.context.CompilationCache.CompilationCache();
 
 	static var doNotCheckModules = false;
 	static var legacyCompletion = false;
