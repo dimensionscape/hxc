@@ -516,6 +516,9 @@ class Compiler {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 			// The init-macro callbacks run after the stage changes and before root modules type.
 			ctx.initMacrosDone = true;
+			// The context re-registers under its post-macro signature (init macros can add defines); the
+			// last registration's desc wins.
+			hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "after_init_macros");
 			hxc.eval.EvalMacro.runAfterInitMacrosCallbacks();
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());

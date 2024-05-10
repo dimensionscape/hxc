@@ -125,13 +125,19 @@ class Genjson {
 		]);
 	}
 
-	// Filters internal metas (meta.json m_internal); hxc has no meta registry, so the
-	// compiler-synthesized internal names filter by hand.
-	static var internalMetas = [
-		":tailRecursion" => true, ":storedTypedExpr" => true, ":this" => true,
-		":impl" => true, ":mergeBlock" => true, ":implicitReturn" => true,
-		":realPath" => true, ":value" => true, ":usedOnlyBy" => true, ":directlyUsed" => true
-	];
+	// Internal metas are filtered out: those the meta registry flags as internal, plus the hxc-only
+	// synthetic metas that have no registry entry, filtered explicitly.
+	static var internalMetas:Map<String, Bool> = buildInternalMetas();
+
+	static function buildInternalMetas():Map<String, Bool> {
+		var m = new Map<String, Bool>();
+		// Hxc-only synthetic metas without a registry entry
+		for (k in [":storedTypedExpr", ":impl", ":mergeBlock", ":usedOnlyBy"]) m.set(k, true);
+		for (entry in hxc.context.MetaRegistry.metas())
+			if (hxc.context.MetaRegistry.boolField(entry, "internal"))
+				m.set(hxc.context.MetaRegistry.stringField(entry, "metadata", ""), true);
+		return m;
+	}
 
 	public function generateMetadata(ml:Metadata):JsonValue {
 		return jarray([for (m in ml) if (!internalMetas.exists(m.name)) generateMetadataEntry(m)]);
