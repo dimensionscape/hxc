@@ -219,6 +219,13 @@ class Messages {
 			};
 			if (s != null) (cm.severity == Information ? outBuf : errBuf).add(s + "\n");
 		}
+		// Buffer all request messages, including stdout information, for the response frame.
+		var req = hxc.Compiler.requestOutput;
+		if (req != null) {
+			if (outBuf.length > 0) req.add(outBuf.toString());
+			if (errBuf.length > 0) req.add(errBuf.toString());
+			return;
+		}
 		if (outBuf.length > 0) Sys.stdout().writeString(outBuf.toString());
 		if (errBuf.length > 0) Sys.stderr().writeString(errBuf.toString());
 	}
