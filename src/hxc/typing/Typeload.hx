@@ -21,6 +21,12 @@ class Typeload {
 	static var genericInstanceId:Int = 0;
 	static var genericInstances:Map<String, TClass> = new Map();
 
+	// Per-request reset for the wait server (specializations belong to the request module set).
+	public static function resetPerRequest():Void {
+		genericInstanceId = 0;
+		genericInstances = new Map();
+	}
+
 	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType):TypedTypeParam {
 		var n = tp.tpName.name;
 		// A default type parameter is only allowed on a type declaration, not on a constructor, method, or

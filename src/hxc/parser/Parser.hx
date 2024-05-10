@@ -46,6 +46,13 @@ class Parser {
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
 
+	// Per-request reset for the wait server.
+	public static function resetPerRequest():Void {
+		displayFile = null;
+		displayOffset = -1;
+		syntaxErrors = [];
+	}
+
 	function isDisplayFile():Bool {
 		if (displayFile == null) return false;
 		var f = StringTools.replace(file, "\\", "/");

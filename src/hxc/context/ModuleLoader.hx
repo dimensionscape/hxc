@@ -84,6 +84,11 @@ class ModuleLoader {
 	static var stdinConsumed = false;
 	static var stdinContent:Null<String> = null;
 
+	public static function resetPerRequest():Void {
+		stdinConsumed = false;
+		stdinContent = null;
+	}
+
 	public static function moduleFileContent(ctx:Context, file:String):String {
 		var df = hxc.parser.Parser.displayFile;
 		if (df != null && ctx.defines.rawDefined("display_stdin")) {

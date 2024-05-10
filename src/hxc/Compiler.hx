@@ -38,11 +38,34 @@ import sys.io.Process;
 	<flag value="-STACK:134217728"/>
 </linker>
 ')
+// Unwinds an in-process wait-server request on a path that would exit the one-shot process serving after a
+// failed compile).
+private class RequestAbort extends haxe.Exception {
+	public var code:Int;
+	public function new(code:Int) { super("request abort " + code); this.code = code; }
+}
+
 class Compiler {
 	public function new() run(Sys.args());
 	public static function main() run(Sys.args());
 
-	// + the wait loop: length-prefixed request/response over stdin/stderr; each request is one compilation.
+	// The wait loop: length-prefixed request/response over stdin/stderr; each request is one
+	// compilation. Reset the per-request mutable statics so a wait-server request compiles like a
+	// fresh process. The deliberately persistent set is untouched: Position.fileCache (the global file
+	// table), DisplayJson's configure switches and CompilationCache (server state),
+	// Context.nextStoredTypedExprId (module-global). When set, request-scoped answers (display JSON,
+	// protocol errors) collect here instead of the process stderr, so the wait server can frame them.
+	// Null outside in-process request execution.
+	public static var requestOutput:Null<StringBuf> = null;
+
+	public static function resetForNextRequest():Void {
+		hxc.typing.Typer.resetPerRequest();
+		hxc.typing.TypeFields.resetPerRequest();
+		hxc.typing.Typeload.resetPerRequest();
+		hxc.parser.Parser.resetPerRequest();
+		hxc.context.ModuleLoader.resetPerRequest();
+	}
+
 	static function runWaitStdio():Void {
 		var stdin = Sys.stdin();
 		var stderr = Sys.stderr();
@@ -109,6 +132,38 @@ class Compiler {
 				stderr.flush();
 				continue;
 			}
+			if (Sys.getEnv("HXC_WAIT_INPROCESS") != null && displayArg != null) {
+				// The request compiles in this process over the persistent caches; a failing compile aborts
+				// only the request.
+				resetForNextRequest();
+				requestOutput = new StringBuf();
+				var failed = false;
+				try {
+					run(lines);
+				} catch (_:RequestAbort) {
+					failed = true;
+				} catch (e:Dynamic) {
+					requestOutput.add("Error: " + Std.string(e) + "\n");
+					failed = true;
+				}
+				var payloadOut = requestOutput.toString();
+				requestOutput = null;
+				if (payloadOut.length > 0) {
+					out.add(payloadOut);
+					if (!StringTools.endsWith(payloadOut, "\n")) out.add("\n");
+				}
+				if (failed) out.add("\x02\n");
+				var body2 = haxe.io.Bytes.ofString(out.toString());
+				var head2 = haxe.io.Bytes.alloc(4);
+				head2.set(0, body2.length & 0xFF);
+				head2.set(1, (body2.length >> 8) & 0xFF);
+				head2.set(2, (body2.length >> 16) & 0xFF);
+				head2.set(3, (body2.length >> 24) & 0xFF);
+				stderr.write(head2);
+				stderr.write(body2);
+				stderr.flush();
+				continue;
+			}
 			try {
 				var proc = new Process(Sys.programPath(), lines);
 				var pout = proc.stdout.readAll().toString();
@@ -168,7 +223,7 @@ class Compiler {
 				var code = proc.exitCode();
 				proc.close();
 				if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
-				if (stderr.length > 0) Sys.stderr().writeString(stderr.toString());
+				if (stderr.length > 0) answerOut(stderr.toString());
 				if (code != 0) {
 					exitCode = code;
 					break;
@@ -319,8 +374,8 @@ class Compiler {
 					// A nonexistent directory aborts with the argument error "Invalid directory".
 					var dir = args[i++];
 					if (!sys.FileSystem.exists(dir) || !sys.FileSystem.isDirectory(dir)) {
-						Sys.stderr().writeString("Error: Invalid directory: " + dir + "\n");
-						Sys.exit(1);
+						answerOut("Error: Invalid directory: " + dir + "\n");
+						exitRequest(1);
 					}
 					Sys.setCwd(dir);
 				case "--cmd" | "-cmd":
@@ -403,12 +458,14 @@ class Compiler {
 				hxc.context.DisplayJson.parseInput(ctx, ctx.displaySpec);
 			} catch (out:hxc.context.DisplayJson.JsonDisplayOutput) {
 				// Print the response verbatim without a trailing newline.
-				Sys.stderr().writeString(out.output);
+				if (requestOutput != null) requestOutput.add(out.output)
+				else answerOut(out.output);
 				return;
 			} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 				// An uncaught Invalid_argument prints bare on stderr and exits 1.
-				Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
-				Sys.exit(1);
+				if (requestOutput != null) { requestOutput.add("Invalid_argument(\"" + e.arg + "\")\n"); return; }
+				answerOut("Invalid_argument(\"" + e.arg + "\")\n");
+				exitRequest(1);
 			}
 		}
 		// Legacy --display file@pos: the parser stops at a dot-path completion point of the display file,
@@ -423,10 +480,10 @@ class Compiler {
 				// A package answer: a string array over the protocol.
 				if (ctx.jsonRpcId != null) {
 					var parts = pack == "" ? [] : pack.split(".");
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (s in parts) haxe.Json.stringify(s)].join(",") + "]"));
+					answerOut(jsonRpcAnswer(ctx, "[" + [for (s in parts) haxe.Json.stringify(s)].join(",") + "]"));
 					return;
 				}
-				Sys.stderr().writeString(pack + "\n");
+				answerOut(pack + "\n");
 				return;
 			}
 			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation" || dmode == "signature")) {
@@ -464,15 +521,15 @@ class Compiler {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
-			Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
-			Sys.exit(1);
+			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
+			exitRequest(1);
 		} catch (e:hxc.core.TypingError) {
 			// Through the message store, so -D message.reporting picks the formatter and a
 			// compound message renders its sub-lines as depth children.
 			ctx.raiseTypingErrors = false;
 			ctx.addDiagnostic(e.message, e.pos, e.depth);
 			flushPendingMessages(ctx);
-			Sys.exit(1);
+			exitRequest(1);
 		}
 
 		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=
@@ -528,9 +585,9 @@ class Compiler {
 				if (found == null) found = [];
 				// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
 				if (ctx.jsonRpcId != null)
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
+					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
 				else
-					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(found) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(found) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayTypeDefinition) {
@@ -541,50 +598,50 @@ class Compiler {
 				var p = t == null ? null : typeDefinitionPos(t);
 				var locs = p == null ? "[null]" : "[" + jsonLocation(p) + "]";
 				if (ctx.jsonRpcId != null)
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, locs))
+					answerOut(jsonRpcAnswer(ctx, locs))
 				else
-					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayHover) {
 				if (ctx.jsonRpcId != null) {
 					var out = jsonHover(ctx);
-					Sys.stderr().writeString(out == null ? jsonRpcAnswer(ctx, "null") : out);
+					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
 					return;
 				}
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
 				if (h == null) h = hoverOnFieldName(ctx);
-				Sys.stderr().writeString(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
+				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
 				return;
 			}
 			if (hxc.typing.Typer.displayImplementation) {
 				var impls = collectImplementations(ctx);
 				if (ctx.jsonRpcId != null)
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in impls) jsonLocation(p)].join(",") + "]"))
+					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in impls) jsonLocation(p)].join(",") + "]"))
 				else
-					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(impls) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(impls) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.displayUsage) {
 				var usages = collectUsages(ctx);
 				if (ctx.jsonRpcId != null)
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + [for (p in usages) jsonLocation(p)].join(",") + "]"))
+					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in usages) jsonLocation(p)].join(",") + "]"))
 				else
-					Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(usages) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(usages) + "\n");
 				return;
 			}
 			if (hxc.typing.Typer.fieldCompletionFound != null) {
 				if (ctx.jsonRpcId != null) {
 					var out = jsonCompletion(ctx);
-					Sys.stderr().writeString(out == null ? jsonRpcAnswer(ctx, "null") : out);
+					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
 					return;
 				}
-				Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound) + "\n");
+				answerOut(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound) + "\n");
 				return;
 			}
 			if (isDisplay(ctx, "signature")) {
 				if (ctx.jsonRpcId != null) {
-					Sys.stderr().writeString(jsonSignature(ctx));
+					answerOut(jsonSignature(ctx));
 					return;
 				}
 				displaySignature(ctx);
@@ -629,7 +686,7 @@ class Compiler {
 				if (ctx.jsonRpcId != null && isDisplay(ctx, "compiledTypes")) {
 					var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 					var l = [for (mt in ctx.types) hxc.core.Json.Json.stringOfJson(gen.generateModuleType(mt))];
-					Sys.stderr().writeString(jsonRpcAnswer(ctx, "[" + l.join(",") + "]"));
+					answerOut(jsonRpcAnswer(ctx, "[" + l.join(",") + "]"));
 					return;
 				}
 				if (!noOutput) {
@@ -687,17 +744,17 @@ class Compiler {
 			}
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
 			var answer = jsonToplevelCompletion(ctx, tl.items);
-			if (answer != null) Sys.stderr().writeString(answer);
+			if (answer != null) answerOut(answer);
 			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
 			handleTypePathCompletion(ctx, tc);
 			return;
 		} catch (dp:hxc.compiler.DisplayXml.DisplayPositions) {
-			Sys.stderr().writeString(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
+			answerOut(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
 			return;
 		} catch (tl:hxc.compiler.DisplayXml.ToplevelCompletion) {
 			// No trailing newline: the completion string prints verbatim.
-			Sys.stderr().writeString(hxc.compiler.DisplayXml.printToplevel(tl.items));
+			answerOut(hxc.compiler.DisplayXml.printToplevel(tl.items));
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
@@ -717,15 +774,15 @@ class Compiler {
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
-			Sys.stderr().writeString("Invalid_argument(\"" + e.arg + "\")\n");
-			Sys.exit(1);
+			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
+			exitRequest(1);
 		} catch (e:Dynamic) {
-			Sys.stderr().writeString("Error: " + Std.string(e) + "\n");
-			Sys.exit(1);
+			answerOut("Error: " + Std.string(e) + "\n");
+			exitRequest(1);
 		}
 		if (hxc.core.Timer.measureTimes) {
 			hxc.core.Timer.closeTimes();
-			hxc.core.Timer.reportTimes(function(s) Sys.stderr().writeString(s + "\n"));
+			hxc.core.Timer.reportTimes(function(s) answerOut(s + "\n"));
 		}
 	}
 
@@ -815,7 +872,7 @@ class Compiler {
 				if (errorPos.min >= 0) {
 					ctx.addDiagnostic(msg, qualifyStdPosition(ctx, errorPos));
 					flushPendingMessages(ctx);
-					Sys.exit(1);
+					exitRequest(1);
 				}
 			case _:
 		}
@@ -841,7 +898,7 @@ class Compiler {
 		for (p in frames) stack.push({message: "Called from here", pos: p});
 		ctx.addDiagnosticStack(stack);
 		flushPendingMessages(ctx);
-		Sys.exit(1);
+		exitRequest(1);
 	}
 
 	static function qualifyStdPosition(ctx:Context, p:Null<Position>):Null<Position> {
@@ -1435,6 +1492,18 @@ class Compiler {
 		return hxc.core.Json.stringOfJson(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull).generatePosAsLocation(p));
 	}
 
+	// A failing one-shot compile exits the process; an in-process wait-server request
+	// aborts only the request.
+	static function exitRequest(code:Int):Void {
+		if (requestOutput != null) throw new RequestAbort(code) else Sys.exit(code);
+	}
+
+	// Writes a request answer to the wait-server buffer when one is active, or the
+	// process stderr in one-shot mode.
+	static function answerOut(sv:String):Void {
+		if (requestOutput != null) requestOutput.add(sv) else Sys.stderr().writeString(sv);
+	}
+
 	// The protocol envelope around a report-time answer.
 	static function jsonRpcAnswer(ctx:Context, resultJson:String):String {
 		return '{"jsonrpc":"2.0","id":' + ctx.jsonRpcId + ',"result":{"result":' + resultJson + ',"timestamp":' + Sys.time() + '}}';
@@ -1476,7 +1545,7 @@ class Compiler {
 		// the raw array. No trailing newline: the raw print.
 		if (ctx.jsonRpcId != null)
 			raw = jsonRpcAnswer(ctx, raw);
-		Sys.stderr().writeString(raw);
+		answerOut(raw);
 	}
 
 	static function displaySignature(ctx:Context):Void {
@@ -1525,7 +1594,7 @@ class Compiler {
 			case _:
 		}
 		if (sigs.length == 0) sigs.push('{"label":"():Void","parameters":[]}');
-		Sys.stderr().writeString('{"signatures":[' + sigs.join(",") + '],"activeParameter":0,"activeSignature":0}\n');
+		answerOut('{"signatures":[' + sigs.join(",") + '],"activeParameter":0,"activeSignature":0}\n');
 	}
 
 	// List the module's public types, plus the main type's public statics when completing an import.
@@ -1547,7 +1616,7 @@ class Compiler {
 			}
 			var m = try ModuleLoader.loadModule(ctx, {pack: pack, name: sModule}, Position.nullPos) catch (e:Dynamic) {
 				printPositionMessage("Could not load module " + Context.sTypePath({pack: tc.pack, name: tc.module}), Position.nullPos);
-				Sys.exit(1);
+				exitRequest(1);
 				return;
 			};
 			try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
@@ -1595,7 +1664,7 @@ class Compiler {
 				}
 			}
 		}
-		Sys.stderr().writeString(hxc.compiler.DisplayXml.printFields(fields));
+		answerOut(hxc.compiler.DisplayXml.printFields(fields));
 	}
 
 	// Each metadata argument whose span encloses the display position types as an expression; failures
@@ -1641,7 +1710,7 @@ class Compiler {
 		if (!ctx.hasError()) return;
 		hxc.compiler.Messages.display(ctx);
 		ctx.diagnostics = [];
-		Sys.exit(1);
+		exitRequest(1);
 	}
 
 	static function expandArgs(args:Array<String>):Array<String> {
@@ -1756,7 +1825,7 @@ class Compiler {
 		ctx.raiseTypingErrors = false;
 		ctx.addDiagnostic(msg, pos, depth);
 		flushPendingMessages(ctx);
-		Sys.exit(1);
+		exitRequest(1);
 	}
 
 	static function printPositionMessage(msg:String, pos:Position):Void {
@@ -1765,7 +1834,7 @@ class Compiler {
 		var lines = msg.split("\n");
 		var parts = [lines[0]];
 		for (i in 1...lines.length) parts.push("... " + lines[i]);
-		Sys.stderr().writeString(epos + " : " + parts.join("\n" + epos + " : ") + "\n");
+		answerOut(epos + " : " + parts.join("\n" + epos + " : ") + "\n");
 	}
 
 	static function addResource(ctx:Context, spec:String):Void {

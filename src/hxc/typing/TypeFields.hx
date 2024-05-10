@@ -25,6 +25,13 @@ class TypeFields {
 	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 
+	// Per-request reset for the wait server (a fresh request re-types loaded bodies).
+	public static function resetPerRequest():Void {
+		lazyFieldTypes = new haxe.ds.ObjectMap();
+		bodyTyped = new haxe.ds.ObjectMap();
+		_forcing = [];
+	}
+
 	public static function typeAllModules(ctx:Context):Void {
 		if (!ctx.isMacro) hxc.eval.EvalMacro.runBuildMacros(ctx);
 		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat

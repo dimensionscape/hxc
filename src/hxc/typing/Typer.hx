@@ -38,6 +38,29 @@ class Typer {
 	// The stack of cast fields being applied, for macro @:from recursion.
 	static var abstractCastStack:Array<TClassField> = [];
 
+	// Clears the per-compilation mutable statics so a wait-server request types like a fresh process (each
+	// request is an isolated compilation over the persistent caches).
+	public static function resetPerRequest():Void {
+		abstractCastStack = [];
+		expectedArrayAllowDynamic = false;
+		displayDefinition = false;
+		displayFound = null;
+		displayHover = false;
+		hoverFound = null;
+		displayTypeDefinition = false;
+		displaySignature = false;
+		signatureFound = null;
+		displayToplevel = false;
+		displayToplevelJson = false;
+		displayUsage = false;
+		displayImplementation = false;
+		usageTargetField = null;
+		usageTargetVar = null;
+		usageTargetEnumField = null;
+		usageTargetClass = null;
+		fieldCompletionFound = null;
+	}
+
 	// A fresh mono, recorded in the per-function list. A valid Haxe identifier: an initial letter or `_`,
 	// then letters, digits or `_`. A quoted object field like "x-bar" is not one.
 	static function isValidIdentifier(s:String):Bool {
