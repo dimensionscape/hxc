@@ -132,7 +132,9 @@ class Compiler {
 				stderr.flush();
 				continue;
 			}
-			if (Sys.getEnv("HXC_WAIT_INPROCESS") != null) {
+			// In-process execution is the default; HXC_WAIT_CHILD=1 restores the isolated child-process mode
+			// as an escape hatch.
+			if (Sys.getEnv("HXC_WAIT_CHILD") == null) {
 				// The request compiles in this process over the persistent caches; a failing compile aborts
 				// only the request.
 				resetForNextRequest();
