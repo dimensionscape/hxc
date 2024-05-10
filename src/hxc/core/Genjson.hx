@@ -497,4 +497,60 @@ class Genjson {
 		}
 		return jobject([field("kind", jstring(kind))].concat(fields1).concat([field("args", jobject(fields2))]));
 	}
+
+	static function sModuleSkipReason(reason:hxc.core.Type.ModuleSkipReason):String {
+		function loop(stack:Array<Path>, r:hxc.core.Type.ModuleSkipReason):String {
+			return switch (r) {
+				case DependencyDirty(path, r2):
+					var rec_ = false;
+					for (p in stack) if (p.name == path.name && p.pack.join(".") == path.pack.join(".")) { rec_ = true; break; }
+					(stack.length == 0 ? "DependencyDirty " : "") + hxc.core.Globals.sTypePath(path)
+						+ " - " + (rec_ ? "rec" : loop(stack.concat([path]), r2));
+				case Tainted(cause): "Tainted " + cause;
+				case FileChanged(file): "FileChanged " + file;
+				case Shadowed(file): "Shadowed " + file;
+				case LibraryChanged: "LibraryChanged";
+			};
+		}
+		return loop([], reason);
+	}
+
+	// The server/module payload. Dependencies list descending by id; dependents scan the context's
+	// cached modules for ones depending on this id.
+	public static function generateModule(cc:hxc.context.CompilationCache.CacheContext, m:hxc.core.Type.ModuleDef):JsonValue {
+		var depIds = [for (id in m.extra.deps.keys()) id];
+		depIds.sort(function(a, b) return a - b);
+		depIds.reverse();
+		var dependents:Array<JsonValue> = [];
+		for (path in cc.modules.keys()) {
+			var m2 = cc.modules.get(path);
+			if (m2.extra.deps.exists(m.id))
+				dependents.push(jobject([
+					field("path", jstring(hxc.core.Globals.sTypePath(m2.path))),
+					field("sign", jstring(m2.extra.sign))
+				]));
+		}
+		return jobject([
+			field("id", jint(m.id)),
+			field("path", jobject(modulePathFields(m.path))),
+			field("types", jarray([for (mt in m.types) {
+				var infos = TypeFunctions.tInfos(mt);
+				generateTypePath(m.path, infos.path, infos.meta);
+			}])),
+			field("file", jstring(m.extra.file)),
+			field("sign", jstring(m.extra.sign)),
+			field("cacheState", jstring(switch (m.extra.cacheState) {
+				case MSGood: "Good";
+				case MSBad(reason): sModuleSkipReason(reason);
+				case MSUnknown: "Unknown";
+			})),
+			field("dependencies", jarray([for (id in depIds) {
+				var dm = m.extra.deps.get(id);
+				jobject([
+					field("path", jstring(hxc.core.Globals.sTypePath(dm.path))),
+					field("sign", jstring(dm.extra.sign))
+				]);
+			}]))
+		].concat([field("dependents", jarray(dependents))]));
+	}
 }

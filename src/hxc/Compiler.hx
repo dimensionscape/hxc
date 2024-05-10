@@ -132,7 +132,7 @@ class Compiler {
 				stderr.flush();
 				continue;
 			}
-			if (Sys.getEnv("HXC_WAIT_INPROCESS") != null && displayArg != null) {
+			if (Sys.getEnv("HXC_WAIT_INPROCESS") != null) {
 				// The request compiles in this process over the persistent caches; a failing compile aborts
 				// only the request.
 				resetForNextRequest();

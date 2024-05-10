@@ -231,16 +231,20 @@ class DisplayJson {
 				var cc = cache.getContext(sign);
 				var m = cc.findModule(path);
 				if (m == null) hctx.sendError([JString("No such module")]);
-				// Cached-module generation is not implemented; empty caches do not reach this branch.
-				hctx.sendError([JString("No such module")]);
+				hctx.sendResult(hxc.core.Genjson.generateModule(cc, m));
 			}},
 			{name: "server/type", f: function(hctx) {
 				var sign = hxc.context.CompilationCache.CompilationCache.digestFromHex(hctx.jsonrpc.getStringParam("signature"));
 				var path = hctx.jsonrpc.getStringParam("modulePath");
-				hctx.jsonrpc.getStringParam("typeName");
+				var typeName = hctx.jsonrpc.getStringParam("typeName");
 				var cc = cache.getContext(sign);
 				var m = cc.findModule(path);
 				if (m == null) hctx.sendError([JString("No such module")]);
+				for (mt in m.types) {
+					var infos = hxc.core.TypeFunctions.tInfos(mt);
+					if (infos.path.name == typeName)
+						hctx.sendResult(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMMinimum).generateModuleType(mt));
+				}
 				hctx.sendError([JString("No such type")]);
 			}},
 			{name: "server/typeContexts", f: function(hctx) {
