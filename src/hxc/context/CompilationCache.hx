@@ -19,6 +19,14 @@ class CacheContext {
 	// Keyed by lowercased full path.
 	public var files = new StringMap<CachedFile>();
 	public var modules = new StringMap<hxc.core.Type.ModuleDef>();
+	// Module fold order follows hash buckets keyed by the path tuple.
+	public var moduleOrder = new hxc.core.NameHash.HashTableOrder();
+
+	public function cacheModule(m:hxc.core.Type.ModuleDef):Void {
+		var key = Context.sTypePath(m.path);
+		modules.set(key, m);
+		moduleOrder.add(key, hxc.core.NameHash.pathHash(m.path.pack, m.path.name));
+	}
 	public var removedFiles = new StringMap<String>();
 	public var json:JsonValue = JNull;
 
@@ -104,7 +112,7 @@ class CompilationCache {
 		for (m in com.modules) {
 			var mcc = (m.extra != null && m.extra.sign != null && m.extra.sign != "" && m.extra.sign != sign)
 				? getContext(m.extra.sign) : cc;
-			mcc.modules.set(Context.sTypePath(m.path), m);
+			mcc.cacheModule(m);
 		}
 	}
 

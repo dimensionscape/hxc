@@ -527,15 +527,18 @@ class Genjson {
 		var depIds = [for (id in m.extra.deps.keys()) id];
 		depIds.sort(function(a, b) return a - b);
 		depIds.reverse();
+		// The dependents come out in the REVERSE of the module table's bucket visit order (modeled by
+		// moduleOrder).
 		var dependents:Array<JsonValue> = [];
-		for (path in cc.modules.keys()) {
+		for (path in cc.moduleOrder.visitOrder()) {
 			var m2 = cc.modules.get(path);
-			if (m2.extra.deps.exists(m.id))
+			if (m2 != null && m2.extra.deps.exists(m.id))
 				dependents.push(jobject([
 					field("path", jstring(hxc.core.Globals.sTypePath(m2.path))),
 					field("sign", jstring(m2.extra.sign))
 				]));
 		}
+		dependents.reverse();
 		return jobject([
 			field("id", jint(m.id)),
 			field("path", jobject(modulePathFields(m.path))),
