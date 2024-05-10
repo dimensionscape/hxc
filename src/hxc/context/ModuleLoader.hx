@@ -118,12 +118,15 @@ class ModuleLoader {
 	}
 
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
+		// Store full native path, signature and mtime for server/module reporting.
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
 		return {
 			id: TypeFunctions.allocMid(),
 			path: mpath,
 			types: [],
 			statics: null,
-			extra: TypeFunctions.moduleExtra(file, "", 0.0, MCode, [])
+			extra: TypeFunctions.moduleExtra(full, ctx.defines.getSignature(), time, ctx.isMacro ? MMacro : MCode, [])
 		};
 	}
 
@@ -864,6 +867,14 @@ class ModuleLoader {
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
 		addModule(ctx, m);
+		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
+		// dependency too. .
+		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
+		if (std != null) {
+			addDependency(m, std);
+			var str = ctx.moduleLut.get(Context.pathKey({pack: [], name: "String"}));
+			if (str != null) addDependency(m, str);
+		}
 		return m;
 	}
 
@@ -972,11 +983,18 @@ class ModuleLoader {
 	 * all its declarations. Raises
 	 * `ContextError(ModuleNotFound)` when no source file exists.
 	 */
+	// Record mdep in m's deps (self and null-module loads record nothing).
+	public static function addDependency(m:Null<ModuleDef>, mdep:ModuleDef):Void {
+		if (m == null || m == mdep) return;
+		m.extra.deps.set(mdep.id, mdep);
+	}
+
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
 		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
-		if (existing != null) return existing;
+		// Every module load records the loaded module as a dependency of the requesting module.
+		if (existing != null) { addDependency(ctx.currentModule, existing); return existing; }
 		if (ctx.moduleNonexistentLut.exists(key))
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 
@@ -996,7 +1014,10 @@ class ModuleLoader {
 			throw new ContextError("Invalid package : " + file + " declares package "
 				+ spack(pkg.pack) + " but module path is " + spack(m.pack), p);
 		}
-		return typeModule(ctx, m, file, pkg.decls);
+		var requester = ctx.currentModule;
+		var loaded = typeModule(ctx, m, file, pkg.decls);
+		addDependency(requester, loaded);
+		return loaded;
 	}
 
 	public static function loadTypeDef(ctx:Context, path:Path, p:Position, ?sub:String):ModuleType {
