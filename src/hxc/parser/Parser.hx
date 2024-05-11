@@ -1286,9 +1286,10 @@ class Parser {
 			case Kwd(KwdCast):
 				return parseCast();
 			case Kwd(KwdThrow):
+				// EThrow keeps the KEYWORD token position only, no union with the thrown value.
 				var p = next().pos;
 				var e = expr();
-				return new Expr(EThrow(e), Position.union(p, e.pos));
+				return new Expr(EThrow(e), p);
 			case Kwd(KwdNew):
 				return parseNew();
 			case POpen:
