@@ -891,6 +891,11 @@ class Filters {
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
 		memProbe("pass1b:done");
+		// UnusedPure (pure-statement elimination) runs after inline_constructors so the trailing
+		// result-local read of an inlined value block reaches finalMap first (InlineConstructors unwraps
+		// the
+		// block on that read).
+		hxc.typing.UnusedPure.run(com);
 		// The analyzer runs between the pre-analyzer type filters and RenameVars
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		memProbe("analyzer:done");

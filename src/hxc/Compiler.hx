@@ -663,7 +663,9 @@ class Compiler {
 			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
 			// runs in the shared filter pipeline).
 			hxc.filters.LocalVarsInit.run(ctx);
-			hxc.typing.UnusedPure.run(ctx);
+			// UnusedPure (hxc-only) moved into Filters.run after inline_constructors: an inlined value
+			// block ends with a read of its result local, and consumes exactly that read to splice the
+			// block flat (unwrap on Some io).
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
 			hxc.debug.Dump.run(ctx);
 			// Fix com.main and the static-init type order before any target consumes them

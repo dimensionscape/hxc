@@ -25,6 +25,8 @@ class Interp {
 	final scriptClasses:Map<String, ScriptClass> = new Map();
 	// Enum type name -> its descriptor, for Type reflection over script enums.
 	final scriptEnums:Map<String, ScriptEnum> = new Map();
+	// Canonical instances of no-argument script enum constructors, so `A == A` holds like Haxe.
+	final enumSingletons:Map<String, EnumValue> = new Map();
 	// "Class.field" -> current value of a script static var; its initializers run before main.
 	final scriptStaticVars:Map<String, Dynamic> = new Map();
 	final pendingStatics:Array<{key:String, body:Null<OpNode>}> = [];
@@ -48,6 +50,7 @@ class Interp {
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);
 		index();
+		installSerialization();
 		this.mainCall = tree.hasMain ? tree.main : null;
 		this.fuelLimit = limits != null && limits.fuelPerCall != null ? limits.fuelPerCall : 100000000;
 		this.maxDepth = limits != null && limits.maxCallDepth != null ? limits.maxCallDepth : 2000;
@@ -267,7 +270,7 @@ class Interp {
 				if (he != null)
 					return function(f) { countAlloc(16); return Type.createEnum(he, name, [for (c in argcs) c(f)]); };
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
-				return function(f) { countAlloc(16); return new EnumValue(idx, name, [for (c in argcs) c(f)], etype); };
+				return function(f) { countAlloc(16); return mkEnum(etype, idx, name, [for (c in argcs) c(f)]); };
 			case "FENUM":
 				var name = strings[n.ints[1]];
 				var etype = types[n.ints[0]];
@@ -275,7 +278,7 @@ class Interp {
 				if (he != null)
 					return function(f) return Type.createEnum(he, name, []);
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
-				return function(f) return new EnumValue(idx, name, [], etype);
+				return function(f) return mkEnum(etype, idx, name, []);
 			case "ENUMI":
 				var pi = n.ints[1];
 				var e = compile(n.kids[0]);
@@ -492,13 +495,29 @@ class Interp {
 		return function(f):Dynamic {
 			try {
 				return block(f);
-			} catch (t:ScriptThrow) {
+			} catch (e:haxe.Exception) {
+				// Control-flow signals and the budget meter must flow past a catch; everything
+				// else (a script `throw`, a host exception from a binding) is catchable so a
+				// script `catch(e:Dynamic)` behaves like Haxe.
+				if (Std.isOfType(e, ReturnSignal) || Std.isOfType(e, BreakSignal)
+					|| Std.isOfType(e, ContinueSignal) || Std.isOfType(e, BudgetError))
+					throw e;
 				if (catches.length == 0)
-					throw t;
-				f.locals.set(catches[0].vId, t.value);
+					throw e;
+				f.locals.set(catches[0].vId, caughtValue(e));
 				return catches[0].body(f);
 			}
 		};
+	}
+
+	// The value a script `catch` binds: a script throw and a host thrown value both unwrap to
+	// the original value; any other host exception is passed through as the exception object.
+	static function caughtValue(e:haxe.Exception):Dynamic {
+		if (Std.isOfType(e, ScriptThrow))
+			return (cast e : ScriptThrow).value;
+		if (Std.isOfType(e, haxe.ValueException))
+			return (cast e : haxe.ValueException).value;
+		return e;
 	}
 
 	static inline function loopBody(b:Frame->Dynamic, f:Frame):Void {
@@ -739,7 +758,37 @@ class Interp {
 	}
 
 	function makeEnum(se:ScriptEnum, index:Int, ctor:String, params:Array<Dynamic>):EnumValue
-		return new EnumValue(index, ctor, params != null ? params : [], se.name);
+		return mkEnum(se.name, index, ctor, params != null ? params : []);
+
+	// Build a script enum value, returning the canonical singleton for a no-argument constructor
+	// so reference equality matches Haxe (Serializer/Unserializer and `==` both rely on this).
+	public function mkEnum(enumType:String, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
+		if (params.length == 0) {
+			var key = enumType + "." + ctor;
+			var s = enumSingletons.get(key);
+			if (s == null) {
+				s = new EnumValue(index, ctor, [], enumType);
+				enumSingletons.set(key, s);
+			}
+			return s;
+		}
+		return new EnumValue(index, ctor, params, enumType);
+	}
+
+	// Serialization must be script-aware: the host Serializer/Unserializer reflect internally
+	// and cannot see script classes/enums. Bind them to the shims, which reconstruct script
+	// values via this interpreter's descriptors. Wired here (not in NeutralStd) because the
+	// script tables are only known after index().
+	function installSerialization():Void {
+		registry.bindStatic("haxe.Serializer", "run", function(a) return NeutralSerializer.run(a[0]));
+		registry.bindNew("haxe.Serializer", function(_) return new NeutralSerializer());
+		var self = this;
+		registry.bindStatic("haxe.Unserializer", "run", function(a) return NeutralUnserializer.run(a[0], self));
+		registry.bindNew("haxe.Unserializer", function(a) return new NeutralUnserializer(a[0], self));
+		// USE_ENUM_INDEX / USE_CACHE static reads/writes still resolve to the host class.
+		registry.markNeutralStatic("haxe.Serializer", haxe.Serializer);
+		registry.markNeutralStatic("haxe.Unserializer", haxe.Unserializer);
+	}
 
 	// Structural enum equality for script enums (host Type.enumEq cannot see them).
 	function enumEq(a:Dynamic, b:Dynamic):Bool {
@@ -759,6 +808,11 @@ class Interp {
 	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
 		if (Std.isOfType(token, PrimType))
 			return (token : PrimType).matches(v);
+		// The std shims stand in for their host types, so isOfType against the real class holds.
+		if (Std.isOfType(v, NeutralBytes))
+			return token == haxe.io.Bytes;
+		if (Std.isOfType(v, NeutralStringBuf))
+			return token == StringBuf;
 		if (Std.isOfType(token, ScriptEnum))
 			return Std.isOfType(v, EnumValue) && (v : EnumValue).enumType == (token : ScriptEnum).name;
 		if (Std.isOfType(token, ScriptClass)) {

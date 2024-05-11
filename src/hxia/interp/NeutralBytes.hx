@@ -29,11 +29,11 @@ class NeutralBytes {
 		return fromHost(haxe.io.Bytes.ofHex(s));
 	}
 
-	static function fromHost(hb:haxe.io.Bytes):NeutralBytes {
+	public static function fromHost(hb:haxe.io.Bytes):NeutralBytes {
 		return new NeutralBytes(hb.length, [for (i in 0...hb.length) hb.get(i)]);
 	}
 
-	function toHost():haxe.io.Bytes {
+	public function toHost():haxe.io.Bytes {
 		var hb = haxe.io.Bytes.alloc(length);
 		for (i in 0...length)
 			hb.set(i, b[i] & 0xFF);
