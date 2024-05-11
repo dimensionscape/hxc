@@ -1096,7 +1096,9 @@ class Calls {
 		propagateGenericConstraints(ctx, cf.params, monos, hostParamMap(fa));
 		closeGenericMonos(monos);
 		var params = [for (m in monos) TypeFunctions.follow(m)];
-		var name = cf.name + "_" + genericSuffix(params);
+		// Names from the raw bound monos (its loop resolves one step per follow_or), so a typedef-typed
+		// parameter keeps its typedef path.
+		var name = cf.name + "_" + genericSuffix(monos);
 		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
 		// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
 		// synthesized class <Class>_<method>_<Params> in its own module, so the specialization is
@@ -1334,58 +1336,73 @@ class Calls {
 		}
 	}
 
+	// Name each top-level type parameter through loop(true).
 	static function genericSuffix(params:TParams):String {
-		// An unbound monomorph cannot name a specialization.
-		for (p in params) switch (TypeFunctions.follow(p)) {
-			case TMono(r) if (r.type == null):
-				throw new TypingError("Could not determine type for parameter", Position.nullPos);
-			case _:
-		}
-		return [for (p in params) sanitizeGenericPart(genericPart(p))].join("_");
+		return [for (p in params) genericLoop(true, p)].join("_");
 	}
 
-	static var genericPartDepth = 0;
-
-	static function genericPart(t:T):String {
-		// Recursive structures would loop forever; past a sane depth the part degrades to "_".
-		if (genericPartDepth > 10) return "_";
-		genericPartDepth++;
-		var r = genericPartInner(t);
-		genericPartDepth--;
-		return r;
-	}
-
-	static function genericPartInner(t:T):String {
-		return switch (TypeFunctions.follow(t)) {
-			case TInst(c, params): pathName(c.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
-			case TEnum(e, params): pathName(e.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
-			case TAbstract(a, params): pathName(a.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
-			case TType(td, params): pathName(td.path) + (params.length == 0 ? "" : "_" + genericSuffix(params));
-			case TDynamic(_): "Dynamic";
-			case TMono(_): "Mono";
-			// A function parameter spells func_<args>_<ret>, an anonymous structure anon_<field>_<type>...
-			case TFun(sig): "func_" + [for (a in sig.args) genericPart(a.t)].join("_") + "_" + genericPart(sig.ret);
-			case TAnon(an): {
-				var names = [for (n in an.fields.keys()) n];
-				names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
-				"anon_" + [for (n in names) n + "_" + genericPart(TypeFunctions.follow(an.fields.get(n).type))].join("_");
-			}
-			case TLazy(f): genericPart(TypeFunctions.lazyType(f));
-		}
-	}
-
-	static function pathName(path:hxc.core.Globals.Path):String {
-		return path == null ? "T" : (path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name);
-	}
-
-	static function sanitizeGenericPart(s:String):String {
+	// An unsafe character spells _<charcode>_
+	static function identSafe(s:String):String {
 		var b = new StringBuf();
 		for (i in 0...s.length) {
 			var c = s.charCodeAt(i);
 			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
-			b.addChar(ok ? c : "_".code);
+			if (ok) b.addChar(c) else b.add("_" + c + "_");
 		}
 		return b.toString();
+	}
+
+	// The type path with its package joined by underscores.
+	static function pathUnderscore(path:hxc.core.Globals.Path):String {
+		return path == null ? "T" : (path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name);
+	}
+
+	static var genericPartDepth = 0;
+
+	// The raw type names the part (no eager follow), so a typedef parameter keeps its typedef path
+	// (Issue7985 gen_..._Rec); only a non-top unknown degrades to "_" through follow_or, and Dynamic
+	// spells "Dynamic" only at top.
+	static function genericLoop(top:Bool, t:T):String {
+		// Recursive structures would loop forever; past a sane depth the part degrades to "_"
+		// (hxc guard; the reference cannot recurse here because typedefs stop unfollowed).
+		if (genericPartDepth > 10) return "_";
+		genericPartDepth++;
+		var r = switch (t) {
+			case TInst(c, tl):
+				switch (c.kind) {
+					case KExpr(e): identSafe(hxc.ast.Ast.Printer.sExpr(e));
+					case _: identSafe(pathUnderscore(c.path)) + genericLoopTl(top, tl);
+				}
+			case TType(td, tl): pathUnderscore(td.path) + genericLoopTl(top, tl);
+			case TEnum(en, tl): pathUnderscore(en.path) + genericLoopTl(top, tl);
+			case TAnon(an):
+				var names = [for (n in an.fields.keys()) n];
+				names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+				"anon_" + [for (n in names) n + "_" + genericLoop(false, TypeFunctions.follow(an.fields.get(n).type))].join("_");
+			case TFun(sig): "func_" + [for (a in sig.args) genericLoop(false, a.t)].join("_") + "_" + genericLoop(false, sig.ret);
+			case TAbstract(a, tl): pathUnderscore(a.path) + genericLoopTl(top, tl);
+			case _ if (!top): genericFollowOr(t, top, function() return "_");
+			case TMono(r) if (r.type == null):
+				genericPartDepth--;
+				throw new TypingError("Could not determine type for parameter", Position.nullPos);
+			case TDynamic(_): "Dynamic";
+			case _: genericFollowOr(t, top, function():String {
+				genericPartDepth--;
+				throw new TypingError("Unsupported type parameter", Position.nullPos);
+			});
+		};
+		genericPartDepth--;
+		return r;
+	}
+
+	static function genericLoopTl(top:Bool, tl:TParams):String {
+		return tl.length == 0 ? "" : "_" + [for (t in tl) genericLoop(top, t)].join("_");
+	}
+
+	// Resolve one step; an unresolvable type takes the fallback.
+	static function genericFollowOr(t:T, top:Bool, orFn:Void->String):String {
+		var ft = TypeFunctions.followOnce(t);
+		return ft == t ? orFn() : genericLoop(top, ft);
 	}
 
 	// A generic local function stores its type params on its TVar (extra); a call gives each a fresh
