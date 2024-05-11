@@ -798,7 +798,15 @@ class Operators {
 		}
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
-			case AKField(fa): assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
+			case AKField(fa):
+				// Assigning to a dynamic method must see its inferred return already settled (a no-return
+				// body links the mono to Void) before the rhs types against it. hxc types signature and
+				// body separately, so force the body here to bind the same monos.
+				if (fa.field.kind.match(Method(_))) {
+					var hostC = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:Dynamic) null;
+					if (hostC != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, hostC, fa.field);
+				}
+				assignTo(ctx, FieldAccessTools.getFieldExpr(fa, FWrite), e2, p);
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MSet(e2))) {
 					case AccessorFound(setterFa):
