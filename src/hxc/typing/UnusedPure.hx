@@ -11,13 +11,22 @@ import hxc.context.Context;
 class UnusedPure {
 	public static function run(ctx:Context):Void {
 		if (!ctx.defines.rawDefined("analyzer_optimize")) return;
+		// The eliminations here stand in for the analyzer's local-dce, so they obey the same
+		// per-field config: @:analyzer(ignore/no_optimize/no_local_dce) and :has_untyped disable
+		// them exactly as they disable that pass (an @:analyzer(no_local_dce) method keeps its pure
+		// statements).
+		inline function fieldRuns(c:hxc.core.Type.TClass, f:TClassField):Bool {
+			if (hxc.optimization.AnalyzerConfig.isIgnored(f.meta)) return false;
+			var config = hxc.optimization.AnalyzerConfig.getFieldConfig(ctx, c, f);
+			return config.optimize && config.localDce;
+		}
 		for (m in ctx.modules) for (mt in m.types) switch (mt) {
 			case TClassDecl(c):
 				// A field expression is a value: a method's is its TFunction (whose body is the
 				// statement), a var's is its initializer whose result must survive.
-				for (f in c.orderedFields) if (f.expr != null) f.expr = value(f.expr);
-				for (f in c.orderedStatics) if (f.expr != null) f.expr = value(f.expr);
-				if (c.constructor != null && c.constructor.expr != null)
+				for (f in c.orderedFields) if (f.expr != null && fieldRuns(c, f)) f.expr = value(f.expr);
+				for (f in c.orderedStatics) if (f.expr != null && fieldRuns(c, f)) f.expr = value(f.expr);
+				if (c.constructor != null && c.constructor.expr != null && fieldRuns(c, c.constructor))
 					c.constructor.expr = value(c.constructor.expr);
 			case _:
 		}
