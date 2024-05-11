@@ -70,14 +70,16 @@ class TypeFields {
 				case _:
 			}
 		}
-		// An annotated var's initializer has a concrete signature, so the lazy force above never types its
-		// body.
+		// Resolve the type through haxe.EnumTools.
 		var i = 0;
 		while (i < ctx.modules.length) {
 			for (mt in ctx.modules[i].types) switch (mt) {
-				case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)):
-					for (cf in c.orderedFields) if (cf.expr == null && cf.kind.match(Var(_))) forceFieldBody(ctx, c, cf);
-					for (cf in c.orderedStatics) if (cf.expr == null && cf.kind.match(Var(_))) forceFieldBody(ctx, c, cf);
+				// Extern classes stay in the walk: forceFieldBody itself types an
+				// extern INLINE body (haxe.EnumTools) and skips true externs.
+				case TClassDecl(c):
+					for (cf in c.orderedFields) if (cf.expr == null) forceFieldBody(ctx, c, cf);
+					for (cf in c.orderedStatics) if (cf.expr == null) forceFieldBody(ctx, c, cf);
+					if (c.constructor != null && c.constructor.expr == null) forceFieldBody(ctx, c, c.constructor);
 				case _:
 			}
 			i++;
