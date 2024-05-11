@@ -30,8 +30,12 @@ class NeutralStd {
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
 		reg.bindNew("Date", function(a) return new Date(a[0], a[1], a[2], a[3], a[4], a[5]));
-		reg.bindNew("List", function(_) return new haxe.ds.List<Dynamic>());
-		reg.bindNew("haxe.ds.List", function(_) return new haxe.ds.List<Dynamic>());
+		// Share one List constructor closure across both names: two separate `new haxe.ds.List()` sites
+		// can compile to distinct Class objects on the interpreter, so `is List` would fail for a List
+		// built through the other name.
+		var mkList = function(_) return new haxe.ds.List<Dynamic>();
+		reg.bindNew("List", mkList);
+		reg.bindNew("haxe.ds.List", mkList);
 		reg.markNeutralStatic("List", haxe.ds.List);
 
 		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
