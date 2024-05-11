@@ -27,6 +27,10 @@ class Interp {
 	final scriptEnums:Map<String, ScriptEnum> = new Map();
 	// Canonical instances of no-argument script enum constructors, so `A == A` holds like Haxe.
 	final enumSingletons:Map<String, EnumValue> = new Map();
+	// A host-class CLASSOF token -> the type name it was built from. The interpreter can present
+	// distinct Class objects for one class across the neutral-static boundary, so a name-based
+	// isOfType fallback needs the reliable compile-time name rather than Type.getClassName.
+	final hostTokenNames:haxe.ds.ObjectMap<Dynamic, String> = new haxe.ds.ObjectMap();
 	// "Class.field" -> current value of a script static var; its initializers run before main.
 	final scriptStaticVars:Map<String, Dynamic> = new Map();
 	final pendingStatics:Array<{key:String, body:Null<OpNode>}> = [];
@@ -365,6 +369,8 @@ class Interp {
 						// (Class/Enum on js) falls back to a name token so the type reference does not
 						// fail.
 						var rc = tryResolveClass(typeName);
+						if (rc != null)
+							hostTokenNames.set(rc, stripPath(typeName));
 						rc != null ? (rc : Dynamic) : new PrimType(stripPath(typeName));
 					}
 				return function(f) return token;
@@ -832,16 +838,21 @@ class Interp {
 			return false;
 		if (Std.isOfType(v, token))
 			return true;
+		throw "SCRIPTISOFTYPE tokenClass=[" + (try Type.getClassName(token) catch (_:Dynamic) "?") + "] vClass=[" + (try Type.getClassName(Type.getClass(v)) catch (_:Dynamic) "?") + "]";
 		// Fallback: the host can hand out distinct Class objects for the same class across the
 		// neutral-static boundary (e.g. `Lambda.list(x)` vs `new List()` both haxe.ds.List), so a
 		// direct isOfType can miss. Compare by class name up the value's super chain.
 		return sameByName(v, token);
 	}
 
-	static function sameByName(v:Dynamic, token:Dynamic):Bool {
+	function sameByName(v:Dynamic, token:Dynamic):Bool {
 		if (v == null)
 			return false;
-		var wanted:String = try Type.getClassName(token) catch (_:Dynamic) null;
+		// Prefer the name CLASSOF built the token from (reliable across the neutral-static
+		// boundary); fall back to the runtime class name.
+		var wanted:String = hostTokenNames.get(token);
+		if (wanted == null)
+			wanted = try Type.getClassName(token) catch (_:Dynamic) null;
 		if (wanted == null)
 			return false;
 		var c = Type.getClass(v);
@@ -923,6 +934,17 @@ class Interp {
 		var fun = scriptStatics.get(type + "." + name);
 		if (fun != null)
 			return Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(fun, null, args));
+		// Math constants are inline/property statics on js, so reflection reads null; return the
+		// literal values.
+		if (type == "Math") {
+			switch (name) {
+				case "NaN": return Math.NaN;
+				case "POSITIVE_INFINITY": return Math.POSITIVE_INFINITY;
+				case "NEGATIVE_INFINITY": return Math.NEGATIVE_INFINITY;
+				case "PI": return Math.PI;
+				case _:
+			}
+		}
 		var cls = resolveClass(type);
 		return mediator.getField(cls, name);
 	}
@@ -1136,8 +1158,23 @@ class PrimType {
 			case "Float" | "Single": Std.isOfType(v, Float);
 			case "Bool": Std.isOfType(v, Bool);
 			case "Dynamic": true;
-			case _: false;
+			// A host class name whose runtime Class could not be resolved on this target: match by
+			// class name up the value's super chain (the same class can present distinct Class
+			// objects across the neutral-static boundary, so an identity check is unreliable).
+			case _: nameInChain(v, name);
 		}
+	}
+
+	static function nameInChain(v:Dynamic, name:String):Bool {
+		if (v == null)
+			return false;
+		var c = Type.getClass(v);
+		while (c != null) {
+			if (Type.getClassName(c) == name)
+				return true;
+			c = Type.getSuperClass(c);
+		}
+		return false;
 	}
 }
 
