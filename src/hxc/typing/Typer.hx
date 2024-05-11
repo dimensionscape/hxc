@@ -2956,6 +2956,10 @@ class Typer {
 					var fieldExpr = FieldAccessTools.getFieldExpr(fa, FGet);
 					switch (TypeFunctions.follow(fieldExpr.type)) {
 						case TFun(sig) if (sig.args.length > 0):
+							// AKUsingField: the closure binds the receiver through an OUTER one-arg wrapper
+							// `function(_e) return function(args) ...` applied to the receiver; expression
+							// reduction later inlines the immediate call, so a receiver read inside the
+							// inner closure stays the bound `_e` local (the capture forces the temp).
 							var p = fa.pos;
 							var receiverType = switch (TypeFunctions.follow(se.thisExpr.type)) {
 								case TAbstract(a, tl) if (TypeFunctions.hasClassFieldFlag(fa.field, CfImpl)):
@@ -2966,7 +2970,8 @@ class Typer {
 							try TypeUnification.unifyDefault(receiverType, sig.args[0].t) catch (_:Dynamic) {};
 							var rest = sig.args.slice(1);
 							var ret = sig.ret;
-							var tcall = TFun({args: rest, ret: ret});
+							var tcallb = TFun({args: rest, ret: ret});
+							var twrap = TFun({args: [{name: "_e", opt: false, t: se.thisExpr.type}], ret: tcallb});
 							var args:Array<TFuncArg> = [];
 							var locals:Array<TExpr> = [];
 							for (a in rest) {
@@ -2978,9 +2983,14 @@ class Typer {
 								args.push({v: v, c: a.opt ? TypeFunctions.mk(TConst(TNull), vt, p) : null});
 								locals.push(TypeFunctions.mk(TLocal(v), vt, p));
 							}
-							var call = Calls.makeCall(ctx, fieldExpr, [se.thisExpr].concat(locals), ret, p);
+							var ve = TypeFunctions.allocVar(VGenerated, "_e", se.thisExpr.type, se.thisExpr.pos);
+							var call = Calls.makeCall(ctx, fieldExpr,
+								[TypeFunctions.mk(TLocal(ve), ve.type, p)].concat(locals), ret, p);
 							var body = isVoid(TypeFunctions.follow(ret)) ? call : TypeFunctions.mk(TReturn(call), TypeFunctions.tDynamic, p);
-							TypeFunctions.mk(TFunction(new TFunc(args, ret, body)), tcall, p);
+							var ecallb = TypeFunctions.mk(TFunction(new TFunc(args, ret, body)), tcallb, p);
+							var ewrap = TypeFunctions.mk(TFunction(new TFunc([{v: ve, c: null}], tcallb,
+								TypeFunctions.mk(TReturn(ecallb), TypeFunctions.tDynamic, p))), twrap, p);
+							Calls.makeCall(ctx, ewrap, [se.thisExpr], tcallb, p);
 						case _:
 							FieldAccessTools.getFieldExpr(fa, FRead);
 					}
