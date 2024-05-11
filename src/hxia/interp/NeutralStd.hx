@@ -17,6 +17,9 @@ class NeutralStd {
 		reg.markNeutralStatic("Type", Type);
 		reg.markNeutralStatic("Date", Date);
 		reg.markNeutralStatic("Xml", Xml);
+		reg.markNeutralStatic("haxe.Json", haxe.Json);
+		reg.markNeutralStatic("haxe.format.JsonPrinter", haxe.format.JsonPrinter);
+		reg.markNeutralStatic("haxe.format.JsonParser", haxe.format.JsonParser);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
