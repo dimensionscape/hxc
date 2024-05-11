@@ -830,7 +830,27 @@ class Interp {
 		// A script object is not an instance of any host class (except Dynamic-ish checks).
 		if (Std.isOfType(v, ScriptObject))
 			return false;
-		return Std.isOfType(v, token);
+		if (Std.isOfType(v, token))
+			return true;
+		// Fallback: the host can hand out distinct Class objects for the same class across the
+		// neutral-static boundary (e.g. `Lambda.list(x)` vs `new List()` both haxe.ds.List), so a
+		// direct isOfType can miss. Compare by class name up the value's super chain.
+		return sameByName(v, token);
+	}
+
+	static function sameByName(v:Dynamic, token:Dynamic):Bool {
+		if (v == null)
+			return false;
+		var wanted:String = try Type.getClassName(token) catch (_:Dynamic) null;
+		if (wanted == null)
+			return false;
+		var c = Type.getClass(v);
+		while (c != null) {
+			if (Type.getClassName(c) == wanted)
+				return true;
+			c = Type.getSuperClass(c);
+		}
+		return false;
 	}
 
 	function construct(type:String, args:Array<Dynamic>):Dynamic {

@@ -75,6 +75,17 @@ class NeutralUnserializer extends haxe.Unserializer {
 				return interp.scriptEnums.exists(name) ? (scriptEnum(name) : Dynamic) : resolver.resolveEnum(name);
 			case "s".code: // Host Bytes -> the interpreter's Bytes shim
 				return NeutralBytes.fromHost(super.unserialize());
+			case "l".code:
+				// Build the List through the registry constructor the script's `new List()` uses,
+				// so its Class matches the script's `is List` (the host Unserializer's internal List
+				// is a distinct Class object across the neutral-static boundary on the interpreter).
+				pos++;
+				var l:haxe.ds.List<Dynamic> = interp.registry.construct("List", []);
+				cache.push(l);
+				while (get(pos) != "h".code)
+					l.add(unserialize());
+				pos++; // Consume 'h'
+				return l;
 			case _:
 				return super.unserialize();
 		}
