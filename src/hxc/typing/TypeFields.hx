@@ -190,6 +190,11 @@ class TypeFields {
 	}
 
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
+		// A @:coreApi class outside a -D core_api build queues its validation against the pristine core
+		// definition (delayed to PForce; display requests skip it).
+		if (Sys.getEnv("HXC_DBG_CORE") != null && TypeFunctions.hasMeta(":coreApi", c.meta)) Sys.println("[core] hook-check " + c.path.name + " core_api=" + ctx.defines.rawDefined("core_api") + " disp=" + (ctx.displaySpec != null));
+		if (TypeFunctions.hasMeta(":coreApi", c.meta) && !ctx.defines.rawDefined("core_api") && ctx.displaySpec == null)
+			ctx.pendingConstraintChecks.push(function() try hxc.typing.CoreApi.initCoreApi(ctx, c) catch (e:Dynamic) recordFieldError(ctx, e));
 		if (TypeFunctions.hasClassFlag(c, CAbstract) && TypeFunctions.hasClassFlag(c, CFinal))
 			addDiagnosticOnce(ctx, "An abstract class may not be final", c.namePos);
 		if (TypeFunctions.hasClassFlag(c, CInterface) && TypeFunctions.hasClassFlag(c, CAbstract))

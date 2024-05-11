@@ -64,6 +64,7 @@ class Compiler {
 		hxc.typing.Typeload.resetPerRequest();
 		hxc.parser.Parser.resetPerRequest();
 		hxc.context.ModuleLoader.resetPerRequest();
+		hxc.typing.CoreApi.reset();
 	}
 
 	static function runWaitStdio():Void {
