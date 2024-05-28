@@ -780,7 +780,12 @@ class Filters {
 									var ft = funType(fa2);
 									var args = [for (arg in el) loop(arg)];
 									var field = TypeFunctions.mk(TField(TypeFunctions.mk(e2.expr, m, e2.pos), fa2), ft.t, e2.pos);
-									maybeCast(Calls.makeCall(ctx, field, args, ft.ret, e.pos), e.type, e.pos);
+									// The reference's make_call here always falls back to a plain call the concrete type m's
+									// module only loads at this FILTER (the multiType underlying resolves lazily, never during
+									// typing), so its method bodies are expr = None and the inline arm raises Exit. Verified
+									// by instrumentation: StringMap.get has no expression and a non-lazy type here in the
+									// reference.
+									maybeCast(TypeFunctions.mk(TCall(field, args), ft.ret, e.pos), e.type, e.pos);
 								case _:
 									throw new hxc.core.NotFound();
 							}
