@@ -1449,6 +1449,22 @@ class CppGenClass {
 		return CppTypeText.tcppToString(CppTypeOf.cppTypeOf(f.type));
 	}
 
+	// toCommon: every reflective read wraps `t( value )`, boxing cpp.Struct payloads and raw pointers
+	// first.
+	function toCommon(t:String, f:TClassField, value:String):String {
+		var ct = CppTypeOf.cppTypeOf(f.type);
+		var inner = switch (ct) {
+			case TCppInst(c, _) if (TypeFunctions.hasMeta(":structAccess", c.meta)):
+				"cpp::Struct< " + CppTypeText.tcppToString(ct) + " >( " + value + " )";
+			case TCppStar(_, _):
+				"cpp::Pointer<void *>( " + value + " )";
+			case _: value;
+		};
+		return t + "( " + inner + " )";
+	}
+	inline function toVal(f:TClassField, value:String):String return toCommon("::hx::Val", f, value);
+	inline function toDynamic(f:TClassField, value:String):String return toCommon("", f, value);
+
 	function hasGetMemberField():Bool {
 		for (f in classDef.orderedFields) if (reflective(f) && isReadable(f)) return true;
 		return false;
@@ -1482,11 +1498,11 @@ class CppGenClass {
 			// a ternary that falls back to the backing field.
 			var result = switch (f.kind) {
 				case Var(k) if (k.read == AccCall && !TypeFunctions.isPhysicalField(f)):
-					"if (" + checkPropCall(f) + ") return ::hx::Val( " + CppTypeText.keywordRemap("get_" + f.name) + "() );";
+					"if (" + checkPropCall(f) + ") return " + toVal(f, CppTypeText.keywordRemap("get_" + f.name) + "()") + ";";
 				case Var(k) if (k.read == AccCall):
-					"return ::hx::Val( " + checkPropCall(f) + " ? " + CppTypeText.keywordRemap("get_" + f.name) + "() : " + access + " );";
+					"return " + toVal(f, checkPropCall(f) + " ? " + CppTypeText.keywordRemap("get_" + f.name) + "() : " + access) + ";";
 				case _:
-					"return ::hx::Val( " + access + " );";
+					"return " + toVal(f, access) + ";";
 			};
 			entries.push({name: f.name, result: result});
 		}
@@ -1503,11 +1519,11 @@ class CppGenClass {
 			// A read-AccCall static property routes through its getter under an allowed call.
 			var result = switch (f.kind) {
 				case Var(k) if (k.read == AccCall && !TypeFunctions.isPhysicalField(f)):
-					"if (" + checkPropCall(f) + ") { outValue = " + CppTypeText.keywordRemap("get_" + f.name) + "(); return true; }";
+					"if (" + checkPropCall(f) + ") { outValue = " + toDynamic(f, CppTypeText.keywordRemap("get_" + f.name) + "()") + "; return true; }";
 				case Var(k) if (k.read == AccCall):
-					"outValue = " + checkPropCall(f) + " ? " + CppTypeText.keywordRemap("get_" + f.name) + "() : " + access + "; return true;";
+					"outValue = " + toDynamic(f, checkPropCall(f) + " ? " + CppTypeText.keywordRemap("get_" + f.name) + "() : " + access) + "; return true;";
 				case _ if (isMemberVar(f)):
-					"outValue = ( " + CppTypeText.cppMemberNameOf(f) + " ); return true;";
+					"outValue = " + toDynamic(f, CppTypeText.cppMemberNameOf(f)) + "; return true;";
 				case _:
 					"outValue = " + CppTypeText.cppMemberNameOf(f) + "_dyn(); return true;";
 			};
