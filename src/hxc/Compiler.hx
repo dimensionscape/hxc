@@ -1234,13 +1234,31 @@ class Compiler {
 		var pathSeen = new haxe.ds.StringMap<Bool>();
 		inline function pathKey(pack:Array<String>, moduleName:String, typeName:String):String
 			return pack.join(".") + "." + moduleName + "." + typeName;
+		// CollectionContext.get_import_status an item whose name was already collected is Shadowed;
+		// otherwise a loaded type (is_import) or a toplevel path is Imported and anything else
+		// Unimported. Names register in collection order: locals and fields first, then loaded types,
+		// then scanned files.
+		var namesSeen = new haxe.ds.StringMap<Bool>();
+		for (e in entries) switch (e) {
+			case JTLocal(v): namesSeen.set(v.name, true);
+			case JTField(cf, _, _): namesSeen.set(cf.name, true);
+			case _:
+		}
+		inline function collectStatus(name:String, isImport:Bool, pack:Array<String>):Int {
+			var st = namesSeen.exists(name) ? 2 : (isImport || pack.length == 0 ? 0 : 1);
+			namesSeen.set(name, true);
+			return st;
+		}
 		for (mt in types) {
 			var infos = TypeFunctions.tInfos(mt);
 			var path = infos.path;
 			var key = pathKey(path.pack, infos.module.path.name, path.name);
 			if (pathSeen.exists(key)) continue;
 			pathSeen.set(key, true);
-			var st = importStatus(path).match(Imported) ? 0 : importStatus(path).match(Unimported) ? 1 : 2;
+			// The reference's add_type runs only for the DISPLAY module's own types and
+			// its imports (collect:459-462, is_import=true); every other module's types
+			// arrive from the file cache with is_import=false.
+			var st = collectStatus(path.name, curMod != null && infos.module == curMod, path.pack);
 			var mtc = mt;
 			typeItems.push({rank: 31 + st, name: path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name,
 				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});
@@ -1262,8 +1280,7 @@ class Compiler {
 				var key = pathKey(sf.pack, sf.moduleName, name);
 				if (pathSeen.exists(key)) continue;
 				pathSeen.set(key, true);
-				var path:hxc.core.Globals.Path = {pack: sf.pack, name: name};
-				var st = importStatus(path).match(Imported) ? 0 : importStatus(path).match(Unimported) ? 1 : 2;
+				var st = collectStatus(name, false, sf.pack);
 				var tdc = td;
 				var sfc = sf;
 				typeItems.push({rank: 31 + st, name: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,
