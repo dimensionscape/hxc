@@ -53,6 +53,9 @@ class ModuleTree {
 	public var decls:Array<DeclNode> = [];
 	public var main:Null<OpNode> = null;
 	public var hasMain:Bool = false;
+	// Embedded resources (--resource), each {nameId into the string table, raw bytes}. Parsed from
+	// the RESOURCES tail that follows MAIN/NOMAIN; names are resolved against strings in the Interp.
+	public var resources:Array<{nameId:Int, data:haxe.io.Bytes}> = [];
 
 	public function new() {}
 }

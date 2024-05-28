@@ -68,6 +68,7 @@ class Interp {
 		this.tree = Decoder.decode(ir);
 		index();
 		installSerialization();
+		installResources();
 		this.mainCall = tree.hasMain ? tree.main : null;
 		this.fuelLimit = limits != null && limits.fuelPerCall != null ? limits.fuelPerCall : 100000000;
 		this.maxDepth = limits != null && limits.maxCallDepth != null ? limits.maxCallDepth : 2000;
@@ -828,6 +829,25 @@ class Interp {
 		// USE_ENUM_INDEX / USE_CACHE static reads/writes still resolve to the host class.
 		registry.markNeutralStatic("haxe.Serializer", haxe.Serializer);
 		registry.markNeutralStatic("haxe.Unserializer", haxe.Unserializer);
+	}
+
+	// Bind haxe.Resource to the cppia's own embedded resources (from the RESOURCES tail), keyed by
+	// name resolved against the string table. The host's haxe.Resource sees the interpreter binary's
+	// resources, not the script's, so these must be served from the module, not reflected on the host.
+	function installResources():Void {
+		var byName = new Map<String, haxe.io.Bytes>();
+		for (res in tree.resources)
+			byName.set(strings[res.nameId], res.data);
+		var names = [for (n in byName.keys()) n];
+		registry.bindStatic("haxe.Resource", "listNames", function(_) return names.copy());
+		registry.bindStatic("haxe.Resource", "getString", function(a) {
+			var b = byName.get(a[0]);
+			return b == null ? null : b.getString(0, b.length);
+		});
+		registry.bindStatic("haxe.Resource", "getBytes", function(a) {
+			var b = byName.get(a[0]);
+			return b == null ? null : NeutralBytes.fromHost(b);
+		});
 	}
 
 	// Structural enum equality for script enums (host Type.enumEq cannot see them).

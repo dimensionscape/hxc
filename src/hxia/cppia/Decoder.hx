@@ -41,6 +41,21 @@ class Decoder {
 		var after = readOp();
 		if (after != "RESOURCES")
 			throw new DecodeError("op stream did not end at RESOURCES; got " + after + " at " + r.pos);
+		// RESOURCES <count>, then <count> RESO <nameId> <len> headers, then the raw data blocks
+		// back to back (CppiaGen writes all headers first, then all data). Names are string ids.
+		var count = r.readInt();
+		var lens = [];
+		for (_ in 0...count) {
+			var head = readOp();
+			if (head != "RESO")
+				throw new DecodeError("expected RESO in resource table, got " + head + " at " + r.pos);
+			var nameId = r.readInt();
+			var len = r.readInt();
+			m.resources.push({nameId: nameId, data: null});
+			lens.push(len);
+		}
+		for (i in 0...count)
+			m.resources[i].data = r.readBytes(lens[i]);
 		return m;
 	}
 
