@@ -1093,8 +1093,14 @@ class CppGenClass {
 		var guard = "INCLUDED_" + hash64(selfPath);
 		w.writeH("#ifndef " + guard + "\n#define " + guard + "\n#include \"" + selfPath + "\"\n#endif\n\n");
 		genOpenNamespace(w);
-		w.write("\n\n");
+		// One newline after the namespace opens.
+		w.write("\n");
 		var dotName = joinPath(classDef.path, ".");
+		// The field bodies come first; outputNativeConstructor runs after the field loop, separated by the
+		// loop's trailing newline.
+		for (f in classDef.orderedFields) genNativeGenMethodCpp(w, false, f);
+		for (f in classDef.orderedStatics) genNativeGenMethodCpp(w, true, f);
+		w.write("\n");
 		var ctorTf = ctorFuncDef();
 		if (ctorTf != null) {
 			var frameLine = CppEmit.getErrorLine(ctorTf.expr.pos);
@@ -1112,8 +1118,6 @@ class CppGenClass {
 			emitCtor.genExpressionTree([for (a in ctorTf.args) a.v], ctorTf.type, ctorTf.expr,
 				function(gc) { emitCtor.cppGenDefaultValues(ctorDefaults, "__o_"); hxStackPush(com, w, dotName, "new", ctorTf.expr.pos.file, frameLine, gc, cppFileId); }, null, dotName, "new");
 		}
-		for (f in classDef.orderedFields) genNativeGenMethodCpp(w, false, f);
-		for (f in classDef.orderedStatics) genNativeGenMethodCpp(w, true, f);
 		genCloseNamespace(w);
 		return w.getHeader() + w.getBody();
 	}
@@ -1144,7 +1148,8 @@ class CppGenClass {
 				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
 					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, name, tf.expr.pos.file, frameLine, gc, cppFileId); }, null, dotName, name);
-				w.write("\n");
+				// Every field body is followed by a double newline.
+				w.write("\n\n");
 			case _:
 		}
 	}
