@@ -241,6 +241,17 @@ class Fusion {
 			var found = false;
 			var blocked = false;
 			var ir = InterferenceReport.fromTexpr(e1);
+			// fusionDebug prints the interference report and the
+			// substitution target block before the walk.
+			if (config.fusionDebug) {
+				var bits = [];
+				if (ir.hasStateRead()) bits.push("stateRead");
+				if (ir.hasStateWrite()) bits.push("stateWrite");
+				if (ir.hasAnyFieldRead()) bits.push("fieldRead");
+				if (ir.hasAnyFieldWrite()) bits.push("fieldWrite");
+				Sys.println("INTERFERENCE: [" + bits.join(",") + "]\nINTO: "
+					+ hxc.core.TPrinting.sExprStr(TypeFunctions.mk(TBlock(el), TypeFunctions.tDynamic, hxc.ast.Position.nullPos)));
+			}
 			var replace:TExpr->TExpr = null;
 			function explore(e:TExpr):TExpr {
 				var old = blocked;
@@ -413,7 +424,10 @@ class Fusion {
 				state.changed();
 				state.decReads(v1);
 				out;
-			} catch (_:Exit) null;
+			} catch (_:Exit) {
+				if (config.fusionDebug) Sys.println("NO: fusion canceled (found=" + found + ")");
+				null;
+			}
 		}
 
 		// POLARITY: blockElement takes the reversed list and its prepend accumulation emits SOURCE order,
