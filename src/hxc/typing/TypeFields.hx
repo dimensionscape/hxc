@@ -58,6 +58,11 @@ class TypeFields {
 		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
+			// A module loaded on demand after the initial resolveAll pass (e.g. through an import inside a
+			// lazily loaded class) has no heritage yet; resolve it before installing and forcing bodies, or
+			// a `super(...)` in one of its constructors types against a null superClass. resolveModule is
+			// idempotent (processed gate).
+			hxc.typing.TypeResolve.resolveModule(ctx, ctx.modules[i]);
 			installModuleFields(ctx, ctx.modules[i], pending);
 			i++;
 		}
@@ -73,6 +78,9 @@ class TypeFields {
 		// Resolve the type through haxe.EnumTools.
 		var i = 0;
 		while (i < ctx.modules.length) {
+			// A body typed below can load more modules; this loop reaches them (the list
+			// grows), so they too need their heritage resolved before their bodies force.
+			hxc.typing.TypeResolve.resolveModule(ctx, ctx.modules[i]);
 			for (mt in ctx.modules[i].types) switch (mt) {
 				// Extern classes stay in the walk: forceFieldBody itself types an
 				// extern INLINE body (haxe.EnumTools) and skips true externs.
