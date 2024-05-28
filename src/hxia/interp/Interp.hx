@@ -838,7 +838,6 @@ class Interp {
 			return false;
 		if (Std.isOfType(v, token))
 			return true;
-		throw "SCRIPTISOFTYPE tokenClass=[" + (try Type.getClassName(token) catch (_:Dynamic) "?") + "] vClass=[" + (try Type.getClassName(Type.getClass(v)) catch (_:Dynamic) "?") + "]";
 		// Fallback: the host can hand out distinct Class objects for the same class across the
 		// neutral-static boundary (e.g. `Lambda.list(x)` vs `new List()` both haxe.ds.List), so a
 		// direct isOfType can miss. Compare by class name up the value's super chain.
