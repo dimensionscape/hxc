@@ -5,6 +5,7 @@ import hxia.interp.Interp.EnumValue;
 import hxia.interp.Interp.ScriptClass;
 import hxia.interp.Interp.ScriptEnum;
 import hxia.interp.NeutralBytes;
+import hxia.interp.NeutralList;
 
 // The reverse of NeutralSerializer. Overrides unserialize() to reconstruct the four script
 // value shapes from their descriptors (script classes/enums are not host types, so the parent's
@@ -80,7 +81,7 @@ class NeutralUnserializer extends haxe.Unserializer {
 				// so its Class matches the script's `is List` (the host Unserializer's internal List
 				// is a distinct Class object across the neutral-static boundary on the interpreter).
 				pos++;
-				var l:haxe.ds.List<Dynamic> = interp.registry.construct("List", []);
+				var l = new NeutralList();
 				cache.push(l);
 				while (get(pos) != "h".code)
 					l.add(unserialize());

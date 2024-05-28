@@ -452,11 +452,17 @@ class Interp {
 				return function(f):Dynamic throw new ScriptThrow(e(f));
 			// Type coercions: identity on a dynamic shared heap (the value already is the host value; the
 			// writer's cast/interface wrappers carry no runtime representation here).
-			case "NOTNULL", "TCAST", "CAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
+			case "TCAST", "CAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
 				return compile(n.kids[0]);
 			case "ISNULL":
 				var e = compile(n.kids[0]);
 				return function(f):Dynamic return e(f) == null;
+			case "NOTNULL":
+				// The writer emits NOTNULL for `e != null` (gencpp IaNotNull), a boolean. It is
+				// truthy in a condition either way, but must yield an actual Bool when the result
+				// is used as a value (e.g. the inlined ListIterator it.hasNext()).
+				var e = compile(n.kids[0]);
+				return function(f):Dynamic return e(f) != null;
 			case "~":
 				var e = compile(n.kids[0]);
 				return function(f):Dynamic return ~(e(f) : Int);
@@ -835,6 +841,8 @@ class Interp {
 			return name == "haxe.io.Bytes" || name == "Bytes";
 		if (Std.isOfType(v, NeutralStringBuf))
 			return name == "StringBuf";
+		if (Std.isOfType(v, NeutralList))
+			return name == "haxe.ds.List" || name == "List";
 		if (PrimType.isPrimitive(name))
 			return new PrimType(name).matches(v);
 		// A host value: prefer real Class identity, then a name comparison up the super chain
@@ -855,6 +863,8 @@ class Interp {
 			return token == haxe.io.Bytes;
 		if (Std.isOfType(v, NeutralStringBuf))
 			return token == StringBuf;
+		if (Std.isOfType(v, NeutralList))
+			return token == haxe.ds.List;
 		if (Std.isOfType(token, ScriptEnum))
 			return Std.isOfType(v, EnumValue) && (v : EnumValue).enumType == (token : ScriptEnum).name;
 		if (Std.isOfType(token, ScriptClass)) {

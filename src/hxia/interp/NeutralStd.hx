@@ -30,23 +30,35 @@ class NeutralStd {
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
 		reg.bindNew("Date", function(a) return new Date(a[0], a[1], a[2], a[3], a[4], a[5]));
-		// Share one List constructor closure across both names: two separate `new haxe.ds.List()` sites
-		// can compile to distinct Class objects on the interpreter, so `is List` would fail for a List
-		// built through the other name.
-		var mkList = function(_) return new haxe.ds.List<Dynamic>();
+		// Date.now/fromTime/fromString are `inline` on js, so reflecting Date.<name> off the class
+		// resolves to native js Date functions that return a number (ms), not a Haxe Date. Bind them
+		// so a script's `Date.now()` yields a real host Date the serializer recognizes ("v", not "d").
+		reg.bindStatic("Date", "now", function(_) return Date.now());
+		reg.bindStatic("Date", "fromTime", function(a) return Date.fromTime(a[0]));
+		reg.bindStatic("Date", "fromString", function(a) return Date.fromString(a[0]));
+		// List is a shim (NeutralList) because `for (x in list)` / `list.iterator()` inline into
+		// reads of the private head-node fields; the shim exposes them publicly. Its methods are
+		// keyed by the shim's runtime type name, and Lambda.list is rebound to build a shim List.
+		var mkList = function(_) return new NeutralList();
 		reg.bindNew("List", mkList);
 		reg.bindNew("haxe.ds.List", mkList);
-		reg.markNeutralStatic("List", haxe.ds.List);
-		// List's ListIterator has inline hasNext/next that reflection cannot reach, so `for (x in
-		// list)` would iterate nothing; return a materialized array iterator instead.
-		reg.bindMember("haxe.ds.List", "iterator", function(o, a) return [for (x in (o : haxe.ds.List<Dynamic>)) x].iterator());
-		reg.bindMember("haxe.ds.List", "add", function(o, a) { (o : haxe.ds.List<Dynamic>).add(a[0]); return null; });
-		reg.bindMember("haxe.ds.List", "push", function(o, a) { (o : haxe.ds.List<Dynamic>).push(a[0]); return null; });
-		reg.bindMember("haxe.ds.List", "pop", function(o, a) return (o : haxe.ds.List<Dynamic>).pop());
-		reg.bindMember("haxe.ds.List", "first", function(o, a) return (o : haxe.ds.List<Dynamic>).first());
-		reg.bindMember("haxe.ds.List", "last", function(o, a) return (o : haxe.ds.List<Dynamic>).last());
-		reg.bindMember("haxe.ds.List", "isEmpty", function(o, a) return (o : haxe.ds.List<Dynamic>).isEmpty());
-		reg.bindMember("haxe.ds.List", "remove", function(o, a) return (o : haxe.ds.List<Dynamic>).remove(a[0]));
+		var nlist = Type.getClassName(NeutralList);
+		reg.bindMember(nlist, "iterator", function(o, a) return (o : NeutralList).iterator());
+		reg.bindMember(nlist, "add", function(o, a) { (o : NeutralList).add(a[0]); return null; });
+		reg.bindMember(nlist, "push", function(o, a) { (o : NeutralList).push(a[0]); return null; });
+		reg.bindMember(nlist, "pop", function(o, a) return (o : NeutralList).pop());
+		reg.bindMember(nlist, "first", function(o, a) return (o : NeutralList).first());
+		reg.bindMember(nlist, "last", function(o, a) return (o : NeutralList).last());
+		reg.bindMember(nlist, "isEmpty", function(o, a) return (o : NeutralList).isEmpty());
+		reg.bindMember(nlist, "clear", function(o, a) { (o : NeutralList).clear(); return null; });
+		reg.bindMember(nlist, "remove", function(o, a) return (o : NeutralList).remove(a[0]));
+		reg.bindMember(nlist, "toString", function(o, a) return (o : NeutralList).toString());
+		reg.bindStatic("Lambda", "list", function(a) {
+			var nl = new NeutralList();
+			for (x in (a[0] : Iterable<Dynamic>))
+				nl.add(x);
+			return nl;
+		});
 
 		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
 		// factories return the shim and its non-inline methods are keyed by the shim type name.

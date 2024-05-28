@@ -5,6 +5,7 @@ import hxia.interp.Interp.EnumValue;
 import hxia.interp.Interp.ScriptClass;
 import hxia.interp.Interp.ScriptEnum;
 import hxia.interp.NeutralBytes;
+import hxia.interp.NeutralList;
 
 // A script-aware Serializer. The host haxe.Serializer dispatches on Type.typeof and reads
 // fields with Reflect, which cannot see script-defined types (a ScriptObject would serialize
@@ -53,6 +54,17 @@ class NeutralSerializer extends haxe.Serializer {
 			// The interpreter's Bytes shim serializes as a real host Bytes ("s" base64), so the
 			// output matches the standard format and round-trips back to a NeutralBytes.
 			super.serialize((v : NeutralBytes).toHost());
+		} else if (Std.isOfType(v, NeutralList)) {
+			// The List shim serializes in the standard "l" list format.
+			if (useCache && serializeRef(v))
+				return;
+			buf.add("l");
+			var node = (v : NeutralList).h;
+			while (node != null) {
+				serialize(node.item);
+				node = node.next;
+			}
+			buf.add("h");
 		} else if (Std.isOfType(v, ScriptClass)) {
 			buf.add("A");
 			serializeString((v : ScriptClass).name);
