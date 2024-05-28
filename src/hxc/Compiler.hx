@@ -1244,9 +1244,11 @@ class Compiler {
 			case JTField(cf, _, _): namesSeen.set(cf.name, true);
 			case _:
 		}
-		inline function collectStatus(name:String, isImport:Bool, pack:Array<String>):Int {
-			var st = namesSeen.exists(name) ? 2 : (isImport || pack.length == 0 ? 0 : 1);
-			namesSeen.set(name, true);
+		// Only add_type'd items (the display module's own types and imports) register their name;
+		// file-sourced items pass shadowing_name = None and never shadow each other.
+		inline function collectStatus(name:String, register:Bool, isImport:Bool, statusPack:Array<String>):Int {
+			var st = namesSeen.exists(name) ? 2 : (isImport || statusPack.length == 0 ? 0 : 1);
+			if (register) namesSeen.set(name, true);
 			return st;
 		}
 		for (mt in types) {
@@ -1257,14 +1259,35 @@ class Compiler {
 			pathSeen.set(key, true);
 			// The reference's add_type runs only for the DISPLAY module's own types and
 			// its imports (collect:459-462, is_import=true); every other module's types
-			// arrive from the file cache with is_import=false.
-			var st = collectStatus(path.name, curMod != null && infos.module == curMod, path.pack);
+			// arrive from the file cache with is_import=false. StdTypes is implicitly
+			// imported into every module (typeloadModule's implicit import), so its
+			// subtypes rank Imported.
+			var isCur = curMod != null && (infos.module == curMod
+				|| (infos.module.path.pack.length == 0 && infos.module.path.name == "StdTypes"));
+			var statusPack = path.name == infos.module.path.name ? path.pack : path.pack.concat([infos.module.path.name]);
+			var st = collectStatus(path.name, isCur, isCur, statusPack);
 			var mtc = mt;
 			typeItems.push({rank: 31 + st, name: path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name,
 				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});
 		}
 		var packages = new haxe.ds.StringMap<Array<String>>();
-		for (sf in hxc.compiler.ToplevelScan.get(ctx)) {
+		// Files order by pack similarity to the current package (collect:470-475);
+		// shallower packs first approximates it and puts toplevel main types ahead so
+		// their name registration shadows deeper same-named modules (std Type before
+		// haxe.macro.Type).
+		var scannedFiles = hxc.compiler.ToplevelScan.get(ctx).copy();
+		scannedFiles.sort(function(a, b) {
+			if (a.pack.length != b.pack.length) return a.pack.length - b.pack.length;
+			var an = a.pack.join(".") + "." + a.moduleName, bn = b.pack.join(".") + "." + b.moduleName;
+			return an < bn ? -1 : an > bn ? 1 : 0;
+		});
+		var curpack = curMod == null ? [] : curMod.path.pack;
+		function packContains(pack:Array<String>, target:Array<String>):Bool {
+			if (pack.length > target.length) return false;
+			for (i in 0...pack.length) if (pack[i] != target[i]) return false;
+			return true;
+		}
+		for (sf in scannedFiles) {
 			var contributed = false;
 			for (td in sf.decls) {
 				var name:Null<String> = null, isPrivate = false, meta:hxc.ast.Ast.Metadata = [];
@@ -1280,7 +1303,12 @@ class Compiler {
 				var key = pathKey(sf.pack, sf.moduleName, name);
 				if (pathSeen.exists(key)) continue;
 				pathSeen.set(key, true);
-				var st = collectStatus(name, false, sf.pack);
+				// TODO(collect:273-278): a module MAIN type sharing the current package
+				// should register its name (shadowing_name) so deeper same-named modules
+				// rank Shadowed (oracle: haxe.macro.Type). Registration order must match
+				// the reference's file iteration first; a shallow-first approximation
+				// overshadowed other blocks, so it stays off until the order is ported.
+				var st = collectStatus(name, false, false, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
 				var tdc = td;
 				var sfc = sf;
 				typeItems.push({rank: 31 + st, name: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,
