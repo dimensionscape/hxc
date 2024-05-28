@@ -301,10 +301,15 @@ class Inline {
 	// expressions keep their caller-side types.
 	static function mapInlinedTypes(mt:T->T, skip:Array<TExpr>, root:TExpr):TExpr {
 		var mappedVars:Map<Int, Bool> = new Map();
+		var fRef:TExpr->TExpr = null;
 		function fv(v:TVar):TVar {
 			if (!mappedVars.exists(v.id)) {
 				mappedVars.set(v.id, true);
 				v.type = mt(v.type);
+				// The stored expr type-maps along, so the
+				// abstract receiver type it carries concretizes with the substitution.
+				if (v.extra != null && v.extra.expr != null)
+					v.extra = new TVarExtra(v.extra.params, fRef(v.extra.expr));
 			}
 			return v;
 		}
@@ -365,6 +370,7 @@ class Inline {
 			};
 			return TypeFunctions.mk(ne, et, e.pos);
 		}
+		fRef = f;
 		return f(root);
 	}
 
@@ -938,6 +944,9 @@ class Inline {
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
 				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
+				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
+				// type behind an IMap-typed temp.
+				nv.extra = v.extra;
 				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
 				TVarExpr(nv, eo == null ? null : m(eo));
 			case TBlock(el): TBlock([for (x in el) m(x)]);
