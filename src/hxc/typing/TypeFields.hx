@@ -546,7 +546,9 @@ class TypeFields {
 						if (staticPos != null) throw new TypingError("Inline functions cannot have static locals", staticPos);
 					}
 					tf.expr = localStatics(tctx, tf.expr);
-					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, cff.cffPos);
+					// The TFunction node itself also carries the body position; genxml's line attribute
+					// reads it.
+					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, funcPos);
 				case FProp(_, _, _, eo):
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
