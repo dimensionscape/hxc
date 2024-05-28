@@ -183,7 +183,14 @@ class CppGen {
 		}
 		var bootCls = CppGenClass.bootClasses.copy();
 		bootCls.reverse();
-		for (p in bootCls) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__boot();\n");
+		// Classes boot in two passes: the cpp classes (the cpp package, EReg, haxe.Log) first, then
+		// everything else.
+		inline function isCppClass(p:hxc.core.Globals.Path):Bool
+			return (p.pack.length > 0 && p.pack[0] == "cpp")
+				|| (p.pack.length == 0 && p.name == "EReg")
+				|| (p.pack.length == 1 && p.pack[0] == "haxe" && p.name == "Log");
+		for (p in bootCls) if (isCppClass(p)) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__boot();\n");
+		for (p in bootCls) if (!isCppClass(p)) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__boot();\n");
 		b.add("}\n\n");
 		writeSourceFile(com, base + "/src/__boot__" + sourceExtension, b.toString());
 	}
@@ -281,7 +288,13 @@ class CppGen {
 	// then a null), and __resources__.cpp declares them extern and lists them in the __Resources table
 	// (name, length, blob+4). With no resource the table is just the terminator.
 	static function genResources(com:Context, base:String, sourceExtension:String):Void {
-		var names = [for (k in com.resources.keys()) k];
+		// The resources live in a hash table and every resource pass walks it in bucket order, so the
+		// __res_N index assignment follows the bucket walk over the resource names, not insertion order.
+		var names = {
+			var h = new hxc.core.NameHash.HashTableOrder();
+			for (n in com.resourceOrder) h.add(n, hxc.core.NameHash.NameHash.stringHash(n));
+			h.visitOrder();
+		};
 		// One data blob per resource.
 		if (names.length > 0) ensureDir(base + "/src/resources");
 		for (idx in 0...names.length) {
