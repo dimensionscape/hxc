@@ -58,6 +58,15 @@ class Compiler {
 	// Null outside in-process request execution.
 	public static var requestOutput:Null<StringBuf> = null;
 
+	// STDOUT content produced during a server request (macro trace/print) joins the response channel, each
+	// write encoded as "\x01" + s with every "\n" turned into an "\x01" continuation + a trailing "\n".
+	// Returns false outside a request so the caller falls back to the real stdout.
+	public static function serverPrint(s:String):Bool {
+		if (requestOutput == null) return false;
+		requestOutput.add("\x01" + s.split("\n").join("\x01") + "\n");
+		return true;
+	}
+
 	public static function resetForNextRequest():Void {
 		hxc.typing.Typer.resetPerRequest();
 		hxc.typing.TypeFields.resetPerRequest();

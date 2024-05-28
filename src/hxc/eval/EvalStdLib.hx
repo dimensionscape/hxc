@@ -2637,6 +2637,12 @@ class EvalStdLib {
 	}
 
 	static function writeStdoutString(s:String, newline:Bool):Void {
+		// During a wait-server request, macro-time stdout joins the framed response; the whole logical
+		// write (content plus line end) is one encoded chunk.
+		if (hxc.Compiler.requestOutput != null) {
+			hxc.Compiler.serverPrint(s + (newline ? (Sys.systemName() == "Windows" ? "\r\n" : "\n") : ""));
+			return;
+		}
 		var start = 0;
 		var i = 0;
 		while (i < s.length) {
