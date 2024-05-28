@@ -246,6 +246,15 @@ class Interp {
 			case "CALLSTATIC":
 				var typeName = types[n.ints[0]];
 				var member = strings[n.ints[1]];
+				// `x is T` is Std.isOfType(x, CLASSOF T). Resolve the check against the compile-time
+				// type name rather than the runtime CLASSOF token: the interpreter host can present distinct
+				// Class objects for one class across the neutral-static boundary, so a token-identity check is
+				// unreliable, but the cppia's type name is exact.
+				if (typeName == "Std" && member == "isOfType" && n.kids.length == 2 && n.kids[1].op == "CLASSOF") {
+					var checkType = types[n.kids[1].ints[0]];
+					var vE = compile(n.kids[0]);
+					return function(f) return isOfTypeNamed(vE(f), checkType);
+				}
 				var argcs = [for (k in n.kids) compile(k)];
 				return function(f) {
 					var args = [for (c in argcs) c(f)];
@@ -809,6 +818,33 @@ class Interp {
 		return true;
 	}
 
+	// `x is T` resolved against the compile-time type name (from CLASSOF), which is exact even
+	// when the runtime Class object is unreliable across the neutral-static boundary.
+	function isOfTypeNamed(v:Dynamic, rawType:String):Bool {
+		var name = stripPath(rawType);
+		if (name == "Dynamic")
+			return true;
+		// Dispatch on the value's world first: a std class (e.g. haxe.ds.List) may be embedded in the
+		// cppia as a decl and thus present in scriptClasses, but a host value must still be checked as a
+		// host type, and a script value is never a host-class instance.
+		if (Std.isOfType(v, ScriptObject))
+			return scriptClasses.exists(rawType) && scriptIsOfType(v, scriptClasses.get(rawType));
+		if (Std.isOfType(v, EnumValue))
+			return scriptEnums.exists(rawType) && (v : EnumValue).enumType == rawType;
+		if (Std.isOfType(v, NeutralBytes))
+			return name == "haxe.io.Bytes" || name == "Bytes";
+		if (Std.isOfType(v, NeutralStringBuf))
+			return name == "StringBuf";
+		if (PrimType.isPrimitive(name))
+			return new PrimType(name).matches(v);
+		// A host value: prefer real Class identity, then a name comparison up the super chain
+		// (handles the fragmented-Class case and unqualified typedef names like `List`).
+		var rc = tryResolveClass(rawType);
+		if (rc != null && Std.isOfType(v, rc))
+			return true;
+		return PrimType.nameInChain(v, name);
+	}
+
 	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
 	// chain reaches it; anything else defers to the host check.
 	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
@@ -1164,12 +1200,16 @@ class PrimType {
 		}
 	}
 
-	static function nameInChain(v:Dynamic, name:String):Bool {
+	public static function nameInChain(v:Dynamic, name:String):Bool {
 		if (v == null)
 			return false;
+		// An unqualified name (e.g. the typedef `List`) matches a fully-qualified class whose last
+		// path component is the same (`haxe.ds.List`), since resolveClass cannot see the typedef.
+		var unqualified = name.indexOf(".") < 0;
 		var c = Type.getClass(v);
 		while (c != null) {
-			if (Type.getClassName(c) == name)
+			var cn = Type.getClassName(c);
+			if (cn == name || (unqualified && cn != null && StringTools.endsWith(cn, "." + name)))
 				return true;
 			c = Type.getSuperClass(c);
 		}
