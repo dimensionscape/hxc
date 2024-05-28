@@ -1989,7 +1989,13 @@ class Parser {
 	function parseClassFields(tdecl:Bool, p1:Position):{fields:Array<ClassField>, pos:Position} {
 		var acc:Array<ClassField> = [];
 		while (true) {
-			if (tokEq(peek(), BrClose) || tokEq(peek(), Eof)) break;
+			if (tokEq(peek(), BrClose) || tokEq(peek(), Eof)) {
+				// A field parse is ATTEMPTED at the closing brace: its getDoc consumes any pending doc
+				// before the attempt fails, so a trailing doc comment in a body never leaks onto the next
+				// declaration.
+				getDoc();
+				break;
+			}
 			acc.push(parseClassField(tdecl));
 		}
 		// A display-mode parse tolerates a body left unclosed by an earlier recovery (the file ends before
