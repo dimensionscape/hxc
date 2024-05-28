@@ -48,7 +48,10 @@ class ToplevelScan {
 
 	static function walk(ctx:Context, dir:String, pack:Array<String>, out:Array<ScannedFile>, seen:haxe.ds.StringMap<Bool>):Void {
 		var entries = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) return;
-		entries.sort(Reflect.compare);
+		entries.sort(function(a, b) {
+			var al = a.toLowerCase(), bl = b.toLowerCase();
+			return al < bl ? -1 : al > bl ? 1 : (a < b ? -1 : a > b ? 1 : 0);
+		});
 		for (name in entries) {
 			if (name.length == 0 || name.charCodeAt(0) == ".".code) continue;
 			var full = (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/") + name;

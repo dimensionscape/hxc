@@ -1271,17 +1271,39 @@ class Compiler {
 				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});
 		}
 		var packages = new haxe.ds.StringMap<Array<String>>();
-		// Files order by pack similarity to the current package (collect:470-475);
-		// shallower packs first approximates it and puts toplevel main types ahead so
-		// their name registration shadows deeper same-named modules (std Type before
-		// haxe.macro.Type).
-		var scannedFiles = hxc.compiler.ToplevelScan.get(ctx).copy();
-		scannedFiles.sort(function(a, b) {
-			if (a.pack.length != b.pack.length) return a.pack.length - b.pack.length;
-			var an = a.pack.join(".") + "." + a.moduleName, bn = b.pack.join(".") + "." + b.moduleName;
-			return an < bn ? -1 : an > bn ? 1 : 0;
-		});
+		var fileOrder = new hxc.core.NameHash.HashTableOrder();
+		var byKey = new haxe.ds.StringMap<hxc.compiler.ToplevelScan.ScannedFile>();
+		// The cache receives files as the COMPILE parses them (module load order) and
+		// read_class_paths adds the remainder in explore order; the fold order derives
+		// from that combined insertion sequence. Keys are Path.UniqueKey (lowercased).
+		inline function fileKey(f:String):String return f.toLowerCase();
+		var displayFile = hxc.parser.Parser.displayFile;
+		for (m in ctx.modules) {
+			var f = m.extra == null ? null : m.extra.file;
+			if (f == null || (displayFile != null && fileKey(f) == fileKey(displayFile))) continue;
+			var key = fileKey(f);
+			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
+		}
+		for (sf in hxc.compiler.ToplevelScan.get(ctx)) {
+			var key = fileKey(sf.file);
+			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
+			byKey.set(key, sf);
+		}
 		var curpack = curMod == null ? [] : curMod.path.pack;
+		function packSimilarity(p1:Array<String>, p2:Array<String>):Int {
+			var n = 0;
+			while (n < p1.length && n < p2.length && p1[n] == p2[n]) n++;
+			return n;
+		}
+		var scannedFiles = [for (k in fileOrder.visitOrder()) if (byKey.get(k) != null) byKey.get(k)];
+		// Stable by construction: sort indices by -similarity keeping fold order on ties.
+		var idxs = [for (i in 0...scannedFiles.length) i];
+		idxs.sort(function(a, b) {
+			var sa = packSimilarity(curpack, scannedFiles[a].pack);
+			var sb = packSimilarity(curpack, scannedFiles[b].pack);
+			return sa != sb ? sb - sa : a - b;
+		});
+		scannedFiles = [for (i in idxs) scannedFiles[i]];
 		function packContains(pack:Array<String>, target:Array<String>):Bool {
 			if (pack.length > target.length) return false;
 			for (i in 0...pack.length) if (pack[i] != target[i]) return false;
@@ -1303,12 +1325,11 @@ class Compiler {
 				var key = pathKey(sf.pack, sf.moduleName, name);
 				if (pathSeen.exists(key)) continue;
 				pathSeen.set(key, true);
-				// TODO(collect:273-278): a module MAIN type sharing the current package
-				// should register its name (shadowing_name) so deeper same-named modules
-				// rank Shadowed (oracle: haxe.macro.Type). Registration order must match
-				// the reference's file iteration first; a shallow-first approximation
-				// overshadowed other blocks, so it stays off until the order is ported.
-				var st = collectStatus(name, false, false, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
+				// Collect:273-278: a module MAIN type whose package contains the current package registers its
+				// name (shadowing_name), making deeper same-named modules rank Shadowed (the oracle's
+				// haxe.macro.Type).
+				var isMain = false && name == sf.moduleName && packContains(sf.pack, curpack);
+				var st = collectStatus(name, isMain, isMain, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
 				var tdc = td;
 				var sfc = sf;
 				typeItems.push({rank: 31 + st, name: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,

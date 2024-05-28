@@ -53,6 +53,12 @@ class NameHash {
 		return h & 0x3FFFFFFF;
 	}
 
+	// The hash of a plain string (one string mix from seed 0, then the final avalanche) - the hash of a
+	// Path.UniqueKey file key.
+	public static function stringHash(s:String):Int {
+		return finalMix(mixString(0, s));
+	}
+
 	public static function pathHash(pack:Array<String>, name:String):Int {
 		// Breadth-first queue: 0 = tuple, 1 = list suffix (index into pack), 2 = string
 		var kinds:Array<Int> = [0];
