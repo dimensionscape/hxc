@@ -221,8 +221,86 @@ class CompletionItem {
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
-	// + to_json (GMFull): the Type item with the module-kind int code, the ctor-derived
-	// extern/final/abstract flags and ast params.
+	// The Type item (full mode) with the module-kind int code, the ctor-derived extern/final/abstract flags
+	// and ast params.
+	// A SYNTAX-side declaration (a parsed but unloaded module from class-path exploration) makes the same
+	// Type item shape as a typed module type, with flags/kind read from the declaration flags.
+	public static function declTypeToJson(gen:Genjson, pack:Array<String>, moduleName:String, td:hxc.ast.Ast.TypeDef,
+			declPos:hxc.ast.Position, importStatus:Int, ?index:Int):JsonValue {
+		var name:String;
+		var params:Array<hxc.ast.Ast.TypeParam>;
+		var meta:hxc.ast.Ast.Metadata;
+		var doc:hxc.ast.Ast.Documentation;
+		var kind = 0;
+		var isExtern = false, isFinal = false, isAbstract = false;
+		switch (td) {
+			case EClass(d):
+				name = d.dName.name; params = d.dParams; meta = d.dMeta; doc = d.dDoc;
+				isExtern = d.dFlags.contains(HExtern);
+				isFinal = d.dFlags.contains(HFinal);
+				isAbstract = d.dFlags.contains(HAbstract);
+				kind = d.dFlags.contains(HInterface) ? 1 : 0;
+			case EEnum(d):
+				name = d.dName.name; params = d.dParams; meta = d.dMeta; doc = d.dDoc;
+				isExtern = d.dFlags.contains(EExtern);
+				kind = 2;
+			case ETypedef(d):
+				name = d.dName.name; params = d.dParams; meta = d.dMeta; doc = d.dDoc;
+				isExtern = d.dFlags.contains(EExtern);
+				kind = switch (d.dData.ct) { case CTAnonymous(_): 6; case _: 5; };
+			case EAbstract(d):
+				name = d.dName.name; params = d.dParams; meta = d.dMeta; doc = d.dDoc;
+				isExtern = d.dFlags.contains(AbExtern);
+				kind = d.dFlags.contains(AbEnum) ? 4 : 3;
+			case EStatic(d):
+				// EStatic: final, of kind Static, the value after TypeParameter in the kind enum (Class
+				// Interface Enum Abstract EnumAbstract TypeAlias Struct TypeParameter Static).
+				name = d.dName.name; params = d.dParams; meta = d.dMeta; doc = d.dDoc;
+				isFinal = true;
+				kind = 8;
+			case EImport(_) | EUsing(_):
+				throw new hxc.core.NotFound();
+		}
+		function astParam(tp:hxc.ast.Ast.TypeParam):JsonValue {
+			return JObject([
+				{name: "name", value: JString(tp.tpName.name)},
+				{name: "params", value: JArray([])},
+				{name: "constraints", value: JNull},
+				{name: "metadata", value: gen.generateMetadata(tp.tpMeta)}
+			]);
+		}
+		return JObject(([
+			{name: "kind", value: JString("Type")},
+			{name: "args", value: JObject([
+				{name: "path", value: JObject([
+					{name: "pack", value: JArray([for (x in pack) JString(x)])},
+					{name: "moduleName", value: JString(moduleName)},
+					{name: "typeName", value: JString(name)},
+					{name: "importStatus", value: JInt(importStatus)}
+				])},
+				{name: "kind", value: JInt(kind)},
+				{name: "meta", value: gen.generateMetadata(meta)},
+				{name: "pos", value: gen.generatePos(declPos)},
+				{name: "params", value: JArray([for (tp in params) astParam(tp)])},
+				{name: "isExtern", value: JBool(isExtern)},
+				{name: "isFinal", value: JBool(isFinal)},
+				{name: "isAbstract", value: JBool(isAbstract)},
+				{name: "doc", value: doc == null ? JNull : JString(hxc.ast.Ast.genDocText(doc))}
+			])}
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
+	// A package item: {path: {pack}, contents: []}.
+	public static function packageToJson(pack:Array<String>, ?index:Int):JsonValue {
+		return JObject(([
+			{name: "kind", value: JString("Package")},
+			{name: "args", value: JObject([
+				{name: "path", value: JObject([{name: "pack", value: JArray([for (x in pack) JString(x)])}])},
+				{name: "contents", value: JArray([])}
+			])}
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
 	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int):JsonValue {
 		var infos = TypeFunctions.tInfos(mt);
 		var kind:Int;

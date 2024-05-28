@@ -1223,15 +1223,67 @@ class Compiler {
 			push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, f.cf,
 				hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(f.c)), true, ct(t), i));
 		}
-		types.sort(function(a, b) {
-			var an = TypeFunctions.tInfos(a).path.name;
-			var bn = TypeFunctions.tInfos(b).path.name;
-			return an < bn ? -1 : an > bn ? 1 : 0;
-		});
+		// Types merge from two sources like the reference collect: the loaded module types (ctx
+		// modules/imports, add_type) and the class-path exploration's parsed declarations
+		// (collect:465-495 iterates the cache's files; process_decls:255 adds one item per visible
+		// declaration). Loaded paths shadow scanned ones (path_exists), and the whole set sorts by type
+		// name. get_sort_index a Type item sorts by (31 imported / 32 unimported / 33 shadowed, full dot
+		// path); packages(40), literals(50) and keywords(60) follow, which the push order below already
+		// respects.
+		var typeItems:Array<{rank:Int, name:String, mk:Int->hxc.core.Json.JsonValue}> = [];
+		var pathSeen = new haxe.ds.StringMap<Bool>();
+		inline function pathKey(pack:Array<String>, moduleName:String, typeName:String):String
+			return pack.join(".") + "." + moduleName + "." + typeName;
 		for (mt in types) {
-			var path = TypeFunctions.tInfos(mt).path;
+			var infos = TypeFunctions.tInfos(mt);
+			var path = infos.path;
+			var key = pathKey(path.pack, infos.module.path.name, path.name);
+			if (pathSeen.exists(key)) continue;
+			pathSeen.set(key, true);
 			var st = importStatus(path).match(Imported) ? 0 : importStatus(path).match(Unimported) ? 1 : 2;
-			push(function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
+			var mtc = mt;
+			typeItems.push({rank: 31 + st, name: path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name,
+				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});
+		}
+		var packages = new haxe.ds.StringMap<Array<String>>();
+		for (sf in hxc.compiler.ToplevelScan.get(ctx)) {
+			var contributed = false;
+			for (td in sf.decls) {
+				var name:Null<String> = null, isPrivate = false, meta:hxc.ast.Ast.Metadata = [];
+				switch (td.decl) {
+					case EClass(d): name = d.dName.name; isPrivate = d.dFlags.contains(HPrivate); meta = d.dMeta;
+					case EEnum(d): name = d.dName.name; isPrivate = d.dFlags.contains(EPrivate); meta = d.dMeta;
+					case ETypedef(d): name = d.dName.name; isPrivate = d.dFlags.contains(EPrivate); meta = d.dMeta;
+					case EAbstract(d): name = d.dName.name; isPrivate = d.dFlags.contains(AbPrivate); meta = d.dMeta;
+					case EStatic(d): name = d.dName.name; isPrivate = Lambda.exists(d.dFlags, function(f) return f.access == APrivate); meta = d.dMeta;
+					case EImport(_) | EUsing(_): continue;
+				}
+				if (isPrivate || TypeFunctions.hasMeta(":noCompletion", meta)) continue;
+				var key = pathKey(sf.pack, sf.moduleName, name);
+				if (pathSeen.exists(key)) continue;
+				pathSeen.set(key, true);
+				var path:hxc.core.Globals.Path = {pack: sf.pack, name: name};
+				var st = importStatus(path).match(Imported) ? 0 : importStatus(path).match(Unimported) ? 1 : 2;
+				var tdc = td;
+				var sfc = sf;
+				typeItems.push({rank: 31 + st, name: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,
+					mk: function(i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sfc.pack, sfc.moduleName, tdc.decl, tdc.pos, st, i)});
+				contributed = true;
+			}
+			// check_package a contributing module's package registers once; every distinct non-empty pack
+			// becomes a Package item.
+			if (contributed && sf.pack.length > 0) packages.set(sf.pack.join("."), sf.pack);
+		}
+		typeItems.sort(function(a, b) {
+			if (a.rank != b.rank) return a.rank - b.rank;
+			return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+		});
+		for (ti in typeItems) push(ti.mk);
+		var packList = [for (k in packages.keys()) packages.get(k)];
+		packList.sort(function(a, b) { var an = a.join("."), bn = b.join("."); return an < bn ? -1 : an > bn ? 1 : 0; });
+		for (pk in packList) {
+			var pkc = pk;
+			push(function(i) return hxc.core.CompletionItem.CompletionItem.packageToJson(pkc, i));
 		}
 		// The literal set in alphabetical order; `trace` types as its magic single-argument signature.
 		var basic = ctx.basic;
