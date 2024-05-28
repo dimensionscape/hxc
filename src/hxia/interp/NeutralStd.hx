@@ -37,6 +37,16 @@ class NeutralStd {
 		reg.bindNew("List", mkList);
 		reg.bindNew("haxe.ds.List", mkList);
 		reg.markNeutralStatic("List", haxe.ds.List);
+		// List's ListIterator has inline hasNext/next that reflection cannot reach, so `for (x in
+		// list)` would iterate nothing; return a materialized array iterator instead.
+		reg.bindMember("haxe.ds.List", "iterator", function(o, a) return [for (x in (o : haxe.ds.List<Dynamic>)) x].iterator());
+		reg.bindMember("haxe.ds.List", "add", function(o, a) { (o : haxe.ds.List<Dynamic>).add(a[0]); return null; });
+		reg.bindMember("haxe.ds.List", "push", function(o, a) { (o : haxe.ds.List<Dynamic>).push(a[0]); return null; });
+		reg.bindMember("haxe.ds.List", "pop", function(o, a) return (o : haxe.ds.List<Dynamic>).pop());
+		reg.bindMember("haxe.ds.List", "first", function(o, a) return (o : haxe.ds.List<Dynamic>).first());
+		reg.bindMember("haxe.ds.List", "last", function(o, a) return (o : haxe.ds.List<Dynamic>).last());
+		reg.bindMember("haxe.ds.List", "isEmpty", function(o, a) return (o : haxe.ds.List<Dynamic>).isEmpty());
+		reg.bindMember("haxe.ds.List", "remove", function(o, a) return (o : haxe.ds.List<Dynamic>).remove(a[0]));
 
 		// Bytes: cpp inlines get/set into buffer indexing on the shim's `b`/`length`, so the
 		// factories return the shim and its non-inline methods are keyed by the shim type name.
