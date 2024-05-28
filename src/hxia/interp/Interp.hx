@@ -681,9 +681,15 @@ class Interp {
 	}
 
 	function callStatic(type:String, member:String, args:Array<Dynamic>):Dynamic {
-		var fun = scriptStatics.get(type + "." + member);
-		if (fun != null)
-			return invokeFun(fun, null, args);
+		// A neutral-static type (Math, haxe.Json, haxe.format.JsonParser, ...) is std we provide
+		// natively; the cppia may still carry a decl copy of it as DCE fallout, but interpreting
+		// that copy would re-run inlined internals (e.g. JsonParser's `str.cca(pos)`) that are not
+		// reflectively callable. Prefer the host binding by skipping the script decl for such types.
+		if (registry.neutralStaticClass(type) == null) {
+			var fun = scriptStatics.get(type + "." + member);
+			if (fun != null)
+				return invokeFun(fun, null, args);
+		}
 		// isOfType must understand script classes: their instances are all the same host class,
 		// so a host check cannot tell them apart; dispatch on the ScriptObject's descriptor.
 		if (type == "Std" && member == "isOfType")

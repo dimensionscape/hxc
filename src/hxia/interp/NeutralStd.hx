@@ -132,6 +132,17 @@ class NeutralStd {
 		reg.bindMember("EReg", "split", function(o, a) return (o : EReg).split(a[0]));
 		reg.bindMember("EReg", "matchSub", function(o, a) return (o : EReg).matchSub(a[0], a[1], a.length > 2 ? a[2] : -1));
 
+		// `cca` is the charCodeAt alias that StringTools.fastCodeAt lowers to; the cppia inlines it
+		// into callers (e.g. haxe.format.JsonParser.nextChar) and it is not reflectively callable on
+		// either host. The cppia is cpp-compiled, so its inlined StringTools.isEof tests `c == 0`;
+		// cca must therefore return the cpp past-end sentinel 0 on every host (js charCodeAt would
+		// yield NaN past-end, which `== 0` never matches, so EOF is missed and parsing throws).
+		reg.bindMember("String", "cca", function(o, a) {
+			var s:String = o;
+			var i:Int = a[0];
+			return (i >= 0 && i < s.length) ? StringTools.fastCodeAt(s, i) : 0;
+		});
+
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Sys", "print", function(a) { logSink(Std.string(a[0])); return null; });
