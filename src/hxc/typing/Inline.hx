@@ -2,6 +2,7 @@ package hxc.typing;
 
 import hxc.ast.Position;
 import hxc.core.Type;
+import hxc.core.TypeUnification;
 import hxc.core.TypeFunctions;
 import hxc.core.TypingError;
 import hxc.core.TexprTools;
@@ -527,13 +528,17 @@ class Inline {
 			};
 			TypeFunctions.mk(TBlock(binds.concat(bodyEls)), tret, p);
 		};
+		// The wrap check reads `follow e.type` before map_type substitutes parameters, so an inlined body
+		// typed as an open mono or a raw type parameter casts even when the substituted type equals tret
+		// (the cpp oracle keeps `cast unsafeGet(...)` for Vector.get<String>).
+		var preMapType = result.type;
 		if (mapType != null) {
 			var skipExprs = params.copy();
 			if (ethis != null) skipExprs.push(ethis);
 			result = mapInlinedTypes(mapType, skipExprs, result);
 		}
-		// With no bindings the value stands alone: it keeps its own (substituted) type when that equals the
-		// expected return, and gets a cast otherwise. .
+		// With no bindings the value stands alone: it keeps its own (substituted) type when that
+		// equals the expected return, and gets a cast otherwise.
 		if (binds.length == 0) {
 			if (!hasReturnValue) {
 				// A body without a value return keeps its block, retyped to
@@ -543,12 +548,18 @@ class Inline {
 					case _: TypeFunctions.mk(TBlock([result]), tret, result.pos);
 				};
 			} else {
-				// An untyped expression keeps an open mono and must be cast to the declared return type instead
-				// of being accepted by typeEq.
-				var needsCast = switch (TypeFunctions.follow(result.type)) {
-					case TMono(_): true;
-					case TInst(c2, _) if (switch (c2.kind) { case KTypeParameter(_): true; case _: false; }): true;
-					case _: !hxc.core.TypeUnification.typeIseqStrict(result.type, tret);
+				// A mono/type-param body is accepted bare only for a
+				// Void return; otherwise it casts. Anything else compares the MAPPED type to
+				// tret with EqDoNotFollowNull on static targets (EqStrict elsewhere).
+				var needsCast = switch (TypeFunctions.follow(preMapType)) {
+					case TMono(_) | TInst({kind: KTypeParameter(_)}, _):
+						!TypeFunctions.follow(tret).match(TAbstract({path: {pack: [], name: "Void"}}, _));
+					case _:
+						try {
+							hxc.core.TypeUnification.typeEqKind(
+								ctx.com.platformConfig.isStatic ? EqDoNotFollowNull : EqStrict, result.type, tret);
+							false;
+						} catch (_:Dynamic) true;
 				};
 				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
 			}
