@@ -623,9 +623,10 @@ class CppEmit {
 		topSetvar = "";
 		topPrologue = function(gc) {
 			cppGenDefaultValues(closure.closeArgs, "__o_");
-			// gen_closure uses the tree's output_i (spacer + write_i), so the closure frame is indented by
-			// the closure body depth .
-			CppGenClass.hxStackPush(com, writer, emitClassName, emitFuncName, closure.closeExpr.pos.file, lineOf(closure.closeExpr.pos), gc, null, debugLevel, forHeader, true);
+			// The closure frame is indented by the closure body depth (outI: spacer + writeI).
+			// hxStackPush always ticks the file-id counter, and the same counter numbers _hx_array_data_
+			// tables, so the closure frame must tick too.
+			CppGenClass.hxStackPush(com, writer, emitClassName, emitFuncName, closure.closeExpr.pos.file, lineOf(closure.closeExpr.pos), gc, fileId, debugLevel, forHeader, true);
 		};
 		genWithInjection(closure.closeExpr, true);
 		topPrologue = saved;
