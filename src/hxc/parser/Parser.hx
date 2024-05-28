@@ -147,13 +147,14 @@ class Parser {
 					toks.push(t);
 					break;
 				case Comment(content):
-					// Filtered from the stream, but a block comment is the doc of the next significant
-					// token reads the token source's last stored comment). The delimiting stars of a `/**
-					// .. **/` block strip off, matching the emitted doc text.
-					var d = content;
-					if (StringTools.startsWith(d, "*")) d = d.substr(1);
-					if (StringTools.endsWith(d, "*")) d = d.substr(0, d.length - 1);
-					pendingDoc = d;
+					// Filtered from the stream. Only a DOC comment (content starting with '*', i.e. a `/**`
+					// block) records as the pending doc; the leading star strips always and a trailing star
+					// strips when present.
+					if (StringTools.startsWith(content, "*")) {
+						var d = content.substr(1);
+						if (StringTools.endsWith(d, "*")) d = d.substr(0, d.length - 1);
+						pendingDoc = d;
+					}
 				case CommentLine(_):
 					// Filtered, like the reference token stream
 				case _:
@@ -1862,10 +1863,22 @@ class Parser {
 		}
 	}
 
-	// The block comment stored on the declaration's first token.
+	// The block comment stored on the declaration's first token. The most recent doc comment HOLDS until a
+	// getDoc consumes it, surviving across skipped tokens and distance (a well-known doc leak).
+	// Token-attached docs scan forward monotonically into lastDoc.
+	var lastDoc:Null<String> = null;
+	var docScanIdx:Int = 0;
+
 	function getDoc():Documentation {
-		var t = idx < tokens.length ? tokens[idx] : null;
-		return t == null || t.doc == null ? null : Ast.docFromString(t.doc);
+		var limit = idx < tokens.length ? idx : tokens.length - 1;
+		while (docScanIdx <= limit) {
+			var d = tokens[docScanIdx].doc;
+			if (d != null) lastDoc = d;
+			docScanIdx++;
+		}
+		var d = lastDoc;
+		lastDoc = null;
+		return d == null ? null : Ast.docFromString(d);
 	}
 
 	function parseCommonFlags():Array<PlacedDeclFlag> {

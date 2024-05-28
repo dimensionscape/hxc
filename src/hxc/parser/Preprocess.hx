@@ -35,20 +35,37 @@ class Preprocess {
 	inline function cur():TokenInfo return toks[i < toks.length ? i : toks.length - 1];
 	inline function adv():TokenInfo { var t = toks[i]; i++; return t; }
 
+	// A doc attached to a DROPPED token (a sharp marker or anything inside a skipped region) carries
+	// to the next KEPT token: docs are recorded as tokens stream, before the conditional skipping
+	// consumes them, so a doc comment right before an excluded #if block still documents the following
+	// declaration.
+	var pendingDoc:Null<String> = null;
+
+	inline function keep(ti:TokenInfo):Void {
+		if (ti.doc != null) pendingDoc = null
+		else if (pendingDoc != null) { ti.doc = pendingDoc; pendingDoc = null; }
+		out.push(ti);
+	}
+
+	inline function dropDoc(ti:TokenInfo):Void {
+		if (ti.doc != null) pendingDoc = ti.doc;
+	}
+
 	function process():Array<TokenInfo> {
 		while (true) {
 			if (i >= toks.length) break;
 			var ti = toks[i];
+			dropDoc(ti);
 			switch (ti.tok) {
 				case Eof:
-					out.push(ti);
+					keep(ti);
 					i++;
 					break;
 				case Sharp("end"):
-					if (mstack.length == 0) { out.push(ti); i++; }
+					if (mstack.length == 0) { keep(ti); i++; }
 					else { mstack.pop(); i++; }
 				case Sharp("elseif"):
-					if (mstack.length == 0) { out.push(ti); i++; }
+					if (mstack.length == 0) { keep(ti); i++; }
 					else {
 						mstack.pop();
 						i++;
@@ -56,7 +73,7 @@ class Preprocess {
 						skipTokens(ti.pos, false);
 					}
 				case Sharp("else"):
-					if (mstack.length == 0) { out.push(ti); i++; }
+					if (mstack.length == 0) { keep(ti); i++; }
 					else {
 						mstack.pop();
 						i++;
@@ -82,7 +99,7 @@ class Preprocess {
 				case Sharp(s):
 					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos);
 				case _:
-					out.push(ti);
+					keep(ti);
 					i++;
 			}
 		}
@@ -113,6 +130,9 @@ class Preprocess {
 				throw new ParserError(Unclosed_conditional, p);
 			}
 			var ti = toks[i];
+			// The reference's skip consumes via the same token stream that records
+			// docs, so a doc inside a skipped region still updates last_doc.
+			dropDoc(ti);
 			switch (ti.tok) {
 				case Eof:
 					throw new ParserError(Unclosed_conditional, p);
