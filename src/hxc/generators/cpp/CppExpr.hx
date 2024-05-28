@@ -24,6 +24,10 @@ typedef CppClosure = {
 	closeExpr:CppExpr,
 	closeId:Int,
 	closeUndeclared:Map<String, TVar>,
+	// closeUndeclared is keyed by variable name, and every capture list the generator emits walks it
+	// in hash-table bucket order, not insertion order; that order is precomputed here at closure
+	// build.
+	closeUndeclaredOrder:Array<String>,
 	closeThis:Null<CppThis>,
 }
 

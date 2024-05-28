@@ -409,7 +409,7 @@ class CppEmit {
 					case null:
 					case th: out(th.match(ThisReal) ? "this" : "__this"); sep = ",";
 				}
-				for (name in closure.closeUndeclared.keys()) {
+				for (name in closure.closeUndeclaredOrder) {
 					out(sep); sep = ",";
 					out(CppTypeText.keywordRemap(name));
 				}
@@ -605,14 +605,13 @@ class CppEmit {
 	// debug level 1).
 	function genClosure(closure:CppClosure):Void {
 		var undeclared = closure.closeUndeclared;
-		var argc = 0;
-		for (_ in undeclared.keys()) argc++;
+		var argc = closure.closeUndeclaredOrder.length;
 		if (argc >= 20 || closure.closeArgs.length >= 20) writer.addBigClosures();
 		var argsCount = Std.string(closure.closeArgs.length);
 		outI("HX_BEGIN_LOCAL_FUNC_S" + argc + "(");
 		out(closure.closeThis != null ? "::hx::LocalThisFunc," : "::hx::LocalFunc,");
 		out("_hx_Closure_" + closure.closeId);
-		for (name in undeclared.keys())
+		for (name in closure.closeUndeclaredOrder)
 			out("," + cppMacroVarType(undeclared.get(name)) + "," + CppTypeText.keywordRemap(name));
 		out(") HXARGC(" + argsCount + ")\n");
 		outI(CppTypeText.tcppToString(closure.closeType) + " _hx_run(" + cppArgList(closure.closeArgs, "__o_") + ")");

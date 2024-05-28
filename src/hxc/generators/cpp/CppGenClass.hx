@@ -1214,27 +1214,37 @@ class CppGenClass {
 	function genClassInit(w:CppWriter):Void {
 		if (classDef.init == null) return;
 		w.write("void " + className + "::__init__()");
-		var dotName = joinPath(classDef.path, ".");
+		// The __init__ stack frame carries the qualified C++ class name as its dot name, not the dot path.
+		var cppName = CppTypeText.cppClassName(classDef);
 		var frameLine = CppEmit.getErrorLine(classDef.init.pos);
 		new CppEmit(com, w, 1, false, cppFileId).genExpressionTree([], TypeFunctions.tDynamic, classDef.init,
-			function(gc) hxStackPush(com, w, dotName, "__init__", classDef.init.pos.file, frameLine, gc, cppFileId), null, dotName, "__init__");
+			function(gc) hxStackPush(com, w, cppName, "__init__", classDef.init.pos.file, frameLine, gc, cppFileId), null, cppName, "__init__");
 		w.write("\n\n");
 	}
 
 	// The flat _hx_<pack>_<Name> vtable-struct name of an interface.
 	inline function interfaceImplName(iface:TClass):String return "_hx_" + joinPath(iface.path, "_");
 
-	// Implemented-interface set: descend real_interfaces(interfaces) through each interface's own
-	// interfaces and superClass (transitive), skipping cpp.rtti markers and native-gen.
+	// The implemented-interface set: descend the real interfaces of interfaces through each
+	// interface's own interfaces and superClass (transitive), skipping cpp.rtti markers; native-gen
+	// interfaces land in a separate table (still descended). The emitted list prepends each key during
+	// a hash-table walk, so its order is the REVERSE of the bucket walk over the flat _hx_ names,
+	// reproduced through the hash-table order model.
 	function implementedInterfaces():Array<TClass> {
-		var order:Array<TClass> = [];
+		var byName = new Map<String, TClass>();
 		var seen = new Map<String, Bool>();
+		var nativeSeen = new Map<String, Bool>();
+		var h = new hxc.core.NameHash.HashTableOrder();
 		function descend(iface:TClass):Void {
-			if (CppTypeOf.isNativeGenClass(iface)) return;
 			var nm = interfaceImplName(iface);
-			if (!seen.exists(nm)) {
-				seen.set(nm, true);
-				order.push(iface);
+			var isNative = CppTypeOf.isNativeGenClass(iface);
+			var table = isNative ? nativeSeen : seen;
+			if (!table.exists(nm)) {
+				table.set(nm, true);
+				if (!isNative) {
+					h.add(nm, hxc.core.NameHash.NameHash.stringHash(nm));
+					byName.set(nm, iface);
+				}
 				for (imp in iface.interfaces) descend(imp.c);
 			}
 			if (iface.superClass != null) descend(iface.superClass.c);
@@ -1243,7 +1253,9 @@ class CppGenClass {
 			if (imp.c.path.pack.length == 2 && imp.c.path.pack[0] == "cpp" && imp.c.path.pack[1] == "rtti") continue;
 			descend(imp.c);
 		}
-		return order;
+		var names = h.visitOrder();
+		names.reverse();
+		return [for (nm in names) byName.get(nm)];
 	}
 
 	// The interface-implementation glue: one static vtable struct of the class's member-function pointers

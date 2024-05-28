@@ -50,6 +50,9 @@ private class RetypeSession {
 	final fileId:{v:Int};
 	var declarations:Map<String, Bool>;
 	var undeclared:Map<String, TVar>;
+	// Insertion order of `undeclared` (first-insert encounter order); feeds the hash-table bucket-order
+	// model that fixes the emitted capture order.
+	var undeclaredOrder:Array<String>;
 	var gcStack:Bool;
 	var injection:Bool;
 	var thisReal:CppThis;
@@ -65,6 +68,7 @@ private class RetypeSession {
 		this.forCppia = com.defines.rawDefined("cppia");
 		this.declarations = new Map();
 		this.undeclared = new Map();
+		this.undeclaredOrder = [];
 		this.gcStack = false;
 		this.injection = forInjection;
 		this.thisReal = realThisPtr ? ThisReal : ThisDynamic;
@@ -118,6 +122,7 @@ private class RetypeSession {
 			case TLocal(tvar):
 				if (declarations.exists(tvar.name)) {def: CppVar(VarLocal(tvar)), t: CppTypeOf.cppTypeOf(tvar.type)};
 				else {
+					if (!undeclared.exists(tvar.name)) undeclaredOrder.push(tvar.name);
 					undeclared.set(tvar.name, tvar);
 					if (TypeFunctions.hasVarFlag(tvar, VCaptured)) {def: CppVar(VarClosure(tvar)), t: CppTypeOf.cppTypeOf(tvar.type)};
 					else {def: CppExtern(tvar.name, false), t: CppTypeOf.cppTypeOf(tvar.type)};
@@ -284,6 +289,7 @@ private class RetypeSession {
 				var oldThisReal = thisReal;
 				thisReal = ThisFake;
 				var oldUndeclared = undeclared;
+				var oldUndeclaredOrder = undeclaredOrder;
 				var oldDeclarations = declarations;
 				var oldUsesThis = usesThis;
 				var oldGcStack = gcStack;
@@ -292,13 +298,23 @@ private class RetypeSession {
 				functionReturnType = ret;
 				usesThis = null;
 				undeclared = new Map();
+				undeclaredOrder = [];
 				declarations = new Map();
 				for (a in func.args) declarations.set(a.v.name, true);
 				var cppExpr = retype(TCppVoid, TypeFunctions.mkBlock(func.expr));
+				// Captures are emitted in hash-table walk order: buckets ascend over the hash of the name,
+				// chains newest-first.
+				// Reproduce that walk from the encounter order via the calibrated model.
+				var iterOrder = {
+					var h = new hxc.core.NameHash.HashTableOrder();
+					for (n in undeclaredOrder) h.add(n, hxc.core.NameHash.NameHash.stringHash(n));
+					h.visitOrder();
+				};
 				var result:CppClosure = {
 					closeExpr: cppExpr,
 					closeId: closureId,
 					closeUndeclared: undeclared,
+					closeUndeclaredOrder: iterOrder,
 					closeType: ret,
 					closeArgs: [for (a in func.args) {v: a.v, dflt: a.c}],
 					closeThis: usesThis,
@@ -307,7 +323,16 @@ private class RetypeSession {
 				var childUndeclared = undeclared;
 				declarations = oldDeclarations;
 				undeclared = oldUndeclared;
-				for (name => tvar in childUndeclared) if (!declarations.exists(name)) undeclared.set(name, tvar);
+				undeclaredOrder = oldUndeclaredOrder;
+				// Re-insert the child's captures into the enclosing table in the child's bucket-walk order,
+				// so the parent's insertion order follows that walk.
+				for (name in iterOrder) {
+					var tvar = childUndeclared.get(name);
+					if (!declarations.exists(name)) {
+						if (!undeclared.exists(name)) undeclaredOrder.push(name);
+						undeclared.set(name, tvar);
+					}
+				}
 				functionReturnType = oldReturnType;
 				thisReal = oldThisReal;
 				usesThis = (usesThis != null) ? oldThisReal : oldUsesThis;
