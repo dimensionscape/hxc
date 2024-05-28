@@ -662,6 +662,21 @@ class Filters {
 		}
 	}
 
+	// Cpp only: interfaces have no super, so the first extended interface becomes superClass for
+	// efficiency and the remaining ones stay implemented. interfaces is prepend-built, so index 0 is
+	// the list head. Downstream cpp passes depend on the mutation: CppFixOverrides walks superClass,
+	// which is how a sub-interface's redeclared method gets dropped.
+	public static function promoteFirstInterfaceToSuper(t:ModuleType):Void {
+		switch (t) {
+			case TClassDecl(c) if (TypeFunctions.hasClassFlag(c, CInterface) && c.interfaces.length > 0):
+				var first = c.interfaces[0];
+				if (first.c.path.pack.length == 2 && first.c.path.pack[0] == "cpp" && first.c.path.pack[1] == "rtti") return;
+				c.superClass = first;
+				c.interfaces = c.interfaces.slice(1);
+			case _:
+		}
+	}
+
 	public static function checkVoidField(t:ModuleType):Void {
 		switch (t) {
 			case TClassDecl(c):
@@ -971,6 +986,7 @@ class Filters {
 			addFieldInits(com, tctx, renameLocals, t);
 			addMetaField(com, t);
 			checkVoidField(t);
+			if (com.platform == Cpp) promoteFirstInterfaceToSuper(t);
 			commitFeaturesOf(com, t);
 			checkReservedTypePaths(tctx, t);
 		}

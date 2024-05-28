@@ -1398,10 +1398,13 @@ class CppGenClass {
 		return switch (f.expr.expr) { case TFunction(_): fieldIsDynamic(f); case _: true; };
 	}
 
-	// Fields that are dynamic haxe methods (a Dynamic member initialized to a __default_<name> closure
-	// at construction).
+	// Instance fields that are dynamic haxe methods (a Dynamic member initialized to a __default_<name>
+	// closure at construction). The list is built by PREPENDING, so every consumer sees the REVERSE of
+	// orderedFields.
 	function dynamicFunctions():Array<TClassField> {
-		return [for (f in classDef.orderedFields) if (fieldIsDynamic(f)) f];
+		var fns = [for (f in classDef.orderedFields) if (fieldIsDynamic(f)) f];
+		fns.reverse();
+		return fns;
 	}
 	static function hasDynamicMemberFunctions(c:TClass):Bool {
 		for (f in c.orderedFields) if (isDynamicFieldIn(c, f)) return true;
