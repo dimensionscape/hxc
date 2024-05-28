@@ -1305,6 +1305,13 @@ class Typer {
 						if (tp.tparams.length > 0) ctx.com.addDiagnostic("Type parameters are not supported for the `is` operator", th.pos);
 						var e = typeExpr(ctx, e1, WithTypeTools.value);
 						var mt = Typeload.resolveTypePath(ctx.com, {pack: tp.tpackage, name: tp.tname}, tp.tsub, th.pos);
+						// type_module_type redirects an abstract WITH an impl class to the impl class's
+						// type expr, so DCE sees and keeps the impl class (the oracle emits
+						// cpp._Int64.Int64_Impl_ for `is cpp.Int64`).
+						switch (mt) {
+							case TAbstractDecl(a) if (a.impl != null): mt = TClassDecl(a.impl);
+							case _:
+						}
 						var eType = TexprTools.makeTypeExpr(mt, th.pos);
 						var std = switch (Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, p)) {
 							case TClassDecl(c): c;
