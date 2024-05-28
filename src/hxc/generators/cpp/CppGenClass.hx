@@ -539,9 +539,12 @@ class CppGenClass {
 		var ctorTf = ctorFuncDef();
 		var allocArgs = "::hx::Ctx *_hx_ctx" + (ctorTypeArgs == "" ? "" : "," + ctorTypeArgs);
 		var ptrName = "::hx::ObjectPtr< " + className + " >";
-		// Inline-able constructor emits the __new/__alloc bodies directly in the header; otherwise only
-		// their declarations, with the bodies emitted in the cpp.
-		if (canInlineConstructor()) {
+		// An inline-able constructor emits the __new/__alloc bodies directly in the header; otherwise only
+		// their declarations, with the bodies emitted in the cpp. An abstract class emits neither, just a
+		// blank line, and skips the construction scaffolding.
+		if (TypeFunctions.hasClassFlag(classDef, CAbstract)) {
+			w.write("\n");
+		} else if (canInlineConstructor()) {
 			w.write("\n");
 			w.write("\t\tinline static " + ptrName + " __new(" + ctorTypeArgs + ") {\n");
 			w.write("\t\t\t" + ptrName + " __this = new " + className + "();\n");
@@ -580,9 +583,11 @@ class CppGenClass {
 			w.write("\t\tstatic " + ptrName + " __new(" + ctorTypeArgs + ");\n");
 			if (canQuickAlloc()) w.write("\t\tstatic " + ptrName + " __alloc(" + allocArgs + ");\n");
 		}
-		w.write("\t\tstatic void * _hx_vtable;\n");
-		w.write("\t\tstatic Dynamic __CreateEmpty();\n");
-		w.write("\t\tstatic Dynamic __Create(::hx::DynamicArray inArgs);\n");
+		if (!TypeFunctions.hasClassFlag(classDef, CAbstract)) {
+			w.write("\t\tstatic void * _hx_vtable;\n");
+			w.write("\t\tstatic Dynamic __CreateEmpty();\n");
+			w.write("\t\tstatic Dynamic __Create(::hx::DynamicArray inArgs);\n");
+		}
 		// A class with dynamic member functions declares its default-installer.
 		if (dynamicFunctions().length > 0)
 			w.write("\t\tstatic void __alloc_dynamic_functions(::hx::Ctx *_hx_alloc," + className + " *_hx_obj);\n");
@@ -968,11 +973,14 @@ class CppGenClass {
 			// A real ctor body is followed by a single newline (an empty ctor uses " { }\n\n").
 			w.write("\n");
 		}
-		w.write("Dynamic " + className + "::__CreateEmpty() { return new " + className + "; }\n\n");
-		w.write("void *" + className + "::_hx_vtable = 0;\n\n");
-		// __Create passes the constructor args out of the DynamicArray
-		var createArgs = [for (i in 0...constructorArgNames().length) "inArgs[" + i + "]"].join(",");
-		w.write("Dynamic " + className + "::__Create(::hx::DynamicArray inArgs)\n{\n\t::hx::ObjectPtr< " + className + " > _hx_result = new " + className + "();\n\t_hx_result->__construct(" + createArgs + ");\n\treturn _hx_result;\n}\n\n");
+		// An abstract class emits no __CreateEmpty/_hx_vtable/__Create bodies.
+		if (!TypeFunctions.hasClassFlag(classDef, CAbstract)) {
+			w.write("Dynamic " + className + "::__CreateEmpty() { return new " + className + "; }\n\n");
+			w.write("void *" + className + "::_hx_vtable = 0;\n\n");
+			// __Create passes the constructor args out of the DynamicArray
+			var createArgs = [for (i in 0...constructorArgNames().length) "inArgs[" + i + "]"].join(",");
+			w.write("Dynamic " + className + "::__Create(::hx::DynamicArray inArgs)\n{\n\t::hx::ObjectPtr< " + className + " > _hx_result = new " + className + "();\n\t_hx_result->__construct(" + createArgs + ");\n\treturn _hx_result;\n}\n\n");
+		}
 		genIsInstanceOf(w);
 		// The interface-implementation vtable structs + _hx_getInterface dispatch.
 		genInterfaceGlue(w);
@@ -1002,9 +1010,10 @@ class CppGenClass {
 			}
 			w.write("}\n");
 		}
-		// Non-inline constructor emits its __new/__alloc bodies in the cpp, after
-		// __alloc_dynamic_functions and before the default constructor.
-		if (!canInlineConstructor()) outputConstructorCpp(w);
+		// A non-inline constructor emits its __new/__alloc bodies in the cpp, after
+		// __alloc_dynamic_functions and before the default constructor. An abstract class emits no
+		// __new/__alloc bodies.
+		if (!canInlineConstructor() && !TypeFunctions.hasClassFlag(classDef, CAbstract)) outputConstructorCpp(w);
 		// The C++ default constructor installs each dynamic method's default closure.
 		w.write(className + "::" + className + "()\n{\n");
 		for (f in dynFns) {
@@ -1772,13 +1781,18 @@ class CppGenClass {
 			"0 /* sStaticFields */";
 		};
 		w.write("void " + className + "::__register()\n{\n");
-		w.write("\t" + className + " _hx_dummy;\n");
-		w.write("\t" + className + "::_hx_vtable = *(void **)&_hx_dummy;\n");
+		// An abstract class registers without the vtable dummy or ctor hooks.
+		if (!TypeFunctions.hasClassFlag(classDef, CAbstract)) {
+			w.write("\t" + className + " _hx_dummy;\n");
+			w.write("\t" + className + "::_hx_vtable = *(void **)&_hx_dummy;\n");
+		}
 		w.write("\t::hx::Static(__mClass) = new ::hx::Class_obj();\n");
 		w.write("\t__mClass->mName = " + CppTypeText.strq(smartStrings, classNameText) + ";\n");
 		w.write("\t__mClass->mSuper = &super::__SGetClass();\n");
-		w.write("\t__mClass->mConstructEmpty = &__CreateEmpty;\n");
-		w.write("\t__mClass->mConstructArgs = &__Create;\n");
+		if (!TypeFunctions.hasClassFlag(classDef, CAbstract)) {
+			w.write("\t__mClass->mConstructEmpty = &__CreateEmpty;\n");
+			w.write("\t__mClass->mConstructArgs = &__Create;\n");
+		}
 		var sMemberFields = reflectiveMembers().length > 0 ? className + "_sMemberFields" : "0 /* sMemberFields */";
 		w.write("\t__mClass->mGetStaticField = &" + (hasGetStaticField() ? className + "::__GetStatic;\n" : "::hx::Class_obj::GetNoStaticField;\n"));
 		w.write("\t__mClass->mSetStaticField = &" + (hasSetStaticField() ? className + "::__SetStatic;\n" : "::hx::Class_obj::SetNoStaticField;\n"));
