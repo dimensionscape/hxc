@@ -16,6 +16,10 @@ class UnusedPure {
 		// them exactly as they disable that pass (an @:analyzer(no_local_dce) method keeps its pure
 		// statements).
 		inline function fieldRuns(c:hxc.core.Type.TClass, f:TClassField):Bool {
+			// An @:analyzer(ignore) class is skipped before any option parsing, so its meta never reaches
+			// the per-field config reader (which would warn on the unlisted "ignore" flag, e.g.
+			// cpp/_std/Reflect.hx).
+			if (hxc.optimization.AnalyzerConfig.isIgnored(c.meta)) return false;
 			if (hxc.optimization.AnalyzerConfig.isIgnored(f.meta)) return false;
 			var config = hxc.optimization.AnalyzerConfig.getFieldConfig(ctx, c, f);
 			return config.optimize && config.localDce;
