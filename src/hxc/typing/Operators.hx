@@ -757,6 +757,15 @@ class Operators {
 		}
 	}
 
+	// vrToTexpr: the binds-plus-result block is wrapped in @:mergeBlock, so a statement-position result
+	// SPLICES into the enclosing block (typeBlock's merge); fusion then sees flat statements instead of a
+	// nested value block it could collapse into an argument.
+	static function vrToTexpr(vars:Array<TExpr>, e:TExpr):TExpr {
+		if (vars.length == 0) return e;
+		var b = TypeFunctions.mk(TBlock(vars.concat([e])), e.type, e.pos);
+		return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, b), b.type, b.pos);
+	}
+
 	static function maybeTempReceiver(ctx:TyperContext, recv:TExpr, p:Position):{expr:TExpr, init:Null<TExpr>} {
 		// A stable side-effect-free lvalue stays as-is so an inline setter assigning `this` writes
 		// back through the original storage (a static field, array element or field chain).
@@ -938,7 +947,7 @@ class Operators {
 						case r: toTexpr(r);
 					};
 					var assign = TypeFunctions.mk(TBinop(OpAssign, st.lv, Typer.castOrUnify(ctx, st.lv.type, opCall, p)), st.lv.type, p);
-					st.init.length == 0 ? assign : TypeFunctions.mk(TBlock(st.init.concat([assign])), assign.type, p);
+					vrToTexpr(st.init, assign);
 				case BinopSpecial(opCall, false):
 					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
 					opCall;
@@ -980,7 +989,7 @@ class Operators {
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
 			Calls.checkModifiesThisDirect(ctx, implC, setterCf, recv, p);
 			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
-			return recvVars.length == 0 ? setCall : TypeFunctions.mk(TBlock(recvVars.concat([setCall])), retOf(setterCf), p);
+			return vrToTexpr(recvVars, setCall);
 		}
 		// A class property `a.p op= b` evaluates the receiver once, reads via its read access (the getter
 		// or
@@ -1011,7 +1020,7 @@ class Operators {
 				var vrVars:Array<TExpr> = [];
 				var lv = vrGetExprAux(ctx, vrVars, 0, "lhs", te1);
 				var out = compound(lv);
-				vrVars.length == 0 ? out : TypeFunctions.mk(TBlock(vrVars.concat([out])), out.type, p);
+				vrToTexpr(vrVars, out);
 			case AKNo(acc2, np):
 				// A write-restricted target (a final field) still takes a compound op when the abstract
 				// declares a dedicated overload that needs no write-back; the write error is deferred to
@@ -1035,7 +1044,7 @@ class Operators {
 					var recvVars:Array<TExpr> = [];
 					var ef = vrGetExprAux(ctx, recvVars, 1, "fh", fa.on);
 					var out = compound(FieldAccessTools.getFieldExpr({on: ef, field: fa.field, host: fa.host, isInline: fa.isInline, pos: fa.pos}, FWrite));
-					recvVars.length == 0 ? out : TypeFunctions.mk(TBlock(recvVars.concat([out])), out.type, p);
+					vrToTexpr(recvVars, out);
 				}
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
@@ -1065,7 +1074,7 @@ class Operators {
 					case BinopSpecial(opCall, false):
 						// A dedicated @:op(a -= b) overload is the assignment and returns its own result, so the
 						// value is not written back through resolveWrite.
-						recvVars.length == 0 ? opCall : TypeFunctions.mk(TBlock(recvVars.concat([opCall])), opCall.type, p);
+						vrToTexpr(recvVars, opCall);
 					case br:
 						var opResult = toTexpr(br);
 						// The write call passes the ORIGINAL receiver, not the stabilized read; only the
@@ -1080,7 +1089,7 @@ class Operators {
 									: Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [se.thisExpr, Typer.castOrUnify(ctx, ws.args[1].t, nm2, p), Typer.castOrUnify(ctx, ws.args[2].t, opResult, p)], p), ws.ret, p);
 							case _: throw new TypingError("Resolve target is not a function", p);
 						};
-						recvVars.length == 0 ? write : TypeFunctions.mk(TBlock(recvVars.concat([write])), write.type, p);
+						vrToTexpr(recvVars, write);
 				}
 			case _:
 				throw new TypingError("This compound assignment target is not yet ported", p);
@@ -1129,7 +1138,7 @@ class Operators {
 							if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 							var abs = tryAbstractUnop(ctx, op, flag, te, p);
 							var out = if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
-							recvVars.length == 0 ? out : TypeFunctions.mk(TBlock(recvVars.concat([out])), out.type, p);
+							vrToTexpr(recvVars, out);
 						}
 					case AKAccessor(fa): accessorIncr(ctx, op, flag, fa, withType, p);
 					case AKUsingAccessor(se): usingAccessorIncr(ctx, op, flag, se, withType, p);
