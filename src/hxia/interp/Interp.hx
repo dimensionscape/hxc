@@ -47,10 +47,23 @@ class Interp {
 	// The single mediated seam for all reflective host access
 	final mediator:Mediator;
 
+	// Hxcpp keeps a per-String "is UTF8-encoded" flag, and StringMap hashes the raw char buffer, so a
+	// cppia string constant (materialized by Bytes.getString) and the same text produced by the
+	// serializer's urlDecode path can be `==`-equal yet hash differently, making a unicode map key set
+	// on one and looked up with the other miss. substr(0) reallocates into hxcpp's canonical encoding,
+	// aligning the two; on the other targets it is an identity no-op.
+	static inline function normStr(s:String):String {
+		#if cpp
+		return s.substr(0);
+		#else
+		return s;
+		#end
+	}
+
 	public function new(ir:ModuleIR, registry:HostRegistry, ?limits:Limits, ?mediator:Mediator) {
 		this.registry = registry;
 		this.mediator = mediator != null ? mediator : new Mediator(null, function(t, m) return registry.memberBinding(t, m));
-		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
+		this.strings = [for (b in ir.strings) normStr(b.getString(0, b.length))];
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);
 		index();
