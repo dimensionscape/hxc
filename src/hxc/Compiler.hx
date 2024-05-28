@@ -1273,17 +1273,46 @@ class Compiler {
 		var packages = new haxe.ds.StringMap<Array<String>>();
 		var fileOrder = new hxc.core.NameHash.HashTableOrder();
 		var byKey = new haxe.ds.StringMap<hxc.compiler.ToplevelScan.ScannedFile>();
-		// The cache receives files as the COMPILE parses them (module load order) and
-		// read_class_paths adds the remainder in explore order; the fold order derives
-		// from that combined insertion sequence. Keys are Path.UniqueKey (lowercased).
-		inline function fileKey(f:String):String return f.toLowerCase();
-		var displayFile = hxc.parser.Parser.displayFile;
-		for (m in ctx.modules) {
-			var f = m.extra == null ? null : m.extra.file;
-			if (f == null || (displayFile != null && fileKey(f) == fileKey(displayFile))) continue;
-			var key = fileKey(f);
-			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
+		// The cache receives files as the COMPILE parses them (module load order) and read_class_paths adds
+		// the remainder in explore order; the fold order derives from that combined insertion sequence.
+		// Keys are Path.UniqueKey: on Windows lowercase(get_full_path f) where get_full_path is
+		// GetFullPathName, absolutizing against the cwd, resolving . and .. segments and normalizing every
+		// separator to a backslash.
+		function fileKey(f:String):String {
+			var p = StringTools.replace(f, "/", "\\");
+			var isAbs = (p.length >= 2 && p.charCodeAt(1) == ":".code)
+				|| (p.length >= 1 && p.charCodeAt(0) == "\\".code);
+			if (!isAbs) {
+				var cwd = StringTools.replace(Sys.getCwd(), "/", "\\");
+				if (!StringTools.endsWith(cwd, "\\")) cwd += "\\";
+				p = cwd + p;
+			}
+			var parts = p.split("\\");
+			var out = [];
+			for (i in 0...parts.length) {
+				var s = parts[i];
+				if (i > 0 && s == "") continue;
+				if (s == ".") continue;
+				if (s == "..") { if (out.length > 1) out.pop(); continue; }
+				out.push(s);
+			}
+			return out.join("\\").toLowerCase();
 		}
+		var displayFile = hxc.parser.Parser.displayFile;
+		inline function addModuleFiles(mods:Array<hxc.core.Type.ModuleDef>):Void {
+			for (m in mods) {
+				var f = m.extra == null ? null : m.extra.file;
+				if (f == null || f == "" || (displayFile != null && fileKey(f) == fileKey(displayFile))) continue;
+				var key = fileKey(f);
+				fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
+			}
+		}
+		// The cache receives files as each context PARSES them: the main context's
+		// modules, the macro context's (its sys.* files sit in the oracle's fold list),
+		// then the class-path exploration fills the remainder.
+		addModuleFiles(ctx.modules);
+		var macroCom = hxc.eval.EvalMacro.getMacroCom();
+		if (macroCom != null) addModuleFiles(macroCom.modules);
 		for (sf in hxc.compiler.ToplevelScan.get(ctx)) {
 			var key = fileKey(sf.file);
 			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
@@ -1295,7 +1324,11 @@ class Compiler {
 			while (n < p1.length && n < p2.length && p1[n] == p2[n]) n++;
 			return n;
 		}
-		var scannedFiles = [for (k in fileOrder.visitOrder()) if (byKey.get(k) != null) byKey.get(k)];
+		// Verified against a WSL-instrumented oracle: the captured 192-key order is exactly non-ascending
+		// in stringHash(key) & 127 (0 violations).
+		var foldOrder = fileOrder.visitOrder();
+		foldOrder.reverse();
+		var scannedFiles = [for (k in foldOrder) if (byKey.get(k) != null) byKey.get(k)];
 		// Stable by construction: sort indices by -similarity keeping fold order on ties.
 		var idxs = [for (i in 0...scannedFiles.length) i];
 		idxs.sort(function(a, b) {
@@ -1325,10 +1358,12 @@ class Compiler {
 				var key = pathKey(sf.pack, sf.moduleName, name);
 				if (pathSeen.exists(key)) continue;
 				pathSeen.set(key, true);
-				// Collect:273-278: a module MAIN type whose package contains the current package registers its
-				// name (shadowing_name), making deeper same-named modules rank Shadowed (the oracle's
-				// haxe.macro.Type).
-				var isMain = false && name == sf.moduleName && packContains(sf.pack, curpack);
+				// A module MAIN type whose package is a prefix of the current package registers its name as a
+				// shadowing name, making later same-named types rank Shadowed. The status is computed before
+				// registering, and order-sensitivity resolves through the reversed-fold file order above:
+				// std/Type precedes haxe/macro/Type (Shadowed) while haxe/ds/List precedes std/List
+				// (Unimported, never registered since its pack is not a prefix).
+				var isMain = name == sf.moduleName && packContains(sf.pack, curpack);
 				var st = collectStatus(name, isMain, isMain, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
 				var tdc = td;
 				var sfc = sf;
