@@ -553,7 +553,34 @@ class Inline {
 				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
 			}
 		}
-		return result;
+		// A constant-initialized local this inline bound, with no remaining use, drops to an empty block
+		// (expression reduction's no-op filter strips it from block element lists). Covers the null
+		// receiver a multiType @:to cast is called with (the `var t = null` of Map's toIntMap).
+		// Eligibility is restricted to the binds; body-declared clones live in subst values
+		// indistinguishably from substituted caller locals, so they stay exempt.
+		var inlineVars = new Map<Int, Bool>();
+		for (b in binds) switch (b.expr) {
+			case TVarExpr(v, _): inlineVars.set(v.id, true);
+			case _:
+		}
+		if (vthis != null) inlineVars.set(vthis.id, true);
+		var used = new Map<Int, Bool>();
+		function countLocals(e:TExpr):Void {
+			switch (e.expr) {
+				case TLocal(v): used.set(v.id, true);
+				case TVarExpr(_, eo): if (eo != null) countLocals(eo);
+				case _: TexprTools.iter(countLocals, e);
+			}
+		}
+		countLocals(result);
+		function dropUnusedVars(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TVarExpr(v, {expr: TConst(_)}) if (inlineVars.exists(v.id) && !used.exists(v.id)):
+					TypeFunctions.mk(TBlock([]), e.type, e.pos);
+				case _: TexprTools.mapExpr(dropUnusedVars, e);
+			}
+		}
+		return dropUnusedVars(result);
 	}
 
 	static function countThisUses(root:TExpr):Int {

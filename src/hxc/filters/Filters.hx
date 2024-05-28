@@ -820,19 +820,15 @@ class Filters {
 							case TInst(tc, _) if (tc.kind.match(KTypeParameter(_))): open = true;
 							case _:
 						}
-						if (open) {
-							// A construction whose selector is still a type parameter (a generic body kept
-							// as a field) picks its @:to cast by constraint unification and becomes the
-							// cast's static call, which then inlines TNew / find_multitype_specialization).
-							var sel = try hxc.typing.Typer.resolveMultiType(tctx, a, tl, e.pos) catch (_:Dynamic) null;
-							if (sel == null) return e;
-							return hxc.typing.Typer.buildMultiTypeCastCall(tctx, a, tl, sel.castField, sel.castType, sel.ret, el, e.pos);
-						}
-						var concrete = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos) catch (_:Dynamic) null;
-						switch (concrete == null ? null : TypeFunctions.follow(concrete)) {
-							case TInst(cc, ctl): TypeFunctions.mk(TNew(cc, ctl, el), e.type, e.pos);
-							case _: e;
-						}
+						// Every multiType construction rewrites to the selected @:to cast's static call with a null
+						// receiver prepended (the call inlines), and the result is typed as the UNDERLYING concrete
+						// type ({e with type = m}).
+						var sel = try hxc.typing.Typer.resolveMultiType(tctx, a, tl, e.pos) catch (_:Dynamic) null;
+						if (sel == null) return e;
+						var call = hxc.typing.Typer.buildMultiTypeCastCall(tctx, a, tl, sel.castField, sel.castType, sel.ret, el, e.pos);
+						if (open) return call;
+						var m = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos) catch (_:Dynamic) null;
+						m == null ? call : TypeFunctions.mk(call.expr, m, call.pos);
 					case _: e;
 				}
 			case _: e;

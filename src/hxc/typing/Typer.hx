@@ -3986,7 +3986,11 @@ class Typer {
 				if (ctorSelection != null) {
 					return buildMultiTypeCastCall(ctx, a, usedAtl, ctorSelection.castField, ctorSelection.castType, ctorSelection.ret, ctorSelection.args, p);
 				}
-				if (a.impl != null && multiTypeHasOpenSelector(a, usedAtl)) {
+				// Every multiType construction is typed as TNew of the impl; a later filter rewrites it to
+				// the @:to cast's static call. Resolving eagerly here would make typing-time inlines (an
+				// abstract member called on the fresh construction) see a concrete-typed receiver instead
+				// of the abstract.
+				if (a.impl != null) {
 					var sig = switch (a.impl.statics.get("_new")) {
 						case null:
 							{args: [], ret: ctx.com.basic.tvoid};
