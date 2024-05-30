@@ -79,6 +79,20 @@ class NeutralStd {
 		reg.bindMember(bytes, "sub", function(o, a) return (o : NeutralBytes).sub(a[0], a[1]));
 		reg.bindMember(bytes, "compare", function(o, a) return (o : NeutralBytes).compare(a[0]));
 
+		// Crypto over Bytes: convert the shim to/from a host Bytes at the boundary so the real
+		// algorithms run unchanged; string-input digests pass through directly.
+		reg.bindStatic("haxe.crypto.Base64", "encode", function(a) return haxe.crypto.Base64.encode((a[0] : NeutralBytes).toHost(), a.length > 1 ? a[1] : true));
+		reg.bindStatic("haxe.crypto.Base64", "decode", function(a) return NeutralBytes.fromHost(haxe.crypto.Base64.decode(a[0], a.length > 1 ? a[1] : true)));
+		reg.bindStatic("haxe.crypto.Md5", "encode", function(a) return haxe.crypto.Md5.encode(a[0]));
+		reg.bindStatic("haxe.crypto.Md5", "make", function(a) return NeutralBytes.fromHost(haxe.crypto.Md5.make((a[0] : NeutralBytes).toHost())));
+		reg.bindStatic("haxe.crypto.Sha1", "encode", function(a) return haxe.crypto.Sha1.encode(a[0]));
+		reg.bindStatic("haxe.crypto.Sha1", "make", function(a) return NeutralBytes.fromHost(haxe.crypto.Sha1.make((a[0] : NeutralBytes).toHost())));
+		reg.bindNew("haxe.crypto.BaseCode", function(a) return new haxe.crypto.BaseCode((a[0] : NeutralBytes).toHost()));
+		reg.bindMember("haxe.crypto.BaseCode", "encodeString", function(o, a) return (o : haxe.crypto.BaseCode).encodeString(a[0]));
+		reg.bindMember("haxe.crypto.BaseCode", "decodeString", function(o, a) return (o : haxe.crypto.BaseCode).decodeString(a[0]));
+		reg.bindMember("haxe.crypto.BaseCode", "encodeBytes", function(o, a) return NeutralBytes.fromHost((o : haxe.crypto.BaseCode).encodeBytes((a[0] : NeutralBytes).toHost())));
+		reg.bindMember("haxe.crypto.BaseCode", "decodeBytes", function(o, a) return NeutralBytes.fromHost((o : haxe.crypto.BaseCode).decodeBytes((a[0] : NeutralBytes).toHost())));
+
 		// Map methods bound as typed IMap calls: on some targets (js) the map .set/.get are
 		// inlined and DCE'd, so reflective dispatch cannot reach them. Interface dispatch does.
 		for (mapType in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap", "haxe.ds.EnumValueMap"]) {
