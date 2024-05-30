@@ -221,9 +221,10 @@ class Typer {
 	}
 
 	static function makeAbstractCast(ctx:TyperContext, a:TAbstract, tl:Array<T>, castField:TAbstractCast, e:TExpr, t:T, p:Position):TExpr {
+		// Only a @:multiType cast field short-circuits to a plain cast; everything else (including extern
+		// inline casts like Any.__promote) goes through a static call, whose inliner binds a side-effectful
+		// receiver to a temp.
 		if (TypeFunctions.hasMeta(":multiType", castField.cf.meta)) return TypeFunctions.mk(TCast(e, null), t, p);
-		if (a.path.pack.length == 0 && a.path.name == "Any" && castField.cf.name == "__promote") return TypeFunctions.mk(TCast(e, null), t, p);
-		if (TypeFunctions.hasClassFieldFlag(castField.cf, CfExtern)) return TypeFunctions.mk(TCast(e, null), t, p);
 		if (a.impl == null) throw new NotFound();
 		// Macro @:from recursion probe.
 		if (hxc.eval.EvalMacro.isMacroField(castField.cf) && abstractCastStack.length > 0
@@ -245,7 +246,8 @@ class Typer {
 			throw err;
 		}
 		abstractCastStack.pop();
-		return result;
+		// The implicit cast result is tagged @:implicitCast.
+		return TypeFunctions.mk(TMeta({name: ":implicitCast", params: [], pos: result.pos}, result), result.type, result.pos);
 	}
 
 	// A trailing optional ?p:haxe.PosInfos on a cast method receives the call-site info.
