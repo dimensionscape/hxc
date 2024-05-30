@@ -941,6 +941,13 @@ class Inline {
 				// goes to the underlying lvalue.
 				var me1 = m(e1);
 				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
+				// The map's assign arm rebuilds a local left-hand side in place ({e1 with expr = TLocal
+				// l.i_subst}), so it keeps its ORIGINAL position through the inline remap; the emitted
+				// statement line derives from it.
+				switch ([e1.expr, me1.expr]) {
+					case [TLocal(_), TLocal(_)]: me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
+					case _:
+				}
 				TBinop(op, me1, m(e2));
 			case TBinop(op, e1, e2): TBinop(op, m(e1), m(e2));
 			case TField(e1, fa): TField(m(e1), fa);
@@ -977,6 +984,12 @@ class Inline {
 				// Increment targets unwrap the substitution cast like assignment left-hand sides.
 				var me1 = m(e1);
 				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
+				// Like the assign arm, a local increment target keeps its original position {e1 with expr =
+				// TLocal l.i_subst} in place).
+				switch ([e1.expr, me1.expr]) {
+					case [TLocal(_), TLocal(_)]: me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
+					case _:
+				}
 				TUnop(op, fl, me1);
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
