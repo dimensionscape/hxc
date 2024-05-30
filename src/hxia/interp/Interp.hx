@@ -170,14 +170,24 @@ class Interp {
 			depth--;
 			throw new BudgetError(CallDepth, "?", {file: "?", line: 0});
 		}
-		// FUN ints: [type, argc, then per arg: nameId, id, captured, type, marker...]
+		// FUN ints: [type, argc, then per arg: nameId, id, captured, type, marker]. A marker==1 arg
+		// carries a default-value expr; the decoder stored those as the leading kids (in arg order)
+		// before the body. Apply the default when the argument is absent or null, matching Haxe's
+		// optional-with-default lowering; evaluate it in the frame so it can see earlier args/this.
 		var argc = fun.ints[1];
 		var idx = 2;
+		var defaultKid = 0;
 		for (i in 0...argc) {
 			var vId = fun.ints[idx + 1];
-			frame.declare(vId, i < args.length ? args[i] : null);
+			var marker = fun.ints[idx + 4];
+			var v:Dynamic = i < args.length ? args[i] : null;
+			if (marker == 1) {
+				var defExpr = fun.kids[defaultKid++];
+				if (v == null)
+					v = compile(defExpr)(frame);
+			}
+			frame.declare(vId, v);
 			idx += 5;
-			// A marker==1 arg carries a default value kid, consumed during decode; skip here
 		}
 		var body = fun.kids[fun.kids.length - 1];
 		try {
@@ -277,9 +287,13 @@ class Interp {
 			case "CALLMEMBER":
 				var member = strings[n.ints[1]];
 				var recv = compile(n.kids[0]);
-				// Enum runtime index (gencpp emits CALLMEMBER ::hx::EnumBase.__Index)
+				// Enum runtime index (gencpp emits CALLMEMBER ::hx::EnumBase.__Index). The value may be our
+				// EnumValue (script enum) or a real host enum (e.g. a matched haxe.ds.Option).
 				if (member == "__Index")
-					return function(f) return (recv(f) : EnumValue).index;
+					return function(f) {
+						var v = recv(f);
+						return Std.isOfType(v, EnumValue) ? (v : EnumValue).index : Type.enumIndex(cast v);
+					};
 				var argcs = [for (i in 1...n.kids.length) compile(n.kids[i])];
 				return function(f) {
 					burnFuel();
@@ -307,9 +321,14 @@ class Interp {
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				return function(f) return mkEnum(etype, idx, name, []);
 			case "ENUMI":
+				// Extract enum-constructor parameter pi. The value may be our EnumValue or a host enum
+				// value (an extractor like `isPair(_) => Some(p)` matches against a host haxe.ds.Option).
 				var pi = n.ints[1];
 				var e = compile(n.kids[0]);
-				return function(f) return (e(f) : EnumValue).params[pi];
+				return function(f) {
+					var v = e(f);
+					return Std.isOfType(v, EnumValue) ? (v : EnumValue).params[pi] : Type.enumParameters(cast v)[pi];
+				};
 			case "CALLTHIS":
 				var member = strings[n.ints[1]];
 				var argcs = [for (k in n.kids) compile(k)];
@@ -369,7 +388,10 @@ class Interp {
 				var name = strings[n.ints[1]];
 				var obj = compile(n.kids[0]);
 				return function(f) return getMember(obj(f), name);
-			case "FTHISINST":
+			case "FTHISINST", "FTHISNAME":
+				// FTHISINST is a field on `this` by instance slot; FTHISNAME is a closure/anon field
+				// on `this` by name (the cpp generator's FClosure/FAnon on `this`). Both read member `name`
+				// off this; getMember returns a bound method for a closure, as FClosure does.
 				var name = strings[n.ints[1]];
 				return function(f) return getMember(f.thisv, name);
 			case "FSTATIC":

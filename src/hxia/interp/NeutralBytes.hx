@@ -33,6 +33,15 @@ class NeutralBytes {
 		return new NeutralBytes(hb.length, [for (i in 0...hb.length) hb.get(i)]);
 	}
 
+	// getData/ofData expose the LIVE integer buffer (BytesData on this shim): the cppia inlines
+	// Bytes.fastGet into direct indexing on it, and TestBytes mutates a Bytes through data read
+	// back with getData, so the two must share the array, not copy it.
+	public function getData():Array<Int>
+		return b;
+
+	public static function ofData(x:Array<Int>):NeutralBytes
+		return new NeutralBytes(x.length, x);
+
 	public function toHost():haxe.io.Bytes {
 		var hb = haxe.io.Bytes.alloc(length);
 		for (i in 0...length)
