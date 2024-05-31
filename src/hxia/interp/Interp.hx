@@ -305,19 +305,25 @@ class Interp {
 				var name = strings[n.ints[1]];
 				var etype = types[n.ints[0]];
 				var argcs = [for (k in n.kids) compile(k)];
-				// A host enum (e.g. ValueType) must construct the real host value so it compares equal to
-				// values host functions return; a script-only enum builds our EnumValue.
+				// A host enum is wrapped in our EnumValue (tagged with its host Enum) rather than built
+				// as a real host value: hxcpp miscompiles reading the index/params off a raw host-enum
+				// Dynamic that reaches a switch, so the wrapper keeps that path on our representation and
+				// toHostEnum rebuilds the real value at the host boundary.
 				var he = tryResolveEnumHost(etype);
-				if (he != null)
-					return function(f) { countAlloc(16); return Type.createEnum(he, name, [for (c in argcs) c(f)]); };
+				if (he != null) {
+					var hidx = Type.getEnumConstructs(he).indexOf(name);
+					return function(f) { countAlloc(16); return mkHostEnum(he, etype, hidx, name, [for (c in argcs) c(f)]); };
+				}
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				return function(f) { countAlloc(16); return mkEnum(etype, idx, name, [for (c in argcs) c(f)]); };
 			case "FENUM":
 				var name = strings[n.ints[1]];
 				var etype = types[n.ints[0]];
 				var he = tryResolveEnumHost(etype);
-				if (he != null)
-					return function(f) return Type.createEnum(he, name, []);
+				if (he != null) {
+					var hidx = Type.getEnumConstructs(he).indexOf(name);
+					return function(f) return mkHostEnum(he, etype, hidx, name, []);
+				}
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
 				return function(f) return mkEnum(etype, idx, name, []);
 			case "ENUMI":
@@ -838,6 +844,32 @@ class Interp {
 		return new EnumValue(index, ctor, params, enumType);
 	}
 
+	// A host-enum value as our wrapper (see EnumValue.hostEnum). No-arg constructors are singletons
+	// so `A == A` holds, matching Haxe. `he` lets toHostEnum rebuild the real value at the boundary.
+	function mkHostEnum(he:Enum<Dynamic>, enumType:String, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
+		if (params.length == 0) {
+			var key = enumType + "." + ctor;
+			var s = enumSingletons.get(key);
+			if (s == null) {
+				s = new EnumValue(index, ctor, [], enumType, he);
+				enumSingletons.set(key, s);
+			}
+			return s;
+		}
+		return new EnumValue(index, ctor, params, enumType, he);
+	}
+
+	// Materialize a real host enum from our wrapper (recursively, so nested host enums in params
+	// convert too). Non-wrapper values pass through unchanged.
+	function toHostEnum(v:Dynamic):Dynamic {
+		if (Std.isOfType(v, EnumValue)) {
+			var ev:EnumValue = v;
+			if (ev.hostEnum != null)
+				return Type.createEnum(ev.hostEnum, ev.name, [for (p in ev.params) toHostEnum(p)]);
+		}
+		return v;
+	}
+
 	// Serialization must be script-aware: the host Serializer/Unserializer reflect internally
 	// and cannot see script classes/enums. Bind them to the shims, which reconstruct script
 	// values via this interpreter's descriptors. Wired here (not in NeutralStd) because the
@@ -1294,9 +1326,15 @@ class EnumValue {
 	public var name:String;
 	public var params:Array<Dynamic>;
 	public var enumType:String;
-	public function new(index:Int, name:String, params:Array<Dynamic>, ?enumType:String) {
+	// Set when this wraps a value of a host enum (e.g. haxe.ds.Option). hxcpp miscompiles reading the
+	// runtime index/params off a host-enum Dynamic that reaches a switch through the interpreter (a
+	// use-after-free-shaped crash), so the interpreter represents host-enum values with this wrapper
+	// too and materializes a real host value only at the host boundary (toHostEnum).
+	public var hostEnum:Enum<Dynamic>;
+	public function new(index:Int, name:String, params:Array<Dynamic>, ?enumType:String, ?hostEnum:Enum<Dynamic>) {
 		this.index = index; this.name = name; this.params = params;
 		this.enumType = enumType;
+		this.hostEnum = hostEnum;
 	}
 
 	// Haxe enum string form: `Name` for a no-arg constructor, `Name(p0,p1)` otherwise. Host
