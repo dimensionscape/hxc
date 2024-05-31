@@ -1737,12 +1737,15 @@ class TexprConverter {
 					if (topLevel || withType.match(NoValue)) {
 						var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 						var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
-						TypeFunctions.mk(TIf(cond, eThen, null), basic.tvoid, Position.union(e.pos, eThen.pos));
+						// GuardNull without an else: the TIf is positioned at eThen.pos alone
+						TypeFunctions.mk(TIf(cond, eThen, null), basic.tvoid, eThen.pos);
 					} else throw new TypingError("Unmatched patterns: _", e.pos);
 				} else {
 					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
-					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, dt.pos);
+					// GuardNull with both branches: the union of eThen.pos and eElse.pos (the branch
+					// EXPRESSIONS, i.e. the case bodies), not the dt span
+					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
 				}
 			case Bind(bl, dt2):
 				if (Sys.getEnv("HXC_DBG_MATCH") != null)

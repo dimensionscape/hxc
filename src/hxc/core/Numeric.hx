@@ -14,16 +14,26 @@ class Numeric {
 	// C "%.<prec>g" formatting; the shortest-repr search below relies on it
 	static function formatG(f:Float, precision:Int):String {
 		#if cpp
-		return switch (precision) {
+		var s = switch (precision) {
 			case 12: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.12g", v); return ::String(buf); })({0})', f);
 			case 15: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.15g", v); return ::String(buf); })({0})', f);
 			case 18: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.18g", v); return ::String(buf); })({0})', f);
 			case _: Std.string(f);
 		}
+		return msvcrtExponent(s);
 		#else
 		// Interp type-check fallback; the native binary uses the C formatter
 		return Std.string(f);
 		#end
+	}
+
+	// Normalize folded float lexemes to match reference output.
+	static function msvcrtExponent(s:String):String {
+		var i = s.indexOf("e");
+		if (i < 0) return s;
+		var digits = s.substr(i + 2);
+		while (digits.length < 3) digits = "0" + digits;
+		return s.substr(0, i + 2) + digits;
 	}
 
 	// floatRepres: the shortest of %.12g/%.15g/%.18g that round-trips.
