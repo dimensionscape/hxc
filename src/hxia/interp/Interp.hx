@@ -105,6 +105,14 @@ class Interp {
 			var superId = d.ints[1];
 			if (superId >= 0 && superId < types.length)
 				sc.superName = types[superId];
+			// classDecl ints: [instId, superId, nIfaces, ifaceId...]. Record interface names so
+			// scriptClassImplements can answer `is`/checked-cast against implemented interfaces.
+			var nIfaces = d.ints[2];
+			for (k in 0...nIfaces) {
+				var ifId = d.ints[3 + k];
+				if (ifId >= 0 && ifId < types.length)
+					sc.interfaces.push(types[ifId]);
+			}
 			for (f in d.fields) {
 				if (f.kind == "var") {
 					// Static var: remember its initializer to run before main (instance vars are
@@ -494,8 +502,17 @@ class Interp {
 				return function(f):Dynamic throw new ScriptThrow(e(f));
 			// Type coercions: identity on a dynamic shared heap (the value already is the host value; the
 			// writer's cast/interface wrappers carry no runtime representation here).
-			case "TCAST", "CAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
+			case "CAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
 				return compile(n.kids[0]);
+			case "TCAST":
+				// A checked cast `cast(e, T)` (gencpp IaTCast, unlike the auto CAST) throws on a bad
+				// cast. Enforce it only where the interpreter can decide confidently: a script object
+				// cast to a registered script class/interface (interface-aware via scriptClassImplements).
+				// The check is a plain method, not an inline closure, to avoid an hxcpp miscompile of a
+				// value passing through an extra closure layer. Host-value casts stay identity.
+				var rawType = types[n.ints[0]];
+				var e = compile(n.kids[0]);
+				return function(f) return checkedCast(e(f), rawType);
 			case "ISNULL":
 				var e = compile(n.kids[0]);
 				return function(f):Dynamic return e(f) == null;
@@ -521,6 +538,16 @@ class Interp {
 
 	// SWITCH ints=[caseCount, hasDefault, nValues per case...]; kids=[cond, (values, body) per
 	// case, optional default]. Guards are already lowered to IFs inside the case bodies.
+	// Checked-cast enforcement (see the TCAST arm). Only a script object cast to a registered
+	// script class/interface is decided here; everything else (host values, unresolved types,
+	// null, Dynamic) passes through, since host isOfType is unreliable across the neutral-static seam.
+	function checkedCast(v:Dynamic, rawType:String):Dynamic {
+		if (v != null && Std.isOfType(v, ScriptObject) && stripPath(rawType) != "Dynamic"
+			&& scriptClasses.exists(rawType) && !scriptClassImplements((v : ScriptObject).cls, rawType))
+			throw new ScriptThrow("Cannot cast to " + stripPath(rawType));
+		return v;
+	}
+
 	function compileSwitch(n:OpNode):Frame->Dynamic {
 		var caseCount = n.ints[0];
 		var hasDefault = n.ints[1] == 1;
@@ -963,14 +990,7 @@ class Interp {
 		if (Std.isOfType(token, ScriptClass)) {
 			if (!Std.isOfType(v, ScriptObject))
 				return false;
-			var c = (v : ScriptObject).cls;
-			var target = (token : ScriptClass);
-			while (c != null) {
-				if (c == target)
-					return true;
-				c = c.superClass;
-			}
-			return false;
+			return scriptClassImplements((v : ScriptObject).cls, (token : ScriptClass).name);
 		}
 		// A script object is not an instance of any host class (except Dynamic-ish checks).
 		if (Std.isOfType(v, ScriptObject))
@@ -981,6 +1001,32 @@ class Interp {
 		// neutral-static boundary (e.g. `Lambda.list(x)` vs `new List()` both haxe.ds.List), so a
 		// direct isOfType can miss. Compare by class name up the value's super chain.
 		return sameByName(v, token);
+	}
+
+	// Does script class `c` (or an ancestor) extend/implement a type named `targetName`? Walks the
+	// super chain and, transitively, the interface lists (an interface may extend other interfaces,
+	// each its own ScriptClass), so a checked cast / `is` against an interface holds.
+	function scriptClassImplements(c:ScriptClass, targetName:String):Bool {
+		var seen = new Map<String, Bool>();
+		var stack = [c];
+		while (stack.length > 0) {
+			var k = stack.pop();
+			if (k == null || seen.exists(k.name))
+				continue;
+			seen.set(k.name, true);
+			if (k.name == targetName)
+				return true;
+			if (k.superClass != null)
+				stack.push(k.superClass);
+			for (i in k.interfaces) {
+				if (i == targetName)
+					return true;
+				var ic = scriptClasses.get(i);
+				if (ic != null)
+					stack.push(ic);
+			}
+		}
+		return false;
 	}
 
 	function sameByName(v:Dynamic, token:Dynamic):Bool {
@@ -1225,6 +1271,9 @@ class ScriptClass {
 	public var methods:Map<String, OpNode> = new Map();
 	public var instanceVars:Array<String> = [];
 	public var staticFields:Array<String> = [];
+	// Directly-declared interface names (raw cppia type strings); the transitive implements-check
+	// lives in Interp.scriptClassImplements, which resolves interface names to their descriptors.
+	public var interfaces:Array<String> = [];
 	public function new(name:String) this.name = name;
 
 	// Resolve a method by name, walking up the super chain (virtual dispatch).
