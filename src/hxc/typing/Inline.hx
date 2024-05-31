@@ -933,7 +933,16 @@ class Inline {
 				throw new InlineBail();
 			case TConst(_): e.expr;
 			case TLocal(v):
-				if (subst.exists(v.id)) return subst.get(v.id);
+				if (subst.exists(v.id)) {
+					var se = subst.get(v.id);
+					// A local-shaped substitution (a body-local clone or an argument temp) reads like any mapped
+					// node: each READ takes the remapped position, not the declaration's. A non-local argument
+					// value keeps its own position verbatim.
+					return switch (se.expr) {
+						case TLocal(_): TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+						case _: se;
+					};
+				}
 				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
 			case TBinop(op = OpAssign | OpAssignOp(_), e1, e2):
