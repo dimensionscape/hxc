@@ -216,9 +216,47 @@ class Operators {
 		function isDynamic(t:T):Bool {
 			return switch (TypeFunctions.follow(t)) { case TDynamic(_): true; case _: false; };
 		}
+		// isDynamicArray: a non-Array-shaped receiver counts as dynamic
+		function isDynamicArray(t:T):Bool {
+			return switch (TypeFunctions.follow(t)) {
+				case TInst(_, [p]): isDynamic(p);
+				case _: true;
+			};
+		}
+		function isDynamicField(t:T, name:String):Bool {
+			return switch (TypeFunctions.follow(t)) {
+				case TAnon(a):
+					var cf = a.fields.get(name);
+					cf != null && isDynamic(cf.type);
+				case TInst(c, tl):
+					try {
+						var f = TypeFunctions.classField(c, tl, name);
+						isDynamic(TypeFunctions.applyParams(c.params, tl, f.t));
+					} catch (_:hxc.core.NotFound) false;
+				case _: true;
+			};
+		}
+		// isDynamicReturn: a non-function type counts as dynamic
+		function isDynamicReturn(t:T):Bool {
+			return switch (TypeFunctions.follow(t)) {
+				case TFun(sig): isDynamic(sig.ret);
+				case _: true;
+			};
+		}
+		// Quick analysis of the common dynamic-to-mono conversions (array reads, field reads, calls whose
+		// function type returns Dynamic).
 		function maybeDynamicMono(e:TExpr):Bool {
+			inline function rec(e2:TExpr, t:T):Bool {
+				return switch (TypeFunctions.follow(t)) {
+					case TMono(_) | TDynamic(_): maybeDynamicMono(e2);
+					case _: false;
+				};
+			}
 			return switch (e.expr) {
 				case TLocal(_): isDynamic(e.type);
+				case TArray(e1, _): isDynamicArray(e1.type) || rec(e1, e1.type);
+				case TField(e1, fa): isDynamicField(e1.type, TypeFunctions.fieldName(fa)) || rec(e1, e1.type);
+				case TCall(e1, _): isDynamicReturn(e1.type) || rec(e1, e1.type);
 				case TParenthesis(e2): maybeDynamicMono(e2);
 				case TMeta(_, e2): maybeDynamicMono(e2);
 				case TIf(_, a, b) if (b != null): maybeDynamicMono(a) || maybeDynamicMono(b);
