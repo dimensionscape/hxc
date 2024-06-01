@@ -146,6 +146,33 @@ class Context {
 	// PCheckConstraint.
 	public var pendingConstraintChecks:Array<Void->Void> = [];
 
+	public static inline var PBuildModule = 0;
+	public static inline var PBuildClass = 1;
+	public static inline var PConnectField = 2;
+	public static inline var PTypeField = 3;
+	public static inline var PCheckConstraint = 4;
+	public static inline var PForce = 5;
+	public static inline var PFinal = 6;
+
+	// Sort delays by ascending pass and use LIFO order within each pass. Class finalization queues
+	// fields in reverse order.
+	public var delayed:Array<{pass:Int, fns:Array<Void->Void>}> = [];
+
+	public function delay(pass:Int, f:Void->Void):Void {
+		var idx = 0;
+		while (idx < delayed.length && delayed[idx].pass < pass) idx++;
+		if (idx < delayed.length && delayed[idx].pass == pass) delayed[idx].fns.unshift(f);
+		else delayed.insert(idx, {pass: pass, fns: [f]});
+	}
+
+	public function flushPass(pass:Int):Void {
+		while (delayed.length > 0 && delayed[0].pass <= pass) {
+			var bucket = delayed[0];
+			if (bucket.fns.length == 0) delayed.shift();
+			else bucket.fns.shift()();
+		}
+	}
+
 	/**
 	 * Initialize from loaded StdTypes, String and Array declarations; retain safe placeholders until
 	 * loading completes.
