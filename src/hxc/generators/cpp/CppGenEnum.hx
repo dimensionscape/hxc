@@ -149,13 +149,14 @@ class CppGenEnum {
 		var meta = hxc.core.TexprTools.buildMetadata(com.basic, TEnumDecl(enumDef));
 		if (meta != null) {
 			var cppFileId = {v: -1};
-			var dotName = CppGenClass.joinPath(classPath, ".");
+			// The init frame is named after the enum's local class name (`<Name>_obj`), not its dot path.
+			var frameName = classPath.name + "_obj";
 			var frameLine = hxc.generators.cpp.CppEmit.getErrorLine(meta.pos);
 			var frameFile = meta.pos.file;
 			var emit = new hxc.generators.cpp.CppEmit(com, w, 1, false, cppFileId);
 			emit.genExpressionTree([], TypeFunctions.tDynamic, meta,
-				function(gc) CppGenClass.hxStackPush(com, w, dotName, "boot", frameFile, frameLine, gc, cppFileId),
-				"__mClass->__meta__ = ", dotName, "boot");
+				function(gc) CppGenClass.hxStackPush(com, w, frameName, "boot", frameFile, frameLine, gc, cppFileId),
+				"__mClass->__meta__ = ", frameName, "boot");
 		}
 		for (c in constructorsByName()) switch (c.type) {
 			case TFun(_):

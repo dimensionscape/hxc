@@ -758,6 +758,14 @@ class Fields {
 	}
 
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
+		// A `super` receiver of a class type rewrites to `cast this` (fresh mono inside, the
+		// receiver's type outside), so the extension call passes `this` with an explicit upcast that
+		// survives to the generators (cpp emits `( (Foo)(this) )`).
+		switch ([TypeFunctions.follow(e.type), e.expr]) {
+			case [TInst(_, _), TConst(TSuper)]:
+				e = TypeFunctions.mk(TCast(TypeFunctions.mk(TConst(TThis), TypeFunctions.mkMono(), e.pos), null), e.type, e.pos);
+			case _:
+		}
 		var own = tryUsingList(ctx, typeUsings(e.type, i), e, i, p);
 		if (own != null) return own;
 		var m = ctx.com.currentModule;
