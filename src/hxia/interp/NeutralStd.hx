@@ -112,6 +112,9 @@ class NeutralStd {
 		// the shared heap they are plain get/set on the underlying array.
 		reg.bindMember("Array", "__unsafe_get", function(o, a) return (o : Array<Dynamic>)[a[0]]);
 		reg.bindMember("Array", "__unsafe_set", function(o, a) { (o : Array<Dynamic>)[a[0]] = a[1]; return a[1]; });
+		// Haxe's Array.toString is `[a,b,c]`; the native js/cpp Array.toString the mediator would
+		// reflect gives the bracket-less `a,b,c`, so bind the Haxe form explicitly.
+		reg.bindMember("Array", "toString", function(o, a) return "[" + (o : Array<Dynamic>).join(",") + "]");
 		reg.bindMember("Array", "push", function(o, a) return (o : Array<Dynamic>).push(a[0]));
 		reg.bindMember("Array", "pop", function(o, a) return (o : Array<Dynamic>).pop());
 		reg.bindMember("Array", "shift", function(o, a) return (o : Array<Dynamic>).shift());
