@@ -209,18 +209,20 @@ class Preprocess {
 		while (true) {
 			var ti = cur();
 			switch (ti.tok) {
-				case Dot:
-					i++;
-					var tn = cur();
-					switch (tn.tok) {
-						case Const(CIdent(name)):
-							i++;
+				// In a condition `a.b.c` is one identifier only while the characters are CONTIGUOUS; any
+				// whitespace ends it, so `#if sys .replace(...)` keeps `.replace` in the token stream. Model
+				// that with position adjacency on both sides of the dot.
+				case Dot if (acc.pos.max == ti.pos.min):
+					var tn = i + 1 < toks.length ? toks[i + 1] : null;
+					switch (tn != null ? tn.tok : null) {
+						case Const(CIdent(name)) if (ti.pos.max == tn.pos.min):
+							i += 2;
 							acc = new Expr(EField(acc, name, EFNormal), Position.union(acc.pos, tn.pos));
-						case Kwd(k):
-							i++;
+						case Kwd(k) if (ti.pos.max == tn.pos.min):
+							i += 2;
 							acc = new Expr(EField(acc, Ast.sKeyword(k), EFNormal), Position.union(acc.pos, tn.pos));
 						case _:
-							throw new ParserError(Custom("Invalid condition expression"), ti.pos);
+							return acc;
 					}
 				case _:
 					return acc;
