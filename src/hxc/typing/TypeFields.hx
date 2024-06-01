@@ -75,23 +75,30 @@ class TypeFields {
 				case _:
 			}
 		}
-		// Resolve the type through haxe.EnumTools.
-		var i = 0;
-		while (i < ctx.modules.length) {
-			// A body typed below can load more modules; this loop reaches them (the list
-			// grows), so they too need their heritage resolved before their bodies force.
-			hxc.typing.TypeResolve.resolveModule(ctx, ctx.modules[i]);
-			for (mt in ctx.modules[i].types) switch (mt) {
-				// Extern classes stay in the walk: forceFieldBody itself types an
-				// extern INLINE body (haxe.EnumTools) and skips true externs.
-				case TClassDecl(c):
-					for (cf in c.orderedFields) if (cf.expr == null) forceFieldBody(ctx, c, cf);
-					for (cf in c.orderedStatics) if (cf.expr == null) forceFieldBody(ctx, c, cf);
-					if (c.constructor != null && c.constructor.expr == null) forceFieldBody(ctx, c, c.constructor);
-				case _:
-			}
-			i++;
+		// Bodies route through the queue here (lazy-schedule port step b): registration runs
+		// newest-module-first so the PREPENDING delay bucket flushes in the established module x
+		// declaration order; a body typed during the flush can load more modules, which typeAllModules'
+		// outer stability loop reaches on the next pass (bodyTyped/expr keep this idempotent).
+		var mi = ctx.modules.length - 1;
+		while (mi >= 0) {
+			var m = ctx.modules[mi];
+			ctx.delay(hxc.context.Context.PTypeField, function() {
+				// Heritage must resolve before bodies force, or a `super(...)` types
+				// against a null superClass. resolveModule is idempotent.
+				hxc.typing.TypeResolve.resolveModule(ctx, m);
+				for (mt in m.types) switch (mt) {
+					// Extern classes stay in the walk: forceFieldBody itself types an
+					// extern INLINE body (haxe.EnumTools) and skips true externs.
+					case TClassDecl(c):
+						for (cf in c.orderedFields) if (cf.expr == null) forceFieldBody(ctx, c, cf);
+						for (cf in c.orderedStatics) if (cf.expr == null) forceFieldBody(ctx, c, cf);
+						if (c.constructor != null && c.constructor.expr == null) forceFieldBody(ctx, c, c.constructor);
+					case _:
+				}
+			});
+			mi--;
 		}
+		ctx.flushPass(hxc.context.Context.PTypeField);
 	}
 
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
