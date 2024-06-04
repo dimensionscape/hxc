@@ -3961,7 +3961,7 @@ class EvalStdLib {
 				case "get_resources":
 					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
 				case "make_expr":
-					VFunction(function(args) return EvalMacro.makeExprValue(ctx, arg(args, 0)), true);
+					VFunction(function(args) return EvalMacro.makeExprValueArgs(ctx, arg(args, 0), arg(args, 1)), true);
 				case "add_global_metadata_impl":
 					VFunction(function(args) return EvalMacro.addGlobalMetadataValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...5) arg(args, i)]), true);
 				case "type_patch":
