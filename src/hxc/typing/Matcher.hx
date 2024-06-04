@@ -1849,6 +1849,8 @@ class Match {
 		if (def != null) allCases.push({values: [new Expr(EConst(CIdent("_")), def.pos)], guard: null, expr: def.e, pos: def.pos});
 		var matchCases:Array<MatchCase> = [];
 		for (cas in allCases) {
+			// A case decoded without a position (Position.nullPos) takes its body's position
+			if (cas.pos == Position.nullPos && cas.expr != null) cas = {values: cas.values, guard: cas.guard, expr: cas.expr, pos: cas.expr.pos};
 			if (tupleEls != null) {
 				// `case [p..]|[q..]:` over a tuple stays one case whose pattern is a PatOr of tuples, so
 				// both branches share one leaf and merge at conversion.

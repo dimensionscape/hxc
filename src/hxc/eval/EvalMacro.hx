@@ -130,7 +130,7 @@ class EvalMacro {
 			com.addDiagnostic(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, hxc.core.Globals.MessageSeverity.Information);
 			return VNull;
 		});
-		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0]));
+		reg2("makeExpr", "make_expr", function(a) return makeExprValue(ec, a[0], posArg(ec, a, 1, curPos)));
 		reg2("getExpectedType", "get_expected_type", function(a) {
 			if (expectedTypeStack.length == 0) return VNull;
 			return switch (expectedTypeStack[expectedTypeStack.length - 1]) {
@@ -1142,8 +1142,13 @@ class EvalMacro {
 		}
 	}
 
-	public static function makeExprValue(ec:EvalContext, v:EvalValue):EvalValue {
-		return encodeExpr(ec, valueToExpr(ec, v, Position.nullPos));
+	// Context.makeExpr: the value as an expression positioned at the decoded pos argument.
+	public static function makeExprValue(ec:EvalContext, v:EvalValue, p:Position):EvalValue {
+		return encodeExpr(ec, valueToExpr(ec, v, p));
+	}
+
+	public static function makeExprValueArgs(ec:EvalContext, v:EvalValue, pv:EvalValue):EvalValue {
+		return makeExprValue(ec, v, posOf(ec, pv, curPos));
 	}
 
 	// Compiler.addGlobalMetadata: parse the meta string (an expression carrying leading metadata) and
@@ -2585,7 +2590,9 @@ class EvalMacro {
 			values: [for (x in arrOf(EvalField.field(ec, v, EvalHash.hash("values")))) decodeExpr(ec, x, dp)],
 			guard: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("guard")), dp),
 			expr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			pos: dp
+			// Read the hidden pos field, the null position when a macro built the case object without it
+			// (the match then falls back to the body position).
+			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), Position.nullPos)
 		};
 	}
 
@@ -3117,6 +3124,9 @@ class EvalMacro {
 		fields.set(EvalHash.hash("values"), encodeArray([for (v in c.values) encodeExpr(ec, v)]));
 		fields.set(EvalHash.hash("guard"), c.guard == null ? VNull : encodeExpr(ec, c.guard));
 		fields.set(EvalHash.hash("expr"), c.expr == null ? VNull : encodeExpr(ec, c.expr));
+		// The case position travels as a hidden pos field even though haxe.macro.Expr.Case does not declare
+		// one.
+		fields.set(EvalHash.hash("pos"), encPos(c.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
