@@ -785,10 +785,10 @@ class Typeload {
 	static function cloneVar(v:TVar, subst:T->T, vars:Map<Int, TVar>):TVar {
 		var found = vars.get(v.id);
 		if (found != null) return found;
+		// Only meta is copied; extra is dropped, which keeps handle_abstract_casts from seeing through
+		// inliner temps in generic clones
 		var nv = TypeFunctions.allocVar(v.kind, v.name, subst(v.type), v.pos);
-		nv.extra = v.extra;
 		nv.meta = v.meta;
-		nv.flags = v.flags;
 		vars.set(v.id, nv);
 		return nv;
 	}
