@@ -1876,7 +1876,9 @@ class Match {
 		// contain the same node twice. Duplicate the variables so every declaration site is its own var and
 		// no subtree is shared.
 		te = TexprTools.duplicateTvars(function(x) return x, te);
-		return varLazify(te);
+		te = varLazify(te);
+		// The converted match is repositioned to the whole switch expression's position
+		return TypeFunctions.mk(te.expr, te.type, p);
 	}
 
 	// An extractor variable's initialization moves from its declaration to its first use, so a guard (e.g.
