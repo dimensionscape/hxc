@@ -29,6 +29,9 @@ class NeutralStd {
 		reg.bindNew("haxe.ds.EnumValueMap", function(_) return new haxe.ds.EnumValueMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
+		reg.bindNew("String", function(a) return a.length > 0 ? Std.string(a[0]) : "");
+		reg.bindNew("haxe.Template", function(a) return new haxe.Template(a[0]));
+		reg.bindMember("haxe.Template", "execute", function(o, a) return (o : haxe.Template).execute(a[0], a.length > 1 ? a[1] : null));
 		reg.bindNew("Date", function(a) return new Date(a[0], a[1], a[2], a[3], a[4], a[5]));
 		// Date.now/fromTime/fromString are `inline` on js, so reflecting Date.<name> off the class
 		// resolves to native js Date functions that return a number (ms), not a Haxe Date. Bind them

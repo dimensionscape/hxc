@@ -821,9 +821,18 @@ class Interp {
 			case "createEmptyInstance":
 				if (Std.isOfType(a0, ScriptClass)) return new ScriptObject(a0);
 			case "getEnum":
-				if (Std.isOfType(a0, EnumValue)) return scriptEnums.get((a0 : EnumValue).enumType);
+				if (Std.isOfType(a0, EnumValue)) {
+					var ev:EnumValue = a0;
+					return ev.hostEnum != null ? ev.hostEnum : scriptEnums.get(ev.enumType);
+				}
 			case "getEnumConstructs":
 				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).ctorNames.copy();
+			case "allEnums":
+				// All no-argument constructor VALUES of a script enum, in declaration order.
+				if (Std.isOfType(a0, ScriptEnum)) {
+					var se:ScriptEnum = a0;
+					return [for (i in 0...se.ctorNames.length) if (se.ctorArity[i] == 0) mkEnum(se.name, i, se.ctorNames[i], [])];
+				}
 			case "createEnum":
 				if (Std.isOfType(a0, ScriptEnum)) return makeEnum(a0, (a0 : ScriptEnum).indexOf(args[1]), args[1], args[2]);
 			case "createEnumIndex":
