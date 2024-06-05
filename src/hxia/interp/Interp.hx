@@ -1070,6 +1070,17 @@ class Interp {
 				invokeFun(sc.ctor, so, args);
 			return so;
 		}
+		// The cppia flattens generic type params into the type name (`new Array<Object>()` ->
+		// "Array.Object"), but constructors are registered under the base name. If the full name is
+		// not bound, strip trailing param segments until a registered ctor is found.
+		if (!registry.hasNew(type)) {
+			var t = type;
+			while (t.indexOf(".") >= 0) {
+				t = t.substr(0, t.lastIndexOf("."));
+				if (registry.hasNew(t))
+					return registry.construct(t, args);
+			}
+		}
 		return registry.construct(type, args);
 	}
 
