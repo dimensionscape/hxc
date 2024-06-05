@@ -1024,7 +1024,10 @@ class Filters {
 		switch (cf.expr) {
 			case {expr: TFunction(f)} if (!bodyCallsSuper(f.expr)):
 				var tvoid = com.basic.tvoid;
-				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos), []), tvoid, c.pos);
+				// The injected super call sits at the constructor body position (e.pos), not the class
+				// declaration, so its stack frame line is the new line.
+				var superPos = f.expr.pos;
+				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), superPos), []), tvoid, superPos);
 				var body = TypeFunctions.concat(superCall, f.expr);
 				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.pos);
 			case _:
