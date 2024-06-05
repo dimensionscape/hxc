@@ -82,6 +82,7 @@ class Inline {
 		// An abstract instance member (CfImpl) is an impl static whose first arg is the abstract `this`;
 		// a mutation of `this` must write back to an lvalue receiver.
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		var absThisArg = absMember && cf.name != "_new";
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		// Collapse the arguments matching a trailing haxe.Rest parameter into one value.
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
@@ -99,7 +100,7 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p) catch (b:InlineBail) {
+		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg) catch (b:InlineBail) {
 			// A forced inline of a normal method with an early return cannot fall back to a
 			// call; it is reported at the call.
 			if (forceInline && b.notFinalReturn && !cf.kind.match(Method(MethInline))) {
@@ -171,13 +172,14 @@ class Inline {
 			}
 		}
 		var absMember = TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		var absThisArg = absMember && cf.name != "_new";
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
 		if (tf.args.length != params.length) return null;
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p) catch (_:InlineBail) null;
+		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg) catch (_:InlineBail) null;
 		depth--;
 		cfStack.pop();
 		if (r != null) r = inlineMetadata(r, cf.meta);
@@ -375,7 +377,7 @@ class Inline {
 		return f(root);
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position):TExpr {
+	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
@@ -459,7 +461,11 @@ class Inline {
 			var forceTemp = paramSideEffect[i]
 				|| nullMismatch
 				|| (hadSideEffect && checker.mightBeAffected(param) && !valueSemantics(param.type));
-			var isAbsThis = absMember && i == 0;
+			// The abstract `this` is argument 0 of an abstract member, EXCEPT for `_new`: an
+			// abstract constructor creates the underlying value in a synthesized local, so its
+			// first argument is a real parameter and must not be wrapped in the abstract-this cast
+			// (the abstract this is the :this-meta var, which `_new`'s params lack).
+			var isAbsThis = absThisArg && i == 0;
 			// A WRITTEN abstract `this` always substitutes so the assignment writes back through the
 			// caller's lvalue; otherwise an abstract `this` substitutes only when it is a plain local and
 			// any other receiver follows the ordinary read-count rules, so a multi-read field chain binds a
