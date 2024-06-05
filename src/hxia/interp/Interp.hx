@@ -290,7 +290,7 @@ class Interp {
 				var argcs = [for (k in n.kids) compile(k)];
 				return function(f) {
 					var args = [for (c in argcs) c(f)];
-					return callStatic(typeName, member, args);
+					return wrapHostEnum(callStatic(typeName, member, args));
 				};
 			case "CALLMEMBER":
 				var member = strings[n.ints[1]];
@@ -307,7 +307,7 @@ class Interp {
 					burnFuel();
 					var obj = recv(f);
 					var args = [for (c in argcs) c(f)];
-					return callMember(obj, member, args);
+					return wrapHostEnum(callMember(obj, member, args));
 				};
 			case "CREATEENUM":
 				var name = strings[n.ints[1]];
@@ -893,6 +893,20 @@ class Interp {
 			var ev:EnumValue = v;
 			if (ev.hostEnum != null)
 				return Type.createEnum(ev.hostEnum, ev.name, [for (p in ev.params) toHostEnum(p)]);
+		}
+		return v;
+	}
+
+	// Wrap a host enum value RETURNED from a host call (e.g. Type.typeof -> ValueType) in our
+	// EnumValue, so a script `switch` on it uses our representation - hxcpp miscompiles reading the
+	// index off a raw host-enum Dynamic that reaches a switch through the interpreter. Safe here at
+	// the return boundary (Type.enumIndex works outside a switch). Non-enum values pass through; our
+	// own EnumValue is left as-is. No-arg ctors share the singleton so they == a script-built one.
+	function wrapHostEnum(v:Dynamic):Dynamic {
+		if (v != null && !Std.isOfType(v, EnumValue) && Reflect.isEnumValue(v)) {
+			var he = Type.getEnum(v);
+			return mkHostEnum(he, Type.getEnumName(he), Type.enumIndex(v), Type.enumConstructor(v),
+				[for (p in Type.enumParameters(v)) wrapHostEnum(p)]);
 		}
 		return v;
 	}
