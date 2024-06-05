@@ -1075,11 +1075,11 @@ class DtCompile {
 				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
 				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
 			case ConFields(fields):
-				[for (i in 0...fields.length) {
-					var name = fields[i];
-					var p = i < argPositions.length ? argPositions[i] : con.pos;
-					Typer.accGet(mctx.ctx, Fields.typeField(mctx.ctx, e, name, p, MGet, WithTypeTools.value));
-				}];
+				// Each field extraction is positioned at the SUBJECT position (e.pos), not the per-field
+				// pattern position, so a field shared across cases takes the object subject's line rather
+				// than the first pattern's.
+				[for (name in fields)
+					Typer.accGet(mctx.ctx, Fields.typeField(mctx.ctx, e, name, e.pos, MGet, WithTypeTools.value))];
 		};
 	}
 
