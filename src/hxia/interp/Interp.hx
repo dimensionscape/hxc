@@ -762,6 +762,11 @@ class Interp {
 		// so a host check cannot tell them apart; dispatch on the ScriptObject's descriptor.
 		if (type == "Std" && member == "isOfType")
 			return scriptIsOfType(args[0], args[1]);
+		// Downcast/instance are a checked cast: return the value if it is of the type, else null. The
+		// host version does `v instanceof cl`, which throws when cl is a ScriptClass descriptor or a js
+		// interface marker; route it through the script-aware check.
+		if (type == "Std" && (member == "downcast" || member == "instance"))
+			return scriptIsOfType(args[0], args[1]) ? args[0] : null;
 		// Script-level Reflect goes through the same mediated seam, so it cannot bypass the
 		// policy that gates direct member access.
 		if (type == "Reflect") {
