@@ -102,8 +102,14 @@ class Decoder {
 				if (f.ints[6] == 1)
 					f.body = expr();
 				f;
+			case "INLINE":
+				// An inline var (AccInline/AccNever): a compile-time constant with no runtime
+				// representation, emitted by the writer as the bare op with no operands. It has no
+				// runtime field, so the interpreter ignores it; we just consume the op to keep the
+				// field stream aligned (present when the driver keeps such fields, e.g. -dce std).
+				new FieldNode("inline");
 			case other:
-				throw new DecodeError("expected FUNCTION/VAR field, got " + other);
+				throw new DecodeError("expected FUNCTION/VAR/INLINE field, got " + other);
 		};
 	}
 

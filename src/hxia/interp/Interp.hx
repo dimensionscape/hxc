@@ -115,6 +115,11 @@ class Interp {
 			}
 			for (f in d.fields) {
 				if (f.kind == "var") {
+					// An extern (non-physical) var is a property with no backing storage - it compiles
+					// to get_/set_ calls at use sites - so it is not a runtime field and must not appear
+					// in Type.getInstanceFields/getClassFields. VAR ints: [static, read, write, extern, ...].
+					if (f.ints[3] == 1)
+						continue;
 					// Static var: remember its initializer to run before main (instance vars are
 					// set by the constructor body).
 					var isStatic = f.ints[0] == 1;
