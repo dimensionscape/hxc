@@ -596,6 +596,13 @@ class Interp {
 					throw e;
 				f.locals.set(catches[0].vId, caughtValue(e));
 				return catches[0].body(f);
+			} catch (e:Dynamic) {
+				// A raw non-haxe.Exception host throw (e.g. `throw "Overflow"` from Int64.toInt), which a
+				// script `catch(e:Dynamic)` must still catch with the value unwrapped.
+				if (catches.length == 0)
+					throw e;
+				f.locals.set(catches[0].vId, e);
+				return catches[0].body(f);
 			}
 		};
 	}
