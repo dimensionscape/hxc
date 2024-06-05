@@ -52,7 +52,7 @@ class NeutralBytes {
 	// Get/set are inlined into `b` indexing by the cpp writer in most positions, but the writer still
 	// emits real calls in some (e.g. through Dynamic), so expose them too.
 	public function get(pos:Int):Int
-		return b[pos];
+		return b[pos] & 0xFF;
 
 	public function set(pos:Int, v:Int):Void
 		b[pos] = v & 0xFF;

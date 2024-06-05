@@ -82,6 +82,14 @@ class NeutralStd {
 		reg.bindMember(bytes, "sub", function(o, a) return (o : NeutralBytes).sub(a[0], a[1]));
 		reg.bindMember(bytes, "compare", function(o, a) return (o : NeutralBytes).compare(a[0]));
 
+		// BytesInput reads over a host Bytes; construct it from the shim and wrap Bytes it returns.
+		reg.bindNew("haxe.io.BytesInput", function(a) return new haxe.io.BytesInput((a[0] : NeutralBytes).toHost(),
+			a.length > 1 ? a[1] : 0, a.length > 2 ? a[2] : ((a[0] : NeutralBytes).length - (a.length > 1 ? a[1] : 0))));
+		reg.bindMember("haxe.io.BytesInput", "readAll", function(o, a) return NeutralBytes.fromHost((o : haxe.io.BytesInput).readAll()));
+		reg.bindMember("haxe.io.BytesInput", "readByte", function(o, a) return (o : haxe.io.BytesInput).readByte());
+		reg.bindMember("haxe.io.BytesInput", "readString", function(o, a) return (o : haxe.io.BytesInput).readString(a[0]));
+		reg.bindMember("haxe.io.BytesInput", "readLine", function(o, a) return (o : haxe.io.BytesInput).readLine());
+
 		// Crypto over Bytes: convert the shim to/from a host Bytes at the boundary so the real
 		// algorithms run unchanged; string-input digests pass through directly.
 		reg.bindStatic("haxe.crypto.Base64", "encode", function(a) return haxe.crypto.Base64.encode((a[0] : NeutralBytes).toHost(), a.length > 1 ? a[1] : true));
