@@ -34,6 +34,7 @@ class Interp {
 	// "Class.field" -> current value of a script static var; its initializers run before main.
 	final scriptStaticVars:Map<String, Dynamic> = new Map();
 	final pendingStatics:Array<{key:String, body:Null<OpNode>}> = [];
+	final pendingInits:Array<OpNode> = [];
 	var mainCall:Null<OpNode>;
 
 	// Metering
@@ -140,6 +141,9 @@ class Interp {
 				// by name so `new` allocates and runs it with the fresh instance as thisv.
 				if (name == "new")
 					sc.ctor = f.body;
+				else if (name == "__init__")
+					// A class static initializer (`__init__`); run before main, not a user field.
+					pendingInits.push(f.body);
 				else if (isStatic) {
 					scriptStatics.set(className + "." + name, f.body);
 					sc.staticFields.push(name);
@@ -160,6 +164,10 @@ class Interp {
 	function initStatics():Void {
 		for (p in pendingStatics)
 			scriptStaticVars.set(p.key, p.body != null ? compile(p.body)(new Frame()) : null);
+		// Class static initializers (__init__) run after the static vars exist, since they assign to
+		// them (often through a property setter), matching Haxe's class-init order before main.
+		for (body in pendingInits)
+			compile(body)(new Frame());
 	}
 
 	public function run():Void {
