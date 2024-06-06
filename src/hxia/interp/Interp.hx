@@ -427,7 +427,7 @@ class Interp {
 				var typeName = types[n.ints[0]];
 				var token:Dynamic = if (scriptClasses.exists(typeName)) scriptClasses.get(typeName);
 					else if (scriptEnums.exists(typeName)) scriptEnums.get(typeName);
-					else if (PrimType.isPrimitive(typeName)) new PrimType(typeName);
+					else if (PrimType.isPrimitive(typeName)) PrimType.of(typeName);
 					else {
 						// Prefer the real host class; a meta-type with no runtime Class on this target
 						// (Class/Enum on js) falls back to a name token so the type reference does not
@@ -1016,6 +1016,10 @@ class Interp {
 	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
 	// chain reaches it; anything else defers to the host check.
 	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
+		// isOfType against a null type is always false (and the name-based fallback would read
+		// hostTokenNames.get(null), which derefs null.__id__ on js). TestReflect's isTrue passes null.
+		if (token == null)
+			return false;
 		if (Std.isOfType(token, PrimType))
 			return (token : PrimType).matches(v);
 		// The std shims stand in for their host types, so isOfType against the real class holds.
@@ -1382,6 +1386,19 @@ class ScriptObject {
 class PrimType {
 	public var name:String;
 	public function new(name:String) this.name = name;
+
+	// Interned per name so a primitive type token compares equal to itself (`Int == Int`), matching
+	// Haxe where a Class value is a singleton; a fresh instance per CLASSOF would break reflection.
+	static var cache:Map<String, PrimType> = new Map();
+
+	public static function of(name:String):PrimType {
+		var t = cache.get(name);
+		if (t == null) {
+			t = new PrimType(name);
+			cache.set(name, t);
+		}
+		return t;
+	}
 
 	public static function isPrimitive(name:String):Bool {
 		return switch (name) {
