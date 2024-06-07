@@ -5,6 +5,17 @@ package hxia.interp;
 // dispatched reflectively by the interpreter, so only constructors and statics need
 // explicit bindings here. The `logSink` receives Sys.println / trace output.
 class NeutralStd {
+	// Box a bare Int back into a real haxe.Int64 on the js host (see the Int64 bindings below).
+	// On the cpp host an Int64 is a native 64-bit int that the ops handle directly, and an
+	// already-boxed value is an object (not `is Int`), so both pass through unchanged.
+	static inline function b(x:Dynamic):Dynamic {
+		#if js
+		return (x != null && Std.isOfType(x, Int)) ? haxe.Int64.ofInt(x) : x;
+		#else
+		return x;
+		#end
+	}
+
 	public static function install(reg:HostRegistry, logSink:String->Void):Void {
 		// Authority-free std classes: their statics resolve reflectively when not explicitly
 		// bound (the explicit bindings above keep priority and stay DCE-safe on every host).
@@ -189,64 +200,70 @@ class NeutralStd {
 		// Int64 abstract-impl statics: cppia keys them by the impl class path. The host Int64 is
 		// the same representation (shared heap), so values round-trip through these bindings.
 		var i64 = "haxe._Int64.Int64_Impl_";
+		// On the cpp target `haxe.Int64`'s underlying is the native `cpp.Int64` (a 64-bit int), so the
+		// abstract's `@:from ofInt` cast (e.g. `var a:Int64 = 1`) inlines to a bare native int64 literal
+		// with no runtime marker - in the cppia that reaches the interp as a PLAIN Int. On the cpp host
+		// that is already a real 64-bit int and the ops below work as-is; on the js host it is a 32-bit
+		// number missing the high word, so box it back into a real Int64 before any Int64 op reads
+		// .high/.low. b() is identity on non-js and on already-boxed values (objects are not `is Int`).
 		reg.bindStatic(i64, "make", function(a) return haxe.Int64.make(a[0], a[1]));
 		reg.bindStatic(i64, "ofInt", function(a) return haxe.Int64.ofInt(a[0]));
-		reg.bindStatic(i64, "add", function(a) return haxe.Int64.add(a[0], a[1]));
-		reg.bindStatic(i64, "sub", function(a) return haxe.Int64.sub(a[0], a[1]));
-		reg.bindStatic(i64, "mul", function(a) return haxe.Int64.mul(a[0], a[1]));
-		reg.bindStatic(i64, "toStr", function(a) return haxe.Int64.toStr(a[0]));
-		reg.bindStatic(i64, "toString", function(a) return haxe.Int64.toStr(a[0]));
-		reg.bindStatic(i64, "toInt", function(a) return haxe.Int64.toInt(a[0]));
-		reg.bindStatic(i64, "compare", function(a) return haxe.Int64.compare(a[0], a[1]));
-		reg.bindStatic(i64, "ucompare", function(a) return haxe.Int64.ucompare(a[0], a[1]));
-		reg.bindStatic(i64, "divMod", function(a) return haxe.Int64.divMod(a[0], a[1]));
-		reg.bindStatic(i64, "div", function(a) return haxe.Int64.div(a[0], a[1]));
-		reg.bindStatic(i64, "mod", function(a) return haxe.Int64.mod(a[0], a[1]));
-		reg.bindStatic(i64, "neg", function(a) return haxe.Int64.neg(a[0]));
-		reg.bindStatic(i64, "isNeg", function(a) return haxe.Int64.isNeg(a[0]));
-		reg.bindStatic(i64, "isZero", function(a) return haxe.Int64.isZero(a[0]));
+		reg.bindStatic(i64, "add", function(a) return haxe.Int64.add(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "sub", function(a) return haxe.Int64.sub(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "mul", function(a) return haxe.Int64.mul(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "toStr", function(a) return haxe.Int64.toStr(b(a[0])));
+		reg.bindStatic(i64, "toString", function(a) return haxe.Int64.toStr(b(a[0])));
+		reg.bindStatic(i64, "toInt", function(a) return haxe.Int64.toInt(b(a[0])));
+		reg.bindStatic(i64, "compare", function(a) return haxe.Int64.compare(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "ucompare", function(a) return haxe.Int64.ucompare(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "divMod", function(a) return haxe.Int64.divMod(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "div", function(a) return haxe.Int64.div(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "mod", function(a) return haxe.Int64.mod(b(a[0]), b(a[1])));
+		reg.bindStatic(i64, "neg", function(a) return haxe.Int64.neg(b(a[0])));
+		reg.bindStatic(i64, "isNeg", function(a) return haxe.Int64.isNeg(b(a[0])));
+		reg.bindStatic(i64, "isZero", function(a) return haxe.Int64.isZero(b(a[0])));
 		reg.bindStatic(i64, "parseString", function(a) return haxe.Int64.parseString(a[0]));
 		reg.bindStatic(i64, "fromFloat", function(a) return haxe.Int64.fromFloat(a[0]));
-		reg.bindStatic(i64, "getHigh", function(a) return haxe.Int64.getHigh(a[0]));
-		reg.bindStatic(i64, "getLow", function(a) return haxe.Int64.getLow(a[0]));
+		reg.bindStatic(i64, "getHigh", function(a) return haxe.Int64.getHigh(b(a[0])));
+		reg.bindStatic(i64, "getLow", function(a) return haxe.Int64.getLow(b(a[0])));
 		// High/low property getters (Int64 `var high(get, never)`); the cppia reads them as get_high/low.
-		reg.bindStatic(i64, "get_high", function(a) return haxe.Int64.getHigh(a[0]));
-		reg.bindStatic(i64, "get_low", function(a) return haxe.Int64.getLow(a[0]));
+		reg.bindStatic(i64, "get_high", function(a) return haxe.Int64.getHigh(b(a[0])));
+		reg.bindStatic(i64, "get_low", function(a) return haxe.Int64.getLow(b(a[0])));
 		// Comparison / bitwise @:op impls: all `inline`, so reflection cannot reach them; the cppia
 		// keys them on the impl class. Bind the (Int64,Int64) and mixed (Int64,Int)/(Int,Int64) forms.
-		reg.bindStatic(i64, "eq", function(a) return (a[0] : haxe.Int64) == (a[1] : haxe.Int64));
-		reg.bindStatic(i64, "eqInt", function(a) return (a[0] : haxe.Int64) == haxe.Int64.ofInt(a[1]));
-		reg.bindStatic(i64, "neq", function(a) return (a[0] : haxe.Int64) != (a[1] : haxe.Int64));
-		reg.bindStatic(i64, "neqInt", function(a) return (a[0] : haxe.Int64) != haxe.Int64.ofInt(a[1]));
-		reg.bindStatic(i64, "lt", function(a) return haxe.Int64.compare(a[0], a[1]) < 0);
-		reg.bindStatic(i64, "ltInt", function(a) return haxe.Int64.compare(a[0], haxe.Int64.ofInt(a[1])) < 0);
-		reg.bindStatic(i64, "intLt", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), a[1]) < 0);
-		reg.bindStatic(i64, "lte", function(a) return haxe.Int64.compare(a[0], a[1]) <= 0);
-		reg.bindStatic(i64, "lteInt", function(a) return haxe.Int64.compare(a[0], haxe.Int64.ofInt(a[1])) <= 0);
-		reg.bindStatic(i64, "intLte", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), a[1]) <= 0);
-		reg.bindStatic(i64, "gt", function(a) return haxe.Int64.compare(a[0], a[1]) > 0);
-		reg.bindStatic(i64, "gtInt", function(a) return haxe.Int64.compare(a[0], haxe.Int64.ofInt(a[1])) > 0);
-		reg.bindStatic(i64, "intGt", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), a[1]) > 0);
-		reg.bindStatic(i64, "gte", function(a) return haxe.Int64.compare(a[0], a[1]) >= 0);
-		reg.bindStatic(i64, "gteInt", function(a) return haxe.Int64.compare(a[0], haxe.Int64.ofInt(a[1])) >= 0);
-		reg.bindStatic(i64, "intGte", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), a[1]) >= 0);
+		reg.bindStatic(i64, "eq", function(a) return (b(a[0]) : haxe.Int64) == (b(a[1]) : haxe.Int64));
+		reg.bindStatic(i64, "eqInt", function(a) return (b(a[0]) : haxe.Int64) == haxe.Int64.ofInt(a[1]));
+		reg.bindStatic(i64, "neq", function(a) return (b(a[0]) : haxe.Int64) != (b(a[1]) : haxe.Int64));
+		reg.bindStatic(i64, "neqInt", function(a) return (b(a[0]) : haxe.Int64) != haxe.Int64.ofInt(a[1]));
+		reg.bindStatic(i64, "lt", function(a) return haxe.Int64.compare(b(a[0]), b(a[1])) < 0);
+		reg.bindStatic(i64, "ltInt", function(a) return haxe.Int64.compare(b(a[0]), haxe.Int64.ofInt(a[1])) < 0);
+		reg.bindStatic(i64, "intLt", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), b(a[1])) < 0);
+		reg.bindStatic(i64, "lte", function(a) return haxe.Int64.compare(b(a[0]), b(a[1])) <= 0);
+		reg.bindStatic(i64, "lteInt", function(a) return haxe.Int64.compare(b(a[0]), haxe.Int64.ofInt(a[1])) <= 0);
+		reg.bindStatic(i64, "intLte", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), b(a[1])) <= 0);
+		reg.bindStatic(i64, "gt", function(a) return haxe.Int64.compare(b(a[0]), b(a[1])) > 0);
+		reg.bindStatic(i64, "gtInt", function(a) return haxe.Int64.compare(b(a[0]), haxe.Int64.ofInt(a[1])) > 0);
+		reg.bindStatic(i64, "intGt", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), b(a[1])) > 0);
+		reg.bindStatic(i64, "gte", function(a) return haxe.Int64.compare(b(a[0]), b(a[1])) >= 0);
+		reg.bindStatic(i64, "gteInt", function(a) return haxe.Int64.compare(b(a[0]), haxe.Int64.ofInt(a[1])) >= 0);
+		reg.bindStatic(i64, "intGte", function(a) return haxe.Int64.compare(haxe.Int64.ofInt(a[0]), b(a[1])) >= 0);
 		// Complement/and/or/xor/shl/shr/ushr are private @:op impls; reach them through the abstract's
 		// operators, which resolve to the same code without touching the private statics.
-		reg.bindStatic(i64, "complement", function(a) return ~(a[0] : haxe.Int64));
-		reg.bindStatic(i64, "and", function(a) return (a[0] : haxe.Int64) & (a[1] : haxe.Int64));
-		reg.bindStatic(i64, "or", function(a) return (a[0] : haxe.Int64) | (a[1] : haxe.Int64));
-		reg.bindStatic(i64, "xor", function(a) return (a[0] : haxe.Int64) ^ (a[1] : haxe.Int64));
-		reg.bindStatic(i64, "shl", function(a) return (a[0] : haxe.Int64) << a[1]);
-		reg.bindStatic(i64, "shr", function(a) return (a[0] : haxe.Int64) >> a[1]);
-		reg.bindStatic(i64, "ushr", function(a) return (a[0] : haxe.Int64) >>> a[1]);
-		reg.bindStatic(i64, "addInt", function(a) return haxe.Int64.add(a[0], haxe.Int64.ofInt(a[1])));
-		reg.bindStatic(i64, "subInt", function(a) return haxe.Int64.sub(a[0], haxe.Int64.ofInt(a[1])));
-		reg.bindStatic(i64, "intSub", function(a) return haxe.Int64.sub(haxe.Int64.ofInt(a[0]), a[1]));
-		reg.bindStatic(i64, "mulInt", function(a) return haxe.Int64.mul(a[0], haxe.Int64.ofInt(a[1])));
-		reg.bindStatic(i64, "divInt", function(a) return haxe.Int64.div(a[0], haxe.Int64.ofInt(a[1])));
-		reg.bindStatic(i64, "intDiv", function(a) return haxe.Int64.div(haxe.Int64.ofInt(a[0]), a[1]));
-		reg.bindStatic(i64, "modInt", function(a) return haxe.Int64.mod(a[0], haxe.Int64.ofInt(a[1])));
-		reg.bindStatic(i64, "intMod", function(a) return haxe.Int64.mod(haxe.Int64.ofInt(a[0]), a[1]));
+		reg.bindStatic(i64, "complement", function(a) return ~(b(a[0]) : haxe.Int64));
+		reg.bindStatic(i64, "and", function(a) return (b(a[0]) : haxe.Int64) & (b(a[1]) : haxe.Int64));
+		reg.bindStatic(i64, "or", function(a) return (b(a[0]) : haxe.Int64) | (b(a[1]) : haxe.Int64));
+		reg.bindStatic(i64, "xor", function(a) return (b(a[0]) : haxe.Int64) ^ (b(a[1]) : haxe.Int64));
+		reg.bindStatic(i64, "shl", function(a) return (b(a[0]) : haxe.Int64) << a[1]);
+		reg.bindStatic(i64, "shr", function(a) return (b(a[0]) : haxe.Int64) >> a[1]);
+		reg.bindStatic(i64, "ushr", function(a) return (b(a[0]) : haxe.Int64) >>> a[1]);
+		reg.bindStatic(i64, "addInt", function(a) return haxe.Int64.add(b(a[0]), haxe.Int64.ofInt(a[1])));
+		reg.bindStatic(i64, "subInt", function(a) return haxe.Int64.sub(b(a[0]), haxe.Int64.ofInt(a[1])));
+		reg.bindStatic(i64, "intSub", function(a) return haxe.Int64.sub(haxe.Int64.ofInt(a[0]), b(a[1])));
+		reg.bindStatic(i64, "mulInt", function(a) return haxe.Int64.mul(b(a[0]), haxe.Int64.ofInt(a[1])));
+		reg.bindStatic(i64, "divInt", function(a) return haxe.Int64.div(b(a[0]), haxe.Int64.ofInt(a[1])));
+		reg.bindStatic(i64, "intDiv", function(a) return haxe.Int64.div(haxe.Int64.ofInt(a[0]), b(a[1])));
+		reg.bindStatic(i64, "modInt", function(a) return haxe.Int64.mod(b(a[0]), haxe.Int64.ofInt(a[1])));
+		reg.bindStatic(i64, "intMod", function(a) return haxe.Int64.mod(haxe.Int64.ofInt(a[0]), b(a[1])));
 
 		reg.bindStatic("Math", "abs", function(a) return Math.abs(a[0]));
 		reg.bindStatic("Math", "floor", function(a) return Math.floor(a[0]));
