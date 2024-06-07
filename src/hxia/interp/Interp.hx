@@ -779,10 +779,18 @@ class Interp {
 		// policy that gates direct member access.
 		if (type == "Reflect") {
 			switch (member) {
-				case "field": return getMember(args[0], args[1]);
-				case "setField": setMember(args[0], args[1], args[2]); return null;
-				case "getProperty": return getMember(args[0], args[1]);
-				case "setProperty": setMember(args[0], args[1], args[2]); return null;
+				case "field":
+					if (Std.isOfType(args[0], ScriptClass)) return staticGet(args[0], args[1], false);
+					return getMember(args[0], args[1]);
+				case "setField":
+					if (Std.isOfType(args[0], ScriptClass)) { staticSet(args[0], args[1], args[2], false); return null; }
+					setMember(args[0], args[1], args[2]); return null;
+				case "getProperty":
+					if (Std.isOfType(args[0], ScriptClass)) return staticGet(args[0], args[1], true);
+					return getMember(args[0], args[1]);
+				case "setProperty":
+					if (Std.isOfType(args[0], ScriptClass)) { staticSet(args[0], args[1], args[2], true); return null; }
+					setMember(args[0], args[1], args[2]); return null;
 				case "fields":
 					if (Std.isOfType(args[0], ScriptObject))
 						return [for (k in (args[0] : ScriptObject).fields.keys()) k];
@@ -1169,6 +1177,29 @@ class Interp {
 		if (Std.isOfType(obj, haxe.Constraints.IMap))
 			name = mapMethodShim(name);
 		return mediator.callMethod(obj, name, args);
+	}
+
+	// Reflect.field/getProperty over a script class's static member. getProperty honours a property
+	// getter (get_<name>); both fall back to the static var/method. Routes through the interpreter's
+	// own static tables rather than host Reflect on the ScriptClass descriptor (which has no fields).
+	function staticGet(cls:ScriptClass, name:String, useProperty:Bool):Dynamic {
+		if (useProperty) {
+			var getter = scriptStatics.get(cls.name + ".get_" + name);
+			if (getter != null)
+				return invokeFun(getter, null, []);
+		}
+		return getStatic(cls.name + "." + name, cls.name, name);
+	}
+
+	function staticSet(cls:ScriptClass, name:String, v:Dynamic, useProperty:Bool):Void {
+		if (useProperty) {
+			var setter = scriptStatics.get(cls.name + ".set_" + name);
+			if (setter != null) {
+				invokeFun(setter, null, [v]);
+				return;
+			}
+		}
+		setStatic(cls.name + "." + name, cls.name, name, v);
 	}
 
 	// Read a static field: a script static var if we own it, else a host static (Reflect on
