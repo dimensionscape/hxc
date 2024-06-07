@@ -1085,9 +1085,12 @@ class CppGenClass {
 		cppFileId = {v: -1};
 		var w = new CppWriter();
 		w.writeH("#include <hxcpp.h>\n\n");
-		var selfPath = joinPath(classDef.path, "/") + ".h";
-		var guard = "INCLUDED_" + hash64(selfPath);
-		w.writeH("#ifndef " + guard + "\n#define " + guard + "\n#include \"" + selfPath + "\"\n#endif\n\n");
+		// The referenced-type walk runs for a nativeGen class too: the class's own header is a @verbatim
+		// include (path/Name.h), and an extern super's @:include files (BoolVector's @:include("vector"))
+		// come in through the super() call in the constructor body, so the cpp includes them.
+		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, false, false).deps;
+		for (p in refs) addInclude(w, p);
+		w.writeH("\n");
 		genOpenNamespace(w);
 		// One newline after the namespace opens.
 		w.write("\n");
