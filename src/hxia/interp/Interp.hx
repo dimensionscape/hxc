@@ -1139,10 +1139,16 @@ class Interp {
 			if (so.fields.exists(name))
 				return so.fields.get(name);
 			// Reading a method as a value yields a bound closure (so Reflect.field(obj, method)
-			// and `obj.method` used as a value both work).
+			// and `obj.method` used as a value both work); cache it so repeated reads return the
+			// same closure and Reflect.compareMethods can compare them.
+			if (so.bound.exists(name))
+				return so.bound.get(name);
 			var m = so.cls.lookup(name);
-			if (m != null)
-				return Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(m, so, args));
+			if (m != null) {
+				var closure = Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(m, so, args));
+				so.bound.set(name, closure);
+				return closure;
+			}
 			return null;
 		}
 		// A registry-bound method read as a value resolves to a bound closure (reliable when the
@@ -1417,6 +1423,9 @@ class ScriptEnum {
 class ScriptObject {
 	public var cls:ScriptClass;
 	public var fields:Map<String, Dynamic> = new Map();
+	// Bound method closures cached per name, so `o.m` reads the same closure each time - matching
+	// Haxe's stable bound methods and letting Reflect.compareMethods(o.m, o.m) hold.
+	public var bound:Map<String, Dynamic> = new Map();
 	public function new(cls:ScriptClass) this.cls = cls;
 }
 
