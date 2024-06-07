@@ -50,6 +50,13 @@ class NeutralStd {
 		reg.bindStatic("Date", "now", function(_) return Date.now());
 		reg.bindStatic("Date", "fromTime", function(a) return Date.fromTime(a[0]));
 		reg.bindStatic("Date", "fromString", function(a) return Date.fromString(a[0]));
+		// Date.toString is `inline` on js and lowers to a Haxe-format builder ("YYYY-MM-DD HH:MM:SS");
+		// the mediator's reflective call would otherwise reach native js Date.toString (a locale string).
+		reg.bindMember("Date", "toString", function(o, a) {
+			var d:Date = o;
+			inline function p(n:Int) return n < 10 ? "0" + n : "" + n;
+			return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+		});
 		// List is a shim (NeutralList) because `for (x in list)` / `list.iterator()` inline into
 		// reads of the private head-node fields; the shim exposes them publicly. Its methods are
 		// keyed by the shim's runtime type name, and Lambda.list is rebound to build a shim List.

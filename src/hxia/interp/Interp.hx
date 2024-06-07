@@ -644,7 +644,9 @@ class Interp {
 			case "ARRAYI":
 				var arr = compile(lv.kids[0]);
 				var idx = compile(lv.kids[1]);
-				return function(f) { var v = rhs(f); (arr(f) : Array<Dynamic>)[idx(f)] = v; return v; };
+				// Haxe evaluates `a[i] = v` left to right: array, then index, then value. Evaluating rhs
+				// first flips the order and breaks side-effecting subexpressions like `a[x++] = x++`.
+				return function(f) { var a:Array<Dynamic> = arr(f); var i:Int = idx(f); var v = rhs(f); a[i] = v; return v; };
 			case "FLINK", "FNAME", "FTHISINST":
 				var name = strings[lv.ints[1]];
 				var obj = lv.op == "FTHISINST" ? null : compile(lv.kids[0]);
@@ -1134,6 +1136,10 @@ class Interp {
 	// map and dispatches methods through its class descriptor; everything else falls through
 	// to the mediated host seam (the capability boundary).
 	function getMember(obj:Dynamic, name:String):Dynamic {
+		// Reading a field on null throws in Haxe on every target; the differential's native/cpp both
+		// do, so a lenient null read here would diverge (e.g. `try nf.s catch "NPE"` never catching).
+		if (obj == null)
+			throw "Null Object Reference";
 		if (Std.isOfType(obj, ScriptObject)) {
 			var so:ScriptObject = obj;
 			if (so.fields.exists(name))
