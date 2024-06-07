@@ -1072,8 +1072,11 @@ class DtCompile {
 					case _: [];
 				}
 			case ConArray(n):
+				// Builds each array-element access at the subject position (e.pos), not the per-element pattern
+				// position, so an element read shared across cases takes the array subject's line rather than
+				// the first pattern's.
 				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
-				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, i < argPositions.length ? argPositions[i] : con.pos)];
+				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, e.pos)];
 			case ConFields(fields):
 				// Each field extraction is positioned at the SUBJECT position (e.pos), not the per-field
 				// pattern position, so a field shared across cases takes the object subject's line rather
