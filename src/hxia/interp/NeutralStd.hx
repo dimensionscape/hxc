@@ -110,8 +110,11 @@ class NeutralStd {
 
 		// Crypto over Bytes: convert the shim to/from a host Bytes at the boundary so the real
 		// algorithms run unchanged; string-input digests pass through directly.
-		reg.bindStatic("haxe.crypto.Base64", "encode", function(a) return haxe.crypto.Base64.encode((a[0] : NeutralBytes).toHost(), a.length > 1 ? a[1] : true));
-		reg.bindStatic("haxe.crypto.Base64", "decode", function(a) return NeutralBytes.fromHost(haxe.crypto.Base64.decode(a[0], a.length > 1 ? a[1] : true)));
+		// The `complement` (padding) flag defaults to true; the cpp cppia passes an omitted optional as
+		// an explicit null, so gate the default on a[1] != null (else null coerces to false on cpp and
+		// encode drops the "=" padding / decode rejects it).
+		reg.bindStatic("haxe.crypto.Base64", "encode", function(a) return haxe.crypto.Base64.encode((a[0] : NeutralBytes).toHost(), (a.length > 1 && a[1] != null) ? a[1] : true));
+		reg.bindStatic("haxe.crypto.Base64", "decode", function(a) return NeutralBytes.fromHost(haxe.crypto.Base64.decode(a[0], (a.length > 1 && a[1] != null) ? a[1] : true)));
 		reg.bindStatic("haxe.crypto.Md5", "encode", function(a) return haxe.crypto.Md5.encode(a[0]));
 		reg.bindStatic("haxe.crypto.Md5", "make", function(a) return NeutralBytes.fromHost(haxe.crypto.Md5.make((a[0] : NeutralBytes).toHost())));
 		reg.bindStatic("haxe.crypto.Sha1", "encode", function(a) return haxe.crypto.Sha1.encode(a[0]));

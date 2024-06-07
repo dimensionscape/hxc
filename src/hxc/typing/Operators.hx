@@ -748,7 +748,11 @@ class Operators {
 				var check = TypeFunctions.mk(TBinop(OpNotEq, tmpLocal, TexprTools.makeNull(tmpType, p)), ctx.com.basic.tbool, p);
 				var iff = Typer.makeIfThenElse(ctx, check, tmpLocal, te2, WithTypeTools.withType(t), p);
 				var decl = TypeFunctions.mk(TVarExpr(tmp, te1), tvoid, p);
-				TypeFunctions.mk(TBlock([decl, iff]), t, p);
+				// The temp-binding block is wrapped in a :mergeBlock meta, so the analyzer merges it into
+				// the enclosing scope and declares an assigned-in-branches result var before the temp,
+				// rather than splicing the plain block and emitting the temp first.
+				var block = TypeFunctions.mk(TBlock([decl, iff]), t, p);
+				TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), t, p);
 			case _:
 				var lhsWt = promotedBinopWithType(op, withType);
 				var te1 = Typer.typeExpr(ctx, e1, lhsWt);
