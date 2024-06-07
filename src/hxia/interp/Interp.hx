@@ -795,9 +795,20 @@ class Interp {
 					setMember(args[0], args[1], args[2]); return null;
 				case "getProperty":
 					if (Std.isOfType(args[0], ScriptClass)) return staticGet(args[0], args[1], true);
+					if (Std.isOfType(args[0], ScriptObject)) {
+						// An instance property read must run its get_<name> accessor, not read the raw
+						// field: a pure property has no backing field and a computed one differs from it.
+						var getter = (args[0] : ScriptObject).cls.lookup("get_" + args[1]);
+						if (getter != null)
+							return invokeFun(getter, args[0], []);
+					}
 					return getMember(args[0], args[1]);
 				case "setProperty":
 					if (Std.isOfType(args[0], ScriptClass)) { staticSet(args[0], args[1], args[2], true); return null; }
+					if (Std.isOfType(args[0], ScriptObject)) {
+						var setter = (args[0] : ScriptObject).cls.lookup("set_" + args[1]);
+						if (setter != null) { invokeFun(setter, args[0], [args[2]]); return null; }
+					}
 					setMember(args[0], args[1], args[2]); return null;
 				case "fields":
 					if (Std.isOfType(args[0], ScriptObject))
