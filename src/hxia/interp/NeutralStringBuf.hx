@@ -44,6 +44,11 @@ class NeutralStringBuf {
 			b.push(sub);
 	}
 
+	// StringBuf exposes `var length(get, never)`; the cppia reads it as a get_length call. The shim
+	// keeps content in b/charBuf rather than a running counter, so derive it from the assembled string.
+	public function get_length():Int
+		return toString().length;
+
 	public function toString():String {
 		if (charBuf != null)
 			flush();

@@ -166,6 +166,7 @@ class NeutralStd {
 		reg.bindMember(sbuf, "addChar", function(o, a) { (o : NeutralStringBuf).addChar(a[0]); return null; });
 		reg.bindMember(sbuf, "addSub", function(o, a) { (o : NeutralStringBuf).addSub(a[0], a[1], a[2]); return null; });
 		reg.bindMember(sbuf, "toString", function(o, a) return (o : NeutralStringBuf).toString());
+		reg.bindMember(sbuf, "get_length", function(o, a) return (o : NeutralStringBuf).get_length());
 
 		// EReg is a native @:coreApi on js/cpp: its methods are not reflectively callable there,
 		// so bind the surface as typed calls (they are direct on eval, but binding is uniform).
