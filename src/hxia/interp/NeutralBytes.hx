@@ -67,8 +67,21 @@ class NeutralBytes {
 		return toHost().toString();
 
 	public function blit(pos:Int, src:NeutralBytes, srcpos:Int, len:Int):Void {
-		for (i in 0...len)
-			b[pos + i] = src.b[srcpos + i];
+		// haxe.io.Bytes.blit throws OutsideBounds on an out-of-range request; TestBytes relies on the
+		// throw (exc(...)) and, without it, a silent over-copy corrupts the buffer for later asserts.
+		if (pos < 0 || srcpos < 0 || len < 0 || pos + len > length || srcpos + len > src.length)
+			throw haxe.io.Error.OutsideBounds;
+		// haxe.io.Bytes.blit is memmove-safe: an overlapping copy within the same buffer where the
+		// destination is above the source must run backward, or a naive forward copy propagates the
+		// first bytes over the rest (TestBytes' `b.blit(4, b, 3, 3)`).
+		if (src == this && pos > srcpos) {
+			var i = len;
+			while (i-- > 0)
+				b[pos + i] = src.b[srcpos + i];
+		} else {
+			for (i in 0...len)
+				b[pos + i] = src.b[srcpos + i];
+		}
 	}
 
 	public function fill(pos:Int, len:Int, value:Int):Void {
