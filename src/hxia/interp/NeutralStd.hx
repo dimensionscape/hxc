@@ -201,6 +201,13 @@ class NeutralStd {
 			var i:Int = a[0];
 			return (i >= 0 && i < s.length) ? StringTools.fastCodeAt(s, i) : 0;
 		});
+		// Haxe String.charCodeAt returns Null<Int> (null past the ends); native js charCodeAt returns
+		// NaN, which the mediator would surface instead, so `"".charCodeAt(0)` must yield null not NaN.
+		reg.bindMember("String", "charCodeAt", function(o, a) {
+			var s:String = o;
+			var i:Int = a[0];
+			return (i >= 0 && i < s.length) ? StringTools.fastCodeAt(s, i) : null;
+		});
 		// Substr: the cpp cppia passes an omitted optional `len` as an explicit null (substr(pos, null)).
 		// The cpp host's String.substr reads null len as "to end"; the js host reaches the mediator's
 		// reflective call to native js substr, which coerces null->0 and returns "". Route through the
