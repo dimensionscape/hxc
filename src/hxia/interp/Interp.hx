@@ -1234,7 +1234,11 @@ class Interp {
 	}
 
 	function setStatic(key:String, type:String, name:String, v:Dynamic):Void {
-		if (scriptStaticVars.exists(key))
+		// A static of a script class writes to our own store, never the host: the class exists only
+		// in the cppia. This also covers reassigning a `dynamic static function` (stored in
+		// scriptStatics as a body); the new value lands in scriptStaticVars, which getStatic reads
+		// first, so the override wins over the original body.
+		if (scriptStaticVars.exists(key) || scriptClasses.exists(type))
 			scriptStaticVars.set(key, v);
 		else
 			mediator.setField(resolveClass(type), name, v);
