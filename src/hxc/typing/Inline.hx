@@ -156,7 +156,7 @@ class Inline {
 
 	// The inliner entry with an explicit callee: class, field, function and receiver expression
 	// (the call-site resolution is the caller's).
-	public static function typeInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField, tf:TFunc, ethis:Null<TExpr>, params:Array<TExpr>, tret:T, p:Position):Null<TExpr> {
+	public static function typeInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField, tf:TFunc, ethis:Null<TExpr>, params:Array<TExpr>, tret:T, p:Position, selfCallingClosure:Bool = false):Null<TExpr> {
 		if (depth > 32) return null;
 		// The platform api substitutions run before the body inline, so a js Std.isOfType(o, String)
 		// folds to a typeof check instead of its body.
@@ -179,7 +179,7 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg) catch (_:InlineBail) null;
+		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure) catch (_:InlineBail) null;
 		depth--;
 		cfStack.pop();
 		if (r != null) r = inlineMetadata(r, cf.meta);
@@ -377,7 +377,7 @@ class Inline {
 		return f(root);
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool):TExpr {
+	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
@@ -517,7 +517,9 @@ class Inline {
 			}
 		}
 		for (dc in defaultChecks) binds.push(dc);
-		var keepPositions = ctx.com.defines.rawDefined("keep_inline_positions");
+		// A self-calling closure (an immediately-called TFunction) keeps its body positions, like
+		// the keep_inline_positions define.
+		var keepPositions = selfCallingClosure || ctx.com.defines.rawDefined("keep_inline_positions");
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
 		if (absMember) checkAbstractWrite(value, p);
 		// A single-expression block unwraps to its expression only when the body returned a

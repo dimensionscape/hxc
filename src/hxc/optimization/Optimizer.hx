@@ -353,7 +353,7 @@ class Optimizer {
 						var rt = switch (TypeFunctions.follow(ef.type)) { case TFun(sig): sig.ret; case _: e.type; };
 						var cf = TypeFunctions.mkField("", ef.type, e.pos, e.pos);
 						var ethis = TypeFunctions.mk(TConst(TThis), TypeFunctions.tDynamic, e.pos);
-						var inl = try hxc.typing.Inline.typeInline(ctx, null, cf, fn, ethis, el, rt, e.pos) catch (_:Dynamic) null;
+						var inl = try hxc.typing.Inline.typeInline(ctx, null, cf, fn, ethis, el, rt, e.pos, true) catch (_:Dynamic) null;
 						if (inl == null) reduceExpr(ctx, e) else reduceLoop(ctx, inl);
 					case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (cf.kind.match(Method(MethInline)) && !stackHas(cf)):
 						var inl = hxc.typing.Inline.tryInline(ctx, TexprTools.skip(e1), el, e.type, e.pos);
