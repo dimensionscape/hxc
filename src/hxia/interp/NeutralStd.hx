@@ -188,6 +188,22 @@ class NeutralStd {
 			var i:Int = a[0];
 			return (i >= 0 && i < s.length) ? StringTools.fastCodeAt(s, i) : 0;
 		});
+		// Substr: the cpp cppia passes an omitted optional `len` as an explicit null (substr(pos, null)).
+		// The cpp host's String.substr reads null len as "to end"; the js host reaches the mediator's
+		// reflective call to native js substr, which coerces null->0 and returns "". Route through the
+		// Haxe String.substr (HxOverrides on js) so the "to end" case is honoured on every host.
+		reg.bindMember("String", "substr", function(o, a) {
+			var s:String = o;
+			var pos:Int = a[0];
+			return (a.length > 1 && a[1] != null) ? s.substr(pos, a[1]) : s.substr(pos);
+		});
+		// Substring has the same omitted-optional-as-null hazard (substring(start, null)); the Haxe
+		// String.substring reads null end as "to end", native js substring coerces null->0.
+		reg.bindMember("String", "substring", function(o, a) {
+			var s:String = o;
+			var start:Int = a[0];
+			return (a.length > 1 && a[1] != null) ? s.substring(start, a[1]) : s.substring(start);
+		});
 
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
