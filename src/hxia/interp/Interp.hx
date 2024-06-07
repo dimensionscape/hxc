@@ -346,6 +346,12 @@ class Interp {
 					return function(f) return mkHostEnum(he, etype, hidx, name, []);
 				}
 				var idx = enumIdxOf(n.ints[0], n.ints[1]);
+				// A parametric constructor referenced as a value (`var c = MyEnum.C`) is a factory function,
+				// not the enum value; calling it later (`c(1, "x")`) builds the instance. A no-arg constructor
+				// is the constant value itself.
+				var se = scriptEnums.get(etype);
+				if (se != null && idx < se.ctorArity.length && se.ctorArity[idx] > 0)
+					return function(f) return Reflect.makeVarArgs(function(args:Array<Dynamic>) return mkEnum(etype, idx, name, args));
 				return function(f) return mkEnum(etype, idx, name, []);
 			case "ENUMI":
 				// Extract enum-constructor parameter pi. The value may be our EnumValue or a host enum
