@@ -144,7 +144,7 @@ class NeutralStd {
 		reg.bindMember("Array", "remove", function(o, a) return (o : Array<Dynamic>).remove(a[0]));
 		reg.bindMember("Array", "contains", function(o, a) return (o : Array<Dynamic>).contains(a[0]));
 		reg.bindMember("Array", "indexOf", function(o, a) return (o : Array<Dynamic>).indexOf(a[0], a.length > 1 ? a[1] : 0));
-		reg.bindMember("Array", "lastIndexOf", function(o, a) return (o : Array<Dynamic>).lastIndexOf(a[0], a.length > 1 ? a[1] : (o : Array<Dynamic>).length - 1));
+		reg.bindMember("Array", "lastIndexOf", function(o, a) return (o : Array<Dynamic>).lastIndexOf(a[0], (a.length > 1 && a[1] != null) ? a[1] : (o : Array<Dynamic>).length - 1));
 		reg.bindMember("Array", "insert", function(o, a) { (o : Array<Dynamic>).insert(a[0], a[1]); return null; });
 		reg.bindMember("Array", "splice", function(o, a) return (o : Array<Dynamic>).splice(a[0], a[1]));
 		reg.bindMember("Array", "slice", function(o, a) return (o : Array<Dynamic>).slice(a[0], a.length > 1 ? a[1] : null));
@@ -176,7 +176,9 @@ class NeutralStd {
 		reg.bindMember("EReg", "matchedPos", function(o, a) return (o : EReg).matchedPos());
 		reg.bindMember("EReg", "replace", function(o, a) return (o : EReg).replace(a[0], a[1]));
 		reg.bindMember("EReg", "split", function(o, a) return (o : EReg).split(a[0]));
-		reg.bindMember("EReg", "matchSub", function(o, a) return (o : EReg).matchSub(a[0], a[1], a.length > 2 ? a[2] : -1));
+		// The cpp cppia passes an omitted optional as an explicit null, so a.length is 3 even for the
+		// 2-arg matchSub(s, pos) call; guard on a[2] != null to restore the -1 ("to end") default.
+		reg.bindMember("EReg", "matchSub", function(o, a) return (o : EReg).matchSub(a[0], a[1], (a.length > 2 && a[2] != null) ? a[2] : -1));
 
 		// `cca` is the charCodeAt alias that StringTools.fastCodeAt lowers to; the cppia inlines it
 		// into callers (e.g. haxe.format.JsonParser.nextChar) and it is not reflectively callable on

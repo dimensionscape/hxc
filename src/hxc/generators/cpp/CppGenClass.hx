@@ -1227,8 +1227,12 @@ class CppGenClass {
 		// The __init__ stack frame carries the qualified C++ class name as its dot name, not the dot path.
 		var cppName = CppTypeText.cppClassName(classDef);
 		var frameLine = CppEmit.getErrorLine(classDef.init.pos);
-		new CppEmit(com, w, 1, false, cppFileId).genExpressionTree([], TypeFunctions.tDynamic, classDef.init,
-			function(gc) hxStackPush(com, w, cppName, "__init__", classDef.init.pos.file, frameLine, gc, cppFileId), null, cppName, "__init__");
+		// The class-init body gets a fresh file id counter reset to -1, so the __init__ stack frame and any
+		// goto/const-array ids in its body use their own counter and do not advance the shared per-file
+		// counter that numbers the methods' goto labels and const-array tables.
+		var initFileId = {v: -1};
+		new CppEmit(com, w, 1, false, initFileId).genExpressionTree([], TypeFunctions.tDynamic, classDef.init,
+			function(gc) hxStackPush(com, w, cppName, "__init__", classDef.init.pos.file, frameLine, gc, initFileId), null, cppName, "__init__");
 		w.write("\n\n");
 	}
 
