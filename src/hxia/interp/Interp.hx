@@ -19,6 +19,9 @@ class Interp {
 	final tree:ModuleTree;
 	// "Type.method" -> the FUN op node of a script static method.
 	final scriptStatics:Map<String, OpNode> = new Map();
+	// Cache the closure a script static method yields when read as a value, so two reads return the
+	// same closure and Reflect.compareMethods(C.m, C.m) holds.
+	final scriptStaticClosures:Map<String, Dynamic> = new Map();
 	// "EnumType.Ctor" -> constructor index (position, = index; the writer sorts by it).
 	final enumCtorIndex:Map<String, Int> = new Map();
 	// Type name -> its script-class descriptor (ctor + instance methods), for `new` and dispatch.
@@ -967,8 +970,16 @@ class Interp {
 		return so;
 	}
 
-	function makeEnum(se:ScriptEnum, index:Int, ctor:String, params:Array<Dynamic>):EnumValue
+	function makeEnum(se:ScriptEnum, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
+		// Type.createEnum/createEnumIndex throw on an unknown constructor or the wrong argument count;
+		// TestReflect asserts those throws (exc(...)).
+		if (index < 0 || index >= se.ctorNames.length)
+			throw "No such constructor " + ctor;
+		var np = params != null ? params.length : 0;
+		if (np != se.ctorArity[index])
+			throw "Invalid number of arguments : " + ctor;
 		return mkEnum(se.name, index, ctor, params != null ? params : []);
+	}
 
 	// Build a script enum value, returning the canonical singleton for a no-argument constructor
 	// so reference equality matches Haxe (Serializer/Unserializer and `==` both rely on this).
@@ -1317,10 +1328,16 @@ class Interp {
 	function getStatic(key:String, type:String, name:String):Dynamic {
 		if (scriptStaticVars.exists(key))
 			return scriptStaticVars.get(key);
-		// A static method of a script class read as a value: return a bound-free closure.
+		// A static method of a script class read as a value: return a bound-free closure, cached so a
+		// repeated read yields the same closure (Reflect.compareMethods(C.m, C.m) must hold).
 		var fun = scriptStatics.get(type + "." + name);
-		if (fun != null)
-			return Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(fun, null, args));
+		if (fun != null) {
+			if (scriptStaticClosures.exists(key))
+				return scriptStaticClosures.get(key);
+			var closure = Reflect.makeVarArgs(function(args:Array<Dynamic>) return invokeFun(fun, null, args));
+			scriptStaticClosures.set(key, closure);
+			return closure;
+		}
 		// Math constants are inline/property statics on js, so reflection reads null; return the
 		// literal values.
 		if (type == "Math") {
