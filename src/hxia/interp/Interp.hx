@@ -131,6 +131,8 @@ class Interp {
 						sc.staticFields.push(vname);
 					} else {
 						sc.instanceVars.push(vname);
+						if (f.ints[5] >= 0 && f.ints[5] < types.length)
+							sc.instanceVarTypes.set(vname, types[f.ints[5]]);
 					}
 					continue;
 				}
@@ -911,7 +913,16 @@ class Interp {
 			case "createInstance":
 				if (Std.isOfType(a0, ScriptClass)) return instantiate(a0, args[1]);
 			case "createEmptyInstance":
-				if (Std.isOfType(a0, ScriptClass)) return new ScriptObject(a0);
+				if (Std.isOfType(a0, ScriptClass)) {
+					var sc:ScriptClass = a0;
+					var so = new ScriptObject(sc);
+					var c = sc;
+					while (c != null) {
+						for (v in c.instanceVars) if (!so.fields.exists(v)) so.fields.set(v, emptyFieldDefault(c.instanceVarTypes.get(v)));
+						c = c.superClass;
+					}
+					return so;
+				}
 			case "getEnum":
 				if (Std.isOfType(a0, EnumValue)) {
 					var ev:EnumValue = a0;
@@ -1380,6 +1391,17 @@ class Interp {
 		};
 	}
 
+	static function emptyFieldDefault(type:String):Dynamic {
+		if (type == null) return null;
+		var n = type; var i = n.lastIndexOf(":"); if (i >= 0) n = n.substr(i + 1);
+		return switch (n) {
+			case "Int" | "UInt" | "Int64" | "Int32" | "int" | "int64" | "unsigned int": 0;
+			case "Float" | "Single" | "float" | "double": 0.0;
+			case "Bool" | "bool": false;
+			case _: null;
+		};
+	}
+
 	static function binop(op:String, a:Dynamic, b:Dynamic):Dynamic {
 		switch (op) {
 			case "+":
@@ -1455,6 +1477,7 @@ class ScriptClass {
 	public var ctor:Null<OpNode>;
 	public var methods:Map<String, OpNode> = new Map();
 	public var instanceVars:Array<String> = [];
+	public var instanceVarTypes:Map<String, String> = new Map();
 	public var staticFields:Array<String> = [];
 	// Directly-declared interface names (raw cppia type strings); the transitive implements-check
 	// lives in Interp.scriptClassImplements, which resolves interface names to their descriptors.
