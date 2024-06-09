@@ -228,6 +228,15 @@ class Operators {
 				case TAnon(a):
 					var cf = a.fields.get(name);
 					cf != null && isDynamic(cf.type);
+				case TMono(m):
+					// A structurally-constrained monomorph (a.length adds a length field) is not dynamic in
+					// that field: read the constraint field's type.
+					switch (TypeUnification.classifyDownConstraints(m)) {
+						case CStructural(fields, _):
+							var cf = fields.get(name);
+							cf != null && isDynamic(cf.type);
+						case _: true;
+					}
 				case TInst(c, tl):
 					try {
 						var f = TypeFunctions.classField(c, tl, name);
