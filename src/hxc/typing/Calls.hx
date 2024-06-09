@@ -1116,7 +1116,24 @@ class Calls {
 		var cf2 = fields.get(name);
 		if (cf2 == null) {
 			function subst(t:T):T return substituteGenericMethodType(cf.params, params, t);
-			cf2 = TypeFunctions.mkField(name, resolveGenericMonos(subst(callType)), cf.pos, cf.namePos, TypeFunctions.hasClassFieldFlag(cf, CfPublic), stat);
+			// Cf2's type from fcc.fc_type, which keeps the host class type parameters symbolic in the
+			// argument types (only the method params and the return mono are resolved). The specialization
+			// is shared across every instantiation of the host, so an argument typed by a class param must
+			// stay generic (T, erased to Dynamic in codegen), never bound to one call site's argument type.
+			// Taking the whole call type would bind such a param (T -> Int), which then mismatches the
+			// cloned body's symbolic argument var and forces a _tmp_ rename in fix_override. So take the
+			// argument types from the raw field signature and only the return type from the inferred call.
+			var sigType = {
+				var callFun = TypeFunctions.follow(resolveGenericMonos(subst(callType)));
+				var rawFun = TypeFunctions.follow(cf.type);
+				switch [callFun, rawFun] {
+					case [TFun(cs), TFun(rs)] if (cs.args.length == rs.args.length):
+						TFun({args: [for (i in 0...rs.args.length) {name: cs.args[i].name, opt: cs.args[i].opt, t: subst(rs.args[i].t)}], ret: cs.ret});
+					case _:
+						resolveGenericMonos(subst(callType));
+				}
+			};
+			cf2 = TypeFunctions.mkField(name, sigType, cf.pos, cf.namePos, TypeFunctions.hasClassFieldFlag(cf, CfPublic), stat);
 			cf2.doc = cf.doc;
 			cf2.meta = cf.meta;
 			cf2.kind = cf.kind;
