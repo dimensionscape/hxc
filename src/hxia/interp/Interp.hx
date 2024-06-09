@@ -949,8 +949,8 @@ class Interp {
 			case "enumEq":
 				if (Std.isOfType(a0, EnumValue) || Std.isOfType(args[1], EnumValue)) return enumEq(a0, args[1]);
 			case "typeof":
-				if (Std.isOfType(a0, ScriptObject)) return Type.ValueType.TClass(cast (a0 : ScriptObject).cls);
-				if (Std.isOfType(a0, EnumValue)) return Type.ValueType.TEnum(cast scriptEnums.get((a0 : EnumValue).enumType));
+				if (Std.isOfType(a0, ScriptObject)) return mkValueType("TClass", [(a0 : ScriptObject).cls]);
+				if (Std.isOfType(a0, EnumValue)) return mkValueType("TEnum", [scriptEnums.get((a0 : EnumValue).enumType)]);
 				// A script class/enum referenced as a value is a plain object to the host: TObject.
 				// PrimType covers the interpreter tokens for Class/Enum/Int/... whose host Type.typeof
 				// would report TClass(PrimType); a class/enum value is a plain object at runtime (TObject).
@@ -987,6 +987,15 @@ class Interp {
 
 	// A host-enum value as our wrapper (see EnumValue.hostEnum). No-arg constructors are singletons
 	// so `A == A` holds, matching Haxe. `he` lets toHostEnum rebuild the real value at the boundary.
+	// Build a Type.ValueType wrapper DIRECTLY with the given params. typeof for a script class/enum
+	// must not go through a raw host `ValueType.TClass(scriptClass)` and let wrapHostEnum re-read the
+	// param: Type.enumParameters on a host enum holding a script Dynamic returns null on cpp (the
+	// hxcpp miscompile), dropping the class/enum. Constructing our wrapper here keeps the param.
+	function mkValueType(ctor:String, params:Array<Dynamic>):EnumValue {
+		var vt:Enum<Dynamic> = Type.ValueType;
+		return mkHostEnum(vt, Type.getEnumName(vt), Type.getEnumConstructs(vt).indexOf(ctor), ctor, params);
+	}
+
 	function mkHostEnum(he:Enum<Dynamic>, enumType:String, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
 		if (params.length == 0) {
 			var key = enumType + "." + ctor;
@@ -1064,7 +1073,12 @@ class Interp {
 		if (!Std.isOfType(a, EnumValue) || !Std.isOfType(b, EnumValue))
 			return a == b;
 		var ea:EnumValue = a, eb:EnumValue = b;
-		if (ea.enumType != eb.enumType || ea.index != eb.index || ea.params.length != eb.params.length)
+		// Two wrappers of the same host enum can carry DIFFERENT enumType strings: a script-built value
+		// (CREATEENUM) uses the cppia type string, while one wrapped from a host return (wrapHostEnum,
+		// e.g. Type.typeof -> ValueType) uses Type.getEnumName. Compare the host Enum reference when
+		// both have one (it is the canonical identity), falling back to the string for script enums.
+		var sameType = (ea.hostEnum != null && eb.hostEnum != null) ? ea.hostEnum == eb.hostEnum : ea.enumType == eb.enumType;
+		if (!sameType || ea.index != eb.index || ea.params.length != eb.params.length)
 			return false;
 		for (i in 0...ea.params.length)
 			if (!enumEq(ea.params[i], eb.params[i]) && ea.params[i] != eb.params[i])
