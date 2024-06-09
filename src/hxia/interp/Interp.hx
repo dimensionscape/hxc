@@ -98,6 +98,7 @@ class Interp {
 					se.ctorNames.push(ctorName);
 					se.ctorArity.push(d.enumCtors[i][1]);
 				}
+				se.metaExpr = d.enumMeta;
 				scriptEnums.set(enumName, se);
 				continue;
 			}
@@ -1200,6 +1201,15 @@ class Interp {
 		// reads `cls.__meta__` directly); route it to the script class's static store.
 		if (Std.isOfType(obj, ScriptClass))
 			return staticGet(obj, name, false);
+		// An enum token exposes only its compiler-generated __meta__ (haxe.rtti.Meta), evaluated once.
+		if (Std.isOfType(obj, ScriptEnum)) {
+			var se:ScriptEnum = obj;
+			if (name == "__meta__") {
+				if (se.meta == null && se.metaExpr != null)
+					se.meta = compile(se.metaExpr)(new Frame());
+				return se.meta;
+			}
+		}
 		if (Std.isOfType(obj, ScriptObject)) {
 			var so:ScriptObject = obj;
 			if (so.fields.exists(name))
@@ -1484,6 +1494,9 @@ class ScriptEnum {
 	public var name:String;
 	public var ctorNames:Array<String> = [];
 	public var ctorArity:Array<Int> = [];
+	// The enum's compiler-generated __meta__ expression (haxe.rtti.Meta reads it); evaluated lazily.
+	public var metaExpr:Null<hxia.cppia.OpTree.OpNode> = null;
+	public var meta:Dynamic = null;
 	public function new(name:String) this.name = name;
 
 	public function indexOf(ctor:String):Int
