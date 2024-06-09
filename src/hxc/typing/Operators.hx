@@ -1379,7 +1379,10 @@ class Operators {
 		var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p);
 		if (stmts.length == 0) return setCall;
 		stmts.push(setCall);
-		return TypeFunctions.mk(TBlock(stmts), setCall.type, p);
+		// The receiver-temp block is wrapped in a :mergeBlock meta so the analyzer merges it flat instead
+		// of emitting a nested block.
+		var block = TypeFunctions.mk(TBlock(stmts), setCall.type, p);
+		return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 	}
 
 	// Increment/decrement of a class property via its accessors: read once, apply +/-1, write back; postfix
@@ -1418,7 +1421,11 @@ class Operators {
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
 		var setCall = accessorWriteOn(ctx, er, fa, newv, p);
-		return recvInit == null ? setCall : TypeFunctions.mk(TBlock([recvInit, setCall]), setCall.type, p);
+		// The receiver-temp block is wrapped in a :mergeBlock meta, so the analyzer merges it into the
+		// enclosing scope instead of emitting a nested block.
+		if (recvInit == null) return setCall;
+		var block = TypeFunctions.mk(TBlock([recvInit, setCall]), setCall.type, p);
+		return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 	}
 
 	// An abstract that overloads this unary operator dispatches to its @:op impl method.
