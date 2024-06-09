@@ -57,8 +57,11 @@ class NeutralBytes {
 	public function set(pos:Int, v:Int):Void
 		b[pos] = v & 0xFF;
 
-	public function getString(pos:Int, len:Int):String
+	public function getString(pos:Int, len:Int):String {
+		if (pos < 0 || len < 0 || pos + len > length)
+			throw haxe.io.Error.OutsideBounds;
 		return toHost().getString(pos, len);
+	}
 
 	public function toHex():String
 		return toHost().toHex();
@@ -90,6 +93,8 @@ class NeutralBytes {
 	}
 
 	public function sub(pos:Int, len:Int):NeutralBytes {
+		if (pos < 0 || len < 0 || pos + len > length)
+			throw haxe.io.Error.OutsideBounds;
 		return new NeutralBytes(len, [for (i in 0...len) b[pos + i]]);
 	}
 

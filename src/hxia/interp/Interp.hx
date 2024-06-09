@@ -648,8 +648,23 @@ class Interp {
 				var vId = lv.ints[0];
 				return function(f) { var v = rhs(f); f.assign(vId, v); return v; };
 			case "ARRAYI":
-				var arr = compile(lv.kids[0]);
+				var arrKid = lv.kids[0];
 				var idx = compile(lv.kids[1]);
+				// A store the cppia inlines from Bytes.set is `<recv>.b[i] = v`; mask it to 0..255 as a
+				// native byte array would clamp it. Gate on a runtime type check of the receiver (not an
+				// array-identity map, which is unreliable on cpp) so only a real NeutralBytes store masks.
+				if ((arrKid.op == "FLINK" || arrKid.op == "FNAME") && strings[arrKid.ints[1]] == "b") {
+					var recv = compile(arrKid.kids[0]);
+					return function(f) {
+						var r = recv(f);
+						var a:Array<Dynamic> = getMember(r, "b");
+						var i:Int = idx(f);
+						var v = rhs(f);
+						a[i] = Std.isOfType(r, NeutralBytes) ? ((v : Int) & 0xFF) : v;
+						return v;
+					};
+				}
+				var arr = compile(arrKid);
 				// Haxe evaluates `a[i] = v` left to right: array, then index, then value. Evaluating rhs
 				// first flips the order and breaks side-effecting subexpressions like `a[x++] = x++`.
 				return function(f) { var a:Array<Dynamic> = arr(f); var i:Int = idx(f); var v = rhs(f); a[i] = v; return v; };
