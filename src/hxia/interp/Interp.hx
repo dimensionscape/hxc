@@ -941,7 +941,9 @@ class Interp {
 				if (Std.isOfType(a0, ScriptObject)) return Type.ValueType.TClass(cast (a0 : ScriptObject).cls);
 				if (Std.isOfType(a0, EnumValue)) return Type.ValueType.TEnum(cast scriptEnums.get((a0 : EnumValue).enumType));
 				// A script class/enum referenced as a value is a plain object to the host: TObject.
-				if (Std.isOfType(a0, ScriptClass) || Std.isOfType(a0, ScriptEnum)) return Type.ValueType.TObject;
+				// PrimType covers the interpreter tokens for Class/Enum/Int/... whose host Type.typeof
+				// would report TClass(PrimType); a class/enum value is a plain object at runtime (TObject).
+				if (Std.isOfType(a0, ScriptClass) || Std.isOfType(a0, ScriptEnum) || Std.isOfType(a0, PrimType)) return Type.ValueType.TObject;
 			case _:
 		}
 		return NotHandled;
