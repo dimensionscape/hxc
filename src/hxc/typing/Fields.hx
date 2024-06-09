@@ -170,6 +170,19 @@ class Fields {
 		var isSet = mode.match(MSet(_));
 		checkNoClosureMeta(ctx, f, fh, mode, pfield);
 		forceFieldType(ctx, f, fh);
+		// A method read as a value whose inferred return is still an open monomorph has not had its
+		// body typed. Force it so the return (and the argument monos it settles) bind from the body,
+		// not from the first use site that would bind them to Dynamic.
+		if (!mode.match(MCall(_)) && f.expr == null && f.kind.match(Method(_))) {
+			var retOpen = switch (TypeFunctions.follow(TypeFields.fieldCallType(f))) {
+				case TFun(sig): TypeFunctions.follow(sig.ret).match(TMono(_));
+				case _: false;
+			};
+			if (retOpen) switch (fh) {
+				case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFields.forceFieldBody(ctx.com, c, f);
+				case FHAnon:
+			}
+		}
 		// Visibility. An overloaded method call is checked after the actual overload is resolved, so
 		// skip it here; an instance access uses the actual (potential child) class from the receiver
 		// type.
