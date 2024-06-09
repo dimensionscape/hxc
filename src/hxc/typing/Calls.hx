@@ -933,7 +933,10 @@ class Calls {
 		// so the signature is complete. Only an open signature forces, keeping diagnostic order.
 		if (fa.field.expr == null) switch (TypeFunctions.follow(fa.field.type)) {
 			case TFun(sig):
-				var hasOpenArg = false;
+				// An unhinted RETURN also forces the body: a no-return body links its return to Void, which
+				// must
+				// settle before an overloaded call reads it.
+				var hasOpenArg = TypeFunctions.follow(sig.ret).match(TMono(_));
 				for (a in sig.args) if (TypeFunctions.follow(a.t).match(TMono(_))) hasOpenArg = true;
 				if (hasOpenArg) switch (fa.host) {
 					case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFields.forceFieldBody(ctx.com, c, fa.field);
