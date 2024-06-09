@@ -436,6 +436,40 @@ class PatternMaker {
 		return PatVariable(v);
 	}
 
+	// The object-pattern field types come from an anon directly, a or a @:forward abstract's
+	// underlying type (filtered by the forwarded field list). Returns null when t is none of these
+	// (fields then default to Dynamic).
+	static function forwardFilter(a:TAbstract):Null<Map<String, Bool>> {
+		for (m in a.meta) if (m.name == ":forward") {
+			if (m.params.length == 0) return null;
+			var set = new Map<String, Bool>();
+			for (pe in m.params) switch (pe.expr) { case EConst(CIdent(sn)): set.set(sn, true); case _: }
+			return set;
+		}
+		return null;
+	}
+	static function objectPatternFieldTypes(t:T):Null<Map<String, T>> {
+		var out = new Map<String, T>();
+		var found = false;
+		function collect(t:T):Void {
+			switch (TypeFunctions.follow(t)) {
+				case TAnon(an):
+					found = true;
+					for (cf in an.fields) if (!out.exists(cf.name)) out.set(cf.name, cf.type);
+				case TAbstract(a, tl) if (a.impl != null && TypeFunctions.hasMeta(":forward", a.meta)):
+					var fwd = forwardFilter(a);
+					var inner = objectPatternFieldTypes(TypeFunctions.getUnderlyingType(a, tl));
+					if (inner != null) {
+						found = true;
+						for (name in inner.keys()) if (!out.exists(name) && (fwd == null || fwd.exists(name))) out.set(name, inner.get(name));
+					}
+				case _:
+			}
+		}
+		collect(t);
+		return found ? out : null;
+	}
+
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
 		var ctx = pctx.ctx;
 		var p = e.pos;
@@ -533,17 +567,17 @@ class PatternMaker {
 				// Structure pattern: match named fields against the expected anon type. Fields the pattern
 				// omits are filled with wildcards so every structure pattern for the type carries the same
 				// field set (and arity) -- the matcher then treats them as one constructor. (record fill).
-				var anonFields = switch (TypeFunctions.follow(t)) { case TAnon(a): a.fields; case _: null; };
+				var fieldTypes = objectPatternFieldTypes(t);
 				var mentioned = new Map<String, Expr>();
 				for (f in fields) mentioned.set(f.name, f.expr);
-				var allNames = anonFields == null ? [for (f in fields) f.name] : [for (k in anonFields.keys()) k];
+				var allNames = fieldTypes == null ? [for (f in fields) f.name] : [for (k in fieldTypes.keys()) k];
 				var pairs = [for (name in allNames) {
-					var cf = anonFields == null ? null : anonFields.get(name);
+					var cf = fieldTypes == null ? null : fieldTypes.get(name);
 					var fe = mentioned.get(name);
 					// An omitted field, or a reification position field (carries no matchable info), is a wildcard.
 					var sub = if (fe == null || (pctx.inReification && (name == "pos" || name == "posPath" || name == "namePos")))
 						({pat: PatAny, pos: fe == null ? p : fe.pos} : Pattern)
-						else make(pctx, false, cf != null ? cf.type : TypeFunctions.tDynamic, fe);
+						else make(pctx, false, cf != null ? cf : TypeFunctions.tDynamic, fe);
 					{name: name, sub: sub};
 				}];
 				pairs.sort(function(a2, b2) return a2.name < b2.name ? -1 : (a2.name > b2.name ? 1 : 0));
