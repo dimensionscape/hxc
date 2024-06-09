@@ -1335,10 +1335,13 @@ class Interp {
 			case "*": return num(a) * num(b);
 			case "/": return num(a) / num(b);
 			case "%": return num(a) % num(b);
-			case "<": return num(a) < num(b);
-			case ">": return num(a) > num(b);
-			case "<=": return num(a) <= num(b);
-			case ">=": return num(a) >= num(b);
+			// String operands compare lexicographically. On js `num()` is a no-op cast so string `<`
+			// worked by accident; on cpp `(String : Float)` collapses to 0 and every comparison was
+			// false, so dispatch on the operand types explicitly.
+			case "<": return (Std.isOfType(a, String) && Std.isOfType(b, String)) ? (a : String) < (b : String) : num(a) < num(b);
+			case ">": return (Std.isOfType(a, String) && Std.isOfType(b, String)) ? (a : String) > (b : String) : num(a) > num(b);
+			case "<=": return (Std.isOfType(a, String) && Std.isOfType(b, String)) ? (a : String) <= (b : String) : num(a) <= num(b);
+			case ">=": return (Std.isOfType(a, String) && Std.isOfType(b, String)) ? (a : String) >= (b : String) : num(a) >= num(b);
 			case "==": return a == b;
 			case "!=": return a != b;
 			case "&": return int(a) & int(b);
