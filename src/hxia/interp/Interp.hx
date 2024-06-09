@@ -800,6 +800,30 @@ class Interp {
 			return scriptIsOfType(args[0], args[1]) ? args[0] : null;
 		// Script-level Reflect goes through the same mediated seam, so it cannot bypass the
 		// policy that gates direct member access.
+		// haxe.rtti.Meta reads the compiler-generated __meta__ static of a class/enum: getType returns
+		// its `obj` sub-object (type-level metadata), getFields its `fields`, getStatics its `statics`.
+		// Reflect.field already reaches the __meta__ static for a script type; missing metadata is {}.
+		if (type == "haxe.rtti.Meta") {
+			// getMeta returns the whole __meta__ static; getType/getFields/getStatics (inline on cpp,
+			// so usually reached only via the inlined getMeta call) extract obj/fields/statics from it.
+			if (member == "getMeta")
+				return (args[0] == null) ? null
+					: (Std.isOfType(args[0], ScriptClass) ? staticGet(args[0], "__meta__", false) : getMember(args[0], "__meta__"));
+			var which = switch (member) {
+				case "getType": "obj";
+				case "getFields": "fields";
+				case "getStatics": "statics";
+				case _: null;
+			};
+			if (which != null) {
+				var meta = (args[0] == null) ? null
+					: (Std.isOfType(args[0], ScriptClass) ? staticGet(args[0], "__meta__", false) : getMember(args[0], "__meta__"));
+				if (meta == null)
+					return {};
+				var sub = getMember(meta, which);
+				return sub == null ? {} : sub;
+			}
+		}
 		if (type == "Reflect") {
 			switch (member) {
 				case "field":
@@ -1172,6 +1196,10 @@ class Interp {
 		// do, so a lenient null read here would diverge (e.g. `try nf.s catch "NPE"` never catching).
 		if (obj == null)
 			throw "Null Object Reference";
+		// A field read off a class TOKEN is a static access (e.g. the inlined haxe.rtti.Meta.getType
+		// reads `cls.__meta__` directly); route it to the script class's static store.
+		if (Std.isOfType(obj, ScriptClass))
+			return staticGet(obj, name, false);
 		if (Std.isOfType(obj, ScriptObject)) {
 			var so:ScriptObject = obj;
 			if (so.fields.exists(name))
