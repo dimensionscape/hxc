@@ -1593,6 +1593,9 @@ class PrimType {
 	public static function isPrimitive(name:String):Bool {
 		return switch (name) {
 			case "Int" | "Float" | "Bool" | "UInt" | "Single" | "Dynamic": true;
+			// The Class/Enum meta-types have no useful runtime Class; resolve them to a name token on
+			// every target (on cpp they otherwise resolve to an aliased host class mis-tagged "Enum").
+			case "Class" | "Enum": true;
 			case _: false;
 		}
 	}
@@ -1603,6 +1606,9 @@ class PrimType {
 			case "Float" | "Single": Std.isOfType(v, Float);
 			case "Bool": Std.isOfType(v, Bool);
 			case "Dynamic": true;
+			// A class/enum descriptor used as a value is an instance of Class / Enum.
+			case "Class": Std.isOfType(v, ScriptClass);
+			case "Enum": Std.isOfType(v, ScriptEnum);
 			// A host class name whose runtime Class could not be resolved on this target: match by
 			// class name up the value's super chain (the same class can present distinct Class
 			// objects across the neutral-static boundary, so an identity check is unreliable).
