@@ -545,6 +545,10 @@ class Fields {
 							case _: a.read;
 						};
 						if (resolveCf != null) {
+							// Force the resolve method's body so an inferred return settles from the body
+							// (return f -> String) before the resolve call unifies it with the expected
+							// type.
+							if (resolveCf.expr == null) TypeFields.forceFieldBody(ctx.com, a.impl, resolveCf);
 							return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, pfield), i);
 						}
 						// The underlying's resolve is the final fallback, after the own-resolve attempt.

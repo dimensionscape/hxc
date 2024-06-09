@@ -1439,7 +1439,11 @@ class Calls {
 				makeCall(ctx, ce, args, TDynamic(null), p, forceInline, forcePos);
 			case TAbstract(a, tl) if (a.call != null && a.impl != null):
 				// @:op(a()) call operator: dispatch to the impl call field with the abstract value as its
-				// first (`this`) argument. (call branch).
+				// first
+				// (`this`) argument.
+				// Force the call method's body so an inferred return settles from the body before this call
+				// unifies it with the expected type.
+				if (a.call.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, a.call);
 				var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, a.call.type))) {
 					case TFun(s) if (s.args.length >= 1): s;
 					case _: null;
