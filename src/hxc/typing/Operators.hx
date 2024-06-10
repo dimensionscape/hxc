@@ -1239,7 +1239,10 @@ class Operators {
 			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
 			stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, newv, p)], tvoid, p));
 			stmts.push(eold);
-			return TypeFunctions.mk(TBlock(stmts), eold.type, p);
+			// The increment expression yields the element type (what the abstract @:arrayAccess setter
+			// returns), not the nullable getter result: the block as e_set.type (V), so a Null<V>/Dynamic
+			// old value casts to V at the use site.
+			return TypeFunctions.mk(TBlock(stmts), kv.v, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
 		var vnew = TypeFunctions.allocVar(VGenerated, "v", newv.type, p);
@@ -1280,7 +1283,10 @@ class Operators {
 			return TypeFunctions.mk(TBlock([evarKey, abs]), abs.type, p);
 		}
 		var el = [evarKey, evarGet, eSet].concat(flag.match(Postfix) ? [evGet] : []);
-		return TypeFunctions.mk(TBlock(el), flag.match(Postfix) ? evGet.type : eSet.type, p);
+		// The whole block is typed as the setter result (the @:arrayAccess element type) for both prefix
+		// and postfix; a postfix read temp yields the old value cast to that type at the use site, not
+		// the nullable getter result type.
+		return TypeFunctions.mk(TBlock(el), eSet.type, p);
 	}
 
 	// Read a class property `er.p`: call its getter when the read accessor is AccCall, else read the stored
