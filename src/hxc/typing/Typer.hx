@@ -599,12 +599,57 @@ class Typer {
 		}
 	}
 
+	static function anonFieldCount(a:TAnon):Int {
+		var n = 0;
+		for (_ in a.fields.keys()) n++;
+		return n;
+	}
+
+	// The element type of a closed { hasNext():Bool, next():T } anon.
+	static function getIteratorParam(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAnon(a) if (a.status.get().match(Closed)):
+				var hn = a.fields.get("hasNext");
+				var nx = a.fields.get("next");
+				if (hn == null || nx == null) null;
+				else switch [TypeFunctions.follow(hn.type), TypeFunctions.follow(nx.type)] {
+					case [TFun(sh), TFun(sn)] if (sh.args.length == 0 && sn.args.length == 0):
+						var isBool = switch (TypeFunctions.follow(sh.ret)) {
+							case TAbstract(ab, []): ab.path.pack.length == 0 && ab.path.name == "Bool";
+							case _: false;
+						};
+						if (isBool && anonFieldCount(a) == 2) sn.ret else null;
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
+	// The element type of a closed { iterator():Iterator<T> } anon.
+	static function getIterableParam(t:T):Null<T> {
+		return switch (TypeFunctions.follow(t)) {
+			case TAnon(a) if (a.status.get().match(Closed)):
+				var it = a.fields.get("iterator");
+				if (it == null) null;
+				else switch (TypeFunctions.follow(it.type)) {
+					case TFun(s) if (s.args.length == 0):
+						var r = getIteratorParam(s.ret);
+						if (r != null && anonFieldCount(a) == 1) r else null;
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
 	static function expectedArrayElement(ctx:TyperContext, t:T):Null<T> {
 		function loop(seen:Array<T>, t:T):Null<T> {
 			t = TypeFunctions.follow(t);
 			var direct = arrayElementFromType(t);
 			if (direct != null) return direct;
 			return switch (t) {
+				// An expected structural (Iterable/Iterator) type gives its element.
+				case TAnon(_):
+					getIterableParam(t);
 				case TAbstract(a, tl):
 					for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return null;
 					var hits:Array<T> = [];
