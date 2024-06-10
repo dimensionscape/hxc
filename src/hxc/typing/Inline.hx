@@ -516,6 +516,11 @@ class Inline {
 				}
 			}
 		}
+		// The receiver and argument bindings precede the default checks in binds; they are
+		// materialized at the inlined body position, not the call position. This differs only when
+		// the body keeps its own positions (a self-calling closure), where the body sits on a later
+		// line than the call site.
+		var argBindCount = binds.length;
 		for (dc in defaultChecks) binds.push(dc);
 		// A self-calling closure (an immediately-called TFunction) keeps its body positions, like
 		// the keep_inline_positions define.
@@ -527,6 +532,11 @@ class Inline {
 		var hasReturnValue = bodyHasReturnValue(tf.expr);
 		if (hasReturnValue)
 			value = switch (value.expr) { case TBlock([one]): one; case _: value; };
+		// The argument-binding TVars take the finalized body position.
+		for (i in 0...argBindCount) switch (binds[i].expr) {
+			case TVarExpr(v, eo): binds[i] = TypeFunctions.mk(TVarExpr(v, eo), tvoid, value.pos);
+			case _:
+		}
 		// With argument bindings present, a block body SPLICES its
 		// elements after the binds instead of nesting as one element.
 		var result = if (binds.length == 0) value else {
