@@ -65,8 +65,12 @@ class FieldAccessTools {
 		};
 		// A method value read while its inferred return is still an unbound monomorph gets a FRESH mono: a
 		// caller unifying the closure's return (eq(foo(), 3)) must not bind the declaration mono, which the
-		// later body typing needs open. The reference's TLazy forces the body at read instead .
-		if (cf != curField && mode.match(FRead) && cf.kind.match(Method(_)) && cf.expr == null) switch (TypeFunctions.follow(t)) {
+		// later body typing needs open. The reference's TLazy forces the body at read instead . A recursive
+		// self-read (cf == curField) or a read of a field whose body is currently being forced
+		// (TypeFields.isForcing) is exempt: the reference TLazy is in Lazy_processing and returns the
+		// actual declaration signature, so the read must track the real return mono that body typing later
+		// binds, not a throwaway fresh mono.
+		if (cf != curField && !TypeFields.isForcing(cf) && mode.match(FRead) && cf.kind.match(Method(_)) && cf.expr == null) switch (TypeFunctions.follow(t)) {
 			case TFun(sig):
 				switch (TypeFunctions.follow(sig.ret)) {
 					case TMono(r) if (r.type == null):

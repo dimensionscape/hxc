@@ -392,6 +392,13 @@ class TypeFields {
 
 	static var _forcing:Array<TClassField> = [];
 
+	// A field whose body is currently being forced/typed: reading it returns the in-progress signature (its
+	// real, still-inferred return mono), as a lazy type still in progress does.
+	public static function isForcing(cf:TClassField):Bool {
+		for (f in _forcing) if (f == cf) return true;
+		return false;
+	}
+
 	// Type a single field body on demand. Inline expansion needs a callee body that may not be
 	// installed yet (its module is processed later, or loaded on demand); the owning class is known
 	// from the call site, so locate the syntactic field and run its body typing here.
