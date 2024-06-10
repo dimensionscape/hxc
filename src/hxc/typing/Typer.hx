@@ -955,7 +955,14 @@ class Typer {
 				for (i in 0...args.length) {
 					var fa = f.fArgs[i];
 					var at = args[i].v.type;
-					if (fa.value != null) args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
+					if (fa.value != null) {
+						args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
+						// The typed default with the argument type (Null-wrapped, since a default makes the argument
+						// optional). This records a constraint on the argument monomorph that survives to its close,
+						// so a later use that links it to another mono can resolve to the default's type.
+						var target = fa.opt ? ctx.com.basic.tnull(at) : at;
+						try TypeUnification.unifyDefault(args[i].c.type, target) catch (_:UnifyError) {};
+					}
 					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
 				}
 				// A local function of a member types as FunMemberClassLocal (abstract members as
