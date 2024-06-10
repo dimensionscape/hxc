@@ -57,7 +57,7 @@ class FieldAccessTools {
 		return tl.length == 0 ? t : TypeFunctions.applyParams(c.params, tl, t);
 	}
 
-	public static function getFieldExpr(fa:FieldAccess, mode:FieldAccessMode):TExpr {
+	public static function getFieldExpr(fa:FieldAccess, mode:FieldAccessMode, ?curField:TClassField):TExpr {
 		var cf = fa.field;
 		var t = switch (mode) {
 			case FCall: TypeFields.fieldCallType(cf);
@@ -66,7 +66,7 @@ class FieldAccessTools {
 		// A method value read while its inferred return is still an unbound monomorph gets a FRESH mono: a
 		// caller unifying the closure's return (eq(foo(), 3)) must not bind the declaration mono, which the
 		// later body typing needs open. The reference's TLazy forces the body at read instead .
-		if (mode.match(FRead) && cf.kind.match(Method(_)) && cf.expr == null) switch (TypeFunctions.follow(t)) {
+		if (cf != curField && mode.match(FRead) && cf.kind.match(Method(_)) && cf.expr == null) switch (TypeFunctions.follow(t)) {
 			case TFun(sig):
 				switch (TypeFunctions.follow(sig.ret)) {
 					case TMono(r) if (r.type == null):

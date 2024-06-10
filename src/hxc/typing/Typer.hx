@@ -2979,7 +2979,7 @@ class Typer {
 				// the definition position records here where the field is still known.
 				if (fa.isInline && displayDefinition && displayFound == null && atDisplayPos(fa.pos))
 					displayFound = [fa.field.namePos];
-				fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead);
+				fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
 			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MGet)) {
