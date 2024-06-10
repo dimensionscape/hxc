@@ -69,8 +69,6 @@ class UnusedPure {
 				var ok = isPure(s) && (def == null || isPure(def));
 				if (ok) for (c in cases) { if (!allPure(c.values) || !isPure(c.expr)) { ok = false; break; } }
 				ok;
-			case TCall({expr: TField(_, FStatic(c, cf))}, args) if (c.path.pack.length == 0 && c.path.name == "Std" && cf.name == "string"):
-				allPure(args);
 			case TEnumParameter(e1, _, _) | TEnumIndex(e1): isPure(e1);
 			case _: false;
 		};
