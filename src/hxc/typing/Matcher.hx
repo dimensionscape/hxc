@@ -1656,8 +1656,11 @@ class TexprConverter {
 				}
 				// The default converts and reports first so a missing constructor at this switch is the
 				// counter-example, not a deeper unmatched constant inside a case branch. A case branch that
-				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. .
-				var droppedCompleteDefault = topLevel && complete && runtimeFinite;
+				// fails to convert (a guard whose fall-through is unmatched) reports like a missing default. A
+				// run-time-finite subject (enum/Bool) whose cases cover every constructor drops its default at
+				// any nesting level, not only at top level; the toplevel condition governs only the Infinite
+				// no-value exhaustiveness error.
+				var droppedCompleteDefault = complete && runtimeFinite;
 				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, inheritedDefault);
 				var nullaryMissing = switch (TypeFunctions.follow(effT)) {
 					case TEnum(en, _) if (unmatched != null):
