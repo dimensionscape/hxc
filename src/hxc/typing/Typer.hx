@@ -3364,7 +3364,12 @@ class Typer {
 						ctx.inLoop = oldLoop;
 						castOrUnify(ctx, t, te, p);
 				};
-				var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, t, pv);
+				// A var carrying the :this meta is the abstract constructor's synthetic this-var; classify
+				// it VAbstractThis (compiler-generated) so fusion still folds it under -debug.
+				var v = if (TypeFunctions.hasMeta(":this", ev.evMeta))
+					addLocal(ctx, VAbstractThis, n, t, pv)
+				else
+					addLocalWithOrigin(ctx, TVOLocalVariable, n, t, pv);
 				v.meta = ev.evMeta;
 				if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
 				if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
@@ -3473,6 +3478,10 @@ class Typer {
 				var withExpected = isVoid(TypeFunctions.follow(ctx.ret)) ? WithTypeTools.noValue
 					: implicit ? WithTypeTools.ofImplicitReturn(ctx.ret) : WithTypeTools.withType(ctx.ret);
 				var teRaw = typeExpr(ctx, ex, withExpected);
+				// A Void return type with an implicit return (an arrow-function body) emits just the
+				// expression, with no return statement: `() -> {}` and `() -> voidCall()` produce an
+				// empty/plain body, not a trailing `return;`.
+				if (implicit && isVoid(TypeFunctions.follow(ctx.ret))) return teRaw;
 				// Returning a value from a Void function discards the value rather than unifying it.
 				// ctx.ret may only just have settled to Void while typing teRaw (an inner `return` in an
 				// unannotated arrow whose return mono that branch binds), so re-check here, not only up
