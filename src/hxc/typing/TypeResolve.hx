@@ -368,15 +368,16 @@ class TypeResolve {
 				acc.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}, {name: ":noCompletion", params: [], pos: Position.nullPos}];
 				return acc;
 			}
-			// Iterate in declaration order and splice each synthesized interface accessor (get_x/set_x) in
-			// right after its property, matching the reference which creates the accessor while building
-			// that property's field . Iterating StringMap keys (hash order) or appending at the end both
-			// list the accessors in the wrong cpp vtable / reflection slot.
+			// A synthesized interface accessor (a getter or setter) is created by the method check, which
+			// property creation delays to PConnectField. That pass runs after orderedFields is reversed
+			// into declaration order, and each accessor is prepended. Because a pass flushes its delays
+			// LIFO,
+			// every generated accessor lands at the FRONT of the field list, in property-declaration order
+			// (get before set per property). Collect them in declaration order here, then prepend the whole
+			// batch.
 			var orderedProps = propIsStatic ? c.orderedStatics : c.orderedFields;
-			var newOrdered:Array<TClassField> = [];
-			var changed = false;
+			var genAccessors:Array<TClassField> = [];
 			for (cf in orderedProps) {
-				newOrdered.push(cf);
 				var name = cf.name;
 				var pt = cf.type;
 				if (pt == null) continue;
@@ -391,8 +392,7 @@ class TypeResolve {
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
 								var acc = genAccessor("get_" + name, pt, false);
 								fields.set(acc.name, acc);
-								newOrdered.push(acc);
-								changed = true;
+								genAccessors.push(acc);
 							}
 							else checkAccessor("get_" + name, name, fields, other, propIsStatic);
 						}
@@ -407,15 +407,15 @@ class TypeResolve {
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
 								var acc = genAccessor("set_" + name, pt, true);
 								fields.set(acc.name, acc);
-								newOrdered.push(acc);
-								changed = true;
+								genAccessors.push(acc);
 							}
 							else checkAccessor("set_" + name, name, fields, other, propIsStatic);
 						}
 					case _:
 				}
 			}
-			if (changed) {
+			if (genAccessors.length > 0) {
+				var newOrdered = genAccessors.concat(orderedProps);
 				if (propIsStatic) c.orderedStatics = newOrdered;
 				else c.orderedFields = newOrdered;
 			}
