@@ -31,12 +31,15 @@ class NeutralStd {
 		reg.markNeutralStatic("haxe.Json", haxe.Json);
 		reg.markNeutralStatic("haxe.format.JsonPrinter", haxe.format.JsonPrinter);
 		reg.markNeutralStatic("haxe.format.JsonParser", haxe.format.JsonParser);
+		reg.markNeutralStatic("haxe.Log", haxe.Log);
+		reg.markNeutralStatic("haxe.ds.ArraySort", haxe.ds.ArraySort);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
 		reg.bindNew("haxe.ds.StringMap", function(_) return new haxe.ds.StringMap<Dynamic>());
 		reg.bindNew("haxe.ds.IntMap", function(_) return new haxe.ds.IntMap<Dynamic>());
 		reg.bindNew("haxe.ds.ObjectMap", function(_) return new haxe.ds.ObjectMap<Dynamic, Dynamic>());
+		reg.bindNew("haxe.ds.WeakMap", function(_) return new haxe.ds.WeakMap<Dynamic, Dynamic>());
 		reg.bindNew("haxe.ds.EnumValueMap", function(_) return new haxe.ds.EnumValueMap<Dynamic, Dynamic>());
 		reg.bindNew("StringBuf", function(_) return new NeutralStringBuf());
 		reg.bindNew("EReg", function(a) return new EReg(a[0], a[1]));
@@ -144,6 +147,9 @@ class NeutralStd {
 		// the shared heap they are plain get/set on the underlying array.
 		reg.bindMember("Array", "__unsafe_get", function(o, a) return (o : Array<Dynamic>)[a[0]]);
 		reg.bindMember("Array", "__unsafe_set", function(o, a) { (o : Array<Dynamic>)[a[0]] = a[1]; return a[1]; });
+		// Hxcpp pre-sizes a large array literal with __SetSizeExact before filling it by index; a Haxe
+		// array grows on demand, so this is a no-op hint here.
+		reg.bindMember("Array", "__SetSizeExact", function(o, a) return null);
 		// Haxe's Array.toString is `[a,b,c]`; the native js/cpp Array.toString the mediator would
 		// reflect gives the bracket-less `a,b,c`, so bind the Haxe form explicitly.
 		reg.bindMember("Array", "toString", function(o, a) return "[" + (o : Array<Dynamic>).join(",") + "]");
@@ -228,8 +234,12 @@ class NeutralStd {
 		// Statics: the owned sinks + pure compute
 		reg.bindStatic("Sys", "println", function(a) { logSink(Std.string(a[0])); return null; });
 		reg.bindStatic("Sys", "print", function(a) { logSink(Std.string(a[0])); return null; });
+		reg.bindStatic("Sys", "systemName", function(_) return Sys.systemName());
+		reg.bindStatic("Sys", "time", function(_) return Sys.time());
+		reg.bindStatic("Sys", "getEnv", function(a) return Sys.getEnv(a[0]));
 		reg.bindStatic("Std", "string", function(a) return Std.string(a[0]));
 		reg.bindStatic("Std", "isOfType", function(a) return Std.isOfType(a[0], a[1]));
+		reg.bindStatic("String", "fromCharCode", function(a) return String.fromCharCode(a[0]));
 		reg.bindStatic("Std", "int", function(a) return Std.int(a[0]));
 		reg.bindStatic("Std", "parseInt", function(a) return Std.parseInt(a[0]));
 		reg.bindStatic("Std", "parseFloat", function(a) return Std.parseFloat(a[0]));
@@ -257,6 +267,7 @@ class NeutralStd {
 		reg.bindStatic(i64, "mod", function(a) return haxe.Int64.mod(b(a[0]), b(a[1])));
 		reg.bindStatic(i64, "neg", function(a) return haxe.Int64.neg(b(a[0])));
 		reg.bindStatic(i64, "isNeg", function(a) return haxe.Int64.isNeg(b(a[0])));
+		reg.bindStatic(i64, "isInt64", function(a) return haxe.Int64.isInt64(a[0]));
 		reg.bindStatic(i64, "isZero", function(a) return haxe.Int64.isZero(b(a[0])));
 		reg.bindStatic(i64, "parseString", function(a) return haxe.Int64.parseString(a[0]));
 		reg.bindStatic(i64, "fromFloat", function(a) return haxe.Int64.fromFloat(a[0]));
