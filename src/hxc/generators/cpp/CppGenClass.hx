@@ -278,10 +278,27 @@ class CppGenClass {
 		return CppTypeText.tcppToString(CppTypeOf.cppTypeOf(t));
 	}
 
+	// A native @:unreflective class (a raw pointer type), or a function mentioning one in an argument or
+	// return, cannot be reflected on and so gets no dynamic wrapper.
+	static function unreflectiveType(t:T):Bool {
+		// A native pointer type such as cpp.ConstCharStar reaches its @:unreflective RawConstPointer only
+		// through the abstract, so unwrap non-coreType abstracts here (followWithAbstracts already guards
+		// the coreType self-cycle).
+		return switch (TypeFunctions.followWithAbstracts(t)) {
+			case TInst(klass, _): TypeFunctions.hasMeta(":unreflective", klass.meta);
+			case TFun(sig):
+				var result = unreflectiveType(sig.ret);
+				for (arg in sig.args) if (unreflectiveType(arg.t)) result = true;
+				result;
+			case _: false;
+		};
+	}
+
 	function reflective(field:TClassField):Bool {
 		return !(TypeFunctions.hasMeta(":nativeGen", classDef.meta)
 			|| TypeFunctions.hasMeta(":unreflective", classDef.meta)
-			|| TypeFunctions.hasMeta(":unreflective", field.meta));
+			|| TypeFunctions.hasMeta(":unreflective", field.meta)
+			|| unreflectiveType(field.type));
 	}
 
 	static function isDynamicHaxeMethod(f:TClassField):Bool {
