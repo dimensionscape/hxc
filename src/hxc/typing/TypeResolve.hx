@@ -360,7 +360,6 @@ class TypeResolve {
 			}
 		}
 		function loop(fields:StringMap<TClassField>, other:StringMap<TClassField>, propIsStatic:Bool):Void {
-			var generated:Array<TClassField> = [];
 			inline function genAccessor(accName:String, propType:T, isSetter:Bool):TClassField {
 				// Generate the virtual accessor for an interface property.
 				var ft = isSetter ? TFun({args: [{name: "value", opt: false, t: propType}], ret: propType}) : TFun({args: [], ret: propType});
@@ -369,8 +368,16 @@ class TypeResolve {
 				acc.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}, {name: ":noCompletion", params: [], pos: Position.nullPos}];
 				return acc;
 			}
-			for (name in fields.keys()) {
-				var cf = fields.get(name);
+			// Iterate in declaration order and splice each synthesized interface accessor (get_x/set_x) in
+			// right after its property, matching the reference which creates the accessor while building
+			// that property's field . Iterating StringMap keys (hash order) or appending at the end both
+			// list the accessors in the wrong cpp vtable / reflection slot.
+			var orderedProps = propIsStatic ? c.orderedStatics : c.orderedFields;
+			var newOrdered:Array<TClassField> = [];
+			var changed = false;
+			for (cf in orderedProps) {
+				newOrdered.push(cf);
+				var name = cf.name;
 				var pt = cf.type;
 				if (pt == null) continue;
 				switch (cf.kind) {
@@ -381,7 +388,12 @@ class TypeResolve {
 								case TFun(sig): usePropertyType(sig.ret, pt);
 								case _:
 							}
-							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("get_" + name, pt, false));
+							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
+								var acc = genAccessor("get_" + name, pt, false);
+								fields.set(acc.name, acc);
+								newOrdered.push(acc);
+								changed = true;
+							}
 							else checkAccessor("get_" + name, name, fields, other, propIsStatic);
 						}
 						if (vk.write.match(AccCall)) {
@@ -392,15 +404,20 @@ class TypeResolve {
 									usePropertyType(sig.ret, pt);
 								case _:
 							}
-							else if (TypeFunctions.hasClassFlag(c, CInterface)) generated.push(genAccessor("set_" + name, pt, true));
+							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
+								var acc = genAccessor("set_" + name, pt, true);
+								fields.set(acc.name, acc);
+								newOrdered.push(acc);
+								changed = true;
+							}
 							else checkAccessor("set_" + name, name, fields, other, propIsStatic);
 						}
 					case _:
 				}
 			}
-			for (acc in generated) {
-				c.fields.set(acc.name, acc);
-				c.orderedFields.push(acc);
+			if (changed) {
+				if (propIsStatic) c.orderedStatics = newOrdered;
+				else c.orderedFields = newOrdered;
 			}
 		}
 		loop(c.statics, c.fields, true);
