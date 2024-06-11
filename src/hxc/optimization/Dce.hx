@@ -981,13 +981,11 @@ class Dce {
 	}
 
 	function keepCppInterfaceSlots():Void {
-		if (com.platform != Cpp) return;
-		for (t in com.types) switch (t) {
-			case TClassDecl(c) if (c.path.pack.length == 1 && c.path.pack[0] == "haxe" && c.path.name == "IMap"):
-				var field = c.fields.get("toString");
-				if (field != null) markField(c, field, false);
-			case _:
-		}
+		// (Intentionally empty.) There is no IMap-specific rule; normal DCE keeps haxe.IMap.toString
+		// whenever a map value is stringified (Std.string / trace / concat / join), which then cascades to
+		// each implementor via markDependentFields. Unconditionally marking IMap.toString for cpp
+		// over-keeps every map implementor's toString in programs that never stringify a map, and the cpp
+		// interface dispatch works without it.
 	}
 
 	function mark():Void {
