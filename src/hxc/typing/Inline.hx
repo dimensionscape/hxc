@@ -900,7 +900,7 @@ class Inline {
 				// shared type (return_type).
 				var body = terminal(e1);
 				var mappedCatches = [for (c in catches) {
-					var nv = TypeFunctions.allocVar(VGenerated, c.v.name, c.v.type, c.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
 					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
 					{v: nv, expr: terminal(c.expr)};
 				}];
@@ -918,6 +918,15 @@ class Inline {
 			case _:
 				return m(e);
 		}
+	}
+
+	// A body-declared local re-declared while inlining keeps its original kind, except a user var becomes
+	// VInlined rather than VGenerated.
+	static inline function declareKind(v:TVar):TVarKind {
+		return switch (v.kind) {
+			case VUser(_): VInlined;
+			case k: k;
+		};
 	}
 
 	// The non-terminal mapping lane: substitutes argument/this locals; a non-final return
@@ -1021,7 +1030,7 @@ class Inline {
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
-				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
+				var nv = TypeFunctions.allocVar(declareKind(v), v.name, v.type, v.pos);
 				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
 				// type behind an IMap-typed temp.
 				nv.extra = v.extra;
@@ -1032,7 +1041,7 @@ class Inline {
 				var me1 = m(e1);
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
-				var nv = TypeFunctions.allocVar(VGenerated, v.name, v.type, v.pos);
+				var nv = TypeFunctions.allocVar(declareKind(v), v.name, v.type, v.pos);
 				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
@@ -1059,7 +1068,7 @@ class Inline {
 				// re-declares as a fresh local (state#declare).
 				var me1 = m(e1);
 				TTry(me1, [for (c in catches) {
-					var nv = TypeFunctions.allocVar(VGenerated, c.v.name, c.v.type, c.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
 					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
 					{v: nv, expr: m(c.expr)};
 				}]);
@@ -1070,7 +1079,7 @@ class Inline {
 				// the
 				// inlined bindings rather than the callee's argument vars.
 				var nargs:Array<TFuncArg> = [for (a in f.args) {
-					var nv = TypeFunctions.allocVar(VGenerated, a.v.name, a.v.type, a.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(a.v), a.v.name, a.v.type, a.v.pos);
 					subst.set(a.v.id, TypeFunctions.mk(TLocal(nv), nv.type, a.v.pos));
 					{v: nv, c: a.c == null ? null : m(a.c)};
 				}];
