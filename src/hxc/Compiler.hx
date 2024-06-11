@@ -306,7 +306,7 @@ class Compiler {
 					// Print the member->atom table and exit; the test lane reads this.
 					Sys.print(hxc.hxia.CapabilityMask.dump());
 					return;
-				case "--resource": addResource(ctx, args[i++]);
+				case "--resource" | "-r" | "-resource": addResource(ctx, args[i++]);
 				case "--remap":
 					var spec = args[i++];
 					var sep = spec.indexOf(":");
