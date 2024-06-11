@@ -78,11 +78,24 @@ class CppReferenced {
 		return !CppTypeOf.isInternalClass(path);
 	}
 
+	// A `./`-relative @:include/@:cppInclude/@:depend path resolves against the directory of the .hx file
+	// the meta sits in, so the emitted #include still finds the companion file from the generated-source
+	// directory. A bare header name (e.g. "vector") is left as is. The meta position's file is relative to
+	// the invocation cwd, which still holds during codegen (the build step's chdir runs later).
+	static function makePathAbsolute(path:String, pos:hxc.ast.Position):String {
+		if (path.length >= 2 && path.substr(0, 2) == "./") {
+			var base = haxe.io.Path.isAbsolute(pos.file) ? pos.file : haxe.io.Path.join([Sys.getCwd(), pos.file]);
+			var joined = haxe.io.Path.join([haxe.io.Path.directory(base), path.substr(2)]);
+			return StringTools.replace(haxe.io.Path.normalize(joined), "\\", "/");
+		}
+		return path;
+	}
+
 	// Every string parameter of the given meta key, as a path.
 	public static function getAllMetaStringPath(meta:Metadata, mkey:String):Array<String> {
 		var acc:Array<String> = [];
 		for (m in meta) if (m.name == mkey && m.params.length > 0) switch (m.params[0].expr) {
-			case EConst(CString(s, _)): acc.push(s);
+			case EConst(CString(s, _)): acc.push(makePathAbsolute(s, m.pos));
 			case _:
 		}
 		return acc;
