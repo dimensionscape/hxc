@@ -147,9 +147,11 @@ class NeutralStd {
 		// the shared heap they are plain get/set on the underlying array.
 		reg.bindMember("Array", "__unsafe_get", function(o, a) return (o : Array<Dynamic>)[a[0]]);
 		reg.bindMember("Array", "__unsafe_set", function(o, a) { (o : Array<Dynamic>)[a[0]] = a[1]; return a[1]; });
-		// Hxcpp pre-sizes a large array literal with __SetSizeExact before filling it by index; a Haxe
-		// array grows on demand, so this is a no-op hint here.
-		reg.bindMember("Array", "__SetSizeExact", function(o, a) return null);
+		// Hxcpp sizes an array with __SetSize(Exact) - a large array literal is pre-sized before being
+		// filled by index, and haxe.ds.Vector.new sizes its backing array this way (so Vector.length must
+		// reflect it). Actually resize, don't no-op, or the length stays 0.
+		reg.bindMember("Array", "__SetSizeExact", function(o, a) { (o : Array<Dynamic>).resize(a[0]); return o; });
+		reg.bindMember("Array", "__SetSize", function(o, a) { (o : Array<Dynamic>).resize(a[0]); return o; });
 		// Haxe's Array.toString is `[a,b,c]`; the native js/cpp Array.toString the mediator would
 		// reflect gives the bracket-less `a,b,c`, so bind the Haxe form explicitly.
 		reg.bindMember("Array", "toString", function(o, a) return "[" + (o : Array<Dynamic>).join(",") + "]");
