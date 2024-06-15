@@ -34,6 +34,7 @@ class NeutralStd {
 		reg.markNeutralStatic("haxe.Log", haxe.Log);
 		reg.markNeutralStatic("haxe.ds.ArraySort", haxe.ds.ArraySort);
 		reg.markNeutralStatic("haxe.xml.Parser", haxe.xml.Parser);
+		reg.markNeutralStatic("haxe.NativeStackTrace", haxe.NativeStackTrace);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
