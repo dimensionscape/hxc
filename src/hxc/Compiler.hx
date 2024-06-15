@@ -1897,7 +1897,7 @@ class Compiler {
 				out = out.concat(expandHxml(a, seen));
 				continue;
 			}
-			if (a == "-lib" || a == "--library") {
+			if (a == "-lib" || a == "--library" || a == "-L") {
 				if (i >= args.length) throw "Missing library name";
 				libs.push(args[i++]);
 				continue;
