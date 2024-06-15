@@ -33,6 +33,7 @@ class NeutralStd {
 		reg.markNeutralStatic("haxe.format.JsonParser", haxe.format.JsonParser);
 		reg.markNeutralStatic("haxe.Log", haxe.Log);
 		reg.markNeutralStatic("haxe.ds.ArraySort", haxe.ds.ArraySort);
+		reg.markNeutralStatic("haxe.xml.Parser", haxe.xml.Parser);
 
 		// Constructors
 		reg.bindNew("Array", function(_) return []);
