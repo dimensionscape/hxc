@@ -602,44 +602,80 @@ class Interp {
 	function compileTry(n:OpNode):Frame->Dynamic {
 		var block = compile(n.kids[0]);
 		var count = n.ints[0];
-		var catches:Array<{vId:Int, body:Frame->Dynamic}> = [];
+		var catches:Array<{vId:Int, type:String, body:Frame->Dynamic}> = [];
 		for (ci in 0...count) {
 			var vId = n.ints[1 + ci * 4 + 1];
-			catches.push({vId: vId, body: compile(n.kids[1 + ci])});
+			var typeId = n.ints[1 + ci * 4 + 3];
+			var type = (typeId >= 0 && typeId < types.length) ? types[typeId] : "Dynamic";
+			catches.push({vId: vId, type: type, body: compile(n.kids[1 + ci])});
 		}
 		return function(f):Dynamic {
+			var raw:Dynamic;
+			var isValue:Bool;
 			try {
 				return block(f);
 			} catch (e:haxe.Exception) {
-				// Control-flow signals and the budget meter must flow past a catch; everything
-				// else (a script `throw`, a host exception from a binding) is catchable so a
-				// script `catch(e:Dynamic)` behaves like Haxe.
+				// Control-flow signals and the budget meter must flow past a catch untouched.
 				if (Std.isOfType(e, ReturnSignal) || Std.isOfType(e, BreakSignal)
 					|| Std.isOfType(e, ContinueSignal) || Std.isOfType(e, BudgetError))
 					throw e;
-				if (catches.length == 0)
-					throw e;
-				f.locals.set(catches[0].vId, caughtValue(e));
-				return catches[0].body(f);
+				// A script `throw` or a value thrown by a binding (wrapped in ValueException) unwraps to
+				// the raw value; any other haxe.Exception is a real exception object.
+				if (Std.isOfType(e, ScriptThrow)) { raw = (cast e : ScriptThrow).value; isValue = !isExceptionValue(raw); }
+				else if (Std.isOfType(e, haxe.ValueException)) { raw = (cast e : haxe.ValueException).value; isValue = true; }
+				else { raw = e; isValue = false; }
 			} catch (e:Dynamic) {
-				// A raw non-haxe.Exception host throw (e.g. `throw "Overflow"` from Int64.toInt), which a
-				// script `catch(e:Dynamic)` must still catch with the value unwrapped.
-				if (catches.length == 0)
-					throw e;
-				f.locals.set(catches[0].vId, e);
-				return catches[0].body(f);
+				// A raw non-haxe.Exception host throw (e.g. `throw "Overflow"`).
+				raw = e; isValue = true;
 			}
+			return dispatchCatch(f, catches, raw, isValue);
 		};
 	}
 
-	// The value a script `catch` binds: a script throw and a host thrown value both unwrap to
-	// the original value; any other host exception is passed through as the exception object.
-	static function caughtValue(e:haxe.Exception):Dynamic {
-		if (Std.isOfType(e, ScriptThrow))
-			return (cast e : ScriptThrow).value;
-		if (Std.isOfType(e, haxe.ValueException))
-			return (cast e : haxe.ValueException).value;
-		return e;
+	// Pick the first catch clause whose declared type matches the thrown thing, shape the bound
+	// value to that type (a raw value stays raw for a value/Dynamic catch, but is wrapped in a
+	// ValueException when caught as Exception/ValueException so e.value/e.message work), run it.
+	// A thrown thing is an "exception" (not a value that catch(e:ValueException) matches) if it is a
+	// real host haxe.Exception or a script class whose super chain reaches haxe.Exception.
+	function isExceptionValue(v:Dynamic):Bool {
+		if (v == null)
+			return false;
+		if (Std.isOfType(v, haxe.Exception))
+			return true;
+		if (Std.isOfType(v, ScriptObject)) {
+			var c = (v : ScriptObject).cls;
+			while (c != null) {
+				if (c.name == "haxe.Exception" || c.superName == "haxe.Exception")
+					return true;
+				c = c.superClass;
+			}
+		}
+		return false;
+	}
+
+	function dispatchCatch(f:Frame, catches:Array<{vId:Int, type:String, body:Frame->Dynamic}>, raw:Dynamic, isValue:Bool):Dynamic {
+		for (c in catches) {
+			var name = stripPath(c.type);
+			var match = switch (name) {
+				case "Dynamic": true;
+				case "haxe.Exception" | "Exception": true;
+				case "haxe.ValueException" | "ValueException": isValue;
+				case _: isValue ? isOfTypeNamed(raw, c.type) : isOfTypeNamed(raw, c.type);
+			};
+			if (match) {
+				var bound:Dynamic = switch (name) {
+					case "haxe.Exception" | "Exception" | "haxe.ValueException" | "ValueException":
+						isValue ? new haxe.ValueException(raw) : raw;
+					case _: raw;
+				};
+				f.locals.set(c.vId, bound);
+				return c.body(f);
+			}
+		}
+		// No clause matched: rethrow so an outer try (or the host) sees it.
+		if (isValue)
+			throw new ScriptThrow(raw);
+		throw (raw : haxe.Exception);
 	}
 
 	static inline function loopBody(b:Frame->Dynamic, f:Frame):Void {
