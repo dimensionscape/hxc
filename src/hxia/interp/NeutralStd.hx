@@ -145,6 +145,12 @@ class NeutralStd {
 		reg.bindMember("haxe.io.BytesOutput", "writeInt8", function(o, a) { (o : haxe.io.BytesOutput).writeInt8(a[0]); return null; });
 		reg.bindMember("haxe.io.BytesOutput", "writeInt16", function(o, a) { (o : haxe.io.BytesOutput).writeInt16(a[0]); return null; });
 		reg.bindMember("haxe.io.BytesOutput", "writeInt32", function(o, a) { (o : haxe.io.BytesOutput).writeInt32(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeInt24", function(o, a) { (o : haxe.io.BytesOutput).writeInt24(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeUInt16", function(o, a) { (o : haxe.io.BytesOutput).writeUInt16(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeUInt24", function(o, a) { (o : haxe.io.BytesOutput).writeUInt24(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "get_length", function(o, a) return (o : haxe.io.BytesOutput).length);
+		reg.bindMember("haxe.io.BytesInput", "readInt24", function(o, a) return (o : haxe.io.BytesInput).readInt24());
+		reg.bindMember("haxe.io.BytesInput", "readUInt24", function(o, a) return (o : haxe.io.BytesInput).readUInt24());
 		reg.bindMember("haxe.io.BytesOutput", "prepare", function(o, a) { (o : haxe.io.BytesOutput).prepare(a[0]); return null; });
 		reg.bindMember("haxe.io.BytesOutput", "write", function(o, a) { (o : haxe.io.BytesOutput).write((a[0] : NeutralBytes).toHost()); return null; });
 		reg.bindMember("haxe.io.BytesOutput", "flush", function(o, a) { (o : haxe.io.BytesOutput).flush(); return null; });
