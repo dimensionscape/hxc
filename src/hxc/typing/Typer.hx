@@ -2561,7 +2561,26 @@ class Typer {
 				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
 				return md == null ? null : scan(md.types);
 			}
-			for (imp in imports.names) { var r = scanPath(imp.modulePath); if (r != null) return r; }
+			for (imp in imports.names) {
+				if (imp.aliased == true) continue;
+				if (imp.sub != null) {
+					// A sub-type import (`import pack.Module.Sub`) exposes constructors/members only when the
+					// imported sub-type is ITSELF an enum or enum-abstract (`import haxe.CallStack.StackItem`
+					// brings FilePos/Method/...); it must not expose a sibling enum in the same module, or a
+					// member like haxe.display.Display.DisplayItemKind.Type would shadow the std Type class when
+					// only the sibling `Package` typedef was imported. Scan just the imported sub-type.
+					var md = try hxc.context.ModuleLoader.loadModule(ctx.com, imp.modulePath, Position.nullPos) catch (_:Dynamic) null;
+					if (md != null) {
+						try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
+						for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == imp.sub) {
+							var r = scan([mt]); if (r != null) return r;
+						}
+					}
+				} else {
+					// A whole-module import (`import pack.Module`) brings every enum's constructors into scope.
+					var r = scanPath(imp.modulePath); if (r != null) return r;
+				}
+			}
 			for (w in imports.wildcards) { var r = scanPath(w); if (r != null) return r; }
 		}
 		return null;
