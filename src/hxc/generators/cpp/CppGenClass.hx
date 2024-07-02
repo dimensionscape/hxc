@@ -878,7 +878,7 @@ class CppGenClass {
 	// debugger can inspect them at a breakpoint.
 	function baseDebugLevel():Int {
 		if (com.defines.rawDefined("annotate_source")) return 3;
-		if (com.defines.rawDefined("hxcpp_debugger")) return 2;
+		if (com.defines.rawDefined("HXCPP_DEBUGGER")) return 2;
 		return com.defines.rawDefined("no_debug") ? 0 : 1;
 	}
 
