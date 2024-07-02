@@ -864,7 +864,7 @@ class Calls {
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline || faCall.isInline, forcePos);
+						makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);
@@ -994,7 +994,7 @@ class Calls {
 							};
 							if (DebugDump.enabled("select", p))
 								DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
-							makeCall(ctx, ce, r.el, ret, p, forceInline || faCall.isInline, forcePos);
+							makeCall(ctx, ce, r.el, ret, p, forceInline, forcePos);
 						case _:
 							callExpr(ctx, ce, el, p);
 					}

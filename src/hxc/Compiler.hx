@@ -361,6 +361,10 @@ class Compiler {
 					ctx.defines.rawDefine("debug");
 				case "--no-opt":
 					ctx.foptimize = false;
+				case "--no-traces":
+					ctx.defines.rawDefine("no_traces");
+				case "--no-inline":
+					ctx.defines.rawDefine("no_inline");
 				case "--dce" | "-dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
 				case "-java" | "--java":
