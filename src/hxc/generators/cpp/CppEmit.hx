@@ -48,6 +48,23 @@ class CppEmit {
 
 	inline function spacer():String return debugLevel > 0 ? "            \t" : "";
 
+	// The name the debugger shows for a local is its @:realPath (set when RenameVars rewrote the emitted
+	// name) or, failing that, its source name.
+	static function cppVarDebugNameOf(v:TVar):String {
+		for (m in v.meta) if (m.name == ":realPath") switch (m.params[0].expr) {
+			case EConst(CString(s, _)): return s;
+			case _:
+		}
+		return v.name;
+	}
+
+	// A HX_VAR macro takes the type as a single token, so a comma in a template type (Map<K,V>) is passed
+	// as HX_COMMA to survive macro argument splitting.
+	static function cppMacroVarTypeOf(v:TVar):String {
+		var t = CppTypeText.tcppToString(CppTypeOf.cppTypeOf(v.type));
+		return t.indexOf(",") >= 0 ? StringTools.replace(t, ",", " HX_COMMA ") : t;
+	}
+
 	// genExpressionTree retypes the body and emits it, with an optional prologue (the stack-frame /
 	// default-values injection) emitted at the top block's start.
 	// The setvar: a literal prefix (e.g. `origin = ` or `_hx_result = `) emitted just before the last
@@ -149,7 +166,19 @@ class CppEmit {
 			case CppNullAccess: out("::hx::Throw(" + CppTypeText.strq(smartStrings, "Null access") + ")");
 			case CppVar(loc): genVarLoc(loc);
 			case CppVarDecl(v, init):
-				out(CppTypeText.tcppToString(CppTypeOf.cppTypeOf(v.type)) + " " + CppTypeText.cppVarNameOf(v));
+				// At debug level >= 2 a debuggable local is declared through HX_VAR / HX_VARI (or the _NAME
+				// form when the emitted name differs from the debug name) so the interactive debugger can
+				// enumerate and inspect it; otherwise a plain C++ declaration.
+				var dName = CppTypeText.cppVarNameOf(v);
+				if (CppGenClass.cppNoDebugSymbol(debugLevel, v)) {
+					out(CppTypeText.tcppToString(CppTypeOf.cppTypeOf(v.type)) + " " + dName);
+				} else {
+					var dbgName = cppVarDebugNameOf(v);
+					var mac = init == null ? "HX_VAR" : "HX_VARI";
+					var varType = cppMacroVarTypeOf(v);
+					if (dName != dbgName) out(mac + "_NAME( " + varType + "," + dName + ",\"" + dbgName + "\")");
+					else out(mac + "( " + varType + "," + dName + ")");
+				}
 				switch (init) { case null: case i: out(" = "); gen(i); }
 			// An assignment used as a value (non-void cpptype, e.g. nested inside `a + (b = c)`) is wrapped
 			// in parentheses so C++ precedence keeps the assignment together; a statement is not.
@@ -627,6 +656,17 @@ class CppEmit {
 			// hxStackPush always ticks the file-id counter, and the same counter numbers _hx_array_data_
 			// tables, so the closure frame must tick too.
 			CppGenClass.hxStackPush(com, writer, emitClassName, emitFuncName, closure.closeExpr.pos.file, lineOf(closure.closeExpr.pos), gc, fileId, debugLevel, forHeader, true);
+			// At debug level >= 2 the closure prologue registers the captured `this` (as __this.mPtr) and
+			// each visible argument, then marks the closure body's opening line. These lines are indented
+			// by the closure body depth (writeI), like the frame above.
+			if (debugLevel >= 2) {
+				if (closure.closeThis != null) { writer.write("            \t"); writer.writeI("HX_STACK_THIS(__this.mPtr)\n"); }
+				for (a in closure.closeArgs) if (!CppGenClass.cppNoDebugSymbol(debugLevel, a.v)) {
+					writer.write("            \t");
+					writer.writeI("HX_STACK_ARG(" + CppTypeText.cppVarNameOf(a.v) + ",\"" + cppVarDebugNameOf(a.v) + "\")\n");
+				}
+				writer.write("HXLINE(" + StringTools.lpad(Std.string(lineOf(closure.closeExpr.pos)), " ", 4) + ")\n");
+			}
 		};
 		genWithInjection(closure.closeExpr, true);
 		topPrologue = saved;

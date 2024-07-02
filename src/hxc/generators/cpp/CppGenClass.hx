@@ -873,9 +873,43 @@ class CppGenClass {
 		else w.write("            \t" + frame);
 	}
 
+	// The debug level: -D annotate-source is 3, -D hxcpp-debugger is 2, otherwise the base level (0 when -D
+	// no-debug, else 1). Level >= 2 is what makes the prologue register this/args so the interactive
+	// debugger can inspect them at a breakpoint.
+	function baseDebugLevel():Int {
+		if (com.defines.rawDefined("annotate_source")) return 3;
+		if (com.defines.rawDefined("hxcpp_debugger")) return 2;
+		return com.defines.rawDefined("no_debug") ? 0 : 1;
+	}
+
 	// A @:noDebug field (or class) drops the debug level to 0 for its body.
 	function fieldDebugLevel(field:TClassField):Int {
-		return (TypeFunctions.hasMeta(":noDebug", field.meta) || TypeFunctions.hasMeta(":noDebug", classDef.meta)) ? 0 : 1;
+		return (TypeFunctions.hasMeta(":noDebug", field.meta) || TypeFunctions.hasMeta(":noDebug", classDef.meta)) ? 0 : baseDebugLevel();
+	}
+
+	// At level >= 2 an argument becomes a debuggable HX_STACK_ARG only when it is a user local of a
+	// reflectable, non-native type whose name is not a compiler temp.
+	public static function cppNoDebugSymbol(debug:Int, v:TVar):Bool {
+		if (debug <= 1) return true;
+		if (!v.kind.match(VUser(_))) return true;
+		return switch (CppTypeOf.cppTypeOf(v.type)) {
+			case TCppStar(_, _) | TCppReference(_): true;
+			case TCppInst(c, _) if (TypeFunctions.hasMeta(":structAccess", c.meta) || TypeFunctions.hasMeta(":unreflective", c.meta)): true;
+			case _:
+				var name = v.name;
+				name.length > 4 && name.substr(0, 4) == "_hx_";
+		};
+	}
+
+	// The level>=2 debugger prologue that follows the stack frame: register `this` (a member method uses
+	// `this`, a closure `__this`) and each inspectable argument as a stack variable, then mark the body's
+	// opening line so a breakpoint on the signature resolves to a real position.
+	static function hxStackDebugVars(w:CppWriter, debug:Int, isStatic:Bool, realThisPtr:Bool, args:Array<TVar>, frameLine:Int):Void {
+		if (debug < 2) return;
+		if (!isStatic) w.write("            \tHX_STACK_THIS(" + (realThisPtr ? "this" : "__this") + ")\n");
+		for (v in args) if (!cppNoDebugSymbol(debug, v))
+			w.write("            \tHX_STACK_ARG(" + CppTypeText.cppVarNameOf(v) + ",\"" + v.name + "\")\n");
+		w.write("HXLINE(" + StringTools.lpad(Std.string(frameLine), " ", 4) + ")\n");
 	}
 
 	function genFieldCpp(w:CppWriter, isStatic:Bool, field:TClassField):Void {
@@ -915,7 +949,7 @@ class CppGenClass {
 				var emit = new CppEmit(com, w, dbg, !isStatic, cppFileId);
 				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); }, null, dotName, field.name);
+					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine); }, null, dotName, field.name);
 				w.write("\n\n");
 				var doDynamic = !isOverride(field) && reflective(field);
 				if (doDynamic) {
@@ -979,10 +1013,11 @@ class CppGenClass {
 			w.write("void " + className + "::__construct(" + ctorTypeArgs + ")");
 			var dotName = joinPath(classDef.path, ".");
 			var frameLine = CppEmit.getErrorLine(ctorTf.expr.pos);
-			var emitCtor = new CppEmit(com, w, 1, true, cppFileId);
+			var ctorDbg = classDef.constructor != null ? fieldDebugLevel(classDef.constructor) : baseDebugLevel();
+			var emitCtor = new CppEmit(com, w, ctorDbg, true, cppFileId);
 			var ctorDefaults = [for (a in ctorTf.args) {v: a.v, dflt: a.c}];
 			emitCtor.genExpressionTree([for (a in ctorTf.args) a.v], ctorTf.type, ctorTf.expr,
-				function(gc) { emitCtor.cppGenDefaultValues(ctorDefaults, "__o_"); hxStackPush(com, w, dotName, "new", ctorTf.expr.pos.file, frameLine, gc, cppFileId); }, null, dotName, "new");
+				function(gc) { emitCtor.cppGenDefaultValues(ctorDefaults, "__o_"); hxStackPush(com, w, dotName, "new", ctorTf.expr.pos.file, frameLine, gc, cppFileId, ctorDbg); hxStackDebugVars(w, ctorDbg, false, true, [for (a in ctorTf.args) a.v], frameLine); }, null, dotName, "new");
 			// A real ctor body is followed by a single newline (an empty ctor uses " { }\n\n").
 			w.write("\n");
 		}
@@ -1121,7 +1156,8 @@ class CppGenClass {
 		if (ctorTf != null) {
 			var frameLine = CppEmit.getErrorLine(ctorTf.expr.pos);
 			w.write(smartName + "::" + smartName + "(" + ctxArgList(ctorTf.args, "") + ")");
-			var emitCtor = new CppEmit(com, w, 1, true, cppFileId);
+			var ctorDbg = classDef.constructor != null ? fieldDebugLevel(classDef.constructor) : baseDebugLevel();
+			var emitCtor = new CppEmit(com, w, ctorDbg, true, cppFileId);
 			// A super() call in the ctor body is emitted as a C++ base initializer list.
 			if (classDef.superClass != null) {
 				var superArgs = findSuperArgs(ctorTf.expr);
@@ -1132,7 +1168,7 @@ class CppGenClass {
 			}
 			var ctorDefaults = [for (a in ctorTf.args) {v: a.v, dflt: a.c}];
 			emitCtor.genExpressionTree([for (a in ctorTf.args) a.v], ctorTf.type, ctorTf.expr,
-				function(gc) { emitCtor.cppGenDefaultValues(ctorDefaults, "__o_"); hxStackPush(com, w, dotName, "new", ctorTf.expr.pos.file, frameLine, gc, cppFileId); }, null, dotName, "new");
+				function(gc) { emitCtor.cppGenDefaultValues(ctorDefaults, "__o_"); hxStackPush(com, w, dotName, "new", ctorTf.expr.pos.file, frameLine, gc, cppFileId, ctorDbg); hxStackDebugVars(w, ctorDbg, false, true, [for (a in ctorTf.args) a.v], frameLine); }, null, dotName, "new");
 		}
 		genCloseNamespace(w);
 		return w.getHeader() + w.getBody();
@@ -1251,8 +1287,11 @@ class CppGenClass {
 		// goto/const-array ids in its body use their own counter and do not advance the shared per-file
 		// counter that numbers the methods' goto labels and const-array tables.
 		var initFileId = {v: -1};
-		new CppEmit(com, w, 1, false, initFileId).genExpressionTree([], TypeFunctions.tDynamic, classDef.init,
-			function(gc) hxStackPush(com, w, cppName, "__init__", classDef.init.pos.file, frameLine, gc, initFileId), null, cppName, "__init__");
+		// The class-init body runs at the global debug level (it is not dropped per-field), so a closure
+		// inside __init__ still gets its debug>=2 stack registrations.
+		var initDbg = baseDebugLevel();
+		new CppEmit(com, w, initDbg, false, initFileId).genExpressionTree([], TypeFunctions.tDynamic, classDef.init,
+			function(gc) hxStackPush(com, w, cppName, "__init__", classDef.init.pos.file, frameLine, gc, initFileId, initDbg), null, cppName, "__init__");
 		w.write("\n\n");
 	}
 
