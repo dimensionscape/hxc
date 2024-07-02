@@ -16,6 +16,16 @@ class NeutralStd {
 		#end
 	}
 
+	// readBytes into a shim buffer: read into a host Bytes, then copy into the shim's array. Returns
+	// the number of bytes actually read (the host Input may read fewer than requested at EOF).
+	static function ioReadBytes(input:Dynamic, buf:NeutralBytes, pos:Int, len:Int):Int {
+		var tmp = haxe.io.Bytes.alloc(len);
+		var got = (input : haxe.io.Input).readBytes(tmp, 0, len);
+		for (i in 0...got)
+			buf.b[pos + i] = tmp.get(i);
+		return got;
+	}
+
 	public static function install(reg:HostRegistry, logSink:String->Void):Void {
 		// Authority-free std classes: their statics resolve reflectively when not explicitly
 		// bound (the explicit bindings above keep priority and stay DCE-safe on every host).
@@ -112,6 +122,35 @@ class NeutralStd {
 		reg.bindMember("haxe.io.BytesInput", "readByte", function(o, a) return (o : haxe.io.BytesInput).readByte());
 		reg.bindMember("haxe.io.BytesInput", "readString", function(o, a) return (o : haxe.io.BytesInput).readString(a[0]));
 		reg.bindMember("haxe.io.BytesInput", "readLine", function(o, a) return (o : haxe.io.BytesInput).readLine());
+		reg.bindMember("haxe.io.BytesInput", "readFloat", function(o, a) return (o : haxe.io.BytesInput).readFloat());
+		reg.bindMember("haxe.io.BytesInput", "readDouble", function(o, a) return (o : haxe.io.BytesInput).readDouble());
+		reg.bindMember("haxe.io.BytesInput", "readInt8", function(o, a) return (o : haxe.io.BytesInput).readInt8());
+		reg.bindMember("haxe.io.BytesInput", "readInt16", function(o, a) return (o : haxe.io.BytesInput).readInt16());
+		reg.bindMember("haxe.io.BytesInput", "readInt32", function(o, a) return (o : haxe.io.BytesInput).readInt32());
+		reg.bindMember("haxe.io.BytesInput", "readUInt16", function(o, a) return (o : haxe.io.BytesInput).readUInt16());
+		// readBytes/read fill a shim buffer: read into a host Bytes then copy into the shim's array.
+		reg.bindMember("haxe.io.BytesInput", "readBytes", function(o, a) return ioReadBytes(o, a[0], a[1], a[2]));
+		reg.bindMember("haxe.io.BytesInput", "read", function(o, a) return NeutralBytes.fromHost((o : haxe.io.BytesInput).read(a[0])));
+		reg.bindMember("haxe.io.BytesInput", "set_bigEndian", function(o, a) { (o : haxe.io.BytesInput).bigEndian = a[0]; return a[0]; });
+		reg.bindMember("haxe.io.BytesInput", "get_bigEndian", function(o, a) return (o : haxe.io.BytesInput).bigEndian);
+
+		// BytesOutput accumulates into a host Bytes; getBytes returns it wrapped in the shim.
+		reg.bindNew("haxe.io.BytesOutput", function(_) return new haxe.io.BytesOutput());
+		reg.bindMember("haxe.io.BytesOutput", "getBytes", function(o, a) return NeutralBytes.fromHost((o : haxe.io.BytesOutput).getBytes()));
+		reg.bindMember("haxe.io.BytesOutput", "writeByte", function(o, a) { (o : haxe.io.BytesOutput).writeByte(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeBytes", function(o, a) return (o : haxe.io.BytesOutput).writeBytes((a[0] : NeutralBytes).toHost(), a[1], a[2]));
+		reg.bindMember("haxe.io.BytesOutput", "writeString", function(o, a) { (o : haxe.io.BytesOutput).writeString(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeFloat", function(o, a) { (o : haxe.io.BytesOutput).writeFloat(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeDouble", function(o, a) { (o : haxe.io.BytesOutput).writeDouble(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeInt8", function(o, a) { (o : haxe.io.BytesOutput).writeInt8(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeInt16", function(o, a) { (o : haxe.io.BytesOutput).writeInt16(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "writeInt32", function(o, a) { (o : haxe.io.BytesOutput).writeInt32(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "prepare", function(o, a) { (o : haxe.io.BytesOutput).prepare(a[0]); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "write", function(o, a) { (o : haxe.io.BytesOutput).write((a[0] : NeutralBytes).toHost()); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "flush", function(o, a) { (o : haxe.io.BytesOutput).flush(); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "close", function(o, a) { (o : haxe.io.BytesOutput).close(); return null; });
+		reg.bindMember("haxe.io.BytesOutput", "set_bigEndian", function(o, a) { (o : haxe.io.BytesOutput).bigEndian = a[0]; return a[0]; });
+		reg.bindMember("haxe.io.BytesOutput", "get_bigEndian", function(o, a) return (o : haxe.io.BytesOutput).bigEndian);
 
 		// Crypto over Bytes: convert the shim to/from a host Bytes at the boundary so the real
 		// algorithms run unchanged; string-input digests pass through directly.
