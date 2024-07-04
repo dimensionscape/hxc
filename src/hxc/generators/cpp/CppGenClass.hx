@@ -967,7 +967,9 @@ class CppGenClass {
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
 					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine); }, null, dotName, field.name);
 				w.write("\n\n");
-				var doDynamic = !isOverride(field) && reflective(field);
+				// doDynamic = (nonVirtual || !isOverride) && reflective. A @:nonVirtual override still gets
+				// its dynamic wrapper (matching the header decl at genMemberDefHeader).
+				var doDynamic = (TypeFunctions.hasMeta(":nonVirtual", field.meta) || !isOverride(field)) && reflective(field);
 				if (doDynamic) {
 					// = "(void)" | "return " (with the trailing space)
 					var ret = isVoid ? "(void)" : "return ";
