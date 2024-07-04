@@ -194,10 +194,24 @@ class CppEmit {
 						gen(obj); out("->__SetItem("); gen(idx); out(","); gen(value); out(")");
 					case CppArrayRef(ArrayImplements(_, obj, idx)):
 						gen(obj); out("->__set("); gen(idx); out(","); gen(value); out(")");
+					// Under HXCPP_GC_GENERATIONAL a store into a GC-pointer array element goes through
+					// setCtx (the write-barrier array set) instead of a direct bracket assignment.
+					case CppArrayRef(ArrayObject(obj, idx, _)) if (CppGenClass.isGcElementFor(com, TCppDynamic)):
+						gen(obj); out("->setCtx( HX_CTX, "); gen(idx); out(","); gen(value); out(")");
+					case CppArrayRef(ArrayTyped(obj, idx, t)) if (CppGenClass.isGcElementFor(com, t)):
+						gen(obj); out("->setCtx( HX_CTX, "); gen(idx); out(","); gen(value); out(")");
 					case CppArrayRef(ArrayObject(obj, idx, _)):
 						gen(obj); out("["); gen(idx); out("] = "); gen(value);
 					case CppDynamicRef(e, name):
 						gen(e); out("->__SetField(" + CppTypeText.strq(smartStrings, name) + ","); gen(value); out(",::hx::paccDynamic)");
+					// Under HXCPP_GC_GENERATIONAL a write to a GC-pointer member field routes through its
+					// write-barrier setter (_hx_set_<name>(HX_CTX, value)) instead of a direct store.
+					case CppVarRef(VarThis(cf, _)) if (CppGenClass.isGcElementFor(com, CppTypeOf.cppTypeOf(cf.type))):
+						out("this->_hx_set_" + CppTypeText.cppMemberNameOf(cf) + "(HX_CTX, "); gen(value); out(")");
+					case CppVarRef(VarInstance(obj, cf, _, "->")) if (CppGenClass.isGcElementFor(com, CppTypeOf.cppTypeOf(cf.type))):
+						gen(obj); out("->_hx_set_" + CppTypeText.cppMemberNameOf(cf) + "(HX_CTX, "); gen(value); out(")");
+					case CppVarRef(VarClosure(v)) if (CppGenClass.isGcElementFor(com, CppTypeOf.cppTypeOf(v.type))):
+						out("this->_hx_set_" + CppTypeText.cppVarNameOf(v) + "(HX_CTX, "); gen(value); out(")");
 					case _:
 						genLValue(lvalue); out(" = "); gen(value);
 				}

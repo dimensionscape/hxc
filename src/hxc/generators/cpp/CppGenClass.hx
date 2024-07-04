@@ -389,6 +389,10 @@ class CppGenClass {
 				if (fieldIsDynamic(field)) {
 					if (doDynamic) {
 						w.write("::Dynamic " + remapName + ";\n");
+						// A GC-managed dynamic-method field gets a write-barrier setter too, typed
+						// ::Dynamic, so a reassignment of `dynamic function f` records the store.
+						if (!isStatic && isGcElement(TCppDynamic))
+							w.write("\t\tinline ::Dynamic _hx_set_" + remapName + "(::hx::StackContext *_hx_ctx,::Dynamic _hx_v) { HX_OBJ_WB(this,_hx_v.mPtr) return " + remapName + "=_hx_v; }\n");
 						w.write(isStatic ? "\t\tstatic " : "\t\t");
 						w.write("inline ::Dynamic &" + remapName + "_dyn() {return " + remapName + "; }\n");
 					}
@@ -431,6 +435,15 @@ class CppGenClass {
 				// Member variable declaration: the C++ type + name
 				var tcpp = CppTypeOf.cppTypeOf(field.type);
 				w.write(CppTypeText.tcppToString(tcpp) + " " + remapName + ";\n");
+				// Under HXCPP_GC_GENERATIONAL a GC-pointer member field gets an inline write-barrier
+				// setter: a store records itself (HX_OBJ_WB) so the generational collector rescans this
+				// object. The barrier argument is the value's raw pointer.
+				if (!isStatic && isGcElement(tcpp)) {
+					var ts2 = CppTypeText.tcppToString(tcpp);
+					var getPtr = tcpp.match(TCppString) ? ".raw_ref()" : ".mPtr";
+					w.write("		inline " + ts2 + " _hx_set_" + remapName + "(::hx::StackContext *_hx_ctx," + ts2 + " _hx_v) { HX_OBJ_WB(this,_hx_v" + getPtr + ") return " + remapName + "=_hx_v; }
+");
+				}
 				// Unify variable/function access: a function-typed var gets a _dyn() accessor
 				switch (TypeFunctions.follow(field.type)) {
 					case TFun(_):
@@ -1645,7 +1658,11 @@ class CppGenClass {
 
 	// Only under the generational GC define is an object member a GC element.
 	function isGcElement(t:CppType):Bool {
-		return com.defines.rawDefined("hxcpp_gc_generational") && isObjectElement(t);
+		return isGcElementFor(com, t);
+	}
+
+	public static function isGcElementFor(com:Context, t:CppType):Bool {
+		return com.defines.rawDefined("HXCPP_GC_GENERATIONAL") && isObjectElement(t);
 	}
 
 	// __SetStatic: reflective static-var writes.

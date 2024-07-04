@@ -779,7 +779,7 @@ private class RetypeSession {
 
 	// Only under generational GC.
 	inline function isGcElement(memberType:CppType):Bool {
-		return com.defines.rawDefined("HxcppGcGenerational") && isObjectElement(memberType);
+		return com.defines.rawDefined("HXCPP_GC_GENERATIONAL") && isObjectElement(memberType);
 	}
 
 	// Turn a retyped value into an assignable lvalue, flagging GC targets
