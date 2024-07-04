@@ -1212,10 +1212,11 @@ class CppGenClass {
 				var dotName = joinPath(classDef.path, ".");
 				var frameLine = CppEmit.getErrorLine(tf.expr.pos);
 				w.write(ret + " " + smartName + "::" + name + "(" + ctxArgList(tf.args, "") + ")");
-				var emit = new CppEmit(com, w, 1, !isStatic, cppFileId);
+				var ngDbg = fieldDebugLevel(f);
+				var emit = new CppEmit(com, w, ngDbg, !isStatic, cppFileId);
 				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, name, tf.expr.pos.file, frameLine, gc, cppFileId); }, null, dotName, name);
+					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, name, tf.expr.pos.file, frameLine, gc, cppFileId, ngDbg); hxStackDebugVars(w, ngDbg, isStatic, true, [for (a in tf.args) a.v], frameLine); }, null, dotName, name);
 				// Every field body is followed by a double newline.
 				w.write("\n\n");
 			case _:
