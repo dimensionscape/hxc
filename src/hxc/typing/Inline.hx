@@ -297,6 +297,11 @@ class Inline {
 				case TFun(sig):
 					for (i in 0...params.length) if (i < sig.args.length)
 						try hxc.core.TypeUnification.unifyDefault(params[i].type, mapSoFar(sig.args[i].t)) catch (_:haxe.Exception) {};
+					// Also bind a RETURN-only method type parameter from the (already inferred) return type,
+					// so a generic function whose type parameter appears only in its result - e.g.
+					// cpp.Stdlib.malloc<T>:cpp.Pointer<T> - infers T instead of leaving it Dynamic.
+					if (tret != null)
+						try hxc.core.TypeUnification.unifyDefault(tret, mapSoFar(sig.ret)) catch (_:haxe.Exception) {};
 				case _:
 			}
 		}

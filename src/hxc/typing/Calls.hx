@@ -986,6 +986,21 @@ class Calls {
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
 							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
+							// A generic method with a return-only type parameter (e.g. cpp.Stdlib.malloc<T>
+							// : cpp.Pointer<T>, whose T is not in any argument) infers T from the expected
+							// type before
+							// makeCall inlines and closes the monomorphs; otherwise T defaults to Dynamic
+							// and the inlined
+							// cast is cpp.Pointer<Dynamic>. A @:generic method does the same inside
+							// genericFieldAccess
+							// (unifying the call's return with the with-type first); do the same for a
+							// plain generic method
+							// here.
+							if (cf.params.length > 0 && !TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && withType != null)
+								switch (withType) {
+									case WithType(t, _): try TypeUnification.unifyDefault(sig.ret, t) catch (_:hxc.core.TypeUnification.UnifyError) {}
+									case _:
+								}
 							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, withType);
 							if (faCall != fa2) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 							var ret = switch (TypeFunctions.follow(ce.type)) {
