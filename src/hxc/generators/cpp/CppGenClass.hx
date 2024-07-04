@@ -839,7 +839,9 @@ class CppGenClass {
 		// captured call/exception stack (haxe.NativeStackTrace.callStack); it still gets
 		// HX_JUST_GC_STACKFRAME when the body allocates.
 		if (debug <= 0) {
-			if (gcStack) w.write("            \tHX_JUST_GC_STACKFRAME\n");
+			// A @:noDebug function body is indented by a single tab, not the 12-space debug spacer, so its
+			// HX_JUST_GC_STACKFRAME aligns to one tab.
+			if (gcStack) w.write("\tHX_JUST_GC_STACKFRAME\n");
 			return;
 		}
 		// Every stack frame bumps the shared per-file counter (the id is not used here, but the bump keeps
