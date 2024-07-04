@@ -925,10 +925,11 @@ class CppGenClass {
 					var dotNameD = joinPath(classDef.path, ".");
 					var frameLineD = CppEmit.getErrorLine(tf.expr.pos);
 					var frameFileD = tf.expr.pos.file;
-					var emitD = new CppEmit(com, w, 1, false, cppFileId);
+					var dbgD = fieldDebugLevel(field);
+					var emitD = new CppEmit(com, w, dbgD, false, cppFileId);
 					var defaultsD = [for (a in tf.args) {v: a.v, dflt: a.c}];
 					emitD.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-						function(gc) { emitD.cppGenDefaultValues(defaultsD, "__o_"); hxStackPush(com, w, dotNameD, funcName, frameFileD, frameLineD, gc, cppFileId); }, null, dotNameD, funcName);
+						function(gc) { emitD.cppGenDefaultValues(defaultsD, "__o_"); hxStackPush(com, w, dotNameD, funcName, frameFileD, frameLineD, gc, cppFileId, dbgD); hxStackDebugVars(w, dbgD, isStatic, false, [for (a in tf.args) a.v], frameLineD); }, null, dotNameD, funcName);
 					w.write("HX_END_LOCAL_FUNC" + tf.args.length + "(" + (isVoidD ? "(void)" : "return ") + ")\n");
 					w.write("HX_END_DEFAULT_FUNC\n\n");
 					if (isStatic) w.write("::Dynamic " + className + "::" + nativeFieldNameRemap(isStatic, field) + ";\n\n");
