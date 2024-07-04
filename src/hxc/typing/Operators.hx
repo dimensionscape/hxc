@@ -170,7 +170,10 @@ class Operators {
 	public static function classify(t:T):TypeClass {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, []) if (c.path.pack.length == 0 && c.path.name == "String"): KString;
-			case TAbstract(a, tl) if (a.impl != null): KAbstract(a, tl);
+			// A @:coreType abstract is never KAbstract: it classifies by its @:to casts instead (a
+			// cpp.AtomicInt, whose to is Int, is KNumParam -> Std.string in a concat). hxc builds an impl
+			// class for a coreType abstract's native methods, so impl alone does not decide it.
+			case TAbstract(a, tl) if (a.impl != null && !TypeFunctions.hasMeta(":coreType", a.meta)): KAbstract(a, tl);
 			case TAbstract(a, []) if (a.path.pack.length == 0 && a.path.name == "Int"): KInt;
 			case TAbstract(a, []) if (a.path.pack.length == 0 && a.path.name == "Float"): KFloat;
 			case TAbstract(a, []) if (Lambda.exists(a.to, isNumLike)): KNumParam(t);
