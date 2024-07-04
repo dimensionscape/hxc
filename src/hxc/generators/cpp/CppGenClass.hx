@@ -1204,7 +1204,13 @@ class CppGenClass {
 	}
 
 	function genNativeGenMethodCpp(w:CppWriter, isStatic:Bool, f:TClassField):Void {
-		if (!isMethodField(f)) return;
+		if (!isMethodField(f)) {
+			// A @:nativeGen static physical var still needs its storage definition in the cpp (`<type>
+			// Class::name;`), just like a normal class's static.
+			if (isStatic && TypeFunctions.isPhysicalField(f))
+				w.write(CppTypeText.tcppToString(CppTypeOf.cppTypeOf(f.type)) + " " + smartName + "::" + CppTypeText.cppMemberNameOf(f) + ";\n\n");
+			return;
+		}
 		switch (f.expr.expr) {
 			case TFunction(tf):
 				var ret = CppTypeOf.cppTypeOf(tf.type).match(TCppVoid) ? "void" : ctxTypeString(tf.type);
