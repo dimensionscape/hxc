@@ -1812,8 +1812,11 @@ class CppGenClass {
 				};
 				var dotName = joinPath(classDef.path, ".");
 				var frameLine = CppEmit.getErrorLine(field.expr.pos);
-				new CppEmit(com, w, 1, false, cppFileId).genExpressionTree([], TypeFunctions.tDynamic, field.expr,
-					function(gc) hxStackPush(com, w, dotName, "boot", field.pos.file, frameLine, gc, cppFileId), name + " = ", dotName, "boot");
+				// The boot init runs at the global debug level (like __init__), so a closure in a static
+				// initializer still gets its debug>=2 stack registrations under HXCPP_DEBUGGER.
+				var bootDbg = baseDebugLevel();
+				new CppEmit(com, w, bootDbg, false, cppFileId).genExpressionTree([], TypeFunctions.tDynamic, field.expr,
+					function(gc) hxStackPush(com, w, dotName, "boot", field.pos.file, frameLine, gc, cppFileId, bootDbg), name + " = ", dotName, "boot");
 		}
 	}
 
