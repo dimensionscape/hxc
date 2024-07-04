@@ -3,6 +3,8 @@ package hxc.filters;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.Ref;
+import hxc.ast.Ast;
+import hxc.ast.Position;
 import haxe.ds.StringMap;
 import haxe.ds.IntMap;
 
@@ -203,12 +205,20 @@ class RenameVarsRun {
 		var v = entry.v;
 		var overlaps = entry.overlaps.get();
 
+		// Commit: record the pre-rename name as :realPath before mutating name, so the hxcpp debugger
+		// shows the source name (HX_STACK_ARG / HX_VARI_NAME) rather than the renamed one. An unchanged
+		// var gets :realPath == name (HX_VAR/HX_VARI), a renamed one gets the original.
+		inline function commit(newName:String):Void {
+			v.meta = [({name: ":realPath", params: [new Expr(EConst(CString(v.name, SDoubleQuotes)), Position.nullPos)], pos: Position.nullPos} : MetadataEntry)].concat(v.meta);
+			v.name = newName;
+		}
+
 		// Chop the escape char for generated locals. (GenJS.ident also does the `_g` transform at print
 		// time; doing it here first keeps the collision check consistent with the emitted name and is
 		// idempotent.)
 		if (isGenLocal(v)) {
 			var name = v.name.substr(1);
-			v.name = "_g" + stripTrailingNumbers(name);
+			commit("_g" + stripTrailingNumbers(name));
 		}
 
 		var baseName = v.name;
@@ -226,7 +236,7 @@ class RenameVarsRun {
 			count++;
 			name = baseName + count;
 		}
-		v.name = name;
+		commit(name);
 		// NoShadowing / VCaptured reservation: a CAPTURED var under hoisting reserves its renamed name so a
 		// same-named sibling in the shared function scope renames away from it; otherwise closures over an
 		// unrolled/hoisted loop var all read the last one.
