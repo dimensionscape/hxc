@@ -244,6 +244,11 @@ class CppGen {
 		function add(p:Path):Void {
 			for (q in paths) if (q.name == p.name && q.pack.join(".") == p.pack.join(".")) return;
 			paths.push(p);
+			// Main deps come from find_referenced_types over the @Main class, which pulls each referenced
+			// type's super chain (add_type follows super_deps); so a main class extending utest.Test drags
+			// in utest.Test and utest.ITest.
+			var sd = CppGenClass.superDeps.get(CppTypeOf.joinClassPath(p, "."));
+			if (sd != null) for (sp in sd) add(sp);
 		}
 		function walk(e:TExpr):Void {
 			switch (e.expr) {
