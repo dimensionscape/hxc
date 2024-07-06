@@ -72,6 +72,19 @@ class CppTypeOf {
 		return (isExternClass(c) || isNativeGenClass(c)) && !isInternalClass(c.path);
 	}
 
+	// A class implements a native interface if any implemented
+	// interface is @:nativeGen (or transitively implements one), or its superclass does.
+	public static function implementsNativeInterface(c:TClass):Bool {
+		for (i in c.interfaces) if (isNativeGenClass(i.c) || implementsNativeInterface(i.c)) return true;
+		return c.superClass != null && implementsNativeInterface(c.superClass.c);
+	}
+
+	// Only a non-native class implementing no native interface may use the
+	// generational __alloc fast path; anything touching native vtables allocates through plain __new.
+	public static function canQuickAlloc(c:TClass):Bool {
+		return !isNativeClass(c) && !implementsNativeInterface(c);
+	}
+
 	public static inline function isExternEnum(e:TEnum):Bool {
 		return e.isExtern || TypeFunctions.hasMeta(":extern", e.meta);
 	}

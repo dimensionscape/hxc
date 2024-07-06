@@ -725,7 +725,7 @@ class CppEmit {
 		// A `new C(args)` on a quick-allocatable class lowers to the fast __alloc path `C_obj::__alloc(
 		// HX_CTX ,args)` instead of a __new call
 		switch (func) {
-			case FuncNew(TCppInst(klass, p)) if (!CppTypeOf.isNativeClass(klass)):
+			case FuncNew(TCppInst(klass, p)) if (CppTypeOf.canQuickAlloc(klass)):
 				out(CppTypeText.cppClassPathOf(klass, p) + "_obj::__alloc( HX_CTX ");
 				for (arg in args) { out(","); gen(arg); }
 				out(")");

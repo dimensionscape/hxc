@@ -769,7 +769,7 @@ class CppGenClass {
 
 	// A non-native class can use the fast __alloc path.
 	function canQuickAlloc():Bool {
-		return !CppTypeOf.isNativeClass(classDef);
+		return CppTypeOf.canQuickAlloc(classDef);
 	}
 
 	// The ctor body is simple (no TReturn / no non-empty array literal) and constructs only this class or a
