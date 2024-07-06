@@ -201,9 +201,12 @@ class CppGen {
 			var name = isMain ? "__main__" : "__lib__";
 			var w = new CppWriter();
 			w.writeH("#include <hxcpp.h>\n\n#include <stdio.h>\n\nextern \"C\" void __hxcpp_main();\n\nextern \"C\" void __hxcpp_lib_main();\n\n");
-			// Include the main class header
-			if (com.main != null) for (p in mainRefs(com)) w.writeH(guardedInclude(p));
-			w.write("\n\n");
+			// With a main class the referenced headers are included, then "\n\n"; without one (for example
+			// -D static_link) neither is emitted.
+			if (com.main != null) {
+				for (p in mainRefs(com)) w.writeH(guardedInclude(p));
+				w.write("\n\n");
+			}
 			if (isMain) w.write("\n#include <hx/HxcppMain.h>\n\n");
 			w.write("void __hxcpp_main() {\n");
 			if (com.main != null) {
