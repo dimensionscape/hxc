@@ -1891,12 +1891,15 @@ class CppGenClass {
 					case _: CppTypeText.cppMemberNameOf(field);
 				};
 				var dotName = joinPath(classDef.path, ".");
+				// The boot frame position is the initializer expression's own position (expr.pos), so a
+				// macro-expanded static var points at the macro body (Loader.hx), not the class that
+				// declares the field.
 				var frameLine = CppEmit.getErrorLine(field.expr.pos);
 				// The boot init runs at the global debug level (like __init__), so a closure in a static
 				// initializer still gets its debug>=2 stack registrations under HXCPP_DEBUGGER.
 				var bootDbg = baseDebugLevel();
 				new CppEmit(com, w, bootDbg, false, cppFileId).genExpressionTree([], TypeFunctions.tDynamic, field.expr,
-					function(gc) hxStackPush(com, w, dotName, "boot", field.pos.file, frameLine, gc, cppFileId, bootDbg), name + " = ", dotName, "boot");
+					function(gc) hxStackPush(com, w, dotName, "boot", field.expr.pos.file, frameLine, gc, cppFileId, bootDbg), name + " = ", dotName, "boot");
 		}
 	}
 
