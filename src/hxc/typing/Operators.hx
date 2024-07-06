@@ -336,20 +336,25 @@ class Operators {
 		}
 		function toString(e:TExpr):TExpr {
 			// An abstract operand in a string concatenation whose impl defines toString is converted by
-			// calling it (null-checked); other operands are stringified by the runtime.
-			return switch (classify(e.type)) {
-				case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
-					callToString(e);
-				case KInt | KFloat | KString: e;
-				case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther:
-					// A non-primitive operand (Array, an enum, an anon, ...) stringifies through
-					// Std.string, not the target's native coercion.
-					stdString(e);
-				case KAbstract(_, _):
-					// An abstract with no toString is converted to String by its @:to String cast when it
-					// has one; otherwise it stringifies as its underlying value.
-					try Typer.castOrUnify(ctx, tstring, e, p) catch (_:Dynamic) e;
-			};
+			// calling it (null-checked); other operands are stringified by the runtime. The inner loop
+			// walks over the type (not the expr) so an abstract with no @:to String recurses through its
+			// underlying type: a cpp.Callable over a function reaches KOther and stringifies.
+			function loop(t:T):TExpr {
+				return switch (classify(t)) {
+					case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
+						callToString(e);
+					case KInt | KFloat | KString: e;
+					case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther:
+						// A non-primitive operand (Array, an enum, an anon, ...) stringifies through
+						// Std.string, not the target's native coercion.
+						stdString(e);
+					case KAbstract(a, tl):
+						// An abstract with no toString is converted to String by its @:to String cast when
+						// it has one; otherwise it stringifies as its underlying value.
+						try Typer.castOrUnify(ctx, tstring, e, p) catch (_:Dynamic) loop(TypeFunctions.getUnderlyingType(a, tl));
+				};
+			}
+			return loop(e.type);
 		}
 		function mkOp(a:TExpr, b:TExpr, t:T):BinopResult {
 			if (op.match(OpAdd) && (switch (classify(t)) { case KString: true; case _: false; })) {

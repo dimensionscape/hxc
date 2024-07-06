@@ -444,8 +444,9 @@ class CppGenClass {
 					w.write("		inline " + ts2 + " _hx_set_" + remapName + "(::hx::StackContext *_hx_ctx," + ts2 + " _hx_v) { HX_OBJ_WB(this,_hx_v" + getPtr + ") return " + remapName + "=_hx_v; }
 ");
 				}
-				// Unify variable/function access: a function-typed var gets a _dyn() accessor
-				switch (TypeFunctions.follow(field.type)) {
+				// Unify variable/function access: a function-typed var gets a _dyn() accessor (judged
+				// through followWithAbstracts, so a cpp.Callable var counts).
+				switch (TypeFunctions.followWithAbstracts(field.type)) {
 					case TFun(_):
 						w.write(isStatic ? "\t\tstatic " : "\t\t");
 						w.write("Dynamic " + remapName + "_dyn() { return " + remapName + ";}\n");
@@ -1628,7 +1629,9 @@ class CppGenClass {
 	// A non-function-typed field (excludes methods and dynamic methods, whose type is a TFun), as
 	// listed by __GetFields / Reflect.fields.
 	static function isDataField(f:TClassField):Bool {
-		return switch (TypeFunctions.follow(f.type)) { case TFun(_): false; case _: true; };
+		// The C++ generator follows abstracts (followWithAbstracts), so a var whose type is a non-core
+		// abstract over a function (for example cpp.Callable) is a function field, not data.
+		return switch (TypeFunctions.followWithAbstracts(f.type)) { case TFun(_): false; case _: true; };
 	}
 	function hasGetFields():Bool {
 		for (f in classDef.orderedFields) if (isDataField(f)) return true;
