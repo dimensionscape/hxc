@@ -295,6 +295,12 @@ class EvalMacro {
 			}
 			return encodeType(ec, t);
 		});
+		reg2("getModule", "get_module", function(a) {
+			// Context.getModule: type the whole module at the given path and return the list of module
+			// types it declares.
+			var m = hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(strOf(a[0])), curPos);
+			return encodeArray([for (mt in m.types) encodeType(ec, TypeFunctions.typeOfModuleType(mt))]);
+		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
 		reg2("unify", "unify", function(a) {
 			if (curTctx == null) throw new TypingError("unify outside a macro", curPos);
