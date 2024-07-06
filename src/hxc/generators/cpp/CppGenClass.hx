@@ -971,9 +971,53 @@ class CppGenClass {
 				// its dynamic wrapper (matching the header decl at genMemberDefHeader).
 				var doDynamic = (TypeFunctions.hasMeta(":nonVirtual", field.meta) || !isOverride(field)) && reflective(field);
 				if (doDynamic) {
-					// = "(void)" | "return " (with the trailing space)
-					var ret = isVoid ? "(void)" : "return ";
-					w.write((isStatic ? "STATIC_" : "") + "HX_DEFINE_DYNAMIC_FUNC" + tf.args.length + "(" + className + "," + name + "," + ret + ")\n\n");
+					// A method whose return or an argument is a native pointer / @:structAccess struct
+					// cannot round-trip through HX_DEFINE_DYNAMIC_FUNC (each value passes as a Dynamic);
+					// emit a _hx_wrap thunk that casts those values, plus a _dyn() built through
+					// Create*Function.
+					var tcppArgs = [for (a in tf.args) CppTypeOf.cppTypeOf(a.v.type)];
+					function needsWrapper(t:CppType):Bool return switch (t) {
+						case TCppStar(_, _): true;
+						case TCppInst(c, _): TypeFunctions.hasMeta(":structAccess", c.meta);
+						case _: false;
+					};
+					if (needsWrapper(returnCpp) || Lambda.exists(tcppArgs, needsWrapper)) {
+						var wrapName = "_hx_wrap" + className + "_" + name;
+						w.write("static ::Dynamic " + wrapName + "( ");
+						var sep = " ";
+						if (!isStatic) { w.write("::hx::Object *obj"); sep = ","; }
+						for (i in 0...tcppArgs.length) { w.write(sep + "const Dynamic &a" + i); sep = ","; }
+						w.write(") {\n\t");
+						if (!isVoid) switch (returnCpp) {
+							case TCppStar(_, _): w.write("return (cpp::Pointer<const void *>) ");
+							case TCppInst(c, _) if (TypeFunctions.hasMeta(":structAccess", c.meta)):
+								w.write("return (cpp::Struct< " + CppTypeText.tcppToString(returnCpp) + " >) ");
+							case _: w.write("return ");
+						}
+						w.write(isStatic ? (className + "::" + name + "(") : ("reinterpret_cast< " + className + " *>(obj)->" + name + "("));
+						var sep2 = "";
+						for (i in 0...tcppArgs.length) {
+							w.write(sep2); sep2 = ",";
+							switch (tcppArgs[i]) {
+								case TCppStar(t, isConst): w.write("(cpp::" + (isConst ? "Const" : "") + "Pointer<" + CppTypeText.tcppToString(t) + " >) ");
+								case TCppInst(c, _) if (TypeFunctions.hasMeta(":structAccess", c.meta)):
+									w.write("(cpp::Struct< " + CppTypeText.tcppToString(tcppArgs[i]) + " >) ");
+								case _:
+							}
+							w.write("a" + i);
+						}
+						w.write(");\n");
+						if (isVoid) w.write("\treturn null();\n");
+						w.write("}\n");
+						w.write("::Dynamic " + className + "::" + name + "_dyn() {\n\treturn ");
+						w.write(isStatic
+							? ("::hx::CreateStaticFunction" + tcppArgs.length + "(\"" + name + "\"," + wrapName + ");")
+							: ("::hx::CreateMemberFunction" + tcppArgs.length + "(\"" + name + "\",this," + wrapName + ");"));
+						w.write("}\n");
+					} else {
+						var ret = isVoid ? "(void)" : "return ";
+						w.write((isStatic ? "STATIC_" : "") + "HX_DEFINE_DYNAMIC_FUNC" + tf.args.length + "(" + className + "," + name + "," + ret + ")\n\n");
+					}
 				}
 			case _:
 				// Data field: a static physical var gets its storage definition in the cpp (member vars
@@ -1542,9 +1586,19 @@ class CppGenClass {
 		w.write("\t}\n");
 	}
 
-	// toDynamic / toVal wrappers a plain field value is wrapped `( v )` / `::hx::Val( v )`
+	// toDynamic / toVal wrappers: a plain field value is wrapped `( v )` / `::hx::Val( v )`.
+	// A reflective read/write of a @:structAccess or native-pointer field casts the Dynamic through
+	// cpp::Struct<T> / cpp::Pointer<T> (the boxed forms), not the raw C++ type.
 	function castOf(f:TClassField):String {
-		return CppTypeText.tcppToString(CppTypeOf.cppTypeOf(f.type));
+		var ct = CppTypeOf.cppTypeOf(f.type);
+		return switch (ct) {
+			case TCppInst(c, _) if (TypeFunctions.hasMeta(":structAccess", c.meta)):
+				"cpp::Struct< " + CppTypeText.tcppToString(ct) + " > ";
+			case TCppStar(t, _):
+				"cpp::Pointer< " + CppTypeText.tcppToString(t) + " >";
+			case _:
+				CppTypeText.tcppToString(ct);
+		};
 	}
 
 	// toCommon: every reflective read wraps `t( value )`, boxing cpp.Struct payloads and raw pointers
@@ -1652,7 +1706,7 @@ class CppGenClass {
 			case Var(k) if (k.write == AccCall):
 				var inVal = "(" + valueVar + ".Cast< " + castable + " >())";
 				var setter = CppTypeText.keywordRemap("set_" + f.name);
-				"if (" + checkPropCall(f) + ") return ::hx::Val( " + setter + inVal + " );"
+				"if (" + checkPropCall(f) + ") return " + toVal(f, setter + inVal) + ";"
 					+ (TypeFunctions.isPhysicalField(f) ? defaultAction : "");
 			case _: defaultAction;
 		};
@@ -1685,7 +1739,7 @@ class CppGenClass {
 			// physical field) falls back to the direct write.
 			var result = switch (f.kind) {
 				case Var(k) if (k.write == AccCall):
-					"if (" + checkPropCall(f) + ")  ioValue = ( " + CppTypeText.keywordRemap("set_" + f.name) + "(ioValue.Cast< " + castable + " >()) );"
+					"if (" + checkPropCall(f) + ")  ioValue = " + toDynamic(f, CppTypeText.keywordRemap("set_" + f.name) + "(ioValue.Cast< " + castable + " >())") + ";"
 						+ (TypeFunctions.isPhysicalField(f) ? " else " + defaultAction : "");
 				case _:
 					defaultAction;
