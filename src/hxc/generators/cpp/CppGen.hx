@@ -105,12 +105,22 @@ class CppGen {
 			case _:
 		}
 
+		// An extern class contributes its @:sourceFile native source to the Build.xml __externs__ group
+		// (prepended while walking com.types, so reverse type order).
+		var externSrc:Array<String> = [];
+		for (mt in com.types) switch (mt) {
+			case TClassDecl(c) if (CppTypeOf.isExternClass(c)):
+				var srcs = CppReferenced.getAllMetaStringPath(c.meta, ":sourceFile");
+				if (srcs.length > 0) externSrc.unshift(srcs[0]);
+			case _:
+		}
+
 		genBoot(com, base, sourceExtension);
 		genMain(com, base, sourceExtension);
 		genFiles(com, base, sourceExtension);
 		genResources(com, base, sourceExtension);
 		genExportClassesInfo(com, exeClasses);
-		genBuildXml(com, base, exeClasses, sourceExtension);
+		genBuildXml(com, base, exeClasses, sourceExtension, externSrc);
 		genOptions(com, base);
 		if (!com.defines.rawDefined("no_compilation")) compileNative(com, base);
 	}
@@ -366,7 +376,7 @@ class CppGen {
 		writeFile(filename, b.toString());
 	}
 
-	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}>, sourceExtension:String):Void {
+	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}>, sourceExtension:String, externSrc:Array<String>):Void {
 		var api = com.defines.rawDefinedValueSafe("hxcpp_api_level", "430");
 		var exe = com.main != null ? mainClassName(com) : "output";
 		var mainDeps = com.main != null ? mainRefs(com) : [];
@@ -400,7 +410,9 @@ class CppGen {
 		var resCount = [for (k in com.resources.keys()) k].length;
 		for (idx in 0...resCount) b.add("  <file name=\"src/resources/__res_" + idx + sourceExtension + "\" />\n");
 		b.add("</files>\n");
-		b.add("<files id=\"__externs__\">\n</files>\n");
+		b.add("<files id=\"__externs__\">\n");
+		for (src in externSrc) b.add("<file name=\"" + src + "\" />\n");
+		b.add("</files>\n");
 		b.add("<set name=\"HAXE_OUTPUT\" value=\"" + exe + "\" />\n");
 		b.add("<include name=\"${HXCPP}/build-tool/BuildCommon.xml\"/>\n");
 		// The accumulated @:buildXml code (the std lib's Build.xml includes)
