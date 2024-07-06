@@ -78,11 +78,14 @@ class CppGen {
 				ensureDir(base + "/include/" + dirOf(p));
 				ensureDir(base + "/src/" + dirOf(p));
 				var nativeGen = TypeFunctions.hasMeta(":nativeGen", c.meta);
-				// Cpp is generated before the header so interface-glue forwarders accumulated during the cpp
-				// pass are available when the header is emitted.
-				var cppText = nativeGen ? gc.genNativeGenCpp() : gc.genCpp();
+				// The cpp is generated before the header so interface-glue forwarders accumulated during
+				// the cpp pass are available when the header is emitted. A @:nativeGen interface writes
+				// only a header, no cpp.
+				var isNativeGenInterface = nativeGen && TypeFunctions.hasClassFlag(c, CInterface);
+				var cppText = isNativeGenInterface ? null : (nativeGen ? gc.genNativeGenCpp() : gc.genCpp());
 				writeSourceFile(com, base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
-				writeSourceFile(com, base + "/src/" + p + sourceExtension, cppText);
+				if (!isNativeGenInterface)
+					writeSourceFile(com, base + "/src/" + p + sourceExtension, cppText);
 				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
 				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
 				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));

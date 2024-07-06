@@ -1401,6 +1401,35 @@ class CppGenClass {
 		return [for (nm in names) byName.get(nm)];
 	}
 
+	// The native-gen subset of the implemented-interface set, emitted in hash-table bucket order (not
+	// reversed by prepending), consumed by the HX_REGISTER_VTABLE_OFFSET registrations for a class
+	// that implements a native interface.
+	function nativeImplementedInterfaces():Array<TClass> {
+		var byName = new Map<String, TClass>();
+		var seen = new Map<String, Bool>();
+		var nativeSeen = new Map<String, Bool>();
+		var h = new hxc.core.NameHash.HashTableOrder();
+		function descend(iface:TClass):Void {
+			var nm = interfaceImplName(iface);
+			var isNative = CppTypeOf.isNativeGenClass(iface);
+			var table = isNative ? nativeSeen : seen;
+			if (!table.exists(nm)) {
+				table.set(nm, true);
+				if (isNative) {
+					h.add(nm, hxc.core.NameHash.NameHash.stringHash(nm));
+					byName.set(nm, iface);
+				}
+				for (imp in iface.interfaces) descend(imp.c);
+			}
+			if (iface.superClass != null) descend(iface.superClass.c);
+		}
+		for (imp in classDef.interfaces) {
+			if (imp.c.path.pack.length == 2 && imp.c.path.pack[0] == "cpp" && imp.c.path.pack[1] == "rtti") continue;
+			descend(imp.c);
+		}
+		return [for (nm in h.visitOrder()) byName.get(nm)];
+	}
+
 	// The interface-implementation glue: one static vtable struct of the class's member-function pointers
 	// per implemented interface, then _hx_getInterface dispatching the interface hash to its struct
 	// (falling through to super). When a concrete method's signature differs from the interface's Dynamic
@@ -1960,6 +1989,10 @@ class CppGenClass {
 		w.write("#ifdef HXCPP_SCRIPTABLE\n\t__mClass->mMemberStorageInfo = " + className + "_sMemberStorageInfo;\n#endif\n");
 		w.write("#ifdef HXCPP_SCRIPTABLE\n\t__mClass->mStaticStorageInfo = " + className + "_sStaticStorageInfo;\n#endif\n");
 		w.write("\t::hx::_hx_RegisterClass(__mClass->mName, __mClass);\n");
+		// Each implemented native interface registers its vtable offset so a native caller can find the
+		// haxe methods through the native interface pointer.
+		for (intf in nativeImplementedInterfaces())
+			w.write("\tHX_REGISTER_VTABLE_OFFSET( " + className + "," + CppTypeText.joinClassPathRemap(intf.path, "::") + ");\n");
 		w.write("}\n\n");
 	}
 }
