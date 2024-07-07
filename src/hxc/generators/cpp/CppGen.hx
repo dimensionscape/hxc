@@ -306,11 +306,18 @@ class CppGen {
 		b.add("#endif\n 0 };\n\n");
 		b.add("const char *__hxcpp_all_files_fullpath[] = {\n");
 		b.add("#ifdef HXCPP_DEBUGGER\n");
+		var platformExt = "." + hxc.core.Globals.platformName(com.platform);
 		for (k in keys) {
-			// Each name resolves through find_file (the classpath search) first; an unresolvable name (e.g.
-			// a macro-made position file) absolutizes as-is against the cwd.
+			// Each name resolves through the classpath search first; an unresolvable name (e.g. a
+			// macro-made position file) absolutizes as-is against the cwd.
+			// A PLATFORM-SPECIFIC file (`X.<platform>.hx`) is cached under its stripped representation
+			// (`X.hx`), never under its literal name, so the classpath search cannot resolve the literal
+			// path and it absolutizes against the cwd like any unresolvable name.
+			var noExt = haxe.io.Path.withoutExtension(k);
+			var isPlatformSpecific = haxe.io.Path.extension(k) == "hx"
+				&& noExt.length > platformExt.length && noExt.substr(noExt.length - platformExt.length) == platformExt;
 			var resolved = k;
-			for (dir in com.classPath) {
+			if (!isPlatformSpecific) for (dir in com.classPath) {
 				var candidate = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + k;
 				if (sys.FileSystem.exists(candidate) && !sys.FileSystem.isDirectory(candidate)) { resolved = candidate; break; }
 			}
