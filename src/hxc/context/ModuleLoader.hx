@@ -1333,6 +1333,17 @@ class ModuleLoader {
 				// A plain member var has no storage on an abstract; enum abstract constants stay legal.
 				throw new ContextError("Cannot declare member variable in abstract", p);
 			case FFun(fu) if (f.cffName.name == "new" && !stat):
+				// A @:multiType constructor is a declaration only (the concrete map is picked by the
+				// multi-type cast), so it is marked extern and later dropped with the extern fields - no
+				// storage or reflection is generated for it.
+				var access = f.cffAccess;
+				if (TypeFunctions.hasMeta(":multiType", a.meta)) {
+					for (acc in access) if (acc.access == AInline)
+						throw new ContextError("inline on MultiType constructor", f.cffPos);
+					if (fu.fExpr != null && com != null)
+						com.addDiagnostic("MultiType constructors cannot have a body", f.cffPos);
+					access = [{access: AExtern, pos: Position.nullPos}].concat(access);
+				}
 				for (acc in f.cffAccess) if (acc.access == AMacro)
 					throw new ContextError("Invalid modifier: macro on abstract constructor", acc.pos);
 				var thisVar:EVar = {
@@ -1358,7 +1369,7 @@ class ModuleLoader {
 				// Rename to `_new` and force static (the impl `_new` is a static factory).
 				return {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
-					cffMeta: meta, cffAccess: withStatic(f.cffAccess, p), cffKind: FFun(fu2)
+					cffMeta: meta, cffAccess: withStatic(access, p), cffKind: FFun(fu2)
 				};
 			case FFun(fu) if (!stat):
 				// A member (non-static) method. For a member impl method only when `not fctx.is_macro`. A macro
