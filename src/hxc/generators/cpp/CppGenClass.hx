@@ -607,7 +607,11 @@ class CppGenClass {
 					var frameLine = CppEmit.getErrorLine(ctorTf.expr.pos);
 					var stripped = stripFile(com, ctorTf.expr.pos.file);
 					var varName = "_hx_pos_" + hash64(dotName + "." + stripped) + "_" + frameLine + "_new";
-					var emitAlloc = new CppEmit(com, w, 1, false, cppFileId, true);
+					// The header inline ctor body carries the field's own debug level and (at debug>=2) the
+					// HX_STACK_THIS/HX_STACK_ARG registrations. The real this ptr is false here, so `this`
+					// is the local __this.
+					var allocDbg = classDef.constructor != null ? fieldDebugLevel(classDef.constructor) : baseDebugLevel();
+					var emitAlloc = new CppEmit(com, w, allocDbg, false, cppFileId, true);
 					var allocDefaults = [for (a in ctorTf.args) {v: a.v, dflt: a.c}];
 					emitAlloc.genExpressionTree([for (a in ctorTf.args) a.v], ctorTf.type, ctorTf.expr,
 						function(gc) {
@@ -615,6 +619,7 @@ class CppGenClass {
 							fileInfo.set(stripped, ctorTf.expr.pos.file);
 							w.writeHUnique("HX_DECLARE_STACK_FRAME(" + varName + ")\n");
 							w.write("            \t" + (gc ? "HX_GC_STACKFRAME" : "HX_STACKFRAME") + "(&" + varName + ")\n");
+							hxStackDebugVars(w, allocDbg, false, false, [for (a in ctorTf.args) a.v], frameLine);
 						}, null, dotName, "new");
 					w.write("\t\t\n"); // outputConstructor trailing `out "\n"` (a \t\t-prefixed blank line)
 				}
