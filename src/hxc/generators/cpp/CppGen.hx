@@ -11,6 +11,20 @@ import hxc.generators.cpp.CppType;
 // Options.txt.
 class CppGen {
 	public static function generate(com:Context):Void {
+		// The interface-slot map is per-generation state; reset it before the class pass fills it.
+		CppScriptable.resetInterfaceSlots();
+		// Interface method slots are numbered in REVERSE com.types order, each interface assigning its
+		// methods' slots on first sight. The class loop below runs forward, so pre-assign the slots in
+		// reverse order here.
+		if (com.defines.rawDefined("scriptable")) {
+			var rev = com.types.copy();
+			rev.reverse();
+			for (mt in rev) switch (mt) {
+				case TClassDecl(c) if (shouldEmit(c) && TypeFunctions.hasClassFlag(c, CInterface) && !TypeFunctions.hasMeta(":nativeGen", c.meta)):
+					for (f in CppScriptable.allVirtualFunctions(c)) CppScriptable.cppGetInterfaceSlot(CppTypeText.keywordRemap(f.name));
+				case _:
+			}
+		}
 		var base = com.file;
 		var sourceExtension = sourceFileExtension(com);
 		ensureDir(base);
@@ -177,13 +191,25 @@ class CppGen {
 	// classes (each list is reverse com.types order).
 	static function genBoot(com:Context, base:String, sourceExtension:String):Void {
 		var order = CppGenClass.bootEnums.concat(CppGenClass.bootClasses).concat(CppGenClass.nonbootClasses);
+		var scriptable = com.defines.rawDefined("scriptable");
 		var b = new StringBuf();
 		b.add("#include <hxcpp.h>\n\n");
 		for (p in order) b.add(guardedInclude(p));
+		// A scriptable build lists every interface method name (sorted by its assigned slot id) so the
+		// cppia loader can bind them.
+		if (scriptable) {
+			b.add("#include <hx/Scriptable.h>\n");
+			var funcs = [for (name in CppScriptable.interfaceSlots.keys()) {name: name, id: CppScriptable.interfaceSlots.get(name)}];
+			funcs.sort(function(a, b) return a.id - b.id);
+			b.add("static const char *scriptableInterfaceFuncs[] = {\n\t0,\n\t0,\n");
+			for (f in funcs) b.add("\t\"" + f.name + "\", //" + (-f.id) + "\n");
+			b.add("};\n");
+		}
 		b.add("\nvoid __files__boot();\n");
 		b.add("\nvoid __boot_all()\n{\n");
 		b.add("__files__boot();\n");
 		b.add("::hx::RegisterResources( ::hx::GetResources() );\n");
+		if (scriptable) b.add("::hx::ScriptableRegisterNameSlots(scriptableInterfaceFuncs," + CppScriptable.interfaceSlotCount + ");\n");
 		for (p in order) b.add("::" + CppTypeText.joinClassPathRemap(p, "::") + "_obj::__register();\n");
 		// The boot sequence: enums __boot(), then (init classes __init__), then boot classes __boot()
 		// (reversed back to com.types order).

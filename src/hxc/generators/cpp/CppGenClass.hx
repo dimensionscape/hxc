@@ -400,10 +400,11 @@ class CppGenClass {
 					return;
 				}
 				var returnType = ctxTypeString(tf.type);
-				// Instance method is virtual when the member-types table marks it (a subclass overrides it); an
-				// internal member (toString and the __-runtime names) is always virtual.
+				// An instance method is virtual when the member-types table marks it (a subclass overrides
+				// it); an internal member (toString and the __-runtime names) is always virtual, and a
+				// scriptable build makes every method virtual so the __scriptable subclass can override it.
 				if (!isStatic && !nonVirtual) {
-					if (!CppTypeText.isInternalMember(field.name)) {
+					if (!CppTypeText.isInternalMember(field.name) && !com.defines.rawDefined("scriptable")) {
 						var key = joinPath(classDef.path, ".") + "." + field.name;
 						var v = memberTypes.get(key);
 						if (v != null) w.write(v);
@@ -542,11 +543,13 @@ class CppGenClass {
 		var superName = superDef != null
 			? CppTypeText.tcppToStringSuffix("_obj", CppTypeOf.cppInstanceTypeOf(superDef.c, superDef.params))
 			: "::hx::Object";
+		// A dll_export (cppia host) build tags classes with the EXTERN attribute macro.
+		var attribs = "HXCPP_" + (com.defines.rawDefined("dll_export") ? "EXTERN_" : "") + "CLASS_ATTRIBUTES";
 		if (isInterface) {
-			w.write("class HXCPP_CLASS_ATTRIBUTES " + className + " {\n\tpublic:\n");
+			w.write("class " + attribs + " " + className + " {\n\tpublic:\n");
 			w.write("\t\ttypedef " + superName + " super;\n");
 		} else {
-			w.write("class HXCPP_CLASS_ATTRIBUTES " + className + " : public " + superName + "\n{\n\tpublic:\n");
+			w.write("class " + attribs + " " + className + " : public " + superName + "\n{\n\tpublic:\n");
 			w.write("\t\ttypedef " + superName + " super;\n");
 			w.write("\t\ttypedef " + className + " OBJ_;\n");
 		}
@@ -622,6 +625,9 @@ class CppGenClass {
 		// A class with dynamic member functions declares its default-installer.
 		if (dynamicFunctions().length > 0)
 			w.write("\t\tstatic void __alloc_dynamic_functions(::hx::Ctx *_hx_alloc," + className + " *_hx_obj);\n");
+		// A scriptable build declares the cppia constructor trampoline handle.
+		if (com.defines.rawDefined("scriptable"))
+			w.write("\t\tstatic ::hx::ScriptFunction __script_construct;\n");
 		w.write("\t\t//~" + className + "();\n\n");
 		w.write("\t\tHX_DO_RTTI_ALL;\n");
 		// Reflection method declarations, each gated like its .cpp definition.
@@ -1042,9 +1048,11 @@ class CppGenClass {
 		var w = new CppWriter();
 		w.writeH("#include <hxcpp.h>\n\n");
 		// Self + every referenced type (extern @:include files become @verbatim guarded includes), sorted
-		// by dotted path.
+		// by dotted path, with the per-class scriptable flag as includeSuperArgs.
 		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, false, false).deps;
 		for (p in refs) addInclude(w, p);
+		// A scriptable (cppia host) build pulls in the CppiaCtx dispatch header.
+		if (com.defines.rawDefined("scriptable")) w.writeH("#include <hx/Scriptable.h>\n");
 		w.writeH("\n");
 		// @:cppFileCode is injected verbatim at file scope (before the namespace opens), then any
 		// @:cppInclude files.
@@ -1062,6 +1070,7 @@ class CppGenClass {
 			for (f in staticsExceptMeta()) genFieldCpp(w, true, f);
 			w.write("\n");
 			genMemberFieldsAndMarks(w);
+			genScriptable(w);
 			genRegister(w);
 			genClassBoot(w);
 			genCloseNamespace(w);
@@ -1142,6 +1151,7 @@ class CppGenClass {
 		if (hasGetFields()) genGetFields(w);
 		genScriptableStorage(w);
 		genMemberFieldsAndMarks(w);
+		genScriptable(w);
 		genRegister(w);
 		genClassBoot(w);
 		genCloseNamespace(w);
@@ -1900,6 +1910,156 @@ class CppGenClass {
 		w.write("}\n\n");
 	}
 
+	// A var or a dynamic method (excluded from the script-function tables).
+	static function isDataMember(f:TClassField):Bool {
+		return switch (f.kind) { case Var(_) | Method(MethDynamic): true; case _: false; };
+	}
+
+	// A CPPIA_CALL trampoline that unpacks the call arguments from the CppiaCtx stack and invokes the real
+	// method, returning the accumulated cppia signature string.
+	function generateScriptFunction(w:CppWriter, isStatic:Bool, field:TClassField, scriptName:String, callName:String):String {
+		switch (TypeFunctions.follow(field.type)) {
+			case TFun(sig) if (!isDataMember(field)):
+				var args = sig.args;
+				var returnType = sig.ret;
+				var isInterface = TypeFunctions.hasClassFlag(classDef, CInterface);
+				var isTemplated = !isStatic && !isInterface;
+				if (isTemplated) w.write("\ntemplate<bool _HX_SUPER=false>");
+				w.write("\nstatic void CPPIA_CALL " + scriptName + "(::hx::CppiaCtx *ctx) {\n");
+				var ret = switch (CppTypeOf.cppTypeOf(returnType)) { case TCppScalar("bool"): "b"; case _: CppScriptable.scriptSignature(returnType, false); };
+				if (ret != "v") w.write("ctx->return" + CppScriptable.scriptType(returnType, false) + "(");
+				function dumpCall(castPrefix:String):String {
+					if (isInterface) w.write(className + "::" + callName + "(ctx->getThis()" + (args.length > 0 ? "," : ""));
+					else if (isStatic) w.write(className + "::" + callName + "(");
+					else w.write("((" + className + "*)ctx->getThis())->" + castPrefix + callName + "(");
+					var signature = ret;
+					var sep = "";
+					var size = "sizeof(void*)";
+					for (a in args) {
+						w.write(sep + "ctx->get" + CppScriptable.scriptType(a.t, a.opt) + "(" + size + ")");
+						signature += CppScriptable.scriptSignature(a.t, a.opt);
+						sep = ",";
+						size = size + "+sizeof(" + CppScriptable.scriptSizeType(a.t, a.opt) + ")";
+					}
+					w.write(")");
+					return signature;
+				}
+				var signature;
+				if (isTemplated) {
+					w.write(" _HX_SUPER ? ");
+					dumpCall(className + "::");
+					w.write(" : ");
+					signature = dumpCall("");
+				} else {
+					signature = dumpCall("");
+				}
+				if (ret != "v") w.write(")");
+				w.write(";\n}\n");
+				return signature;
+			case _:
+				return "";
+		}
+	}
+
+	// The __scriptable subclass's override of one virtual method, which dispatches to a bound script (via
+	// __scriptVTable) or falls back to the real class method.
+	function dumpScriptField(w:CppWriter, idx:Int, field:TClassField):Void {
+		var sig = switch (TypeFunctions.follow(field.type)) { case TFun(s): s; case _: return; };
+		var fArgs = sig.args;
+		var returnT = sig.ret;
+		var isInterface = TypeFunctions.hasClassFlag(classDef, CInterface);
+		var argsDecl = ctxTfunArgList(fArgs, true);
+		var names = [for (a in fArgs) CppTypeText.keywordRemap(a.name)];
+		var returnType = ctxTypeString(returnT);
+		var ret = (returnType == "Void" || returnType == "void") ? " " : "return ";
+		var name = CppTypeText.keywordRemap(field.name);
+		var vtable = "__scriptVTable[" + (idx + 1) + "] ";
+		w.write("\t" + returnType + " " + name + "( " + argsDecl + " ) {\n");
+		if (isInterface) {
+			w.write("\t\t::hx::CppiaCtx *__ctx = ::hx::CppiaCtx::getCurrent();\n");
+			w.write("\t\t::hx::AutoStack __as(__ctx);\n");
+			w.write("\t\t__ctx->pushObject(this);\n");
+			for (a in fArgs) w.write("\t\t__ctx->push" + CppScriptable.scriptType(a.t, a.opt) + "(" + CppTypeText.keywordRemap(a.name) + ");\n");
+			var interfaceSlot = Std.string(-(CppScriptable.cppGetInterfaceSlot(name)));
+			w.write("\t\t" + ret + "__ctx->run" + CppScriptable.scriptType(returnT, false) + "(__GetScriptVTable()[" + interfaceSlot + "]);\n");
+			w.write("\t}\n");
+		} else {
+			w.write("\tif (" + vtable + ") {\n");
+			w.write("\t\t::hx::CppiaCtx *__ctx = ::hx::CppiaCtx::getCurrent();\n");
+			w.write("\t\t::hx::AutoStack __as(__ctx);\n");
+			w.write("\t\t__ctx->pushObject(this);\n");
+			for (a in fArgs) w.write("\t\t__ctx->push" + CppScriptable.scriptType(a.t, a.opt) + "(" + CppTypeText.keywordRemap(a.name) + ");\n");
+			w.write("\t\t" + ret + "__ctx->run" + CppScriptable.scriptType(returnT, false) + "(" + vtable + ");\n");
+			w.write("\t}  else " + ret);
+			w.write(className + "::" + name + "(" + names.join(",") + ");");
+			if (returnType != "void") w.write("return null();");
+			w.write("}\n");
+		}
+	}
+
+	// The scriptable block: a `<class>__scriptable` dispatch subclass plus the CPPIA_CALL trampolines and
+	// the __scriptableFunctions table, so a compiled host can run cppia overrides.
+	function genScriptable(w:CppWriter):Void {
+		if (!com.defines.rawDefined("scriptable")) return;
+		if (TypeFunctions.hasMeta(":nativeGen", classDef.meta)) return;
+		var isInterface = TypeFunctions.hasClassFlag(classDef, CInterface);
+		// Functions dispatched by the subclass: all virtual functions minus toString (kept for
+		// interfaces).
+		var functions = [for (f in CppScriptable.allVirtualFunctions(classDef)) if (f.name != "toString" || isInterface) f];
+		// The table + trampolines use only this class's own virtual functions.
+		var newScriptFunctions = isInterface ? CppScriptable.allVirtualFunctions(classDef) : CppScriptable.ownVirtualFunctions(classDef);
+		var scriptName = className + "__scriptable";
+		if (isInterface) {
+			w.write("class " + scriptName + " : public ::hx::Object {\n");
+			w.write("public:\n");
+		} else {
+			w.write("class " + scriptName + " : public " + className + " {\n");
+			w.write("   typedef " + scriptName + " __ME;\n");
+			w.write("   typedef " + className + " super;\n");
+			var hasFunkyToString = Lambda.exists(classDef.orderedStatics, function(f) return f.name == "toString")
+				|| Lambda.exists(classDef.orderedFields, function(f) return f.name == "toString" && fieldArgCount(f) != 0);
+			var superString = hasFunkyToString ? className + "::super" : className;
+			w.write("   typedef " + superString + " __superString;\n");
+			w.write("   HX_DEFINE_SCRIPTABLE(HX_ARR_LIST" + constructorArgNames().length + ")\n");
+			w.write("\tHX_DEFINE_SCRIPTABLE_DYNAMIC;\n");
+		}
+		for (i in 0...functions.length) dumpScriptField(w, i, functions[i]);
+		w.write("};\n\n");
+
+		var sigs = new Map<String, String>();
+		var staticFunctions = [for (f in staticsExceptMeta()) if (reflective(f) && !isDataMember(f)) f];
+		var allScriptFunctions = [for (f in newScriptFunctions) f].concat(staticFunctions);
+		if (allScriptFunctions.length > 0) {
+			for (f in newScriptFunctions) sigs.set(f.name, generateScriptFunction(w, false, f, "__s_" + f.name, CppTypeText.keywordRemap(f.name)));
+			for (f in classDef.orderedStatics) sigs.set(f.name, generateScriptFunction(w, true, f, "__s_" + f.name, CppTypeText.keywordRemap(f.name)));
+			w.write("#ifndef HXCPP_CPPIA_SUPER_ARG\n#define HXCPP_CPPIA_SUPER_ARG(x)\n#endif\n");
+			w.write("static ::hx::ScriptNamedFunction __scriptableFunctions[] = {\n");
+			function dumpFunc(f:TClassField, isStaticFlag:String):Void {
+				var s = sigs.exists(f.name) ? sigs.get(f.name) : "v";
+				w.write("  ::hx::ScriptNamedFunction(\"" + f.name + "\",__s_" + f.name + ",\"" + s + "\", " + isStaticFlag + " ");
+				var superCall = (isStaticFlag == "true" || isInterface) ? "0" : ("__s_" + f.name + "<true>");
+				w.write("HXCPP_CPPIA_SUPER_ARG(" + superCall + ")");
+				w.write(" ),\n");
+			}
+			for (f in newScriptFunctions) dumpFunc(f, "false");
+			for (f in staticFunctions) dumpFunc(f, "true");
+			w.write("  ::hx::ScriptNamedFunction(0,0,0 HXCPP_CPPIA_SUPER_ARG(0) ) };\n");
+		} else {
+			w.write("static ::hx::ScriptNamedFunction *__scriptableFunctions = 0;\n");
+		}
+		// An interface also emits a static vtable of member-function pointers into the __scriptable
+		// dispatcher, one per virtual function.
+		if (isInterface) {
+			w.write("\n\n" + className + " " + className + "_scriptable = {\n");
+			for (f in newScriptFunctions) switch (TypeFunctions.follow(f.type)) {
+				case TFun(s):
+					w.write("\t( " + ctxTypeString(s.ret) + " (::hx::Object::*)(" + ctxTfunArgList(s.args, true) + "))&" + scriptName + "::" + CppTypeText.keywordRemap(f.name) + ",\n");
+				case _:
+			}
+			w.write("};\n");
+		}
+	}
+
 	// A static var with a value initializer becomes `name = <value>;` (emitted inside a stack-frame block
 	// via CppEmit).
 	function genFieldInit(w:CppWriter, field:TClassField):Void {
@@ -1951,18 +2111,30 @@ class CppGenClass {
 			w.write("\t__mClass->mCanCast = ::hx::TIsInterface< (int)" + genHash(0, joinPath(classDef.path, "::")) + " >;\n");
 			if (hasMarkFunc()) w.write("#ifdef HXCPP_VISIT_ALLOCS\n\t__mClass->mVisitFunc = " + className + "_sVisitStatics;\n#endif\n");
 			w.write("\t::hx::_hx_RegisterClass(__mClass->mName, __mClass);\n");
+			// A scriptable build registers the interface for cppia dispatch.
+			if (com.defines.rawDefined("scriptable"))
+				w.write("  HX_SCRIPTABLE_REGISTER_INTERFACE(\"" + classNameText + "\"," + className + ");\n");
 			w.write("}\n\n");
 			return;
 		}
+		// __mClass is declared, then (a scriptable build) __script_construct, then the reflective
+		// static-field table - in that order.
+		w.write("::hx::Class " + className + "::__mClass;\n\n");
+		if (com.defines.rawDefined("scriptable")) {
+			if (classDef.constructor != null) {
+				var sig = generateScriptFunction(w, false, classDef.constructor, "__script_construct_func", "__construct");
+				w.write("::hx::ScriptFunction " + className + "::__script_construct(__script_construct_func,\"" + sig + "\");\n");
+			} else {
+				w.write("::hx::ScriptFunction " + className + "::__script_construct(0,0);\n");
+			}
+		}
 		var reflectiveStatics = [for (f in staticsExceptMeta()) if (reflective(f) && (isMemberVar(f) || isMethodField(f))) f];
 		var sStaticFields = if (reflectiveStatics.length > 0) {
-			w.write("::hx::Class " + className + "::__mClass;\n\n");
 			w.write("static ::String " + className + "_sStaticFields[] = {\n");
 			for (f in reflectiveStatics) w.write("\t" + CppTypeText.strq(smartStrings, f.name) + ",\n");
 			w.write("\t::String(null())\n};\n\n");
 			className + "_sStaticFields";
 		} else {
-			w.write("::hx::Class " + className + "::__mClass;\n\n");
 			"0 /* sStaticFields */";
 		};
 		w.write("void " + className + "::__register()\n{\n");
@@ -1989,6 +2161,9 @@ class CppGenClass {
 		w.write("#ifdef HXCPP_SCRIPTABLE\n\t__mClass->mMemberStorageInfo = " + className + "_sMemberStorageInfo;\n#endif\n");
 		w.write("#ifdef HXCPP_SCRIPTABLE\n\t__mClass->mStaticStorageInfo = " + className + "_sStaticStorageInfo;\n#endif\n");
 		w.write("\t::hx::_hx_RegisterClass(__mClass->mName, __mClass);\n");
+		// A scriptable build registers the class so the cppia loader can bind script overrides.
+		if (com.defines.rawDefined("scriptable"))
+			w.write("  HX_SCRIPTABLE_REGISTER_CLASS(\"" + classNameText + "\"," + className + ");\n");
 		// Each implemented native interface registers its vtable offset so a native caller can find the
 		// haxe methods through the native interface pointer.
 		for (intf in nativeImplementedInterfaces())

@@ -1101,7 +1101,10 @@ class TypeResolve {
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-				var ret = isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
+				// Constructor's return type is always Void regardless of any hint, so its signature reads
+				// TFun(args, Void). Visible in a cppia host's __script_construct signature.
+				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid
+					: (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;
