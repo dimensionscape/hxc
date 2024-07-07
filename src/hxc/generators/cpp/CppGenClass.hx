@@ -274,6 +274,12 @@ class CppGenClass {
 		return "0x" + StringTools.lpad(StringTools.hex(classId(), 8).toLowerCase(), "0", 8);
 	}
 
+	// The per-class scriptable flag: the -D scriptable build EXCEPT for a private class (an abstract's
+	// _Impl_ and other private modules get no cppia dispatch surface).
+	function isScriptable():Bool {
+		return com.defines.rawDefined("scriptable") && !classDef.isPrivate;
+	}
+
 	function ctxTypeString(t:T):String {
 		return CppTypeText.tcppToString(CppTypeOf.cppTypeOf(t));
 	}
@@ -527,8 +533,9 @@ class CppGenClass {
 		// From HX_DECLARE_CLASS0 onward goes to the body buffer = write); the begin above + any
 		// inline-ctor stack frames go to the HEADER buffer, so a HX_DECLARE_STACK_FRAME lands between the
 		// includes and HX_DECLARE_CLASS0 (as in the oracle). + gen_forward_decl: a HX_DECLARE_CLASS<n>
-		// for every referenced type (self included), sorted by dotted path.
-		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, false);
+		// for every referenced type (self included), sorted by dotted path. the per-class scriptable as
+		// include_super_args so a cppia host also names the super methods' argument types.
+		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, isScriptable());
 		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
 		// One blank line, the @:headerCode, then the namespace, two blanks, @:headerNamespaceCode.
 		w.write("\n");
@@ -626,7 +633,7 @@ class CppGenClass {
 		if (dynamicFunctions().length > 0)
 			w.write("\t\tstatic void __alloc_dynamic_functions(::hx::Ctx *_hx_alloc," + className + " *_hx_obj);\n");
 		// A scriptable build declares the cppia constructor trampoline handle.
-		if (com.defines.rawDefined("scriptable"))
+		if (isScriptable())
 			w.write("\t\tstatic ::hx::ScriptFunction __script_construct;\n");
 		w.write("\t\t//~" + className + "();\n\n");
 		w.write("\t\tHX_DO_RTTI_ALL;\n");
@@ -1049,10 +1056,10 @@ class CppGenClass {
 		w.writeH("#include <hxcpp.h>\n\n");
 		// Self + every referenced type (extern @:include files become @verbatim guarded includes), sorted
 		// by dotted path, with the per-class scriptable flag as includeSuperArgs.
-		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, false, false).deps;
+		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, false, isScriptable()).deps;
 		for (p in refs) addInclude(w, p);
 		// A scriptable (cppia host) build pulls in the CppiaCtx dispatch header.
-		if (com.defines.rawDefined("scriptable")) w.writeH("#include <hx/Scriptable.h>\n");
+		if (isScriptable()) w.writeH("#include <hx/Scriptable.h>\n");
 		w.writeH("\n");
 		// @:cppFileCode is injected verbatim at file scope (before the namespace opens), then any
 		// @:cppInclude files.
@@ -2000,7 +2007,7 @@ class CppGenClass {
 	// The scriptable block: a `<class>__scriptable` dispatch subclass plus the CPPIA_CALL trampolines and
 	// the __scriptableFunctions table, so a compiled host can run cppia overrides.
 	function genScriptable(w:CppWriter):Void {
-		if (!com.defines.rawDefined("scriptable")) return;
+		if (!isScriptable()) return;
 		if (TypeFunctions.hasMeta(":nativeGen", classDef.meta)) return;
 		var isInterface = TypeFunctions.hasClassFlag(classDef, CInterface);
 		// Functions dispatched by the subclass: all virtual functions minus toString (kept for
@@ -2112,7 +2119,7 @@ class CppGenClass {
 			if (hasMarkFunc()) w.write("#ifdef HXCPP_VISIT_ALLOCS\n\t__mClass->mVisitFunc = " + className + "_sVisitStatics;\n#endif\n");
 			w.write("\t::hx::_hx_RegisterClass(__mClass->mName, __mClass);\n");
 			// A scriptable build registers the interface for cppia dispatch.
-			if (com.defines.rawDefined("scriptable"))
+			if (isScriptable())
 				w.write("  HX_SCRIPTABLE_REGISTER_INTERFACE(\"" + classNameText + "\"," + className + ");\n");
 			w.write("}\n\n");
 			return;
@@ -2120,7 +2127,7 @@ class CppGenClass {
 		// __mClass is declared, then (a scriptable build) __script_construct, then the reflective
 		// static-field table - in that order.
 		w.write("::hx::Class " + className + "::__mClass;\n\n");
-		if (com.defines.rawDefined("scriptable")) {
+		if (isScriptable()) {
 			if (classDef.constructor != null) {
 				var sig = generateScriptFunction(w, false, classDef.constructor, "__script_construct_func", "__construct");
 				w.write("::hx::ScriptFunction " + className + "::__script_construct(__script_construct_func,\"" + sig + "\");\n");
@@ -2162,7 +2169,7 @@ class CppGenClass {
 		w.write("#ifdef HXCPP_SCRIPTABLE\n\t__mClass->mStaticStorageInfo = " + className + "_sStaticStorageInfo;\n#endif\n");
 		w.write("\t::hx::_hx_RegisterClass(__mClass->mName, __mClass);\n");
 		// A scriptable build registers the class so the cppia loader can bind script overrides.
-		if (com.defines.rawDefined("scriptable"))
+		if (isScriptable())
 			w.write("  HX_SCRIPTABLE_REGISTER_CLASS(\"" + classNameText + "\"," + className + ");\n");
 		// Each implemented native interface registers its vtable offset so a native caller can find the
 		// haxe methods through the native interface pointer.
