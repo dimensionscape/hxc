@@ -594,49 +594,75 @@ class TypeResolve {
 			if (cf == null) continue;
 			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
 			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
-			// the field (loop cf.meta).
-			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta))
+			// the field (loop cf.meta). starts set for a @:coreType abstract, and allow_no_expr() is called
+			// by the @:arrayAccess / @:op([]) / @:op(binop) / @:op(unop) / @:op(call) / @:resolve arms (not
+			// by @:from / @:to). A bodiless function in such a field is a declaration only.
+			var allowsNoExpr = TypeFunctions.hasMeta(":coreType", a.meta);
+			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)) {
 				a.array.push(cf);
+				allowsNoExpr = true;
+			}
 			// @:resolve routes to the same read/write registration as @:op([EField]).
-			if (TypeFunctions.hasMeta(":resolve", cff.cffMeta))
+			if (TypeFunctions.hasMeta(":resolve", cff.cffMeta)) {
 				registerResolveField(a, cf, cff, cf.pos);
+				allowsNoExpr = true;
+			}
 			// The @:op meta survives transformAbstractField (it concats f.cffMeta), so read it off
 			// the SOURCE field and resolve the matching impl cf by name. A member @:op was promoted
 			// to a static abstract member; a `static` @:op stays a static too.
-			if (!TypeFunctions.hasMeta(":op", cff.cffMeta)) continue;
-			var meta = TypeFunctions.getMeta(":op", cff.cffMeta);
-			// @:op takes exactly one expression param: an EBinop, EUnop, EArrayDecl ([]),
-			// ECall, EField, or ETernary.
-			if (meta.params.length != 1) continue;
-			var opExpr = meta.params[0];
-			switch (opExpr.expr) {
-				// `@:op([])` (EArrayDecl) -> array (same arm as the
-				// @:arrayAccess meta handled above).
-				case EArrayDecl(_):
-					a.array.push(cf);
-				// Assignment / null-coalescing / ternary overloads
-				// are explicitly rejected.
-				case EBinop(OpAssign, _, _):
-					throw new ContextError("Assignment overloading is not supported", cf.pos);
-				case EBinop(OpNullCoal, _, _) | EBinop(OpAssignOp(OpNullCoal), _, _):
-					throw new ContextError("Null coalescing overloading is not supported", cf.pos);
-				case ETernary(_, _, _):
-					throw new ContextError("Ternary overloading is not supported", cf.pos);
-				case EBinop(op, _, _):
-					a.ops.push({op: op, cf: cf});
-				// `@:op(unop A)` / `@:op(A unop)`: register
-				// (op, flag, cf) in unops.
-				case EUnop(op, flag, _):
-					a.unops.push({op: op, flag: flag, cf: cf});
-				// `@:op(a)` call overload. The first method
-				// becomes `call`; later ones are prepended as overloads of that field.
-				case ECall(_, _):
-					if (a.call == null)
-						a.call = cf;
-					else
-						a.call.overloads.unshift(cf);
-				case EField(_, _, _):
-					registerResolveField(a, cf, cff, opExpr.pos);
+			if (TypeFunctions.hasMeta(":op", cff.cffMeta)) {
+				var meta = TypeFunctions.getMeta(":op", cff.cffMeta);
+				// @:op takes exactly one expression param: an EBinop, EUnop, EArrayDecl ([]),
+				// ECall, EField, or ETernary.
+				if (meta.params.length == 1) {
+					var opExpr = meta.params[0];
+					switch (opExpr.expr) {
+						// `@:op([])` (EArrayDecl) -> array (same arm as the
+						// @:arrayAccess meta handled above).
+						case EArrayDecl(_):
+							a.array.push(cf);
+							allowsNoExpr = true;
+						// Assignment / null-coalescing / ternary overloads
+						// are explicitly rejected.
+						case EBinop(OpAssign, _, _):
+							throw new ContextError("Assignment overloading is not supported", cf.pos);
+						case EBinop(OpNullCoal, _, _) | EBinop(OpAssignOp(OpNullCoal), _, _):
+							throw new ContextError("Null coalescing overloading is not supported", cf.pos);
+						case ETernary(_, _, _):
+							throw new ContextError("Ternary overloading is not supported", cf.pos);
+						case EBinop(op, _, _):
+							a.ops.push({op: op, cf: cf});
+							allowsNoExpr = true;
+						// `@:op(unop A)` / `@:op(A unop)`: register
+						// (op, flag, cf) in unops.
+						case EUnop(op, flag, _):
+							a.unops.push({op: op, flag: flag, cf: cf});
+							allowsNoExpr = true;
+						// `@:op(a)` call overload. The first method
+						// becomes `call`; later ones are prepended as overloads of that field.
+						case ECall(_, _):
+							if (a.call == null)
+								a.call = cf;
+							else
+								a.call.overloads.unshift(cf);
+							allowsNoExpr = true;
+						case EField(_, _, _):
+							registerResolveField(a, cf, cff, opExpr.pos);
+							allowsNoExpr = true;
+						case _:
+					}
+				}
+			}
+			// A body-less function on such a field is a declaration only (the operation is performed
+			// natively): tag it @:noExpr and, unless the abstract is @:coreType, never add it to the
+			// implementation class, so no storage or dispatch is generated for it.
+			switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null && allowsNoExpr):
+					cf.meta.unshift({name: ":noExpr", params: [], pos: hxc.ast.Position.nullPos});
+					if (!TypeFunctions.hasMeta(":coreType", a.meta)) {
+						c.orderedStatics.remove(cf);
+						if (c.statics.get(cf.name) == cf) c.statics.remove(cf.name);
+					}
 				case _:
 			}
 		}
