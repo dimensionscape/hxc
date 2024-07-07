@@ -1464,8 +1464,10 @@ class CppGenClass {
 			genInterfaceFuncs(w, iface, implnameFull, interfaceImplName(iface), alreadyGlued, cppGlue);
 			w.write("};\n\n");
 		}
-		cppGlue.sort(glueOrder);
-		headerGlue.sort(glueOrder);
+		// The glue lists are built by PREPENDING each forwarder then emitted as-is, so the output reads in
+		// reverse insertion order (interfaces in order, each interface's orderedFields).
+		cppGlue.reverse();
+		headerGlue.reverse();
 		// The glue forwarder bodies precede the _hx_getInterface dispatch. Each body already ends in
 		// "\n}\n", and the bodies are joined with a single "\n".
 		if (cppGlue.length > 0) w.write(cppGlue.join("\n"));
