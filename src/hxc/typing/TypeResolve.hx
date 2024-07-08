@@ -1150,9 +1150,14 @@ class TypeResolve {
 	// target (`supportsOverload = false` for js), so we only handle the meta-with-function form.
 	static function initMetaOverloads(ctx:Context, typeParams:TypeParams, cf:TClassField):Void {
 		var overloads:Array<TClassField> = [];
+		// The filter REBUILDS meta: an @:overload(function(){}) entry is consumed into overloads and
+		// dropped from the field's own metadata (a bare @:overload, which marks native platform
+		// overloading,
+		// is kept).
+		var keptMeta:Metadata = [];
 		for (m in cf.meta) {
-			if (m.name != ":overload") continue;
-			if (m.params.length != 1) continue;
+			var converted = false;
+			if (m.name != ":overload" || m.params.length != 1) { keptMeta.push(m); continue; }
 			switch (m.params[0].expr) {
 				case EFunction(_, f):
 					// Method-local type params on the overload function (rare for the std/externs
@@ -1181,9 +1186,12 @@ class TypeResolve {
 					// Drop the @:overload/@:value metas from the clone.
 					ocf.meta = [for (mm in cf.meta) if (mm.name != ":overload" && mm.name != ":value") mm];
 					overloads.push(ocf);
+					converted = true;
 				case _:
 			}
+			if (!converted) keptMeta.push(m);
 		}
+		cf.meta = keptMeta;
 		if (overloads.length > 0) cf.overloads = overloads;
 	}
 }
