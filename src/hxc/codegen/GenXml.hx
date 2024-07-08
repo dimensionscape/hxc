@@ -269,4 +269,15 @@ class GenXml {
 		writeXml(buf, "", x);
 		return buf.toString();
 	}
+
+	// Emit types without @:noDoc, including positions, under one haxe root.
+	public static function generate(com:Context, file:String):Void {
+		var decls = [for (t in com.types) if (!TypeFunctions.hasMeta(":noDoc", TypeFunctions.tInfos(t).meta)) genTypeDecl(com, true, t)];
+		var buf = new StringBuf();
+		buf.add("<!-- This file can be parsed by haxe.rtti.XmlParser -->\n");
+		writeXml(buf, "", Node("haxe", [], decls));
+		var dir = haxe.io.Path.directory(file);
+		if (dir != "" && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+		sys.io.File.saveContent(file, buf.toString());
+	}
 }

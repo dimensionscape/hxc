@@ -281,6 +281,8 @@ class Compiler {
 		var extraClasses:Array<String> = [];
 		var cmds:Array<String> = [];
 		var noOutput = false;
+		var xmlOut:String = null;
+		var jsonOut:String = null;
 		var helpUserDefines = false;
 		var helpUserMetas = false;
 		var platform:Platform = Cross;
@@ -306,6 +308,15 @@ class Compiler {
 					// Print the member->atom table and exit; the test lane reads this.
 					Sys.print(hxc.hxia.CapabilityMask.dump());
 					return;
+				// The RTTI type descriptions; both write even under --no-output
+				case "--xml" | "-xml": xmlOut = args[i++];
+				case "--json": jsonOut = args[i++];
+				// The compilation server. Not implemented here, but the argument must still be consumed and
+				// reported clearly - left unhandled it is taken as a class path and the build fails with a
+				// misleading "Package <port> was not found".
+				case "--server-listen" | "--server-connect":
+					var spec = args[i++];
+					throw "The compilation server is not supported (" + a + " " + spec + ")";
 				case "--resource" | "-r" | "-resource": addResource(ctx, args[i++]);
 				case "--remap":
 					var spec = args[i++];
@@ -695,6 +706,24 @@ class Compiler {
 				return;
 			}
 			abortOnDiagnostics(ctx, platform);
+			// The --xml / --json type descriptions are written after typing but before the target
+			// generation, and are not gated on --no-output.
+			function auxiliaryOutput():Void {
+				if (xmlOut != null) {
+					var tX = hxc.core.Timer.timer(["generate", "xml"]);
+					hxc.codegen.GenXml.generate(ctx, xmlOut);
+					tX();
+				}
+				if (jsonOut != null) {
+					var tJ = hxc.core.Timer.timer(["generate", "json"]);
+					var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+					var l = [for (mt in ctx.types) hxc.core.Json.Json.stringOfJson(gen.generateModuleType(mt))];
+					var jdir = haxe.io.Path.directory(jsonOut);
+					if (jdir != "" && !sys.FileSystem.exists(jdir)) sys.FileSystem.createDirectory(jdir);
+					sys.io.File.saveContent(jsonOut, "[" + l.join(",") + "]");
+					tJ();
+				}
+			}
 			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
 			// exception lowering, and closure/local passes before interpretation. Filters run even under
 			// --no-output only generation on no_output), so analyzer value checks still report.
@@ -710,6 +739,7 @@ class Compiler {
 					answerOut(jsonRpcAnswer(ctx, "[" + l.join(",") + "]"));
 					return;
 				}
+				auxiliaryOutput();
 				if (!noOutput) {
 					if (platform == Js) {
 						var tGen = hxc.core.Timer.timer(["generate", "js"]);
@@ -730,6 +760,7 @@ class Compiler {
 					{name: "check_abstract_as_value", f: hxc.filters.Filters.checkAbstractAsValue},
 				], t);
 				abortOnDiagnostics(ctx, platform);
+				auxiliaryOutput();
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			// A generator error (a printed error during generation, e.g. a bad @:native code placeholder)
