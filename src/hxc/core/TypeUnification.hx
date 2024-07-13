@@ -861,7 +861,7 @@ class TypeUnification {
 						case AbstractStatics(ab): switch (a1.status.get()) { case AbstractStatics(ab2) if (ab == ab2): case _: error([]); }
 						case _:
 					}
-					for (n in a1.fields.keys()) {
+					for (n in sortedFieldNames(a1.fields)) {
 						var f1 = a1.fields.get(n);
 						if (!a2.fields.exists(n)) {
 							error([hasNoField(b, n)]);
@@ -877,7 +877,7 @@ class TypeUnification {
 						if (TypeFunctions.hasClassFieldFlag(f1, CfPublic) != TypeFunctions.hasClassFieldFlag(f2, CfPublic))
 							error([invalidVisibility(n)]);
 					}
-					for (n in a2.fields.keys()) {
+					for (n in sortedFieldNames(a2.fields)) {
 						if (!a1.fields.exists(n)) error([hasNoField(a, n)]);
 					}
 				} catch (e:UnifyError) {
@@ -1026,7 +1026,7 @@ class TypeUnification {
 				}
 				c.build();
 				try {
-					for (n in an.fields.keys()) {
+					for (n in sortedFieldNames(an.fields)) {
 						var f2 = an.fields.get(n);
 						// Introducing monomorphs while unifying might create infinite loops (#2315)
 						var monos:Array<T> = [];
@@ -1219,10 +1219,19 @@ class TypeUnification {
 		}
 	}
 
+	// Anon fields are walked in ascending name order. That order is observable: the per-field walk
+	// marks @:maybeUsed on each matched class field as it goes and stops at the first failure, so
+	// which fields get marked (and which missing field an error names) depends on it. StringMap
+	// iterates in hash order; sort.
+	static function sortedFieldNames(fields:haxe.ds.StringMap<TClassField>):Array<String> {
+		var names = [for (n in fields.keys()) n];
+		names.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
+		return names;
+	}
+
 	static function unifyAnons(uctx:UnificationContext, a:T, b:T, a1:TAnon, a2:TAnon):Void {
 		try {
-			var targetNames = [for (n in a2.fields.keys()) n];
-			targetNames.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
+			var targetNames = sortedFieldNames(a2.fields);
 			for (n in targetNames) {
 				var f2 = a2.fields.get(n);
 				if (a1.fields.exists(n)) {
