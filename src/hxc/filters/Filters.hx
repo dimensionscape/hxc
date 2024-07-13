@@ -822,33 +822,26 @@ class Filters {
 		], t);
 	}
 
-	// The ordered filter driver. Stage slots that have their own rows (Tre, InlineConstructors,
-	// Exceptions, analyzer, RenameVars, DCE) are marked below and join this order as they land.
-	// Env-gated phase-boundary memory probe for hunting allocation runaways (HXC_DBG_MEM=1). hxc's
-	// typer defers a @:multiType construction whose selector is still an open monomorph by emitting
-	// TNew of the abstract impl (Typer.typeNew, multiTypeHasOpenSelector). By filter time the
-	// monomorphs have settled, so pick the concrete implementation the reference would have chosen at
-	// the delayed resolution multitype via find_multitype_specialization).
+	// The typer emits TNew of the abstract impl for every @:multiType construction; here it rewrites to
+	// the selected @:to cast's static call with a null receiver prepended, and the result is typed as
+	// the UNDERLYING concrete type. Specialization failures are typing errors, never swallowed.
 	static function resolveDeferredMultiType(tctx:TyperContext, e:TExpr):TExpr {
 		return switch (e.expr) {
 			case TNew(c, tl, el):
 				switch (c.kind) {
-					case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
-						var open = false;
-						for (x in tl) switch (TypeFunctions.follow(x)) {
-							case TMono(_): open = true;
-							case TInst(tc, _) if (tc.kind.match(KTypeParameter(_))): open = true;
-							case _:
+					case KAbstractImpl(a) if (!TypeFunctions.hasMeta(":multiType", a.meta)):
+						// This must have been a @:generic expansion with a { new } constraint; construct
+						// the underlying
+						// type.
+						switch (TypeFunctions.getUnderlyingType(a, tl)) {
+							case TInst(uc, utl): TypeFunctions.mk(TNew(uc, utl, el), TInst(uc, utl), e.pos);
+							case _: throw new hxc.core.TypingError("Cannot construct "
+								+ hxc.core.TPrinting.sTypeStr(TAbstract(a, tl)), e.pos);
 						}
-						// Every multiType construction rewrites to the selected @:to cast's static call with a null
-						// receiver prepended (the call inlines), and the result is typed as the UNDERLYING concrete
-						// type ({e with type = m}).
-						var sel = try hxc.typing.Typer.resolveMultiType(tctx, a, tl, e.pos) catch (_:Dynamic) null;
-						if (sel == null) return e;
+					case KAbstractImpl(a):
+						var sel = hxc.typing.Typer.resolveMultiType(tctx, a, tl, e.pos);
 						var call = hxc.typing.Typer.buildMultiTypeCastCall(tctx, a, tl, sel.castField, sel.castType, sel.ret, el, e.pos);
-						if (open) return call;
-						var m = try hxc.typing.Typer.resolveMultiTypeConcrete(a, tl, e.pos) catch (_:Dynamic) null;
-						m == null ? call : TypeFunctions.mk(call.expr, m, call.pos);
+						TypeFunctions.mk(call.expr, sel.ret, call.pos);
 					case _: e;
 				}
 			case _: e;

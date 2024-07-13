@@ -4219,39 +4219,129 @@ class Typer {
 	// type-parameter constraint is satisfied by the actual key type, with the concrete return
 	// type specialized to the actual type parameters.
 	public static function resolveMultiType(ctx:TyperContext, a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
-		return resolveMultiTypeSelection(a, atl, p);
+		var spec = findMultitypeSpecialization(ctx.com, a, atl, p);
+		return {castField: spec.castField, castType: applyMultiTypeCastType(a, atl, spec.castField.cf), ret: spec.m};
 	}
 
 	public static function resolveMultiTypeConcrete(a:TAbstract, atl:Array<T>, p:Position):T {
-		return resolveMultiTypeSelection(a, atl, p).ret;
+		return findMultitypeSpecializationType(a, atl);
 	}
 
-	static function resolveMultiTypeSelection(a:TAbstract, atl:Array<T>, p:Position):{castField:TAbstractCast, castType:T, ret:T} {
-		// Follow an abstract key to its underlying type so a key like `enum abstract Foo(String)` selects
-		// the impl for its underlying (StringMap), matching the reference.
-		var key = atl.length > 0 ? TypeFunctions.followWithAbstracts(atl[0]) : TypeFunctions.tDynamic;
-		if (TypeFunctions.hasMono(key))
-			throw new TypingError("Type parameters of multi type abstracts must be known", p);
-		for (toCast in a.toField) {
-			var cf = toCast.cf;
-			if (cf.params.length == 0) {
-				if (a.params.length == 0) {
-					var castType = applyMultiTypeCastType(a, atl, cf);
-					return {castField: toCast, castType: castType, ret: TypeFunctions.follow(toCast.t)};
-				}
-				continue;
+	// The @:multiType meta names which type parameters must be known to pick the specialization (each
+	// optionally wrapped @:followWithAbstracts); a parameter not named is passed through when closed and
+	// degrades to Dynamic while still a monomorph.
+	static function findMultitypeParams(a:TAbstract, pl:Array<T>):{tl:Array<T>, definitive:Array<T>} {
+		var meta = TypeFunctions.getMeta(":multiType", a.meta);
+		if (meta == null || meta.params.length == 0) return {tl: pl, definitive: pl};
+		var relevant = new Map<String, T->T>();
+		for (e in meta.params) {
+			function loop(f:T->T, e:Expr):Void switch (e.expr) {
+				case EConst(CIdent(s)): relevant.set(s, f);
+				case EMeta(mm, e1) if (mm.name == ":followWithAbstracts"): loop(TypeFunctions.followWithAbstracts, e1);
+				case _: throw new TypingError("Type parameter expected", e.pos);
 			}
-			// An unconstrained key parameter accepts any key (the fallback impl, e.g. ObjectMap).
-			var constraints = multiTypeConstraints(cf.params[0]);
-			var ok = true;
-			for (cn in constraints) if (!tryUnifyMulti(key, cn)) { ok = false; break; }
-			if (ok) {
-				var castType = applyMultiTypeCastType(a, atl, cf);
-				return {castField: toCast, castType: castType, ret: TypeFunctions.applyParams(cf.params, atl, toCast.t)};
-			}
+			loop(function(t) return t, e);
 		}
-		throw new TypingError("Cannot resolve multi-type for " + a.path.name, p);
+		var definitive:Array<T> = [];
+		var tl:Array<T> = [for (i in 0...a.params.length) {
+			var f = relevant.get(a.params[i].name);
+			var t = pl[i];
+			if (f != null) { var t2 = f(t); definitive.push(t2); t2; }
+			else if (!TypeFunctions.hasMono(t)) t;
+			else TypeFunctions.tDynamic;
+		}];
+		return {tl: tl, definitive: definitive};
 	}
+
+	// The specialization arrives as `follow m` whose inner parameters are still monomorphs bound during
+	// findTo's unification (StringMap<TMono(:=Int)>). Resolve them through so consumers see the literal
+	// parameter types; hxc's inliner and analyzer key some decisions on the syntactic type.
+	static function deepFollow(t:T):T {
+		return TypeFunctions.map(deepFollow, TypeFunctions.follow(t));
+	}
+
+	// findTo unifies for real, and a failed candidate's partial bindings persist (doesFuncUnify
+	// does not roll back). The reference wears that only at its few get_underlying_type call sites;
+	// hxc reaches followWithAbstracts from more places, so the same persistent effects land at
+	// different times and perturb inference. Run the whole specialization in a rollback frame and
+	// materialize the result before unwinding (deepFollow copies the bound monos out).
+	static function specializeRolledBack<R>(f:Void->R):R {
+		var result:Null<R> = null;
+		var thrown:Null<haxe.Exception> = null;
+		try {
+			TypeUnification.withMonoRollback(function():Bool {
+				try result = f() catch (e:haxe.Exception) thrown = e;
+				throw new UnifyError([]);
+			});
+		} catch (_:UnifyError) {}
+		if (thrown != null) throw thrown;
+		return result;
+	}
+
+	// Resolve through findTo against a fresh monomorph; raises NotFound (get_underlying_type falls
+	// back to thisType on it).
+	static function multitypeResult(castField:TAbstractCast, pl:Array<T>, m:T):T {
+		var cf = castField.cf;
+		if (cf.params.length == pl.length) return TypeFunctions.applyParams(cf.params, pl, castField.t);
+		return deepFollow(m);
+	}
+
+	public static function findMultitypeSpecializationType(a:TAbstract, pl:Array<T>):T {
+		return specializeRolledBack(function() {
+			var m = TypeFunctions.mkMono();
+			var r = findMultitypeParams(a, pl);
+			var castField = TypeUnification.findTo(TypeUnification.defaultUnificationContext, m, a, r.tl);
+			for (t in r.definitive) if (TypeFunctions.hasMono(t)) throw new NotFound();
+			return multitypeResult(castField, pl, m);
+		});
+	}
+
+	// The erroring variant used when a multiType construction must specialize, with the js-only Map
+	// Class-key rejection.
+	public static function findMultitypeSpecialization(com:hxc.context.Context, a:TAbstract, pl:Array<T>, p:Position):{castField:TAbstractCast, m:T} {
+		var m = TypeFunctions.mkMono();
+		var r = findMultitypeParams(a, pl);
+		var tl = r.tl;
+		if (com.platform == Js && a.path.pack.length == 2 && a.path.pack[0] == "haxe" && a.path.pack[1] == "ds"
+				&& a.path.name == "Map" && tl.length > 0) {
+			var t1 = tl[0];
+			var stack:Array<T> = [];
+			function loop(t:T):T {
+				for (t2 in stack) if (TypeUnification.fastEq(t, t2)) return t;
+				stack.push(t);
+				return switch (TypeFunctions.follow(t)) {
+					case TAbstract(ca, _) if (ca.path.pack.length == 0 && ca.path.name == "Class"):
+						throw new TypingError("Cannot use " + hxc.core.TPrinting.sTypeStr(t1)
+							+ " as key type to Map because Class<T> is not comparable on JavaScript", p);
+					case TEnum(en, _):
+						for (n in en.constrs.keys()) loop(en.constrs.get(n).type);
+						TypeFunctions.map(loop, t);
+					case _:
+						TypeFunctions.map(loop, t);
+				}
+			}
+			loop(t1);
+		}
+		return specializeRolledBack(function() {
+			var castField = try {
+				var c = TypeUnification.findTo(TypeUnification.defaultUnificationContext, m, a, tl);
+				for (t in r.definitive) if (TypeFunctions.hasMono(t)) {
+					var at = TypeFunctions.applyParams(a.params, pl, a.thisType);
+					throw new TypingError("Type parameters of multi type abstracts must be known (for "
+						+ hxc.core.TPrinting.sTypeStr(at) + ")", p);
+				}
+				c;
+			} catch (_:NotFound) {
+				var at = TypeFunctions.applyParams(a.params, pl, a.thisType);
+				var st = hxc.core.TPrinting.sTypeStr(at);
+				if (TypeFunctions.hasMono(at))
+					throw new TypingError("Type parameters of multi type abstracts must be known (for " + st + ")", p);
+				throw new TypingError("Abstract " + hxc.core.Globals.sTypePath(a.path) + " has no @:to function that accepts " + st, p);
+			}
+			return {castField: castField, m: multitypeResult(castField, pl, m)};
+		});
+	}
+
 
 	static function applyMultiTypeCastType(a:TAbstract, atl:Array<T>, cf:TClassField):T {
 		var t = cf.type;
@@ -4309,29 +4399,6 @@ class Typer {
 		return TypeFunctions.mk(call.expr, TAbstract(a, atl), p);
 	}
 
-	static function multiTypeHasOpenSelector(a:TAbstract, atl:Array<T>):Bool {
-		if (atl.length == 0) return false;
-		var selector = TypeFunctions.followWithAbstracts(atl[0]);
-		if (TypeFunctions.hasMono(selector)) return true;
-		return switch (TypeFunctions.follow(selector)) {
-			case TInst(c, _): switch (c.kind) { case KTypeParameter(_): true; case _: false; }
-			case _: false;
-		};
-	}
-
-	static function multiTypeConstraints(ttp:TypedTypeParam):Array<T> {
-		return switch (TypeFunctions.follow(ttp.type)) {
-			case TInst(c, _): switch (c.kind) { case KTypeParameter(tl): tl; case _: []; };
-			case _: [];
-		};
-	}
-
-	static function tryUnifyMulti(a:T, b:T):Bool {
-		return try TypeUnification.withMonoRollback(function() {
-			TypeUnification.unifyDefault(a, b);
-			return true;
-		}) catch (_:UnifyError) false;
-	}
 
 	// A non-Void function body must return, throw, or dead-end on every path; the first path that falls
 	// through reports "Missing return: <type>".

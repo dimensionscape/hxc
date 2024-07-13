@@ -1553,8 +1553,6 @@ class TypeUnification {
 	public static function findFieldTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
 		// Same forcing as findFieldFrom.
 		buildAbstract(ab);
-		if (Sys.getEnv("HXC_DEBUG_MONO") != null && ab.path.name.substr(0,3) == "Vec")
-			for (c in ab.toField) Sys.println("[findto] " + c.cf.name + " t=" + TPrinting.sTypeStr(c.t) + " cftype=" + TPrinting.sTypeStr(c.cf.type) + " expr=" + (c.cf.expr != null));
 		for (c in ab.toField) if (unifiesToField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
 		throw new NotFound();
 	}
