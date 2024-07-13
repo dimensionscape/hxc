@@ -230,7 +230,7 @@ class ModuleLoader {
 					}
 					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
 						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
-					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub, aliased: true});
+					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name});
 			}
 		}
 
@@ -435,6 +435,8 @@ class ModuleLoader {
 						toField: [], array: [], read: null, write: null, call: null,
 						isEnum: hasAbstractFlag(d.dFlags, AbEnum) || TypeFunctions.hasMeta(":enum", d.dMeta)
 					};
+					if (a.isEnum && !TypeFunctions.hasMeta(":enum", a.meta))
+						a.meta = ([{name: ":enum", params: [], pos: Position.nullPos}] : Metadata).concat(a.meta);
 					decls.push(TAbstractDecl(a));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -453,14 +455,15 @@ class ModuleLoader {
 						if (!hxc.core.StringHelper.isValidIdentifier(implName) && !StringTools.startsWith(implName, "$") && implName.length > 0 && !hxc.ast.Ast.isLowerIdent(implName))
 							ctx.addDiagnostic("\"" + hxc.core.StringHelper.sEscape(implName) + "\" is not a valid type name.", p);
 						var implPath:Path = {pack: m.path.pack.concat(["_" + m.path.name]), name: implName};
-						// Copy only whitelisted abstract metadata to its implementation. Keep @:keep on the abstract
-						// so unused implementations can be removed.
-						var implMeta:Metadata = [for (mm in d.dMeta)
+						// Copy whitelisted metadata in reverse order, including injected :enum. Keep @:keep on the
+						// abstract so unused implementation classes can be removed.
+						var implMeta:Metadata = [for (mm in a.meta)
 							if (mm.name == ":using" || mm.name == ":build" || mm.name == ":coreApi"
 								|| mm.name == ":allow" || mm.name == ":access" || mm.name == ":enum"
 								|| mm.name == ":dce" || mm.name == ":native" || mm.name == ":hlNative"
 								|| mm.name == ":jsRequire" || mm.name == ":pythonImport" || mm.name == ":expose"
 								|| mm.name == ":deprecated" || mm.name == ":phpGlobal" || mm.name == ":publicFields") mm];
+						implMeta.reverse();
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
 							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: implMeta,
 							dFlags: [HPrivate], dData: implFields
@@ -1174,6 +1177,20 @@ class ModuleLoader {
 			// main type, not a type named after the alias.
 			var sub = named.sub != null ? named.sub : named.modulePath.name;
 			var r = visible(tryLoadSub(ctx, named.modulePath, sub, p));
+			// `import X in Y` binds Y to a TEMP PRIVATE typedef at (pack + ["_" + module], Y) over the
+			// built instance, not to X directly, so signatures resolved through the alias print the typedef.
+			// It is never registered in the module.
+			if (r != null && named.aliased == true && named.aliasName != null) {
+				if (named.aliasTypedef == null) {
+					var mi = TypeFunctions.tInfos(r);
+					var tPath:Path = {pack: mi.module.path.pack.concat(["_" + mi.module.path.name]), name: named.aliasName};
+					var td = TypeFunctions.mkTypedef(cur, tPath, p, p, TypeFunctions.typeOfModuleType(r));
+					td.isPrivate = true;
+					td.params = mi.params;
+					named.aliasTypedef = TTypeDecl(td);
+				}
+				return named.aliasTypedef;
+			}
 			if (r != null) return r;
 		}
 		for (key in imports.names.keys()) {

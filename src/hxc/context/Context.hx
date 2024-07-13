@@ -481,7 +481,7 @@ class ModuleImports {
  * Short-name binding to a module and optional subtype. The map key is the referenced alias, subtype
  * or module name.
  */
-typedef ImportedName = {modulePath:Path, sub:Null<String>, ?aliased:Bool};
+typedef ImportedName = {modulePath:Path, sub:Null<String>, ?aliased:Bool, ?aliasName:String, ?aliasTypedef:ModuleType};
 
 /**
  * Resolved static-field import: owning module, optional subtype and static field or enum
