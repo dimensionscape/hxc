@@ -157,10 +157,11 @@ enum PatKind {
 typedef Pattern = {pat:PatKind, pos:Position};
 typedef UnappliedTypeParam = {m:TMono, old:Null<T>};
 
-private enum PatternUse {
-	UnusedCase;
-	UnusedPattern(p:Position);
-	Used;
+// Useless: checks for useless patterns based on http://moscova.inria.fr/~maranget/papers/warn/index.html
+private enum Useless {
+	UFalse;
+	UPos(p:Position);
+	UTrue;
 }
 
 private class UnusedPatternCheck {
@@ -168,91 +169,192 @@ private class UnusedPatternCheck {
 
 	static function anyPatterns(n:Int, p:Position):Array<Pattern> return [for (_ in 0...n) ({pat: PatAny, pos: p} : Pattern)];
 
-	static function specialize(isTuple:Bool, con:Con, m:Array<Array<Pattern>>):Array<Array<Pattern>> {
-		var out:Array<Array<Pattern>> = [];
-		for (row in m) {
-			if (row.length == 0) continue;
-			var head = row[0];
-			var rest = row.slice(1);
-			function loop(pat:Pattern):Void switch (pat.pat) {
-				case PatConstructor(c, subs) if (!isTuple && Constructor.equal(con, c)):
-					out.push(subs.concat(rest));
-				case PatTuple(subs) if (isTuple):
-					out.push(subs.concat(rest));
-				case PatVariable(_) | PatAny:
-					out.push(anyPatterns(Constructor.arity(con), pat.pos).concat(rest));
-				case PatBind(_, inner):
-					loop(inner);
-				case PatOr(a, b):
-					loop(a); loop(b);
+	// Specialization (the U part). A PatVariable head row is DROPPED here (only PatAny expands), unlike
+	// uSpecialize2 below.
+	static function uSpecialize(isTuple:Bool, con:Con, pM:Array<Array<Pattern>>):Array<Array<Pattern>> {
+		var acc:Array<Array<Pattern>> = [];
+		var work = pM.copy();
+		var i = 0;
+		while (i < work.length) {
+			var patterns = work[i]; i++;
+			if (patterns.length == 0) continue;
+			var head = patterns[0], rest = patterns.slice(1);
+			switch (head.pat) {
+				case PatConstructor(con2, patterns1) if (!isTuple && Constructor.equal(con, con2)):
+					acc.push(patterns1.concat(rest));
+				case PatTuple(patterns1) if (isTuple):
+					acc.push(patterns1.concat(rest));
+				case PatAny:
+					acc.push(anyPatterns(Constructor.arity(con), head.pos).concat(rest));
+				case PatBind(_, pat1):
+					work.insert(i, ([pat1] : Array<Pattern>).concat(rest));
 				case _:
 			}
-			loop(head);
 		}
-		return out;
+		return acc;
 	}
 
-	static function defaults(m:Array<Array<Pattern>>):Array<Array<Pattern>> {
-		var out:Array<Array<Pattern>> = [];
-		for (row in m) if (row.length > 0) switch (row[0].pat) {
-			case PatVariable(_) | PatAny: out.push(row.slice(1));
-			case PatBind(_, inner):
-				var one:Array<Pattern> = [inner];
-				out = out.concat(defaults([one.concat(row.slice(1))]));
+	static function uDefault(pM:Array<Array<Pattern>>):Array<Array<Pattern>> {
+		var acc:Array<Array<Pattern>> = [];
+		for (patterns in pM) if (patterns.length > 0) switch (patterns[0].pat) {
+			case PatVariable(_) | PatAny: acc.push(patterns.slice(1));
 			case _:
 		}
-		return out;
+		return acc;
 	}
 
-	static function covered(m:Array<Array<Pattern>>, q:Array<Pattern>):Bool {
-		if (q.length == 0) return m.length > 0 && [for (row in m) if (row.length == 0) true].length > 0;
-		if (m.length == 0) return false;
-		var head = q[0], tail = q.slice(1);
-		return switch (head.pat) {
-			case PatConstructor(con, subs): covered(specialize(false, con, m), subs.concat(tail));
-			case PatTuple(subs): covered(specialize(true, Constructor.make(ConArray(subs.length), head.pos), m), subs.concat(tail));
-			case PatVariable(_) | PatAny: covered(defaults(m), tail);
-			case PatOr(a, b): covered(m, [a].concat(tail)) && covered(m, [b].concat(tail));
-			case PatBind(_, inner): covered(m, [inner].concat(tail));
-			case PatExtractor(_, _, _): true;
-		};
+	// U: is the vector q useful against matrix pM?
+	static function u(pM:Array<Array<Pattern>>, q:Array<Pattern>):Bool {
+		if (q.length == 0) return pM.length == 0;
+		var q1 = q[0], ql = q.slice(1);
+		function loop(pat:Pattern):Bool return switch (pat.pat) {
+			case PatConstructor(con, patterns):
+				u(uSpecialize(false, con, pM), patterns.concat(ql));
+			case PatTuple(patterns):
+				u(uSpecialize(true, Constructor.make(ConConst(TNull), pat.pos), pM), patterns.concat(ql));
+			case PatVariable(_) | PatAny:
+				u(uDefault(pM), ql);
+			case PatOr(pat1, pat2):
+				u(pM, ([pat1] : Array<Pattern>).concat(ql)) || u(pM, ([pat2] : Array<Pattern>).concat(ql));
+			case PatBind(_, pat1):
+				loop(pat1);
+			case PatExtractor(_, _, _):
+				true;
+		}
+		return loop(q1);
 	}
 
-	static function usefulness(prior:Array<Array<Pattern>>, row:Array<Pattern>):PatternUse {
-		for (i in 0...row.length) switch (row[i].pat) {
-			case PatOr(a, b):
-				var before = prior.copy();
-				var unused = 0, first:Null<Position> = null;
-				for (alt in [a, b]) {
-					var candidate = row.copy();
-					candidate[i] = alt;
-					if (covered(before, candidate)) {
-						unused++;
-						if (first == null) first = alt.pos;
-					} else {
-						before.push(candidate);
-					}
+	// transferColumn: move each row head from source to target; an empty source row drops the pair from
+	// both.
+	static function transferColumn(source:Array<Array<Pattern>>, target:Array<Array<Pattern>>):{source:Array<Array<Pattern>>, target:Array<Array<Pattern>>} {
+		var s2:Array<Array<Pattern>> = [], t2:Array<Array<Pattern>> = [];
+		for (i in 0...source.length) {
+			var patterns1 = source[i], patterns2 = target[i];
+			if (patterns1.length > 0) {
+				s2.push(patterns1.slice(1));
+				t2.push(([patterns1[0]] : Array<Pattern>).concat(patterns2));
+			}
+		}
+		return {source: s2, target: t2};
+	}
+
+	// Specialization for u2 (the U2 part): triple-matrix specialization; a PatOr head requeues both
+	// alternatives with the row q/r duplicated.
+	static function uSpecialize2(isTuple:Bool, con:Con, pM:Array<Array<Pattern>>, qM:Array<Array<Pattern>>, rM:Array<Array<Pattern>>):{p:Array<Array<Pattern>>, q:Array<Array<Pattern>>, r:Array<Array<Pattern>>} {
+		var arity = Constructor.arity(con);
+		var pAcc:Array<Array<Pattern>> = [], qAcc:Array<Array<Pattern>> = [], rAcc:Array<Array<Pattern>> = [];
+		var pW = pM.copy(), qW = qM.copy(), rW = rM.copy();
+		var idx = 0;
+		while (idx < pW.length) {
+			var q1 = qW[idx], r1 = rW[idx];
+			var cur = pW[idx]; idx++;
+			var again = true;
+			while (again) {
+				again = false;
+				if (cur.length == 0) break;
+				var head = cur[0], rest = cur.slice(1);
+				switch (head.pat) {
+					case PatConstructor(con2, patterns1) if (!isTuple && Constructor.equal(con, con2)):
+						pAcc.push(patterns1.concat(rest)); qAcc.push(q1); rAcc.push(r1);
+					case PatTuple(patterns1) if (isTuple):
+						pAcc.push(patterns1.concat(rest)); qAcc.push(q1); rAcc.push(r1);
+					case PatVariable(_) | PatAny:
+						pAcc.push(anyPatterns(arity, head.pos).concat(rest)); qAcc.push(q1); rAcc.push(r1);
+					case PatOr(pat1, pat2):
+						pW.insert(idx, ([pat2] : Array<Pattern>).concat(rest));
+						pW.insert(idx, ([pat1] : Array<Pattern>).concat(rest));
+						qW.insert(idx, q1); qW.insert(idx, q1);
+						rW.insert(idx, r1); rW.insert(idx, r1);
+					case PatBind(_, pat1):
+						cur = ([pat1] : Array<Pattern>).concat(rest);
+						again = true;
+					case _:
 				}
-				return unused == 2 ? UnusedCase : (first == null ? Used : UnusedPattern(first));
-			case _:
+			}
 		}
-		return covered(prior, row) ? UnusedCase : Used;
+		return {p: pAcc, q: qAcc, r: rAcc};
 	}
 
+	static function combine(u1:Useless, p1:Position, u2v:Useless, p2:Position):Useless {
+		return switch [u1, u2v] {
+			case [UTrue, UTrue]: UTrue;
+			case [UFalse, UFalse]: UFalse;
+			case [UTrue, UFalse]: UPos(p2);
+			case [UFalse, UTrue]: UPos(p1);
+			case [UTrue, UPos(_)]: u2v;
+			case [UPos(_), UTrue]: u1;
+			case [UFalse, UPos(_)]: UPos(p1);
+			case [UPos(_), _]: u1;
+		}
+	}
+
+	// U2: usefulness with or-pattern position tracking. q and r accumulate by PREPEND.
+	static function u2(pM:Array<Array<Pattern>>, qM:Array<Array<Pattern>>, rM:Array<Array<Pattern>>, p:Array<Pattern>, q:Array<Pattern>, r:Array<Pattern>):Useless {
+		if (p.length == 0) {
+			if (r.length == 0) return u(qM, q) ? UTrue : UFalse;
+			// Each deferred or-pattern column i is pulled out of every rM row (the rest joins the qM
+			// row), then both alternatives are checked, the second against the first.
+			function processRow(i:Int, l:Array<Pattern>, q:Array<Pattern>):{x:Pattern, l:Array<Pattern>} {
+				return {x: l[i], l: l.slice(0, i).concat(l.slice(i + 1)).concat(q)};
+			}
+			var et:Useless = UTrue;
+			for (i in 0...r.length) {
+				switch (r[i].pat) {
+					case PatOr(pat1, pat2):
+						var col:Array<Array<Pattern>> = [], mat:Array<Array<Pattern>> = [];
+						for (j in 0...rM.length) {
+							var pr = processRow(i, rM[j], qM[j]);
+							col.push([pr.x]);
+							mat.push(pr.l);
+						}
+						var rNew = processRow(i, r, q).l;
+						var et1 = u2(col, mat, copyMatrix(mat), [pat1], rNew, []);
+						var qM2 = mat.concat([rNew]);
+						var et2 = u2(col.concat([([pat1] : Array<Pattern>)]), qM2, copyMatrix(qM2), [pat2], rNew, []);
+						var et3 = combine(et1, pat1.pos, et2, pat2.pos);
+						var pu = Position.union(pat1.pos, pat2.pos);
+						et = combine(et, pu, et3, pu);
+					case _:
+						throw new TypingError("Something went wrong", r[i].pos);
+				}
+			}
+			return et;
+		}
+		var pat0 = p[0], pl = p.slice(1);
+		function loop(pat:Pattern):Useless return switch (pat.pat) {
+			case PatConstructor(con, patterns):
+				var s = uSpecialize2(false, con, pM, qM, rM);
+				u2(s.p, s.q, s.r, patterns.concat(pl), q, r);
+			case PatTuple(patterns):
+				var s = uSpecialize2(true, Constructor.make(ConConst(TNull), pat.pos), pM, qM, rM);
+				u2(s.p, s.q, s.r, patterns.concat(pl), q, r);
+			case PatVariable(_) | PatAny:
+				var t = transferColumn(pM, qM);
+				u2(t.source, t.target, rM, pl, ([pat] : Array<Pattern>).concat(q), r);
+			case PatOr(_, _):
+				var t = transferColumn(pM, rM);
+				u2(t.source, qM, t.target, pl, q, ([pat] : Array<Pattern>).concat(r));
+			case PatBind(_, pat1):
+				loop(pat1);
+			case PatExtractor(_, _, _):
+				UTrue;
+		}
+		return loop(pat0);
+	}
+
+	static function checkCase(ctx:TyperContext, prior:Array<Array<Pattern>>, mc:MatchCase):Void {
+		switch (u2(prior, prior.copy(), copyMatrix(prior), mc.patterns, [], [])) {
+			case UFalse: ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This case is unused", mc.c.pos);
+			case UPos(p): ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This pattern is unused", p);
+			case UTrue:
+		}
+	}
+
+	// A guarded case does not join the preceding matrix.
 	public static function check(ctx:TyperContext, cases:Array<MatchCase>):Void {
 		var prior:Array<Array<Pattern>> = [];
 		for (mc in cases) {
-			switch (usefulness(prior, mc.patterns)) {
-				case UnusedCase:
-					var casePos = mc.c.pos;
-					var patternPos = mc.warningPos == null ? mc.patterns[0].pos : mc.warningPos;
-					if (mc.patterns.length == 1 && Position.getInfos(casePos).line != Position.getInfos(patternPos).line)
-						ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This pattern is unused", patternPos);
-					else
-						ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This case is unused", casePos);
-				case UnusedPattern(pos): ctx.com.warning(hxc.core.WarningList.Warning.WUnusedPattern, [], "This pattern is unused", pos);
-				case Used:
-			}
+			checkCase(ctx, prior, mc);
 			if (mc.c.guard == null) prior.push(mc.patterns);
 		}
 	}
@@ -890,7 +992,7 @@ enum DtKind {
 typedef Binding = {v:TVar, p:Position, e:TExpr};
 
 // One row of the pattern matrix during compilation: (case, accumulated bindings, the row patterns).
-typedef MatchCase = {c:Case, bindings:Array<Binding>, patterns:Array<Pattern>, ?warningPos:Position};
+typedef MatchCase = {c:Case, bindings:Array<Binding>, patterns:Array<Pattern>};
 
 class MatcherContext {
 	public var ctx:TyperContext;
@@ -1895,7 +1997,7 @@ class Match {
 				// `case [p..]|[q..]:` over a tuple stays one case whose pattern is a PatOr of tuples, so
 				// both branches share one leaf and merge at conversion.
 				var r = CaseMaker.makeTuple(ctx, subjectTypes, cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
-				matchCases.push({c: r.c, bindings: [], patterns: r.pats, warningPos: cas.values[0].pos});
+				matchCases.push({c: r.c, bindings: [], patterns: r.pats});
 			} else {
 				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
