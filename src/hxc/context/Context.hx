@@ -464,12 +464,16 @@ enum ContextErrorKind {
 @:structInit
 class ModuleImports {
 	public var names:StringMap<ImportedName>;
+	// Import bindings resolve in reverse declaration order, so the last import wins. Do not use
+	// StringMap hash order.
+	public var order:Array<ImportedName>;
 	public var wildcards:Array<Path>;
 	public var usings:Array<Path>;
 	public var globals:StringMap<ImportedGlobal>;
 	public var rawImports:Array<Import>;
-	public function new(names:StringMap<ImportedName>, wildcards:Array<Path>, usings:Array<Path>, ?globals:StringMap<ImportedGlobal>, ?rawImports:Array<Import>) {
+	public function new(names:StringMap<ImportedName>, wildcards:Array<Path>, usings:Array<Path>, ?globals:StringMap<ImportedGlobal>, ?rawImports:Array<Import>, ?order:Array<ImportedName>) {
 		this.names = names;
+		this.order = order != null ? order : [];
 		this.wildcards = wildcards;
 		this.usings = usings;
 		this.globals = globals != null ? globals : new StringMap();

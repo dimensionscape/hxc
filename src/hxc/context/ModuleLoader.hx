@@ -220,7 +220,9 @@ class ModuleLoader {
 						return;
 					}
 					var short = split.sub != null ? split.sub : split.modulePath.name;
-					imports.names.set(short, {modulePath: split.modulePath, sub: split.sub});
+					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub};
+					imports.names.set(short, ni);
+					imports.order.push(ni);
 				case IAsName(alias):
 					var split = splitImportPath(parts);
 					if (split == null) return;
@@ -230,7 +232,9 @@ class ModuleLoader {
 					}
 					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
 						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
-					imports.names.set(alias.name, {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name});
+					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name};
+					imports.names.set(alias.name, ni);
+					imports.order.push(ni);
 			}
 		}
 
@@ -242,7 +246,9 @@ class ModuleLoader {
 			var namedModulePath = split.modulePath;
 			if (split.sub != null && split.modulePath.pack.length == 0 && m.path.pack.length > 0)
 				namedModulePath = {pack: m.path.pack, name: split.modulePath.name};
-			imports.names.set(short, {modulePath: namedModulePath, sub: split.sub});
+			var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub};
+			imports.names.set(short, ni);
+			imports.order.push(ni);
 			function usingPath(modulePath:Path):Path {
 				return split.sub != null ? {pack: modulePath.pack.concat([modulePath.name]), name: split.sub} : modulePath;
 			}
@@ -435,8 +441,12 @@ class ModuleLoader {
 						toField: [], array: [], read: null, write: null, call: null,
 						isEnum: hasAbstractFlag(d.dFlags, AbEnum) || TypeFunctions.hasMeta(":enum", d.dMeta)
 					};
+					// Inject :enum for enum abstracts lacking it; explicit @:enum instead reports deprecation.
 					if (a.isEnum && !TypeFunctions.hasMeta(":enum", a.meta))
-						a.meta = ([{name: ":enum", params: [], pos: Position.nullPos}] : Metadata).concat(a.meta);
+						a.meta = ([{name: ":enum", params: [], pos: Position.nullPos}] : Metadata).concat(a.meta)
+					else if (TypeFunctions.hasMeta(":enum", d.dMeta))
+						ctx.warning(hxc.core.WarningList.Warning.WDeprecatedEnumAbstract, hxc.core.WarningList.fromMeta(d.dMeta),
+							"`@:enum abstract` is deprecated in favor of `enum abstract`", TypeFunctions.getMeta(":enum", d.dMeta).pos);
 					decls.push(TAbstractDecl(a));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -1193,8 +1203,12 @@ class ModuleLoader {
 			}
 			if (r != null) return r;
 		}
-		for (key in imports.names.keys()) {
-			var ni = imports.names.get(key);
+		// The reference prepends each import's exposed types onto module_imports and takes the first
+		// match, so a name exposed by several module imports (utest Assert's `import Map; import
+		// haxe.Constraints;` both expose an IMap) resolves to the LAST-declared import.
+		var i = imports.order.length - 1;
+		while (i >= 0) {
+			var ni = imports.order[i--];
 			if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
 			var r = visible(tryLoadSub(ctx, ni.modulePath, name, p));
 			if (r != null) return r;

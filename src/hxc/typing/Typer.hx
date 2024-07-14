@@ -2422,10 +2422,10 @@ class Typer {
 			}
 		}
 		// A plain module import (`import M;`) exposes every PUBLIC module-level static of M as a bare
-		// identifier INormal: md.statics' public fields enter module_globals). An aliased or sub-type
-		// import does not.
-		for (key in imports.names.keys()) {
-			var ni = imports.names.get(key);
+		// identifier INormal: md.statics' public fields enter module_globals).
+		var oi = imports.order.length - 1;
+		while (oi >= 0) {
+			var ni = imports.order[oi--];
 			if (ni.sub != null || ni.aliased == true) continue;
 			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
 			if (mod.statics == null) continue;
@@ -2561,7 +2561,11 @@ class Typer {
 				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
 				return md == null ? null : scan(md.types);
 			}
-			for (imp in imports.names) {
+			// Reversed declaration order: imports are prepended, so a name exposed by several imports
+			// resolves to the last-declared one.
+			var impIdx = imports.order.length - 1;
+			while (impIdx >= 0) {
+				var imp = imports.order[impIdx--];
 				if (imp.aliased == true) continue;
 				if (imp.sub != null) {
 					// A sub-type import (`import pack.Module.Sub`) exposes constructors/members only when the
