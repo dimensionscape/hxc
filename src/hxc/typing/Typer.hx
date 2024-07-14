@@ -2780,7 +2780,7 @@ class Typer {
 		var v = TypeFunctions.allocVar(VGenerated, "`", tea.type, p);
 		// The reference stores the accumulator local and references it through the @:storedTypedExpr
 		// marker; the ID is consumed either way, which keeps the stored-expression id stream aligned. .
-		var refId = ++hxc.context.Context.nextStoredTypedExprId;
+		var refId = hxc.context.Context.allocStoredTypedExprId("comprehension " + p.file + ":" + Position.getInfos(p).line);
 		ctx.com.storedTypedExprs.set(refId, TypeFunctions.mk(TLocal(v), v.type, p));
 		var restore = saveLocals(ctx);
 		ctx.locals.set(acc, v);

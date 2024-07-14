@@ -142,6 +142,13 @@ class Context {
 	// One id sequence across every context, host and macro alike.
 	public static var nextStoredTypedExprId:Int = 0;
 
+	// Increment before allocating a stored-expression ID. HXC_STE_DBG traces the allocation site.
+	public static function allocStoredTypedExprId(tag:String):Int {
+		var id = ++nextStoredTypedExprId;
+		if (Sys.getEnv("HXC_STE_DBG") != null) Sys.stderr().writeString("[STE] " + id + " " + tag + "\n");
+		return id;
+	}
+
 	// Constraint checks deferred by loadInstance until all module fields are typed, at
 	// PCheckConstraint.
 	public var pendingConstraintChecks:Array<Void->Void> = [];

@@ -909,7 +909,7 @@ class Calls {
 			case TConst(TBool(b)):
 				new Expr(EConst(CIdent(b ? "true" : "false")), p);
 			case _:
-				var id = ++hxc.context.Context.nextStoredTypedExprId;
+				var id = hxc.context.Context.allocStoredTypedExprId("push_this");
 				ctx.com.storedTypedExprs.set(id, e);
 				var eid = new Expr(EConst(CInt(Std.string(id), null)), p);
 				new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), p);
