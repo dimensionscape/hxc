@@ -78,7 +78,15 @@ class Inline {
 		// installed yet, so type it on demand from its owning class, then follow the lazy as a backstop.
 		if (c != null) TypeFields.forceFieldBody(ctx.com, c, cf);
 		TypeFunctions.follow(cf.type);
-		var body = cf.expr;
+		// Inline from exprUnoptimized when it is set (the pre-analyzer body saved by save_class_state),
+		// falling back to expr. This only matters for a module reused from the compilation cache, whose
+		// expr has been analyzer-transformed; inlining that into a fresh caller would carry
+		// analyzer-split temps into a body the pre-analyzer checks still visit. A freshly typed field has
+		// exprUnoptimized = null, so the one-shot path is unaffected.
+		var body = switch (cf.exprUnoptimized) {
+			case some if (some != null && some.expr.match(TFunction(_))): some;
+			case _: cf.expr;
+		};
 		if (body == null) return null;
 		var tf = switch (body.expr) {
 			case TFunction(f): f;

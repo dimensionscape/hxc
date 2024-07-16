@@ -17,7 +17,13 @@ private class StopInit extends haxe.Exception {
 // the WVarInit warning.
 class LocalVarsInit {
 	public static function run(ctx:Context):Void {
-		for (m in ctx.modules) for (mt in m.types) switch (mt) {
+		// Only newly typed modules are checked: a module reused from the compilation cache (its body
+		// already analyzer-transformed and definite-assignment-clean on the compile that cached it) is not
+		// re-checked. This runs as a standalone post-typing pass over ctx.modules, so it applies that skip
+		// itself; a one-shot compile never caches, so processed stays 0 and nothing is skipped.
+		for (m in ctx.modules) {
+			if (m.extra.processed != 0 && m.extra.processed < hxc.context.ServerCache.compilationStep) continue;
+			for (mt in m.types) switch (mt) {
 			case TClassDecl(c):
 				inline function field(cf:TClassField) if (cf.expr != null) check(ctx, c.meta, cf.meta, cf.expr);
 				for (cf in c.orderedFields) field(cf);
@@ -25,6 +31,7 @@ class LocalVarsInit {
 				if (c.constructor != null) field(c.constructor);
 				if (c.init != null) check(ctx, c.meta, [], c.init);
 			case _:
+			}
 		}
 	}
 

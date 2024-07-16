@@ -150,12 +150,10 @@ class Compiler {
 				// The request compiles in this process over the persistent caches; a failing compile aborts
 				// only the request.
 				resetForNextRequest();
-				// Module reuse is wired end-to-end (check_module / add_modules / save_class_state) but a reused
-				// module still re-enters the filter pipeline on a later dirty-root request (its restored
-				// post-analyzer body then fails check_local_vars_init), so the consultation stays off until
-				// that is resolved; every request still recompiles in full, matching the pre-cache behavior.
-				// Set HXC_SERVER_REUSE=1 to exercise it.
-				hxc.context.ServerCache.enabled = Sys.getEnv("HXC_SERVER_REUSE") != null;
+				// A request reuses cache-valid modules and only re-types the dirty subgraph;
+				// HXC_SERVER_NOREUSE=1 falls back to full recompilation.
+				// Only ever set here (the in-process wait server), so a one-shot compile is untouched.
+				hxc.context.ServerCache.enabled = Sys.getEnv("HXC_SERVER_NOREUSE") == null;
 				requestOutput = new StringBuf();
 				var failed = false;
 				try {
