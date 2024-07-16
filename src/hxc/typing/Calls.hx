@@ -1179,7 +1179,7 @@ class Calls {
 			}
 		}
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
-		mg.extra.processed = 2;
+		mg.extra.resolved = 2;
 		var cg = TypeFunctions.mkClass(mg, path, host.pos, host.namePos);
 		cg.build = function():BuildState return Built;
 		cg.module = mg;

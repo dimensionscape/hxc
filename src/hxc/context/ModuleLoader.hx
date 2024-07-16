@@ -850,6 +850,12 @@ class ModuleLoader {
 		}
 	}
 
+	// A cache-reused module registers with the current compilation exactly like a freshly typed one (the
+	// module lookup table + com.modules/types).
+	public static function registerReusedModule(ctx:Context, m:ModuleDef):Void {
+		addModule(ctx, m);
+	}
+
 	static function handleImportHx(ctx:Context, m:ModuleDef, decls:Array<TypeDecl>):Array<TypeDecl> {
 		var file = m.extra.file;
 		if (file == null || file == "" || !FileSystem.exists(file)) return decls;
@@ -1008,6 +1014,11 @@ class ModuleLoader {
 		var existing = ctx.moduleLut.get(key);
 		// Every module load records the loaded module as a dependency of the requesting module.
 		if (existing != null) { addDependency(ctx.currentModule, existing); return existing; }
+		// While a compilation server request runs, a cache-valid module is reused instead of parsed.
+		if (hxc.context.ServerCache.enabled) {
+			var cached = hxc.context.ServerCache.typeModule(ctx, m, p);
+			if (cached != null) { addDependency(ctx.currentModule, cached); return cached; }
+		}
 		if (ctx.moduleNonexistentLut.exists(key))
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 

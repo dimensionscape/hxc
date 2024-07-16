@@ -74,6 +74,8 @@ class Compiler {
 		hxc.parser.Parser.resetPerRequest();
 		hxc.context.ModuleLoader.resetPerRequest();
 		hxc.typing.CoreApi.reset();
+		hxc.context.ServerCache.resetRequest();
+		hxc.ast.Position.resetFileCache();
 	}
 
 	static function runWaitStdio():Void {
@@ -148,6 +150,12 @@ class Compiler {
 				// The request compiles in this process over the persistent caches; a failing compile aborts
 				// only the request.
 				resetForNextRequest();
+				// Module reuse is wired end-to-end (check_module / add_modules / save_class_state) but a reused
+				// module still re-enters the filter pipeline on a later dirty-root request (its restored
+				// post-analyzer body then fails check_local_vars_init), so the consultation stays off until
+				// that is resolved; every request still recompiles in full, matching the pre-cache behavior.
+				// Set HXC_SERVER_REUSE=1 to exercise it.
+				hxc.context.ServerCache.enabled = Sys.getEnv("HXC_SERVER_REUSE") != null;
 				requestOutput = new StringBuf();
 				var failed = false;
 				try {
@@ -158,6 +166,9 @@ class Compiler {
 					requestOutput.add("Error: " + Std.string(e) + "\n");
 					failed = true;
 				}
+				hxc.context.ServerCache.enabled = false;
+				// A fresh signature's directory scan runs after the request.
+				hxc.context.ServerCache.runDelays();
 				var payloadOut = requestOutput.toString();
 				requestOutput = null;
 				if (payloadOut.length > 0) {

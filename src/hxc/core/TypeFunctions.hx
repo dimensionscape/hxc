@@ -293,7 +293,12 @@ class TypeFunctions {
 	public static function addDependency(m:ModuleDef, mdep:ModuleDef, skip_postprocess:Bool = false):Void {
 		if (m != nullModule && m != mdep) {
 			m.extra.deps.set(mdep.id, mdep);
-			if (!skip_postprocess) m.extra.processed = 0;
+			// A new dependency invalidates the RESOLVE gate (a later resolveModule re-runs), not the
+			// save_class_state cache mark (processed). The reference's save_class_state comment is explicit
+			// that nothing may add a dependency after the save without making the module read as uncached;
+			// here the split keeps the cache mark intact so a reused module's dependencies (added while
+			// re-typing a dirty root above it) do not force it back through the filters.
+			if (!skip_postprocess) m.extra.resolved = 0;
 		}
 	}
 

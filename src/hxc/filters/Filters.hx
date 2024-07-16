@@ -862,20 +862,35 @@ class Filters {
 
 	public static function run(tctx:TyperContext):Void {
 		var com = tctx.com;
-		var newTypes = com.types;
+		// A cached type (reused from the server cache, already restored to its post-RenameVars snapshot)
+		// skips the whole filter pipeline; only the destructive stages below re-run on it. The
+		// inheritance graph registers for every type (DCE walks descendants to keep overrides of used
+		// fields), and an uncached class snapshots exprUnoptimized so the next compilation inlines from
+		// the original expression.
+		var reuse = hxc.context.ServerCache.enabled;
+		var newTypes:Array<ModuleType> = [];
+		for (t in com.types) {
+			var cached = reuse && isCached(com, t);
+			switch (t) {
+				case TClassDecl(cls):
+					for (i in cls.interfaces) TypeFunctions.addDescendant(i.c, cls);
+					if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
+					if (reuse && !cached) {
+						inline function fld(cf:TClassField) cf.exprUnoptimized = cf.expr;
+						for (cf in cls.orderedFields) fld(cf);
+						for (cf in cls.orderedStatics) fld(cf);
+						if (cls.constructor != null) fld(cls.constructor);
+					}
+				case _:
+			}
+			if (!cached) newTypes.push(t);
+		}
 		// A class without its own constructor inherits a forwarding one from its super, so the generator
 		// emits the super call rather than an empty body. Done before the filters so the synthesized body
 		// is
 		// processed too.
 		for (t in newTypes) switch (t) {
 			case TClassDecl(cls): hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
-			case _:
-		}
-		// Register the inheritance graph first; DCE walks descendants to keep overrides of used fields
-		for (t in newTypes) switch (t) {
-			case TClassDecl(cls):
-				for (i in cls.interfaces) TypeFunctions.addDescendant(i.c, cls);
-				if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
 			case _:
 		}
 		memProbe("filters:start");
@@ -925,12 +940,186 @@ class Filters {
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
 		memProbe("pass2:done");
-		// onGenerate callbacks run after the expression passes and before save_class_state/destruction, so
-		// macro-side type mutation (e.g. cpp.cppia.HostClasses marking host classes extern) is invisible to
-		// the expression filters. (save_class_state itself is server cache; single-shot hxc skips it.)
+		// The onGenerate callbacks run after the expression passes and before saveClassState/destruction,
+		// so macro-side type mutation (e.g. cpp.cppia.HostClasses marking host classes extern) is invisible
+		// to the expression filters.
 		hxc.eval.EvalMacro.runGenerateCallbacks(com);
+		// State: the typed snapshot the compilation server restores on reuse, with the signature-level
+		// dependency registration that must precede it. Only meaningful while the server reuses modules;
+		// a one-shot compile never restores, so skip the snapshot (and its open-mono binding) to keep the
+		// one-shot path byte-identical.
+		if (hxc.context.ServerCache.enabled) for (t in newTypes) {
+			updateCacheDependencies(com, t);
+			saveClassState(com, t);
+		}
 		destruction(tctx, renameLocals);
 		memProbe("destruction:done");
+	}
+
+	// A module whose saveClassState ran in an earlier server request is cached; its types skip the
+	// whole filter pipeline (their restored state is already post-RenameVars) and only the destructive
+	// stages re-run. One-shot compiles never increment the step, so processed < 0-step is false and
+	// nothing is ever cached.
+	static function isCached(com:Context, t:ModuleType):Bool {
+		var m = TypeFunctions.tInfos(t).module.extra;
+		return m.processed != 0 && m.processed < hxc.context.ServerCache.compilationStep;
+	}
+
+	// Field SIGNATURES can reference modules the expression loads never touched; register them as
+	// dependencies so the server's module check walks them. A still-open monomorph in a signature binds
+	// to Dynamic here.
+	static function updateCacheDependencies(com:Context, t:ModuleType):Void {
+		var visitedAnons:Array<hxc.core.Type.TAnon> = [];
+		function checkT(m:hxc.core.Type.ModuleDef, t:T):Void {
+			switch (t) {
+				case TInst(c, tl):
+					hxc.context.ModuleLoader.addDependency(m, c.module);
+					for (x in tl) checkT(m, x);
+				case TEnum(en, tl):
+					hxc.context.ModuleLoader.addDependency(m, en.module);
+					for (x in tl) checkT(m, x);
+				case TType(td, tl):
+					hxc.context.ModuleLoader.addDependency(m, td.module);
+					for (x in tl) checkT(m, x);
+				case TAbstract(a, tl):
+					hxc.context.ModuleLoader.addDependency(m, a.module);
+					for (x in tl) checkT(m, x);
+				case TFun(sig):
+					for (a in sig.args) checkT(m, a.t);
+					checkT(m, sig.ret);
+				case TAnon(an):
+					if (visitedAnons.indexOf(an) < 0) {
+						visitedAnons.push(an);
+						for (n in an.fields.keys()) checkT(m, an.fields.get(n).type);
+					}
+				case TMono(r):
+					switch (r.type) {
+						case null: TypeUnification.doBind(r, TypeFunctions.tDynamic);
+						case some: checkT(m, some);
+					}
+				case TLazy(f):
+					checkT(m, TypeFunctions.lazyType(f));
+				case TDynamic(null):
+				case TDynamic(t2):
+					checkT(m, t2);
+			}
+		}
+		function checkField(m:hxc.core.Type.ModuleDef, cf:TClassField):Void {
+			checkT(m, cf.type);
+			for (o in cf.overloads) checkField(m, o);
+		}
+		switch (t) {
+			case TClassDecl(c):
+				for (cf in c.orderedStatics) checkField(c.module, cf);
+				for (cf in c.orderedFields) checkField(c.module, cf);
+				if (c.constructor != null) checkField(c.module, c.constructor);
+			case _:
+		}
+	}
+
+	// Snapshot each type so the compilation server can restore it after the destructive stages (DCE
+	// sweep, native path rewrite, generator mutations). The mutable arrays are captured as copies so the
+	// snapshot cannot change.
+	static function saveClassState(com:Context, t:ModuleType):Void {
+		// Nothing may add a dependency after this point, or the module immediately reads as
+		// uncached again.
+		TypeFunctions.tInfos(t).module.extra.processed = hxc.context.ServerCache.compilationStep;
+		switch (t) {
+			case TClassDecl(c):
+				var vars:Array<{v:TVar, t:T}> = [];
+				function saveVars(e:TExpr):Void {
+					switch (e.expr) {
+						case TFunction(fn):
+							for (a in fn.args) vars.push({v: a.v, t: a.v.type});
+							saveVars(fn.expr);
+						case TVarExpr(v, e1):
+							vars.push({v: v, t: v.type});
+							if (e1 != null) saveVars(e1);
+						case _:
+							TexprTools.iter(saveVars, e);
+					}
+				}
+				function mkOverloadRestore(f:TClassField) {
+					TypeFunctions.addClassFieldFlag(f, CfPostProcessed);
+					return {name: f.name, kind: f.kind, expr: f.expr, t: f.type, meta: f.meta.copy(), params: f.params.copy()};
+				}
+				function mkFieldRestore(f:TClassField) {
+					if (f.expr != null) saveVars(f.expr);
+					return {f: f, res: mkOverloadRestore(f), overloads: [for (o in f.overloads) {f: o, res: mkOverloadRestore(o)}]};
+				}
+				function restoreOne(f:TClassField, r:{name:String, kind:FieldKind, expr:Null<TExpr>, t:T, meta:Metadata, params:TypeParams}):TClassField {
+					f.name = r.name;
+					f.kind = r.kind;
+					f.expr = r.expr;
+					f.type = r.t;
+					f.meta = r.meta.copy();
+					f.params = r.params.copy();
+					return f;
+				}
+				var meta = c.meta.copy();
+				var path = c.path;
+				var ext = TypeFunctions.hasClassFlag(c, CExtern);
+				var sup = c.superClass;
+				var impl = c.interfaces.copy();
+				var csr = c.constructor == null ? null : mkFieldRestore(c.constructor);
+				var ofr = [for (f in c.orderedFields) mkFieldRestore(f)];
+				var osr = [for (f in c.orderedStatics) mkFieldRestore(f)];
+				var init = c.init;
+				if (init != null) saveVars(init);
+				c.restore = function() {
+					function restoreField(fr:{f:TClassField, res:{name:String, kind:FieldKind, expr:Null<TExpr>, t:T, meta:Metadata, params:TypeParams}, overloads:Array<{f:TClassField, res:{name:String, kind:FieldKind, expr:Null<TExpr>, t:T, meta:Metadata, params:TypeParams}}>}):TClassField {
+						var f = restoreOne(fr.f, fr.res);
+						f.overloads = [for (o in fr.overloads) restoreOne(o.f, o.res)];
+						return f;
+					}
+					c.superClass = sup;
+					c.interfaces = impl.copy();
+					c.meta = meta.copy();
+					if (ext) TypeFunctions.addClassFlag(c, CExtern) else TypeFunctions.removeClassFlag(c, CExtern);
+					c.path = path;
+					c.init = init;
+					c.orderedFields = [for (fr in ofr) restoreField(fr)];
+					c.orderedStatics = [for (fr in osr) restoreField(fr)];
+					var fm = new StringMap<TClassField>();
+					for (f in c.orderedFields) fm.set(f.name, f);
+					c.fields = fm;
+					var sm = new StringMap<TClassField>();
+					for (f in c.orderedStatics) sm.set(f.name, f);
+					c.statics = sm;
+					c.constructor = csr == null ? null : restoreField(csr);
+					c.descendants = [];
+					for (x in vars) x.v.type = x.t;
+				};
+			case TEnumDecl(en):
+				var path = en.path;
+				en.restore = function() {
+					// The :realPath meta records a native-path rewrite; restoring pops it back.
+					var acc:Metadata = [];
+					var rest = en.meta;
+					var done = false;
+					for (i in 0...rest.length) {
+						var x = rest[i];
+						if (x.name == ":realPath") switch (x.params) {
+							case [{expr: EConst(CString(s, _))}]:
+								en.path = hxc.ast.Ast.parsePath(s);
+								en.meta = acc.concat(rest.slice(i + 1));
+								done = true;
+								break;
+							case _: acc.push(x);
+						} else acc.push(x);
+					}
+					if (!done) en.path = path;
+				};
+			case TTypeDecl(td):
+				var path = td.path;
+				td.restore = function() td.path = path;
+			case TAbstractDecl(a):
+				var path = a.path;
+				a.restore = function() {
+					a.path = path;
+					a.meta = [for (m in a.meta) if (m.name != ":valueUsed") m];
+				};
+		}
 	}
 
 	// The type filters around DCE

@@ -19,6 +19,11 @@ class Position {
 
 	static var fileCache:StringMap<PositionFile> = new StringMap();
 
+	// Clear cached contents between server requests so a changed file is reread.
+	public static function resetFileCache():Void {
+		fileCache = new StringMap();
+	}
+
 	public static function registerFileContent(file:String, content:String):String {
 		fileCache.set(file, new PositionFile(content));
 		return content;

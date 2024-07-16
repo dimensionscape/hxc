@@ -76,12 +76,39 @@ class CompilationCache {
 		for (cc in contextList) cc.removeFile(key);
 	}
 
-	// File invalidation is not implemented yet; one-shot caches contain no modules to invalidate.
+	// Taint modules for this lowercased file key so the server refuses reuse.
 	public function taintModules(key:String, reason:String):Void {
 		for (cc in contextList) for (path in cc.modules.keys()) {
 			var m = cc.modules.get(path);
-			if (m.extra.file == key) {}
+			if (m.extra.file != null && m.extra.file.toLowerCase() == key)
+				m.extra.cacheState = MSBad(Tainted(reason));
 		}
+	}
+
+	var directories = new StringMap<Array<hxc.context.ServerCache.CachedDirectory>>();
+
+	public function findDirectories(sign:String):Null<Array<hxc.context.ServerCache.CachedDirectory>> {
+		return directories.get(sign);
+	}
+	public function addDirectories(sign:String, dirs:Array<hxc.context.ServerCache.CachedDirectory>):Void {
+		var cur = directories.get(sign);
+		if (cur == null) directories.set(sign, dirs.copy());
+		else for (d in dirs) cur.push(d);
+	}
+	public function addDirectory(sign:String, dir:hxc.context.ServerCache.CachedDirectory):Void {
+		addDirectories(sign, [dir]);
+	}
+	public function hasDirectory(sign:String, path:String):Bool {
+		var cur = directories.get(sign);
+		if (cur == null) return false;
+		for (d in cur) if (d.path == path) return true;
+		return false;
+	}
+	public function removeDirectory(sign:String, path:String):Void {
+		var cur = directories.get(sign);
+		if (cur == null) return;
+		var i = cur.length - 1;
+		while (i >= 0) { if (cur[i].path == path) cur.splice(i, 1); i--; }
 	}
 
 	// Register JSON to expose this context in server/contexts. List define keys in descending order.

@@ -614,6 +614,10 @@ class ModuleDefExtra {
 	public var added:Int;
 	public var checked:Int;
 	public var processed:Int;
+	// The resolveModule idempotence gate (0 = unresolved, 1 = resolved, 2 = synthesized module, never
+	// resolve). Distinct from processed: the compilation step of the module's last class-state save (the
+	// server cache-validity mark).
+	public var resolved:Int = 0;
 	public var deps:Map<Int, ModuleDef>;
 	public var kind:ModuleKind;
 	public var bindedRes:StringMap<String>;

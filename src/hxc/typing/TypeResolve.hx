@@ -17,8 +17,8 @@ class TypeResolve {
 	static final pNull = Position.nullPos;
 
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
-		if (m.extra.processed >= 1) return;
-		m.extra.processed = 1;
+		if (m.extra.resolved >= 1) return;
+		m.extra.resolved = 1;
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
 		for (mt in m.types) {

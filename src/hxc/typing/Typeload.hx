@@ -500,7 +500,7 @@ class Typeload {
 	// must not be re-resolved here, re-resolving rebuilds field `type`s with fresh unbound monos and
 	// discards inferred return types
 	static function ensureResolved(ctx:Context, m:ModuleDef):Void {
-		if (m == null || m.extra.processed >= 1) return;
+		if (m == null || m.extra.resolved >= 1) return;
 		var saved = ctx.currentModule;
 		try {
 			TypeResolve.resolveModule(ctx, m);
@@ -1097,7 +1097,7 @@ class Typeload {
 		if (ctx.typeToModule.exists(Context.pathKey(path)))
 			throw new TypingError("Cannot specialize @:generic because the generated type name is already used: " + path.name, p);
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
-		mg.extra.processed = 2;
+		mg.extra.resolved = 2;
 		var cg = TypeFunctions.mkClass(mg, path, c.pos, c.namePos);
 		cg.doc = c.doc;
 		cg.meta = c.meta;
