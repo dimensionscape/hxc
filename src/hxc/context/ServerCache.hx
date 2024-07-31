@@ -248,6 +248,19 @@ class ServerCache {
 		add(mRoot, mRoot);
 	}
 
+	// Every module file parsed while the server serves a request is entered into the signature context's
+	// parser cache. The module name stays unset here; it is filled in lazily, which nothing on this path
+	// does, so server/files reports it as null.
+	public static function cacheParsedFile(com:Context, file:String, pack:Array<String>):Void {
+		if (!enabled) return;
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var time = statMtime(full);
+		if (time == null) return;
+		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
+		// Path.UniqueKey: the lowercased full path (matching DisplayJson.fileKey).
+		cc.files.set(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null});
+	}
+
 	// The module-load hook. Looks the module up in the cache; if it is still valid, re-adds it (with its
 	// subgraph) and returns it, else null and the caller re-types.
 	public static function typeModule(com:Context, mpath:hxc.core.Globals.Path, p:Position):Null<ModuleDef> {

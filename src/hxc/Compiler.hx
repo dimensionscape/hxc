@@ -1539,28 +1539,33 @@ class Compiler {
 			};
 		}
 		var item:Null<hxc.core.Json.JsonValue> = null;
+		// A field item's isQualified comes from re-typing its bare name in the scope the expression was
+		// typed in (Typer.retypeIsQualified), not from a constant.
+		var hoverTctx = hxc.typing.Typer.hoverFound != null ? hxc.typing.Typer.hoverFound.tctx : null;
+		inline function qualified(name:String):Bool
+			return hxc.typing.Typer.retypeIsQualified(hoverTctx, e, name, e.type);
 		switch (e.expr) {
 			case TField(e1, fa):
 				switch (fa) {
 					case FStatic(c, cf):
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), true, ct(t));
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(t));
 					case FInstance(c, _, cf):
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), true, ct(t));
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(t));
 					case FClosure(cwp, cf):
 						var origin = if (cwp != null) hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c))
 							else switch (TypeFunctions.follow(e1.type)) {
 								case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
 								case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
 							};
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(t));
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
 					case FAnon(cf):
 						var origin = switch (TypeFunctions.follow(e1.type)) {
 							case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
 							case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
 						};
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(t));
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
 					case FEnum(en, ef):
-						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), true, ct(t));
+						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(t));
 					case FDynamic(_):
 				}
 			case TLocal(v):
@@ -1571,7 +1576,7 @@ class Compiler {
 			case TConst(c):
 				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t));
 			case TNew(c, _, _) if (c.constructor != null):
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), true, ct(t));
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(t));
 			case _:
 		}
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(t));
@@ -1633,15 +1638,19 @@ class Compiler {
 		var h = hxc.typing.Typer.hoverFound;
 		if (h != null) {
 			rangePos = h.p;
+			// isQualified re-types the bare name in the scope the hovered expression was typed in; it is
+			// not a constant.
+			inline function qualified(name:String):Bool
+				return hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
 			if (h.e != null) switch (h.e.expr) {
 				case TField(e1, fa):
 					switch (fa) {
 						case FStatic(c, cf):
 							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), true, ct(h.t));
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
 						case FInstance(c, _, cf):
 							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), true, ct(h.t));
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
 						case FClosure(cwp, cf):
 							doc = cf.doc;
 							var origin = if (cwp != null) hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c))
@@ -1649,17 +1658,17 @@ class Compiler {
 									case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
 									case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
 								};
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(h.t));
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
 						case FAnon(cf):
 							doc = cf.doc;
 							var origin = switch (TypeFunctions.follow(e1.type)) {
 								case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
 								case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
 							};
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, true, ct(h.t));
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
 						case FEnum(en, ef):
 							doc = ef.doc;
-							item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), true, ct(h.t));
+							item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(h.t));
 						case FDynamic(_):
 					}
 				case TLocal(v):
@@ -1671,7 +1680,7 @@ class Compiler {
 					item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
 				case TNew(c, _, _) if (c.constructor != null):
 					doc = c.constructor.doc;
-					item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), true, ct(h.t));
+					item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(h.t));
 				case _:
 			}
 			if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));

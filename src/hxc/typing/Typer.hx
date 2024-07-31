@@ -1407,7 +1407,7 @@ class Typer {
 		};
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
-		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(typed, withType);
+		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
@@ -1423,9 +1423,10 @@ class Typer {
 	// post-order typing makes the first enclosing hit the innermost.
 	public static var displayHover:Bool = false;
 	// The typed expression is kept alongside so the JSON protocol can build the full hover item (field
-	// access, local, enum field). hexpected: the with-type at the hover point passes Some with_type; it as
-	// `expected`).
-	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType}> = null;
+	// access, local, enum field).
+	// hexpected: the with-type at the hover point, encoded as `expected`.
+	// tctx is the scope the hovered expression was typed in; the isQualified retype needs it.
+	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext}> = null;
 
 	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
 	// position.
@@ -1480,14 +1481,14 @@ class Typer {
 		return atDisplayPos(p);
 	}
 
-	static function checkDisplayHover(te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
+	static function checkDisplayHover(ctx:TyperContext, te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
 		switch (te.expr) {
 			// Recurse only into a PROPER sub-range: a synthetic receiver (the module type expr
 			// under an unqualified enum constructor) reuses the whole ident's position and must
 			// not shadow the field the cursor is on.
 			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1)
 				if (atHoverPos(e1.pos) && (e1.pos.min > te.pos.min || e1.pos.max < te.pos.max)):
-				checkDisplayHover(e1, withType);
+				checkDisplayHover(ctx, e1, withType);
 			case _:
 		}
 		// The SMALLEST enclosing range wins: a desugared part (an interpolated string literal) reuses the
@@ -1496,7 +1497,37 @@ class Typer {
 		// unrelated to the syntactic node the gate saw.
 		if (!atHoverPos(te.pos)) return;
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: te.type, p: te.pos, e: te, wt: withType};
+			hoverFound = {t: te.type, p: te.pos, e: te, wt: withType, tctx: ctx};
+	}
+
+	// A field item is "qualified" when typing its BARE name in the same scope, against the same expected
+	// type, reproduces the very expression being reported. The identifier carries a null position so
+	// re-typing it cannot re-enter the display hooks. Any typing failure means the name does not resolve
+	// here, hence false.
+	public static function retypeIsQualified(ctx:TyperContext, e:TExpr, name:String, t:T):Bool {
+		if (ctx == null || e == null) return false;
+		// The probe identifier has a null position so the position-keyed display checks cannot fire while
+		// it re-types. hxc additionally signals display results by throwing, and some collection points key
+		// off the display MODE rather than the position, so the modes are switched off for the probe: a
+		// raise here would be swallowed by the catch below and lose the real response, and a nested capture
+		// would overwrite the very hover being reported.
+		var sHover = displayHover, sTypeDef = displayTypeDefinition, sDef = displayDefinition;
+		var sTop = displayToplevel, sTopJson = displayToplevelJson, sSig = displaySignature;
+		var sUsage = displayUsage, sImpl = displayImplementation;
+		var sFound = hoverFound;
+		displayHover = false; displayTypeDefinition = false; displayDefinition = false;
+		displayToplevel = false; displayToplevelJson = false; displaySignature = false;
+		displayUsage = false; displayImplementation = false;
+		var result = try {
+			var e2 = typeExpr(ctx, new Expr(EConst(CIdent(name)), Position.nullPos),
+				hxc.core.WithType.WithType.WithType(t, null));
+			hxc.core.TexprTools.equal(e, e2);
+		} catch (_:Dynamic) false;
+		displayHover = sHover; displayTypeDefinition = sTypeDef; displayDefinition = sDef;
+		displayToplevel = sTop; displayToplevelJson = sTopJson; displaySignature = sSig;
+		displayUsage = sUsage; displayImplementation = sImpl;
+		hoverFound = sFound;
+		return result;
 	}
 
 	// Legacy --display file@pos@toplevel: an identifier at the display position raises the

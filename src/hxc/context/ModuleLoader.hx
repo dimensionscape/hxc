@@ -1032,6 +1032,7 @@ class ModuleLoader {
 
 		var src = moduleFileContent(ctx, file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack);
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
 			var spack = function(l:Array<String>) return l.length == 0 ? "(root)" : l.join(".");

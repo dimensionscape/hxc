@@ -220,9 +220,15 @@ class DisplayJson {
 				hctx.sendResult(JArray(out));
 			}},
 			{name: "server/modules", f: function(hctx) {
+				// Exclude MFake modules and report in reverse hash-bucket visit order.
 				var sign = hxc.context.CompilationCache.CompilationCache.digestFromHex(hctx.jsonrpc.getStringParam("signature"));
 				var cc = cache.getContext(sign);
-				var out = [for (path in cc.modules.keys()) if (cc.modules.get(path).extra.kind != MFake) JString(path)];
+				var out:Array<JsonValue> = [];
+				for (path in cc.moduleOrder.visitOrder()) {
+					var m = cc.modules.get(path);
+					if (m != null && m.extra.kind != MFake) out.push(JString(path));
+				}
+				out.reverse();
 				hctx.sendResult(JArray(out));
 			}},
 			{name: "server/module", f: function(hctx) {
