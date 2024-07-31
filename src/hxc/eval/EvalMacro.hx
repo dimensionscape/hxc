@@ -1425,6 +1425,25 @@ class EvalMacro {
 		return macroCtx;
 	}
 
+	// Set once the macro world's boot stored-typed-expr ids have been accounted for.
+	static var macroBootStoresAccounted:Bool = false;
+
+	// The reference boots its macro interpreter through the typer: init_macro_interp loads haxe.macro.Expr
+	// and haxe.macro.Type, and the first flush_macro_context finalizes that closure, typing two field
+	// bodies that each store a typed expression. Those two ids are consumed before any member-macro
+	// receiver reaches push_this which is why the reference's first push_this id is 3.
+	//
+	// hxc's macro world runs on EvalMain, a hand-written interpreter with no typer-driven boot closure to
+	// finalize, so it never allocates those two ids and its first push_this would land at 1. The counter is
+	// process-global and never reset a module-global ref), and the reference likewise boots its interpreter
+	// once per process (macro_interp_cache), so this runs once.
+	static function accountMacroBootStores():Void {
+		if (macroBootStoresAccounted) return;
+		macroBootStoresAccounted = true;
+		hxc.context.Context.allocStoredTypedExprId("macro boot");
+		hxc.context.Context.allocStoredTypedExprId("macro boot");
+	}
+
 	static var macroCom:Context = null;
 
 	// The macro-world compilation context, when one exists (a class evaluated at macro
@@ -1647,6 +1666,7 @@ class EvalMacro {
 		};
 		var path = hostClass.path;
 		var callModule = moduleForPosition(tctx.com, p);
+		accountMacroBootStores();
 		// A member receiver is pushed as `this` before the macro loads and types the macro world, so its
 		// stored id precedes the ids consumed by macro-context typing.
 		var receiverSyntax = isInstance ? Calls.typedExprToSyntax(tctx, fa.on) : null;
