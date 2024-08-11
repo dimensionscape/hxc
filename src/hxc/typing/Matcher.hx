@@ -550,61 +550,55 @@ class PatternMaker {
 		}
 		return null;
 	}
-	static function objectPatternFieldTypes(ctx:TyperContext, t:T):Null<Map<String, T>> {
-		var out = new Map<String, T>();
+	static function objectPatternFieldTypes(ctx:TyperContext, t:T):Null<{types:Map<String, T>, order:Array<String>}> {
+		var types = new Map<String, T>();
+		var order:Array<String> = [];
 		var found = false;
+		inline function add(name:String, ty:T):Void {
+			if (!types.exists(name)) { types.set(name, ty); order.push(name); found = true; }
+		}
 		function collect(t:T):Void {
 			switch (TypeFunctions.follow(t)) {
 				case TAnon(an):
-					found = true;
-					for (cf in an.fields) if (!out.exists(cf.name)) out.set(cf.name, cf.type);
+					var names = [for (cf in an.fields) cf.name];
+					names.sort(function(a2, b2) return a2 < b2 ? -1 : (a2 > b2 ? 1 : 0));
+					for (n in names) add(n, an.fields.get(n).type);
 				case TInst(c, tl):
-					// TInst: every accessible, matchable (non-method) field of the class and its supers, a
-					// subclass field overriding a same-named super field. this makes two structure patterns for a
-					// class value (`{a:_}` and `{b:_}`) carry the same full field set, so the matcher treats them
-					// as one ConFields constructor instead of two and never builds a value-switch on a structure
-					// pattern (issue: self-host GenJS).
+					// TInst: every accessible, matchable (non-method) field of the class and its supers, supers
+					// first and in declaration order. this makes two structure patterns for a class value (`{a:_}`
+					// and `{b:_}`) carry the same full field set, so the matcher treats them as one ConFields
+					// constructor instead of two and never builds a value-switch on a structure pattern (issue:
+					// self-host GenJS).
 					function loopClass(c:TClass, tl:Array<T>):Void {
-						for (cf in c.orderedFields) {
-							if (out.exists(cf.name) || cf.kind.match(Method(_))) continue;
-							if (!hxc.typing.Fields.canAccess(ctx, c, cf, false)) continue;
-							found = true;
-							out.set(cf.name, TypeFunctions.applyParams(c.params, tl, cf.type));
-						}
 						switch (c.superClass) {
 							case null:
 							case sup: loopClass(sup.c, [for (t2 in sup.params) TypeFunctions.applyParams(c.params, tl, t2)]);
 						}
+						for (cf in c.orderedFields) {
+							if (cf.kind.match(Method(_)) || !hxc.typing.Fields.canAccess(ctx, c, cf, false)) continue;
+							add(cf.name, TypeFunctions.applyParams(c.params, tl, cf.type));
+						}
 					}
 					loopClass(c, tl);
 				case TAbstract(a, tl) if (a.impl != null):
-					// TAbstract: a @:forward abstract first exposes its underlying type's fields (filtered
-					// by the @:forward name list), then the abstract's own @:impl instance fields (its
-					// properties/vars) OVERRIDE them; a non-forward abstract exposes only its impl fields.
-					// Collecting the impl fields is what gives e.g. a property `foo:Foo` its abstract type
-					// instead of the underlying anon's raw field type. Methods are not matchable and are
-					// skipped. Impl fields are added first so first-wins matches the reference's
-					// impl-overrides-underlying order.
+					// TAbstract: the abstract's @:impl instance fields (its properties/vars) expose their
+					// abstract type, and a @:forward abstract additionally exposes its underlying type's
+					// fields (filtered by the @:forward name list) for any name the impl does not already
+					// define. Methods are not matchable and are skipped.
 					for (cf in a.impl.orderedStatics) {
-						if (out.exists(cf.name) || !TypeFunctions.hasClassFieldFlag(cf, CfImpl) || cf.kind.match(Method(_))) continue;
-						found = true;
-						out.set(cf.name, TypeFunctions.applyParams(a.params, tl, cf.type));
+						if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || cf.kind.match(Method(_))) continue;
+						add(cf.name, TypeFunctions.applyParams(a.params, tl, cf.type));
 					}
 					if (TypeFunctions.hasMeta(":forward", a.meta)) {
 						var fwd = forwardFilter(a);
 						var inner = objectPatternFieldTypes(ctx, TypeFunctions.getUnderlyingType(a, tl));
-						if (inner != null) {
-							for (name in inner.keys()) if (!out.exists(name) && (fwd == null || fwd.exists(name))) {
-								found = true;
-								out.set(name, inner.get(name));
-							}
-						}
+						if (inner != null) for (name in inner.order) if (fwd == null || fwd.exists(name)) add(name, inner.types.get(name));
 					}
 				case _:
 			}
 		}
 		collect(t);
-		return found ? out : null;
+		return found ? {types: types, order: order} : null;
 	}
 
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
@@ -707,9 +701,16 @@ class PatternMaker {
 				var fieldTypes = objectPatternFieldTypes(ctx, t);
 				var mentioned = new Map<String, Expr>();
 				for (f in fields) mentioned.set(f.name, f.expr);
-				var allNames = fieldTypes == null ? [for (f in fields) f.name] : [for (k in fieldTypes.keys()) k];
+				// The field order is the collect_fields visit order (already correct per type kind);
+				// a type with no known field set falls back to the names the pattern lists, sorted so
+				// two such patterns still share one constructor.
+				var allNames = if (fieldTypes != null) fieldTypes.order else {
+					var ns = [for (f in fields) f.name];
+					ns.sort(function(a2, b2) return a2 < b2 ? -1 : (a2 > b2 ? 1 : 0));
+					ns;
+				};
 				var pairs = [for (name in allNames) {
-					var cf = fieldTypes == null ? null : fieldTypes.get(name);
+					var cf = fieldTypes == null ? null : fieldTypes.types.get(name);
 					var fe = mentioned.get(name);
 					// An omitted field, or a reification position field (carries no matchable info), is a wildcard.
 					var sub = if (fe == null || (pctx.inReification && (name == "pos" || name == "posPath" || name == "namePos")))
@@ -717,7 +718,6 @@ class PatternMaker {
 						else make(pctx, false, cf != null ? cf : TypeFunctions.tDynamic, fe);
 					{name: name, sub: sub};
 				}];
-				pairs.sort(function(a2, b2) return a2.name < b2.name ? -1 : (a2.name > b2.name ? 1 : 0));
 				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
 			case ECall(ec, el):
 				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
