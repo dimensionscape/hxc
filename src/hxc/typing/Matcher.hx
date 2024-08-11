@@ -1732,7 +1732,22 @@ class TexprConverter {
 					case Fail: true;
 					case Bind(_, d1): hasFail(d1);
 					case Guard(_, _, d2) | GuardNull(_, _, d2): hasFail(d2);
-					case Switch(_, _, dflt): hasFail(dflt);
+					case Switch(sub, subCases, dflt):
+						// A complete run-time-finite sub-switch (its cases cover every constructor of a
+						// true enum or Bool) drops its default at texpr time, exactly as
+						// droppedCompleteDefault does below, so the Fail there is dead and does not make
+						// the enclosing constructor a partial match. Otherwise `case C(Prefix): ..; case
+						// C(Postfix): ..;` would read as leaving C(_) unmatched even though {Prefix,
+						// Postfix} exhausts the argument.
+						var subT = effectiveSubjectType(sub, subCases);
+						var subUnmatched = unmatchedFiniteCoverage(ctx.com, subT, subCases);
+						var subComplete = subUnmatched != null && subUnmatched.length == 0;
+						var subRuntimeFinite = switch (TypeFunctions.follow(subT)) {
+							case TEnum(_, _): true;
+							case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
+							case _: false;
+						};
+						(subComplete && subRuntimeFinite) ? false : hasFail(dflt);
 					case Leaf(_): false;
 				};
 				var enumParamRoot = switch (subject.expr) {
