@@ -58,7 +58,7 @@ class Fields {
 
 	// forcePrivate ignores CfPublic, treating the field as non-public when an AccNo/AccNever
 	// accessor makes a public field effectively private.
-	static function canAccess(ctx:TyperContext, c:TClass, cf:TClassField, stat:Bool, forcePrivate:Bool = false):Bool {
+	public static function canAccess(ctx:TyperContext, c:TClass, cf:TClassField, stat:Bool, forcePrivate:Bool = false):Bool {
 		if (!forcePrivate && TypeFunctions.hasClassFieldFlag(cf, CfPublic)) return true;
 		if (c == ctx.curclass) return true;
 		var ms = ctx.curclass.module.statics;

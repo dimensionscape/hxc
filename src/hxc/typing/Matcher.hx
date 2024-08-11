@@ -550,7 +550,7 @@ class PatternMaker {
 		}
 		return null;
 	}
-	static function objectPatternFieldTypes(t:T):Null<Map<String, T>> {
+	static function objectPatternFieldTypes(ctx:TyperContext, t:T):Null<Map<String, T>> {
 		var out = new Map<String, T>();
 		var found = false;
 		function collect(t:T):Void {
@@ -558,12 +558,47 @@ class PatternMaker {
 				case TAnon(an):
 					found = true;
 					for (cf in an.fields) if (!out.exists(cf.name)) out.set(cf.name, cf.type);
-				case TAbstract(a, tl) if (a.impl != null && TypeFunctions.hasMeta(":forward", a.meta)):
-					var fwd = forwardFilter(a);
-					var inner = objectPatternFieldTypes(TypeFunctions.getUnderlyingType(a, tl));
-					if (inner != null) {
+				case TInst(c, tl):
+					// TInst: every accessible, matchable (non-method) field of the class and its supers, a
+					// subclass field overriding a same-named super field. this makes two structure patterns for a
+					// class value (`{a:_}` and `{b:_}`) carry the same full field set, so the matcher treats them
+					// as one ConFields constructor instead of two and never builds a value-switch on a structure
+					// pattern (issue: self-host GenJS).
+					function loopClass(c:TClass, tl:Array<T>):Void {
+						for (cf in c.orderedFields) {
+							if (out.exists(cf.name) || cf.kind.match(Method(_))) continue;
+							if (!hxc.typing.Fields.canAccess(ctx, c, cf, false)) continue;
+							found = true;
+							out.set(cf.name, TypeFunctions.applyParams(c.params, tl, cf.type));
+						}
+						switch (c.superClass) {
+							case null:
+							case sup: loopClass(sup.c, [for (t2 in sup.params) TypeFunctions.applyParams(c.params, tl, t2)]);
+						}
+					}
+					loopClass(c, tl);
+				case TAbstract(a, tl) if (a.impl != null):
+					// TAbstract: a @:forward abstract first exposes its underlying type's fields (filtered
+					// by the @:forward name list), then the abstract's own @:impl instance fields (its
+					// properties/vars) OVERRIDE them; a non-forward abstract exposes only its impl fields.
+					// Collecting the impl fields is what gives e.g. a property `foo:Foo` its abstract type
+					// instead of the underlying anon's raw field type. Methods are not matchable and are
+					// skipped. Impl fields are added first so first-wins matches the reference's
+					// impl-overrides-underlying order.
+					for (cf in a.impl.orderedStatics) {
+						if (out.exists(cf.name) || !TypeFunctions.hasClassFieldFlag(cf, CfImpl) || cf.kind.match(Method(_))) continue;
 						found = true;
-						for (name in inner.keys()) if (!out.exists(name) && (fwd == null || fwd.exists(name))) out.set(name, inner.get(name));
+						out.set(cf.name, TypeFunctions.applyParams(a.params, tl, cf.type));
+					}
+					if (TypeFunctions.hasMeta(":forward", a.meta)) {
+						var fwd = forwardFilter(a);
+						var inner = objectPatternFieldTypes(ctx, TypeFunctions.getUnderlyingType(a, tl));
+						if (inner != null) {
+							for (name in inner.keys()) if (!out.exists(name) && (fwd == null || fwd.exists(name))) {
+								found = true;
+								out.set(name, inner.get(name));
+							}
+						}
 					}
 				case _:
 			}
@@ -669,7 +704,7 @@ class PatternMaker {
 				// Structure pattern: match named fields against the expected anon type. Fields the pattern
 				// omits are filled with wildcards so every structure pattern for the type carries the same
 				// field set (and arity) -- the matcher then treats them as one constructor. (record fill).
-				var fieldTypes = objectPatternFieldTypes(t);
+				var fieldTypes = objectPatternFieldTypes(ctx, t);
 				var mentioned = new Map<String, Expr>();
 				for (f in fields) mentioned.set(f.name, f.expr);
 				var allNames = fieldTypes == null ? [for (f in fields) f.name] : [for (k in fieldTypes.keys()) k];
