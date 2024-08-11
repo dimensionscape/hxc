@@ -464,6 +464,12 @@ class Calls {
 		var callArgs:Array<TExpr> = [];
 		var missingVl:Array<TVar> = [];
 		var missingArgs:Array<TSignatureArg> = [];
+		// A signature argument with no name (a function typed through a bare TFun, e.g. a local
+		// function value) gets a synthetic "a1"/"a2"/... so the bound closure's parameters and temps
+		// have valid names. Outside a display file only, so hover keeps the source name there.
+		var acount = 0;
+		inline function allocName(n:String):String
+			return (n == "" && hxc.parser.Parser.displayFile == null) ? "a" + (++acount) : n;
 		var pi = 0;
 		for (arg in sig.args) {
 			var isUnderscore = pi < params.length && (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
@@ -482,14 +488,15 @@ class Calls {
 				// The missing arg keeps its position on the closure. An optional arg becomes Null<t> so the
 				// bound closure can pass null through to the original function's default.
 				var vt = arg.opt ? ctx.com.basic.tnull(arg.t) : arg.t;
-				var v = TypeFunctions.allocVar(VGenerated, arg.name, vt, p);
+				var nm = allocName(arg.name);
+				var v = TypeFunctions.allocVar(VGenerated, nm, vt, p);
 				missingVl.push(v);
-				missingArgs.push({name: arg.name, opt: arg.opt, t: vt});
+				missingArgs.push({name: nm, opt: arg.opt, t: vt});
 				callArgs.push(TexprTools.makeLocal(v, p));
 				if (isUnderscore) pi++;
 			} else {
 				var te = Typer.castOrUnify(ctx, arg.t, Typer.typeExpr(ctx, params[pi], WithTypeTools.withArgument(arg.t, arg.name)), params[pi].pos);
-				var v = TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p);
+				var v = TypeFunctions.allocVar(VGenerated, allocName(arg.name), arg.t, p);
 				decls.push(TypeFunctions.mk(TVarExpr(v, te), tvoid, p));
 				callArgs.push(TexprTools.makeLocal(v, p));
 				pi++;
