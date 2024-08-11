@@ -297,6 +297,9 @@ class Compiler {
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 		var javaOutSeen = false;
+		// Legacy flag deprecations queue during parsing and are emitted together once the arguments are
+		// processed, before -D no-deprecation-warnings disables them.
+		var deprecations:Array<String> = [];
 
 		var i = 0;
 		while (i < args.length) {
@@ -383,8 +386,10 @@ class Compiler {
 					ctx.foptimize = false;
 				case "--no-traces":
 					ctx.defines.rawDefine("no_traces");
+					deprecations.push("--no-traces has been deprecated, use -D no-traces instead");
 				case "--no-inline":
 					ctx.defines.rawDefine("no_inline");
+					deprecations.push("--no-inline has been deprecated, use -D no-inline instead");
 				case "--dce" | "-dce":
 					ctx.defines.rawDefineValue("dce", args[i++]);
 				case "-java" | "--java":
@@ -480,6 +485,10 @@ class Compiler {
 		// The startup class is known from -main during argument handling, so an init macro's
 		// Context.getMainExpr / Compiler.getConfiguration already sees it.
 		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
+		// The queued legacy-flag deprecations emit here, in the order they were seen, before the
+		// no-deprecation-warnings disable is installed below.
+		for (s in deprecations)
+			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], s, Position.nullPos);
 		// The --java target with -D jvm and no --jvm flag.
 		if (javaOutSeen && ctx.defines.rawDefined("jvm"))
 			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], "--java out.jar -D jvm is deprecated; use --jvm out.jar directly", Position.nullPos);
@@ -777,9 +786,6 @@ class Compiler {
 			// the compile like the final error check does, so a real target that printed an error does not
 			// exit 0.
 			abortOnDiagnostics(ctx, platform);
-			// The single success-path flush: everything recorded up to and including the
-			// after-generate callbacks prints once, before interpreter output or --cmd runs.
-			flushPendingMessages(ctx);
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.
@@ -841,6 +847,11 @@ class Compiler {
 			answerOut("Error: " + Std.string(e) + "\n");
 			exitRequest(1);
 		}
+		// Collected messages display at the very end, after generation (which runs the --interp program)
+		// and any --cmd. A clean run and an uncaught interp exception both reach here, so a deferred
+		// warning follows the program's own output rather than preceding it. Compile errors abort earlier
+		// via abortWithMessage and flush there.
+		flushPendingMessages(ctx);
 		if (hxc.core.Timer.measureTimes) {
 			hxc.core.Timer.closeTimes();
 			hxc.core.Timer.reportTimes(function(s) answerOut(s + "\n"));
