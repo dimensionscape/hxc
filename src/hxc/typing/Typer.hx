@@ -1180,7 +1180,7 @@ class Typer {
 							case TConst(_) | TTypeExpr(_) | TFunction(_):
 							case _:
 								if (hadSideEffect) {
-									var v = TypeFunctions.allocVar(VGenerated, "`s", te.type, te.pos);
+									var v = TypeFunctions.allocVar(VGenerated, "`", te.type, te.pos);
 									evars.unshift(TypeFunctions.mk(TVarExpr(v, te), te.type, te.pos));
 									byName.set(fname, TexprTools.makeLocal(v, te.pos));
 								} else if (hasSideEffect(te)) {
