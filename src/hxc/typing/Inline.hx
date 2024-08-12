@@ -29,6 +29,13 @@ private class InlineBail extends haxe.Exception {
 // map_expr_type).
 class Inline {
 	static var depth = 0;
+	// The declared return type of the inline function whose body is currently being mapped;
+	// null outside a body map.
+	static var inlineFuncRetType:Null<T> = null;
+
+	static inline function isInlineVoid(t:T):Bool {
+		return switch (t) { case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void"; case _: false; };
+	}
 	// A field already being inlined does not inline again inside its own expansion, so a
 	// self-recursive inline function stays a call.
 	static var cfStack:Array<TClassField> = [];
@@ -543,7 +550,12 @@ class Inline {
 		// A self-calling closure (an immediately-called TFunction) keeps its body positions, like
 		// the keep_inline_positions define.
 		var keepPositions = selfCallingClosure || ctx.com.defines.rawDefined("keep_inline_positions");
+		// The return-type rule consults the inlined function's declared return type; scope it to
+		// this body map (save/restore so a nested inline restores the outer value).
+		var savedRetType = inlineFuncRetType;
+		inlineFuncRetType = tf.type;
 		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
+		inlineFuncRetType = savedRetType;
 		if (absMember) checkAbstractWrite(value, p);
 		// A single-expression block unwraps to its expression only when the body returned a
 		// value; a void body keeps its block.
@@ -881,7 +893,16 @@ class Inline {
 			keepPositions:Bool):TExpr {
 		function m(x:TExpr):TExpr return mapExpr(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
 		function terminal(x:TExpr):TExpr return mapTerminal(ctx, x, subst, vthis, ethis, inlinePos, keepPositions);
+		// A Dynamic or Void inline-function return sticks to the whole inlined value; otherwise a node
+		// whose own type is Void takes its branches' common type, and any other node keeps its own (more
+		// precise) type. Without the last rule an if/switch typed to the declared return (e.g. Int over
+		// Null<Int> branches) collapses to the branch type and the caller boxes it.
 		function sharedType(values:Array<TExpr>):T {
+			if (inlineFuncRetType != null) {
+				var ftt = TypeFunctions.follow(inlineFuncRetType);
+				if (ftt.match(TDynamic(_)) || isInlineVoid(ftt)) return inlineFuncRetType;
+			}
+			if (!isInlineVoid(TypeFunctions.follow(e.type))) return e.type;
 			for (value in values) if (value.type != ctx.com.basic.tvoid) return value.type;
 			return e.type;
 		}
