@@ -1205,6 +1205,11 @@ class ModuleLoader {
 			if (r != null && named.aliased == true && named.aliasName != null) {
 				if (named.aliasTypedef == null) {
 					var mi = TypeFunctions.tInfos(r);
+					// The instance snapshot needs the heritage linked first. Here that means resolving the
+					// target module (idempotent, gated by resolved): an alias used before that module was
+					// resolved would otherwise capture the class with superClass still unset, and the alias
+					// then fails to unify with its own supertypes.
+					try hxc.typing.TypeResolve.resolveModule(ctx, mi.module) catch (_:Dynamic) {}
 					var tPath:Path = {pack: mi.module.path.pack.concat(["_" + mi.module.path.name]), name: named.aliasName};
 					var td = TypeFunctions.mkTypedef(cur, tPath, p, p, TypeFunctions.typeOfModuleType(r));
 					td.isPrivate = true;

@@ -41,6 +41,8 @@ class Operators {
 		try {
 			TypeUnification.unifyDefault(a, b);
 		} catch (e:UnifyError) {
+			// Untyped code ignores unification failures.
+			if (ctx.untypedMode) return;
 			throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 		}
 	}

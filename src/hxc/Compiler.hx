@@ -37,6 +37,19 @@ import sys.io.Process;
 	<flag value="-LARGEADDRESSAWARE"/>
 	<flag value="-STACK:134217728"/>
 </linker>
+<linker id="exe" if="emscripten">
+	<flag value="-sALLOW_MEMORY_GROWTH=1"/>
+	<flag value="-sSTACK_SIZE=67108864"/>
+	<flag value="-sINITIAL_MEMORY=268435456"/>
+	<flag value="-sFORCE_FILESYSTEM=1"/>
+	<flag value="-sEXPORTED_RUNTIME_METHODS=[FS,callMain,ENV,NODEFS,MEMFS]"/>
+	<flag value="-lnodefs.js"/>
+	<flag value="-sMODULARIZE=1"/>
+	<flag value="-sEXPORT_NAME=createHxc"/>
+	<flag value="-sINVOKE_RUN=0"/>
+	<flag value="--preload-file" if="HXC_WASM_PRELOAD_STD"/>
+	<flag value="${HXC_WASM_STD_DIR}@/std" if="HXC_WASM_PRELOAD_STD"/>
+</linker>
 ')
 // Unwinds an in-process wait-server request on a path that would exit the one-shot process serving after a
 // failed compile).
@@ -408,8 +421,10 @@ class Compiler {
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
 					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
-					| "--net-std" | "-c-arg" | "--c-arg" | "--connect":
+					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
+					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
+					// directory is consumed and dropped.
 					i++;
 				case "--cwd" | "-C":
 					// A nonexistent directory aborts with the argument error "Invalid directory".
@@ -2013,6 +2028,13 @@ class Compiler {
 		}
 		var args:Array<String> = [];
 		for (line in stdout.split("\n")) {
+			// A `-L <dir>` line is a neko link path, not a library: it becomes --neko-lib-path carrying the
+			// rest of the line. .
+			var stripped = StringTools.trim(line);
+			if (StringTools.startsWith(stripped, "-L ")) {
+				args = args.concat(["--neko-lib-path", stripped.substr(3)]);
+				continue;
+			}
 			var parsed = parseHxmlLine(line);
 			if (parsed.length == 1 && !StringTools.startsWith(parsed[0], "-") && !StringTools.endsWith(parsed[0], ".hxml"))
 				args = args.concat(["-cp", parsed[0]]);
