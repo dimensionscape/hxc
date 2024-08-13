@@ -49,6 +49,10 @@ import sys.io.Process;
 	<flag value="-sINVOKE_RUN=0"/>
 	<flag value="--preload-file" if="HXC_WASM_PRELOAD_STD"/>
 	<flag value="${HXC_WASM_STD_DIR}@/std" if="HXC_WASM_PRELOAD_STD"/>
+	<flag value="--preload-file" if="HXC_WASM_PRELOAD_LIBS"/>
+	<flag value="${HXC_WASM_OPENFL_DIR}@/libs/openfl" if="HXC_WASM_PRELOAD_LIBS"/>
+	<flag value="--preload-file" if="HXC_WASM_PRELOAD_LIBS"/>
+	<flag value="${HXC_WASM_LIME_DIR}@/libs/lime" if="HXC_WASM_PRELOAD_LIBS"/>
 </linker>
 ')
 // Unwinds an in-process wait-server request on a path that would exit the one-shot process serving after a
