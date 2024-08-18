@@ -149,7 +149,13 @@ class Finalization {
 					switch (t) {
 						case TClassDecl(c): loopClass(p, c);
 						case TEnumDecl(en): loopEnum(p, en);
-						case TAbstractDecl(a): loopAbstract(p, a);
+						case TAbstractDecl(a):
+							// A static access on an abstract that has an implementation depends on that impl class. hxc
+							// keeps the abstract in the type expression (the `A.new` and @:forward.new arms in Typer
+							// match on it), so follow through to the impl here: otherwise the impl is never reached as a
+							// dependency and falls through to the top-level types sweep.
+							if (a.impl != null) loopClass(p, a.impl);
+							loopAbstract(p, a);
 						case TTypeDecl(_): throw new TypingError("Unexpected typedef in typed AST", e.pos);
 					}
 				case TNew(c, _, _):
