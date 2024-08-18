@@ -714,16 +714,13 @@ class Filters {
 		function underlying(a:TAbstract, pl:Array<T>, p:Position):T {
 			if (!TypeFunctions.hasMeta(":multiType", a.meta))
 				return TypeFunctions.applyParams(a.params, pl, a.thisType);
-			var open = false;
-			function check(t:T):Void if (!open) switch (TypeFunctions.follow(t)) {
-				case TMono(_): open = true;
-				case TInst(c, _) if (c.kind.match(KTypeParameter(_))): open = true;
-				case TAbstract(_, tl) | TEnum(_, tl) | TInst(_, tl): for (x in tl) check(x);
-				case TFun(sig): for (x in sig.args) check(x.t); check(sig.ret);
-				case _:
-			};
-			for (t in pl) check(t);
-			return open ? TypeFunctions.applyParams(a.params, pl, a.thisType) : Typer.resolveMultiTypeConcrete(a, pl, p);
+			// A multiType abstract always attempts its specialization and only falls back to the declared
+			// underlying when that fails, i.e. no @:to matched or a DEFINITIVE parameter still holds a
+			// monomorph. A type parameter is not a monomorph, so `Map<String, V>` inside a generic class
+			// resolves to StringMap<V> like any closed key; treating it as open would leave the call on IMap
+			// and block the inline forward in Map.clear/toString.
+			return try Typer.resolveMultiTypeConcrete(a, pl, p)
+				catch (_:Dynamic) TypeFunctions.applyParams(a.params, pl, a.thisType);
 		}
 		function maybeCast(e:TExpr, t:T, p:Position):TExpr {
 			return TypeUnification.typeIseqDefault(e.type, t) ? e : TypeFunctions.mk(TCast(e, null), t, p);
