@@ -514,7 +514,12 @@ class Inline {
 			if (substitutable) {
 				subst.set(av.id, isAbsThis ? absThisCast(param) : param);
 			} else {
-				var nv = TypeFunctions.allocVar(VGenerated, av.name, av.type, p);
+				// The bound local takes the SOURCE kind mapped through VUser -> VInlined, and is downgraded
+				// to VGenerated only when it is read at most once and never written. Keeping the VInlined
+				// kind in the other case is what stops the analyzer (for which neither VUser nor VInlined
+				// counts as compiler generated) from fusing the local without -D analyzer-optimize.
+				var nv = TypeFunctions.allocVar(declareKind(av), av.name, av.type, p);
+				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, absThisCast(TypeFunctions.mk(TLocal(nv), nv.type, p)));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
