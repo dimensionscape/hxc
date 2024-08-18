@@ -293,7 +293,10 @@ class Calls {
 		function typeAgainst(name:String, t:T, e:Expr):TExpr {
 			var te = Typer.typeExpr(ctx, e, WithTypeTools.withArgument(t, name));
 			DebugDump.unify("call-arg " + name, te.type, t, te.pos);
-			return Typer.castOrUnify(ctx, t, te, te.pos);
+			// An argument is typed against its parameter with the RAISING cast. The optional-argument skip
+			// below is driven by this failure, so it must surface even inside untyped code; the swallowing
+			// variant would make every argument fit the first optional slot there.
+			return Typer.castOrUnifyRaise(ctx, t, te, te.pos);
 		}
 		// Optional parameters skipped while fitting a later argument, oldest first, each with the
 		// error it produced. When a subsequent argument cannot be placed, the first skipped

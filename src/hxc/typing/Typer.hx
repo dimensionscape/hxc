@@ -122,7 +122,7 @@ class Typer {
 		};
 	}
 
-	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
+	static function castOrUnifyInner(ctx:TyperContext, t:T, e:TExpr, p:Position, raiseOnFail:Bool):TExpr {
 		if (TypeUnification.fastEq(e.type, t)) return e;
 		// The cast-field search runs before plain unification: its strict first pass can pick a @:from
 		// whose parameter matches exactly even when the value would also unify with a plain `from` type.
@@ -135,9 +135,22 @@ class Typer {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
 		} catch (ue:UnifyError) { uerr = ue.errors; }
-		// Untyped code swallows the unification failure and keeps the value
-		if (ctx.untypedMode) return e;
+		// Untyped code swallows the unification failure and keeps the value . The RAISING variant does
+		// not consult untyped: always raises, and call-argument typing needs that failure so
+		// optional-argument SKIPPING still happens inside untyped code.
+		if (!raiseOnFail && ctx.untypedMode) return e;
 		throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
+	}
+
+	// Never consults untyped.
+	public static function castOrUnifyRaise(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
+		return castOrUnifyInner(ctx, t, e, p, true);
+	}
+
+	// The non-raising variant, with the failure routed through raiseOrDisplay, which drops it entirely in
+	// untyped code.
+	public static function castOrUnify(ctx:TyperContext, t:T, e:TExpr, p:Position):TExpr {
+		return castOrUnifyInner(ctx, t, e, p, false);
 	}
 
 	static function doesUnify(a:T, b:T):Bool {
