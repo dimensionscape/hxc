@@ -511,6 +511,12 @@ class Inline {
 			// keeps Texpr.equal from conflating the abstract this with its underlying value in later fusion.
 			inline function absThisCast(e:TExpr):TExpr
 				return isAbsThis ? TypeFunctions.mk(TCast(e, null), av.type, e.pos) : e;
+			if (ctx.com.defines.rawDefined("inline_debug")) Sys.println("[INL] " + av.name
+				+ " reads=" + use.reads + " writes=" + use.writes + " called=" + use.called
+				+ " captured=" + use.captured + " forceTemp=" + forceTemp + " subst=" + substitutable
+				+ " paramKind=" + Std.string(param.expr).substr(0,22)
+				+ " ptype=" + hxc.core.TPrinting.sTypeStr(param.type)
+				+ " atype=" + hxc.core.TPrinting.sTypeStr(av.type));
 			if (substitutable) {
 				subst.set(av.id, isAbsThis ? absThisCast(param) : param);
 			} else {
