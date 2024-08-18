@@ -118,6 +118,8 @@ class Finalization {
 			return s == null ? NOT_YET : s;
 		}
 		var statics = new StringMap<Bool>();
+		var sortDbg = ctx.defines.rawDefined("sort_debug");
+		var sortStack:Array<String> = [];
 
 		var loop:ModuleType->Void = null;
 
@@ -202,12 +204,18 @@ class Finalization {
 				case GENERATING:
 					ctx.warning(WStaticInitOrder, [], "Warning : maybe loop in static generation of " + Context.sTypePath(p), TypeFunctions.tInfos(t).pos);
 				case _:
+					if (sortDbg) {
+						var par = sortStack.length > 0 ? sortStack[sortStack.length - 1] : "ROOT";
+						Sys.println("[SORT] " + StringTools.lpad("", " ", sortStack.length * 2) + Context.sTypePath(p) + "  <- " + par);
+					}
+					if (sortDbg) sortStack.push(Context.sTypePath(p));
 					states.set(Context.pathKey(p), GENERATING);
 					switch (t) {
 						case TClassDecl(c): walkClass(p, c);
 						case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 					}
 					states.set(Context.pathKey(p), DONE);
+					if (sortDbg) sortStack.pop();
 					types.unshift(t);
 			}
 		}
