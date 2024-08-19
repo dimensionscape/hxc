@@ -791,6 +791,40 @@ class Filters {
 									var fa2 = TypeFunctions.quickField(m, fname);
 									var ft = funType(fa2);
 									var args = [for (arg in el) loop(arg)];
+									// A @:multiType call is rebuilt against the CONCRETE implementation, so
+									// every argument is cast to
+									// that implementation's parameter type. Otherwise the argument keeps
+									// the abstract's type, and later
+									// passes that key on the expression SHAPE go wrong: the inliner would
+									// see a bare local instead of a
+									// TCast and substitute an argument it must bind to a temporary (the
+									// TLocal arm versus the
+									// read-count arm).
+									if (TypeFunctions.hasMeta(":multiType", abs.a.meta)) {
+										var origArgs = switch (TypeFunctions.follow(ef.type)) {
+											case TFun(sig): sig.args;
+											case _: null;
+										};
+										if (origArgs != null) {
+											var casted = [];
+											for (ai in 0...args.length) {
+												// Once the concrete signature runs out the remaining arguments pass through
+												if (ai >= ft.args.length) { casted.push(args[ai]); continue; }
+												var at = ft.args[ai].t;
+												// An unresolved parameter type keeps the ORIGINAL one when that was Dynamic
+												if (ai < origArgs.length) switch (TypeFunctions.follow(at)) {
+													case TMono(_):
+														switch (TypeFunctions.follow(origArgs[ai].t)) {
+															case TDynamic(_): at = origArgs[ai].t;
+															case _:
+														}
+													case _:
+												}
+												casted.push(maybeCast(args[ai], at, args[ai].pos));
+											}
+											args = casted;
+										}
+									}
 									var field = TypeFunctions.mk(TField(TypeFunctions.mk(e2.expr, m, e2.pos), fa2), ft.t, e2.pos);
 									// The reference's make_call here always falls back to a plain call the concrete type m's
 									// module only loads at this FILTER (the multiType underlying resolves lazily, never during
