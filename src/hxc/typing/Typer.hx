@@ -4394,7 +4394,13 @@ class Typer {
 	static function applyMultiTypeCastType(a:TAbstract, atl:Array<T>, cf:TClassField):T {
 		var t = cf.type;
 		if (cf.params.length > 0) {
-			var params = cf.params.length == atl.length ? atl : [for (_ in cf.params) TypeFunctions.mkMono()];
+			// A @:to cast field carries its own constrained parameters (toStringMap<K:String>), and a
+			// candidate is only valid when the abstract key type satisfies them. Spawn CONSTRAINED
+			// monomorphs so binding enforces the constraint, the same way unifiesToField does.
+			// Substituting the abstract type arguments directly, or plain monomorphs, would accept the first
+			// cast whose arity matched and pick toStringMap for an object key.
+			function mapAbs(x:T):T return a.params.length > 0 ? TypeFunctions.applyParams(a.params, atl, x) : x;
+			var params = TypeUnification.spawnConstrainedMonos(mapAbs, cf.params);
 			t = TypeFunctions.applyParams(cf.params, params, t);
 		}
 		if (a.params.length > 0) t = TypeFunctions.applyParams(a.params, atl, t);
