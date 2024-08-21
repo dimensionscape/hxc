@@ -1085,6 +1085,14 @@ class Typeload {
 		return cf;
 	}
 
+	// A process-wide counter, so the first generated name is Hx___short___hx_type_0.
+	static var shortNameCounter = -1;
+
+	static function getShortName():String {
+		shortNameCounter++;
+		return "Hx___short___hx_type_" + shortNameCounter;
+	}
+
 	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
 		var key = genericKey(c, params);
 		var cached = genericInstances.get(key);
@@ -1129,6 +1137,11 @@ class Typeload {
 			q.cf.expr = q.f.expr == null ? null : cloneExpr(q.f.expr, q.subst, new Map(), q.gsubst2);
 			q.cf.exprUnoptimized = q.f.exprUnoptimized == null ? null : cloneExpr(q.f.exprUnoptimized, q.subst, new Map(), q.gsubst2);
 		}
+		// In rare cases the specialized name gets too long, so it is replaced by a generated @:native.
+		// Without this a target that derives file names from the type name can exceed the platform path
+		// limit.
+		if (cg.path.name.length > 254)
+			cg.meta = [{name: ":native", params: [new Expr(EConst(CString(getShortName(), SDoubleQuotes)), p)], pos: Position.nullPos}].concat(cg.meta);
 		mg.types = [TClassDecl(cg)];
 		ctx.modules.push(mg);
 		ctx.types.push(TClassDecl(cg));
