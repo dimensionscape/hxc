@@ -77,7 +77,11 @@ class CapturedVars {
 						}
 					}
 					LocalUsage.localUsage(browse, e);
+					// `fused` is folded in ascending key order while consing onto the accumulator, so the
+					// list comes out ordered by descending id. A Map iterates in bucket order here, and the order
+					// is observable as the wrapper closure parameter order.
 					var vars = [for (v in fused) v];
+					vars.sort(function(a, b) return b.id - a.id);
 
 					// In case the variable has been marked as used in a parallel scope
 					var fexpr = wrap(used, f.expr);
