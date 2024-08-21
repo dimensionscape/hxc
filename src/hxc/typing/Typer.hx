@@ -2190,14 +2190,21 @@ class Typer {
 				var absImpl = switch (ctx.curclass.kind) { case KAbstractImpl(ab): ab; case _: null; };
 				if (absImpl != null && TypeFunctions.hasClassFieldFlag(smf, CfImpl) && !TypeFunctions.hasClassFieldFlag(smf, CfEnum)) {
 					var thisExpr = getThis(ctx, p);
+					// The `this` node is retyped to the abstract before the field access, so threading it on to a
+					// sibling member casts it back down to the underlying type. Without that cast the inliner
+					// would see a bare TLocal and substitute where it should bind a temp.
+					var atl = TypeFunctions.extractParamTypes(absImpl.params);
+					thisExpr = TypeFunctions.mk(thisExpr.expr, TAbstract(absImpl, atl), thisExpr.pos);
 					// A bare reference to a sibling abstract member threads `this`: a method becomes a
 					// static extension call, a var/property dispatches through its accessor (get_/set_)
 					// rather than emitting a raw static field access.
 					switch (smf.kind) {
 						case Method(_):
-							return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(ctx.curclass, smf, thisExpr, false, p));
+							// The access is hosted on FHAbstract, which makes the call unify the receiver as the applied
+							// underlying type rather than as the abstract it was just retyped to.
+							return AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(absImpl, atl, ctx.curclass, smf, thisExpr, false, p));
 						case Var(_):
-							return Fields.fieldAccess(ctx, mode, smf, FHAbstract(absImpl, TypeFunctions.extractParamTypes(absImpl.params), ctx.curclass), thisExpr, p);
+							return Fields.fieldAccess(ctx, mode, smf, FHAbstract(absImpl, atl, ctx.curclass), thisExpr, p);
 					}
 				}
 				var typeExpr = TexprTools.makeTypeExpr(TClassDecl(ctx.curclass), p);

@@ -1023,10 +1023,13 @@ class Inline {
 				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
 			case TBinop(op = OpAssign | OpAssignOp(_), e1, e2):
-				// inline_params a substitution cast unwraps on the assignment left-hand side so the write
-				// goes to the underlying lvalue.
+				// A substitution cast unwraps on the assignment left-hand side so the write goes to the
+				// underlying lvalue. hxc bakes the abstract-this read cast into the substitution value, so
+				// the receiver can carry both it and the Dynamic-mismatch cast; peel through them to the
+				// same
+				// lvalue, which is what the write check recurses for.
 				var me1 = m(e1);
-				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
+				while (true) switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: break; }
 				// The map's assign arm rebuilds a local left-hand side in place ({e1 with expr = TLocal
 				// l.i_subst}), so it keeps its ORIGINAL position through the inline remap; the emitted
 				// statement line derives from it.
