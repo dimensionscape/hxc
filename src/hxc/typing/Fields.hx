@@ -547,7 +547,16 @@ class Fields {
 						// forwarding, so an extension whose first argument is the abstract type still
 						// matches.
 						try {
-							return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType, false);
+							// The field lookup gets a receiver CAST to the underlying type; only the cs
+							// target retypes
+							// the node in place. The cast is observable: it makes an inlined abstract
+							// member see a Cast
+							// rather than a plain local, so the receiver binds a temp instead of
+							// substituting.
+							var recv = ctx.com.platform.match(Cs)
+								? TypeFunctions.mk(e.expr, underlying, e.pos)
+								: TypeFunctions.mk(TCast(e, null), underlying, e.pos);
+							return typeField(ctx, recv, i, pfield, mode, withType, false);
 						} catch (_:FieldNotFoundError) {}
 					}
 					var u = tryUsing(ctx, e, i, pfield);
