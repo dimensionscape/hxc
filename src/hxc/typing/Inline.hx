@@ -452,6 +452,14 @@ class Inline {
 		for (i in 0...tf.args.length) {
 			var av = tf.args[i].v;
 			var param = params[i];
+			// A Null<T> value passed where a static platform expects a
+			// non-nullable T forces the local.
+			var nullMismatch = ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(av.type) && TypeFunctions.isNull(param.type);
+			// A Dynamic mismatch between argument and parameter casts once
+			// through the arg expression, so DCE and the read-count rules see a single cast.
+			var dynamicV = TypeFunctions.follow(av.type).match(TDynamic(null));
+			var dynamicE = TypeFunctions.follow(param.type).match(TDynamic(null));
+			if (dynamicV != dynamicE) param = TypeFunctions.mk(TCast(param, null), av.type, param.pos);
 			// A null argument (an omitted optional) takes the default CONSTANT directly, repositioned to the
 			// call site, with no runtime default check; only a possibly-null runtime value keeps the default
 			// temp.
@@ -463,14 +471,6 @@ class Inline {
 					passedNull = true;
 				case _:
 			}
-			// A Null<T> value passed where a static platform expects a
-			// non-nullable T forces the local.
-			var nullMismatch = ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(av.type) && TypeFunctions.isNull(param.type);
-			// A Dynamic mismatch between argument and parameter casts once
-			// through the arg expression, so DCE and the read-count rules see a single cast.
-			var dynamicV = TypeFunctions.follow(av.type).match(TDynamic(null));
-			var dynamicE = TypeFunctions.follow(param.type).match(TDynamic(null));
-			if (dynamicV != dynamicE) param = TypeFunctions.mk(TCast(param, null), av.type, param.pos);
 			// The abstract `this` (first arg of an abstract member) binds to a local receiver directly, so
 			// `++this` / `this = ...` writes back to the caller's variable; other args are call-by-value.
 			// A stable lvalue receiver (a local or a side-effect-free field chain) substitutes
