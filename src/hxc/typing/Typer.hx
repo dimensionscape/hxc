@@ -4337,7 +4337,13 @@ class Typer {
 	// back to thisType on it).
 	static function multitypeResult(castField:TAbstractCast, pl:Array<T>, m:T):T {
 		var cf = castField.cf;
-		if (cf.params.length == pl.length) return TypeFunctions.applyParams(cf.params, pl, castField.t);
+		if (cf.params.length == pl.length) {
+			var t = TypeFunctions.applyParams(cf.params, pl, castField.t);
+			// The stored toField type is a monomorph when the @:to has no declared return type. So only keep
+			// the caller-node rebuild while it is closed, and otherwise fall back to the reference's result,
+			// or cpp lowers the specialization to Dynamic.
+			if (!TypeFunctions.hasMono(t)) return t;
+		}
 		return deepFollow(m);
 	}
 
