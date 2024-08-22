@@ -518,6 +518,14 @@ class CppGenClass {
 		}).join(",");
 	}
 
+	// The super class and each interface contribute their @:include files when they have any, and only
+	// otherwise their own class header. Both go to the HEADER buffer, ahead of the forward declarations.
+	function includeClassHeader(w:CppWriter, c:TClass):Void {
+		var includeFiles = CppReferenced.getAllMetaStringPath(c.meta, ":include");
+		if (includeFiles.length > 0) for (inc in includeFiles) w.writeHUnique(guardedInclude(inc));
+		else addInclude(w, c.path);
+	}
+
 	public function genHeader():String {
 		cppFileId = {v: -1};
 		var w = new CppWriter();
@@ -526,10 +534,10 @@ class CppGenClass {
 		w.writeH("#ifndef HXCPP_H\n#include <hxcpp.h>\n#endif\n\n");
 		// Include the super class's real header, then each implemented (non-rtti) interface's, so their
 		// full definitions are available to the class declaration.
-		if (classDef.superClass != null) addInclude(w, classDef.superClass.c.path);
+		if (classDef.superClass != null) includeClassHeader(w, classDef.superClass.c);
 		for (imp in classDef.interfaces)
 			if (!(imp.c.path.pack.length == 2 && imp.c.path.pack[0] == "cpp" && imp.c.path.pack[1] == "rtti"))
-				addInclude(w, imp.c.path);
+				includeClassHeader(w, imp.c);
 		// From HX_DECLARE_CLASS0 onward goes to the body buffer = write); the begin above + any
 		// inline-ctor stack frames go to the HEADER buffer, so a HX_DECLARE_STACK_FRAME lands between the
 		// includes and HX_DECLARE_CLASS0 (as in the oracle). + gen_forward_decl: a HX_DECLARE_CLASS<n>
@@ -667,7 +675,11 @@ class CppGenClass {
 		}
 		// The __boot declaration when the class has static initializers.
 		if (hasBootField(classDef)) w.write("\t\tstatic void __boot();\n");
-		for (f in staticsExceptMeta()) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, true, f);
+		// The ArrayAccess typedef sits between __boot and the statics.
+		if (classDef.arrayAccess != null) w.write("\t\ttypedef " + ctxTypeString(classDef.arrayAccess) + " __array_access;\n");
+		// Declare all the statics, orderedStatics rather than staticsExceptMeta: only the cpp body skips
+		// __meta__ and __rtti, because those are assigned through __mClass instead of defined.
+		for (f in classDef.orderedStatics) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, true, f);
 		var instanceFields = isInterface ? virtualFields() : classDef.orderedFields;
 		for (f in instanceFields) if (TypeFunctions.isPhysicalField(f)) genMemberDefHeader(w, false, f);
 		// @:headerClassCode is injected verbatim just before the class closing brace.
@@ -1177,9 +1189,6 @@ class CppGenClass {
 		w.writeH("#ifndef INCLUDED_" + defString + "\n#define INCLUDED_" + defString + "\n\n");
 		// The header-file prologue for a @:nativeGen class.
 		w.writeH("#ifndef HXCPP_H\n#ifdef HXCPP_API_LEVEL\n#include <hxcpp.h>\n#else\n#include <hx/Native.h>\n#endif\n#endif\n\n");
-		var selfPath = joinPath(classDef.path, "/") + ".h";
-		var guard = "INCLUDED_" + hash64(selfPath);
-		w.writeH("#ifndef " + guard + "\n#define " + guard + "\n#include \"" + selfPath + "\"\n#endif\n\n");
 		// A nativeGen class extending a base emits `: public <native-instance-type>` and includes the
 		// base's header (its @:include files, or the base's own header).
 		var superName = classDef.superClass != null
@@ -1191,6 +1200,13 @@ class CppGenClass {
 			if (includeFiles.length > 0) for (inc in includeFiles) w.writeHUnique(guardedInclude(inc));
 			else addInclude(w, superClass.path);
 		}
+		// The forward declarations, which for a nativeGen class are the @verbatim includes: the class's
+		// own header plus any the referenced types pull in. They go to the body, so an @:include already
+		// written to the header by the super above is emitted a second time here (the header and body
+		// writers keep separate dedup state).
+		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, isScriptable());
+		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
+		w.write("\n");
 		genOpenNamespace(w);
 		w.write("\n\n");
 		w.write("class HXCPP_CLASS_ATTRIBUTES " + smartName + (superName == "" ? "" : " : public " + superName) + "\n{\n\tpublic:\n");
@@ -1213,7 +1229,8 @@ class CppGenClass {
 		} else if (isMethodField(f)) switch (f.expr.expr) {
 			case TFunction(tf):
 				var ret = CppTypeOf.cppTypeOf(tf.type).match(TCppVoid) ? "void" : ctxTypeString(tf.type);
-				w.write(prefix + ret + " " + CppTypeText.cppMemberNameOf(f) + "(" + ctxArgList(tf.args, "") + ");\n");
+				// A method declaration closes with a blank line.
+				w.write(prefix + ret + " " + CppTypeText.cppMemberNameOf(f) + "(" + ctxArgList(tf.args, "") + ");\n\n");
 			case _:
 		}
 	}
