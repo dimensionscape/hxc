@@ -506,9 +506,17 @@ class Operators {
 
 	// Emit the static impl-method call for a @:op field, preserving evaluation order when the operands were
 	// swapped for a @:commutative overload (bind both to temps so the original left is evaluated first).
-	static function makeStaticOpCall(ctx:TyperContext, implC:TClass, cf:TClassField, args:Array<TExpr>, tret:T, p:Position):TExpr {
+	static function makeStaticOpCall(ctx:TyperContext, implC:TClass, cf:TClassField, map:T->T, args:Array<TExpr>, tret:T, p:Position):TExpr {
 		var implExpr = hxc.core.TexprTools.makeStaticThis(implC, p);
 		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p), FCall);
+		// The static call spawns fresh monomorphs for the field's own params and types the field
+		// EXPRESSION as `map cf.type`, where the caller's map applies the ABSTRACT's parameters. Hosting
+		// the access on the impl class alone leaves the signature holding the abstract's type parameters,
+		// and a referenced-type walk skips a KTypeParameter, so the types reachable only through an @:op
+		// signature would never get their include emitted.
+		var monos = [for (_ in cf.params) TypeFunctions.mkMono()];
+		function mapFull(t:T):T return map(TypeFunctions.applyParams(cf.params, monos, t));
+		fieldExpr = TypeFunctions.mk(fieldExpr.expr, mapFull(cf.type), fieldExpr.pos);
 		// A trailing optional ?p:haxe.PosInfos on the op method receives the call-site info.
 		switch (TypeFunctions.follow(cf.type)) {
 			case TFun(sig): args = Calls.padPosInfos(ctx, sig.args, args, p);
@@ -597,7 +605,7 @@ class Operators {
 				var vrhs = TypeFunctions.allocVar(VGenerated, "rhs", me1.type, me1.pos);
 				var elhs = TexprTools.makeLocal(vlhs, me2.pos);
 				var erhs = TexprTools.makeLocal(vrhs, me1.pos);
-				var call = makeStaticOpCall(ctx, implC, cf, [erhs, elhs], tret, p);
+				var call = makeStaticOpCall(ctx, implC, cf, map, [erhs, elhs], tret, p);
 				var e = TypeFunctions.mk(TBlock([
 					TypeFunctions.mk(TVarExpr(vlhs, me2), tvoid, me2.pos),
 					TypeFunctions.mk(TVarExpr(vrhs, me1), tvoid, me1.pos),
@@ -605,7 +613,7 @@ class Operators {
 				]), tret, p);
 				return BinopSpecial(e, needsAssign);
 			} else {
-				return BinopSpecial(makeStaticOpCall(ctx, implC, cf, [me1, me2], tret, p), needsAssign);
+				return BinopSpecial(makeStaticOpCall(ctx, implC, cf, map, [me1, me2], tret, p), needsAssign);
 			}
 		}
 
