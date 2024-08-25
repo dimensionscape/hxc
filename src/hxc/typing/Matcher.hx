@@ -1297,12 +1297,26 @@ class DtCompile {
 		}
 	}
 
+	// True when `t` is one of the enum's own declaration type parameters, i.e. the constructor leaves
+	// that position unconstrained.
+	static function isTypeParamOf(en:TEnum, t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, _): c.kind.match(KTypeParameter(_));
+			case _: false;
+		}
+	}
+
 	static function refineSubjects(subject:TExpr, con:Con, rest:Array<TExpr>):Array<TExpr> {
 		var subst:Array<{from:T, to:T}> = switch (con.kind) {
 			case ConEnum(en, ef):
 				switch [TypeFunctions.follow(subject.type), TypeFunctions.follow(enumConstructorReturn(ef))] {
 					case [TEnum(se, stl), TEnum(re, rtl)] if (se == en && re == en && stl.length == rtl.length):
-						[for (i in 0...stl.length) {from: stl[i], to: rtl[i]}];
+						// Only a GADT constructor genuinely constrains the parameter: BoolLit(b:Bool):E<Bool> returns
+						// E<Bool>, so matching it refines the sibling subject's E<S> to E<Bool>. An ordinary
+						// constructor returns the enum's own generic form (Some : Option<T>), and substituting
+						// towards that rewrites a concrete Option<String> back into Option<T>, leaving the sibling's
+						// extraction typed as a bare type parameter.
+						[for (i in 0...stl.length) if (!isTypeParamOf(en, rtl[i])) {from: stl[i], to: rtl[i]}];
 					case _:
 						[];
 				}
