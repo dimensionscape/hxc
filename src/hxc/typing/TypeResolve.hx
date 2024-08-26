@@ -853,6 +853,27 @@ class TypeResolve {
 								return t2;
 							}));
 							a.fromField.push({t: TLazy(r), cf: cf});
+							// A @:from's return to the abstract, and in the reference that constraint lands on the same
+							// field the generator later reads. hxc keeps a separate modelled cast field on purpose
+							// (forcing the real one during unification recurses, see the note above), so the constraint
+							// reached only the model: an UNCALLED @:from with no declared return type kept the monomorph
+							// its body never bound, and a target lowered that to Dynamic instead of the abstract. The
+							// impl static's signature is still a bare monomorph here, so this has to wait for PForce,
+							// which is where cast signatures anyway.
+							if (isFrom && a.impl != null) {
+								var castName = cff.cffName.name;
+								ctx.delay(hxc.context.Context.PForce, function() {
+									var implCf = a.impl.statics.get(castName);
+									if (implCf == null) return;
+									switch (TypeFunctions.follow(implCf.type)) {
+										case TFun(isig) if (TypeFunctions.follow(isig.ret).match(TMono(_))):
+											try TypeUnification.typeEqKind(EqStrict, isig.ret,
+												TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
+											catch (_:hxc.core.TypeUnification.UnifyError) {}
+										case _:
+									}
+								});
+							}
 						}
 					}
 					if (isTo) {

@@ -99,6 +99,9 @@ class TypeFields {
 			mi--;
 		}
 		ctx.flushPass(hxc.context.Context.PTypeField);
+		// Cast-signature resolution is scheduled at PForce, so bucket must be drained here, or
+		// PForce/PCheckConstraint/PFinal delays never run at all.
+		ctx.flushPass(hxc.context.Context.PForce);
 	}
 
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
