@@ -193,6 +193,7 @@ class TypeResolve {
 			case _:
 		}
 		resolveClassFields(ctx, c, d, p);
+		markClassBuilt(c);
 		TypeFields.addImplicitInterfaceFields(c);
 	}
 
@@ -233,8 +234,42 @@ class TypeResolve {
 		return null;
 	}
 
-	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro
-	// rewrites the field list but not the heritage, so it re-runs this without redoing extends.
+	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro rewrites the
+	// field list but not the heritage, so it re-runs this without redoing extends. the build protocol:
+	// while a class is being built its build reports `Building [c]` so a re-entrant request is a NO-OP,
+	// and on completion it is replaced by `Built` so later requests do nothing at all. hxc resolves fields
+	// through a plain pass instead, with no such state, so anything that wanted to force a class early had
+	// to re-run the pass and disturb the schedule for every other class. Track the same two states here.
+	// Only buildClassFields consults them; the ordinary resolution path just records that it happened, and
+	// an explicit re-resolution after a @:build macro rewrites the definition deliberately bypasses this.
+	static var buildState = new haxe.ds.ObjectMap<TClass, Int>();
+	static inline var BUILDING = 1;
+	static inline var BUILT = 2;
+
+	public static function markClassBuilt(c:TClass):Void {
+		buildState.set(c, BUILT);
+	}
+
+	// Make sure the class is set up before its fields are read. Returns true when this call did the
+	// work.
+	public static function buildClassFields(ctx:Context, c:TClass, p:Position):Bool {
+		if (buildState.exists(c)) return false;
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return false;
+		switch (entry.decl) {
+			case EClass(d):
+				buildState.set(c, BUILDING);
+				var savedModule = ctx.currentModule;
+				if (c.module != null) ctx.currentModule = c.module;
+				try resolveClassFields(ctx, c, d, p) catch (_:Dynamic) {}
+				ctx.currentModule = savedModule;
+				buildState.set(c, BUILT);
+				return true;
+			case _:
+				return false;
+		}
+	}
+
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
@@ -573,6 +608,7 @@ class TypeResolve {
 			switch (implEntry != null ? implEntry.decl : null) {
 				case EClass(impl):
 					resolveClassFields(ctx, a.impl, impl, p);
+					markClassBuilt(a.impl);
 				case _:
 			}
 		}

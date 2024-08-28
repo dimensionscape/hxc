@@ -1094,6 +1094,11 @@ class Typeload {
 	}
 
 	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
+		// `ignore(c.build())` - 'make sure the super class is already setup' before build_field
+		// substitutes over its signatures. A @:generic reached from a HERITAGE clause specializes before
+		// the base class has had its field types resolved, and substituting an open monomorph only yields
+		// another one.
+		hxc.typing.TypeResolve.buildClassFields(ctx, c, p);
 		var key = genericKey(c, params);
 		var cached = genericInstances.get(key);
 		if (cached != null) return cached;
