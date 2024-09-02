@@ -1165,6 +1165,9 @@ class Calls {
 			cf2.expr = Typeload.cloneExpr(cf.expr, subst, new Map());
 			cf2.exprUnoptimized = cf.exprUnoptimized == null ? null : Typeload.cloneExpr(cf.exprUnoptimized, subst, new Map());
 			cf2.flags = cf.flags;
+			// The specialization with a FRESH mk_field and then copies only kind and meta, so it never
+			// inherits `extern`.
+			TypeFunctions.removeClassFieldFlag(cf2, CfExtern);
 			TypeFunctions.removeClassFieldFlag(cf2, CfGeneric);
 			if (stat) TypeFunctions.addClassFieldFlag(cf2, CfStatic);
 			else TypeFunctions.removeClassFieldFlag(cf2, CfStatic);
