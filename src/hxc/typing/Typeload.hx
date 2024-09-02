@@ -726,6 +726,11 @@ class Typeload {
 		return false;
 	}
 
+	// Substituting into a generic needs the typer, to build instances while rewriting a field access.
+	// hxc's substitution state is a bare gsubst array, so hold the typer here for the duration of a
+	// specialization instead.
+	static var genericBuildCtx:Null<Context> = null;
+
 	public static function canSpecializeGeneric(params:TParams):Bool {
 		return !hasOpenMono(params) && !hasTypeParameterParams(params);
 	}
@@ -848,9 +853,35 @@ class Typeload {
 				var cg2 = switch (TypeFunctions.follow(ce1.type)) {
 					case TInst(c2, _): switch (c2.kind) {
 						case KGenericInstance(base, _) if (base == fc): c2;
-						case _: canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+						case _:
+							// Building the instance here CREATES a cascading instance as a side effect. It does not
+							// follow that the access is redirected to it: this field stays on the unspecialized owner,
+							// since redirecting makes the instance reachable and --dce full would keep a class that
+							// should be discarded.
+							if (!canSpecializeGeneric(stl)) null;
+							else {
+								var known = genericInstances.get(genericKey(fc, stl));
+								if (known != null) known;
+								else {
+									if (genericBuildCtx != null) specializeGenericClass(genericBuildCtx, fc, stl, e.pos);
+									null;
+								}
+							}
 					}
-					case _: canSpecializeGeneric(stl) ? genericInstances.get(genericKey(fc, stl)) : null;
+					case _:
+						// Building the instance here CREATES a cascading instance as a side effect. It does not
+						// follow that the access is redirected to it: this field stays on the unspecialized owner,
+						// since redirecting makes the instance reachable and --dce full would keep a class that
+						// should be discarded.
+						if (!canSpecializeGeneric(stl)) null;
+						else {
+							var known = genericInstances.get(genericKey(fc, stl));
+							if (known != null) known;
+							else {
+								if (genericBuildCtx != null) specializeGenericClass(genericBuildCtx, fc, stl, e.pos);
+								null;
+							}
+						}
 				};
 				if (cg2 == null || cg2 == fc) {
 					TField(ce1, fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1));
@@ -1094,6 +1125,7 @@ class Typeload {
 	}
 
 	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
+		var savedGenericCtx = genericBuildCtx; genericBuildCtx = ctx;
 		// `ignore(c.build())` - 'make sure the super class is already setup' before build_field
 		// substitutes over its signatures. A @:generic reached from a HERITAGE clause specializes before
 		// the base class has had its field types resolved, and substituting an open monomorph only yields
@@ -1101,7 +1133,7 @@ class Typeload {
 		hxc.typing.TypeResolve.buildClassFields(ctx, c, p);
 		var key = genericKey(c, params);
 		var cached = genericInstances.get(key);
-		if (cached != null) return cached;
+		if (cached != null) { genericBuildCtx = savedGenericCtx; return cached; }
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path = {pack: c.path.pack, name: c.path.name + suffix};
@@ -1153,6 +1185,7 @@ class Typeload {
 		ctx.moduleLut.set(Context.pathKey(path), mg);
 		ctx.typeToModule.set(Context.pathKey(path), path);
 		TypeFunctions.addDependency(mg, c.module);
+		genericBuildCtx = savedGenericCtx;
 		return cg;
 	}
 }
