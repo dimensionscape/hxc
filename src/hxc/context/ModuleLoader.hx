@@ -1502,9 +1502,14 @@ class ModuleLoader {
 							if (TypeFunctions.hasClassFlag(c, CExtern)) {
 								field.cffKind = FProp({name: "default", pos: Position.nullPos}, {name: "never", pos: Position.nullPos}, effCt, null);
 							} else if (modeString) {
-								setField(field, effCt, new Expr(EConst(CString(field.cffName.name, SDoubleQuotes)), field.cffPos));
+								// The enum abstract build synthesizes both the String and the Int value at
+								// the null position, and the cast that wraps them sits at that position
+								// too. The field position would give the generated boot assignments a real
+								// file and line, so a target that emits position info per statement would
+								// print the declaration line instead of "?" and line 1.
+								setField(field, effCt, new Expr(EConst(CString(field.cffName.name, SDoubleQuotes)), Position.nullPos));
 							} else if (modeInt) {
-								setField(field, effCt, new Expr(EConst(CInt(Std.string(intCounter), null)), field.cffPos));
+								setField(field, effCt, new Expr(EConst(CInt(Std.string(intCounter), null)), Position.nullPos));
 								intCounter++;
 							} else {
 								throw new ContextError("Value required", field.cffPos);
