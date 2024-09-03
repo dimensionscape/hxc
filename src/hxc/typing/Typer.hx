@@ -2932,7 +2932,14 @@ class Typer {
 					case null:
 						null;
 					case e:
-						var e2 = TypeFunctions.mk(e.expr, e.type, p);
+						// A read of an inline var is repositioned RECURSIVELY. Moving only the outer node leaves
+						// everything under it at its declaration position, and enum abstract values are each wrapped
+						// in an ECast, so the constant underneath keeps the declaring file. On js that drags the
+						// declaring module into the source map's `sources`, which shifts every later source index and
+						// desynchronises the mappings.
+						function reposition(x:TExpr):TExpr
+							return TexprTools.mapExpr(reposition, TypeFunctions.mk(x.expr, x.type, p));
+						var e2 = reposition(e);
 						TypeUnification.typeIseqDefault(cf.type, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), cf.type, p);
 				}
 			case _:
@@ -3019,9 +3026,16 @@ class Typer {
 				switch (cf.expr) {
 					case null: throw new TypingError("Recursive inline is not supported", p);
 					case e:
-						// apply_params is the identity for static/instance hosts, so substituting the stored
-						// value only moves it to the access position; a TCast bridges any type mismatch.
-						var e2 = TypeFunctions.mk(e.expr, e.type, p);
+						// apply_params is the identity for static/instance hosts, so substituting the stored value
+						// only moves it to the access position; a TCast bridges any type mismatch. a read of an
+						// inline var RECURSIVELY: let rec loop e = Type.map_expr loop { e with pos = p; ... } Moving
+						// only the outer node leaves everything under it at its declaration position, and
+						// build_enum_abstract wraps every value in an ECast, so the constant underneath keeps the
+						// declaring file. On js that drags the declaring module into the source map's `sources`,
+						// which shifts every later source index and desynchronises the mappings.
+						function reposition1(x:TExpr):TExpr
+							return TexprTools.mapExpr(reposition1, TypeFunctions.mk(x.expr, x.type, p));
+						var e2 = reposition1(e);
 						var tf = cf.type;
 						TypeUnification.typeIseqDefault(tf, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), tf, p);
 				}
