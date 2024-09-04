@@ -1058,9 +1058,13 @@ class GenJS {
 		}
 	}
 
-	// A single JavaScript condition delimiter around the typed value. Keep an existing AST parenthesis
-	// as that delimiter instead of duplicating it.
+	// A single JavaScript condition delimiter surrounds the typed value; an existing AST parenthesis
+	// is kept as that delimiter instead of duplicating it. The source mapping is registered before
+	// anything is emitted, so the segment lands on the opening parenthesis. The condition node carries
+	// the INNER expression's position, which makes the inner mapping a duplicate that addMapping
+	// drops.
 	function genCondition(e:TExpr):Void {
+		var clearMapping = addMapping(e);
 		switch (e.expr) {
 			case TParenthesis(e1):
 				spr("(");
@@ -1071,6 +1075,7 @@ class GenJS {
 				genValue(e);
 				spr(")");
 		}
+		clearMapping();
 	}
 
 	// A stand-in js.Boot class reference for __cast
