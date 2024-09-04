@@ -743,7 +743,11 @@ class Typer {
 			case EConst(c): typeConst(ctx, c, p, mode, withType);
 			case EParenthesis(e1):
 				var te = typeExpr(ctx, e1, withType);
-				TypeFunctions.mk(TParenthesis(te), te.type, te.pos);
+				// Keeps the PARENTHESIS position here, not the inner one, so the node spans both
+				// parentheses as the parser built it. Collapsing it onto the inner would make the two
+				// indistinguishable, and the js source map would then drop the outer segment as a
+				// duplicate.
+				TypeFunctions.mk(TParenthesis(te), te.type, p);
 			case EBlock([]) if (emptyBlockIsObject(withType)):
 				// `{}` parses as an empty block; in a value position with a known (non-mono) type it is an
 				// empty object literal, not a Void block.
