@@ -1237,9 +1237,17 @@ class DtCompile {
 				var subject = TypeUnification.typeIseqDefault(ten, e.type) ? e : TypeFunctions.mk(TCast(e, null), ten, e.pos);
 				switch (TypeFunctions.follow(ef.type)) {
 					case TFun(sig):
-						[for (i in 0...sig.args.length) TypeFunctions.mk(TEnumParameter(subject, ef, i),
-							TypeFunctions.applyParams(en.params, pl, TypeFunctions.monomorphs(ef.params, sig.args[i].t)),
-							i < argPositions.length ? argPositions[i] : con.pos)];
+						// The SUBJECT is repositioned onto the argument's pattern position as well as the
+						// extraction itself, so the two share one position and only one source-map segment
+						// survives the dedup; leaving the subject where it was declared would emit a second
+						// segment at every extraction.
+						// When a constructor takes more arguments than the pattern named, the extra ones
+						// use the SUBJECT's position, not the constructor's.
+						[for (i in 0...sig.args.length) {
+							var ap = i < argPositions.length ? argPositions[i] : e.pos;
+							TypeFunctions.mk(TEnumParameter(TypeFunctions.mk(subject.expr, subject.type, ap), ef, i),
+								TypeFunctions.applyParams(en.params, pl, TypeFunctions.monomorphs(ef.params, sig.args[i].t)), ap);
+						}];
 					case _: [];
 				}
 			case ConArray(n):
