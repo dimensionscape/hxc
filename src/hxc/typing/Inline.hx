@@ -527,7 +527,7 @@ class Inline {
 				var nv = TypeFunctions.allocVar(declareKind(av), av.name, av.type, p);
 				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
-				subst.set(av.id, absThisCast(TypeFunctions.mk(TLocal(nv), nv.type, p)));
+				subst.set(av.id, absThisCast(substLocal(nv, p)));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
@@ -792,7 +792,22 @@ class Inline {
 		};
 	}
 
-	// The body reduced to its result value: a single or final return's value, else the body itself.
+	// The body reduced to its result value: a single or final return's value, else the body
+	// itself.
+	// Two rewrites are kept apart. A read of an INLINE-DECLARED var becomes a TLocal of its
+	// substitute on the already position-mapped node, so such a read takes the call position;
+	// an inlined argument is replaced with the CALLER's expression verbatim after the position
+	// map, so the caller's own position survives. hxc fuses both into one substitution map,
+	// where the two are told apart only by shape, so an argument that happens to be a local
+	// could pass for an inliner temp. Recording the locals the inliner itself allocated keeps
+	// the distinction.
+	static var inlinerLocals = new Map<Int, Bool>();
+
+	static function substLocal(nv:TVar, pos:Position):TExpr {
+		inlinerLocals.set(nv.id, true);
+		return TypeFunctions.mk(TLocal(nv), nv.type, pos);
+	}
+
 	static function inlineBody(ctx:TyperContext, body:TExpr, subst:Map<Int, TExpr>, vthis:Null<TVar>, ethis:Null<TExpr>, inlinePos:Position,
 			keepPositions:Bool, abstractMember:Bool):TExpr {
 		switch (body.expr) {
@@ -951,7 +966,7 @@ class Inline {
 				var body = terminal(e1);
 				var mappedCatches = [for (c in catches) {
 					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
-					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
+					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: terminal(c.expr)};
 				}];
 				var values = [body].concat([for (c in mappedCatches) c.expr]);
@@ -1016,7 +1031,8 @@ class Inline {
 					// node: each READ takes the remapped position, not the declaration's. A non-local argument
 					// value keeps its own position verbatim.
 					return switch (se.expr) {
-						case TLocal(_): TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
+							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
 						case _: se;
 					};
 				}
@@ -1087,7 +1103,7 @@ class Inline {
 				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
 				// type behind an IMap-typed temp.
 				nv.extra = v.extra;
-				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
+				subst.set(v.id, substLocal(nv, v.pos));
 				TVarExpr(nv, eo == null ? null : m(eo));
 			case TBlock(el): TBlock([for (x in el) m(x)]);
 			case TFor(v, e1, e2):
@@ -1095,7 +1111,7 @@ class Inline {
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
 				var nv = TypeFunctions.allocVar(declareKind(v), v.name, v.type, v.pos);
-				subst.set(v.id, TypeFunctions.mk(TLocal(nv), nv.type, v.pos));
+				subst.set(v.id, substLocal(nv, v.pos));
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
 				TFor(nv, me1, me2);
@@ -1122,7 +1138,7 @@ class Inline {
 				var me1 = m(e1);
 				TTry(me1, [for (c in catches) {
 					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
-					subst.set(c.v.id, TypeFunctions.mk(TLocal(nv), nv.type, c.v.pos));
+					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: m(c.expr)};
 				}]);
 			case TFunction(f):
@@ -1133,7 +1149,7 @@ class Inline {
 				// inlined bindings rather than the callee's argument vars.
 				var nargs:Array<TFuncArg> = [for (a in f.args) {
 					var nv = TypeFunctions.allocVar(declareKind(a.v), a.v.name, a.v.type, a.v.pos);
-					subst.set(a.v.id, TypeFunctions.mk(TLocal(nv), nv.type, a.v.pos));
+					subst.set(a.v.id, substLocal(nv, a.v.pos));
 					{v: nv, c: a.c == null ? null : m(a.c)};
 				}];
 				var body = mapExpr(ctx, f.expr, subst, vthis, ethis, inlinePos, keepPositions, true);
