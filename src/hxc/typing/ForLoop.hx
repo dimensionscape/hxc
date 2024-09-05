@@ -342,6 +342,11 @@ class ForLoop {
 	public static function typeForLoop(ctx:TyperContext, it:Expr, e2:Expr, p:Position):TExpr {
 		var vName:String;
 		var e1Expr:Expr;
+		// The loop variable at the identifier's position, not at the position of the whole `for`. The
+		// lowered `var i = _g++` and the `_g < _g1` condition both punion that position /396), so losing
+		// it collapsed them onto the `for` keyword and the js source map dropped the condition segment as
+		// a duplicate.
+		var pi:Position = p;
 		switch (it.expr) {
 			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than
 			// `=>`; a macro-built head may carry the OpIn(OpArrow(k, v), e) shape instead.
@@ -351,13 +356,14 @@ class ForLoop {
 				Typer.checkLocalVariableName(ctx, vi, TVOForVariable, vexpr.pos);
 				return ctx.com.platform.match(Eval)
 					? typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p)
-					: ForLoopFaithful.typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p);
+					: ForLoopFaithful.typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p, kexpr.pos, vexpr.pos);
 			case EBinop(OpIn, lhs, rhs):
 				vName = switch (lhs.expr) {
 					case EConst(CIdent(i)): i;
 					case _: throw new TypingError("Identifier expected", lhs.pos);
 				};
 				Typer.checkLocalVariableName(ctx, vName, TVOForVariable, lhs.pos);
+				pi = lhs.pos;
 				e1Expr = rhs;
 			case _:
 				throw new TypingError("For expression should be 'v in expr'", it.pos);
@@ -366,7 +372,7 @@ class ForLoop {
 		// the typer-level IIFE wrap that the reference performs in the captured-vars filter,
 		// which the eval pipeline does not run. Generated targets take the faithful port.
 		if (!ctx.com.platform.match(Eval))
-			return ForLoopFaithful.typeNormalForLoop(ctx, vName, e1Expr, e2, p);
+			return ForLoopFaithful.typeNormalForLoop(ctx, vName, e1Expr, e2, p, pi);
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
 		var intLoop = typeIntIteratorForLoop(ctx, vName, e1, e2, p);
@@ -882,21 +888,21 @@ class ForLoopFaithful {
 		};
 	}
 
-	public static function typeNormalForLoop(ctx:TyperContext, vName:String, e1Expr:Expr, e2:Expr, p:Position):TExpr {
+	public static function typeNormalForLoop(ctx:TyperContext, vName:String, e1Expr:Expr, e2:Expr, p:Position, pi:Position):TExpr {
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
 		var e2b = Expr.ensureBlock(e2);
 		var iterator = ofTexpr(ctx, e1, getUnrollWeight(ctx, e2b), p);
-		var i = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, iterator.pt, p);
+		var i = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, iterator.pt, pi);
 		var te2 = Typer.typeExpr(ctx, e2b, WithTypeTools.noValue);
 		ctx.inLoop = oldLoop;
 		oldLocals();
 		return toTexpr(ctx, i, iterator, te2, p);
 	}
 
-	public static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
+	public static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position, pkey:Position, pvalue:Position):TExpr {
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
 		switch (TypeFunctions.follow(e1.type)) {
@@ -918,8 +924,8 @@ class ForLoopFaithful {
 		var ev = TexprTools.makeLocal(v, v.pos);
 		var ekey = Typer.accGet(ctx, Fields.typeField(ctx, ev, "key", ev.pos, MGet, WithTypeTools.value));
 		var evalue = Typer.accGet(ctx, Fields.typeField(ctx, ev, "value", ev.pos, MGet, WithTypeTools.value));
-		var vkey = Typer.addLocalWithOrigin(ctx, TVOForVariable, ki, ekey.type, p);
-		var vvalue = Typer.addLocalWithOrigin(ctx, TVOForVariable, vi, evalue.type, p);
+		var vkey = Typer.addLocalWithOrigin(ctx, TVOForVariable, ki, ekey.type, pkey);
+		var vvalue = Typer.addLocalWithOrigin(ctx, TVOForVariable, vi, evalue.type, pvalue);
 		var e2 = Typer.typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
 		var ebody = TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, enext), basic.tvoid, enext.pos),
