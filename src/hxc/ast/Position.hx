@@ -49,16 +49,21 @@ class Position {
 		return getInfos(p).line;
 	}
 
+	// Unreadable files resolve to line 1, column min; line 0 would produce a negative source-map line.
+	static inline function unresolved(p:Position):PositionInfos {
+		return {file: p.file, min: p.min, max: p.max, line: 1, column: p.min, endLine: 1, endColumn: p.max};
+	}
+
 	public static function getInfos(p:Position):PositionInfos {
 		if (p.min < 0 || p.max < 0)
-			return {file: p.file, min: p.min, max: p.max, line: 0, column: p.min, endLine: 0, endColumn: p.max};
+			return unresolved(p);
 		var cached = fileCache.get(p.file);
 		if (cached == null) {
 			if (p.file != "?" && sys.FileSystem.exists(p.file) && !sys.FileSystem.isDirectory(p.file)) {
 				getFileContent(p.file);
 				cached = fileCache.get(p.file);
 			} else {
-				return {file: p.file, min: p.min, max: p.max, line: 0, column: p.min, endLine: 0, endColumn: p.max};
+				return unresolved(p);
 			}
 		}
 		return cached.info(p);

@@ -169,7 +169,6 @@ class Globals {
 		// Min = -1 prints as "(unknown)".
 		if (p.min == -1) return "(unknown)";
 		var info = Position.getInfos(p);
-		if (info.line <= 0) return '${p.file}: (unknown)';
 		if (info.line != info.endLine) return printer(p.file, info.line) + ' lines ${info.line}-${info.endLine}';
 		var c1 = info.column + 1;
 		var c2 = info.endColumn + 1;
