@@ -1046,11 +1046,13 @@ class Inline {
 				// lvalue, which is what the write check recurses for.
 				var me1 = m(e1);
 				while (true) switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: break; }
-				// The map's assign arm rebuilds a local left-hand side in place ({e1 with expr = TLocal
-				// l.i_subst}), so it keeps its ORIGINAL position through the inline remap; the emitted
-				// statement line derives from it.
+				// A local write target the INLINER declared is rebuilt in place, keeping the body's position; a
+				// caller value substituted for an argument is used VERBATIM, so it never keeps the body
+				// position. hxc maps both in one pass, so it has to make the same distinction here as it does
+				// for a read.
 				switch ([e1.expr, me1.expr]) {
-					case [TLocal(_), TLocal(_)]: me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
+					case [TLocal(_), TLocal(sv)] if (inlinerLocals.exists(sv.id)):
+						me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
 					case _:
 				}
 				TBinop(op, me1, m(e2));
@@ -1089,10 +1091,10 @@ class Inline {
 				// Increment targets unwrap the substitution cast like assignment left-hand sides.
 				var me1 = m(e1);
 				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
-				// Like the assign arm, a local increment target keeps its original position {e1 with expr =
-				// TLocal l.i_subst} in place).
+				// Like the assign arm, and with the same restriction to inliner-declared locals.
 				switch ([e1.expr, me1.expr]) {
-					case [TLocal(_), TLocal(_)]: me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
+					case [TLocal(_), TLocal(sv)] if (inlinerLocals.exists(sv.id)):
+						me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
 					case _:
 				}
 				TUnop(op, fl, me1);
