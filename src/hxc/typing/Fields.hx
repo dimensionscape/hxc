@@ -571,7 +571,8 @@ class Fields {
 							// (return f -> String) before the resolve call unifies it with the expected
 							// type.
 							if (resolveCf.expr == null) TypeFields.forceFieldBody(ctx.com, a.impl, resolveCf);
-							return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, pfield), i);
+							// The resolve access is built at the full field position, not the name slice.
+							return AKResolve(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, resolveCf, e, false, p), i);
 						}
 						// The underlying's resolve is the final fallback, after the own-resolve attempt.
 						if (forwardsField(a, i)) {
@@ -590,7 +591,10 @@ class Fields {
 				var isProp = switch (cf.kind) { case Var(vk): vk.read.match(AccCall) || vk.write.match(AccCall); case _: false; };
 				checkAbstractFieldAccess(ctx, a, cf, pfield);
 				if (isProp) fieldAccess(ctx, mode, cf, FHAbstract(a, params, a.impl), e, pfield);
-				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, pfield));
+				// The access is built at the union of the receiver's position and the field name's; the
+				// name
+				// slice alone would make the callee a separate source map segment from its own receiver.
+				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, Position.union(e.pos, pfield)));
 			case TAbstract(_, _):
 				var u = tryUsing(ctx, e, i, pfield);
 				if (u != null) u else throw fieldNotFound(e.type, i, pfield);
