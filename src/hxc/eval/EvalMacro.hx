@@ -2751,7 +2751,9 @@ class EvalMacro {
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
 		var typeV = EvalField.field(ec, v, EvalHash.hash("type"));
 		return {
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
+			// Whose fallback is maybe_decode_pos = null_pos.
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
+				pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), Position.nullPos)},
 			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
 			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp),
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
@@ -3072,6 +3074,12 @@ class EvalMacro {
 	static function encodeFunctionArg(ec:EvalContext, a:FunctionArg):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(a.name.name));
+		// The argument name's position travels alongside the name, even though
+		// haxe.macro.Expr.FunctionArg does not document the field, and decoding reads it back. Without it
+		// a build macro that returns getBuildFields() unchanged would still lose every argument position,
+		// which the js rest-arguments prologue then reports at the enclosing function instead of at the
+		// argument.
+		fields.set(EvalHash.hash("name_pos"), encPos(a.name.pos));
 		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
 		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type.ct));
 		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
