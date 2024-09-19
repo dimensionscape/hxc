@@ -998,6 +998,19 @@ class Operators {
 			};
 			return {init: init, lv: lv};
 		}
+		// mkAssign: every write this builds first casts the right side to the target type and then COMPACTS
+		// back to a compound operator when the result is exactly `target op rhs`. The same closure covers
+		// the assignment an abstract's @:op result needs as well as the plain one, so an abstract compound
+		// does not stay expanded as `a = a + b`.
+		function mkAssign(target:TExpr, eRhs:TExpr):TExpr {
+			var eRhs = Typer.castOrUnify(ctx, target.type, eRhs, p);
+			return switch (eRhs.expr) {
+				case TBinop(op2, a, b) if (Type.enumEq(op2, sub) && TexprTools.equal(target, a)):
+					TypeFunctions.mk(TBinop(OpAssignOp(op2), a, b), target.type, p);
+				case _:
+					TypeFunctions.mk(TBinop(OpAssign, target, eRhs), target.type, p);
+			};
+		}
 		function compound(te1:TExpr):TExpr {
 			if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
@@ -1015,8 +1028,7 @@ class Operators {
 						case BinopSpecial(oc, _): oc;
 						case r: toTexpr(r);
 					};
-					var assign = TypeFunctions.mk(TBinop(OpAssign, st.lv, Typer.castOrUnify(ctx, st.lv.type, opCall, p)), st.lv.type, p);
-					vrToTexpr(st.init, assign);
+					vrToTexpr(st.init, mkAssign(st.lv, opCall));
 				case BinopSpecial(opCall, false):
 					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
 					opCall;
@@ -1025,13 +1037,7 @@ class Operators {
 					// The binop result carries the typed operands (a string concatenation wraps a
 					// non-string operand in Std.string), so the compound form reuses them; a right side
 					// that no longer starts from the target falls back to a plain assignment.
-					var eRhs = Typer.castOrUnify(ctx, te1.type, toTexpr(r), p);
-					switch (eRhs.expr) {
-						case TBinop(op2, a, b) if (Type.enumEq(op2, sub) && TexprTools.equal(te1, a)):
-							TypeFunctions.mk(TBinop(OpAssignOp(op2), a, b), te1.type, p);
-						case _:
-							TypeFunctions.mk(TBinop(OpAssign, te1, eRhs), te1.type, p);
-					}
+					mkAssign(te1, toTexpr(r));
 			};
 		}
 		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
