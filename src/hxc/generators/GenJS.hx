@@ -74,12 +74,27 @@ private class JsSourceMap {
 		return function() {};
 	}
 
+	// The generated column advances by the BYTE length of what is written, so a non-ASCII character counts
+	// once per UTF-8 byte. Counting characters instead would place every mapping after a literal like "e"
+	// with an accent one column early, and the error would accumulate across the rest of the line.
+	static function utf8Length(s:String, from:Int):Int {
+		var n = s.length - from;
+		var i = from;
+		while (i < s.length) {
+			var c = StringTools.unsafeCodeAt(s, i);
+			if (c >= 0x80)
+				n += if (c < 0x800) 1 else if (c <= 0xDFFF && c >= 0xD800) 1 else if (c < 0x10000) 2 else 3;
+			i++;
+		}
+		return n;
+	}
+
 	public function handleNewlines(str:String):Void {
 		var from = 0;
 		while (true) {
 			var next = str.indexOf("\n", from);
 			if (next < 0) {
-				outputCurrentCol += str.length - from;
+				outputCurrentCol += utf8Length(str, from);
 				break;
 			}
 			next += 1;
