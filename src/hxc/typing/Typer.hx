@@ -2863,8 +2863,12 @@ class Typer {
 
 	static function comprehensionPush(acc:Expr, e:Expr):{expr:Expr, isMap:Bool} {
 		inline function same(expr:Expr, isMap:Bool) return {expr: expr, isMap: isMap};
+		// The accumulator local once and reuses that reference at every push site (`efield
+		// (e_ref,"push")`), so the receiver keeps the COMPREHENSION's position while the call and the
+		// field take the body position. Rebuilding the identifier at the body position collapsed the two,
+		// and the js source map lost the receiver's own segment.
 		inline function call(name:String, args:Array<Expr>):Expr
-			return new Expr(ECall(new Expr(EField(new Expr(acc.expr, e.pos), name, EFNormal), e.pos), args), e.pos);
+			return new Expr(ECall(new Expr(EField(acc, name, EFNormal), e.pos), args), e.pos);
 		return switch (e.expr) {
 			case EFor(it, body):
 				var b = comprehensionPush(acc, body);
