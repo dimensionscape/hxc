@@ -499,8 +499,13 @@ class Calls {
 				if (isUnderscore) pi++;
 			} else {
 				var te = Typer.castOrUnify(ctx, arg.t, Typer.typeExpr(ctx, params[pi], WithTypeTools.withArgument(arg.t, arg.name)), params[pi].pos);
-				var v = TypeFunctions.allocVar(VGenerated, allocName(arg.name), arg.t, p);
-				decls.push(TypeFunctions.mk(TVarExpr(v, te), tvoid, p));
+				// A GIVEN bind argument's var is allocated at the argument expression's own position, and
+				// its
+				// declaration is built at the var's position. Only a MISSING argument takes the call
+				// position,
+				// so the captured declaration sits on the argument, not on the bind receiver.
+				var v = TypeFunctions.allocVar(VGenerated, allocName(arg.name), arg.t, params[pi].pos);
+				decls.push(TypeFunctions.mk(TVarExpr(v, te), tvoid, v.pos));
 				callArgs.push(TexprTools.makeLocal(v, p));
 				pi++;
 			}
