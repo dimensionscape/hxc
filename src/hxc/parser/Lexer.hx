@@ -25,8 +25,38 @@ class Lexer {
 	public inline function offset():Int
 		return pos;
 
+	// Source positions count UNICODE CODE POINTS, while a Haxe string indexes UTF-16 code units, so an
+	// astral character counts twice here; without conversion every position after it is one too far right.
+	// Convert at the single construction point; a source with no astral character (the overwhelming
+	// majority) resolves to the identity after one scan.
+	var hiSurrogates:Null<Array<Int>> = null;
+
+	function scanSurrogates():Array<Int> {
+		var a:Array<Int> = [];
+		var i = 0;
+		while (i < len) {
+			var c = StringTools.fastCodeAt(src, i);
+			if (c >= 0xD800 && c <= 0xDBFF) a.push(i);
+			i++;
+		}
+		hiSurrogates = a;
+		return a;
+	}
+
+	function codePointOffset(i:Int):Int {
+		var a = hiSurrogates != null ? hiSurrogates : scanSurrogates();
+		if (a.length == 0) return i;
+		var lo = 0;
+		var hi = a.length;
+		while (lo < hi) {
+			var mid = (lo + hi) >> 1;
+			if (a[mid] < i) lo = mid + 1 else hi = mid;
+		}
+		return i - lo;
+	}
+
 	inline function mkPos(pmin:Int, pmax:Int):Position
-		return new Position(file, pmin, pmax);
+		return new Position(file, codePointOffset(pmin), codePointOffset(pmax));
 
 	inline function peek(o:Int = 0):Int {
 		var i = pos + o;

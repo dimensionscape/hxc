@@ -93,20 +93,26 @@ private class PositionFile {
 	public final content:String;
 	final lineStarts:Array<Int>;
 
+	// Store line starts in code-point offsets to match lexer positions, including astral characters.
+	final cpLength:Int;
+
 	public function new(content:String) {
 		this.content = content;
 		this.lineStarts = [0];
 		var i = 0;
+		var cp = 0;
 		while (i < content.length) {
-			var c = content.charCodeAt(i);
+			var c = StringTools.fastCodeAt(content, i);
 			if (c == "\n".code) {
-				lineStarts.push(i + 1);
+				lineStarts.push(cp + 1);
 			} else if (c == "\r".code) {
-				if (i + 1 >= content.length || content.charCodeAt(i + 1) != "\n".code)
-					lineStarts.push(i + 1);
+				if (i + 1 >= content.length || StringTools.fastCodeAt(content, i + 1) != "\n".code)
+					lineStarts.push(cp + 1);
 			}
-			i++;
+			i += (c >= 0xD800 && c <= 0xDBFF) ? 2 : 1;
+			cp++;
 		}
+		this.cpLength = cp;
 	}
 
 	public function info(p:Position):PositionInfos {
@@ -127,7 +133,7 @@ private class PositionFile {
 
 	function clamp(v:Int):Int {
 		if (v < 0) return 0;
-		if (v > content.length) return content.length;
+		if (v > cpLength) return cpLength;
 		return v;
 	}
 
