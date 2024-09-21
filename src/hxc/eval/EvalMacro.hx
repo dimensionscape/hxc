@@ -167,7 +167,10 @@ class EvalMacro {
 			return encodeExpr(ec, reanchorExpr(hxc.parser.Parser.parseExprString(strOf(a[0]), p.file, com.defines), p));
 		});
 		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, true)));
-		reg2("formatString", "format_string", function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), curPos, com.defines)));
+		// The CALLER's position is passed through, so every expression MacroStringTools.formatString builds
+		// lands inside the string it was given rather than on the macro call.
+		reg2("formatString", "format_string",
+			function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), posOf(ec, a[1], curPos), com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
 		reg2("typeof", "typeof", function(a) {
