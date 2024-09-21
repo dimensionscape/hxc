@@ -418,7 +418,9 @@ class Fields {
 			case TAnon(a):
 				switch (a.status.get()) {
 					case EnumStatics(en):
-						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, pfield);
+						// An enum constructor access is built at `p`, the full field position,
+						// so it collapses with its own type expression into one source map segment.
+						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, p);
 						else {
 							var u = tryUsing(ctx, e, i, pfield);
 							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
