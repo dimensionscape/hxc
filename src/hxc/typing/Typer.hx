@@ -1390,7 +1390,9 @@ class Typer {
 						};
 						var cf = std.statics.get("isOfType");
 						if (cf == null) throw new TypingError("Field not found : isOfType", p);
-						var stdIs = TexprTools.makeStaticField(std, cf, p);
+						// The Std.isOfType reference is built at a zero-range position (max equals min),
+						// not at the full expression range.
+						var stdIs = TexprTools.makeStaticField(std, cf, hxc.core.Globals.mkZeroRangePos(p));
 						TypeFunctions.mk(TCall(stdIs, [e, eType]), ctx.com.basic.tbool, p);
 					case _:
 						ctx.com.addDiagnostic("Unsupported type for `is` operator", th.pos);

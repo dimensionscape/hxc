@@ -840,7 +840,14 @@ class ForLoopFaithful {
 				var evIndex = TexprTools.makeLocal(vIndex, vIndex.pos);
 				var econd = TypeFunctions.mk(TBinop(OpLt, evIndex, b), basic.tbool, Position.union(v.pos, b.pos));
 				var evIncr = TypeFunctions.mk(TUnop(Increment, Postfix, evIndex), tInt, Position.union(a.pos, b.pos));
-				var evar = TypeFunctions.mk(TVarExpr(v, evIncr), tVoid, Position.union(v.pos, a.pos));
+				// Verified four ways: widening the gap between the loop variable and the range start moves the
+				// reference's segment with the range, splitting the `for` head across lines puts it on the
+				// range's LINE, a Context.onGenerate probe prints `punion a.pos b.pos` while the condition in
+				// the same run matches verbatim, and both the IteratorInt and IteratorIntConst arms behave
+				// alike. The surrounding lines all behave exactly as written, so this is one line, not a
+				// misreading of the arm. cpp cannot see it because both candidates sit on the same source LINE;
+				// only the js source map distinguishes them.
+				var evar = TypeFunctions.mk(TVarExpr(v, evIncr), tVoid, evIncr.pos);
 				var body = concat(evar, e2);
 				TypeFunctions.mk(TBlock([
 					evarIndex,
@@ -856,7 +863,14 @@ class ForLoopFaithful {
 				var evB = TexprTools.makeLocal(vB, b.pos);
 				var econd = TypeFunctions.mk(TBinop(OpLt, evIndex, evB), basic.tbool, Position.union(v.pos, b.pos));
 				var evIncr = TypeFunctions.mk(TUnop(Increment, Postfix, evIndex), tInt, Position.union(a.pos, b.pos));
-				var evar = TypeFunctions.mk(TVarExpr(v, evIncr), tVoid, Position.union(v.pos, a.pos));
+				// Verified four ways: widening the gap between the loop variable and the range start moves the
+				// reference's segment with the range, splitting the `for` head across lines puts it on the
+				// range's LINE, a Context.onGenerate probe prints `punion a.pos b.pos` while the condition in
+				// the same run matches verbatim, and both the IteratorInt and IteratorIntConst arms behave
+				// alike. The surrounding lines all behave exactly as written, so this is one line, not a
+				// misreading of the arm. cpp cannot see it because both candidates sit on the same source LINE;
+				// only the js source map distinguishes them.
+				var evar = TypeFunctions.mk(TVarExpr(v, evIncr), tVoid, evIncr.pos);
 				var body = concat(evar, e2);
 				TypeFunctions.mk(TBlock([
 					evarIndex,
