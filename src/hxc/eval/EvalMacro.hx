@@ -320,7 +320,7 @@ class EvalMacro {
 		});
 		reg2("toComplexType", "to_complex_type", function(a) {
 			var ct = typeToComplexType(decodeType(ec, a[0]));
-			return ct == null ? VNull : encodeComplexType(ec, ct);
+			return ct == null ? VNull : encodeComplexType(ec, {ct: ct, pos: hxc.ast.Position.nullPos});
 		});
 		reg2("typeToModuleType", "type_to_module_type", function(a) {
 			return encodeModuleType(ec, TypeFunctions.moduleTypeOfType(decodeType(ec, a[0])));
@@ -2637,7 +2637,12 @@ class EvalMacro {
 	}
 
 	static function decodeTypeHint(ec:EvalContext, v:EvalValue, dp:Position):TypeHint {
-		return {ct: decodeComplexType(ec, v, dp), pos: dp};
+		// Read the position the encoder attached to the value.
+		var p = switch (EvalValueTools.vresolve(v)) {
+			case VEnumValue(ev) if (ev.enpos != null): ev.enpos;
+			case _: dp;
+		};
+		return {ct: decodeComplexType(ec, v, dp), pos: p};
 	}
 
 	static function decodeComplexType(ec:EvalContext, v:EvalValue, dp:Position):ComplexType {
@@ -2961,7 +2966,7 @@ class EvalMacro {
 		var en = findEnum(ec, enumName);
 		var ef = en.constrs.get(ctor);
 		if (ef == null) throw "macro encode: no constructor " + ctor + " in " + enumName;
-		return VEnumValue(new VEnumValue(ef.index, args, EvalHash.pathHash(en.path), ef.namePos));
+		return VEnumValue(new VEnumValue(ef.index, args, EvalHash.pathHash(en.path), null));
 	}
 
 	static function mkString(s:String):EvalValue {
@@ -3005,9 +3010,9 @@ class EvalMacro {
 			case EUntyped(e1): mkEnumValue(ec, "ExprDef", "EUntyped", [encodeExpr(ec, e1)]);
 			case ETernary(c, t, e1): mkEnumValue(ec, "ExprDef", "ETernary", [encodeExpr(ec, c), encodeExpr(ec, t), encodeExpr(ec, e1)]);
 			case EMeta(m, e1): mkEnumValue(ec, "ExprDef", "EMeta", [encodeMetadataEntry(ec, m), encodeExpr(ec, e1)]);
-			case ECast(e1, th): mkEnumValue(ec, "ExprDef", "ECast", [encodeExpr(ec, e1), th == null ? VNull : encodeComplexType(ec, th.ct)]);
-			case EIs(e1, th): mkEnumValue(ec, "ExprDef", "EIs", [encodeExpr(ec, e1), encodeComplexType(ec, th.ct)]);
-			case ECheckType(e1, th): mkEnumValue(ec, "ExprDef", "ECheckType", [encodeExpr(ec, e1), encodeComplexType(ec, th.ct)]);
+			case ECast(e1, th): mkEnumValue(ec, "ExprDef", "ECast", [encodeExpr(ec, e1), th == null ? VNull : encodeComplexType(ec, th)]);
+			case EIs(e1, th): mkEnumValue(ec, "ExprDef", "EIs", [encodeExpr(ec, e1), encodeComplexType(ec, th)]);
+			case ECheckType(e1, th): mkEnumValue(ec, "ExprDef", "ECheckType", [encodeExpr(ec, e1), encodeComplexType(ec, th)]);
 			case EDisplay(e1, _): encodeExprDef(ec, e1.expr);
 			case _: throw "macro encode: unhandled ExprDef";
 		};
@@ -3019,7 +3024,7 @@ class EvalMacro {
 		fields.set(EvalHash.hash("namePos"), encPos(ev.evName.pos));
 		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
 		fields.set(EvalHash.hash("isStatic"), ev.evStatic ? VTrue : VFalse);
-		fields.set(EvalHash.hash("type"), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType.ct));
+		fields.set(EvalHash.hash("type"), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType));
 		fields.set(EvalHash.hash("expr"), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
 		fields.set(EvalHash.hash("meta"), encodeArray([for (m in ev.evMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
@@ -3047,16 +3052,16 @@ class EvalMacro {
 
 	static function encodeFieldKind(ec:EvalContext, k:ClassFieldKind):EvalValue {
 		return switch (k) {
-			case FVar(t, e): mkEnumValue(ec, "FieldType", "FVar", [t == null ? VNull : encodeComplexType(ec, t.ct), e == null ? VNull : encodeExpr(ec, e)]);
+			case FVar(t, e): mkEnumValue(ec, "FieldType", "FVar", [t == null ? VNull : encodeComplexType(ec, t), e == null ? VNull : encodeExpr(ec, e)]);
 			case FFun(fn): mkEnumValue(ec, "FieldType", "FFun", [encodeFunc(ec, fn)]);
-			case FProp(get, set, t, e): mkEnumValue(ec, "FieldType", "FProp", [mkString(get.name), mkString(set.name), t == null ? VNull : encodeComplexType(ec, t.ct), e == null ? VNull : encodeExpr(ec, e)]);
+			case FProp(get, set, t, e): mkEnumValue(ec, "FieldType", "FProp", [mkString(get.name), mkString(set.name), t == null ? VNull : encodeComplexType(ec, t), e == null ? VNull : encodeExpr(ec, e)]);
 		};
 	}
 
 	static function encodeFunc(ec:EvalContext, f:Func):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("args"), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
-		fields.set(EvalHash.hash("ret"), f.fType == null ? VNull : encodeComplexType(ec, f.fType.ct));
+		fields.set(EvalHash.hash("ret"), f.fType == null ? VNull : encodeComplexType(ec, f.fType));
 		fields.set(EvalHash.hash("expr"), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
 		fields.set(EvalHash.hash("params"), encodeArray([for (tp in f.fParams) encodeTparamDecl(ec, tp)]));
 		return VObject(new VObject([], ODictionary(fields)));
@@ -3068,8 +3073,8 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(tp.tpName.name));
 		fields.set(EvalHash.hash("params"), encodeArray([for (p in tp.tpParams) encodeTparamDecl(ec, p)]));
-		fields.set(EvalHash.hash("constraints"), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints.ct)]));
-		fields.set(EvalHash.hash("defaultType"), tp.tpDefault == null ? VNull : encodeComplexType(ec, tp.tpDefault.ct));
+		fields.set(EvalHash.hash("constraints"), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints)]));
+		fields.set(EvalHash.hash("defaultType"), tp.tpDefault == null ? VNull : encodeComplexType(ec, tp.tpDefault));
 		fields.set(EvalHash.hash("meta"), encodeArray([]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
@@ -3084,7 +3089,7 @@ class EvalMacro {
 		// argument.
 		fields.set(EvalHash.hash("name_pos"), encPos(a.name.pos));
 		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
-		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type.ct));
+		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type));
 		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
 		fields.set(EvalHash.hash("meta"), encodeArray([for (m in a.meta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
@@ -3143,7 +3148,7 @@ class EvalMacro {
 
 	static function encodeTypeParam(ec:EvalContext, tpc:TypeParamOrConst):EvalValue {
 		return switch (tpc) {
-			case TPType(th): mkEnumValue(ec, "TypeParam", "TPType", [encodeComplexType(ec, th.ct)]);
+			case TPType(th): mkEnumValue(ec, "TypeParam", "TPType", [encodeComplexType(ec, th)]);
 			case TPExpr(e): mkEnumValue(ec, "TypeParam", "TPExpr", [encodeExpr(ec, e)]);
 		};
 	}
@@ -3176,7 +3181,7 @@ class EvalMacro {
 		// Preserve the catch type hint so a build macro that reads and re-emits a try/catch keeps the
 		// declared catch type. Dropping it here made every round-tripped catch decode back to Dynamic,
 		// which then bound the raw thrown value instead of a haxe.ValueException wrapper.
-		fields.set(EvalHash.hash("type"), c.type == null ? VNull : encodeComplexType(ec, c.type.ct));
+		fields.set(EvalHash.hash("type"), c.type == null ? VNull : encodeComplexType(ec, c.type));
 		fields.set(EvalHash.hash("expr"), encodeExpr(ec, c.expr));
 		fields.set(EvalHash.hash("pos"), encPos(c.pos));
 		return VObject(new VObject([], ODictionary(fields)));
@@ -3348,16 +3353,28 @@ class EvalMacro {
 		};
 	}
 
-	static function encodeComplexType(ec:EvalContext, ct:ComplexType):EvalValue {
+	// The type HINT's position is attached to the ComplexType value, and decoding reads it back, so a
+	// type that survives a macro round trip keeps its position rather than falling back to the
+	// enclosing one, and `x is T` keeps the position of T.
+	static function encodeComplexType(ec:EvalContext, th:TypeHint):EvalValue {
+		var v = encodeComplexTypeInner(ec, th.ct);
+		switch (v) {
+			case VEnumValue(ev): ev.enpos = th.pos;
+			case _:
+		}
+		return v;
+	}
+
+	static function encodeComplexTypeInner(ec:EvalContext, ct:ComplexType):EvalValue {
 		return switch (ct) {
 			case CTPath(tp): mkEnumValue(ec, "ComplexType", "TPath", [encodeTypePath(ec, tp)]);
-			case CTFunction(args, ret): mkEnumValue(ec, "ComplexType", "TFunction", [encodeArray([for (a in args) encodeComplexType(ec, a.ct)]), encodeComplexType(ec, ret.ct)]);
+			case CTFunction(args, ret): mkEnumValue(ec, "ComplexType", "TFunction", [encodeArray([for (a in args) encodeComplexType(ec, a)]), encodeComplexType(ec, ret)]);
 			case CTAnonymous(fl): mkEnumValue(ec, "ComplexType", "TAnonymous", [encodeArray([for (f in fl) encodeField(ec, f)])]);
-			case CTParent(t): mkEnumValue(ec, "ComplexType", "TParent", [encodeComplexType(ec, t.ct)]);
+			case CTParent(t): mkEnumValue(ec, "ComplexType", "TParent", [encodeComplexType(ec, t)]);
 			case CTExtend(paths, fl): mkEnumValue(ec, "ComplexType", "TExtend", [encodeArray([for (pp in paths) encodeTypePath(ec, pp.path)]), encodeArray([for (f in fl) encodeField(ec, f)])]);
-			case CTOptional(t): mkEnumValue(ec, "ComplexType", "TOptional", [encodeComplexType(ec, t.ct)]);
-			case CTNamed(n, t): mkEnumValue(ec, "ComplexType", "TNamed", [mkString(n.name), encodeComplexType(ec, t.ct)]);
-			case CTIntersection(tl): mkEnumValue(ec, "ComplexType", "TIntersection", [encodeArray([for (t in tl) encodeComplexType(ec, t.ct)])]);
+			case CTOptional(t): mkEnumValue(ec, "ComplexType", "TOptional", [encodeComplexType(ec, t)]);
+			case CTNamed(n, t): mkEnumValue(ec, "ComplexType", "TNamed", [mkString(n.name), encodeComplexType(ec, t)]);
+			case CTIntersection(tl): mkEnumValue(ec, "ComplexType", "TIntersection", [encodeArray([for (t in tl) encodeComplexType(ec, t)])]);
 		};
 	}
 

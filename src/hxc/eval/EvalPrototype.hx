@@ -47,7 +47,10 @@ class EvalPrototype {
 		for (name in en.names) {
 			var ef = en.constrs.get(name);
 			var idx = ef.index;
-			var pos = ef.namePos;
+			// Most enum values with `~pos:None`; only the ComplexType encoder attaches one . Keeping the
+			// constructor's declaration position here would make decode_enum_with_pos hand back a position
+			// inside haxe/macro/Expr.hx.
+			var pos:Null<hxc.ast.Position> = null;
 			var v:EvalValue = switch (TypeFunctions.follow(ef.type)) {
 				case TFun(sig):
 					constructors.push({name: name, args: [for (a in sig.args) EvalHash.hash(a.name)]});
