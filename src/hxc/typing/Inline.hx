@@ -575,11 +575,14 @@ class Inline {
 		// A single-expression block unwraps to its expression only when the body returned a
 		// value; a void body keeps its block.
 		var hasReturnValue = bodyHasReturnValue(tf.expr);
+		// The argument binds take the mapped body as is. The single-expression unwrap belongs to the
+		// no-binds path only, so the binds must take the body's position from before that unwrap.
+		var bindPos = value.pos;
 		if (hasReturnValue)
 			value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		// The argument-binding TVars take the finalized body position.
 		for (i in 0...argBindCount) switch (binds[i].expr) {
-			case TVarExpr(v, eo): binds[i] = TypeFunctions.mk(TVarExpr(v, eo), tvoid, value.pos);
+			case TVarExpr(v, eo): binds[i] = TypeFunctions.mk(TVarExpr(v, eo), tvoid, bindPos);
 			case _:
 		}
 		// With argument bindings present, a block body SPLICES its
