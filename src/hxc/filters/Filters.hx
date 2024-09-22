@@ -1242,7 +1242,10 @@ class Filters {
 				var superPos = f.expr.pos;
 				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), superPos), []), tvoid, superPos);
 				var body = TypeFunctions.concat(superCall, f.expr);
-				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.pos);
+				// The TFunction node keeps the body position it was typed at; rebuilding it here must not
+				// move it
+				// onto the field declaration.
+				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.expr.pos);
 			case _:
 		}
 	}

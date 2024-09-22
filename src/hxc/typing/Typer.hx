@@ -1962,13 +1962,32 @@ class Typer {
 		var frag = "";
 		var fragStart = 0;
 		var segStart = 0;
-		// Both min and min on every apostrophe it scans, because the source spelled it `'` (two
+		// Every apostrophe scanned bumps the position by one, because the source spelled it `'` (two
 		// characters) while the string value holds one. Every part positioned after such an apostrophe
-		// therefore sits one further right per apostrophe already scanned. hxc derived positions straight
-		// from the value index and lost that.
+		// therefore sits one further right per apostrophe already scanned.
+		// Parsing resumes after a group's closing brace, so the inside of a `${...}` is never walked: an
+		// apostrophe there is ordinary source that was never spelled `'`, and must not shift the parts that
+		// follow.
 		function aposAt(idx:Int):Int {
 			var n2 = 0;
-			for (k in 0...idx) if (str.charCodeAt(k) == "'".code) n2++;
+			var k = 0;
+			while (k < idx) {
+				var ck = str.charCodeAt(k);
+				if (ck == "'".code) n2++;
+				if (ck == "$".code && k + 1 < n && str.charCodeAt(k + 1) == "{".code) {
+					var depth = 1;
+					var j = k + 2;
+					while (j < n && depth > 0) {
+						var cj = str.charCodeAt(j);
+						if (cj == "{".code) depth++;
+						else if (cj == "}".code) depth--;
+						j++;
+					}
+					k = j;
+					continue;
+				}
+				k++;
+			}
 			return n2;
 		}
 		function flush(forceEmpty:Bool = false) {

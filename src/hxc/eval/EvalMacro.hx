@@ -1657,6 +1657,10 @@ class EvalMacro {
 	public static var lastExpansionAst:Null<Expr> = null;
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		// Saved before the call position is installed: a nested run (an @:from cast macro reached while
+		// typing an outer macro's argument) must put back the OUTER call's position, as a per-call API
+		// record would.
+		var savedPos0 = curPos;
 		curPos = p;
 		var isInstance = false;
 		var hostClass = switch (fa.host) {
@@ -1691,7 +1695,7 @@ class EvalMacro {
 			case _: throw new TypingError("Not a macro function: " + fa.field.name, p);
 		};
 		var savedTctx = curTctx;
-		var savedPos = curPos;
+		var savedPos = savedPos0;
 		var savedModule = curModule;
 		try {
 			// The argument signature comes from the macro world: the host-context signature of a macro
