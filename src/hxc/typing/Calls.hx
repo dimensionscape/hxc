@@ -211,7 +211,10 @@ class Calls {
 						// does not
 						// unify with this instantiation is skipped.
 						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
-						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+						// 166 cast the key with `p`, the array-access position, not with the key's own. Using the
+						// key's position made the generated cast call start at the key instead of at the access it
+						// belongs to.
+						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, p);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
 						var implExpr = TexprTools.makeStaticThis(c, p);
@@ -243,7 +246,10 @@ class Calls {
 				case TFun(sig) if (sig.args.length == 3 || (sig.args.length == 4 && sig.args[3].opt)):
 					try {
 						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
-						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, ekey.pos);
+						// 166 cast the key with `p`, the array-access position, not with the key's own. Using the
+						// key's position made the generated cast call start at the key instead of at the access it
+						// belongs to.
+						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, p);
 						var val = valueFn(sig.args[2].t);
 						lastVal = val;
 						val = Typer.castOrUnify(ctx, sig.args[2].t, val, p);
