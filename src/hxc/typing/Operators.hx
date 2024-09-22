@@ -840,8 +840,10 @@ class Operators {
 		// back through the original storage (a static field, array element or field chain).
 		return if (Inline.isStableLvalue(recv)) {expr: recv, init: null} else switch (recv.expr) {
 			case _:
-				var v = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
-				{expr: TexprTools.makeLocal(v, p), init: TypeFunctions.mk(TVarExpr(v, recv), ctx.com.basic.tvoid, p)};
+				// The bound temp is allocated at the bound EXPRESSION's position and declared at `v.pos`, so
+				// the declaration sits on the receiver rather than on the enclosing operator.
+				var v = TypeFunctions.allocVar(VGenerated, "fh", recv.type, recv.pos);
+				{expr: TexprTools.makeLocal(v, v.pos), init: TypeFunctions.mk(TVarExpr(v, recv), ctx.com.basic.tvoid, v.pos)};
 		}
 	}
 
@@ -1438,17 +1440,14 @@ class Operators {
 		var tint = ctx.com.basic.tint;
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		// Increment/Decrement: bind the receiver to fh only when it is not a plain local/const
-		// (value_reference get_expr_part "fh"); the setter call is itself the value, so prefix and
-		// value-discarded forms need no extra temp; a postfix used as a value binds the old value to
-		// postfix.
-		var recvInit:Null<TExpr> = null;
-		var er = recv;
-		if (!recv.expr.match(TLocal(_) | TTypeExpr(_) | TConst(_))) {
-			var vr = TypeFunctions.allocVar(VGenerated, "fh", recv.type, p);
-			er = TexprTools.makeLocal(vr, p);
-			recvInit = TypeFunctions.mk(TVarExpr(vr, recv), tvoid, p);
-		}
+		// Increment/decrement: bind the receiver to fh only when it is not a plain local/const; the
+		// setter call is itself the value, so prefix and value-discarded forms need no extra temp; a
+		// postfix used as a value binds the old value to postfix. The receiver binds at depth 1: the temp
+		// is allocated at the bound EXPRESSION's position and declared at `v.pos`, so the declaration
+		// sits on the receiver, not on the operator.
+		var recvVars:Array<TExpr> = [];
+		var er = vrGetExprAux(ctx, recvVars, 1, "fh", recv);
+		var recvInit:Null<TExpr> = recvVars.length > 0 ? recvVars[0] : null;
 		var readVal = accessorReadOn(ctx, er, fa);
 		if (flag.match(Postfix) && !withType.match(NoValue)) {
 			// Postfix temp: a complex read binds as "lhs" first, the postfix temp captures it, and the
