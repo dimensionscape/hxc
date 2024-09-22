@@ -1962,17 +1962,28 @@ class Typer {
 		var frag = "";
 		var fragStart = 0;
 		var segStart = 0;
+		// Both min and min on every apostrophe it scans, because the source spelled it `'` (two
+		// characters) while the string value holds one. Every part positioned after such an apostrophe
+		// therefore sits one further right per apostrophe already scanned. hxc derived positions straight
+		// from the value index and lost that.
+		function aposAt(idx:Int):Int {
+			var n2 = 0;
+			for (k in 0...idx) if (str.charCodeAt(k) == "'".code) n2++;
+			return n2;
+		}
 		function flush(forceEmpty:Bool = false) {
 			if (frag == "" && i > segStart) fragStart = segStart;
 			frag += str.substring(segStart, i);
 			segStart = i;
 			if (frag != "") {
-				parts.push(new Expr(EConst(CString(frag, SDoubleQuotes)), new Position(p.file, p.min + 1 + fragStart, p.min + 1 + i)));
+				var adj = aposAt(i);
+				parts.push(new Expr(EConst(CString(frag, SDoubleQuotes)), new Position(p.file, p.min + 1 + fragStart + adj, p.min + 1 + i + adj)));
 				frag = "";
 			} else if (forceEmpty && parts.length == 0) {
 				// A string STARTING with an interpolation leads with an empty literal so the chain
 				// concatenates as String.
-				parts.push(new Expr(EConst(CString("", SDoubleQuotes)), new Position(p.file, p.min + 1 + i, p.min + 1 + i)));
+				var adj = aposAt(i);
+				parts.push(new Expr(EConst(CString("", SDoubleQuotes)), new Position(p.file, p.min + 1 + i + adj, p.min + 1 + i + adj)));
 			}
 		}
 		while (i < n) {
@@ -2001,7 +2012,7 @@ class Typer {
 					if (StringTools.trim(sb.toString()) == "")
 						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + i + 3, p.min + j));
 					try {
-						var exprStart = p.min + i + 3;
+						var exprStart = p.min + i + 3 + aposAt(i);
 						parts.push(hxc.parser.Parser.parseExprString(spaces(exprStart) + sb.toString(), p.file, defines));
 					} catch (err:hxc.parser.ParserError) {
 						throw new TypingError(hxc.parser.ParserError.errorMsg(err.msg), err.pos);
@@ -2014,7 +2025,8 @@ class Typer {
 					var sb = new StringBuf();
 					while (j < n && isIdentChar(str.charCodeAt(j))) { sb.addChar(str.charCodeAt(j)); j++; }
 					// The ident's own source range: content starts one past the opening quote.
-					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + i + 2, p.min + j + 1)));
+					var adjI = aposAt(i);
+					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + i + 2 + adjI, p.min + j + 1 + adjI)));
 					i = j;
 					segStart = i;
 				} else i++;
