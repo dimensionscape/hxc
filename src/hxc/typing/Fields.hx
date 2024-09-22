@@ -411,7 +411,7 @@ class Fields {
 						case _:
 					}
 					if (constrained != null) constrained else {
-						var u = tryUsing(ctx, e, i, pfield);
+						var u = tryUsing(ctx, e, i, p);
 						if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
 					}
 				}
@@ -422,7 +422,7 @@ class Fields {
 						// so it collapses with its own type expression into one source map segment.
 						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, p);
 						else {
-							var u = tryUsing(ctx, e, i, pfield);
+							var u = tryUsing(ctx, e, i, p);
 							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
 						}
 					case _:
@@ -449,11 +449,11 @@ class Fields {
 										var mt = TypeFunctions.moduleTypeOfType(ab.thisType);
 										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, pfield), i, pfield, mode, withType);
 									} catch (_:hxc.core.ExitException) {
-										var u = tryUsing(ctx, e, i, pfield);
+										var u = tryUsing(ctx, e, i, p);
 										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
 									}
 								case _:
-									var u = tryUsing(ctx, e, i, pfield);
+									var u = tryUsing(ctx, e, i, p);
 									if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p))
 									// Reaching for an instance field through the class value (Class<C>) is
 									// a
@@ -497,7 +497,7 @@ class Fields {
 							} else {
 								// A CLOSED structural monomorph (e.g. bound by an intersection constraint
 								// A & B) still consults the module's using extensions before failing.
-								var u = tryUsing(ctx, e, i, pfield);
+								var u = tryUsing(ctx, e, i, p);
 								if (u != null) u else throw fieldNotFound(e.type, i, pfield);
 							}
 						case CTypes(tl):
@@ -564,7 +564,7 @@ class Fields {
 							return typeField(ctx, recv, i, pfield, mode, withType, false);
 						} catch (_:FieldNotFoundError) {}
 					}
-					var u = tryUsing(ctx, e, i, pfield);
+					var u = tryUsing(ctx, e, i, p);
 					if (u != null) return u;
 					if (allowResolve) {
 						var resolveCf = switch (mode) {
@@ -601,17 +601,17 @@ class Fields {
 				// slice alone would make the callee a separate source map segment from its own receiver.
 				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, Position.union(e.pos, pfield)));
 			case TAbstract(_, _):
-				var u = tryUsing(ctx, e, i, pfield);
+				var u = tryUsing(ctx, e, i, p);
 				if (u != null) u else throw fieldNotFound(e.type, i, pfield);
 			case TDynamic(dt):
 				// A using extension applies to a Dynamic receiver before the dynamic-field fallback.
 				// A field on Dynamic<T> reads at T, plain Dynamic otherwise.
-				var u = tryUsing(ctx, e, i, pfield);
+				var u = tryUsing(ctx, e, i, p);
 				if (u != null) u else AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), dt == null ? TypeFunctions.tDynamic : dt, p));
 			case _:
 				// A field not found on an enum or other value may come from a `using` static extension
 				// (e.g. the global EnumValueTools on an enum value).
-				var u = tryUsing(ctx, e, i, pfield);
+				var u = tryUsing(ctx, e, i, p);
 				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
 		};
 	}
@@ -792,6 +792,9 @@ class Fields {
 		return null;
 	}
 
+	// The static extension receiver is unified and the access built at `p`, the full field position,
+	// not at the name slice, so a `using` call such as `field.access.has(AFinal)` starts with its own
+	// receiver and shares its map segment.
 	static function tryUsing(ctx:TyperContext, e:TExpr, i:String, p:Position):Null<AccessKind> {
 		// A `super` receiver of a class type rewrites to `cast this` (fresh mono inside, the
 		// receiver's type outside), so the extension call passes `this` with an explicit upcast that
