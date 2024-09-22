@@ -1055,7 +1055,10 @@ class Inline {
 				// position. hxc maps both in one pass, so it has to make the same distinction here as it does
 				// for a read.
 				switch ([e1.expr, me1.expr]) {
-					case [TLocal(_), TLocal(sv)] if (inlinerLocals.exists(sv.id)):
+					// An outside var (one the inline never declared, so reading it yields the var itself and no
+					// substitution replaces it) also keeps e1's original position: inlineParams only overwrites
+					// the node when the var WAS substituted.
+					case [TLocal(v0), TLocal(sv)] if (inlinerLocals.exists(sv.id) || !subst.exists(v0.id)):
 						me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
 					case _:
 				}
@@ -1097,7 +1100,10 @@ class Inline {
 				switch (me1.expr) { case TCast(inner, null): me1 = inner; case _: }
 				// Like the assign arm, and with the same restriction to inliner-declared locals.
 				switch ([e1.expr, me1.expr]) {
-					case [TLocal(_), TLocal(sv)] if (inlinerLocals.exists(sv.id)):
+					// An outside var (one the inline never declared, so reading it yields the var itself and no
+					// substitution replaces it) also keeps e1's original position: inlineParams only overwrites
+					// the node when the var WAS substituted.
+					case [TLocal(v0), TLocal(sv)] if (inlinerLocals.exists(sv.id) || !subst.exists(v0.id)):
 						me1 = TypeFunctions.mk(me1.expr, me1.type, e1.pos);
 					case _:
 				}
