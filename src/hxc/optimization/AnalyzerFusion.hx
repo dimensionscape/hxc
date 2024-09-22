@@ -556,8 +556,12 @@ class Fusion {
 						var handled = try {
 							var e2full = next;
 							var r:{e:TExpr, f:TExpr->TExpr} = switch (e2full.expr) {
-								case TReturn(x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TReturn(e), e2full.type, e2full.pos)};
-								case TVarExpr(v2, x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TVarExpr(v2, e), e2full.type, e2full.pos)};
+								// These are rebuilt from the INNER expression bound by the pattern - the returned value or
+								// the var's initialiser - not the enclosing statement. So the reconstructed return or
+								// declaration inherits its value's position (and type), which reports
+								// `var y = x++` at the `x++`.
+								case TReturn(x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TReturn(e), x2.type, x2.pos)};
+								case TVarExpr(v2, x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TVarExpr(v2, e), x2.type, x2.pos)};
 								case _: throw new Exit();
 							};
 							inline function opsMatch(op1:Unop, op2:Binop):Bool
