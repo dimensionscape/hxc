@@ -248,13 +248,22 @@ class Inline {
 					case TMono(_): remaining.length == 0 ? elem : Typer.unifyMin(ctx, remaining);
 					case _: elem;
 				};
-				var array = TypeFunctions.mk(TArrayDecl(remaining), ctx.com.basic.tarray(tParams), p);
+				// The position is the union of the rest arguments' positions, and the default is ignored
+				// whenever there is at least one: one argument yields its own position, several the union of
+				// the first and the last. So the collapsed array and its haxe.Rest.of call sit on the rest
+				// ARGUMENTS, not on the call.
+				var restPos = switch (remaining.length) {
+					case 0: p;
+					case 1: remaining[0].pos;
+					case n: Position.union(remaining[0].pos, remaining[n - 1].pos);
+				};
+				var array = TypeFunctions.mk(TArrayDecl(remaining), ctx.com.basic.tarray(tParams), restPos);
 				var ofCf = a.impl.statics.get("of");
 				var ofType = ofCf.params.length == 1
 					? TypeFunctions.applyParams(ofCf.params, [tParams], TypeFunctions.follow(ofCf.type))
 					: TypeFunctions.follow(ofCf.type);
-				var fieldE = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(a.impl), p), FStatic(a.impl, ofCf)), ofType, p);
-				out.push(TypeFunctions.mk(TCall(fieldE, [array]), TAbstract(a, [tParams]), p));
+				var fieldE = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(a.impl), restPos), FStatic(a.impl, ofCf)), ofType, restPos);
+				out.push(TypeFunctions.mk(TCall(fieldE, [array]), TAbstract(a, [tParams]), restPos));
 				return out;
 			case _:
 				return params;
