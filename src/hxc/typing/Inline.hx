@@ -546,9 +546,13 @@ class Inline {
 				if (hasRuntimeDefault && dflt != null && !dflt.expr.match(TConst(TNull))
 						&& (!ctx.com.platformConfig.isStatic || TypeFunctions.isNullable(av.type))
 						&& use.reads > 0) {
-					var ve = TypeFunctions.mk(TLocal(nv), nv.type, p);
-					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, p)), ctx.com.basic.tbool, p);
-					defaultChecks.unshift(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dflt), nv.type, p), null), tvoid, p));
+					// The default moves onto the argument expression, and the whole check is built at that same
+					// position, so each runtime default check sits on the argument it guards, not on the call.
+					var dp = param.pos;
+					var dfltAt = TypeFunctions.mk(dflt.expr, dflt.type, dp);
+					var ve = TypeFunctions.mk(TLocal(nv), nv.type, dp);
+					var cond = TypeFunctions.mk(TBinop(OpEq, ve, TypeFunctions.mk(TConst(TNull), nv.type, dp)), ctx.com.basic.tbool, dp);
+					defaultChecks.unshift(TypeFunctions.mk(TIf(cond, TypeFunctions.mk(TBinop(OpAssign, ve, dfltAt), nv.type, dp), null), tvoid, dp));
 				}
 			}
 		}
