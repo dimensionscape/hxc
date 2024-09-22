@@ -1990,19 +1990,31 @@ class Typer {
 			}
 			return n2;
 		}
+		// The part offsets are BYTE counts into the string value, while p.min came from the lexer in code
+		// points. Every offset added to p.min is therefore a UTF-8 byte count, so a part following a
+		// non-ASCII character sits one column further right per extra byte.
+		function byteOff(idx:Int):Int {
+			var n2 = idx;
+			for (k in 0...idx) {
+				var c = StringTools.unsafeCodeAt(str, k);
+				if (c >= 0x80)
+					n2 += if (c < 0x800) 1 else if (c <= 0xDFFF && c >= 0xD800) 1 else if (c < 0x10000) 2 else 3;
+			}
+			return n2;
+		}
 		function flush(forceEmpty:Bool = false) {
 			if (frag == "" && i > segStart) fragStart = segStart;
 			frag += str.substring(segStart, i);
 			segStart = i;
 			if (frag != "") {
 				var adj = aposAt(i);
-				parts.push(new Expr(EConst(CString(frag, SDoubleQuotes)), new Position(p.file, p.min + 1 + fragStart + adj, p.min + 1 + i + adj)));
+				parts.push(new Expr(EConst(CString(frag, SDoubleQuotes)), new Position(p.file, p.min + 1 + byteOff(fragStart) + adj, p.min + 1 + byteOff(i) + adj)));
 				frag = "";
 			} else if (forceEmpty && parts.length == 0) {
 				// A string STARTING with an interpolation leads with an empty literal so the chain
 				// concatenates as String.
 				var adj = aposAt(i);
-				parts.push(new Expr(EConst(CString("", SDoubleQuotes)), new Position(p.file, p.min + 1 + i + adj, p.min + 1 + i + adj)));
+				parts.push(new Expr(EConst(CString("", SDoubleQuotes)), new Position(p.file, p.min + 1 + byteOff(i) + adj, p.min + 1 + byteOff(i) + adj)));
 			}
 		}
 		while (i < n) {
@@ -2029,9 +2041,9 @@ class Typer {
 						j++;
 					}
 					if (StringTools.trim(sb.toString()) == "")
-						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + i + 3, p.min + j));
+						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + byteOff(i) + 3, p.min + byteOff(j)));
 					try {
-						var exprStart = p.min + i + 3 + aposAt(i);
+						var exprStart = p.min + byteOff(i) + 3 + aposAt(i);
 						parts.push(hxc.parser.Parser.parseExprString(spaces(exprStart) + sb.toString(), p.file, defines));
 					} catch (err:hxc.parser.ParserError) {
 						throw new TypingError(hxc.parser.ParserError.errorMsg(err.msg), err.pos);
@@ -2045,7 +2057,7 @@ class Typer {
 					while (j < n && isIdentChar(str.charCodeAt(j))) { sb.addChar(str.charCodeAt(j)); j++; }
 					// The ident's own source range: content starts one past the opening quote.
 					var adjI = aposAt(i);
-					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + i + 2 + adjI, p.min + j + 1 + adjI)));
+					parts.push(new Expr(EConst(CIdent(sb.toString())), new Position(p.file, p.min + byteOff(i) + 2 + adjI, p.min + byteOff(j) + 1 + adjI)));
 					i = j;
 					segStart = i;
 				} else i++;

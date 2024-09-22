@@ -2706,7 +2706,7 @@ class EvalMacro {
 		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
 		var pv = EvalField.field(ec, v, EvalHash.hash("params"));
 		var params = pv == VNull ? [] : [for (pe in arrOf(pv)) decodeExpr(ec, pe, dp)];
-		return {name: name, params: params, pos: dp};
+		return {name: name, params: params, pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp)};
 	}
 
 	static function decodeAccess(ec:EvalContext, v:EvalValue):Access {
@@ -3195,7 +3195,9 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(m.name));
 		fields.set(EvalHash.hash("params"), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
-		fields.set(EvalHash.hash("pos"), VNull);
+		// The entry position is encoded; without it every metadata entry that survives a build macro round
+		// trip would fall back to the field position.
+		fields.set(EvalHash.hash("pos"), encPos(m.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 

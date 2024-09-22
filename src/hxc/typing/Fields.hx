@@ -447,7 +447,9 @@ class Fields {
 								case AbstractStatics(ab) if (ab.impl != null && forwardsStaticField(ab, i)):
 									try {
 										var mt = TypeFunctions.moduleTypeOfType(ab.thisType);
-										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, pfield), i, pfield, mode, withType);
+										// The underlying type expression with p and re-enters the same lookup, so the forwarded
+										// access keeps the full span, not the name slice.
+										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, p), i, p, mode, withType);
 									} catch (_:hxc.core.ExitException) {
 										var u = tryUsing(ctx, e, i, p);
 										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);

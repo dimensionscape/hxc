@@ -930,7 +930,9 @@ class Operators {
 						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
 						var nameArg = Typer.castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
-						var valArg = Typer.castOrUnify(ctx, sig.args[2].t, te2, p);
+						// The cast is made at the argument's own position (e.pos), so an implicit @:from wrapper sits
+						// on the value, not the assignment.
+						var valArg = Typer.castOrUnify(ctx, sig.args[2].t, te2, te2.pos);
 						hxc.typing.Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg, valArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);
