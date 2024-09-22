@@ -1044,7 +1044,7 @@ class Operators {
 		}
 		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
 		// the op, and writes via the setter.
-		function accessorCompound(recv:TExpr, host:hxc.typing.AccessKind.FieldHost, name:String):TExpr {
+		function accessorCompound(recv:TExpr, host:hxc.typing.AccessKind.FieldHost, name:String, faPos:Position):TExpr {
 			var implC = FieldAccessTools.getHostClassRaise(host);
 			var getterCf = implC.statics.get("get_" + name);
 			var setterCf = implC.statics.get("set_" + name);
@@ -1054,11 +1054,12 @@ class Operators {
 			// "base"/"index" binds and duplicates as an expression in the get and set calls.
 			var recvVars:Array<TExpr> = [];
 			var er = vrGetExprAux(ctx, recvVars, 0, "fh", recv);
-			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+			// The accessor field expression is built at the property's position.
+			var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), faPos);
 			// The accessor keeps the abstract host so its signature gets the instance's type parameters
 			// applied.
-			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, host, false, p), FCall);
-			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, host, false, p), FCall);
+			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, host, false, faPos), FCall);
+			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, host, false, faPos), FCall);
 			function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
 			function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
 			var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
@@ -1125,7 +1126,7 @@ class Operators {
 				}
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
-				accessorCompound(se.thisExpr, se.access.host, se.access.field.name);
+				accessorCompound(se.thisExpr, se.access.host, se.access.field.name, se.access.pos);
 			case AKResolve(se, name):
 				// Compound assign on a resolve field: resolveWrite(this, name, resolveRead(this, name) OP
 				// value), evaluating the receiver once.
@@ -1396,11 +1397,13 @@ class Operators {
 		// dispatch.
 		var recvVars:Array<TExpr> = [];
 		var er = vrGetExprAux(ctx, recvVars, 0, "fh", recv);
-		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), p);
+		// The accessor field expression is built at `fa.pos`, the property's own position, not at the
+		// enclosing operator's, so the generated accessor call sits on `c.v` and not on the `++`.
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos);
 		// The accessor keeps the abstract host so its signature gets the instance's type parameters
 		// applied.
-		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, fa.host, false, p), FCall);
-		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, fa.host, false, p), FCall);
+		var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, fa.host, false, fa.pos), FCall);
+		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, fa.host, false, fa.pos), FCall);
 		function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
 		function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
 		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
