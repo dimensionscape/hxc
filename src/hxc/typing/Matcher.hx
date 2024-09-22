@@ -1354,8 +1354,10 @@ class DtCompile {
 				s.con = {kind: s.con.kind, pos: con.pos, subPos: argPositions.length == 0 ? null : argPositions[0]};
 				return;
 			}
-			con.subPos = argPositions.length == 0 ? null : argPositions[0];
-			sigma.push({con: con, unguarded: false, argPositions: argPositions, casePos: casePos});
+			// Same aliasing: `con` belongs to the pattern, so store a copy rather than writing
+			// subPos into it.
+			sigma.push({con: {kind: con.kind, pos: con.pos, subPos: argPositions.length == 0 ? null : argPositions[0]},
+				unguarded: false, argPositions: argPositions, casePos: casePos});
 		}
 		function markUnguarded(con:Con) {
 			for (c in unguarded) if (Constructor.equal(c, con)) return;
