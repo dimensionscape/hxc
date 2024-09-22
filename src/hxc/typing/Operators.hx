@@ -1313,6 +1313,17 @@ class Operators {
 		return TypeFunctions.mk(TBlock(el), eSet.type, p);
 	}
 
+	// The callee must keep the property's own position. hxc resolves the accessor by name, and the
+	// name slice is then derived from the ACCESSOR's name length (four characters longer than the
+	// property's), which starts the callee before its own receiver and adds a source map segment. Put
+	// the callee back on the property position.
+	static function atFieldPos(e:TExpr, p:Position):TExpr {
+		return switch (e.expr) {
+			case TField(_, _): TypeFunctions.mk(e.expr, e.type, p);
+			case _: e;
+		};
+	}
+
 	// Read a class property `er.p`: call its getter when the read accessor is AccCall, else read the stored
 	// field.
 	static function accessorReadOn(ctx:TyperContext, er:TExpr, fa:hxc.typing.AccessKind.FieldAccess):TExpr {
@@ -1331,7 +1342,11 @@ class Operators {
 			ctx.privateAccess++;
 			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value);
 			ctx.privateAccess--;
-			return Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
+			var call = Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
+			return switch (call.expr) {
+				case TCall(callee, args): TypeFunctions.mk(TCall(atFieldPos(callee, fa.pos), args), call.type, call.pos);
+				case _: call;
+			};
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		return FieldAccessTools.getFieldExpr(faOn, FRead);
@@ -1355,7 +1370,7 @@ class Operators {
 			ctx.privateAccess++;
 			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value));
 			ctx.privateAccess--;
-			return Calls.makeCall(ctx, setterExpr, [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
+			return Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos), [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
