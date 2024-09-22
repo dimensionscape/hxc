@@ -1347,8 +1347,11 @@ class DtCompile {
 			for (s in sigma) if (Constructor.equal(s.con, con)) {
 				s.argPositions = argPositions;
 				s.casePos = casePos;
-				s.con.pos = con.pos;
-				s.con.subPos = argPositions.length == 0 ? null : argPositions[0];
+				// Replacing a constructor table entry stores a new key; it never mutates the one already there.
+				// `s.con` is the very Con object the PATTERN still holds, so assigning into it would rewrite
+				// the position recorded in every other sub-matrix that shares it. Replace the entry with a
+				// fresh Con.
+				s.con = {kind: s.con.kind, pos: con.pos, subPos: argPositions.length == 0 ? null : argPositions[0]};
 				return;
 			}
 			con.subPos = argPositions.length == 0 ? null : argPositions[0];
