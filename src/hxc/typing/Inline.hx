@@ -412,6 +412,23 @@ class Inline {
 	}
 
 	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false):TExpr {
+		// `inlinerLocals` records the locals this inline declares, so a read of one takes the
+		// mapped position while a caller value stays verbatim. It has to be scoped to the current inline:
+		// a local an OUTER inline created is, from an inner one's point of view, an ordinary caller
+		// value. Without the scoping, a closure inlined into an already-inlined body (Array.filter's
+		// predicate reading the loop variable) would reposition a value it should keep.
+		var savedInlinerLocals = inlinerLocals;
+		inlinerLocals = new Map();
+		var r = try doInlineScoped(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure)
+			catch (e:Dynamic) {
+				inlinerLocals = savedInlinerLocals;
+				throw e;
+			};
+		inlinerLocals = savedInlinerLocals;
+		return r;
+	}
+
+	static function doInlineScoped(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
