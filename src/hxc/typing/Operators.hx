@@ -1109,8 +1109,10 @@ class Operators {
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
 				};
 				if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
+				// The retry runs at the access kind's own position, not the compound's: AKNo's position
+				// (the field's) replaces the outer p before the operator resolution is re-entered.
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
+				switch (makeBinop(ctx, sub, te1, te2, true, withType, np)) {
 					case BinopSpecial(opCall, false): opCall;
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
 				}
