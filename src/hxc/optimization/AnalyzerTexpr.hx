@@ -173,9 +173,14 @@ class AnalyzerTexpr {
 
 	public static function typeChangeOk(com:Context, t1:T, t2:T):Bool {
 		if (t1 == t2) return true;
+		// An unbound monomorph maps to Dynamic, and `t1 == t2` is then re-tested to cover cases where a
+		// monomorph became Dynamic. That identity test needs every Dynamic to be one shared value; hxc's
+		// Dynamic types are separate instances, so the mapping normalises them onto the singleton. Without
+		// this a mono-typed local fusing with a Dynamic value takes a needless TCast.
 		function mapT(t:T):T {
 			return switch (t) {
 				case TMono(r): r.type == null ? TypeFunctions.tDynamic : mapT(r.type);
+				case TDynamic(null): TypeFunctions.tDynamic;
 				case _: TypeFunctions.map(mapT, t);
 			};
 		}
