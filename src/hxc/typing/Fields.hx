@@ -535,9 +535,10 @@ class Fields {
 				if (cf != null && !TypeFunctions.hasClassFieldFlag(cf, CfImpl)) cf = null;
 				if (cf == null) {
 					// The type's own using extensions win over @:forward and over the @:op(a.b) resolve fallback:
-					// type_field_by_type_extension before forwarding recurses into the underlying type's
-					// extensions, and AKResolve lives in the last stage (type_field_by_fallback).
-					var own = tryUsingList(ctx, typeUsings(e.type, i), e, i, pfield);
+					// they are tried before forwarding recurses into the underlying type's extensions, and
+					// AKResolve is the last stage. As at the tryUsing sites, a static extension access is built at
+					// the full field position. This is the `@:using(...)` on the type's own list.
+					var own = tryUsingList(ctx, typeUsings(e.type, i), e, i, p);
 					if (own != null) return own;
 					// @:forward: a member not on the impl is resolved on the underlying type, which the abstract
 					// wraps transparently, without the underlying's resolve fallback: the outer abstract's own
