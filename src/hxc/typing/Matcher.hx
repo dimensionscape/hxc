@@ -1480,13 +1480,9 @@ class DtCompile {
 			dt = bind(mctx, bindings, dt);
 			switchCases.push({con: s.con, unguarded: s.unguarded, dt: dt});
 		}
-		// A structure pattern is irrefutable (every value of the type has the fields): bind the fields and
-		// continue with no switch test, which has no runtime discriminant to emit. A nullable subject keeps
-		// the switch shell so the null guard below still routes null to the default the guard and collapses
-		// the single-ConFields switch at conversion).
-		if (switchCases.length == 1 && sig.nullCases.length == 0 && !TypeFunctions.isExplicitNull(subject.type)
-				&& (switch (sig.sigma[0].con.kind) { case ConFields(_): true; case _: false; }))
-			return switchCases[0].dt;
+		// A single structure-pattern case is irrefutable and emits no runtime test, but the Switch node
+		// is still built: only the converter skips it, and the node it leaves behind carries subject.pos,
+		// which the enclosing Bind block takes as its position.
 		var def = defaultMatrix(subject, cases);
 		var switchDefault = compile(mctx, rest, def);
 		var dt = switchCases.length == 0 ? switchDefault : switchDt(mctx, subject, switchCases, switchDefault);
@@ -1974,7 +1970,10 @@ class TexprConverter {
 				if (inner == null) null else {
 					var el = [for (b in bl) TypeFunctions.mk(TVarExpr(b.v, b.e), basic.tvoid, b.p)];
 					el.push(inner);
-					TypeFunctions.mk(TBlock(el), inner.type, dt.pos);
+					// The arm binds as Bind(bl, dt) over the inner node, so the block takes the INNER
+					// node's position. The two differ whenever hashcons handed back an existing Bind:
+					// bind() proposes dt.pos but a dedup keeps the first one's.
+					TypeFunctions.mk(TBlock(el), inner.type, dt2.pos);
 				}
 			case Fail:
 				null;
