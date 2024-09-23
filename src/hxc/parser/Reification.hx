@@ -237,8 +237,11 @@ class Reification {
 			case ETry(e1, catches):
 				var arr = toArray(function(c:Catch, pp:Position) {
 					return toObj([
-						{name: "name", e: toString(c.name.name, c.name.pos)},
-						{name: "type", e: toOpt(function(th, _pp) return toTypeHint(th), c.type, pp)},
+						// A catch reifies both its name and its type hint at the ENCLOSING position,
+						// discarding the
+						// name's own position and never going through toTypeHint.
+						{name: "name", e: toString(c.name.name, pp)},
+						{name: "type", e: toOpt(function(th, ppp) return toCType(th.ct, ppp), c.type, pp)},
 						{name: "expr", e: loop(c.expr)},
 					], pp);
 				}, catches, p);

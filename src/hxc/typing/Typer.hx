@@ -3209,7 +3209,9 @@ class Typer {
 				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length >= 2):
-						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
+						// The resolve name is built at Position.nullPos, so it contributes no source
+						// mapping at all.
+						var eName = TexprTools.makeString(ctx.com.basic, name, hxc.ast.Position.nullPos);
 						var nameArg = castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
 						Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
@@ -4192,10 +4194,6 @@ class Typer {
 				if (expectedOpen && TypeFunctions.hasMono(selector)) {
 					var at = TypeFunctions.applyParams(a.params, usedAtl, a.thisType);
 					throw new TypingError("Type parameters of multi type abstracts must be known (for " + hxc.core.TPrinting.sTypeStr(at) + ")", p);
-				}
-				var ctorSelection = selectMultiTypeByCtorArgs(ctx, a, usedAtl, el, p);
-				if (ctorSelection != null) {
-					return buildMultiTypeCastCall(ctx, a, usedAtl, ctorSelection.castField, ctorSelection.castType, ctorSelection.ret, ctorSelection.args, p);
 				}
 				// Every multiType construction is typed as TNew of the impl; a later filter rewrites it to
 				// the @:to cast's static call. Resolving eagerly here would make typing-time inlines (an

@@ -927,7 +927,9 @@ class Operators {
 				var ce = FieldAccessTools.getFieldExpr(se.access, FCall);
 				switch (TypeFunctions.follow(ce.type)) {
 					case TFun(sig) if (sig.args.length >= 3):
-						var eName = TexprTools.makeString(ctx.com.basic, name, se.access.pos);
+						// The resolve name is built at Position.nullPos, so it contributes no source
+						// mapping at all.
+						var eName = TexprTools.makeString(ctx.com.basic, name, hxc.ast.Position.nullPos);
 						var nameArg = Typer.castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
 						// The cast is made at the argument's own position (e.pos), so an implicit @:from wrapper sits

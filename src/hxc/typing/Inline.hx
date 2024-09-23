@@ -653,7 +653,10 @@ class Inline {
 							false;
 						} catch (_:Dynamic) true;
 				};
-				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, p);
+				// The cast wraps at the position of the value being cast, not the call site: the cast
+				// prints
+				// nothing, so at p it would emit a stray source mapping.
+				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, result.pos);
 			}
 		}
 		// A constant-initialized local this inline bound, with no remaining use, drops to an empty block
