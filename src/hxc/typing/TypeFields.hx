@@ -872,6 +872,10 @@ class TypeFields {
 			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
+			// @:this is prepended to the abstract this argument. LocalDce's `keep` tests exactly that meta,
+			// so without it a store to the abstract this in an impl body reads as a dead store and is
+			// removed.
+			if (kind.match(VAbstractThis)) v.meta = [{name: ":this", params: [], pos: hxc.ast.Position.nullPos}].concat(v.meta);
 			// The default value unifies into the argument type so an inferred argument settles from its
 			// default (x = 1 gives x:Int).
 			var def:Null<TExpr> = if (fa.value != null) Typer.castOrUnify(tctx, at, Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at)), fa.value.pos)
