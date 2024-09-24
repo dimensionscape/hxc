@@ -286,12 +286,29 @@ class Compiler {
 		// lookup.
 		hxc.core.TypeUnification.buildAbstractRef = function(a:hxc.core.Type.TAbstract) {
 			if (a.impl == null) return;
-			inline function forceReal(cf:hxc.core.Type.TClassField):Void {
-				var real = a.impl.statics.get(cf.name);
-				if (real != null && real.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx, a.impl, real);
+			// The recorded cast pair is a SNAPSHOT taken at load time, not the impl field itself, so
+			// an unhinted @:to's return stays an open monomorph on it while the real field's return
+			// settles during typing. The reference shares one node and never has to reconcile them.
+			// Sync the snapshot here, while the real field still exists: an inline @:to is removed
+			// from statics by the time the generator filters specialize, and from then on the
+			// stale open monomorph is the only type left, which cpp lowers to Dynamic.
+			inline function forceReal(c:hxc.core.Type.TAbstractCast, isTo:Bool):Void {
+				var real = a.impl.statics.get(c.cf.name);
+				if (real == null) return;
+				if (real.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx, a.impl, real);
+				// Only an UNHINTED @:to leaves an open monomorph on the snapshot; a declared cast type is
+				// already correct. The snapshot carries its own params, so the built signature may only be read
+				// when there are none - otherwise substitution would mix two sets of parameter nodes and every
+				// generic @:from stops unifying.
+				if (real == c.cf || !isTo || c.cf.params.length > 0) return;
+				if (!hxc.core.TypeFunctions.follow(c.t).match(TMono(_))) return;
+				switch (hxc.core.TypeFunctions.follow(real.type)) {
+					case TFun(sig): c.t = sig.ret;
+					case _:
+				}
 			}
-			for (c in a.fromField) forceReal(c.cf);
-			for (c in a.toField) forceReal(c.cf);
+			for (c in a.fromField) forceReal(c, false);
+			for (c in a.toField) forceReal(c, true);
 		};
 		// Close a still-open inferred method return before structural unification reads it; the field
 		// types in whichever world (main or macro) owns its module.

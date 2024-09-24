@@ -4380,11 +4380,17 @@ class Typer {
 		return TypeFunctions.map(deepFollow, TypeFunctions.follow(t));
 	}
 
-	// findTo unifies for real, and a failed candidate's partial bindings persist (doesFuncUnify
-	// does not roll back). The reference wears that only at its few get_underlying_type call sites;
-	// hxc reaches followWithAbstracts from more places, so the same persistent effects land at
-	// different times and perturb inference. Run the whole specialization in a rollback frame and
-	// materialize the result before unwinding (deepFollow copies the bound monos out).
+	// findTo unifies for real, and a failed candidate's partial bindings persist (doesFuncUnify does not
+	// roll back).
+	// Building the abstract forces the impl class, and each cast field's lazy signature resolves while it
+	// types - a PERMANENT binding of an unhinted @:to's inferred return. If a rollback undid that binding,
+	// the return monomorph would come back open, the next specialization would unify it BACKWARDS onto a
+	// fresh monomorph, and every later read of the field would see an unbound type, which cpp lowers to
+	// Dynamic. So the bodies are forced up front, outside any rollback.
+	static function forceCastFields(a:TAbstract):Void {
+		if (TypeUnification.buildAbstractRef != null) TypeUnification.buildAbstractRef(a);
+	}
+
 	static function specializeRolledBack<R>(f:Void->R):R {
 		var result:Null<R> = null;
 		var thrown:Null<haxe.Exception> = null;
@@ -4413,6 +4419,7 @@ class Typer {
 	}
 
 	public static function findMultitypeSpecializationType(a:TAbstract, pl:Array<T>):T {
+		forceCastFields(a);
 		return specializeRolledBack(function() {
 			var m = TypeFunctions.mkMono();
 			var r = findMultitypeParams(a, pl);
@@ -4448,6 +4455,7 @@ class Typer {
 			}
 			loop(t1);
 		}
+		forceCastFields(a);
 		return specializeRolledBack(function() {
 			var castField = try {
 				var c = TypeUnification.findTo(TypeUnification.defaultUnificationContext, m, a, tl);
