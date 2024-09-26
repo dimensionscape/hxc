@@ -745,7 +745,6 @@ class Compiler {
 			// block ends with a read of its result local, and consumes exactly that read to splice the
 			// block flat (unwrap on Some io).
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
-			hxc.debug.Dump.run(ctx);
 			// Fix com.main and the static-init type order before any target consumes them
 			if (platform != Cross) hxc.typing.Finalization.run(ctx);
 			// A fully-typed non-display compile caches its modules into the process cache, activating
@@ -794,6 +793,10 @@ class Compiler {
 					return;
 				}
 				auxiliaryOutput();
+				// At generation time, after every filter including the analyzer. Dumping before them showed a
+				// tree no later stage ever sees, which makes a dump-to-dump comparison against the reference
+				// meaningless.
+				hxc.debug.Dump.run(ctx);
 				if (!noOutput) {
 					if (platform == Js) {
 						var tGen = hxc.core.Timer.timer(["generate", "js"]);
