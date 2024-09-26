@@ -139,9 +139,10 @@ class TypeFields {
 			if (explicit && frames.length > 0) frames.shift();
 			var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: explicit ? re.pos : Position.nullPos}];
 			for (p in frames) stack.push({message: "Called from here", pos: p});
-			// The macro invocation site closes the stack (the reference's api-call env).
-			var callPos = hxc.eval.EvalMacro.currentPosition();
-			if (callPos != null && callPos.file != "?" && callPos.min >= 0) stack.push({message: "Called from here", pos: callPos});
+			// The macro invocation sites close the stack (the reference's api-call envs), recorded
+			// on the exception by EvalMacro.run as it unwound each frame, innermost first.
+			for (cp in re.callPositions)
+				if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
 			ctx.addDiagnosticStack(stack);
 		} else if (Std.isOfType(e, haxe.Exception)) {
 			ctx.unresolvedFields++;

@@ -1732,6 +1732,12 @@ class EvalMacro {
 			return typed;
 		} catch (e:haxe.Exception) {
 			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
+			// The macro INVOCATION site closes the eval stack (the reference's api-call env, which
+			// its env stack carries naturally). Record it on the exception as it leaves this frame,
+			// innermost first: reading curPos at catch time instead only ever worked because the
+			// restore was putting back this frame's own position rather than the caller's.
+			var rte = Std.downcast(e, hxc.eval.EvalExceptions.EvalRunTimeException);
+			if (rte != null) rte.callPositions.push(p);
 			curTctx = savedTctx;
 			curPos = savedPos;
 			curModule = savedModule;
@@ -2763,9 +2769,12 @@ class EvalMacro {
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
 		var typeV = EvalField.field(ec, v, EvalHash.hash("type"));
 		return {
-			// Whose fallback is maybe_decode_pos = null_pos.
+			// haxe.macro.Expr.FunctionArg has no name_pos field, so the fallback is always taken: the
+			// enclosing expression's position, the same rule the EVars arm spells out. A macro returning
+			// EFunction with an invalid argument name then reports at the macro call position, where a null
+			// fallback would print the error with no position at all.
 			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-				pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), Position.nullPos)},
+				pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
 			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
 			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp),
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
