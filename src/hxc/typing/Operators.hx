@@ -585,33 +585,24 @@ class Operators {
 				// flag
 				// uses isAssignOp (bodyless @:op wants underlying-type assignment semantics).
 				if (swapped) {
-					var tvoid = ctx.com.basic.tvoid;
-					var vlhs = TypeFunctions.allocVar(VGenerated, "lhs", me2.type, me2.pos);
-					var vrhs = TypeFunctions.allocVar(VGenerated, "rhs", me1.type, me1.pos);
-					var elhs = TexprTools.makeLocal(vlhs, me2.pos);
-					var erhs = TexprTools.makeLocal(vrhs, me1.pos);
-					var e = TypeFunctions.mk(TBlock([
-						TypeFunctions.mk(TVarExpr(vlhs, me2), tvoid, me2.pos),
-						TypeFunctions.mk(TVarExpr(vrhs, me1), tvoid, me1.pos),
-						TypeFunctions.mk(TBinop(op, erhs, elhs), tret, p)
-					]), tret, p);
-					return BinopSpecial(e, isAssignOp);
+					// The binop result binds through the value reference, whose block is tagged :mergeBlock
+					// so it FLATTENS into the enclosing block. A plain nested block is a value instead, and
+					// the temps get substituted straight back out again.
+					var vrVars:Array<TExpr> = [];
+					var elhs = vrAsVar(ctx, vrVars, "lhs", me2);
+					var erhs = vrAsVar(ctx, vrVars, "rhs", me1);
+					return BinopSpecial(vrToTexpr(vrVars, TypeFunctions.mk(TBinop(op, erhs, elhs), tret, p)), isAssignOp);
 				}
 				return BinopSpecial(TypeFunctions.mk(TBinop(op, me1, me2), tret, p), isAssignOp);
 			} else if (swapped) {
-				// Preserve evaluation order after the commutative swap by binding both operands to temps.
-				var tvoid = ctx.com.basic.tvoid;
-				var vlhs = TypeFunctions.allocVar(VGenerated, "lhs", me2.type, me2.pos);
-				var vrhs = TypeFunctions.allocVar(VGenerated, "rhs", me1.type, me1.pos);
-				var elhs = TexprTools.makeLocal(vlhs, me2.pos);
-				var erhs = TexprTools.makeLocal(vrhs, me1.pos);
+				// Both operands bind through the value reference so the original left is evaluated first;
+				// the block is tagged :mergeBlock so it FLATTENS into the enclosing block rather than
+				// staying a nested value.
+				var vrVars:Array<TExpr> = [];
+				var elhs = vrAsVar(ctx, vrVars, "lhs", me2);
+				var erhs = vrAsVar(ctx, vrVars, "rhs", me1);
 				var call = makeStaticOpCall(ctx, implC, cf, map, [erhs, elhs], tret, p);
-				var e = TypeFunctions.mk(TBlock([
-					TypeFunctions.mk(TVarExpr(vlhs, me2), tvoid, me2.pos),
-					TypeFunctions.mk(TVarExpr(vrhs, me1), tvoid, me1.pos),
-					call
-				]), tret, p);
-				return BinopSpecial(e, needsAssign);
+				return BinopSpecial(vrToTexpr(vrVars, call), needsAssign);
 			} else {
 				return BinopSpecial(makeStaticOpCall(ctx, implC, cf, map, [me1, me2], tret, p), needsAssign);
 			}
@@ -805,9 +796,17 @@ class Operators {
 		return TypeFunctions.mk(TBinop(OpAssign, te1, te2), te1.type, p);
 	}
 
-	// #get_expr_aux: depth 0 keeps a field/array access SHAPE, binding only its non-simple parts ("fh"
-	// receiver, "base"/"index" operands); depth 1 binds any non-simple expression whole. Binds accumulate
-	// as TVar decls.
+	// Value reference, vrGetExprAux: depth 0 keeps a field/array access SHAPE, binding only its non-simple
+	// parts ("fh" receiver, "base"/"index" operands); depth 1 binds any non-simple expression whole. Binds
+	// accumulate as TVar decls.
+	// vrAsVar: always bind, allocating at the bound expression's position and referring to the new local at
+	// v.pos.
+	static function vrAsVar(ctx:TyperContext, vars:Array<TExpr>, name:String, e:TExpr):TExpr {
+		var v = TypeFunctions.allocVar(VGenerated, name, e.type, e.pos);
+		vars.push(TypeFunctions.mk(TVarExpr(v, e), ctx.com.basic.tvoid, v.pos));
+		return TexprTools.makeLocal(v, v.pos);
+	}
+
 	static function vrGetExprAux(ctx:TyperContext, vars:Array<TExpr>, depth:Int, name:String, e:TExpr):TExpr {
 		return switch (TexprTools.skip(e).expr) {
 			case TLocal(_) | TTypeExpr(_) | TConst(_):
