@@ -623,11 +623,21 @@ class TypeResolve {
 		a.ops = [];
 		a.unops = [];
 		a.array = [];
+		// Each SYNTAX field with the cf built from it, so an OVERLOADED @:op name reaches every
+		// declaration. Looking the field up by name cannot do that: it hands back the same cf twice, and
+		// once a body-less declaration removes that one from statics the sibling is never visited and
+		// survives into the output. Pair positionally instead, by taking the next not-yet-handled field
+		// of that name.
+		var handled:Array<TClassField> = [];
 		for (cff in d.dData) {
 			// Locate the impl cf (member -> promoted static; static -> static). Resolve it up front: both
 			// the @:op arms and the @:arrayAccess arm need it.
 			var cf = abstractImplField(c, cff.cffName.name);
-			if (cf == null) continue;
+			if (cf == null || handled.indexOf(cf) >= 0) {
+				for (x in c.orderedStatics) if (x.name == cff.cffName.name && handled.indexOf(x) < 0) { cf = x; break; }
+			}
+			if (cf == null || handled.indexOf(cf) >= 0) continue;
+			handled.push(cf);
 			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
 			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
 			// the field (loop cf.meta). starts set for a @:coreType abstract, and allow_no_expr() is called
