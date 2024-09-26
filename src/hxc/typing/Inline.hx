@@ -351,7 +351,10 @@ class Inline {
 		var mappedVars:Map<Int, Bool> = new Map();
 		var fRef:TExpr->TExpr = null;
 		function fv(v:TVar):TVar {
-			if (!mappedVars.exists(v.id)) {
+			// Only vars this inline declared may be retyped. The CALLEE'S own argument vars belong to the
+			// field and are shared by every later use of it; retyping them would permanently narrow an
+			// inline abstract member's impl signature to one call site's parameters.
+			if (!mappedVars.exists(v.id) && inlinerLocals.exists(v.id)) {
 				mappedVars.set(v.id, true);
 				v.type = mt(v.type);
 				// The stored expr type-maps along, so the
