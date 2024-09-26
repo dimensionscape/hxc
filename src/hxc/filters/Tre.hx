@@ -50,8 +50,11 @@ class Tre {
 		var result:Array<TVar> = [];
 		function loop(inClosure:Bool, e:TExpr):Void {
 			switch (e.expr) {
+				// The result is built by PREPENDING, so the loop-scoped copies are allocated in reverse
+				// discovery order. Their variable ids decide the wrapper closure's parameter order in
+				// capturedVars.
 				case TLocal(v) if (inClosure && v.kind.match(VUser(TVOArgument)) && result.indexOf(v) < 0 && args.indexOf(v) >= 0):
-					result.push(v);
+					result.unshift(v);
 				case TFunction(f):
 					loop(true, f.expr);
 				case _:
@@ -100,7 +103,9 @@ class Tre {
 		var replaceList:Array<{v:TVar, nv:TVar}> = [];
 		for (v in captured) {
 			var nv = TypeFunctions.allocVar(VGenerated, "`" + v.name, v.type, v.pos);
-			declarations.push(TypeFunctions.mk(TVarExpr(nv, TypeFunctions.mk(TLocal(v), v.type, v.pos)), ctx.com.basic.tvoid, v.pos));
+			// Prepending onto `declarations` leaves them in REVERSE of `captured`, which is the order the
+			// copies are declared in the loop body.
+			declarations.unshift(TypeFunctions.mk(TVarExpr(nv, TypeFunctions.mk(TLocal(v), v.type, v.pos)), ctx.com.basic.tvoid, v.pos));
 			replaceList.push({v: v, nv: nv});
 		}
 		return wrap(TypeFunctions.mk(TBlock(declarations.concat([replaceVars(replaceList, false, body)])), body.type, body.pos));

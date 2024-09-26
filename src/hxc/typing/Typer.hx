@@ -917,7 +917,12 @@ class Typer {
 				for (fa in f.fArgs) {
 					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
 					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
-					args.push({v: TypeFunctions.allocVar(VUser(TVOLocalVariable), fa.name.name, at, fa.name.pos), c: null});
+					// Every function argument, local functions included, is allocated as
+					// VUser(TVOArgument). Tail-recursion elimination keys all three of its checks off that
+					// kind (captured arguments, the tail-recursion assign arm, the argument-local test), so
+					// treating a local function's arguments as local VARIABLES would make it reuse the
+					// parameters instead of redeclaring loop-scoped copies.
+					args.push({v: TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos), c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
 				// Top-down inference: bind unannotated (mono) arg/return types from an expected function
