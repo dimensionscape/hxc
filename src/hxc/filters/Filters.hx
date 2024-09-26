@@ -788,7 +788,26 @@ class Filters {
 									var e2 = loop(abs.e);
 									var m = try underlying(abs.a, abs.pl, e2.pos) catch (_:Dynamic) throw new hxc.core.NotFound();
 									var fname = TypeFunctions.fieldName(fa);
-									var fa2 = TypeFunctions.quickField(m, fname);
+									// quickField fails when m is itself an abstract; the static-extension call is then
+									// replicated on that abstract's impl, passing the receiver as the first argument.
+									// Otherwise the call would resolve against the multiType's DECLARED underlying instead of
+									// the specialization, skipping a member the specialization overrides (and whose body
+									// ignores an argument).
+									var fa2 = try TypeFunctions.quickField(m, fname) catch (_:Dynamic) {
+										switch (TypeFunctions.follow(m)) {
+											case TAbstract(a2, pl2) if (a2.impl != null && a2.impl.statics.exists(fname)):
+												var cf2 = a2.impl.statics.get(fname);
+												hxc.typing.TypeFields.forceFieldBody(ctx.com, a2.impl, cf2);
+												var map2 = function(t:T) return TypeFunctions.applyParams(a2.params, pl2, t);
+												var callee = TypeFunctions.mk(
+													TField(TexprTools.makeTypeExpr(TClassDecl(a2.impl), e2.pos), FStatic(a2.impl, cf2)),
+													map2(cf2.type), e2.pos);
+												var args2 = [e2].concat([for (arg in el) loop(arg)]);
+												return maybeCast(Calls.makeCall(ctx, callee, args2, e.type, e.pos), e.type, e.pos);
+											case _:
+										}
+										throw new hxc.core.NotFound();
+									};
 									var ft = funType(fa2);
 									var args = [for (arg in el) loop(arg)];
 									// A @:multiType call is rebuilt against the CONCRETE implementation, so
