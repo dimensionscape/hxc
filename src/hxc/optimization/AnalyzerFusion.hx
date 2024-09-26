@@ -519,11 +519,16 @@ class Fusion {
 						if (!handled) keep();
 					case TVarExpr(v1, einit) if (einit != null && canBeFused(v1, einit)):
 						var handled = false;
+						// Match on `el` once: when the next element is a prefix increment of a local, the increment
+						// arm owns this var and its failure path KEEPS it. handleAssignedLocal is reached only from
+						// the fallback branch, so a failed fold must not fall through to it.
+						var tookIncrArm = false;
 						if (next != null) switch (next.expr) {
 							// The increment may be on any local, not only v1 (e.g. `var num = a[_g]; ++_g;`), and
 							// replace hunts for that incremented local inside the var's init, once, not crossing
 							// branching constructs.
 							case TUnop(op = Increment | Decrement, Prefix, {expr: TLocal(v2)}):
+								tookIncrArm = true;
 								var found = false;
 								var replace:TExpr->TExpr = null;
 								replace = function(e:TExpr):TExpr {
@@ -548,8 +553,11 @@ class Fusion {
 							case _:
 						}
 						if (!handled) {
-							var r = handleAssignedLocal(v1, einit, el.slice(1));
-							if (r != null) el = r else keep();
+							if (tookIncrArm) keep();
+							else {
+								var r = handleAssignedLocal(v1, einit, el.slice(1));
+								if (r != null) el = r else keep();
+							}
 						}
 					case TUnop(op = Increment | Decrement, Prefix, ev = {expr: TLocal(v)}) if (next != null):
 						// Restore prefix/postfix forms into a following return or var init
