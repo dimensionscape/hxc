@@ -618,7 +618,11 @@ class Inline {
 		// The argument binds take the mapped body as is. The single-expression unwrap belongs to the
 		// no-binds path only, so the binds must take the body's position from before that unwrap.
 		var bindPos = value.pos;
-		if (hasReturnValue)
+		// The `TBlock([e]) -> e` unwrap happens on the no-binds path only. Doing it before the splice
+		// below flattens one level too far: a body of TBlock([block]) becomes `block`, whose own elements
+		// then get spliced, so a nested statement block that must stay (a discarded non-Void @:op result
+		// conversion) is dissolved.
+		if (hasReturnValue && binds.length == 0)
 			value = switch (value.expr) { case TBlock([one]): one; case _: value; };
 		// The argument-binding TVars take the finalized body position.
 		for (i in 0...argBindCount) switch (binds[i].expr) {
