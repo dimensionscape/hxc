@@ -431,7 +431,15 @@ class Compiler {
 					// arguments are known.
 					javaOutSeen = true;
 					i++;
-				case "-neko" | "--neko" | "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
+				case "-neko" | "--neko":
+					// No neko GENERATOR here, but the platform must still be set: it is set for every
+					// target and only OUTPUT is gated on --no-output, so typing, the filter pipeline and
+					// the analyzer all run and report. Leaving it Cross would skip every one of them and
+					// accept anything targeted at neko in silence.
+					platform = Neko;
+					targetDir = "neko";
+					ctx.file = args[i++];
+				case "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
 					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed

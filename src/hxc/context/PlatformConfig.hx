@@ -82,11 +82,25 @@ class PlatformConfig {
 		};
 	}
 
+	// Neko: the default config with isStatic/usesUtf16/supportsUnicode off, padNulls and
+	// supportsThreads on. There is no neko GENERATOR here, but the platform still has to be set: it
+	// decides std resolution, the filter pipeline and the analyzer, and left at Cross, anything compiled
+	// with -neko would be accepted without a single check.
+	public static function neko():PlatformConfig {
+		return {
+			isStatic: false, sys: true, supportsOverload: false, capturePolicy: CPNone,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: false, usesUtf16: false, supportsUnicode: false,
+			supportsThreads: true,
+		};
+	}
+
 	public static function get(p:Platform):PlatformConfig {
 		return switch (p) {
 			case Js: js();
 			case Cpp: cpp();
 			case Eval: eval();
+			case Neko: neko();
 			// Cross + the not-yet-targeted platforms use the base config until their backend
 			case _: defaults();
 		}
