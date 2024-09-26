@@ -195,6 +195,17 @@ class Inline {
 		var absThisArg = absMember && cf.name != "_new";
 		var mapType = buildMapType(c, cf, ethis, params, tret);
 		params = inlineRestParams(ctx, tf, params, mapType == null ? (function(t) return t) : mapType, p);
+		// An argument the call did not supply binds to its default, or to null at the argument's own
+		// position when it has none. There is no arity guard: bailing here would leave an inline
+		// constructor with an optional argument uninlined, which would then keep the inline constructor
+		// pass from removing the object entirely.
+		if (params.length < tf.args.length) {
+			params = params.copy();
+			for (i in params.length...tf.args.length) {
+				var a = tf.args[i];
+				params.push(a.c != null ? a.c : TypeFunctions.mk(TConst(TNull), a.v.type, a.v.pos));
+			}
+		}
 		if (tf.args.length != params.length) return null;
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
