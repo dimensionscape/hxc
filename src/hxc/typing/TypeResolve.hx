@@ -852,7 +852,11 @@ class TypeResolve {
 					var ft = TFun({args: args, ret: ret});
 					var cf = TypeFunctions.mkField(cff.cffName.name, ft, cff.cffPos, cff.cffName.pos, true, true);
 					cf.meta = cff.cffMeta;
-					if (TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember && !TypeFunctions.hasMeta(":multiType", cf.meta))
+					// is_multitype_cast inside the @:to handling only, so the meta lands on @:to fields
+					// alone. Marking @:from as well made abstractCast's make() short-circuit to a bare
+					// mk_cast, skipping the static call whose inliner binds a side-effectful argument to a
+					// temp.
+					if (isTo && TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember && !TypeFunctions.hasMeta(":multiType", cf.meta))
 						cf.meta = [{name: ":multiType", params: [], pos: Position.nullPos}].concat(cf.meta);
 					cf.kind = Method(isMacro ? MethMacro : MethInline);
 					cf.params = methodParams;
