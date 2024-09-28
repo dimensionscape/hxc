@@ -255,6 +255,12 @@ class Parser {
 		throw new ParserError(Custom(msg), cur().pos);
 	}
 
+	// A null placed over the GAP between an already parsed position and the next token, so a cursor sitting
+	// in the gap is enclosed by it (the max is one short of the next token's end).
+	function nullStandIn(p1:Position):Expr {
+		return new Expr(EConst(CIdent("null")), new Position(p1.file, p1.min, peekInfo().pos.max - 1));
+	}
+
 	function serror():Dynamic {
 		throw new ParserError(Unexpected(peek()), cur().pos);
 	}
@@ -1182,7 +1188,24 @@ class Parser {
 		// A token that cannot start an expression reports Expected expression there. .
 		switch (peek()) {
 			case PClose | BrClose | BkClose | Semicolon | Comma | Eof:
-				throw new ParserError(Expected(["expression"]), peekInfo().pos);
+				var np = peekInfo().pos;
+				// Under a display mode the error is recorded rather than raised, and a null stands in for the
+				// missing expression. Its position spans the GAP from just past the last token to just inside
+				// the next one, so a cursor sitting in that gap is enclosed by the stand-in and gets answered
+				// there instead of the parse aborting.
+				if (displayFile != null) {
+					syntaxErrors.push({msg: Expected(["expression"]), pos: np});
+					var last = tokens[idx > 0 ? idx - 1 : 0];
+					// A value-like last token contributes one more character, which is what puts the gap start
+					// past a bare identifier or keyword
+					var offset = switch (last.tok) {
+						case Const(_) | Kwd(_) | Dollar(_): 1;
+						case _: 0;
+					};
+					return new Expr(EConst(CIdent("null")),
+						new Position(last.pos.file, last.pos.max + offset, np.max - 1));
+				}
+				throw new ParserError(Expected(["expression"]), np);
 			case _:
 		}
 		return expr();
@@ -1242,7 +1265,12 @@ class Parser {
 			case BrOpen:
 				var p1 = next().pos;
 				var b = block1(p1);
-				var p2 = expect(BrClose);
+				// Under a display mode a missing } is recorded and the block is closed at the next token's
+				// position ("guess the last position"), so a truncated body does not abort the whole parse.
+				var p2 = if (!tokEq(peek(), BrClose) && displayFile != null) {
+					syntaxErrors.push({msg: Expected(["}"]), pos: peekInfo().pos});
+					peekInfo().pos;
+				} else expect(BrClose);
 				var e = new Expr(b, Position.union(p1, p2));
 				return switch (b) {
 					case EObjectDecl(_): exprNext(e);
@@ -1546,15 +1574,49 @@ class Parser {
 				return parseField(e1, EFSafe, p);
 			case POpen:
 				var p1 = next().pos;
+				// The call parameters take a SEPARATE path in the display file: they recover argument by
+				// argument and a failed one becomes a null STAND-IN spanning the gap up to the next token.
+				// Keeping only the parsed prefix would leave no node under the cursor, so completion inside
+				// an unfinished argument list would have nothing to answer at all.
+				if (displayFile != null) {
+					if (tokEq(peek(), PClose)) {
+						var p2 = next().pos;
+						return exprNext(new Expr(ECall(e1, []), Position.union(e1.pos, p2)));
+					}
+					var el:Array<Expr> = [];
+					var pprev = p1;
+					while (true) {
+						var e:Expr;
+						try {
+							e = expr();
+						} catch (er:ParserError) {
+							// Under a display mode the error is recorded, not raised
+							syntaxErrors.push({msg: Expected(el.length == 0 ? ["expression", ")"] : ["expression"]), pos: peekInfo().pos});
+							e = nullStandIn(pprev);
+						}
+						el.push(e);
+						if (tokEq(peek(), PClose)) {
+							var p2 = next().pos;
+							return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
+						}
+						if (tokEq(peek(), Comma)) {
+							pprev = next().pos;
+							if (tokEq(peek(), PClose)) {
+								var p3 = next().pos;
+								return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p3)));
+							}
+							continue;
+						}
+						var p2 = peekInfo().pos;
+						syntaxErrors.push({msg: Expected([",", ")"]), pos: p2});
+						return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
+					}
+				}
 				var el = psepTrailing(expr);
 				if (tokEq(peek(), PClose)) {
 					var p2 = next().pos;
 					return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
 				}
-				// An unfinished call argument list containing the display position keeps the parsed prefix
-				// so completion can fire inside an argument. (display-mode resume in parse_call_params).
-				if (displayFile != null && displayOffset >= p1.min && displayOffset <= peekInfo().pos.max)
-					return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, peekInfo().pos)));
 				throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 			case BkOpen:
 				junk();
