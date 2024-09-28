@@ -114,7 +114,10 @@ class EvalMacro {
 			}
 			return encodeArray(envs);
 		});
-		reg2("initMacrosDone", "init_macros_done", function(a) return initMacrosDoneFlag ? VTrue : VFalse);
+		// Reads the PER-CONTEXT flag, like every other primitive registered here. A process-wide static is
+		// never reset, so in server mode every request after the first would run its init macros with the
+		// flag already true, and Context.assertInitMacro would warn on every Compiler init-only API.
+		reg2("initMacrosDone", "init_macros_done", function(a) return com.initMacrosDone ? VTrue : VFalse);
 		// Error/fatal_error abort at the given position. "error"/"fatal_error" (vfun3 msg p depth ->
 		// raise (Error.Fatal_error (located msg p, depth))).
 		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
@@ -1087,12 +1090,10 @@ class EvalMacro {
 		}
 	}
 
-	static var initMacrosDoneFlag = false;
-
 	public static function runAfterInitMacrosCallbacks():Void {
-		// The stage advances before the callbacks run, so an init-only API used inside one warns.
-		// (CInitMacrosDone precedes after_init_macros callbacks).
-		initMacrosDoneFlag = true;
+		// The stage advances before the callbacks run, so an init-only API used inside one warns
+		// CInitMacrosDone precedes after_init_macros callbacks). The driver sets ctx.initMacrosDone just
+		// before calling this, which is that advance.
 		for (cb in onAfterInitMacrosCallbacks) {
 			EvalContext.setCtx(cb.ec);
 			// A Context.error inside one callback records and the remaining callbacks still
