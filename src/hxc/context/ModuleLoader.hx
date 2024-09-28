@@ -84,6 +84,10 @@ class ModuleLoader {
 	static var stdinConsumed = false;
 	static var stdinContent:Null<String> = null;
 
+	// Server display source follows a request's 0x01 byte. Prefer it over stdin so parsing cannot
+	// consume the next frame header.
+	public static var currentStdin:Null<String> = null;
+
 	public static function resetPerRequest():Void {
 		stdinConsumed = false;
 		stdinContent = null;
@@ -97,7 +101,9 @@ class ModuleLoader {
 			if (f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f)) {
 				if (!stdinConsumed) {
 					stdinConsumed = true;
-					stdinContent = try Sys.stdin().readAll().toString() catch (_:Dynamic) null;
+					stdinContent = currentStdin != null
+						? currentStdin
+						: (try Sys.stdin().readAll().toString() catch (_:Dynamic) null);
 				}
 				if (stdinContent != null) return Position.registerFileContent(file, stdinContent);
 			}

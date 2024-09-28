@@ -107,8 +107,19 @@ class Compiler {
 				b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
 			} catch (_:haxe.io.Eof) break;
 			var payload = try stdin.read(len).toString() catch (_:haxe.io.Eof) break;
-			var lines = payload.split("\n");
-			while (lines.length > 0 && lines[lines.length - 1] == "") lines.pop();
+			// A \x01 byte splits the request: arguments before it, the display file's source after it
+			// (cleared again after the request).
+			var sep = payload.indexOf("\x01");
+			if (sep >= 0) {
+				hxc.context.ModuleLoader.currentStdin = payload.substr(sep + 1);
+				payload = payload.substr(0, sep);
+			} else {
+				hxc.context.ModuleLoader.currentStdin = null;
+			}
+			// The argument text is hxml, not one raw argument per line: blank and # lines drop out, quotes
+			// come off, and a flag line splits at its first space.
+			var lines:Array<String> = [];
+			for (line in payload.split("\n")) lines = lines.concat(parseHxmlLine(line));
 			var out = new StringBuf();
 			// The stateful cache methods answer in the server process itself so cache state (contexts,
 			// removed files, configure switches) persists across requests; compilations still run isolated
@@ -575,6 +586,22 @@ class Compiler {
 				answerOut(pack + "\n");
 				return;
 			}
+			// The symbol outline is read off the display file's cached DECLARATIONS, so it needs the parse
+			// and nothing more (the packages and declarations of the files; locals are included when
+			// unfiltered).
+			if (dmode == "module-symbols" && dparts.length >= 2) {
+				// The cache entry keeps the file path as RESOLVED, not absolutized, and both the reported file
+				// and the container paths are derived from it.
+				var dfile = dparts[0];
+				hxc.parser.Parser.displayFile = dfile;
+				var src = ModuleLoader.moduleFileContent(ctx, dfile);
+				var pkg = hxc.parser.Parser.parseModuleString(src, dfile, ctx.defines);
+				// No module-name entry on this path, even for a file that declares no type of its own name:
+				// the outline holds only the declared symbols.
+				var syms = hxc.compiler.DocumentSymbols.collectModuleSymbols(null, true, pkg);
+				answerOut(hxc.compiler.DocumentSymbols.printModuleSymbols([{file: dfile, l: syms}], null));
+				return;
+			}
 			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation" || dmode == "signature")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
@@ -589,11 +616,17 @@ class Compiler {
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					hxc.typing.Typer.displaySignature = dmode == "signature";
-					var base = dparts[0];
-					var slash = StringTools.replace(base, "\\", "/").lastIndexOf("/");
-					if (slash >= 0) base = base.substr(slash + 1);
-					if (StringTools.endsWith(base, ".hx")) base = base.substr(0, base.length - 3);
-					displayRoot = {pack: [], name: base};
+					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
+					// package loads as that package's module; the basename alone would look for it at the
+					// classpath root.
+					var path = displayModulePath(ctx, dparts[0]);
+					if (path != null) {
+						// A dotted module name is Name.macro (never a compile root: the compiler would not
+						// find it) or Name.<target>, which loads as Name.
+						var nparts = path.name.split(".");
+						if (nparts.length == 1) displayRoot = path;
+						else if (nparts.length == 2 && nparts[1] != "macro") displayRoot = {pack: path.pack, name: nparts[0]};
+					}
 				}
 			}
 		}
@@ -1040,28 +1073,73 @@ class Compiler {
 		return ctx.displaySpec == null ? [] : ctx.displaySpec.split("@");
 	}
 
-	// Legacy --display @package: the display file's package is its path relative to the classpath that
-	// contains it, keeping the SHORTEST module path across classpaths. .
-	static function displayFilePackage(ctx:Context, file:String):String {
-		var real = try FileSystem.fullPath(file) catch (_:Dynamic) file;
-		function norm(s:String):String {
-			var n = StringTools.replace(s, "\\", "/");
-			return Sys.systemName() == "Windows" ? n.toLowerCase() : n;
+	// A path part is a package name except for the last, which is the module name; a rejected part makes
+	// the whole candidate unusable. A package name wants a lowercase or _ first character, and every part
+	// is checked for invalid characters.
+	static function parsePathParts(rest:String):Null<Path> {
+		// A .hx path splits on slashes with the extension stripped, anything else splits on dots.
+		var parts = if (rest.length > 3 && rest.substr(rest.length - 3) == ".hx")
+			StringTools.replace(rest.substr(0, rest.length - 3), "\\", "/").split("/")
+		else
+			rest.split(".");
+		if (parts.length == 0) return null;
+		function invalidChar(x:String):Bool {
+			for (i in 1...x.length) {
+				var c = x.charCodeAt(i);
+				var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)
+					|| (c >= "0".code && c <= "9".code) || c == "_".code || c == ".".code;
+				if (!ok) return true;
+			}
+			return false;
+		}
+		var name = parts[parts.length - 1];
+		if (invalidChar(name)) return null;
+		var pack = parts.slice(0, parts.length - 1);
+		for (x in pack) {
+			if (x.length == 0) return null;
+			var c = x.charCodeAt(0);
+			if ((c < "a".code || c > "z".code) && c != "_".code) return null;
+			if (invalidChar(x)) return null;
+		}
+		return {pack: pack, name: name};
+	}
+
+	// The display file's module path is its path relative to the classpath that contains it, keeping the
+	// SHORTEST dot path across classpaths (a tie keeps the earlier classpath).
+	static function displayModulePath(ctx:Context, file:String):Null<Path> {
+		// The reference's get_real_path fixes the case of every component on Windows; the
+		// runtime here only absolutizes, so the prefix test compares case-insensitively
+		// instead and the extracted remainder keeps the path's own case.
+		var real = StringTools.replace(try FileSystem.fullPath(file) catch (_:Dynamic) file, "\\", "/");
+		var onWindows = Sys.systemName() == "Windows";
+		inline function norm(s:String):String {
+			return onWindows ? s.toLowerCase() : s;
 		}
 		var realN = norm(real);
-		var best:Null<Array<String>> = null;
-		for (cp in ctx.classPath.concat(ctx.stdPath)) {
-			var cpReal = try FileSystem.fullPath(cp == "" ? "." : cp) catch (_:Dynamic) continue;
-			var cpN = norm(cpReal);
-			if (!StringTools.endsWith(cpN, "/")) cpN += "/";
-			if (realN.length <= cpN.length || realN.substr(0, cpN.length) != cpN) continue;
-			var rest = StringTools.replace(real, "\\", "/").substr(cpN.length);
-			var segs = rest.split("/");
-			if (segs.length == 0) continue;
-			segs.pop();
-			if (best == null || segs.join(".").length < best.join(".").length) best = segs;
+		var cps = ctx.classPath.concat(ctx.stdPath);
+		function loop(i:Int):Null<Path> {
+			if (i >= cps.length) return null;
+			var cpReal = try FileSystem.fullPath(cps[i] == "" ? "." : cps[i]) catch (_:Dynamic) return loop(i + 1);
+			var c = StringTools.replace(cpReal, "\\", "/");
+			if (!StringTools.endsWith(c, "/")) c += "/";
+			if (c.length >= real.length || norm(c) != realN.substr(0, c.length)) return loop(i + 1);
+			var parsed = parsePathParts(real.substr(c.length));
+			if (parsed == null) return loop(i + 1);
+			var other = loop(i + 1);
+			if (other != null && sTypePath(other).length < sTypePath(parsed).length) return other;
+			return parsed;
 		}
-		return best == null ? "" : best.join(".");
+		return loop(0);
+	}
+
+	static function sTypePath(p:Path):String {
+		return p.pack.length == 0 ? p.name : p.pack.join(".") + "." + p.name;
+	}
+
+	// Legacy --display @package answers the package of that same derived module path.
+	static function displayFilePackage(ctx:Context, file:String):String {
+		var path = displayModulePath(ctx, file);
+		return path == null ? "" : path.pack.join(".");
 	}
 
 	// A display position on a field declaration name makes the declared field itself the usage target.
