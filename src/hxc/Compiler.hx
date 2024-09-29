@@ -616,6 +616,7 @@ class Compiler {
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					hxc.typing.Typer.displaySignature = dmode == "signature";
+					hxc.parser.Parser.displaySignatureMode = dmode == "signature";
 					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
 					// package loads as that package's module; the basename alone would look for it at the
 					// classpath root.
@@ -1308,21 +1309,6 @@ class Compiler {
 		function ct(t:T):hxc.core.Json.JsonValue
 			return hxc.core.CompletionItem.CompletionTypeTools.toJson(gen,
 				hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t));
-		function isRest(t:T):Bool {
-			return switch (TypeFunctions.follow(t)) {
-				case TAbstract(a, _): a.path.pack.join(".") == "haxe" && a.path.name == "Rest";
-				case _: false;
-			};
-		}
-		function argIndex(args:Array<hxc.core.Type.TSignatureArg>, paramIndex:Int):Int {
-			var index = 0;
-			for (i in 0...args.length) {
-				if (index == paramIndex) return paramIndex;
-				if (i == args.length - 1 && index < paramIndex && isRest(args[i].t)) return index;
-				index++;
-			}
-			return paramIndex;
-		}
 		var signatures:Array<hxc.core.Json.JsonValue> = [];
 		for (s in sf.sigs) {
 			var fields:Array<hxc.core.Json.JsonField> = [];
@@ -1337,7 +1323,7 @@ class Compiler {
 			fields.push({name: "ret", value: ct(s.ret)});
 			signatures.push(hxc.core.Json.JsonValue.JObject(fields));
 		}
-		var active = sf.sigs.length == 0 ? sf.activeArg : argIndex(sf.sigs[0].args, sf.activeArg);
+		var active = sf.sigs.length == 0 ? sf.activeArg : signatureArgIndex(sf.sigs[0].args, sf.activeArg);
 		var result = hxc.core.Json.JsonValue.JObject([
 			{name: "activeSignature", value: hxc.core.Json.JsonValue.JInt(0)},
 			{name: "activeParameter", value: hxc.core.Json.JsonValue.JInt(active)},
@@ -1907,53 +1893,45 @@ class Compiler {
 		answerOut(raw);
 	}
 
+	// The legacy signature answer is JSON too, shaped {signatures:[{documentation?, label,
+	// parameters:[{label}]}], activeParameter, activeSignature}, where a label reads "(?n:T,
+	// n2:T2):Ret" and a parameter label is that same "?n:T" piece. It reads the same signature payload
+	// the json-rpc answer does.
 	static function displaySignature(ctx:Context):Void {
-		var parts = displayParts(ctx);
-		var file = parts.length > 0 ? parts[0] : "";
-		var offset = parts.length > 1 ? Std.parseInt(parts[1]) : null;
-		var identifier = "";
-		var sourceDocumentation:Null<String> = null;
-		if (offset != null) {
-			var sourceFile = file;
-			if (!FileSystem.exists(sourceFile)) for (m in ctx.modules) if (StringTools.endsWith(m.extra.file, file)) { sourceFile = m.extra.file; break; }
-			if (FileSystem.exists(sourceFile)) {
-				var source = File.getContent(sourceFile);
-				function identChar(c:Int):Bool return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
-				var cursor = offset;
-				while (cursor > 0 && !identChar(source.charCodeAt(cursor))) cursor--;
-				var start = cursor;
-				while (start > 0 && identChar(source.charCodeAt(start - 1))) start--;
-				var end = cursor;
-				while (end < source.length && identChar(source.charCodeAt(end))) end++;
-				identifier = source.substr(start, end - start);
-				var decl = source.indexOf("function " + identifier);
-				var open = decl < 0 ? -1 : source.lastIndexOf("/**", decl);
-				var close = open < 0 ? -1 : source.indexOf("**/", open + 3);
-				if (open >= 0 && close >= 0 && close < decl) sourceDocumentation = source.substr(open + 3, close - open - 3);
+		inline function sArg(a:hxc.core.Type.TSignatureArg):String
+			return (a.opt ? "?" : "") + a.name + ":" + TPrinting.sTypeStr(a.t);
+		var sf = hxc.typing.Typer.signatureFound;
+		var sigs:Array<hxc.core.Json.JsonValue> = [];
+		if (sf != null) for (s in sf.sigs) {
+			var fields:Array<hxc.core.Json.JsonField> = [];
+			if (s.doc != null) fields.push({name: "documentation", value: hxc.core.Json.JsonValue.JString(Ast.genDocText(s.doc))});
+			fields.push({name: "label", value: hxc.core.Json.JsonValue.JString("(" + [for (a in s.args) sArg(a)].join(", ") + "):" + TPrinting.sTypeStr(s.ret))});
+			fields.push({name: "parameters", value: hxc.core.Json.JsonValue.JArray([for (a in s.args)
+				hxc.core.Json.JsonValue.JObject([{name: "label", value: hxc.core.Json.JsonValue.JString(sArg(a))}])])});
+			sigs.push(hxc.core.Json.JsonValue.JObject(fields));
+		}
+		var active = (sf == null || sf.sigs.length == 0) ? 0 : signatureArgIndex(sf.sigs[0].args, sf.activeArg);
+		answerOut(hxc.core.Json.Json.stringOfJson(hxc.core.Json.JsonValue.JObject([
+			{name: "signatures", value: hxc.core.Json.JsonValue.JArray(sigs)},
+			{name: "activeParameter", value: hxc.core.Json.JsonValue.JInt(active)},
+			{name: "activeSignature", value: hxc.core.Json.JsonValue.JInt(0)}
+		])));
+	}
+
+	// The active parameter is the requested index, except that a trailing rest argument absorbs every index
+	// past its own.
+	static function signatureArgIndex(args:Array<hxc.core.Type.TSignatureArg>, paramIndex:Int):Int {
+		function isRest(t:T):Bool {
+			return switch (TypeFunctions.follow(t)) {
+				case TAbstract(a, _): a.path.pack.join(".") == "haxe" && a.path.name == "Rest";
+				case _: false;
 			}
 		}
-		var field:TClassField = null;
-		if (offset != null) for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c):
-				for (cf in c.orderedStatics.concat(c.orderedFields))
-					if ((identifier == "" ? (cf.pos.max >= offset && cf.pos.min <= offset) : cf.name == identifier)
-						&& (identifier != "" || StringTools.endsWith(cf.pos.file, file) || StringTools.endsWith(cf.pos.file, StringTools.replace(file, "/", "\\")))) field = cf;
-			case _:
+		for (i in 0...args.length) {
+			if (i == paramIndex) return paramIndex;
+			if (i == args.length - 1 && i < paramIndex && isRest(args[i].t)) return i;
 		}
-		var sigs = [];
-		if (field != null) switch (TypeFunctions.follow(field.type)) {
-			case TFun(sig):
-				var args:Array<String> = [];
-				for (a in sig.args) args.push((a.opt ? "?" : "") + a.name + ":" + TPrinting.sTypeStr(a.t));
-				var label = "(" + args.join(", ") + "):" + TPrinting.sTypeStr(sig.ret);
-				var params = [for (a in sig.args) '{"label":' + haxe.Json.stringify((a.opt ? "?" : "") + a.name + ":" + TPrinting.sTypeStr(a.t)) + '}'];
-				var docText = field.doc == null ? sourceDocumentation : Ast.genDocText(field.doc);
-				var doc = docText == null ? "" : ',"documentation":' + haxe.Json.stringify(docText);
-				sigs.push('{' + (doc == "" ? "" : doc.substr(1)) + (doc == "" ? "" : ",") + '"label":' + haxe.Json.stringify(label) + ',"parameters":[' + params.join(",") + ']}');
-			case _:
-		}
-		if (sigs.length == 0) sigs.push('{"label":"():Void","parameters":[]}');
-		answerOut('{"signatures":[' + sigs.join(",") + '],"activeParameter":0,"activeSignature":0}\n');
+		return paramIndex;
 	}
 
 	// List the module's public types, plus the main type's public statics when completing an import.

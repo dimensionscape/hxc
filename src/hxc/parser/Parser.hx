@@ -42,6 +42,8 @@ class Parser {
 	// when the offset falls right after a dot in a type path of that file.
 	public static var displayFile:Null<String> = null;
 	public static var displayOffset:Int = -1;
+	// Signature display (display mode DMSignature).
+	public static var displaySignatureMode:Bool = false;
 	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
@@ -50,6 +52,7 @@ class Parser {
 	public static function resetPerRequest():Void {
 		displayFile = null;
 		displayOffset = -1;
+		displaySignatureMode = false;
 		syntaxErrors = [];
 	}
 
@@ -259,6 +262,19 @@ class Parser {
 	// in the gap is enclosed by it (the max is one short of the next token's end).
 	function nullStandIn(p1:Position):Expr {
 		return new Expr(EConst(CIdent("null")), new Position(p1.file, p1.min, peekInfo().pos.max - 1));
+	}
+
+	// In signature display, the argument whose span from the preceding separator to the following one
+	// covers the cursor is marked, and the index of that marked argument is what the answer reports as
+	// the active parameter. Counting finished arguments instead puts the cursor on the next parameter
+	// as soon as it leaves the last one.
+	function checkSignatureMark(e:Expr, p1:Position, p2:Position):Expr {
+		if (!displaySignatureMode || displayOffset < 0) return e;
+		// Union of p1 and p2, then the enclosing-position test with a strict upper bound
+		var pmin = p1.min < p2.min ? p1.min : p2.min;
+		var pmax = p1.max > p2.max ? p1.max : p2.max;
+		if (pmin <= displayOffset && pmax > displayOffset) return new Expr(EDisplay(e, DKMarked), e.pos);
+		return e;
 	}
 
 	function serror():Dynamic {
@@ -1594,21 +1610,25 @@ class Parser {
 							syntaxErrors.push({msg: Expected(el.length == 0 ? ["expression", ")"] : ["expression"]), pos: peekInfo().pos});
 							e = nullStandIn(pprev);
 						}
-						el.push(e);
 						if (tokEq(peek(), PClose)) {
 							var p2 = next().pos;
+							el.push(checkSignatureMark(e, pprev, p2));
 							return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
 						}
 						if (tokEq(peek(), Comma)) {
-							pprev = next().pos;
+							var pc = next().pos;
 							if (tokEq(peek(), PClose)) {
 								var p3 = next().pos;
+								el.push(checkSignatureMark(e, pprev, p3));
 								return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p3)));
 							}
+							el.push(checkSignatureMark(e, pprev, pc));
+							pprev = pc;
 							continue;
 						}
 						var p2 = peekInfo().pos;
 						syntaxErrors.push({msg: Expected([",", ")"]), pos: p2});
+						el.push(checkSignatureMark(e, pprev, p2));
 						return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
 					}
 				}

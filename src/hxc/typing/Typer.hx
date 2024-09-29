@@ -1462,6 +1462,17 @@ class Typer {
 	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
 
 	static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
+		// The active argument is the index of the one the PARSER marked, and the marker is stripped
+		// before anything is typed, since a display node has no typing of its own. Counting finished
+		// arguments instead would put the cursor on the next parameter as soon as it leaves the last one.
+		var active = 0;
+		for (i in 0...params.length) switch (params[i].expr) {
+			case EDisplay(inner, DKMarked):
+				active = i;
+				params[i] = inner;
+				break;
+			case _:
+		}
 		// The display position must sit inside the argument span (after the callee).
 		var off = hxc.parser.Parser.displayOffset;
 		if (!atDisplayPos(p) || off <= e1.pos.max) return;
@@ -1489,13 +1500,6 @@ class Typer {
 			case TFun(sig):
 				// The current signature lists first, overloads after.
 				var sigs = [{args: sig.args, ret: sig.ret, doc: doc}].concat(overloads);
-				// The active argument: the argument whose span contains the offset, else
-				// the count of arguments already completed before it.
-				var active = 0;
-				for (i in 0...params.length) {
-					if (off > params[i].pos.max) active = i + 1
-					else if (off >= params[i].pos.min) { active = i; break; }
-				}
 				signatureFound = {sigs: sigs, activeArg: active};
 			case _:
 		}
@@ -1594,7 +1598,7 @@ class Typer {
 		return out;
 	}
 
-	static function collectToplevel(ctx:TyperContext):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+	static function collectToplevel(ctx:TyperContext, ?withType:WithType):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		inline function sType(t:T):String return hxc.core.TPrinting.sTypeStr(t);
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
@@ -1629,18 +1633,46 @@ class Typer {
 				for (cf in c.orderedStatics)
 					if (!noCompletion(cf.meta)) items.push({kind: "static", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
 		}
-		// Enum constructors of the current module's enums and enum abstracts
+		// Enum constructors. Each enum contributes once: every arm checks whether the path was already
+		// recorded, and records it.
+		var seenEnumPaths = new Map<String, Bool>();
+		function enumCtors(mt:ModuleType):Void {
+			switch (mt) {
+				case TEnumDecl(en):
+					var key = hxc.core.Globals.sTypePath(en.path);
+					if (seenEnumPaths.exists(key)) return;
+					seenEnumPaths.set(key, true);
+					for (name in en.constrs.keys()) {
+						var ef = en.constrs.get(name);
+						items.push({kind: "enum", name: ef.name, type: sType(ef.type), doc: Ast.genDocTextOpt(ef.doc)});
+					}
+				case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl != c):
+					var key = hxc.core.Globals.sTypePath(a.path);
+					if (seenEnumPaths.exists(key)) return;
+					seenEnumPaths.set(key, true);
+					for (cf in a.impl.orderedStatics)
+						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
+							items.push({kind: "enumabstract", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+				case TTypeDecl(td):
+					// A typedef contributes only if it aliases an enum.
+					switch (TypeFunctions.follow(td.type)) {
+						case TEnum(en, _): enumCtors(TEnumDecl(en));
+						case _:
+					}
+				case _:
+			}
+		}
 		var m = c == null ? null : c.module;
-		if (m != null) for (mt in m.types) switch (mt) {
-			case TEnumDecl(en):
-				for (name in en.constrs.keys()) {
-					var ef = en.constrs.get(name);
-					items.push({kind: "enum", name: ef.name, type: sType(ef.type), doc: Ast.genDocTextOpt(ef.doc)});
+		if (m != null) for (mt in m.types) enumCtors(mt);
+		// The EXPECTED type's constructors, which makes an enum value complete inside a call argument or
+		// an assignment whose target is that enum.
+		if (withType != null) switch (withType) {
+			case WithType(t, _):
+				switch (TypeFunctions.follow(t)) {
+					case TEnum(en, _): enumCtors(TEnumDecl(en));
+					case TAbstract(a, _): enumCtors(TAbstractDecl(a));
+					case _:
 				}
-			case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl != c):
-				for (cf in a.impl.orderedStatics)
-					if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
-						items.push({kind: "enumabstract", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
 			case _:
 		}
 		// Literals
@@ -2083,7 +2115,7 @@ class Typer {
 				if (displayToplevelJson && atDisplayPos(p))
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
 				if (displayToplevel && atDisplayPos(p))
-					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
+					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
 			case CInt(s, suffix):
@@ -3455,7 +3487,7 @@ class Typer {
 				for (e in el) if (e.pos.max < off) try typeExpr(ctx, e, WithTypeTools.noValue) catch (_:TypingError) {}
 				if (displayToplevelJson)
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
-				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx));
+				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 			}
 		}
 		var acc:Array<TExpr> = [];
