@@ -590,9 +590,8 @@ class Filters {
 			case TClassDecl(c):
 				var ethis = TypeFunctions.mk(TConst(TThis), TInst(c, TypeFunctions.extractParamTypes(c.params)), c.pos);
 				var inits = [for (cf in c.orderedFields) if (cf.kind.match(Var(_)) && cf.expr != null) cf];
-				// The init list by PREPENDING (cf :: inits) over the ordered fields with no re-reversal at , so
-				// the assignments emit in REVERSE declaration order (verified against the oracle's utest_Runner
-				// constructor on js and Socket's on cpp).
+				// The init list is built by PREPENDING over the ordered fields with no re-reversal, so the
+				// assignments emit in REVERSE declaration order.
 				inits.reverse();
 				if (inits.length == 0) return;
 				var el = [for (cf in inits) {

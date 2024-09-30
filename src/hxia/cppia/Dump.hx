@@ -5,8 +5,8 @@ import haxe.io.Bytes;
 // Renders a ModuleIR to readable, diff-friendly text: the string and type tables as
 // indexed lines, the class count, and the body. For a text (CPPIA) artifact the body is
 // already human-readable and is emitted verbatim; for a binary (CPPIB) artifact the body
-// is summarized (opcode decoding is a later phase). Dumping two artifacts and diffing is
-// the differential tool for hxc's own cppia output (hxc vs oracle).
+// is summarized, not decoded. Dumping two artifacts and diffing them is the differential
+// tool for cppia output.
 class Dump {
 	public static function text(m:ModuleIR, includeBody:Bool = true):String {
 		var sb = new StringBuf();

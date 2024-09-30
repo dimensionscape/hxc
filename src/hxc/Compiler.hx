@@ -1474,7 +1474,7 @@ class Compiler {
 			}
 		}
 		// The cache receives files as each context PARSES them: the main context's
-		// modules, the macro context's (its sys.* files sit in the oracle's fold list),
+		// modules, the macro context's (its sys.* files sit in the reference's fold list),
 		// then the class-path exploration fills the remainder.
 		addModuleFiles(ctx.modules);
 		var macroCom = hxc.eval.EvalMacro.getMacroCom();
@@ -1490,8 +1490,8 @@ class Compiler {
 			while (n < p1.length && n < p2.length && p1[n] == p2[n]) n++;
 			return n;
 		}
-		// Verified against a WSL-instrumented oracle: the captured 192-key order is exactly non-ascending
-		// in stringHash(key) & 127 (0 violations).
+		// The list is built by PREPENDING inside a hash-table fold, so the processed order is the REVERSE
+		// of the fold's ascending-bucket walk: non-ascending in stringHash(key) & 127.
 		var foldOrder = fileOrder.visitOrder();
 		foldOrder.reverse();
 		var scannedFiles = [for (k in foldOrder) if (byKey.get(k) != null) byKey.get(k)];

@@ -34,12 +34,12 @@ class CppGen {
 		// Class-id pre-pass: assign every eligible type its id (collision-avoided) before any class is
 		// emitted, so classId()/parent-id lookups are byte-exact synthesize the forwarding constructor
 		// for every subclass that inherits one but declares none, so __new/__alloc and __construct match
-		// the oracle. rewrite each override method's signature to match its overridden base (return type
-		// + arg types) so C++ virtual overrides are covariant-clean; must run before add_constructor and
-		// generation. a static `__init__` is the class-init block, not a reflective static method. hxc's
-		// typer leaves it in orderedStatics; move its (non-trivial) body to init here (cpp-only) so it
-		// emits as `void C::__init__()` and is dropped from method/reflection emission, matching the
-		// oracle.
+		// the reference. rewrite each override method's signature to match its overridden base (return
+		// type + arg types) so C++ virtual overrides are covariant-clean; must run before add_constructor
+		// and generation. a static `__init__` is the class-init block, not a reflective static method.
+		// hxc's typer leaves it in orderedStatics; move its (non-trivial) body to init here (cpp-only) so
+		// it emits as `void C::__init__()` and is dropped from method/reflection emission, matching the
+		// reference.
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c):
 				var initCf = null;
@@ -505,8 +505,8 @@ class CppGen {
 	}
 
 	static function writeFile(path:String, content:String):Void {
-		// Match the host oracle: the emitter only ever writes "\n", so a blanket split/join produces no
-		// double-CR.
+		// Generated sources use the platform's text line ending: on Windows every "\n" the writer emits
+		// becomes "\r\n". The emitter only ever writes "\n", so a blanket split/join produces no double-CR.
 		if (Sys.systemName() == "Windows") content = content.split("\n").join("\r\n");
 		sys.io.File.saveContent(path, content);
 	}

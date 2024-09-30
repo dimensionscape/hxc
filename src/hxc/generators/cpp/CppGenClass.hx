@@ -538,11 +538,11 @@ class CppGenClass {
 		for (imp in classDef.interfaces)
 			if (!(imp.c.path.pack.length == 2 && imp.c.path.pack[0] == "cpp" && imp.c.path.pack[1] == "rtti"))
 				includeClassHeader(w, imp.c);
-		// From HX_DECLARE_CLASS0 onward goes to the body buffer = write); the begin above + any
-		// inline-ctor stack frames go to the HEADER buffer, so a HX_DECLARE_STACK_FRAME lands between the
-		// includes and HX_DECLARE_CLASS0 (as in the oracle). + gen_forward_decl: a HX_DECLARE_CLASS<n>
-		// for every referenced type (self included), sorted by dotted path. the per-class scriptable as
-		// include_super_args so a cppia host also names the super methods' argument types.
+		// From HX_DECLARE_CLASS0 onward goes to the body buffer; the begin above + any inline-ctor stack
+		// frames go to the HEADER buffer, so a HX_DECLARE_STACK_FRAME lands between the includes and
+		// HX_DECLARE_CLASS0. The forward declarations: a HX_DECLARE_CLASS<n> for every referenced type
+		// (self included), sorted by dotted path. The per-class scriptable flag is passed as
+		// includeSuperArgs so a cppia host also names the super methods' argument types.
 		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, isScriptable());
 		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
 		// One blank line, the @:headerCode, then the namespace, two blanks, @:headerNamespaceCode.

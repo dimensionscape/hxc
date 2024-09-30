@@ -638,9 +638,9 @@ class Inline {
 			};
 			TypeFunctions.mk(TBlock(binds.concat(bodyEls)), tret, p);
 		};
-		// The wrap check reads `follow e.type` before map_type substitutes parameters, so an inlined body
-		// typed as an open mono or a raw type parameter casts even when the substituted type equals tret
-		// (the cpp oracle keeps `cast unsafeGet(...)` for Vector.get<String>).
+		// The wrap check reads the followed type before the type map substitutes parameters, so an
+		// inlined body typed as an open mono or a raw type parameter casts even when the substituted type
+		// equals tret (the cpp output keeps `cast unsafeGet(...)` for Vector.get<String>).
 		var preMapType = result.type;
 		if (mapType != null) {
 			var skipExprs = params.copy();

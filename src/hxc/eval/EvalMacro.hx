@@ -1351,6 +1351,8 @@ class EvalMacro {
 					});
 					if (!isPos) fields.push({name: name, pos: p, quotes: isIdentName(name) ? NoQuotes : DoubleQuotes, expr: valueToExpr(ec, val, p)});
 				}
+				// Object fields fold the eval IntMap, a PATRICIA trie: the observable field order is
+				// ascending little-endian-patricia visit order of the hashed keys.
 				inline function camlOrder(names:Array<String>):Array<String>
 					return hxc.eval.EvalStdLib.sortNamesPtmap(names);
 				switch (o.oproto) {
