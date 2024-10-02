@@ -44,6 +44,15 @@ class Parser {
 	public static var displayOffset:Int = -1;
 	// Signature display (display mode DMSignature).
 	public static var displaySignatureMode:Bool = false;
+	// Completion display (display mode DMDefault): field or toplevel completion.
+	public static var displayCompletionMode:Bool = false;
+	// The name Meta.HxCompletion carries; it never reaches a real declaration, only the
+	// metadata completion answer, which reports a null subject for it.
+	public static inline var HX_COMPLETION_META = ":hxCompletion";
+	// Set when the SOURCE wrote a metadata entry whose name the cursor is on. Only the
+	// parser can tell that: by the time fields are typed their metadata also holds injected
+	// entries, which carry the position of whatever they were attached to.
+	public static var displayMetaFound:Bool = false;
 	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
@@ -53,6 +62,8 @@ class Parser {
 		displayFile = null;
 		displayOffset = -1;
 		displaySignatureMode = false;
+		displayCompletionMode = false;
+		displayMetaFound = false;
 		syntaxErrors = [];
 	}
 
@@ -267,7 +278,13 @@ class Parser {
 	// In signature display, the argument whose span from the preceding separator to the following one
 	// covers the cursor is marked, and the index of that marked argument is what the answer reports as
 	// the active parameter. Counting finished arguments instead puts the cursor on the next parameter
-	// as soon as it leaves the last one.
+	// as soon as it leaves the last one. the cursor sitting exactly at the end of this token, in the
+	// display file and in completion mode, means the construct the token opens is what is being
+	// completed.
+	function checkResume(p:Position):Bool {
+		return displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset;
+	}
+
 	function checkSignatureMark(e:Expr, p1:Position, p2:Position):Expr {
 		if (!displaySignatureMode || displayOffset < 0) return e;
 		// Union of p1 and p2, then the enclosing-position test with a strict upper bound
@@ -445,7 +462,17 @@ class Parser {
 
 	function parseMetaEntry():MetadataEntry {
 		var p1 = expect(At);
-		var name = parseMetaName(p1);
+		// A lone @ with the cursor right after it stands for the metadata completion marker, so the
+		// declaration parses and the answer comes from the marker's position instead of the parse failing
+		// on whatever follows.
+		var resumeMarker = checkResume(p1);
+		var name = try parseMetaName(p1) catch (er:ParserError) {
+			if (!resumeMarker) throw er;
+			syntaxErrors.push({msg: er.msg, pos: er.pos});
+			// The marker exists only because the cursor is on this entry.
+			displayMetaFound = true;
+			return {name: HX_COMPLETION_META, params: [], pos: p1};
+		}
 		var pEnd = tokens[idx - 1].pos;
 		var params:Array<Expr> = [];
 		// A `(...)` is metadata ARGS only when the `(` is IMMEDIATELY adjacent to the name (POpen.min ==
@@ -462,20 +489,36 @@ class Parser {
 				throw new ParserError(Expected(params.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 			// The entry position spans the name only; the arguments are excluded.
 		}
-		return {name: name, params: params, pos: Position.union(p1, pEnd)};
+		var entry = {name: name, params: params, pos: Position.union(p1, pEnd)};
+		// The display position sitting on the entry completes its name.
+		if (displayCompletionMode && isDisplayFile() && displayOffset >= entry.pos.min && displayOffset <= entry.pos.max)
+			displayMetaFound = true;
+		return entry;
+	}
+
+	// Every part must sit IMMEDIATELY after what precedes it (p.min = p1.max). A following '.' needs no
+	// adjacency of its own, but the part after it must be adjacent to the dot.
+	function metaNameParts(prev:Position, acc:Array<String>):Array<String> {
+		if (peekInfo().pos.min != prev.max) throw new ParserError(Expected(["metadata name"]), peekInfo().pos);
+		acc.push(metaNamePart());
+		if (tokEq(peek(), Dot)) return metaNameParts(next().pos, acc);
+		return acc;
 	}
 
 	function parseMetaName(p1:Position):String {
-		// Optional leading ':' for compiler meta
-		var prefix = "";
-		if (tokEq(peek(), DblDot)) { junk(); prefix = ":"; }
-		var parts:Array<String> = [];
-		parts.push(metaNamePart());
-		while (tokEq(peek(), Dot)) {
-			junk();
-			parts.push(metaNamePart());
+		// A leading ':' must itself be adjacent to the '@'. Without the adjacency rule a name on the next
+		// LINE reads as the metadata's name, which swallows the declaration that follows a bare '@'.
+		if (tokEq(peek(), DblDot) && peekInfo().pos.min == p1.max) {
+			var pd = next().pos;
+			// A cursor right after the ':' is completing the name as well
+			var marker = checkResume(pd);
+			return try ":" + metaNameParts(pd, []).join(".") catch (er:ParserError) {
+				if (!marker) throw er;
+				syntaxErrors.push({msg: er.msg, pos: er.pos});
+				HX_COMPLETION_META;
+			}
 		}
-		return prefix + parts.join(".");
+		return metaNameParts(p1, []).join(".");
 	}
 
 	function metaNamePart():String {
@@ -1793,6 +1836,82 @@ class Parser {
 		}
 	}
 
+	// Walk BACK over the tokens that merely prefix a declaration (a `private`, a metadata entry with or
+	// without its call parentheses) so the skip stops in front of the declaration itself rather than in the
+	// middle of its prefix, then drop k tokens. The window is read back to front, so index 0 below is the
+	// k-th token ahead.
+	function junkTokens(k:Int):Void {
+		while (k > 0) {
+			inline function tok(i:Int):Token return peek(k - 1 - i);
+			if (tok(0).match(Kwd(KwdPrivate))) { k--; continue; }
+			var isName = switch (tok(0)) {
+				case Const(CIdent(_)) | Kwd(_): true;
+				case _: false;
+			};
+			if (isName && k >= 2 && tok(1).match(At)) { k = k - 2; continue; }
+			if (isName && k >= 3 && tok(1).match(DblDot) && tok(2).match(At)) { k = k - 3; continue; }
+			if (tok(0).match(PClose)) {
+				// Count matching parentheses back to the metadata call's opening one.
+				var n = 0, i = 1;
+				while (i < k) {
+					switch (tok(i)) {
+						case POpen: if (n == 0) break; n--;
+						case PClose: n++;
+						case _:
+					}
+					i++;
+				}
+				var nameAt = i + 1;
+				var nameIsName = nameAt < k ? (switch (tok(nameAt)) { case Const(CIdent(_)) | Kwd(_): true; case _: false; }) : false;
+				if (nameIsName && nameAt + 1 < k && tok(nameAt + 1).match(At)) { k = k - (nameAt + 2); continue; }
+				if (nameIsName && nameAt + 2 < k && tok(nameAt + 1).match(DblDot) && tok(nameAt + 2).match(At)) { k = k - (nameAt + 3); continue; }
+			}
+			break;
+		}
+		idx += k;
+	}
+
+	// Resume: skip forward to the next plausible declaration start so a broken one does not abort the
+	// whole file. Returns true when a field start was found (the caller retries a field), false at a
+	// closing brace, a type keyword or Eof (the caller stops).
+	function resumeScan(tdecl:Bool, fdecl:Bool):Bool {
+		var k = 1;
+		while (true) {
+			if (idx + k - 1 >= tokens.length) return false;
+			inline function tok(i:Int):Token return peek(k - 1 - i);
+			var t0 = tok(0);
+			var t1 = k >= 2 ? tok(1) : null;
+			var t2 = k >= 3 ? tok(2) : null;
+			var isKwd = t0.match(Kwd(_));
+			if (isKwd && t1 != null && t1.match(At)) { k++; continue; }
+			if (isKwd && t1 != null && t2 != null && t1.match(DblDot) && t2.match(At)) { k++; continue; }
+			if (fdecl) {
+				var fieldStart = switch [t0, t1] {
+					case [Const(_), Kwd(KwdFunction)]: true;
+					case [Kwd(KwdNew), Kwd(KwdFunction)]: true;
+					case _: false;
+				};
+				if (fieldStart) { junkTokens(k - 2); return true; }
+				switch (t0) {
+					case Kwd(KwdMacro) | Kwd(KwdPublic) | Kwd(KwdStatic) | Kwd(KwdVar) | Kwd(KwdFinal)
+						| Kwd(KwdOverride) | Kwd(KwdDynamic) | Kwd(KwdInline) | Kwd(KwdOverload):
+						junkTokens(k - 1);
+						return true;
+					case _:
+				}
+			}
+			if (tdecl && t0.match(BrClose)) { junkTokens(k - 1); return false; }
+			switch (t0) {
+				case Eof | Kwd(KwdImport) | Kwd(KwdUsing) | Kwd(KwdExtern) | Kwd(KwdClass)
+					| Kwd(KwdInterface) | Kwd(KwdEnum) | Kwd(KwdTypedef) | Kwd(KwdAbstract):
+					junkTokens(k - 1);
+					return false;
+				case _:
+			}
+			k++;
+		}
+	}
+
 	function parseTypeDecls(pack:Array<String>):Array<TypeDecl> {
 		var acc:Array<TypeDecl> = [];
 		while (true) {
@@ -1802,6 +1921,14 @@ class Parser {
 			try {
 				td = parseTypeDecl();
 			} catch (e:ParserError) {
+				// In the display file the error is recorded and the scan skips to the next plausible
+				// declaration, so one broken declaration does not cost the answer for the rest of the file.
+				if (displayFile != null) {
+					syntaxErrors.push({msg: e.msg, pos: e.pos});
+					if (idx == save) idx++;
+					resumeScan(false, false);
+					continue;
+				}
 				// No error-recovery in batch mode: rethrow if we made progress past EOF
 				idx = save;
 				if (tokEq(peek(), Eof)) break;

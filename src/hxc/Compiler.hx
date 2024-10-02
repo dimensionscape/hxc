@@ -617,6 +617,7 @@ class Compiler {
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					hxc.typing.Typer.displaySignature = dmode == "signature";
 					hxc.parser.Parser.displaySignatureMode = dmode == "signature";
+					hxc.parser.Parser.displayCompletionMode = dmode == "" || dmode == "toplevel";
 					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
 					// package loads as that package's module; the basename alone would look for it at the
 					// classpath root.
@@ -771,6 +772,16 @@ class Compiler {
 					return;
 				}
 				displaySignature(ctx);
+				return;
+			}
+			// A display position sitting on a metadata ENTRY completes the metadata name. That answer
+			// raises from inside typing, so a field or type completion at the same spot answers first; here
+			// the check runs after typing, so it has to come after every other answer has declined.
+			// The parser flags it, because it is the only stage that sees only what the SOURCE wrote: a
+			// typed field's metadata also holds injected entries, and those carry the position of the field
+			// itself, which would swallow a completion anywhere in it.
+			if (hxc.parser.Parser.displayMetaFound) {
+				answerMetadataCompletion(ctx);
 				return;
 			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
@@ -2032,6 +2043,22 @@ class Compiler {
 				}
 			}
 		}
+	}
+
+	// Under DMDefault: completing a metadata name answers the whole registry as CRMetadata fields. The
+	// subject is null for the completion marker, which is why a bare @ lists everything rather than
+	// filtering.
+	static function answerMetadataCompletion(ctx:Context):Void {
+		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		for (mv in hxc.context.MetaRegistry.metas()) {
+			var name = hxc.context.MetaRegistry.stringField(mv, "metadata", "");
+			// The 4.3.7 binary's generated Meta list predates this meta.json entry.
+			if (name == ":inlineConstructorArgument") continue;
+			fields.push({kind: "metadata", name: "@" + name, type: "", doc: hxc.context.MetaRegistry.stringField(mv, "doc", "")});
+		}
+		for (k in ctx.userMetas.keys())
+			fields.push({kind: "metadata", name: "@" + k, type: "", doc: ctx.userMetas.get(k).doc});
+		answerOut(hxc.compiler.DisplayXml.printFields(fields));
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {
