@@ -756,11 +756,17 @@ class Lexer {
 		}
 		var xml = lexXml(); // Scans from '<' through the close; leaves pos after the literal
 		var end = pos;
-		var metaPos = mkPos(start, start + 1);
+		// A markup literal builds the EMeta node directly and has no tokens here, so this prefix is
+		// synthetic either way. It must still be CONTIGUOUS: the grammar reads a metadata name as parts
+		// that each begin where the previous one ended, so the ':' must start where the '@' ends, not
+		// where it starts. The '@' keeps the '<' span the entry uses, and the rest are empty at its end,
+		// so the entry position unions back to exactly that span.
+		var atPos = mkPos(start, start + 1);
+		var afterAt = mkPos(start + 1, start + 1);
 		return [
-			new TokenInfo(At, metaPos),
-			new TokenInfo(DblDot, metaPos),
-			new TokenInfo(Const(CIdent("markup")), metaPos),
+			new TokenInfo(At, atPos),
+			new TokenInfo(DblDot, afterAt),
+			new TokenInfo(Const(CIdent("markup")), afterAt),
 			new TokenInfo(Const(CString(xml, SDoubleQuotes)), mkPos(start, end)),
 		];
 	}
