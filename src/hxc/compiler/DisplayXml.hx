@@ -107,7 +107,7 @@ class DisplayXml {
 	}
 
 	// Print the full path in p; omit p for a null position.
-	public static function printType(t:String, p:hxc.ast.Position):String {
+	public static function printType(t:String, p:hxc.ast.Position, ?doc:String):String {
 		var head = if (p == null || p.min == -1) {
 			"<type";
 		} else {
@@ -115,6 +115,7 @@ class DisplayXml {
 			var ap = new hxc.ast.Position(full, p.min, p.max);
 			'<type p="' + htmlescape(hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', ap)) + '"';
 		}
+		if (doc != null) head += ' d="' + htmlescape(doc) + '"';
 		return head + ">\n" + htmlescape(t) + "\n</type>\n";
 	}
 

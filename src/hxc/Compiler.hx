@@ -96,8 +96,51 @@ class Compiler {
 	}
 
 	static function runWaitStdio():Void {
-		var stdin = Sys.stdin();
-		var stderr = Sys.stderr();
+		runWaitLoop(Sys.stdin(), Sys.stderr());
+	}
+
+	// The STARTUP arguments are parsed before entering the wait loop, so a --cwd given when the server was
+	// launched is in effect for every request that follows; each request's own paths are then relative to
+	// it.
+	static function applyStartupArgs(args:Array<String>):Void {
+		var i = 0;
+		while (i < args.length) {
+			var a = args[i++];
+			if ((a == "--cwd" || a == "-C") && i < args.length) {
+				var dir = args[i++];
+				try Sys.setCwd(dir) catch (_:Dynamic) {}
+			}
+		}
+	}
+
+	// --server-connect dials the given port and then runs the same request loop, since a socket is
+	// framed exactly as stdin/stderr are. Only the endpoints differ.
+	static function runWaitConnect(hostPort:String):Void {
+		// "host:port", or a bare port on 127.0.0.1.
+		var host = "127.0.0.1";
+		var portStr = hostPort;
+		var colon = hostPort.indexOf(":");
+		if (colon >= 0) {
+			host = hostPort.substr(0, colon);
+			portStr = hostPort.substr(colon + 1);
+		}
+		var port = Std.parseInt(portStr);
+		if (port == null) {
+			Sys.stderr().writeString("Invalid port
+");
+			Sys.exit(1);
+		}
+		var sock = new sys.net.Socket();
+		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
+			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "
+");
+			Sys.exit(1);
+		}
+		runWaitLoop(sock.input, sock.output);
+		try sock.close() catch (_:Dynamic) {}
+	}
+
+	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
 		while (true) {
 			var len = try {
 				var b0 = stdin.readByte();
@@ -286,7 +329,14 @@ class Compiler {
 		// a \x02 line flags failure; anything else is a compiler message line.
 		var waitAt = args.indexOf("--wait");
 		if (waitAt >= 0 && waitAt + 1 < args.length && args[waitAt + 1] == "stdio") {
+			applyStartupArgs(args);
 			runWaitStdio();
+			return;
+		}
+		var connectAt = args.indexOf("--server-connect");
+		if (connectAt >= 0 && connectAt + 1 < args.length) {
+			applyStartupArgs(args);
+			runWaitConnect(args[connectAt + 1]);
 			return;
 		}
 		var ctx = new Context();
@@ -371,9 +421,12 @@ class Compiler {
 				// The compilation server. Not implemented here, but the argument must still be consumed and
 				// reported clearly - left unhandled it is taken as a class path and the build fails with a
 				// misleading "Package <port> was not found".
-				case "--server-listen" | "--server-connect":
+				case "--server-listen":
 					var spec = args[i++];
 					throw "The compilation server is not supported (" + a + " " + spec + ")";
+				case "--server-connect":
+					// Handled before the argument loop; a request's own argument list repeats it.
+					i++;
 				case "--resource" | "-r" | "-resource": addResource(ctx, args[i++]);
 				case "--remap":
 					var spec = args[i++];
@@ -737,8 +790,9 @@ class Compiler {
 					return;
 				}
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
+				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound.e);
 				if (h == null) h = hoverOnFieldName(ctx);
-				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p));
+				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
 				return;
 			}
 			if (hxc.typing.Typer.displayImplementation) {
@@ -807,11 +861,15 @@ class Compiler {
 			// onGenerate callbacks run inside Filters.run a targetless compile has no filter pipeline, so
 			// they fire here to keep macro tests observable.
 			if (platform == Cross) hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
-			if (isDisplay(ctx, "diagnostics")) {
+			// The report comes after the filters, so it covers what they raise (the analyzer's value checks,
+			// among others). A target with no filter pipeline has nothing further to run, so it reports here
+			// instead.
+			if (isDisplay(ctx, "diagnostics")
+				&& !(platform == Js || platform == Cpp || platform == Eval || platform == Neko)) {
 				displayDiagnostics(ctx);
 				return;
 			}
-			abortOnDiagnostics(ctx, platform);
+			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// The --xml / --json type descriptions are written after typing but before the target
 			// generation, and are not gated on --no-output.
 			function auxiliaryOutput():Void {
@@ -837,6 +895,10 @@ class Compiler {
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
+				if (isDisplay(ctx, "diagnostics")) {
+					displayDiagnostics(ctx);
+					return;
+				}
 				abortOnDiagnostics(ctx, platform);
 				// Typer/compiledTypes: every compiled type serializes after the filters.
 				if (ctx.jsonRpcId != null && isDisplay(ctx, "compiledTypes")) {
@@ -1843,7 +1905,19 @@ class Compiler {
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
-	// Through the ported serializer.
+	// Through the ported serializer. a hover reports the documentation of the ITEM under the cursor,
+	// which is the field's, the enum constructor's or the type's own doc.
+	static function hoverDocumentation(e:Null<hxc.core.Type.TExpr>):Null<String> {
+		if (e == null) return null;
+		var doc:hxc.ast.Ast.Documentation = switch (e.expr) {
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf)): cf.doc;
+			case TField(_, FEnum(_, ef)): ef.doc;
+			case TTypeExpr(mt): hxc.core.TypeFunctions.tInfos(mt).doc;
+			case _: null;
+		};
+		return doc == null ? null : hxc.ast.Ast.genDocText(doc);
+	}
+
 	static function jsonLocation(p:Position):String {
 		return hxc.core.Json.stringOfJson(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull).generatePosAsLocation(p));
 	}
