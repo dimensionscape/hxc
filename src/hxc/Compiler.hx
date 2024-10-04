@@ -817,7 +817,8 @@ class Compiler {
 					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
 					return;
 				}
-				answerOut(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound) + "\n");
+				// The field printer supplies the list terminator; append no newline.
+				answerOut(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound));
 				return;
 			}
 			if (isDisplay(ctx, "signature")) {

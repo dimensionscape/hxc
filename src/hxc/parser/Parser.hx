@@ -1209,6 +1209,16 @@ class Parser {
 	}
 
 	function parseField(e1:Expr, efk:EFieldKind, p:Position):Expr {
+		// Opens with check_resume: a cursor sitting exactly at the dot's end completes on the receiver's
+		// fields, whether or not a name follows it. Only checking the DANGLING dot below missed `foo.bar`
+		// with the cursor right after the dot, which is the ordinary way an editor asks for completion.
+		// The empty field name is how the request is carried here, as the dangling-dot case already does.
+		// A cursor inside the field name completes on the same receiver: the reference gets there by
+		// annotating the enclosing field access DKMarked) rather than at the dot, but the request and the
+		// answer are the same, and the span from the dot to the end of the name is what encloses_position
+		// accepts for that access.
+		if (checkResume(p) || (displayCompletionMode && atDisplayDot(p)))
+			return exprNext(new Expr(EField(e1, "", efk), Position.union(e1.pos, p)));
 		switch (peek()) {
 			case Kwd(KwdMacro):
 				var p2 = next().pos;
