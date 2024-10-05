@@ -2099,7 +2099,11 @@ class Parser {
 				// `final NAME...` module-level final var
 				var rc = c.copy();
 				rc.reverse();
-				if (rc.length > 0 && rc[0].flag == DFinal) {
+				// The module-level field parse is ATTEMPTED, and falling out of it is what reaches the flag
+				// completion. `final ` with the cursor after it is a declaration flag, not the start of a
+				// final variable.
+				var beforeFinal = idx;
+				if (rc.length > 0 && rc[0].flag == DFinal) try {
 					var p1 = rc[0].pos;
 					var crest = rc.slice(1);
 					crest.reverse();
@@ -2113,6 +2117,8 @@ class Parser {
 						dFlags: flags, dData: FVar(t, a.e),
 					};
 					return {decl: EStatic(def), pos: Position.union(p1, a.pos)};
+				} catch (er:ParserError) {
+					idx = beforeFinal;
 				}
 				checkTypeDeclFlagCompletion(c);
 				return serror();
