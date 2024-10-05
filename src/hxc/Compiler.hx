@@ -839,6 +839,21 @@ class Compiler {
 				answerMetadataCompletion(ctx);
 				return;
 			}
+			// A display mode that EXITS during typing has to have been answered by then. Reaching this point
+			// means no hook covered the position, which is an error the client relies on, not a silent
+			// success. An actual compile error wins: aborts on has_error before reporting a missing
+			// completion point.
+			if (hxc.parser.Parser.displayFile != null && ctx.jsonRpcId == null && !ctx.hasError()) {
+				var dm = displayParts(ctx);
+				var dmode = dm.length >= 3 ? dm[2] : "";
+				switch (dmode) {
+					case "" | "position" | "type" | "typeDefinition" | "signature" | "toplevel":
+						answerOut("Error: No completion point was found
+");
+						exitRequest(1);
+					case _:
+				}
+			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// Null safety runs before every expression filter and elimination so it sees the exprs as
 			// typed.
