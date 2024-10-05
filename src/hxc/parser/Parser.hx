@@ -2204,6 +2204,18 @@ class Parser {
 		}
 	}
 
+	// With the cursor sitting just past `extends` or `implements`, the heritage takes the MAGIC type
+	// path an empty name) at the display position instead of failing. Loading that path is what asks
+	// which types may stand here, and the inheritance check is what filters them.
+	function parseHeritTypePath(pkeyword:Position):PlacedTypePath {
+		if (displayCompletionMode && isDisplayFile() && displayOffset >= pkeyword.max + 1
+			&& displayOffset <= peekInfo().pos.max) {
+			var dp = new Position(pkeyword.file, displayOffset, displayOffset);
+			return {path: {tpackage: [], tname: "", tparams: [], tsub: null}, pos: dp};
+		}
+		return parseTypePath();
+	}
+
 	function parseClassContent(doc:Documentation, meta:Metadata, c:Array<PlacedDeclFlag>, n:Array<ClassFlag>, p1:Position):TypeDecl {
 		var name = typeName();
 		var tl = parseConstraintParams();
@@ -2211,18 +2223,23 @@ class Parser {
 		while (true) {
 			switch (peek()) {
 				case Kwd(KwdExtends):
-					junk();
-					var t = parseTypePath();
+					var pk = next().pos;
+					var t = parseHeritTypePath(pk);
 					hl.push(HExtends(t));
 				case Kwd(KwdImplements):
-					junk();
-					var t = parseTypePath();
+					var pk = next().pos;
+					var t = parseHeritTypePath(pk);
 					hl.push(HImplements(t));
 				case _:
 					break;
 			}
 		}
-		expect(BrOpen);
+		// The `{` TERMINATES the heritage loop, and its absence is a recorded syntax error rather than a
+		// raise, so the fields still parse. Requiring it here would drop the whole declaration in a display
+		// file and with it any answer inside its heritage.
+		if (!tokEq(peek(), BrOpen) && displayFile != null)
+			syntaxErrors.push({msg: Expected(["extends", "implements", "{"]), pos: peekInfo().pos});
+		else expect(BrOpen);
 		var cf = parseClassFields(false, p1);
 		var flags = filterClassFlags(c).concat(n).concat(hl);
 		var def:Definition<ClassFlag, Array<ClassField>> = {
@@ -2240,6 +2257,24 @@ class Parser {
 				// declaration.
 				getDoc();
 				break;
+			}
+			// In the display file a failed field is recorded and the scan looks for the next plausible field
+			// start; finding none ends the body where it stands, so a declaration that runs into the next
+			// one still yields a class rather than aborting the file.
+			if (displayFile != null) {
+				var save = idx;
+				var cff = try parseClassField(tdecl) catch (er:ParserError) {
+					syntaxErrors.push({msg: er.msg, pos: er.pos});
+					// Without rewinding, a sibling type after an unclosed body was eaten by the body and
+					// vanished from the module.
+					idx = save;
+					// With no field start left, the body ends here (acc, last_pos) - there is no closing brace to
+					// expect.
+					if (resumeScan(tdecl, true) && idx > save) continue;
+					return {fields: acc, pos: tokens[save > 0 ? save - 1 : 0].pos};
+				};
+				acc.push(cff);
+				continue;
 			}
 			acc.push(parseClassField(tdecl));
 		}

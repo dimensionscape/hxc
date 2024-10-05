@@ -27,6 +27,10 @@ class TypeResolve {
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
 			try {
 				resolveType(ctx, mt, entry.decl, entry.pos);
+			} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+				// A display completion is an answer, not a declaration error: it has to reach the responder
+				// rather than be recorded and swallowed here.
+				throw dc;
 			} catch (e:ContextError) {
 				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of
 				// the module still resolves but the compile fails.
@@ -66,7 +70,9 @@ class TypeResolve {
 		var entry = ctx.declOfType.get(key);
 		if (entry == null) return;
 		onDemand.set(key, true);
-		try resolveType(ctx, mt, entry.decl, entry.pos) catch (_:Dynamic) {}
+		try resolveType(ctx, mt, entry.decl, entry.pos)
+		catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) { onDemand.remove(key); throw dc; }
+		catch (_:Dynamic) {}
 		onDemand.remove(key);
 	}
 
@@ -157,11 +163,62 @@ class TypeResolve {
 		}
 	}
 
+	// Loading a heritage under a display request answers the toplevel type set, which is then filtered
+	// for the position. An interface cannot `implements` at all, so answers nothing. Otherwise an
+	// interface is offered when implementing (or when an interface extends), and a class only when
+	// extending a class - never the type being declared, never a final one unless @:hack, and never a
+	// basic class unless both are extern.
+	static function answerHeritCompletion(ctx:Context, c:TClass, isExtends:Bool, p:Position):Void {
+		var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
+		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		if (isExtends || !isInterface) {
+			inline function isBasicClassPath(path:hxc.core.Globals.Path):Bool {
+				return path.pack.length == 0
+					&& (path.name == "Array" || path.name == "String" || path.name == "Date" || path.name == "Xml");
+			}
+			for (mt in visibleTypesForCompletion(ctx)) {
+				var inf = TypeFunctions.tInfos(mt);
+				if (inf.isPrivate || Context.pathKey(inf.path) == Context.pathKey(c.path)) continue;
+				var keep = switch (mt) {
+					case TClassDecl(cm) if (TypeFunctions.hasClassFlag(cm, CInterface)):
+						!isExtends || isInterface;
+					case TClassDecl(cm):
+						isExtends && !isInterface
+							&& (!TypeFunctions.hasClassFlag(cm, CFinal) || TypeFunctions.hasMeta(":hack", c.meta))
+							&& (!isBasicClassPath(cm.path)
+								|| (TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasClassFlag(cm, CExtern)));
+					case _: false;
+				};
+				if (keep) items.push({kind: "type", name: inf.path.name, path: hxc.core.Globals.sTypePath(inf.path)});
+			}
+			items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
+		}
+		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
+	}
+
+	// The types a completion here can see: everything loaded so far, which is what the reference's
+	// collect reaches through the module lookup at the same moment.
+	static function visibleTypesForCompletion(ctx:Context):Array<ModuleType> {
+		var out:Array<ModuleType> = [];
+		var seen = new Map<String, Bool>();
+		for (key in ctx.moduleLut.keys()) {
+			var m = ctx.moduleLut.get(key);
+			for (mt in m.types) {
+				var k = Context.pathKey(TypeFunctions.tInfos(mt).path);
+				if (seen.exists(k)) continue;
+				seen.set(k, true);
+				out.push(mt);
+			}
+		}
+		return out;
+	}
+
 	public static function resolveClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
 				heritagePositions.set(Context.pathKey(c.path), pt.pos);
+				if (pt.path.tname == "") answerHeritCompletion(ctx, c, true, pt.pos);
 				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					throw err;
@@ -169,6 +226,7 @@ class TypeResolve {
 				checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
 				heritagePositions.set(Context.pathKey(c.path), pt.pos);
+				if (pt.path.tname == "") answerHeritCompletion(ctx, c, false, pt.pos);
 				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					throw err;
