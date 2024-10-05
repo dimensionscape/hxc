@@ -1955,6 +1955,25 @@ class Parser {
 		return acc;
 	}
 
+	// A cursor sitting after a type-declaration flag (`extern `, `final `, ...) asks which declaration
+	// keywords may still follow it: class and interface always, plus the flags not already given, and
+	// final additionally opens enum/abstract/typedef.
+	function checkTypeDeclFlagCompletion(flags:Array<{flag:DeclFlag, pos:Position}>):Void {
+		if (!displayCompletionMode || !isDisplayFile() || flags.length == 0) return;
+		// would_skip_display_position: the cursor lies between the flag and the next token.
+		var last = flags[flags.length - 1].pos;
+		if (!(displayOffset >= last.max + 1 && displayOffset <= peekInfo().pos.max)) return;
+		function has(f:DeclFlag):Bool {
+			for (x in flags) if (Type.enumEq(x.flag, f)) return true;
+			return false;
+		}
+		var l = ["class", "interface"];
+		if (!has(DPrivate)) l.unshift("private");
+		if (!has(DExtern)) l.unshift("extern");
+		if (!has(DFinal)) l = ["final", "enum", "abstract", "typedef"].concat(l);
+		throw new hxc.compiler.DisplayXml.SyntaxCompletion(l);
+	}
+
 	function parseTypeDecl():TypeDecl {
 		switch (peek()) {
 			case Kwd(KwdImport):
@@ -2084,6 +2103,7 @@ class Parser {
 					};
 					return {decl: EStatic(def), pos: Position.union(p1, a.pos)};
 				}
+				checkTypeDeclFlagCompletion(c);
 				return serror();
 		}
 	}

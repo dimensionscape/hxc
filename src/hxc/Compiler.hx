@@ -974,6 +974,9 @@ class Compiler {
 		} catch (dp:hxc.compiler.DisplayXml.DisplayPositions) {
 			answerOut(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
 			return;
+		} catch (sc:hxc.compiler.DisplayXml.SyntaxCompletion) {
+			answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
+			return;
 		} catch (tl:hxc.compiler.DisplayXml.ToplevelCompletion) {
 			// No trailing newline: the completion string prints verbatim.
 			answerOut(hxc.compiler.DisplayXml.printToplevel(tl.items));

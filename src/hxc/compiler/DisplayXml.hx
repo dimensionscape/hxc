@@ -29,6 +29,15 @@ typedef ToplevelItem = {
 	?doc:String,
 }
 
+// Syntax keyword answers use their own printer and concatenate items without separators.
+class SyntaxCompletion {
+	public final keywords:Array<String>;
+
+	public function new(keywords:Array<String>) {
+		this.keywords = keywords;
+	}
+}
+
 class ToplevelCompletion {
 	public final items:Array<ToplevelItem>;
 
@@ -61,6 +70,14 @@ class DisplayXml {
 			b.add('<i n="' + f.name + '" k="' + f.kind + '"><t>' + htmlescape(f.type) + "</t><d>" + htmlescape(d) + "</d></i>\n");
 		}
 		b.add("</list>\n");
+		return b.toString();
+	}
+
+	public static function printKeywords(kwds:Array<String>):String {
+		var b = new StringBuf();
+		b.add("<il>\n");
+		for (k in kwds) b.add('<i k="keyword">' + k + "</i>");
+		b.add("</il>");
 		return b.toString();
 	}
 
