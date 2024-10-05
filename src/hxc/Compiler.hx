@@ -1947,6 +1947,12 @@ class Compiler {
 
 	static function displayDiagnostics(ctx:Context):Void {
 		var groups:Array<{file:String, items:Array<String>}> = [];
+		// An unresolved identifier is its own kind (1) whose args are the suggestion list, not a message.
+		// The compiler error it also produced would otherwise report it generically as a compiler message
+		// (2) with the text as args.
+		var unresolvedAt = new Map<String, Array<{kind:Int, name:String}>>();
+		for (u in ctx.unresolvedIdentifiers)
+			unresolvedAt.set(u.pos.file + ":" + u.pos.min + ":" + u.pos.max, u.suggestions);
 		for (d in ctx.diagnostics) {
 			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
 			var i = Position.getInfos(d.pos);
@@ -1961,6 +1967,11 @@ class Compiler {
 			};
 			var kind = d.kind == null ? 2 : d.kind;
 			var args = haxe.Json.stringify(d.message);
+			var sug = unresolvedAt.get(d.pos.file + ":" + d.pos.min + ":" + d.pos.max);
+			if (sug != null && StringTools.startsWith(d.message, "Unknown identifier :")) {
+				kind = 1;
+				args = "[" + [for (x in sug) '{"kind":' + x.kind + ',"name":' + haxe.Json.stringify(x.name) + "}"].join(",") + "]";
+			}
 			var item = '{"kind":' + kind + ',"severity":' + severity
 				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
 				+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn

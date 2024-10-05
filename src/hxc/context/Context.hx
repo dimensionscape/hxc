@@ -125,6 +125,9 @@ class Context {
 	public var unresolvedFields:Int = 0;
 
 	public var diagnostics:Array<CompilerDiagnostic>;
+	// Capture unresolved-identifier candidates when typing fails; the typer context is gone by
+	// diagnostics reporting.
+	public var unresolvedIdentifiers:Array<{name:String, pos:Position, suggestions:Array<{kind:Int, name:String}>}> = [];
 	public var warningOptions:Array<Array<hxc.core.WarningList.WarningOption>>;
 
 	public var moduleImports:StringMap<ModuleImports>;

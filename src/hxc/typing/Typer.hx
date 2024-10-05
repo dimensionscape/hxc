@@ -1595,6 +1595,29 @@ class Typer {
 		return out;
 	}
 
+	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind
+	// 0); anything else is a typo suggestion naming it (kind 1).
+	static function recordUnresolvedIdentifier(ctx:TyperContext, i:String, p:Position):Void {
+		var items = try collectToplevel(ctx) catch (_:Dynamic) return;
+		var scored = [];
+		for (it in items) {
+			var d = hxc.core.StringError.levenshtein(i, it.name);
+			scored.push({item: it, d: d});
+		}
+		scored.sort(function(a, b) return a.d - b.d);
+		var out:Array<{kind:Int, name:String}> = [];
+		for (e in scored) {
+			// Similarity filtering stops at the first candidate that fails the bound.
+			var shorter = i.length < e.item.name.length ? i.length : e.item.name.length;
+			if (e.d > Std.int(shorter / 3)) break;
+			if (e.d == 0) {
+				if (e.item.kind != "type") continue;
+				out.push({kind: 0, name: e.item.path != null ? e.item.path : e.item.name});
+			} else out.push({kind: 1, name: e.item.name});
+		}
+		ctx.com.unresolvedIdentifiers.push({name: i, pos: p, suggestions: out});
+	}
+
 	static function collectToplevel(ctx:TyperContext, ?withType:WithType):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		inline function sType(t:T):String return hxc.core.TPrinting.sTypeStr(t);
@@ -2409,6 +2432,9 @@ class Typer {
 				if (mod != null && hxc.context.ModuleLoader.findTypeInModuleOpt(mod, i) == null)
 					throw new TypingError("Module " + hxc.core.Globals.sTypePath(mod.path) + " does not define type " + i, p);
 			}
+			// Record the candidates the toplevel set offers, so the diagnostics report can name them. It
+			// runs long after this context is gone, which is why the suggestions are computed here.
+			if (ctx.com.displaySpec != null) recordUnresolvedIdentifier(ctx, i, p);
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
 		switch (mt) {
