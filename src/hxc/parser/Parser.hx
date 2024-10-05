@@ -1692,9 +1692,15 @@ class Parser {
 				}
 				throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 			case BkOpen:
-				junk();
+				var p1 = next().pos;
 				var e2 = secureExpr();
-				var p2 = expect(BkClose);
+				// A missing ] is recorded, not raised, and the index carries the signature mark like a call
+				// argument does.
+				var p2 = if (!tokEq(peek(), BkClose) && displayFile != null) {
+					syntaxErrors.push({msg: Expected(["]"]), pos: peekInfo().pos});
+					peekInfo().pos;
+				} else expect(BkClose);
+				e2 = checkSignatureMark(e2, p1, p2);
 				return exprNext(new Expr(EArray(e1, e2), Position.union(e1.pos, p2)));
 			case Arrow:
 				var pa = next().pos;

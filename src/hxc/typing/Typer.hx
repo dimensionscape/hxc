@@ -1458,6 +1458,42 @@ class Typer {
 	public static var displaySignature:Bool = false;
 	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
 
+	// Under signature display: an Array reports one (index:Int) signature returning its element, and
+	// an abstract reports its @:arrayAccess overloads with the `this` argument dropped. Anything else
+	// reports none.
+	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, p:Position):Void {
+		var active = 0;
+		switch (e2.expr) {
+			case EDisplay(inner, DKMarked): active = 0;
+			case _: return; // Only the marked index asks for a signature
+		}
+		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
+		switch (TypeFunctions.follow(te1.type)) {
+			case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"):
+				signatureFound = {
+					// This literal doc is attached to the array index.
+					sigs: [{args: [{name: "index", opt: false, t: ctx.com.basic.tint}], ret: t, doc: Ast.docFromString("The array index")}],
+					activeArg: active
+				};
+			case TAbstract(a, tl):
+				if (a.impl != null) hxc.eval.EvalMacro.ensureBuilt(ctx.com, a.impl);
+				var sigs = [];
+				for (cf in a.array) switch (TypeFunctions.follow(cf.type)) {
+					case TFun(sig) if (sig.args.length > 0):
+						var rest = sig.args.slice(1);
+						sigs.push({
+							args: [for (x in rest) {name: x.name, opt: x.opt, t: TypeFunctions.applyParams(a.params, tl, x.t)}],
+							ret: TypeFunctions.applyParams(a.params, tl, sig.ret),
+							doc: cf.doc
+						});
+					case _:
+				}
+				signatureFound = {sigs: sigs, activeArg: active};
+			case _:
+				signatureFound = {sigs: [], activeArg: active};
+		}
+	}
+
 	static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
 		// The active argument is the index of the one the PARSER marked, and the marker is stripped
 		// before anything is typed, since a display node has no typing of its own. Counting finished
@@ -3459,6 +3495,7 @@ class Typer {
 					acc;
 				}
 			case EArray(e1, e2):
+				if (displaySignature && signatureFound == null) checkArraySignatureDisplay(ctx, e1, e2, p);
 				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
 				switch (a1) {
