@@ -1485,10 +1485,20 @@ class Parser {
 			case Kwd(KwdDo):
 				var p1 = next().pos;
 				var e = secureExpr();
+				// A missing `while` is recorded and the body alone stands in (the `do` is ignored), so an
+				// unfinished loop body still answers.
+				if (!tokEq(peek(), Kwd(KwdWhile)) && displayFile != null) {
+					syntaxErrors.push({msg: Expected(["while"]), pos: peekInfo().pos});
+					return e;
+				}
 				expect(Kwd(KwdWhile));
 				expect(POpen);
 				var cond = secureExpr();
-				var p2 = expect(PClose);
+				// Recorded rather than raised in the display file, as expectUnlessResume does
+				var p2 = if (!tokEq(peek(), PClose) && displayFile != null) {
+					syntaxErrors.push({msg: Expected([")"]), pos: peekInfo().pos});
+					peekInfo().pos;
+				} else expect(PClose);
 				return new Expr(EWhile(cond, e, DoWhile), Position.union(p1, p2));
 			case Kwd(KwdSwitch):
 				var p1 = next().pos;

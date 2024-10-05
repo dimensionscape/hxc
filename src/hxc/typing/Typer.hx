@@ -1899,10 +1899,16 @@ class Typer {
 		var pushScope:hxc.core.Type.ClassFieldScope = CFSMember;
 		var pushOriginClass:Null<TClass> = null;
 		var pushOriginAnon:Null<TAnon> = null;
+		// Every field is mapped through the instance's parameters, so a field of Array<T> on an `[]`
+		// reads as its element monomorph rather than as Array.T.
+		var pushParams:Null<TypeParams> = null;
+		var pushArgs:Null<TParams> = null;
 		function push(cf:TClassField):Void {
 			if (seen.exists(cf.name)) return;
 			seen.set(cf.name, true);
 			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+			if (pushParams != null && pushArgs != null && pushParams.length > 0)
+				t = TypeFunctions.applyParams(pushParams, pushArgs, t);
 			pushJson(cf, pushScope, pushOriginClass, pushOriginAnon, false);
 			fields.push({
 				kind: cf.kind.match(Method(_)) ? "method" : "var",
@@ -1930,16 +1936,28 @@ class Typer {
 				// Fields of the value's type: class instance fields walk the inheritance chain, structures list
 				// their members, and a function value has only the magic bind. .
 				switch (TypeFunctions.follow(typed.type)) {
-					case TInst(c, _):
+					case TInst(c, tl):
 						var cur = c;
+						var curArgs:TParams = tl;
 						while (cur != null) {
 							pushOriginClass = cur;
+							pushParams = cur.params;
+							pushArgs = curArgs;
 							for (name in cur.fields.keys()) {
 								var cf = cur.fields.get(name);
 								if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
 							}
-							cur = cur.superClass == null ? null : cur.superClass.c;
+							if (cur.superClass == null) cur = null;
+							else {
+								// The super's arguments are written in terms of THIS class's
+								// parameters, so they carry the substitution up the chain.
+								var sup = cur.superClass;
+								curArgs = [for (pt in sup.params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
+								cur = sup.c;
+							}
 						}
+						pushParams = null;
+						pushArgs = null;
 					case TAnon(an):
 						pushOriginAnon = an;
 						for (name in an.fields.keys()) push(an.fields.get(name));
