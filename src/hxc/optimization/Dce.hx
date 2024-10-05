@@ -100,7 +100,10 @@ class Dce {
 		return false;
 	}
 
-	static function metaEntry(name:String, p:Position):MetadataEntry return {name: name, params: [], pos: p};
+	// The used and keep metadata entries collapse the position to a zero range: the entry marks the
+	// declaration, it does not span it.
+	static function metaEntry(name:String, p:Position):MetadataEntry
+		return {name: name, params: [], pos: hxc.core.Globals.mkZeroRangePos(p)};
 
 	static function removeMeta(name:String, ml:Metadata):Metadata {
 		return [for (e in ml) if (e.name != name) e];

@@ -27,13 +27,20 @@ class Typeload {
 		genericInstances = new Map();
 	}
 
-	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType):TypedTypeParam {
+	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType, ?declModule:ModuleDef):TypedTypeParam {
 		var n = tp.tpName.name;
 		// A default type parameter is only allowed on a type declaration, not on a constructor, method, or
 		// enum constructor.
 		if (tp.tpDefault != null && host != TPHType)
 			ctx.addDiagnostic("Default type parameters are only supported on types", tp.tpDefault.pos);
-		var c = TypeFunctions.mkClass(TypeFunctions.nullModule, {pack: declPath.pack.concat([declPath.name]), name: n}, tp.tpName.pos, tp.tpName.pos);
+		// The parameter's class path is the declaring path with the parameter's name: it lives under
+		// <module>.<Type>.<N>.
+		// The parameter's class belongs to the module declaring it. A null module leaves its moduleName
+		// empty
+		// everywhere the path is serialized, and currentModule is not it for a macro-defined type, whose
+		// declarations are typed while the module that TRIGGERED the macro is still current.
+		var pmod = declModule != null ? declModule : (ctx.currentModule != null ? ctx.currentModule : TypeFunctions.nullModule);
+		var c = TypeFunctions.mkClass(pmod, {pack: declPath.pack.concat([declPath.name]), name: n}, tp.tpName.pos, tp.tpName.pos);
 		c.kind = KTypeParameter([]);
 		c.meta = tp.tpMeta;
 		var t = TInst(c, []);
@@ -147,7 +154,7 @@ class Typeload {
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 
-	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType):TypeParams {
+	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType, ?declModule:ModuleDef):TypeParams {
 		// Returns the sibling params so a
 		// first, then hand each param a thunk closing over it.
 		var params:TypeParams = [];
@@ -159,7 +166,7 @@ class Typeload {
 			if (names.indexOf(tp.tpName.name) >= 0)
 				ctx.addDiagnostic("Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
 			names.push(tp.tpName.name);
-			params.push(typeTypeParam(ctx, declPath, getParams, tp, host));
+			params.push(typeTypeParam(ctx, declPath, getParams, tp, host, declModule));
 		}
 		return params;
 	}
@@ -1145,8 +1152,14 @@ class Typeload {
 		mg.extra.resolved = 2;
 		var cg = TypeFunctions.mkClass(mg, path, c.pos, c.namePos);
 		cg.doc = c.doc;
-		cg.meta = c.meta;
-		cg.isPrivate = true;
+		// Only a whitelist of the source class's metadata carries over to the instance, and @:noDoc leads
+		// it. isPrivate is not set.
+		var carried = [
+			":access", ":allow", ":final", ":hack", ":internal", ":keep", ":keepSub",
+			":noClosure", ":nullSafety", ":pure", ":struct", ":structInit", ":using", ":unreflective"
+		];
+		cg.meta = [{name: ":noDoc", params: [], pos: Position.nullPos}]
+			.concat([for (m in c.meta) if (carried.indexOf(m.name) >= 0) m]);
 		cg.kind = KGenericInstance(c, params);
 		cg.flags = c.flags;
 		cg.usings = c.usings;

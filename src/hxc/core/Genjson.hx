@@ -184,8 +184,10 @@ class Genjson {
 	}
 
 	function generateAnon(an:TAnon):JsonValue {
-		var fields:Array<JsonValue> = [];
-		for (name in an.fields.keys()) fields.push(generateClassField(CFSMember, an.fields.get(name)));
+		// The fields list in descending name order.
+		var names = [for (name in an.fields.keys()) name];
+		names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+		var fields:Array<JsonValue> = [for (name in names) generateClassField(CFSMember, an.fields.get(name))];
 		return jobject([
 			field("fields", jarray(fields)),
 			field("status", generateAnonStatus(an.status.get()))

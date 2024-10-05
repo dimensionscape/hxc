@@ -363,7 +363,7 @@ class ModuleLoader {
 					c.doc = d.dDoc;
 					c.meta = d.dMeta;
 					// Register type parameters before resolving other modules so their arity is already available.
-					c.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams);
+					c.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m);
 					if (hasClassFlag(d.dFlags, HAbstract)) TypeFunctions.addClassFlag(c, CAbstract);
 					for (f in d.dFlags) switch (f) {
 						case HExtern: TypeFunctions.addClassFlag(c, CExtern);
@@ -403,7 +403,7 @@ class ModuleLoader {
 						namePos: d.dName.pos,
 						doc: d.dDoc,
 						meta: d.dMeta,
-						params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams),
+						params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m),
 						usings: [],
 						restore: function() {},
 						isPrivate: priv,
@@ -427,7 +427,7 @@ class ModuleLoader {
 					t.doc = d.dDoc;
 					t.isPrivate = priv;
 					t.meta = d.dMeta;
-					t.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams);
+					t.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m);
 					decls.push(TTypeDecl(t));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -441,7 +441,7 @@ class ModuleLoader {
 					d.dData = patch.fields;
 					var a:TAbstract = {
 						path: path, module: m, pos: p, namePos: d.dName.pos,
-						isPrivate: priv, doc: d.dDoc, meta: d.dMeta, params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams), usings: [],
+						isPrivate: priv, doc: d.dDoc, meta: d.dMeta, params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m), usings: [],
 						restore: function() {}, ops: [], unops: [], impl: null,
 						thisType: TypeFunctions.mkMono(), from: [], fromField: [], to: [],
 						toField: [], array: [], read: null, write: null, call: null,
@@ -501,7 +501,8 @@ class ModuleLoader {
 		}
 
 		if (statics.length > 0) {
-			var firstPos = statics[0].p;
+			// Use a zero-width position to mark the start of module statics.
+			var firstPos = hxc.core.Globals.mkZeroRangePos(statics[0].p);
 			var fieldsPath = makePath(m.path.name + "_Fields_", true, firstPos);
 			var fields:Array<ClassField> = [
 				for (s in statics) {
