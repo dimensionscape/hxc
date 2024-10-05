@@ -988,6 +988,47 @@ class Parser {
 		return new Expr(EObjectDecl(acc), Position.union(p0, pEnd));
 	}
 
+	// The call parameters take a SEPARATE path in the display file: they recover argument by argument, a
+	// failed one becoming a null STAND-IN spanning the gap up to the next token, and each argument is
+	// marked for signature help. Keeping only the parsed prefix would leave no node under the cursor, so
+	// completion inside an unfinished argument list would have nothing to answer. Both a call and a `new`
+	// go through it.
+	function parseCallParamsResume(pOpen:Position):{el:Array<Expr>, p2:Position} {
+		if (tokEq(peek(), PClose)) return {el: [], p2: next().pos};
+		var el:Array<Expr> = [];
+		var pprev = pOpen;
+		while (true) {
+			var e:Expr;
+			try {
+				e = expr();
+			} catch (er:ParserError) {
+				// Under a display mode the error is recorded, not raised
+				syntaxErrors.push({msg: Expected(el.length == 0 ? ["expression", ")"] : ["expression"]), pos: peekInfo().pos});
+				e = nullStandIn(pprev);
+			}
+			if (tokEq(peek(), PClose)) {
+				var p2 = next().pos;
+				el.push(checkSignatureMark(e, pprev, p2));
+				return {el: el, p2: p2};
+			}
+			if (tokEq(peek(), Comma)) {
+				var pc = next().pos;
+				if (tokEq(peek(), PClose)) {
+					var p3 = next().pos;
+					el.push(checkSignatureMark(e, pprev, p3));
+					return {el: el, p2: p3};
+				}
+				el.push(checkSignatureMark(e, pprev, pc));
+				pprev = pc;
+				continue;
+			}
+			var p2 = peekInfo().pos;
+			syntaxErrors.push({msg: Expected([",", ")"]), pos: p2});
+			el.push(checkSignatureMark(e, pprev, p2));
+			return {el: el, p2: p2};
+		}
+	}
+
 	function parseCallParamsList():Array<Expr> {
 		var el = psepTrailing(expr);
 		if (!tokEq(peek(), PClose))
@@ -1510,7 +1551,11 @@ class Parser {
 		var p1 = next().pos;
 		var t = parseTypePath();
 		if (tokEq(peek(), POpen)) {
-			junk();
+			var pOpen = next().pos;
+			if (displayFile != null) {
+				var r = parseCallParamsResume(pOpen);
+				return exprNext(new Expr(ENew(t, r.el), Position.union(p1, r.p2)));
+			}
 			var el = parseCallParamsList();
 			var p2 = expect(PClose);
 			return exprNext(new Expr(ENew(t, el), Position.union(p1, p2)));
@@ -1648,42 +1693,8 @@ class Parser {
 				// Keeping only the parsed prefix would leave no node under the cursor, so completion inside
 				// an unfinished argument list would have nothing to answer at all.
 				if (displayFile != null) {
-					if (tokEq(peek(), PClose)) {
-						var p2 = next().pos;
-						return exprNext(new Expr(ECall(e1, []), Position.union(e1.pos, p2)));
-					}
-					var el:Array<Expr> = [];
-					var pprev = p1;
-					while (true) {
-						var e:Expr;
-						try {
-							e = expr();
-						} catch (er:ParserError) {
-							// Under a display mode the error is recorded, not raised
-							syntaxErrors.push({msg: Expected(el.length == 0 ? ["expression", ")"] : ["expression"]), pos: peekInfo().pos});
-							e = nullStandIn(pprev);
-						}
-						if (tokEq(peek(), PClose)) {
-							var p2 = next().pos;
-							el.push(checkSignatureMark(e, pprev, p2));
-							return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
-						}
-						if (tokEq(peek(), Comma)) {
-							var pc = next().pos;
-							if (tokEq(peek(), PClose)) {
-								var p3 = next().pos;
-								el.push(checkSignatureMark(e, pprev, p3));
-								return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p3)));
-							}
-							el.push(checkSignatureMark(e, pprev, pc));
-							pprev = pc;
-							continue;
-						}
-						var p2 = peekInfo().pos;
-						syntaxErrors.push({msg: Expected([",", ")"]), pos: p2});
-						el.push(checkSignatureMark(e, pprev, p2));
-						return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
-					}
+					var r = parseCallParamsResume(p1);
+					return exprNext(new Expr(ECall(e1, r.el), Position.union(e1.pos, r.p2)));
 				}
 				var el = psepTrailing(expr);
 				if (tokEq(peek(), PClose)) {

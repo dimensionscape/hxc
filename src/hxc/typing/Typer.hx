@@ -1458,9 +1458,44 @@ class Typer {
 	public static var displaySignature:Bool = false;
 	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
 
-	// Under signature display: an Array reports one (index:Int) signature returning its element, and
-	// an abstract reports its @:arrayAccess overloads with the `this` argument dropped. Anything else
+	// An EArray under signature display: an Array reports one (index:Int) signature returning its element,
+	// and an abstract reports its @:arrayAccess overloads with the `this` argument dropped. Anything else
 	// reports none.
+	// A class or an abstract with an implementation contributes its constructor and that constructor's
+	// overloads.
+	static function checkNewSignatureDisplay(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, p:Position):Void {
+		var active = 0;
+		var marked = false;
+		for (i in 0...el.length) switch (el[i].expr) {
+			case EDisplay(inner, DKMarked):
+				active = i;
+				el[i] = inner;
+				marked = true;
+				break;
+			case _:
+		}
+		if (!marked) return;
+		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true) catch (_:Dynamic) return;
+		var c:Null<TClass> = switch (TypeFunctions.follow(t)) {
+			case TInst(cl, _): cl;
+			case TAbstract(a, _) if (a.impl != null): a.impl;
+			case _: null;
+		};
+		if (c == null) { signatureFound = {sigs: [], activeArg: active}; return; }
+		var ctor = c.constructor;
+		var cur = c;
+		while (ctor == null && cur.superClass != null) { cur = cur.superClass.c; ctor = cur.constructor; }
+		if (ctor == null) { signatureFound = {sigs: [], activeArg: active}; return; }
+		var sigs = [];
+		inline function add(cf:TClassField):Void switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig): sigs.push({args: sig.args, ret: sig.ret, doc: cf.doc});
+			case _:
+		}
+		add(ctor);
+		for (o in ctor.overloads) add(o);
+		signatureFound = {sigs: sigs, activeArg: active};
+	}
+
 	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, p:Position):Void {
 		var active = 0;
 		switch (e2.expr) {
@@ -4157,6 +4192,9 @@ class Typer {
 	}
 
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		// ENew under signature display: the signatures are the constructor's, found on the instantiated
+		// type.
+		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
 		try switch (ctx.com.getType({pack: tp.path.tpackage, name: tp.path.tname}, tp.pos, tp.path.tsub)) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx.com, td, tp.pos); hxc.filters.DeprecationCheck.markTypedefConstruction(p); hxc.filters.DeprecationCheck.markTypedefConstruction(tp.pos);
 			case _:
