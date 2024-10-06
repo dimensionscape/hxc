@@ -841,8 +841,14 @@ class Compiler {
 			}
 			// A display mode that EXITS during typing has to have been answered by then. Reaching this point
 			// means no hook covered the position, which is an error the client relies on, not a silent
-			// success. An actual compile error wins: aborts on has_error before reporting a missing
-			// completion point.
+			// success. An actual compile error wins: the request aborts on a recorded error before reporting
+			// a missing completion point. The DELAYED type-declaration keyword list is answered here, once
+			// nothing more specific has claimed the position.
+			if (hxc.parser.Parser.delayedSyntaxCompletion != null && ctx.jsonRpcId == null
+				&& hxc.parser.Parser.displayCompletionMode) {
+				answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
+				return;
+			}
 			if (hxc.parser.Parser.displayFile != null && ctx.jsonRpcId == null && !ctx.hasError()) {
 				var dm = displayParts(ctx);
 				var dmode = dm.length >= 3 ? dm[2] : "";

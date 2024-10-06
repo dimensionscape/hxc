@@ -49,6 +49,9 @@ class Parser {
 	// The name Meta.HxCompletion carries; it never reaches a real declaration, only the
 	// metadata completion answer, which reports a null subject for it.
 	public static inline var HX_COMPLETION_META = ":hxCompletion";
+	// The keyword list for a type declaration position is DELAYED, so a more specific completion found
+	// later wins; it is answered only if nothing else did.
+	public static var delayedSyntaxCompletion:Null<Array<String>> = null;
 	// Set when the SOURCE wrote a metadata entry whose name the cursor is on. Only the
 	// parser can tell that: by the time fields are typed their metadata also holds injected
 	// entries, which carry the position of whatever they were attached to.
@@ -64,6 +67,7 @@ class Parser {
 		displaySignatureMode = false;
 		displayCompletionMode = false;
 		displayMetaFound = false;
+		delayedSyntaxCompletion = null;
 		syntaxErrors = [];
 	}
 
@@ -1840,7 +1844,7 @@ class Parser {
 			// but only when pack=[] and next is an uppercase ident; we keep it
 			// lenient-but-faithful: require a semicolon to close the package.
 			semicolon();
-			var l = parseTypeDecls(pack);
+			var l = parseTypeDecls(pack, 1, tokens[idx > 0 ? idx - 1 : 0].pos.max);
 			return {pack: pack, decls: l};
 		}
 		var l = parseTypeDecls([]);
@@ -1949,9 +1953,27 @@ class Parser {
 		}
 	}
 
-	function parseTypeDecls(pack:Array<String>):Array<TypeDecl> {
+	// With the cursor in the GAP between the previous declaration and the next token, the answer is
+	// which declaration keywords may start here. it: the flags and type keywords, plus import/using
+	// once a package has been seen and package as well before that, and none of them inside import.hx.
+	function checkTypeDeclCompletion(mode:Int, pmax:Int):Void {
+		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return;
+		var nextPmin = tokEq(peek(), Eof) ? 0x3FFFFFFF : peekInfo().pos.min;
+		if (!(pmax <= displayOffset && nextPmin >= displayOffset)) return;
+		var inImportHx = StringTools.endsWith(StringTools.replace(file, "\\", "/"), "/import.hx") || file == "import.hx";
+		var l = inImportHx ? [] : ["private", "extern", "class", "interface", "enum", "abstract", "typedef", "final"];
+		l = switch (mode) {
+			case 0: ["package", "import", "using"].concat(l); // Before the package statement
+			case 1: ["import", "using"].concat(l); // After it, imports still allowed
+			case _: l;
+		};
+		delayedSyntaxCompletion = l;
+	}
+
+	function parseTypeDecls(pack:Array<String>, mode:Int = 0, pmax:Int = -1):Array<TypeDecl> {
 		var acc:Array<TypeDecl> = [];
 		while (true) {
+			checkTypeDeclCompletion(mode, pmax);
 			if (tokEq(peek(), Eof)) break;
 			var save = idx;
 			var td:TypeDecl;
@@ -1972,6 +1994,9 @@ class Parser {
 				throw e;
 			}
 			acc.push(td);
+			// An import or using keeps imports available, anything else closes that window.
+			mode = switch (td.decl) { case EImport(_) | EUsing(_): 1; case _: 2; };
+			pmax = td.pos.max;
 		}
 		return acc;
 	}
