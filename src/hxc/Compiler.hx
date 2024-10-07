@@ -663,7 +663,10 @@ class Compiler {
 					hxc.typing.Typer.displayDefinition = dmode == "position";
 					hxc.typing.Typer.displayHover = dmode == "type";
 					hxc.typing.Typer.displayUsage = dmode == "usage";
-					hxc.typing.Typer.displayToplevel = dmode == "toplevel";
+					// "toplevel" and the empty mode are the same default mode, and both answer with a toplevel
+					// collection when the position is not a field access. Which printer runs follows the answer (a
+					// field list prints <list>, a toplevel one <il>), not the request.
+					hxc.typing.Typer.displayToplevel = dmode == "toplevel" || (dmode == "" && ctx.jsonRpcId == null);
 					// The JSON completion request at a non-dot position answers the toplevel item set.
 					hxc.typing.Typer.displayToplevelJson = ctx.jsonRpcId != null && dmode == "";
 					hxc.typing.Typer.displayTypeDefinition = dmode == "typeDefinition";

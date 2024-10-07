@@ -412,6 +412,12 @@ class Calls {
 			} else if (ai >= args.length) {
 				// A skipped optional parameter's error takes precedence over "Too many arguments".
 				if (skipped.length > 0) throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
+				// In the display file the surplus arguments are typed before the arity error, so a cursor
+				// sitting on one still answers. The argument the user has not written yet is exactly such a
+				// surplus. A diagnostics run is excluded there and reports the arity error itself.
+				if (hxc.parser.Parser.displayFile != null && ctx.com.displaySpec != null
+					&& ctx.com.displaySpec.indexOf("@diagnostics") < 0)
+					for (k in ei...el.length) try Typer.typeExpr(ctx, el[k], WithTypeTools.value) catch (_:TypingError) {};
 				throw new TypingError("Too many arguments", el[ei].pos);
 			} else {
 				var a = args[ai];

@@ -279,6 +279,20 @@ class Parser {
 		return new Expr(EConst(CIdent("null")), new Position(p1.file, p1.min, peekInfo().pos.max - 1));
 	}
 
+	// Outside a display mode the error is RAISED, inside one it is recorded and the caller's stand-in value
+	// takes the place of what could not be parsed. A construct that hard-expects its closing token instead
+	// loses everything after it, so an unfinished `if (`/`for (`/`while (`/`switch` never reaches the
+	// cursor inside it.
+	function syntaxError(msg:hxc.parser.ParserError.ParserErrorMsg, ?pos:Position):Void {
+		var p = pos != null ? pos : peekInfo().pos;
+		if (displayFile == null) throw new ParserError(msg, p);
+		syntaxErrors.push({msg: msg, pos: p});
+	}
+
+	function mkNullExpr(p:Position):Expr {
+		return new Expr(EConst(CIdent("null")), p);
+	}
+
 	// In signature display, the argument whose span from the preceding separator to the following one
 	// covers the cursor is marked, and the index of that marked argument is what the answer reports as
 	// the active parameter. Counting finished arguments instead puts the cursor on the next parameter
@@ -287,6 +301,27 @@ class Parser {
 	// completed.
 	function checkResume(p:Position):Bool {
 		return displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset;
+	}
+
+	// The cursor sitting in the GAP between the end of this token and the start of the next one, in the
+	// display file and in completion mode.
+	function checkResumeRange(p:Position):Bool {
+		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return false;
+		return p.min < displayOffset && peekInfo().pos.min >= displayOffset;
+	}
+
+	// An empty package and name marks a type position that is under the cursor, which type loading answers
+	// with every type in scope.
+	static function magicTypePath():TypePath {
+		return {tpackage: [], tname: "", tparams: [], tsub: null};
+	}
+
+	// An element list whose GAP holds the cursor gets a marked null in that gap, the element the user
+	// has not written yet. Returns it as a list so a caller can splice it in unconditionally.
+	function gapMark(pAfter:Position, pBefore:Position):Array<Expr> {
+		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return [];
+		if (pAfter.max > displayOffset || pBefore.min < displayOffset) return [];
+		return [new Expr(EConst(CIdent("null")), new Position(pAfter.file, displayOffset, displayOffset))];
 	}
 
 	function checkSignatureMark(e:Expr, p1:Position, p2:Position):Expr {
@@ -543,6 +578,13 @@ class Parser {
 
 	function parseTypeHint():TypeHint {
 		var p1 = expect(DblDot);
+		// With the cursor in the gap after the `:`, the hint is the magic type path at the display
+		// position, and the real type is still parsed but discarded. Parsing it first would leave an
+		// unfinished hint with no completion point.
+		if (checkResumeRange(p1)) {
+			try parseComplexType() catch (_:ParserError) {};
+			return {ct: CTPath(magicTypePath()), pos: new Position(p1.file, displayOffset, displayOffset)};
+		}
 		var ct = parseComplexType();
 		return ct;
 	}
@@ -998,7 +1040,12 @@ class Parser {
 	// completion inside an unfinished argument list would have nothing to answer. Both a call and a `new`
 	// go through it.
 	function parseCallParamsResume(pOpen:Position):{el:Array<Expr>, p2:Position} {
-		if (tokEq(peek(), PClose)) return {el: [], p2: next().pos};
+		if (tokEq(peek(), PClose)) {
+			// An empty argument list whose parentheses hold the cursor still gets one marked null, so the
+			// position has something to complete on.
+			var p2 = next().pos;
+			return {el: gapMark(pOpen, p2), p2: p2};
+		}
 		var el:Array<Expr> = [];
 		var pprev = pOpen;
 		while (true) {
@@ -1020,7 +1067,9 @@ class Parser {
 				if (tokEq(peek(), PClose)) {
 					var p3 = next().pos;
 					el.push(checkSignatureMark(e, pprev, p3));
-					return {el: el, p2: p3};
+					// The cursor after the trailing comma is a marked null of its own, the argument the user has
+					// not written yet.
+					return {el: el.concat(gapMark(pc, p3)), p2: p3};
 				}
 				el.push(checkSignatureMark(e, pprev, pc));
 				pprev = pc;
@@ -1051,6 +1100,13 @@ class Parser {
 					var b = blockWithPos(p1);
 					if (def != null) err("Duplicate default");
 					def = (b.exprs.length == 0) ? {e: null, pos: pdot} : {e: new Expr(EBlock(b.exprs), Position.union(p1, b.pos)), pos: Position.union(p1, b.pos)};
+					// The default's own body gets the same mark when the cursor is in the gap after it, so
+					// `default:` with nothing written still answers.
+					{
+						var dm = gapMark(def.pos, peekInfo().pos);
+						if (dm.length > 0)
+							def = {e: (def.e == null) ? dm[0] : new Expr(EBlock(b.exprs.concat(dm)), Position.union(p1, dm[0].pos)), pos: def.pos};
+					}
 				case Kwd(KwdCase):
 					var p1 = next().pos;
 					var el = psep(Comma, exprOrVar);
@@ -1060,6 +1116,13 @@ class Parser {
 					var b = blockWithPos(p1);
 					var bexpr:Null<Expr> = (b.exprs.length == 0) ? null : new Expr(EBlock(b.exprs), Position.union(p1, b.pos));
 					var cpos = (b.exprs.length == 0) ? Position.union(p1, pdot) : Position.union(p1, b.pos);
+					// A cursor in the gap between the end of this case and the start of the next one (or the
+					// closing brace) belongs to this case body, where the pattern's captured variables are in
+					// scope. The reference appends a marked null there; here the stand-in carries the display
+					// position itself, which is what the toplevel collection keys off.
+					var cm = gapMark(cpos, peekInfo().pos);
+					if (cm.length > 0)
+						bexpr = (bexpr == null) ? cm[0] : new Expr(EBlock(b.exprs.concat(cm)), Position.union(p1, cm[0].pos));
 					cases.push({values: el, guard: eg, expr: bexpr, pos: cpos});
 				case _:
 					break;
@@ -1149,10 +1212,11 @@ class Parser {
 			} catch (er:ParserError) {
 				// In the DISPLAY file a failed block element records its error and the block resumes from the
 				// stream position the failed attempt reached, so an incomplete construct under the cursor does
-				// not abort hover/definition requests elsewhere in the file.
+				// not abort hover/definition requests elsewhere in the file. Skipping a token there instead let
+				// the block run past the field it stopped at and swallow every sibling declaration after it.
 				if (isDisplayFile() && !er.msg.match(Missing_semicolon)) {
+					if (idx == save) break;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
-					if (idx == save) idx++;
 					continue;
 				}
 				// A missing semicolon is a hard error; recovery here would silently drop the parsed element
@@ -1460,8 +1524,14 @@ class Parser {
 				var p = next().pos;
 				expect(POpen);
 				var it = secureExpr();
-				expect(PClose);
-				var e = secureExpr();
+				// A missing `)` is recorded and the loop body stands in as null
+				var e = if (tokEq(peek(), PClose)) {
+					next();
+					secureExpr();
+				} else {
+					syntaxError(Expected([")"]));
+					mkNullExpr(it.pos);
+				}
 				return new Expr(EFor(it, e), Position.union(p, e.pos));
 			case Kwd(KwdIf):
 				return parseIf();
@@ -1483,8 +1553,14 @@ class Parser {
 				var p1 = next().pos;
 				expect(POpen);
 				var cond = secureExpr();
-				expect(PClose);
-				var e = secureExpr();
+				// A missing `)` is recorded and the loop body stands in as null
+				var e = if (tokEq(peek(), PClose)) {
+					next();
+					secureExpr();
+				} else {
+					syntaxError(Expected([")"]));
+					mkNullExpr(cond.pos);
+				}
 				return new Expr(EWhile(cond, e, NormalWhile), Position.union(p1, e.pos));
 			case Kwd(KwdDo):
 				var p1 = next().pos;
@@ -1507,9 +1583,19 @@ class Parser {
 			case Kwd(KwdSwitch):
 				var p1 = next().pos;
 				var e = secureExpr();
-				expect(BrOpen);
+				// A missing `{` is recorded and the switch stands in with no cases, so a subject still
+				// under construction is reachable.
+				if (!tokEq(peek(), BrOpen)) {
+					syntaxError(Expected(["{"]));
+					return new Expr(ESwitch(e, [], null), Position.union(p1, e.pos));
+				}
+				next();
 				var sw = parseSwitchCases();
-				var p2 = expect(BrClose);
+				// Ignore a missing } and "guess" the last position
+				var p2 = if (!tokEq(peek(), BrClose) && displayFile != null) {
+					syntaxErrors.push({msg: Expected(["}"]), pos: peekInfo().pos});
+					peekInfo().pos;
+				} else expect(BrClose);
 				return new Expr(ESwitch(e, sw.cases, sw.def), Position.union(p1, p2));
 			case Kwd(KwdTry):
 				var p1 = next().pos;
@@ -1660,8 +1746,14 @@ class Parser {
 		var p = next().pos;
 		expect(POpen);
 		var cond = secureExpr();
-		expect(PClose);
-		var e1 = secureExpr();
+		// A missing `)` is recorded and the then-branch stands in as null
+		var e1 = if (tokEq(peek(), PClose)) {
+			next();
+			secureExpr();
+		} else {
+			syntaxError(Expected([")"]));
+			mkNullExpr(cond.pos);
+		}
 		var e2:Null<Expr> = null;
 		if (tokEq(peek(), Kwd(KwdElse))) {
 			junk();
@@ -1747,7 +1839,13 @@ class Parser {
 			case Question:
 				junk();
 				var e2 = expr();
-				expect(DblDot);
+				// A missing `:` is recorded and the then branch alone stands in for the whole conditional, so a
+				// cursor inside it is still reachable.
+				if (!tokEq(peek(), DblDot)) {
+					syntaxError(Expected([":"]));
+					return e2;
+				}
+				next();
 				var e3 = expr();
 				return new Expr(ETernary(e1, e2, e3), Position.union(e1.pos, e3.pos));
 			case Kwd(KwdIn):
@@ -2263,7 +2361,7 @@ class Parser {
 		if (displayCompletionMode && isDisplayFile() && displayOffset >= pkeyword.max + 1
 			&& displayOffset <= peekInfo().pos.max) {
 			var dp = new Position(pkeyword.file, displayOffset, displayOffset);
-			return {path: {tpackage: [], tname: "", tparams: [], tsub: null}, pos: dp};
+			return {path: magicTypePath(), pos: dp};
 		}
 		return parseTypePath();
 	}

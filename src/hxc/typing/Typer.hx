@@ -2221,9 +2221,12 @@ class Typer {
 		var basic = ctx.com.basic;
 		return switch (c) {
 			case CIdent(s):
-				if (displayToplevelJson && atDisplayPos(p))
+				// Carries `not !was_annotated`: exactly one node in the expression is the display subject. A
+				// field access already answered here is that node, so a stand-in the recovery put at an
+				// enclosing position must not displace it.
+				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
-				if (displayToplevel && atDisplayPos(p))
+				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
 					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
@@ -3592,7 +3595,7 @@ class Typer {
 		// The display position sits inside this block but on no statement (whitespace or an empty body):
 		// the reference parser marks the spot and completion raises with an empty subject. Statements
 		// before the cursor type first so their locals are in scope. (collect_and_raise, empty subject).
-		if ((displayToplevel || displayToplevelJson) && atDisplayPos(p)) {
+		if ((displayToplevel || displayToplevelJson) && atDisplayPos(p) && fieldCompletionFound == null) {
 			var covered = false;
 			for (e in el) if (atDisplayPos(e.pos)) { covered = true; break; }
 			if (!covered) {

@@ -196,6 +196,20 @@ class TypeResolve {
 		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
 	}
 
+	// The parser's magic type path reaching load_type_def means the cursor is in a type position, and
+	// every type in scope is the answer (CRTypeHint). The heritage answer above is the same collection
+	// with set_heritance's extra filtering on top.
+	public static function answerTypeHintCompletion(ctx:Context, p:Position):Void {
+		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		for (mt in visibleTypesForCompletion(ctx)) {
+			var inf = TypeFunctions.tInfos(mt);
+			if (inf.isPrivate) continue;
+			items.push({kind: "type", name: inf.path.name, path: hxc.core.Globals.sTypePath(inf.path)});
+		}
+		items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
+		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
+	}
+
 	// The types a completion here can see: everything loaded so far, which is what the reference's
 	// collect reaches through the module lookup at the same moment.
 	static function visibleTypesForCompletion(ctx:Context):Array<ModuleType> {

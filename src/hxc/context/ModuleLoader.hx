@@ -17,6 +17,10 @@ class ModuleLoader {
 		hxc.core.TypeFunctions.multiTypeResolver = function(a, pl)
 			return try hxc.typing.Typer.resolveMultiTypeConcrete(a, pl, Position.nullPos) catch (_:Dynamic) null;
 		ctx.getType = function(path:Path, p:Position, ?sub:String):ModuleType {
+			// An empty package and type name marks cursor type completion; answer before rejecting empty
+			// module names.
+			if (path.pack.length == 0 && path.name == "" && sub == null && hxc.parser.Parser.displayFile != null)
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, p);
 			if (path.name == "") throw new ContextError("Empty module name is not allowed", p);
 			return loadTypeDef(ctx, path, p, sub);
 		};

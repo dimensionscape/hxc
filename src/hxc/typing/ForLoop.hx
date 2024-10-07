@@ -366,6 +366,11 @@ class ForLoop {
 				pi = lhs.pos;
 				e1Expr = rhs;
 			case _:
+				// A head that is not `v in expr` still ANSWERS a display request inside it (handle_display)
+				// before the error is raised. Erroring first left an unfinished `for ([].` with no completion
+				// point at all.
+				if (Typer.atDisplayPos(it.pos))
+					try Typer.typeExpr(ctx, it, WithTypeTools.value) catch (_:TypingError) {};
 				throw new TypingError("For expression should be 'v in expr'", it.pos);
 		}
 		// The eval lane keeps the legacy lowering below: its frame-based capture model needs
