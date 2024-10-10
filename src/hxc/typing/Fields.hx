@@ -831,20 +831,20 @@ class Fields {
 					for (mt in uts) {
 						if (TypeFunctions.tInfos(mt).isPrivate) continue;
 						var r = tryUsingModuleType(ctx, mt, e, i, p);
-						if (r != null) return r;
+						if (r != null) { imports.markUsing(up); return r; }
 					}
 					continue;
 				}
 				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
 				if (mt != null) {
 					var r = tryUsingModuleType(ctx, mt, e, i, p);
-					if (r != null) return r;
+					if (r != null) { imports.markUsing(up); return r; }
 				} else if (isMacroToolsUsing(up)) {
 					for (toolPath in macroToolsUsingModules) {
 						var tool = try ctx.com.getType(toolPath, p, null) catch (_:Dynamic) null;
 						if (tool == null) continue;
 						var r = tryUsingModuleType(ctx, tool, e, i, p);
-						if (r != null) return r;
+						if (r != null) { imports.markUsing(up); return r; }
 					}
 				}
 			}

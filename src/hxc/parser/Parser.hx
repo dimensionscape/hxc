@@ -72,6 +72,10 @@ class Parser {
 	}
 
 	function isDisplayFile():Bool {
+		return matchesDisplayFile(file);
+	}
+
+	public static function matchesDisplayFile(file:String):Bool {
 		if (displayFile == null) return false;
 		var f = StringTools.replace(file, "\\", "/");
 		var df = StringTools.replace(displayFile, "\\", "/");
@@ -1247,9 +1251,14 @@ class Parser {
 				var p1 = next().pos;
 				switch (peek()) {
 					case Kwd(KwdVar):
-						// Redundant `var` check
+						// The redundant `var` is recorded as an error and consumed, so the declaration still parses
+						// as a final one. Raising instead would leave the name behind as an unresolved identifier of
+						// its own.
 						var p2 = next().pos;
-						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
+						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
+						var vl = parseVarDecls(true);
+						var pEnd = semicolon();
+						return new Expr(EVars(vl), Position.union(p1, pEnd));
 					case Const(CIdent(_)), Dollar(_), At:
 						var vl = parseVarDecls(true);
 						var p2 = semicolon();
@@ -1398,6 +1407,20 @@ class Parser {
 			case Kwd(KwdClass), Kwd(KwdInterface):
 				var d = parseClassForMacro();
 				return Reification.reifyTypeDef(d, p, inMacro);
+			// A declaration reifies as an EVars node of its own, rather than going through the expression
+			// grammar
+			case Kwd(KwdVar):
+				var p1 = next().pos;
+				return Reification.reifyExpr(new Expr(EVars(psep(Comma, function() return parseVarDecl(false))), p1), inMacro);
+			case Kwd(KwdFinal):
+				var p1 = next().pos;
+				switch (peek()) {
+					case Kwd(KwdVar):
+						var p2 = next().pos;
+						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
+					case _:
+				}
+				return Reification.reifyExpr(new Expr(EVars(psep(Comma, function() return parseVarDecl(true))), p1), inMacro);
 			case _:
 		}
 		var e = secureExpr();
@@ -1469,10 +1492,12 @@ class Parser {
 				return new Expr(EVars(vl), p1);
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
+				// The redundant `var` is recorded as an error and consumed, so the declaration still parses as
+				// a final one.
 				switch (peek()) {
 					case Kwd(KwdVar):
 						var p2 = next().pos;
-						throw new ParserError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
+						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case _:
 				}
 				var vl = parseVarDecls(true);

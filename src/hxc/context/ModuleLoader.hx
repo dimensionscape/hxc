@@ -214,41 +214,44 @@ class ModuleLoader {
 			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
 		}
 
-		function recordImport(imp:Import):Void {
+		function recordImport(imp:Import, declPos:Position):Void {
 			imports.rawImports.unshift(imp);
+			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
 			switch (imp.mode) {
 				case IAll:
 					var split = splitImportPath(parts);
 					if (split != null) imports.wildcards.unshift(split.modulePath);
 					else if (parts.length > 0) imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
+					imports.wildcardImp.unshift(impIdx);
 				case INormal:
 					var split = splitImportPath(parts);
 					if (split == null) return;
 					if (split.field != null) {
-						imports.globals.set(split.field, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
+						imports.globals.set(split.field, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
 						return;
 					}
 					var short = split.sub != null ? split.sub : split.modulePath.name;
-					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub};
+					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, impIdx: impIdx};
 					imports.names.set(short, ni);
 					imports.order.push(ni);
 				case IAsName(alias):
 					var split = splitImportPath(parts);
 					if (split == null) return;
 					if (split.field != null) {
-						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
+						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
 						return;
 					}
 					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
 						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
-					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name};
+					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name, impIdx: impIdx};
 					imports.names.set(alias.name, ni);
 					imports.order.push(ni);
 			}
 		}
 
-		function recordUsing(path:Array<PlacedName>):Void {
+		function recordUsing(path:Array<PlacedName>, declPos:Position):Void {
+			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in path) pn.name];
 			var split = splitImportPath(parts);
 			if (split == null) return;
@@ -256,7 +259,7 @@ class ModuleLoader {
 			var namedModulePath = split.modulePath;
 			if (split.sub != null && split.modulePath.pack.length == 0 && m.path.pack.length > 0)
 				namedModulePath = {pack: m.path.pack, name: split.modulePath.name};
-			var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub};
+			var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub, impIdx: impIdx};
 			imports.names.set(short, ni);
 			imports.order.push(ni);
 			function usingPath(modulePath:Path):Path {
@@ -265,8 +268,10 @@ class ModuleLoader {
 			if (split.modulePath.pack.length == 0 && m.path.pack.length > 0) {
 				var localModulePath = {pack: m.path.pack, name: split.modulePath.name};
 				imports.usings.push(usingPath(localModulePath));
+				imports.usingImp.push(impIdx);
 			}
 			imports.usings.push(usingPath(split.modulePath));
+			imports.usingImp.push(impIdx);
 		}
 
 		// Record the duplicate-name error, then raise Previous declaration here one level deeper at the
@@ -338,12 +343,12 @@ class ModuleLoader {
 				case EImport(imp):
 					if (hasDeclaration)
 						throw new ContextError("import and using may not appear after a declaration", p);
-					recordImport(imp);
+					recordImport(imp, p);
 
 				case EUsing(path):
 					if (hasDeclaration)
 						throw new ContextError("import and using may not appear after a declaration", p);
-					recordUsing(path);
+					recordUsing(path, p);
 
 				case EStatic(d):
 					checkStaticName(d);
@@ -626,6 +631,7 @@ class ModuleLoader {
 		if (file == null || file == "" || !FileSystem.exists(file)) return [];
 		var src = Position.getFileContent(file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		reportDisplayParseError(ctx, file);
 		if (!sameArray(pkg.pack, c.module.path.pack)) return [];
 		for (td in pkg.decls) switch (td.decl) {
 			case EClass(d):
@@ -1043,6 +1049,7 @@ class ModuleLoader {
 
 		var src = moduleFileContent(ctx, file);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		reportDisplayParseError(ctx, file);
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack);
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
@@ -1054,6 +1061,18 @@ class ModuleLoader {
 		var loaded = typeModule(ctx, m, file, pkg.decls);
 		addDependency(requester, loaded);
 		return loaded;
+	}
+
+	// The first syntax error a DISPLAY file parse recorded is reported. A diagnostics run reports it
+	// as a parser-error diagnostic instead of aborting, which is how a file with a syntax error still
+	// gets a report.
+	static function reportDisplayParseError(ctx:Context, file:String):Void {
+		if (hxc.parser.Parser.syntaxErrors.length == 0) return;
+		if (!hxc.parser.Parser.matchesDisplayFile(file)) return;
+		if (ctx.displaySpec == null || ctx.displaySpec.indexOf("@diagnostics") < 0) return;
+		var e = hxc.parser.Parser.syntaxErrors[0];
+		ctx.diagnostics.push({message: hxc.parser.ParserError.errorMsg(e.msg), pos: e.pos, depth: 0,
+			severity: hxc.core.Globals.MessageSeverity.Error, kind: 4});
 	}
 
 	public static function loadTypeDef(ctx:Context, path:Path, p:Position, ?sub:String):ModuleType {
@@ -1169,15 +1188,15 @@ class ModuleLoader {
 				if (ni.sub != null) {
 					// `import M.Sub;` binds only that sub-type, match its full path directly.
 					var r = tryLoadSubFull(ctx, ni.modulePath, path, p);
-					if (r != null) return r;
+					if (r != null) { imports.markImport(ni.impIdx); return r; }
 					continue;
 				}
 				var m = try loadModule(ctx, ni.modulePath, p) catch (_:ContextError) continue;
-				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) return mt;
+				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markImport(ni.impIdx); return mt; }
 			}
 			for (wp in imports.wildcards) {
 				var m = try loadModule(ctx, wp, p) catch (_:ContextError) continue;
-				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) return mt;
+				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markWildcard(wp); return mt; }
 			}
 		}
 		return null;
@@ -1227,9 +1246,10 @@ class ModuleLoader {
 					td.params = mi.params;
 					named.aliasTypedef = TTypeDecl(td);
 				}
+				imports.markImport(named.impIdx);
 				return named.aliasTypedef;
 			}
-			if (r != null) return r;
+			if (r != null) { imports.markImport(named.impIdx); return r; }
 		}
 		// The reference prepends each import's exposed types onto module_imports and takes the first
 		// match, so a name exposed by several module imports (utest Assert's `import Map; import
@@ -1239,7 +1259,7 @@ class ModuleLoader {
 			var ni = imports.order[i--];
 			if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
 			var r = visible(tryLoadSub(ctx, ni.modulePath, name, p));
-			if (r != null) return r;
+			if (r != null) { imports.markImport(ni.impIdx); return r; }
 		}
 		return null;
 	}
@@ -1251,9 +1271,9 @@ class ModuleLoader {
 		if (imports == null) return null;
 		for (wp in imports.wildcards) {
 			var r = tryLoadSub(ctx, wp, name, p);
-			if (r != null) return r;
+			if (r != null) { imports.markWildcard(wp); return r; }
 			r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
-			if (r != null) return r;
+			if (r != null) { imports.markWildcard(wp); return r; }
 		}
 		return null;
 	}

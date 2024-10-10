@@ -2313,6 +2313,9 @@ class Typer {
 		}
 		if (ctx.locals.exists(i)) {
 			var v = ctx.locals.get(i);
+			// Every local the typer looks up is flagged, which is what the unused-variable diagnostic
+			// tests.
+			TypeFunctions.addVarFlag(v, VUsedByTyper);
 			// A local inline function resolves through a fake extern class holding an inline method, so a
 			// call reuses the regular inline machinery (outer locals referenced by the body pass through as
 			// captures-by-substitution). Reading or assigning the name is an error.
@@ -2643,7 +2646,7 @@ class Typer {
 		var g = imports.globals.get(i);
 		if (g != null) {
 			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) return r; }
+			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) { imports.markImport(g.impIdx); return r; } }
 			// `import M.field` where field is a MODULE-LEVEL static: the module may have no main type at
 			// all; resolve against its statics holder.
 			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, g.ownerPath, p) catch (_:Dynamic) null;
@@ -2651,7 +2654,7 @@ class Typer {
 				try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
 				var sc = mod.statics;
 				var cf = sc.statics.get(g.field != null ? g.field : i);
-				if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
+				if (cf != null) { imports.markImport(g.impIdx); return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p); }
 			}
 		}
 		// `import M.X` with an uppercase trailing X was recorded as a sub-type import; when M has no
@@ -2661,7 +2664,7 @@ class Typer {
 			var subMt = try ctx.com.getType(n.modulePath, p, n.sub) catch (_:Dynamic) null;
 			if (subMt == null) {
 				var mainMt = try ctx.com.getType(n.modulePath, p, null) catch (_:Dynamic) null;
-				if (mainMt != null) { var r = tryType(mainMt, n.sub); if (r != null) return r; }
+				if (mainMt != null) { var r = tryType(mainMt, n.sub); if (r != null) { imports.markImport(n.impIdx); return r; } }
 				// An uppercase module-level static (`import M.UpperCase [as X]`) is recorded as a sub-type
 				// import; when no such type exists it is a field of statics.
 				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, n.modulePath, p) catch (_:Dynamic) null;
@@ -2689,7 +2692,7 @@ class Typer {
 		}
 		for (w in imports.wildcards) {
 			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt, i, true); if (r != null) return r; }
+			if (mt != null) { var r = tryType(mt, i, true); if (r != null) { imports.markWildcard(w); return r; } }
 		}
 		return null;
 	}

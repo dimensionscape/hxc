@@ -93,6 +93,7 @@ class Compiler {
 		hxc.typing.CoreApi.reset();
 		hxc.context.ServerCache.resetRequest();
 		hxc.ast.Position.resetFileCache();
+		hxc.compiler.Diagnostics.reset();
 	}
 
 	static function runWaitStdio():Void {
@@ -655,7 +656,9 @@ class Compiler {
 				answerOut(hxc.compiler.DocumentSymbols.printModuleSymbols([{file: dfile, l: syms}], null));
 				return;
 			}
-			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation" || dmode == "signature")) {
+			// Every mode that names a file makes it a compile root, diagnostics included. Leaving
+			// diagnostics out would mean a request with no other root compiles nothing and reports nothing.
+			if (dparts.length >= 2 && (dmode == "" || dmode == "position" || dmode == "type" || dmode == "usage" || dmode == "toplevel" || dmode == "typeDefinition" || dmode == "implementation" || dmode == "signature" || dmode == "diagnostics")) {
 				var doff = Std.parseInt(dparts[1]);
 				if (doff != null) {
 					hxc.parser.Parser.displayFile = dparts[0];
@@ -1972,7 +1975,22 @@ class Compiler {
 		displayDiagnostics(ctx);
 	}
 
+	static inline var DK_UNUSED_IMPORT = 0;
+	static inline var DK_UNRESOLVED_IDENTIFIER = 1;
+	static inline var DK_COMPILER_MESSAGE = 2;
+	static inline var DK_REMOVABLE_CODE = 3;
+	static inline var DK_PARSER_ERROR = 4;
+
+	static function posAsRange(p:Position):String {
+		var i = Position.getInfos(p);
+		return '{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
+			+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn + '}}';
+	}
+
 	static function displayDiagnostics(ctx:Context):Void {
+		// Diagnostics are collected at REPORT time, after the filters, so what is walked is the same tree
+		// the rest of the report describes.
+		hxc.compiler.Diagnostics.collect(ctx, function(f) return isDiagnosticsFile(ctx, f));
 		var groups:Array<{file:String, items:Array<String>}> = [];
 		// An unresolved identifier is its own kind (1) whose args are the suggestion list, not a message.
 		// The compiler error it also produced would otherwise report it generically as a compiler message
@@ -2003,6 +2021,38 @@ class Compiler {
 				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
 				+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn
 				+ '}},"args":' + args + ',"relatedInformation":[]}';
+			var group = null;
+			for (g in groups) if (g.file == displayFile) { group = g; break; }
+			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+			group.items.push(item);
+		}
+		// An import declaration nothing ever resolved through.
+		for (key in ctx.moduleImports.keys()) {
+			var imps = ctx.moduleImports.get(key);
+			for (e in imps.importPositions) {
+				if (e.used || !isDiagnosticsFile(ctx, e.p.file)) continue;
+				var displayFile = e.p.file;
+				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
+					displayFile = FileSystem.fullPath(displayFile);
+				var item = '{"kind":' + DK_UNUSED_IMPORT + ',"severity":2,"range":' + posAsRange(e.p)
+					+ ',"args":[],"relatedInformation":[]}';
+				var group = null;
+				for (g in groups) if (g.file == displayFile) { group = g; break; }
+				if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+				group.items.push(item);
+			}
+		}
+		// The removable code follows the messages, carrying its description and the range an editor would
+		// delete (null when the declaration is shared).
+		for (r in hxc.compiler.Diagnostics.removableCode) {
+			if (!isDiagnosticsFile(ctx, r.p.file)) continue;
+			var displayFile = r.p.file;
+			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
+				displayFile = FileSystem.fullPath(displayFile);
+			var args = '{"description":' + haxe.Json.stringify(r.s) + ',"range":'
+				+ (r.prange == null || r.prange.min < 0 ? "null" : posAsRange(r.prange)) + "}";
+			var item = '{"kind":' + DK_REMOVABLE_CODE + ',"severity":2,"range":' + posAsRange(r.p)
+				+ ',"args":' + args + ',"relatedInformation":[]}';
 			var group = null;
 			for (g in groups) if (g.file == displayFile) { group = g; break; }
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }

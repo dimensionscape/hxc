@@ -481,6 +481,39 @@ class ModuleImports {
 	public var usings:Array<Path>;
 	public var globals:StringMap<ImportedGlobal>;
 	public var rawImports:Array<Import>;
+	// Track usage per import declaration. Unset flags become unused-import diagnostics; wildcardImp
+	// and usingImp index these flags.
+	public var importPositions:Array<{p:Position, used:Bool}> = [];
+	public var wildcardImp:Array<Int> = [];
+	public var usingImp:Array<Int> = [];
+
+	public function addImportPosition(p:Position):Int {
+		for (i in 0...importPositions.length) {
+			var e = importPositions[i];
+			if (e.p.min == p.min && e.p.max == p.max && e.p.file == p.file) return i;
+		}
+		importPositions.push({p: p, used: false});
+		return importPositions.length - 1;
+	}
+
+	public function markImport(idx:Null<Int>):Void {
+		if (idx != null && idx >= 0 && idx < importPositions.length) importPositions[idx].used = true;
+	}
+
+	static function samePath(a:Path, b:Path):Bool {
+		if (a.name != b.name || a.pack.length != b.pack.length) return false;
+		for (i in 0...a.pack.length) if (a.pack[i] != b.pack[i]) return false;
+		return true;
+	}
+
+	public function markWildcard(w:Path):Void {
+		for (i in 0...wildcards.length) if (i < wildcardImp.length && samePath(wildcards[i], w)) { markImport(wildcardImp[i]); return; }
+	}
+
+	public function markUsing(u:Path):Void {
+		for (i in 0...usings.length) if (i < usingImp.length && samePath(usings[i], u)) { markImport(usingImp[i]); return; }
+	}
+
 	public function new(names:StringMap<ImportedName>, wildcards:Array<Path>, usings:Array<Path>, ?globals:StringMap<ImportedGlobal>, ?rawImports:Array<Import>, ?order:Array<ImportedName>) {
 		this.names = names;
 		this.order = order != null ? order : [];
@@ -495,10 +528,10 @@ class ModuleImports {
  * Short-name binding to a module and optional subtype. The map key is the referenced alias, subtype
  * or module name.
  */
-typedef ImportedName = {modulePath:Path, sub:Null<String>, ?aliased:Bool, ?aliasName:String, ?aliasTypedef:ModuleType};
+typedef ImportedName = {modulePath:Path, sub:Null<String>, ?aliased:Bool, ?aliasName:String, ?aliasTypedef:ModuleType, ?impIdx:Int};
 
 /**
  * Resolved static-field import: owning module, optional subtype and static field or enum
  * constructor.
  */
-typedef ImportedGlobal = {ownerPath:Path, ownerSub:Null<String>, field:String};
+typedef ImportedGlobal = {ownerPath:Path, ownerSub:Null<String>, field:String, ?impIdx:Int};
