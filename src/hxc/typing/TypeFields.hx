@@ -99,6 +99,14 @@ class TypeFields {
 			mi--;
 		}
 		ctx.flushPass(hxc.context.Context.PTypeField);
+		// A field with no body never reaches typeFieldBody, so its modifier completion is checked here.
+		// It runs after every body so a body's own answer wins, and after every module so a supertype
+		// declared elsewhere already has its field list.
+		if (hxc.parser.Parser.displayFile != null && Typer.fieldCompletionFound == null)
+			for (m in ctx.modules) for (mt in m.types) switch (mt) {
+				case TClassDecl(c): checkModifierDisplayForClass(ctx, c);
+				case _:
+			}
 		// Cast-signature resolution is scheduled at PForce, so bucket must be drained here, or
 		// PForce/PCheckConstraint/PFinal delays never run at all.
 		ctx.flushPass(hxc.context.Context.PForce);
@@ -462,6 +470,9 @@ class TypeFields {
 			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
 			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
 			nameSeen.set(key, occ + 1);
+			// A second constructor with no overload slot was reported as a duplicate and dropped,
+			// so it is not the declaration of any field.
+			if (f.cffName.name == "new" && occ > 0 && base.overloads.length < occ) continue;
 			var target = if (occ > 0 && base.overloads.length >= occ) base.overloads[base.overloads.length - occ] else base;
 			if (target == cf) return f;
 		}
@@ -582,6 +593,52 @@ class TypeFields {
 			throw e;
 		}
 		cleanup();
+		checkFieldDisplay(tctx.com, tctx.curclass, cff);
+	}
+
+	// A body-less field (a plain `var`) never reaches typeFieldBody, so its declaration is
+	// checked once the class's bodies have all run.
+	static function checkModifierDisplayForClass(ctx:Context, c:TClass):Void {
+		if (hxc.parser.Parser.displayFile == null || Typer.fieldCompletionFound != null) return;
+		var entry = ctx.declOfType.get(hxc.context.Context.pathKey(c.path));
+		if (entry == null) return;
+		switch (entry.decl) {
+			case EClass(d):
+				for (cff in d.dData) checkFieldDisplay(ctx, c, cff);
+			case _:
+		}
+	}
+
+	// checkFieldDisplay runs after the body binds, so anything the body itself answered wins. A cursor
+	// anywhere in an `override` field then completes on the fields this class could still override,
+	// which is every member field of a supertype it does not already declare.
+	static function checkFieldDisplay(ctx:Context, c:TClass, cff:ClassField):Void {
+		if (hxc.parser.Parser.displayFile == null || !Typer.displayToplevel && !hxc.parser.Parser.displayCompletionMode) return;
+		if (Typer.fieldCompletionFound != null) return;
+		if (!Typer.atDisplayPos(cff.cffPos)) return;
+		var isOverride = false;
+		for (a in cff.cffAccess) if (a.access == AOverride) isOverride = true;
+		if (!isOverride) return;
+		var own = new haxe.ds.StringMap<Bool>();
+		for (f in c.orderedFields) own.set(f.name, true);
+		var items:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		var seen = new haxe.ds.StringMap<Bool>();
+		var sup = c.superClass;
+		while (sup != null) {
+			for (f in sup.c.orderedFields) {
+				if (own.exists(f.name) || seen.exists(f.name)) continue;
+				seen.set(f.name, true);
+				var t = TypeFunctions.applyParams(sup.c.params, sup.params, f.type);
+				items.push({
+					kind: f.kind.match(Method(_)) ? "method" : "var",
+					name: f.name,
+					type: hxc.core.TPrinting.sTypeStr(t),
+					doc: Ast.genDocTextOpt(f.doc)
+				});
+			}
+			sup = sup.c.superClass;
+		}
+		Typer.fieldCompletionFound = items;
 	}
 
 	// A member variable initializer cannot reach this (issue #1958); the first occurrence reports and the

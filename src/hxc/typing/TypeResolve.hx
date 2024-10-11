@@ -364,7 +364,11 @@ class TypeResolve {
 			var key = (isStatic ? "s:" : "i:") + cff.cffName.name;
 			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
 			nameSeen.set(key, occ + 1);
-			// Occurrence > 0 is a merged overload sibling: resolve onto its overloads slot.
+			// Occurrence > 0 is a merged overload sibling: resolve onto its overloads slot. A second
+			// constructor with no slot was reported as a duplicate and dropped (the first is kept), so it
+			// binds nothing; falling through to `cf` rebinds the surviving constructor to the rejected
+			// declaration.
+			if (cff.cffName.name == "new" && occ > 0 && cf.overloads.length < occ) continue;
 			var target = if (occ > 0 && cf.overloads.length >= occ) cf.overloads[cf.overloads.length - occ] else cf;
 			if (isAbstractMember) TypeFunctions.addClassFieldFlag(target, CfImpl);
 			try {

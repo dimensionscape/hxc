@@ -684,6 +684,9 @@ class ModuleLoader {
 			return [];
 		}
 		var clIfFeature = checkIfFeature(c.meta);
+		// Detect duplicate constructors within this declaration list only; build macros and abstract
+		// implementations may register fresh lists on an existing class.
+		var ctorRegistered = false;
 		for (cff in fields) {
 			var isStatic = false;
 			var isExtern = false;
@@ -757,6 +760,8 @@ class ModuleLoader {
 			var isMethod = switch (cf.kind) { case Method(_): true; case _: false; };
 			if (overloadPos != null) {
 				TypeFunctions.addClassFieldFlag(cf, CfOverload);
+				// Overloaded constructors and non-extern overloads remain unsupported and fatal in this
+				// version.
 				if (cf.name == "new") {
 					throw new ContextError("Invalid modifier: overload on constructor", overloadPos);
 				} else if (!TypeFunctions.hasClassFlag(c, CExtern) && !isExtern) {
@@ -819,7 +824,20 @@ class ModuleLoader {
 				c.statics.set(cf.name, cf);
 				c.orderedStatics.push(cf);
 			} else if (cf.name == "new") {
-				c.constructor = cf;
+				// A second constructor merges onto the first only where the target does native overload
+				// resolution and both carry the flag; otherwise it is reported and the first one stands.
+				if (!ctorRegistered || c.constructor == null) {
+					c.constructor = cf;
+					ctorRegistered = true;
+				} else if (ctx != null && ctx.platformConfig.supportsOverload) {
+					if (TypeFunctions.hasClassFieldFlag(cf, CfOverload) && TypeFunctions.hasClassFieldFlag(c.constructor, CfOverload))
+						c.constructor.overloads.unshift(cf);
+					else if (ctx != null)
+						ctx.addDiagnostic("If using overloaded constructors, all constructors must be declared with 'overload'",
+							TypeFunctions.hasClassFieldFlag(cf, CfOverload) ? c.constructor.pos : cf.pos);
+				} else if (ctx != null) {
+					ctx.addDiagnostic("Duplicate constructor", cff.cffPos);
+				}
 			} else {
 				c.fields.set(cf.name, cf);
 				c.orderedFields.push(cf);
