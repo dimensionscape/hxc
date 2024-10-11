@@ -1177,7 +1177,14 @@ class Calls {
 			};
 			cf2 = TypeFunctions.mkField(name, sigType, cf.pos, cf.namePos, TypeFunctions.hasClassFieldFlag(cf, CfPublic), stat);
 			cf2.doc = cf.doc;
-			cf2.meta = cf.meta;
+			// These three are PREPENDED to the specialization's metadata: it is not a name the user can
+			// complete on or apply a static extension through, and it is marked as an instance of a
+			// generic. All three carry the call position, not the field's.
+			cf2.meta = [
+				{name: ":noCompletion", params: [], pos: fa.pos},
+				{name: ":noUsing", params: [], pos: fa.pos},
+				{name: ":genericInstance", params: [], pos: fa.pos}
+			].concat(cf.meta);
 			cf2.kind = cf.kind;
 			cf2.expr = Typeload.cloneExpr(cf.expr, subst, new Map());
 			cf2.exprUnoptimized = cf.exprUnoptimized == null ? null : Typeload.cloneExpr(cf.exprUnoptimized, subst, new Map());

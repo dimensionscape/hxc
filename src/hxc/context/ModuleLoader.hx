@@ -1460,9 +1460,9 @@ class ModuleLoader {
 					}
 				};
 				var fu2:Func = {fParams: fu.fParams, fArgs: fu.fArgs, fType: aT, fExpr: newExpr};
-				// Resolve this through get_this; member calls inject their receiver through AKUsingField, so
-				// CfImpl here affects only fmode.
-				var meta = [{name: ":noCompletion", params: [], pos: p}, {name: ":impl", params: [], pos: p}].concat(f.cffMeta);
+				// Local is the `this` resolved by get_this. AKUsingField member-call rewrite, so the CfImpl
+				// flag here only affects fmode. the injected entry null_pos, not the field's own.
+				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}, {name: ":impl", params: [], pos: p}].concat(f.cffMeta);
 				// Rename to `_new` and force static (the impl `_new` is a static factory).
 				return {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
