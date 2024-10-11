@@ -2292,6 +2292,13 @@ class Typer {
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		// A reified $i{""} produces an empty ident.
 		if (i == "") throw new TypingError("Identifier name must not be empty", p);
+		// With the identifier as the SUBJECT: a cursor inside a name is a completion request on it.
+		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
+		// check, so `f|oo("")` answered nothing.
+		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)) {
+			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
+		}
 		if (i == "abstract") {
 			return switch [mode, ctx.curclass.kind] {
 				case [MSet(_), KAbstractImpl(_)]: throw new TypingError("Property 'abstract' is read-only", p);
