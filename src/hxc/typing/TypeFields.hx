@@ -546,7 +546,6 @@ class TypeFields {
 						cf.expr = checked;
 					}
 				case FFun(fd):
-					setFunctionValueMeta(cf, fd);
 					var sig = switch (TypeFunctions.follow(sigType)) { case TFun(s): s; case _: null; };
 					// A constructor never returns a value: its body types in void context (FunConstructor).
 					// Otherwise its inferred return monomorph can stay open (a bare `return;` keeps it
@@ -759,7 +758,7 @@ class TypeFields {
 		cf.meta = [{name: ":value", params: params, pos: cf.pos}].concat([for (m in cf.meta) if (m.name != ":value") m]);
 	}
 
-	static function setFunctionValueMeta(cf:TClassField, fd:Func):Void {
+	public static function setFunctionValueMeta(cf:TClassField, fd:Func):Void {
 		// The values accumulate through a prepending fold, so the object lists the defaulted arguments in
 		// REVERSE declaration order.
 		var fields:Array<ObjectField> = [];

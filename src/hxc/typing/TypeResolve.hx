@@ -1281,6 +1281,9 @@ class TypeResolve {
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;
+				// The argument metadata is generated at field CREATION, so a body-less function (an extern
+				// declaration) records its defaults too.
+				hxc.typing.TypeFields.setFunctionValueMeta(cf, fd);
 				// Build a TFun signature from each
 				// `@:overload(function(args):ret {})` meta and store it in overloads. This is
 				// `(fd,data:Dynamic,?position)` / `(fd,data,position,encoding)` alternates) be
