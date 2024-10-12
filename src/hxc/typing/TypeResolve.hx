@@ -1175,6 +1175,7 @@ class TypeResolve {
 		// The enum self-type, with its declared params applied.
 		var et = TEnum(e, TypeFunctions.extractParamTypes(e.params));
 		var index = 0;
+		var isFlat = true;
 		for (c in d.dData) {
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
@@ -1207,8 +1208,12 @@ class TypeResolve {
 			var ef = new TEnumField(c.ecName.name, t, c.ecPos, c.ecName.pos, c.ecDoc, index, ctorParams, c.ecMeta);
 			e.constrs.set(c.ecName.name, ef);
 			e.names.push(c.ecName.name);
+			if (c.ecArgs.length > 0) isFlat = false;
 			index++;
 		}
+		// An enum whose every constructor takes no argument is FLAT, and carries the meta that unification
+		// tests for a haxe.FlatEnum constraint.
+		if (isFlat) e.meta = [{name: hxc.core.TypeUnification.Meta.FlatEnum, params: [], pos: Position.nullPos}].concat(e.meta);
 	}
 
 	// Field-type resolution: the part of creating a variable, method or property field that

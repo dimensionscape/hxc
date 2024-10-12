@@ -1102,6 +1102,11 @@ class ModuleLoader {
 			for (mt in ctx.currentModule.types) {
 				if (TypeFunctions.tInfos(mt).path.name == tname) return mt;
 			}
+			// The module's own types and then its local IMPORTS are checked, both before any filesystem
+			// lookup. Going to disk first would make an imported name that also names a root module load
+			// that module too: `import haxe.ds.List` in Lambda would pull in the root List typedef as well.
+			var imported = resolveNamedImportType(ctx, ctx.currentModule, tname, p);
+			if (imported != null) return imported;
 		}
 		try {
 			var m = loadModule(ctx, path, p);
