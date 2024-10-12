@@ -873,30 +873,17 @@ class Compiler {
 			hxc.filters.NullSafety.run(ctx, ctx.types);
 			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
 			hxc.filters.InterfaceCheck.run(ctx);
-			// Definite-assignment runs after typing on the pre-optimization tree, independent of the target
-			// runs in the shared filter pipeline).
-			hxc.filters.LocalVarsInit.run(ctx);
 			// UnusedPure (hxc-only) moved into Filters.run after inline_constructors: an inlined value
 			// block ends with a read of its result local, and consumes exactly that read to splice the
 			// block flat (unwrap on Some io).
 			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
-			// Fix com.main and the static-init type order before any target consumes them
-			if (platform != Cross) hxc.typing.Finalization.run(ctx);
+			// Fix com.main and the static-init type order before any target consumes them which runs for
+			// every target including none)
+			hxc.typing.Finalization.run(ctx);
 			// A fully-typed non-display compile caches its modules into the process cache, activating
 			// server/module and server/type lookups for later requests in the same process.
 			// (maybe_cache_context: dms_full_typing + dms_populate_cache, both true outside display runs).
 			if (ctx.displaySpec == null) hxc.context.DisplayJson.cache.cacheContext(ctx);
-			// onGenerate callbacks run inside Filters.run a targetless compile has no filter pipeline, so
-			// they fire here to keep macro tests observable.
-			if (platform == Cross) hxc.eval.EvalMacro.runGenerateCallbacks(ctx);
-			// The report comes after the filters, so it covers what they raise (the analyzer's value checks,
-			// among others). A target with no filter pipeline has nothing further to run, so it reports here
-			// instead.
-			if (isDisplay(ctx, "diagnostics")
-				&& !(platform == Js || platform == Cpp || platform == Eval || platform == Neko)) {
-				displayDiagnostics(ctx);
-				return;
-			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// The --xml / --json type descriptions are written after typing but before the target
 			// generation, and are not gated on --no-output.
@@ -919,7 +906,7 @@ class Compiler {
 			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
 			// exception lowering, and closure/local passes before interpretation. Filters run even under
 			// --no-output only generation on no_output), so analyzer value checks still report.
-			if (platform == Js || platform == Cpp || platform == Eval || platform == Neko) {
+			{
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
 				tFilter();
@@ -951,16 +938,6 @@ class Compiler {
 						tGen();
 					}
 				}
-			}
-			// A targetless compile still checks value misuse the filter stage would catch; the reference's
-			// filters run regardless of output. . Main resolution (privacy, signature) also still applies.
-			if (platform == Cross) {
-				hxc.typing.Finalization.getMain(ctx, ctx.types);
-				for (t in ctx.types) hxc.filters.FiltersCommon.runExpressionFilters(new hxc.typing.TyperContext(ctx), [
-					{name: "check_abstract_as_value", f: hxc.filters.Filters.checkAbstractAsValue},
-				], t);
-				abortOnDiagnostics(ctx, platform);
-				auxiliaryOutput();
 			}
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			// A generator error (a printed error during generation, e.g. a bad @:native code placeholder)

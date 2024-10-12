@@ -161,13 +161,14 @@ class Dce {
 		var pack:Array<String> = c.path.pack;
 		var n:String = c.path.name;
 		var topLevel:Bool = pack.length == 0;
-		// Platform = Js: Math/Array (top-level) -> false (do not keep whole)
-		if (topLevel && (n == "Math" || n == "Array")) return false;
-		// flash._Boot.RealBoot -> true (irrelevant on Js, kept for fidelity)
+		// Math and Array are exempted from the whole-class keep only on js; both arms below test the
+		// platform.
+		var isJs = com.platform.match(Js);
+		if (topLevel && (n == "Math" || n == "Array") && isJs) return false;
 		if (pack.length == 1 && pack[0] == "flash" && n == "RealBoot") return true;
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return true;
-		// String/Array (top-level): not (platform = Js) => false on Js
-		if (topLevel && (n == "String" || n == "Array")) return false;
+		// String/Array keep whole unless the platform is js.
+		if (topLevel && (n == "String" || n == "Array")) return !isJs;
 		return false;
 	}
 
