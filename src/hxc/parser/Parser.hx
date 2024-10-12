@@ -307,6 +307,15 @@ class Parser {
 		return displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset;
 	}
 
+	// The span from the end of this token to the end of the next one contains the cursor, so whatever
+	// belongs between them was never written.
+	function wouldSkipDisplayPosition(p1:Position, plusOne:Bool):Bool {
+		if (!isDisplayFile() || displayOffset < 0) return false;
+		var p2 = peekInfo().pos;
+		var lo = p1.max + (plusOne ? 1 : 0);
+		return lo <= displayOffset && displayOffset <= p2.max;
+	}
+
 	// The cursor sitting in the GAP between the end of this token and the start of the next one, in the
 	// display file and in completion mode.
 	function checkResumeRange(p:Position):Bool {
@@ -820,8 +829,8 @@ class Parser {
 		}
 		var params:Array<TypeParamOrConst> = [];
 		if (tokEq(peek(), TBinop(OpLt))) {
-			junk();
-			params = psep(Comma, parseTypePathOrConst);
+			var plt = next().pos;
+			params = psep(Comma, parseTypePathOrConst.bind(plt));
 			p2 = expect(TBinop(OpGt));
 		}
 		var tp:TypePath = {
@@ -833,7 +842,11 @@ class Parser {
 		return {path: tp, pos: Position.union(p0 == null ? p1 : p0, p2)};
 	}
 
-	function parseTypePathOrConst():TypeParamOrConst {
+	function parseTypePathOrConst(plt:Position):TypeParamOrConst {
+		// With the cursor in the gap right after the `<`, the parameter that was never written is the
+		// MAGIC type path, so `Null<|>` completes on the types in scope instead of erroring on the arity.
+		if (wouldSkipDisplayPosition(plt, false))
+			return TPType({ct: CTPath(magicTypePath()), pos: new Position(plt.file, displayOffset, displayOffset)});
 		// BkOpen array, then a complex type, then unop/neg+const, then const, then expr.
 		switch (peek()) {
 			case BkOpen:
