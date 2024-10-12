@@ -130,9 +130,10 @@ class Preprocess {
 				throw new ParserError(Unclosed_conditional, p);
 			}
 			var ti = toks[i];
-			// The reference's skip consumes via the same token stream that records
-			// docs, so a doc inside a skipped region still updates last_doc.
-			dropDoc(ti);
+			// No dropDoc here: skipping pulls tokens straight from the lexer, bypassing the step that
+			// records a doc comment, so a doc inside a skipped region never becomes the pending doc.
+			// Carrying it would make the first declaration after the branch inherit the doc of the last one
+			// inside it.
 			switch (ti.tok) {
 				case Eof:
 					throw new ParserError(Unclosed_conditional, p);
