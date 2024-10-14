@@ -801,9 +801,12 @@ class ModuleLoader {
 					for (a in cff.cffAccess) if (a.access == AInline) varInline = true;
 					varInline ? Var({read: AccInline, write: AccNever}) : isFinalField ? Var({read: AccNormal, write: isStatic ? AccNever : AccCtor}) : Var({read: AccNormal, write: AccNormal});
 				case FProp(get, set, _, _):
-					// Property accessors use AccCall for get/set or dynamic, AccNo for null, AccNever for never
-					// and AccNormal for default. This makes reads invoke getters rather than uninitialized backing
-					// fields.
+					// Property reads and writes invoke get/set methods for AccCall. Defer display on accessor
+					// names to PConnectField so sibling accessor methods exist.
+					if (hxc.typing.Typer.atDisplayPos(get.pos) && get.name == "get")
+						delayAccessorDisplay(ctx, c, "get_" + cff.cffName.name, get.pos, isStatic);
+					if (hxc.typing.Typer.atDisplayPos(set.pos) && set.name == "set")
+						delayAccessorDisplay(ctx, c, "set_" + cff.cffName.name, set.pos, isStatic);
 					Var({read: propAccess(get.name, true), write: propAccess(set.name, false)});
 			}
 			var isMethod = switch (cf.kind) { case Method(_): true; case _: false; };
@@ -907,6 +910,23 @@ class ModuleLoader {
 			case AMacro: "macro"; case AFinal: "final"; case AExtern: "extern";
 			case AAbstract: "abstract"; case AOverload: "overload";
 		};
+	}
+
+	// Report the accessor field the identifier names, exactly as a field access to it would.
+	static function delayAccessorDisplay(ctx:Context, c:TClass, name:String, p:Position, isStatic:Bool):Void {
+		if (ctx == null) return;
+		ctx.delay(Context.PConnectField, function() {
+			var cf = isStatic ? c.statics.get(name) : c.fields.get(name);
+			if (cf == null) return;
+			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displayFound == null)
+				hxc.typing.Typer.displayFound = [cf.namePos];
+			if ((hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition)
+					&& hxc.typing.Typer.hoverFound == null)
+				hxc.typing.Typer.hoverFound = {t: t, p: p};
+			if (hxc.typing.Typer.displayUsage && hxc.typing.Typer.usageTargetField == null)
+				hxc.typing.Typer.usageTargetField = cf;
+		});
 	}
 
 	// Map property accessor names to VarAccess. Unknown custom accessors retain AccCall behavior after

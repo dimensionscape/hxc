@@ -617,7 +617,7 @@ class Calls {
 			}
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt);
-		Typer.noteDisplayAccess(acc, callee.pos);
+		Typer.noteDisplayAccess(ctx, acc, callee.pos);
 		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
 	}
 

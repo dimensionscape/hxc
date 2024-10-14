@@ -1433,7 +1433,7 @@ class Typer {
 				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
-		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(typed);
+		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
 		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
@@ -2083,7 +2083,7 @@ class Typer {
 		};
 		var te = readExpr(acc);
 		if (te == null) return;
-		if (displayDefinition) checkDisplayDefinition(te);
+		if (displayDefinition) checkDisplayDefinition(ctx, te);
 		if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, te, null);
 		if (displayUsage || displayImplementation) captureUsageTarget(te);
 	}
@@ -2316,16 +2316,26 @@ class Typer {
 
 	// A call whose ARGUMENTS fail to unify still resolves its callee; the definition records
 	// from the resolved access before argument typing can abort the call.
-	public static function noteDisplayAccess(acc:AccessKind, pos:Position):Void {
+	public static function noteDisplayAccess(ctx:TyperContext, acc:AccessKind, pos:Position):Void {
 		if (!displayDefinition || displayFound != null || !atDisplayPos(pos)) return;
 		switch (acc) {
-			case AKExpr(te): checkDisplayDefinition(te);
+			case AKExpr(te): checkDisplayDefinition(ctx, te);
 			case AKField(fa) | AKAccessor(fa): displayFound = [fa.field.namePos];
 			case _:
 		}
 	}
 
-	static function checkDisplayDefinition(te:TExpr):Void {
+	// Walks up until a class actually declares a constructor.
+	static function superConstructor(c:Null<TClass>):Null<TClassField> {
+		var cur = c;
+		while (cur != null) {
+			if (cur.constructor != null) return cur.constructor;
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	static function checkDisplayDefinition(ctx:TyperContext, te:TExpr):Void {
 		if (displayFound != null) return;
 		// A sub-expression that still encloses the offset is the more precise match: recurse
 		// into any PROPER enclosing sub-range first (an assignment target or call argument
@@ -2333,7 +2343,7 @@ class Typer {
 		TexprTools.iter(function(child) {
 			if (displayFound == null && atDisplayPos(child.pos)
 				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max))
-				checkDisplayDefinition(child);
+				checkDisplayDefinition(ctx, child);
 		}, te);
 		if (displayFound != null) return;
 		var pl:Array<Position> = switch (te.expr) {
@@ -2345,6 +2355,14 @@ class Typer {
 			case TVarExpr(v, _) if (atDisplayPos(v.pos)): [v.pos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
+			// `super(...)` reports the SUPER constructor, and a bare `super` the super class.
+			case TCall({expr: TConst(TSuper)}, _):
+				var sup = ctx.curclass == null ? null : ctx.curclass.superClass;
+				var ctor = sup == null ? null : superConstructor(sup.c);
+				ctor == null ? [] : [ctor.namePos];
+			case TConst(TSuper):
+				var sup = ctx.curclass == null ? null : ctx.curclass.superClass;
+				sup == null ? [] : [sup.c.namePos];
 			case _: [];
 		};
 		if (pl.length > 0) displayFound = pl;
