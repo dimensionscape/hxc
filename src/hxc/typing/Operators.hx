@@ -875,7 +875,10 @@ class Operators {
 				}
 			case _:
 		}
-		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
+		var lhsAcc = Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType);
+		// The display answers on the ACCESS, whether or not the write that follows is allowed.
+		Typer.checkDisplayOnAccess(ctx, lhsAcc, e1.pos);
+		return switch (lhsAcc) {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
 			case AKField(fa):
 				// Assigning to a dynamic method must see its inferred return already settled (a no-return

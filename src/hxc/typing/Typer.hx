@@ -2053,6 +2053,28 @@ class Typer {
 		}
 	}
 
+	// Runs on the ACCESS, before the assignment decides whether the write is legal at all. hxc only
+	// ever hands the display hooks a typed EXPRESSION, and a rejected write never becomes one, so an
+	// lvalue under the cursor answered nothing.
+	public static function checkDisplayOnAccess(ctx:TyperContext, acc:hxc.typing.AccessKind.AccessKind, p:Position):Void {
+		if (!atDisplayPos(p)) return;
+		if (!displayDefinition && !displayHover && !displayTypeDefinition && !displayUsage && !displayImplementation) return;
+		function readExpr(a:hxc.typing.AccessKind.AccessKind):Null<TExpr> return switch (a) {
+			case AKNo(inner, _): readExpr(inner);
+			case AKExpr(te): te;
+			case AKField(fa) | AKAccessor(fa):
+				try hxc.typing.FieldAccessTools.getFieldExpr(fa, FRead) catch (_:Dynamic) null;
+			case AKUsingField(se) | AKUsingAccessor(se):
+				try hxc.typing.FieldAccessTools.getFieldExpr(se.access, FRead) catch (_:Dynamic) null;
+			case _: null;
+		};
+		var te = readExpr(acc);
+		if (te == null) return;
+		if (displayDefinition) checkDisplayDefinition(te);
+		if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, te, null);
+		if (displayUsage || displayImplementation) captureUsageTarget(te);
+	}
+
 	public static function atDisplayPos(p:Position):Bool {
 		var df = hxc.parser.Parser.displayFile;
 		var off = hxc.parser.Parser.displayOffset;
