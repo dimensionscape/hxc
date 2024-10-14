@@ -109,16 +109,18 @@ class DisplayXml {
 		return b.toString();
 	}
 
-	// <pos>file:line: characters a-b</pos> per position, with the real (absolute) file path and no newline
-	// after the closing tag.
+	// Absolutize file names only while printing; changing position keys would make unsaved buffers use
+	// the disk file's line index.
+	static function fullPathPrinter(file:String, line:Int):String {
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		return '$full:$line:';
+	}
+
 	public static function printPositions(positions:Array<hxc.ast.Position>):String {
 		var b = new StringBuf();
 		b.add("<list>\n");
-		for (p in positions) {
-			var full = try sys.FileSystem.fullPath(p.file) catch (_:Dynamic) p.file;
-			var ap = new hxc.ast.Position(full, p.min, p.max);
-			b.add("<pos>" + hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', ap) + "</pos>\n");
-		}
+		for (p in positions)
+			b.add("<pos>" + hxc.core.Globals.getErrorPosRef(fullPathPrinter, p) + "</pos>\n");
 		b.add("</list>");
 		return b.toString();
 	}
@@ -128,9 +130,7 @@ class DisplayXml {
 		var head = if (p == null || p.min == -1) {
 			"<type";
 		} else {
-			var full = try sys.FileSystem.fullPath(p.file) catch (_:Dynamic) p.file;
-			var ap = new hxc.ast.Position(full, p.min, p.max);
-			'<type p="' + htmlescape(hxc.core.Globals.getErrorPosRef(function(file, line) return '$file:$line:', ap)) + '"';
+			'<type p="' + htmlescape(hxc.core.Globals.getErrorPosRef(fullPathPrinter, p)) + '"';
 		}
 		if (doc != null) head += ' d="' + htmlescape(doc) + '"';
 		return head + ">\n" + htmlescape(t) + "\n</type>\n";

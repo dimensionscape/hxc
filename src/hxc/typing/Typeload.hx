@@ -515,7 +515,30 @@ class Typeload {
 		ctx.currentModule = saved;
 	}
 
+	// Every type path loaded records (module, occurrence, resolved type). Each is later resolved to the
+	// declaration's name position and turned into a Referenced relation. Without it a type is only ever
+	// found through an EXPRESSION, so a reference from a type hint (an extends clause, an argument hint,
+	// an abstract's underlying type) is invisible to @usage.
+	public static var typeHints:Array<{m:Null<ModuleDef>, p:Position, t:T}> = [];
+
 	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
+		var r = loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
+		// The hint list only feeds the reference searches, so it is collected only for them.
+		if (hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation) {
+			typeHints.push({m: ctx.currentModule, p: p, t: r});
+			// Narrows the path's range to the dotted name itself, so `Array<Foo>` with the cursor on Foo
+			// answers Foo and not Array.
+			var strings = t.tsub != null ? [t.tsub, t.tname].concat(t.tpackage) : [t.tname].concat(t.tpackage);
+			var pName = new Position(p.file, p.min, p.min + strings.join(".").length);
+			if (hxc.typing.Typer.atDisplayPos(pName)) {
+				var mt = try TypeFunctions.moduleTypeOfType(r) catch (_:hxc.core.ExitException) null;
+				if (mt != null) hxc.typing.Typer.usageTargetType = mt;
+			}
+		}
+		return r;
+	}
+
+	static function loadInstance_(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
 		// Look up a bare type-parameter name before resolving a module.
 		if (t.tpackage.length == 0 && t.tsub == null) {
 			var pt:Null<T> = null;

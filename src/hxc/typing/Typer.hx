@@ -58,6 +58,8 @@ class Typer {
 		usageTargetVar = null;
 		usageTargetEnumField = null;
 		usageTargetClass = null;
+		usageTargetType = null;
+		hxc.typing.Typeload.typeHints = [];
 		fieldCompletionFound = null;
 	}
 
@@ -922,7 +924,10 @@ class Typer {
 					// kind (captured arguments, the tail-recursion assign arm, the argument-local test), so
 					// treating a local function's arguments as local VARIABLES would make it reuse the
 					// parameters instead of redeclaring loop-scoped copies.
-					args.push({v: TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos), c: null});
+					var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
+					// The display is answered from the argument's own name range.
+					if (atDisplayPos(fa.name.pos)) displayVariable(ctx, av, fa.name.pos);
+					args.push({v: av, c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
 				// Top-down inference: bind unannotated (mono) arg/return types from an expected function
@@ -1817,8 +1822,6 @@ class Typer {
 	static function addCachedFileTypes(com:hxc.context.Context, items:Array<hxc.compiler.DisplayXml.ToplevelItem>,
 			seenPaths:Map<String, Bool>):Void {
 		if (!hxc.context.ServerCache.enabled) return;
-		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
-		if (cc == null) return;
 		// A package with a `_`-prefixed segment is the private `_Module` container and is never offered.
 		function packVisible(pack:Array<String>):Bool {
 			for (s in pack) if (s.length > 0 && s.charCodeAt(0) == "_".code) return false;
@@ -1826,10 +1829,10 @@ class Typer {
 		}
 		var packages:Array<Array<String>> = [];
 		var seenPack = new Map<String, Bool>();
-		for (k in cc.files.keys()) {
-			var cf = cc.files.get(k);
-			if (cf.decls == null || !packVisible(cf.pack)) continue;
-			var moduleName = cf.moduleName != null ? cf.moduleName : moduleNameOfPath(cf.path);
+		// The same parse-only class-path scan the json toplevel answer folds over; nothing here is typed.
+		for (cf in hxc.compiler.ToplevelScan.get(com)) {
+			if (!packVisible(cf.pack)) continue;
+			var moduleName = cf.moduleName;
 			var added = false;
 			for (td in cf.decls) {
 				var info = declNameAndFlags(td.decl);
@@ -1851,13 +1854,6 @@ class Typer {
 		for (pack in packages) if (packVisible(pack)) items.push({kind: "package", name: pack[pack.length - 1]});
 	}
 
-	static function moduleNameOfPath(path:String):String {
-		var p = StringTools.replace(path, "\\", "/");
-		var i = p.lastIndexOf("/");
-		var base = i < 0 ? p : p.substr(i + 1);
-		return StringTools.endsWith(base, ".hx") ? base.substr(0, base.length - 3) : base;
-	}
-
 	// The name, privacy and metadata of a declaration; an import or using contributes nothing.
 	static function declNameAndFlags(d:hxc.ast.Ast.TypeDef):Null<{name:String, priv:Bool, meta:Metadata}> {
 		return switch (d) {
@@ -1866,6 +1862,22 @@ class Typer {
 			case ETypedef(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(EPrivate) >= 0, meta: dd.dMeta};
 			case EAbstract(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(AbPrivate) >= 0, meta: dd.dMeta};
 			case _: null;
+		}
+	}
+
+	// A variable declaration answers the display by itself when the cursor sits on its name, without
+	// any typed expression referring to it. A function argument is the case that has no expression at
+	// all to be found through.
+	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position):Void {
+		if (displayDefinition) {
+			if (displayFound == null) displayFound = [v.pos];
+		} else if (displayHover || displayTypeDefinition) {
+			// DMTypeDefinition resolves from the same captured type.
+			if (hoverFound == null)
+				hoverFound = {t: v.type, p: p, e: TypeFunctions.mk(TLocal(v), v.type, p), tctx: ctx};
+		} else if (displayUsage || displayImplementation) {
+			if (usageTargetField == null && usageTargetVar == null && usageTargetEnumField == null)
+				usageTargetVar = v;
 		}
 	}
 
@@ -1903,12 +1915,18 @@ class Typer {
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): usageTargetField = cf;
 			case TLocal(v) | TVarExpr(v, _): usageTargetVar = v;
 			case TNew(c, _, _) if (c.constructor != null): usageTargetField = c.constructor;
-			case TTypeExpr(TClassDecl(c)): usageTargetClass = c;
+			case TTypeExpr(mt):
+				usageTargetType = mt;
+				switch (mt) { case TClassDecl(c): usageTargetClass = c; case _: }
 			case _:
 		}
 	}
 
 	public static var usageTargetClass:Null<TClass> = null;
+
+	// Under DMUsage/DMImplementation a type is the usage subject, whether the cursor sat on an
+	// expression naming it or on a type hint.
+	public static var usageTargetType:Null<hxc.core.Type.ModuleType> = null;
 
 	// Legacy field completion at a dangling display dot: a type lists its public statics CONCATENATED
 	// with the module's other types. Recorded, not raised, so the surrounding catch Dynamic recovery

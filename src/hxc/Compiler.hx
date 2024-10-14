@@ -1295,15 +1295,69 @@ class Compiler {
 		return out;
 	}
 
+	static function modKey(m:hxc.core.Type.ModuleDef):String {
+		return m.path.pack.join(".") + "." + m.path.name;
+	}
+
+	// The cursor on a type declaration name makes that type the subject, for a class, enum, typedef or
+	// abstract alike.
+	static function usageTypeAtDeclaration(ctx:Context):Null<hxc.core.Type.ModuleType> {
+		for (mt in ctx.types)
+			if (hxc.typing.Typer.atHoverPos(TypeFunctions.tInfos(mt).namePos)) return mt;
+		return null;
+	}
+
 	// Scan every typed field body for references to the captured @usage target. positions sort in source
 	// order.
 	static function collectUsages(ctx:Context):Array<Position> {
 		var cf = hxc.typing.Typer.usageTargetField;
 		var v = hxc.typing.Typer.usageTargetVar;
 		var ef = hxc.typing.Typer.usageTargetEnumField;
+		var mtTarget = hxc.typing.Typer.usageTargetType;
+		if (cf == null && v == null && ef == null && mtTarget == null) mtTarget = usageTypeAtDeclaration(ctx);
 		if (cf == null && v == null && ef == null) cf = usageFieldAtDeclaration(ctx);
-		if (cf == null && v == null && ef == null) return [];
 		var out:Array<Position> = [];
+		if (cf == null && v == null && ef == null && mtTarget == null) return [];
+		if (mtTarget != null) {
+			var want = TypeFunctions.tInfos(mtTarget).namePos;
+			// A relation is added on each promoted type hint. The position check compares both ends and the
+			// file, so an occurrence counts only when the hint resolved to this very declaration.
+			var mods = new Map<String, Bool>();
+			for (t in ctx.types) mods.set(modKey(TypeFunctions.tInfos(t).module), true);
+			for (h in hxc.typing.Typeload.typeHints) {
+				// Only modules that survived into com.types are checked, so a hint recorded from a
+				// discarded module contributes nothing.
+				if (h.m == null || !mods.exists(modKey(h.m))) continue;
+				var hmt = try TypeFunctions.moduleTypeOfType(h.t) catch (_:hxc.core.ExitException) null;
+				if (hmt == null) continue;
+				var got = TypeFunctions.tInfos(hmt).namePos;
+				if (got.min != want.min || got.max != want.max || got.file != want.file) continue;
+				if (h.p.min == want.min && h.p.max == want.max && h.p.file == want.file) continue;
+				var dup = false;
+				for (o in out) if (o.min == h.p.min && o.max == h.p.max && o.file == h.p.file) { dup = true; break; }
+				if (!dup) out.push(h.p);
+			}
+			// Type expressions also count as references.
+			function walkT(e:hxc.core.Type.TExpr):Void {
+				switch (e.expr) {
+					case TTypeExpr(mt2) if (TypeFunctions.tInfos(mt2).namePos == want): out.push(e.pos);
+					case _:
+				}
+				hxc.core.TexprTools.iter(walkT, e);
+			}
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c):
+					var all = c.orderedFields.concat(c.orderedStatics);
+					if (c.constructor != null) all.push(c.constructor);
+					for (f in all) if (f.expr != null) walkT(f.expr);
+				case _:
+			}
+			out.sort(function(a, b) {
+				if (a.file != b.file) return a.file < b.file ? -1 : 1;
+				return a.min - b.min;
+			});
+			return out;
+		}
 		function walk(e:hxc.core.Type.TExpr):Void {
 			switch (e.expr) {
 				case TField(_, FAnon(cf2) | FInstance(_, _, cf2) | FStatic(_, cf2) | FClosure(_, cf2)) if (cf != null && cf2 == cf): out.push(e.pos);

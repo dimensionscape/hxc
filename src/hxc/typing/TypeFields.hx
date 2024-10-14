@@ -927,6 +927,8 @@ class TypeFields {
 			var kind = if (tctx.curfun.match(FunMemberAbstract) && i == 0 && fa.name.name == "this") VAbstractThis else VUser(TVOArgument);
 			if (!kind.match(VAbstractThis)) Typer.checkLocalVariableName(tctx, fa.name.name, TVOArgument, fa.name.pos);
 			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
+			// The display is answered from the argument's own name range.
+			if (Typer.atDisplayPos(fa.name.pos)) Typer.displayVariable(tctx, v, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
 			// @:this is prepended to the abstract this argument. LocalDce's `keep` tests exactly that meta,
