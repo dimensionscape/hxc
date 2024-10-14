@@ -215,6 +215,11 @@ class ModuleLoader {
 		}
 
 		function recordImport(imp:Import, declPos:Position):Void {
+			// An empty import path completes the same in-scope type set as a type hint.
+			if (imp.path.length == 0 && imp.mode.match(INormal)) {
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
+				return;
+			}
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
@@ -251,6 +256,10 @@ class ModuleLoader {
 		}
 
 		function recordUsing(path:Array<PlacedName>, declPos:Position):Void {
+			if (path.length == 0) {
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
+				return;
+			}
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in path) pn.name];
 			var split = splitImportPath(parts);

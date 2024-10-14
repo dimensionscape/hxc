@@ -2739,9 +2739,13 @@ class Parser {
 					}
 				}
 			case _:
-				return err("Expected identifier after import");
+				// `import |` leaves the path empty rather than failing, and that with every type in scope.
+				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after import");
 		}
-		var p2 = expect(Semicolon);
+		// The missing semicolon is likewise not an error when the cursor is what stands where it would
+		// be.
+		var p2 = (path.length == 0 && !tokEq(peek(), Semicolon) && wouldSkipDisplayPosition(p1, true))
+			? new Position(p1.file, displayOffset, displayOffset) : expect(Semicolon);
 		var ipos = Position.union(p1, p2);
 		return {decl: EImport({path: path, mode: mode, pos: ipos}), pos: ipos};
 	}
@@ -2769,9 +2773,11 @@ class Parser {
 					}
 				}
 			case _:
-				return err("Expected identifier after using");
+				// The same rule for `using |`.
+				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after using");
 		}
-		var p2 = expect(Semicolon);
+		var p2 = (path.length == 0 && !tokEq(peek(), Semicolon) && wouldSkipDisplayPosition(p1, true))
+			? new Position(p1.file, displayOffset, displayOffset) : expect(Semicolon);
 		return {decl: EUsing(path), pos: Position.union(p1, p2)};
 	}
 }

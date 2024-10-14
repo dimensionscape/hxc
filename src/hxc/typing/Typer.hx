@@ -1875,7 +1875,7 @@ class Typer {
 	// loaded it. Each file's DECLARATIONS become type items, and a file that contributed anything also
 	// contributes its package (named by the package's last segment). The old protocol deliberately
 	// takes the ADVANCED branch here, not the legacy-completion one.
-	static function addCachedFileTypes(com:hxc.context.Context, items:Array<hxc.compiler.DisplayXml.ToplevelItem>,
+	public static function addCachedFileTypes(com:hxc.context.Context, items:Array<hxc.compiler.DisplayXml.ToplevelItem>,
 			seenPaths:Map<String, Bool>):Void {
 		if (!hxc.context.ServerCache.enabled) return;
 		// A package with a `_`-prefixed segment is the private `_Module` container and is never offered.

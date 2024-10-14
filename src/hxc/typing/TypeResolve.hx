@@ -201,11 +201,18 @@ class TypeResolve {
 	// with set_heritance's extra filtering on top.
 	public static function answerTypeHintCompletion(ctx:Context, p:Position):Void {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		var seenPaths = new Map<String, Bool>();
 		for (mt in visibleTypesForCompletion(ctx)) {
 			var inf = TypeFunctions.tInfos(mt);
 			if (inf.isPrivate) continue;
-			items.push({kind: "type", name: inf.path.name, path: hxc.core.Globals.sTypePath(inf.path)});
+			var key = hxc.core.Globals.sTypePath(inf.path);
+			if (seenPaths.exists(key)) continue;
+			seenPaths.set(key, true);
+			items.push({kind: "type", name: inf.path.name, path: key});
 		}
+		// A type collection reaches the same cache-files source an expression collection does, which is
+		// where a bare PACKAGE name comes from. Without it a type hint offers types only, never `haxe`.
+		hxc.typing.Typer.addCachedFileTypes(ctx, items, seenPaths);
 		items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
 		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
 	}
