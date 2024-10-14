@@ -799,6 +799,12 @@ class Compiler {
 					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
 					return;
 				}
+				// Under hover, the metadata name reports its own documentation, in its own element. Metadata
+				// display raises as soon as the entry is reached, so it wins over the expression the metadata
+				// is attached to; the parser only records the entry when the cursor is on the name. A name the
+				// registry does not know (a custom metadata) answers nothing.
+				var metaDoc = displayMetaDoc(ctx);
+				if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
 				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound.e);
 				if (h == null) h = hoverOnFieldName(ctx);
@@ -809,12 +815,6 @@ class Compiler {
 						h = {t: TypeFunctions.typeOfModuleType(mt), p: inf.namePos};
 						hdoc = inf.doc == null ? null : hxc.ast.Ast.genDocText(inf.doc);
 					}
-				}
-				// Under DMHover: the metadata name reports its own documentation, in its own element. A name
-				// the registry does not know (Meta.Custom, has no documentation and so answers nothing.
-				if (h == null) {
-					var doc = displayMetaDoc(ctx);
-					if (doc != null) { answerOut("<metadata>" + doc + "</metadata>"); return; }
 				}
 				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
 				return;
@@ -1000,6 +1000,10 @@ class Compiler {
 			answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
 			return;
 		} catch (tl:hxc.compiler.DisplayXml.ToplevelCompletion) {
+			// Metadata display raises at the metadata ENTRY, so a cursor on the entry answers with the
+			// registry and not with whatever the expression the metadata is attached to would have
+			// completed to.
+			if (hxc.parser.Parser.displayMetaFound) { answerMetadataCompletion(ctx); return; }
 			// No trailing newline: the completion string prints verbatim.
 			answerOut(hxc.compiler.DisplayXml.printToplevel(tl.items));
 			return;
