@@ -1558,24 +1558,80 @@ class Typer {
 				case t2: t2;
 			};
 		}
-		var doc:hxc.ast.Ast.Documentation = null;
-		var overloads:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		// The field's own type first, then its overloads reversed, and each one dropped when the calling
+		// scope cannot reach it. A "wacky" overload (the @:overload metadata kind, which carries no
+		// CfOverload flag) documents itself from the MAIN field, since the metadata form has no doc of
+		// its own.
+		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		function addCand(t:T, doc:hxc.ast.Ast.Documentation):Void switch (followCallable(t)) {
+			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: doc});
+			case _:
+		}
 		switch (callee.expr) {
-			case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf)):
-				doc = cf.doc;
-				for (o in cf.overloads) switch (TypeFunctions.follow(o.type)) {
-					case TFun(sig): overloads.push({args: sig.args, ret: sig.ret, doc: o.doc});
-					case _:
-				}
+			case TField(_, FStatic(c, cf) | FInstance(c, _, cf)):
+				var stat = switch (callee.expr) { case TField(_, FStatic(_, _)): true; case _: false; };
+				var wacky = !TypeFunctions.hasClassFieldFlag(cf, CfOverload);
+				var all = [cf];
+				var ovl = cf.overloads.copy();
+				ovl.reverse();
+				for (o in ovl) all.push(o);
+				for (o in all)
+					if (hxc.typing.Fields.canAccess(ctx, c, o, stat))
+						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc);
+			// A closure over a known class goes through the same access filter; an anonymous one has no
+			// class to check against.
+			case TField(_, FClosure(cp, cf)) if (cp != null):
+				var wacky = !TypeFunctions.hasClassFieldFlag(cf, CfOverload);
+				var all = [cf];
+				var ovl = cf.overloads.copy();
+				ovl.reverse();
+				for (o in ovl) all.push(o);
+				for (o in all)
+					if (hxc.typing.Fields.canAccess(ctx, cp.c, o, false))
+						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc);
+			case TField(_, FAnon(cf) | FClosure(_, cf)):
+				var wacky = !TypeFunctions.hasClassFieldFlag(cf, CfOverload);
+				addCand(callee.type, cf.doc);
+				var ovl = cf.overloads.copy();
+				ovl.reverse();
+				for (o in ovl) addCand(o.type, wacky ? cf.doc : o.doc);
 			case _:
+				addCand(callee.type, null);
 		}
-		switch (followCallable(callee.type)) {
-			case TFun(sig):
-				// The current signature lists first, overloads after.
-				var sigs = [{args: sig.args, ret: sig.ret, doc: doc}].concat(overloads);
-				signatureFound = {sigs: sigs, activeArg: active};
-			case _:
+		if (cands.length == 0) return;
+		// A display position past the last written argument gets a null appended so argument unification
+		// can fail on arity instead of silently accepting.
+		var el = params.copy();
+		if (el.length > 0 && active >= el.length) el.push(new Expr(EConst(CIdent("null")), Position.nullPos));
+		// An overload survives when the arguments written so far still unify with it (too FEW arguments
+		// is expected, not a mismatch). The accumulator prepends, so what survives comes out reversed;
+		// nothing surviving keeps the lot.
+		var kept = [];
+		for (cand in cands) {
+			var ok = try { unifyCallArgsForSignature(ctx, el, cand.args, cand.ret, p); true; }
+				catch (err:TypingError) err.message.indexOf("Not enough arguments") >= 0
+				catch (_:Dynamic) false;
+			if (ok) kept.unshift(cand);
 		}
+		signatureFound = {sigs: kept.length == 0 ? cands : kept, activeArg: active};
+	}
+
+	// The keep test runs the real argument unification but must leave nothing behind: it types
+	// the argument expressions, and a display hook firing inside one would answer the request
+	// with a completion from a candidate that is only being probed.
+	static function unifyCallArgsForSignature(ctx:TyperContext, el:Array<Expr>, args:Array<hxc.core.Type.TSignatureArg>, r:T, p:Position):Void {
+		var sSig = displaySignature, sFound = signatureFound;
+		var sHover = displayHover, sDef = displayDefinition, sTop = displayToplevel;
+		displaySignature = false; displayHover = false; displayDefinition = false; displayToplevel = false;
+		try {
+			hxc.typing.Calls.unifyCallArgs(ctx, el, args, r, p);
+		} catch (e:haxe.Exception) {
+			displaySignature = sSig; signatureFound = sFound;
+			displayHover = sHover; displayDefinition = sDef; displayToplevel = sTop;
+			throw e;
+		}
+		displaySignature = sSig; signatureFound = sFound;
+		displayHover = sHover; displayDefinition = sDef; displayToplevel = sTop;
 	}
 
 	public static function atHoverPos(p:Position):Bool {
