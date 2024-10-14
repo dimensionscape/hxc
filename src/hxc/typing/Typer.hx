@@ -1810,8 +1810,13 @@ class Typer {
 				for (cf in a.impl.orderedStatics) {
 					if (noCompletion(cf.meta)) continue;
 					if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
-						if (ctx.curfun != FunStatic) items.push({kind: "member", name: cf.name, type: sType(cf.type),
-							doc: Ast.genDocTextOpt(cf.doc), sortGroup: 10, sortKey: cf.name, sortType: cf.type});
+						// An abstract's member reads without the leading `this` argument its impl carries.
+						var mt = switch (TypeFunctions.follow(cf.type)) {
+							case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
+							case t2: t2;
+						};
+						if (ctx.curfun != FunStatic) items.push({kind: "member", name: cf.name, type: sType(mt),
+							doc: Ast.genDocTextOpt(cf.doc), sortGroup: 10, sortKey: cf.name, sortType: mt});
 					} else items.push({kind: "static", name: cf.name, type: sType(cf.type),
 						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: cf.type});
 				}
