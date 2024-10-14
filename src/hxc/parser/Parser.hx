@@ -1143,7 +1143,9 @@ class Parser {
 					var p1 = next().pos;
 					var el = psep(Comma, exprOrVar);
 					var eg = parseGuardOpt();
-					var pdot = expect(DblDot);
+					// A missing `:` is recorded, not raised, so `case <cursor>` with nothing after it still forms
+					// a case and the pattern the user is writing gets answered.
+					var pdot = expectUnlessResume(DblDot);
 					if (el.length == 0) err("case without a pattern is not allowed");
 					var b = blockWithPos(p1);
 					var bexpr:Null<Expr> = (b.exprs.length == 0) ? null : new Expr(EBlock(b.exprs), Position.union(p1, b.pos));
@@ -1185,7 +1187,11 @@ class Parser {
 				var np = dollarIdent();
 				return new Expr(EVars([mkEvar(np, true)]), Position.union(p1, np.pos));
 			case _:
-				return expr();
+				// The pattern falls through to secureExpr, so a case pattern the user has not written yet
+				// stands in as a null over the gap. That is what puts the display position in the PATTERN,
+				// where the subject type is expected, instead of leaving it to the case body where nothing
+				// is expected.
+				return secureExpr();
 		}
 	}
 
@@ -1399,6 +1405,16 @@ class Parser {
 		}
 	}
 
+	// The token if it is there, otherwise syntaxError, which records rather than raises inside the display
+	// file and stands the next position in.
+	function expectUnlessResume(t:Token):Position {
+		if (tokEq(peek(), t)) return next().pos;
+		var np = peekInfo().pos;
+		if (displayFile == null) throw new ParserError(Expected([Ast.sToken(t)]), np);
+		syntaxErrors.push({msg: Expected([Ast.sToken(t)]), pos: np});
+		return np;
+	}
+
 	function secureExpr():Expr {
 		// A token that cannot start an expression reports Expected expression there. .
 		switch (peek()) {
@@ -1423,7 +1439,25 @@ class Parser {
 				throw new ParserError(Expected(["expression"]), np);
 			case _:
 		}
-		return expr();
+		// secureExpr is `expr` with a CATCH-ALL fallback, not a fixed token list, so any other token that
+		// cannot start an expression stands in too. The fallback is reached only when the attempt consumed
+		// NOTHING (a soft failure); a partially consumed one propagates, which is the `idx != save` test.
+		// Outside a display file the original error stands, so no existing message changes.
+		var save = idx;
+		var np = peekInfo().pos;
+		try {
+			return expr();
+		} catch (er:ParserError) {
+			if (idx != save || displayFile == null) throw er;
+			syntaxErrors.push({msg: Expected(["expression"]), pos: np});
+			var last = tokens[idx > 0 ? idx - 1 : 0];
+			var offset = switch (last.tok) {
+				case Const(_) | Kwd(_) | Dollar(_): 1;
+				case _: 0;
+			};
+			return new Expr(EConst(CIdent("null")),
+				new Position(last.pos.file, last.pos.max + offset, np.max - 1));
+		}
 	}
 
 	function parseMacroExpr(p:Position):Expr {

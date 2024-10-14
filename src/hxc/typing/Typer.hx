@@ -59,6 +59,7 @@ class Typer {
 		usageTargetEnumField = null;
 		usageTargetClass = null;
 		usageTargetType = null;
+		patternDisplay = false;
 		hxc.typing.Typeload.typeHints = [];
 		fieldCompletionFound = null;
 	}
@@ -1750,15 +1751,23 @@ class Typer {
 		ctx.com.unresolvedIdentifiers.push({name: i, pos: p, suggestions: out});
 	}
 
-	static function collectToplevel(ctx:TyperContext, ?withType:WithType):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+	static function collectToplevel(ctx:TyperContext, ?withType:WithType, sort:Bool = false):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		var displayOff = hxc.parser.Parser.displayOffset;
 		inline function sType(t:T):String return hxc.core.TPrinting.sTypeStr(t);
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
 		// Locals in scope
 		for (name in ctx.locals.keys()) {
 			var v = ctx.locals.get(name);
-			if (name.length > 0 && name.charCodeAt(0) != "`".code)
-				items.push({kind: "local", name: name, type: sType(v.type)});
+			if (name.length > 0 && name.charCodeAt(0) != "`".code) {
+				// A local sorts by how far the cursor is PAST its declaration, so the nearest one comes first,
+				// behind a levenshtein distance to the name the position expects when there is one .
+				var d = displayOff - v.pos.min;
+				var key = StringTools.lpad(Std.string(d < 0 ? 0 : d), "0", 5);
+				var exp = expectedName(withType);
+				if (exp != null) key = StringTools.lpad(Std.string(levenshtein(exp, v.name)), "0", 5) + key;
+				items.push({kind: "local", name: name, type: sType(v.type), sortGroup: 0, sortKey: key, sortType: v.type});
+			}
 		}
 		var c = ctx.curclass;
 		// Member fields, including inherited ones
@@ -1767,7 +1776,9 @@ class Typer {
 			while (cur != null) {
 				for (name in cur.fields.keys()) {
 					var cf = cur.fields.get(name);
-					if (!noCompletion(cf.meta)) items.push({kind: "member", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+					// The class's own member is 10, an inherited one 11.
+					if (!noCompletion(cf.meta)) items.push({kind: "member", name: cf.name, type: sType(cf.type),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: cur == c ? 10 : 11, sortKey: cf.name, sortType: cf.type});
 				}
 				cur = cur.superClass == null ? null : cur.superClass.c;
 			}
@@ -1778,12 +1789,15 @@ class Typer {
 				for (cf in a.impl.orderedStatics) {
 					if (noCompletion(cf.meta)) continue;
 					if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
-						if (ctx.curfun != FunStatic) items.push({kind: "member", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
-					} else items.push({kind: "static", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+						if (ctx.curfun != FunStatic) items.push({kind: "member", name: cf.name, type: sType(cf.type),
+							doc: Ast.genDocTextOpt(cf.doc), sortGroup: 10, sortKey: cf.name, sortType: cf.type});
+					} else items.push({kind: "static", name: cf.name, type: sType(cf.type),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: cf.type});
 				}
 			case _:
 				for (cf in c.orderedStatics)
-					if (!noCompletion(cf.meta)) items.push({kind: "static", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+					if (!noCompletion(cf.meta)) items.push({kind: "static", name: cf.name, type: sType(cf.type),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: cf.type});
 		}
 		// Enum constructors. Each enum contributes once: every arm checks whether the path was already
 		// recorded, and records it.
@@ -1796,7 +1810,11 @@ class Typer {
 					seenEnumPaths.set(key, true);
 					for (name in en.constrs.keys()) {
 						var ef = en.constrs.get(name);
-						items.push({kind: "enum", name: ef.name, type: sType(ef.type), doc: Ast.genDocTextOpt(ef.doc)});
+						// An enum field sorts before everything else in a pattern, and by its declaration INDEX
+						// rather than its name - which is the only thing that puts the constructors back in source
+						// order.
+						items.push({kind: "enum", name: ef.name, type: sType(ef.type), doc: Ast.genDocTextOpt(ef.doc),
+							sortGroup: patternDisplay ? -1 : 20, sortKey: StringTools.lpad(Std.string(ef.index), "0", 4), sortType: ef.type});
 					}
 				case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl != c):
 					var key = hxc.core.Globals.sTypePath(a.path);
@@ -1804,7 +1822,8 @@ class Typer {
 					seenEnumPaths.set(key, true);
 					for (cf in a.impl.orderedStatics)
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
-							items.push({kind: "enumabstract", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+							items.push({kind: "enumabstract", name: cf.name, type: sType(cf.type), doc: Ast.genDocTextOpt(cf.doc),
+								sortGroup: patternDisplay ? -1 : 21, sortKey: cf.name, sortType: cf.type});
 				case TTypeDecl(td):
 					// A typedef contributes only if it aliases an enum.
 					switch (TypeFunctions.follow(td.type)) {
@@ -1827,22 +1846,25 @@ class Typer {
 				}
 			case _:
 		}
-		// Literals
-		items.push({kind: "literal", name: "null"});
-		items.push({kind: "literal", name: "true"});
-		items.push({kind: "literal", name: "false"});
+		// Literals Each literal carries a type, which is what ranks it against the expected one - null is
+		// Dynamic, the booleans are Bool, trace is a function.
+		inline function lit(n:String, lt:T) items.push({kind: "literal", name: n, sortGroup: 50, sortKey: n, sortType: lt});
+		lit("null", TypeFunctions.tDynamic);
+		lit("true", ctx.com.basic.tbool);
+		lit("false", ctx.com.basic.tbool);
 		switch (ctx.curfun) {
 			case FunMember | FunConstructor | FunMemberClassLocal:
-				items.push({kind: "literal", name: "this"});
-				if (c != null && c.superClass != null) items.push({kind: "literal", name: "super"});
+				lit("this", c == null ? TypeFunctions.tDynamic : TInst(c, TypeFunctions.extractParamTypes(c.params)));
+				if (c != null && c.superClass != null) lit("super", TInst(c.superClass.c, c.superClass.params));
 			case FunMemberAbstract:
-				items.push({kind: "literal", name: "abstract"});
+				lit("abstract", c == null ? TypeFunctions.tDynamic : TInst(c, TypeFunctions.extractParamTypes(c.params)));
 			case _:
 		}
-		items.push({kind: "literal", name: "trace"});
+		lit("trace", TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: ctx.com.basic.tvoid}));
 		// Type params
 		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
-			case TInst(pc, _): items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path)});
+			case TInst(pc, _): items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path),
+				sortGroup: 30, sortKey: pc.path.name});
 			case _:
 		}
 		// Module types, then the implicit StdTypes import (newest first, matching the reversed
@@ -1858,7 +1880,10 @@ class Typer {
 			var key = hxc.core.Globals.sTypePath(inf.path);
 			if (seenPaths.exists(key)) return;
 			seenPaths.set(key, true);
-			items.push({kind: "type", name: inf.path.name, path: key});
+			// A type sorts by IMPORT STATUS then dotted path. Everything reached here is in scope by
+			// definition (the module's own types and StdTypes), which is Imported; the cache-files source
+			// below contributes the Unimported ones.
+			items.push({kind: "type", name: inf.path.name, path: key, sortGroup: 31, sortKey: key});
 		}
 		if (m != null) for (mt in m.types) addType(mt);
 		var std = ctx.com.moduleLut.get("StdTypes");
@@ -1868,7 +1893,88 @@ class Typer {
 			for (mt in l) addType(mt);
 		}
 		addCachedFileTypes(ctx.com, items, seenPaths);
-		return items;
+		return sort ? sortToplevel(items, withType) : items;
+	}
+
+	// An EDisplay inside a PATTERN answers with the pattern's own expected type, which is what ranks the
+	// subject enum's constructors first.
+	public static function raiseToplevelInPattern(ctx:TyperContext, t:T, name:String):Void {
+		if (fieldCompletionFound != null) return;
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+		if (displayToplevel)
+			throw new hxc.compiler.DisplayXml.ToplevelCompletion(
+				collectToplevel(ctx, WithTypeTools.withType(t), name == "null"));
+	}
+
+	// The argument or structure field the position is filling.
+	static function expectedName(withType:Null<WithType>):Null<String> {
+		return switch (withType) {
+			case Value(FunctionArgument(si)) | WithType(_, FunctionArgument(si)): si.name;
+			case Value(StructureField(si)) | WithType(_, StructureField(si)): si.name;
+			case _: null;
+		};
+	}
+
+	static function levenshtein(a:String, b:String):Int {
+		var prev = [for (j in 0...b.length + 1) j];
+		for (i in 0...a.length) {
+			var cur = [i + 1];
+			for (j in 0...b.length) {
+				var sub = prev[j] + (a.charCodeAt(i) == b.charCodeAt(j) ? 0 : 1);
+				var del = prev[j + 1] + 1;
+				var ins = cur[j] + 1;
+				cur.push(sub < del ? (sub < ins ? sub : ins) : (del < ins ? del : ins));
+			}
+			prev = cur;
+		}
+		return prev[b.length];
+	}
+
+	// A display inside a PATTERN is DKPattern, which becomes TKPattern, which floats the enum constructors
+	// above everything else. hxc does not thread the display kind through the matcher, so the pattern
+	// context is flagged here.
+	public static var patternDisplay:Bool = false;
+
+	// The reference sorts only when the completion subject is empty `sort = (name = "")`), so a
+	// partially typed identifier keeps the collection order and only a bare position gets ranked.
+	static function sortToplevel(items:Array<hxc.compiler.DisplayXml.ToplevelItem>, withType:Null<WithType>):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+		var expected:Null<T> = switch (withType) {
+			case WithType(t, _) if (!TypeFunctions.follow(t).match(TMono(_))): t;
+			case _: null;
+		};
+		// How well the item's own type fits the expected one. An enum constructor is judged on what it
+		// returns, so an argument-less one ranks with it .
+		function comp(it:hxc.compiler.DisplayXml.ToplevelItem):Int {
+			if (expected == null) return 0;
+			var t = it.sortType;
+			if (t == null) return 9;
+			if (it.kind == "enum") switch (TypeFunctions.follow(t)) {
+				case TFun(sig): t = sig.ret;
+				case _:
+			}
+			if (TypeUnification.typeIseqDefault(t, expected)) return 0;
+			if (TypeFunctions.follow(t).match(TDynamic(_))) return 5;
+			try { TypeUnification.unifyDefault(t, expected); return 1; } catch (_:Dynamic) {}
+			return switch (TypeFunctions.follow(t)) {
+				case TFun(sig):
+					if (TypeUnification.typeIseqDefault(sig.ret, expected)) 2
+					else try { TypeUnification.unifyDefault(sig.ret, expected); 3; } catch (_:Dynamic) 7;
+				case _: 6;
+			};
+		}
+		var keyed = [for (i in 0...items.length) {
+			it: items[i], c: comp(items[i]),
+			g: items[i].sortGroup == null ? 500 : items[i].sortGroup,
+			k: items[i].sortKey == null ? "" : items[i].sortKey, i: i
+		}];
+		keyed.sort(function(a, b) {
+			if (a.c != b.c) return a.c - b.c;
+			if (a.g != b.g) return a.g - b.g;
+			if (a.k != b.k) return a.k < b.k ? -1 : 1;
+			// The sort is stable, so equal keys keep the collection order.
+			return a.i - b.i;
+		});
+		return [for (e in keyed) e.it];
 	}
 
 	// The third collection source: every file the compilation cache knows, whether or not this compile
@@ -1897,7 +2003,8 @@ class Typer {
 					+ (info.name == moduleName ? info.name : moduleName + "." + info.name);
 				if (seenPaths.exists(full)) continue;
 				seenPaths.set(full, true);
-				items.push({kind: "type", name: info.name, path: full});
+				// Nothing reached through the cache is in scope yet, so these are the Unimported group.
+				items.push({kind: "type", name: info.name, path: full, sortGroup: 32, sortKey: full});
 				added = true;
 			}
 			// The package contributes under its last segment.
@@ -1907,7 +2014,8 @@ class Typer {
 			}
 		}
 		// Packages are emitted after every type source.
-		for (pack in packages) if (packVisible(pack)) items.push({kind: "package", name: pack[pack.length - 1]});
+		for (pack in packages) if (packVisible(pack))
+			items.push({kind: "package", name: pack[pack.length - 1], sortGroup: 40, sortKey: pack.join(".")});
 	}
 
 	// The name, privacy and metadata of a declaration; an import or using contributes nothing.
@@ -2361,7 +2469,9 @@ class Typer {
 				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
 				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
-					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
+					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
+					// real identifier under the cursor keeps the collection order.
+					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, s == "null"));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
 			case CInt(s, suffix):
@@ -3747,7 +3857,8 @@ class Typer {
 				for (e in el) if (e.pos.max < off) try typeExpr(ctx, e, WithTypeTools.noValue) catch (_:TypingError) {}
 				if (displayToplevelJson)
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
-				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
+				// A bare position in a block has no subject at all.
+				throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, true));
 			}
 		}
 		var acc:Array<TExpr> = [];

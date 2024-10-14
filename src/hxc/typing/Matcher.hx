@@ -622,6 +622,21 @@ class PatternMaker {
 		}
 		function unifyExpected(t2:T) unify(ctx, t2, t, p);
 
+		// A display position on A PATTERN answers with the pattern's own expected type. hxc has no
+		// EDisplay node here (the parser stands a null in directly), so the position is the trigger; the
+		// local the pattern would bind is never added, which is why ctx.locals is saved and restored
+		// around it.
+		switch (e.expr) {
+			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos)):
+				Typer.raiseToplevelInPattern(ctx, t, s);
+			// Inside a pattern, an `if (cond)` whose body is the recovery's null stand-in is the display
+			// subject. `case <cursor> if (guard):` parses the guard as the pattern, because the pattern
+			// itself has not been written yet.
+			case EIf(_, {expr: EConst(CIdent("null"))}, null) if (hxc.parser.Parser.displayCompletionMode):
+				Typer.raiseToplevelInPattern(ctx, t, "null");
+			case _:
+		}
+
 		var kind:PatKind = switch (e.expr) {
 			case EParenthesis(e1) | ECast(e1, null):
 				return make(pctx, toplevel, t, e1);
@@ -869,10 +884,17 @@ class CaseMaker {
 		pctx.isPostfixMatch = postfixMatch;
 		pctx.unapplyTypeParameters = function() return TypeParameterFrame.unapply(ctx.typeParams, monos);
 		var pat:Pattern;
+		// A display position inside a pattern is a pattern display (a POSTFIX match is a marked display
+		// instead), which is what floats the enum constructors to the front of a completion. hxc does not
+		// thread the display kind through the matcher.
+		var savedPatternDisplay = Typer.patternDisplay;
+		Typer.patternDisplay = !postfixMatch;
 		try {
 			pat = PatternMaker.make(pctx, true, map(t), e);
 			TypeParameterFrame.unapply(ctx.typeParams, monos);
+			Typer.patternDisplay = savedPatternDisplay;
 		} catch (ex:Dynamic) {
+			Typer.patternDisplay = savedPatternDisplay;
 			cleanup();
 			throw ex;
 		}

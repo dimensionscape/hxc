@@ -27,6 +27,10 @@ typedef ToplevelItem = {
 	?type:String,
 	?path:String,
 	?doc:String,
+	// Capture sort keys when building an item; printing no longer has its declaration context.
+	?sortGroup:Int,
+	?sortKey:String,
+	?sortType:hxc.core.Type.T,
 }
 
 // Syntax keyword answers use their own printer and concatenate items without separators.
