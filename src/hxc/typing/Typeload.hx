@@ -214,7 +214,15 @@ class Typeload {
 				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p);
 				switch (anonT) {
 					case TAnon(a):
-						var il = [for (pt in paths) {t: loadInstance(ctx, typeParams, pt.path, pt.pos, false), pos: pt.pos}];
+						// The type list a `> <cursor>` raises is re-raised filtered to STRUCTURES, since
+						// only a structure
+						// can extend one.
+						var il = [for (pt in paths) {
+							t: try loadInstance(ctx, typeParams, pt.path, pt.pos, false)
+								catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion)
+									throw new hxc.compiler.DisplayXml.ToplevelCompletion(
+										[for (it in tc.items) if (it.kind == "type" && isStructureTypeItem(ctx, it)) it]),
+							pos: pt.pos}];
 						if (il.length == 1) {
 							mkExtension(ctx, a, il[0].t, il[0].pos);
 						} else {
@@ -232,6 +240,25 @@ class Typeload {
 			case CTFunction(args, ret):
 				loadFunctionType(ctx, typeParams, args, ret, p);
 		}
+	}
+
+	// CompletionModuleKind.Struct: a typedef whose right-hand side is an anonymous structure. That is
+	// the only kind an extension keeps.
+	static function isStructureTypeItem(ctx:Context, it:hxc.compiler.DisplayXml.ToplevelItem):Bool {
+		if (it.path == null) return false;
+		// Resolve against what is already loaded rather than through getType: the module the hint is
+		// written in is mid-load, and asking the loader for one of its own types while it is loading
+		// answers nothing.
+		function isStruct(mt:ModuleType):Bool return switch (mt) {
+			case TTypeDecl(td): TypeFunctions.follow(td.type).match(TAnon(_));
+			case _: false;
+		};
+		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path);
+		if (ctx.currentModule != null)
+			for (mt in ctx.currentModule.types) if (pathOf(mt) == it.path) return isStruct(mt);
+		for (key in ctx.moduleLut.keys())
+			for (mt in ctx.moduleLut.get(key).types) if (pathOf(mt) == it.path) return isStruct(mt);
+		return false;
 	}
 
 	// CTExtend helpers do not check is_redefined.

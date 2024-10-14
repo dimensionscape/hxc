@@ -727,7 +727,13 @@ class Parser {
 	}
 
 	function parseStructuralExtension():PlacedTypePath {
-		expect(TBinop(OpGt));
+		var p1 = expect(TBinop(OpGt));
+		// `> <cursor>` yields the MAGIC type path, which load_type_def answers with every type in scope
+		// (filtered to structures by the CTExtend arm). A trailing comma is optional there.
+		if (wouldSkipDisplayPosition(p1, false)) {
+			if (tokEq(peek(), Comma)) junk();
+			return {path: magicTypePath(), pos: new Position(p1.file, displayOffset, displayOffset)};
+		}
 		var t = parseTypePath();
 		expect(Comma);
 		return t;

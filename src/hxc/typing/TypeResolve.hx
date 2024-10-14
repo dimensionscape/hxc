@@ -202,7 +202,11 @@ class TypeResolve {
 	public static function answerTypeHintCompletion(ctx:Context, p:Position):Void {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		var seenPaths = new Map<String, Bool>();
-		for (mt in visibleTypesForCompletion(ctx)) {
+		// The current module's own types first. They exist from the moment the module is created, well
+		// before it finishes loading, which is when a type hint inside that same module asks.
+		var all:Array<ModuleType> = ctx.currentModule == null ? [] : ctx.currentModule.types.copy();
+		for (mt in visibleTypesForCompletion(ctx)) all.push(mt);
+		for (mt in all) {
 			var inf = TypeFunctions.tInfos(mt);
 			if (inf.isPrivate) continue;
 			var key = hxc.core.Globals.sTypePath(inf.path);
