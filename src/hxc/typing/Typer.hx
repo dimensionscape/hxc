@@ -1781,14 +1781,27 @@ class Typer {
 		// Member fields, including inherited ones
 		if (c != null && ctx.curfun != FunStatic) {
 			var cur = c;
+			// Every inherited field is mapped with the class's own parameters, so a member declared on
+			// C1<T> reads with the argument C3 -> C2<String> -> C1<String> supplies, not as the raw
+			// parameter.
+			var curArgs:TParams = TypeFunctions.extractParamTypes(c.params);
 			while (cur != null) {
 				for (name in cur.fields.keys()) {
 					var cf = cur.fields.get(name);
+					var ct = cf.type;
+					if (cur.params.length > 0) ct = TypeFunctions.applyParams(cur.params, curArgs, ct);
 					// The class's own member is 10, an inherited one 11.
-					if (!noCompletion(cf.meta)) items.push({kind: "member", name: cf.name, type: sType(cf.type),
-						doc: Ast.genDocTextOpt(cf.doc), sortGroup: cur == c ? 10 : 11, sortKey: cf.name, sortType: cf.type});
+					if (!noCompletion(cf.meta)) items.push({kind: "member", name: cf.name, type: sType(ct),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: cur == c ? 10 : 11, sortKey: cf.name, sortType: ct});
 				}
-				cur = cur.superClass == null ? null : cur.superClass.c;
+				if (cur.superClass == null) cur = null;
+				else {
+					// The super's arguments are written in terms of THIS class's parameters, so
+					// they carry the substitution up the chain.
+					var sup = cur.superClass;
+					curArgs = [for (pt in sup.params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
+					cur = sup.c;
+				}
 			}
 		}
 		// Statics; on an abstract impl the CfImpl fields read as members

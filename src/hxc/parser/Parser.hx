@@ -1047,7 +1047,13 @@ class Parser {
 			} else if (tokEq(peek(), BkClose)) {
 				p2 = next().pos; break;
 			} else {
-				return err("Expected , or ]");
+				// The missing `]` is recorded inside the display file and the elements parsed so far stand, so
+				// `[<cursor>` with nothing closing it still has a node at the position to complete on.
+				var np = peekInfo().pos;
+				if (displayFile == null) return err("Expected , or ]");
+				syntaxErrors.push({msg: Expected([",", "]"]), pos: np});
+				p2 = np;
+				break;
 			}
 		}
 		return new Expr(EArrayDecl(el), Position.union(p1, p2));
