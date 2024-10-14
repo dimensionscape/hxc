@@ -2208,6 +2208,29 @@ class Typer {
 					case _:
 				}
 		}
+		// The static extensions in scope are part of a field completion. They come after the receiver's
+		// own fields, which is what the `seen` check in push already expresses skips a name the type
+		// itself provides).
+		if (typed != null) switch (typed.expr) {
+			case TTypeExpr(_):
+			case _:
+				pushScope = CFSMember;
+				pushOriginClass = null;
+				pushOriginAnon = null;
+				pushParams = null;
+				pushArgs = null;
+				hxc.typing.Fields.collectUsingFields(ctx, typed, p, function(cf, t) {
+					if (seen.exists(cf.name)) return;
+					seen.set(cf.name, true);
+					pushJson(cf, CFSMember, null, null, false);
+					fields.push({
+						kind: cf.kind.match(Method(_)) ? "method" : "var",
+						name: cf.name,
+						type: hxc.core.TPrinting.sTypeStr(t),
+						doc: Ast.genDocTextOpt(cf.doc)
+					});
+				});
+		}
 		jsonFieldCompletion = {entries: jsonEntries, receiver: typed, insertPos: p};
 		// The statics list CONCATENATES the module's other types (the same-named main type
 		// excluded), whether or not any statics exist.

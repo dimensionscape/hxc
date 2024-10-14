@@ -754,6 +754,68 @@ class Fields {
 		return null;
 	}
 
+	// A field completion also offers every `using` static whose first argument accepts the receiver,
+	// listed with that argument dropped and with @:noUsing / @:noCompletion / an abstract impl member
+	// skipped. The acceptance test is the same resolution the call path runs, one name at a time, so
+	// nothing is offered that would not actually resolve.
+	public static function collectUsingFields(ctx:TyperContext, e:TExpr, p:Position, add:TClassField->T->Void):Void {
+		if (TypeFunctions.follow(e.type).match(TMono(_))) return;
+		var seenClasses:Array<TClass> = [];
+		function tryClass(uc:Null<TClass>):Void {
+			if (uc == null || seenClasses.indexOf(uc) >= 0) return;
+			seenClasses.push(uc);
+			for (cf in uc.orderedStatics) {
+				if (TypeFunctions.hasMeta(":noUsing", cf.meta) || TypeFunctions.hasMeta(":noCompletion", cf.meta)) continue;
+				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
+				var ok = try tryUsingClass(ctx, uc, e, cf.name, p) != null catch (_:Dynamic) false;
+				if (!ok) continue;
+				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+				switch (TypeFunctions.follow(t)) {
+					case TFun(sig) if (sig.args.length > 0):
+						add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
+					case _:
+				}
+			}
+		}
+		function tryModuleType(mt:ModuleType):Void switch (mt) {
+			case TClassDecl(uc): tryClass(uc);
+			case TAbstractDecl(a) if (a.impl != null): tryClass(a.impl);
+			case TTypeDecl(td): switch (TypeFunctions.follow(td.type)) {
+					case TInst(uc, _): tryClass(uc);
+					case TAbstract(a, _) if (a.impl != null): tryClass(a.impl);
+					case _:
+				}
+			case _:
+		}
+		// loop_module_using, the type's own @:using, then the module's, then global.
+		for (u in typeUsings(e.type, "")) tryClass(u.c);
+		var m = ctx.com.currentModule;
+		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
+		if (imports != null) {
+			var ups = imports.usings.copy();
+			ups.reverse();
+			for (up in ups) {
+				var um = try hxc.context.ModuleLoader.loadModule(ctx.com, up, p) catch (_:Dynamic) null;
+				if (um != null) {
+					var uts = um.types.copy();
+					uts.reverse();
+					for (mt in uts) if (!TypeFunctions.tInfos(mt).isPrivate) tryModuleType(mt);
+					continue;
+				}
+				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
+				if (mt != null) tryModuleType(mt);
+				else if (isMacroToolsUsing(up)) for (toolPath in macroToolsUsingModules) {
+					var tool = try ctx.com.getType(toolPath, p, null) catch (_:Dynamic) null;
+					if (tool != null) tryModuleType(tool);
+				}
+			}
+		}
+		for (gp in globalUsingModules) {
+			var gm = try hxc.context.ModuleLoader.loadModule(ctx.com, gp, p) catch (_:Dynamic) null;
+			if (gm != null) for (mt in gm.types) tryModuleType(mt);
+		}
+	}
+
 	static function tryUsingModuleType(ctx:TyperContext, mt:ModuleType, e:TExpr, i:String, p:Position):Null<AccessKind> {
 		return switch (mt) {
 			case TClassDecl(uc):
