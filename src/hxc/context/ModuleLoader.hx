@@ -214,12 +214,51 @@ class ModuleLoader {
 			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
 		}
 
+		// Answer the segment containing the display position, including cursors inside a segment rather
+		// than at its dot.
+		function checkPathDisplay(path:Array<PlacedName>):Void {
+			if (!hxc.typing.Typer.displayToplevel && !hxc.typing.Typer.displayToplevelJson) return;
+			var pack:Array<String> = [];
+			var mod:Null<String> = null;
+			var sub:Null<String> = null;
+			for (part in path) {
+				var isLower = part.name.length > 0 && part.name.charCodeAt(0) >= "a".code && part.name.charCodeAt(0) <= "z".code;
+				var here = hxc.typing.Typer.atDisplayPos(part.pos);
+				if (mod != null && sub != null) {
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), sub, true);
+					return;
+				}
+				if (mod != null && isLower) {
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), mod, true);
+					return;
+				}
+				if (mod != null) {
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), mod, true);
+					sub = part.name;
+					continue;
+				}
+				if (isLower) {
+					// A single package segment completes all in-scope types; longer paths complete their parent
+					// package.
+					if (here) {
+						if (pack.length == 0) hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, part.pos);
+						throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true);
+					}
+					pack.push(part.name);
+					continue;
+				}
+				if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true);
+				mod = part.name;
+			}
+		}
+
 		function recordImport(imp:Import, declPos:Position):Void {
 			// An empty import path completes the same in-scope type set as a type hint.
 			if (imp.path.length == 0 && imp.mode.match(INormal)) {
 				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
 				return;
 			}
+			checkPathDisplay(imp.path);
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
@@ -260,6 +299,7 @@ class ModuleLoader {
 				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
 				return;
 			}
+			checkPathDisplay(path);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in path) pn.name];
 			var split = splitImportPath(parts);
