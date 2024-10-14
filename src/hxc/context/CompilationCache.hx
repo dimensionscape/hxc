@@ -11,6 +11,8 @@ typedef CachedFile = {
 	var time:Float;
 	var pack:Array<String>;
 	var moduleName:Null<String>;
+	// Parsed declarations supply completion items for modules the current compilation has not loaded.
+	var ?decls:Array<hxc.ast.Ast.TypeDecl>;
 }
 
 class CacheContext {

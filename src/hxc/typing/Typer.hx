@@ -1806,7 +1806,67 @@ class Typer {
 			l.reverse();
 			for (mt in l) addType(mt);
 		}
+		addCachedFileTypes(ctx.com, items, seenPaths);
 		return items;
+	}
+
+	// The third collection source: every file the compilation cache knows, whether or not this compile
+	// loaded it. Each file's DECLARATIONS become type items, and a file that contributed anything also
+	// contributes its package (named by the package's last segment). The old protocol deliberately
+	// takes the ADVANCED branch here, not the legacy-completion one.
+	static function addCachedFileTypes(com:hxc.context.Context, items:Array<hxc.compiler.DisplayXml.ToplevelItem>,
+			seenPaths:Map<String, Bool>):Void {
+		if (!hxc.context.ServerCache.enabled) return;
+		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
+		if (cc == null) return;
+		// A package with a `_`-prefixed segment is the private `_Module` container and is never offered.
+		function packVisible(pack:Array<String>):Bool {
+			for (s in pack) if (s.length > 0 && s.charCodeAt(0) == "_".code) return false;
+			return true;
+		}
+		var packages:Array<Array<String>> = [];
+		var seenPack = new Map<String, Bool>();
+		for (k in cc.files.keys()) {
+			var cf = cc.files.get(k);
+			if (cf.decls == null || !packVisible(cf.pack)) continue;
+			var moduleName = cf.moduleName != null ? cf.moduleName : moduleNameOfPath(cf.path);
+			var added = false;
+			for (td in cf.decls) {
+				var info = declNameAndFlags(td.decl);
+				if (info == null || info.priv || TypeFunctions.hasMeta(":noCompletion", info.meta)) continue;
+				var full = (cf.pack.length == 0 ? "" : cf.pack.join(".") + ".")
+					+ (info.name == moduleName ? info.name : moduleName + "." + info.name);
+				if (seenPaths.exists(full)) continue;
+				seenPaths.set(full, true);
+				items.push({kind: "type", name: info.name, path: full});
+				added = true;
+			}
+			// The package contributes under its last segment.
+			if (added && cf.pack.length > 0) {
+				var key = cf.pack.join(".");
+				if (!seenPack.exists(key)) { seenPack.set(key, true); packages.push(cf.pack); }
+			}
+		}
+		// Packages are emitted after every type source.
+		for (pack in packages) if (packVisible(pack)) items.push({kind: "package", name: pack[pack.length - 1]});
+	}
+
+	static function moduleNameOfPath(path:String):String {
+		var p = StringTools.replace(path, "\\", "/");
+		var i = p.lastIndexOf("/");
+		var base = i < 0 ? p : p.substr(i + 1);
+		return StringTools.endsWith(base, ".hx") ? base.substr(0, base.length - 3) : base;
+	}
+
+	// The name, privacy and metadata of a declaration; an import or using contributes nothing.
+	static function declNameAndFlags(d:hxc.ast.Ast.TypeDef):Null<{name:String, priv:Bool, meta:Metadata}> {
+		return switch (d) {
+			case EClass(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(HPrivate) >= 0, meta: dd.dMeta};
+			case EEnum(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(EPrivate) >= 0, meta: dd.dMeta};
+			case ETypedef(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(EPrivate) >= 0, meta: dd.dMeta};
+			case EAbstract(dd): {name: dd.dName.name, priv: dd.dFlags.indexOf(AbPrivate) >= 0, meta: dd.dMeta};
+			case _: null;
+		}
 	}
 
 	public static function atDisplayPos(p:Position):Bool {
