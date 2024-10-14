@@ -726,6 +726,27 @@ class Parser {
 		}
 	}
 
+	// Plus check_display. `from <cursor>` yields the MAGIC type path, and so does `from <cursor> {}`,
+	// where a type WAS parsed but the cursor was skipped over to reach it , which is issue 7137
+	// itself).
+	function abstractRelationType(pk:Position):TypeHint {
+		// The magic arm is the SECOND alternative: a real type is parsed first and the magic path
+		// only stands in when that attempt fails having consumed nothing.
+		var save = idx;
+		var t:TypeHint;
+		try t = parseComplexType() catch (er:ParserError) {
+			if (idx != save) throw er;
+			idx = save;
+			if (!wouldSkipDisplayPosition(pk, false)) throw er;
+			return {ct: CTPath(magicTypePath()), pos: new Position(pk.file, displayOffset, displayOffset)};
+		}
+		// A type WAS parsed but the cursor was skipped OVER to reach it, which is `from <cursor> {}`
+		// swallowing the body as an anonymous structure.
+		if (isDisplayFile() && displayOffset >= 0 && pk.max < displayOffset && t.pos.min >= displayOffset)
+			return {ct: CTPath(magicTypePath()), pos: new Position(t.pos.file, displayOffset, displayOffset)};
+		return t;
+	}
+
 	function parseStructuralExtension():PlacedTypePath {
 		var p1 = expect(TBinop(OpGt));
 		// `> <cursor>` yields the MAGIC type path, which load_type_def answers with every type in scope
@@ -2730,18 +2751,18 @@ class Parser {
 		while (true) {
 			switch (peek()) {
 				case Const(CIdent("to")):
-					junk();
-					var t = parseComplexType();
-					sl.push(AbTo(t));
+					var pk = next().pos;
+					sl.push(AbTo(abstractRelationType(pk)));
 				case Const(CIdent("from")):
-					junk();
-					var t = parseComplexType();
-					sl.push(AbFrom(t));
+					var pk = next().pos;
+					sl.push(AbFrom(abstractRelationType(pk)));
 				case _:
 					break;
 			}
 		}
-		expect(BrOpen);
+		// The missing `{` after the relations is recorded inside the display file, so `abstract A(Int)
+		// from <cursor>` with no body still yields a declaration.
+		expectUnlessResume(BrOpen);
 		var cf = parseClassFields(false, p1);
 		var allFlags = (st == null) ? flags : [AbOver(st)].concat(flags);
 		allFlags = allFlags.concat(sl);
