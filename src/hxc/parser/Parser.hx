@@ -56,6 +56,9 @@ class Parser {
 	// parser can tell that: by the time fields are typed their metadata also holds injected
 	// entries, which carry the position of whatever they were attached to.
 	public static var displayMetaFound:Bool = false;
+	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
+	// documentation out of the registry.
+	public static var displayMetaName:Null<String> = null;
 	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
@@ -67,6 +70,7 @@ class Parser {
 		displaySignatureMode = false;
 		displayCompletionMode = false;
 		displayMetaFound = false;
+		displayMetaName = null;
 		delayedSyntaxCompletion = null;
 		syntaxErrors = [];
 	}
@@ -542,9 +546,12 @@ class Parser {
 			// The entry position spans the name only; the arguments are excluded.
 		}
 		var entry = {name: name, params: params, pos: Position.union(p1, pEnd)};
-		// The display position sitting on the entry completes its name.
-		if (displayCompletionMode && isDisplayFile() && displayOffset >= entry.pos.min && displayOffset <= entry.pos.max)
-			displayMetaFound = true;
+		// The display position sitting on the entry answers on its name. Which answer follows the mode:
+		// completion of the whole registry under DMDefault, this entry's own documentation under DMHover.
+		if (isDisplayFile() && displayOffset >= entry.pos.min && displayOffset <= entry.pos.max) {
+			if (displayCompletionMode) displayMetaFound = true;
+			displayMetaName = entry.name;
+		}
 		return entry;
 	}
 

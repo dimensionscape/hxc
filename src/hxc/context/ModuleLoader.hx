@@ -758,14 +758,20 @@ class ModuleLoader {
 					Var({read: propAccess(get.name, true), write: propAccess(set.name, false)});
 			}
 			var isMethod = switch (cf.kind) { case Method(_): true; case _: false; };
+			// Without native overload support, do not flag constructors as CfOverload; merging duplicate
+			// constructors would create an unsupported shape. Record both errors without dropping the field.
 			if (overloadPos != null) {
-				TypeFunctions.addClassFieldFlag(cf, CfOverload);
-				// Overloaded constructors and non-extern overloads remain unsupported and fatal in this
-				// version.
-				if (cf.name == "new") {
-					throw new ContextError("Invalid modifier: overload on constructor", overloadPos);
-				} else if (!TypeFunctions.hasClassFlag(c, CExtern) && !isExtern) {
-					throw new ContextError("Invalid modifier: overload is only supported on extern functions", overloadPos);
+				if (ctx != null && ctx.platformConfig.supportsOverload) {
+					TypeFunctions.addClassFieldFlag(cf, CfOverload);
+				} else if (cf.name == "new") {
+					if (ctx != null) ctx.addDiagnostic("Invalid modifier: overload on constructor", overloadPos);
+					else throw new ContextError("Invalid modifier: overload on constructor", overloadPos);
+				} else {
+					TypeFunctions.addClassFieldFlag(cf, CfOverload);
+					if (!TypeFunctions.hasClassFlag(c, CExtern) && !isExtern) {
+						if (ctx != null) ctx.addDiagnostic("Invalid modifier: overload is only supported on extern functions", overloadPos);
+						else throw new ContextError("Invalid modifier: overload is only supported on extern functions", overloadPos);
+					}
 				}
 			}
 				if (abstractPos != null) {

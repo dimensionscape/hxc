@@ -768,7 +768,11 @@ class Compiler {
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
-				if (found == null) found = [];
+				if (found == null) {
+					// Under go-to-definition, a type declaration reports itself.
+					var mt = displayTypeAtName(ctx);
+					found = mt == null ? [] : [TypeFunctions.tInfos(mt).namePos];
+				}
 				// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
 				if (ctx.jsonRpcId != null)
 					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
@@ -798,6 +802,20 @@ class Compiler {
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
 				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound.e);
 				if (h == null) h = hoverOnFieldName(ctx);
+				if (h == null) {
+					var mt = displayTypeAtName(ctx);
+					if (mt != null) {
+						var inf = TypeFunctions.tInfos(mt);
+						h = {t: TypeFunctions.typeOfModuleType(mt), p: inf.namePos};
+						hdoc = inf.doc == null ? null : hxc.ast.Ast.genDocText(inf.doc);
+					}
+				}
+				// Under DMHover: the metadata name reports its own documentation, in its own element. A name
+				// the registry does not know (Meta.Custom, has no documentation and so answers nothing.
+				if (h == null) {
+					var doc = displayMetaDoc(ctx);
+					if (doc != null) { answerOut("<metadata>" + doc + "</metadata>"); return; }
+				}
 				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
 				return;
 			}
@@ -1380,6 +1398,14 @@ class Compiler {
 			return a.min - b.min;
 		});
 		return out;
+	}
+
+	// The cursor on a type declaration name answers with that type itself, for a class, enum, typedef
+	// or abstract alike.
+	static function displayTypeAtName(ctx:Context):Null<hxc.core.Type.ModuleType> {
+		for (mt in ctx.types)
+			if (hxc.typing.Typer.atHoverPos(TypeFunctions.tInfos(mt).namePos)) return mt;
+		return null;
 	}
 
 	// A hover on a field declaration name has no enclosing expression; the typed field's signature is
@@ -2232,11 +2258,31 @@ class Compiler {
 							tctx.typeParams = c.params;
 						case _:
 					}
+					// The argument is typed through the ENCLOSING module's typer context, so a bare name
+					// resolves against that module's own types and imports.
+					var savedMod = ctx.currentModule;
+					ctx.currentModule = m;
 					try hxc.typing.Typer.typeExpr(tctx, arg, hxc.core.WithType.WithTypeTools.value)
 					catch (_:hxc.core.TypingError) {} catch (_:hxc.context.Context.ContextError) {}
+					ctx.currentModule = savedMod;
 				}
 			}
 		}
+	}
+
+	// The documentation registered for the metadata name the cursor is on, or null when the registry
+	// has no entry for it (which is every Meta.Custom, the case that answers nothing).
+	static function displayMetaDoc(ctx:Context):Null<String> {
+		var want = hxc.parser.Parser.displayMetaName;
+		if (want == null) return null;
+		var user = ctx.userMetas.get(want.charAt(0) == ":" ? want.substr(1) : want);
+		if (user != null) return user.doc;
+		for (mv in hxc.context.MetaRegistry.metas())
+			if (hxc.context.MetaRegistry.stringField(mv, "metadata", "") == want) {
+				var doc = hxc.context.MetaRegistry.stringField(mv, "doc", "");
+				return doc == "" ? null : doc;
+			}
+		return null;
 	}
 
 	// Under DMDefault: completing a metadata name answers the whole registry as CRMetadata fields. The
