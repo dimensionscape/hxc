@@ -1502,7 +1502,7 @@ class Typer {
 		signatureFound = {sigs: sigs, activeArg: active};
 	}
 
-	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, p:Position):Void {
+	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):Void {
 		var active = 0;
 		switch (e2.expr) {
 			case EDisplay(inner, DKMarked): active = 0;
@@ -1521,6 +1521,13 @@ class Typer {
 				var sigs = [];
 				for (cf in a.array) switch (TypeFunctions.follow(cf.type)) {
 					case TFun(sig) if (sig.args.length > 0):
+						// A VOID-returning @:arrayAccess is not a candidate where a value is wanted, which
+						// is every position but NoValue.
+						var retVoid = switch (TypeFunctions.follow(sig.ret)) {
+							case TAbstract(va, _): va.path.pack.length == 0 && va.path.name == "Void";
+							case _: false;
+						};
+						if (retVoid && !withType.match(NoValue)) continue;
 						var rest = sig.args.slice(1);
 						sigs.push({
 							args: [for (x in rest) {name: x.name, opt: x.opt, t: TypeFunctions.applyParams(a.params, tl, x.t)}],
@@ -3902,7 +3909,7 @@ class Typer {
 					acc;
 				}
 			case EArray(e1, e2):
-				if (displaySignature && signatureFound == null) checkArraySignatureDisplay(ctx, e1, e2, p);
+				if (displaySignature && signatureFound == null) checkArraySignatureDisplay(ctx, e1, e2, withType, p);
 				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
 				switch (a1) {
