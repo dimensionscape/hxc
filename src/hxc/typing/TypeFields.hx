@@ -332,7 +332,20 @@ class TypeFields {
 		if (cf.expr != null) return;
 		// A body that already ran (successfully or with an error) is not re-typed on later passes.
 		if (bodyTyped.exists(cf)) return;
-		if (skipMacroBodyInHost(ctx, cf)) return;
+		if (skipMacroBodyInHost(ctx, cf)) {
+			// A macro field holding the display position is FORCED through the macro world, which is the
+			// only place its body can type (a display-mode macro load). A typing error there is swallowed;
+			// a display answer is not.
+			if (hxc.parser.Parser.displayFile != null && cff != null && Typer.atDisplayPos(cff.cffPos)
+					&& tctx.curclass != null) {
+				// The declaring module's path, not the class's: a class whose name differs from its module file
+				// (common in display requests) is not loadable by its own path.
+				try hxc.eval.EvalMacro.loadMacroClass(ctx, tctx.curclass.path, cf.name, false, m.path)
+				catch (_:hxc.core.TypingError) {}
+				catch (_:hxc.context.Context.ContextError) {}
+			}
+			return;
+		}
 		var sigType = cf.type;
 		lazyFieldTypes.set(cf, sigType);
 		var r = new Ref(LAvailable(sigType));

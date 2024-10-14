@@ -1516,7 +1516,15 @@ class EvalMacro {
 	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
 	// copy into the macro context. The host parses every module without macro, which drops the #if macro
 	// members a macro function's body relies on. reference:
-	static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
+	static function isDisplayResult(e:Dynamic):Bool {
+		return Std.isOfType(e, hxc.compiler.DisplayXml.DisplayPositions)
+			|| Std.isOfType(e, hxc.compiler.DisplayXml.ToplevelCompletion)
+			|| Std.isOfType(e, hxc.compiler.DisplayXml.SyntaxCompletion)
+			|| Std.isOfType(e, hxc.parser.Parser.TypePathCompletion)
+			|| Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion);
+	}
+
+	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
 		if (macroCom == null) initMacroContext(host);
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;
@@ -1561,8 +1569,11 @@ class EvalMacro {
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
 			throw e;
-		} catch (_:Dynamic) {
+		} catch (e:Dynamic) {
 			macroCom.raiseTypingErrors = oldRaise;
+			// A display answer raised while typing a macro body is the request's result, not a macro-loading
+			// failure to swallow. only Error.
+			if (isDisplayResult(e)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
