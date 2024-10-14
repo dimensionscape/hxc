@@ -2328,7 +2328,12 @@ class Typer {
 		if (!displayDefinition || displayFound != null || !atDisplayPos(pos)) return;
 		switch (acc) {
 			case AKExpr(te): checkDisplayDefinition(ctx, te);
-			case AKField(fa) | AKAccessor(fa): displayFound = [fa.field.namePos];
+			case AKField(fa) | AKAccessor(fa):
+				// Go through the field EXPRESSION rather than claiming the position outright: the
+				// receiver may be what the cursor is actually on, and only the recursion knows.
+				var te = try hxc.typing.FieldAccessTools.getFieldExpr(fa, FRead) catch (_:Dynamic) null;
+				if (te != null) checkDisplayDefinition(ctx, te);
+				if (displayFound == null) displayFound = [fa.field.namePos];
 			case _:
 		}
 	}
