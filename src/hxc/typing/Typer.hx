@@ -2089,6 +2089,9 @@ class Typer {
 	}
 
 	public static function atDisplayPos(p:Position):Bool {
+		// A position the preprocessor refused to annotate is not a display position for anything downstream
+		// either.
+		if (hxc.parser.Parser.displaySuppressed) return false;
 		var df = hxc.parser.Parser.displayFile;
 		var off = hxc.parser.Parser.displayOffset;
 		if (df == null || off < 0) return false;

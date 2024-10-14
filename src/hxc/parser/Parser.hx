@@ -56,6 +56,9 @@ class Parser {
 	// parser can tell that: by the time fields are typed their metadata also holds injected
 	// entries, which carry the position of whatever they were attached to.
 	public static var displayMetaFound:Bool = false;
+	// A position the preprocessor refuses to annotate answers NOTHING, however many later stages would
+	// happily complete there.
+	public static var displaySuppressed:Bool = false;
 	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
 	// documentation out of the registry.
 	public static var displayMetaName:Null<String> = null;
@@ -71,6 +74,7 @@ class Parser {
 		displayCompletionMode = false;
 		displayMetaFound = false;
 		displayMetaName = null;
+		displaySuppressed = false;
 		delayedSyntaxCompletion = null;
 		syntaxErrors = [];
 	}
@@ -991,6 +995,14 @@ class Parser {
 			case Const(CIdent(_)), Dollar(_):
 				name = dollarIdent();
 			case _:
+		}
+		// The cursor on a local function's name raises Exit, which leaves the whole expression
+		// UNANNOTATED
+		// - the name a function is about to be given is not something to complete, so the request answers
+		// nothing at all.
+		if (displayCompletionMode && isDisplayFile() && displayOffset >= 0) {
+			var pn = name != null ? name.pos : new Position(p1.file, p1.max + 1, peekInfo().pos.min);
+			if (pn.min <= displayOffset && displayOffset <= pn.max) displaySuppressed = true;
 		}
 		var pl = parseConstraintParams();
 		expect(POpen);
