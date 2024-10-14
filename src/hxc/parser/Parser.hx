@@ -1021,14 +1021,22 @@ class Parser {
 		var el:Array<Expr> = [];
 		if (tokEq(peek(), BkClose)) {
 			var p2 = next().pos;
-			return new Expr(EArrayDecl([]), Position.union(p1, p2));
+			// Under a completion runs loop_el, and gives an empty list one marked null, so an empty literal
+			// holding the cursor has something to complete on (which is where the expected element type
+			// comes from).
+			return new Expr(EArrayDecl(gapMark(p1, p2)), Position.union(p1, p2));
 		}
 		el.push(secureExpr());
 		var p2 = p1;
 		while (true) {
 			if (tokEq(peek(), Comma)) {
-				junk();
-				if (tokEq(peek(), BkClose)) { p2 = next().pos; break; }
+				var pc = next().pos;
+				if (tokEq(peek(), BkClose)) {
+					p2 = next().pos;
+					// The cursor past the trailing comma is the element the user has not written yet.
+					el = el.concat(gapMark(pc, p2));
+					break;
+				}
 				el.push(secureExpr());
 			} else if (tokEq(peek(), BkClose)) {
 				p2 = next().pos; break;
