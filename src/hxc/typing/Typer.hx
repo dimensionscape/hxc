@@ -1550,7 +1550,15 @@ class Typer {
 		// The display position must sit inside the argument span (after the callee).
 		var off = hxc.parser.Parser.displayOffset;
 		if (!atDisplayPos(p) || off <= e1.pos.max) return;
-		var callee = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
+		// `f.bind(` reports the signature of F ITSELF, not of the magic bind field, so the callee is the
+		// receiver whenever it follows to a function.
+		var callee:Null<TExpr> = switch (e1.expr) {
+			case EField(recv, "bind", _):
+				var te = try typeExpr(ctx, recv, WithTypeTools.value) catch (_:TypingError) null;
+				(te != null && TypeFunctions.follow(te.type).match(TFun(_))) ? te : null;
+			case _: null;
+		};
+		if (callee == null) callee = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
 		// Unwrap @:callable abstracts.
 		function followCallable(t:T):T {
 			return switch (TypeFunctions.follow(t)) {
