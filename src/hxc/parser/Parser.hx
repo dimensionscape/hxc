@@ -2839,7 +2839,10 @@ class Parser {
 				while (!done) {
 					switch (peek()) {
 						case Dot:
-							junk();
+							var dp = next().pos;
+							// The cursor right after the dot completes on the path so far, the same rule
+							// the import path carries.
+							if (atDisplayDot(dp)) raiseTypePath([for (pn in path) pn.name], false);
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});
