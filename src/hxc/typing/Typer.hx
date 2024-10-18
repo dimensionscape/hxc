@@ -900,7 +900,12 @@ class Typer {
 			case EFor(it, body):
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(tp, el):
-				typeNew(ctx, tp, el, withType, p);
+				// The type list a `new <cursor>` raises is re-raised filtered to what can actually be
+				// constructed - a class or abstract with a constructor, inherited ones included.
+				try typeNew(ctx, tp, el, withType, p)
+				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion)
+					throw new hxc.compiler.DisplayXml.ToplevelCompletion(
+						[for (it in tc.items) if (it.kind != "type" || typeItemHasConstructor(ctx, it)) it]);
 			case EFunction(kind, f):
 				// An anonymous function as a plain STATEMENT has no receiver for its value.
 				if (withType.match(NoValue)) switch (kind) {
@@ -2123,6 +2128,39 @@ class Typer {
 		if (displayDefinition) checkDisplayDefinition(ctx, te);
 		if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, te, null);
 		if (displayUsage || displayImplementation) captureUsageTarget(te);
+	}
+
+	// Resolved against what is already loaded (the module the cursor is in is mid-typing). An abstract
+	// counts when its impl declares _new .
+	static function typeItemHasConstructor(ctx:TyperContext, it:hxc.compiler.DisplayXml.ToplevelItem):Bool {
+		if (it.path == null) return false;
+		function ctorOf(c:TClass):Bool {
+			var cur = c;
+			while (cur != null) {
+				if (cur.constructor != null) return true;
+				cur = cur.superClass == null ? null : cur.superClass.c;
+			}
+			return false;
+		}
+		function check(mt:ModuleType):Bool return switch (mt) {
+			case TClassDecl(c): switch (c.kind) {
+					case KAbstractImpl(a): a.impl != null && a.impl.statics.exists("_new");
+					case _: ctorOf(c);
+				};
+			case TAbstractDecl(a): a.impl != null && a.impl.statics.exists("_new");
+			case TTypeDecl(td): switch (TypeFunctions.follow(td.type)) {
+					case TInst(c, _): ctorOf(c);
+					case TAbstract(a, _): a.impl != null && a.impl.statics.exists("_new");
+					case _: false;
+				};
+			case _: false;
+		};
+		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path);
+		if (ctx.com.currentModule != null)
+			for (mt in ctx.com.currentModule.types) if (pathOf(mt) == it.path) return check(mt);
+		for (key in ctx.com.moduleLut.keys())
+			for (mt in ctx.com.moduleLut.get(key).types) if (pathOf(mt) == it.path) return check(mt);
+		return false;
 	}
 
 	public static function atDisplayPos(p:Position):Bool {

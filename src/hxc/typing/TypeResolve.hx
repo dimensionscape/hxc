@@ -208,7 +208,8 @@ class TypeResolve {
 		for (mt in visibleTypesForCompletion(ctx)) all.push(mt);
 		for (mt in all) {
 			var inf = TypeFunctions.tInfos(mt);
-			if (inf.isPrivate) continue;
+			// A PRIVATE type is still offered inside the module that declares it.
+			if (inf.isPrivate && (ctx.currentModule == null || inf.module != ctx.currentModule)) continue;
 			var key = hxc.core.Globals.sTypePath(inf.path);
 			if (seenPaths.exists(key)) continue;
 			seenPaths.set(key, true);

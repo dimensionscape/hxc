@@ -1781,7 +1781,20 @@ class Parser {
 
 	function parseNew():Expr {
 		var p1 = next().pos;
-		var t = parseTypePath();
+		// `new <cursor>` yields the MAGIC type path rather than failing, and the missing `(` is recorded,
+		// so the ENew node exists for the completion to be filtered through.
+		var save = idx;
+		var t:PlacedTypePath;
+		try t = parseTypePath() catch (er:ParserError) {
+			if (idx != save) throw er;
+			idx = save;
+			if (!wouldSkipDisplayPosition(p1, true)) throw er;
+			t = {path: magicTypePath(), pos: new Position(p1.file, displayOffset, displayOffset)};
+		}
+		if (!tokEq(peek(), POpen) && displayFile != null) {
+			syntaxErrors.push({msg: Expected(["("]), pos: peekInfo().pos});
+			return new Expr(ENew(t, []), Position.union(p1, t.pos));
+		}
 		if (tokEq(peek(), POpen)) {
 			var pOpen = next().pos;
 			if (displayFile != null) {
