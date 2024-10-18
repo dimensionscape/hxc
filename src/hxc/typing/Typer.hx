@@ -2343,6 +2343,10 @@ class Typer {
 				var te = try hxc.typing.FieldAccessTools.getFieldExpr(fa, FRead) catch (_:Dynamic) null;
 				if (te != null) checkDisplayDefinition(ctx, te);
 				if (displayFound == null) displayFound = [fa.field.namePos];
+			// A static-extension callee resolves to a field just the same; the OVERLOAD the call
+			// selected is the one to report.
+			case AKUsingField(se) | AKUsingAccessor(se):
+				displayFound = [se.access.field.namePos];
 			case _:
 		}
 	}

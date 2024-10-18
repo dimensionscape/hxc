@@ -618,6 +618,14 @@ class Calls {
 		}
 		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt);
 		Typer.noteDisplayAccess(ctx, acc, callee.pos);
+		// A static EXTENSION callee answers hover from the access: the typed call keeps the impl static's
+		// own position, not the syntactic `recv.name` the cursor is on, so the normal smallest-enclosing
+		// walk never reaches it. Every other call is left alone - its typed callee carries the SELECTED
+		// overload, which the access does not know yet.
+		switch (acc) {
+			case AKUsingField(_) | AKUsingAccessor(_): Typer.checkDisplayOnAccess(ctx, acc, callee.pos);
+			case _:
+		}
 		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
 	}
 
