@@ -624,6 +624,11 @@ class Calls {
 		// overload, which the access does not know yet.
 		switch (acc) {
 			case AKUsingField(_) | AKUsingAccessor(_): Typer.checkDisplayOnAccess(ctx, acc, callee.pos);
+			// A MACRO callee likewise: the typed call carries the macro's RESULT, and the host signature
+			// the field itself holds is all Dynamic, so the access is the only place the macro-world types
+			// can be reached.
+			case AKField(fa) if (hxc.eval.EvalMacro.isMacroField(fa.field)):
+				Typer.checkDisplayOnAccess(ctx, acc, callee.pos);
 			case _:
 		}
 		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);

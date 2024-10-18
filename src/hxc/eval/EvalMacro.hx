@@ -1513,9 +1513,46 @@ class EvalMacro {
 		return path;
 	}
 
-	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install that
-	// copy into the macro context. The host parses every module without macro, which drops the #if macro
-	// members a macro function's body relies on. reference:
+	// Re-parse a macro's class under the macro defines (so its #if macro members exist) and install
+	// that copy into the macro context. The host parses every module without macro, which drops the
+	// #if macro members a macro function's body relies on. A MACRO field's display type merges the
+	// host signature (where every argument the host cannot see is Dynamic) with the MACRO world's (a
+	// Dynamic host argument takes the macro-world one, and the return is always the macro world's).
+	// Without it a macro reads as `Dynamic -> Dynamic`.
+	public static function macroFieldDisplayType(host:Context, c:TClass, cf:TClassField):Null<T> {
+		if (!isMacroField(cf) || host.isMacro) return null;
+		var mpath = c.module == null ? c.path : c.module.path;
+		try loadMacroClass(host, c.path, cf.name, false, mpath) catch (_:Dynamic) {}
+		if (macroCom == null) return null;
+		var m = macroCom.moduleLut.get(hxc.context.Context.pathKey(mpath));
+		if (m == null) return null;
+		var mcf:Null<TClassField> = null;
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(mc) if (mc.path.name == c.path.name):
+				var f = mc.statics.get(cf.name);
+				if (f == null) f = mc.fields.get(cf.name);
+				if (f != null) mcf = f;
+			case _:
+		}
+		if (mcf == null) return null;
+		var mt2 = switch (mcf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
+		var msig = switch (TypeFunctions.follow(mt2)) { case TFun(sig): sig; case _: return null; };
+		inline function isDyn(t:T) return TypeFunctions.follow(t).match(TDynamic(_));
+		return switch (TypeFunctions.follow(cf.type)) {
+			case TFun(hsig):
+				var args = [];
+				var i = 0;
+				while (i < hsig.args.length && i < msig.args.length) {
+					args.push(isDyn(hsig.args[i].t) ? msig.args[i] : hsig.args[i]);
+					i++;
+				}
+				while (i < msig.args.length) { args.push(msig.args[i]); i++; }
+				TFun({args: args, ret: msig.ret});
+			case _:
+				TFun({args: msig.args, ret: msig.ret});
+		};
+	}
+
 	static function isDisplayResult(e:Dynamic):Bool {
 		return Std.isOfType(e, hxc.compiler.DisplayXml.DisplayPositions)
 			|| Std.isOfType(e, hxc.compiler.DisplayXml.ToplevelCompletion)

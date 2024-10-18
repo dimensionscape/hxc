@@ -1581,6 +1581,13 @@ class Typer {
 		// CfOverload flag) documents itself from the MAIN field, since the metadata form has no doc of
 		// its own.
 		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		// A MACRO callee resolves to its macro-world signature first.
+		switch (callee.expr) {
+			case TField(_, FStatic(mc, mcf) | FInstance(mc, _, mcf)):
+				var mt2 = hxc.eval.EvalMacro.macroFieldDisplayType(ctx.com, mc, mcf);
+				if (mt2 != null) callee = TypeFunctions.mk(callee.expr, mt2, callee.pos);
+			case _:
+		}
 		function addCand(t:T, doc:hxc.ast.Ast.Documentation):Void switch (followCallable(t)) {
 			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: doc});
 			case _:
@@ -1830,9 +1837,14 @@ class Typer {
 						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: cf.type});
 				}
 			case _:
-				for (cf in c.orderedStatics)
-					if (!noCompletion(cf.meta)) items.push({kind: "static", name: cf.name, type: sType(cf.type),
-						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: cf.type});
+				for (cf in c.orderedStatics) {
+					if (noCompletion(cf.meta)) continue;
+					// A macro field resolves to its macro-world display type.
+					var st = hxc.eval.EvalMacro.macroFieldDisplayType(ctx.com, c, cf);
+					if (st == null) st = cf.type;
+					items.push({kind: "static", name: cf.name, type: sType(st),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: st});
+				}
 		}
 		// Enum constructors. Each enum contributes once: every arm checks whether the path was already
 		// recorded, and records it.
@@ -2097,6 +2109,13 @@ class Typer {
 		};
 		var te = readExpr(acc);
 		if (te == null) return;
+		// A macro field reports its MACRO-WORLD signature.
+		switch (te.expr) {
+			case TField(_, FStatic(mc, mcf) | FInstance(mc, _, mcf) | FClosure({c: mc}, mcf)):
+				var mt2 = hxc.eval.EvalMacro.macroFieldDisplayType(ctx.com, mc, mcf);
+				if (mt2 != null) te = TypeFunctions.mk(te.expr, mt2, te.pos);
+			case _:
+		}
 		if (displayDefinition) checkDisplayDefinition(ctx, te);
 		if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, te, null);
 		if (displayUsage || displayImplementation) captureUsageTarget(te);
