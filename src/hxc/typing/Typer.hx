@@ -1147,7 +1147,11 @@ class Typer {
 					for (f in fields) if (atDisplayPos(f.expr.pos)) { covered = true; break; }
 					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
 					if (an != null) {
-						fieldCompletionFound = [for (name in an.fields.keys()) {
+						// A field already GIVEN in the literal is removed from the candidates, so only what is still
+						// missing is offered.
+						var given = new haxe.ds.StringMap<Bool>();
+						for (f in fields) if (!atDisplayPos(f.pos)) given.set(f.name, true);
+						fieldCompletionFound = [for (name in an.fields.keys()) if (!given.exists(name)) {
 							var cf = an.fields.get(name);
 							{
 								kind: cf.kind.match(Method(_)) ? "method" : "var",
