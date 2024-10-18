@@ -909,6 +909,9 @@ class ForLoopFaithful {
 		var e2b = Expr.ensureBlock(e2);
 		var iterator = ofTexpr(ctx, e1, getUnrollWeight(ctx, e2b), p);
 		var i = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, iterator.pt, pi);
+		// The loop variable's declaration answers by itself, the same as a function argument and a catch
+		// variable.
+		if (Typer.atDisplayPos(pi)) Typer.displayVariable(ctx, i, pi);
 		var te2 = Typer.typeExpr(ctx, e2b, WithTypeTools.noValue);
 		ctx.inLoop = oldLoop;
 		oldLocals();

@@ -1338,6 +1338,8 @@ class Typer {
 					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
 					// The catch var is declared at the var name's position, not the catch clause's.
 					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.name.pos);
+					// Display on the catch variable's own name.
+					if (atDisplayPos(c.name.pos)) displayVariable(ctx, v, c.name.pos);
 					var cbody = typeExpr(ctx, c.expr, withType);
 					v.type = normalizedCatchType;
 					restore();
