@@ -50,6 +50,7 @@ class Typer {
 		displayTypeDefinition = false;
 		displaySignature = false;
 		signatureFound = null;
+		signatureCallPos = null;
 		displayToplevel = false;
 		displayToplevelJson = false;
 		displayUsage = false;
@@ -1473,6 +1474,9 @@ class Typer {
 	// DMSignature: a call whose argument span contains the display position captures its callee's
 	// signatures and the active argument.
 	public static var displaySignature:Bool = false;
+	// The span of the call the signature was recorded from; a nested call replaces it only when its own
+	// span is strictly inside (the innermost call is the marked one).
+	public static var signatureCallPos:Null<Position> = null;
 	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
 
 	// An EArray under signature display: an Array reports one (index:Int) signature returning its element,
@@ -1568,6 +1572,30 @@ class Typer {
 		// The display position must sit inside the argument span (after the callee).
 		var off = hxc.parser.Parser.displayOffset;
 		if (!atDisplayPos(p) || off <= e1.pos.max) return;
+		// Marks the INNERMOST call holding the cursor, and only that one. hxc types the outer call first,
+		// so a nested call may only replace a record whose span strictly contains its own.
+		if (signatureFound != null && signatureCallPos != null
+			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
+				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		// A `super(...)` call reports the SUPER's constructor signatures.
+		switch (e1.expr) {
+			case EConst(CIdent("super")):
+				var sup = ctx.curclass == null ? null : ctx.curclass.superClass;
+				var ctor = sup == null ? null : superConstructor(sup.c);
+				if (ctor != null) {
+					var sigs = [];
+					inline function addCtor(cf:TClassField) switch (TypeFunctions.follow(cf.type)) {
+						case TFun(sig): sigs.push({args: sig.args, ret: sig.ret, doc: cf.doc});
+						case _:
+					}
+					addCtor(ctor);
+					for (o in ctor.overloads) addCtor(o);
+					signatureFound = {sigs: sigs, activeArg: active};
+					signatureCallPos = p;
+				}
+				return;
+			case _:
+		}
 		// `f.bind(` reports the signature of F ITSELF, not of the magic bind field, so the callee is the
 		// receiver whenever it follows to a function.
 		var callee:Null<TExpr> = switch (e1.expr) {
@@ -1648,6 +1676,7 @@ class Typer {
 			if (ok) kept.unshift(cand);
 		}
 		signatureFound = {sigs: kept.length == 0 ? cands : kept, activeArg: active};
+		signatureCallPos = p;
 	}
 
 	// The keep test runs the real argument unification but must leave nothing behind: it types
@@ -4011,7 +4040,7 @@ class Typer {
 						Calls.arrayAccess(ctx, accGet(ctx, a1), te2, mode, p);
 				}
 			case ECall(e1, params):
-				if (displaySignature && signatureFound == null) checkSignatureDisplay(ctx, e1, params, p);
+				if (displaySignature) checkSignatureDisplay(ctx, e1, params, p);
 				hxc.eval.EvalMacro.lastExpansionAst = null;
 				var acc = Calls.typeCallAccess(ctx, e1, params, withType, p);
 				// A call result is not an lvalue; a MACRO call defers to its EXPANSION, which reports at
