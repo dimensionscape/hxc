@@ -2085,6 +2085,20 @@ class Typer {
 		}
 	}
 
+	// A type path under the cursor answers with that type - its declaration position, its own type for
+	// hover, itself as the usage subject.
+	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position):Void {
+		var inf = TypeFunctions.tInfos(mt);
+		if (displayDefinition) {
+			if (displayFound == null) displayFound = [inf.namePos];
+		} else if (displayHover || displayTypeDefinition) {
+			if (hoverFound == null)
+				hoverFound = {t: TypeFunctions.typeOfModuleType(mt), p: p};
+		} else if (displayUsage || displayImplementation) {
+			usageTargetType = mt;
+		}
+	}
+
 	// A variable declaration answers the display by itself when the cursor sits on its name, without
 	// any typed expression referring to it. A function argument is the case that has no expression at
 	// all to be found through.
