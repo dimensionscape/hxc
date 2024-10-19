@@ -2464,6 +2464,12 @@ class Typer {
 			case TConst(TSuper):
 				var sup = ctx.curclass == null ? null : ctx.curclass.superClass;
 				sup == null ? [] : [sup.c.namePos];
+			// Walk into a call's CALLEE and a cast's operand STRUCTURALLY, with no position test of their
+			// own: `n|ew X()` on an abstract types as a call to the impl's _new, whose own position is
+			// nowhere near the cursor.
+			case TCall(e1, _) | TCast(e1, _):
+				checkDisplayDefinition(ctx, e1);
+				[];
 			case _: [];
 		};
 		if (pl.length > 0) displayFound = pl;
