@@ -1596,6 +1596,19 @@ class Typer {
 		if (signatureFound != null && signatureCallPos != null
 			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
 				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		// `$type` under DMSignature: one (expression : <mono>) signature carrying its own documentation.
+		switch (e1.expr) {
+			case EConst(CIdent("$type")):
+				signatureFound = {
+					sigs: [{args: [{name: "expression", opt: false, t: TypeFunctions.mkMono()}],
+						ret: TypeFunctions.mkMono(),
+						doc: Ast.docFromString("Outputs type of argument as a warning and uses argument as value")}],
+					activeArg: active
+				};
+				signatureCallPos = p;
+				return;
+			case _:
+		}
 		// A `super(...)` call reports the SUPER's constructor signatures.
 		switch (e1.expr) {
 			case EConst(CIdent("super")):
@@ -4940,7 +4953,13 @@ class Typer {
 					values.push(castOrUnify(ctx, tval, tv, tv.pos));
 				}
 			case _:
-				throw new TypingError("Invalid map literal entry", e.pos);
+				// The recovery's stand-in for an entry the user has not written is not a `k => v` pair; it is
+				// there so the position has something to complete on, and typing it answers the request rather
+				// than rejecting the literal. The key type is what the entry starts with, so the completion is
+				// ranked against it rather than against nothing.
+				if (atDisplayPos(e.pos))
+					typeExpr(ctx, e, mapParams == null ? WithTypeTools.value : WithTypeTools.withType(tkey));
+				else throw new TypingError("Invalid map literal entry", e.pos);
 		}
 		if (mapParams == null) {
 			tkey = unifyMinRaise(ctx, keys);
