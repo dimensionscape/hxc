@@ -1557,7 +1557,26 @@ class Typer {
 		}
 	}
 
-	static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
+	// A constructor in a PATTERN resolves against the pattern's expected type, not as a free
+	// expression, so an enum whose constructors are not imported still reports its signature.
+	public static function patternConstructorSignature(en:TEnum, tl:TParams, ef:TEnumField, params:Array<Expr>, p:Position):Void {
+		var active = 0;
+		for (i in 0...params.length) switch (params[i].expr) {
+			case EDisplay(inner, DKMarked): active = i; params[i] = inner; break;
+			case _:
+		}
+		if (signatureFound != null && signatureCallPos != null
+			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
+				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		switch (TypeFunctions.follow(TypeFunctions.applyParams(en.params, tl, ef.type))) {
+			case TFun(sig):
+				signatureFound = {sigs: [{args: sig.args, ret: sig.ret, doc: ef.doc}], activeArg: active};
+				signatureCallPos = p;
+			case _:
+		}
+	}
+
+	public static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
 		// The active argument is the index of the one the PARSER marked, and the marker is stripped
 		// before anything is typed, since a display node has no typing of its own. Counting finished
 		// arguments instead would put the cursor on the next parameter as soon as it leaves the last one.

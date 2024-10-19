@@ -627,6 +627,24 @@ class PatternMaker {
 		// local the pattern would bind is never added, which is why ctx.locals is saved and restored
 		// around it.
 		switch (e.expr) {
+			// A signature request inside a pattern answers the SIGNATURE of the constructor being matched,
+			// exactly as a call expression would.
+			case ECall(ce, cparams) if (Typer.displaySignature && Typer.atDisplayPos(e.pos)):
+				var handled = false;
+				switch (ce.expr) {
+					case EConst(CIdent(cname)):
+						switch (TypeFunctions.follow(t)) {
+							case TEnum(en, tl):
+								var ef = en.constrs.get(cname);
+								if (ef != null) {
+									Typer.patternConstructorSignature(en, tl, ef, cparams, e.pos);
+									handled = true;
+								}
+							case _:
+						}
+					case _:
+				}
+				if (!handled) Typer.checkSignatureDisplay(ctx, ce, cparams, e.pos);
 			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos)):
 				Typer.raiseToplevelInPattern(ctx, t, s);
 			// Inside a pattern, an `if (cond)` whose body is the recovery's null stand-in is the display
