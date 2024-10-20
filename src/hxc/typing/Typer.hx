@@ -4759,6 +4759,14 @@ class Typer {
 			case _:
 		} catch (_:Dynamic) {}
 		var t:T;
+		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
+		// request is answered, then re-raise.
+		inline function typeArgsForDisplay():Void {
+			for (e in el) if (atDisplayPos(e.pos)) {
+				for (e2 in el) try typeExpr(ctx, e2, WithTypeTools.value) catch (_:Dynamic) {}
+				break;
+			}
+		}
 		if (tp.path.tparams.length == 0) {
 			ctx.com.callArgumentStack.unshift(el);
 			try {
@@ -4766,10 +4774,12 @@ class Typer {
 				ctx.com.callArgumentStack.shift();
 			} catch (e:Dynamic) {
 				ctx.com.callArgumentStack.shift();
+				typeArgsForDisplay();
 				throw e;
 			}
 		} else {
-			t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false);
+			try t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false)
+			catch (e:Dynamic) { typeArgsForDisplay(); throw e; }
 		}
 		return switch (TypeFunctions.follow(t)) {
 				case TInst(c, params) if (c.kind.match(KTypeParameter(_))):
