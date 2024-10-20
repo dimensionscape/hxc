@@ -2182,6 +2182,19 @@ class Typer {
 	public static function checkDisplayOnAccess(ctx:TyperContext, acc:hxc.typing.AccessKind.AccessKind, p:Position):Void {
 		if (!atDisplayPos(p)) return;
 		if (!displayDefinition && !displayHover && !displayTypeDefinition && !displayUsage && !displayImplementation) return;
+		// The RECEIVER is its own node: `|e.toString()` is a question about e, not about the
+		// static extension it is passed to, so the answer comes from the receiver instead.
+		var recv:Null<TExpr> = switch (acc) {
+			case AKUsingField(se) | AKUsingAccessor(se):
+				(se.thisExpr != null && atDisplayPos(se.thisExpr.pos)) ? se.thisExpr : null;
+			case _: null;
+		};
+		if (recv != null) {
+			if (displayDefinition) checkDisplayDefinition(ctx, recv);
+			if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, recv, null);
+			if (displayUsage || displayImplementation) captureUsageTarget(recv);
+			return;
+		}
 		function readExpr(a:hxc.typing.AccessKind.AccessKind):Null<TExpr> return switch (a) {
 			case AKNo(inner, _): readExpr(inner);
 			case AKExpr(te): te;
@@ -2482,7 +2495,10 @@ class Typer {
 			// A static-extension callee resolves to a field just the same; the OVERLOAD the call
 			// selected is the one to report.
 			case AKUsingField(se) | AKUsingAccessor(se):
-				displayFound = [se.access.field.namePos];
+				// The RECEIVER is its own node: `|e.toString()` asks about e, not about the
+				// static extension it is passed to.
+				if (se.thisExpr != null && atDisplayPos(se.thisExpr.pos)) checkDisplayDefinition(ctx, se.thisExpr);
+				else displayFound = [se.access.field.namePos];
 			case _:
 		}
 	}
