@@ -1288,6 +1288,10 @@ class TypeResolve {
 					}
 					if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 					var sigOpt = fa.opt || fa.value != null;
+					if (hxc.typing.Typer.atDisplayPos(fa.name.pos)) {
+						var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
+						hxc.typing.Typer.displayVariable(null, av, fa.name.pos);
+					}
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;

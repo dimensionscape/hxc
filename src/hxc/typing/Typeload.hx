@@ -443,6 +443,10 @@ class Typeload {
 			cf.meta = f.cffMeta;
 			cf.params = params;
 			if (isFinal) cf.flags = Flags.setFlag(cf.flags, TypeFunctions.intOfClassFieldFlag(CfFinal));
+			// The cursor on a structure field's name answers with that field. The reference delays it to
+			// PBuildClass so the whole anon exists first; here the field's own type is already built, which
+			// is all the answer needs.
+			if (hxc.typing.Typer.atDisplayPos(cf.namePos)) hxc.typing.Typer.displayAnonField(cf);
 			fields.set(n, cf);
 		}
 		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Closed), fields);

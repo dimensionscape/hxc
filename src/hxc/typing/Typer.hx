@@ -2146,6 +2146,21 @@ class Typer {
 		}
 	}
 
+	// Reached an ANONYMOUS structure's field: the declaration answers by itself, exactly as a class
+	// field's does.
+	public static function displayAnonField(cf:TClassField):Void {
+		if (displayDefinition) {
+			if (displayFound == null) displayFound = [cf.namePos];
+		} else if (displayHover || displayTypeDefinition) {
+			if (hoverFound == null) {
+				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+				hoverFound = {t: t, p: cf.namePos};
+			}
+		} else if (displayUsage || displayImplementation) {
+			if (usageTargetField == null) usageTargetField = cf;
+		}
+	}
+
 	// A type path under the cursor answers with that type - its declaration position, its own type for
 	// hover, itself as the usage subject.
 	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position):Void {
