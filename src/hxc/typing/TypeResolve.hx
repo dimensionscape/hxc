@@ -1295,8 +1295,14 @@ class TypeResolve {
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-				// Constructor's return type is always Void regardless of any hint, so its signature reads
+				// A constructor's return type is always Void regardless of any hint, so its signature reads
 				// TFun(args, Void). Visible in a cppia host's __script_construct signature.
+				// The hint is still loaded, for the display alone, so a cursor inside it has something to
+				// answer
+				// from; the resulting type is discarded either way.
+				if (cf.name == "new" && !isStaticField && fd.fType != null
+						&& hxc.typing.Typer.atDisplayPos(fd.fType.pos))
+					try Typeload.loadTypeHint(ctx, localParams, fd.fType, false) catch (_:Dynamic) {}
 				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid
 					: (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;

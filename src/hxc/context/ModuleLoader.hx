@@ -217,6 +217,34 @@ class ModuleLoader {
 		// Answer the segment containing the display position, including cursors inside a segment rather
 		// than at its dot.
 		function checkPathDisplay(path:Array<PlacedName>):Void {
+			// Hovering a module or subtype path segment returns its type, as an expression type path does.
+			if (hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition
+					|| hxc.typing.Typer.displayDefinition) {
+				var pack:Array<String> = [];
+				var mod:Null<String> = null;
+				for (part in path) {
+					var isLower = part.name.length > 0 && part.name.charCodeAt(0) >= "a".code && part.name.charCodeAt(0) <= "z".code;
+					if (mod != null) {
+						if (hxc.typing.Typer.atDisplayPos(part.pos)) {
+							var m2 = try loadModule(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
+							if (m2 != null) for (mt in m2.types)
+								if (TypeFunctions.tInfos(mt).path.name == part.name)
+									hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+						}
+						return;
+					}
+					if (isLower) { pack.push(part.name); continue; }
+					if (hxc.typing.Typer.atDisplayPos(part.pos)) {
+						var m2 = try loadModule(ctx, {pack: pack, name: part.name}, part.pos) catch (_:Dynamic) null;
+						if (m2 != null) for (mt in m2.types)
+							if (TypeFunctions.tInfos(mt).path.name == part.name)
+								hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+						return;
+					}
+					mod = part.name;
+				}
+				return;
+			}
 			if (!hxc.typing.Typer.displayToplevel && !hxc.typing.Typer.displayToplevelJson) return;
 			var pack:Array<String> = [];
 			var mod:Null<String> = null;
