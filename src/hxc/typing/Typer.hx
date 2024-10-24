@@ -2212,6 +2212,7 @@ class Typer {
 		}
 		function readExpr(a:hxc.typing.AccessKind.AccessKind):Null<TExpr> return switch (a) {
 			case AKNo(inner, _): readExpr(inner);
+			case AKSafeNav(sn): readExpr(sn.access);
 			case AKExpr(te): te;
 			case AKField(fa) | AKAccessor(fa):
 				try hxc.typing.FieldAccessTools.getFieldExpr(fa, FRead) catch (_:Dynamic) null;
@@ -4012,7 +4013,13 @@ class Typer {
 						temp = TypeFunctions.mk(TVarExpr(v, base), ctx.com.basic.tvoid, base.pos);
 						safeBase = TexprTools.makeLocal(v, base.pos);
 				}
-				AKSafeNav({pos: p, base: safeBase, tempVar: temp, access: Fields.typeField(ctx, safeBase, field, p, mode, withType)});
+				var snAcc = AKSafeNav({pos: p, base: safeBase, tempVar: temp,
+					access: Fields.typeField(ctx, safeBase, field, p, mode, withType)});
+				// A `?.` chain desugars into a null check whose type is Null<T> and whose parts
+				// carry the whole chain's position, so the display has to answer from the ACCESS:
+				// the field itself, exactly as a plain `.` would report it.
+				checkDisplayOnAccess(ctx, snAcc, p);
+				snAcc;
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
 				// The dangling display dot (EField with an empty name from parseField) asks for the legacy
