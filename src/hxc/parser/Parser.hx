@@ -2077,6 +2077,17 @@ class Parser {
 		var acc:Array<Expr> = [first];
 		var rest = blockWithPos(p);
 		for (e in rest.exprs) acc.push(e);
+		// A block holding exactly the identifier under the cursor is really the start of a STRUCTURE
+		// literal - `{ fie` and `{ fie }` both parse as blocks - so it becomes an object declaration with
+		// that one field, whose value stands at a null position so nothing downstream reads it as written.
+		// This is decided on the PARSED tree, before any block a later stage synthesizes exists.
+		if (acc.length == 1 && displayCompletionMode && ident.match(CIdent(_)) && acc[0] == first
+				&& first.expr.match(EConst(CIdent(_))) && isDisplayFile()
+				&& p.min <= displayOffset && displayOffset <= p.max)
+			return EObjectDecl([{
+				name: key.name, pos: key.pos, quotes: NoQuotes,
+				expr: new Expr(EConst(CIdent("null")), Position.nullPos)
+			}]);
 		return EBlock(acc);
 	}
 

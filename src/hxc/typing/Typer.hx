@@ -757,17 +757,6 @@ class Typer {
 				// `{}` parses as an empty block; in a value position with a known (non-mono) type it is an
 				// empty object literal, not a Void block.
 				typeExpr(ctx, new Expr(EObjectDecl([]), p), withType);
-			// A block holding exactly the identifier under the cursor is really the start of a STRUCTURE
-			// literal - `{ fie` and `{ fie }` both parse as blocks - so it retypes as an object declaration
-			// carrying that one field, whose value stands at a null position so nothing downstream reads it
-			// as written.
-			case EBlock([e1]) if (hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null
-					&& e1.expr.match(EConst(CIdent(_))) && atDisplayPos(e1.pos)):
-				var name = switch (e1.expr) { case EConst(CIdent(n)): n; case _: ""; };
-				typeExpr(ctx, new Expr(EObjectDecl([{
-					name: name, pos: e1.pos, quotes: NoQuotes,
-					expr: new Expr(EConst(CIdent("null")), Position.nullPos)
-				}]), p), withType);
 			case EBlock(l):
 				var restore = saveLocals(ctx);
 				var te = typeBlock(ctx, l, withType, p);
@@ -1177,6 +1166,8 @@ class Typer {
 					var covered = false;
 					for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
 					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
+					// A @:structInit class completes like a structure, from the fields its constructor accepts.
+					if (an == null && !covered) an = structInitAnonFields(ctx, withType);
 					if (an != null) {
 						// A field already GIVEN in the literal is removed from the candidates, so only what is still
 						// missing is offered.
@@ -2224,6 +2215,31 @@ class Typer {
 		}
 	}
 
+	// A DECLARED class field the cursor sits on answers by itself, without any expression referring to
+	// it. An abstract's own member drops the leading `this` its impl carries prepare_using_field), and
+	// a constructor reads as the function that produces its class , which is not what its stored
+	// signature says.
+	public static function displayClassField(c:Null<TClass>, isCtor:Bool, cf:TClassField, p:Position):Void {
+		if (displayDefinition) {
+			if (displayFound == null) displayFound = [cf.namePos];
+		} else if (displayHover || displayTypeDefinition) {
+			if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)) {
+				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) t = switch (TypeFunctions.follow(t)) {
+					case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
+					case t2: t2;
+				};
+				if (isCtor && c != null) switch (TypeFunctions.follow(t)) {
+					case TFun(sig): t = TFun({args: sig.args, ret: TInst(c, TypeFunctions.extractParamTypes(c.params))});
+					case _:
+				}
+				hoverFound = {t: t, p: p};
+			}
+		} else if (displayUsage || displayImplementation) {
+			if (usageTargetField == null) usageTargetField = cf;
+		}
+	}
+
 	// A type path under the cursor answers with that type - its declaration position, its own type for
 	// hover, itself as the usage subject.
 	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position):Void {
@@ -2629,6 +2645,49 @@ class Typer {
 			case _: [];
 		};
 		if (pl.length > 0) displayFound = pl;
+	}
+
+	// A @:structInit class's completable fields are the ARGUMENTS its constructor accepts, with the
+	// receiver's type parameters applied, each reported at the declared field of that name. A class
+	// whose constructor cannot be read contributes every var field it declares instead.
+	static function structInitAnonFields(ctx:TyperContext, withType:WithType):Null<TAnon> {
+		var hit = switch (withType) {
+			case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+				case TInst(c, tl) if (TypeFunctions.hasMeta(":structInit", c.meta)): {c: c, tl: tl};
+				case _: null;
+			};
+			case _: null;
+		};
+		if (hit == null) return null;
+		var c = hit.c;
+		var ctor = c.constructor;
+		var sig = ctor == null ? null : switch (try findConstructorType(ctx, c, hit.tl) catch (_:Dynamic) null) {
+			case null: null;
+			case ct: switch (TypeFunctions.follow(ct)) { case TFun(s): s; case _: null; };
+		};
+		var fields = new haxe.ds.StringMap<TClassField>();
+		if (sig != null) {
+			for (arg in sig.args) {
+				var decl = c.fields.get(arg.name);
+				var np = decl != null ? decl.namePos : ctor.namePos;
+				var cf = TypeFunctions.mkField(arg.name, arg.t, np, np);
+				if (decl != null) cf.doc = decl.doc;
+				fields.set(arg.name, cf);
+			}
+		} else {
+			for (name in c.fields.keys()) {
+				var cf = c.fields.get(name);
+				switch (cf.kind) {
+					case Var(_):
+						var cf2 = TypeFunctions.mkField(cf.name, TypeFunctions.applyParams(c.params, hit.tl, cf.type), cf.namePos, cf.namePos);
+						cf2.doc = cf.doc;
+						fields.set(name, cf2);
+					case _:
+				}
+			}
+		}
+		if (!fields.keys().hasNext()) return null;
+		return {fields: fields, status: new hxc.core.Ref(Closed)};
 	}
 
 	static function expectedAnonFromWithType(ctx:TyperContext, withType:WithType):Null<TAnon> {

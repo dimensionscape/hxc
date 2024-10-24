@@ -102,7 +102,7 @@ class TypeFields {
 		// A field with no body never reaches typeFieldBody, so its modifier completion is checked here.
 		// It runs after every body so a body's own answer wins, and after every module so a supertype
 		// declared elsewhere already has its field list.
-		if (hxc.parser.Parser.displayFile != null && Typer.fieldCompletionFound == null)
+		if (hxc.parser.Parser.displayFile != null)
 			for (m in ctx.modules) for (mt in m.types) switch (mt) {
 				case TClassDecl(c): checkModifierDisplayForClass(ctx, c);
 				case _:
@@ -611,7 +611,17 @@ class TypeFields {
 	// A body-less field (a plain `var`) never reaches typeFieldBody, so its declaration is
 	// checked once the class's bodies have all run.
 	static function checkModifierDisplayForClass(ctx:Context, c:TClass):Void {
-		if (hxc.parser.Parser.displayFile == null || Typer.fieldCompletionFound != null) return;
+		if (hxc.parser.Parser.displayFile == null) return;
+		// A field with no expression to bind (an extern or interface method, an abstract declaration)
+		// still answers the display from its own name. maybe_display_field only fires when the cursor is
+		// on that name.
+		inline function nameDisplay(cf:TClassField, isCtor:Bool):Void {
+			if (Typer.atDisplayPos(cf.namePos)) Typer.displayClassField(c, isCtor, cf, cf.namePos);
+		}
+		for (cf in c.orderedFields) nameDisplay(cf, false);
+		for (cf in c.orderedStatics) nameDisplay(cf, false);
+		if (c.constructor != null) nameDisplay(c.constructor, true);
+		if (Typer.fieldCompletionFound != null) return;
 		var entry = ctx.declOfType.get(hxc.context.Context.pathKey(c.path));
 		if (entry == null) return;
 		switch (entry.decl) {
