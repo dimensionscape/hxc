@@ -90,6 +90,7 @@ class Compiler {
 		hxc.typing.Typeload.resetPerRequest();
 		hxc.parser.Parser.resetPerRequest();
 		hxc.context.ModuleLoader.resetPerRequest();
+		hxc.eval.EvalMacro.resetPerRequest();
 		hxc.typing.CoreApi.reset();
 		hxc.context.ServerCache.resetRequest();
 		hxc.ast.Position.resetFileCache();

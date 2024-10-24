@@ -1392,6 +1392,7 @@ class EvalMacro {
 
 	static function getContext(com:Context):EvalContext {
 		hostCom = com;
+		evictDisplayModule();
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
@@ -1455,6 +1456,45 @@ class EvalMacro {
 	// The macro-world compilation context, when one exists (a class evaluated at macro
 	// time belongs to it, not to the host Context).
 	public static function macroWorld():Null<Context> return macroCom;
+
+	// A compilation's macro world is fresh and serves its modules back out of the shared cache, and
+	// the server drops the display file from every cache before a request, so one module is what a
+	// compilation can never inherit. hxc keeps the macro world in a process static, so without this a
+	// second request would find the display file's macro-world fields already typed, run no display
+	// hook, and answer empty. Dropping just that module keeps the guarantee without rebuilding the
+	// whole macro world each request.
+	static var pendingDisplayEvict:Bool = false;
+
+	public static function resetPerRequest():Void {
+		pendingDisplayEvict = true;
+	}
+
+	static function evictDisplayModule():Void {
+		if (!pendingDisplayEvict) return;
+		pendingDisplayEvict = false;
+		if (macroCom == null) return;
+		var df = hxc.parser.Parser.displayFile;
+		if (df == null) return;
+		inline function key(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
+		var want = key(df);
+		var dropped = false;
+		for (m in macroCom.modules.copy()) {
+			var f = m.extra == null ? null : m.extra.file;
+			if (f == null) continue;
+			var k = key(f);
+			if (k != want && !StringTools.endsWith(k, "/" + want) && !StringTools.endsWith(want, "/" + k)) continue;
+			macroCom.modules.remove(m);
+			macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
+			dropped = true;
+		}
+		// The interpreter's prototypes still point at the retired fields, so it is rebuilt (macro
+		// static state migrates) exactly as it is when a field types after its prototype was built.
+		if (dropped && macroCtx != null) {
+			staleMacroCtx = macroCtx;
+			macroCtx = null;
+			lastModuleCount = -1;
+		}
+	}
 
 	static function initMacroContext(com:Context):Void {
 		macroCom = com.cloneForMacro();
@@ -1562,6 +1602,7 @@ class EvalMacro {
 	}
 
 	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
+		evictDisplayModule();
 		if (macroCom == null) initMacroContext(host);
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;
