@@ -769,11 +769,31 @@ class Fields {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
 				var ok = try tryUsingClass(ctx, uc, e, cf.name, p) != null catch (_:Dynamic) false;
 				if (!ok) continue;
-				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-				switch (TypeFunctions.follow(t)) {
-					case TFun(sig) if (sig.args.length > 0):
-						add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
-					case _:
+				// Over `f :: f.overloads` and handles each one: the candidate is whichever accepts the receiver
+				// as its first argument, which is not necessarily the main field. An overload set's main field
+				// can be the ZERO-argument one, and reading only that offered the field nowhere at all.
+				for (o in [cf].concat(cf.overloads)) {
+					var t = switch (o.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+					// The receiver is unified against the first argument of a copy whose own type
+					// parameters
+					// are fresh monos, so the reported signature carries the bindings that unification made
+					// (K becomes String, not K).
+					if (o.params.length > 0) {
+						var monos = TypeUnification.spawnConstrainedMonos(function(x) return x, o.params);
+						t = TypeFunctions.applyParams(o.params, monos, t);
+					}
+					var matched = false;
+					switch (TypeFunctions.follow(t)) {
+						case TFun(sig) if (sig.args.length > 0):
+							// The same acceptance test the call path uses: a plain unify is stricter and drops the
+							// Map-receiver-against-StringMap-parameter cases.
+							if (usingAccepts(o, e.type, sig.args[0].t)) {
+								add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
+								matched = true;
+							}
+						case _:
+					}
+					if (matched) break;
 				}
 			}
 		}
