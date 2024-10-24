@@ -2433,10 +2433,10 @@ class Typer {
 				}
 		}
 		// The static extensions in scope are part of a field completion. They come after the receiver's
-		// own fields, which is what the `seen` check in push already expresses skips a name the type
-		// itself provides).
+		// own fields, which is what the `seen` check in push already expresses (a name the type itself
+		// provides is skipped). The using loop runs on the receiver's type whatever the receiver is, so
+		// `C.<cursor>` collects the extensions declared over Class<C> too.
 		if (typed != null) switch (typed.expr) {
-			case TTypeExpr(_):
 			case _:
 				pushScope = CFSMember;
 				pushOriginClass = null;
