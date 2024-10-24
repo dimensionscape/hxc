@@ -1112,7 +1112,10 @@ class Parser {
 				case Const(CString(name, _)): var p = next().pos; key = {name: name, pos: p, quotes: DoubleQuotes};
 				case _: break;
 			}
-			expect(DblDot);
+			// A missing `:` after a field name is recorded and the value read anyway, so `{ a: 1, fie` still
+			// carries `fie` as a field for completion to answer on.
+			if (tokEq(peek(), DblDot)) junk();
+			else syntaxError(Expected([":"]));
 			var e = secureExpr();
 			acc.push({name: key.name, pos: key.pos, quotes: key.quotes, expr: e});
 			pEnd = e.pos;

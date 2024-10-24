@@ -53,6 +53,7 @@ class Typer {
 		signatureCallPos = null;
 		displayToplevel = false;
 		displayToplevelJson = false;
+		markedDisplay = null;
 		displayUsage = false;
 		displayImplementation = false;
 		usageTargetField = null;
@@ -756,6 +757,17 @@ class Typer {
 				// `{}` parses as an empty block; in a value position with a known (non-mono) type it is an
 				// empty object literal, not a Void block.
 				typeExpr(ctx, new Expr(EObjectDecl([]), p), withType);
+			// A block holding exactly the identifier under the cursor is really the start of a STRUCTURE
+			// literal - `{ fie` and `{ fie }` both parse as blocks - so it retypes as an object declaration
+			// carrying that one field, whose value stands at a null position so nothing downstream reads it
+			// as written.
+			case EBlock([e1]) if (hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null
+					&& e1.expr.match(EConst(CIdent(_))) && atDisplayPos(e1.pos)):
+				var name = switch (e1.expr) { case EConst(CIdent(n)): n; case _: ""; };
+				typeExpr(ctx, new Expr(EObjectDecl([{
+					name: name, pos: e1.pos, quotes: NoQuotes,
+					expr: new Expr(EConst(CIdent("null")), Position.nullPos)
+				}]), p), withType);
 			case EBlock(l):
 				var restore = saveLocals(ctx);
 				var te = typeBlock(ctx, l, withType, p);
@@ -889,6 +901,16 @@ class Typer {
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
 				accGet(ctx, typeAccess(ctx, e.expr, p, mode, withType));
 			case EBinop(op, e1, e2):
+				// An assignment whose own span holds the cursor while neither operand does is "probably" a
+				// request on the RIGHT-hand side, so side becomes the display subject. Bottom-up in the
+				// reference; here an operand already covering the cursor is what stands in for was_annotated.
+				switch (op) {
+					case OpAssign | OpAssignOp(_)
+						if (hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null
+							&& atDisplayPos(p) && !atDisplayPos(e1.pos) && !atDisplayPos(e2.pos)):
+						markedDisplay = e2;
+					case _:
+				}
 				Operators.typeBinop(ctx, op, e1, e2, false, withType, p);
 			case EUnop(op, flag, e1):
 				Operators.typeUnop(ctx, op, flag, e1, withType, p);
@@ -1149,8 +1171,11 @@ class Typer {
 				// The display position sits inside the literal on no field: complete the EXPECTED
 				// structure's fields. (CRStructureField via display_expr on an object declaration).
 				if (hxc.parser.Parser.displayFile != null && fieldCompletionFound == null && atDisplayPos(p)) {
+					// The cursor on a field name makes that field the completion SUBJECT; only a field it is not
+					// on hands the answer to its own value. Testing the values first would let the stand-in the
+					// parser leaves after a missing `:` swallow a cursor that is really sitting on the name.
 					var covered = false;
-					for (f in fields) if (atDisplayPos(f.expr.pos)) { covered = true; break; }
+					for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
 					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
 					if (an != null) {
 						// A field already GIVEN in the literal is removed from the candidates, so only what is still
@@ -1272,8 +1297,16 @@ class Typer {
 					for (f in fields) {
 						var ef = dynParam == null && expected != null ? expected.fields.get(f.name) : null;
 						var ft:Null<T> = dynParam != null ? dynParam : (ef != null ? ef.type : null);
+						// The cursor on a field name answers with the field it matched in the EXPECTED structure, so
+						// it reports that field's declaration and its declared type rather than the literal's own.
+						if (ef != null && atDisplayPos(f.pos)) displayAnonField(ef);
 						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name) : WithTypeTools.value;
 						var te = typeExpr(ctx, f.expr, fwt);
+						// With no expected structure the field answers with itself, typed from its value.
+						// The field is built (and displayed) whether or not the name is a valid identifier;
+						// only the anon entry below is guarded.
+						if (expected == null && dynParam == null && atDisplayPos(f.pos))
+							displayAnonField(TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
 						// Against an expected field type, coerce the value to it so an implicit abstract cast
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
 						if (ft != null) {
@@ -1445,6 +1478,10 @@ class Typer {
 				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
+		// Wraps the expression the preprocessor decided is the display subject; it and then answers with
+		// the toplevel collection. hxc has no EDisplay node in the typer, so the decision is recorded and
+		// read back here, at the same point and with the same expected type.
+		if (markedDisplay == e) { markedDisplay = null; raiseToplevelMarked(ctx, e, withType); }
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
 		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
@@ -2021,6 +2058,32 @@ class Typer {
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(
 				collectToplevel(ctx, WithTypeTools.withType(t), name == "null"));
+	}
+
+	// The expression the preprocessor marked as the display subject, recorded instead of wrapped since
+	// hxc's typer has no EDisplay node. Identity, not position, so an expression that merely shares a
+	// span is never mistaken for it.
+	public static var markedDisplay:Null<Expr> = null;
+
+	// /:105: the cursor in the whitespace where an expression is EXPECTED but has not been written - after
+	// a var's `=` or an assignment's - marks whatever the parser found there as the display subject, so the
+	// statement it swallowed is completed against instead of reported. The span runs from p0 (the var's
+	// type hint, or its name when it has none) to where that expression starts.
+	public static function markedGap(p0:Position, e:Expr):Bool {
+		if (!hxc.parser.Parser.displayCompletionMode || fieldCompletionFound != null) return false;
+		return atDisplayPos(new Position(p0.file, p0.min, e.pos.min));
+	}
+
+	// A marked expression that is not a field access answers with the toplevel collection keyed by its
+	// own dotted path; anything that is not a path (a call, a literal, `null`) has an empty subject,
+	// which is the sorted case.
+	public static function raiseToplevelMarked(ctx:TyperContext, e:Expr, withType:WithType):Void {
+		if (fieldCompletionFound != null) return;
+		var name = try Ast.stringListOfExprPathRaise(e).join(".") catch (_:Dynamic) "";
+		if (name == "null") name = "";
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+		if (displayToplevel)
+			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
 
 	// The argument or structure field the position is filling.
@@ -4181,6 +4244,19 @@ class Typer {
 	static function typeVars(ctx:TyperContext, vl:Array<EVar>, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var out:Array<{v:TVar, e:Null<TExpr>}> = [];
+		// The cursor on a var name marks nothing here (the declaration answers it, and every var after it
+		// is left alone); otherwise the first initializer whose leading gap holds the cursor becomes the
+		// display subject.
+		if (atDisplayPos(p)) for (ev in vl) {
+			if (atDisplayPos(ev.evName.pos)) break;
+			// A var with no expression has nothing to mark; a cursor on its type hint is picked up while
+			// that hint loads.
+			if (ev.evExpr == null) continue;
+			if (markedGap(ev.evType != null ? ev.evType.pos : ev.evName.pos, ev.evExpr)) {
+				markedDisplay = ev.evExpr;
+				break;
+			}
+		}
 		for (ev in vl) {
 			var n = ev.evName.name;
 			var pv = ev.evName.pos;
