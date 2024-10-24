@@ -753,14 +753,23 @@ class Parser {
 
 	function parseStructuralExtension():PlacedTypePath {
 		var p1 = expect(TBinop(OpGt));
-		// `> <cursor>` yields the MAGIC type path, which load_type_def answers with every type in scope
-		// (filtered to structures by the CTExtend arm). A trailing comma is optional there.
-		if (wouldSkipDisplayPosition(p1, false)) {
+		// A real type path is parsed first; only a failure that consumed nothing reaches the magic arm,
+		// where `> <cursor>` yields the MAGIC type path (which type loading answers with every type in
+		// scope, filtered to structures by the CTExtend arm) and the trailing comma is optional. Checking
+		// the cursor before parsing would complete over `> |A` instead of answering about A.
+		var save = idx;
+		var t:PlacedTypePath;
+		try t = parseTypePath() catch (er:ParserError) {
+			if (idx != save) throw er;
+			idx = save;
+			if (!wouldSkipDisplayPosition(p1, false)) throw er;
 			if (tokEq(peek(), Comma)) junk();
 			return {path: magicTypePath(), pos: new Position(p1.file, displayOffset, displayOffset)};
 		}
-		var t = parseTypePath();
-		expect(Comma);
+		// The comma after an extension is recorded when missing, not raised, so `> T` with nothing after
+		// it still yields the path it did parse.
+		if (tokEq(peek(), Comma)) junk();
+		else syntaxError(Expected([","]));
 		return t;
 	}
 

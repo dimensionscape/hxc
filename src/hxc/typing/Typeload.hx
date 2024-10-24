@@ -553,7 +553,16 @@ class Typeload {
 	public static var typeHints:Array<{m:Null<ModuleDef>, p:Position, t:T}> = [];
 
 	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
-		var r = loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
+		// A type path that does not resolve, with the cursor on it, is a completion request rather than
+		// an error - the name is what the user is still typing.
+		var r = if (hxc.parser.Parser.displayCompletionMode && hxc.typing.Typer.atDisplayPos(p))
+			try loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric)
+			catch (e:ContextError) {
+				if (e.message.indexOf("Type not found") != 0) throw e;
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, p);
+				throw e;
+			}
+		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
 		// The hint list only feeds the reference searches, so it is collected only for them.
 		if (hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation)
 			typeHints.push({m: ctx.currentModule, p: p, t: r});
