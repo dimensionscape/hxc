@@ -2463,6 +2463,122 @@ class Typer {
 				doc: Ast.genDocTextOpt(cf.doc)
 			});
 		}
+		// A field reported under a type other than its own declared one (an abstract member read without
+		// its receiver, a parameter substitution) is copied so the declaration is left untouched.
+		function withType(cf:TClassField, t:T):TClassField {
+			var c2 = TypeFunctions.mkField(cf.name, t, cf.pos, cf.namePos);
+			c2.doc = cf.doc;
+			c2.meta = cf.meta;
+			c2.kind = cf.kind;
+			c2.params = cf.params;
+			c2.flags = cf.flags;
+			return c2;
+		}
+		// The fields a type offers, walked structurally. A class walks its hierarchy, a type parameter
+		// offers what its constraints do, an abstract offers its own @:impl members plus whatever
+		// @:forward lets through, an enum value offers the one EnumValue static, a structure its members,
+		// and a
+		// function only the magic bind.
+		function loopType(t:T):Void {
+			switch (TypeFunctions.follow(t)) {
+				// A type parameter accesses the fields of its constraints.
+				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
+					switch (c.kind) { case KTypeParameter(tl): for (ct in tl) loopType(ct); case _: }
+				case TInst(c, tl):
+					var cur = c;
+					var curArgs:TParams = tl;
+					var savedScope = pushScope;
+					pushScope = CFSMember;
+					while (cur != null) {
+						pushOriginClass = cur;
+						pushParams = cur.params;
+						pushArgs = curArgs;
+						for (name in cur.fields.keys()) {
+							var cf = cur.fields.get(name);
+							if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
+						}
+						if (cur.superClass == null) cur = null;
+						else {
+							// The super's arguments are written in terms of THIS class's
+							// parameters, so they carry the substitution up the chain.
+							var sup = cur.superClass;
+							curArgs = [for (pt in sup.params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
+							cur = sup.c;
+						}
+					}
+					pushParams = null;
+					pushArgs = null;
+					pushOriginClass = null;
+					pushScope = savedScope;
+				// An abstract shows every @:impl field except its constructor, each read without the receiver
+				// its impl carries.
+				case TAbstract(a, tl) if (a.impl != null):
+					var impl = a.impl;
+					var savedScope = pushScope;
+					pushScope = CFSMember;
+					pushOriginClass = impl;
+					for (cf in impl.orderedStatics) {
+						if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
+						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) continue;
+						if (!(TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == impl)) continue;
+						if (TypeFunctions.hasMeta(":noCompletion", cf.meta)) continue;
+						var ct = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+						ct = switch (TypeFunctions.follow(ct)) {
+							case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
+							case t2: t2;
+						};
+						if (tl.length > 0) ct = TypeFunctions.applyParams(a.params, tl, ct);
+						push(withType(cf, ct));
+					}
+					pushOriginClass = null;
+					// With @:forward the UNDERLYING type's fields are collected separately and merged in,
+					// keeping only the names the meta lists (all of them when it lists none) and never one
+					// the abstract declares itself.
+					if (TypeFunctions.hasMeta(":forward", a.meta)) {
+						var listed = [for (e in TypeFunctions.getMeta(":forward", a.meta).params)
+							switch (e.expr) { case EConst(CIdent(s)): s; case _: null; }];
+						var savedFields = fields, savedSeen = seen, savedJson = jsonEntries;
+						fields = []; seen = new haxe.ds.StringMap(); jsonEntries = [];
+						loopType(TypeFunctions.applyParams(a.params, tl, a.thisType));
+						var got = fields, gotJson = jsonEntries;
+						fields = savedFields; seen = savedSeen; jsonEntries = savedJson;
+						for (i in 0...got.length) {
+							var f = got[i];
+							if (listed.length > 0 && listed.indexOf(f.name) < 0) continue;
+							if (impl.fields.exists(f.name) || impl.statics.exists(f.name)) continue;
+							if (seen.exists(f.name)) continue;
+							seen.set(f.name, true);
+							fields.push(f);
+							jsonEntries.push(gotJson[i]);
+						}
+					}
+					pushScope = savedScope;
+				// An enum value carries EnumValue's `match`, nothing else.
+				case TEnum(_, _):
+					var ev = try Typeload.resolveTypePath(ctx.com, {pack: [], name: "EnumValue"}, null, p) catch (_:Dynamic) null;
+					switch (ev) {
+						case TAbstractDecl(a) if (a.impl != null):
+							var cf = a.impl.statics.get("match");
+							if (cf != null) push(cf);
+						case _:
+					}
+				case TAnon(an):
+					var savedAnon = pushOriginAnon;
+					pushOriginAnon = an;
+					for (name in an.fields.keys()) push(an.fields.get(name));
+					pushOriginAnon = savedAnon;
+				// A function has no field except the magic bind, which takes and returns the same signature
+				// with every argument made optional.
+				case TFun(sig):
+					if (!seen.exists("bind")) {
+						var opt = TFun({args: [for (a2 in sig.args) {name: a2.name, opt: true, t: a2.t}], ret: sig.ret});
+						var cf = TypeFunctions.mkField("bind", TypeFunctions.tfun([opt], opt), p, Position.nullPos);
+						cf.kind = Method(MethNormal);
+						push(cf);
+					}
+				case _:
+			}
+		}
 		// A single-character string constant offers the compile-time `code` field first.
 		switch (e1.expr) {
 			case EConst(CString(s, _)) if (s.length == 1):
@@ -2479,38 +2595,8 @@ class Typer {
 				for (cf in c.orderedStatics)
 					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == c) push(cf);
 			case _:
-				// Fields of the value's type: class instance fields walk the inheritance chain, structures list
-				// their members, and a function value has only the magic bind. .
-				switch (TypeFunctions.follow(typed.type)) {
-					case TInst(c, tl):
-						var cur = c;
-						var curArgs:TParams = tl;
-						while (cur != null) {
-							pushOriginClass = cur;
-							pushParams = cur.params;
-							pushArgs = curArgs;
-							for (name in cur.fields.keys()) {
-								var cf = cur.fields.get(name);
-								if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
-							}
-							if (cur.superClass == null) cur = null;
-							else {
-								// The super's arguments are written in terms of THIS class's
-								// parameters, so they carry the substitution up the chain.
-								var sup = cur.superClass;
-								curArgs = [for (pt in sup.params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
-								cur = sup.c;
-							}
-						}
-						pushParams = null;
-						pushArgs = null;
-					case TAnon(an):
-						pushOriginAnon = an;
-						for (name in an.fields.keys()) push(an.fields.get(name));
-					case TFun(sig):
-						fields.push({kind: "method", name: "bind", type: hxc.core.TPrinting.sTypeStr(TFun(sig)), doc: null});
-					case _:
-				}
+				// Fields of the value's type. (loop on e.type).
+				loopType(typed.type);
 		}
 		// The static extensions in scope are part of a field completion. They come after the receiver's
 		// own fields, which is what the `seen` check in push already expresses (a name the type itself

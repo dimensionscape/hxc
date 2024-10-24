@@ -803,8 +803,10 @@ class Parser {
 	function parseComplexTypeNext(t:TypeHint):TypeHint {
 		switch (peek()) {
 			case Arrow:
-				junk();
-				var t2 = parseComplexType();
+				var pa = next().pos;
+				// Nothing after the arrow is not an error when the CURSOR is what stands there - the magic
+				// path answers with every type in scope.
+				var t2 = missingTypeAtCursor(pa, function() return parseComplexType());
 				return switch (t2.ct) {
 					case CTFunction(args, r):
 						{ct: CTFunction([t].concat(args), r), pos: Position.union(t.pos, t2.pos)};
@@ -812,8 +814,9 @@ class Parser {
 						{ct: CTFunction([t], t2), pos: Position.union(t.pos, t2.pos)};
 				}
 			case TBinop(OpAnd):
-				junk();
-				var t2 = parseComplexType();
+				var pa = next().pos;
+				// The same rule for an intersection
+				var t2 = missingTypeAtCursor(pa, function() return parseComplexType());
 				return switch (t2.ct) {
 					case CTIntersection(tl):
 						{ct: CTIntersection([t].concat(tl)), pos: Position.union(t.pos, t2.pos)};
@@ -825,9 +828,21 @@ class Parser {
 		}
 	}
 
+	// A type the grammar REQUIRES but the user has not written stands in as the magic path when the cursor
+	// is what sits in its place, so the request completes on types instead of reporting a syntax error. A
+	// failure that consumed tokens is a real error.
+	function missingTypeAtCursor(pa:Position, parse:Void->TypeHint):TypeHint {
+		var save = idx;
+		try return parse() catch (er:ParserError) {
+			if (idx != save || !wouldSkipDisplayPosition(pa, false)) throw er;
+			idx = save;
+			return {ct: CTPath(magicTypePath()), pos: new Position(pa.file, displayOffset, displayOffset)};
+		}
+	}
+
 	function parseFunctionTypeNext(tl:Array<TypeHint>, p1:Position):TypeHint {
-		expect(Arrow);
-		var tret = parseComplexTypeInner(false);
+		var pa = expect(Arrow);
+		var tret = missingTypeAtCursor(pa, function() return parseComplexTypeInner(false));
 		return {ct: CTFunction(tl, tret), pos: Position.union(p1, tret.pos)};
 	}
 
@@ -2857,10 +2872,12 @@ class Parser {
 				// `import |` leaves the path empty rather than failing, and that with every type in scope.
 				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after import");
 		}
-		// The missing semicolon is likewise not an error when the cursor is what stands where it would
-		// be.
-		var p2 = (path.length == 0 && !tokEq(peek(), Semicolon) && wouldSkipDisplayPosition(p1, true))
-			? new Position(p1.file, displayOffset, displayOffset) : expect(Semicolon);
+		// The cursor standing where the semicolon would be is not an error at all, and a semicolon
+		// missing for any other reason is recorded, so the import the user has half-typed still reaches
+		// import handling and answers the display.
+		var p2 = if (tokEq(peek(), Semicolon)) next().pos
+			else if (wouldSkipDisplayPosition(p1, true)) new Position(p1.file, displayOffset, displayOffset)
+			else { syntaxError(Expected([".", ";", "as"])); tokens[idx > 0 ? idx - 1 : 0].pos; };
 		var ipos = Position.union(p1, p2);
 		return {decl: EImport({path: path, mode: mode, pos: ipos}), pos: ipos};
 	}
@@ -2894,8 +2911,10 @@ class Parser {
 				// The same rule for `using |`.
 				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after using");
 		}
-		var p2 = (path.length == 0 && !tokEq(peek(), Semicolon) && wouldSkipDisplayPosition(p1, true))
-			? new Position(p1.file, displayOffset, displayOffset) : expect(Semicolon);
+		// The same rule the import above carries
+		var p2 = if (tokEq(peek(), Semicolon)) next().pos
+			else if (wouldSkipDisplayPosition(p1, true)) new Position(p1.file, displayOffset, displayOffset)
+			else { syntaxError(Expected([".", ";"])); tokens[idx > 0 ? idx - 1 : 0].pos; };
 		return {decl: EUsing(path), pos: Position.union(p1, p2)};
 	}
 }
