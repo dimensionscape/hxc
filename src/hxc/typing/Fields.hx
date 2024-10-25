@@ -264,6 +264,11 @@ class Fields {
 					case AccInline:
 						hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);
 						AKField(makeAccess(true));
+					// A property access the display position is on does not resolve to its accessor - it stays a
+					// plain field access to the property itself, which is the declaration the request is asking
+					// about, not the getter's.
+					case AccCall if (hxc.typing.Typer.atDisplayPos(pfull)):
+						AKField(makeAccess(false));
 					case AccCall:
 						// Reading/writing a property through its own accessor (or under @:bypassAccessor)
 						// resolves to a raw field access, so the getter/setter does not recurse into itself.

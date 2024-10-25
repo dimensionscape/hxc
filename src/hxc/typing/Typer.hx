@@ -1474,7 +1474,7 @@ class Typer {
 		// read back here, at the same point and with the same expected type.
 		if (markedDisplay == e) { markedDisplay = null; raiseToplevelMarked(ctx, e, withType); }
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
-		if ((displayHover || displayTypeDefinition) && atHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
+		if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
 		return typed;
 	}
@@ -1761,13 +1761,27 @@ class Typer {
 		return atDisplayPos(p);
 	}
 
+	// DMHover picks the display subject with a STRICT upper bound. A cursor sitting exactly at the end of a
+	// node is therefore outside it and the ENCLOSING one answers: `"x".length|` is a question about the
+	// call it is an argument of, not about length.
+	public static function atExprHoverPos(p:Position):Bool {
+		if (hxc.parser.Parser.displaySuppressed) return false;
+		var df = hxc.parser.Parser.displayFile;
+		var off = hxc.parser.Parser.displayOffset;
+		if (df == null || off < 0) return false;
+		if (!(p.min <= off && off < p.max)) return false;
+		var f = StringTools.replace(p.file, "\\", "/");
+		var d = StringTools.replace(df, "\\", "/");
+		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+	}
+
 	static function checkDisplayHover(ctx:TyperContext, te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
 		switch (te.expr) {
 			// Recurse only into a PROPER sub-range: a synthetic receiver (the module type expr
 			// under an unqualified enum constructor) reuses the whole ident's position and must
 			// not shadow the field the cursor is on.
 			case TField(e1, _) | TCall(e1, _) | TCast(e1, _) | TParenthesis(e1)
-				if (atHoverPos(e1.pos) && (e1.pos.min > te.pos.min || e1.pos.max < te.pos.max)):
+				if (atExprHoverPos(e1.pos) && (e1.pos.min > te.pos.min || e1.pos.max < te.pos.max)):
 				checkDisplayHover(ctx, e1, withType);
 			case _:
 		}
@@ -1775,7 +1789,7 @@ class Typer {
 		// whole expression's position, so first-completed is not always innermost. The typed expr's own
 		// position must still enclose the offset; a match-compiled body carries a rewritten position
 		// unrelated to the syntactic node the gate saw.
-		if (!atHoverPos(te.pos)) return;
+		if (!atExprHoverPos(te.pos)) return;
 		// A declaration reports the variable's type, and a `super(...)` call the SUPER's; the nodes
 		// themselves are Void.
 		var ht = switch (te.expr) {
@@ -5079,7 +5093,7 @@ class Typer {
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
 				// A construction reports the constructor the call resolved to, as the function that produces
 				// the instance - not the instance type, which is all the typed node itself carries.
-				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atHoverPos(p)
+				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atExprHoverPos(p)
 						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
 					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p};
 				switch (c.kind) {
