@@ -2484,6 +2484,19 @@ class Typer {
 				doc: Ast.genDocTextOpt(cf.doc)
 			});
 		}
+		// A field is offered when the current context could actually reach it, which is what the access
+		// check decides (@:allow, @:access, a subclass, @:privateAccess). A non-public accessor is hidden
+		// whatever access says, and a static never shows an abstract's @:impl members.
+		function shouldAccess(c2:TClass, cf:TClassField, stat:Bool):Bool {
+			if (TypeFunctions.hasMeta(":noCompletion", cf.meta)) return false;
+			if (c2 != ctx.curclass && !TypeFunctions.hasClassFieldFlag(cf, CfPublic) && cf.name.length > 4) {
+				var pre = cf.name.substr(0, 4);
+				if (pre == "get_" || pre == "set_") return false;
+				return hxc.typing.Fields.canAccess(ctx, c2, cf, stat);
+			}
+			return (!stat || !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
+				&& hxc.typing.Fields.canAccess(ctx, c2, cf, stat);
+		}
 		// A field reported under a type other than its own declared one (an abstract member read without
 		// its receiver, a parameter substitution) is copied so the declaration is left untouched.
 		function withType(cf:TClassField, t:T):TClassField {
@@ -2506,27 +2519,28 @@ class Typer {
 				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
 					switch (c.kind) { case KTypeParameter(tl): for (ct in tl) loopType(ct); case _: }
 				case TInst(c, tl):
-					var cur = c;
-					var curArgs:TParams = tl;
 					var savedScope = pushScope;
 					pushScope = CFSMember;
-					while (cur != null) {
+					// An interface walks its extends list, a class its super chain. Each level's arguments are
+					// written in terms of the level below's parameters, so they carry the substitution up.
+					function walkClass(cur:TClass, curArgs:TParams):Void {
 						pushOriginClass = cur;
 						pushParams = cur.params;
 						pushArgs = curArgs;
 						for (name in cur.fields.keys()) {
 							var cf = cur.fields.get(name);
-							if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) push(cf);
+							if (shouldAccess(cur, cf, false)) push(cf);
 						}
-						if (cur.superClass == null) cur = null;
-						else {
-							// The super's arguments are written in terms of THIS class's
-							// parameters, so they carry the substitution up the chain.
-							var sup = cur.superClass;
-							curArgs = [for (pt in sup.params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
-							cur = sup.c;
+						inline function up(c2:TClass, params:TParams):TParams
+							return [for (pt in params) TypeFunctions.applyParams(cur.params, curArgs, pt)];
+						if (TypeFunctions.hasClassFlag(cur, CInterface)) {
+							for (i in cur.interfaces) walkClass(i.c, up(i.c, i.params));
+						} else switch (cur.superClass) {
+							case null:
+							case sup: walkClass(sup.c, up(sup.c, sup.params));
 						}
 					}
+					walkClass(c, tl);
 					pushParams = null;
 					pushArgs = null;
 					pushOriginClass = null;
@@ -2541,8 +2555,7 @@ class Typer {
 					for (cf in impl.orderedStatics) {
 						if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) continue;
-						if (!(TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == impl)) continue;
-						if (TypeFunctions.hasMeta(":noCompletion", cf.meta)) continue;
+						if (!shouldAccess(impl, cf, false)) continue;
 						var ct = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
 						ct = switch (TypeFunctions.follow(ct)) {
 							case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
@@ -2586,6 +2599,23 @@ class Typer {
 				case TAnon(an):
 					var savedAnon = pushOriginAnon;
 					pushOriginAnon = an;
+					// The statics of a @:forwardStatics abstract's UNDERLYING class come first, before the
+					// impl's own.
+					var fwdAbstract:Null<TAbstract> = switch (an.status.get()) {
+						case Statics(sc): switch (sc.kind) { case KAbstractImpl(a): a; case _: null; };
+						case AbstractStatics(a): a;
+						case _: null;
+					};
+					if (fwdAbstract != null && TypeFunctions.hasMeta(":forwardStatics", fwdAbstract.meta))
+						switch (TypeFunctions.follow(fwdAbstract.thisType)) {
+							case TInst(uc, _):
+								var savedC = pushOriginClass;
+								pushOriginClass = uc;
+								for (cf in uc.orderedStatics)
+									if (shouldAccess(uc, cf, true)) push(cf);
+								pushOriginClass = savedC;
+							case _:
+						}
 					for (name in an.fields.keys()) push(an.fields.get(name));
 					pushOriginAnon = savedAnon;
 				// A function has no field except the magic bind, which takes and returns the same signature
@@ -2614,7 +2644,7 @@ class Typer {
 				pushScope = CFSStatic;
 				pushOriginClass = c;
 				for (cf in c.orderedStatics)
-					if (TypeFunctions.hasClassFieldFlag(cf, CfPublic) || ctx.curclass == c) push(cf);
+					if (shouldAccess(c, cf, true)) push(cf);
 			case _:
 				// Fields of the value's type. (loop on e.type).
 				loopType(typed.type);
