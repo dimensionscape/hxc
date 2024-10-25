@@ -219,6 +219,16 @@ class TypeResolve {
 		// where a bare PACKAGE name comes from. Without it a type hint offers types only, never `haxe`.
 		hxc.typing.Typer.addCachedFileTypes(ctx, items, seenPaths);
 		items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
+		// The type PARAMETERS in scope are part of the collection too, which makes a constructible one
+		// reachable from `new <cursor>`.
+		for (tp in hxc.typing.Typeload.currentTypeParams) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(pc, _):
+				var key = hxc.core.Globals.sTypePath(pc.path);
+				if (seenPaths.exists(key)) continue;
+				seenPaths.set(key, true);
+				items.unshift({kind: "type", name: pc.path.name, path: key, tparam: pc});
+			case _:
+		}
 		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
 	}
 

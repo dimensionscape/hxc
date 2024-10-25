@@ -31,6 +31,8 @@ typedef ToplevelItem = {
 	?sortGroup:Int,
 	?sortKey:String,
 	?sortType:hxc.core.Type.T,
+	// Keep a type parameter in new-completion only when its constraints permit construction.
+	?tparam:hxc.core.Type.TClass,
 }
 
 // Syntax keyword answers use their own printer and concatenate items without separators.

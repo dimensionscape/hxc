@@ -913,11 +913,12 @@ class Typer {
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(tp, el):
 				// The type list a `new <cursor>` raises is re-raised filtered to what can actually be
-				// constructed - a class or abstract with a constructor, inherited ones included.
+				// CONSTRUCTED - a class or abstract with a constructor, inherited ones included, or a type
+				// parameter whose constraints make it constructible. Nothing else survives.
 				try typeNew(ctx, tp, el, withType, p)
 				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion)
 					throw new hxc.compiler.DisplayXml.ToplevelCompletion(
-						[for (it in tc.items) if (it.kind != "type" || typeItemHasConstructor(ctx, it)) it]);
+						[for (it in tc.items) if (newCandidateSurvives(ctx, it, p)) it]);
 			case EFunction(kind, f):
 				// An anonymous function as a plain STATEMENT has no receiver for its value.
 				if (withType.match(NoValue)) switch (kind) {
@@ -2030,7 +2031,7 @@ class Typer {
 		// Type params
 		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
 			case TInst(pc, _): items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path),
-				sortGroup: 30, sortKey: pc.path.name});
+				sortGroup: 30, sortKey: pc.path.name, tparam: pc});
 			case _:
 		}
 		// Module types, then the implicit StdTypes import (newest first, matching the reversed
@@ -2334,14 +2335,39 @@ class Typer {
 		if (displayUsage || displayImplementation) captureUsageTarget(te);
 	}
 
-	// Resolved against what is already loaded (the module the cursor is in is mid-typing). An abstract
-	// counts when its impl declares _new .
+	// The constructor test, resolved against what is already loaded (the module the cursor is in is
+	// mid-typing). An abstract counts when its impl declares _new. What a `new <cursor>` keeps out of
+	// the toplevel collection.
+	static function newCandidateSurvives(ctx:TyperContext, it:hxc.compiler.DisplayXml.ToplevelItem, p:Position):Bool {
+		if (it.tparam != null) return switch (it.tparam.kind) {
+			case KTypeParameter(tl): (try getConstructibleConstraint(ctx, tl, p) catch (_:Dynamic) null) != null;
+			case _: false;
+		};
+		return it.kind == "type" && typeItemHasConstructor(ctx, it);
+	}
+
 	static function typeItemHasConstructor(ctx:TyperContext, it:hxc.compiler.DisplayXml.ToplevelItem):Bool {
 		if (it.path == null) return false;
+		// A constructor that is not PUBLIC only counts inside the class itself or a subclass of it, inside
+		// the abstract whose impl declares it, or under @:privateAccess (YesButPrivate).
+		function reachable(c:TClass, ctor:TClassField):Bool {
+			if (TypeFunctions.hasClassFieldFlag(ctor, CfPublic)) return true;
+			if (ctx.privateAccess > 0) return true;
+			switch (ctx.curclass.kind) {
+				case KAbstractImpl(a) if (hxc.core.Globals.sTypePath(a.path) == hxc.core.Globals.sTypePath(c.path)): return true;
+				case _:
+			}
+			var cur = ctx.curclass;
+			while (cur != null) {
+				if (cur == c) return true;
+				cur = cur.superClass == null ? null : cur.superClass.c;
+			}
+			return false;
+		}
 		function ctorOf(c:TClass):Bool {
 			var cur = c;
 			while (cur != null) {
-				if (cur.constructor != null) return true;
+				if (cur.constructor != null) return reachable(cur, cur.constructor);
 				cur = cur.superClass == null ? null : cur.superClass.c;
 			}
 			return false;

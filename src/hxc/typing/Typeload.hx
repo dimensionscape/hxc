@@ -552,7 +552,25 @@ class Typeload {
 	// an abstract's underlying type) is invisible to @usage.
 	public static var typeHints:Array<{m:Null<ModuleDef>, p:Position, t:T}> = [];
 
+	// The toplevel collection a type position answers includes the type PARAMETERS in scope. hxc
+	// reaches that collection through ctx.getType, which is a Context closure with no typer state, so
+	// the parameters the load was given are recorded here.
+	public static var currentTypeParams:TypeParams = [];
+
 	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
+		var savedTp = currentTypeParams;
+		currentTypeParams = typeParams;
+		try {
+			var res = loadInstanceInner(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
+			currentTypeParams = savedTp;
+			return res;
+		} catch (e:Dynamic) {
+			currentTypeParams = savedTp;
+			throw e;
+		}
+	}
+
+	static function loadInstanceInner(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
 		// A type path that does not resolve, with the cursor on it, is a completion request rather than
 		// an error - the name is what the user is still typing.
 		var r = if (hxc.parser.Parser.displayCompletionMode && hxc.typing.Typer.atDisplayPos(p))
