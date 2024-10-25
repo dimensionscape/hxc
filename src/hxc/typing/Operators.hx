@@ -49,7 +49,8 @@ class Operators {
 
 	static function checkAssign(ctx:TyperContext, e:TExpr):Void {
 		switch (e.expr) {
-			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal) && !ctx.untypedMode):
+			// When errors are ignored, assigning to a final local is not rejected here either.
+			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal) && !ctx.untypedMode && !ctx.com.ignoreErrors):
 				throw new TypingError("Cannot assign to final", e.pos);
 			case TLocal(v) if (v.extra == null):
 			case TField(ef, FInstance(_, _, cf)) if (!ctx.untypedMode):

@@ -59,6 +59,8 @@ class Context {
 	public var mainClass:Null<Path>;
 
 	public var displaySpec:Null<String>;
+	// Suppress errors that would prevent an answer to a position-specific display request.
+	public var ignoreErrors:Bool = false;
 
 	// Serialized JSON-RPC request ID used when reporting the display response.
 	public var jsonRpcId:Null<String>;

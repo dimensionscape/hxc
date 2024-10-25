@@ -678,6 +678,10 @@ class Compiler {
 					hxc.typing.Typer.displaySignature = dmode == "signature";
 					hxc.parser.Parser.displaySignatureMode = dmode == "signature";
 					hxc.parser.Parser.displayCompletionMode = dmode == "" || dmode == "toplevel";
+					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
+					// the typer consults that (ignoreError) at the handful of places where an error would
+					// cost the answer rather than describe it.
+					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
 					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
 					// package loads as that package's module; the basename alone would look for it at the
 					// classpath root.

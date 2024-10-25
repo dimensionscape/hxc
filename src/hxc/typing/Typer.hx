@@ -4026,7 +4026,11 @@ class Typer {
 				if (fa.isInline && displayDefinition && displayFound == null && atDisplayPos(fa.pos))
 					displayFound = [fa.field.namePos];
 				fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
-			case AKNo(_, p): throw new TypingError("This expression cannot be accessed for reading", p);
+			// Under a display request the unreadable access still yields its own expression, so what the
+			// cursor is on can be reported.
+			case AKNo(acc, p):
+				if (!ctx.com.ignoreErrors) throw new TypingError("This expression cannot be accessed for reading", p);
+				accGet(ctx, acc);
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MGet)) {
 					case AccessorFound(getterFa):

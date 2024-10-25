@@ -674,13 +674,25 @@ class Typeload {
 			} else if (i1 >= t.tparams.length) {
 				// A parameter past the given ones: its default, if it has one.
 				var def = types[i2].defaultType;
-				if (def == null)
-					throw new ContextError("Not enough type parameters for " + Context.sTypePath(declPath), p);
+				if (def == null) {
+					// A display request fills the missing parameter with the declaration's own, so the path
+					// still LOADS
+					// and the type it names can be reported instead of the request failing over an arity
+					// the user is
+					// mid-typing.
+					if (!ctx.ignoreErrors)
+						throw new ContextError("Not enough type parameters for " + Context.sTypePath(declPath), p);
+					params.push(types[i2].type);
+					i2++;
+					continue;
+				}
 				params.push(def);
 				i2++;
 			} else {
 				// Too many arguments: reported at the first EXCESS argument.
 				var pt = switch (t.tparams[i1]) { case TPType(th): th.pos; case TPExpr(e): e.pos; };
+				// A display request DROPS the excess ones for the same reason.
+				if (ctx.ignoreErrors) break;
 				throw new ContextError("Too many type parameters for " + Context.sTypePath(declPath), pt);
 			}
 		}

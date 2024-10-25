@@ -1911,7 +1911,12 @@ class TexprConverter {
 					case TAbstract(a, _) if (a.isEnum && a.impl != null): true;
 					case _: false;
 				};
-				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue || compileTimeFiniteUnmatched)) reportUnmatched();
+				// Under a display request an inexhaustive match is no expression rather than an error, so the
+				// request still answers from what did type.
+				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue || compileTimeFiniteUnmatched)) {
+					if (ctx.com.ignoreErrors) return null;
+					reportUnmatched();
+				}
 				// Group: cases that share a decision emit one case with several values, sorted by constructor
 				// order
 				var groups:Array<{cons:Array<Con>, dt:Dt}> = [];
@@ -1932,8 +1937,10 @@ class TexprConverter {
 					} else caseFailed = true;
 				}
 				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
-					&& !withType.match(NoValue))
+					&& !withType.match(NoValue)) {
+					if (ctx.com.ignoreErrors) return null;
 					reportUnmatched();
+				}
 				// An enum switch dispatches on the constructor index.
 				var isNullableSubject = TypeFunctions.isExplicitNull(subject.type);
 				var swSubject = if (cases.length == 0) subject else switch (cases[0].con.kind) {
@@ -1998,14 +2005,18 @@ class TexprConverter {
 				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec, hasDefault);
 				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
 				if (eThen == null) {
-					if (topLevel || withType.match(NoValue)) eElse else throw new TypingError("Unmatched patterns: null", e.pos);
+					// The same rule, standing a null in for the branch that did not type.
+					if (topLevel || withType.match(NoValue)) eElse
+					else if (ctx.com.ignoreErrors) TypeFunctions.mk(TConst(TNull), Typer.spawnMonomorph(ctx, e.pos), dt2.pos)
+					else throw new TypingError("Unmatched patterns: null", e.pos);
 				} else if (eElse == null) {
 					if (topLevel || withType.match(NoValue)) {
 						var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 						var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
 						// GuardNull without an else: the TIf is positioned at eThen.pos alone
 						TypeFunctions.mk(TIf(cond, eThen, null), basic.tvoid, eThen.pos);
-					} else throw new TypingError("Unmatched patterns: _", e.pos);
+					} else if (ctx.com.ignoreErrors) TypeFunctions.mk(TConst(TNull), Typer.spawnMonomorph(ctx, e.pos), dt1.pos)
+					else throw new TypingError("Unmatched patterns: _", e.pos);
 				} else {
 					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
