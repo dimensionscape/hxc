@@ -2787,8 +2787,10 @@ class Typer {
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): [cf.namePos];
 			case TLocal(v): [v.pos];
 			// A declaration reports itself, but only when the cursor sits on the name; an offset inside the
-			// initializer whose own extraction found nothing must not claim it.
-			case TVarExpr(v, _) if (atDisplayPos(v.pos)): [v.pos];
+			// initializer whose own extraction found nothing must not claim it. The `this` an abstract
+			// constructor is rewritten around carries the whole constructor's position, so without this it
+			// claimed every cursor inside the body.
+			case TVarExpr(v, _) if (v.kind.match(VUser(_)) && atDisplayPos(v.pos)): [v.pos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
 			// `super(...)` reports the SUPER constructor, and a bare `super` the super class.
