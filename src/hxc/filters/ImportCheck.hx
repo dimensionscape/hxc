@@ -43,9 +43,15 @@ class ImportCheck {
 				var key = pack.join(".") + "." + parts[mi].name;
 				if (plainImportsTried.exists(key)) continue;
 				plainImportsTried.set(key, true);
-				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, imp.pos)
-				catch (e:hxc.context.Context.ContextError) ctx.addDiagnostic(e.message, e.pos, e.depth)
-				catch (_:Dynamic) {}
+				// The module load reports at the type path - the first pack segment through the module name
+				// - not over the whole import declaration.
+				var pType = new Position(imp.pos.file, parts[0].pos.min, parts[mi].pos.max);
+				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, pType)
+				catch (e:hxc.context.Context.ContextError) {
+					ctx.addDiagnostic(e.message, e.pos, e.depth);
+					imports.markImportFailed(imp.pos);
+				}
+				catch (_:Dynamic) imports.markImportFailed(imp.pos);
 			}
 		}
 	}

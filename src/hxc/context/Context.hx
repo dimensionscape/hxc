@@ -485,7 +485,7 @@ class ModuleImports {
 	public var rawImports:Array<Import>;
 	// Track usage per import declaration. Unset flags become unused-import diagnostics; wildcardImp
 	// and usingImp index these flags.
-	public var importPositions:Array<{p:Position, used:Bool}> = [];
+	public var importPositions:Array<{p:Position, used:Bool, ?failed:Bool}> = [];
 	public var wildcardImp:Array<Int> = [];
 	public var usingImp:Array<Int> = [];
 
@@ -500,6 +500,13 @@ class ModuleImports {
 
 	public function markImport(idx:Null<Int>):Void {
 		if (idx != null && idx >= 0 && idx < importPositions.length) importPositions[idx].used = true;
+	}
+
+	// Failed imports must not produce unused-import diagnostics. Mark their preregistered positions as
+	// failed.
+	public function markImportFailed(p:Position):Void {
+		for (e in importPositions)
+			if (e.p.min == p.min && e.p.max == p.max && e.p.file == p.file) { e.failed = true; return; }
 	}
 
 	static function samePath(a:Path, b:Path):Bool {

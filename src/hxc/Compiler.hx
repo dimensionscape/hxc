@@ -1389,7 +1389,14 @@ class Compiler {
 			switch (e.expr) {
 				case TField(_, FAnon(cf2) | FInstance(_, _, cf2) | FStatic(_, cf2) | FClosure(_, cf2)) if (cf != null && cf2 == cf): out.push(e.pos);
 				case TField(_, FEnum(_, ef2)) if (ef != null && ef2 == ef): out.push(e.pos);
-				case TLocal(v2) if (v != null && v2 == v): out.push(e.pos);
+				// A local reference is keyed by the declaration's position, not by the tvar object: the matcher
+				// duplicates its tvars, so a pattern variable's uses carry a different object than the one that
+				// was captured. Only a use whose span is exactly the name's width counts, which leaves out the
+				// synthesized locals a desugaring reuses the name for.
+				case TLocal(v2) if (v != null && (v2 == v || (v2.name == v.name
+						&& v2.pos.min == v.pos.min && v2.pos.max == v.pos.max
+						&& v2.pos.file == v.pos.file))
+					&& e.pos.max - e.pos.min == v2.name.length): out.push(e.pos);
 				case TNew(c2, _, _) if (cf != null && c2.constructor == cf): out.push(e.pos);
 				case _:
 			}
@@ -2096,7 +2103,7 @@ class Compiler {
 		for (key in ctx.moduleImports.keys()) {
 			var imps = ctx.moduleImports.get(key);
 			for (e in imps.importPositions) {
-				if (e.used || !isDiagnosticsFile(ctx, e.p.file)) continue;
+				if (e.used || e.failed == true || !isDiagnosticsFile(ctx, e.p.file)) continue;
 				var displayFile = e.p.file;
 				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
 					displayFile = FileSystem.fullPath(displayFile);
