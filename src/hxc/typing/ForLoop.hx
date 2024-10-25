@@ -483,6 +483,10 @@ class ForLoopFaithful {
 	// The syntactic expression weight for unrolling, or null when the body breaks/continues
 	// (those cannot unroll).
 	public static function getUnrollWeight(ctx:TyperContext, e2:Expr):Null<Int> {
+		// A display request never unrolls. The unrolled copies replace the loop variable with a
+		// constant, so nothing in the body refers to it any more and a request about it - its uses
+		// above all - has nothing left to find.
+		if (ctx.com.ignoreErrors) return null;
 		var numExpr = 0;
 		function loop(e:Expr):Expr {
 			switch (e.expr) {
