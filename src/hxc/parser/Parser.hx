@@ -866,11 +866,15 @@ class Parser {
 		}
 	}
 
+	// Type paths, imports and usings all gate the dot completion on checkResume - the cursor sitting
+	// exactly at the dot's end - not on wouldSkipDisplayPosition. The wider span would swallow a
+	// cursor inside the name after the dot, so `import Type.Valu|eType` would answer with Type's
+	// statics instead of hovering ValueType.
 	function parseTypePath2(p0:Null<Position>, pack:Array<String>, name:String, p1:Position):PlacedTypePath {
 		if (isLowerIdent(name)) {
 			if (tokEq(peek(), Dot)) {
 				var dp = next().pos;
-				if (atDisplayDot(dp)) raiseTypePath(pack.concat([name]), false);
+				if (checkResume(dp)) raiseTypePath(pack.concat([name]), false);
 				return parseTypePath1(p0 == null ? p1 : p0, pack.concat([name]));
 			} else {
 				return err("Type name should start with an uppercase letter");
@@ -880,7 +884,7 @@ class Parser {
 		var p2 = p1;
 		if (tokEq(peek(), Dot)) {
 			var dp = next().pos;
-			if (atDisplayDot(dp)) raiseTypePath(pack.concat([name]), false);
+			if (checkResume(dp)) raiseTypePath(pack.concat([name]), false);
 			switch (peek()) {
 				case Const(CIdent(sn)) if (!isLowerIdent(sn)):
 					p2 = next().pos;
@@ -2864,7 +2868,7 @@ class Parser {
 					switch (peek()) {
 						case Dot:
 							var dp = next().pos;
-							if (atDisplayDot(dp)) raiseTypePath([for (pn in path) pn.name], true);
+							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], true);
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});
@@ -2912,7 +2916,7 @@ class Parser {
 							var dp = next().pos;
 							// The cursor right after the dot completes on the path so far, the same rule
 							// the import path carries.
-							if (atDisplayDot(dp)) raiseTypePath([for (pn in path) pn.name], false);
+							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], false);
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});

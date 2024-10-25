@@ -2805,6 +2805,11 @@ class Typer {
 			case TCall(e1, _) | TCast(e1, _):
 				checkDisplayDefinition(ctx, e1);
 				[];
+			// `A.new` types as a function whose whole body returns the construction, and the display is a
+			// question about that constructor.
+			case TFunction({expr: {expr: TReturn(e1 = {expr: TNew(_, _, _)})}}) if (e1 != null):
+				checkDisplayDefinition(ctx, e1);
+				[];
 			case _: [];
 		};
 		if (pl.length > 0) displayFound = pl;
