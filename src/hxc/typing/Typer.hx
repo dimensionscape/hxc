@@ -1776,8 +1776,15 @@ class Typer {
 		// position must still enclose the offset; a match-compiled body carries a rewritten position
 		// unrelated to the syntactic node the gate saw.
 		if (!atHoverPos(te.pos)) return;
+		// A declaration reports the variable's type, and a `super(...)` call the SUPER's; the nodes
+		// themselves are Void.
+		var ht = switch (te.expr) {
+			case TVarExpr(v, _): v.type;
+			case TCall(e1 = {expr: TConst(TSuper)}, _): e1.type;
+			case _: te.type;
+		};
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: te.type, p: te.pos, e: te, wt: withType, tctx: ctx};
+			hoverFound = {t: ht, p: te.pos, e: te, wt: withType, tctx: ctx};
 	}
 
 	// A field item is "qualified" when typing its BARE name in the same scope, against the same expected
@@ -5045,6 +5052,7 @@ class Typer {
 				// Try each constructor signature, first success wins (overload retry).
 				var r:Dynamic = null;
 				var firstError:Null<Dynamic> = null;
+				var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
 				for (ctorType in ctorTypes) {
 					var sig = switch (TypeFunctions.follow(ctorType)) {
 						case TFun(s): s;
@@ -5052,6 +5060,7 @@ class Typer {
 					};
 					try {
 						r = TypeUnification.withMonoRollback(function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+						chosenArgs = sig.args;
 						break;
 					} catch (e:hxc.core.TypeUnification.UnifyError) {
 						if (firstError == null) firstError = e;
@@ -5064,6 +5073,11 @@ class Typer {
 					}
 				}
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
+				// A construction reports the constructor the call resolved to, as the function that produces
+				// the instance - not the instance type, which is all the typed node itself carries.
+				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atHoverPos(p)
+						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
+					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p};
 				switch (c.kind) {
 					case KGeneric if (tp.path.tparams.length == 0 && Typeload.canSpecializeGeneric(tl)):
 						// Only specialize when every parameter is concrete (no open monomorph and no type

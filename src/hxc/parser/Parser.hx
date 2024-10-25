@@ -958,10 +958,21 @@ class Parser {
 	function parseConstraintParams():Array<TypeParam> {
 		if (!tokEq(peek(), TBinop(OpLt))) return [];
 		junk();
-		var l = [parseConstraintParam()];
-		while (tokEq(peek(), Comma)) { junk(); l.push(parseConstraintParam()); }
-		expect(TBinop(OpGt));
-		return l;
+		var save = idx;
+		try {
+			var l = [parseConstraintParam()];
+			while (tokEq(peek(), Comma)) { junk(); l.push(parseConstraintParam()); }
+			expect(TBinop(OpGt));
+			return l;
+		} catch (er:ParserError) {
+			// A parameter list that could not be read at all junks a `>` so the follow-up parse is not
+			// thrown off by it, and records what was expected there. An attempt that consumed tokens is a
+			// real error.
+			if (idx != save) throw er;
+			var pos = tokEq(peek(), TBinop(OpGt)) ? next().pos : null;
+			syntaxError(Expected(["type parameter"]), pos);
+			return [];
+		}
 	}
 
 	function parseConstraintParam():TypeParam {
@@ -1427,8 +1438,12 @@ class Parser {
 		if (last != null && tokEq(last.tok, BrClose))
 			return last.pos;
 		// Outside the closing-brace exemption a missing semicolon is a parse error at the next token. In
-		// display mode a syntax error records without aborting the parse inDisplay).
-		if (displayFile != null) return cur().pos;
+		// display mode a syntax error RECORDS without aborting the parse, which makes it a parser
+		// diagnostic rather than nothing at all.
+		if (displayFile != null) {
+			syntaxErrors.push({msg: Missing_semicolon, pos: cur().pos});
+			return cur().pos;
+		}
 		throw new ParserError(Missing_semicolon, cur().pos);
 	}
 
@@ -2824,8 +2839,10 @@ class Parser {
 			}
 		}
 		// The missing `{` after the relations is recorded inside the display file, so `abstract A(Int)
-		// from <cursor>` with no body still yields a declaration.
-		expectUnlessResume(BrOpen);
+		// from <cursor>` with no body still yields a declaration. What is expected there is a body or
+		// another relation.
+		if (tokEq(peek(), BrOpen)) junk();
+		else syntaxError(Expected(["{", "to", "from"]));
 		var cf = parseClassFields(false, p1);
 		var allFlags = (st == null) ? flags : [AbOver(st)].concat(flags);
 		allFlags = allFlags.concat(sl);
