@@ -222,16 +222,50 @@ class ModuleLoader {
 					|| hxc.typing.Typer.displayDefinition) {
 				var pack:Array<String> = [];
 				var mod:Null<String> = null;
+				var sub:Null<String> = null;
+				// Display a trailing static segment as an ordinary access on its module type or subtype.
+				function staticField(typeName:String, field:String, fp:Position):Void {
+					var m2 = try loadModule(ctx, {pack: pack, name: mod}, fp) catch (_:Dynamic) null;
+					if (m2 == null) return;
+					// Build the class before display; merely loaded field signatures still contain open
+					// monomorphs.
+					try hxc.typing.TypeResolve.resolveModule(ctx, m2) catch (_:Dynamic) {}
+					try hxc.typing.TypeFields.installLazy(ctx) catch (_:Dynamic) {}
+					for (mt in m2.types) {
+						var c:Null<TClass> = switch (mt) {
+							case TClassDecl(c2) if (c2.path.name == typeName): c2;
+							case TAbstractDecl(a) if (a.impl != null && a.path.name == typeName): a.impl;
+							case _: null;
+						};
+						if (c == null) continue;
+						var cf = c.statics.get(field);
+						if (cf != null) {
+							try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (_:Dynamic) {}
+							hxc.typing.Typer.displayClassField(c, false, cf, fp);
+						}
+					}
+				}
 				for (part in path) {
 					var isLower = part.name.length > 0 && part.name.charCodeAt(0) >= "a".code && part.name.charCodeAt(0) <= "z".code;
+					if (mod != null && sub != null) {
+						if (hxc.typing.Typer.atDisplayPos(part.pos)) staticField(sub, part.name, part.pos);
+						return;
+					}
 					if (mod != null) {
 						if (hxc.typing.Typer.atDisplayPos(part.pos)) {
-							var m2 = try loadModule(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
-							if (m2 != null) for (mt in m2.types)
-								if (TypeFunctions.tInfos(mt).path.name == part.name)
-									hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+							// A lowercase segment following the module names a static of its main type, not a subtype.
+							if (isLower) staticField(mod, part.name, part.pos);
+							else {
+								var m2 = try loadModule(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
+								if (m2 != null) for (mt in m2.types)
+									if (TypeFunctions.tInfos(mt).path.name == part.name)
+										hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+							}
+							return;
 						}
-						return;
+						if (isLower) return;
+						sub = part.name;
+						continue;
 					}
 					if (isLower) { pack.push(part.name); continue; }
 					if (hxc.typing.Typer.atDisplayPos(part.pos)) {
