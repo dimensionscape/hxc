@@ -1169,6 +1169,15 @@ class Typer {
 					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
 					// A @:structInit class completes like a structure, from the fields its constructor accepts.
 					if (an == null && !covered) an = structInitAnonFields(ctx, withType);
+					// One field whose value is a null at a NULL position is what the parser leaves behind for `{
+					// ident`. With no structure expected that is not a structure completion at all - it is a
+					// toplevel one keyed by the name, which is how a function body of just `{ foo
+					// }` answers.
+					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
+							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
+						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
+					}
 					if (an != null) {
 						// A field already GIVEN in the literal is removed from the candidates, so only what is still
 						// missing is offered.
