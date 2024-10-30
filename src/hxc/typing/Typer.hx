@@ -1533,8 +1533,20 @@ class Typer {
 				break;
 			case _:
 		}
-		if (!marked) return;
+		// An empty argument list counts as marked, so the parentheses on their own are enough to ask for
+		// the signature.
+		if (!marked && !(el.length == 0 && atDisplayPos(p))) return;
 		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true) catch (_:Dynamic) return;
+		// A type parameter is constructed through its Constructible constraint, and the function that
+		// constraint names is the signature.
+		switch (TypeFunctions.follow(t)) {
+			case TInst(cl, _) if (cl.kind.match(KTypeParameter(_))):
+				var ctl = switch (cl.kind) { case KTypeParameter(x): x; case _: []; };
+				var csig = try getConstructibleConstraint(ctx, ctl, p) catch (_:Dynamic) null;
+				signatureFound = {sigs: csig == null ? [] : [{args: csig.args, ret: csig.ret, doc: null}], activeArg: active};
+				return;
+			case _:
+		}
 		var c:Null<TClass> = switch (TypeFunctions.follow(t)) {
 			case TInst(cl, _): cl;
 			case TAbstract(a, _) if (a.impl != null): a.impl;
