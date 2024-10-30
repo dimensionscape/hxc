@@ -1398,6 +1398,16 @@ class Compiler {
 						&& v2.pos.file == v.pos.file))
 					&& e.pos.max - e.pos.min == v2.name.length): out.push(e.pos);
 				case TNew(c2, _, _) if (cf != null && c2.constructor == cf): out.push(e.pos);
+				// A `super(...)` call references the super constructor, and the whole call expression is the
+				// occurrence.
+				case TCall({expr: TConst(TSuper), type: st}, _) if (cf != null):
+					switch (TypeFunctions.follow(st)) {
+						case TInst(sc, _):
+							var cur = sc;
+							while (cur != null && cur.constructor != cf) cur = cur.superClass == null ? null : cur.superClass.c;
+							if (cur != null) out.push(e.pos);
+						case _:
+					}
 				case _:
 			}
 			hxc.core.TexprTools.iter(walk, e);

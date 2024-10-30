@@ -1485,7 +1485,7 @@ class Typer {
 		if (markedDisplay == e) { markedDisplay = null; raiseToplevelMarked(ctx, e, withType); }
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
 		if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
-		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed);
+		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed, ctx);
 		return typed;
 	}
 
@@ -2460,12 +2460,13 @@ class Typer {
 	public static var usageTargetVar:Null<TVar> = null;
 	public static var usageTargetEnumField:Null<TEnumField> = null;
 
-	static function captureUsageTarget(te:TExpr):Void {
+	// Ctx0: the scope the expression was typed in, needed to resolve `super`.
+	static function captureUsageTarget(te:TExpr, ?ctx0:TyperContext):Void {
 		if (usageTargetField != null || usageTargetVar != null || usageTargetEnumField != null) return;
 		TexprTools.iter(function(child) {
 			if (atDisplayPos(child.pos)
 				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max))
-				captureUsageTarget(child);
+				captureUsageTarget(child, ctx0);
 		}, te);
 		if (usageTargetField != null || usageTargetVar != null || usageTargetEnumField != null) return;
 		switch (te.expr) {
@@ -2473,6 +2474,11 @@ class Typer {
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): usageTargetField = cf;
 			case TLocal(v) | TVarExpr(v, _): usageTargetVar = v;
 			case TNew(c, _, _) if (c.constructor != null): usageTargetField = c.constructor;
+			// A `super(...)` call is a reference to the SUPER constructor.
+			case TCall({expr: TConst(TSuper)}, _):
+				var sup = ctx0 == null || ctx0.curclass == null ? null : ctx0.curclass.superClass;
+				var ctor = sup == null ? null : superConstructor(sup.c);
+				if (ctor != null) usageTargetField = ctor;
 			case TTypeExpr(mt):
 				usageTargetType = mt;
 				switch (mt) { case TClassDecl(c): usageTargetClass = c; case _: }
@@ -2665,6 +2671,20 @@ class Typer {
 							if (cf != null) push(cf);
 						case _:
 					}
+				// An unbound monomorph offers what its STRUCTURAL constraints require. A closed structure
+				// BINDS the monomorph and the bound type answers; an open one offers the constraint's own
+				// fields.
+				case TMono(m):
+					function foldConstraints(k:hxc.core.Type.TMonoConstraintKind):Void switch (k) {
+						case CStructural(cfields, isOpen):
+							if (!isOpen) {
+								hxc.core.TypeUnification.close(m);
+								if (m.type != null) loopType(m.type);
+							} else loopType(TypeFunctions.mkAnon(new hxc.core.Ref(Closed), cfields));
+						case CMixed(l): for (k2 in l) foldConstraints(k2);
+						case CTypes(_) | CUnknown:
+					}
+					foldConstraints(TypeFunctions.monomorphClassifyConstraintsRef(m));
 				case TAnon(an):
 					var savedAnon = pushOriginAnon;
 					pushOriginAnon = an;
