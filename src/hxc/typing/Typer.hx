@@ -1120,7 +1120,7 @@ class Typer {
 								switch (TypeFunctions.follow(wt)) {
 									case TAbstract(a, _) if (a.path.name == "Map"):
 										var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
-										emptyMap = typeNew(ctx, tp, [], withType, p);
+										emptyMap = typeNew(ctx, tp, [], withType, p, false);
 									case _:
 								}
 							case _:
@@ -2273,7 +2273,7 @@ class Typer {
 
 	// A type path under the cursor answers with that type - its declaration position, its own type for
 	// hover, itself as the usage subject.
-	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position):Void {
+	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position, allowCompletion:Bool = false):Void {
 		var inf = TypeFunctions.tInfos(mt);
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [inf.namePos];
@@ -2282,7 +2282,22 @@ class Typer {
 				hoverFound = {t: TypeFunctions.typeOfModuleType(mt), p: p};
 		} else if (displayUsage || displayImplementation) {
 			usageTargetType = mt;
+		} else if (allowCompletion && hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null) {
+			// DMDefault: the type path answers with the type HINT collection.
+			hxc.typing.TypeResolve.answerTypeHintCompletion(com, p);
 		}
+	}
+
+	// The report uses the DOTTED name's own span, so `Array<Foo>` with the cursor on Foo answers Foo
+	// and not Array.
+	public static function checkDisplayType(com:hxc.context.Context, t:T, tp:PlacedTypePath):Void {
+		if (hxc.parser.Parser.displayFile == null) return;
+		var path = tp.path;
+		var strings = path.tsub != null ? [path.tsub, path.tname].concat(path.tpackage) : [path.tname].concat(path.tpackage);
+		var pName = new Position(tp.pos.file, tp.pos.min, tp.pos.min + strings.join(".").length);
+		if (!atDisplayPos(pName)) return;
+		var mt = try TypeFunctions.moduleTypeOfType(t) catch (_:hxc.core.ExitException) null;
+		if (mt != null) displayModuleType(com, mt, pName, true);
 	}
 
 	// A variable declaration answers the display by itself when the cursor sits on its name, without
@@ -3100,7 +3115,7 @@ class Typer {
 			case CRegexp(r, opt):
 				var tp:PlacedTypePath = {path: {tpackage: [], tname: "EReg", tparams: [], tsub: null}, pos: p};
 				var args = [new Expr(EConst(CString(r, SDoubleQuotes)), p), new Expr(EConst(CString(opt, SDoubleQuotes)), p)];
-				typeNew(ctx, tp, args, withType, p);
+				typeNew(ctx, tp, args, withType, p, false);
 		};
 	}
 
@@ -5075,7 +5090,8 @@ class Typer {
 		};
 	}
 
-	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+	// userWritten: a construction the user actually spelled.
+	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position, userWritten:Bool = true):TExpr {
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
 		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
@@ -5106,6 +5122,10 @@ class Typer {
 			try t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false)
 			catch (e:Dynamic) { typeArgsForDisplay(); throw e; }
 		}
+		// A construction reports its type path the way a type hint does, which under a completion request
+		// answers with the type set; the ENew wrapper around this call is what narrows that to the types
+		// something can actually be constructed from.
+		if (userWritten) checkDisplayType(ctx.com, t, tp);
 		return switch (TypeFunctions.follow(t)) {
 				case TInst(c, params) if (c.kind.match(KTypeParameter(_))):
 					// New T() on a generic type parameter resolves the constructor from a constructible

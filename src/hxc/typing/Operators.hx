@@ -740,7 +740,7 @@ class Operators {
 				typeAssignOp(ctx, sub, e1, e2, withType, p);
 			case OpInterval:
 				var tp:PlacedTypePath = {path: {tpackage: [], tname: "IntIterator", tparams: [], tsub: null}, pos: p};
-				Typer.typeNew(ctx, tp, [e1, e2], withType, p);
+				Typer.typeNew(ctx, tp, [e1, e2], withType, p, false);
 			case OpNullCoal:
 				// `a ?? b` desugars to `{ var tmp = a; if (tmp != null) tmp else b }`, evaluating the left
 				// once.
