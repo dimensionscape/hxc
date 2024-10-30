@@ -1573,7 +1573,14 @@ class Typer {
 			case EDisplay(inner, DKMarked): active = 0;
 			case _: return; // Only the marked index asks for a signature
 		}
+		// Maps bottom-up under `not !found`, so the INNERMOST node holding the cursor wins whether it is
+		// a call or an array access. hxc types the outer call first, so this may only replace a record
+		// whose span strictly contains it.
+		if (signatureFound != null && signatureCallPos != null
+			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
+				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
 		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
+		signatureCallPos = p;
 		switch (TypeFunctions.follow(te1.type)) {
 			case TInst(c, [t]) if (c.path.pack.length == 0 && c.path.name == "Array"):
 				signatureFound = {
@@ -4427,7 +4434,7 @@ class Typer {
 					acc;
 				}
 			case EArray(e1, e2):
-				if (displaySignature && signatureFound == null) checkArraySignatureDisplay(ctx, e1, e2, withType, p);
+				if (displaySignature) checkArraySignatureDisplay(ctx, e1, e2, withType, p);
 				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
 				switch (a1) {
