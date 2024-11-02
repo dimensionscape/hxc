@@ -186,7 +186,15 @@ class Parser {
 						pendingDoc = d;
 					}
 				case CommentLine(_):
-					// Filtered, like the reference token stream
+					// Filtered from the token stream. A line comment in the DISPLAY file holding the cursor
+					// answers a comment completion, which becomes an empty keyword list - and an empty list prints
+					// nothing at all, so the request ends with no completion point. In completion mode the leading
+					// `/` is excluded, so completing at the slash still reaches the expression before it. The min
+					// > 0 guard is for a comment at the very start of the file.
+					if (matchesDisplayFile(file) && displayOffset >= 0 && t.pos.min > 0) {
+						var lo = displayCompletionMode ? t.pos.min + 1 : t.pos.min;
+						if (lo <= displayOffset && displayOffset <= t.pos.max) displaySuppressed = true;
+					}
 				case _:
 					if (pendingDoc != null) {
 						t.doc = pendingDoc;
