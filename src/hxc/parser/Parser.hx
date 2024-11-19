@@ -932,10 +932,6 @@ class Parser {
 	}
 
 	function parseTypePathOrConst(plt:Position):TypeParamOrConst {
-		// With the cursor in the gap right after the `<`, the parameter that was never written is the
-		// MAGIC type path, so `Null<|>` completes on the types in scope instead of erroring on the arity.
-		if (wouldSkipDisplayPosition(plt, false))
-			return TPType({ct: CTPath(magicTypePath()), pos: new Position(plt.file, displayOffset, displayOffset)});
 		// BkOpen array, then a complex type, then unop/neg+const, then const, then expr.
 		switch (peek()) {
 			case BkOpen:
@@ -978,7 +974,18 @@ class Parser {
 				var p = next().pos;
 				return TPExpr(new Expr(EConst(c), p));
 			case _:
-				return TPExpr(expr());
+		}
+		// The last alternative. Only a parameter that could not be read at all becomes the magic type
+		// path, so `Null<|>` completes on the types in scope while `Array<Strin|g` keeps the name the
+		// user is writing.
+		var saveE = idx;
+		try {
+			return TPExpr(expr());
+		} catch (er:ParserError) {
+			if (idx != saveE) throw er;
+			idx = saveE;
+			if (!wouldSkipDisplayPosition(plt, false)) throw er;
+			return TPType({ct: CTPath(magicTypePath()), pos: new Position(plt.file, displayOffset, displayOffset)});
 		}
 	}
 
