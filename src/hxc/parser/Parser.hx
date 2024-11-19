@@ -1492,20 +1492,23 @@ class Parser {
 		// accepts for that access.
 		if (checkResume(p) || (displayCompletionMode && atDisplayDot(p)))
 			return exprNext(new Expr(EField(e1, "", efk), Position.union(e1.pos, p)));
+		// Every name arm is guarded by `p.max = p2.min` - the field name must TOUCH the dot. `k.` with
+		// the name on the next line is not a field access at all, so the name stays a statement of its own.
+		var adjacent = peekInfo().pos.min == p.max;
 		switch (peek()) {
-			case Kwd(KwdMacro):
+			case Kwd(KwdMacro) if (adjacent):
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, "macro", efk), Position.union(e1.pos, p2)));
-			case Kwd(KwdExtern):
+			case Kwd(KwdExtern) if (adjacent):
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, "extern", efk), Position.union(e1.pos, p2)));
-			case Kwd(KwdFunction):
+			case Kwd(KwdFunction) if (adjacent):
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, "function", efk), Position.union(e1.pos, p2)));
-			case Kwd(KwdNew):
+			case Kwd(KwdNew) if (adjacent):
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, "new", efk), Position.union(e1.pos, p2)));
-			case Const(CIdent(f)):
+			case Const(CIdent(f)) if (adjacent):
 				var p2 = next().pos;
 				return exprNext(new Expr(EField(e1, f, efk), Position.union(e1.pos, p2)));
 			case Dollar(v):
@@ -2136,9 +2139,22 @@ class Parser {
 			var od = parseObjDecl({name: key.name, pos: key.pos, quotes: key.quotes, expr: e}, p);
 			return od.expr;
 		}
-		var first = exprNext(new Expr(EConst(ident), p));
-		semicolon();
-		var acc:Array<Expr> = [first];
+		// The first element goes through the block recovery TOO, so a failure while reading it is recovered
+		// exactly like any later one - recorded, the element dropped, the block continuing from where the
+		// attempt stopped. Parsing it outside the recovery would let one broken statement take the whole
+		// enclosing block with it.
+		var acc:Array<Expr> = [];
+		var save = idx;
+		var first:Null<Expr> = null;
+		try {
+			first = exprNext(new Expr(EConst(ident), p));
+			semicolon();
+		} catch (er:ParserError) {
+			if (!isDisplayFile() || idx == save) throw er;
+			syntaxErrors.push({msg: er.msg, pos: er.pos});
+			first = null;
+		}
+		if (first != null) acc.push(first);
 		var rest = blockWithPos(p);
 		for (e in rest.exprs) acc.push(e);
 		// A block holding exactly the identifier under the cursor is really the start of a STRUCTURE
