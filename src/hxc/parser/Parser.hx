@@ -691,6 +691,15 @@ class Parser {
 		}
 	}
 
+	// After an anonymous-structure field the parser wants `,` or `}`; anything else is recorded and
+	// the structure closes at the last token it read, so an unfinished `{signatures: Array<String`
+	// still yields the fields it did parse.
+	function closeAnonFields():Position {
+		if (tokEq(peek(), BrClose)) return next().pos;
+		syntaxError(Expected([",", "}"]));
+		return tokens[idx > 0 ? idx - 1 : 0].pos;
+	}
+
 	function parseBraceType(p1:Position):TypeHint {
 		// Either anonymous { fields }, or extension { > T, fields }
 		if (tokEq(peek(), TBinop(OpGt))) {
@@ -702,7 +711,7 @@ class Parser {
 			// class-field body
 			if (isAnonVarBody()) {
 				var fields = parseAnonFields();
-				var p2 = expect(BrClose);
+				var p2 = closeAnonFields();
 				return {ct: CTExtend(tl, fields), pos: Position.union(p1, p2)};
 			}
 			var r = parseClassFields(true, p1);
@@ -713,7 +722,7 @@ class Parser {
 		// the reference falls through from parse_type_anonymous to parse_class_fields.
 		if (isAnonVarBody()) {
 			var fields = parseAnonFields();
-			var p2 = expect(BrClose);
+			var p2 = closeAnonFields();
 			return {ct: CTAnonymous(fields), pos: Position.union(p1, p2)};
 		}
 		var r = parseClassFields(true, p1);
@@ -905,7 +914,13 @@ class Parser {
 		if (tokEq(peek(), TBinop(OpLt))) {
 			var plt = next().pos;
 			params = psep(Comma, parseTypePathOrConst.bind(plt));
-			p2 = expect(TBinop(OpGt));
+			// A missing `>` is recorded and the path closes at the last token it read, so an unfinished
+			// `Array<String` still yields a type path to answer about.
+			if (tokEq(peek(), TBinop(OpGt))) p2 = next().pos;
+			else {
+				syntaxError(Expected([">"]));
+				p2 = tokens[idx > 0 ? idx - 1 : 0].pos;
+			}
 		}
 		var tp:TypePath = {
 			tpackage: pack.copy(),
