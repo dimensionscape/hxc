@@ -350,7 +350,7 @@ class ModuleLoader {
 					}
 					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
 						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
-					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name, impIdx: impIdx};
+					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name, aliasPos: alias.pos, impIdx: impIdx};
 					imports.names.set(alias.name, ni);
 					imports.order.push(ni);
 			}
@@ -1401,10 +1401,16 @@ class ModuleLoader {
 					// then fails to unify with its own supertypes.
 					try hxc.typing.TypeResolve.resolveModule(ctx, mi.module) catch (_:Dynamic) {}
 					var tPath:Path = {pack: mi.module.path.pack.concat(["_" + mi.module.path.name]), name: named.aliasName};
-					var td = TypeFunctions.mkTypedef(cur, tPath, p, p, TypeFunctions.typeOfModuleType(r));
+					// The typedef sits at the ALIAS's own position, which is the declaration every request
+					// through the alias reports.
+					var tp = named.aliasPos != null ? named.aliasPos : p;
+					var td = TypeFunctions.mkTypedef(cur, tPath, tp, tp, TypeFunctions.typeOfModuleType(r));
 					td.isPrivate = true;
 					td.params = mi.params;
 					named.aliasTypedef = TTypeDecl(td);
+					// The typedef just built answers when the cursor is on the alias.
+					if (hxc.typing.Typer.atDisplayPos(tp))
+						hxc.typing.Typer.displayModuleType(ctx, named.aliasTypedef, tp);
 				}
 				imports.markImport(named.impIdx);
 				return named.aliasTypedef;
