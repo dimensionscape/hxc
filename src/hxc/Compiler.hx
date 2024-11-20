@@ -1016,6 +1016,11 @@ class Compiler {
 			// registry and not with whatever the expression the metadata is attached to would have
 			// completed to.
 			if (hxc.parser.Parser.displayMetaFound) { answerMetadataCompletion(ctx); return; }
+			// The same collection answers as JSON when json output is set.
+			if (ctx.jsonRpcId != null && tl.moduleTypes != null) {
+				answerOut(jsonRpcAnswer(ctx, jsonTypeCompletion(ctx, tl)));
+				return;
+			}
 			// No trailing newline: the completion string prints verbatim.
 			answerOut(hxc.compiler.DisplayXml.printToplevel(tl.items));
 			return;
@@ -2068,6 +2073,28 @@ class Compiler {
 		var filter = subj == null || subj.name == null ? "" : subj.name;
 		return '{"items":[' + [for (it in items) hxc.core.Json.stringOfJson(it)].join(",")
 			+ '],"isIncomplete":false,"mode":{"kind":' + kind + '}'
+			+ ',"filterString":' + haxe.Json.stringify(filter)
+			+ ',"replaceRange":' + range + '}';
+	}
+
+	// Over a type collection: the module types the raise site carried, each as a Type item, with the
+	// mode kind it recorded.
+	static function jsonTypeCompletion(ctx:Context, tl:hxc.compiler.DisplayXml.ToplevelCompletion):String {
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var curMod = displayModule(ctx);
+		var mts = tl.moduleTypes;
+		var items:Array<String> = [];
+		for (i in 0...mts.length) {
+			var inf = TypeFunctions.tInfos(mts[i]);
+			var st = importStatusFor(ctx, curMod, inf.path);
+			items.push(hxc.core.Json.stringOfJson(
+				hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mts[i], hxc.core.CompletionItem.ImportStatusTools.toInt(st), i)));
+		}
+		var range = tl.subjectPos == null
+			? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
+			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(tl.subjectPos));
+		var filter = tl.subjectName == null ? "" : tl.subjectName;
+		return '{"items":[' + items.join(",") + '],"isIncomplete":false,"mode":{"kind":' + tl.kind + '}'
 			+ ',"filterString":' + haxe.Json.stringify(filter)
 			+ ',"replaceRange":' + range + '}';
 	}

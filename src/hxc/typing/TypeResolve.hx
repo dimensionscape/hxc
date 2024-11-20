@@ -168,9 +168,11 @@ class TypeResolve {
 	// interface is offered when implementing (or when an interface extends), and a class only when
 	// extending a class - never the type being declared, never a final one unless @:hack, and never a
 	// basic class unless both are extern.
-	static function answerHeritCompletion(ctx:Context, c:TClass, isExtends:Bool, p:Position):Void {
+	static function answerHeritCompletion(ctx:Context, c:TClass, isExtends:Bool, p:Position,
+			?subjectName:String, ?subjectPos:Position):Void {
 		var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		var mts:Array<ModuleType> = [];
 		if (isExtends || !isInterface) {
 			inline function isBasicClassPath(path:hxc.core.Globals.Path):Bool {
 				return path.pack.length == 0
@@ -189,18 +191,33 @@ class TypeResolve {
 								|| (TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasClassFlag(cm, CExtern)));
 					case _: false;
 				};
-				if (keep) items.push({kind: "type", name: inf.path.name, path: hxc.core.Globals.sTypePath(inf.path)});
+				if (keep) {
+					items.push({kind: "type", name: inf.path.name, path: hxc.core.Globals.sTypePath(inf.path)});
+					mts.push(mt);
+				}
 			}
-			items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
+			// The XML lane sorts by name; the JSON one keeps the pair aligned.
+			var order = [for (i in 0...items.length) i];
+			order.sort(function(a, b) return items[a].name < items[b].name ? -1 : (items[a].name > items[b].name ? 1 : 0));
+			items = [for (i in order) items[i]];
+			mts = [for (i in order) mts[i]];
 		}
-		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
+		// CRExtends is 5, CRImplements 6.
+		var tc = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
+		tc.kind = isExtends ? 5 : 6;
+		// Re-raised with the subject of the type-hint completion the failed load produced, i.e. the path
+		// the user was writing.
+		tc.subjectPos = subjectPos != null ? subjectPos : p;
+		tc.subjectName = subjectName;
+		throw tc;
 	}
 
 	// The parser's magic type path reaching load_type_def means the cursor is in a type position, and
 	// every type in scope is the answer (CRTypeHint). The heritage answer above is the same collection
 	// with set_heritance's extra filtering on top.
-	public static function answerTypeHintCompletion(ctx:Context, p:Position):Void {
+	public static function answerTypeHintCompletion(ctx:Context, p:Position, ?subjectName:String):Void {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
+		var mts:Array<ModuleType> = [];
 		var seenPaths = new Map<String, Bool>();
 		// The current module's own types first. They exist from the moment the module is created, well
 		// before it finishes loading, which is when a type hint inside that same module asks.
@@ -214,10 +231,15 @@ class TypeResolve {
 			if (seenPaths.exists(key)) continue;
 			seenPaths.set(key, true);
 			items.push({kind: "type", name: inf.path.name, path: key});
+			mts.push(mt);
 		}
 		// A type collection reaches the same cache-files source an expression collection does, which is
 		// where a bare PACKAGE name comes from. Without it a type hint offers types only, never `haxe`.
+		var nTyped = items.length;
 		hxc.typing.Typer.addCachedFileTypes(ctx, items, seenPaths);
+		// The module types only cover the entries collected above; the cache-file ones have no
+		// loaded type yet, so the JSON lane emits what it has and the XML lane the whole list.
+		var typedItems = items.slice(0, nTyped);
 		items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
 		// The type PARAMETERS in scope are part of the collection too, which makes a constructible one
 		// reachable from `new <cursor>`.
@@ -229,7 +251,13 @@ class TypeResolve {
 				items.unshift({kind: "type", name: pc.path.name, path: key, tparam: pc});
 			case _:
 		}
-		throw new hxc.compiler.DisplayXml.ToplevelCompletion(items);
+		// CRTypeHint is 4.
+		var tc = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
+		tc.kind = 4;
+		tc.subjectPos = p;
+		// The subject is keyed by the path the user was writing, which is what the client filters on.
+		tc.subjectName = subjectName;
+		throw tc;
 	}
 
 	// The types a completion here can see: everything loaded so far, which is what the reference's
@@ -258,6 +286,13 @@ class TypeResolve {
 				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					throw err;
+				}
+				// A heritage path that answered a type HINT completion is re-raised filtered for the position,
+				// carrying that answer's own subject.
+				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+					if (tc.kind != 4) throw tc;
+					answerHeritCompletion(ctx, c, true, pt.pos, tc.subjectName, tc.subjectPos);
+					throw tc;
 				};
 				checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
@@ -266,6 +301,13 @@ class TypeResolve {
 				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					throw err;
+				}
+				// A heritage path that answered a type HINT completion is re-raised filtered for the position,
+				// carrying that answer's own subject.
+				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+					if (tc.kind != 4) throw tc;
+					answerHeritCompletion(ctx, c, false, pt.pos, tc.subjectName, tc.subjectPos);
+					throw tc;
 				};
 				checkHerit(ctx, c, t, false, pt.pos);
 			case _:

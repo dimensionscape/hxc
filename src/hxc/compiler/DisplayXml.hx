@@ -46,9 +46,16 @@ class SyntaxCompletion {
 
 class ToplevelCompletion {
 	public final items:Array<ToplevelItem>;
+	// Both formats share the collection; retain module types for JSON as well as the strings XML
+	// needs.
+	public var moduleTypes:Null<Array<hxc.core.Type.ModuleType>>;
+	public var kind:Int = 2;
+	public var subjectPos:Null<hxc.ast.Position>;
+	public var subjectName:Null<String>;
 
-	public function new(items:Array<ToplevelItem>) {
+	public function new(items:Array<ToplevelItem>, ?moduleTypes:Array<hxc.core.Type.ModuleType>) {
 		this.items = items;
+		this.moduleTypes = moduleTypes;
 	}
 }
 

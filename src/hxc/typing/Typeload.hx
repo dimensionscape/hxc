@@ -577,7 +577,11 @@ class Typeload {
 			try loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric)
 			catch (e:ContextError) {
 				if (e.message.indexOf("Type not found") != 0) throw e;
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, p);
+				// The subject is the path the user wrote, and the range it replaces is that path's own span.
+				var sname = t.tsub != null ? t.tsub : t.tname;
+				var sfull = (t.tpackage.length == 0 ? "" : t.tpackage.join(".") + ".") + t.tname + (t.tsub != null ? "." + t.tsub : "");
+				var sp = new Position(p.file, p.min, p.min + sfull.length);
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, sp, sfull);
 				throw e;
 			}
 		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
