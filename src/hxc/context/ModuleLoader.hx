@@ -317,7 +317,9 @@ class ModuleLoader {
 		function recordImport(imp:Import, declPos:Position):Void {
 			// An empty import path completes the same in-scope type set as a type hint.
 			if (imp.path.length == 0 && imp.mode.match(INormal)) {
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
+				// Use an empty subject at the declaration end so CRImport inserts without replacing text.
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
+					new Position(declPos.file, declPos.max, declPos.max), null, 8);
 				return;
 			}
 			checkPathDisplay(imp.path);
@@ -358,7 +360,9 @@ class ModuleLoader {
 
 		function recordUsing(path:Array<PlacedName>, declPos:Position):Void {
 			if (path.length == 0) {
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, declPos);
+				// An empty using path inserts at the declaration end with CRUsing.
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
+					new Position(declPos.file, declPos.max, declPos.max), null, 9);
 				return;
 			}
 			checkPathDisplay(path);

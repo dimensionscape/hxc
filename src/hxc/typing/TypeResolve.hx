@@ -215,7 +215,7 @@ class TypeResolve {
 	// The parser's magic type path reaching load_type_def means the cursor is in a type position, and
 	// every type in scope is the answer (CRTypeHint). The heritage answer above is the same collection
 	// with set_heritance's extra filtering on top.
-	public static function answerTypeHintCompletion(ctx:Context, p:Position, ?subjectName:String):Void {
+	public static function answerTypeHintCompletion(ctx:Context, p:Position, ?subjectName:String, kind:Int = 4):Void {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		var mts:Array<ModuleType> = [];
 		var seenPaths = new Map<String, Bool>();
@@ -253,7 +253,7 @@ class TypeResolve {
 		}
 		// CRTypeHint is 4.
 		var tc = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
-		tc.kind = 4;
+		tc.kind = kind;
 		tc.subjectPos = p;
 		// The subject is keyed by the path the user was writing, which is what the client filters on.
 		tc.subjectName = subjectName;
