@@ -41,11 +41,14 @@ class SyntaxCompletion {
 	// JSON reports the subject as filterString and replaceRange; XML omits it.
 	public var subjectName:Null<String>;
 	public var subjectPos:Null<hxc.ast.Position>;
+	// Use CRTypeDecl (14) for declarations or flags, and CRTypeRelation (13) for extends/implements.
+	public var kind:Int;
 
-	public function new(keywords:Array<String>, ?subjectName:String, ?subjectPos:hxc.ast.Position) {
+	public function new(keywords:Array<String>, ?subjectName:String, ?subjectPos:hxc.ast.Position, kind:Int = 14) {
 		this.keywords = keywords;
 		this.subjectName = subjectName;
 		this.subjectPos = subjectPos;
+		this.kind = kind;
 	}
 }
 

@@ -1011,7 +1011,7 @@ class Compiler {
 			return;
 		} catch (sc:hxc.compiler.DisplayXml.SyntaxCompletion) {
 			if (ctx.jsonRpcId != null)
-				answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, sc.keywords, 14, sc.subjectName, sc.subjectPos)));
+				answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, sc.keywords, sc.kind, sc.subjectName, sc.subjectPos)));
 			else
 				answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
 			return;
@@ -2064,14 +2064,28 @@ class Compiler {
 		if (requestOutput != null) requestOutput.add(sv) else Sys.stderr().writeString(sv);
 	}
 
-	// The protocol envelope around a report-time answer. the JSON shape every completion answers with
-	// - items, isIncomplete, the mode's kind, the filter string and the range the client replaces. a
-	// SYNTAX completion through it too; hxc only had the XML half, so display/completion at a
-	// type-declaration position answered nothing at all.
+	// The protocol envelope around a report-time answer.
+	// The JSON shape every completion answers with - items, isIncomplete, the mode's kind, the filter
+	// string and the range the client replaces. A SYNTAX completion goes through it too, so
+	// display/completion at a type-declaration position answers as JSON.
+	// The insert position is CUT at the cursor, so a cursor inside a name replaces only what precedes it,
+	// and the filter string is shortened to that same width.
+	static function patchCompletionSubject(name:Null<String>, p:Null<Position>):{name:Null<String>, pos:Null<Position>} {
+		if (p == null) return {name: name, pos: p};
+		var off = hxc.parser.Parser.displayOffset;
+		var cut = new Position(p.file, p.min, off);
+		if (name == null) return {name: null, pos: cut};
+		var delta = cut.max - cut.min;
+		return {name: delta > 0 && delta < name.length ? name.substr(0, delta) : name, pos: cut};
+	}
+
 	static function jsonKeywordCompletion(ctx:Context, keywords:Array<String>, kind:Int,
 			?subjectName:String, ?subjectPos:Position):String {
 		var items = [for (i in 0...keywords.length) hxc.core.CompletionItem.CompletionItem.keywordToJson(keywords[i], i)];
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var subj = patchCompletionSubject(subjectName, subjectPos);
+		subjectName = subj.name;
+		subjectPos = subj.pos;
 		var range = subjectPos == null ? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
 			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subjectPos));
 		var filter = subjectName == null ? "" : subjectName;
@@ -2094,10 +2108,11 @@ class Compiler {
 			items.push(hxc.core.Json.stringOfJson(
 				hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mts[i], hxc.core.CompletionItem.ImportStatusTools.toInt(st), i)));
 		}
-		var range = tl.subjectPos == null
+		var subj = patchCompletionSubject(tl.subjectName, tl.subjectPos);
+		var range = subj.pos == null
 			? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
-			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(tl.subjectPos));
-		var filter = tl.subjectName == null ? "" : tl.subjectName;
+			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subj.pos));
+		var filter = subj.name == null ? "" : subj.name;
 		return '{"items":[' + items.join(",") + '],"isIncomplete":false,"mode":{"kind":' + tl.kind + '}'
 			+ ',"filterString":' + haxe.Json.stringify(filter)
 			+ ',"replaceRange":' + range + '}';

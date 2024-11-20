@@ -2638,32 +2638,58 @@ class Parser {
 		}
 	}
 
-	// With the cursor sitting just past `extends` or `implements`, the heritage takes the MAGIC type
-	// path an empty name) at the display position instead of failing. Loading that path is what asks
-	// which types may stand here, and the inheritance check is what filters them.
-	function parseHeritTypePath(pkeyword:Position):PlacedTypePath {
-		if (displayCompletionMode && isDisplayFile() && displayOffset >= pkeyword.max + 1
-			&& displayOffset <= peekInfo().pos.max) {
+	// With the cursor sitting just past `extends` or `implements`, the heritage takes the MAGIC type path
+	// (an empty name) at the display position instead of failing. Loading that path is what asks which
+	// types may stand here, and the inheritance check is what filters them.
+	// The second result says whether the path was RESUMED at the display position, which stops the heritage
+	// loop reporting again.
+	function parseHeritTypePath(pkeyword:Position):{path:PlacedTypePath, resumed:Bool} {
+		// The resume is a RECOVERY: only a path that fails to parse hands the position back, so a
+		// name that does parse stays the subject and the typer answers about it.
+		var save = idx;
+		try {
+			return {path: parseTypePath(), resumed: false};
+		} catch (e:ParserError) {
+			idx = save;
+			if (!wouldSkipDisplayPosition(pkeyword, true)) throw e;
 			var dp = new Position(pkeyword.file, displayOffset, displayOffset);
-			return {path: magicTypePath(), pos: dp};
+			return {path: {path: magicTypePath(), pos: dp}, resumed: true};
 		}
-		return parseTypePath();
 	}
 
 	function parseClassContent(doc:Documentation, meta:Metadata, c:Array<PlacedDeclFlag>, n:Array<ClassFlag>, p1:Position):TypeDecl {
 		var name = typeName();
 		var tl = parseConstraintParams();
 		var hl:Array<ClassFlag> = [];
+		// The cursor in a GAP of the heritage clause asks which relation keyword belongs there, and an
+		// interface may only extend. p0 tracks the end of what was consumed last, so each gap runs from
+		// there to the next token.
+		var hadDisplay = false;
+		var isInterface = false;
+		for (f in n) if (f.match(HInterface)) isInterface = true;
+		function relationKeywords():Array<String> {
+			return isInterface ? ["extends"] : ["extends", "implements"];
+		}
+		function checkDisplay(pp:Position):Void {
+			if (hadDisplay || !isDisplayFile() || displayOffset < 0) return;
+			if (!(pp.min <= displayOffset && displayOffset <= pp.max)) return;
+			throw new hxc.compiler.DisplayXml.SyntaxCompletion(relationKeywords(), null,
+				new Position(pp.file, displayOffset, displayOffset), 13);
+		}
+		var p0 = tokens[idx > 0 ? idx - 1 : 0].pos;
 		while (true) {
 			switch (peek()) {
-				case Kwd(KwdExtends):
+				case Kwd(KwdExtends) | Kwd(KwdImplements):
+					var isExtends = tokEq(peek(), Kwd(KwdExtends));
 					var pk = next().pos;
-					var t = parseHeritTypePath(pk);
-					hl.push(HExtends(t));
-				case Kwd(KwdImplements):
-					var pk = next().pos;
-					var t = parseHeritTypePath(pk);
-					hl.push(HImplements(t));
+					var r = parseHeritTypePath(pk);
+					checkDisplay(new Position(pk.file, p0.max, pk.min));
+					// With no type parameters the span is widened by one so the cursor right after the name
+					// is not offered extends/implements again.
+					p0 = new Position(r.path.pos.file, r.path.pos.min,
+						r.path.pos.max + (r.path.path.tparams.length == 0 ? 1 : 0));
+					if (r.resumed) hadDisplay = true;
+					hl.push(isExtends ? HExtends(r.path) : HImplements(r.path));
 				case _:
 					break;
 			}
@@ -2671,9 +2697,21 @@ class Parser {
 		// The `{` TERMINATES the heritage loop, and its absence is a recorded syntax error rather than a
 		// raise, so the fields still parse. Requiring it here would drop the whole declaration in a display
 		// file and with it any answer inside its heritage.
-		if (!tokEq(peek(), BrOpen) && displayFile != null)
+		if (tokEq(peek(), BrOpen)) {
+			checkDisplay(new Position(p0.file, p0.max, peekInfo().pos.min));
+			expect(BrOpen);
+		} else if (displayFile != null) {
+			// An identifier under the cursor here is an incomplete relation keyword, answered with that name
+			// as the subject.
+			var np = peekInfo().pos;
+			switch (peek()) {
+				case Const(CIdent(iname)) if (np.min <= displayOffset && displayOffset <= np.max):
+					throw new hxc.compiler.DisplayXml.SyntaxCompletion(relationKeywords(), iname, np, 13);
+				case _:
+			}
+			checkDisplay(new Position(p0.file, p0.max, peekInfo().pos.max));
 			syntaxErrors.push({msg: Expected(["extends", "implements", "{"]), pos: peekInfo().pos});
-		else expect(BrOpen);
+		} else expect(BrOpen);
 		var cf = parseClassFields(false, p1);
 		var flags = filterClassFlags(c).concat(n).concat(hl);
 		var def:Definition<ClassFlag, Array<ClassField>> = {
