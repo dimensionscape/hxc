@@ -2304,21 +2304,24 @@ class Parser {
 		}
 	}
 
-	// With the cursor in the GAP between the previous declaration and the next token, the answer is
-	// which declaration keywords may start here. it: the flags and type keywords, plus import/using
-	// once a package has been seen and package as well before that, and none of them inside import.hx.
+	// With the cursor in the GAP between the previous declaration and the next token, the answer is which
+	// declaration keywords may start here: the flags and type keywords, plus import/using once a package
+	// has been seen and package as well before that, and none of them inside import.hx.
+	function typeDeclKeywords(mode:Int):Array<String> {
+		var inImportHx = StringTools.endsWith(StringTools.replace(file, "\\", "/"), "/import.hx") || file == "import.hx";
+		var l = inImportHx ? [] : ["private", "extern", "class", "interface", "enum", "abstract", "typedef", "final"];
+		return switch (mode) {
+			case 0: ["package", "import", "using"].concat(l);
+			case 1: ["import", "using"].concat(l);
+			case _: l;
+		};
+	}
+
 	function checkTypeDeclCompletion(mode:Int, pmax:Int):Void {
 		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return;
 		var nextPmin = tokEq(peek(), Eof) ? 0x3FFFFFFF : peekInfo().pos.min;
 		if (!(pmax <= displayOffset && nextPmin >= displayOffset)) return;
-		var inImportHx = StringTools.endsWith(StringTools.replace(file, "\\", "/"), "/import.hx") || file == "import.hx";
-		var l = inImportHx ? [] : ["private", "extern", "class", "interface", "enum", "abstract", "typedef", "final"];
-		l = switch (mode) {
-			case 0: ["package", "import", "using"].concat(l); // Before the package statement
-			case 1: ["import", "using"].concat(l); // After it, imports still allowed
-			case _: l;
-		};
-		delayedSyntaxCompletion = l;
+		delayedSyntaxCompletion = typeDeclKeywords(mode);
 		// The subject is the identifier the cursor is IN when the next token is one, at that token's
 		// position; otherwise no name, at the next token's position.
 		var np = peekInfo().pos;
@@ -2337,7 +2340,7 @@ class Parser {
 			var save = idx;
 			var td:TypeDecl;
 			try {
-				td = parseTypeDecl();
+				td = parseTypeDecl(mode);
 			} catch (e:ParserError) {
 				// In the display file the error is recorded and the scan skips to the next plausible
 				// declaration, so one broken declaration does not cost the answer for the rest of the file.
@@ -2363,23 +2366,43 @@ class Parser {
 	// A cursor sitting after a type-declaration flag (`extern `, `final `, ...) asks which declaration
 	// keywords may still follow it: class and interface always, plus the flags not already given, and
 	// final additionally opens enum/abstract/typedef.
-	function checkTypeDeclFlagCompletion(flags:Array<{flag:DeclFlag, pos:Position}>):Void {
-		if (!displayCompletionMode || !isDisplayFile() || flags.length == 0) return;
-		// would_skip_display_position: the cursor lies between the flag and the next token.
-		var last = flags[flags.length - 1].pos;
-		if (!(displayOffset >= last.max + 1 && displayOffset <= peekInfo().pos.max)) return;
+	function checkTypeDeclFlagCompletion(mode:Int, flags:Array<{flag:DeclFlag, pos:Position}>):Void {
+		if (!displayCompletionMode || !isDisplayFile()) return;
 		function has(f:DeclFlag):Bool {
 			for (x in flags) if (Type.enumEq(x.flag, f)) return true;
 			return false;
 		}
-		var l = ["class", "interface"];
-		if (!has(DPrivate)) l.unshift("private");
-		if (!has(DExtern)) l.unshift("extern");
-		if (!has(DFinal)) l = ["final", "enum", "abstract", "typedef"].concat(l);
-		throw new hxc.compiler.DisplayXml.SyntaxCompletion(l);
+		// Class and interface always, plus the flags not already given, and final additionally opens
+		// enum/abstract/typedef.
+		function afterFlagKeywords():Array<String> {
+			var l = ["class", "interface"];
+			if (!has(DPrivate)) l.unshift("private");
+			if (!has(DExtern)) l.unshift("extern");
+			if (!has(DFinal)) l = ["final", "enum", "abstract", "typedef"].concat(l);
+			return l;
+		}
+		// An identifier under the cursor is an incomplete declaration - the parser would fail on it
+		// anyway
+		// - so it answers right here, with that name as the subject. Which list depends on whether any
+		// flag
+		// has been given yet.
+		var np = peekInfo().pos;
+		switch (peek()) {
+			case Const(CIdent(name)) if (np.min <= displayOffset && displayOffset <= np.max):
+				throw new hxc.compiler.DisplayXml.SyntaxCompletion(
+					flags.length == 0 ? typeDeclKeywords(mode) : afterFlagKeywords(), name, np);
+			case _:
+		}
+		if (flags.length == 0) return;
+		// The cursor lies between the flag and the next token, and the subject is empty at the display
+		// position
+		var last = flags[flags.length - 1].pos;
+		if (!(displayOffset >= last.max + 1 && displayOffset <= peekInfo().pos.max)) return;
+		throw new hxc.compiler.DisplayXml.SyntaxCompletion(afterFlagKeywords(), null,
+			new Position(last.file, displayOffset, displayOffset));
 	}
 
-	function parseTypeDecl():TypeDecl {
+	function parseTypeDecl(mode:Int = 2):TypeDecl {
 		switch (peek()) {
 			case Kwd(KwdImport):
 				var p1 = next().pos;
@@ -2514,7 +2537,7 @@ class Parser {
 				} catch (er:ParserError) {
 					idx = beforeFinal;
 				}
-				checkTypeDeclFlagCompletion(c);
+				checkTypeDeclFlagCompletion(mode, c);
 				return serror();
 		}
 	}

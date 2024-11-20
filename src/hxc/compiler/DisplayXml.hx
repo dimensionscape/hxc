@@ -38,9 +38,14 @@ typedef ToplevelItem = {
 // Syntax keyword answers use their own printer and concatenate items without separators.
 class SyntaxCompletion {
 	public final keywords:Array<String>;
+	// JSON reports the subject as filterString and replaceRange; XML omits it.
+	public var subjectName:Null<String>;
+	public var subjectPos:Null<hxc.ast.Position>;
 
-	public function new(keywords:Array<String>) {
+	public function new(keywords:Array<String>, ?subjectName:String, ?subjectPos:hxc.ast.Position) {
 		this.keywords = keywords;
+		this.subjectName = subjectName;
+		this.subjectPos = subjectPos;
 	}
 }
 

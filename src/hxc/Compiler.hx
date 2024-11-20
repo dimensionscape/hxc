@@ -877,7 +877,9 @@ class Compiler {
 				// The XML lane prints the keywords; the JSON lane sends the same list as a completion
 				// result. The type-declaration completion kind is 14.
 				if (ctx.jsonRpcId != null)
-					answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, hxc.parser.Parser.delayedSyntaxCompletion, 14)));
+					answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, hxc.parser.Parser.delayedSyntaxCompletion, 14,
+						hxc.parser.Parser.delayedSyntaxSubject == null ? null : hxc.parser.Parser.delayedSyntaxSubject.name,
+						hxc.parser.Parser.delayedSyntaxSubject == null ? null : hxc.parser.Parser.delayedSyntaxSubject.pos)));
 				else
 					answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
 				return;
@@ -1007,7 +1009,7 @@ class Compiler {
 			return;
 		} catch (sc:hxc.compiler.DisplayXml.SyntaxCompletion) {
 			if (ctx.jsonRpcId != null)
-				answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, sc.keywords, 14)));
+				answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, sc.keywords, 14, sc.subjectName, sc.subjectPos)));
 			else
 				answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
 			return;
@@ -2064,13 +2066,13 @@ class Compiler {
 	// - items, isIncomplete, the mode's kind, the filter string and the range the client replaces. a
 	// SYNTAX completion through it too; hxc only had the XML half, so display/completion at a
 	// type-declaration position answered nothing at all.
-	static function jsonKeywordCompletion(ctx:Context, keywords:Array<String>, kind:Int):String {
+	static function jsonKeywordCompletion(ctx:Context, keywords:Array<String>, kind:Int,
+			?subjectName:String, ?subjectPos:Position):String {
 		var items = [for (i in 0...keywords.length) hxc.core.CompletionItem.CompletionItem.keywordToJson(keywords[i], i)];
-		var subj = hxc.parser.Parser.delayedSyntaxSubject;
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
-		var range = subj == null ? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
-			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subj.pos));
-		var filter = subj == null || subj.name == null ? "" : subj.name;
+		var range = subjectPos == null ? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
+			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subjectPos));
+		var filter = subjectName == null ? "" : subjectName;
 		return '{"items":[' + [for (it in items) hxc.core.Json.stringOfJson(it)].join(",")
 			+ '],"isIncomplete":false,"mode":{"kind":' + kind + '}'
 			+ ',"filterString":' + haxe.Json.stringify(filter)
