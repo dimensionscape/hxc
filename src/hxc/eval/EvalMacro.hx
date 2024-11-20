@@ -1512,8 +1512,17 @@ class EvalMacro {
 		if (macroCom == null) return;
 		var df = hxc.parser.Parser.displayFile;
 		if (df == null) return;
+		evictMacroModulesOfFile(df);
+	}
+
+	// Tainting walks every signature context, so a file invalidated over the protocol taints its
+	// macro-context module too and the next compilation re-types it. hxc keeps the macro world in a
+	// live process static rather than serving it back out of the cache, so the module is dropped from
+	// it here instead.
+	public static function evictMacroModulesOfFile(file:String):Void {
+		if (macroCom == null || file == null) return;
 		inline function key(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
-		var want = key(df);
+		var want = key(file);
 		var dropped = false;
 		for (m in macroCom.modules.copy()) {
 			var f = m.extra == null ? null : m.extra.file;

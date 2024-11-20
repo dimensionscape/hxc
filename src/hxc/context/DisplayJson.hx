@@ -291,6 +291,7 @@ class DisplayJson {
 				var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 				var key = fileKey(full);
 				cache.taintModules(key, "server/invalidate");
+				hxc.eval.EvalMacro.evictMacroModulesOfFile(full);
 				cache.removeFiles(key);
 				hctx.sendResult(JNull);
 			}},
