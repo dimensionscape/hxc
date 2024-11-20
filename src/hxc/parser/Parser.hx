@@ -1406,10 +1406,12 @@ class Parser {
 				// A missing semicolon is a hard error; recovery here would silently drop the parsed element
 				// instead of reporting.
 				if (er.msg.match(Missing_semicolon)) throw er;
+				// An attempt that consumed NOTHING is a soft failure, which ENDS the block - whoever opened
+				// it then reports what it was missing. Only a partially consumed element is the non-soft
+				// error.
+				var consumed = idx > save;
 				idx = save;
-				if (!tokEq(peek(), BrClose) && !tokEq(peek(), Eof)
-					&& !tokEq(peek(), Kwd(KwdCase)) && !tokEq(peek(), Kwd(KwdDefault)))
-					throw er;
+				if (consumed) throw er;
 				break;
 			}
 			acc.push(e);
