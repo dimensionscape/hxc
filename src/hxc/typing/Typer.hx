@@ -28,9 +28,17 @@ enum JsonToplevelEntry {
 // The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
 class JsonToplevelCompletion extends haxe.Exception {
 	public var items:Array<JsonToplevelEntry>;
-	public function new(items:Array<JsonToplevelEntry>) {
+	// The subject is the display expression's own dotted path at its own position; with no name the
+	// position collapses to the cursor.
+	public var subjectName:Null<String>;
+	public var subjectPos:Null<hxc.ast.Position>;
+	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position) {
 		super("json toplevel completion");
 		this.items = items;
+		if (subjectName != null && subjectName != "") {
+			this.subjectName = subjectName;
+			this.subjectPos = subjectPos;
+		}
 	}
 }
 
@@ -2122,7 +2130,7 @@ class Typer {
 		if (fieldCompletionFound != null) return;
 		var name = try Ast.stringListOfExprPathRaise(e).join(".") catch (_:Dynamic) "";
 		if (name == "null") name = "";
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), name, e.pos);
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
@@ -3112,7 +3120,7 @@ class Typer {
 				// field access already answered here is that node, so a stand-in the recovery put at an
 				// enclosing position must not displace it.
 				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
-					throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx), s == "null" ? null : s, p);
 				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
 					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
 					// real identifier under the cursor keeps the collection order.
@@ -3185,7 +3193,7 @@ class Typer {
 		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
 		// check, so `f|oo("")` answered nothing.
 		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)) {
-			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), i, p);
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 		}
 		if (i == "abstract") {

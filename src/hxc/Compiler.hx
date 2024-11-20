@@ -1000,7 +1000,7 @@ class Compiler {
 				if (r != 0) throw "Command failed with error " + r;
 			}
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
-			var answer = jsonToplevelCompletion(ctx, tl.items);
+			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos);
 			if (answer != null) answerOut(answer);
 			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
@@ -1562,7 +1562,8 @@ class Compiler {
 	// displayException fields_to_json CRToplevel: locals, then the enclosing class fields, then every
 	// loaded type sorted by name, then the literal set and the keyword list; mode kind 2 with empty
 	// args.
-	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>):Null<String> {
+	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>,
+			?subjectName:String, ?subjectPos:Position):Null<String> {
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
@@ -1767,6 +1768,7 @@ class Compiler {
 			push(function(i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(kwd, i));
 		var off = hxc.parser.Parser.displayOffset;
 		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
+		var subj = patchCompletionSubject(subjectName, subjectPos == null ? insertPos : subjectPos);
 		var mode = hxc.core.Json.JsonValue.JObject([
 			{name: "kind", value: hxc.core.Json.JsonValue.JInt(2)},
 			{name: "args", value: hxc.core.Json.JsonValue.JObject([])}
@@ -1775,8 +1777,8 @@ class Compiler {
 			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
 			{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
 			{name: "mode", value: mode},
-			{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
-			{name: "replaceRange", value: gen.generatePosAsRange(insertPos)}
+			{name: "filterString", value: hxc.core.Json.JsonValue.JString(subj.name == null ? "" : subj.name)},
+			{name: "replaceRange", value: gen.generatePosAsRange(subj.pos)}
 		]);
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
