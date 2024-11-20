@@ -2501,9 +2501,14 @@ class Typer {
 	// so CompletionItem.toJson can serialize faithfully (the legacy XML lane above stringifies).
 	// receiver/insertPos feed CRField and replaceRange.
 	public static var jsonFieldCompletion:Null<{
-		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool}>,
+		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}>,
 		receiver:Null<TExpr>,
-		insertPos:Position
+		insertPos:Position,
+		// Which CompletionResultKind the answer carries. CRField (0) unless the completion came from
+		// somewhere else, like an `override` modifier (CROverride, 12).
+		?kind:Int,
+		?subjectName:String,
+		?subjectPos:Position
 	}> = null;
 
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
@@ -2534,7 +2539,7 @@ class Typer {
 		};
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
-		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool}> = [];
+		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}> = [];
 		function pushJson(cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool):Void {
 			jsonEntries.push({cf: cf, scope: scope, originClass: originClass, originAnon: originAnon, builtIn: builtIn});
 		}

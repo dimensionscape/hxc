@@ -66,6 +66,10 @@ class Parser {
 	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
 	// documentation out of the registry.
 	public static var displayMetaName:Null<String> = null;
+	// The field name already written after the dot, and its position. The completion's filter string and
+	// replace range come from it.
+	public static var displayDotName:Null<String> = null;
+	public static var displayDotPos:Null<Position> = null;
 	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
@@ -81,6 +85,8 @@ class Parser {
 		displaySuppressed = false;
 		delayedSyntaxCompletion = null;
 		delayedSyntaxSubject = null;
+		displayDotName = null;
+		displayDotPos = null;
 		syntaxErrors = [];
 	}
 
@@ -318,12 +324,26 @@ class Parser {
 		return new Expr(EConst(CIdent("null")), p);
 	}
 
-	// In signature display, the argument whose span from the preceding separator to the following one
-	// covers the cursor is marked, and the index of that marked argument is what the answer reports as
-	// the active parameter. Counting finished arguments instead puts the cursor on the next parameter
-	// as soon as it leaves the last one. the cursor sitting exactly at the end of this token, in the
-	// display file and in completion mode, means the construct the token opens is what is being
-	// completed.
+	// Signature mark: in signature display, the argument whose span from the preceding separator to
+	// the following one covers the cursor is marked, and the index of that marked argument is what the
+	// answer reports as the active parameter. Counting finished arguments instead would put the cursor
+	// on the next parameter as soon as it leaves the last one. Resume: the cursor sitting exactly at
+	// the end of this token, in the display file and in completion mode, means the construct the token
+	// opens is what is being completed. Completion: the identifier the cursor sits in, CONSUMED, or an
+	// empty subject at the display position when the cursor is in the gap after p0.
+	function checkCompletion(p0:Position, plusOne:Bool):Null<{name:Null<String>, pos:Position}> {
+		if (!isDisplayFile() || displayOffset < 0) return null;
+		var np = peekInfo().pos;
+		switch (peek()) {
+			case Const(CIdent(n)) if (np.min <= displayOffset && displayOffset <= np.max):
+				junk();
+				return {name: n, pos: np};
+			case _:
+		}
+		if (!wouldSkipDisplayPosition(p0, plusOne)) return null;
+		return {name: null, pos: new Position(p0.file, displayOffset, displayOffset)};
+	}
+
 	function checkResume(p:Position):Bool {
 		return displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset;
 	}
@@ -1495,8 +1515,19 @@ class Parser {
 		// annotating the enclosing field access DKMarked) rather than at the dot, but the request and the
 		// answer are the same, and the span from the dot to the end of the name is what encloses_position
 		// accepts for that access.
-		if (checkResume(p) || (displayCompletionMode && atDisplayDot(p)))
+		if (checkResume(p) || (displayCompletionMode && atDisplayDot(p))) {
+			// The completion's SUBJECT is the field name already written, spanning back from the display
+			// expression's end by that name's length. The empty field name above is only how the request
+			// travels, so the name is kept here.
+			displayDotName = null;
+			displayDotPos = null;
+			var np = peekInfo().pos;
+			if (np.min == p.max) switch (peek()) {
+				case Const(CIdent(n)): displayDotName = n; displayDotPos = np;
+				case _:
+			}
 			return exprNext(new Expr(EField(e1, "", efk), Position.union(e1.pos, p)));
+		}
 		// Every name arm is guarded by `p.max = p2.min` - the field name must TOUCH the dot. `k.` with
 		// the name on the next line is not a field access at all, so the name stays a statement of its own.
 		var adjacent = peekInfo().pos.min == p.max;
@@ -2811,7 +2842,17 @@ class Parser {
 				var ff = parseFunctionField(doc, meta, al);
 				name = ff.name; kind = ff.kind; meta = ff.meta; al = ff.al; fpos = ff.pos;
 			case _:
-				return serror();
+				// Nothing follows the access flags, and the last of them is `override`: a cursor there asks
+				// which inherited field to override, so an empty method marked @:displayOverride stands in for
+				// the one being written.
+				var last = al.length == 0 ? null : al[al.length - 1];
+				if (last == null || !last.access.match(AOverride)) return serror();
+				var cc = checkCompletion(last.pos, true);
+				if (cc == null) return serror();
+				name = {name: cc.name == null ? "" : cc.name, pos: cc.pos};
+				kind = FFun({fParams: [], fArgs: [], fType: null, fExpr: null});
+				meta = [{name: ":displayOverride", params: [], pos: Position.nullPos}].concat(meta);
+				fpos = Position.union(last.pos, cc.pos);
 		}
 
 		// Position offset by leading access keyword

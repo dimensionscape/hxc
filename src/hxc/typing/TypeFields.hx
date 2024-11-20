@@ -644,6 +644,7 @@ class TypeFields {
 		var own = new haxe.ds.StringMap<Bool>();
 		for (f in c.orderedFields) own.set(f.name, true);
 		var items:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		var entries = [];
 		var seen = new haxe.ds.StringMap<Bool>();
 		var sup = c.superClass;
 		while (sup != null) {
@@ -657,10 +658,17 @@ class TypeFields {
 					type: hxc.core.TPrinting.sTypeStr(t),
 					doc: Ast.genDocTextOpt(f.doc)
 				});
+				// The origin is the PARENT that declares the field.
+				entries.push({cf: f, scope: hxc.core.Type.ClassFieldScope.CFSMember, originClass: sup.c,
+					originAnon: null, builtIn: false, fromParent: true});
 			}
 			sup = sup.c.superClass;
 		}
 		Typer.fieldCompletionFound = items;
+		// The JSON answer is CROverride over the same list, with the field name being written as its
+		// subject.
+		Typer.jsonFieldCompletion = {entries: entries, receiver: null, insertPos: cff.cffName.pos,
+			kind: 12, subjectName: cff.cffName.name, subjectPos: cff.cffName.pos};
 	}
 
 	// A member variable initializer cannot reach this (issue #1958); the first occurrence reports and the

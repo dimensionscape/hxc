@@ -1803,7 +1803,9 @@ class Compiler {
 			var e = entries[i];
 			var origin = e.builtIn ? hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn
 				: e.originAnon != null ? hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(e.originAnon)
-				: e.originClass != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(e.originClass))
+				: e.originClass != null ? (e.fromParent == true
+					? hxc.core.CompletionItem.ClassFieldOrigin.Parent(classDecl(e.originClass))
+					: hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(e.originClass)))
 				: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
 			var t = switch (e.cf.type) {
 				case TLazy(r): TypeFunctions.lazyType(r);
@@ -1833,18 +1835,28 @@ class Compiler {
 				modeArgs.push({name: "moduleTypeFollowed", value: recv.type == followed ? hxc.core.Json.JsonValue.JNull : gen.generateModuleType(mt)});
 			}
 		}
-		var mode = hxc.core.Json.JsonValue.JObject([
+		var kind = jc.kind == null ? 0 : jc.kind;
+		var mode = hxc.core.Json.JsonValue.JObject(kind == 0 ? [
 			{name: "kind", value: hxc.core.Json.JsonValue.JInt(0)},
 			{name: "args", value: hxc.core.Json.JsonValue.JObject(modeArgs)}
+		] : [
+			{name: "kind", value: hxc.core.Json.JsonValue.JInt(kind)}
 		]);
 		var off = hxc.parser.Parser.displayOffset;
-		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
+		// The subject is the field name already typed, at the span that ends where the display expression
+		// does and reaches back by that name's length.
+		var subj = jc.subjectPos != null
+			? patchCompletionSubject(jc.subjectName, jc.subjectPos)
+			: patchCompletionSubject(hxc.parser.Parser.displayDotName,
+				hxc.parser.Parser.displayDotPos != null
+					? hxc.parser.Parser.displayDotPos
+					: new Position(hxc.parser.Parser.displayFile, off, off));
 		var result = hxc.core.Json.JsonValue.JObject([
 			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
 			{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
 			{name: "mode", value: mode},
-			{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
-			{name: "replaceRange", value: gen.generatePosAsRange(insertPos)}
+			{name: "filterString", value: hxc.core.Json.JsonValue.JString(subj.name == null ? "" : subj.name)},
+			{name: "replaceRange", value: gen.generatePosAsRange(subj.pos)}
 		]);
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
