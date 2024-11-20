@@ -167,6 +167,8 @@ class Compiler {
 			// come off, and a flag line splits at its first space.
 			var lines:Array<String> = [];
 			for (line in payload.split("\n")) lines = lines.concat(parseHxmlLine(line));
+			// Log request arguments before any other verbose output.
+			hxc.compiler.ServerMessage.arguments(lines);
 			var out = new StringBuf();
 			// The stateful cache methods answer in the server process itself so cache state (contexts,
 			// removed files, configure switches) persists across requests; compilations still run isolated
@@ -911,10 +913,15 @@ class Compiler {
 			// Fix com.main and the static-init type order before any target consumes them which runs for
 			// every target including none)
 			hxc.typing.Finalization.run(ctx);
-			// A fully-typed non-display compile caches its modules into the process cache, activating
-			// server/module and server/type lookups for later requests in the same process.
-			// (maybe_cache_context: dms_full_typing + dms_populate_cache, both true outside display runs).
-			if (ctx.displaySpec == null) hxc.context.DisplayJson.cache.cacheContext(ctx);
+			// A fully-typed compile with dms_populate_cache caches its modules into the process cache,
+			// activating server/module and server/type lookups for later requests in the same process. Both
+			// flags hold outside display runs, and them again for a JSON diagnostics request, which is a
+			// DMNone compilation of the whole program; the LEGACY diagnostics request clears
+			// dms_populate_cache instead .
+			if (ctx.displaySpec == null || (isDisplay(ctx, "diagnostics") && ctx.jsonRpcId != null)) {
+				hxc.context.DisplayJson.cache.cacheContext(ctx);
+				hxc.compiler.ServerMessage.cachedModules(ctx, "", ctx.modules.length);
+			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// The --xml / --json type descriptions are written after typing but before the target
 			// generation, and are not gated on --no-output.
