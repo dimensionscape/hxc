@@ -2302,8 +2302,9 @@ class Typer {
 		} else if (displayUsage || displayImplementation) {
 			usageTargetType = mt;
 		} else if (allowCompletion && hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null) {
-			// DMDefault: the type path answers with the type HINT collection.
-			hxc.typing.TypeResolve.answerTypeHintCompletion(com, p);
+			// Under DMDefault the type path answers with the type HINT collection, with the type's own
+			// dotted path as the subject. Only callers that allow display reach this.
+			hxc.typing.TypeResolve.answerTypeHintCompletion(com, p, hxc.core.Globals.sTypePath(inf.path));
 		}
 	}
 

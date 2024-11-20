@@ -58,6 +58,7 @@ class ToplevelCompletion {
 	// needs.
 	public var moduleTypes:Null<Array<hxc.core.Type.ModuleType>>;
 	public var kind:Int = 2;
+	public var structExtensionIsIntersection:Bool = false;
 	public var subjectPos:Null<hxc.ast.Position>;
 	public var subjectName:Null<String>;
 

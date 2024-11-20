@@ -174,7 +174,10 @@ class Typeload {
 	public static function loadTypeHint(ctx:Context, typeParams:TypeParams, t:Null<TypeHint>, opt:Bool = false):T {
 		var ty = (t == null)
 			? spawnMonomorph()
-			: loadComplexType(ctx, typeParams, t);
+			// A type HINT is a display-allowed load, so a resolvable path under the cursor reports through
+			// the
+			// display type check.
+			: loadComplexType(ctx, typeParams, t, true);
 		return opt ? ctx.basic.tnull(ty) : ty;
 	}
 
@@ -184,21 +187,21 @@ class Typeload {
 
 	// Ctx allow_display (t,pn)
 	// display/diagnostics mode only; batch mode re-raises, which is our behaviour.)
-	public static function loadComplexType(ctx:Context, typeParams:TypeParams, th:TypeHint):T {
-		return loadComplexTypePrime(ctx, typeParams, th.ct, th.pos);
+	public static function loadComplexType(ctx:Context, typeParams:TypeParams, th:TypeHint, allowDisplay:Bool = false):T {
+		return loadComplexTypePrime(ctx, typeParams, th.ct, th.pos, allowDisplay);
 	}
 
-	static function loadComplexTypePrime(ctx:Context, typeParams:TypeParams, t:ComplexType, p:Position):T {
+	static function loadComplexTypePrime(ctx:Context, typeParams:TypeParams, t:ComplexType, p:Position, allowDisplay:Bool = false):T {
 		return switch (t) {
 			case CTParent(th):
-				loadComplexType(ctx, typeParams, th);
+				loadComplexType(ctx, typeParams, th, allowDisplay);
 
 			// The path `$._hx_mono` spawns a monomorph.
 			case CTPath(tp) if (tp.tpackage.length == 1 && tp.tpackage[0] == "$" && tp.tname == "_hx_mono"):
 				spawnMonomorph();
 
 			case CTPath(tp):
-				loadInstance(ctx, typeParams, tp, p, false);
+				loadInstance(ctx, typeParams, tp, p, false, true, allowDisplay);
 
 			case CTOptional(_):
 				throw new ContextError("Optional type not allowed here", p);
@@ -207,21 +210,23 @@ class Typeload {
 				throw new ContextError("Named type not allowed here", p);
 
 			case CTIntersection(tl):
-				var resolved = [for (th in tl) {t: loadComplexType(ctx, typeParams, th), pos: th.pos}];
+				// The type list an intersection member raises is re-raised filtered to STRUCTURES, as
+				// CRStructExtension over an intersection type.
+				var resolved = [for (th in tl) {t: try loadComplexType(ctx, typeParams, th, allowDisplay)
+						catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) throw structExtensionCompletion(ctx, tc, true),
+					pos: th.pos}];
 				makeExtensionType(ctx, resolved, p);
 
 			case CTExtend(paths, fields):
-				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p);
+				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p, allowDisplay);
 				switch (anonT) {
 					case TAnon(a):
 						// The type list a `> <cursor>` raises is re-raised filtered to STRUCTURES, since
 						// only a structure
 						// can extend one.
 						var il = [for (pt in paths) {
-							t: try loadInstance(ctx, typeParams, pt.path, pt.pos, false)
-								catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion)
-									throw new hxc.compiler.DisplayXml.ToplevelCompletion(
-										[for (it in tc.items) if (it.kind == "type" && isStructureTypeItem(ctx, it)) it]),
+							t: try loadInstance(ctx, typeParams, pt.path, pt.pos, false, true, allowDisplay)
+								catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) throw structExtensionCompletion(ctx, tc, false),
 							pos: pt.pos}];
 						if (il.length == 1) {
 							mkExtension(ctx, a, il[0].t, il[0].pos);
@@ -235,11 +240,27 @@ class Typeload {
 				}
 
 			case CTAnonymous(l):
-				loadAnonymous(ctx, typeParams, l, p);
+				loadAnonymous(ctx, typeParams, l, p, allowDisplay);
 
 			case CTFunction(args, ret):
-				loadFunctionType(ctx, typeParams, args, ret, p);
+				loadFunctionType(ctx, typeParams, args, ret, p, allowDisplay);
 		}
+	}
+
+	// Only a STRUCTURE can extend one, so the type-hint collection raised from inside an extension is
+	// re-raised filtered to those, as CRStructExtension (7). The flag records whether the extension was
+	// written as an intersection.
+	static function structExtensionCompletion(ctx:Context, tc:hxc.compiler.DisplayXml.ToplevelCompletion,
+			isIntersection:Bool):hxc.compiler.DisplayXml.ToplevelCompletion {
+		var items = [for (it in tc.items) if (it.kind == "type" && isStructureTypeItem(ctx, it)) it];
+		var mts:Null<Array<ModuleType>> = tc.moduleTypes == null ? null
+			: [for (mt in tc.moduleTypes) if (TypeFunctions.follow(TypeFunctions.typeOfModuleType(mt)).match(TAnon(_))) mt];
+		var out = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
+		out.kind = 7;
+		out.structExtensionIsIntersection = isIntersection;
+		out.subjectPos = tc.subjectPos;
+		out.subjectName = tc.subjectName;
+		return out;
 	}
 
 	// CompletionModuleKind.Struct: a typedef whose right-hand side is an anonymous structure. That is
@@ -327,11 +348,11 @@ class Typeload {
 		return switch (c.kind) { case KTypeParameter(_): true; case _: false; };
 	}
 
-	static function loadFunctionType(ctx:Context, typeParams:TypeParams, args:Array<TypeHint>, ret:TypeHint, p:Position):T {
+	static function loadFunctionType(ctx:Context, typeParams:TypeParams, args:Array<TypeHint>, ret:TypeHint, p:Position, allowDisplay:Bool = false):T {
 		if (args.length == 1) {
 			switch (args[0].ct) {
 				case CTPath(tp) if (tp.tpackage.length == 0 && tp.tparams.length == 0 && tp.tname == "Void"):
-					return TFun({args: [], ret: loadComplexType(ctx, typeParams, ret)});
+					return TFun({args: [], ret: loadComplexType(ctx, typeParams, ret, allowDisplay)});
 				case _:
 			}
 		}
@@ -354,13 +375,13 @@ class Typeload {
 				case CTNamed(n, t3): name = n.name; inner = t3;
 				case _:
 			}
-			sigArgs.push({name: name, opt: opt, t: loadComplexType(ctx, typeParams, inner)});
+			sigArgs.push({name: name, opt: opt, t: loadComplexType(ctx, typeParams, inner, allowDisplay)});
 		}
-		return TFun({args: sigArgs, ret: loadComplexType(ctx, typeParams, ret)});
+		return TFun({args: sigArgs, ret: loadComplexType(ctx, typeParams, ret, allowDisplay)});
 	}
 
 	// CTAnonymous l -> TAnon (subset of/`topt` machinery)
-	static function loadAnonymous(ctx:Context, typeParams:TypeParams, l:Array<ClassField>, p:Position):T {
+	static function loadAnonymous(ctx:Context, typeParams:TypeParams, l:Array<ClassField>, p:Position, allowDisplay:Bool = false):T {
 		var fields = new StringMap<TClassField>();
 		for (f in l) {
 			var n = f.cffName.name;
@@ -369,7 +390,7 @@ class Typeload {
 
 			function topt(t:Null<TypeHint>):T {
 				if (t == null) throw new ContextError("Explicit type required for field " + n, p);
-				return loadComplexType(ctx, typeParams, t);
+				return loadComplexType(ctx, typeParams, t, allowDisplay);
 			}
 
 			var pub = true;
@@ -389,7 +410,7 @@ class Typeload {
 			switch (f.cffKind) {
 				case FVar(th, _) if (isFinal):
 					if (th == null) throw new ContextError("Type required for structure property", p);
-					t = loadComplexType(ctx, typeParams, th);
+					t = loadComplexType(ctx, typeParams, th, allowDisplay);
 					access = Var({read: AccNormal, write: AccNever});
 				case FVar(th, _):
 					// Reject an explicit Void field type.
@@ -430,7 +451,7 @@ class Typeload {
 						}
 					}
 					if (th == null) throw new ContextError("Type required for structure property", p);
-					t = loadComplexType(ctx, typeParams, th);
+					t = loadComplexType(ctx, typeParams, th, allowDisplay);
 					access = Var({read: acc(get, true), write: acc(set, false)});
 			}
 
@@ -557,11 +578,11 @@ class Typeload {
 	// the parameters the load was given are recorded here.
 	public static var currentTypeParams:TypeParams = [];
 
-	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
+	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false):T {
 		var savedTp = currentTypeParams;
 		currentTypeParams = typeParams;
 		try {
-			var res = loadInstanceInner(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
+			var res = loadInstanceInner(ctx, typeParams, t, p, allowNoParams, specializeGeneric, allowDisplay);
 			currentTypeParams = savedTp;
 			return res;
 		} catch (e:Dynamic) {
@@ -570,7 +591,7 @@ class Typeload {
 		}
 	}
 
-	static function loadInstanceInner(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
+	static function loadInstanceInner(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false):T {
 		// A type path that does not resolve, with the cursor on it, is a completion request rather than
 		// an error - the name is what the user is still typing.
 		var r = if (hxc.parser.Parser.displayCompletionMode && hxc.typing.Typer.atDisplayPos(p))
@@ -596,7 +617,7 @@ class Typeload {
 			var pName = new Position(p.file, p.min, p.min + strings.join(".").length);
 			if (hxc.typing.Typer.atDisplayPos(pName)) {
 				var mt = try TypeFunctions.moduleTypeOfType(r) catch (_:hxc.core.ExitException) null;
-				if (mt != null) hxc.typing.Typer.displayModuleType(ctx, mt, pName);
+				if (mt != null) hxc.typing.Typer.displayModuleType(ctx, mt, pName, allowDisplay);
 			}
 		}
 		return r;

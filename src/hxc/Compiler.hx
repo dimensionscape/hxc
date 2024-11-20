@@ -2125,7 +2125,9 @@ class Compiler {
 			? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
 			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subj.pos));
 		var filter = subj.name == null ? "" : subj.name;
-		return '{"items":[' + items.join(",") + '],"isIncomplete":false,"mode":{"kind":' + tl.kind + '}'
+		// StructExtension is the only one of these kinds carrying args.
+		var modeArgs = tl.kind != 7 ? "" : ',"args":{"isIntersectionType":' + tl.structExtensionIsIntersection + '}';
+		return '{"items":[' + items.join(",") + '],"isIncomplete":false,"mode":{"kind":' + tl.kind + modeArgs + '}'
 			+ ',"filterString":' + haxe.Json.stringify(filter)
 			+ ',"replaceRange":' + range + '}';
 	}
