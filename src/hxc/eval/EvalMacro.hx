@@ -860,7 +860,7 @@ class EvalMacro {
 				if (t != null) {
 					var targetPath = {pack: t.pack, name: t.name};
 					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule);
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, c.module);
 				}
 			case _:
 		}
@@ -1519,7 +1519,7 @@ class EvalMacro {
 	// macro-context module too and the next compilation re-types it. hxc keeps the macro world in a
 	// live process static rather than serving it back out of the cache, so the module is dropped from
 	// it here instead.
-	public static function evictMacroModulesOfFile(file:String):Void {
+	public static function evictMacroModulesOfFile(file:String, ?taintReason:String):Void {
 		if (macroCom == null || file == null) return;
 		inline function key(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
 		var want = key(file);
@@ -1529,6 +1529,9 @@ class EvalMacro {
 			if (f == null) continue;
 			var k = key(f);
 			if (k != want && !StringTools.endsWith(k, "/" + want) && !StringTools.endsWith(want, "/" + k)) continue;
+			// The module OBJECT survives as a dependency of whatever it built, and that is the copy
+			// the dirty-subgraph walk consults, so it is tainted as well as dropped.
+			if (taintReason != null) m.extra.cacheState = MSBad(Tainted(taintReason));
 			macroCom.modules.remove(m);
 			macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
 			dropped = true;
@@ -1647,7 +1650,7 @@ class EvalMacro {
 			|| Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion);
 	}
 
-	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path):Void {
+	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef):Void {
 		evictDisplayModule();
 		if (macroCom == null) initMacroContext(host);
 		var oldRaise = macroCom.raiseTypingErrors;
@@ -1656,6 +1659,18 @@ class EvalMacro {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
 			var m = hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos);
+			// The module being typed DEPENDS on the macro module it called into, across the context
+			// boundary. Without it a macro's own file could be invalidated and every module built by it
+			// still read as clean.
+			var dep = dependent != null ? dependent : host.currentModule;
+			if (dep != null) {
+				// Adding a dependency clears the POST-PROCESSING mark, not the resolve gate: a cached copy
+				// of the module has to run through the filters again now that its dependency set changed.
+				// hxc's addDependency resets its own resolve gate, which would re-derive signatures out
+				// from under the fields already typed.
+				TypeFunctions.addDependency(dep, m, true);
+				dep.extra.processed = 0;
+			}
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
 			for (mt in m.types) switch (mt) {
@@ -1821,7 +1836,8 @@ class EvalMacro {
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
-			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null);
+			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
+				tctx.curclass != null ? tctx.curclass.module : null);
 			ec = getContext(tctx.com);
 			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
