@@ -196,6 +196,8 @@ class EvalMain {
 			var r = EvalPrototype.buildStatic(ctx, c);
 			ctx.staticPrototypes.set(r.proto.ppath, r.proto);
 			for (d in r.delays) delays.push({proto: r.proto, fn: d});
+			// Record the non-persistent initializers, which re-run when the interpreter is reused.
+			if (r.nonPersistent.length > 0) ctx.staticInits.set(r.proto.ppath, {proto: r.proto, delays: r.nonPersistent});
 			var ctor = EvalPrototype.makeConstructor(ctx, c);
 			if (ctor != null) ctx.constructors.set(key, ctor);
 		}

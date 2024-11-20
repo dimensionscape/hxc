@@ -1413,6 +1413,7 @@ class EvalMacro {
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
+		doReuse();
 		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length)) {
 			building = true;
 			try {
@@ -1482,8 +1483,27 @@ class EvalMacro {
 	// whole macro world each request.
 	static var pendingDisplayEvict:Bool = false;
 
+	// A compilation that finds a cached interpreter reuses it and resets the static prototypes - every
+	// non-persistent static initializer runs again. That is what puts a macro-world static back at its
+	// declared value for each compilation, so a macro's counter does not keep counting across requests.
+	static var pendingMacroReuse:Bool = false;
+
 	public static function resetPerRequest():Void {
 		pendingDisplayEvict = true;
+		pendingMacroReuse = true;
+	}
+
+	// Resets the static prototypes for a new compilation.
+	static function doReuse():Void {
+		if (!pendingMacroReuse) return;
+		pendingMacroReuse = false;
+		if (macroCtx == null) return;
+		var ec = macroCtx;
+		EvalContext.setCtx(ec);
+		for (key in ec.staticInits.keys()) {
+			var e = ec.staticInits.get(key);
+			for (d in e.delays) d(e.proto);
+		}
 	}
 
 	static function evictDisplayModule():Void {

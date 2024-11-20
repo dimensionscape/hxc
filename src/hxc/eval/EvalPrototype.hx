@@ -483,12 +483,16 @@ class EvalPrototype {
 		return com;
 	}
 
-	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>} {
+	// Each static initializer records whether the field is @:persistent. The non-persistent ones are
+	// re-run when the interpreter is reused for a new compilation which is what puts a macro-world
+	// static back at its declared value at the start of every request.
+	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>, nonPersistent:Array<ProtoDelay>} {
 		var key = EvalHash.pathHash(c.path);
 		var pparent = c.superClass == null ? null : ctx.staticPrototypes.get(EvalHash.pathHash(c.superClass.c.path));
 		var pfields:Array<EvalValue> = [];
 		var pnames:Map<Int, Int> = new Map();
 		var delays:Array<ProtoDelay> = [];
+		var nonPersistent:Array<ProtoDelay> = [];
 		if (!TypeFunctions.hasClassFlag(c, CExtern)) {
 			var fields = c.orderedStatics.copy();
 			var seen = new Map<String, Bool>();
@@ -537,7 +541,7 @@ class EvalPrototype {
 						addNameAlias(pnames, cf, idx);
 						pfields.push(VNull);
 						var init = cf.expr;
-						delays.push(function(proto) {
+						var d:ProtoDelay = function(proto) {
 							var ctxEval = EvalContext.getEval(ctx);
 							var prev = ctxEval.env;
 							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
@@ -552,7 +556,9 @@ class EvalPrototype {
 								if (!ctx.isMacro) throw e;
 							}
 							EvalContext.popEnvironment(ctx, env);
-						});
+						};
+						delays.push(d);
+						if (!TypeFunctions.hasMeta(":persistent", cf.meta)) nonPersistent.push(d);
 					// A physical field without an initializer still occupies a slot.
 					case _ if (TypeFunctions.isPhysicalField(cf)):
 						var idx = pfields.length;
@@ -577,7 +583,7 @@ class EvalPrototype {
 		addMeta(classMeta(c), pfields, pnames);
 		var proto = new VPrototype(key, pfields, pnames, [], new Map(), pparent, PClass([]), VNull);
 		proto.pvalue = VPrototype(proto);
-		return {proto: proto, delays: delays};
+		return {proto: proto, delays: delays, nonPersistent: nonPersistent};
 	}
 
 	public static function buildInstance(ctx:EvalContext, c:TClass):VPrototype {

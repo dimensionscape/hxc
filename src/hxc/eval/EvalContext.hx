@@ -109,6 +109,9 @@ class EvalContext {
 	public var typeCache:Map<Int, ModuleType>;
 	public var instancePrototypes:Map<Int, VPrototype>;
 	public var staticPrototypes:Map<Int, VPrototype>;
+	// The non-persistent static initializers of every registered prototype, re-run when the interpreter is
+	// reused for a new compilation.
+	public var staticInits:Map<Int, {proto:VPrototype, delays:Array<hxc.eval.EvalPrototype.ProtoDelay>}>;
 	public var constructors:Map<Int, VFunc>;
 	public var arrayPrototype:Null<VPrototype>;
 	public var stringPrototype:Null<VPrototype>;
@@ -131,6 +134,7 @@ class EvalContext {
 		this.typeCache = new Map();
 		this.instancePrototypes = new Map();
 		this.staticPrototypes = new Map();
+		this.staticInits = new Map();
 		this.constructors = new Map();
 		this.arrayPrototype = null;
 		this.stringPrototype = null;

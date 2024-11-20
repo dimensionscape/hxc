@@ -1023,6 +1023,7 @@ class EvalEmitter {
 			var r = hxc.eval.EvalPrototype.buildStatic(ctx, c);
 			ctx.staticPrototypes.set(r.proto.ppath, r.proto);
 			for (d in r.delays) d(r.proto);
+			if (r.nonPersistent.length > 0) ctx.staticInits.set(r.proto.ppath, {proto: r.proto, delays: r.nonPersistent});
 		}
 	}
 
