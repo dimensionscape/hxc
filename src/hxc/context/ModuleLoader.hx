@@ -297,15 +297,15 @@ class ModuleLoader {
 				var isLower = part.name.length > 0 && part.name.charCodeAt(0) >= "a".code && part.name.charCodeAt(0) <= "z".code;
 				var here = hxc.typing.Typer.atDisplayPos(part.pos);
 				if (mod != null && sub != null) {
-					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), sub, true);
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), sub, true, part.pos);
 					return;
 				}
 				if (mod != null && isLower) {
-					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), mod, true);
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.concat([mod]), mod, true, part.pos);
 					return;
 				}
 				if (mod != null) {
-					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), mod, true);
+					if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), mod, true, part.pos);
 					sub = part.name;
 					continue;
 				}
@@ -314,12 +314,12 @@ class ModuleLoader {
 					// package.
 					if (here) {
 						if (pack.length == 0) hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, part.pos);
-						throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true);
+						throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true, part.pos);
 					}
 					pack.push(part.name);
 					continue;
 				}
-				if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true);
+				if (here) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true, part.pos);
 				mod = part.name;
 			}
 		}

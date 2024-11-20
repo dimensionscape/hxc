@@ -12,11 +12,15 @@ class TypePathCompletion {
 	public final pack:Array<String>;
 	public final module:Null<String>;
 	public final isImport:Bool;
+	// The span the client replaces: the path segment the cursor is on. The JSON lane reports it both as
+	// replaceRange and inside CRField's own range.
+	public var pos:Null<Position>;
 
-	public function new(pack:Array<String>, module:Null<String>, isImport:Bool) {
+	public function new(pack:Array<String>, module:Null<String>, isImport:Bool, ?pos:Position) {
 		this.pack = pack;
 		this.module = module;
 		this.isImport = isImport;
+		this.pos = pos;
 	}
 }
 

@@ -2279,6 +2279,10 @@ class Compiler {
 		// Reset the display position so loading the module does not raise again (#6558).
 		hxc.parser.Parser.displayOffset = -1;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		// The same collection answers as JSON when json_out is set, under CRField over the module the
+		// path names so far.
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var jitems:Array<hxc.core.Json.JsonValue> = [];
 		if (tc.module != null) {
 			// An uppercase last pack segment names the module and tc.module a subtype of it
 			// sl_pack/s_module split).
@@ -2300,14 +2304,20 @@ class Compiler {
 			for (mt in m.types) {
 				var info = hxc.core.TypeFunctions.tInfos(mt);
 				if (info.isPrivate) continue;
-				if (tc.module == sModule)
+				if (tc.module == sModule) {
 					fields.push({kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null});
+					jitems.push(hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, jitems.length));
+				}
 				if (tc.isImport && info.path.name == tc.module) switch (mt) {
 					case TClassDecl(c):
 						for (cf in c.orderedStatics) {
 							if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
 							var kind = cf.kind.match(Method(_)) ? "method" : "var";
 							fields.push({kind: kind, name: cf.name, type: TPrinting.sTypeStr(cf.type), doc: cf.doc == null ? null : Ast.genDocText(cf.doc)});
+							jitems.push(hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf,
+								hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c)), true,
+								hxc.core.CompletionItem.CompletionTypeTools.fromType(function(_) return hxc.core.CompletionItem.ImportStatus.Imported, cf.type),
+								jitems.length));
 						}
 					case TEnumDecl(en):
 						for (name in en.constrs.keys()) {
@@ -2332,16 +2342,68 @@ class Compiler {
 						if (name.length > 0 && name.charCodeAt(0) >= "A".code && name.charCodeAt(0) <= "Z".code) {
 							seen.set(entry, true);
 							fields.push({kind: "type", name: name, type: "", doc: null});
+							jitems.push(moduleRefToJson(tc.pack, name, jitems.length));
 						}
 					} else if (FileSystem.isDirectory(full) && entry.length > 0
 							&& entry.charCodeAt(0) >= "a".code && entry.charCodeAt(0) <= "z".code) {
 						seen.set(entry, true);
 						fields.push({kind: "package", name: entry, type: "", doc: null});
+						jitems.push(hxc.core.CompletionItem.CompletionItem.packageToJson(tc.pack.concat([entry]), jitems.length));
 					}
 				}
 			}
 		}
+		if (ctx.jsonRpcId != null) {
+			// The mode's module path is the pack consumed so far, its last segment naming the module; an
+			// empty pack gives the empty path.
+			var mpack = tc.pack.copy();
+			var mname = mpack.length == 0 ? "" : mpack.pop();
+			var tp = tc.pos == null ? new Position(hxc.parser.Parser.displayFile, 0, 0) : tc.pos;
+			var item = hxc.core.Json.JsonValue.JObject([
+				{name: "kind", value: hxc.core.Json.JsonValue.JString("Module")},
+				{name: "args", value: hxc.core.Json.JsonValue.JObject([
+					{name: "path", value: hxc.core.Json.JsonValue.JObject([
+						{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in mpack) hxc.core.Json.JsonValue.JString(x)])},
+						{name: "moduleName", value: hxc.core.Json.JsonValue.JString(mname)}
+					])}
+				])}
+			]);
+			var mode = hxc.core.Json.JsonValue.JObject([
+				{name: "kind", value: hxc.core.Json.JsonValue.JInt(0)},
+				{name: "args", value: hxc.core.Json.JsonValue.JObject([
+					{name: "item", value: item},
+					{name: "range", value: gen.generatePosAsRange(tp)},
+					{name: "iterator", value: hxc.core.Json.JsonValue.JNull},
+					{name: "keyValueIterator", value: hxc.core.Json.JsonValue.JNull}
+				])}
+			]);
+			// None pos: the range is the path segment itself.
+			var result = hxc.core.Json.JsonValue.JObject([
+				{name: "items", value: hxc.core.Json.JsonValue.JArray(jitems)},
+				{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
+				{name: "mode", value: mode},
+				{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
+				{name: "replaceRange", value: gen.generatePosAsRange(tp)}
+			]);
+			answerOut(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result)));
+			return;
+		}
 		answerOut(hxc.compiler.DisplayXml.printFields(fields));
+	}
+
+	// A module that has not been loaded is named by its path alone, which is all the class-path walk
+	// knows about it.
+	static function moduleRefToJson(pack:Array<String>, name:String, index:Int):hxc.core.Json.JsonValue {
+		return hxc.core.Json.JsonValue.JObject([
+			{name: "kind", value: hxc.core.Json.JsonValue.JString("Module")},
+			{name: "args", value: hxc.core.Json.JsonValue.JObject([
+				{name: "path", value: hxc.core.Json.JsonValue.JObject([
+					{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in pack) hxc.core.Json.JsonValue.JString(x)])},
+					{name: "moduleName", value: hxc.core.Json.JsonValue.JString(name)}
+				])}
+			])},
+			{name: "index", value: hxc.core.Json.JsonValue.JInt(index)}
+		]);
 	}
 
 	// Each metadata argument whose span encloses the display position types as an expression; failures
