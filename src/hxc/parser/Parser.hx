@@ -52,6 +52,10 @@ class Parser {
 	// The keyword list for a type declaration position is DELAYED, so a more specific completion found
 	// later wins; it is answered only if nothing else did.
 	public static var delayedSyntaxCompletion:Null<Array<String>> = null;
+	// The delayed syntax completion carries the SUBJECT alongside the keyword list: the identifier the
+	// cursor sits in (if any) and the position the client replaces. The JSON lane reports both as
+	// filterString/replaceRange; the legacy lane prints neither.
+	public static var delayedSyntaxSubject:Null<{name:Null<String>, pos:Position}> = null;
 	// Set when the SOURCE wrote a metadata entry whose name the cursor is on. Only the
 	// parser can tell that: by the time fields are typed their metadata also holds injected
 	// entries, which carry the position of whatever they were attached to.
@@ -76,6 +80,7 @@ class Parser {
 		displayMetaName = null;
 		displaySuppressed = false;
 		delayedSyntaxCompletion = null;
+		delayedSyntaxSubject = null;
 		syntaxErrors = [];
 	}
 
@@ -2314,6 +2319,14 @@ class Parser {
 			case _: l;
 		};
 		delayedSyntaxCompletion = l;
+		// The subject is the identifier the cursor is IN when the next token is one, at that token's
+		// position; otherwise no name, at the next token's position.
+		var np = peekInfo().pos;
+		var sname:Null<String> = switch (peek()) {
+			case Const(CIdent(n)) if (np.min <= displayOffset && displayOffset <= np.max): n;
+			case _: null;
+		};
+		delayedSyntaxSubject = {name: sname, pos: np};
 	}
 
 	function parseTypeDecls(pack:Array<String>, mode:Int = 0, pmax:Int = -1):Array<TypeDecl> {

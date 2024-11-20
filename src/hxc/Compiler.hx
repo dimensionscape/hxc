@@ -873,9 +873,13 @@ class Compiler {
 			// success. An actual compile error wins: the request aborts on a recorded error before reporting
 			// a missing completion point. The DELAYED type-declaration keyword list is answered here, once
 			// nothing more specific has claimed the position.
-			if (hxc.parser.Parser.delayedSyntaxCompletion != null && ctx.jsonRpcId == null
-				&& hxc.parser.Parser.displayCompletionMode) {
-				answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
+			if (hxc.parser.Parser.delayedSyntaxCompletion != null && hxc.parser.Parser.displayCompletionMode) {
+				// The XML lane prints the keywords; the JSON lane sends the same list as a completion
+				// result. The type-declaration completion kind is 14.
+				if (ctx.jsonRpcId != null)
+					answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, hxc.parser.Parser.delayedSyntaxCompletion, 14)));
+				else
+					answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
 				return;
 			}
 			if (hxc.parser.Parser.displayFile != null && ctx.jsonRpcId == null && !ctx.hasError()) {
@@ -1002,7 +1006,10 @@ class Compiler {
 			answerOut(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
 			return;
 		} catch (sc:hxc.compiler.DisplayXml.SyntaxCompletion) {
-			answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
+			if (ctx.jsonRpcId != null)
+				answerOut(jsonRpcAnswer(ctx, jsonKeywordCompletion(ctx, sc.keywords, 14)));
+			else
+				answerOut(hxc.compiler.DisplayXml.printKeywords(sc.keywords));
 			return;
 		} catch (tl:hxc.compiler.DisplayXml.ToplevelCompletion) {
 			// Metadata display raises at the metadata ENTRY, so a cursor on the entry answers with the
@@ -2048,7 +2055,23 @@ class Compiler {
 		if (requestOutput != null) requestOutput.add(sv) else Sys.stderr().writeString(sv);
 	}
 
-	// The protocol envelope around a report-time answer.
+	// The protocol envelope around a report-time answer. the JSON shape every completion answers with
+	// - items, isIncomplete, the mode's kind, the filter string and the range the client replaces. a
+	// SYNTAX completion through it too; hxc only had the XML half, so display/completion at a
+	// type-declaration position answered nothing at all.
+	static function jsonKeywordCompletion(ctx:Context, keywords:Array<String>, kind:Int):String {
+		var items = [for (i in 0...keywords.length) hxc.core.CompletionItem.CompletionItem.keywordToJson(keywords[i], i)];
+		var subj = hxc.parser.Parser.delayedSyntaxSubject;
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var range = subj == null ? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
+			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subj.pos));
+		var filter = subj == null || subj.name == null ? "" : subj.name;
+		return '{"items":[' + [for (it in items) hxc.core.Json.stringOfJson(it)].join(",")
+			+ '],"isIncomplete":false,"mode":{"kind":' + kind + '}'
+			+ ',"filterString":' + haxe.Json.stringify(filter)
+			+ ',"replaceRange":' + range + '}';
+	}
+
 	static function jsonRpcAnswer(ctx:Context, resultJson:String):String {
 		return '{"jsonrpc":"2.0","id":' + ctx.jsonRpcId + ',"result":{"result":' + resultJson + ',"timestamp":' + Sys.time() + '}}';
 	}
