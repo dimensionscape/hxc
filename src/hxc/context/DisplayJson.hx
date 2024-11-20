@@ -302,6 +302,7 @@ class DisplayJson {
 					if (serverMessageNames.indexOf(f.name) == -1)
 						hctx.sendError([JString("Invalid print parame name: " + f.name)]);
 					serverPrintFlags.set(f.name, value);
+					hxc.compiler.ServerMessage.setByName(f.name, value);
 					results.push(JString("Printing " + f.name + " " + (value ? "enabled" : "disabled")));
 				}
 				hctx.jsonrpc.getOptParam(function() {

@@ -112,6 +112,8 @@ class Compiler {
 				var dir = args[i++];
 				try Sys.setCwd(dir) catch (_:Dynamic) {}
 			}
+			// A verbose startup turns on every server message.
+			if (a == "-v" || a == "--verbose") hxc.compiler.ServerMessage.enableAll();
 		}
 	}
 

@@ -506,7 +506,7 @@ class Genjson {
 		return jobject([field("kind", jstring(kind))].concat(fields1).concat([field("args", jobject(fields2))]));
 	}
 
-	static function sModuleSkipReason(reason:hxc.core.Type.ModuleSkipReason):String {
+	public static function sModuleSkipReason(reason:hxc.core.Type.ModuleSkipReason):String {
 		function loop(stack:Array<Path>, r:hxc.core.Type.ModuleSkipReason):String {
 			return switch (r) {
 				case DependencyDirty(path, r2):

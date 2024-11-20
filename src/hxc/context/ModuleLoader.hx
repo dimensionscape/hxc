@@ -136,8 +136,18 @@ class ModuleLoader {
 			path: mpath,
 			types: [],
 			statics: null,
-			extra: TypeFunctions.moduleExtra(full, ctx.defines.getSignature(), time, ctx.isMacro ? MMacro : MCode, [])
+			extra: TypeFunctions.moduleExtra(full, ctx.defines.getSignature(), time, ctx.isMacro ? MMacro : MCode, getPolicy(ctx, mpath))
 		};
+	}
+
+	// Accumulate matching module policies in reverse registration order.
+	public static function getPolicy(ctx:Context, mpath:Path):Array<hxc.core.Type.ModuleCheckPolicy> {
+		if (ctx.moduleCheckPolicies.length == 0) return [];
+		var sl1 = hxc.ast.Ast.fullDotPath2(mpath, mpath);
+		var acc:Array<hxc.core.Type.ModuleCheckPolicy> = [];
+		for (e in ctx.moduleCheckPolicies)
+			if (hxc.ast.Ast.matchPath(e.recursive, sl1, e.filter)) acc = e.policy.concat(acc);
+		return acc;
 	}
 
 	static function applyTypePatches(ctx:Context, path:Path, meta:Metadata, ?fields:Array<ClassField>):{meta:Metadata, fields:Array<ClassField>} {

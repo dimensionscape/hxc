@@ -225,7 +225,7 @@ class ServerCache {
 	// Re-add the cached module and its dependency subgraph to the current compilation, restoring each type
 	// from its typed snapshot.
 	static function addModules(com:Context, mRoot:ModuleDef, p:Position):Void {
-		function add(m0:ModuleDef, m:ModuleDef):Void {
+		function add(tabs:String, m0:ModuleDef, m:ModuleDef):Void {
 			if (m.extra.added >= compilationStep) return;
 			switch [m0.extra.kind, m.extra.kind] {
 				case [MCode, MMacro] | [MMacro, MCode]:
@@ -234,18 +234,17 @@ class ServerCache {
 						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
 				case _:
 					m.extra.added = compilationStep;
-					if (Sys.getEnv("HXC_SERVER_DBG") != null)
-						Sys.stdout().writeString("[server]   re-adding " + Context.sTypePath(m.path) + " (dep of " + Context.sTypePath(m0.path) + ")\n");
+					hxc.compiler.ServerMessage.reusing(com, tabs, m);
 					for (t in m.types) TypeFunctions.tInfos(t).restore();
 					// Adding the module: the duplicate-type check ran when the module first compiled;
 					// re-adding only registers it with the current context.
 					hxc.context.ModuleLoader.registerReusedModule(com, m);
 					for (name in m.extra.bindedRes.keys())
 						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
-					for (m2 in m.extra.deps) add(m0, m2);
+					for (m2 in m.extra.deps) add(tabs + "  ", m0, m2);
 			}
 		}
-		add(mRoot, mRoot);
+		add("", mRoot, mRoot);
 	}
 
 	// Every module file parsed while the server serves a request is entered into the signature context's
@@ -271,12 +270,9 @@ class ServerCache {
 		switch (checkModule(com, m, p)) {
 			case null:
 			case reason:
-				if (Sys.getEnv("HXC_SERVER_DBG") != null)
-					Sys.stdout().writeString("[server] skipping " + Context.sTypePath(m.path) + " (" + Std.string(reason) + ")\n");
+				hxc.compiler.ServerMessage.skippingDep(com, "", m, hxc.core.Genjson.sModuleSkipReason(reason));
 				return null;
 		}
-		if (Sys.getEnv("HXC_SERVER_DBG") != null)
-			Sys.stdout().writeString("[server] reusing " + Context.sTypePath(m.path) + "\n");
 		addModules(com, m, p);
 		return m;
 	}

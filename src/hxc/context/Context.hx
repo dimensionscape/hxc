@@ -27,6 +27,11 @@ class Context {
 	public var globalMetadata:Array<{filter:Array<String>, meta:hxc.ast.Ast.MetadataEntry, recursive:Bool, toTypes:Bool, toFields:Bool}> = [];
 
 	/**
+	 * Module-check policies and their dot-path filters, including recursive matching.
+	 */
+	public var moduleCheckPolicies:Array<{filter:Array<String>, policy:Array<hxc.core.Type.ModuleCheckPolicy>, recursive:Bool}> = [];
+
+	/**
 	 * Deprecated Compiler type patches, keyed by type and optional field, applied during module
 	 * loading.
 	 */

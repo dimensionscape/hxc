@@ -460,6 +460,23 @@ class EvalMacro {
 		reg2("typePatch", "type_patch", function(a) return typePatchValue(com, a));
 		reg2("metaPatch", "meta_patch", function(a) return metaPatchValue(com, a));
 		reg2("addGlobalMetadataImpl", "add_global_metadata_impl", function(a) return addGlobalMetadataValue(com, a));
+		reg2("server_add_module_check_policy", "server_add_module_check_policy", function(a) {
+			var filters = [for (v in arrOf(a[0])) strOf(v)];
+			var policy = [for (v in arrOf(a[1])) moduleCheckPolicyOfInt(intOf(v))];
+			var recursive = a[2] == VTrue;
+			function add(c:Context):Void {
+				// The list is folded in order, so the last filter of the call ends up in front.
+				for (s in filters) c.moduleCheckPolicies.unshift({filter: s.split("."), policy: policy, recursive: recursive});
+				for (m in c.modules) m.extra.checkPolicy = hxc.context.ModuleLoader.getPolicy(c, m.path);
+			}
+			// ContextOptions: 0 NormalContext, 1 MacroContext, 2 NormalAndMacroContext.
+			switch (intOf(a[3])) {
+				case 1: if (macroCom != null) add(macroCom);
+				case 2: add(com); if (macroCom != null) add(macroCom);
+				case _: add(com);
+			}
+			return VNull;
+		});
 		// Compiler.registerCustomDefine / registerCustomMetadata store user documentation entries. /
 		// register_metadata_impl.
 		inline function decodeUserDoc(o:EvalValue, src:EvalValue):hxc.context.Context.UserDocEntry {
@@ -2209,6 +2226,17 @@ class EvalMacro {
 
 	static function strOf(v:EvalValue):String {
 		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw "macro decode: expected string"; };
+	}
+
+	// The module check policies, in the order haxe.macro.CompilationServer declares them.
+	static function moduleCheckPolicyOfInt(i:Int):hxc.core.Type.ModuleCheckPolicy {
+		return switch (i) {
+			case 0: NoCheckFileTimeModification;
+			case 1: CheckFileContentModification;
+			case 2: NoCheckDependencies;
+			case 3: NoCheckShadowing;
+			case _: Retype;
+		}
 	}
 
 	static function intOf(v:EvalValue):Int {
