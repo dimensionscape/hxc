@@ -746,6 +746,7 @@ class Compiler {
 		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
+			checkDisplayFile(ctx);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 			if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
 			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
@@ -2484,6 +2485,26 @@ class Compiler {
 		for (k in ctx.userMetas.keys())
 			fields.push({kind: "metadata", name: "@" + k, type: "", doc: ctx.userMetas.get(k).doc});
 		answerOut(hxc.compiler.DisplayXml.printFields(fields));
+	}
+
+	// The display file is looked up in the cache, and a file it does not hold is removed and its
+	// modules tainted, so the request re-parses and re-types it instead of answering from something
+	// stale. hxc does not answer from a cached module, so a successful lookup only means "leave the
+	// cache alone".
+	static function checkDisplayFile(ctx:Context):Void {
+		if (ctx.displaySpec == null) return;
+		// The DMNone report modes (diagnostics, statistics, compiledTypes) are excluded at the call site,
+		// which runs only when the display kind is not DMNone.
+		if (isDisplay(ctx, "diagnostics") || isDisplay(ctx, "statistics") || isDisplay(ctx, "compiledTypes")) return;
+		var parts = displayParts(ctx);
+		if (parts.length == 0) return;
+		var file = parts[0];
+		if (file == null || file == "" || file == "?") return;
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var key = full.toLowerCase();
+		if (hxc.context.DisplayJson.cache.hasFile(key)) return;
+		hxc.context.DisplayJson.cache.removeFiles(key);
+		hxc.context.DisplayJson.cache.taintModules(key, "check_display_file");
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {

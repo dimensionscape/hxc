@@ -74,6 +74,11 @@ class CompilationCache {
 		return out;
 	}
 
+	public function hasFile(key:String):Bool {
+		for (cc in contextList) if (cc.files.exists(key)) return true;
+		return false;
+	}
+
 	public function removeFiles(key:String):Void {
 		for (cc in contextList) cc.removeFile(key);
 	}
