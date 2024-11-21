@@ -691,8 +691,9 @@ class Compiler {
 					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
 					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
 					// package loads as that package's module; the basename alone would look for it at the
-					// classpath root.
-					var path = displayModulePath(ctx, dparts[0]);
+					// classpath root. Each real file maps to a compile root; the marker the protocol uses when a
+					// request names no file at all is not one.
+					var path = dparts[0] == "?" ? null : displayModulePath(ctx, dparts[0]);
 					if (path != null) {
 						// A dotted module name is Name.macro (never a compile root: the compiler would not
 						// find it) or Name.<target>, which loads as Name.
