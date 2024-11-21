@@ -2232,10 +2232,10 @@ class Compiler {
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
 			group.items.push(item);
 		}
-		// An import declaration nothing ever resolved through.
-		for (key in ctx.moduleImports.keys()) {
-			var imps = ctx.moduleImports.get(key);
-			for (e in imps.importPositions) {
+		// An import declaration nothing ever resolved through. reads them off com.modules, not off the
+		// typer, so a module served back from the CACHE still reports its unused imports.
+		for (m in ctx.modules) {
+			for (e in m.extra.display.importPositions) {
 				if (e.used || e.failed == true || !isDiagnosticsFile(ctx, e.p.file)) continue;
 				var displayFile = e.p.file;
 				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)

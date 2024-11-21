@@ -189,7 +189,7 @@ class TypeFunctions {
 			display: {
 				inlineCalls: [],
 				typeHints: [],
-				importPositions: new Map()
+				importPositions: []
 			},
 			cacheState: MSGood,
 			added: 0,

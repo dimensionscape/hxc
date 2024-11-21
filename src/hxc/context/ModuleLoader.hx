@@ -676,6 +676,8 @@ class ModuleLoader {
 		m.types = decls;
 		applyGlobalMetadata(ctx, m, decls);
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
+		// Share import records so later usage marks remain visible on the module.
+		m.extra.display.importPositions = imports.importPositions;
 	}
 
 	static function applyGlobalMetadata(ctx:Context, m:ModuleDef, decls:Array<ModuleType>):Void {

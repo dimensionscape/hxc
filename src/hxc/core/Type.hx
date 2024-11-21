@@ -592,9 +592,14 @@ class ModuleDef {
 class ModuleDefDisplay {
 	public var inlineCalls:Array<{p1:Position, p2:Position}>;
 	public var typeHints:Array<{p1:Position, p2:Position}>;
-	public var importPositions:Map<Position, Ref<Bool>>;
+	// importPositions: one entry per import declaration of this module, with the flag set when the
+	// import is used. It lives on the module, so a module served back from the cache still reports its
+	// unused imports (the diagnostics walk every module). hxc records a position before resolving
+	// anything, so the entry also carries whether the import failed to load, and a failed entry counts
+	// as never registered.
+	public var importPositions:Array<{p:Position, used:Bool, ?failed:Bool}>;
 	public function new(inlineCalls:Array<{p1:Position, p2:Position}>, typeHints:Array<{p1:Position, p2:Position}>,
-			importPositions:Map<Position, Ref<Bool>>) {
+			importPositions:Array<{p:Position, used:Bool, ?failed:Bool}>) {
 		this.inlineCalls = inlineCalls;
 		this.typeHints = typeHints;
 		this.importPositions = importPositions;
