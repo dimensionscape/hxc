@@ -201,8 +201,22 @@ class DisplayJson {
 				if (file != null) {
 					var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 					hctx.com.displaySpec = full + "@0@diagnostics";
+					hctx.com.fileContents = [{file: full, contents: null}];
 				} else {
-					hctx.com.displaySpec = "?@0@diagnostics";
+					// Without file, fileContents supplies the complete diagnostics file set and any unsaved
+					// sources.
+					var entries = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getArrayParam("fileContents"), []);
+					var fcs:Array<{file:String, contents:Null<String>}> = [];
+					for (e in entries) switch (e) {
+						case JObject(fl):
+							var ef = hctx.jsonrpc.getStringField("fileContents", "file", fl);
+							var full = try sys.FileSystem.fullPath(ef) catch (_:Dynamic) ef;
+							var contents = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringField("fileContents", "contents", fl), null);
+							fcs.push({file: full, contents: contents});
+						case _: throw new hxc.core.JsonRpc.InvalidArgument("fileContents");
+					}
+					hctx.com.fileContents = fcs;
+					hctx.com.displaySpec = (fcs.length == 0 ? "?" : fcs[0].file) + "@0@diagnostics";
 				}
 				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}},

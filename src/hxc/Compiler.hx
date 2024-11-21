@@ -2057,6 +2057,13 @@ class Compiler {
 		var parts = displayParts(ctx);
 		if (parts.length == 0) return true;
 		if (pfile == "?") return true;
+		// Carries the whole file set the request named, so a diagnostics run over fileContents reports on
+		// each of them.
+		if (ctx.fileContents.length > 1) {
+			var got = (try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile).toLowerCase();
+			for (fc in ctx.fileContents) if (fc.file.toLowerCase() == got) return true;
+			return false;
+		}
 		var want = try FileSystem.fullPath(parts[0]) catch (_:Dynamic) parts[0];
 		var got = try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
 		return want.toLowerCase() == got.toLowerCase();

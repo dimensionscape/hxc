@@ -98,6 +98,15 @@ class ModuleLoader {
 	}
 
 	public static function moduleFileContent(ctx:Context, file:String):String {
+		if (ctx.fileContents.length > 0) {
+			var f = StringTools.replace(file, "\\", "/").toLowerCase();
+			for (fc in ctx.fileContents) {
+				if (fc.contents == null) continue;
+				var k = StringTools.replace(fc.file, "\\", "/").toLowerCase();
+				if (k == f || StringTools.endsWith(k, "/" + f) || StringTools.endsWith(f, "/" + k))
+					return Position.registerFileContent(file, fc.contents);
+			}
+		}
 		var df = hxc.parser.Parser.displayFile;
 		if (df != null && ctx.defines.rawDefined("display_stdin")) {
 			var f = StringTools.replace(file, "\\", "/");

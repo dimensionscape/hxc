@@ -22,6 +22,12 @@ class Context {
 	public var args:Array<String> = [];
 
 	/**
+	 * Display-request files and their unsaved contents; null reads from disk. Diagnostics requests
+	 * supply the complete file set.
+	 */
+	public var fileContents:Array<{file:String, contents:Null<String>}> = [];
+
+	/**
 	 * Global metadata registrations: dot-path filter and recursive, type and field flags.
 	 */
 	public var globalMetadata:Array<{filter:Array<String>, meta:hxc.ast.Ast.MetadataEntry, recursive:Bool, toTypes:Bool, toFields:Bool}> = [];
