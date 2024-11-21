@@ -1413,7 +1413,7 @@ class EvalMacro {
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
-		doReuse();
+		doReuse(com);
 		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length)) {
 			building = true;
 			try {
@@ -1491,14 +1491,20 @@ class EvalMacro {
 	public static function resetPerRequest():Void {
 		pendingDisplayEvict = true;
 		pendingMacroReuse = true;
+		// The build macros a compilation ran are its own: a new request must run them again, since its
+		// classes are typed from source again.
+		builtClasses = new Map();
 	}
 
 	// Resets the static prototypes for a new compilation.
-	static function doReuse():Void {
+	static function doReuse(com:Context):Void {
 		if (!pendingMacroReuse) return;
 		pendingMacroReuse = false;
 		if (macroCtx == null) return;
 		var ec = macroCtx;
+		// Reuse also swaps in the new compilation's api: every macro API closure holds the com it was
+		// registered with, and the previous request's is dead.
+		registerContext(ec, com);
 		EvalContext.setCtx(ec);
 		for (key in ec.staticInits.keys()) {
 			var e = ec.staticInits.get(key);

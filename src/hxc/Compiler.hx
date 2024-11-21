@@ -913,12 +913,13 @@ class Compiler {
 			// Fix com.main and the static-init type order before any target consumes them which runs for
 			// every target including none)
 			hxc.typing.Finalization.run(ctx);
-			// A fully-typed compile with dms_populate_cache caches its modules into the process cache,
+			// A fully-typed compile that populates the cache caches its modules into the process cache,
 			// activating server/module and server/type lookups for later requests in the same process. Both
-			// flags hold outside display runs, and them again for a JSON diagnostics request, which is a
-			// DMNone compilation of the whole program; the LEGACY diagnostics request clears
-			// dms_populate_cache instead .
-			if (ctx.displaySpec == null || (isDisplay(ctx, "diagnostics") && ctx.jsonRpcId != null)) {
+			// flags hold outside display runs, and a JSON diagnostics request sets them again, being a
+			// whole-program report compilation; the LEGACY diagnostics request does not populate the cache.
+			// A compilation that ERRORED is not cached, so its half-typed modules are not offered to the
+			// next request.
+			if (!ctx.hasError() && (ctx.displaySpec == null || (isDisplay(ctx, "diagnostics") && ctx.jsonRpcId != null))) {
 				hxc.context.DisplayJson.cache.cacheContext(ctx);
 				hxc.compiler.ServerMessage.cachedModules(ctx, "", ctx.modules.length);
 			}
