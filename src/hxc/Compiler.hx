@@ -631,6 +631,9 @@ class Compiler {
 		// which also joins the compile roots. The statics install before the init macros so a display
 		// position typed during a --macro run records.
 		var displayRoot:Null<Path> = null;
+		// Every file the display request names becomes a compile root, so a file the program never
+		// reaches is still parsed and reported on.
+		var displayRoots:Array<Path> = [];
 		{
 			var dparts = displayParts(ctx);
 			var dmode = dparts.length >= 3 ? dparts[2] : "";
@@ -697,6 +700,18 @@ class Compiler {
 						if (nparts.length == 1) displayRoot = path;
 						else if (nparts.length == 2 && nparts[1] != "macro") displayRoot = {pack: path.pack, name: nparts[0]};
 					}
+					for (fc in ctx.fileContents) {
+						var fp = displayModulePath(ctx, fc.file);
+						if (fp == null) continue;
+						var fnparts = fp.name.split(".");
+						var root = if (fnparts.length == 1) fp
+							else if (fnparts.length == 2 && fnparts[1] != "macro") {pack: fp.pack, name: fnparts[0]}
+							else null;
+						if (root == null) continue;
+						var dup = false;
+						for (r in displayRoots) if (r.name == root.name && r.pack.join(".") == root.pack.join(".")) dup = true;
+						if (!dup) displayRoots.push(root);
+					}
 				}
 			}
 		}
@@ -749,6 +764,7 @@ class Compiler {
 			checkDisplayFile(ctx);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 			if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
+			for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
 			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots are
@@ -2057,13 +2073,14 @@ class Compiler {
 		var parts = displayParts(ctx);
 		if (parts.length == 0) return true;
 		if (pfile == "?") return true;
-		// Carries the whole file set the request named, so a diagnostics run over fileContents reports on
-		// each of them.
-		if (ctx.fileContents.length > 1) {
+		// An empty file list reports on every file (a project-wide diagnostics request), a non-empty one
+		// only on its members - and a JSON request fills that list from the whole fileContents set.
+		if (ctx.fileContents.length > 0) {
 			var got = (try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile).toLowerCase();
 			for (fc in ctx.fileContents) if (fc.file.toLowerCase() == got) return true;
 			return false;
 		}
+		if (parts[0] == "?") return true;
 		var want = try FileSystem.fullPath(parts[0]) catch (_:Dynamic) parts[0];
 		var got = try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
 		return want.toLowerCase() == got.toLowerCase();
