@@ -287,7 +287,16 @@ class EvalMacro {
 			} else {
 				tpath = {tpackage: [], tname: last, tsub: null, tparams: []};
 			}
-			var t = Typeload.loadInstance(com, [], tpath, curPos, true);
+			// Context.getType resolves through the TYPER context of the call, so a bare name reaches the
+			// sub-types of the module the macro was called from. curModule is that module (set at the
+			// invocation); the host com's own currentModule is whatever typing left behind.
+			var savedGetTypeMod = com.currentModule;
+			if (curModule != null) com.currentModule = curModule;
+			var t = try Typeload.loadInstance(com, [], tpath, curPos, true) catch (e:Dynamic) {
+				com.currentModule = savedGetTypeMod;
+				throw e;
+			};
+			com.currentModule = savedGetTypeMod;
 			// The loaded type's build macros run inside the call, like the reference's
 			// PBuildClass delays flushing during get_type (an @:autoBuild subclass in the
 			// same module reports from here).
