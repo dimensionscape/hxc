@@ -1055,6 +1055,10 @@ class Compiler {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
 			exitRequest(1);
+		} catch (e:RequestAbort) {
+			// The request already reported and chose its exit code; it unwinds to the wait loop
+			// rather than being reported a second time as an unexpected error.
+			throw e;
 		} catch (e:Dynamic) {
 			answerOut("Error: " + Std.string(e) + "\n");
 			exitRequest(1);
