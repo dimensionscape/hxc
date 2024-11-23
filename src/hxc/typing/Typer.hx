@@ -924,9 +924,20 @@ class Typer {
 				// CONSTRUCTED - a class or abstract with a constructor, inherited ones included, or a type
 				// parameter whose constraints make it constructible. Nothing else survives.
 				try typeNew(ctx, tp, el, withType, p)
-				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion)
-					throw new hxc.compiler.DisplayXml.ToplevelCompletion(
-						[for (it in tc.items) if (newCandidateSurvives(ctx, it, p)) it]);
+				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+					var items = [for (it in tc.items) if (newCandidateSurvives(ctx, it, p)) it];
+					var keep = new haxe.ds.StringMap<Bool>();
+					for (it in items) if (it.path != null) keep.set(it.path, true);
+					var mts = tc.moduleTypes == null ? null
+						: [for (mt in tc.moduleTypes) if (keep.exists(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path))) mt];
+					var out = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
+					// The filtered collection answers as CRNew (10), carrying the subject the raise built -
+					// the JSON lane has nothing else to report with.
+					out.kind = 10;
+					out.subjectPos = tc.subjectPos;
+					out.subjectName = tc.subjectName;
+					throw out;
+				}
 			case EFunction(kind, f):
 				// An anonymous function as a plain STATEMENT has no receiver for its value.
 				if (withType.match(NoValue)) switch (kind) {
