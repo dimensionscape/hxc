@@ -1216,6 +1216,9 @@ class ModuleLoader {
 		m.extra.processed = 0;
 	}
 
+	// While a module is retyped, only modules already cached may load.
+	public static var loadOnlyCachedModules:Bool = false;
+
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
 		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
@@ -1227,6 +1230,11 @@ class ModuleLoader {
 			var cached = hxc.context.ServerCache.typeModule(ctx, m, p);
 			if (cached != null) { addDependency(ctx.currentModule, cached); return cached; }
 		}
+		// While a module is being RETYPED nothing new may be loaded - a path that is not already cached is
+		// what tells the retyper its signature depends on something the compilation no longer has (Could
+		// not load).
+		if (loadOnlyCachedModules)
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 		if (ctx.moduleNonexistentLut.exists(key))
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 

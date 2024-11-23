@@ -194,8 +194,19 @@ class ServerCache {
 					m.extra.cacheState = MSUnknown;
 					runChecks();
 			};
-			// The Retype policy would attempt_retyping on DependencyDirty here; the policy is only
-			// installed via server/configure, which hxc does not accept yet.
+			// Under the Retype policy a DependencyDirty module is offered to the retyper first; a
+			// successful re-pairing keeps it, a failure leaves it dirty.
+			switch (dirty) {
+				case DependencyDirty(_, _) if (hasPolicy(Retype)):
+					var reason = hxc.context.Retyper.attemptRetyping(com, m, p);
+					if (reason == null) {
+						hxc.compiler.ServerMessage.retyperOk(com, "", m);
+						dirty = null;
+					} else {
+						hxc.compiler.ServerMessage.retyperFail(com, "", m, reason);
+					}
+				case _:
+			}
 			switch (dirty) {
 				case null:
 					// Clean is an assumption until the whole subgraph checks out.
