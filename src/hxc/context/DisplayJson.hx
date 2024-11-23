@@ -32,7 +32,7 @@ class DisplayJson {
 	public static var cache = new hxc.context.CompilationCache.CompilationCache();
 
 	static var doNotCheckModules = false;
-	static var legacyCompletion = false;
+	public static var legacyCompletion = false;
 	static var serverPrintFlags = new haxe.ds.StringMap<Bool>();
 
 	static var serverMessageNames = [

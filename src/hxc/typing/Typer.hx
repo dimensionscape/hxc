@@ -2554,7 +2554,11 @@ class Typer {
 					var dir = cp + rel;
 					if (sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir)) { hit = true; break; }
 				}
-				if (hit) throw new hxc.parser.Parser.TypePathCompletion(segments, null, false);
+				// The dot-path package raise is the LEGACY answer only; the JSON protocol answers the same
+				// position with the toplevel collection instead false whenever json_out is set).
+				if (hit && (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion))
+					throw new hxc.parser.Parser.TypePathCompletion(segments, null, false);
+				if (hit && displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
 			}
 			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
