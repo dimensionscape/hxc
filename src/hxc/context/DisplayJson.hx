@@ -264,6 +264,8 @@ class DisplayJson {
 				var m = cc.findModule(path);
 				if (m == null) hctx.sendError([JString("No such module")]);
 				for (mt in m.types) {
+					// Restore each class before serialization to expose its pre-filter typed state.
+					switch (mt) { case TClassDecl(c): c.restore(); case _: }
 					var infos = hxc.core.TypeFunctions.tInfos(mt);
 					if (infos.path.name == typeName)
 						hctx.sendResult(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMMinimum).generateModuleType(mt));

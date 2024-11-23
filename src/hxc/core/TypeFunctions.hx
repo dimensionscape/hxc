@@ -298,7 +298,13 @@ class TypeFunctions {
 			// that nothing may add a dependency after the save without making the module read as uncached;
 			// here the split keeps the cache mark intact so a reused module's dependencies (added while
 			// re-typing a dirty root above it) do not force it back through the filters.
-			if (!skip_postprocess) m.extra.resolved = 0;
+			if (!skip_postprocess) {
+				m.extra.resolved = 0;
+				// Also clears the POST-PROCESSING mark, so a module served back from the cache runs through the
+				// filters again now that its dependency set changed (issue #10635) - and its save_class_state
+				// snapshot is retaken, which keeps a @:generic specialization another module added to it.
+				m.extra.processed = 0;
+			}
 		}
 	}
 
