@@ -49,10 +49,24 @@ class TexprTools {
 	// underlying module type, so the runtime value carries the concrete class/enum path.
 	public static function makeTypeExpr(mt:ModuleType, p:Position):TExpr {
 		var resolved = TypeFunctions.resolveTypedef(mt);
+		// The type of a type EXPRESSION is a private typedef named after what it refers to -
+		// `Class<pack.Name>`, `Enum<..>`, `Abstract<..>` - wrapping the statics anon. Everything that
+		// reads
+		// the type follows through it; the name is what the @:generic name builder (the TType arm) spells
+		// into a specialization's field name.
+		inline function wrap(m:ModuleDef, prefix:String, path:hxc.core.Globals.Path, pos:Position, inner:T):T {
+			var td = TypeFunctions.mkTypedef(m, {pack: [], name: prefix + "<" + hxc.core.Globals.sTypePath(path) + ">"}, pos, Position.nullPos, inner);
+			td.isPrivate = true;
+			return TType(td, []);
+		}
 		var t = switch (resolved) {
-			case TClassDecl(c): TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics);
-			case TEnumDecl(e): TypeFunctions.mkAnon(new Ref(EnumStatics(e)));
-			case TAbstractDecl(a): TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null);
+			case TClassDecl(c):
+				wrap(c.module, "Class", c.path, c.pos, TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics));
+			case TEnumDecl(e):
+				wrap(e.module, "Enum", e.path, e.pos, TypeFunctions.mkAnon(new Ref(EnumStatics(e))));
+			case TAbstractDecl(a):
+				wrap(a.module, "Abstract", a.path, a.pos,
+					TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null));
 			case _: throw new TypingError("Invalid module type", p);
 		};
 		return TypeFunctions.mk(TTypeExpr(resolved), t, p);
