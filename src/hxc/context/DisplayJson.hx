@@ -96,6 +96,9 @@ class DisplayJson {
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var offset = requiresOffset ? hctx.jsonrpc.getIntParam("offset") : 0;
 		hctx.com.displaySpec = full + "@" + offset + "@" + mode;
+		// Prefer supplied unsaved contents over the file on disk.
+		var contents = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("contents"), null);
+		hctx.com.fileContents = [{file: full, contents: contents}];
 		hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 	}
 

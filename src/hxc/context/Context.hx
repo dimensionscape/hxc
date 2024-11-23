@@ -296,6 +296,8 @@ class Context {
 		c.debug = this.debug;
 		for (name in this.resourceOrder) c.addResource(name, this.resources.get(name));
 		c.initMacros = this.initMacros.copy();
+		// Copy unsaved display contents into the macro world.
+		c.fileContents = this.fileContents.copy();
 		return c;
 	}
 
