@@ -75,8 +75,12 @@ class CompilationCache {
 	}
 
 	public function hasFile(key:String):Bool {
-		for (cc in contextList) if (cc.files.exists(key)) return true;
-		return false;
+		return findFile(key) != null;
+	}
+
+	public function findFile(key:String):Null<CachedFile> {
+		for (cc in contextList) if (cc.files.exists(key)) return cc.files.get(key);
+		return null;
 	}
 
 	public function removeFiles(key:String):Void {

@@ -2527,9 +2527,51 @@ class Compiler {
 		if (file == null || file == "" || file == "?") return;
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var key = full.toLowerCase();
-		if (hxc.context.DisplayJson.cache.hasFile(key)) return;
+		var cfile = hxc.context.DisplayJson.cache.findFile(key);
+		if (cfile != null && checkDisplayModuleOf(ctx, full, cfile)) return;
 		hxc.context.DisplayJson.cache.removeFiles(key);
 		hxc.context.DisplayJson.cache.taintModules(key, "check_display_file");
+	}
+
+	// The display file's module goes through the module-typing hook, and one that comes back is checked as
+	// a display module; anything that fails on the way is a lookup failure, which taints the file instead.
+	static function checkDisplayModuleOf(ctx:Context, full:String, cfile:hxc.context.CompilationCache.CachedFile):Bool {
+		if (cfile.decls == null) return false;
+		var path = displayModulePath(ctx, full);
+		if (path == null) return false;
+		var nparts = path.name.split(".");
+		if (nparts.length > 1) {
+			if (nparts.length != 2 || nparts[1] == "macro") return false;
+			path = {pack: path.pack, name: nparts[0]};
+		}
+		var m = try hxc.context.ServerCache.typeModule(ctx, path, Position.nullPos) catch (_:Dynamic) null;
+		if (m == null) return false;
+		// The module's IMPORT declarations run into it first (typing an import-only list into the module
+		// adds no types), so a name in the field below resolves the way the file resolves it.
+		hxc.context.ModuleLoader.typeImportsIntoModule(ctx, m,
+			[for (d in cfile.decls) if (d.decl.match(EImport(_) | EUsing(_))) d]);
+		// The display-module check pairs the cached SYNTAX back with the cached types by name position and
+		// re-types the one field the cursor is in, so the display hooks fire on it. Its result is dropped:
+		// the cached module is shared with every later request.
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c):
+				var d:Null<hxc.ast.Ast.TypeDecl> = null;
+				for (dd in cfile.decls) switch (dd.decl) {
+					case EClass(cd) if (cd.dName.pos.min == c.namePos.min && cd.dName.pos.max == c.namePos.max): d = dd;
+					case _:
+				}
+				if (d == null) continue;
+				ctx.declOfType.set(Context.pathKey(c.path), {decl: d.decl, pos: d.pos});
+				for (cf in c.orderedFields.concat(c.orderedStatics)) {
+					if (!hxc.typing.Typer.atDisplayPos(cf.pos)) continue;
+					var saved = cf.expr;
+					cf.expr = null;
+					try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (e:Dynamic) { cf.expr = saved; throw e; }
+					cf.expr = saved;
+				}
+			case _:
+		}
+		return true;
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {

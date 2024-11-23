@@ -192,7 +192,13 @@ class ModuleLoader {
 		return {meta: classMeta, fields: result};
 	}
 
-	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>):Void {
+	// Restore cached module imports without replacing existing types; import-only declarations append
+	// no types.
+	public static function typeImportsIntoModule(ctx:Context, m:ModuleDef, imports:Array<TypeDecl>):Void {
+		createModuleTypes(ctx, m, handleImportHx(ctx, m, imports), true);
+	}
+
+	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
 		var hasDeclaration = false;
@@ -673,7 +679,7 @@ class ModuleLoader {
 			m.statics = c;
 		}
 
-		m.types = decls;
+		if (keepTypes) m.types = m.types.concat(decls) else m.types = decls;
 		applyGlobalMetadata(ctx, m, decls);
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
 		// Share import records so later usage marks remain visible on the module.
