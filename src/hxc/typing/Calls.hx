@@ -1166,6 +1166,11 @@ class Calls {
 			target = genericMethodContainer(ctx, host, cf, params);
 			name = cf.name;
 		}
+		// The class the specialization is ADDED to depends on every module its type parameters come from,
+		// over the raw monos - the followed list has already lost the typedef that names the module. That
+		// dependency is what clears the class's post-processing mark, so a reused module re-snapshots
+		// WITH the new field.
+		setTypeParameterDependencies(target.module, monos);
 		var fields = stat ? target.statics : target.fields;
 		var ordered = stat ? target.orderedStatics : target.orderedFields;
 		var cf2 = fields.get(name);
@@ -1447,6 +1452,33 @@ class Calls {
 	// The raw type names the part (no eager follow), so a typedef parameter keeps its typedef path
 	// (Issue7985 gen_..._Rec); only a non-top unknown degrades to "_" through follow_or, and Dynamic
 	// spells "Dynamic" only at top.
+	static function setTypeParameterDependencies(mg:Null<ModuleDef>, tl:TParams):Void {
+		if (mg == null) return;
+		var depStack:Array<T> = [];
+		function loop(t:T):Void {
+			for (x in depStack) if (x == t) return;
+			depStack.push(t);
+			inline function addDep(m:Null<ModuleDef>, tl2:TParams):Void {
+				if (m != null) hxc.context.ModuleLoader.addDependency(mg, m);
+				for (t2 in tl2) loop(t2);
+			}
+			switch (t) {
+				case TInst(c, tl2): addDep(c.module, tl2);
+				case TEnum(e, tl2): addDep(e.module, tl2);
+				case TType(td, tl2): addDep(td.module, tl2);
+				case TAbstract(a, tl2): addDep(a.module, tl2);
+				case TMono(r): if (r.type != null) loop(r.type);
+				case TLazy(r): loop(TypeFunctions.lazyType(r));
+				case TDynamic(t2): if (t2 != null) loop(t2);
+				case TAnon(an): for (n in an.fields.keys()) loop(an.fields.get(n).type);
+				case TFun(sig):
+					for (a in sig.args) loop(a.t);
+					loop(sig.ret);
+			}
+		}
+		for (t in tl) loop(t);
+	}
+
 	static function genericLoop(top:Bool, t:T):String {
 		// Recursive structures would loop forever; past a sane depth the part degrades to "_"
 		// (hxc guard; the reference cannot recurse here because typedefs stop unfollowed).

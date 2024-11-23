@@ -1209,6 +1209,11 @@ class ModuleLoader {
 	public static function addDependency(m:Null<ModuleDef>, mdep:ModuleDef):Void {
 		if (m == null || m == mdep) return;
 		m.extra.deps.set(mdep.id, mdep);
+		// Adding a dependency also clears the POST-PROCESSING mark: a module whose dependency set changed
+		// runs the filters again, which retakes its class state snapshot - so a @:generic specialization
+		// another module adds to it is IN that snapshot. hxc's own resolve gate is deliberately left alone;
+		// clearing it mid-typing re-derives signatures the bodies have already bound.
+		m.extra.processed = 0;
 	}
 
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
