@@ -2555,13 +2555,26 @@ class Compiler {
 		// the cached module is shared with every later request.
 		for (mt in m.types) switch (mt) {
 			case TClassDecl(c):
-				var d:Null<hxc.ast.Ast.TypeDecl> = null;
+				// :22/:53: the syntax is found by name position - an abstract's impl class carries the
+				// abstract's own, so both kinds of declaration pair back the same way.
+				var found = false;
 				for (dd in cfile.decls) switch (dd.decl) {
-					case EClass(cd) if (cd.dName.pos.min == c.namePos.min && cd.dName.pos.max == c.namePos.max): d = dd;
+					case EClass(cd) if (cd.dName.pos.min == c.namePos.min && cd.dName.pos.max == c.namePos.max):
+						ctx.declOfType.set(Context.pathKey(c.path), {decl: dd.decl, pos: dd.pos});
+						found = true;
+					case EAbstract(ad):
+						// For an abstract's impl class the check works off the ABSTRACT's fields, found by its name
+						// position; hxc looks those fields up through the synthetic impl declaration, so it is
+						// rebuilt here.
+						switch (c.kind) {
+							case KAbstractImpl(a) if (ad.dName.pos.min == a.namePos.min && ad.dName.pos.max == a.namePos.max):
+								hxc.context.ModuleLoader.registerAbstractImplDecl(ctx, c, a, ad);
+								found = true;
+							case _:
+						}
 					case _:
 				}
-				if (d == null) continue;
-				ctx.declOfType.set(Context.pathKey(c.path), {decl: d.decl, pos: d.pos});
+				if (!found) continue;
 				for (cf in c.orderedFields.concat(c.orderedStatics)) {
 					if (!hxc.typing.Typer.atDisplayPos(cf.pos)) continue;
 					var saved = cf.expr;
