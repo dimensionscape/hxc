@@ -1618,6 +1618,16 @@ class ModuleLoader {
 	// Rebuilding it is what lets a module served back from the cache be re-inspected field by field (the
 	// display check of a KAbstractImpl class).
 	public static function registerAbstractImplDecl(ctx:Context, c:TClass, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>):Void {
+		var implDef:Definition<ClassFlag, Array<ClassField>> = {
+			dName: {name: c.path.name, pos: c.pos}, dDoc: null, dParams: [], dMeta: c.meta,
+			dFlags: [HPrivate], dData: abstractImplFields(ctx, c, a, d)
+		};
+		ctx.declOfType.set(Context.pathKey(c.path), {decl: EClass(implDef), pos: c.pos});
+	}
+
+	// The abstract's own fields as the IMPL class declares them (the `this` argument injected, `new`
+	// renamed).
+	public static function abstractImplFields(ctx:Context, c:TClass, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>):Array<ClassField> {
 		var p = c.pos;
 		var aTParams:Array<TypeParamOrConst> = [
 			for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
@@ -1625,12 +1635,7 @@ class ModuleLoader {
 		var aT:TypeHint = {ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p};
 		var thisT:TypeHint = aT;
 		for (fl in d.dFlags) switch (fl) { case AbOver(t): thisT = t; break; case _: }
-		var implFields:Array<ClassField> = [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
-		var implDef:Definition<ClassFlag, Array<ClassField>> = {
-			dName: {name: c.path.name, pos: p}, dDoc: null, dParams: [], dMeta: c.meta,
-			dFlags: [HPrivate], dData: implFields
-		};
-		ctx.declOfType.set(Context.pathKey(c.path), {decl: EClass(implDef), pos: p});
+		return [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
 	}
 
 	static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField, ?com:Context):ClassField {

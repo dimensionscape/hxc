@@ -112,6 +112,40 @@ class Retyper {
 		}
 	}
 
+	// Every enum constructor's declared type is loaded again.
+	static function pairEnum(ctx:Context, stack:Array<String>, en:TEnum, d:Definition<EnumFlag, Array<EnumConstructor>>):Void {
+		var stack = stack.concat(["[Enum " + Context.sTypePath(en.path) + "]"]);
+		for (eff in d.dData) {
+			var name = eff.ecName.name;
+			var fstack = stack.concat(["[Field " + name + "]"]);
+			var ef = en.constrs.get(name);
+			if (ef == null) fail(fstack, "Field not found");
+			var h = pairType(eff.ecType, ef.type);
+			disableTypeloading(fstack, function() return hxc.typing.Typeload.loadComplexType(ctx, en.params, h));
+		}
+	}
+
+	static function pairTypedef(ctx:Context, stack:Array<String>, td:TDef, d:Definition<EnumFlag, TypeHint>):Void {
+		var stack = stack.concat(["[Typedef " + Context.sTypePath(td.path) + "]"]);
+		disableTypeloading(stack, function() return hxc.typing.Typeload.loadComplexType(ctx, td.params, d.dData));
+	}
+
+	// An abstract pairs through its IMPL class, whose fields are the abstract's own transformed the way the
+	// module load transforms them.
+	static function pairAbstract(ctx:Context, stack:Array<String>, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position):Void {
+		var stack = stack.concat(["[Abstract " + Context.sTypePath(a.path) + "]"]);
+		var c = a.impl;
+		if (c == null) return;
+		c.restore();
+		for (cff in ModuleLoader.abstractImplFields(ctx, c, a, d)) {
+			var name = cff.cffName.name;
+			var fstack = stack.concat(["[Field " + name + "]"]);
+			var cf = c.statics.get(name);
+			if (cf == null) fail(fstack, "Field not found");
+			pairClassField(ctx, fstack, c, cf, cff);
+		}
+	}
+
 	// Null when the module was successfully re-paired, else the reason it could not be.
 	public static function attemptRetyping(ctx:Context, m:ModuleDef, p:Position):Null<String> {
 		var stack = ["[Module " + Context.sTypePath(m.path) + "]"];
@@ -134,11 +168,23 @@ class Retyper {
 						case TClassDecl(c): pairClass(ctx, stack, c, d, p);
 						case _: fail(stack, "?");
 					}
-				case EImport(_) | EUsing(_) | EEnum(_) | ETypedef(_) | EAbstract(_) | EStatic(_):
-					// The reference pairs enums, typedefs and abstracts too (:155/:175/:183); only
-					// the class case is implemented here, so a module built from anything else is
-					// not a retyping candidate at all.
-					if (!decl.decl.match(EImport(_) | EUsing(_))) fail(stack, "?");
+					case EEnum(d):
+						switch (findType(d.dName.name)) {
+							case TEnumDecl(en): pairEnum(ctx, stack, en, d);
+							case _: fail(stack, "?");
+						}
+					case ETypedef(d):
+						switch (findType(d.dName.name)) {
+							case TTypeDecl(td): pairTypedef(ctx, stack, td, d);
+							case _: fail(stack, "?");
+						}
+					case EAbstract(d):
+						switch (findType(d.dName.name)) {
+							case TAbstractDecl(a): pairAbstract(ctx, stack, a, d, p);
+							case _: fail(stack, "?");
+						}
+					// EImport/EUsing re-run the module's imports; anything else is skipped.
+					case EImport(_) | EUsing(_) | EStatic(_):
 			}
 			m.extra.cacheState = MSGood;
 			m.extra.time = try sys.FileSystem.stat(m.extra.file).mtime.getTime() / 1000.0 catch (_:Dynamic) m.extra.time;
