@@ -582,7 +582,7 @@ class Parser {
 			// An unfinished argument list containing the display position keeps the parsed prefix so typing
 			// can complete at the position; otherwise the missing close reports as usual.
 			if (tokEq(peek(), PClose)) junk();
-			else if (!(displayFile != null && displayOffset >= pOpen.min && displayOffset <= peekInfo().pos.max))
+			else if (!(isDisplayFile() && displayOffset >= pOpen.min && displayOffset <= peekInfo().pos.max))
 				throw new ParserError(Expected(params.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 			// The entry position spans the name only; the arguments are excluded.
 		}
@@ -1505,7 +1505,7 @@ class Parser {
 		// Outside the closing-brace exemption a missing semicolon is a parse error at the next token. In
 		// display mode a syntax error RECORDS without aborting the parse, which makes it a parser
 		// diagnostic rather than nothing at all.
-		if (displayFile != null) {
+		if (isDisplayFile()) {
 			syntaxErrors.push({msg: Missing_semicolon, pos: cur().pos});
 			return cur().pos;
 		}
@@ -1590,7 +1590,7 @@ class Parser {
 				// missing expression. Its position spans the GAP from just past the last token to just inside
 				// the next one, so a cursor sitting in that gap is enclosed by the stand-in and gets answered
 				// there instead of the parse aborting.
-				if (displayFile != null) {
+				if (isDisplayFile()) {
 					syntaxErrors.push({msg: Expected(["expression"]), pos: np});
 					var last = tokens[idx > 0 ? idx - 1 : 0];
 					// A value-like last token contributes one more character, which is what puts the gap start
@@ -1696,7 +1696,7 @@ class Parser {
 				var b = block1(p1);
 				// Under a display mode a missing } is recorded and the block is closed at the next token's
 				// position ("guess the last position"), so a truncated body does not abort the whole parse.
-				var p2 = if (!tokEq(peek(), BrClose) && displayFile != null) {
+				var p2 = if (!tokEq(peek(), BrClose) && isDisplayFile()) {
 					syntaxErrors.push({msg: Expected(["}"]), pos: peekInfo().pos});
 					peekInfo().pos;
 				} else expect(BrClose);
@@ -1820,7 +1820,7 @@ class Parser {
 				var e = secureExpr();
 				// A missing `while` is recorded and the body alone stands in (the `do` is ignored), so an
 				// unfinished loop body still answers.
-				if (!tokEq(peek(), Kwd(KwdWhile)) && displayFile != null) {
+				if (!tokEq(peek(), Kwd(KwdWhile)) && isDisplayFile()) {
 					syntaxErrors.push({msg: Expected(["while"]), pos: peekInfo().pos});
 					return e;
 				}
@@ -1828,7 +1828,7 @@ class Parser {
 				expect(POpen);
 				var cond = secureExpr();
 				// Recorded rather than raised in the display file, as expectUnlessResume does
-				var p2 = if (!tokEq(peek(), PClose) && displayFile != null) {
+				var p2 = if (!tokEq(peek(), PClose) && isDisplayFile()) {
 					syntaxErrors.push({msg: Expected([")"]), pos: peekInfo().pos});
 					peekInfo().pos;
 				} else expect(PClose);
@@ -1845,7 +1845,7 @@ class Parser {
 				next();
 				var sw = parseSwitchCases();
 				// Ignore a missing } and "guess" the last position
-				var p2 = if (!tokEq(peek(), BrClose) && displayFile != null) {
+				var p2 = if (!tokEq(peek(), BrClose) && isDisplayFile()) {
 					syntaxErrors.push({msg: Expected(["}"]), pos: peekInfo().pos});
 					peekInfo().pos;
 				} else expect(BrClose);
@@ -1912,13 +1912,13 @@ class Parser {
 			if (!wouldSkipDisplayPosition(p1, true)) throw er;
 			t = {path: magicTypePath(), pos: new Position(p1.file, displayOffset, displayOffset)};
 		}
-		if (!tokEq(peek(), POpen) && displayFile != null) {
+		if (!tokEq(peek(), POpen) && isDisplayFile()) {
 			syntaxErrors.push({msg: Expected(["("]), pos: peekInfo().pos});
 			return new Expr(ENew(t, []), Position.union(p1, t.pos));
 		}
 		if (tokEq(peek(), POpen)) {
 			var pOpen = next().pos;
-			if (displayFile != null) {
+			if (isDisplayFile()) {
 				var r = parseCallParamsResume(pOpen);
 				return exprNext(new Expr(ENew(t, r.el), Position.union(p1, r.p2)));
 			}
@@ -2064,7 +2064,7 @@ class Parser {
 				// argument and a failed one becomes a null STAND-IN spanning the gap up to the next token.
 				// Keeping only the parsed prefix would leave no node under the cursor, so completion inside
 				// an unfinished argument list would have nothing to answer at all.
-				if (displayFile != null) {
+				if (isDisplayFile()) {
 					var r = parseCallParamsResume(p1);
 					return exprNext(new Expr(ECall(e1, r.el), Position.union(e1.pos, r.p2)));
 				}
@@ -2079,7 +2079,7 @@ class Parser {
 				var e2 = secureExpr();
 				// A missing ] is recorded, not raised, and the index carries the signature mark like a call
 				// argument does.
-				var p2 = if (!tokEq(peek(), BkClose) && displayFile != null) {
+				var p2 = if (!tokEq(peek(), BkClose) && isDisplayFile()) {
 					syntaxErrors.push({msg: Expected(["]"]), pos: peekInfo().pos});
 					peekInfo().pos;
 				} else expect(BkClose);
@@ -2381,7 +2381,7 @@ class Parser {
 			} catch (e:ParserError) {
 				// In the display file the error is recorded and the scan skips to the next plausible
 				// declaration, so one broken declaration does not cost the answer for the rest of the file.
-				if (displayFile != null) {
+				if (isDisplayFile()) {
 					syntaxErrors.push({msg: e.msg, pos: e.pos});
 					if (idx == save) idx++;
 					resumeScan(false, false);
@@ -2737,7 +2737,7 @@ class Parser {
 		if (tokEq(peek(), BrOpen)) {
 			checkDisplay(new Position(p0.file, p0.max, peekInfo().pos.min));
 			expect(BrOpen);
-		} else if (displayFile != null) {
+		} else if (isDisplayFile()) {
 			// An identifier under the cursor here is an incomplete relation keyword, answered with that name
 			// as the subject.
 			var np = peekInfo().pos;
@@ -2770,7 +2770,7 @@ class Parser {
 			// In the display file a failed field is recorded and the scan looks for the next plausible field
 			// start; finding none ends the body where it stands, so a declaration that runs into the next
 			// one still yields a class rather than aborting the file.
-			if (displayFile != null) {
+			if (isDisplayFile()) {
 				var save = idx;
 				var cff = try parseClassField(tdecl) catch (er:ParserError) {
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
@@ -2789,7 +2789,7 @@ class Parser {
 		}
 		// A display-mode parse tolerates a body left unclosed by an earlier recovery (the file ends before
 		// the closing brace).
-		if (tokEq(peek(), Eof) && displayFile != null)
+		if (tokEq(peek(), Eof) && isDisplayFile())
 			return {fields: acc, pos: peekInfo().pos};
 		var p2 = expect(BrClose);
 		return {fields: acc, pos: p2};
