@@ -776,20 +776,24 @@ class Parser {
 		}
 	}
 
-	// Plus check_display. `from <cursor>` yields the MAGIC type path, and so does `from <cursor> {}`,
-	// where a type WAS parsed but the cursor was skipped over to reach it , which is issue 7137
-	// itself).
-	function abstractRelationType(pk:Position):TypeHint {
-		// The magic arm is the SECOND alternative: a real type is parsed first and the magic path
-		// only stands in when that attempt fails having consumed nothing.
+	// `from <cursor>` yields the MAGIC type path, and so does `from <cursor> {}`, where a type WAS parsed
+	// but the cursor was skipped over to reach it.
+	// The magic arm is the SECOND alternative - a real type parses first, and the magic path only stands in
+	// when that attempt fails having consumed nothing and the cursor is in the gap after p.
+	function parseComplexTypeAt(p:Position):TypeHint {
 		var save = idx;
-		var t:TypeHint;
-		try t = parseComplexType() catch (er:ParserError) {
+		try {
+			return parseComplexType();
+		} catch (er:ParserError) {
 			if (idx != save) throw er;
 			idx = save;
-			if (!wouldSkipDisplayPosition(pk, false)) throw er;
-			return {ct: CTPath(magicTypePath()), pos: new Position(pk.file, displayOffset, displayOffset)};
+			if (!wouldSkipDisplayPosition(p, false)) throw er;
+			return {ct: CTPath(magicTypePath()), pos: new Position(p.file, displayOffset, displayOffset)};
 		}
+	}
+
+	function abstractRelationType(pk:Position):TypeHint {
+		var t = parseComplexTypeAt(pk);
 		// A type WAS parsed but the cursor was skipped OVER to reach it, which is `from <cursor> {}`
 		// swallowing the body as an anonymous structure.
 		if (isDisplayFile() && displayOffset >= 0 && pk.max < displayOffset && t.pos.min >= displayOffset)
@@ -2541,8 +2545,11 @@ class Parser {
 				var p1 = next().pos;
 				var name = typeName();
 				var tl = parseConstraintParams();
-				expect(TBinop(OpAssign));
-				var t = parseComplexType();
+				var pAssign = expect(TBinop(OpAssign));
+				// The typedef's right-hand side goes through parseComplexTypeAt, so `typedef Foo =
+				// <cursor>` reaches the typer as the magic path and answers a type hint completion instead
+				// of failing the declaration.
+				var t = parseComplexTypeAt(pAssign);
 				if (tokEq(peek(), Semicolon)) junk();
 				var def:Definition<EnumFlag, TypeHint> = {
 					dName: name, dDoc: doc, dParams: tl, dMeta: meta,
