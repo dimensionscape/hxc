@@ -1183,7 +1183,8 @@ class Typer {
 					// }` answers.
 					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
 							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
-						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+						// The field name is the subject.
+						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), fields[0].name, fields[0].pos);
 						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
 					}
 					if (an != null) {

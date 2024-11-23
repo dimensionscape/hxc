@@ -917,12 +917,23 @@ class Parser {
 	// cursor inside the name after the dot, so `import Type.Valu|eType` would answer with Type's
 	// statics instead of hovering ValueType.
 	function parseTypePath2(p0:Null<Position>, pack:Array<String>, name:String, p1:Position):PlacedTypePath {
+		// With the cursor on the path, an otherwise invalid one is RETURNED as written rather than
+		// reported, so the typer answers a completion about the name being typed instead of a syntax
+		// error.
+		var pFull = p0 == null ? p1 : Position.union(p0, p1);
+		inline function checkDisplay():Null<PlacedTypePath> {
+			if (!isDisplayFile() || displayOffset < 0) return null;
+			if (!(pFull.min <= displayOffset && displayOffset <= pFull.max)) return null;
+			return {path: {tpackage: pack.copy(), tname: name, tparams: [], tsub: null}, pos: pFull};
+		}
 		if (isLowerIdent(name)) {
 			if (tokEq(peek(), Dot)) {
 				var dp = next().pos;
 				if (checkResume(dp)) raiseTypePath(pack.concat([name]), false);
 				return parseTypePath1(p0 == null ? p1 : p0, pack.concat([name]));
 			} else {
+				var cd = checkDisplay();
+				if (cd != null) return cd;
 				return err("Type name should start with an uppercase letter");
 			}
 		}
