@@ -1616,6 +1616,15 @@ class Compiler {
 			case JTLocal(v): push(function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(v.type), i));
 			case JTField(cf, c, stat): fields.push({cf: cf, c: c, stat: stat});
 			case JTType(mt): types.push(mt);
+			// An enum-abstract value serializes like a class field under the EnumAbstractField kind; an enum
+			// constructor has its own serializer.
+			case JTEnumAbstract(a, ec, cf):
+				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+				push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf,
+					hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), true, ct(t), i, true));
+			case JTEnumCtor(en, ef):
+				push(function(i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
+					hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), true, ct(ef.type), i));
 		}
 		for (f in fields) {
 			var scope:hxc.core.Type.ClassFieldScope = f.stat ? CFSStatic : CFSMember;

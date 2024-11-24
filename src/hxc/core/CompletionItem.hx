@@ -175,9 +175,10 @@ class ClassFieldOriginTools {
 }
 
 class CompletionItem {
-	// The ClassField arm: item = {kind, args:{field, origin, resolution}, type}.
+	// The ClassField arm: item = {kind, args:{field, origin, resolution}, type}. ITEnumAbstractField
+	// serializes exactly like ITClassField, under a different kind name .
 	public static function classFieldToJson(gen:Genjson, scope:ClassFieldScope, cf:TClassField, origin:ClassFieldOrigin,
-			isQualified:Bool, ct:CompletionType, ?index:Int):JsonValue {
+			isQualified:Bool, ct:CompletionType, ?index:Int, enumAbstract:Bool = false):JsonValue {
 		var qualifier:JsonValue = switch [scope, origin] {
 			case [CFSStatic, Self(mt) | Parent(mt) | StaticExtension(mt) | StaticImport(mt)]:
 				var infos = TypeFunctions.tInfos(mt);
@@ -191,7 +192,7 @@ class CompletionItem {
 			case _: JNull;
 		};
 		return JObject([
-			{name: "kind", value: JString("ClassField")},
+			{name: "kind", value: JString(enumAbstract ? "EnumAbstractField" : "ClassField")},
 			{name: "args", value: JObject([
 				{name: "field", value: gen.generateClassField(scope, cf)},
 				{name: "origin", value: ClassFieldOriginTools.toJson(gen, origin)},
@@ -357,7 +358,7 @@ class CompletionItem {
 
 	// The EnumField item.
 	public static function enumFieldToJson(gen:Genjson, ef:TEnumField, origin:ClassFieldOrigin, isQualified:Bool,
-			ct:CompletionType):JsonValue {
+			ct:CompletionType, ?index:Int):JsonValue {
 		var qualifier:JsonValue = switch (origin) {
 			case Self(mt) | StaticImport(mt):
 				var infos = TypeFunctions.tInfos(mt);
@@ -379,7 +380,7 @@ class CompletionItem {
 				])}
 			])},
 			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
-		]);
+		].concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
 	// {kind: Literal, args: {name}} plus the type.

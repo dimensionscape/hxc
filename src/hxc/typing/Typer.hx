@@ -23,6 +23,10 @@ enum JsonToplevelEntry {
 	JTLocal(v:TVar);
 	JTField(cf:TClassField, c:TClass, isStatic:Bool);
 	JTType(mt:hxc.core.Type.ModuleType);
+	// An enum's constructors and an enum abstract's values are part of the toplevel collection in
+	// their own right.
+	JTEnumAbstract(a:hxc.core.Type.TAbstract, c:TClass, cf:TClassField);
+	JTEnumCtor(en:hxc.core.Type.TEnum, ef:hxc.core.Type.TEnumField);
 }
 
 // The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
@@ -1195,7 +1199,7 @@ class Typer {
 					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
 							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
 						// The field name is the subject.
-						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), fields[0].name, fields[0].pos);
+						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos);
 						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
 					}
 					if (an != null) {
@@ -1890,7 +1894,7 @@ class Typer {
 	// The one-shot subset: locals in scope, the enclosing class fields (statics always, members
 	// outside a static context), every type of every loaded module, the literal and keyword sets.
 	// Sorting happens at report time.
-	static function collectToplevelJson(ctx:TyperContext):Array<JsonToplevelEntry> {
+	static function collectToplevelJson(ctx:TyperContext, ?withType:WithType):Array<JsonToplevelEntry> {
 		var out:Array<JsonToplevelEntry> = [];
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
 		for (name in ctx.locals.keys()) {
@@ -1916,6 +1920,38 @@ class Typer {
 			if (infos.isPrivate && m != (ctx.curclass == null ? null : ctx.curclass.module)) continue;
 			if (noCompletion(infos.meta)) continue;
 			out.push(JTType(mt));
+		}
+		// Over the current module's types , the module's imports and the EXPECTED type - which is what
+		// puts an enum abstract's own values in front of an assignment to it.
+		var seenEnum = new haxe.ds.StringMap<Bool>();
+		function enumCtors(mt:Null<hxc.core.Type.ModuleType>):Void {
+			if (mt == null) return;
+			switch (mt) {
+				case TAbstractDecl(a) if (a.isEnum && a.impl != null && ctx.curclass != a.impl):
+					var key = hxc.core.Globals.sTypePath(a.path);
+					if (seenEnum.exists(key)) return;
+					seenEnum.set(key, true);
+					for (cf in a.impl.orderedStatics)
+						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
+							out.push(JTEnumAbstract(a, a.impl, cf));
+				case TTypeDecl(td):
+					switch (TypeFunctions.follow(td.type)) {
+						case TEnum(e, _): enumCtors(TEnumDecl(e));
+						case _:
+					}
+				case TEnumDecl(e):
+					var key = hxc.core.Globals.sTypePath(e.path);
+					if (seenEnum.exists(key)) return;
+					seenEnum.set(key, true);
+					for (n in e.constrs.keys()) out.push(JTEnumCtor(e, e.constrs.get(n)));
+				case _:
+			}
+		}
+		if (ctx.com.currentModule != null) for (mt in ctx.com.currentModule.types) enumCtors(mt);
+		if (withType != null) switch (withType) {
+			case WithType(tt, _):
+				enumCtors(try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(tt)) catch (_:Dynamic) null);
+			case _:
 		}
 		return out;
 	}
@@ -2142,7 +2178,7 @@ class Typer {
 		if (fieldCompletionFound != null) return;
 		var name = try Ast.stringListOfExprPathRaise(e).join(".") catch (_:Dynamic) "";
 		if (name == "null") name = "";
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), name, e.pos);
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, e.pos);
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
@@ -3136,7 +3172,7 @@ class Typer {
 				// field access already answered here is that node, so a stand-in the recovery put at an
 				// enclosing position must not displace it.
 				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
-					throw new JsonToplevelCompletion(collectToplevelJson(ctx), s == "null" ? null : s, p);
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), s == "null" ? null : s, p);
 				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
 					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
 					// real identifier under the cursor keeps the collection order.
@@ -3209,7 +3245,7 @@ class Typer {
 		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
 		// check, so `f|oo("")` answered nothing.
 		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)) {
-			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), i, p);
+			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), i, p);
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 		}
 		if (i == "abstract") {
