@@ -209,6 +209,13 @@ class TypeResolve {
 		// the user was writing.
 		tc.subjectPos = subjectPos != null ? subjectPos : p;
 		tc.subjectName = subjectName;
+		// The same filter has to cover the class-path exploration the collection also reaches, whose files
+		// hxc parses lazily - so the decision travels with the raise and is applied where the answer is
+		// built, not here inside typing.
+		tc.heritIsExtends = isExtends;
+		tc.heritIsInterface = isInterface;
+		tc.heritSelf = hxc.core.Globals.sTypePath(c.path);
+		tc.heritHasHack = TypeFunctions.hasMeta(":hack", c.meta);
 		throw tc;
 	}
 

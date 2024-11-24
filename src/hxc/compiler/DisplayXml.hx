@@ -59,6 +59,12 @@ class ToplevelCompletion {
 	public var moduleTypes:Null<Array<hxc.core.Type.ModuleType>>;
 	public var kind:Int = 2;
 	public var structExtensionIsIntersection:Bool = false;
+	// Record inheritance restrictions at the raise site and apply them when lazy class-path
+	// exploration builds the answer.
+	public var heritIsExtends:Null<Bool> = null;
+	public var heritIsInterface:Bool = false;
+	public var heritSelf:Null<String> = null;
+	public var heritHasHack:Bool = false;
 	public var subjectPos:Null<hxc.ast.Position>;
 	public var subjectName:Null<String>;
 
