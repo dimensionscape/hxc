@@ -14,35 +14,76 @@ typedef ScannedFile = {
 };
 
 class ToplevelScan {
-	// One process-wide scan supplies all requests.
-	static var scanned:Null<Array<ScannedFile>> = null;
+	// Scan once per server context rather than once per process.
+	static var scanned:haxe.ds.StringMap<Array<ScannedFile>> = new haxe.ds.StringMap();
 
-	public static function reset():Void scanned = null;
+	public static function reset():Void scanned = new haxe.ds.StringMap();
 
 	public static function get(ctx:Context):Array<ScannedFile> {
-		if (scanned != null) return scanned;
-		var out:Array<ScannedFile> = [];
-		// The first class path wins for each module path.
-		var seen = new haxe.ds.StringMap<Bool>();
-		for (cp in ctx.classPath) {
-			if (cp == "") continue;
-			walk(ctx, cp, [], out, seen);
+		var sign = ctx.defines.getSignature();
+		var out = scanned.get(sign);
+		if (out == null) {
+			out = [];
+			// The first class path wins for each module path.
+			var seen = new haxe.ds.StringMap<Bool>();
+			for (cp in ctx.classPath) {
+				if (cp == "") continue;
+				walk(ctx, cp, [], out, seen);
+			}
+			scanned.set(sign, out);
 		}
-		scanned = out;
+		consumeRemovedFiles(ctx, sign, out);
 		return out;
 	}
 
-	// Skip packages belonging to other targets, including jvm, and skip sys on non-sys targets.
-	static var forbidden:Null<haxe.ds.StringMap<Bool>> = null;
+	// Reparse removed files unless the context holds them again, then clear each removal entry.
+	static function consumeRemovedFiles(ctx:Context, sign:String, out:Array<ScannedFile>):Void {
+		var cc = hxc.context.DisplayJson.cache.getContext(sign);
+		var keys = [for (k in cc.removedFiles.keys()) k];
+		if (keys.length == 0) return;
+		for (k in keys) {
+			var path = cc.removedFiles.get(k);
+			cc.removedFiles.remove(k);
+			if (path == null || cc.files.exists(k)) continue;
+			var moduleName = path.split("/").pop().split("\\").pop();
+			if (!StringTools.endsWith(moduleName, ".hx")) continue;
+			moduleName = moduleName.substr(0, moduleName.length - 3);
+			var idx = -1;
+			for (i in 0...out.length) if (norm(out[i].file) == norm(path)) { idx = i; break; }
+			try {
+				var src = sys.io.File.getContent(path);
+				var pkg:Package = hxc.parser.Parser.parseModuleString(src, path, ctx.defines);
+				var sf:ScannedFile = {file: path, pack: pkg.pack, moduleName: moduleName, decls: pkg.decls};
+				if (idx >= 0) out[idx] = sf else out.push(sf);
+				// Parsing caches the file again, allowing later invalidation to schedule another parse.
+				cc.files.set(k, {
+					path: path,
+					time: try sys.FileSystem.stat(path).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0,
+					pack: pkg.pack,
+					moduleName: moduleName
+				});
+			} catch (_:Dynamic) {
+				if (idx >= 0) out.splice(idx, 1);
+			}
+		}
+	}
+
+	static function norm(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
+
+	// Cache package rules per platform because one server serves multiple targets. Forbid other target
+	// packages and sys on non-sys targets.
+	static var forbidden:haxe.ds.StringMap<haxe.ds.StringMap<Bool>> = new haxe.ds.StringMap();
 
 	static function forbiddenPacks(ctx:Context):haxe.ds.StringMap<Bool> {
-		if (forbidden != null) return forbidden;
 		var cur = hxc.core.Globals.platformName(ctx.platform);
+		var key = cur + (ctx.defines.rawDefined("sys") ? "|sys" : "");
+		var hit = forbidden.get(key);
+		if (hit != null) return hit;
 		var m = new haxe.ds.StringMap<Bool>();
 		for (p in ["js", "lua", "neko", "flash", "php", "cpp", "cs", "java", "python", "hl", "eval", "jvm"])
 			if (p != cur) m.set(p, true);
 		if (!ctx.defines.rawDefined("sys")) m.set("sys", true);
-		forbidden = m;
+		forbidden.set(key, m);
 		return m;
 	}
 

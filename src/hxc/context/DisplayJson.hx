@@ -70,6 +70,8 @@ class DisplayJson {
 					if (e.length > 0 && e.charCodeAt(0) != ".".code) walk(full);
 				} else if (StringTools.endsWith(e, ".hx")) {
 					var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+					// Key the registry by full unique file paths, matching invalidation and module caching.
+					full = try sys.FileSystem.fullPath(full) catch (_:Dynamic) full;
 					cc.files.set(fileKey(full), {
 						path: full,
 						time: time,
@@ -261,12 +263,18 @@ class DisplayJson {
 				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}},
 			{name: "server/readClassPaths", f: function(hctx) {
-				// Explore request class paths and report cached files. This version keys contexts by a
-				// class-path digest; one-shot requests have no paths and report zero.
-				var cc = cache.getContext(haxe.crypto.Md5.encode(requestClassPaths.join(";")));
-				cc.initialized = true;
-				readClassPathsInto(cc);
-				hctx.sendResult(JObject([{name: "files", value: JInt(cache.getFiles().length)}]));
+				// Wait for init macros and key the context by request defines so later completions reuse the
+				// same context.
+				var com = hctx.com;
+				function answer():Void {
+					var cc = cache.getContext(com.defines.getSignature());
+					cc.initialized = true;
+					readClassPathsInto(cc);
+					// Keep exploration parses under the same context signature as completion scans.
+					hxc.compiler.ToplevelScan.get(com);
+					hctx.sendResult(JObject([{name: "files", value: JInt(cache.getFiles().length)}]));
+				}
+				if (com == null) answer() else com.afterInitMacros.push(answer);
 			}},
 			{name: "server/contexts", f: function(hctx) {
 				// Omit contexts whose descriptive JSON is still JNull.

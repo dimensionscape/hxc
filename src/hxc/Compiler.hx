@@ -187,10 +187,12 @@ class Compiler {
 				var m = ~/"method"[ 	]*:[ 	]*"([^"]+)"/;
 				if (m.match(displayArg)) {
 					var name = m.matched(1);
-					// /:229: display/metadata and display/defines are not answered before the compilation. They
-					// register an after-init-macros callback, because a -lib brings its documentation in through
-					// --macro register*DescriptionFile.
-					parentMethod = name == "initialize" || StringTools.startsWith(name, "server/");
+					// Display/metadata and display/defines are not answered before the compilation. They register
+					// an after-init-macros callback, because a -lib brings its documentation in through --macro
+					// register*DescriptionFile. server/readClassPaths also runs inside a compilation, so its
+					// context is the request's own define signature.
+					parentMethod = (name == "initialize" || StringTools.startsWith(name, "server/"))
+						&& name != "server/readClassPaths";
 				}
 			}
 			if (parentMethod) {
