@@ -438,7 +438,13 @@ class Fields {
 							if (TypeFunctions.hasClassFieldFlag(f, CfImpl) && !TypeFunctions.hasClassFieldFlag(f, CfEnum))
 								ctx.com.addDiagnostic("Cannot access non-static abstract field statically", pfield);
 							switch (a.status.get()) {
-								case Statics(c): fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
+								case Statics(c):
+									// A field the compiler synthesized under a name of its own (a promoted
+									// static local) cannot
+									// be named in source.
+									if (TypeFunctions.hasClassFieldFlag(f, CfNoLookup))
+										ctx.com.addDiagnostic("This field cannot be accessed explicitly", pfield);
+									fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
 								case AbstractStatics(ab) if (ab.impl != null):
 									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) || TypeFunctions.hasClassFieldFlag(f, CfEnum))
 										? FHAbstract(ab, TypeFunctions.extractParamTypes(ab.params), ab.impl)

@@ -829,7 +829,9 @@ class TypeFields {
 			return;
 		}
 		if (eo != null) checkLocalStaticInit(eo);
-		var cf = TypeFunctions.mkField(name, v.type, v.pos, v.pos, false, true);
+		// ~static:true passes no ~public, and it to true: the promoted static is public, so naming it
+		// reports only the no-lookup error.
+		var cf = TypeFunctions.mkField(name, v.type, v.pos, v.pos, true, true);
 		cf.meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(v.meta);
 		TypeFunctions.addClassFieldFlag(cf, CfNoLookup);
 		cf.expr = eo;
