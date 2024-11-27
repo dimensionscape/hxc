@@ -197,10 +197,8 @@ class Compiler {
 				try {
 					hxc.context.DisplayJson.parseInput(null, displayArg);
 				} catch (o:hxc.context.DisplayJson.JsonDisplayOutput) {
+					// Print the response verbatim without a trailing newline.
 					out.add(o.output);
-					if (!StringTools.endsWith(o.output, "
-")) out.add("
-");
 				} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 					out.add("Invalid_argument(\"" + e.arg + "\")
 
@@ -246,10 +244,10 @@ class Compiler {
 				hxc.context.ServerCache.runDelays();
 				var payloadOut = requestOutput.toString();
 				requestOutput = null;
-				if (payloadOut.length > 0) {
-					out.add(payloadOut);
-					if (!StringTools.endsWith(payloadOut, "\n")) out.add("\n");
-				}
+				// Writes the string as GIVEN. Every message already carries its own newline output ^ "\n"), and
+				// a completion answer carries none str), so the frame must not pad one on: a legacy diagnostics
+				// answer is exactly "[]".
+				if (payloadOut.length > 0) out.add(payloadOut);
 				if (failed) out.add("\x02\n");
 				var body2 = haxe.io.Bytes.ofString(out.toString());
 				var head2 = haxe.io.Bytes.alloc(4);
@@ -1022,7 +1020,7 @@ class Compiler {
 			// --cmd commands run in order after a successful compile; a `cd ` command changes the working
 			// directory, any other spawns a shell command.
 			if (!noOutput) for (c in cmds) {
-				var r = runCommand(c);
+				var r = runCommand(ctx, c);
 				if (r != 0) throw "Command failed with error " + r;
 			}
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
@@ -1131,12 +1129,57 @@ class Compiler {
 		return out.toString();
 	}
 
-	static function runCommand(cmd:String):Int {
+	// %name% reads the environment first, then the supplied table, and an unresolved name stays as it
+	// was written.
+	static function expandEnv(path:String, h:Map<String, String>):String {
+		var r = ~/%([A-Za-z0-9_]+)%/;
+		var out = new StringBuf();
+		var rest = path;
+		while (r.match(rest)) {
+			var key = r.matched(1);
+			out.add(r.matchedLeft());
+			var v = Sys.getEnv(key);
+			if (v == null) v = h.get(key);
+			out.add(v == null ? "%" + key + "%" : v);
+			rest = r.matchedRight();
+		}
+		out.add(rest);
+		return out.toString();
+	}
+
+	static function runCommand(ctx:Context, cmd:String):Int {
+		// A server request expands __file__ and __platform__ before running the command.
+		if (requestOutput != null) {
+			var h = new Map<String, String>();
+			h.set("__file__", ctx.file == null ? "" : ctx.file);
+			h.set("__platform__", Globals.platformName(ctx.platform));
+			cmd = expandEnv(cmd, h);
+		}
 		if (StringTools.startsWith(cmd, "cd ")) {
 			Sys.setCwd(cmd.substr(3));
 			return 0;
 		}
-		return Sys.command(cmd);
+		// A one-shot compile lets the child inherit the terminal. A server request must not: stderr is
+		// the protocol channel, so opens the process with both streams PIPED and forwards them through
+		// the request's own write_out/write_err .
+		if (requestOutput == null) return Sys.command(cmd);
+		var proc = try new sys.io.Process(cmd) catch (e:Dynamic) return 127;
+		var errBuf = new StringBuf();
+		var done = new sys.thread.Deque<Bool>();
+		sys.thread.Thread.create(function() {
+			try while (true) errBuf.add(String.fromCharCode(proc.stderr.readByte())) catch (_:Dynamic) {}
+			done.add(true);
+		});
+		var outBuf = new StringBuf();
+		try while (true) outBuf.add(String.fromCharCode(proc.stdout.readByte())) catch (_:Dynamic) {}
+		done.pop(true);
+		var code = proc.exitCode();
+		proc.close();
+		var so = outBuf.toString();
+		if (so != "") serverPrint(so);
+		var se = errBuf.toString();
+		if (se != "") requestOutput.add(se);
+		return code;
 	}
 
 	static function parseTypePath(s:String):Path {

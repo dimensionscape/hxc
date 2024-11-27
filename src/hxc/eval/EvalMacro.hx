@@ -70,7 +70,14 @@ class EvalMacro {
 			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos)
 			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos);
 		};
-		list.push({name: EvalHash.hash(fieldName), v: VFunction(wrapped, true)});
+		// A new compilation swaps in its own API. Every closure here holds the com it was registered
+		// with, so a re-registration must REPLACE the entry: a lookup through load("<snake>") ->
+		// callMacroApi takes the first match, and a duplicate would keep answering from the previous
+		// request's dead compilation.
+		var nameKey = EvalHash.hash(fieldName);
+		var entry = {name: nameKey, v: VFunction(wrapped, true)};
+		for (i in 0...list.length) if (list[i].name == nameKey) { list[i] = entry; return; }
+		list.push(entry);
 	}
 
 	static function registerContext(ec:EvalContext, com:Context):Void {
@@ -1503,6 +1510,12 @@ class EvalMacro {
 		// The build macros a compilation ran are its own: a new request must run them again, since its
 		// classes are typed from source again.
 		builtClasses = new Map();
+		// The callback registry belongs to the compilation, and the server builds a fresh one per
+		// request. Carrying the previous request's callbacks over would run every one of them twice.
+		onAfterInitMacrosCallbacks = [];
+		onAfterTypingCallbacks = [];
+		onGenerateCallbacks = [];
+		onAfterGenerateCallbacks = [];
 	}
 
 	// Resets the static prototypes for a new compilation.
