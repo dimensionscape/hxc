@@ -40,6 +40,9 @@ class EvalMacro {
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var macroMonoId:Int = 0;
+	// One fake module per file, kept for the whole process so a later compilation depends on the same
+	// object and its recorded mtime.
+	static var fakeModules:haxe.ds.StringMap<ModuleDef> = new haxe.ds.StringMap();
 	static var macroMonos:Map<Int, TMono> = new Map();
 
 	// A typed-expr value round-trips its native objects through a hidden `$` handle: a tvar is stashed on
@@ -316,6 +319,21 @@ class EvalMacro {
 				case _:
 			}
 			return encodeType(ec, t);
+		});
+		// Context.registerModuleDependency: the named module is loaded and then made to depend on a FAKE
+		// module standing for an arbitrary file, so the server re-types it when that file changes.
+		// Loading it must not leave it as a dependency of whatever is being typed, so the caller's
+		// dependency set is restored around the load.
+		reg2("registerModuleDependency", "register_module_dependency", function(a) {
+			var mpath = strOf(a[0]);
+			var file = strOf(a[1]);
+			var cur = com.currentModule;
+			var oldDeps = cur != null ? cur.extra.deps : null;
+			if (cur != null) cur.extra.deps = [for (k => v in oldDeps) k => v];
+			var m = hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(mpath), curPos);
+			if (cur != null) cur.extra.deps = oldDeps;
+			TypeFunctions.addDependency(m, createFakeModule(com, file));
+			return VNull;
 		});
 		reg2("getModule", "get_module", function(a) {
 			// Context.getModule: type the whole module at the given path and return the list of module
@@ -652,6 +670,25 @@ class EvalMacro {
 			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
 		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
+	}
+
+	static function createFakeModule(com:Context, file:String):ModuleDef {
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var key = StringTools.replace(full, "\\", "/").toLowerCase();
+		var mdep = fakeModules.get(key);
+		if (mdep == null) {
+			var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+			mdep = {
+				id: TypeFunctions.allocMid(),
+				path: {pack: ["$DEP"], name: full},
+				types: [],
+				statics: null,
+				extra: TypeFunctions.moduleExtra(full, com.defines.getSignature(), time, MFake, [])
+			};
+			fakeModules.set(key, mdep);
+		}
+		com.moduleLut.set(hxc.context.Context.pathKey(mdep.path), mdep);
+		return mdep;
 	}
 
 	static function cloneImports(old:Null<hxc.context.Context.ModuleImports>):hxc.context.Context.ModuleImports {
