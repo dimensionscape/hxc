@@ -1195,7 +1195,22 @@ class Typer {
 					// parser leaves after a missing `:` swallow a cursor that is really sitting on the name.
 					var covered = false;
 					for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
-					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
+					var anRaw = expectedAnonFromWithType(ctx, withType);
+					if (anRaw == null) anRaw = structInitAnonFields(ctx, withType);
+					// The cursor BETWEEN a field's `:` and its value completes against THAT field's type with an
+					// empty subject - the value already written must not become the filter string.
+					if (anRaw != null) for (f in fields) {
+						if (atDisplayPos(f.pos)) continue;
+						var between = new Position(f.pos.file, f.pos.max + 1, f.expr.pos.min - 1);
+						if (between.max < between.min || !atDisplayPos(between)) continue;
+						var decl = anRaw.fields.get(f.name);
+						var fwt = decl != null ? WithTypeTools.withType(decl.type) : WithTypeTools.value;
+						if (displayToplevelJson)
+							throw new JsonToplevelCompletion(collectToplevelJson(ctx, fwt), null, between, fwt);
+						if (displayToplevel)
+							throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, fwt, true));
+					}
+					var an = covered ? null : anRaw;
 					// An anon that came from a typedef reports that typedef as the origin; a bare one reports
 					// itself.
 					var anOrigin:Null<hxc.core.Type.ModuleType> = if (an == null) null else switch (withType) {
@@ -1203,13 +1218,10 @@ class Typer {
 						case _: null;
 					}
 					// A @:structInit class completes like a structure, from the fields its constructor accepts,
-					// and reports the class as the origin .
-					if (an == null && !covered) {
-						an = structInitAnonFields(ctx, withType);
-						if (an != null) anOrigin = switch (withType) {
-							case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TInst(c, _): TClassDecl(c); case _: null; };
-							case _: null;
-						}
+					// and reports the class as the origin.
+					if (an != null && anOrigin == null) anOrigin = switch (withType) {
+						case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TInst(c, _): TClassDecl(c); case _: null; };
+						case _: null;
 					}
 					// One field whose value is a null at a NULL position is what the parser leaves behind for `{
 					// ident`. With no structure expected that is not a structure completion at all - it is a
