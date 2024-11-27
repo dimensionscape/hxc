@@ -10,21 +10,26 @@ import hxc.core.Globals.Platform;
 import haxe.ds.StringMap;
 
 /**
- * Dead Code Elimination, faithful port of ` `.
+ * Dead Code Elimination.
  *
  * Runs after typing, before GenJS (wired in `Compiler.run`). It computes the set of REACHABLE
- * types/fields starting from a set of roots (`com.main`, `@:keep`/`@:keepSub`/ `@:expose` types &
+ * types/fields starting from a set of roots (`com.main`, `@:keep`/`@:keepSub`/`@:expose` types &
  * fields, kept classes, extern fields) and then SWEEPS away everything unmarked so GenJS only emits
  * live code.
  *
- * Modes (`-dce no|std|full`, default for -js = std, per the reference): - DceNo : collect entry
- * points + mark, but do not sweep (types unchanged). - DceStd : sweep, but std modules are kept
- * whole (`is_std_file` / `keep_whole_*`). - DceFull : sweep everything unreachable from the roots
- * (std_dirs = []).
+ * Modes (`-dce no|std|full`, default for -js = std):
+ * - DceNo : collect entry points + mark, but do not sweep (types unchanged).
+ * - DceStd : sweep, but std modules are kept whole (`isStdFile` / `keepWhole*`).
+ * - DceFull : sweep everything unreachable from the roots (stdDirs = []).
  *
- * The Python-only `mark_instance_field_access` body is a no-op.
+ * Platform note: platform-conditional branches specialized to their Js arm are documented at each
+ * site. The Python-only instance field access marking is a no-op.
  *
- * `@:keep`/`@:keepSub`/`@:expose` force-keep faithfully (`keep_metas` / `super_forces_keep`).
+ * Reflection: `Reflect.*` / `Type.*` usage reaches those classes/fields through the normal `expr`
+ * walk (a
+ * `TField(_, FStatic(c,cf))` marks `c` + `cf`), so DCE never strips something reachable via
+ * reflection.
+ * `@:keep`/`@:keepSub`/`@:expose` force-keep (`keepMetas` / `superForcesKeep`).
  */
 
 // Metadata names (the parser stores compiler-meta as `:`-prefixed strings).

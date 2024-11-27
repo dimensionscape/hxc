@@ -375,7 +375,7 @@ class ForLoop {
 		}
 		// The eval lane keeps the legacy lowering below: its frame-based capture model needs
 		// the typer-level IIFE wrap that the reference performs in the captured-vars filter,
-		// which the eval pipeline does not run. Generated targets take the faithful port.
+		// which the eval pipeline does not run. Generated targets take the faithful implementation.
 		if (!ctx.com.platform.match(Eval))
 			return ForLoopFaithful.typeNormalForLoop(ctx, vName, e1Expr, e2, p, pi);
 		var basic = ctx.com.basic;

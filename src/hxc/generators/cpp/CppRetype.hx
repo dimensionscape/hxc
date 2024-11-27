@@ -9,12 +9,10 @@ import hxc.generators.cpp.CppExpr;
 import hxc.generators.cpp.CppTypeOf;
 import hxc.generators.cpp.CppTypeText;
 
-// hxc.generators.cpp.CppRetype: lower the typed AST (TExpr) into the cpp IR (CppExpr), (retype_expression).
-// This is the highest-risk, byte-exactness-determining pass; it threads a requested C++ type down the tree
-// and decides every box/unbox/cast/temp. Ported in tranches (see docs/cpp/RETYPE_IR.md): the scaffold +
-// autocast tail + simple arms land first; the TField/TCall/TNew/TFunction/TBinop/TUnop/TSwitch/TTry/...
-// arms follow. Unported arms throw loudly. Named CppRetype (not Retype) to avoid the
-// ModuleCheckPolicy.Retype enum-constructor collision.
+// hxc.generators.cpp.CppRetype: lower the typed AST (TExpr) into the cpp IR (CppExpr). This pass decides
+// the shape of the emitted C++; it threads a requested C++ type down the tree and decides every
+// box/unbox/cast/temp. Unimplemented arms throw loudly.
+// Named CppRetype (not Retype) to avoid the ModuleCheckPolicy.Retype enum-constructor collision.
 class CppRetype {
 	public static inline function mkCppExpr(def:CppExprDef, t:CppType, pos:Position):CppExpr {
 		return {expr: def, ctype: t, pos: pos};

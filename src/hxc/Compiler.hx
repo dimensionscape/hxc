@@ -2161,8 +2161,8 @@ class Compiler {
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
-	// Through the ported serializer. a hover reports the documentation of the ITEM under the cursor,
-	// which is the field's, the enum constructor's or the type's own doc.
+	// Through hxc's serializer. a hover reports the documentation of the ITEM under the cursor, which
+	// is the field's, the enum constructor's or the type's own doc.
 	static function hoverDocumentation(e:Null<hxc.core.Type.TExpr>):Null<String> {
 		if (e == null) return null;
 		var doc:hxc.ast.Ast.Documentation = switch (e.expr) {

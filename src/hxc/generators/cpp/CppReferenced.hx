@@ -8,11 +8,10 @@ import hxc.context.Context;
 import hxc.ast.Ast;
 import hxc.ast.Ast.Metadata;
 
-// hxc.generators.cpp.CppReferenced: the "referenced types" machinery . A class/enum's header lists a
-// forward declaration (HX_DECLARE_CLASS<n>) for every type it mentions, and its cpp lists the matching
-// #includes; the same walk drives the Build.xml <depend> list and the can_inline_constructor check. Ported:
-// create_super_dependencies (7064), create_constructor_dependencies (7082), find_referenced_types_flags
-// (4838) and gen_forward_decl (548).
+// hxc.generators.cpp.CppReferenced: the "referenced types" machinery. A class/enum's header lists a forward
+// declaration (HX_DECLARE_CLASS<n>) for every type it mentions, and its cpp lists the matching #includes;
+// the same walk drives the Build.xml <depend> list and the canInlineConstructor check. Provides
+// createSuperDependencies, createConstructorDependencies, findReferencedTypesFlags and genForwardDecl.
 class CppReferenced {
 	static inline function key(p:Path):String {
 		return CppTypeOf.joinClassPath(p, ".");
@@ -107,7 +106,7 @@ class CppReferenced {
 	}
 
 	// Returns the sorted referenced paths and, per path, a flag that is true for a native forward
-	// declaration (HX_DECLARE_NATIVE). This port covers the header call (field_name="*", constructor_deps
+	// declaration (HX_DECLARE_NATIVE). This covers the header call (field_name="*", constructor_deps
 	// unused, for_depends=false); header_only skips field bodies.
 	public static function findReferencedTypesFlags(com:Context, obj:ModuleType, fieldName:String,
 			superDeps:Map<String, Array<Path>>, constructorDeps:Map<String, TClassField>, headerOnly:Bool,

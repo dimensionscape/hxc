@@ -177,8 +177,8 @@ class Context {
 	public static inline var PForce = 5;
 	public static inline var PFinal = 6;
 
-	// Sort delays by ascending pass and use LIFO order within each pass. Class finalization queues
-	// fields in reverse order.
+	// Ascending pass order, LIFO within each pass; class finalization relies on reversed field
+	// insertion.
 	public var delayed:Array<{pass:Int, fns:Array<Void->Void>}> = [];
 
 	public function delay(pass:Int, f:Void->Void):Void {

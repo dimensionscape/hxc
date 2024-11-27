@@ -7,9 +7,8 @@ import hxc.core.Globals.Path;
 import hxc.ast.Ast;
 import hxc.generators.cpp.CppType;
 
-// hxc.generators.cpp.CppTypeOf: map a Haxe type to its C++ type (the CppType lattice), (cpp_type_of +
-// cpp_type_from_path + cpp_type_of_null + cpp_instance_type), plus the small gencpp predicates it leans on.
-// No output; this is the substrate the retype pass rides on.
+// hxc.generators.cpp.CppTypeOf: map a Haxe type to its C++ type (the CppType lattice),
+// plus the small predicates it leans on. No output; this is the substrate the retype pass rides on.
 class CppTypeOf {
 
 	public static function joinClassPath(path:Path, sep:String):String {

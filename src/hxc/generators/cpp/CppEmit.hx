@@ -6,10 +6,8 @@ import hxc.context.Context;
 import hxc.generators.cpp.CppType;
 import hxc.generators.cpp.CppExpr;
 
-// hxc.generators.cpp.CppEmit: emit C++ text from the retyped cpp IR, (gen_cpp_ast_expression_tree /
-// gen_with_injection). The retype pass (CppRetype) produced the CppExpr; this walks it and writes C++ to a
-// CppWriter. Ported in tranches: the core statement/expression nodes land first; the native-interop and
-// script nodes follow. Unported nodes throw loudly.
+// Emit C++ text from the retyped cpp IR. The retype pass (CppRetype) produced the CppExpr; this walks it
+// and writes C++ to a CppWriter. Unimplemented nodes throw loudly.
 class CppEmit {
 	final com:Context;
 	final writer:CppWriter;

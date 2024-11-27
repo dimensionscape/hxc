@@ -113,7 +113,7 @@ enum UnificationMatrixState {
 }
 
 // Unification_matrix (consumed by the typer overload/unifyMin).
-// `dump` is omitted (TPrinting is a later port).
+// `dump` is omitted (TPrinting lands later).
 class UnificationMatrix {
 	final values:Array<UnificationMatrixState>;
 

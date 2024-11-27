@@ -7,7 +7,7 @@ import hxc.core.TypeFunctions;
 import hxc.core.Globals;
 import hxc.context.Context;
 
-// Only the in-memory @:rtti XML payload is implemented here.
+// One tree builder supplies both @:rtti __rtti and --xml output.
 private enum Xml {
 	Node(name:String, att:Array<{a:String, v:String}>, childs:Array<Xml>);
 	PCData(s:String);

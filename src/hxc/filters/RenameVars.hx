@@ -6,16 +6,12 @@ import hxc.core.Globals.Path;
 import haxe.ds.StringMap;
 
 /**
-	FAITHFUL PORT of (337 lines), INIT half.
-
-	Scope-aware local-variable renaming. That produces `var X = X` self-shadows for generated locals that
-	share an enclosing-scope var's name (e.g. the `.bind()` desugar in Typer.typeBind, whose generated
-	locals are named after the bound args). JS hoisting then makes the inner `X` undefined, capturing the
-	wrong value. This filter renames the colliding local (e.g. `uctx` -> `uctx1`) so the closure reads the
-	real outer value, fixing the cast/macro Heisenbugs.
-
-	The collect/rename half lives in filters.RenameVarsRun (run()).
-**/
+ * Initialize scope-aware local-variable renaming before code generation; the collect/rename pass is
+ * RenameVarsRun.run(). Renaming prevents generated locals from shadowing captured outer variables
+ * under JS hoisting, such as locals synthesized by Typer.typeBind. For flat ES5 output, use
+ * function scope with ReserveAllTypesFlat, VarHoisting, and NoCatchVarShadowing. Disable
+ * no-shadowing, switch-cases-no-blocks, and block scope.
+ */
 class RenameVars {
 
 	// Built once per compile; carries reserved names + the resolved flag set.

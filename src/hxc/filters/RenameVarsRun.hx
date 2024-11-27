@@ -9,15 +9,13 @@ import haxe.ds.StringMap;
 import haxe.ds.IntMap;
 
 /**
- * FAITHFUL PORT of (337 lines), RUN half: collect_vars / declare_var / use_var / maybe_rename_var /
- * rename_vars / run. See filters.RenameVars for the init half and the config rationale.
+ * Local-variable renaming, RUN half: collect, declare, use, maybe rename, rename, run. See
+ * filters.RenameVars for the init half and the config rationale.
  *
- * We still need the full scope/collision analysis to decide when to rename.
- *
- * DEFERRED pieces (noted, not needed for hxc's ES5 output): - BlockScope handling we are
- * FunctionScope. - SwitchCasesNoBlocks , es6 only. - NoShadowing / VCaptured reservation in
- * maybe_rename , es6 only. - The Meta.RealPath annotation on rename , source-map cosmetic; hxc has
- * no Meta.RealPath and stdout is unaffected.
+ * hxc's TLocal(v)/TVarExpr(v) SHARE the same TVar object (by id), so renaming is just MUTATING
+ * `v.name`, and every reference updates automatically. The full scope/collision analysis still
+ * decides
+ * when to rename.
  */
 class RenameVarsRun {
 	var hoisting:Bool;

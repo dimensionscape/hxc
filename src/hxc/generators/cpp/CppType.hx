@@ -2,9 +2,9 @@ package hxc.generators.cpp;
 
 import hxc.core.Type;
 
-// hxc.generators.cpp.CppType: the C++ type lattice (`type tcpp`). The retype pass tags every expression
-// with one of these; it drives boxing/unboxing, pointer vs value, and the emitted C++ type text. Named
-// CppType (not TCpp) to avoid the TExpr/Texpr Windows header collision.
+// hxc.generators.cpp.CppType: the C++ type lattice. The retype
+// pass tags every expression with one of these; it drives boxing/unboxing, pointer vs value, and the
+// emitted C++ type text. Named CppType (not TCpp) to avoid the TExpr/Texpr Windows header collision.
 enum CppType {
 	TCppDynamic;
 	TCppUnchanged;

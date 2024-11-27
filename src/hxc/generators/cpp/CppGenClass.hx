@@ -6,11 +6,7 @@ import hxc.context.Context;
 import hxc.generators.cpp.CppType;
 import hxc.generators.cpp.CppExpr;
 
-// hxc.generators.cpp.CppGenClass: emit the .h and .cpp for a class, (generate_class_files /
-// generate_class_cpp / generate_class_header). Method bodies flow through CppEmit. Ported for the
-// leaf-class path first (no interface/nativeGen/abstract/scriptable); the
-// interface/objc/scriptable/rtti-variant branches follow. Includes/forward-decls use a simple
-// referenced-type scan (find_referenced_types is a later refinement).
+// hxc.generators.cpp.CppGenClass: emit the .h and .cpp for a class. Method bodies flow through CppEmit.
 class CppGenClass {
 	final com:Context;
 	final classDef:TClass;

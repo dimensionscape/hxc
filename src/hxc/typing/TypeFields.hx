@@ -75,10 +75,10 @@ class TypeFields {
 				case _:
 			}
 		}
-		// Bodies route through the queue here (lazy-schedule port step b): registration runs
-		// newest-module-first so the PREPENDING delay bucket flushes in the established module x
-		// declaration order; a body typed during the flush can load more modules, which typeAllModules'
-		// outer stability loop reaches on the next pass (bodyTyped/expr keep this idempotent).
+		// Bodies route through the queue here (lazy-schedule step b): registration runs newest-module-first
+		// so the PREPENDING delay bucket flushes in the established module x declaration order; a body
+		// typed during the flush can load more modules, which typeAllModules' outer stability loop reaches
+		// on the next pass (bodyTyped/expr keep this idempotent).
 		var mi = ctx.modules.length - 1;
 		while (mi >= 0) {
 			var m = ctx.modules[mi];

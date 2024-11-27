@@ -16,8 +16,8 @@ class ApplyParamsRecursion extends haxe.Exception {
 }
 
 class TypeFunctions {
-	// STUB: until TUnification is ported, these have minimal but correct defaults.
-	// `monomorph_create` makes a fresh, unbound monomorph cell.
+	// These have minimal but correct defaults until unification installs its own.
+	// monomorphCreateRef makes a fresh, unbound monomorph cell.
 	public static var monomorphCreateRef:Void->TMono = function() {
 		return new TMono(null, [], []);
 	};
@@ -26,7 +26,7 @@ class TypeFunctions {
 	public static var monomorphBindRef:TMono->T->Void = function(m:TMono, t:T) {
 		m.type = t;
 	};
-	// `monomorph_classify_constraints` - not needed by the functions ported here; stub.
+	// monomorphClassifyConstraintsRef - not needed by the functions implemented here; stub.
 	public static var monomorphClassifyConstraintsRef:TMono->TMonoConstraintKind = function(m:TMono) {
 		return CUnknown;
 	};

@@ -747,6 +747,7 @@ class LocalDce {
 }
 
 class Run {
+	// Timers are not implemented.
 	public static function createAnalyzerContext(com:Context, config:AnalyzerConfig, identifier:String, e:TExpr):AnalyzerContext {
 		var g = Graph.create(e.type, e.pos);
 		var ctx = new AnalyzerContext(com, config, g, identifier);
@@ -863,6 +864,7 @@ class Run {
 		return Optimizer.reduceControlFlow(com, e);
 	}
 
+	// The dot debug output is not implemented.
 	static function runOnFieldSingle(com:Context, config:AnalyzerConfig, c:TClass, cf:TClassField):Void {
 		var e = cf.expr;
 		if (e == null || AnalyzerConfig.isIgnored(cf.meta) || FiltersCommon.isRemovableField(com, cf)

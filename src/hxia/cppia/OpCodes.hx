@@ -1,9 +1,9 @@
 package hxia.cppia;
 
-// The cppia opcode vocabulary: the authoritative name <-> index mapping shared by the decoder (H1)
-// and any re-encoder. Mirrors the writer's cppia_op table and the ported CppiaWriter.opInfo). Text
-// cppia writes the name, binary writes the INDEX; both denote the same op. Structural keywords
-// (class/function/...) frame the op stream and are listed separately.
+// The cppia opcode vocabulary: the authoritative name <-> index mapping shared by the decoder and
+// any re-encoder, matching hxc's CppiaWriter.opInfo. Text cppia writes the name, binary writes the
+// INDEX; both denote the same op. Structural keywords (class/function/...) frame the op stream and
+// are listed separately.
 class OpCodes {
 	// Name -> index, exactly as the writer emits.
 	public static final ops:Array<{name:String, index:Int}> = [

@@ -21,12 +21,12 @@ private class InlineBail extends haxe.Exception {
 	}
 }
 
-// Compile-time expansion of inline-function calls, a safe subset ported It handles expression-bodied inline
-// functions (single or final return, no early returns, no nested switch/try/closures, no type parameters):
-// arguments and `this` bind to fresh locals and the body is substituted in place. Anything else bails and
-// the caller emits a normal call. Class/method type parameters are substituted throughout the inlined tree
-// so declaration-side parameters do not leak into caller ASTs / inline_default_config, finalize's
-// map_expr_type).
+// Compile-time expansion of inline-function calls. It handles expression-bodied inline
+// functions (single or final return, no early returns, no nested switch/try/closures, no type
+// parameters): arguments and `this` bind to fresh locals and the body is substituted in place.
+// Anything else bails and the caller emits a normal call. Class/method type parameters are
+// substituted throughout the inlined tree so declaration-side parameters do not leak into
+// caller ASTs.
 class Inline {
 	static var depth = 0;
 	// The declared return type of the inline function whose body is currently being mapped;
