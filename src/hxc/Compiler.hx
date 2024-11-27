@@ -927,11 +927,17 @@ class Compiler {
 					answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
 				return;
 			}
-			if (hxc.parser.Parser.displayFile != null && ctx.jsonRpcId == null && !ctx.hasError()) {
+			if (hxc.parser.Parser.displayFile != null && !ctx.hasError()) {
 				var dm = displayParts(ctx);
 				var dmode = dm.length >= 3 ? dm[2] : "";
 				switch (dmode) {
-					case "" | "position" | "type" | "typeDefinition" | "signature" | "toplevel":
+					case "" | "position" | "type" | "typeDefinition" | "signature" | "toplevel" | "package":
+						// A JSON request answers DisplayNoResult, which is a null result; only the legacy
+						// lane reports the missing point as an error.
+						if (ctx.jsonRpcId != null) {
+							answerOut(jsonRpcAnswer(ctx, "null"));
+							return;
+						}
 						answerOut("Error: No completion point was found
 ");
 						exitRequest(1);
@@ -1052,7 +1058,7 @@ class Compiler {
 			answerOut(mj.output);
 			return;
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
-			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt);
+			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt, tl.patternOutermost);
 			if (answer != null) answerOut(answer);
 			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
@@ -1681,7 +1687,7 @@ class Compiler {
 	}
 
 	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>,
-			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType):Null<String> {
+			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType, ?patternOutermost:Bool):Null<String> {
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
@@ -1896,9 +1902,15 @@ class Compiler {
 		var off = hxc.parser.Parser.displayOffset;
 		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
 		var subj = patchCompletionSubject(subjectName, subjectPos == null ? insertPos : subjectPos);
+		// The Pattern completion kind is 11 and carries isOutermostPattern ahead of the same expected-type
+		// fields; a pattern collection is re-raised as that.
+		var modeArgs = expectedTypeFields(gen, ct, wt);
+		if (patternOutermost != null)
+			modeArgs = ([{name: "isOutermostPattern", value: hxc.core.Json.JsonValue.JBool(patternOutermost)}]
+				: Array<hxc.core.Json.JsonField>).concat(modeArgs);
 		var mode = hxc.core.Json.JsonValue.JObject([
-			{name: "kind", value: hxc.core.Json.JsonValue.JInt(2)},
-			{name: "args", value: hxc.core.Json.JsonValue.JObject(expectedTypeFields(gen, ct, wt))}
+			{name: "kind", value: hxc.core.Json.JsonValue.JInt(patternOutermost != null ? 11 : 2)},
+			{name: "args", value: hxc.core.Json.JsonValue.JObject(modeArgs)}
 		]);
 		var result = hxc.core.Json.JsonValue.JObject([
 			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},

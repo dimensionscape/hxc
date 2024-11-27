@@ -38,6 +38,9 @@ class JsonToplevelCompletion extends haxe.Exception {
 	public var subjectPos:Null<hxc.ast.Position>;
 	// The EXPECTED type at the cursor travels with the collection; it becomes the mode's args.
 	public var wt:Null<hxc.core.WithType.WithType>;
+	// A toplevel collection raised from inside a PATTERN is re-raised as CRPattern, carrying whether this
+	// is the outermost pattern.
+	public var patternOutermost:Null<Bool>;
 	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position, ?wt:hxc.core.WithType.WithType) {
 		super("json toplevel completion");
 		this.items = items;
@@ -2155,9 +2158,18 @@ class Typer {
 
 	// An EDisplay inside a PATTERN answers with the pattern's own expected type, which is what ranks the
 	// subject enum's constructors first.
-	public static function raiseToplevelInPattern(ctx:TyperContext, t:T, name:String):Void {
+	public static function raiseToplevelInPattern(ctx:TyperContext, t:T, name:String, outermost:Bool = true,
+			?p:Position):Void {
 		if (fieldCompletionFound != null) return;
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
+		var wt = WithTypeTools.withType(t);
+		if (displayToplevelJson) {
+			// The recovery stand-in `null` is not a subject the user wrote; the collection is sorted
+			// exactly when the subject is empty, which is what the legacy lane keys off too.
+			var subj = name == "null" ? null : name;
+			var ex = new JsonToplevelCompletion(collectToplevelJson(ctx, wt), subj, p, wt);
+			ex.patternOutermost = outermost;
+			throw ex;
+		}
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(
 				collectToplevel(ctx, WithTypeTools.withType(t), name == "null"));

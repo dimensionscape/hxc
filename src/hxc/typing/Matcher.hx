@@ -650,12 +650,12 @@ class PatternMaker {
 				}
 				if (!handled) Typer.checkSignatureDisplay(ctx, ce, cparams, e.pos);
 			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos)):
-				Typer.raiseToplevelInPattern(ctx, t, s);
+				Typer.raiseToplevelInPattern(ctx, t, s, toplevel, e.pos);
 			// Inside a pattern, an `if (cond)` whose body is the recovery's null stand-in is the display
 			// subject. `case <cursor> if (guard):` parses the guard as the pattern, because the pattern
 			// itself has not been written yet.
 			case EIf(_, {expr: EConst(CIdent("null"))}, null) if (hxc.parser.Parser.displayCompletionMode):
-				Typer.raiseToplevelInPattern(ctx, t, "null");
+				Typer.raiseToplevelInPattern(ctx, t, "null", toplevel, e.pos);
 			case _:
 		}
 

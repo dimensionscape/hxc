@@ -100,7 +100,9 @@ class DisplayJson {
 	}
 
 	// Configure the display file and offset, preserving the request ID for the later response.
-	static function setDisplayFile(hctx:HandlerContext, mode:String, requiresOffset:Bool = true):Void {
+	static function setDisplayFile(hctx:HandlerContext, mode:String, requiresOffset:Bool = true,
+			autoTriggered:Bool = false):Void {
+		hxc.parser.Parser.wasAutoTriggered = autoTriggered;
 		var file = hctx.jsonrpc.getStringParam("file");
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var offset = requiresOffset ? hctx.jsonrpc.getIntParam("offset") : 0;
@@ -202,7 +204,7 @@ class DisplayJson {
 				if (com == null) answer() else com.afterInitMacros.push(answer);
 			}},
 			{name: "display/signatureHelp", f: function(hctx) {
-				setDisplayFile(hctx, "signature");
+				setDisplayFile(hctx, "signature", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
 			}},
 			{name: "display/completionItem/resolve", f: function(hctx) {
 				// Completion resolution requires a prior server result; every index is invalid in a one-shot
@@ -221,7 +223,7 @@ class DisplayJson {
 			}},
 			{name: "display/completion", f: function(hctx) {
 				// Completion answers at report time. wasAutoTriggered sets the parser's trigger flag.
-				setDisplayFile(hctx, "");
+				setDisplayFile(hctx, "", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
 			}},
 			{name: "display/hover", f: function(hctx) {
 				setDisplayFile(hctx, "type");

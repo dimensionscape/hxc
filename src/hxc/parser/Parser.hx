@@ -67,6 +67,8 @@ class Parser {
 	// A position the preprocessor refuses to annotate answers NOTHING, however many later stages would
 	// happily complete there.
 	public static var displaySuppressed:Bool = false;
+	// Set only by display/completion and display/signatureHelp; every other request leaves it false.
+	public static var wasAutoTriggered:Bool = false;
 	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
 	// documentation out of the registry.
 	public static var displayMetaName:Null<String> = null;
@@ -87,6 +89,7 @@ class Parser {
 		displayMetaFound = false;
 		displayMetaName = null;
 		displaySuppressed = false;
+		wasAutoTriggered = false;
 		delayedSyntaxCompletion = null;
 		delayedSyntaxSubject = null;
 		displayDotName = null;
@@ -211,6 +214,16 @@ class Parser {
 						if (lo <= displayOffset && displayOffset <= t.pos.max) displaySuppressed = true;
 					}
 				case _:
+					// A completion whose position sits on a string or a REGEXP constant aborts the whole marking
+					// pass, so the request finds no completion point at all. A single-quoted string only counts
+					// when the completion was auto triggered. A markup literal never reaches here (it is read
+					// before this switch), which keeps it answering.
+					if (displayCompletionMode && matchesDisplayFile(file) && displayOffset >= 0
+							&& t.pos.min <= displayOffset && displayOffset <= t.pos.max) switch (t.tok) {
+						case Const(CString(_, k)): if (k != SSingleQuotes || wasAutoTriggered) displaySuppressed = true;
+						case Const(CRegexp(_, _)): displaySuppressed = true;
+						case _:
+					}
 					if (pendingDoc != null) {
 						t.doc = pendingDoc;
 						pendingDoc = null;
