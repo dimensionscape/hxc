@@ -320,6 +320,27 @@ class EvalMacro {
 			}
 			return encodeType(ec, t);
 		});
+		// Context.onTypeNotFound: the callback is appended to com.loadExternType, whose loaders are tried
+		// in turn when a module path has no file. A null answer means "not mine" and the next loader gets a
+		// turn; anything else is decoded as a TypeDefinition and becomes the module.
+		reg2("onTypeNotFound", "on_type_not_found", function(a) {
+			var fn = a[0];
+			var ec2 = ec;
+			com.loadExternType.push({name: "onTypeNotFound", load: function(path, p) {
+				var v = applyFn(ec2, fn, [mkString(hxc.core.Globals.sTypePath(path))]);
+				if (v == VNull) return null;
+				var dp = posOf(ec2, EvalField.field(ec2, v, EvalHash.hash("pos")), p);
+				return [decodeTypeDefinition(ec2, v, dp)];
+			}});
+			return VNull;
+		});
+		// send_json: the string is parsed and sent as the json request's result; without a json request
+		// there is nothing to send and it answers false.
+		reg2("send_json", "send_json", function(a) {
+			if (com.jsonRpcId == null) return VFalse;
+			hxc.Compiler.sendMacroJson(com, hxc.core.Json.Json.parse(strOf(a[0])));
+			return VTrue;
+		});
 		// Context.registerModuleDependency: the named module is loaded and then made to depend on a FAKE
 		// module standing for an arbitrary file, so the server re-types it when that file changes.
 		// Loading it must not leave it as a dependency of whatever is being typed, so the caller's

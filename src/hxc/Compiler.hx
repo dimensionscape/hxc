@@ -1030,6 +1030,11 @@ class Compiler {
 				var r = runCommand(ctx, c);
 				if (r != 0) throw "Command failed with error " + r;
 			}
+		} catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) {
+			// Sending a json result raises a completion answer, so a macro that sent one ends the request
+			// there and the compilation answers nothing further.
+			answerOut(mj.output);
+			return;
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
 			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt);
 			if (answer != null) answerOut(answer);
@@ -2189,6 +2194,12 @@ class Compiler {
 	// aborts only the request.
 	static function exitRequest(code:Int):Void {
 		if (requestOutput != null) throw new RequestAbort(code) else Sys.exit(code);
+	}
+
+	// A macro can push a raw json value out as the request result, through the same envelope every other
+	// json answer uses.
+	public static function sendMacroJson(ctx:Context, json:hxc.core.Json.JsonValue):Void {
+		throw new hxc.context.DisplayJson.JsonDisplayOutput(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(json)));
 	}
 
 	// Writes a request answer to the wait-server buffer when one is active, or the

@@ -26,6 +26,8 @@ class Context {
 	 * supply the complete file set.
 	 */
 	public var fileContents:Array<{file:String, contents:Null<String>}> = [];
+	// Context.onTypeNotFound loaders for modules absent from the class path.
+	public var loadExternType:Array<{name:String, load:hxc.core.Globals.Path->hxc.ast.Position->Null<Array<hxc.ast.Ast.TypeDecl>>}> = [];
 
 	/**
 	 * Global metadata registrations: dot-path filter and recursive, type and field flags.

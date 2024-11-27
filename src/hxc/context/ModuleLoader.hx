@@ -1255,11 +1255,30 @@ class ModuleLoader {
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 
 		var file:String;
+		var externDecls:Null<Array<hxc.ast.Ast.TypeDecl>> = null;
 		try {
 			file = resolveModuleFile(ctx, m, p);
 		} catch (e:ContextError) {
-			ctx.moduleNonexistentLut.set(key, true);
-			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			// Nothing to parse, so the extern-type loaders get a turn. The first one that answers names the
+			// module's file; only an exhausted list is not-found.
+			file = null;
+			for (h in ctx.loadExternType) {
+				var r = h.load(m, p);
+				if (r != null) { file = h.name; externDecls = r; break; }
+			}
+			if (externDecls == null) {
+				ctx.moduleNonexistentLut.set(key, true);
+				throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			}
+		}
+
+		// The decls the loader produced are typed as an extern module.
+		if (externDecls != null) {
+			var requester0 = ctx.currentModule;
+			var loaded0 = typeModule(ctx, m, file, externDecls);
+			loaded0.extra.kind = MExtern;
+			addDependency(requester0, loaded0);
+			return loaded0;
 		}
 
 		var src = moduleFileContent(ctx, file);
