@@ -151,7 +151,9 @@ class Context {
 
 	public var callArgumentStack:Array<Array<Expr>>;
 
-	// Custom define and metadata documentation, keyed by name.
+	// Custom define and metadata documentation is registered by init macros. Run display/metadata and
+	// display/defines callbacks after those registrations finish.
+	public var afterInitMacros:Array<Void->Void> = [];
 	public var userDefines:StringMap<UserDocEntry>;
 	public var userMetas:StringMap<UserDocEntry>;
 
@@ -452,6 +454,9 @@ typedef UserDocEntry = {
 	var doc:String;
 	var params:Array<String>;
 	var platforms:Array<String>;
+	// UsedOn restricts metadata declarations; Link supplies documentation URLs.
+	var targets:Array<String>;
+	var links:Array<String>;
 	var source:Null<String>;
 }
 

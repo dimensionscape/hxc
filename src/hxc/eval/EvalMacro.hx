@@ -543,7 +543,8 @@ class EvalMacro {
 				var v = EvalField.field(ec, o, EvalHash.hash(n));
 				return v == VNull ? [] : [for (x in arrOf(v)) strOf(x)];
 			}
-			return {doc: strField("doc"), params: arrField("params"), platforms: arrField("platforms"), source: src == VNull ? null : strOf(src)};
+			return {doc: strField("doc"), params: arrField("params"), platforms: arrField("platforms"),
+				targets: arrField("targets"), links: arrField("links"), source: src == VNull ? null : strOf(src)};
 		}
 		reg2("registerDefineImpl", "register_define_impl", function(a) {
 			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("define")));

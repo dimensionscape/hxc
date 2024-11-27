@@ -64,7 +64,12 @@ private class RequestAbort extends haxe.Exception {
 
 class Compiler {
 	public function new() run(Sys.args());
-	public static function main() run(Sys.args());
+	public static function main() {
+		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
+		// process exits 0.
+		try run(Sys.args())
+		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) Sys.stderr().writeString(mj.output);
+	}
 
 	// The wait loop: length-prefixed request/response over stdin/stderr; each request is one
 	// compilation. Reset the per-request mutable statics so a wait-server request compiles like a
@@ -182,8 +187,10 @@ class Compiler {
 				var m = ~/"method"[ 	]*:[ 	]*"([^"]+)"/;
 				if (m.match(displayArg)) {
 					var name = m.matched(1);
-					parentMethod = name == "initialize" || StringTools.startsWith(name, "server/")
-						|| name == "display/metadata" || name == "display/defines";
+					// /:229: display/metadata and display/defines are not answered before the compilation. They
+					// register an after-init-macros callback, because a -lib brings its documentation in through
+					// --macro register*DescriptionFile.
+					parentMethod = name == "initialize" || StringTools.startsWith(name, "server/");
 				}
 			}
 			if (parentMethod) {
@@ -233,6 +240,11 @@ class Compiler {
 				var failed = false;
 				try {
 					run(lines);
+				} catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) {
+					// A completion answer raised ANYWHERE in the compilation (an init-macro callback
+					// answering a display request, a macro calling send_json) is the request's answer and
+					// is written as given.
+					requestOutput.add(mj.output);
 				} catch (_:RequestAbort) {
 					failed = true;
 				} catch (e:Dynamic) {
@@ -733,6 +745,10 @@ class Compiler {
 			// last registration's desc wins.
 			hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "after_init_macros");
 			hxc.eval.EvalMacro.runAfterInitMacrosCallbacks();
+			// Run native after-init-macros callbacks at the same stage.
+			var aim = ctx.afterInitMacros;
+			ctx.afterInitMacros = [];
+			for (cb in aim) cb();
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {

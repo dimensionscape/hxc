@@ -86,6 +86,15 @@ class DisplayJson {
 		}
 	}
 
+	static function strings(l:Array<String>):Array<JsonValue> return [for (x in l) JString(x)];
+
+	// HasParam and Link registries prepend entries, so reverse them to restore registration order.
+	static function revStrings(l:Array<String>):Array<JsonValue> {
+		var c = l.copy();
+		c.reverse();
+		return [for (x in c) JString(x)];
+	}
+
 	static function sendJson(json:JsonValue):Void {
 		throw new JsonDisplayOutput(Json.stringOfJson(json));
 	}
@@ -110,61 +119,87 @@ class DisplayJson {
 				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}},
 			{name: "display/metadata", f: function(hctx) {
-				// Compiler metadata is available directly; custom metadata requires init-macro registration.
+				// Merge compiler and custom metadata by name after init macros register library documentation.
 				var includeCompiler = hctx.jsonrpc.getBoolParam("compiler");
-				hctx.jsonrpc.getBoolParam("user");
-				var out:Array<JsonValue> = [];
-				if (includeCompiler) {
-					var all = MetaRegistry.metas();
-					all.sort(function(a, b) {
-						var n1 = MetaRegistry.stringField(a, "metadata", "");
-						var n2 = MetaRegistry.stringField(b, "metadata", "");
-						return n1 < n2 ? -1 : n1 > n2 ? 1 : 0;
-					});
-					for (m in all) {
-						// The Haxe 4.3.7 generated metadata list omits this newer meta.json entry.
-						if (MetaRegistry.stringField(m, "metadata", "") == ":inlineConstructorArgument") continue;
+				var includeUser = hctx.jsonrpc.getBoolParam("user");
+				var com = hctx.com;
+				function answer():Void {
+					var named:Array<{name:String, v:JsonValue}> = [];
+					if (includeCompiler) for (m in MetaRegistry.metas()) {
+						var name = MetaRegistry.stringField(m, "metadata", "");
+						// Omit this entry to match the compiler's metadata registry.
+						if (name == ":inlineConstructorArgument") continue;
+						// Reverse prepended HasParam entries to restore their order.
 						var params = MetaRegistry.arrayField(m, "params").copy();
 						params.reverse();
-						out.push(JObject([
-						{name: "name", value: JString(MetaRegistry.stringField(m, "metadata", ""))},
-						{name: "doc", value: JString(MetaRegistry.stringField(m, "doc", ""))},
-						{name: "parameters", value: JArray(params)},
-						{name: "platforms", value: JArray(MetaRegistry.arrayField(m, "platforms"))},
-						{name: "targets", value: JArray(MetaRegistry.arrayField(m, "targets"))},
-						{name: "internal", value: JBool(MetaRegistry.boolField(m, "internal"))},
-						{name: "origin", value: JString("haxe compiler")},
-						{name: "links", value: JArray(MetaRegistry.arrayField(m, "links"))}
-					]));
+						named.push({name: name, v: JObject([
+							{name: "name", value: JString(name)},
+							{name: "doc", value: JString(MetaRegistry.stringField(m, "doc", ""))},
+							{name: "parameters", value: JArray(params)},
+							{name: "platforms", value: JArray(MetaRegistry.arrayField(m, "platforms"))},
+							{name: "targets", value: JArray(MetaRegistry.arrayField(m, "targets"))},
+							{name: "internal", value: JBool(MetaRegistry.boolField(m, "internal"))},
+							{name: "origin", value: JString("haxe compiler")},
+							{name: "links", value: JArray(MetaRegistry.arrayField(m, "links"))}
+						])});
 					}
+					if (includeUser && com != null) for (k in com.userMetas.keys()) {
+						var e = com.userMetas.get(k);
+						named.push({name: k, v: JObject([
+							{name: "name", value: JString(k)},
+							{name: "doc", value: JString(e.doc)},
+							{name: "parameters", value: JArray(revStrings(e.params))},
+							{name: "platforms", value: JArray(strings(e.platforms))},
+							{name: "targets", value: JArray(strings(e.targets))},
+							// Custom metadata cannot decode UsedInternally and therefore is never marked internal.
+							{name: "internal", value: JBool(false)},
+							{name: "origin", value: JString(e.source == null ? "user-defined" : e.source)},
+							{name: "links", value: JArray(revStrings(e.links))}
+						])});
+					}
+					named.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+					hctx.sendResult(JArray([for (n in named) n.v]));
 				}
-				hctx.sendResult(JArray(out));
+				if (com == null) answer() else com.afterInitMacros.push(answer);
 			}},
 			{name: "display/defines", f: function(hctx) {
+				// Merge compiler and custom defines by name. Compiler keys retain underscores; custom keys
+				// retain their registered spelling.
 				var includeCompiler = hctx.jsonrpc.getBoolParam("compiler");
-				hctx.jsonrpc.getBoolParam("user");
-				var out:Array<JsonValue> = [];
-				if (includeCompiler) {
-					var all = MetaRegistry.defines();
-					var named = [for (d in all) {
-						name: StringTools.replace(MetaRegistry.stringField(d, "define", ""), "-", "_"),
-						fields: d
-					}];
-					named.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-					for (d in named) {
-						var deprecated = MetaRegistry.field(d.fields, "deprecated");
-						out.push(JObject([
-							{name: "name", value: JString(d.name)},
-							{name: "doc", value: JString(MetaRegistry.stringField(d.fields, "doc", ""))},
-							{name: "parameters", value: JArray(MetaRegistry.arrayField(d.fields, "params"))},
-							{name: "platforms", value: JArray(MetaRegistry.arrayField(d.fields, "platforms"))},
+				var includeUser = hctx.jsonrpc.getBoolParam("user");
+				var com = hctx.com;
+				function answer():Void {
+					var named:Array<{name:String, v:JsonValue}> = [];
+					if (includeCompiler) for (d in MetaRegistry.defines()) {
+						var name = StringTools.replace(MetaRegistry.stringField(d, "define", ""), "-", "_");
+						var deprecated = MetaRegistry.field(d, "deprecated");
+						named.push({name: name, v: JObject([
+							{name: "name", value: JString(name)},
+							{name: "doc", value: JString(MetaRegistry.stringField(d, "doc", ""))},
+							{name: "parameters", value: JArray(MetaRegistry.arrayField(d, "params"))},
+							{name: "platforms", value: JArray(MetaRegistry.arrayField(d, "platforms"))},
 							{name: "origin", value: JString("haxe compiler")},
 							{name: "deprecated", value: deprecated == null ? JNull : deprecated},
-							{name: "links", value: JArray(MetaRegistry.arrayField(d.fields, "links"))}
-						]));
+							{name: "links", value: JArray(MetaRegistry.arrayField(d, "links"))}
+						])});
 					}
+					if (includeUser && com != null) for (k in com.userDefines.keys()) {
+						var e = com.userDefines.get(k);
+						named.push({name: k, v: JObject([
+							{name: "name", value: JString(k)},
+							{name: "doc", value: JString(e.doc)},
+							{name: "parameters", value: JArray(revStrings(e.params))},
+							{name: "platforms", value: JArray(strings(e.platforms))},
+							{name: "origin", value: JString(e.source == null ? "user-defined" : e.source)},
+							// Custom defines cannot decode Deprecated and therefore never report it.
+							{name: "deprecated", value: JNull},
+							{name: "links", value: JArray(revStrings(e.links))}
+						])});
+					}
+					named.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+					hctx.sendResult(JArray([for (n in named) n.v]));
 				}
-				hctx.sendResult(JArray(out));
+				if (com == null) answer() else com.afterInitMacros.push(answer);
 			}},
 			{name: "display/signatureHelp", f: function(hctx) {
 				setDisplayFile(hctx, "signature");
