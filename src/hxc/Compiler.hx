@@ -629,6 +629,8 @@ class Compiler {
 		// which also joins the compile roots. The statics install before the init macros so a display
 		// position typed during a --macro run records.
 		var displayRoot:Null<Path> = null;
+		// A .macro.hx display file is not a compile root; only the macro context can load its module.
+		var displayMacroRoot:Null<Path> = null;
 		// Every file the display request names becomes a compile root, so a file the program never
 		// reaches is still parsed and reported on.
 		var displayRoots:Array<Path> = [];
@@ -698,6 +700,8 @@ class Compiler {
 						var nparts = path.name.split(".");
 						if (nparts.length == 1) displayRoot = path;
 						else if (nparts.length == 2 && nparts[1] != "macro") displayRoot = {pack: path.pack, name: nparts[0]};
+						// The module is loaded in the macro context instead.
+						else if (nparts.length == 2) displayMacroRoot = {pack: path.pack, name: nparts[0]};
 					}
 					for (fc in ctx.fileContents) {
 						var fp = displayModulePath(ctx, fc.file);
@@ -720,6 +724,9 @@ class Compiler {
 		hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+			// A .macro.hx display file loads into the macro context once the init macros have run, which is
+			// where handle_display_file_before_typing does it.
+			if (displayMacroRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayMacroRoot);
 			// The init-macro callbacks run after the stage changes and before root modules type.
 			ctx.initMacrosDone = true;
 			// The context re-registers under its post-macro signature (init macros can add defines); the

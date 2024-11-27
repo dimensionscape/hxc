@@ -353,6 +353,30 @@ class DisplayJson {
 					])}
 				]));
 			}},
+			{name: "server/memory/context", f: function(hctx) {
+				// Report cached module paths and kinds. Heap sizes and cross-context leak detection are
+				// unavailable, so sizes are zero and leak lists empty.
+				var sign = hxc.context.CompilationCache.CompilationCache.digestFromHex(hctx.jsonrpc.getStringParam("signature"));
+				var cc = cache.getContext(sign);
+				var list:Array<JsonValue> = [];
+				for (path in cc.moduleOrder.visitOrder()) {
+					var m = cc.modules.get(path);
+					if (m == null) continue;
+					list.push(JObject([
+						{name: "path", value: JString(path)},
+						{name: "size", value: JInt(0)},
+						{name: "hasTypes", value: JBool(m.extra.kind == MCode || m.extra.kind == MMacro)}
+					]));
+				}
+				hctx.sendResult(JObject([
+					{name: "leaks", value: JNull},
+					{name: "syntaxCache", value: JObject([{name: "size", value: JInt(0)}])},
+					{name: "moduleCache", value: JObject([
+						{name: "size", value: JInt(0)},
+						{name: "list", value: JArray(list)}
+					])}
+				]));
+			}},
 			{name: "initialize", f: function(hctx) {
 				supportsResolve = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("supportsResolve"), false);
 				var methods = [for (h in handlers()) JString(h.name)];

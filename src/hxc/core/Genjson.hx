@@ -319,13 +319,24 @@ class Genjson {
 		};
 		// Only a @:value var serializes its expression (as a printed string); everything else is null.
 		var expr:JsonValue = JNull;
-		if (mode != GMMinimum) switch (cf.kind) {
-			case Var(_):
-				for (m in cf.meta) if (m.name == ":value" && m.params.length == 1) {
-					expr = jobject([field("string", jstring(hxc.ast.Ast.Printer.sExpr(m.params[0])))]);
-					break;
-				}
-			case _:
+		if (mode != GMMinimum) {
+			var hasValue = false;
+			switch (cf.kind) {
+				case Var(_):
+					for (m in cf.meta) if (m.name == ":value" && m.params.length == 1) {
+						expr = jobject([field("string", jstring(hxc.ast.Ast.Printer.sExpr(m.params[0])))]);
+						hasValue = true;
+						break;
+					}
+				case _:
+			}
+			// A field carrying the custom :testHack meta serializes its typed expression instead, printed
+			// the pretty way.
+			if (!hasValue && TypeFunctions.hasMeta(":testHack", cf.meta) && cf.expr != null) {
+				var pc = hxc.core.TPrinting.printContext();
+				expr = jobject([field("testHack", jstring(hxc.core.TPrinting.sExprPretty(false, "", false,
+					function(t) return hxc.core.TPrinting.sType(pc, t), cf.expr)))]);
+			}
 		}
 		return [
 			field("name", jstring(fieldName(cf.name, cf.meta))),

@@ -1522,6 +1522,10 @@ class EvalMacro {
 	static function doReuse(com:Context):Void {
 		if (!pendingMacroReuse) return;
 		pendingMacroReuse = false;
+		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
+		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
+		// is re-synced here.
+		if (macroCom != null) macroCom.fileContents = com.fileContents.copy();
 		if (macroCtx == null) return;
 		var ec = macroCtx;
 		// Reuse also swaps in the new compilation's api: every macro API closure holds the com it was
@@ -1676,6 +1680,28 @@ class EvalMacro {
 			|| Std.isOfType(e, hxc.compiler.DisplayXml.SyntaxCompletion)
 			|| Std.isOfType(e, hxc.parser.Parser.TypePathCompletion)
 			|| Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion);
+	}
+
+	// A display file whose module name is Name.macro is not a compile root, so nothing in the host
+	// compilation would ever load it. It is loaded into the MACRO context instead, and dropped from
+	// that context's lookups first so it types again in display mode even if an earlier --macro
+	// already typed it (issue #7017).
+	public static function loadDisplayModuleInMacro(host:Context, path:hxc.core.Globals.Path):Void {
+		if (macroCom == null) initMacroContext(host);
+		var key = hxc.context.Context.pathKey(path);
+		var m = macroCom.moduleLut.get(key);
+		if (m != null) {
+			macroCom.moduleLut.remove(key);
+			macroCom.typeToModule.remove(key);
+			macroCom.modules.remove(m);
+			for (mt in m.types) {
+				var tk = hxc.context.Context.pathKey(TypeFunctions.tInfos(mt).path);
+				macroCom.moduleLut.remove(tk);
+				macroCom.typeToModule.remove(tk);
+			}
+			if (macroCtx != null) { staleMacroCtx = macroCtx; macroCtx = null; lastModuleCount = -1; }
+		}
+		loadMacroClass(host, path, null, true);
 	}
 
 	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef):Void {
