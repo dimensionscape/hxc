@@ -1024,7 +1024,7 @@ class Compiler {
 				if (r != 0) throw "Command failed with error " + r;
 			}
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
-			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos);
+			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt);
 			if (answer != null) answerOut(answer);
 			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
@@ -1631,12 +1631,29 @@ class Compiler {
 		};
 	}
 
-	// The completion response over the typed entries the field-completion collector recorded. +
-	// displayException fields_to_json CRToplevel: locals, then the enclosing class fields, then every
-	// loaded type sorted by name, then the literal set and the keyword list; mode kind 2 with empty
-	// args.
+	// The completion response over the typed entries the field-completion collector recorded.
+	// The toplevel collection: locals, then the enclosing class fields, then every loaded type sorted by
+	// name, then the literal set and the keyword list; mode kind 2 with empty args.
+	// A collection raised under a WithType reports that type, the same type with follow mapped over its
+	// immediate children, and - for a @:structInit class - the anonymous structure its constructor
+	// arguments describe. Anything else contributes no fields at all.
+	static function expectedTypeFields(gen:hxc.core.Genjson, ct:T->hxc.core.CompletionItem.CompletionType,
+			wt:Null<hxc.core.WithType.WithType>):Array<hxc.core.Json.JsonField> {
+		var t = switch (wt) { case null: null; case WithType(t, _): t; case _: null; };
+		if (t == null) return [];
+		var tf = TypeFunctions.map(TypeFunctions.follow, TypeFunctions.follow(t));
+		var compatible:Array<hxc.core.Json.JsonValue> = [];
+		var an = hxc.typing.Typer.structInitAnonForCompletion(wt);
+		if (an != null) compatible.push(hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, ct(TAnon(an))));
+		return [
+			{name: "expectedType", value: hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, ct(t))},
+			{name: "expectedTypeFollowed", value: hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, ct(tf))},
+			{name: "compatibleTypes", value: hxc.core.Json.JsonValue.JArray(compatible)}
+		];
+	}
+
 	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>,
-			?subjectName:String, ?subjectPos:Position):Null<String> {
+			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType):Null<String> {
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
@@ -1853,7 +1870,7 @@ class Compiler {
 		var subj = patchCompletionSubject(subjectName, subjectPos == null ? insertPos : subjectPos);
 		var mode = hxc.core.Json.JsonValue.JObject([
 			{name: "kind", value: hxc.core.Json.JsonValue.JInt(2)},
-			{name: "args", value: hxc.core.Json.JsonValue.JObject([])}
+			{name: "args", value: hxc.core.Json.JsonValue.JObject(expectedTypeFields(gen, ct, wt))}
 		]);
 		var result = hxc.core.Json.JsonValue.JObject([
 			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
@@ -2063,7 +2080,12 @@ class Compiler {
 			// not a constant.
 			inline function qualified(name:String):Bool
 				return hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
-			if (h.e != null) switch (h.e.expr) {
+			// A type path under the cursor answers with a Type item carrying its own type, not with the
+			// expression that path sits in.
+			if (h.mt != null) {
+				doc = TypeFunctions.tInfos(h.mt).doc;
+				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, h.mt, 0, null, ct(h.t));
+			} else if (h.e != null) switch (h.e.expr) {
 				case TField(e1, fa):
 					switch (fa) {
 						case FStatic(c, cf):

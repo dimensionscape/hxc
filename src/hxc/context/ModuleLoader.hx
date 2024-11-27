@@ -1660,9 +1660,12 @@ class ModuleLoader {
 				}
 				for (acc in f.cffAccess) if (acc.access == AMacro)
 					throw new ContextError("Invalid modifier: macro on abstract constructor", acc.pos);
+				// The synthetic `this` var has no position of its own. Giving it the field's would make it
+				// enclose the whole constructor body, and a display question anywhere inside would be answered
+				// by it instead.
 				var thisVar:EVar = {
-					evName: {name: "this", pos: p}, evFinal: false, evStatic: false,
-					evType: thisT, evExpr: null, evMeta: [{name: ":this", params: [], pos: p}]
+					evName: {name: "this", pos: Position.nullPos}, evFinal: false, evStatic: false,
+					evType: thisT, evExpr: null, evMeta: [{name: ":this", params: [], pos: Position.nullPos}]
 				};
 				var initE = new Expr(EVars([thisVar]), p);
 				var retE = new Expr(EReturn(new Expr(ECast(new Expr(EConst(CIdent("this")), p), null), p)), p);

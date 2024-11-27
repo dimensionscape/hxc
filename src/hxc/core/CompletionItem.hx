@@ -302,7 +302,9 @@ class CompletionItem {
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
-	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int):JsonValue {
+	// The "type" field is present only when the item carries a ci_type. A toplevel Type item has none
+	// (make_ci_type ... None); a HOVER on a type path does Some (t,ct)).
+	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int, ?ct:CompletionType):JsonValue {
 		var infos = TypeFunctions.tInfos(mt);
 		var kind:Int;
 		var isExtern = false, isFinal = false, isAbstract = false;
@@ -353,7 +355,9 @@ class CompletionItem {
 				{name: "isAbstract", value: JBool(isAbstract)},
 				{name: "doc", value: infos.doc == null ? JNull : JString(hxc.ast.Ast.genDocText(infos.doc))}
 			])}
-		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+		]:Array<JsonField>)
+			.concat(ct == null ? [] : ([{name: "type", value: CompletionTypeTools.toJson(gen, ct)}]:Array<JsonField>))
+			.concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
 	// The EnumField item.

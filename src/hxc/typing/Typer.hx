@@ -36,9 +36,12 @@ class JsonToplevelCompletion extends haxe.Exception {
 	// position collapses to the cursor.
 	public var subjectName:Null<String>;
 	public var subjectPos:Null<hxc.ast.Position>;
-	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position) {
+	// The EXPECTED type at the cursor travels with the collection; it becomes the mode's args.
+	public var wt:Null<hxc.core.WithType.WithType>;
+	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position, ?wt:hxc.core.WithType.WithType) {
 		super("json toplevel completion");
 		this.items = items;
+		this.wt = wt;
 		if (subjectName != null && subjectName != "") {
 			this.subjectName = subjectName;
 			this.subjectPos = subjectPos;
@@ -1199,7 +1202,7 @@ class Typer {
 					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
 							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
 						// The field name is the subject.
-						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos);
+						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos, withType);
 						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
 					}
 					if (an != null) {
@@ -1457,6 +1460,9 @@ class Typer {
 						if (tp.tparams.length > 0) ctx.com.addDiagnostic("Type parameters are not supported for the `is` operator", th.pos);
 						var e = typeExpr(ctx, e1, WithTypeTools.value);
 						var mt = Typeload.resolveTypePath(ctx.com, {pack: tp.tpackage, name: tp.tname}, tp.tsub, th.pos);
+						// The cursor on the type of an `is` answers with that type, not with the whole expression,
+						// and it answers the DECLARED type - the redirect below is only for codegen.
+						if (atDisplayPos(th.pos)) displayModuleType(ctx.com, mt, th.pos);
 						switch (mt) {
 							case TAbstractDecl(a) if (a.impl != null): mt = TClassDecl(a.impl);
 							case _:
@@ -1527,7 +1533,7 @@ class Typer {
 	// access, local, enum field).
 	// hexpected: the with-type at the hover point, encoded as `expected`.
 	// tctx is the scope the hovered expression was typed in; the isQualified retype needs it.
-	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext}> = null;
+	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType}> = null;
 
 	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
 	// position.
@@ -2178,7 +2184,7 @@ class Typer {
 		if (fieldCompletionFound != null) return;
 		var name = try Ast.stringListOfExprPathRaise(e).join(".") catch (_:Dynamic) "";
 		if (name == "null") name = "";
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, e.pos);
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, e.pos, withType);
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
@@ -2353,8 +2359,9 @@ class Typer {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [inf.namePos];
 		} else if (displayHover || displayTypeDefinition) {
+			// A type path answers with a type item, not with an expression.
 			if (hoverFound == null)
-				hoverFound = {t: TypeFunctions.typeOfModuleType(mt), p: p};
+				hoverFound = {t: TypeFunctions.typeOfModuleType(mt), p: p, mt: mt};
 		} else if (displayUsage || displayImplementation) {
 			usageTargetType = mt;
 		} else if (allowCompletion && hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null) {
@@ -2947,8 +2954,14 @@ class Typer {
 	}
 
 	// A @:structInit class's completable fields are the ARGUMENTS its constructor accepts, with the
-	// receiver's type parameters applied, each reported at the declared field of that name. A class
-	// whose constructor cannot be read contributes every var field it declares instead.
+	// receiver's type parameters applied, each reported at the declared field of that name. A class whose
+	// constructor cannot be read contributes every var field it declares instead.
+	// The completion answer needs the same anon without a typer context (the collection is already raised
+	// by then); only the ctor-signature branch wanted one.
+	public static function structInitAnonForCompletion(withType:WithType):Null<TAnon> {
+		return try structInitAnonFields(null, withType) catch (_:Dynamic) null;
+	}
+
 	static function structInitAnonFields(ctx:TyperContext, withType:WithType):Null<TAnon> {
 		var hit = switch (withType) {
 			case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
@@ -3172,7 +3185,7 @@ class Typer {
 				// field access already answered here is that node, so a stand-in the recovery put at an
 				// enclosing position must not displace it.
 				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
-					throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), s == "null" ? null : s, p);
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), s == "null" ? null : s, p, withType);
 				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
 					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
 					// real identifier under the cursor keeps the collection order.
@@ -3245,7 +3258,7 @@ class Typer {
 		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
 		// check, so `f|oo("")` answered nothing.
 		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)) {
-			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), i, p);
+			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), i, p, withType);
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 		}
 		if (i == "abstract") {
@@ -4652,6 +4665,9 @@ class Typer {
 				v.meta = ev.evMeta;
 				if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
 				if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
+				// The cursor on the DECLARED name answers with the variable itself, which makes a hover there a
+				// Local rather than the expression around it.
+				if (atDisplayPos(pv)) displayVariable(ctx, v, pv);
 				out.push({v: v, e: e});
 			} catch (err:TypingError) {
 				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
