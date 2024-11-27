@@ -511,6 +511,10 @@ class ModuleLoader {
 					c.isPrivate = priv;
 					c.doc = d.dDoc;
 					c.meta = d.dMeta;
+					if (TypeFunctions.hasMeta(":inheritDoc", d.dMeta)) {
+						var cDoc = c;
+						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildClassDoc(ctx, cDoc));
+					}
 					// Register type parameters before resolving other modules so their arity is already available.
 					c.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m);
 					if (hasClassFlag(d.dFlags, HAbstract)) TypeFunctions.addClassFlag(c, CAbstract);
@@ -561,6 +565,10 @@ class ModuleLoader {
 						names: [],
 						type: enumModuleType(m, path, p)
 					};
+					if (TypeFunctions.hasMeta(":inheritDoc", d.dMeta)) {
+						var eDoc = e;
+						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildEnumDoc(ctx, eDoc));
+					}
 					decls.push(TEnumDecl(e));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -602,6 +610,10 @@ class ModuleLoader {
 					else if (TypeFunctions.hasMeta(":enum", d.dMeta))
 						ctx.warning(hxc.core.WarningList.Warning.WDeprecatedEnumAbstract, hxc.core.WarningList.fromMeta(d.dMeta),
 							"`@:enum abstract` is deprecated in favor of `enum abstract`", TypeFunctions.getMeta(":enum", d.dMeta).pos);
+					if (TypeFunctions.hasMeta(":inheritDoc", a.meta)) {
+						var aDoc = a;
+						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildAbstractDoc(ctx, aDoc));
+					}
 					decls.push(TAbstractDecl(a));
 					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
 
@@ -862,6 +874,10 @@ class ModuleLoader {
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, isStatic);
 			cf.doc = cff.cffDoc;
 			cf.meta = cff.cffMeta;
+			if (TypeFunctions.hasMeta(":inheritDoc", cff.cffMeta)) {
+				var cDoc = c, cfDoc = cf;
+				ctx.delay(Context.PTypeField, function() hxc.typing.InheritDoc.buildClassFieldDoc(ctx, cDoc, cfDoc));
+			}
 			// Tag abstract implementation members so calls prepend the receiver as this.
 			if (TypeFunctions.hasMeta(":impl", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfImpl);
 			// Abstract members carry CfImpl, including enum-abstract variables, whose CfEnum flag enables

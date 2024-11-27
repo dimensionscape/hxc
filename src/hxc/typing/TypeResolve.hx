@@ -1278,6 +1278,11 @@ class TypeResolve {
 			};
 			var ef = new TEnumField(c.ecName.name, t, c.ecPos, c.ecName.pos, c.ecDoc, index, ctorParams, c.ecMeta);
 			e.constrs.set(c.ecName.name, ef);
+			// A constructor carrying @:inheritDoc collects its inherited docs.
+			if (TypeFunctions.hasMeta(":inheritDoc", c.ecMeta)) {
+				var efDoc = ef;
+				ctx.delay(hxc.context.Context.PConnectField, function() hxc.typing.InheritDoc.buildEnumFieldDoc(ctx, efDoc));
+			}
 			e.names.push(c.ecName.name);
 			if (c.ecArgs.length > 0) isFlat = false;
 			index++;
