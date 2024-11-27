@@ -1940,11 +1940,14 @@ class Compiler {
 			};
 		}
 		var entries = jc.entries.copy();
-		entries.sort(function(a, b) return a.cf.name < b.cf.name ? -1 : a.cf.name > b.cf.name ? 1 : 0);
+		// Structure completion preserves declaration order.
+		if (jc.noSort != true)
+			entries.sort(function(a, b) return a.cf.name < b.cf.name ? -1 : a.cf.name > b.cf.name ? 1 : 0);
 		var items:Array<hxc.core.Json.JsonValue> = [];
 		for (i in 0...entries.length) {
 			var e = entries[i];
-			var origin = e.builtIn ? hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn
+			var origin = jc.originModuleType != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(jc.originModuleType)
+				: e.builtIn ? hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn
 				: e.originAnon != null ? hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(e.originAnon)
 				: e.originClass != null ? (e.fromParent == true
 					? hxc.core.CompletionItem.ClassFieldOrigin.Parent(classDecl(e.originClass))

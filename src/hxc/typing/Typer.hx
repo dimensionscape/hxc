@@ -1196,8 +1196,21 @@ class Typer {
 					var covered = false;
 					for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
 					var an = covered ? null : expectedAnonFromWithType(ctx, withType);
-					// A @:structInit class completes like a structure, from the fields its constructor accepts.
-					if (an == null && !covered) an = structInitAnonFields(ctx, withType);
+					// An anon that came from a typedef reports that typedef as the origin; a bare one reports
+					// itself.
+					var anOrigin:Null<hxc.core.Type.ModuleType> = if (an == null) null else switch (withType) {
+						case WithType(wt, _): switch (wt) { case TType(td, _): TTypeDecl(td); case _: null; };
+						case _: null;
+					}
+					// A @:structInit class completes like a structure, from the fields its constructor accepts,
+					// and reports the class as the origin .
+					if (an == null && !covered) {
+						an = structInitAnonFields(ctx, withType);
+						if (an != null) anOrigin = switch (withType) {
+							case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TInst(c, _): TClassDecl(c); case _: null; };
+							case _: null;
+						}
+					}
 					// One field whose value is a null at a NULL position is what the parser leaves behind for `{
 					// ident`. With no structure expected that is not a structure completion at all - it is a
 					// toplevel one keyed by the name, which is how a function body of just `{ foo
@@ -1213,15 +1226,34 @@ class Typer {
 						// missing is offered.
 						var given = new haxe.ds.StringMap<Bool>();
 						for (f in fields) if (!atDisplayPos(f.pos)) given.set(f.name, true);
-						fieldCompletionFound = [for (name in an.fields.keys()) if (!given.exists(name)) {
-							var cf = an.fields.get(name);
-							{
-								kind: cf.kind.match(Method(_)) ? "method" : "var",
-								name: cf.name,
-								type: hxc.core.TPrinting.sTypeStr(cf.type),
-								doc: Ast.genDocTextOpt(cf.doc)
-							}
+						var cand = [for (name in an.fields.keys()) if (!given.exists(name)) an.fields.get(name)];
+						// Sort by declaration position descending; for an empty literal the list is then built by
+						// prepending, which turns that back into ascending.
+						cand.sort(function(c1, c2) return c2.pos.min - c1.pos.min);
+						if (fields.length == 0) cand.reverse();
+						fieldCompletionFound = [for (cf in cand) {
+							kind: cf.kind.match(Method(_)) ? "method" : "var",
+							name: cf.name,
+							type: hxc.core.TPrinting.sTypeStr(cf.type),
+							doc: Ast.genDocTextOpt(cf.doc)
 						}];
+						// The JSON answer is the same collection under kind 1 (CRStructureField), keyed by the field
+						// name the cursor is on.
+						var subjName:Null<String> = null;
+						var subjPos:Null<Position> = null;
+						for (f in fields) if (atDisplayPos(f.pos)) { subjName = f.name; subjPos = f.pos; break; }
+						var doff = hxc.parser.Parser.displayOffset;
+						var insert = new Position(p.file, doff, doff);
+						jsonFieldCompletion = {
+							entries: [for (cf in cand) {cf: cf, scope: CFSMember, originClass: null, originAnon: null, builtIn: false}],
+							receiver: null,
+							insertPos: insert,
+							originModuleType: anOrigin,
+							noSort: true,
+							kind: 1,
+							subjectName: subjName,
+							subjectPos: subjPos != null ? subjPos : insert
+						};
 					}
 				}
 				// A field may appear only once in an object literal.
@@ -2580,6 +2612,12 @@ class Typer {
 		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}>,
 		receiver:Null<TExpr>,
 		insertPos:Position,
+		// The ORIGIN, which for a structure is the typedef or the @:structInit class the fields came from,
+		// not a class each entry declares.
+		?originModuleType:hxc.core.Type.ModuleType,
+		// Orders a structure's fields by declaration position, so the answer keeps the order it was built
+		// in rather than sorting by name the way a field completion does.
+		?noSort:Bool,
 		// Which CompletionResultKind the answer carries. CRField (0) unless the completion came from
 		// somewhere else, like an `override` modifier (CROverride, 12).
 		?kind:Int,
@@ -2984,6 +3022,10 @@ class Typer {
 		};
 		if (hit == null) return null;
 		var c = hit.c;
+		// A @:structInit class needs its constructor while its FIELDS type, so there is always a signature
+		// to read - including the super's arguments. hxc synthesizes it in a filter, long after a
+		// completion runs, so it is forced here.
+		if (c.constructor == null && ctx != null) try ensureStructInitCtor(ctx, c) catch (_:Dynamic) {}
 		var ctor = c.constructor;
 		var sig = ctor == null ? null : switch (try findConstructorType(ctx, c, hit.tl) catch (_:Dynamic) null) {
 			case null: null;
@@ -2991,11 +3033,32 @@ class Typer {
 		};
 		var fields = new haxe.ds.StringMap<TClassField>();
 		if (sig != null) {
+			// The constructor's own doc is read as JAVADOC, and each argument takes its documentation from
+			// the matching @param tag.
+			var jd = switch (Ast.genDocTextOpt(ctor.doc)) {
+				case null: null;
+				case d: new hxc.core.Javadoc(d);
+			}
+			// With a typed constructor body every argument reports its own VAR position, so a field
+			// forwarded from a superclass reports where that field is declared; in the bodyless case a field
+			// of this class reports its own name and doc.
+			var tfArgs:Null<Array<TFuncArg>> = ctor.expr == null ? null : switch (ctor.expr.expr) {
+				case TFunction(fn): fn.args;
+				case _: null;
+			}
 			for (arg in sig.args) {
-				var decl = c.fields.get(arg.name);
-				var np = decl != null ? decl.namePos : ctor.namePos;
+				var np = ctor.namePos;
+				var doc:hxc.ast.Ast.Documentation = null;
+				if (tfArgs != null) {
+					for (fa in tfArgs) if (fa.v.name == arg.name) { np = fa.v.pos; break; }
+					doc = jd == null ? null : Ast.docFromStringOpt(jd.getParamInfo(arg.name));
+				} else {
+					var decl = c.fields.get(arg.name);
+					if (decl != null) { np = decl.namePos; doc = decl.doc; }
+					else doc = jd == null ? null : Ast.docFromStringOpt(jd.getParamInfo(arg.name));
+				}
 				var cf = TypeFunctions.mkField(arg.name, arg.t, np, np);
-				if (decl != null) cf.doc = decl.doc;
+				cf.doc = doc;
 				fields.set(arg.name, cf);
 			}
 		} else {
@@ -5063,6 +5126,8 @@ class Typer {
 		var args:Array<TFuncArg> = [];
 		var sigArgs:Array<TSignatureArg> = [];
 		var body:Array<TExpr> = [];
+		// Every documented field contributes an `@param` line to the synthesized constructor's own doc.
+		var docBuf = new StringBuf();
 		// A field declared with a default value (`var x:Int = 100`) becomes an optional constructor
 		// argument, and its assignment is guarded so an omitted arg keeps the declared default. The
 		// default is detected from the AST field list.
@@ -5094,6 +5159,11 @@ class Typer {
 			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, c.pos);
 			var ev = TypeFunctions.mk(TLocal(v), v.type, c.pos);
 			var assign = TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, c.pos);
+			switch (Ast.genDocTextOpt(cf.doc)) {
+				case null:
+				case d: docBuf.add("@param " + cf.name + " " + StringTools.trim(d) + "
+");
+			}
 			if (dflt) {
 				// If (arg != null) this.field = arg -- the field keeps its declared default otherwise
 				var cond = TypeFunctions.mk(TBinop(OpNotEq, ev, TypeFunctions.mk(TConst(TNull), at, c.pos)), ctx.com.basic.tbool, c.pos);
@@ -5109,8 +5179,14 @@ class Typer {
 				switch (TypeFunctions.follow(st)) {
 					case TFun(ssig):
 						var superLocals:Array<TExpr> = [];
-						for (sa in ssig.args) {
-							var sv = TypeFunctions.allocVar(VGenerated, sa.name, sa.t, c.pos);
+						// The super's own argument VARS are reused, so a forwarded field keeps the position where it
+						// was declared.
+						var superArgs:Null<Array<TFuncArg>> = c.superClass.c.constructor.expr == null ? null
+							: switch (c.superClass.c.constructor.expr.expr) { case TFunction(sfn): sfn.args; case _: null; };
+						for (i in 0...ssig.args.length) {
+							var sa = ssig.args[i];
+							var spos = superArgs != null && i < superArgs.length ? superArgs[i].v.pos : c.pos;
+							var sv = TypeFunctions.allocVar(VGenerated, sa.name, sa.t, spos);
 							args.push({v: sv});
 							sigArgs.push({name: sa.name, opt: sa.opt, t: sa.t});
 							superLocals.push(TypeFunctions.mk(TLocal(sv), sa.t, c.pos));
@@ -5125,8 +5201,16 @@ class Typer {
 		var ctorType = TFun({args: sigArgs, ret: tvoid});
 		var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
 		cfCtor.kind = Method(MethNormal);
+		// The synthesized constructor carries the collected @param doc and both metas, then collects what
+		// @:inheritDoc brings it.
+		cfCtor.doc = Ast.docFromString(docBuf.toString());
+		cfCtor.meta = [
+			{name: ":compilerGenerated", params: [], pos: Position.nullPos},
+			{name: ":inheritDoc", params: [], pos: Position.nullPos}
+		];
 		cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
 		c.constructor = cfCtor;
+		hxc.typing.InheritDoc.buildClassFieldDoc(ctx.com, c, cfCtor);
 	}
 
 	static function findConstructorType(ctx:TyperContext, c:TClass, tl:TParams):Null<T> {
