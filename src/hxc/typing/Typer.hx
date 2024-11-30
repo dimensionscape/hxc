@@ -1304,6 +1304,30 @@ class Typer {
 					// source order.
 					var argByName = new haxe.ds.StringMap<TSignatureArg>();
 					for (arg in scSig.args) argByName.set(arg.name, arg);
+					// Each constructor argument becomes a synthetic field positioned at that argument's own VAR,
+					// or at the constructor name when the constructor has no body, and a cursor on the field name
+					// is then answered with it. That is how a field of a @:structInit class reports its own
+					// declaration.
+					if (hxc.parser.Parser.displayFile != null && atDisplayPos(p)) {
+						if (scHit.c.constructor == null) try ensureStructInitCtor(ctx, scHit.c) catch (_:Dynamic) {}
+						var ctor = scHit.c.constructor;
+						if (ctor != null) {
+							var argPos = new haxe.ds.StringMap<Position>();
+							var tfArgs = ctor.expr == null ? null : switch (ctor.expr.expr) {
+								case TFunction(fn): fn.args;
+								case _: null;
+							}
+							for (i in 0...scSig.args.length) {
+								var nm = scSig.args[i].name;
+								argPos.set(nm, tfArgs != null && i < tfArgs.length ? tfArgs[i].v.pos : ctor.namePos);
+							}
+							for (f in fields) if (atDisplayPos(f.pos)) {
+								var arg = argByName.get(f.name);
+								var ap = argPos.get(f.name);
+								if (arg != null && ap != null) displayAnonField(TypeFunctions.mkField(f.name, arg.t, ap, ap));
+							}
+						}
+					}
 					var byName = new haxe.ds.StringMap<TExpr>();
 					for (f in fields) {
 						var arg = argByName.get(f.name);
