@@ -19,6 +19,9 @@ class ToplevelScan {
 
 	public static function reset():Void scanned = new haxe.ds.StringMap();
 
+	// Discard this signature's exploration so the next collection rescans class paths.
+	public static function uninitialize(sign:String):Void scanned.remove(sign);
+
 	public static function get(ctx:Context):Array<ScannedFile> {
 		var sign = ctx.defines.getSignature();
 		var out = scanned.get(sign);
@@ -102,6 +105,14 @@ class ToplevelScan {
 					walk(ctx, full, pack.concat([name]), out, seen);
 			} else if (StringTools.endsWith(name, ".hx")) {
 				var moduleName = name.substr(0, name.length - 3);
+				// Accept Name.platform.hx only when its suffix matches the current target.
+				var dot = moduleName.lastIndexOf(".");
+				if (dot >= 0) {
+					var platformStr = ctx.isMacro || ctx.defines.rawDefined("macro")
+						? "macro" : hxc.core.Globals.platformName(ctx.platform);
+					if (moduleName.substr(dot + 1) != platformStr) continue;
+					moduleName = moduleName.substr(0, dot);
+				}
 				var c0 = moduleName.charCodeAt(0);
 				if (!((c0 >= "A".code && c0 <= "Z".code))) continue;
 				var key = pack.join(".") + "." + moduleName;

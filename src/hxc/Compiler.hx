@@ -737,8 +737,9 @@ class Compiler {
 			}
 		}
 		// The context registers its descriptive json in the process cache before the init macros run, which
-		// is what makes server/contexts list it. (CommonCache.maybe_add_context_sign cs com
-		// "before_init_macros").
+		// is what makes server/contexts list it.
+		// afterArgParsing runs once the defines and the class path are final.
+		hxc.context.ServerCache.afterArgParsing(ctx);
 		hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);

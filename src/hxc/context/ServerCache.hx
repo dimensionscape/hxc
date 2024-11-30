@@ -21,6 +21,23 @@ class ServerCache {
 	// sctx.delays: callbacks run after the request (a fresh context's directory registry populates
 	// here so the scan does not slow the request that created the context).
 	static var delays:Array<Void->Void> = [];
+	// The class path the SIGNATURE was last seen with. A request that changes it for the same defines
+	// clears the directory registry and marks the context uninitialised, so the class-path exploration runs
+	// again.
+	static var classPaths:haxe.ds.StringMap<String> = new haxe.ds.StringMap();
+
+	public static function afterArgParsing(com:Context):Void {
+		if (!enabled) return;
+		var sign = com.defines.getSignature();
+		var cp = com.classPath.join("
+");
+		var old = classPaths.get(sign);
+		classPaths.set(sign, cp);
+		if (old == null || old == cp) return;
+		hxc.compiler.ServerMessage.classPathsChanged(com, "");
+		changedDirectories.remove(sign);
+		hxc.compiler.ToplevelScan.uninitialize(sign);
+	}
 
 	public static function resetRequest():Void {
 		compilationStep++;
