@@ -973,6 +973,11 @@ class Compiler {
 			// next request.
 			if (!ctx.hasError() && (ctx.displaySpec == null || (isDisplay(ctx, "diagnostics") && ctx.jsonRpcId != null))) {
 				hxc.context.DisplayJson.cache.cacheContext(ctx);
+				// The modules of the com being finished are cached, and the MACRO com is one of those (a
+				// fresh one per compilation). Its modules carry the macro signature, so they land in that
+				// context and the server's module check can report on them like any other.
+				var mw = hxc.eval.EvalMacro.macroWorld();
+				if (mw != null) hxc.context.DisplayJson.cache.cacheContext(mw);
 				hxc.compiler.ServerMessage.cachedModules(ctx, "", ctx.modules.length);
 			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
