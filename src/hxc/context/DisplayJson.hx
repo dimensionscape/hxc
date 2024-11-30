@@ -33,6 +33,9 @@ class DisplayJson {
 
 	static var doNotCheckModules = false;
 	public static var legacyCompletion = false;
+	// Find-references flags controlling expansion to related fields.
+	public static var usageDescendants = false;
+	public static var usageBase = false;
 	static var serverPrintFlags = new haxe.ds.StringMap<Bool>();
 
 	static var serverMessageNames = [
@@ -234,8 +237,14 @@ class DisplayJson {
 				setDisplayFile(hctx, "position");
 			}},
 			{name: "display/references", f: function(hctx) {
-				// Only normal reference search is implemented; descendant variants are not collected yet.
+				// Reference-search kind selects whether to include base declarations and descendants.
 				setDisplayFile(hctx, "usage");
+				var kind = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("kind"), "normal");
+				switch (kind) {
+					case "withBaseAndDescendants": usageDescendants = true; usageBase = true;
+					case "withDescendants": usageDescendants = true; usageBase = false;
+					case _: usageDescendants = false; usageBase = false;
+				}
 			}},
 			{name: "display/diagnostics", f: function(hctx) {
 				// Answer diagnostics only after compilation, using the stored request ID.

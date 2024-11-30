@@ -1095,6 +1095,9 @@ class Typer {
 				var tf = typeFunction(ctx, args, ret, localMode, f.fExpr, p);
 				ctx.typeParams = savedTypeParams;
 				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
+				// The cursor on a named local function's name answers with the variable it binds, so the answer
+				// is the name's own range and not the whole function.
+				if (namedVar != null && atDisplayPos(namedVar.pos)) displayVariable(ctx, namedVar, namedVar.pos);
 				if (namedVar == null) fnExpr;
 					else {
 						// A recursive named local function is bound in two steps: `var f = null; f = <fn>`,

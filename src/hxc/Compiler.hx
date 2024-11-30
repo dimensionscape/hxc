@@ -98,6 +98,10 @@ class Compiler {
 		hxc.eval.EvalMacro.resetPerRequest();
 		hxc.typing.CoreApi.reset();
 		hxc.context.ServerCache.resetRequest();
+		// The usage flags belong to one request (each json call sets them); the legacy @usage lane never
+		// sets them, so they must not survive a json one.
+		hxc.context.DisplayJson.usageDescendants = false;
+		hxc.context.DisplayJson.usageBase = false;
 		hxc.ast.Position.resetFileCache();
 		hxc.compiler.Diagnostics.reset();
 	}
@@ -1459,8 +1463,72 @@ class Compiler {
 		return null;
 	}
 
-	// Scan every typed field body for references to the captured @usage target. positions sort in source
-	// order.
+	// Scan every typed field body for references to the captured @usage target; positions sort in
+	// source order. A non-static field search expands its target to a set of declarations, and only an
+	// access resolving to one of them counts (the position check gates both the direct relation and
+	// the related-class walk). It walks UP to the topmost class still declaring the name when the base
+	// is wanted, then prefers the INTERFACES of whatever class that landed on, and then replaces the
+	// whole set with every class in the compilation that extends one of them and declares the name.
+	static function referenceTargets(ctx:Context, cf:hxc.core.Type.TClassField):Array<hxc.core.Type.TClassField> {
+		var findDescendants = hxc.context.DisplayJson.usageDescendants;
+		var findBase = hxc.context.DisplayJson.usageBase;
+		if ((!findDescendants && !findBase) || TypeFunctions.hasClassFieldFlag(cf, CfStatic)) return [cf];
+		var owner:Null<hxc.core.Type.TClass> = null;
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c2):
+				for (f in c2.orderedFields) if (f == cf) { owner = c2; break; }
+				if (owner != null) break;
+			case _:
+		}
+		if (owner == null) return [cf];
+		var baseCf = cf, baseC = owner;
+		if (findBase) {
+			var c2 = owner;
+			while (c2.superClass != null) {
+				var sup = c2.superClass.c;
+				var f = sup.fields.get(cf.name);
+				if (f == null) break;
+				baseCf = f; baseC = sup; c2 = sup;
+			}
+		}
+		// An interface that declares the name replaces the class in the set, recursively, so the search
+		// is rooted at the topmost declaration of the member.
+		function loopIface(c2:hxc.core.Type.TClass):Array<{cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass}> {
+			var acc:Array<{cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass}> = [];
+			for (i in c2.interfaces) for (r in loopIface(i.c)) acc.push(r);
+			if (acc.length > 0) return acc;
+			var f = c2.fields.get(cf.name);
+			return f == null ? [] : [{cf: f, c: c2}];
+		}
+		var pairs:Array<{cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass}> = [];
+		for (i in baseC.interfaces) for (r in loopIface(i.c)) pairs.push(r);
+		if (pairs.length == 0) pairs = [{cf: baseCf, c: baseC}];
+		if (!findDescendants) return [for (pr in pairs) pr.cf];
+		// Extends is reflexive and follows both superclasses and interfaces.
+		function ext(c2:hxc.core.Type.TClass, csup:hxc.core.Type.TClass):Bool {
+			if (c2 == csup) return true;
+			for (i in c2.interfaces) if (ext(i.c, csup)) return true;
+			return c2.superClass == null ? false : ext(c2.superClass.c, csup);
+		}
+		var out:Array<hxc.core.Type.TClassField> = [];
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(child):
+				var hit = false;
+				for (pr in pairs) if (ext(child, pr.c)) { hit = true; break; }
+				if (!hit) continue;
+				var f = child.fields.get(cf.name);
+				if (f != null) out.push(f);
+			case _:
+		}
+		return out.length == 0 ? [cf] : out;
+	}
+
+	// An occurrence is reported as the name's width back from the end of the expression, not as the
+	// expression's own span.
+	static function patchStringPos(p:Position, name:String):Position {
+		return new Position(p.file, p.max - name.length, p.max);
+	}
+
 	static function collectUsages(ctx:Context):Array<Position> {
 		var cf = hxc.typing.Typer.usageTargetField;
 		var v = hxc.typing.Typer.usageTargetVar;
@@ -1492,7 +1560,9 @@ class Compiler {
 			// Type expressions also count as references.
 			function walkT(e:hxc.core.Type.TExpr):Void {
 				switch (e.expr) {
-					case TTypeExpr(mt2) if (TypeFunctions.tInfos(mt2).namePos == want): out.push(e.pos);
+					// Reports the type name's width back from the end of the expression.
+					case TTypeExpr(mt2) if (TypeFunctions.tInfos(mt2).namePos == want):
+						out.push(patchStringPos(e.pos, TypeFunctions.tInfos(mt2).path.name));
 					case _:
 				}
 				hxc.core.TexprTools.iter(walkT, e);
@@ -1510,10 +1580,31 @@ class Compiler {
 			});
 			return out;
 		}
+		// Collecting references. The recursion is explicit per node: a TField only walks its receiver when
+		// that receiver is genuinely SHORTER (which is how a generated access is told apart), and
+		// TTypeExpr, TNew and a super call do not walk into anything the arm did not name.
+		var cfTargets = cf == null ? [] : referenceTargets(ctx, cf);
 		function walk(e:hxc.core.Type.TExpr):Void {
 			switch (e.expr) {
-				case TField(_, FAnon(cf2) | FInstance(_, _, cf2) | FStatic(_, cf2) | FClosure(_, cf2)) if (cf != null && cf2 == cf): out.push(e.pos);
-				case TField(_, FEnum(_, ef2)) if (ef != null && ef2 == ef): out.push(e.pos);
+				case TField(e1, fa):
+					if (e1.pos.min == e.pos.min && e1.pos.max != e.pos.max) walk(e1);
+					switch (fa) {
+						case FInstance(_, _, cf2):
+							if (cf != null && (cf2 == cf || cfTargets.indexOf(cf2) >= 0))
+								out.push(patchStringPos(e.pos, cf2.name));
+						case FClosure(_, cf2):
+							// A closure over an instance field is the same relation as an access.
+							if (cf != null && (cf2 == cf || cfTargets.indexOf(cf2) >= 0))
+								out.push(patchStringPos(e.pos, cf2.name));
+						case FAnon(cf2) | FStatic(_, cf2):
+							// A field reference is reported as the field name's width back from the end of the access,
+							// so a property read through its getter `get_x` reports two characters before the `x` the
+							// source wrote.
+							if (cf != null && cf2 == cf) out.push(patchStringPos(e.pos, cf2.name));
+						case FEnum(_, ef2):
+							if (ef != null && ef2 == ef) out.push(patchStringPos(e.pos, ef2.name));
+						case FDynamic(_):
+					}
 				// A local reference is keyed by the declaration's position, not by the tvar object: the matcher
 				// duplicates its tvars, so a pattern variable's uses carry a different object than the one that
 				// was captured. Only a use whose span is exactly the name's width counts, which leaves out the
@@ -1522,11 +1613,15 @@ class Compiler {
 						&& v2.pos.min == v.pos.min && v2.pos.max == v.pos.max
 						&& v2.pos.file == v.pos.file))
 					&& e.pos.max - e.pos.min == v2.name.length): out.push(e.pos);
-				case TNew(c2, _, _) if (cf != null && c2.constructor == cf): out.push(e.pos);
-				// A `super(...)` call references the super constructor, and the whole call expression is the
-				// occurrence.
-				case TCall({expr: TConst(TSuper), type: st}, _) if (cf != null):
-					switch (TypeFunctions.follow(st)) {
+				// Walk constructor arguments and report the construction's original span.
+				case TNew(c2, _, el):
+					for (a in el) walk(a);
+					if (cf != null && c2.constructor == cf) out.push(e.pos);
+				// A `super(...)` call references the super constructor, and the whole call expression is
+				// the occurrence.
+				case TCall({expr: TConst(TSuper), type: st}, el):
+					for (a in el) walk(a);
+					if (cf != null) switch (TypeFunctions.follow(st)) {
 						case TInst(sc, _):
 							var cur = sc;
 							while (cur != null && cur.constructor != cf) cur = cur.superClass == null ? null : cur.superClass.c;
@@ -1534,8 +1629,8 @@ class Compiler {
 						case _:
 					}
 				case _:
+					hxc.core.TexprTools.iter(walk, e);
 			}
-			hxc.core.TexprTools.iter(walk, e);
 		}
 		for (mt in ctx.types) switch (mt) {
 			case TClassDecl(c):
