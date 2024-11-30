@@ -1000,9 +1000,16 @@ class Calls {
 			case _:
 		}
 		var allExtern = multi && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
-		var successes:Array<{cf:TClassField, expr:TExpr}> = [];
+		var successes:Array<{cf:TClassField, expr:TExpr, hover:Null<Dynamic>}> = [];
+		// While overload candidates are being tried, a display answer is not raised - it is STORED per
+		// candidate and only the one belonging to the candidate resolution PICKS is committed.
+		// Otherwise a candidate that goes on to fail on its argument count still gets to name the
+		// expected argument.
+		var outerHover = hxc.typing.Typer.hoverFound;
+		var firstFailHover:Null<Dynamic> = null;
 		for (cf in candidates) {
 			var diagBefore = ctx.com.diagnostics.length;
+			if (multi) hxc.typing.Typer.hoverFound = outerHover;
 			var oldRaise = ctx.com.raiseTypingErrors;
 			if (multi) ctx.com.raiseTypingErrors = true;
 			inline function restore() {
@@ -1056,19 +1063,23 @@ class Calls {
 				});
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
 				if (!allExtern) return r;
-				successes.push({cf: cf, expr: r});
+				successes.push({cf: cf, expr: r, hover: hxc.typing.Typer.hoverFound});
 			} catch (e:UnifyError) {
 				restore();
+				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
 				failures.push({cf: cf, msg: hxc.core.TPrinting.betterErrorMessage(e.errors), pos: p, depth: 0});
 			} catch (e:TypingError) {
 				restore();
+				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
 				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth});
 			} catch (e:haxe.Exception) {
 				restore();
 				throw e;
 			}
 		}
-		if (successes.length == 1) return successes[0].expr;
+		// The chosen candidate's stored answer is the one that is committed.
+		inline function commit(h:Null<Dynamic>):Void if (multi) hxc.typing.Typer.hoverFound = h;
+		if (successes.length == 1) { commit(successes[0].hover); return successes[0].expr; }
 		var externAmbiguous = successes.length > 1 && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
 		if (externAmbiguous) {
 			var minArgs = 0x7fffffff;
@@ -1080,13 +1091,16 @@ class Calls {
 				case TFun(sig) if (sig.args.length == minArgs): s;
 				case _: null;
 			}].filter(function(s) return s != null);
-			if (narrow.length == 1) return narrow[0].expr;
+			if (narrow.length == 1) { commit(narrow[0].hover); return narrow[0].expr; }
 			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
 			for (s in successes)
 				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sTypeStr(s.cf.type), s.cf.namePos, 1);
+			commit(successes[0].hover);
 			return successes[0].expr;
 		}
-		if (successes.length > 1) return successes[0].expr;
+		if (successes.length > 1) { commit(successes[0].hover); return successes[0].expr; }
+		// Nothing resolved: the answer a candidate reached is still the only one there is.
+		commit(firstFailHover);
 		if (failures.length == 0) throw new TypingError("No matching overload", p);
 		// A single candidate (or several failing identically) raises the one error; distinct failures
 		// report each overload with its own reason (duplicates removed by message, then either the one

@@ -1667,8 +1667,15 @@ class Compiler {
 					};
 					return {t: t, p: cf.namePos, cf: cf, c: c, scope: scope};
 				}
-				for (cf in c.orderedFields) if (hxc.typing.Typer.atHoverPos(cf.namePos)) return found(cf, CFSMember);
-				for (cf in c.orderedStatics) if (hxc.typing.Typer.atHoverPos(cf.namePos)) return found(cf, CFSStatic);
+				// Every overload but the first is kept on the first one's overloads, so a declaration name is
+				// only found by looking there too.
+				function pick(cf:hxc.core.Type.TClassField):Null<hxc.core.Type.TClassField> {
+					if (hxc.typing.Typer.atHoverPos(cf.namePos)) return cf;
+					for (o in cf.overloads) if (hxc.typing.Typer.atHoverPos(o.namePos)) return o;
+					return null;
+				}
+				for (cf in c.orderedFields) switch (pick(cf)) { case null: case hit: return found(hit, CFSMember); }
+				for (cf in c.orderedStatics) switch (pick(cf)) { case null: case hit: return found(hit, CFSStatic); }
 				if (c.constructor != null && hxc.typing.Typer.atHoverPos(c.constructor.namePos)) return found(c.constructor, CFSConstructor);
 			case _:
 		}
