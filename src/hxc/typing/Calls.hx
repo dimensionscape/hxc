@@ -550,6 +550,9 @@ class Calls {
 			case EConst(CIdent("null")):
 				throw new TypingError("This expression cannot be called", callee.pos);
 			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
+				// The cursor on the `trace` identifier answers a SYNTHETIC one-argument signature, not
+				// haxe.Log.trace's real one, and a definition question answers no position at all.
+				Typer.displayTraceIdent(ctx, callee.pos);
 				return AKExpr(typeTrace(ctx, el, withType, p));
 			case EConst(CIdent("$type")) if (el.length == 1):
 				// $type(e): type e, report its type, return e unchanged; $type(_) reports the expected

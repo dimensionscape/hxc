@@ -2469,6 +2469,25 @@ class Typer {
 	// A variable declaration answers the display by itself when the cursor sits on its name, without
 	// any typed expression referring to it. A function argument is the case that has no expression at
 	// all to be found through.
+	// `trace` under the cursor is answered SYNTHETICALLY - one Dynamic argument named "value"
+	// returning
+	// Void, documented "Print given arguments" - because the real haxe.Log.trace signature carries the
+	// PosInfos argument the compiler fills in. A definition or type-definition question answers no
+	// position at all.
+	public static function displayTraceIdent(ctx:TyperContext, p:Position):Void {
+		if (displayDefinition || displayTypeDefinition) {
+			if (atDisplayPos(p) && displayFound == null) displayFound = [];
+			return;
+		}
+		// A HOVER subject is picked with a strict upper bound, so the cursor sitting at the very end of
+		// `trace` is outside it and the enclosing call answers instead.
+		if (!displayHover || !atExprHoverPos(p)) return;
+		var t = TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: ctx.com.basic.tvoid});
+		if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
+			hoverFound = {t: t, p: p, e: TypeFunctions.mk(TIdent("trace"), t, p), tctx: ctx,
+				wt: hxc.core.WithType.WithTypeTools.namedArgument("value")};
+	}
+
 	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [v.pos];
