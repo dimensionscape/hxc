@@ -2125,7 +2125,15 @@ class EvalMacro {
 				new Expr(ECheckType(new Expr(EConst(CIdent("null")), e.pos), {ct: CTPath(exprPath), pos: e.pos}), e.pos);
 			new Expr(EArray(new Expr(EArrayDecl([wrapped]), e.pos), new Expr(EConst(CInt(Std.string(i), null)), e.pos)), e.pos);
 		}];
-		var elt = Calls.unifyCallArgs(mctx, constants, checkArgs, TypeFunctions.tDynamic, p).el;
+		// The stand-in `(null : Expr)` is built at the argument'S own position. It must never answer a
+		// display question: a display subject is a marked EDisplay node and these stand-ins are
+		// synthesized after the marking, but hxc decides by position, so the check has to be off while
+		// they are typed. The real argument expressions are typed after this, outside the window.
+		var savedSuppressed = hxc.parser.Parser.displaySuppressed;
+		hxc.parser.Parser.displaySuppressed = true;
+		var elt = try Calls.unifyCallArgs(mctx, constants, checkArgs, TypeFunctions.tDynamic, p).el
+			catch (e:Dynamic) { hxc.parser.Parser.displaySuppressed = savedSuppressed; throw e; };
+		hxc.parser.Parser.displaySuppressed = savedSuppressed;
 		var args:Array<EvalValue> = [];
 		for (i in 0...elt.length) {
 			var te = elt[i];
