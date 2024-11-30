@@ -702,6 +702,9 @@ class Compiler {
 					hxc.typing.Typer.displayImplementation = dmode == "implementation";
 					hxc.typing.Typer.displaySignature = dmode == "signature";
 					hxc.parser.Parser.displaySignatureMode = dmode == "signature";
+					// Hover is the mode whose enclosure test takes the upper bound STRICTLY, which the
+					// display position handling branches on.
+					hxc.parser.Parser.displayHoverMode = dmode == "type" || dmode == "typeDefinition";
 					hxc.parser.Parser.displayCompletionMode = dmode == "" || dmode == "toplevel";
 					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
 					// the typer consults that (ignoreError) at the handful of places where an error would
@@ -792,8 +795,15 @@ class Compiler {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			checkDisplayFile(ctx);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
-			if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
-			for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
+			// The parse of the display file raises DisplayInMacroBlock when the cursor is in a block only
+			// the macro context turns on. The normal typing is abandoned and the module is loaded in that
+			// context instead where the display hook fires against the macro-world types.
+			try {
+				if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
+				for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
+			} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
+				if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
+			}
 			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
 			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
 			// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots are

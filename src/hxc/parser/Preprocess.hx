@@ -11,6 +11,14 @@ class Preprocess {
 	final out:Array<TokenInfo>;
 	// Stack of `#if` start positions still open (for unclosed-conditional errors)
 	final mstack:Array<Position>;
+	// Every region the conditions turned off, with the condition that was in force there. Each one is
+	// re-evaluated against the MACRO defines to decide whether the display position sits in macro-only
+	// code.
+	public final deadBlocks:Array<{p:Position, cond:Expr}> = [];
+	// The stack of open conditions, with negate and conjoin.
+	final condStack:Array<Expr> = [];
+	final condDepths:Array<Int> = [];
+	final openBlocks:Array<{p:Position, cond:Expr}> = [];
 
 	function new(toks:Array<TokenInfo>, defines:Define) {
 		this.toks = toks;
@@ -20,9 +28,12 @@ class Preprocess {
 		this.mstack = [];
 	}
 
-	public static function run(toks:Array<TokenInfo>, defines:Define):Array<TokenInfo> {
+	public static function run(toks:Array<TokenInfo>, defines:Define,
+			?deadOut:Array<{p:Position, cond:Expr}>):Array<TokenInfo> {
 		var p = new Preprocess(toks, defines);
-		return p.process();
+		var r = p.process();
+		if (deadOut != null) for (b in p.deadBlocks) deadOut.push(b);
+		return r;
 	}
 
 	// Evaluate a conditional expression against the defines, as #if does. Used by @:require.
@@ -51,6 +62,66 @@ class Preprocess {
 		if (ti.doc != null) pendingDoc = ti.doc;
 	}
 
+	// De Morgan through the boolean operators, double negation removed.
+	static function negate(e:Expr):Expr {
+		return switch (e.expr) {
+			case EUnop(Not, _, e1): e1;
+			case EBinop(OpBoolAnd, e1, e2): new Expr(EBinop(OpBoolOr, negate(e1), negate(e2)), e.pos);
+			case EBinop(OpBoolOr, e1, e2): new Expr(EBinop(OpBoolAnd, negate(e1), negate(e2)), e.pos);
+			case _: new Expr(EUnop(Not, Prefix, e), e.pos);
+		}
+	}
+
+	// maybeParent: a binop other than && is parenthesised before it is conjoined.
+	static function maybeParent(e:Expr):Expr {
+		return switch (e.expr) {
+			case EBinop(op, _, _) if (!op.match(OpBoolAnd)): new Expr(EParenthesis(e), e.pos);
+			case _: e;
+		}
+	}
+
+	static function conjoin(lhs:Expr, rhs:Expr):Expr {
+		var l = maybeParent(lhs), r = maybeParent(rhs);
+		return new Expr(EBinop(OpBoolAnd, l, r), Position.union(l.pos, r.pos));
+	}
+
+	// currentCondition: the whole stack conjoined, `true` when it is empty.
+	function currentCondition():Expr {
+		if (condStack.length == 0) return new Expr(EConst(CIdent("true")), Position.nullPos);
+		var e = condStack[0];
+		for (i in 1...condStack.length) e = conjoin(e, condStack[i]);
+		return e;
+	}
+
+	function condIfInner(e:Expr):Void condStack.unshift(e);
+
+	function condIf(e:Expr):Void { condIfInner(e); condDepths.unshift(1); }
+
+	function condElse():Void if (condStack.length > 0) condStack[0] = negate(condStack[0]);
+
+	function condElseif(e:Expr):Void {
+		condElse();
+		condIfInner(e);
+		if (condDepths.length > 0) condDepths[0] = condDepths[0] + 1;
+	}
+
+	function condEnd():Void {
+		if (condDepths.length == 0) return;
+		var d = condDepths.shift();
+		while (d-- > 0 && condStack.length > 0) condStack.shift();
+	}
+
+	// openDeadBlock / closeDeadBlock: the region runs from the end of the token that
+	// opened it to the start of the one that closed it.
+	function openDeadBlock(p:Position):Void
+		openBlocks.unshift({p: new Position(p.file, p.max, p.max), cond: currentCondition()});
+
+	function closeDeadBlock(p:Position):Void {
+		if (openBlocks.length == 0) return;
+		var b = openBlocks.shift();
+		deadBlocks.push({p: new Position(b.p.file, b.p.min, p.min), cond: b.cond});
+	}
+
 	function process():Array<TokenInfo> {
 		while (true) {
 			if (i >= toks.length) break;
@@ -63,13 +134,16 @@ class Preprocess {
 					break;
 				case Sharp("end"):
 					if (mstack.length == 0) { keep(ti); i++; }
-					else { mstack.pop(); i++; }
+					else { condEnd(); mstack.pop(); i++; }
 				case Sharp("elseif"):
 					if (mstack.length == 0) { keep(ti); i++; }
 					else {
 						mstack.pop();
 						i++;
-						parseMacroCond(); // Condition of the elseif we are leaving
+						// Leaving a LIVE branch for an elseif opens a dead block that runs to the matching #end.
+						var ce = parseMacroCond();
+						condElseif(ce);
+						openDeadBlock(ce.pos);
 						skipTokens(ti.pos, false);
 					}
 				case Sharp("else"):
@@ -77,6 +151,8 @@ class Preprocess {
 					else {
 						mstack.pop();
 						i++;
+						condElse();
+						openDeadBlock(ti.pos);
 						skipTokens(ti.pos, false);
 					}
 				case Sharp("if"):
@@ -112,9 +188,12 @@ class Preprocess {
 	// Parse cond, eval; if true push branch, else skip to else/elseif/end.
 	function enterMacro(isIf:Bool, p:Position):Void {
 		var e = parseMacroCond();
+		// The condition joins the stack whether or not it holds.
+		if (isIf) condIf(e) else condElseif(e);
 		if (isTrue(eval(e))) {
 			mstack.push(p);
 		} else {
+			openDeadBlock(e.pos);
 			skipTokensLoop(p, true);
 		}
 	}
@@ -138,25 +217,40 @@ class Preprocess {
 				case Eof:
 					throw new ParserError(Unclosed_conditional, p);
 				case Sharp("end"):
+					condEnd();
+					closeDeadBlock(ti.pos);
 					i++;
 					return;
 				case Sharp("elseif") if (!test):
+					// One dead region ends and the next begins.
+					closeDeadBlock(ti.pos);
 					i++;
-					parseMacroCond();
+					var ce = parseMacroCond();
+					condElseif(ce);
+					openDeadBlock(ce.pos);
 				case Sharp("else") if (!test):
+					condElse();
+					closeDeadBlock(ti.pos);
+					openDeadBlock(ti.pos);
 					i++;
 				case Sharp("else"):
+					// The else branch is LIVE: the dead region ends here.
+					condElse();
+					closeDeadBlock(ti.pos);
 					i++;
 					mstack.push(ti.pos);
 					return;
 				case Sharp("elseif"):
+					closeDeadBlock(ti.pos);
 					i++;
 					enterMacro(false, ti.pos);
 					return;
 				case Sharp("if"):
-					// Nested #if while skipping: skip its whole block too
+					// A nested #if inside a dead region is its own dead block.
 					i++;
-					parseMacroCond();
+					var ce = parseMacroCond();
+					condIf(ce);
+					openDeadBlock(ce.pos);
 					skipTokensLoop(p, false);
 					// After the nested block is consumed, keep skipping the outer
 				case Sharp("error"), Sharp("line"):

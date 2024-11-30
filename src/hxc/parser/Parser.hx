@@ -24,6 +24,12 @@ class TypePathCompletion {
 	}
 }
 
+// The display position sits in a block that only the MACRO context turns on, so the normal typing is
+// abandoned and the module is loaded in that context.
+class DisplayInMacroBlock extends haxe.Exception {
+	public function new() super("display in macro block");
+}
+
 class Parser {
 	final tokens:Array<TokenInfo>;
 	var idx:Int;
@@ -67,6 +73,10 @@ class Parser {
 	// A position the preprocessor refuses to annotate answers NOTHING, however many later stages would
 	// happily complete there.
 	public static var displaySuppressed:Bool = false;
+	// The display file has a conditional block that would be LIVE in the macro context.
+	public static var displayModuleHasMacroDefines:Bool = false;
+	// The display mode is a HOVER (it uses the enclosing-position test with a strict upper bound).
+	public static var displayHoverMode:Bool = false;
 	// Set only by display/completion and display/signatureHelp; every other request leaves it false.
 	public static var wasAutoTriggered:Bool = false;
 	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
@@ -89,6 +99,8 @@ class Parser {
 		displayMetaFound = false;
 		displayMetaName = null;
 		displaySuppressed = false;
+		displayModuleHasMacroDefines = false;
+		displayHoverMode = false;
 		wasAutoTriggered = false;
 		delayedSyntaxCompletion = null;
 		delayedSyntaxSubject = null;
@@ -274,9 +286,29 @@ class Parser {
 		// from the caller (CLI/Setup later); default is empty (no hardcoded define tables).
 		if (hasSharp(toks)) {
 			var d = defines == null ? new Define() : defines;
-			toks = Preprocess.run(toks, d);
+			// handlePdi runs over the DISPLAY file's dead blocks only.
+			var dead:Null<Array<{p:Position, cond:Expr}>> = matchesDisplayFile(file) && displayOffset >= 0 ? [] : null;
+			toks = Preprocess.run(toks, d, dead);
+			if (dead != null) handlePdi(d, dead);
 		}
 		return new Parser(toks, file, defines != null && defines.rawDefined("macro"));
+	}
+
+	// Every DEAD block of the display file is re-evaluated with the defines ADAPTED to the MACRO
+	// context. A block that would be live there means the module has macro-only code; the cursor
+	// sitting inside such a block means the whole question belongs to the macro world, and the normal
+	// typing is abandoned for it.
+	static function handlePdi(defines:Define, dead:Array<{p:Position, cond:Expr}>):Void {
+		var macroDefines = Define.adaptToMacroContext(defines);
+		for (b in dead) {
+			var hasMacroDefine = try Preprocess.isTrueExpr(macroDefines, b.cond) catch (_:Dynamic) false;
+			if (hasMacroDefine) displayModuleHasMacroDefines = true;
+			// The enclosing-position test, with the HOVER variant taking the upper bound strictly
+			var inside = displayHoverMode
+				? (b.p.min <= displayOffset && b.p.max > displayOffset)
+				: (b.p.min <= displayOffset && b.p.max >= displayOffset);
+			if (inside && hasMacroDefine) throw new DisplayInMacroBlock();
+		}
 	}
 
 	static function hasSharp(toks:Array<TokenInfo>):Bool {
