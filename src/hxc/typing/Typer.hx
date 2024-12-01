@@ -2036,6 +2036,17 @@ class Typer {
 		return out;
 	}
 
+	// An unresolved identifier where only types are wanted: a type name that did not resolve. A type
+	// position collects no locals and no instance fields, which is what a typer context carrying
+	// neither gives here.
+	public static function handleUnresolvedIdentifier(com:hxc.context.Context, i:String, p:Position):Void {
+		recordUnresolvedIdentifier(new TyperContext(com), i, p);
+	}
+
+	// Nesting depth of a type_ident_raise-style SPECULATIVE lookup: inside one, an
+	// unresolved name raises without being recorded, because the caller has another route.
+	public static var identSpeculation:Int = 0;
+
 	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind
 	// 0); anything else is a typo suggestion naming it (kind 1).
 	static function recordUnresolvedIdentifier(ctx:TyperContext, i:String, p:Position):Void {
@@ -2056,7 +2067,10 @@ class Typer {
 				out.push({kind: 0, name: e.item.path != null ? e.item.path : e.item.name});
 			} else out.push({kind: 1, name: e.item.name});
 		}
-		ctx.com.unresolvedIdentifiers.push({name: i, pos: p, suggestions: out});
+		// prepends. The recorders themselves run LIFO (the PForce delays a type hint queues come off the
+		// front), so prepending puts the list back in source order, which is the order the diagnostics
+		// are emitted in.
+		ctx.com.unresolvedIdentifiers.unshift({name: i, pos: p, suggestions: out});
 	}
 
 	static function collectToplevel(ctx:TyperContext, ?withType:WithType, sort:Bool = false):Array<hxc.compiler.DisplayXml.ToplevelItem> {
@@ -3631,7 +3645,13 @@ class Typer {
 			}
 			// Record the candidates the toplevel set offers, so the diagnostics report can name them. It
 			// runs long after this context is gone, which is why the suggestions are computed here.
-			if (ctx.com.displaySpec != null) recordUnresolvedIdentifier(ctx, i, p);
+			// In a DIAGNOSTICS run the name is only recorded, never reported - the access recovers to a
+			// monomorph so the rest of the field still types, and the report describes it as an unresolved
+			// identifier rather than as a compiler error.
+			if (identSpeculation == 0 && ctx.com.errorInDiagnosticsRun(p)) {
+				recordUnresolvedIdentifier(ctx, i, p);
+				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
+			}
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
 		switch (mt) {
@@ -4621,7 +4641,15 @@ class Typer {
 					case _:
 				}
 				try {
-					var acc = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
+					// Is the SPECULATIVE lookup: it raises and reports nothing, and uses it for a dot path's head
+					// so a package prefix falls through to the type-path route below. hxc reaches that head
+					// through the REPORTING typeIdent, so the attempt runs with the recording off - a resolvable
+					// `haxe.Log.trace` must not leave `haxe` in the unresolved list.
+					var speculative = flattenIdentPath(e1.expr) != null;
+					if (speculative) identSpeculation++;
+					var acc = try typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value)
+						catch (headErr:Dynamic) { if (speculative) identSpeculation--; throw headErr; };
+					if (speculative) identSpeculation--;
 					switch (acc) {
 						case AKSafeNav(sn):
 							AKSafeNav({

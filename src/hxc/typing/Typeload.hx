@@ -185,10 +185,27 @@ class Typeload {
 		return TypeFunctions.mkMono();
 	}
 
-	// Ctx allow_display (t,pn)
-	// display/diagnostics mode only; batch mode re-raises, which is our behaviour.)
+	// A PACKAGE-LESS path that does not resolve recovers to Dynamic wherever the run tolerates errors,
+	// so the rest of the declaration still types and the report can describe the name rather than stop
+	// at it. A PACKAGED path keeps its error, and so does a bare one with the cursor inside the hint,
+	// where the name is the subject of the request. In a diagnostics run the name is recorded as an
+	// unresolved identifier instead, which is what turns it into DKUnresolvedIdentifier rather than a
+	// compiler error.
 	public static function loadComplexType(ctx:Context, typeParams:TypeParams, th:TypeHint, allowDisplay:Bool = false):T {
-		return loadComplexTypePrime(ctx, typeParams, th.ct, th.pos, allowDisplay);
+		return try loadComplexTypePrime(ctx, typeParams, th.ct, th.pos, allowDisplay)
+		catch (exc:ContextError) {
+			var name = switch (exc.kind) {
+				case ModuleNotFound(m) if (m.pack.length == 0): m.name;
+				case _: throw exc;
+			};
+			if (ctx.errorInDiagnosticsRun(exc.pos)) {
+				var p = exc.pos;
+				ctx.delay(Context.PForce, function() hxc.typing.Typer.handleUnresolvedIdentifier(ctx, name, p));
+				TypeFunctions.tDynamic;
+			} else if (ctx.ignoreError() && !hxc.typing.Typer.atDisplayPos(th.pos)) {
+				TypeFunctions.tDynamic;
+			} else throw exc;
+		}
 	}
 
 	static function loadComplexTypePrime(ctx:Context, typeParams:TypeParams, t:ComplexType, p:Position, allowDisplay:Bool = false):T {
@@ -528,13 +545,6 @@ class Typeload {
 				if (m.path.name != path.name) continue;
 				var mt = hxc.context.ModuleLoader.findTypeInModuleOpt(m, sub);
 				if (mt != null) return mt;
-			}
-		}
-		if (sub == null && path.pack.length == 0 && ctx.defines.rawDefined("macro")) {
-			switch (path.name) {
-				case "Expr" | "Context" | "Compiler" | "Type" | "Tools" | "ExprTools" | "TypeTools" | "ComplexTypeTools" | "MacroStringTools":
-					try return ctx.getType({pack: ["haxe", "macro"], name: path.name}, p, null) catch (_:Dynamic) {}
-				case _:
 			}
 		}
 		try {

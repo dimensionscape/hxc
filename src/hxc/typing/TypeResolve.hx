@@ -490,14 +490,11 @@ class TypeResolve {
 					}
 				}
 			} catch (e:ContextError) {
-				var isUserMacroField = c.module != null && c.module.path.pack.length == 0
-					&& (c.module.extra.file == null || (c.module.extra.file.toLowerCase().indexOf("utest") < 0 && c.module.extra.file.toLowerCase().indexOf("\\haxe\\") < 0));
-				if (e.message == "Type not found : Expr" && isUserMacroField) {
-					var duplicate = false;
-					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
-					if (!duplicate) ctx.addDiagnostic(e.message, e.pos, e.depth);
-				}
-				else ctx.unresolvedFields++;
+				// A field's signature is typed under protection, so a hint that does not resolve is an error
+				// about the declaration, not a field quietly left untyped. The type load has already recovered
+				// the cases a report is meant to survive.
+				ctx.unresolvedFields++;
+				throw e;
 			}
 		}
 		linkPropertyAccessors(ctx, c, isAbsImpl);
@@ -1123,19 +1120,20 @@ class TypeResolve {
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
 			try {
-				resolveFieldType(ctx, c.params, cf, cff, c.module);
+				// An abstract-impl field resolves against the abstract's type parameters. The impl class is
+				// declared with none of its own, so a synthesized enum value hinted `Name<T>` has nothing to
+				// bind T to without them.
+				var params = TypeFunctions.hasClassFieldFlag(cf, CfImpl) ? a.params : c.params;
+				resolveFieldType(ctx, params, cf, cff, c.module);
 				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
 					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
 				}
 			} catch (e:ContextError) {
-				var isUserMacroField = c.module != null && c.module.path.pack.length == 0
-					&& (c.module.extra.file == null || (c.module.extra.file.toLowerCase().indexOf("utest") < 0 && c.module.extra.file.toLowerCase().indexOf("\\haxe\\") < 0));
-				if (e.message == "Type not found : Expr" && isUserMacroField) {
-					var duplicate = false;
-					for (d in ctx.diagnostics) if (d.message == e.message && d.pos.file == e.pos.file && d.pos.min == e.pos.min && d.pos.max == e.pos.max) duplicate = true;
-					if (!duplicate) ctx.addDiagnostic(e.message, e.pos, e.depth);
-				}
-				else ctx.unresolvedFields++;
+				// A field's signature is typed under protection, so a hint that does not resolve is an error
+				// about the declaration, not a field quietly left untyped. The type load has already recovered
+				// the cases a report is meant to survive.
+				ctx.unresolvedFields++;
+				throw e;
 			}
 		}
 	}
@@ -1203,43 +1201,6 @@ class TypeResolve {
 			case _:
 		}
 		return TypeFunctions.tDynamic;
-	}
-
-	static function checkMacroExprHint(ctx:Context, th:Null<TypeHint>, ownerModule:Null<ModuleDef>):Void {
-		var module = ownerModule == null ? ctx.currentModule : ownerModule;
-		if (th == null || module == null) return;
-		// A platform-suffixed host file (Name.<target>.hx) has a macro-context sibling that carries its own
-		// imports; the macro world resolves the hint there and the host never resolves it at all. (to_dyn).
-		var mfile = module.extra.file;
-		if (mfile != null && StringTools.endsWith(mfile, "." + hxc.core.Globals.platformName(ctx.platform) + ".hx")) return;
-		switch (th.ct) {
-			case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Expr" && tp.tsub == null):
-				var imports = ctx.moduleImports.get(hxc.context.Context.pathKey(module.path));
-				var imported = false;
-			if (imports != null) for (imp in imports.rawImports) switch (imp.mode) {
-				case INormal | IAsName(_):
-					var names = [for (pn in imp.path) pn.name];
-					if (names.length == 3 && names[0] == "haxe" && names[1] == "macro" && names[2] == "Expr") imported = true;
-				case IAll:
-					var names = [for (pn in imp.path) pn.name];
-					if (names.length == 2 && names[0] == "haxe" && names[1] == "macro") imported = true;
-			}
-				if (!imported && imports != null && imports.names.exists("Expr")) imported = true;
-				if (!imported && module.path.pack.length > 0
-					&& (module.path.pack[0] == "haxe" || module.path.pack[0] == "utest")) imported = true;
-				if (!imported && module.extra.file != null) {
-					var moduleFile = module.extra.file.toLowerCase();
-					if (moduleFile.indexOf("utest") >= 0 || moduleFile.indexOf("\\haxe\\") >= 0 || moduleFile.indexOf("/haxe/") >= 0) imported = true;
-				}
-				if (!imported && module.extra.file != null) {
-					try {
-						var source = sys.io.File.getContent(module.extra.file);
-						if (source.indexOf("import haxe.macro.Expr") >= 0) imported = true;
-					} catch (_:Dynamic) {}
-				}
-				if (!imported) throw new hxc.context.Context.ContextError("Type not found : Expr", th.pos);
-			case _:
-		}
 	}
 
 	static function resolveEnum(ctx:Context, e:TEnum, d:Definition<EnumFlag, Array<EnumConstructor>>, p:Position):Void {
@@ -1319,10 +1280,6 @@ class TypeResolve {
 				}
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
-				if (isMacroField) {
-					for (fa in fd.fArgs) checkMacroExprHint(ctx, fa.type, fieldModule);
-					checkMacroExprHint(ctx, fd.fType, fieldModule);
-				}
 				var args:Array<TSignatureArg> = [];
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];

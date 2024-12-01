@@ -2838,12 +2838,18 @@ class EvalMacro {
 		var before = com.diagnostics.length;
 		var oldRaise = com.raiseTypingErrors;
 		com.raiseTypingErrors = true;
+		// typingTimer turns the report off for the whole API call, so an expression the MACRO asked to type
+		// reports back to the macro (which usually means a `catch`) rather than becoming a finding about
+		// the file being reported on.
+		var restoreReport = com.disableReportMode();
 		var te = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (err:haxe.Exception) {
 			com.raiseTypingErrors = oldRaise;
+			restoreReport();
 			if (com.diagnostics.length > before) com.diagnostics.resize(before);
 			throw err;
 		};
 		com.raiseTypingErrors = oldRaise;
+		restoreReport();
 		// Fallback for a path that records into diagnostics directly (bypassing addDiagnostic): surface
 		// the first new error and roll the trial diagnostics back.
 		var i = before;

@@ -382,12 +382,7 @@ class Fields {
 			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
 			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 		}
-		try return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
-		catch (err:FieldNotFoundError) {
-			for (d in ctx.com.diagnostics) if (d.message == "Type not found : Expr")
-				return AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
-			throw err;
-		}
+		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve);
 	}
 
 	// Every FDynamic access is built at `p`, the full field position; the name slice `pfield` serves

@@ -302,6 +302,9 @@ class Context {
 		c.initMacros = this.initMacros.copy();
 		// Copy unsaved display contents into the macro world.
 		c.fileContents = this.fileContents.copy();
+		// Cloning preserves display error recovery, so unresolved macro-argument types recover to Dynamic
+		// in both worlds.
+		c.ignoreErrors = this.ignoreErrors;
 		return c;
 	}
 
@@ -392,8 +395,6 @@ class Context {
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
-		if (message == "Type not found : Expr") for (d in diagnostics)
-			if (d.message == message && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
 		if (forwardWarningsTo != null && severity != null && severity != Error) {
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
 			return;
@@ -438,8 +439,37 @@ class Context {
 	}
 
 	public function hasError():Bool {
+		if (forcedError) return true;
 		for (d in diagnostics) if (d.severity == Error) return true;
 		return false;
+	}
+
+	// Swallowed errors still mark the compilation as errored so the server cannot cache its modules.
+	public var forcedError:Bool = false;
+
+	// Position-specific display modes use EPIgnore; compilation-reporting modes do not.
+	public function ignoreError():Bool {
+		if (!ignoreErrors) return false;
+		forcedError = true;
+		return true;
+	}
+
+	// In diagnostics mode, errors in the requested file set are findings rather than failures.
+	public var diagnosticsFileFilter:Null<String->Bool> = null;
+
+	// Temporarily disable diagnostics collection for internal typing, such as macro APIs and pattern
+	// probes, so callers can catch errors.
+	public function disableReportMode():Void->Void {
+		var old = diagnosticsFileFilter;
+		diagnosticsFileFilter = null;
+		return function() diagnosticsFileFilter = old;
+	}
+
+	public function errorInDiagnosticsRun(p:Position):Bool {
+		if (diagnosticsFileFilter == null) return false;
+		if (!diagnosticsFileFilter(p.file)) return false;
+		forcedError = true;
+		return true;
 	}
 
 	public function errorCount():Int {

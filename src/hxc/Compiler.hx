@@ -710,6 +710,10 @@ class Compiler {
 					// the typer consults that (ignoreError) at the handful of places where an error would
 					// cost the answer rather than describe it.
 					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
+					// The report mode is diagnostics only for a diagnostics request, so isDiagnosticsFile
+					// answers false everywhere else.
+					ctx.diagnosticsFileFilter = dmode != "diagnostics" ? null
+						: function(f:String) return isDiagnosticsFile(ctx, f);
 					// The compile root is the display file's path RELATIVE to its classpath, so a file in a
 					// package loads as that package's module; the basename alone would look for it at the
 					// classpath root. Each real file maps to a compile root; the marker the protocol uses when a
@@ -2466,12 +2470,24 @@ class Compiler {
 		// the rest of the report describes.
 		hxc.compiler.Diagnostics.collect(ctx, function(f) return isDiagnosticsFile(ctx, f));
 		var groups:Array<{file:String, items:Array<String>}> = [];
-		// An unresolved identifier is its own kind (1) whose args are the suggestion list, not a message.
-		// The compiler error it also produced would otherwise report it generically as a compiler message
-		// (2) with the text as args.
-		var unresolvedAt = new Map<String, Array<{kind:Int, name:String}>>();
-		for (u in ctx.unresolvedIdentifiers)
-			unresolvedAt.set(u.pos.file + ":" + u.pos.min + ":" + u.pos.max, u.suggestions);
+		// The unresolved identifiers are their own kind (1) whose args are the suggestion list, and they
+		// are emitted before the compiler messages, from the recorded list rather than from any error - a
+		// name that recovered (a type hint, an identifier under never produced one. scores each
+		// candidate: an exact match is an IMPORT suggestion carrying the full type path (kind 0),
+		// anything else a typo suggestion naming it (kind 1).
+		for (u in ctx.unresolvedIdentifiers) {
+			if (!isDiagnosticsFile(ctx, u.pos.file)) continue;
+			var displayFile = u.pos.file;
+			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
+				displayFile = FileSystem.fullPath(displayFile);
+			var args = "[" + [for (x in u.suggestions) '{"kind":' + x.kind + ',"name":' + haxe.Json.stringify(x.name) + "}"].join(",") + "]";
+			var item = '{"kind":1,"severity":1,"range":' + posAsRange(u.pos)
+				+ ',"args":' + args + ',"relatedInformation":[]}';
+			var group = null;
+			for (g in groups) if (g.file == displayFile) { group = g; break; }
+			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+			group.items.push(item);
+		}
 		for (d in ctx.diagnostics) {
 			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
 			var i = Position.getInfos(d.pos);
@@ -2486,11 +2502,6 @@ class Compiler {
 			};
 			var kind = d.kind == null ? 2 : d.kind;
 			var args = haxe.Json.stringify(d.message);
-			var sug = unresolvedAt.get(d.pos.file + ":" + d.pos.min + ":" + d.pos.max);
-			if (sug != null && StringTools.startsWith(d.message, "Unknown identifier :")) {
-				kind = 1;
-				args = "[" + [for (x in sug) '{"kind":' + x.kind + ',"name":' + haxe.Json.stringify(x.name) + "}"].join(",") + "]";
-			}
 			var item = '{"kind":' + kind + ',"severity":' + severity
 				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
 				+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn
