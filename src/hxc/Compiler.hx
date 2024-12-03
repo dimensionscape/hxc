@@ -1652,13 +1652,21 @@ class Compiler {
 					hxc.core.TexprTools.iter(walk, e);
 			}
 		}
-		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c):
-				var all = c.orderedFields.concat(c.orderedStatics);
-				if (c.constructor != null) all.push(c.constructor);
-				for (f in all) if (f.expr != null) walk(f.expr);
-			case _:
+		// After com.types the walk RECURSES into the macro com's types, so a reference that only exists in
+		// the macro world - anything a macro function's own body does with its arguments - is counted too.
+		// The host keeps no body for a macro field, so without this those uses are invisible.
+		function walkTypes(types:Array<hxc.core.Type.ModuleType>):Void {
+			for (mt in types) switch (mt) {
+				case TClassDecl(c):
+					var all = c.orderedFields.concat(c.orderedStatics);
+					if (c.constructor != null) all.push(c.constructor);
+					for (f in all) if (f.expr != null) walk(f.expr);
+				case _:
+			}
 		}
+		walkTypes(ctx.types);
+		var mw = hxc.eval.EvalMacro.macroWorld();
+		if (mw != null && mw != ctx) walkTypes(mw.types);
 		out.sort(function(a, b) {
 			if (a.file != b.file) return a.file < b.file ? -1 : 1;
 			return a.min - b.min;

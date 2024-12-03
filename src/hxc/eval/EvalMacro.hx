@@ -1632,6 +1632,12 @@ class EvalMacro {
 			if (taintReason != null) m.extra.cacheState = MSBad(Tainted(taintReason));
 			macroCom.modules.remove(m);
 			macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
+			// com.types is rebuilt from the surviving modules on every compilation and the reference's
+			// macro com is a fresh clone each time, so a retired module never leaves types behind. This one
+			// is a live static: leaving them meant a re-load APPENDED a second copy of the same class, and
+			// anything walking com.types - @usage, for one - counted every occurrence in it once per
+			// request that had touched the file.
+			for (mt in m.types) macroCom.types.remove(mt);
 			dropped = true;
 		}
 		// The interpreter's prototypes still point at the retired fields, so it is rebuilt (macro
