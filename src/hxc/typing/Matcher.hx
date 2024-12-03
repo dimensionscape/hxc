@@ -498,11 +498,36 @@ class PatternMaker {
 						case _:
 					}
 					unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConEnum(en, ef), p), []);
-				case TField(_, FStatic(c, cf)): unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
+				// A static is a constant pattern only when it is a read-only VAR; any other field is a bad
+				// pattern ("Only inline or read-only (default, never) fields can be used as a pattern"), which
+				// handleIdent turns into a CAPTURE. Taking every static would make `case macro $i{foo}` match
+				// the enclosing macro method named foo instead of binding foo as the String the reified CIdent
+				// carries.
+				case TField(_, FStatic(c, cf)) if (cf.kind.match(Var({write: AccNever}))):
+					unify(pctx.ctx, e.type, t, p); PatConstructor(Constructor.make(ConStatic(c, cf), p), []);
 				case TTypeExpr(mt): unifyTypePattern(pctx.ctx, mt, t, p); PatConstructor(Constructor.make(ConTypeExpr(mt), p), []);
 				case _: null;
 			};
 		}
+		// The pattern is built first and the display answered afterwards, so a marked identifier resolves
+		// against the scope the pattern has just declared. Both lookups below are speculative - their
+		// result is thrown away unless it yields a pattern - so neither may claim the display position on
+		// the way. The answer is produced once, after the pattern is known: by this re-type when the
+		// ident WAS a pattern, and by addLocal's displayVariable when it captured instead.
+		var savedSuppressed = hxc.parser.Parser.displaySuppressed;
+		var atDisplay = !savedSuppressed && Typer.atDisplayPos(p);
+		function answerDisplay(pat:PatKind):PatKind {
+			hxc.parser.Parser.displaySuppressed = savedSuppressed;
+			// The re-type spawns the constructor's parameters FRESH, so it needs the same
+			// unification against the expected type that check_expr does, or the answer names an
+			// unbound monomorph where the pattern's own type is known.
+			if (atDisplay) try {
+				var e2 = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
+				unify(pctx.ctx, e2.type, t, p);
+			} catch (_:Dynamic) {}
+			return pat;
+		}
+		hxc.parser.Parser.displaySuppressed = true;
 		try {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
 			// from another module.
@@ -514,9 +539,12 @@ class PatternMaker {
 			};
 			pctx.ctx.untypedMode = oldUntyped;
 			var pat = checkTyped(e);
-			if (pat != null) return pat;
+			if (pat != null) return answerDisplay(pat);
 		} catch (err:TypingError) {
-			if (err.message == "Invalid match: Not enough patterns") throw err;
+			if (err.message == "Invalid match: Not enough patterns") {
+				hxc.parser.Parser.displaySuppressed = savedSuppressed;
+				throw err;
+			}
 		}
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
@@ -528,8 +556,9 @@ class PatternMaker {
 			var emt = TexprTools.makeTypeExpr(mt, p);
 			var acc = Fields.typeField(pctx.ctx, emt, i, p, MGet, WithTypeTools.value);
 			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
-			if (pat != null) return pat;
+			if (pat != null) return answerDisplay(pat);
 		} catch (_:Dynamic) {}
+		hxc.parser.Parser.displaySuppressed = savedSuppressed;
 		if (pctx.ctx.com.diagnostics.length > diagBefore) pctx.ctx.com.diagnostics.resize(diagBefore);
 		// Anything that is not a lower-case identifier (an uppercase name, a $-ident) is not a capture;
 		// generated-local and `_` prefixes are excluded.
