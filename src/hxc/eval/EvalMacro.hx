@@ -1584,7 +1584,14 @@ class EvalMacro {
 		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
 		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
 		// is re-synced here.
-		if (macroCom != null) macroCom.fileContents = com.fileContents.copy();
+		if (macroCom != null) {
+			macroCom.fileContents = com.fileContents.copy();
+			// Same reason for the error POLICY: the macro com has to decide whether an error is ignored the
+			// way the request in hand does. A world built by an earlier NON-display request would keep the
+			// normal policy, so a macro argument whose type does not resolve would fail there instead of
+			// recovering to Dynamic.
+			macroCom.ignoreErrors = com.ignoreErrors;
+		}
 		if (macroCtx == null) return;
 		var ec = macroCtx;
 		// Reuse also swaps in the new compilation's api: every macro API closure holds the com it was
