@@ -758,7 +758,24 @@ class Typer {
 		}
 	}
 
+	// Type_expr (core subset). A subtree the COMPILER built, registered by identity the way
+	// markedDisplay is. The reference can never answer a display question from one: ExprPreprocessing
+	// chose the subject before the rewrite existed, so the node was never a candidate. hxc decides by
+	// position, and these carry the position of the construct they were built for, so the check is off
+	// while the subtree types. The rest of the construct - the arguments the user wrote - types
+	// outside this window and still answers.
+	public static var synthesizedNode:Null<Expr> = null;
+
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
+		if (synthesizedNode == e) {
+			synthesizedNode = null;
+			var saved = hxc.parser.Parser.displaySuppressed;
+			hxc.parser.Parser.displaySuppressed = true;
+			var r = try typeExpr(ctx, e, withType, mode)
+				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw ex; };
+			hxc.parser.Parser.displaySuppressed = saved;
+			return r;
+		}
 		if (mode == null) mode = MGet;
 		var basic = ctx.com.basic;
 		var p = e.pos;
@@ -1906,6 +1923,13 @@ class Typer {
 		var f = StringTools.replace(p.file, "\\", "/");
 		var d = StringTools.replace(df, "\\", "/");
 		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+	}
+
+	// The whole-literal record a desugared construct leaves no typed node for. Same
+	// narrowest-wins rule as checkDisplayHover, so a real node inside the span still wins.
+	static function noteLiteralHover(ctx:TyperContext, te:TExpr, p:Position, ?withType:hxc.core.WithType.WithType):Void {
+		if (hoverFound != null && (p.max - p.min) >= (hoverFound.p.max - hoverFound.p.min)) return;
+		hoverFound = {t: te.type, p: p, e: te, wt: withType, tctx: ctx};
 	}
 
 	static function checkDisplayHover(ctx:TyperContext, te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
@@ -3374,7 +3398,15 @@ class Typer {
 			// $-containing ones: the resulting constant carries the CONTENT span (quotes excluded), which
 			// downstream errors report.
 			case CString(str, SSingleQuotes) if (str != ""):
-				typeExpr(ctx, formatString(str, p), withType);
+				var te = typeExpr(ctx, formatString(str, p), withType);
+				// The parts start one past the literal and union their spans, so the CHAIN covers neither
+				// quote nor the gaps around an interpolation brace. Display marks the SOURCE literal and
+				// answers with what it typed to, so those positions still report String; hxc scans typed
+				// nodes, and the literal has none of its own after the rewrite. Record one over its whole
+				// span.
+				if ((displayHover || displayTypeDefinition) && atExprHoverPos(p))
+					noteLiteralHover(ctx, te, p, withType);
+				te;
 			case CString(_, _):
 				TexprTools.typeConstant(basic, c, p);
 			case CRegexp(r, opt):

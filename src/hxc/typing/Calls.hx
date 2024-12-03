@@ -729,6 +729,9 @@ class Calls {
 			fld("className", strE(ctx.curclass == null ? "" : hxc.core.Globals.sTypePath(ctx.curclass.path))),
 			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
 		]), callp);
+		// Every part of the infos object is built at the call position, so without this the constants
+		// claim a cursor that belongs to the call itself.
+		Typer.synthesizedNode = infos;
 		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
 	}
 
@@ -797,6 +800,7 @@ class Calls {
 		var infos = new Expr(EObjectDecl(fields), p);
 		if ((ctx.com.platform.match(Js) || ctx.com.platform.match(Python)) && el.length <= 1 && ctx.com.hasDce()) {
 			var e = Typer.typeExpr(ctx, v, WithTypeTools.value);
+			Typer.synthesizedNode = infos;
 			var tinfos = Typer.typeExpr(ctx, infos, WithTypeTools.value);
 			e = switch (TypeFunctions.follow(e.type)) {
 				case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
@@ -809,6 +813,9 @@ class Calls {
 		}
 		var haxePkg = new Expr(EConst(CIdent("haxe")), p);
 		var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
+		// The infos argument is registered, not the whole call: the argument the user wrote is typed
+		// inside it and has to keep answering.
+		Typer.synthesizedNode = infos;
 		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [mkToStringMeta(v), infos]), p), WithTypeTools.noValue);
 	}
 
