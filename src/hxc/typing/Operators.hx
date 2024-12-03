@@ -53,18 +53,8 @@ class Operators {
 			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal) && !ctx.untypedMode && !ctx.com.ignoreErrors):
 				throw new TypingError("Cannot assign to final", e.pos);
 			case TLocal(v) if (v.extra == null):
-			case TField(ef, FInstance(_, _, cf)) if (!ctx.untypedMode):
-				switch (cf.kind) {
-					case Var({write: AccNever}) if (!isConstructorThisField(ctx, ef)):
-						throw new TypingError("This expression cannot be accessed for writing", e.pos);
-					case _:
-				}
-			case TField(_, FStatic(_, cf) | FAnon(cf)) if (!ctx.untypedMode):
-				switch (cf.kind) {
-					case Var({write: AccNever}):
-						throw new TypingError("This expression cannot be accessed for writing", e.pos);
-					case _:
-				}
+			// Every TField is let through: whether the write is allowed is decided by the ACCESS (an
+			// unwritable one resolves to AKNo), not here.
 			case TArray(_, _) | TField(_, _) | TIdent(_):
 			case TConst(TThis) | TTypeExpr(_) if (ctx.untypedMode):
 			case _ if (!ctx.untypedMode):
@@ -879,6 +869,17 @@ class Operators {
 		var lhsAcc = Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType);
 		// The display answers on the ACCESS, whether or not the write that follows is allowed.
 		Typer.checkDisplayOnAccess(ctx, lhsAcc, e1.pos);
+		// When errors are ignored the write check does not raise. It recurses into the access the AKNo
+		// WRAPS and assigns through that, so a display request still has a real assignment expression to
+		// answer from - which is how `finalField = x` reports the field type rather than the enclosing
+		// block. A diagnostics run carries EPNormal and reports it as the error it is.
+		while (true) switch (lhsAcc) {
+			case AKNo(inner, np):
+				if (!ctx.com.ignoreError())
+					throw new TypingError("This expression cannot be accessed for writing", np);
+				lhsAcc = inner;
+			case _: break;
+		}
 		return switch (lhsAcc) {
 			case AKExpr(te1): assignTo(ctx, te1, e2, p);
 			case AKField(fa):
