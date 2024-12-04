@@ -1947,8 +1947,11 @@ class TexprConverter {
 				// Under a display request an inexhaustive match is no expression rather than an error, so the
 				// request still answers from what did type.
 				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue || compileTimeFiniteUnmatched)) {
-					if (ctx.com.ignoreErrors) return null;
-					reportUnmatched();
+					// Under a display request it is the default BRANCH that is absent, which the conversion then
+					// reads as "this switch has no default" - the Switch node itself is still produced. Returning
+					// null for the whole node would reach the toplevel, where the error is unconditional, so an
+					// inexhaustive match would still fail the request it is supposed to survive.
+					if (!ctx.com.ignoreError()) reportUnmatched();
 				}
 				// Group: cases that share a decision emit one case with several values, sorted by constructor
 				// order
@@ -1971,8 +1974,9 @@ class TexprConverter {
 				}
 				if (caseFailed && !(unmatched != null && unmatched.length == 0 && !runtimeFinite)
 					&& !withType.match(NoValue)) {
-					if (ctx.com.ignoreErrors) return null;
-					reportUnmatched();
+					// A case whose branch produced no expression is DROPPED and the switch is built from
+					// the rest, so the same rule applies here.
+					if (!ctx.com.ignoreError()) reportUnmatched();
 				}
 				// An enum switch dispatches on the constructor index.
 				var isNullableSubject = TypeFunctions.isExplicitNull(subject.type);
