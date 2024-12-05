@@ -111,6 +111,10 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("currentPos", "current_pos", function(a) return encPos(curPos));
+		// The display position ENCLOSED IN p, and in the same file. atDisplayPos is both tests (its file
+		// compare uses file keys).
+		reg2("containsDisplayPosition", "contains_display_position",
+			function(a) return hxc.typing.Typer.atDisplayPos(posArg(ec, a, 0, curPos)) ? VTrue : VFalse);
 		// The live eval call stack's positions, newest first, skipping the API call frame itself.
 		reg2("getMacroStack", "get_macro_stack", function(a) {
 			var envs:Array<EvalValue> = [];

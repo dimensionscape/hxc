@@ -2590,6 +2590,9 @@ class Parser {
 				var p1 = next().pos;
 				var name = typeName();
 				var tl = parseConstraintParams();
+				// The `=` is a plain pattern element, so a different token there is an error with no message,
+				// reported as `Unexpected <token>`, not as an expectation.
+				if (!tokEq(peek(), TBinop(OpAssign))) serror();
 				var pAssign = expect(TBinop(OpAssign));
 				// The typedef's right-hand side goes through parseComplexTypeAt, so `typedef Foo =
 				// <cursor>` reaches the typer as the magic path and answers a type hint completion instead
