@@ -2172,6 +2172,51 @@ class Typer {
 						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: st});
 				}
 		}
+		// ctx.m.module_globals: every static a bare name reaches through an import. keeps only what
+		// can_access allows and what is not @:noCompletion. The reference EXPANDS a wildcard into
+		// module_globals at import time; hxc keeps wildcards as paths and resolves them by name on demand,
+		// so they expand here.
+		{
+			var curMod = ctx.com.currentModule;
+			var imports = curMod == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curMod.path));
+			if (imports != null) {
+				var seenGlobal = new Map<String, Bool>();
+				function staticsOf(mt:ModuleType):Null<TClass> return switch (mt) {
+					case TClassDecl(cl): cl;
+					case TAbstractDecl(a) if (a.impl != null): a.impl;
+					case _: null;
+				};
+				function addImported(cl:TClass, cf:TClassField, name:String):Void {
+					if (seenGlobal.exists(name) || noCompletion(cf.meta)) return;
+					if (!Fields.canAccess(ctx, cl, cf, true)) return;
+					seenGlobal.set(name, true);
+					// A StaticImport is group 14.
+					items.push({kind: "static", name: name, type: sType(cf.type),
+						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 14, sortKey: name, sortType: cf.type});
+				}
+				for (name in imports.globals.keys()) {
+					var g = imports.globals.get(name);
+					var mt = try ctx.com.getType(g.ownerPath, Position.nullPos, g.ownerSub) catch (_:Dynamic) null;
+					var cl = mt == null ? null : staticsOf(mt);
+					if (cl == null) continue;
+					try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
+					var cf = cl.statics.get(g.field != null ? g.field : name);
+					if (cf != null) addImported(cl, cf, name);
+				}
+				for (w in imports.wildcards) {
+					var mt = try ctx.com.getType(w, Position.nullPos, null) catch (_:Dynamic) null;
+					var cl = mt == null ? null : staticsOf(mt);
+					if (cl == null) continue;
+					try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
+					for (cf in cl.orderedStatics) {
+						// A WILDCARD skips @:noImportGlobal; an explicit field import does not.
+						// (module_globals population).
+						if (TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) continue;
+						addImported(cl, cf, cf.name);
+					}
+				}
+			}
+		}
 		// Enum constructors. Each enum contributes once: every arm checks whether the path was already
 		// recorded, and records it.
 		var seenEnumPaths = new Map<String, Bool>();
