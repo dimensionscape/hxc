@@ -1774,6 +1774,12 @@ class EvalMacro {
 			if (macroCtx != null) { staleMacroCtx = macroCtx; macroCtx = null; lastModuleCount = -1; }
 		}
 		loadMacroClass(host, path, null, true);
+		// The MACRO context is finalized after the load, so every field body types there and a display
+		// position inside one answers. loadMacroClass forces only the class whose name matches the module
+		// path, so a display file whose main class is named differently would get its signatures typed
+		// and nothing else.
+		var loaded = macroCom.moduleLut.get(key);
+		if (loaded != null) forceModuleClassFields(macroCom, loaded);
 	}
 
 	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef):Void {

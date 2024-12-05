@@ -619,8 +619,18 @@ class Calls {
 				case _: break;
 			}
 		}
-		var acc = Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt);
+		// A CALLEE the compiler synthesized (typeTrace's haxe.Log.trace) reaches the typer here,
+		// not through typeExpr, so the synthesizedNodes window is applied at this entry too.
+		var calleeSynth = Typer.synthesizedNodes.length > 0 && Typer.synthesizedNodes.remove(callee);
+		var savedSuppressed = hxc.parser.Parser.displaySuppressed;
+		if (calleeSynth) hxc.parser.Parser.displaySuppressed = true;
+		var acc = try Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt)
+			catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = savedSuppressed; throw ex; };
+		// noteDisplayAccess is the recovery that answers from the ACCESS, keyed on the callee's position
+		// - which for a synthesized callee is the whole call's, so it claimed a cursor sitting on an
+		// argument. It stays inside the window.
 		Typer.noteDisplayAccess(ctx, acc, callee.pos);
+		if (calleeSynth) hxc.parser.Parser.displaySuppressed = savedSuppressed;
 		// A static EXTENSION callee answers hover from the access: the typed call keeps the impl static's
 		// own position, not the syntactic `recv.name` the cursor is on, so the normal smallest-enclosing
 		// walk never reaches it. Every other call is left alone - its typed callee carries the SELECTED
@@ -731,7 +741,7 @@ class Calls {
 		]), callp);
 		// Every part of the infos object is built at the call position, so without this the constants
 		// claim a cursor that belongs to the call itself.
-		Typer.synthesizedNode = infos;
+		Typer.synthesized(infos);
 		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
 	}
 
@@ -800,7 +810,7 @@ class Calls {
 		var infos = new Expr(EObjectDecl(fields), p);
 		if ((ctx.com.platform.match(Js) || ctx.com.platform.match(Python)) && el.length <= 1 && ctx.com.hasDce()) {
 			var e = Typer.typeExpr(ctx, v, WithTypeTools.value);
-			Typer.synthesizedNode = infos;
+			Typer.synthesized(infos);
 			var tinfos = Typer.typeExpr(ctx, infos, WithTypeTools.value);
 			e = switch (TypeFunctions.follow(e.type)) {
 				case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
@@ -813,9 +823,13 @@ class Calls {
 		}
 		var haxePkg = new Expr(EConst(CIdent("haxe")), p);
 		var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
+		// The CALLEE is synthesized too, and it at the call position, so a definition request anywhere in
+		// the call answered with haxe.Log.trace's declaration. The `trace` identifier itself is answered
+		// by displayTraceIdent .
+		Typer.synthesized(logTrace);
 		// The infos argument is registered, not the whole call: the argument the user wrote is typed
 		// inside it and has to keep answering.
-		Typer.synthesizedNode = infos;
+		Typer.synthesized(infos);
 		return Typer.typeExpr(ctx, new Expr(ECall(logTrace, [mkToStringMeta(v), infos]), p), WithTypeTools.noValue);
 	}
 

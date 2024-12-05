@@ -764,11 +764,15 @@ class Typer {
 	// position, and these carry the position of the construct they were built for, so the check is off
 	// while the subtree types. The rest of the construct - the arguments the user wrote - types
 	// outside this window and still answers.
-	public static var synthesizedNode:Null<Expr> = null;
+	public static var synthesizedNodes:Array<Expr> = [];
+
+	public static function synthesized(e:Expr):Expr {
+		synthesizedNodes.push(e);
+		return e;
+	}
 
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
-		if (synthesizedNode == e) {
-			synthesizedNode = null;
+		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e)) {
 			var saved = hxc.parser.Parser.displaySuppressed;
 			hxc.parser.Parser.displaySuppressed = true;
 			var r = try typeExpr(ctx, e, withType, mode)

@@ -951,6 +951,13 @@ class Compiler {
 			if (hxc.parser.Parser.displayFile != null && !ctx.hasError()) {
 				var dm = displayParts(ctx);
 				var dmode = dm.length >= 3 ? dm[2] : "";
+				// No completion point was found, and the display file has a block only the MACRO context turns
+				// on - so load it there and let the hooks fire against the macro-world types. Besides a
+				// .macro.hx root and the parser's DisplayInMacroBlock raise, this is the third place a display
+				// module loads in the macro context, the one that covers `#if macro` inside an ordinary file. A
+				// display answer raised in there is the result, so it must not be caught here.
+				if (hxc.parser.Parser.displayModuleHasMacroDefines && displayRoot != null)
+					hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
 				switch (dmode) {
 					case "" | "position" | "type" | "typeDefinition" | "signature" | "toplevel" | "package":
 						// A JSON request answers DisplayNoResult, which is a null result; only the legacy
