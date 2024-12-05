@@ -1120,6 +1120,18 @@ class Compiler {
 				return;
 			}
 			// No trailing newline: the completion string prints verbatim.
+			{
+				var seen = new haxe.ds.StringMap<Bool>();
+				for (it in tl.items) if (it.path != null) seen.set(it.path, true);
+				heritageScan(ctx, tl, seen, function(sf, td) switch (td.decl) {
+					case EClass(d):
+						var nm = d.dName.name;
+						tl.items.push({kind: "type", name: nm,
+							path: (sf.pack.length == 0 ? "" : sf.pack.join(".") + ".")
+								+ (nm == sf.moduleName ? nm : sf.moduleName + "." + nm)});
+					case _:
+				});
+			}
 			answerOut(hxc.compiler.DisplayXml.printToplevel(tl.items));
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
@@ -2412,8 +2424,34 @@ class Compiler {
 			+ ',"replaceRange":' + range + '}';
 	}
 
-	// Over a type collection: the module types the raise site carried, each as a Type item, with the
-	// mode kind it recorded.
+	// The completion JSON over a type collection: the module types the raise site carried, each as a
+	// Type item, with the mode kind it recorded. The collection reaches the CLASS-PATH exploration as
+	// well as the loaded types, so a class no compilation has touched is offered too, from its PARSED
+	// declaration. The heritage filter travels on the raise and is applied here, where the answer is
+	// built. both lanes need it, or a legacy `class C extends |` would offer only the classes that
+	// happen to be loaded instead of the whole class path.
+	static function heritageScan(ctx:Context, tl:hxc.compiler.DisplayXml.ToplevelCompletion,
+			seen:haxe.ds.StringMap<Bool>, add:hxc.compiler.ToplevelScan.ScannedFile->hxc.ast.Ast.TypeDecl->Void):Void {
+		if (tl.heritIsExtends == null) return;
+		var isExtends = tl.heritIsExtends;
+		for (sf in hxc.compiler.ToplevelScan.get(ctx)) for (td in sf.decls) switch (td.decl) {
+			case EClass(d):
+				if (d.dFlags.contains(HPrivate) || TypeFunctions.hasMeta(":noCompletion", d.dMeta)) continue;
+				var nm = d.dName.name;
+				var full = (sf.pack.length == 0 ? "" : sf.pack.join(".") + ".")
+					+ (nm == sf.moduleName ? nm : sf.moduleName + "." + nm);
+				if (seen.exists(full) || full == tl.heritSelf) continue;
+				var isIface = d.dFlags.contains(HInterface);
+				var basic = sf.pack.length == 0 && (nm == "Array" || nm == "String" || nm == "Date" || nm == "Xml");
+				var keep = isIface ? (!isExtends || tl.heritIsInterface)
+					: (isExtends && !tl.heritIsInterface && (!d.dFlags.contains(HFinal) || tl.heritHasHack) && !basic);
+				if (!keep) continue;
+				seen.set(full, true);
+				add(sf, td);
+			case _:
+		}
+	}
+
 	static function jsonTypeCompletion(ctx:Context, tl:hxc.compiler.DisplayXml.ToplevelCompletion):String {
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 		var curMod = displayModule(ctx);
@@ -2428,27 +2466,13 @@ class Compiler {
 		// The collection reaches the class-path exploration as well as the loaded types, so a type no
 		// compilation has touched is offered too - from its PARSED declaration, which is all there is for
 		// it. The heritage filter that produced this collection travels on it.
-		if (tl.heritIsExtends != null) {
-			var isExtends = tl.heritIsExtends;
+		{
 			var seen = new haxe.ds.StringMap<Bool>();
 			for (mt in mts) seen.set(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path), true);
-			for (sf in hxc.compiler.ToplevelScan.get(ctx)) for (td in sf.decls) switch (td.decl) {
-				case EClass(d):
-					if (d.dFlags.contains(HPrivate) || TypeFunctions.hasMeta(":noCompletion", d.dMeta)) continue;
-					var nm = d.dName.name;
-					var full = (sf.pack.length == 0 ? "" : sf.pack.join(".") + ".")
-						+ (nm == sf.moduleName ? nm : sf.moduleName + "." + nm);
-					if (seen.exists(full) || full == tl.heritSelf) continue;
-					var isIface = d.dFlags.contains(HInterface);
-					var basic = sf.pack.length == 0 && (nm == "Array" || nm == "String" || nm == "Date" || nm == "Xml");
-					var keep = isIface ? (!isExtends || tl.heritIsInterface)
-						: (isExtends && !tl.heritIsInterface && (!d.dFlags.contains(HFinal) || tl.heritHasHack) && !basic);
-					if (!keep) continue;
-					seen.set(full, true);
-					items.push(hxc.core.Json.stringOfJson(hxc.core.CompletionItem.CompletionItem.declTypeToJson(
-						gen, sf.pack, sf.moduleName, td.decl, td.pos, 1, items.length)));
-				case _:
-			}
+			heritageScan(ctx, tl, seen, function(sf, td) {
+				items.push(hxc.core.Json.stringOfJson(hxc.core.CompletionItem.CompletionItem.declTypeToJson(
+					gen, sf.pack, sf.moduleName, td.decl, td.pos, 1, items.length)));
+			});
 		}
 		var subj = patchCompletionSubject(tl.subjectName, tl.subjectPos);
 		var range = subj.pos == null
