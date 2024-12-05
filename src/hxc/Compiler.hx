@@ -914,7 +914,10 @@ class Compiler {
 				answerOut(hxc.compiler.DisplayXml.printFields(hxc.typing.Typer.fieldCompletionFound));
 				return;
 			}
-			if (isDisplay(ctx, "signature")) {
+			// Signature display raises its answer, so a request that never reached one is not answered at
+			// all - it falls through to the compile's own errors (such as "Not a callable type"), or to "no
+			// completion point was found". An empty signature list would swallow that error.
+			if (isDisplay(ctx, "signature") && hxc.typing.Typer.signatureFound != null) {
 				if (ctx.jsonRpcId != null) {
 					answerOut(jsonSignature(ctx));
 					return;

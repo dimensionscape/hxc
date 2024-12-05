@@ -1841,7 +1841,9 @@ class Typer {
 		}
 		function addCand(t:T, doc:hxc.ast.Ast.Documentation):Void switch (followCallable(t)) {
 			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: doc});
-			case _:
+			// What is not a function after the @:callable unwrap is an error naming the type, not a silently
+			// empty signature list.
+			case t2: throw new TypingError("Not a callable type: " + hxc.core.TPrinting.sTypeStr(t2), p);
 		}
 		switch (callee.expr) {
 			case TField(_, FStatic(c, cf) | FInstance(c, _, cf)):
