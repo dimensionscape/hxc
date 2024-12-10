@@ -302,9 +302,9 @@ class Context {
 		c.initMacros = this.initMacros.copy();
 		// Copy unsaved display contents into the macro world.
 		c.fileContents = this.fileContents.copy();
-		// Cloning preserves display error recovery, so unresolved macro-argument types recover to Dynamic
-		// in both worlds.
+		// Cloning preserves display error policy and diagnostics file filters for the macro world.
 		c.ignoreErrors = this.ignoreErrors;
+		c.diagnosticsFileFilter = this.diagnosticsFileFilter;
 		return c;
 	}
 
