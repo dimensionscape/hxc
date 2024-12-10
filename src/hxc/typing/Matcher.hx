@@ -2084,7 +2084,14 @@ class TexprConverter {
 
 class Match {
 	static function bodyExpr(ctx:TyperContext, c:Case):TExpr {
-		return c.expr != null ? c.expr : TypeFunctions.mk(TBlock([]), ctx.com.basic.tvoid, c.pos);
+		// A case with a BLOCK body is represented by that block's last element, so a type error unifyMin
+		// reports lands on the expression that produced the type and not on the whole body. A case with
+		// no body at all is an empty block at the CASE's own position, which is all there is to point at.
+		if (c.expr == null) return TypeFunctions.mk(TBlock([]), ctx.com.basic.tvoid, c.pos);
+		return switch (c.expr.expr) {
+			case TBlock(el) if (el.length > 0): el[el.length - 1];
+			case _: c.expr;
+		};
 	}
 
 	static function inferSwitchType(ctx:TyperContext, withType:WithType, cases:Array<MatchCase>, allowMinVoid:Bool):T {

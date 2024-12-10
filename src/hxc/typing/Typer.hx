@@ -526,7 +526,7 @@ class Typer {
 		return switch (TypeUnification.unify_min_(TypeUnification.defaultUnificationContext, commonTypes, tl)) {
 			case UnifyMinOk(t2): t2;
 			case UnifyMinError(l, index):
-				throw new TypingError(hxc.core.TPrinting.betterErrorMessage(l), elTail[index].pos);
+				throw new hxc.core.TypingError.MinUnifyError(hxc.core.TPrinting.betterErrorMessage(l), elTail[index].pos);
 		};
 	}
 
@@ -602,10 +602,10 @@ class Typer {
 	}
 
 	public static function unifyMin(ctx:TyperContext, el:Array<TExpr>):T {
-		return try unifyMinRaise(ctx, el) catch (e:TypingError) {
-			if (!ctx.untypedMode && (StringTools.startsWith(e.message, "error: ")
-				|| e.message == "Could not determine common type, please add a type-hint"))
-				ctx.com.addDiagnostic(e.message, e.pos, e.depth);
+		// Reports every unify failure unifyMinRaise raised, with no filtering on what it says, and
+		// recovers to the first element's type.
+		return try unifyMinRaise(ctx, el) catch (e:hxc.core.TypingError.MinUnifyError) {
+			if (!ctx.untypedMode) ctx.com.addDiagnostic(e.message, e.pos, e.depth);
 			el[0].type;
 		};
 	}
