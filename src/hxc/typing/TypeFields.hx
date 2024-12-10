@@ -66,6 +66,10 @@ class TypeFields {
 			installModuleFields(ctx, ctx.modules[i], pending);
 			i++;
 		}
+		// context_init before the module's fields type, which is what puts a wildcard import's statics
+		// into module_globals in time for anything that reads them. hxc queues that work as a
+		// PBuildModule delay, so the bucket is drained here, ahead of the bodies rather than with them.
+		ctx.flushPass(hxc.context.Context.PBuildModule);
 		// Force any field not reached on demand, then unwrap the lazy back to its concrete
 		// signature so downstream consumers never see a TLazy.
 		for (cf in pending) {

@@ -357,6 +357,27 @@ class ModuleLoader {
 					if (split != null) imports.wildcards.unshift(split.modulePath);
 					else if (parts.length > 0) imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
 					imports.wildcardImp.unshift(impIdx);
+					// Defer wildcard global imports until the type builds, skipping @:noImportGlobal. Package
+					// wildcards contribute no globals.
+					if (split != null && split.field == null) {
+						var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
+						ctx.delay(hxc.context.Context.PBuildModule, function() {
+							var mt = try ctx.getType(wpath, declPos, wsub) catch (_:Dynamic) return;
+							inline function put(name:String) imports.globals.set(name,
+								{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
+							switch (mt) {
+								case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
+									try hxc.typing.TypeResolve.resolveModule(ctx, cl.module) catch (_:Dynamic) {}
+									for (cf in cl.orderedStatics)
+										if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) put(cf.name);
+								case TEnumDecl(en):
+									try hxc.typing.TypeResolve.resolveModule(ctx, en.module) catch (_:Dynamic) {}
+									for (name in en.names)
+										if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta)) put(name);
+								case _:
+							}
+						});
+					}
 				case INormal:
 					var split = splitImportPath(parts);
 					if (split == null) return;

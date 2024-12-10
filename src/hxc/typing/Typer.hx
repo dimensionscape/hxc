@@ -2174,10 +2174,9 @@ class Typer {
 						doc: Ast.genDocTextOpt(cf.doc), sortGroup: 13, sortKey: cf.name, sortType: st});
 				}
 		}
-		// ctx.m.module_globals: every static a bare name reaches through an import. keeps only what
-		// can_access allows and what is not @:noCompletion. The reference EXPANDS a wildcard into
-		// module_globals at import time; hxc keeps wildcards as paths and resolves them by name on demand,
-		// so they expand here.
+		// The module globals: every static a bare name reaches through an import, whether an explicit field
+		// import or a wildcard put it there. Only what access checks allow and what is not @:noCompletion
+		// is kept.
 		{
 			var curMod = ctx.com.currentModule;
 			var imports = curMod == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curMod.path));
@@ -2204,18 +2203,6 @@ class Typer {
 					try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
 					var cf = cl.statics.get(g.field != null ? g.field : name);
 					if (cf != null) addImported(cl, cf, name);
-				}
-				for (w in imports.wildcards) {
-					var mt = try ctx.com.getType(w, Position.nullPos, null) catch (_:Dynamic) null;
-					var cl = mt == null ? null : staticsOf(mt);
-					if (cl == null) continue;
-					try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
-					for (cf in cl.orderedStatics) {
-						// A WILDCARD skips @:noImportGlobal; an explicit field import does not.
-						// (module_globals population).
-						if (TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) continue;
-						addImported(cl, cf, cf.name);
-					}
 				}
 			}
 		}
