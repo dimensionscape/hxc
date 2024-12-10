@@ -1167,17 +1167,25 @@ class Typer {
 					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
 						typeMapDeclaration(ctx, el, withType, p);
 					case _:
+						// With a Map<K,V> expected, an empty literal is `new Map()`, and a literal whose one element
+						// is the DISPLAY node types that element against the key type - that is what makes the first
+						// key of a map declaration complete against K. Anything else is an ordinary array
+						// declaration. hxc marks the gap with a null stand-in rather than an EDisplay node, so "is
+						// the display node" is the position test.
+						var mapKV:Null<{k:T, v:T}> = switch (withType) {
+							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+								case TAbstract(a, tl) if (a.path.name == "Map" && tl.length == 2): {k: tl[0], v: tl[1]};
+								case _: null;
+							};
+							case _: null;
+						};
 						var emptyMap:Null<TExpr> = null;
-						if (el.length == 0) switch (withType) {
-							case WithType(wt, _):
-								switch (TypeFunctions.follow(wt)) {
-									case TAbstract(a, _) if (a.path.name == "Map"):
-										var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
-										emptyMap = typeNew(ctx, tp, [], withType, p, false);
-									case _:
-								}
-							case _:
+						if (mapKV != null && el.length == 0) {
+							var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
+							emptyMap = typeNew(ctx, tp, [], withType, p, false);
 						}
+						if (mapKV != null && el.length == 1 && atDisplayPos(el[0].pos))
+							return typeExpr(ctx, el[0], WithTypeTools.withType(mapKV.k));
 						if (emptyMap != null) emptyMap else {
 							expectedArrayAllowDynamic = false;
 							var expectedEt:Null<T> = switch (withType) {
