@@ -143,6 +143,11 @@ class Context {
 	// Capture unresolved-identifier candidates when typing fails; the typer context is gone by
 	// diagnostics reporting.
 	public var unresolvedIdentifiers:Array<{name:String, pos:Position, suggestions:Array<{kind:Int, name:String}>}> = [];
+	// Group missing-field diagnostics by position and emit one DKMissingFields with its owning module
+	// type.
+	public var missingFields:Array<{pos:Position, on:ModuleType, scope:hxc.core.Type.ClassFieldScope,
+		fields:Array<{cf:hxc.core.Type.TClassField, t:T}>, cause:String}> = [];
+
 	public var warningOptions:Array<Array<hxc.core.WarningList.WarningOption>>;
 
 	public var moduleImports:StringMap<ModuleImports>;

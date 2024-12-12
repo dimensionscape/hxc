@@ -2569,6 +2569,61 @@ class Compiler {
 				group.items.push(item);
 			}
 		}
+		// The MissingFields records are grouped by position, and one DKMissingFields is printed per
+		// group: the module type the fields would be added to, the file it lives in, and one entry per
+		// record carrying its fields and the cause. The context is GMMinimum.
+		{
+			var order:Array<String> = [];
+			var groups2 = new haxe.ds.StringMap<Array<{pos:Position, on:hxc.core.Type.ModuleType,
+				scope:hxc.core.Type.ClassFieldScope, fields:Array<{cf:hxc.core.Type.TClassField, t:T}>, cause:String}>>();
+			for (mf in ctx.missingFields) {
+				if (!isDiagnosticsFile(ctx, mf.pos.file)) continue;
+				var key = mf.pos.file + ":" + mf.pos.min + ":" + mf.pos.max;
+				var g = groups2.get(key);
+				if (g == null) { g = []; groups2.set(key, g); order.push(key); }
+				g.push(mf);
+			}
+			for (key in order) {
+				var g = groups2.get(key);
+				var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMMinimum);
+				var mt = g[0].on;
+				var entries:Array<String> = [];
+				// A duplicate of a field already offered at this position is dropped, and `unique` is marked
+				// when no other entry in the group offers the same name.
+				var allNames = new haxe.ds.StringMap<Int>();
+				for (mf in g) for (fe in mf.fields)
+					allNames.set(fe.cf.name, (allNames.exists(fe.cf.name) ? allNames.get(fe.cf.name) : 0) + 1);
+				for (mf in g) {
+					var fields:Array<String> = [];
+					for (fe in mf.fields) {
+						var ct = hxc.core.CompletionItem.CompletionTypeTools.toJson(gen,
+							hxc.core.CompletionItem.CompletionTypeTools.fromType(
+								function(_) return hxc.core.CompletionItem.ImportStatus.Imported, fe.t));
+						fields.push(hxc.core.Json.stringOfJson(hxc.core.Json.JsonValue.JObject([
+							{name: "field", value: gen.generateClassField(mf.scope, fe.cf)},
+							{name: "type", value: ct},
+							{name: "unique", value: hxc.core.Json.JsonValue.JBool(allNames.get(fe.cf.name) == 1)}
+						])));
+					}
+					entries.push('{"fields":[' + fields.join(",") + '],"cause":{"kind":'
+						+ haxe.Json.stringify(mf.cause) + ',"args":{}}}');
+				}
+				var inf = TypeFunctions.tInfos(mt);
+				var mfile = inf.module == null || inf.module.extra.file == null ? "" : inf.module.extra.file;
+				var args = '{"moduleType":' + hxc.core.Json.stringOfJson(gen.generateModuleType(mt))
+					+ ',"moduleFile":' + haxe.Json.stringify(mfile)
+					+ ',"entries":[' + entries.join(",") + ']}';
+				var displayFile = g[0].pos.file;
+				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
+					displayFile = FileSystem.fullPath(displayFile);
+				var item = '{"kind":7,"severity":1,"range":' + posAsRange(g[0].pos)
+					+ ',"args":' + args + ',"relatedInformation":[]}';
+				var group = null;
+				for (gg in groups) if (gg.file == displayFile) { group = gg; break; }
+				if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+				group.items.push(item);
+			}
+		}
 		// The removable code follows the messages, carrying its description and the range an editor would
 		// delete (null when the declaration is shared).
 		for (r in hxc.compiler.Diagnostics.removableCode) {

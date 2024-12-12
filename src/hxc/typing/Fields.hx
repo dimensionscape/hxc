@@ -377,6 +377,80 @@ class Fields {
 		};
 	}
 
+	// A field access that did not resolve, in a run whose job is to REPORT, records the field the
+	// code implies - its name, the type the context wants and the kind the access mode implies -
+	// so the report can offer to create it.
+	// Exit means there is nothing usable to describe and nothing is recorded.
+	public static function handleMissingFieldRaise(ctx:TyperContext, tthis:T, i:String, mode:AccessMode,
+			withType:WithType, pfield:Position):Void {
+		// The RETURN type: what is expected, a fresh monomorph for a plain value, and for a
+		// NoValue access whatever the assigned expression turns out to be.
+		var tret:Null<T> = switch (withType) {
+			case WithType(t, _): t;
+			case Value(_): TypeFunctions.mkMono();
+			case NoValue: switch (mode) {
+				case MCall(_): ctx.com.basic.tvoid;
+				case MSet(e) if (e != null):
+					try Typer.typeExpr(ctx, e, WithTypeTools.value).type catch (_:Dynamic) return;
+				case _: return;
+			};
+		};
+		// The field type and KIND: a call implies a method taking the arguments written, a read a
+		// read-only var, a write a settable one.
+		var t:T, kind:FieldKind;
+		switch (mode) {
+			case MCall(el):
+				var args:Array<hxc.core.Type.TSignatureArg> = [];
+				for (idx in 0...el.length) {
+					var name = Expr.findIdent(el[idx]);
+					var te = try Typer.typeExpr(ctx, el[idx], WithTypeTools.value) catch (_:Dynamic) return;
+					args.push({name: name != null ? name : "arg" + idx, opt: false, t: te.type});
+				}
+				t = TFun({args: args, ret: tret}); kind = Method(MethNormal);
+			case MGet:
+				t = tret; kind = Var({read: AccNormal, write: AccNo});
+			case MSet(_):
+				t = tret; kind = Var({read: AccNormal, write: AccNormal});
+		}
+		var cf = TypeFunctions.mkField(i, t, pfield, Position.nullPos, false, false);
+		cf.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos},
+			{name: ":noCompletion", params: [], pos: Position.nullPos}];
+		cf.kind = kind;
+		// WHERE the field would go, and whether it has to be public to be reachable from here.
+		var mt:Null<ModuleType> = null;
+		var scope = hxc.core.Type.ClassFieldScope.CFSMember;
+		var isPublic = true;
+		switch (TypeFunctions.follow(tthis)) {
+			case TInst(c, _): mt = TClassDecl(c); isPublic = !canAccess(ctx, c, cf, false);
+			case TEnum(en, _): mt = TEnumDecl(en);
+			case TAbstract(a, _): mt = TAbstractDecl(a);
+			case TAnon(an): switch (an.status.get()) {
+				case Statics(c): mt = TClassDecl(c); scope = CFSStatic; isPublic = !canAccess(ctx, c, cf, true);
+				case EnumStatics(en): mt = TEnumDecl(en); scope = CFSStatic;
+				case AbstractStatics(a): mt = TAbstractDecl(a); scope = CFSStatic;
+				case _: return;
+			}
+			case _: return;
+		}
+		if (isPublic) TypeFunctions.addClassFieldFlag(cf, CfPublic);
+		if (scope == CFSStatic) TypeFunctions.addClassFieldFlag(cf, CfStatic);
+		ctx.com.missingFields.push({pos: pfield, on: mt, scope: scope,
+			fields: [{cf: cf, t: t}], cause: "FieldAccess"});
+	}
+
+	// A bare name that did not resolve is a missing field of the enclosing STATICS in a static
+	// function, and of `this` otherwise.
+	public static function handleMissingIdent(ctx:TyperContext, i:String, mode:AccessMode,
+			withType:WithType, p:Position):Void {
+		if (ctx.curclass == null) return;
+		var tthis = switch (ctx.curfun) {
+			// makeStaticThis: the STATICS anon of the enclosing class.
+			case FunStatic: hxc.core.TexprTools.makeTypeExpr(TClassDecl(ctx.curclass), p).type;
+			case _: ctx.tthis;
+		};
+		try handleMissingFieldRaise(ctx, tthis, i, mode, withType, p) catch (_:Dynamic) {}
+	}
+
 	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
 		if (ctx.untypedMode) {
 			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)

@@ -3736,6 +3736,9 @@ class Typer {
 			// identifier rather than as a compiler error.
 			if (identSpeculation == 0 && ctx.com.errorInDiagnosticsRun(p)) {
 				recordUnresolvedIdentifier(ctx, i, p);
+				// The MISSING field the name implies is recorded alongside the unresolved identifier, so the
+				// report can offer to create it.
+				Fields.handleMissingIdent(ctx, i, mode, withType, p);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
 			throw new TypingError("Unknown identifier : " + i, p);
