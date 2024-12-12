@@ -2606,7 +2606,15 @@ class Typer {
 		}
 		function readExpr(a:hxc.typing.AccessKind.AccessKind):Null<TExpr> return switch (a) {
 			case AKNo(inner, _): readExpr(inner);
-			case AKSafeNav(sn): readExpr(sn.access);
+			// A `?.` node reports the then expression of the null-check TIf, built as the access CAST to
+			// tnull - but only when its type is not nullable. A structure is nullable, so an inner link
+			// keeps its own type while a basic one reports Null<T>. The cast is then unwrapped KEEPING the
+			// cast type, which is why the field is still what answers a definition request.
+			case AKSafeNav(sn):
+				var inner = readExpr(sn.access);
+				if (inner != null && !TypeFunctions.isNullable(inner.type))
+					inner = TypeFunctions.mk(inner.expr, ctx.com.basic.tnull(inner.type), inner.pos);
+				inner;
 			case AKExpr(te): te;
 			case AKField(fa) | AKAccessor(fa):
 				try hxc.typing.FieldAccessTools.getFieldExpr(fa, FRead) catch (_:Dynamic) null;
