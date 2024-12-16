@@ -4825,11 +4825,24 @@ class Typer {
 
 	static function typeBlock(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		// The display position sits inside this block but on no statement (whitespace or an empty body):
-		// the reference parser marks the spot and completion raises with an empty subject. Statements
-		// before the cursor type first so their locals are in scope. (collect_and_raise, empty subject).
-		if ((displayToplevel || displayToplevelJson) && atDisplayPos(p) && fieldCompletionFound == null) {
+		// the spot is marked and completion raises with an empty subject. Statements before the cursor
+		// type first so their locals are in scope. The display preprocessor runs only when the parser did
+		// not resume: a resume has already produced the display node, so no marker may be inserted
+		// anywhere else. Without that check `switch s.<cursor>` would lose its field completion to this
+		// scan, since the switch ends exactly where the cursor is.
+		if ((displayToplevel || displayToplevelJson) && !hxc.parser.Parser.hadResume
+			&& atDisplayPos(p) && fieldCompletionFound == null) {
 			var covered = false;
-			for (e in el) if (atDisplayPos(e.pos)) { covered = true; break; }
+			for (e in el) if (atDisplayPos(e.pos)) {
+				// A switch is the one node that may DECLINE the position it encloses, so it does not
+				// trigger when the cursor is on its closing `}`. A switch the cursor sits just past claims
+				// nothing, and the block it is a statement of answers instead. Every other node annotates
+				// itself, which is what this scan stands in for.
+				switch (e.expr) {
+					case ESwitch(_, _, _) if (e.pos.max <= hxc.parser.Parser.displayOffset):
+					case _: covered = true; break;
+				}
+			}
 			if (!covered) {
 				var off = hxc.parser.Parser.displayOffset;
 				for (e in el) if (e.pos.max < off) try typeExpr(ctx, e, WithTypeTools.noValue) catch (_:TypingError) {}

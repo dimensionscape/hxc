@@ -86,6 +86,10 @@ class Parser {
 	// replace range come from it.
 	public static var displayDotName:Null<String> = null;
 	public static var displayDotPos:Null<Position> = null;
+	// The parser answered a completion by RESUMING at a token, so it has already decided what the
+	// request is about. ExprPreprocessing is skipped entirely when it is set, which keeps the marker
+	// insertion below from claiming a position the parser has answered.
+	public static var hadResume:Bool = false;
 	// Errors recorded instead of raised while parsing the display file, so an incomplete construct does not
 	// abort a display request.
 	public static var syntaxErrors:Array<{msg:hxc.parser.ParserError.ParserErrorMsg, pos:Position}> = [];
@@ -107,6 +111,7 @@ class Parser {
 		displayDotName = null;
 		displayDotPos = null;
 		syntaxErrors = [];
+		hadResume = false;
 	}
 
 	function isDisplayFile():Bool {
@@ -394,7 +399,9 @@ class Parser {
 	}
 
 	function checkResume(p:Position):Bool {
-		return displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset;
+		if (!(displayCompletionMode && isDisplayFile() && displayOffset >= 0 && p.max == displayOffset)) return false;
+		hadResume = true;
+		return true;
 	}
 
 	// The span from the end of this token to the end of the next one contains the cursor, so whatever
