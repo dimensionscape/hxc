@@ -4885,18 +4885,12 @@ class Typer {
 		for (ev in vl) {
 			var n = ev.evName.name;
 			var pv = ev.evName.pos;
-			// A bad hint reports and recovers as Dynamic so the var and the rest of the body still type. .
-			var t:T = try {
-				ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
-			} catch (ce:hxc.context.Context.ContextError) {
-				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
-				TypeFunctions.tDynamic;
-			} catch (te:TypingError) {
-				ctx.com.addDiagnostic(te.message, te.pos, te.depth);
-				TypeFunctions.tDynamic;
-			};
 			checkLocalVariableName(ctx, n, TVOLocalVariable, pv);
 			try {
+				// The hint loads inside the same attempt as the initializer, so a hint that fails skips
+				// everything after it - the initializer is not typed, the variable is not the one the user
+				// declared, and nothing answers a display request from it.
+				var t:T = ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
 				var e:Null<TExpr> = switch (ev.evExpr) {
 					case null: null;
 					case ex:
@@ -4920,10 +4914,14 @@ class Typer {
 				if (atDisplayPos(pv)) displayVariable(ctx, v, pv);
 				out.push({v: v, e: e});
 			} catch (err:TypingError) {
+				// Record the error, then a generated local at Dynamic with no initializer. VGenerated, not the
+				// user origin: the declaration did not survive, so it is not the variable the user wrote and
+				// must not be reported as one.
 				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
-				var v = addLocalWithOrigin(ctx, TVOLocalVariable, n, TypeFunctions.tDynamic, pv);
-				v.meta = ev.evMeta;
-				out.push({v: v, e: null});
+				out.push({v: addLocal(ctx, VGenerated, n, TypeFunctions.tDynamic, pv), e: null});
+			} catch (ce:hxc.context.Context.ContextError) {
+				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+				out.push({v: addLocal(ctx, VGenerated, n, TypeFunctions.tDynamic, pv), e: null});
 			}
 		}
 		for (ve in out) {
