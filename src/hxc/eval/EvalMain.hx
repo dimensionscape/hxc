@@ -159,6 +159,25 @@ class EvalMain {
 	}
 
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>, runDce:Bool = false):Void {
+		// A type already cached under this path hash is skipped only when it comes from the same module.
+		// One from a DIFFERENT module replaces it, and its prototypes are dropped first so they are
+		// rebuilt rather than kept. Otherwise two display requests over files that both declare the same
+		// type path would leave the second one running the first one's macros ("Macro not found").
+		types = types.filter(function(mt) {
+			var inf = hxc.core.TypeFunctions.tInfos(mt);
+			var key = EvalHash.pathHash(inf.path);
+			var cached = ctx.typeCache.get(key);
+			if (cached != null) {
+				var inf2 = hxc.core.TypeFunctions.tInfos(cached);
+				if (inf2.module != null && inf.module != null && inf2.module.id == inf.module.id)
+					return false;
+			}
+			ctx.instancePrototypes.remove(key);
+			ctx.staticPrototypes.remove(key);
+			ctx.constructors.remove(key);
+			ctx.typeCache.set(key, mt);
+			return true;
+		});
 		var delays:Array<{proto:VPrototype, fn:VPrototype->Void}> = [];
 		// Register type-cache entries and enum prototypes up front.
 		for (mt in types) switch (mt) {
@@ -179,11 +198,14 @@ class EvalMain {
 			case _:
 		}
 		// Build a class prototype, its superclass first, so a subclass inherits the parent field layout
-		// regardless of module registration order.
-		function buildClass(c:TClass):Void {
+		// regardless of module registration order. A prototype is built for every type the filter above
+		// accepted, so two same-path types in one batch end with the last one registered. The existence
+		// test is only for the superclass recursion, which must not rebuild a parent that is already
+		// there.
+		function buildClass(c:TClass, isNew:Bool):Void {
 			var key = EvalHash.pathHash(c.path);
-			if (ctx.instancePrototypes.exists(key)) return;
-			if (c.superClass != null) buildClass(c.superClass.c);
+			if (!isNew && ctx.instancePrototypes.exists(key)) return;
+			if (c.superClass != null) buildClass(c.superClass.c, false);
 			var iproto = EvalPrototype.buildInstance(ctx, c);
 			ctx.instancePrototypes.set(key, iproto);
 			if (c.path.pack.length == 0) switch (c.path.name) {
@@ -202,7 +224,7 @@ class EvalMain {
 			if (ctor != null) ctx.constructors.set(key, ctor);
 		}
 		for (mt in types) switch (mt) {
-			case TClassDecl(c): buildClass(c);
+			case TClassDecl(c): buildClass(c, true);
 			case _:
 		}
 		// Static field initializers run after every prototype is registered.
