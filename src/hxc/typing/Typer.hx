@@ -2777,7 +2777,15 @@ class Typer {
 
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
+		// The receiver of a dot path is looked up SPECULATIVELY, and the raise is what sends a package
+		// prefix to the type-path route in the catch below. hxc reaches it through the REPORTING
+		// typeIdent, so the attempt runs with the recording off - the same counter the dot-path head
+		// uses. Without it the head to a monomorph and `@:access(pack.<cursor>)` answers an empty field
+		// list.
+		var speculativeHead = flattenIdentPath(e1.expr) != null;
+		if (speculativeHead) identSpeculation++;
 		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
+			if (speculativeHead) { identSpeculation--; speculativeHead = false; }
 			// An unresolvable receiver that spells an existing package directory is a dot-path prefix (a
 			// metadata argument like @:access(pack.); complete the package instead of reporting. .
 			var segments:Array<String> = [];
@@ -2805,6 +2813,7 @@ class Typer {
 			}
 			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
+		if (speculativeHead) identSpeculation--;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
 		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}> = [];
@@ -3739,6 +3748,15 @@ class Typer {
 				// The MISSING field the name implies is recorded alongside the unresolved identifier, so the
 				// report can offer to create it.
 				Fields.handleMissingIdent(ctx, i, mode, withType, p);
+				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
+			}
+			// Outside DMNone the name is REPORTED and recovers to a TIdent at a fresh monomorph, so
+			// everything after it in the expression still types and the request can still be answered from
+			// elsewhere in it. the raise for the display SUBJECT, which here is the identifier the cursor is
+			// on - there the raise is how the request gets answered. adds a fake local, but only behind
+			// ServerConfig.legacy_completion, a JSON-RPC initialize option that hxc has no way to set.
+			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)) {
+				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
 			throw new TypingError("Unknown identifier : " + i, p);
