@@ -2072,7 +2072,11 @@ class Parser {
 						return serror();
 				}
 			case _:
-				return serror();
+				// A missing `)` is recorded and the parenthesis closes at the end of the expression inside
+				// it, then parsing continues. Raising here would lose the whole statement, and with it any
+				// display node the recovery had already built inside.
+				syntaxError(Expected([")", ",", ":"]));
+				return exprNext(new Expr(EParenthesis(e), Position.union(p1, e.pos)));
 		}
 	}
 

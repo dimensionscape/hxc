@@ -5158,6 +5158,13 @@ class Typer {
 			reset();
 			throw new TypingError("Function body required", p);
 		}
+		// Print the field's syntax tree when it carries @:debug.position, or @:debug.display in a display
+		// run. They are the only way to see what the parser built for a body the recovery had to
+		// reassemble.
+		if (ctx.curfield != null && (TypeFunctions.hasMeta(":debug.position", ctx.curfield.meta)
+			|| (hxc.parser.Parser.displayFile != null && TypeFunctions.hasMeta(":debug.display", ctx.curfield.meta))))
+			Sys.println("syntax:" + "
+" + hxc.ast.Ast.Expr.dumpWithPos(bodyExpr));
 		var errorsBefore = ctx.com.errorCount();
 		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:TypingError) {
 			reset();
