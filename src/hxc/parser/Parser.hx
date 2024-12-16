@@ -1581,7 +1581,8 @@ class Parser {
 		// annotating the enclosing field access DKMarked) rather than at the dot, but the request and the
 		// answer are the same, and the span from the dot to the end of the name is what encloses_position
 		// accepts for that access.
-		if (checkResume(p) || (displayCompletionMode && atDisplayDot(p))) {
+		var resumed = checkResume(p);
+		if (resumed || (displayCompletionMode && atDisplayDot(p))) {
 			// The completion's SUBJECT is the field name already written, spanning back from the display
 			// expression's end by that name's length. The empty field name above is only how the request
 			// travels, so the name is kept here.
@@ -1592,7 +1593,12 @@ class Parser {
 				case Const(CIdent(n)): displayDotName = n; displayDotPos = np;
 				case _:
 			}
-			return exprNext(new Expr(EField(e1, "", efk), Position.union(e1.pos, p)));
+			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, p));
+			// 's resume arm returns the display node - it does not run expr_next, so whatever follows the
+			// dot stays in the stream and is parsed on its own. That is what ends the enclosing block at
+			// `this.` + `.resume`, which in turn lets a declaration after it belong to the class rather
+			// than to the function body.
+			return resumed ? e : exprNext(e);
 		}
 		// Every name arm is guarded by `p.max = p2.min` - the field name must TOUCH the dot. `k.` with
 		// the name on the next line is not a field access at all, so the name stays a statement of its own.
