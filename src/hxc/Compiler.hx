@@ -885,8 +885,12 @@ class Compiler {
 						hdoc = inf.doc == null ? null : hxc.ast.Ast.genDocText(inf.doc);
 					}
 				}
-				answerOut(h == null ? "" : hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
-				return;
+				// An unanswered display request is not an empty answer. Falling through reports the compile
+				// error the body recorded, or the missing completion point, which is what the client relies on.
+				if (h != null) {
+					answerOut(hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
+					return;
+				}
 			}
 			if (hxc.typing.Typer.displayImplementation) {
 				var impls = collectImplementations(ctx);

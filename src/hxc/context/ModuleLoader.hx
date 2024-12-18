@@ -1723,16 +1723,21 @@ class ModuleLoader {
 					evName: {name: "this", pos: Position.nullPos}, evFinal: false, evStatic: false,
 					evType: thisT, evExpr: null, evMeta: [{name: ":this", params: [], pos: Position.nullPos}]
 				};
-				var initE = new Expr(EVars([thisVar]), p);
-				var retE = new Expr(EReturn(new Expr(ECast(new Expr(EConst(CIdent("this")), p), null), p)), p);
+				// The generated expression positions must not shadow the real code: every node this rewrite
+				// injects, and the block it wraps them in, is built at a ZERO-WIDTH position. With the
+				// field's own span they would enclose the whole constructor, and a display question
+				// anywhere inside would be answered by them.
+				var pgen = new Position(p.file, p.min, p.min);
+				var initE = new Expr(EVars([thisVar]), pgen);
+				var retE = new Expr(EReturn(new Expr(ECast(new Expr(EConst(CIdent("this")), pgen), null), pgen)), pgen);
 				// The body becomes one block: the init, the original statements (or the single expression),
 				// then the
 				// return.
 				var newExpr:Null<Expr> = switch (fu.fExpr) {
 					case null: null;
 					case e: switch (e.expr) {
-						case EBlock(el): new Expr(EBlock([initE].concat(el).concat([retE])), p);
-						case _: new Expr(EBlock([initE, e, retE]), p);
+						case EBlock(el): new Expr(EBlock([initE].concat(el).concat([retE])), pgen);
+						case _: new Expr(EBlock([initE, e, retE]), pgen);
 					}
 				};
 				var fu2:Func = {fParams: fu.fParams, fArgs: fu.fArgs, fType: aT, fExpr: newExpr};

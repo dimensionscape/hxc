@@ -65,6 +65,7 @@ class Typer {
 		displayFound = null;
 		displayHover = false;
 		hoverFound = null;
+		exprDisplayOff = false;
 		displayTypeDefinition = false;
 		displaySignature = false;
 		signatureFound = null;
@@ -1929,7 +1930,7 @@ class Typer {
 	// node is therefore outside it and the ENCLOSING one answers: `"x".length|` is a question about the
 	// call it is an argument of, not about length.
 	public static function atExprHoverPos(p:Position):Bool {
-		if (hxc.parser.Parser.displaySuppressed) return false;
+		if (hxc.parser.Parser.displaySuppressed || exprDisplayOff) return false;
 		var df = hxc.parser.Parser.displayFile;
 		var off = hxc.parser.Parser.displayOffset;
 		if (df == null || off < 0) return false;
@@ -2081,8 +2082,13 @@ class Typer {
 		recordUnresolvedIdentifier(new TyperContext(com), i, p);
 	}
 
-	// Nesting depth of a type_ident_raise-style SPECULATIVE lookup: inside one, an
-	// unresolved name raises without being recorded, because the caller has another route.
+	// Nesting depth of a type_ident_raise-style SPECULATIVE lookup: inside one, an unresolved name
+	// raises without being recorded, because the caller has another route. when find_before_pos gives
+	// up, the reference hands typing the expression unmarked, so no EDisplay is reached and nothing in
+	// it answers - the request ends with "No completion point was found", or with whatever error the
+	// body recorded. hxc answers from positions, so the verdict is carried here instead.
+	public static var exprDisplayOff:Bool = false;
+
 	public static var identSpeculation:Int = 0;
 
 	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind
