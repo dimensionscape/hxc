@@ -699,17 +699,24 @@ class Fields {
 		};
 	}
 
-	static function usingDoesUnify(a:T, b:T):Bool {
-		// A multi-type abstract on either side goes through the abstract-cast machinery, which resolves the
-		// concrete specialization before unifying (Map receiver against a StringMap parameter and vice
-		// versa).
-		function multi(t:T):Null<T> return switch (TypeFunctions.follow(t)) {
-			case TAbstract(ab, tl) if (TypeFunctions.hasMeta(":multiType", ab.meta)):
-				try TypeFunctions.follow(Typer.resolveMultiTypeConcrete(ab, tl, Position.nullPos)) catch (_:Dynamic) null;
-			case _: null;
+	// A @:multiType abstract on EITHER side goes through the abstract-cast machinery, whose first step is
+	// typeIseq - and that is what binds the extension's own type parameter from the receiver. Resolving a
+	// concrete specialization first instead cannot work: `Map<Unknown<0>, Float>` has nothing to specialize
+	// on, so a `Map<String, Float>` receiver matched no candidate at all.
+	static function usingDoesUnify(ctx:TyperContext, e:TExpr, t:T, p:Position):Bool {
+		function isMulti(t:T):Bool return switch (TypeFunctions.follow(t)) {
+			case TAbstract(ab, _): TypeFunctions.hasMeta(":multiType", ab.meta);
+			case _: false;
 		}
-		var a2 = multi(a); if (a2 != null) a = a2;
-		var b2 = multi(b); if (b2 != null) b = b2;
+		var a = e.type;
+		var b = t;
+		if (isMulti(a) || isMulti(b)) {
+			return try TypeUnification.withMonoRollback(function() {
+				Typer.castOrUnifyRaise(ctx, b, e, p);
+				return true;
+			}) catch (_:hxc.core.TypeUnification.UnifyError) false
+			catch (_:TypingError) false;
+		}
 		// The receiver never coerces through Dynamic to claim an extension (allowDynamicToCast =
 		// false).
 		return try TypeUnification.withMonoRollback(function() {
@@ -749,11 +756,11 @@ class Fields {
 		}
 	}
 
-	static function usingAccepts(cf:TClassField, recv:T, first:T):Bool {
+	static function usingAccepts(ctx:TyperContext, cf:TClassField, e:TExpr, first:T, p:Position):Bool {
 		// A Dynamic receiver only takes extensions whose first argument is exactly Dynamic: Dynamic
 		// unifies with anything, so a String-first extension would otherwise claim any dynamic field
 		// access.
-		switch (TypeFunctions.follow(recv)) {
+		switch (TypeFunctions.follow(e.type)) {
 			case TDynamic(null):
 				switch (TypeFunctions.follow(first)) {
 					case TDynamic(null):
@@ -762,13 +769,13 @@ class Fields {
 			case _:
 		}
 		if (!hxc.eval.EvalMacro.isMacroField(cf))
-			return usingDoesUnify(recv, first);
+			return usingDoesUnify(ctx, e, first, p);
 		var exprOf = exprOfParam(first);
 		if (exprOf != null)
-			return usingDoesUnify(recv, exprOf);
+			return usingDoesUnify(ctx, e, exprOf, p);
 		if (isMacroExprParam(first))
 			return true;
-		return usingDoesUnify(recv, first);
+		return usingDoesUnify(ctx, e, first, p);
 	}
 
 	// True when the abstract forwards member `name` to its underlying type: @:forward with no
@@ -826,7 +833,7 @@ class Fields {
 				cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
 			}
 			switch (TypeFunctions.follow(cft)) {
-				case TFun(sig) if (sig.args.length > 0 && usingAccepts(cf, e.type, sig.args[0].t)):
+				case TFun(sig) if (sig.args.length > 0 && usingAccepts(ctx, cf, e, sig.args[0].t, p)):
 					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
 				case _:
 			}
@@ -867,7 +874,7 @@ class Fields {
 						case TFun(sig) if (sig.args.length > 0):
 							// The same acceptance test the call path uses: a plain unify is stricter and drops the
 							// Map-receiver-against-StringMap-parameter cases.
-							if (usingAccepts(o, e.type, sig.args[0].t)) {
+							if (usingAccepts(ctx, o, e, sig.args[0].t, p)) {
 								add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
 								matched = true;
 							}
