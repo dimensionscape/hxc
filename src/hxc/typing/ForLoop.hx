@@ -347,6 +347,15 @@ class ForLoop {
 		// it collapsed them onto the `for` keyword and the js source map dropped the condition segment as
 		// a duplicate.
 		var pi:Position = p;
+		// /:493: the head and the loop identifier are both read through any EDisplay the preprocessing
+		// pass wrapped them in - the display kind is remembered and the shape underneath is what decides
+		// the loop.
+		inline function stripDisplay(e:Expr):Expr {
+			var r = e;
+			while (true) switch (r.expr) { case EDisplay(inner, _): r = inner; case _: break; }
+			return r;
+		}
+		it = stripDisplay(it);
 		switch (it.expr) {
 			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than
 			// `=>`; a macro-built head may carry the OpIn(OpArrow(k, v), e) shape instead.
@@ -358,6 +367,7 @@ class ForLoop {
 					? typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p)
 					: ForLoopFaithful.typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p, kexpr.pos, vexpr.pos);
 			case EBinop(OpIn, lhs, rhs):
+				var lhs = stripDisplay(lhs);
 				vName = switch (lhs.expr) {
 					case EConst(CIdent(i)): i;
 					case _: throw new TypingError("Identifier expected", lhs.pos);

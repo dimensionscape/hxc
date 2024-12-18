@@ -110,7 +110,16 @@ class ExprPreprocessing {
 				var mdef = def == null ? null : {e: def.e == null ? null : map(def.e), pos: def.pos};
 				loop(new Expr(ESwitch(me1, mcases, mdef), e.pos));
 			case _:
-				loop(Ast.mapExpr(map, e));
+				// Rebuild only along the path that actually changed. hxc keys several display
+				// mechanisms on node IDENTITY (Typer.markedDisplay, Typer.synthesizedNodes), so a
+				// wholesale copy of the body silently defeats all of them.
+				var changed = false;
+				var mapped = Ast.mapExpr(function(c) {
+					var m = map(c);
+					if (m != c) changed = true;
+					return m;
+				}, e);
+				loop(changed ? mapped : e);
 		}
 	}
 

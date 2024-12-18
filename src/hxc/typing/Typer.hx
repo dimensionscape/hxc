@@ -1586,8 +1586,15 @@ class Typer {
 						ctx.com.addDiagnostic("Unsupported type for `is` operator", th.pos);
 						TexprTools.makeBool(ctx.com.basic, false, p);
 				}
-			case EDisplay(_, _):
-				throw new TypingError("Display is not yet ported", p);
+			case EDisplay(e1, dk):
+				// The display SUBJECT is typed and answered from. hxc answers from POSITIONS, so a marked
+				// node only has to type through; a DKDot is a field completion on its inner expression,
+				// which is the one shape a MACRO can return - hxc carries that request as an empty field
+				// name.
+				switch (dk) {
+					case DKDot: typeExpr(ctx, new Expr(EField(e1, "", EFNormal), p), withType);
+					case _: typeExpr(ctx, e1, withType);
+				}
 			case ECheckType(e1, th):
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
 				// A `(v : C)` hint in a body forces C's build macros like any class reference does

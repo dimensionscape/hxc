@@ -578,7 +578,8 @@ class TypeFields {
 					// ExprPreprocessing over the body of a field in the DISPLAY file, unless the parser already
 					// resumed . It runs once per field - a local function do_display = ctx.inDisplay, which is
 					// false outside the display subject - so the verdict belongs here rather than in typeFunction,
-					// where a display answer thrown out of a nested body would leave it behind.
+					// where a display answer thrown out of a nested body would leave it behind. Only the VERDICT
+					// is consumed.
 					if (fd.fExpr != null && hxc.parser.Parser.displayFile != null && !hxc.parser.Parser.hadResume
 						&& hxc.typing.ExprPreprocessing.inDisplayFile(fd.fExpr.pos))
 						Typer.exprDisplayOff = hxc.typing.ExprPreprocessing.process(fd.fExpr) == null;
