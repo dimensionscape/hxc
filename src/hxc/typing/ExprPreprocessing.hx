@@ -56,8 +56,15 @@ class ExprPreprocessing {
 		return isHover ? (p.min <= dpos && dpos < p.max) : (p.min <= dpos && dpos <= p.max);
 	}
 
+	// Cleared per request, not per field: only one field can hold the cursor, and the macro world
+	// types its own fields through the same entry point while a macro call is running.
+	public static var markedNode:Null<Expr> = null;
+	public static var markedKind:hxc.ast.Ast.DisplayKind = DKMarked;
+
 	static function annotate(e:Expr, dk:hxc.ast.Ast.DisplayKind):Expr {
 		wasAnnotated = true;
+		markedNode = e;
+		markedKind = dk;
 		return new Expr(EDisplay(e, dk), e.pos);
 	}
 

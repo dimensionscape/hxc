@@ -2174,7 +2174,7 @@ class EvalMacro {
 			var kind = i < kinds.length ? kinds[i] : 0;
 			args.push(switch (kind) {
 				case 0:
-					encodeExpr(ec, origE);
+					encodeExpr(ec, withDisplayMark(origE));
 				case 1:
 					var ma = margs[i];
 					var typed = typeMacroExpr(mctx, origE);
@@ -2218,6 +2218,7 @@ class EvalMacro {
 	// receives the argument's constant value. Non-constant value arguments fall back to the reified
 	// expression.
 	static function macroArg(ec:EvalContext, e:Expr, pt:Null<T>, name:Null<String>):EvalValue {
+		e = withDisplayMark(e);
 		if (pt != null && !isExprParam(pt)) {
 			var c = macroConstArg(ec, e);
 			if (c.ok) return c.value;
@@ -2226,6 +2227,11 @@ class EvalMacro {
 				throw new TypingError("haxe.macro.Expr should be " + hxc.core.TPrinting.sTypeStr(pt) + "\nFor function argument '" + (name == null ? "?" : name) + "'", e.pos);
 		}
 		return encodeExpr(ec, e);
+	}
+
+	static function withDisplayMark(e:Expr):Expr {
+		if (e == null || e != hxc.typing.ExprPreprocessing.markedNode) return e;
+		return new Expr(EDisplay(e, hxc.typing.ExprPreprocessing.markedKind), e.pos);
 	}
 
 	static function isFunctionExpr(e:Expr):Bool {
@@ -2903,6 +2909,7 @@ class EvalMacro {
 			case "EBinop": EBinop(decodeBinop(ec, a[0]), decodeExpr(ec, a[1], dp), decodeExpr(ec, a[2], dp));
 			case "EField": EField(decodeExpr(ec, a[0], dp), strOf(a[1]), decodeEFieldKind(ec, a[2]));
 			case "EParenthesis": EParenthesis(decodeExpr(ec, a[0], dp));
+			case "EDisplay": EDisplay(decodeExpr(ec, a[0], dp), decodeDisplayKind(ec, a[1]));
 			case "EObjectDecl": EObjectDecl([for (f in arrOf(a[0])) decodeObjField(ec, f, dp)]);
 			case "EArrayDecl": EArrayDecl([for (e in arrOf(a[0])) decodeExpr(ec, e, dp)]);
 			case "ECall": ECall(decodeExpr(ec, a[0], dp), [for (e in arrOf(a[1])) decodeExpr(ec, e, dp)]);
@@ -3341,8 +3348,29 @@ class EvalMacro {
 			case ECast(e1, th): mkEnumValue(ec, "ExprDef", "ECast", [encodeExpr(ec, e1), th == null ? VNull : encodeComplexType(ec, th)]);
 			case EIs(e1, th): mkEnumValue(ec, "ExprDef", "EIs", [encodeExpr(ec, e1), encodeComplexType(ec, th)]);
 			case ECheckType(e1, th): mkEnumValue(ec, "ExprDef", "ECheckType", [encodeExpr(ec, e1), encodeComplexType(ec, th)]);
-			case EDisplay(e1, _): encodeExprDef(ec, e1.expr);
+			// A display node encodes as ITSELF, kind and all - a macro can match on it and build one.
+			case EDisplay(e1, dk): mkEnumValue(ec, "ExprDef", "EDisplay", [encodeExpr(ec, e1), encodeDisplayKind(ec, dk)]);
 			case _: throw "macro encode: unhandled ExprDef";
+		};
+	}
+
+	static function encodeDisplayKind(ec:EvalContext, dk:hxc.ast.Ast.DisplayKind):EvalValue {
+		return switch (dk) {
+			case DKCall: mkEnumValue(ec, "DisplayKind", "DKCall", []);
+			case DKDot: mkEnumValue(ec, "DisplayKind", "DKDot", []);
+			case DKStructure: mkEnumValue(ec, "DisplayKind", "DKStructure", []);
+			case DKMarked: mkEnumValue(ec, "DisplayKind", "DKMarked", []);
+			case DKPattern(outermost): mkEnumValue(ec, "DisplayKind", "DKPattern", [outermost ? VTrue : VFalse]);
+		};
+	}
+
+	static function decodeDisplayKind(ec:EvalContext, v:EvalValue):hxc.ast.Ast.DisplayKind {
+		return switch (ctorName(ec, v)) {
+			case "DKCall": DKCall;
+			case "DKDot": DKDot;
+			case "DKStructure": DKStructure;
+			case "DKPattern": DKPattern(eargs(v)[0] == VTrue);
+			case _: DKMarked;
 		};
 	}
 

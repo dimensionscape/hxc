@@ -66,6 +66,7 @@ class Typer {
 		displayHover = false;
 		hoverFound = null;
 		exprDisplayOff = false;
+		hxc.typing.ExprPreprocessing.markedNode = null;
 		displayTypeDefinition = false;
 		displaySignature = false;
 		signatureFound = null;

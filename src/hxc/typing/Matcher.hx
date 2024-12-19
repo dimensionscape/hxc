@@ -640,6 +640,10 @@ class PatternMaker {
 	}
 
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
+		// The pattern is built from what is UNDER a display node and the request is answered separately.
+		// hxc answers by position, and the wrapper carries its inner node's position, so reading through it
+		// here is the whole of that: every check below then sees the pattern the user wrote.
+		while (true) switch (e.expr) { case EDisplay(inner, _): e = inner; case _: break; }
 		var ctx = pctx.ctx;
 		var p = e.pos;
 		var basic = ctx.com.basic;

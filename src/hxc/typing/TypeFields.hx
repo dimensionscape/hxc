@@ -575,11 +575,13 @@ class TypeFields {
 					// `var this = this` so a macro-built method's _gthis capture lands on the body line,
 					// not the decl.
 					var funcPos = fd.fExpr != null ? fd.fExpr.pos : cff.cffPos;
-					// ExprPreprocessing over the body of a field in the DISPLAY file, unless the parser already
-					// resumed . It runs once per field - a local function do_display = ctx.inDisplay, which is
-					// false outside the display subject - so the verdict belongs here rather than in typeFunction,
-					// where a display answer thrown out of a nested body would leave it behind. Only the VERDICT
-					// is consumed.
+					// ExprPreprocessing runs over the body of a field in the DISPLAY file, unless the parser
+					// already resumed (hadResume). It runs once per field - a local function is not in display
+					// mode outside the display subject - so the verdict belongs here rather than in typeFunction,
+					// where a display answer thrown out of a nested body would leave it behind. The pass's VERDICT
+					// and its marked NODE are consumed; the annotated TREE is not. Feeding the typer that tree
+					// would mean every arm that inspects its children structurally has to read through the wrapper
+					// the way the for-loop and matcher handling do, and hxc has a long tail of those.
 					if (fd.fExpr != null && hxc.parser.Parser.displayFile != null && !hxc.parser.Parser.hadResume
 						&& hxc.typing.ExprPreprocessing.inDisplayFile(fd.fExpr.pos))
 						Typer.exprDisplayOff = hxc.typing.ExprPreprocessing.process(fd.fExpr) == null;
