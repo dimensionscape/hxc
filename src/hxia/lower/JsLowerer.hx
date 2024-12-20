@@ -46,12 +46,45 @@ class JsLowerer {
 
 	function emit():String {
 		buf = new StringBuf();
-		buf.add("(function($host){\n\"use strict\";\nvar SS = {};\n");
-		for (d in tree.decls)
-			if (d.kind == "class")
-				emitClassStatics(d);
-			else if (d.kind == "enum" || d.kind == "interface")
+		buf.add("(function($host){\n\"use strict\";\n");
+		// SC: script classes (constructor functions), SS: script statics (functions),
+		// SV: script static vars. The runtime helpers mirror the interpreter's construct/callMember/
+		// getStatic: prefer the script world, fall back to the host seam.
+		buf.add("var SC = {}, SS = {}, SV = {};\n");
+		buf.add("function $new(t, args){ var c = SC[t]; if (c) { var o = new c(); if (o.__ctor) o.__ctor.apply(o, args); return o; } return $host.construct(t, args); }\n");
+		buf.add("function $mem(o, m, args){ if (o != null && typeof o[m] === \"function\") return o[m].apply(o, args); return $host.callMember(o, m, args); }\n");
+		buf.add("function $gs(k, t, m){ if (Object.prototype.hasOwnProperty.call(SV, k)) return SV[k]; if (SS[k]) return SS[k]; return $host.getStatic(t, m); }\n");
+		// Pass 1: allocators, so a forward reference between classes resolves.
+		for (d in tree.decls) {
+			if (d.kind == "enum")
+				throw new LowerError("enum decls not lowered yet");
+			if (d.kind != "class" && d.kind != "interface")
 				throw new LowerError("decl kind '" + d.kind + "' not lowered yet");
+			buf.add("SC[" + jsStr(types[d.ints[0]]) + "] = function(){};\n");
+		}
+		// Pass 2: prototype chains (extends), before any method is attached.
+		for (d in tree.decls) {
+			var superId = d.ints[1];
+			if (superId >= 0 && superId < types.length) {
+				var cn = jsStr(types[d.ints[0]]), sn = jsStr(types[superId]);
+				buf.add("if (SC[" + sn + "]) { SC[" + cn + "].prototype = Object.create(SC[" + sn
+					+ "].prototype); SC[" + cn + "].prototype.constructor = SC[" + cn + "]; }\n");
+			}
+		}
+		// Pass 3: members (instance methods onto the prototype, statics into SS).
+		for (d in tree.decls)
+			emitClassMembers(d);
+		// Pass 4: static var initializers, in declaration order (the interpreter's pendingStatics).
+		for (d in tree.decls) {
+			var cn = types[d.ints[0]];
+			for (f in d.fields) {
+				if (f.kind != "var" || f.ints[0] != 1 || f.ints[3] == 1)
+					continue;
+				buf.add("SV[" + jsStr(cn + "." + strings[f.ints[4]]) + "] = ");
+				if (f.body != null) emitExpr(f.body) else buf.add("null");
+				buf.add(";\n");
+			}
+		}
 		if (tree.hasMain && tree.main != null) {
 			buf.add("return function(){ ");
 			emitExpr(tree.main);
@@ -63,13 +96,21 @@ class JsLowerer {
 		return buf.toString();
 	}
 
-	function emitClassStatics(d:DeclNode):Void {
+	function emitClassMembers(d:DeclNode):Void {
 		var cn = types[d.ints[0]];
 		for (f in d.fields) {
-			if (f.kind != "function" || f.ints[0] != 1 || f.body == null)
+			if (f.kind != "function" || f.body == null)
 				continue;
 			var name = strings[f.ints[2]];
-			buf.add("SS[" + jsStr(cn + "." + name) + "] = ");
+			// The constructor is emitted WITH the static flag but has a `this` body, so it must be
+			// matched by name before the static test (same rule as the interpreter's index()).
+			if (name == "new") {
+				buf.add("SC[" + jsStr(cn) + "].prototype.__ctor = ");
+			} else if (f.ints[0] == 1) {
+				buf.add("SS[" + jsStr(cn + "." + name) + "] = ");
+			} else {
+				buf.add("SC[" + jsStr(cn) + "].prototype[" + jsStr(name) + "] = ");
+			}
 			emitFun(f.body);
 			buf.add(";\n");
 		}
@@ -224,6 +265,40 @@ class JsLowerer {
 				buf.add("]");
 			case "CALLSTATIC":
 				emitCallStatic(n);
+			case "THIS":
+				buf.add("this");
+			case "NEW":
+				buf.add("$new(" + jsStr(types[n.ints[0]]) + ", ");
+				emitArgArray(n.kids, 0);
+				buf.add(")");
+			case "FLINK", "FNAME":
+				emitExpr(n.kids[0]);
+				buf.add("[" + jsStr(strings[n.ints[1]]) + "]");
+			case "FTHISINST", "FTHISNAME":
+				buf.add("this[" + jsStr(strings[n.ints[1]]) + "]");
+			case "FSTATIC":
+				var t = types[n.ints[0]], m = strings[n.ints[1]];
+				buf.add("$gs(" + jsStr(t + "." + m) + ", " + jsStr(t) + ", " + jsStr(m) + ")");
+			case "CALLMEMBER":
+				buf.add("$mem(");
+				emitExpr(n.kids[0]);
+				buf.add(", " + jsStr(strings[n.ints[1]]) + ", ");
+				emitArgArray(n.kids, 1);
+				buf.add(")");
+			case "CALLTHIS":
+				buf.add("$mem(this, " + jsStr(strings[n.ints[1]]) + ", ");
+				emitArgArray(n.kids, 0);
+				buf.add(")");
+			case "CALLSUPER":
+				// Non-virtual call to a named super method: reach it off the super prototype.
+				buf.add("SC[" + jsStr(types[n.ints[0]]) + "].prototype[" + jsStr(strings[n.ints[1]])
+					+ "].apply(this, ");
+				emitArgArray(n.kids, 0);
+				buf.add(")");
+			case "CALLSUPERNEW":
+				buf.add("SC[" + jsStr(types[n.ints[0]]) + "].prototype.__ctor.apply(this, ");
+				emitArgArray(n.kids, 0);
+				buf.add(")");
 			case "CALL":
 				emitExpr(n.kids[0]);
 				buf.add("(");
@@ -275,26 +350,49 @@ class JsLowerer {
 				buf.add("] = ");
 				emitExpr(n.kids[1]);
 				buf.add(")");
+			case "FLINK", "FNAME":
+				buf.add("(");
+				emitExpr(lv.kids[0]);
+				buf.add("[" + jsStr(strings[lv.ints[1]]) + "] = ");
+				emitExpr(n.kids[1]);
+				buf.add(")");
+			case "FTHISINST", "FTHISNAME":
+				buf.add("(this[" + jsStr(strings[lv.ints[1]]) + "] = ");
+				emitExpr(n.kids[1]);
+				buf.add(")");
+			case "FSTATIC":
+				buf.add("(SV[" + jsStr(types[lv.ints[0]] + "." + strings[lv.ints[1]]) + "] = ");
+				emitExpr(n.kids[1]);
+				buf.add(")");
 			case _:
 				throw new LowerError("SET lvalue '" + lv.op + "' not lowered yet");
 		}
 	}
 
+	// Emit `[a, b, c]` from kids starting at `from` (the argument list of a call op).
+	function emitArgArray(kids:Array<OpNode>, from:Int):Void {
+		buf.add("[");
+		for (i in from...kids.length) {
+			if (i > from) buf.add(", ");
+			emitExpr(kids[i]);
+		}
+		buf.add("]");
+	}
+
 	function emitModify(n:OpNode):Void {
-		var lv = n.kids[0];
-		if (lv.op != "VAR")
-			throw new LowerError("modify lvalue '" + lv.op + "' not lowered yet");
-		buf.add("(L" + lv.ints[0] + " " + n.op + " ");
+		var t = lvalueText(n.kids[0]);
+		if (t == null)
+			throw new LowerError("modify lvalue '" + n.kids[0].op + "' not lowered yet");
+		buf.add("(" + t + " " + n.op + " ");
 		emitExpr(n.kids[1]);
 		buf.add(")");
 	}
 
 	function emitCrement(n:OpNode):Void {
 		// "++" / "--" are post; "+++" / "---" are pre (gencpp's prefix variants).
-		var lv = n.kids[0];
-		if (lv.op != "VAR")
-			throw new LowerError("crement lvalue '" + lv.op + "' not lowered yet");
-		var v = "L" + lv.ints[0];
+		var v = lvalueText(n.kids[0]);
+		if (v == null)
+			throw new LowerError("crement lvalue '" + n.kids[0].op + "' not lowered yet");
 		switch (n.op) {
 			case "++": buf.add("(" + v + "++)");
 			case "--": buf.add("(" + v + "--)");
@@ -302,6 +400,40 @@ class JsLowerer {
 			case "---": buf.add("(--" + v + ")");
 			case _: throw new LowerError("crement '" + n.op + "'");
 		}
+	}
+
+	// JS lvalue text for a compound assignment / increment. Returns null when re-evaluating the
+	// receiver would be unsafe (a side-effecting receiver must not run twice), so the caller reports
+	// an honest LowerError instead of emitting wrong code.
+	function lvalueText(lv:OpNode):Null<String> {
+		return switch (lv.op) {
+			case "VAR": "L" + lv.ints[0];
+			case "FSTATIC": "SV[" + jsStr(types[lv.ints[0]] + "." + strings[lv.ints[1]]) + "]";
+			case "FTHISINST", "FTHISNAME": "this[" + jsStr(strings[lv.ints[1]]) + "]";
+			case "FLINK", "FNAME" if (isPure(lv.kids[0])):
+				render(lv.kids[0]) + "[" + jsStr(strings[lv.ints[1]]) + "]";
+			case "ARRAYI" if (isPure(lv.kids[0]) && isPure(lv.kids[1])):
+				render(lv.kids[0]) + "[" + render(lv.kids[1]) + "]";
+			case _: null;
+		};
+	}
+
+	// A node whose evaluation has no side effect, so it may be emitted twice.
+	static function isPure(n:OpNode):Bool {
+		return switch (n.op) {
+			case "VAR", "THIS", "i", "s", "f", "true", "false", "NULL": true;
+			case _: false;
+		};
+	}
+
+	// Render a node to JS text without disturbing the main buffer.
+	function render(n:OpNode):String {
+		var save = buf;
+		buf = new StringBuf();
+		emitExpr(n);
+		var out = buf.toString();
+		buf = save;
+		return out;
 	}
 
 	function emitCallStatic(n:OpNode):Void {
