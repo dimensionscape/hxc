@@ -27,6 +27,8 @@ class JsLowerer {
 	// call rather than a host dispatch.
 	final scriptStatics:Map<String, Bool> = new Map();
 	var buf:StringBuf;
+	// Nesting counter for generated temporaries ($s0/$e0, ...) so nested switches/tries never collide.
+	var switchDepth = 0;
 
 	public function new(ir:ModuleIR) {
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
@@ -54,6 +56,9 @@ class JsLowerer {
 		buf.add("function $new(t, args){ var c = SC[t]; if (c) { var o = new c(); if (o.__ctor) o.__ctor.apply(o, args); return o; } return $host.construct(t, args); }\n");
 		buf.add("function $mem(o, m, args){ if (o != null && typeof o[m] === \"function\") return o[m].apply(o, args); return $host.callMember(o, m, args); }\n");
 		buf.add("function $gs(k, t, m){ if (Object.prototype.hasOwnProperty.call(SV, k)) return SV[k]; if (SS[k]) return SS[k]; return $host.getStatic(t, m); }\n");
+		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
+		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c) return v instanceof c; return $host.isOfType(v, t); }\n");
+		buf.add("function $classof(t){ var c = SC[t]; return c ? c : $host.classOf(t); }\n");
 		// Pass 1: allocators, so a forward reference between classes resolves.
 		for (d in tree.decls) {
 			if (d.kind == "enum")
@@ -197,6 +202,13 @@ class JsLowerer {
 				emitExpr(n.kids[0]);
 			case "RETURN":
 				buf.add("return");
+			case "SWITCH":
+				emitSwitchStmt(n);
+			case "TRY":
+				emitTry(n);
+			case "THROW":
+				buf.add("throw ");
+				emitExpr(n.kids[0]);
 			case _:
 				// Any other node is an expression whose value is discarded.
 				emitExpr(n);
@@ -267,6 +279,9 @@ class JsLowerer {
 				emitCallStatic(n);
 			case "THIS":
 				buf.add("this");
+			case "CLASSOF":
+				// A class referenced as a value: the script constructor function, else a host token.
+				buf.add("$classof(" + jsStr(types[n.ints[0]]) + ")");
 			case "NEW":
 				buf.add("$new(" + jsStr(types[n.ints[0]]) + ", ");
 				emitArgArray(n.kids, 0);
@@ -366,6 +381,74 @@ class JsLowerer {
 				buf.add(")");
 			case _:
 				throw new LowerError("SET lvalue '" + lv.op + "' not lowered yet");
+		}
+	}
+
+	// SWITCH ints=[caseCount, hasDefault, then nValues per case]; kids=[cond, per case: values...,
+	// body, then the default body]. Lowered as an if/else chain rather than a JS `switch`, because
+	// Haxe compares case values with `==` (JS `switch` uses `===`) and the values are expressions,
+	// not constants. An if/else chain also keeps return/break/continue in the enclosing function.
+	function emitSwitchStmt(n:OpNode):Void {
+		var caseCount = n.ints[0];
+		var hasDefault = n.ints[1] == 1;
+		var tmp = "$s" + (switchDepth++);
+		buf.add("{ var " + tmp + " = ");
+		emitExpr(n.kids[0]);
+		buf.add(";\n");
+		var ki = 1;
+		for (ci in 0...caseCount) {
+			var nv = n.ints[2 + ci];
+			buf.add(ci == 0 ? "if (" : "else if (");
+			for (vi in 0...nv) {
+				if (vi > 0) buf.add(" || ");
+				buf.add(tmp + " == ");
+				emitExpr(n.kids[ki++]);
+			}
+			buf.add(") ");
+			emitBlockStmt(n.kids[ki++]);
+			buf.add("\n");
+		}
+		if (hasDefault) {
+			buf.add(caseCount == 0 ? "" : "else ");
+			emitBlockStmt(n.kids[ki++]);
+			buf.add("\n");
+		}
+		buf.add("}");
+		switchDepth--;
+	}
+
+	// TRY ints=[count, then per catch: nameId, id, captured, type]; kids=[block, catch bodies].
+	// The catch clauses are tested in order against the thrown value ($isType), matching the
+	// interpreter's dispatchCatch; an unmatched value is rethrown so an outer try sees it. The
+	// ValueException wrapping the interpreter does for a value caught as Exception is a later slice.
+	function emitTry(n:OpNode):Void {
+		var count = n.ints[0];
+		var ev = "$e" + (switchDepth++);
+		buf.add("try ");
+		emitBlockStmt(n.kids[0]);
+		buf.add("\ncatch (" + ev + ") {\n");
+		for (ci in 0...count) {
+			var vId = n.ints[1 + ci * 4 + 1];
+			var typeId = n.ints[1 + ci * 4 + 3];
+			var type = (typeId >= 0 && typeId < types.length) ? types[typeId] : "Dynamic";
+			buf.add(ci == 0 ? "if (" : "else if (");
+			buf.add("$isType(" + ev + ", " + jsStr(type) + ")) { var L" + vId + " = " + ev + ";\n");
+			emitStmt(n.kids[1 + ci]);
+			buf.add(";\n}\n");
+		}
+		buf.add(count == 0 ? "throw " + ev + ";\n" : "else throw " + ev + ";\n");
+		buf.add("}");
+		switchDepth--;
+	}
+
+	// Emit a node as a statement, always brace-wrapped so it is a valid if/else or try branch.
+	function emitBlockStmt(n:OpNode):Void {
+		if (n.op == "BLOCK" || n.op == "TVARS") {
+			emitStmt(n);
+		} else {
+			buf.add("{ ");
+			emitStmt(n);
+			buf.add("; }");
 		}
 	}
 

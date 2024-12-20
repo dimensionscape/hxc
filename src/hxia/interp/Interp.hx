@@ -654,13 +654,22 @@ class Interp {
 	}
 
 	function dispatchCatch(f:Frame, catches:Array<{vId:Int, type:String, body:Frame->Dynamic}>, raw:Dynamic, isValue:Bool):Dynamic {
-		for (c in catches) {
+		// The compiler lowers a try to [typed clauses..., a ValueException clause that unwraps and
+		// re-tests, a Dynamic wildcard]. The ValueException clause exists to serve the value-typed
+		// catches: its body rethrows when its inner test fails, so a raw value must not be captured there
+		// when a later wildcard clause is present - the wildcard is where it belongs.
+		for (ci in 0...catches.length) {
+			var c = catches[ci];
 			var name = stripPath(c.type);
+			var wildcardAfter = false;
+			for (cj in (ci + 1)...catches.length)
+				if (stripPath(catches[cj].type) == "Dynamic")
+					wildcardAfter = true;
 			var match = switch (name) {
 				case "Dynamic": true;
 				case "haxe.Exception" | "Exception": true;
-				case "haxe.ValueException" | "ValueException": isValue;
-				case _: isValue ? isOfTypeNamed(raw, c.type) : isOfTypeNamed(raw, c.type);
+				case "haxe.ValueException" | "ValueException": isValue && !wildcardAfter;
+				case _: isOfTypeNamed(raw, c.type);
 			};
 			if (match) {
 				var bound:Dynamic = switch (name) {
