@@ -68,7 +68,20 @@ class Compiler {
 		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
 		// process exits 0.
 		try run(Sys.args())
-		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) Sys.stderr().writeString(mj.output);
+		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) Sys.stderr().writeString(mj.output)
+		// The top-level handler wraps the whole compilation, argument processing included: a bad argument
+		// and a plain failure both report "Error: " + msg at a NULL position, which prints with no
+		// location prefix. Without it an argument failure escapes to the hxcpp runtime and prints in its
+		// format ("Error : ..." with a stray space before the colon). The control-flow exceptions are
+		// re-raised rather than reported; everything else, including a plain string raise, becomes one
+		// reported message.
+		catch (ra:RequestAbort) throw ra
+		catch (e:Dynamic) fatalArgError(Std.string(e));
+	}
+
+	static function fatalArgError(msg:String):Void {
+		Sys.stderr().writeString("Error: " + msg + "\n");
+		Sys.exit(1);
 	}
 
 	// The wait loop: length-prefixed request/response over stdin/stderr; each request is one
@@ -305,7 +318,19 @@ class Compiler {
 		}
 	}
 
+	// The top-level handler wraps the whole compilation, argument processing included: a bad argument
+	// and a plain failure report "Error: " + msg at a NULL position, which prints with no location
+	// prefix. This has to be its own frame rather than a catch in main(): on the hxcpp host, a catch
+	// directly around the run() call does not fire for a raise this deep, so an argument failure would
+	// escape to the runtime and print in its format ("Error : ...", on stdout, exit 127).
 	public static function run(args:Array<String>):Void {
+		try runInner(args)
+		catch (ra:RequestAbort) throw ra
+		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) throw mj
+		catch (e:Dynamic) fatalArgError(Std.string(e));
+	}
+
+	static function runInner(args:Array<String>):Void {
 		hxc.core.BinaryStdio.set();
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
 		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
@@ -2993,8 +3018,14 @@ class Compiler {
 		var libs:Array<String> = [];
 		while (i < args.length) {
 			var a = args[i++];
-			if (!StringTools.startsWith(a, "-") && StringTools.endsWith(a, ".hxml")) {
-				out = out.concat(expandHxml(a, seen));
+			// An hxml argument is not expanded when it follows -cmd, and an unreadable one is pushed back as
+			// the literal `<arg> (file not found)`, which then fails as a class path and reports the
+			// argument. Letting the read throw instead surfaced the host's own error value.
+			if (!StringTools.startsWith(a, "-") && StringTools.endsWith(a, ".hxml")
+				&& !(out.length > 0 && (out[out.length - 1] == "-cmd" || out[out.length - 1] == "--cmd"))) {
+				var expanded = try expandHxml(a, seen) catch (_:Dynamic) null;
+				if (expanded == null) out.push(a + " (file not found)");
+				else out = out.concat(expanded);
 				continue;
 			}
 			if (a == "-lib" || a == "--library" || a == "-L") {
@@ -3042,10 +3073,20 @@ class Compiler {
 		var code = p.exitCode();
 		p.close();
 		if (code != 0) {
-			// Distinguish a missing haxelib from its own error output.
-			if (StringTools.trim(stdout) == "" && StringTools.trim(stderr) == "")
+			// The two streams are read as LINE LISTS and joined with "\n", so a Windows child's trailing CR
+			// stays in the message and reaches stderr verbatim; it is not trimmed.
+			function inputList(sv:String):Array<String> {
+				var a = sv.split("\n");
+				if (a.length > 0 && a[a.length - 1] == "") a.pop();
+				return a;
+			}
+			var outLines = inputList(stdout), errLines = inputList(stderr);
+			if (outLines.length == 0 && errLines.length == 0)
 				throw "Failed to call haxelib (command not found ?)";
-			throw StringTools.trim(stdout + (stdout != "" && stderr != "" ? "\n" : "") + stderr);
+			if (outLines.length == 0 && errLines.length == 1
+				&& StringTools.endsWith(StringTools.trim(errLines[0]), "Module not found: path"))
+				throw "The haxelib command has been strip'ed, please install it again";
+			throw outLines.concat(errLines).join("\n");
 		}
 		var args:Array<String> = [];
 		for (line in stdout.split("\n")) {
