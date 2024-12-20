@@ -4,16 +4,22 @@ import hxia.cppia.ModuleIR;
 import hxia.cppia.OpTree;
 import hxia.cppia.Decoder;
 
-// H2 T1 tier (first slice): lower a decoded ModuleIR to JS source, evaluated at load. The gate is identical
-// output T3 == T1 (see tools/hxia-h2.sh).
+// T1 tier: lower a decoded ModuleIR to JS source, evaluated at load. This is the trusted-fast
+// counterpart to the T3 interpreter (src/hxia/interp): the same ModuleIR, but each op is emitted as
+// JS text instead of compiled to a Haxe closure, so the semantics follow the interpreter op-for-op
+// and T1 output must be identical to T3.
 //
-// SCOPE of this slice: main-only pure-compute programs - literals, locals, binops, control flow, local
-// closures, and host/script static calls. Script classes/instances, enums, and the exception model are
-// later slices; an unhandled op throws a LowerError naming it, so coverage grows visibly.
+// COVERED: literals, locals, all binary/unary ops, blocks, if/while/switch, break/continue, return,
+// try/throw, local closures, arrays, script classes (constructors + prototype methods +
+// inheritance), statics, and script enums. not covered: host enums, the ValueException wrapping the
+// interpreter does at a catch boundary, and reflection. An unhandled op throws a LowerError naming
+// it, so a gap is visible rather than silently emitting wrong code.
 //
-// The emitted module is a function `($host) => { ...script statics...; run main }`. Host statics go through
-// `$host.callStatic(type, member, args)`; script statics call the lowered JS function. Every interpreter
-// local `id` becomes a JS `var L<id>` in its function scope (ids are per-function).
+// The emitted module is a function `($host) => { ...decls...; run main }`. Script classes live in
+// SC (JS constructor functions), script statics in SS, static vars in SV, interned no-arg enum
+// values in EI. Host access goes through the `$host` seam ($new/$mem/$gs/$isType/$classof fall back
+// to it). Every interpreter local `id` becomes a JS `var L<id>` in its function scope (ids are
+// per-function).
 class LowerError {
 	public var message:String;
 	public function new(m:String) this.message = m;
@@ -29,6 +35,8 @@ class JsLowerer {
 	var buf:StringBuf;
 	// Nesting counter for generated temporaries ($s0/$e0, ...) so nested switches/tries never collide.
 	var switchDepth = 0;
+	// "Enum.Ctor" -> constructor index, for CREATEENUM/FENUM.
+	final enumCtorIndex:Map<String, Int> = new Map();
 
 	public function new(ir:ModuleIR) {
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
@@ -59,16 +67,30 @@ class JsLowerer {
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
 		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c) return v instanceof c; return $host.isOfType(v, t); }\n");
 		buf.add("function $classof(t){ var c = SC[t]; return c ? c : $host.classOf(t); }\n");
+		// A script enum value: {__e type, __i index, __n ctor name, __p params}. A no-argument
+		// constructor is interned per type+name so `A == A` holds, as it does in the interpreter.
+		buf.add("var EI = {};\n");
+		buf.add("function $enum(t, i, n, p){ if (p.length === 0) { var k = t + \".\" + n; var s = EI[k]; if (!s) { s = EI[k] = {__e:t, __i:i, __n:n, __p:[]}; } return s; } return {__e:t, __i:i, __n:n, __p:p}; }\n");
+		// Enum constructor indices, so CREATEENUM/FENUM can resolve a ctor name to its index.
+		for (d in tree.decls) {
+			if (d.kind != "enum")
+				continue;
+			var en = types[d.ints[0]];
+			for (i in 0...d.enumCtors.length)
+				enumCtorIndex.set(en + "." + strings[d.enumCtors[i][0]], i);
+		}
 		// Pass 1: allocators, so a forward reference between classes resolves.
 		for (d in tree.decls) {
 			if (d.kind == "enum")
-				throw new LowerError("enum decls not lowered yet");
+				continue;
 			if (d.kind != "class" && d.kind != "interface")
 				throw new LowerError("decl kind '" + d.kind + "' not lowered yet");
 			buf.add("SC[" + jsStr(types[d.ints[0]]) + "] = function(){};\n");
 		}
 		// Pass 2: prototype chains (extends), before any method is attached.
 		for (d in tree.decls) {
+			if (d.kind == "enum")
+				continue;
 			var superId = d.ints[1];
 			if (superId >= 0 && superId < types.length) {
 				var cn = jsStr(types[d.ints[0]]), sn = jsStr(types[superId]);
@@ -294,7 +316,24 @@ class JsLowerer {
 			case "FSTATIC":
 				var t = types[n.ints[0]], m = strings[n.ints[1]];
 				buf.add("$gs(" + jsStr(t + "." + m) + ", " + jsStr(t) + ", " + jsStr(m) + ")");
+			case "CREATEENUM":
+				emitEnumCtor(n, n.kids);
+			case "FENUM":
+				emitEnumCtor(n, []);
+			case "ENUMI":
+				// Extract constructor parameter ints[1] from an enum value.
+				buf.add("(");
+				emitExpr(n.kids[0]);
+				buf.add(").__p[" + n.ints[1] + "]");
 			case "CALLMEMBER":
+				// Gencpp emits the enum runtime index as CALLMEMBER ::hx::EnumBase.__Index; on our enum
+				// representation that is the stored index, not a method.
+				if (strings[n.ints[1]] == "__Index") {
+					buf.add("(");
+					emitExpr(n.kids[0]);
+					buf.add(").__i");
+					return;
+				}
 				buf.add("$mem(");
 				emitExpr(n.kids[0]);
 				buf.add(", " + jsStr(strings[n.ints[1]]) + ", ");
@@ -450,6 +489,19 @@ class JsLowerer {
 			emitStmt(n);
 			buf.add("; }");
 		}
+	}
+
+	// CREATEENUM/FENUM: ints[0] = enum type, ints[1] = constructor name; kids are the arguments
+	// (FENUM has none). A host enum is not lowered yet - the script enum table is authoritative here.
+	function emitEnumCtor(n:OpNode, args:Array<OpNode>):Void {
+		var et = types[n.ints[0]];
+		var ctor = strings[n.ints[1]];
+		var idx = enumCtorIndex.get(et + "." + ctor);
+		if (idx == null)
+			throw new LowerError("enum constructor '" + et + "." + ctor + "' not declared in this module");
+		buf.add("$enum(" + jsStr(et) + ", " + idx + ", " + jsStr(ctor) + ", ");
+		emitArgArray(args, 0);
+		buf.add(")");
 	}
 
 	// Emit `[a, b, c]` from kids starting at `from` (the argument list of a call op).
