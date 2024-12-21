@@ -636,7 +636,12 @@ class Inline {
 				case TBlock(bl): bl;
 				case _: [value];
 			};
-			TypeFunctions.mk(TBlock(binds.concat(bodyEls)), tret, p);
+			// That block is built at the mapped body's position, not at the call position `p`. They are the
+			// same whenever the position map rewrote every node to `p`, so only a self-calling closure (or
+			// keep_inline_positions) tells them apart: hxargs generates
+			// `${action}($a{args})`, and the resulting block belongs on the handler function the caller
+			// wrote, not on the macro's own source line.
+			TypeFunctions.mk(TBlock(binds.concat(bodyEls)), tret, bindPos);
 		};
 		// The wrap check reads the followed type before the type map substitutes parameters, so an
 		// inlined body typed as an open mono or a raw type parameter casts even when the substituted type

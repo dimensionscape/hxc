@@ -2015,7 +2015,14 @@ class EvalMacro {
 			curTctx = savedTctx;
 			curPos = savedPos;
 			curModule = savedModule;
-			var typed = Typer.typeExpr(tctx, astExpr, withType);
+			// A located error is installed for exactly this typing, which relocates a message with no
+			// position onto the call. A nested expansion restores the outer call's position rather than
+			// clearing it.
+			var savedRelocate = tctx.com.relocateNullPosTo;
+			tctx.com.relocateNullPosTo = p;
+			var typed = try Typer.typeExpr(tctx, astExpr, withType)
+				catch (te:haxe.Exception) { tctx.com.relocateNullPosTo = savedRelocate; throw te; }
+			tctx.com.relocateNullPosTo = savedRelocate;
 			// Recorded after the inner typing so nested macro runs cannot overwrite the OUTERMOST expansion;
 			// the assign check reads it to judge a macro call lvalue.
 			lastExpansionAst = astExpr;
@@ -2959,12 +2966,18 @@ class EvalMacro {
 
 	static function decodeCatch(ec:EvalContext, v:EvalValue, dp:Position):Catch {
 		var tv = EvalField.field(ec, v, EvalHash.hash("type"));
-		// name_pos and pos back, falling back when a macro built the catch object without them.
+		// name_pos and pos both fall back to the null position - not to the enclosing expression, which is
+		// the separate default a field's pos uses. haxe.macro.Expr.Catch has neither field, so a reified
+		// catch always takes the fallback: hxparse builds every `switch stream` arm as `macro
+		// @:pos(pat.pos) { try ... catch (_:NoMatch) ... }`, and the catch variable carries a NULL position
+		// all the way to the generator, where the empty block the exceptions filter emits for an unused
+		// catch variable prints at line 1. Falling back to the enclosing position would put it on the
+		// switch line and shift the line markers after it.
 		return {
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), Position.nullPos)},
 			type: tv == VNull ? null : decodeTypeHint(ec, tv, dp),
 			expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp)
+			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), Position.nullPos)
 		};
 	}
 

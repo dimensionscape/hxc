@@ -398,7 +398,13 @@ class Context {
 	// Forward diagnostics to this context, normally from the macro world to its host.
 	public var forwardWarningsTo:Null<Context> = null;
 
+	// During macro-result typing, relocate positionless diagnostics to the macro call.
+	public var relocateNullPosTo:Null<Position> = null;
+
 	public function addDiagnostic(message:String, pos:Position, depth:Int = 0, ?severity:MessageSeverity):Void {
+		// Relocate null positions only in diagnostics. Keep AST positions unchanged for generated code.
+		if (relocateNullPosTo != null && pos != null && pos.min < 0 && pos.max < 0 && pos.file == Position.nullPos.file)
+			pos = relocateNullPosTo;
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
 		if (forwardWarningsTo != null && severity != null && severity != Error) {

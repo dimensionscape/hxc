@@ -38,7 +38,14 @@ class ImportCheck {
 				var parts = imp.path;
 				var mi = -1;
 				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
-				if (mi < 0 || parts.length - mi != 1) continue;
+				// The module named by the first uppercase segment and leaves everything after it to the mode
+				// switch, so a sub-type or a static-field import loads its module exactly like a plain one
+				// does. Requiring the module name to be the last segment meant an import of a sub-type nobody
+				// used never pulled its module in: haxe.macro.PositionTools imports
+				// haxe.display.Position.Location for a `#if macro` signature, and the reference still loads
+				// that module and, through the typedef, haxe.display.FsPath - so under -dce no the FsPath
+				// abstract is generated.
+				if (mi < 0) continue;
 				var pack = [for (k in 0...mi) parts[k].name];
 				var key = pack.join(".") + "." + parts[mi].name;
 				if (plainImportsTried.exists(key)) continue;
