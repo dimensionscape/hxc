@@ -58,7 +58,6 @@ class GenXml {
 	}
 
 	static function genMeta(meta:Metadata):Array<Xml> {
-		// Exclude :impl with the internal metadata flags; it is hxc's equivalent of CfImpl.
 		var kept = [for (m in meta) if (m.name != ":used" && m.name != ":maybeUsed" && m.name != ":realPath" && m.name != ":pure" && m.name != ":impl") m];
 		if (kept.length == 0) return [];
 		var nodes = [for (m in kept)

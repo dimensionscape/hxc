@@ -1158,10 +1158,30 @@ class TypeFunctions {
 			tint: TAbstract(aInt, []),
 			tfloat: TAbstract(aFloat, []),
 			tbool: TAbstract(aBool, []),
-			tnull: function(t:T) return (isNull(t) || isExplicitNull(t)) ? t : TAbstract(aNull, [t]),
+			tnull: mkNull.bind(aNull),
 			tstring: TInst(cString, []),
 			tarray: function(t:T) return TInst(cArray, [t])
 		};
+	}
+
+	// The nullability test runs without forcing lazies, so a type whose answer would need a lazy
+	// forced (a typedef, whose type stays a TLazy for the recursion check) aborts instead, and the
+	// wrap is DEFERRED behind a TLazy of its own. A plain TAbstract(Null,[t]) reads the same
+	// everywhere that follows types, but not to the XML generator, which strips a Null off an optional
+	// argument and does not follow a TLazy: deferred, `?infos:haxe.PosInfos` prints as
+	// Null<haxe.PosInfos>; decided eagerly it would print as the bare typedef.
+	static function mkNull(aNull:TAbstract, t:T):T {
+		return try {
+			(isNull(t, true) || isExplicitNull(t)) ? t : TAbstract(aNull, [t]);
+		} catch (_:ExitException) {
+			var r:Ref<TLazy> = new Ref(lazyAvailable(tDynamic));
+			r.set(lazyWait(function():T {
+				var t2 = isNull(t) ? t : TAbstract(aNull, [t]);
+				r.set(lazyAvailable(t2));
+				return t2;
+			}));
+			TLazy(r);
+		}
 	}
 
 	// Helper: a fresh null-abstract-shaped record under a given path/module (STUB use).

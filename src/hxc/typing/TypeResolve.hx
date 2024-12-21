@@ -1079,6 +1079,13 @@ class TypeResolve {
 						if (a.impl != null) {
 							var real = a.impl.statics.get(cff.cffName.name);
 							if (real != null) TypeFunctions.addClassFieldFlag(real, CfImpl);
+							// A static @:to of a @:multiType abstract carries @:multiType itself - it off the field to
+							// find the specializations. Like the CfImpl flag above it belongs on the impl class's real
+							// static, not on the modelled cast entry, which is what the generators and --xml/--json
+							// read.
+							if (real != null && !isAbstractMember && TypeFunctions.hasMeta(":multiType", a.meta)
+									&& !TypeFunctions.hasMeta(":multiType", real.meta))
+								real.meta = ([{name: ":multiType", params: [], pos: Position.nullPos}] : Metadata).concat(real.meta);
 						}
 					}
 				case _:
