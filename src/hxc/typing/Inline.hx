@@ -642,11 +642,16 @@ class Inline {
 		// inlined body typed as an open mono or a raw type parameter casts even when the substituted type
 		// equals tret (the cpp output keeps `cast unsafeGet(...)` for Vector.get<String>).
 		var preMapType = result.type;
-		if (mapType != null) {
-			var skipExprs = params.copy();
-			if (ethis != null) skipExprs.push(ethis);
-			result = mapInlinedTypes(mapType, skipExprs, result);
-		}
+		// map_expr_type on every inlined body, not only a parameterized one: inline_default_config always
+		// hands back a map_type (apply_params over an empty list is the identity), and has_params only
+		// gates the unify_raise above it. The traversal is what re-resolves each TField against the
+		// substituted receiver so skipping it for an unparameterized callee left an FAnon field access on
+		// a concrete class behind: `inline function mk(l, t) return new T(t, l.curPos())` binds `l` to an
+		// open structure, and hxc only recovered the FInstance in the analyzer's Cleanup, which is long
+		// past reduce_expression, so hxparse's curPos was never inlined.
+		var skipExprs = params.copy();
+		if (ethis != null) skipExprs.push(ethis);
+		result = mapInlinedTypes(mapType != null ? mapType : function(t:T):T return t, skipExprs, result);
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that
 		// equals the expected return, and gets a cast otherwise.
 		if (binds.length == 0) {

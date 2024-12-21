@@ -455,6 +455,7 @@ enum IterationKindKind {
 	IteratorCustom(fNext:(TExpr, TExpr, T, Position)->TExpr, fLength:(TExpr, Position)->TExpr);
 	IteratorAbstract(v:TVar, eNext:TExpr, eHasNext:TExpr);
 	IteratorIterator;
+	IteratorGenericStack(c:TClass);
 	IteratorDynamic;
 }
 
@@ -761,6 +762,16 @@ class ForLoopFaithful {
 				}
 			case [_, TAbstract(_, _)]:
 				try tryForwardArrayIterator() catch (_:hxc.core.NotFound) doCheckIterator();
+			// A haxe.ds.GenericStack whose @:generic instance has already been built iterates by walking
+			// its cells directly, so the iterator object never exists.
+			case [_, TInst(c, [])] if (switch (c.kind) {
+					case KGenericInstance(cg, [_]): cg.path.pack.length == 2
+						&& cg.path.pack[0] == "haxe" && cg.path.pack[1] == "ds"
+						&& cg.path.name == "GenericStack";
+					case _: false;
+				}):
+				var pt = switch (c.kind) { case KGenericInstance(_, [t]): t; case _: throw false; };
+				{kind: IteratorGenericStack(c), e: e, pt: pt};
 			case [_, TMono(_)] | [_, TDynamic(_)]:
 				dynamicIterator(e);
 			case _:
@@ -903,6 +914,24 @@ class ForLoopFaithful {
 			case IteratorIterator:
 				try optimizeForLoopIterator(ctx, v, e1, e2, p)
 				catch (_:ForExit) TypeFunctions.mk(TFor(v, e1, e2), tVoid, p);
+			case IteratorGenericStack(c):
+				var tcell = c.fields.get("head").type;
+				var cell = genLocal(ctx, tcell, p);
+				var cexpr = TypeFunctions.mk(TLocal(cell), tcell, p);
+				var evar = TypeFunctions.mk(TVarExpr(v, TypeFunctions.mk(mkField(cexpr, "elt"), pt, p)), tVoid, v.pos);
+				var enext = TypeFunctions.mk(TBinop(OpAssign, cexpr, TypeFunctions.mk(mkField(cexpr, "next"), tcell, p)), tcell, p);
+				var block = switch (e2.expr) {
+					case TBlock(el): TypeFunctions.mk(TBlock([evar, enext].concat(el)), tVoid, e2.pos);
+					case _: TypeFunctions.mk(TBlock([evar, enext, e2]), tVoid, p);
+				};
+				TypeFunctions.mk(TBlock([
+					TypeFunctions.mk(TVarExpr(cell, TypeFunctions.mk(mkField(e1, "head"), tcell, p)), tVoid, p),
+					TypeFunctions.mk(TWhile(
+						TypeFunctions.mk(TBinop(OpNotEq, cexpr, TypeFunctions.mk(TConst(TNull), tcell, p)), basic.tbool, p),
+						block,
+						NormalWhile
+					), tVoid, p)
+				]), tVoid, p);
 			case IteratorAbstract(vTmp, eNext, eHasNext):
 				var evar = TypeFunctions.mk(TVarExpr(v, eNext), tVoid, p);
 				var body = concat(evar, e2);
