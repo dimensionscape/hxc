@@ -1483,7 +1483,25 @@ class ModuleLoader {
 		// and the name stays unbound.
 		inline function visible(r:Null<ModuleType>):Null<ModuleType>
 			return r == null ? null : (TypeFunctions.tInfos(r).isPrivate && TypeFunctions.tInfos(r).module != cur ? null : r);
-		var named = imports.names.get(name);
+		// A module import with no sub exposes every non-private type of that module by its own name,
+		// prepended at that import's position. So which import wins is decided by declaration order alone
+		// - it makes no difference whether the name is the module's own or one of its sub-types. Looking
+		// the exact name up first instead would let an earlier import beat a later one: `import.hx`
+		// bringing in haxe.io.Path would shadow the module's own `import haxe.rtti.CType`, whose Path is
+		// the one that binds.
+		var named:Null<hxc.context.Context.ImportedName> = null;
+		var k = imports.order.length - 1;
+		while (k >= 0) {
+			var ni = imports.order[k--];
+			var short = (ni.aliased == true && ni.aliasName != null) ? ni.aliasName
+				: (ni.sub != null ? ni.sub : ni.modulePath.name);
+			if (short == name) { named = ni; break; }
+			if (ni.sub == null && ni.aliased != true) {
+				var rsub = visible(tryLoadSub(ctx, ni.modulePath, name, p));
+				if (rsub != null) { imports.markImport(ni.impIdx); return rsub; }
+			}
+		}
+		if (named == null) named = imports.names.get(name);
 		if (named != null) {
 			// Alias/sub or module-name exact binding. An aliased module import binds the module's
 			// main type, not a type named after the alias.
@@ -1516,16 +1534,6 @@ class ModuleLoader {
 				return named.aliasTypedef;
 			}
 			if (r != null) { imports.markImport(named.impIdx); return r; }
-		}
-		// The reference prepends each import's exposed types onto module_imports and takes the first
-		// match, so a name exposed by several module imports (utest Assert's `import Map; import
-		// haxe.Constraints;` both expose an IMap) resolves to the LAST-declared import.
-		var i = imports.order.length - 1;
-		while (i >= 0) {
-			var ni = imports.order[i--];
-			if (ni.sub != null || ni.aliased == true) continue; // Sub-imports only bind their own short name (handled above)
-			var r = visible(tryLoadSub(ctx, ni.modulePath, name, p));
-			if (r != null) { imports.markImport(ni.impIdx); return r; }
 		}
 		return null;
 	}
