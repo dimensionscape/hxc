@@ -22,17 +22,28 @@ class ImportCheck {
 		return fatal;
 	}
 
-	// A PLAIN module import loads eagerly (after build macros are ready) so declaration errors in the
-	// imported module surface even when nothing uses it. .
-	static var plainImportsTried:haxe.ds.StringMap<Bool> = new haxe.ds.StringMap();
-
 	public static function loadPlainImports(ctx:Context):Void {
 		var i = 0;
-		while (i < ctx.modules.length) {
-			var m = ctx.modules[i++];
+		while (i < ctx.modules.length) loadModuleImports(ctx, ctx.modules[i++]);
+	}
+
+	// A module is registered first and only then are its declarations initialized, so the imports of a
+	// module load right after it is registered - which keeps a pair of mutually importing modules from
+	// recursing, and what puts an imported module's declaration errors AHEAD of the importing module's
+	// own. An `import.hx` naming sys.thread.Thread therefore reports its `#if (!target.threaded)
+	// #error` before anything in Main.
+	public static function loadModuleImports(ctx:Context, m:hxc.core.Type.ModuleDef):Void {
+		var savedMod = ctx.currentModule;
+		ctx.currentModule = m; // The load records its dependency on the IMPORTING module
+		try {
 			var imports = ctx.moduleImports.get(Context.pathKey(m.path));
-			if (imports == null) continue;
-			for (imp in imports.rawImports) {
+			if (imports == null) { ctx.currentModule = savedMod; return; }
+			// rawImports is built by unshifting, so it runs newest-first; init_module_type walks the
+			// declarations in the order they were written, and with an import.hx in play that is the
+			// difference between reporting its first entry and its last.
+			var k = imports.rawImports.length;
+			while (k-- > 0) {
+				var imp = imports.rawImports[k];
 				switch (imp.mode) { case IAll: continue; case _: }
 				if (imp.pos == null) continue;
 				var parts = imp.path;
@@ -48,8 +59,8 @@ class ImportCheck {
 				if (mi < 0) continue;
 				var pack = [for (k in 0...mi) parts[k].name];
 				var key = pack.join(".") + "." + parts[mi].name;
-				if (plainImportsTried.exists(key)) continue;
-				plainImportsTried.set(key, true);
+				if (ctx.plainImportsTried.exists(key)) continue;
+				ctx.plainImportsTried.set(key, true);
 				// The module load reports at the type path - the first pack segment through the module name
 				// - not over the whole import declaration.
 				var pType = new Position(imp.pos.file, parts[0].pos.min, parts[mi].pos.max);
@@ -58,9 +69,13 @@ class ImportCheck {
 					ctx.addDiagnostic(e.message, e.pos, e.depth);
 					imports.markImportFailed(imp.pos);
 				}
-				catch (_:Dynamic) imports.markImportFailed(imp.pos);
+				// init_module_type wraps init_import in `with Error(err,p,depth) -> display_error_ext`,
+				// which catches a LOAD error and records it.
+				catch (pe:hxc.parser.ParserError) { throw pe; }
+				catch (_:Dynamic) { imports.markImportFailed(imp.pos); }
 			}
-		}
+		} catch (e:haxe.Exception) { ctx.currentModule = savedMod; throw e; }
+		ctx.currentModule = savedMod;
 	}
 
 	static function isUpper(s:String):Bool {

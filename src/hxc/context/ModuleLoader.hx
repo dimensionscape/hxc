@@ -1126,6 +1126,9 @@ class ModuleLoader {
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
 		addModule(ctx, m);
+		// Add the module, then initialize each declaration's type - which is where each imported module
+		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
+		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
 		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
 		// dependency too. .
 		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));

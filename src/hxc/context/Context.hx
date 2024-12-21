@@ -150,6 +150,9 @@ class Context {
 
 	public var warningOptions:Array<Array<hxc.core.WarningList.WarningOption>>;
 
+	// Track imported modules per context; macro-world loads must not suppress host-world loads.
+	public var plainImportsTried:StringMap<Bool> = new StringMap();
+
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;
