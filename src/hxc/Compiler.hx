@@ -446,42 +446,45 @@ class Compiler {
 		var i = 0;
 		while (i < args.length) {
 			var a = args[i++];
-			switch (a) {
-				case "-cp" | "-p" | "--class-path": userCp.push(args[i++]);
-				case "-main" | "-m" | "--main": mainClass = args[i++];
+			// The option parser wraps a handler-raised bad-argument error as ": " + msg + "." before the
+			// top-level handler prefixes "Error: ". An error raised outside the option parser (a
+			// pre-argument like --cwd) has no such framing.
+			try switch (a) {
+				case "-cp" | "-p" | "--class-path": userCp.push(argValue(args, i++, a));
+				case "-main" | "-m" | "--main": mainClass = argValue(args, i++, a);
 				case "--hxia":
 					// The hxia profile mask: `--hxia core` (or sys). Masks the std surface at
 					// typing per hxc.hxia.CapabilityMask; atoms are added by --require.
-					ctx.defines.rawDefineValue("hxia", args[i++]);
+					ctx.defines.rawDefineValue("hxia", argValue(args, i++, a));
 				case "--require":
 					// Grant capability atoms (comma-separated), accumulating across repeats.
 					var prev = ctx.defines.rawDefinedValueSafe("hxia_require", "");
-					var add = args[i++];
+					var add = argValue(args, i++, a);
 					ctx.defines.rawDefineValue("hxia_require", prev == "" ? add : prev + "," + add);
 				case "--hxia-dump-atoms":
 					// Print the member->atom table and exit; the test lane reads this.
 					Sys.print(hxc.hxia.CapabilityMask.dump());
 					return;
 				// The RTTI type descriptions; both write even under --no-output
-				case "--xml" | "-xml": xmlOut = args[i++];
-				case "--json": jsonOut = args[i++];
+				case "--xml" | "-xml": xmlOut = argValue(args, i++, a);
+				case "--json": jsonOut = argValue(args, i++, a);
 				// The compilation server. Not implemented here, but the argument must still be consumed and
 				// reported clearly - left unhandled it is taken as a class path and the build fails with a
 				// misleading "Package <port> was not found".
 				case "--server-listen":
-					var spec = args[i++];
+					var spec = argValue(args, i++, a);
 					throw "The compilation server is not supported (" + a + " " + spec + ")";
 				case "--server-connect":
 					// Handled before the argument loop; a request's own argument list repeats it.
 					i++;
-				case "--resource" | "-r" | "-resource": addResource(ctx, args[i++]);
+				case "--resource" | "-r" | "-resource": addResource(ctx, argValue(args, i++, a));
 				case "--remap":
-					var spec = args[i++];
+					var spec = argValue(args, i++, a);
 					var sep = spec.indexOf(":");
 					if (sep <= 0 || sep == spec.length - 1) throw "Invalid remap format, expected source:target";
 					ctx.packageRemaps.set(spec.substr(0, sep), spec.substr(sep + 1));
 				case "-D" | "--define":
-					var kv = args[i++];
+					var kv = argValue(args, i++, a);
 					var eq = kv.indexOf("=");
 					// Normalizes '-' to '_' in the define key.
 					if (eq < 0) ctx.defines.rawDefine(StringTools.replace(kv, "-", "_"));
@@ -495,32 +498,32 @@ class Compiler {
 					platform = Eval;
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");
-					if (mainClass == null) mainClass = args[i++]; else i++;
+					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
 				case "--run":
 					// Run <module> [args...]: like -x but the trailing arguments are the program's own argv, not
 					// compiler flags. (rewrites to `-x cl` with sys_args = rest).
 					platform = Eval;
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");
-					if (mainClass == null) mainClass = args[i++]; else i++;
+					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
 					i = args.length; // Remaining args belong to the interpreted program
 				case "-js" | "--js":
 					platform = Js;
 					targetDir = "js";
-					ctx.file = args[i++];
+					ctx.file = argValue(args, i++, a);
 				case "-cpp" | "--cpp":
 					platform = Cpp;
 					targetDir = "cpp";
-					ctx.file = args[i++];
+					ctx.file = argValue(args, i++, a);
 				case "-cppia" | "--cppia":
 					// Cppia is the cpp platform with the cppia define, and the output value is a file rather than
 					// a directory.
 					ctx.defines.rawDefine("cppia");
 					platform = Cpp;
 					targetDir = "cpp";
-					ctx.file = args[i++];
+					ctx.file = argValue(args, i++, a);
 				case "--macro":
-					ctx.initMacros.push(args[i++]);
+					ctx.initMacros.push(argValue(args, i++, a));
 				case "-v" | "--verbose":
 					ctx.defines.rawDefine("verbose");
 				case "--debug" | "-debug":
@@ -536,7 +539,7 @@ class Compiler {
 					ctx.defines.rawDefine("no_inline");
 					deprecations.push("--no-inline has been deprecated, use -D no-inline instead");
 				case "--dce" | "-dce":
-					ctx.defines.rawDefineValue("dce", args[i++]);
+					ctx.defines.rawDefineValue("dce", argValue(args, i++, a));
 				case "-java" | "--java":
 					// No generator, but the deprecated --java + -D jvm spelling still warns after the
 					// arguments are known.
@@ -549,7 +552,7 @@ class Compiler {
 					// accept anything targeted at neko in silence.
 					platform = Neko;
 					targetDir = "neko";
-					ctx.file = args[i++];
+					ctx.file = argValue(args, i++, a);
 				case "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
 					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
@@ -557,7 +560,7 @@ class Compiler {
 					// so it does not parse as a compilation root.
 					i++;
 				case "--display":
-					ctx.displaySpec = args[i++];
+					ctx.displaySpec = argValue(args, i++, a);
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
 					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
@@ -568,14 +571,14 @@ class Compiler {
 					i++;
 				case "--cwd" | "-C":
 					// A nonexistent directory aborts with the argument error "Invalid directory".
-					var dir = args[i++];
+					var dir = argValue(args, i++, a);
 					if (!sys.FileSystem.exists(dir) || !sys.FileSystem.isDirectory(dir)) {
 						answerOut("Error: Invalid directory: " + dir + "\n");
 						exitRequest(1);
 					}
 					Sys.setCwd(dir);
 				case "--cmd" | "-cmd":
-					cmds.push(unquote(args[i++]));
+					cmds.push(unquote(argValue(args, i++, a)));
 				case "--version" | "-version":
 					// Recorded as an info message, not printed directly: macros can see and filter it through
 					// Context.getMessages.
@@ -589,7 +592,7 @@ class Compiler {
 				case "--times":
 					hxc.core.Timer.measureTimes = true;
 				case "-w":
-					var spec = args[i++];
+					var spec = argValue(args, i++, a);
 					var wpos = new Position("-w " + spec, 0, 0);
 					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
@@ -608,7 +611,7 @@ class Compiler {
 						}
 						}
 					}
-			}
+			} catch (msg:String) throw ": " + msg + ".";
 		}
 
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
@@ -3006,6 +3009,13 @@ class Compiler {
 		hxc.compiler.Messages.display(ctx);
 		ctx.diagnostics = [];
 		exitRequest(1);
+	}
+
+	// A missing option value is an argument error; reading past the end would give null, and `haxe -D` (and
+	// every other value-taking flag) would exit 0 in silence.
+	static function argValue(args:Array<String>, i:Int, flag:String):String {
+		if (i >= args.length) throw "option '" + flag + "' needs an argument";
+		return args[i];
 	}
 
 	static function expandArgs(args:Array<String>):Array<String> {
