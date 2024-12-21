@@ -899,8 +899,10 @@ class ModuleLoader {
 				var cDoc = c, cfDoc = cf;
 				ctx.delay(Context.PTypeField, function() hxc.typing.InheritDoc.buildClassFieldDoc(ctx, cDoc, cfDoc));
 			}
-			// Tag abstract implementation members so calls prepend the receiver as this.
-			if (TypeFunctions.hasMeta(":impl", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfImpl);
+			// Abstract members carry CfImpl for receiver injection; only variables also carry :impl
+			// metadata.
+			if (TypeFunctions.hasMeta(":hxcImpl", cff.cffMeta) || TypeFunctions.hasMeta(":impl", cff.cffMeta))
+				TypeFunctions.addClassFieldFlag(cf, CfImpl);
 			// Abstract members carry CfImpl, including enum-abstract variables, whose CfEnum flag enables
 			// inline folding.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);
@@ -1769,7 +1771,7 @@ class ModuleLoader {
 				var fu2:Func = {fParams: fu.fParams, fArgs: fu.fArgs, fType: aT, fExpr: newExpr};
 				// Local is the `this` resolved by get_this. AKUsingField member-call rewrite, so the CfImpl
 				// flag here only affects fmode. the injected entry null_pos, not the field's own.
-				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}, {name: ":impl", params: [], pos: p}].concat(f.cffMeta);
+				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}, {name: ":hxcImpl", params: [], pos: p}].concat(f.cffMeta);
 				// Rename to `_new` and force static (the impl `_new` is a static factory).
 				return {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
@@ -1789,7 +1791,7 @@ class ModuleLoader {
 				// Is_abstract_member): tells registerFields to flag this static as an abstract member impl so
 				// the typer prepends the receiver as `this` (`v.m(a)` ->
 				// `Abstract_Impl_.m(v,a)`) via the AKUsingField static-extension rewrite.
-				var meta = [{name: ":impl", params: [], pos: p}].concat(f.cffMeta);
+				var meta = [{name: ":hxcImpl", params: [], pos: p}].concat(f.cffMeta);
 				return {
 					cffName: f.cffName, cffDoc: f.cffDoc, cffPos: f.cffPos, cffMeta: meta,
 					cffAccess: withStatic(f.cffAccess, p), cffKind: FFun(fu2)
@@ -1847,7 +1849,10 @@ class ModuleLoader {
 						case _:
 					}
 					field.cffAccess = [visibility != null ? visibility : {access: APublic, pos: Position.nullPos}];
-					field.cffMeta = [{name: ":enum", params: [], pos: Position.nullPos}].concat(field.cffMeta);
+					// create_variable prepends `:impl` to an abstract member var, which is what an enum abstract
+					// value is (it is not declared static).
+					field.cffMeta = [{name: ":impl", params: [], pos: Position.nullPos},
+						{name: ":enum", params: [], pos: Position.nullPos}].concat(field.cffMeta);
 					var effCt:TypeHint = ct != null ? ct : aT;
 
 					switch (eo) {

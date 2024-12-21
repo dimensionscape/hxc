@@ -994,13 +994,14 @@ class Filters {
 		// to the expression filters.
 		hxc.eval.EvalMacro.runGenerateCallbacks(com);
 		// State: the typed snapshot the compilation server restores on reuse, with the signature-level
-		// dependency registration that must precede it. Only meaningful while the server reuses modules;
-		// a one-shot compile never restores, so skip the snapshot (and its open-mono binding) to keep the
-		// one-shot path byte-identical.
-		if (hxc.context.ServerCache.enabled) for (t in newTypes) {
-			updateCacheDependencies(com, t);
-			saveClassState(com, t);
-		}
+		// dependency registration that must precede it.
+		for (t in newTypes) updateCacheDependencies(com, t);
+		// saveClassState stays gated. It is the half of marks every field CfPostProcessed, and hxc's
+		// destruction still runs expression filters that honour that flag where the reference's pass the
+		// ignore_processed_status those fields need - running it on a one-shot compile makes 77 of the cpp
+		// matrix's sources diverge. The dependency registration above has no such coupling and is what
+		// carries the open-mono binding.
+		if (hxc.context.ServerCache.enabled) for (t in newTypes) saveClassState(com, t);
 		destruction(tctx, renameLocals);
 		memProbe("destruction:done");
 	}

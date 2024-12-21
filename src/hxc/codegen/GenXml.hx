@@ -58,7 +58,8 @@ class GenXml {
 	}
 
 	static function genMeta(meta:Metadata):Array<Xml> {
-		var kept = [for (m in meta) if (m.name != ":used" && m.name != ":maybeUsed" && m.name != ":realPath" && m.name != ":pure" && m.name != ":impl") m];
+		// Used/MaybeUsed/RealPath/Pure, and nothing else, so `:impl` reaches the output.
+		var kept = [for (m in meta) if (m.name != ":used" && m.name != ":maybeUsed" && m.name != ":realPath" && m.name != ":pure" && m.name != ":hxcImpl") m];
 		if (kept.length == 0) return [];
 		var nodes = [for (m in kept)
 			node("m", [{a: "n", v: m.name}], [for (e in m.params) node("e", [], [genString(hxc.ast.Ast.Printer.sExpr(e))])])];

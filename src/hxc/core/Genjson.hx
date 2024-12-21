@@ -132,7 +132,7 @@ class Genjson {
 	static function buildInternalMetas():Map<String, Bool> {
 		var m = new Map<String, Bool>();
 		// Hxc-only synthetic metas without a registry entry
-		for (k in [":storedTypedExpr", ":impl", ":mergeBlock", ":usedOnlyBy"]) m.set(k, true);
+		for (k in [":storedTypedExpr", ":hxcImpl", ":mergeBlock", ":usedOnlyBy"]) m.set(k, true);
 		for (entry in hxc.context.MetaRegistry.metas())
 			if (hxc.context.MetaRegistry.boolField(entry, "internal"))
 				m.set(hxc.context.MetaRegistry.stringField(entry, "metadata", ""), true);
