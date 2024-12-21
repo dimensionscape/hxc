@@ -1208,6 +1208,9 @@ class TypeResolve {
 		var et = TEnum(e, TypeFunctions.extractParamTypes(e.params));
 		var index = 0;
 		var isFlat = true;
+		// A ClassField is collected per constructor alongside the TEnumField; they become the fields of the
+		// enum's statics anon.
+		var staticsFields = new haxe.ds.StringMap<hxc.core.Type.TClassField>();
 		for (c in d.dData) {
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
@@ -1239,6 +1242,17 @@ class TypeResolve {
 			};
 			var ef = new TEnumField(c.ecName.name, t, c.ecPos, c.ecName.pos, c.ecDoc, index, ctorParams, c.ecMeta);
 			e.constrs.set(c.ecName.name, ef);
+			// A ClassField is also built per constructor, for the statics anon below: a value constructor
+			// reads
+			// as a read-only Var, one that takes arguments as a method.
+			var ecf = TypeFunctions.mkField(ef.name, ef.type, ef.pos, ef.namePos);
+			ecf.kind = switch (TypeFunctions.follow(ef.type)) {
+				case TFun(_): Method(MethNormal);
+				case _: Var({read: AccNormal, write: AccNo});
+			};
+			ecf.doc = ef.doc;
+			ecf.params = ef.params;
+			staticsFields.set(ecf.name, ecf);
 			// A constructor carrying @:inheritDoc collects its inherited docs.
 			if (TypeFunctions.hasMeta(":inheritDoc", c.ecMeta)) {
 				var efDoc = ef;
@@ -1247,6 +1261,14 @@ class TypeResolve {
 			e.names.push(c.ecName.name);
 			if (c.ecArgs.length > 0) isFlat = false;
 			index++;
+		}
+		// The enum's own module type is a PRIVATE typedef whose type is the anon of its constructors,
+		// tagged EnumStatics. An enum used as a value is typed as TType(type, params), so anon is what
+		// Context.typeof of an enum type expression follows to. Without its fields a macro reflecting
+		// over it (hxparse's @:mapping, which is how dox builds its keyword tables) sees an empty type.
+		if (e.type != null) {
+			e.type.params = e.params;
+			e.type.type = TypeFunctions.mkAnon(new hxc.core.Ref(EnumStatics(e)), staticsFields);
 		}
 		// An enum whose every constructor takes no argument is FLAT, and carries the meta that unification
 		// tests for a haxe.FlatEnum constraint.

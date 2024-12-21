@@ -62,6 +62,11 @@ class TexprTools {
 		var t = switch (resolved) {
 			case TClassDecl(c):
 				wrap(c.module, "Class", c.path, c.pos, TypeFunctions.mkAnon(new Ref(Statics(c)), c.statics));
+			// An enum's type expression uses the enum's own module typedef, `TType(e.type, types)`, whose
+			// anon holds the constructors. A fresh empty-fields anon would leave the type with no fields at
+			// all, so a macro reflecting over an enum type expression (Context.typeof) would see nothing.
+			case TEnumDecl(e) if (e.type != null):
+				TType(e.type, [for (_ in e.params) TypeFunctions.mkMono()]);
 			case TEnumDecl(e):
 				wrap(e.module, "Enum", e.path, e.pos, TypeFunctions.mkAnon(new Ref(EnumStatics(e))));
 			case TAbstractDecl(a):
