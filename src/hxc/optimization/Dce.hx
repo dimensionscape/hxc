@@ -316,8 +316,16 @@ class Dce {
 		}
 	}
 
-	// Abstract.get_underlying_type a pl == apply_params a.params pl a.thisType (subset).
+	// The underlying type of an abstract applied to pl (a subset of the full rule). @:multiType
+	// dispatches first (the chosen specialization, not the declared this-type) and @:coreType goes to
+	// Dynamic, so toString on a Map<String,Int> does not reach haxe.IMap and keep its toString -
+	// visible in --xml and --json, which report the surviving fields. The walk over thisType that
+	// detects a recursive abstract chain is left out here: hxc's equivalent guard rejects valid
+	// programs.
 	static function getUnderlyingType(a:TAbstract, pl:TParams):T {
+		var mt = TypeFunctions.tryMultiType(a, pl);
+		if (mt != null) return mt;
+		if (hasMeta(DceMeta.CoreType, a.meta)) return TypeFunctions.tDynamic;
 		return TypeFunctions.applyParams(a.params, pl, a.thisType);
 	}
 

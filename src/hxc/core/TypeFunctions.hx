@@ -667,7 +667,7 @@ class TypeFunctions {
 	// the typer; ModuleLoader.attach assigns it. A null result falls through to thisType.
 	public static var multiTypeResolver:Null<(TAbstract, TParams)->Null<T>> = null;
 
-	static function tryMultiType(a:TAbstract, pl:TParams):Null<T> {
+	public static function tryMultiType(a:TAbstract, pl:TParams):Null<T> {
 		if (multiTypeResolver == null || !hasMeta(":multiType", a.meta)) return null;
 		return multiTypeResolver(a, pl);
 	}
