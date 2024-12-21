@@ -1147,13 +1147,60 @@ class TypeResolve {
 
 	static function resolveTypedef(ctx:Context, td:TDef, d:Definition<EnumFlag, TypeHint>, p:Position):Void {
 		var tt = Typeload.loadComplexType(ctx, td.params, d.dData);
-		// @:eager follows the typedef immediately instead of leaving the alias to resolve lazily. .
-		if (TypeFunctions.hasMeta(":eager", td.meta)) tt = TypeFunctions.follow(tt);
+		// A structural EXTEND and haxe.macro.MacroType resolve straight away; @:eager follows immediately;
+		// EVERYTHING ELSE is left behind a TLazy whose forcing is what runs the recursion check. That
+		// laziness is observable: the nullability test for an optional argument does not force a lazy and
+		// DEFERS the Null<> wrap instead, so an optional argument typed by a typedef keeps its Null in the
+		// XML output's parameter following (which has no TLazy arm) where a class-typed one loses it.
+		var eager = TypeFunctions.hasMeta(":eager", td.meta);
+		var direct = switch (d.dData.ct) {
+			case CTExtend(_, _): true;
+			case CTPath(tp): tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro"
+				&& tp.tname == "MacroType";
+			case _: false;
+		};
+		if (direct) {
+			// MacroType has to be followed at once because doing so is what defines the module
+			// types loaded afterwards; the check is the same recursion guard, applied eagerly.
+			switch (d.dData.ct) {
+				case CTPath(_) if (td.type == TypeFunctions.follow(tt)):
+					throw new ContextError("Recursive typedef is not allowed", p);
+				case _:
+			}
+		} else if (eager) {
+			tt = TypeFunctions.follow(tt);
+		} else {
+			var inner = tt;
+			var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(TypeFunctions.tDynamic));
+			r.set(TypeFunctions.lazyProcessing(function():T return inner));
+			r.set(TypeFunctions.lazyWait(function():T {
+				r.set(TypeFunctions.lazyProcessing(function():T return inner));
+				checkRecursiveTypedef(td, inner, p);
+				r.set(TypeFunctions.lazyAvailable(inner));
+				return inner;
+			}));
+			tt = TLazy(r);
+		}
 		switch (td.type) {
 			case TMono(r) if (r.type == null):
 				r.type = tt;
 			case _:
 				td.type = tt;
+		}
+	}
+
+	// The alias may not reach ITSELF, whether directly or through another typedef.
+	static function checkRecursiveTypedef(td:TDef, tt:T, p:Position):Void {
+		if (tt == td.type) throw new ContextError("Recursive typedef is not allowed", p);
+		switch (tt) {
+			case TMono(r):
+				if (r.type != null) checkRecursiveTypedef(td, r.type, p);
+			case TLazy(f):
+				checkRecursiveTypedef(td, TypeFunctions.lazyType(f), p);
+			case TType(td2, tl):
+				if (td2 == td) throw new ContextError("Recursive typedef is not allowed", p);
+				checkRecursiveTypedef(td, TypeFunctions.applyTypedef(td2, tl), p);
+			case _:
 		}
 	}
 

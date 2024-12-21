@@ -1170,7 +1170,7 @@ class TypeFunctions {
 	// everywhere that follows types, but not to the XML generator, which strips a Null off an optional
 	// argument and does not follow a TLazy: deferred, `?infos:haxe.PosInfos` prints as
 	// Null<haxe.PosInfos>; decided eagerly it would print as the bare typedef.
-	static function mkNull(aNull:TAbstract, t:T):T {
+	public static function mkNull(aNull:TAbstract, t:T):T {
 		return try {
 			(isNull(t, true) || isExplicitNull(t)) ? t : TAbstract(aNull, [t]);
 		} catch (_:ExitException) {

@@ -1686,7 +1686,7 @@ class ModuleLoader {
 			tint: TAbstract(aInt, []),
 			tfloat: TAbstract(aFloat, []),
 			tbool: TAbstract(aBool, []),
-			tnull: function(t:T) return (TypeFunctions.isNull(t) || TypeFunctions.isExplicitNull(t)) ? t : TAbstract(aNull, [t]),
+			tnull: TypeFunctions.mkNull.bind(aNull),
 			tstring: TInst(cString, []),
 			tarray: function(t:T) return TInst(cArray, [t])
 		};
