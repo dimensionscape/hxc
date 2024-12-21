@@ -1558,6 +1558,21 @@ class ModuleLoader {
 			if (r != null) return r;
 		}
 
+		// Seeds every module's module_imports with ctx.g.std.types - "We always want core types to be
+		// available so we add them as default imports". those imports before walks the package prefixes,
+		// so a core type never reaches the walk. hxc had the StdTypes lookup only as a fallback after the
+		// walk, which meant every use of one first probed - and missed - `<currentPackage>.<Name>` for
+		// each prefix, each miss consulting com.load_extern_type. The module is read from the LUT, never
+		// loaded from here: an unloaded StdTypes means we are bootstrapping it and there is nothing to
+		// seed with.
+		{
+			var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
+			if (std != null && std != cur) {
+				for (mt in std.types)
+					if (TypeFunctions.tInfos(mt).path.name == name) return mt;
+			}
+		}
+
 		var pack = cur.path.pack;
 		var i = pack.length;
 		while (i >= 0) {
