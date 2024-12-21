@@ -55,8 +55,12 @@ import sys.io.Process;
 	<flag value="${HXC_WASM_LIME_DIR}@/libs/lime" if="HXC_WASM_PRELOAD_LIBS"/>
 </linker>
 ')
-// Unwinds an in-process wait-server request on a path that would exit the one-shot process serving after a
-// failed compile).
+// Unwinds an in-process wait-server request on a path that would exit the one-shot process (the
+// server keeps serving after a failed compile). The argument callback runs outside an option
+// handler, so a failure there reaches the top-level handler as a plain failure and is reported
+// without the option parser's ": " ... "." framing.
+private class ArgFailure extends haxe.Exception {}
+
 private class RequestAbort extends haxe.Exception {
 	public var code:Int;
 	public function new(code:Int) { super("request abort " + code); this.code = code; }
@@ -76,6 +80,7 @@ class Compiler {
 		// re-raised rather than reported; everything else, including a plain string raise, becomes one
 		// reported message.
 		catch (ra:RequestAbort) throw ra
+		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
@@ -327,6 +332,7 @@ class Compiler {
 		try runInner(args)
 		catch (ra:RequestAbort) throw ra
 		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) throw mj
+		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
@@ -599,6 +605,12 @@ class Compiler {
 					// A bare uppercase argument is a compilation root (never the startup class: only -main
 					// sets that); a bare lowercase argument includes the package.
 					if (!StringTools.startsWith(a, "-")) {
+						// Every part of a bare argument is validated: the last one only for invalid characters, the
+						// ones before it as package names. A failure names the whole argument, and is swallowed under
+						// a display run.
+						var perr = parsePathError(a);
+						if (perr != null && !ctx.ignoreError())
+							throw new ArgFailure("Could not process argument " + a + "\n" + perr);
 						if (StringTools.endsWith(a, ".hx")) {
 							// A bare .hx file path is a compilation class, not a package strips the suffix).
 							extraClasses.push(a);
@@ -611,7 +623,8 @@ class Compiler {
 						}
 						}
 					}
-			} catch (msg:String) throw ": " + msg + ".";
+			} catch (af:ArgFailure) throw af
+			catch (msg:String) throw ": " + msg + ".";
 		}
 
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
@@ -3016,6 +3029,37 @@ class Compiler {
 	static function argValue(args:Array<String>, i:Int, flag:String):String {
 		if (i >= args.length) throw "option '" + flag + "' needs an argument";
 		return args[i];
+	}
+
+	// Path parts plus the invalid-character and package-name checks. Returns the error message for the
+	// first offending part, or null when the path is fine.
+	static function parsePathError(f:String):Null<String> {
+		var parts:Array<String>;
+		if (f.length > 3 && f.substr(f.length - 3) == ".hx")
+			parts = StringTools.replace(f.substr(0, f.length - 3), "\\\\", "/").split("/");
+		else
+			parts = f.split(".");
+		function invalidChar(x:String):Null<String> {
+			for (i in 1...x.length) {
+				var c = x.charCodeAt(i);
+				var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)
+					|| (c >= "0".code && c <= "9".code) || c == "_".code || c == ".".code;
+				if (!ok) return "Invalid character: " + hxc.core.StringHelper.sEscape(x.charAt(i));
+			}
+			return null;
+		}
+		if (parts.length == 0) return "Package name must not be empty";
+		for (k in 0...parts.length) {
+			var x = parts[k];
+			if (k == parts.length - 1) return invalidChar(x);
+			if (x.length == 0) return "Package name must not be empty";
+			var c0 = x.charCodeAt(0);
+			if ((c0 < "a".code || c0 > "z".code) && c0 != "_".code)
+				return "Package name must start with a lowercase letter";
+			var e = invalidChar(x);
+			if (e != null) return e;
+		}
+		return null;
 	}
 
 	static function expandArgs(args:Array<String>):Array<String> {
