@@ -3706,8 +3706,13 @@ class Typer {
 		// static field or enum constructor available unqualified.
 		var imp = resolveImportedStatic(ctx, i, p, mode);
 		if (imp != null) return imp;
-		var mt = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
-		if (mt == null) {
+		// A lowercase identifier is never looked up as a type. Without the guard every unresolved
+		// lowercase name (a pattern capture, an argument) would run the whole unqualified type walk, and
+		// each step of that walk is a real module load whose miss consults the extern-type loaders -
+		// which is what Context.onTypeNotFound observes.
+		var mt = hxc.ast.Ast.isLowerIdent(i) ? null
+			: hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
+		if (mt == null && !hxc.ast.Ast.isLowerIdent(i)) {
 			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
 		}
 		if (mt == null) {
