@@ -554,7 +554,12 @@ class Fields {
 				// structure.
 				var isSet = mode.match(MSet(_));
 				function mkUnknownField():TClassField {
-					var nf = TypeFunctions.mkField(i, TypeFunctions.mkMono(), pfield, Position.nullPos);
+					// This one is built at `p`, the whole field-access expression, not at the name:
+					// `untyped
+					// o.toString` records `o.toString`, which is what --json prints for the synthetic field
+					// a
+					// monomorph picks up.
+					var nf = TypeFunctions.mkField(i, TypeFunctions.mkMono(), p, Position.nullPos);
 					nf.kind = Var(new VarKind(AccNormal, isSet ? AccNormal : AccNo));
 					return nf;
 				}

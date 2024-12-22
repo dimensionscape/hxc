@@ -1474,13 +1474,18 @@ class Typer {
 						// type, and never counts as an "extra field".
 						if (isValidIdentifier(f.name)) {
 							// The anon field records the typed expr's type, which the strict-cast wrap
-							// above has already aligned to any expectation. (mk_field n e.type).
-							var anonField = TypeFunctions.mkField(f.name, te.type, f.pos, f.pos);
+							// above has already aligned to any expectation. pos spans the whole `name:
+							// expr` pair and only namePos is the name; --json prints pos as the
+							// structure field's span.
+							var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
 							if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
 							anonFields.set(f.name, anonField);
 						}
 					}
-					var t = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
+					// The status ref is kept so the end of the enclosing function can close it.
+					var anonStatus = new hxc.core.Ref(Const);
+					ctx.opened.unshift(anonStatus);
+					var t = TypeFunctions.mkAnon(anonStatus, anonFields);
 					// A literal against an expected structure must provide every non-optional expected
 					// field and nothing more. Recorded, not raised, so every violation is reported (and a
 					// macro Context.typeof raises through the record).
@@ -5164,6 +5169,9 @@ class Typer {
 		var oldCurfun = ctx.curfun;
 		var oldRet = ctx.ret;
 		var oldLoop = ctx.inLoop;
+		// ctx.opened is cleared for the new function.
+		var oldOpened = ctx.opened;
+		ctx.opened = [];
 		// A fresh member/constructor/static gets its own captured-this slot; a local function shares the
 		// enclosing member's (each field is typed in its own context).
 		var isLocalFn = fmode.match(FunMemberClassLocal | FunMemberAbstractLocal);
@@ -5182,6 +5190,9 @@ class Typer {
 			ctx.curfun = oldCurfun;
 			ctx.ret = oldRet;
 			ctx.inLoop = oldLoop;
+			// Opened structures close at the END of the function, before the enclosing list is put back.
+			for (r in ctx.opened) r.set(Closed);
+			ctx.opened = oldOpened;
 		}
 		if (bodyExpr == null) {
 			reset();

@@ -22,6 +22,10 @@ class TyperContext {
 	/** Expected return type of the function being typed. */
 	public var ret:T;
 	public var curfun:CurrentFun;
+	// Every object-declaration anon is created with a Const status ref that is REGISTERED here,
+	// and all of them flip to Closed when the enclosing function finishes typing. Without the list
+	// they stay Const for good, which --json prints.
+	public var opened:Array<hxc.core.Ref<hxc.core.Type.AnonStatus>> = [];
 	public var curclass:TClass;
 	public var tthis:T;
 	public var curfield:TClassField;

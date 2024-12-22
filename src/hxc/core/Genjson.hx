@@ -453,7 +453,11 @@ class Genjson {
 			field("superClass", c.superClass == null ? JNull : classRelation(c.superClass.c, c.superClass.params)),
 			field("interfaces", jarray([for (i in c.interfaces) classRelation(i.c, i.params)])),
 			field("fields", jarray([for (cf in c.orderedFields) generateClassField(CFSMember, cf)])),
-			field("statics", jarray([for (cf in c.orderedStatics) generateClassField(CFSStatic, cf)])),
+			// The reference's statics never contains __init__ at all: typeloadFields moves a static
+			// __init__ body to init and never adds the field. hxc keeps it as a field by design
+			// (Dce.hx relies on that), so every dump of the type model has to drop it again - GenXml
+			// already did, and --json did not, which is the whole of that surface's residue.
+			field("statics", jarray([for (cf in c.orderedStatics) if (cf.name != "__init__") generateClassField(CFSStatic, cf)])),
 			field("constructor", c.constructor == null ? JNull : generateClassField(CFSConstructor, c.constructor)),
 			field("init", JNull),
 			field("overrides", jarray(overrides)),
