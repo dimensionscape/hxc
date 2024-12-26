@@ -313,6 +313,20 @@ class JsLowerer {
 			case "CLASSOF":
 				// A class referenced as a value: the script constructor function, else a host token.
 				buf.add("$classof(" + jsStr(types[n.ints[0]]) + ")");
+			case "POSINFO":
+				// The auto-filled haxe.PosInfos for a `?pos` argument.
+				buf.add("{fileName:" + jsStr(strings[n.ints[0]]) + ", lineNumber:" + n.ints[1]
+					+ ", className:" + jsStr(strings[n.ints[2]]) + ", methodName:" + jsStr(strings[n.ints[3]]) + "}");
+			case "OBJDEF":
+				// An anonymous object literal: ints[0] = field count, then the name ids; kids are values.
+				var count = n.ints[0];
+				buf.add("{");
+				for (i in 0...count) {
+					if (i > 0) buf.add(", ");
+					buf.add(jsStr(strings[n.ints[1 + i]]) + ": ");
+					emitExpr(n.kids[i]);
+				}
+				buf.add("}");
 			case "NEW":
 				buf.add("$new(" + jsStr(types[n.ints[0]]) + ", ");
 				emitArgArray(n.kids, 0);
@@ -388,7 +402,7 @@ class JsLowerer {
 				buf.add("(");
 				emitExpr(n.kids[0]);
 				buf.add(" != null)");
-			case "CAST", "CASTINT", "CASTBOOL", "TCAST":
+			case "CAST", "CASTINT", "CASTBOOL", "TCAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
 				// CAST is identity on a dynamic heap. TCAST is a checked `cast(e, T)`; its throw-on-bad-
 				// cast is a later slice, so it is identity here (correct for a valid cast, which the
 				// pure-compute corpus only uses).
