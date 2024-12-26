@@ -442,6 +442,7 @@ class Compiler {
 		var jsonOut:String = null;
 		var helpUserDefines = false;
 		var helpUserMetas = false;
+		var helpTables = false;
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 		var javaOutSeen = false;
@@ -589,6 +590,14 @@ class Compiler {
 					// Recorded as an info message, not printed directly: macros can see and filter it through
 					// Context.getMessages.
 					ctx.addDiagnostic(Globals.sVersionFull, Position.nullPos, 0, MessageSeverity.Information);
+				case "--help-metas":
+					// MetaRegistry embeds meta.json verbatim, so the doc text is already here; only the
+					// internal entries are withheld.
+					printCompilerDocs(true);
+					helpTables = true;
+				case "--help-defines":
+					printCompilerDocs(false);
+					helpTables = true;
 				case "--help-user-defines":
 					helpUserDefines = true;
 				case "--help-user-metas":
@@ -630,7 +639,7 @@ class Compiler {
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
 		// works without a std. The accumulated messages (the -version info line) still print.
 		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
-			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && platform == Cross
+			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && !helpTables && platform == Cross
 			&& ctx.displaySpec == null) {
 			flushPendingMessages(ctx);
 			return;
@@ -1234,6 +1243,41 @@ class Compiler {
 			var origin = d.source == null ? "" : " (from " + d.source + ")";
 			Sys.println(" " + StringTools.rpad(en.name, " ", maxLen) + ": " + limitString(params + d.doc + pfs + origin, maxLen + 3));
 		}
+	}
+
+	// Every COMPILER define/metadata is printed, sorted by name, padded to the longest, through the same
+	// 80-column wrap the user variants use. A metadata carries its leading `@` and an internal entry is
+	// skipped.
+	static function printCompilerDocs(isMeta:Bool):Void {
+		var R = hxc.context.MetaRegistry;
+		var rows:Array<{name:String, doc:String}> = [];
+		for (e in (isMeta ? R.metas() : R.defines())) {
+			if (R.boolField(e, "internal")) continue;
+			var name = R.stringField(e, isMeta ? "metadata" : "define", "");
+			if (name == "") continue;
+			var params = [for (p in R.arrayField(e, "params")) switch (p) { case JString(v): v; case _: ""; }];
+			var pstr = params.length == 0 ? ""
+				: (isMeta ? "(<" + params.join(">, <") + ">) " : "<" + params.join(">, <") + "> ");
+			// The platform list holds the json order and is printed reversed. The params are collected by
+			// prepending per entry and then reversed, which restores json order - which is why params are
+			// not reversed here.
+			var plats = [for (p in R.arrayField(e, "platforms")) switch (p) { case JString(v): v; case _: ""; }];
+			plats.reverse();
+			var pfs = switch (plats.length) {
+				case 0: "";
+				case 1: " (" + plats[0] + " only)";
+				case _: " (for " + plats.join(",") + ")";
+			};
+			// A define's documented name joins its `_`-separated parts with dashes, so a define is listed
+			// with dashes; a metadata keeps its name and gains the leading `@`. The rename happens before
+			// the list is sorted, so it decides the ordering too.
+			var shown = isMeta ? "@" + name : name.split("_").join("-");
+			rows.push({name: shown, doc: pstr + R.stringField(e, "doc", "") + pfs});
+		}
+		rows.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		var maxLen = 0;
+		for (r in rows) if (r.name.length > maxLen) maxLen = r.name.length;
+		for (r in rows) Sys.println(" " + StringTools.rpad(r.name, " ", maxLen) + ": " + limitString(r.doc, maxLen + 3));
 	}
 
 	// Word-wraps at 80 columns, continuing lines indented to the given offset.
