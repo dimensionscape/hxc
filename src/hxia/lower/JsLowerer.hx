@@ -62,7 +62,11 @@ class JsLowerer {
 		// getStatic: prefer the script world, fall back to the host seam.
 		buf.add("var SC = {}, SS = {}, SV = {};\n");
 		buf.add("function $new(t, args){ var c = SC[t]; if (c) { var o = new c(); if (o.__ctor) o.__ctor.apply(o, args); return o; } return $host.construct(t, args); }\n");
-		buf.add("function $mem(o, m, args){ if (o != null && typeof o[m] === \"function\") return o[m].apply(o, args); return $host.callMember(o, m, args); }\n");
+		// A member call dispatches directly only on a SCRIPT instance (tagged __sc); every host value
+		// goes through the seam so the registry's bindings win, exactly as the interpreter's mediator
+		// does. Preferring the native JS method here would silently bypass bindings that exist because
+		// the native one differs (e.g. String.substr, whose omitted length arrives as an explicit null).
+		buf.add("function $mem(o, m, args){ if (o != null && o.__sc === true && typeof o[m] === \"function\") return o[m].apply(o, args); return $host.callMember(o, m, args); }\n");
 		buf.add("function $gs(k, t, m){ if (Object.prototype.hasOwnProperty.call(SV, k)) return SV[k]; if (SS[k]) return SS[k]; return $host.getStatic(t, m); }\n");
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
 		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c) return v instanceof c; return $host.isOfType(v, t); }\n");
@@ -98,6 +102,11 @@ class JsLowerer {
 					+ "].prototype); SC[" + cn + "].prototype.constructor = SC[" + cn + "]; }\n");
 			}
 		}
+		// Tag script prototypes (after the chains are built, since Object.create replaces them) so
+		// $mem can tell a script instance from a host value.
+		for (d in tree.decls)
+			if (d.kind != "enum")
+				buf.add("SC[" + jsStr(types[d.ints[0]]) + "].prototype.__sc = true;\n");
 		// Pass 3: members (instance methods onto the prototype, statics into SS).
 		for (d in tree.decls)
 			emitClassMembers(d);
