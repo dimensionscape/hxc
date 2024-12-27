@@ -103,10 +103,17 @@ class JsLowerer {
 			}
 		}
 		// Tag script prototypes (after the chains are built, since Object.create replaces them) so
-		// $mem can tell a script instance from a host value.
+		// $mem can tell a script instance from a host value, and carry the class name so reflection
+		// over a script type can answer getClass/getClassName without a side table.
 		for (d in tree.decls)
-			if (d.kind != "enum")
-				buf.add("SC[" + jsStr(types[d.ints[0]]) + "].prototype.__sc = true;\n");
+			if (d.kind != "enum") {
+				var cn = jsStr(types[d.ints[0]]);
+				buf.add("SC[" + cn + "].prototype.__sc = true; SC[" + cn + "].prototype.__cname = " + cn
+					+ "; SC[" + cn + "].__cname = " + cn + ";\n");
+			}
+		// Hand the script tables to the host so Type.*/Reflect.* over a script value are answered by
+		// the script world, as the interpreter's typeReflect does.
+		buf.add("$host.bindTables(SC, SS, SV);\n");
 		// Pass 3: members (instance methods onto the prototype, statics into SS).
 		for (d in tree.decls)
 			emitClassMembers(d);
