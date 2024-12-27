@@ -1498,13 +1498,23 @@ class ModuleLoader {
 		var k = imports.order.length - 1;
 		while (k >= 0) {
 			var ni = imports.order[k--];
-			var short = (ni.aliased == true && ni.aliasName != null) ? ni.aliasName
-				: (ni.sub != null ? ni.sub : ni.modulePath.name);
-			if (short == name) { named = ni; break; }
-			if (ni.sub == null && ni.aliased != true) {
-				var rsub = visible(tryLoadSub(ctx, ni.modulePath, name, p));
-				if (rsub != null) { imports.markImport(ni.impIdx); return rsub; }
+			// An ALIAS binds its alias name and nothing else; a SUB-import binds that sub name.
+			if (ni.aliased == true && ni.aliasName != null) {
+				if (ni.aliasName == name) { named = ni; break; }
+				continue;
 			}
+			if (ni.sub != null) {
+				if (ni.sub == name) { named = ni; break; }
+				continue;
+			}
+			// A plain module import exposes the module's TYPES by their own names - it does not bind the
+			// module name. Treating the module name as a short name here claimed `FieldAccess` for
+			// `import hxc.typing.FieldAccess`, a module whose types are FieldAccessMode/AccessorResolution/
+			// FieldAccessTools and which has no type of that name at all, and the break then hid the earlier
+			// `import hxc.typing.AccessKind` that really does declare `typedef FieldAccess`. A module that
+			// does have a same-named type still resolves, through this same probe.
+			var rsub = visible(tryLoadSub(ctx, ni.modulePath, name, p));
+			if (rsub != null) { imports.markImport(ni.impIdx); return rsub; }
 		}
 		if (named == null) named = imports.names.get(name);
 		if (named != null) {
