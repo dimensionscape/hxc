@@ -605,6 +605,15 @@ class JsLowerer {
 		var typeName = types[n.ints[0]];
 		var member = strings[n.ints[1]];
 		var key = typeName + "." + member;
+		// `x is T` is Std.isOfType(x, CLASSOF T). Resolve it against the compile-time type name, as
+		// the interpreter does: a primitive (Int/Float/Bool) has no runtime Class on js, so passing a
+		// CLASSOF token to the host would compare against nothing.
+		if (key == "Std.isOfType" && n.kids.length == 2 && n.kids[1].op == "CLASSOF") {
+			buf.add("$isType(");
+			emitExpr(n.kids[0]);
+			buf.add(", " + jsStr(types[n.kids[1].ints[0]]) + ")");
+			return;
+		}
 		if (scriptStatics.exists(key)) {
 			buf.add("SS[" + jsStr(key) + "](");
 			for (i in 0...n.kids.length) {
