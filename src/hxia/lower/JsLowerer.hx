@@ -38,21 +38,30 @@ class JsLowerer {
 	// "Enum.Ctor" -> constructor index, for CREATEENUM/FENUM.
 	final enumCtorIndex:Map<String, Int> = new Map();
 
-	public function new(ir:ModuleIR) {
+	// Types the host provides natively (Math, haxe.Json, haxe.format.JsonParser, ...). The cppia may
+	// still carry a decl copy of such a type as DCE fallout, but running that copy would re-execute
+	// inlined internals that do not work off-target, so a call to one must go to the host - the same
+	// rule the interpreter applies via registry.neutralStaticClass.
+	final isNeutralStatic:String->Bool;
+
+	public function new(ir:ModuleIR, ?isNeutralStatic:String->Bool) {
+		this.isNeutralStatic = isNeutralStatic != null ? isNeutralStatic : function(_) return false;
 		this.strings = [for (b in ir.strings) b.getString(0, b.length)];
 		this.types = [for (b in ir.types) b.getString(0, b.length)];
 		this.tree = Decoder.decode(ir);
 		for (d in tree.decls)
 			if (d.kind == "class") {
 				var cn = types[d.ints[0]];
+				if (this.isNeutralStatic(cn))
+					continue;
 				for (f in d.fields)
 					if (f.kind == "function" && f.ints[0] == 1 && f.body != null)
 						scriptStatics.set(cn + "." + strings[f.ints[2]], true);
 			}
 	}
 
-	public static function lower(ir:ModuleIR):String
-		return new JsLowerer(ir).emit();
+	public static function lower(ir:ModuleIR, ?isNeutralStatic:String->Bool):String
+		return new JsLowerer(ir, isNeutralStatic).emit();
 
 	function emit():String {
 		buf = new StringBuf();
