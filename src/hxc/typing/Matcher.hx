@@ -2043,8 +2043,35 @@ class TexprConverter {
 				}
 			case GuardNull(e, dt1, dt2):
 				var topLevel = rec.match(DRToplevel);
+				// A GuardNull ABSORBS the run of GuardNull/Guard nodes under its success branch whose failure
+				// tree is the same node (dt index equality, and hxc hashconses, so object identity), folding
+				// their conditions into one left-associated && chain: `case FVar(_, null) if (a && b):` emits
+				// `if (x == null && a && b)` rather than nesting the guard inside the null test. The analyzer
+				// then binds that chain to a bool temp.
+				var conds:Array<TExpr> = [];
+				var dtWalk = dt1;
+				var walking = true;
+				while (walking) switch (dtWalk.t) {
+					case GuardNull(e2, d1, d3) if (d3 == dt2):
+						var eNull2 = TypeFunctions.mk(TConst(TNull), e2.type, e2.pos);
+						conds.push(TypeFunctions.mk(TBinop(OpEq, e2, eNull2), basic.tbool, e2.pos));
+						dtWalk = d1;
+					case Guard(e2, d1, d3) if (d3 == dt2):
+						conds.push(e2);
+						dtWalk = d1;
+					case _:
+						walking = false;
+				}
+				dt1 = dtWalk;
 				var eThen = toTexprRec(ctx, tSwitch, withType, dt1, rec, hasDefault);
 				var eElse = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
+				inline function mkCond():TExpr {
+					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
+					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
+					for (c in conds)
+						cond = TypeFunctions.mk(TBinop(OpBoolAnd, cond, c), basic.tbool, Position.union(cond.pos, c.pos));
+					return cond;
+				}
 				if (eThen == null) {
 					// The same rule, standing a null in for the branch that did not type.
 					if (topLevel || withType.match(NoValue)) eElse
@@ -2052,18 +2079,14 @@ class TexprConverter {
 					else throw new TypingError("Unmatched patterns: null", e.pos);
 				} else if (eElse == null) {
 					if (topLevel || withType.match(NoValue)) {
-						var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
-						var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
 						// GuardNull without an else: the TIf is positioned at eThen.pos alone
-						TypeFunctions.mk(TIf(cond, eThen, null), basic.tvoid, eThen.pos);
+						TypeFunctions.mk(TIf(mkCond(), eThen, null), basic.tvoid, eThen.pos);
 					} else if (ctx.com.ignoreErrors) TypeFunctions.mk(TConst(TNull), Typer.spawnMonomorph(ctx, e.pos), dt1.pos)
 					else throw new TypingError("Unmatched patterns: _", e.pos);
 				} else {
-					var eNull = TypeFunctions.mk(TConst(TNull), e.type, e.pos);
-					var cond = TypeFunctions.mk(TBinop(OpEq, e, eNull), basic.tbool, e.pos);
 					// GuardNull with both branches: the union of eThen.pos and eElse.pos (the branch
 					// EXPRESSIONS, i.e. the case bodies), not the dt span
-					TypeFunctions.mk(TIf(cond, eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
+					TypeFunctions.mk(TIf(mkCond(), eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
 				}
 			case Bind(bl, dt2):
 				if (Sys.getEnv("HXC_DBG_MATCH") != null)
