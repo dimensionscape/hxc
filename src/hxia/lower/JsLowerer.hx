@@ -563,15 +563,17 @@ class JsLowerer {
 	}
 
 	function emitCrement(n:OpNode):Void {
-		// "++" / "--" are post; "+++" / "---" are pre (gencpp's prefix variants).
+		// The THREE-character ops are the POST forms and the two-character ops are PRE - the same
+		// rule the interpreter uses (`post = n.op.length == 3`). Getting this backwards silently
+		// off-by-ones every `p++` used for its value, e.g. JsonParser's fastCodeAt(str, pos++).
 		var v = lvalueText(n.kids[0]);
 		if (v == null)
 			throw new LowerError("crement lvalue '" + n.kids[0].op + "' not lowered yet");
 		switch (n.op) {
-			case "++": buf.add("(" + v + "++)");
-			case "--": buf.add("(" + v + "--)");
-			case "+++": buf.add("(++" + v + ")");
-			case "---": buf.add("(--" + v + ")");
+			case "++": buf.add("(++" + v + ")");
+			case "--": buf.add("(--" + v + ")");
+			case "+++": buf.add("(" + v + "++)");
+			case "---": buf.add("(" + v + "--)");
 			case _: throw new LowerError("crement '" + n.op + "'");
 		}
 	}
