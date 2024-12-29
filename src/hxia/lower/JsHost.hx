@@ -154,7 +154,7 @@ class JsHost {
 			case "setField":
 				if (isScriptValue(a0)) { Reflect.setField(a0, args[1], args[2]); return null; }
 			case "fields":
-				if (isScriptValue(a0)) return Reflect.fields(a0).filter(function(f) return f != "__sc" && f != "__cname");
+				if (isScriptValue(a0)) return Reflect.fields(a0).filter(function(f) return f != "__sc" && f != "__cname" && f != "__b");
 			case "hasField":
 				if (isScriptValue(a0)) return Reflect.hasField(a0, args[1]) || Reflect.field(a0, args[1]) != null;
 			case _:

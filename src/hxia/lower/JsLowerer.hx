@@ -77,13 +77,23 @@ class JsLowerer {
 		// the native one differs (e.g. String.substr, whose omitted length arrives as an explicit null).
 		buf.add("function $mem(o, m, args){ if (o != null && o.__sc === true && typeof o[m] === \"function\") return o[m].apply(o, args); return $host.callMember(o, m, args); }\n");
 		buf.add("function $gs(k, t, m){ if (Object.prototype.hasOwnProperty.call(SV, k)) return SV[k]; if (SS[k]) return SS[k]; return $host.getStatic(t, m); }\n");
+		// Reading `o.method` as a value yields a bound method in Haxe, but a plain JS property read
+		// yields the unbound function - calling it later loses `this` (Lambda.array({iterator: m.keys})
+		// then sees an undefined receiver). Bind on read, caching per script instance so repeated reads
+		// give the same closure (Reflect.compareMethods), exactly as the interpreter does.
+		buf.add("function $fld(o, n){ if (o == null) throw \"Null Object Reference\"; var v = o[n]; if (typeof v !== \"function\") return v;"
+			+ " if (o.__sc === true) { var c = o.__b || (o.__b = {}); return c[n] || (c[n] = v.bind(o)); } return v.bind(o); }\n");
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
 		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c) return v instanceof c; return $host.isOfType(v, t); }\n");
 		buf.add("function $classof(t){ var c = SC[t]; return c ? c : $host.classOf(t); }\n");
 		// A script enum value: {__e type, __i index, __n ctor name, __p params}. A no-argument
 		// constructor is interned per type+name so `A == A` holds, as it does in the interpreter.
 		buf.add("var EI = {};\n");
-		buf.add("function $enum(t, i, n, p){ if (p.length === 0) { var k = t + \".\" + n; var s = EI[k]; if (!s) { s = EI[k] = {__e:t, __i:i, __n:n, __p:[]}; } return s; } return {__e:t, __i:i, __n:n, __p:p}; }\n");
+		// The shared prototype carries toString so an enum stringifies as `Ctor(a,b)` like Haxe, and
+		// keeps it off the own-field set that Reflect.fields reports.
+		buf.add("var EP = { toString: function(){ return this.__p.length ? this.__n + \"(\" + this.__p.join(\",\") + \")\" : this.__n; } };\n");
+		buf.add("function $mkE(t, i, n, p){ var o = Object.create(EP); o.__e = t; o.__i = i; o.__n = n; o.__p = p; return o; }\n");
+		buf.add("function $enum(t, i, n, p){ if (p.length === 0) { var k = t + \".\" + n; var s = EI[k]; if (!s) { s = EI[k] = $mkE(t, i, n, []); } return s; } return $mkE(t, i, n, p); }\n");
 		// Enum constructor indices, so CREATEENUM/FENUM can resolve a ctor name to its index.
 		for (d in tree.decls) {
 			if (d.kind != "enum")
@@ -348,10 +358,11 @@ class JsLowerer {
 				emitArgArray(n.kids, 0);
 				buf.add(")");
 			case "FLINK", "FNAME":
+				buf.add("$fld(");
 				emitExpr(n.kids[0]);
-				buf.add("[" + jsStr(strings[n.ints[1]]) + "]");
+				buf.add(", " + jsStr(strings[n.ints[1]]) + ")");
 			case "FTHISINST", "FTHISNAME":
-				buf.add("this[" + jsStr(strings[n.ints[1]]) + "]");
+				buf.add("$fld(this, " + jsStr(strings[n.ints[1]]) + ")");
 			case "FSTATIC":
 				var t = types[n.ints[0]], m = strings[n.ints[1]];
 				buf.add("$gs(" + jsStr(t + "." + m) + ", " + jsStr(t) + ", " + jsStr(m) + ")");
