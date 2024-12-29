@@ -566,8 +566,18 @@ class JsLowerer {
 
 	function emitModify(n:OpNode):Void {
 		var t = lvalueText(n.kids[0]);
-		if (t == null)
-			throw new LowerError("modify lvalue '" + n.kids[0].op + "' not lowered yet");
+		if (t == null) {
+			// A side-effecting receiver/index must be evaluated once: hoist both into an IIFE's parameters,
+			// then apply the operator to the single evaluation.
+			var parts = indexedParts(n.kids[0]);
+			if (parts == null)
+				throw new LowerError("modify lvalue '" + n.kids[0].op + "' not lowered yet");
+			buf.add("(function($o,$k,$v){ return $o[$k] " + n.op + " $v; })(");
+			buf.add(parts.recv + ", " + parts.key + ", ");
+			emitExpr(n.kids[1]);
+			buf.add(")");
+			return;
+		}
 		buf.add("(" + t + " " + n.op + " ");
 		emitExpr(n.kids[1]);
 		buf.add(")");
@@ -578,8 +588,16 @@ class JsLowerer {
 		// rule the interpreter uses (`post = n.op.length == 3`). Getting this backwards silently
 		// off-by-ones every `p++` used for its value, e.g. JsonParser's fastCodeAt(str, pos++).
 		var v = lvalueText(n.kids[0]);
-		if (v == null)
-			throw new LowerError("crement lvalue '" + n.kids[0].op + "' not lowered yet");
+		if (v == null) {
+			var parts = indexedParts(n.kids[0]);
+			if (parts == null)
+				throw new LowerError("crement lvalue '" + n.kids[0].op + "' not lowered yet");
+			var delta = (n.op == "++" || n.op == "+++") ? "+ 1" : "- 1";
+			var post = n.op.length == 3;
+			buf.add("(function($o,$k){ var $x = $o[$k]; $o[$k] = $x " + delta + "; return "
+				+ (post ? "$x" : "$o[$k]") + "; })(" + parts.recv + ", " + parts.key + ")");
+			return;
+		}
 		switch (n.op) {
 			case "++": buf.add("(++" + v + ")");
 			case "--": buf.add("(--" + v + ")");
@@ -601,6 +619,16 @@ class JsLowerer {
 				render(lv.kids[0]) + "[" + jsStr(strings[lv.ints[1]]) + "]";
 			case "ARRAYI" if (isPure(lv.kids[0]) && isPure(lv.kids[1])):
 				render(lv.kids[0]) + "[" + render(lv.kids[1]) + "]";
+			case _: null;
+		};
+	}
+
+	// Split an indexed lvalue into its receiver and key expressions, for the single-evaluation IIFE
+	// form used when either part has a side effect. Returns null for a shape with no key.
+	function indexedParts(lv:OpNode):Null<{recv:String, key:String}> {
+		return switch (lv.op) {
+			case "ARRAYI": {recv: render(lv.kids[0]), key: render(lv.kids[1])};
+			case "FLINK", "FNAME": {recv: render(lv.kids[0]), key: jsStr(strings[lv.ints[1]])};
 			case _: null;
 		};
 	}
