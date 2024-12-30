@@ -54,6 +54,47 @@ class TypeFields {
 
 	// Install lazy field typers for every loaded module and force them. Separate from the build
 	// pre-pass so the macro interpreter can re-run this without recursing into build macros.
+	// HXC_DBG_TYPETIMES: coarse split of the typing/fields bucket, which --times reports as one
+	// number. Same idea as HXC_DBG_FILTERTIMES for the filter pipeline.
+	public static var typeTimes:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
+	public static var fieldTimes:Array<{n:String, t:Float}> = [];
+	static var childStack:Array<Float> = [];
+	public static var timeTyping:Bool = Sys.getEnv("HXC_DBG_TYPETIMES") != null;
+
+	public static inline function tt<T>(name:String, f:Void->T):T {
+		if (!timeTyping) return f();
+		var t0 = haxe.Timer.stamp();
+		var r = f();
+		var prev = typeTimes.get(name);
+		typeTimes.set(name, (prev == null ? 0.0 : prev) + (haxe.Timer.stamp() - t0));
+		return r;
+	}
+
+	public static function dumpTypeTimes():Void {
+		if (!timeTyping) return;
+		var rows = [for (k in typeTimes.keys()) {name: k, t: typeTimes.get(k)}];
+		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var o = Sys.stderr();
+		if (hxc.typing.Typer.countSaveLocals)
+			o.writeString("[ttime] saveLocals calls=" + hxc.typing.Typer.saveLocalsCalls + " entriesCopied=" + hxc.typing.Typer.saveLocalsEntries
+				+ " secs=" + Math.round(hxc.typing.Typer.saveLocalsSecs * 1000) + "ms
+");
+		if (hxc.context.ModuleLoader.dbgResolve)
+			o.writeString("[ttime] resolveModuleFile calls=" + hxc.context.ModuleLoader.rmfCalls
+				+ " secs=" + Math.round(hxc.context.ModuleLoader.rmfSecs * 1000) + "ms  defineType=" + hxc.context.ModuleLoader.defineTypeCalls + "
+");
+		fieldTimes.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var tot = 0.0; for (x in fieldTimes) tot += x.t;
+		o.writeString("[ttime] FIELDS n=" + fieldTimes.length + " total=" + Math.round(tot * 1000) + "ms
+");
+		for (i in 0...(fieldTimes.length < 12 ? fieldTimes.length : 12))
+			o.writeString("[ttime]   top " + StringTools.lpad(Std.string(Math.round(fieldTimes[i].t * 1000)), " ", 6) + "ms  " + fieldTimes[i].n + "
+");
+		for (r in rows) o.writeString("[ttime] " + StringTools.lpad(Std.string(Math.round(r.t * 1000)), " ", 7) + "ms  " + r.name + "
+");
+		o.flush();
+	}
+
 	public static function installAndForce(ctx:Context):Void {
 		var pending:Array<TClassField> = [];
 		var i = 0;
@@ -62,16 +103,18 @@ class TypeFields {
 			// lazily loaded class) has no heritage yet; resolve it before installing and forcing bodies, or
 			// a `super(...)` in one of its constructors types against a null superClass. resolveModule is
 			// idempotent (processed gate).
-			hxc.typing.TypeResolve.resolveModule(ctx, ctx.modules[i]);
-			installModuleFields(ctx, ctx.modules[i], pending);
+			var mres = ctx.modules[i];
+			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
+			tt("installModuleFields", function() { installModuleFields(ctx, mres, pending); return 0; });
 			i++;
 		}
 		// context_init before the module's fields type, which is what puts a wildcard import's statics
 		// into module_globals in time for anything that reads them. hxc queues that work as a
 		// PBuildModule delay, so the bucket is drained here, ahead of the bodies rather than with them.
-		ctx.flushPass(hxc.context.Context.PBuildModule);
+		tt("flush:PBuildModule", function() { ctx.flushPass(hxc.context.Context.PBuildModule); return 0; });
 		// Force any field not reached on demand, then unwrap the lazy back to its concrete
 		// signature so downstream consumers never see a TLazy.
+		tt("forcePendingSignatures", function() {
 		for (cf in pending) {
 			switch (cf.type) {
 				case TLazy(r):
@@ -79,6 +122,7 @@ class TypeFields {
 				case _:
 			}
 		}
+		return 0; });
 		// Bodies route through the queue here (lazy-schedule step b): registration runs newest-module-first
 		// so the PREPENDING delay bucket flushes in the established module x declaration order; a body
 		// typed during the flush can load more modules, which typeAllModules' outer stability loop reaches
@@ -102,7 +146,7 @@ class TypeFields {
 			});
 			mi--;
 		}
-		ctx.flushPass(hxc.context.Context.PTypeField);
+		tt("flush:PTypeField(bodies)", function() { ctx.flushPass(hxc.context.Context.PTypeField); return 0; });
 		// A field with no body never reaches typeFieldBody, so its modifier completion is checked here.
 		// It runs after every body so a body's own answer wins, and after every module so a supertype
 		// declared elsewhere already has its field list.
@@ -113,7 +157,7 @@ class TypeFields {
 			}
 		// Cast-signature resolution is scheduled at PForce, so bucket must be drained here, or
 		// PForce/PCheckConstraint/PFinal delays never run at all.
-		ctx.flushPass(hxc.context.Context.PForce);
+		tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
 	}
 
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
@@ -362,7 +406,19 @@ class TypeFields {
 			var savedMod = ctx.currentModule;
 			ctx.currentModule = m;
 			try {
-				typeFieldBody(tctx, cf, cff, isStatic, sigType);
+				if (timeTyping) {
+					// EXCLUSIVE time: forcing one body can force others, and charging that nested work
+					// to the outer field makes whichever field happens to be first look like the whole
+					// compile. Each frame accumulates its children, and subtracts them on the way out.
+					var _nm = (tctx.curclass != null ? tctx.curclass.path.name : "?") + "." + cf.name;
+					childStack.push(0.0);
+					var _t0 = haxe.Timer.stamp();
+					typeFieldBody(tctx, cf, cff, isStatic, sigType);
+					var _el = haxe.Timer.stamp() - _t0;
+					var _kids = childStack.pop();
+					if (childStack.length > 0) childStack[childStack.length - 1] += _el;
+					fieldTimes.push({n: _nm, t: _el - _kids});
+				} else typeFieldBody(tctx, cf, cff, isStatic, sigType);
 			} catch (e:Dynamic) recordFieldError(ctx, e);
 			ctx.currentModule = savedMod;
 			_forcing.remove(cf);

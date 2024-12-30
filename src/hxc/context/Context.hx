@@ -153,6 +153,10 @@ class Context {
 	// Track imported modules per context; macro-world loads must not suppress host-world loads.
 	public var plainImportsTried:StringMap<Bool> = new StringMap();
 
+	// Cache directory listings per context and clone, preventing stale filesystem views across
+	// requests. Map lowercase names to actual entries; null means listing failed.
+	public var readdirCache:StringMap<Null<StringMap<String>>> = new StringMap();
+
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;

@@ -1005,6 +1005,7 @@ class Filters {
 		destruction(tctx, renameLocals);
 		memProbe("destruction:done");
 		FiltersCommon.dumpFilterTimes();
+		hxc.typing.TypeFields.dumpTypeTimes();
 	}
 
 	// A module whose saveClassState ran in an earlier server request is cached; its types skip the

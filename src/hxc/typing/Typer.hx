@@ -105,7 +105,20 @@ class Typer {
 		return TMono(mono);
 	}
 
+	public static var saveLocalsCalls:Int = 0;
+	public static var saveLocalsEntries:Int = 0;
+	public static var saveLocalsSecs:Float = 0.0;
+	public static var countSaveLocals:Bool = Sys.getEnv("HXC_DBG_SAVELOCALS") != null;
+
 	public static function saveLocals(ctx:TyperContext):Void->Void {
+		if (countSaveLocals) {
+			var t0 = haxe.Timer.stamp();
+			saveLocalsCalls++;
+			for (_ in ctx.locals.keys()) saveLocalsEntries++;
+			var sv = ctx.locals.copy();
+			saveLocalsSecs += haxe.Timer.stamp() - t0;
+			return function() ctx.locals = sv;
+		}
 		var saved = ctx.locals.copy();
 		return function() ctx.locals = saved;
 	}

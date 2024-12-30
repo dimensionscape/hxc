@@ -36,7 +36,7 @@ class ModuleLoader {
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
 			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) {
 				// Require exact spelling from the directory listing even on case-insensitive filesystems.
-				var canon = canonicalFileName(full);
+				var canon = canonicalFileName(ctx, full);
 				var reqBase = { var i = relPath.lastIndexOf("/"); relPath.substr(i + 1); };
 				var gotBase = {
 					var i = canon.lastIndexOf("/");
@@ -54,23 +54,32 @@ class ModuleLoader {
 		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
 	}
 
-	static function canonicalFileName(file:String):String {
+	// Cache each directory listing once, including lowercase-to-actual-name mappings, for later module
+	// lookups.
+	static function dirListing(ctx:Context, dir:String):Null<StringMap<String>> {
+		if (ctx.readdirCache.exists(dir)) return ctx.readdirCache.get(dir);
+		var m:Null<StringMap<String>> = null;
+		try {
+			m = new StringMap<String>();
+			for (entry in FileSystem.readDirectory(dir)) m.set(entry.toLowerCase(), entry);
+		} catch (_:Dynamic) m = null;
+		ctx.readdirCache.set(dir, m);
+		return m;
+	}
+
+	static function canonicalFileName(ctx:Context, file:String):String {
 		var slash = file.lastIndexOf("/");
 		var backslash = file.lastIndexOf("\\");
 		if (backslash > slash) slash = backslash;
 		if (slash < 0) {
-			try {
-				for (entry in FileSystem.readDirectory("."))
-					if (entry.toLowerCase() == file.toLowerCase()) return entry;
-			} catch (_:Dynamic) {}
+			var cwd = dirListing(ctx, ".");
+			if (cwd != null) { var e = cwd.get(file.toLowerCase()); if (e != null) return e; }
 			return file;
 		}
 		var dir = file.substr(0, slash + 1);
 		var name = file.substr(slash + 1);
-		try {
-			for (entry in FileSystem.readDirectory(dir))
-				if (entry.toLowerCase() == name.toLowerCase()) return dir + entry;
-		} catch (_:Dynamic) {}
+		var listing = dirListing(ctx, dir);
+		if (listing != null) { var e = listing.get(name.toLowerCase()); if (e != null) return dir + e; }
 		return file;
 	}
 
@@ -124,7 +133,17 @@ class ModuleLoader {
 		return Position.getFileContent(file);
 	}
 
+	public static var rmfCalls:Int = 0;
+	public static var rmfSecs:Float = 0.0;
+	public static var defineTypeCalls:Int = 0;
+	public static var dbgResolve:Bool = Sys.getEnv("HXC_DBG_RESOLVE") != null;
+
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
+		if (dbgResolve) { rmfCalls++; var _t = haxe.Timer.stamp(); var _r = resolveModuleFileInner(ctx, m, p); rmfSecs += haxe.Timer.stamp() - _t; return _r; }
+		return resolveModuleFileInner(ctx, m, p);
+	}
+
+	static function resolveModuleFileInner(ctx:Context, m:Path, p:Position):String {
 		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
 		if (ctx.isMacro) {
 			try return findFile(ctx, prefix + ".macro.hx", m, p) catch (_:ContextError) {}
@@ -1148,6 +1167,7 @@ class ModuleLoader {
 		// The path check applies to Context.defineType too.
 		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
+		if (dbgResolve) defineTypeCalls++;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
 	}
@@ -1188,6 +1208,7 @@ class ModuleLoader {
 		// The path check reports at the first decoded type's position.
 		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;
+		if (dbgResolve) defineTypeCalls++;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
 	}
