@@ -134,6 +134,11 @@ class ModuleLoader {
 	}
 
 	public static var rmfCalls:Int = 0;
+	public static var tMakeModule:Float = 0.0;
+	public static var tCreateTypes:Float = 0.0;
+	public static var tAddModule:Float = 0.0;
+	public static var tImports:Float = 0.0;
+	public static var typeModuleCalls:Int = 0;
 	public static var rmfSecs:Float = 0.0;
 	public static var defineTypeCalls:Int = 0;
 	public static var dbgResolve:Bool = Sys.getEnv("HXC_DBG_RESOLVE") != null;
@@ -1143,13 +1148,18 @@ class ModuleLoader {
 	}
 
 	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+		var _p = dbgResolve ? haxe.Timer.stamp() : 0.0;
 		var m = makeModule(ctx, mpath, file);
+		if (dbgResolve) { tMakeModule += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
+		if (dbgResolve) { tCreateTypes += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		addModule(ctx, m);
+		if (dbgResolve) { tAddModule += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
 		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
+		if (dbgResolve) { tImports += haxe.Timer.stamp() - _p; typeModuleCalls++; }
 		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
 		// dependency too. .
 		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));

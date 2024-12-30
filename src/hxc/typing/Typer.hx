@@ -99,8 +99,21 @@ class Typer {
 		return true;
 	}
 
+	public static var monoCalls:Int = 0;
+	public static var monoMaxLen:Int = 0;
+	public static var monoSecs:Float = 0.0;
+	public static var dbgMono:Bool = Sys.getEnv("HXC_DBG_MONO") != null;
+
 	public static function spawnMonomorph(ctx:TyperContext, p:Position):T {
 		var mono = TypeUnification.monoCreate();
+		if (dbgMono) {
+			monoCalls++;
+			var _t = haxe.Timer.stamp();
+			ctx.monomorphs.unshift({m: mono, p: p});
+			monoSecs += haxe.Timer.stamp() - _t;
+			if (ctx.monomorphs.length > monoMaxLen) monoMaxLen = ctx.monomorphs.length;
+			return TMono(mono);
+		}
 		ctx.monomorphs.unshift({m: mono, p: p}); // Prepends (newest first)
 		return TMono(mono);
 	}

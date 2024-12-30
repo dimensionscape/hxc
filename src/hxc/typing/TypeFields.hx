@@ -79,6 +79,21 @@ class TypeFields {
 			o.writeString("[ttime] saveLocals calls=" + hxc.typing.Typer.saveLocalsCalls + " entriesCopied=" + hxc.typing.Typer.saveLocalsEntries
 				+ " secs=" + Math.round(hxc.typing.Typer.saveLocalsSecs * 1000) + "ms
 ");
+		if (hxc.typing.Typer.dbgMono)
+			o.writeString("[ttime] spawnMono calls=" + hxc.typing.Typer.monoCalls + " maxListLen=" + hxc.typing.Typer.monoMaxLen
+				+ " unshiftSecs=" + Math.round(hxc.typing.Typer.monoSecs * 1000) + "ms
+");
+		if (hxc.parser.Parser.dbgParse)
+			o.writeString("[ttime] parse calls=" + hxc.parser.Parser.parseCalls + " secs="
+				+ Math.round(hxc.parser.Parser.parseSecs * 1000) + "ms bytes=" + hxc.parser.Parser.parseBytes + "
+");
+		if (hxc.context.ModuleLoader.dbgResolve)
+			o.writeString("[ttime] typeModule n=" + hxc.context.ModuleLoader.typeModuleCalls
+				+ " makeModule=" + Math.round(hxc.context.ModuleLoader.tMakeModule * 1000)
+				+ "ms createTypes=" + Math.round(hxc.context.ModuleLoader.tCreateTypes * 1000)
+				+ "ms addModule=" + Math.round(hxc.context.ModuleLoader.tAddModule * 1000)
+				+ "ms imports=" + Math.round(hxc.context.ModuleLoader.tImports * 1000) + "ms
+");
 		if (hxc.context.ModuleLoader.dbgResolve)
 			o.writeString("[ttime] resolveModuleFile calls=" + hxc.context.ModuleLoader.rmfCalls
 				+ " secs=" + Math.round(hxc.context.ModuleLoader.rmfSecs * 1000) + "ms  defineType=" + hxc.context.ModuleLoader.defineTypeCalls + "
