@@ -199,6 +199,9 @@ class RenameVarsRun {
 	 * (concurrently-live) var's name. hxc renames by MUTATING v.name (shared TVar => every reference
 	 * updates).
 	 */
+	// `reserved` here is the per-scope OVERLAY over the shared reserved base: `reserve` builds a small
+	// delta on top. The base holds every module-type name, so copying it per scope instead would copy all
+	// of them for every function scope in the program.
 	function maybeRenameVar(reserved:StringMap<Bool>, entry:OwnVar):Void {
 		var v = entry.v;
 		var overlaps = entry.overlaps.get();
@@ -222,9 +225,10 @@ class RenameVarsRun {
 		var baseName = v.name;
 		var name = baseName;
 		var count = 0;
-		// While name is reserved or equals some overlapping var's name .
+		// While the name is reserved or equals some overlapping var's name. Reserved = the shared base or
+		// this scope's overlay.
 		while (true) {
-			var collides = reserved.exists(name);
+			var collides = reserved.exists(name) || this.reserved.exists(name);
 			if (!collides) {
 				for (id in overlaps.keys()) {
 					if (overlaps.get(id).name == name) { collides = true; break; }
@@ -243,7 +247,9 @@ class RenameVarsRun {
 
 	// Reserve foreign names, then rename own vars, then recurse into children.
 	function renameVars(scope:RenameScope):Void {
-		var reserved = copyStringMap(this.reserved);
+		// The overlay is this scope's delta over the shared base: per-scope additions never touch the base
+		// and cost nothing to set up. maybeRenameVar consults the shared base alongside it.
+		var reserved = new StringMap<Bool>();
 		if ((hoisting || noShadowing) && !intMapIsEmpty(scope.foreignVars)) {
 			for (id in scope.foreignVars.keys()) reserve(reserved, scope.foreignVars.get(id).name);
 		}

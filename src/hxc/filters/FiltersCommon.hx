@@ -40,9 +40,32 @@ class FiltersCommon {
 	}
 
 	// Apply the named filters to every field body, static init and constructor of a class, skipping
-	// removable classes/fields and already post-processed fields.
+	// removable classes/fields and already post-processed fields. HXC_DBG_FILTERTIMES: accumulated
+	// wall seconds per filter name, dumped by Filters.run at destruction. Localizes a slow pipeline to
+	// the filter, which the coarse --times cannot.
+	public static var filterTimes:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
+	public static var timeFilters:Bool = Sys.getEnv("HXC_DBG_FILTERTIMES") != null;
+
+	public static function dumpFilterTimes():Void {
+		if (!timeFilters) return;
+		var rows = [for (k in filterTimes.keys()) {name: k, t: filterTimes.get(k)}];
+		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var o = Sys.stderr();
+		for (r in rows) o.writeString("[ftime] " + StringTools.lpad(Std.string(Math.round(r.t * 1000)), " ", 7) + "ms  " + r.name + "\n");
+		o.flush();
+	}
+
 	public static function runExpressionFilters(ctx:TyperContext, filters:Array<{name:String, f:TExpr->TExpr}>, t:ModuleType, ignoreProcessedStatus:Bool = false):Void {
 		function run(e:TExpr):TExpr {
+			if (timeFilters) {
+				for (fl in filters) {
+					var t0 = haxe.Timer.stamp();
+					e = fl.f(e);
+					var prev = filterTimes.get(fl.name);
+					filterTimes.set(fl.name, (prev == null ? 0.0 : prev) + (haxe.Timer.stamp() - t0));
+				}
+				return e;
+			}
 			for (fl in filters) e = fl.f(e);
 			return e;
 		}

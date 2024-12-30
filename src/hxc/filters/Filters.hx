@@ -1004,6 +1004,7 @@ class Filters {
 		if (hxc.context.ServerCache.enabled) for (t in newTypes) saveClassState(com, t);
 		destruction(tctx, renameLocals);
 		memProbe("destruction:done");
+		FiltersCommon.dumpFilterTimes();
 	}
 
 	// A module whose saveClassState ran in an earlier server request is cached; its types skip the
