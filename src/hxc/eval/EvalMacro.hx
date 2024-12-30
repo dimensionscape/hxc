@@ -54,6 +54,24 @@ class EvalMacro {
 	static var moduleTypeRefs:Map<Int, ModuleType> = new Map();
 	static var nextModuleTypeRefId:Int = 0;
 	static var anonRefs:Map<Int, TAnon> = new Map();
+	static var nextAnonRefIdDummy:Int = 0;
+
+	public static function dumpRefStats():Void {
+		if (Sys.getEnv("HXC_DBG_REFS") == null) return;
+		inline function n<K, V>(m:Map<K, V>):Int { var c = 0; for (_ in m.keys()) c++; return c; }
+		var o = Sys.stderr();
+		if (macroCom != null) o.writeString("[refs] macroCom modules=" + macroCom.modules.length
+			+ " types=" + macroCom.types.length + "
+");
+		if (curTctx != null && curTctx.com != null) o.writeString("[refs] hostCom modules=" + curTctx.com.modules.length
+			+ " types=" + curTctx.com.types.length + "
+");
+		o.writeString("[refs] tvarRefs=" + n(tvarRefs) + " cfieldRefs=" + n(cfieldRefs)
+			+ " moduleTypeRefs=" + n(moduleTypeRefs) + " anonRefs=" + n(anonRefs)
+			+ " macroMonos=" + n(macroMonos) + " fakeModules=?" + "
+");
+		o.flush();
+	}
 	static var nextAnonRefId:Int = 0;
 
 	static function stashModuleTypeRef(f:Map<Int, EvalValue>, mt:ModuleType):Void {
