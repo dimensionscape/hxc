@@ -79,6 +79,7 @@ class TypeFields {
 			o.writeString("[ttime] saveLocals calls=" + hxc.typing.Typer.saveLocalsCalls + " entriesCopied=" + hxc.typing.Typer.saveLocalsEntries
 				+ " secs=" + Math.round(hxc.typing.Typer.saveLocalsSecs * 1000) + "ms
 ");
+		hxc.core.PerfCount.dump();
 		if (hxc.typing.Typer.dbgMono)
 			o.writeString("[ttime] spawnMono calls=" + hxc.typing.Typer.monoCalls + " maxListLen=" + hxc.typing.Typer.monoMaxLen
 				+ " unshiftSecs=" + Math.round(hxc.typing.Typer.monoSecs * 1000) + "ms

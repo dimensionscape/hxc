@@ -452,6 +452,7 @@ class Fields {
 	}
 
 	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("typeField");
 		if (ctx.untypedMode) {
 			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
 			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));

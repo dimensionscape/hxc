@@ -593,6 +593,7 @@ class TypeFunctions {
 	}
 
 	public static function follow(t:T):T {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("follow");
 		return switch (t) {
 			case TMono(r):
 				switch (r.type) {

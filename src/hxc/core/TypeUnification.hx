@@ -912,6 +912,7 @@ class TypeUnification {
 	}
 
 	public static function unify(uctx:UnificationContext, a:T, b:T):Void {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("unify");
 		if (a == b) return;
 		switch [a, b] {
 			case [TLazy(f), _]: unify(uctx, TypeFunctions.lazyType(f), b);
