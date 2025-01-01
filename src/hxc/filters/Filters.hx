@@ -954,6 +954,20 @@ class Filters {
 			case TClassDecl(cls): hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
 			case _:
 		}
+		{
+			var hc = Sys.getEnv("HXC_DBG_HEAPCENSUS");
+			if (hc != null) {
+				var lim = Std.parseInt(hc);
+				var cap = lim == null || lim <= 1 ? 60000000 : lim;
+				// Each root walked SEPARATELY with a fresh visited set: shared structure is counted
+				// under both, but a root that dominates the heap on its own is unmistakable.
+				hxc.debug.HeapCensus.run(com, "context", cap);
+				var roots = hxc.eval.EvalMacro.dbgRoots()
+					.concat(hxc.eval.EvalHash.dbgRoots())
+					.concat(hxc.ast.Position.dbgRoots());
+				for (r in roots) if (r.root != null) hxc.debug.HeapCensus.run(r.root, r.name, cap);
+			}
+		}
 		hxc.core.PerfCount.walk(com);
 		memProbe("filters:start");
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [

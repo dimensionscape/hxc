@@ -56,6 +56,23 @@ class EvalMacro {
 	static var anonRefs:Map<Int, TAnon> = new Map();
 	static var nextAnonRefIdDummy:Int = 0;
 
+	// Named static roots, for heap attribution. Everything live but unreachable from the Context hangs
+	// off statics like these, so a census rooted only at the Context misses it.
+	public static function dbgRoots():Array<{name:String, root:Dynamic}> {
+		return [
+			{name: "EvalMacro.macroCtx", root: macroCtx},
+			{name: "EvalMacro.macroCom", root: macroCom},
+			{name: "EvalMacro.moduleTypeRefs", root: moduleTypeRefs},
+			{name: "EvalMacro.tvarRefs", root: tvarRefs},
+			{name: "EvalMacro.cfieldRefs", root: cfieldRefs},
+			{name: "EvalMacro.anonRefs", root: anonRefs},
+			{name: "EvalMacro.macroMonos", root: macroMonos},
+			{name: "EvalMacro.fakeModules", root: fakeModules},
+			{name: "EvalMacro.builtClasses", root: builtClasses},
+			{name: "EvalMacro.macroMessages", root: macroMessages}
+		];
+	}
+
 	public static function dumpRefStats():Void {
 		if (Sys.getEnv("HXC_DBG_REFS") == null) return;
 		inline function n<K, V>(m:Map<K, V>):Int { var c = 0; for (_ in m.keys()) c++; return c; }

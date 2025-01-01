@@ -75,6 +75,11 @@ class Compiler {
 		// space percentage. DEBUG only.
 		{
 			var g = Sys.getEnv("HXC_DBG_GC");
+			var wm = Sys.getEnv("HXC_DBG_GCWM");
+			if (wm != null) {
+				var mb = Std.parseInt(wm);
+				if (mb != null) cpp.vm.Gc.setMinimumWorkingMemory(mb * 1024 * 1024);
+			}
 			if (g == "off") cpp.vm.Gc.enable(false);
 			else if (g != null) {
 				var pct = Std.parseInt(g);

@@ -22,6 +22,10 @@ class Position {
 	static var fileCache:StringMap<PositionFile> = new StringMap();
 
 	// Clear cached contents between server requests so a changed file is reread.
+	public static function dbgRoots():Array<{name:String, root:Dynamic}> {
+		return [{name: "Position.fileCache", root: fileCache}];
+	}
+
 	public static function resetFileCache():Void {
 		fileCache = new StringMap();
 	}

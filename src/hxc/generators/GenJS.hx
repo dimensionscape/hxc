@@ -1982,12 +1982,11 @@ class GenJS {
 					// Nothing
 				} else if (!TypeFunctions.hasClassFlag(c, CExtern)) {
 					if (!TypeFunctions.hasClassFlag(c, CInterface) || needToGenerateInterface(c)) {
-						// Collect periodically; the probe is diagnostics-only.
+						// Generation forces no periodic collection: the heap in use holds flat across it.
+						// The probe is diagnostics-only and collects only when HXC_DBG_MEM asks it to.
 						genCount++;
-							if (genCount % 200 == 0) {
-							#if cpp cpp.vm.Gc.run(true); #end
+						if (genCount % 200 == 0)
 							hxc.filters.Filters.memProbe("gen:" + Std.string(genCount) + ":" + hxc.core.Globals.sTypePath(c.path));
-						}
 						generateClass(c);
 					}
 				} else if (TypeFunctions.hasMeta(":jsRequire", c.meta) && com.isDirectlyUsed(c.meta)) {
