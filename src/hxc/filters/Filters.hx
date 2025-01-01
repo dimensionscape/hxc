@@ -903,6 +903,18 @@ class Filters {
 		// Forced major collection first: separates LIVE heap from garbage-awaiting-collection.
 		cpp.vm.Gc.run(true);
 		var o = Sys.stderr();
+		// Immix accounts memory by ROWS IN USE, so a sparsely populated block counts whole.
+		// Comparing usage before and after a compaction separates real retention from
+		// fragmentation; they are very different bugs.
+		if (Sys.getEnv("HXC_DBG_COMPACT") != null) {
+			var before = cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0;
+			var t0 = haxe.Timer.stamp();
+			cpp.vm.Gc.compact();
+			var ms = (haxe.Timer.stamp() - t0) * 1000;
+			o.writeString("[compact] " + tag + " " + Std.int(before) + "MB -> "
+				+ Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0) + "MB in "
+				+ Std.int(ms) + "ms\n");
+		}
 		o.writeString("[mem] " + tag + " used=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0)) + "MB reserved=" + Std.string(Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_RESERVED) / 1048576.0)) + "MB
 ");
 		o.flush();
@@ -942,6 +954,7 @@ class Filters {
 			case TClassDecl(cls): hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
 			case _:
 		}
+		hxc.core.PerfCount.walk(com);
 		memProbe("filters:start");
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},

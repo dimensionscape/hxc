@@ -279,6 +279,26 @@ class GenJS {
 		throw new TypingError("This expression cannot be compiled to Javascript", p);
 	}
 
+	// HXC_DBG_GENTIMES: split the generate phase so a hot sub-pass is attributable.
+	public static var gt:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
+	public static var gn:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
+	public static inline function gtAdd(k:String, t0:Float):Void {
+		var p = gt.get(k);
+		gt.set(k, (p == null ? 0.0 : p) + (haxe.Timer.stamp() - t0));
+		var c = gn.get(k);
+		gn.set(k, c == null ? 1 : c + 1);
+	}
+	public static function gtDump():Void {
+		if (Sys.getEnv("HXC_DBG_GENTIMES") == null) return;
+		var rows = [for (k in gt.keys()) {n: k, t: gt.get(k)}];
+		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var o = Sys.stderr();
+		for (r in rows)
+			o.writeString("[gen] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms  "
+				+ StringTools.lpad(Std.string(gn.get(r.n)), " ", 9) + "x  " + r.n + "\n");
+		o.flush();
+	}
+
 	// Spr / print. StringBuf has no random access, so the buffer's last character is tracked here
 	// rather than paying a full buf.toString() copy per newline/newprop/semicolon (quadratic on the
 	// whole output).
@@ -2147,7 +2167,26 @@ class GenJS {
 			Sys.println("[GENJS] types=" + com.types.length);
 			for (t in com.types) Sys.println("[GENJS] " + Context.sTypePath(TypeFunctions.tPath(t)));
 		}
-		for (t in com.types) ctx.generateType(t);
+		{ var t0 = haxe.Timer.stamp();
+			var per = Sys.getEnv("HXC_DBG_GENTIMES") != null;
+			for (t in com.types) {
+				if (per) {
+					var tt = haxe.Timer.stamp();
+					var before = ctx.buf.length;
+					ctx.generateType(t);
+					var el = haxe.Timer.stamp() - tt;
+					var key = Context.sTypePath(TypeFunctions.tPath(t)) + " [" + (ctx.buf.length - before) + "B]";
+					gtAdd("type:" + key, tt);
+					#if cpp
+					if (el > 0.1) Sys.stderr().writeString("[stall] " + Std.int(el * 1000) + "ms  usage="
+						+ Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1048576.0) + "MB current="
+						+ Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_CURRENT) / 1048576.0) + "MB reserved="
+						+ Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_RESERVED) / 1048576.0) + "MB large="
+						+ Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_LARGE) / 1048576.0) + "MB  " + key + "\n");
+					#end
+				} else ctx.generateType(t);
+			}
+			gtAdd("generateType(all)", t0); }
 		// Feature discovery over inits and statics
 		function chkFeatures(e:TExpr):Void {
 			if (ctx.isDynamicIterator(e)) ctx.addFeature("use.$iterator");
@@ -2160,8 +2199,10 @@ class GenJS {
 					TexprTools.iter(chkFeatures, e);
 			}
 		}
-		for (e in ctx.inits) chkFeatures(e);
-		for (s in ctx.statics) chkFeatures(s.e);
+		{ var t0 = haxe.Timer.stamp();
+			for (e in ctx.inits) chkFeatures(e);
+			for (s in ctx.statics) chkFeatures(s.e);
+			gtAdd("chkFeatures", t0); }
 		if (ctx.hasFeature("use.$iterator")) {
 			ctx.addFeature("use.$bind");
 			var arrayIterator = ctx.sPath({pack: ["haxe", "iterators"], name: "ArrayIterator"});
@@ -2213,7 +2254,7 @@ class GenJS {
 		for (e in initsRev) ctx.genBlockElement(e, true, ctx.esVersion >= 6);
 		// ctx.statics is APPENDED in declaration order, so it emits as-is: a static initializer may read an
 		// earlier one.
-		for (s in ctx.statics) ctx.generateStatic(s.c, s.f, s.e);
+		{ var t0 = haxe.Timer.stamp(); for (s in ctx.statics) ctx.generateStatic(s.c, s.f, s.e); gtAdd("generateStatic", t0); }
 		if (com.main != null) {
 			ctx.genExpr(com.main);
 			ctx.newline();
@@ -2245,9 +2286,10 @@ class GenJS {
 
 		// Write the source map or remove a stale one, then flush
 		if (ctx.smap != null)
-			ctx.writeMappings();
+			{ var t0 = haxe.Timer.stamp(); ctx.writeMappings(); gtAdd("writeMappings", t0); }
 		else
 			try sys.FileSystem.deleteFile(com.file + ".map") catch (_:Dynamic) {}
-		sys.io.File.saveContent(com.file, ctx.buf.toString());
+		{ var t0 = haxe.Timer.stamp(); sys.io.File.saveContent(com.file, ctx.buf.toString()); gtAdd("saveContent", t0); }
+		gtDump();
 	}
 }

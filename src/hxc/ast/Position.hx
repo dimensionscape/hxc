@@ -9,7 +9,9 @@ class Position {
 	public var min:Int;
 	public var max:Int;
 
+	public static var nalloc:Int = 0;
 	public function new(file:String, min:Int, max:Int) {
+		nalloc++;
 		this.file = file;
 		this.min = min;
 		this.max = max;

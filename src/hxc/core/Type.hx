@@ -80,7 +80,9 @@ class TMono {
 	public var type:Null<T>;
 	public var downConstraints:Array<TMonoConstraint>;
 	public var upConstraints:Array<TUpConstraint>;
+	public static var nalloc:Int = 0;
 	public function new(?type:T, ?downConstraints:Array<TMonoConstraint>, ?upConstraints:Array<TUpConstraint>) {
+		nalloc++;
 		this.type = type;
 		this.downConstraints = downConstraints == null ? [] : downConstraints;
 		this.upConstraints = upConstraints == null ? [] : upConstraints;
@@ -216,7 +218,9 @@ enum AnonStatus {
 class TAnon {
 	public var fields:StringMap<TClassField>;
 	public var status:Ref<AnonStatus>;
+	public static var nalloc:Int = 0;
 	public function new(fields:StringMap<TClassField>, status:Ref<AnonStatus>) {
+		nalloc++;
 		this.fields = fields;
 		this.status = status;
 	}
@@ -277,7 +281,9 @@ class TExpr {
 	public var expr:TExprExpr;
 	public var type:T;
 	public var pos:Position;
+	public static var nalloc:Int = 0;
 	public function new(expr:TExprExpr, type:T, pos:Position) {
+		nalloc++;
 		this.expr = expr;
 		this.type = type;
 		this.pos = pos;

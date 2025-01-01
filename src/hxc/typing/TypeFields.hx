@@ -81,6 +81,7 @@ class TypeFields {
 ");
 		hxc.eval.EvalMacro.dumpRefStats();
 		hxc.core.PerfCount.dump();
+		hxc.core.PerfCount.dumpAllocs();
 		if (hxc.typing.Typer.dbgMono)
 			o.writeString("[ttime] spawnMono calls=" + hxc.typing.Typer.monoCalls + " maxListLen=" + hxc.typing.Typer.monoMaxLen
 				+ " unshiftSecs=" + Math.round(hxc.typing.Typer.monoSecs * 1000) + "ms

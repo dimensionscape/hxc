@@ -69,6 +69,19 @@ private class RequestAbort extends haxe.Exception {
 class Compiler {
 	public function new() run(Sys.args());
 	public static function main() {
+		#if cpp
+		// HXC_DBG_GC: measure how much of the wall clock is collection. "off" disables the collector for
+		// the whole run (RSS grows unbounded, so one-shot compiles only); a number sets the target free
+		// space percentage. DEBUG only.
+		{
+			var g = Sys.getEnv("HXC_DBG_GC");
+			if (g == "off") cpp.vm.Gc.enable(false);
+			else if (g != null) {
+				var pct = Std.parseInt(g);
+				if (pct != null) cpp.vm.Gc.setTargetFreeSpacePercentage(pct);
+			}
+		}
+		#end
 		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
 		// process exits 0.
 		try run(Sys.args())

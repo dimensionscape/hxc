@@ -487,7 +487,9 @@ class TypeFunctions {
 		}
 	}
 
+	public static var napply:Int = 0;
 	public static function applyParams(cparams:TypeParams, params:TParams, t:T, ?stack:Ref<Array<{subject:T, applied:TParams}>>):T {
+		napply++;
 		if (cparams.length == 0) return t;
 
 		// Build substitutions, forcing lazy parameter types on the cparam side.
