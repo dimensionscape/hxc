@@ -59,6 +59,27 @@ class PerfCount {
 		o.flush();
 	}
 
+	// HXC_DBG_GCTRACE: sample the heap IN USE along a hot path without forcing a collection.
+	// A drop between samples means the collector ran, which is how a phase is shown to be
+	// collection-bound rather than slow at its own work.
+	public static var gcTrace:Bool = Sys.getEnv("HXC_DBG_GCTRACE") != null;
+	static var gcN:Int = 0;
+	static var gcLast:Float = 0;
+	public static inline function gcSample():Void {
+		if (gcTrace) {
+			gcN++;
+			if (gcN % 200 == 0) {
+				#if cpp
+				var cur = cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_CURRENT) / 1048576.0;
+				Sys.stderr().writeString("[gctrace] #" + gcN + " current=" + Std.int(cur) + "MB"
+					+ (cur < gcLast - 1 ? "  <-- COLLECTED" : "") + "
+");
+				gcLast = cur;
+				#end
+			}
+		}
+	}
+
 	public static function dumpAllocs():Void {
 		if (Sys.getEnv("HXC_DBG_ALLOC") == null) return;
 		var o = Sys.stderr();

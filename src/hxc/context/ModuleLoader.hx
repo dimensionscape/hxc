@@ -1368,6 +1368,7 @@ class ModuleLoader {
 
 	public static function loadTypeDef(ctx:Context, path:Path, p:Position, ?sub:String):ModuleType {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("loadTypeDef");
+		hxc.core.PerfCount.gcSample();
 		var tname = sub != null ? sub : path.name;
 		// In-module sibling type: a bare unqualified name (no pack, no sub) is resolved
 		// `ctx.m.curmod` before the filesystem). This makes a module-level `enum`/class/etc.
