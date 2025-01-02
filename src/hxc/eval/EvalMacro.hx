@@ -928,11 +928,16 @@ class EvalMacro {
 		// fields.
 		if (c.superClass != null) ensureBuilt(com, c.superClass.c);
 		for (i in c.interfaces) ensureBuilt(com, i.c);
+		// Marked before the entry check, not after: a class counts as built once it is built, whether or
+		// not any @:build ran, so a second call is a no-op. Recording only the classes that HAD entries
+		// would leave every ordinary class unmarked, so each construction of one would re-walk its entire
+		// super and interface chain.
+		builtClasses.set(key, true);
 		var entries = collectBuildEntries(c);
 		if (entries.length == 0) return;
-		builtClasses.set(key, true);
 		// A build failure is recorded rather than raised so the rest of the module still types,
 		// but the compile fails; the class keeps its declared fields.
+		var _rb0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
 			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
@@ -942,10 +947,13 @@ class EvalMacro {
 		} catch (e:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
+		if (hxc.typing.Typer.newTiming) hxc.typing.Typer.ebRunBuild += haxe.Timer.stamp() - _rb0;
 		// The reference applies all @:build field transformations before typing field bodies. Doing
 		// this once also keeps a later build macro from invalidating the field table while the previous
 		// macro's bodies are still being forced.
+		var _fc0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 		hxc.typing.TypeFields.forceClassFields(com, c);
+		if (hxc.typing.Typer.newTiming) { hxc.typing.Typer.ebForceFields += haxe.Timer.stamp() - _fc0; hxc.typing.Typer.ebForceCalls++; }
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
