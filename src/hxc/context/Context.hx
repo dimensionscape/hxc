@@ -157,6 +157,12 @@ class Context {
 	// requests. Map lowercase names to actual entries; null means listing failed.
 	public var readdirCache:StringMap<Null<StringMap<String>>> = new StringMap();
 
+	/**
+	 * Per-context declared-field fingerprints let installLazy skip unchanged modules. Host and macro
+	 * worlds sweep independently.
+	 */
+	public var lazyInstalled:StringMap<Int> = new StringMap();
+
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;

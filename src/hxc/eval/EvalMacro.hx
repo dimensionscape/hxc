@@ -1850,8 +1850,12 @@ class EvalMacro {
 				TypeFunctions.addDependency(dep, m, true);
 				dep.extra.processed = 0;
 			}
+			var _r0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 			hxc.typing.TypeResolve.resolveAll(macroCom);
+			if (hxc.typing.Typer.newTiming) hxc.typing.Typer.lmResolve += haxe.Timer.stamp() - _r0;
+			var _i0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 			hxc.typing.TypeFields.installLazy(macroCom);
+			if (hxc.typing.Typer.newTiming) { hxc.typing.Typer.lmInstall += haxe.Timer.stamp() - _i0; hxc.typing.Typer.lmCalls++; }
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.

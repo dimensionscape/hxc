@@ -228,11 +228,40 @@ class TypeFields {
 		}
 	}
 
+	// Cheap stand-in for "has this module's declared field set changed since it was last swept".
+	// installClassFields reads the SYNTAX field list, and a build macro edits that list, so a
+	// module whose type count and declared field counts are both unchanged has nothing new to
+	// install.
+	static function declaredFieldShape(ctx:Context, m:ModuleDef):Int {
+		var n = m.types.length;
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c):
+				var entry = ctx.declOfType.get(Context.pathKey(c.path));
+				if (entry != null) switch (entry.decl) {
+					case EClass(d): n = n * 31 + d.dData.length;
+					case _:
+				}
+			case _:
+		}
+		return n;
+	}
+
+	// A module's field typers belong to the module type and are installed once. hxc sweeps the whole
+	// context instead, and loadMacroClass runs that sweep on every macro invocation, so every
+	// already-installed module would pay for a fresh TyperContext and a full pass over its declared
+	// fields again. Skipping unchanged modules keeps the sweep but drops the repeat.
 	public static function installLazy(ctx:Context):Void {
 		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
-			installModuleFields(ctx, ctx.modules[i], pending);
+			var m = ctx.modules[i];
+			var key = Context.pathKey(m.path);
+			var shape = declaredFieldShape(ctx, m);
+			var seen = ctx.lazyInstalled.get(key);
+			if (seen == null || seen != shape) {
+				installModuleFields(ctx, m, pending);
+				ctx.lazyInstalled.set(key, declaredFieldShape(ctx, m));
+			}
 			i++;
 		}
 	}

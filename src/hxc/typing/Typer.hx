@@ -829,6 +829,9 @@ class Typer {
 	public static var ebForceFields:Float = 0;
 	public static var ebRunBuild:Float = 0;
 	public static var ebForceCalls:Int = 0;
+	public static var lmResolve:Float = 0;
+	public static var lmInstall:Float = 0;
+	public static var lmCalls:Int = 0;
 
 	public static function dumpNew():Void {
 		if (!newTiming) return;
@@ -840,6 +843,8 @@ class Typer {
 			+ "ms unifyArgs=" + Std.int(newUnifyTime * 1000) + "ms\n");
 		Sys.stderr().writeString("[new] ensureBuilt split: forceClassFields=" + Std.int(ebForceFields * 1000)
 			+ "ms (" + ebForceCalls + " classes) runBuildMacros=" + Std.int(ebRunBuild * 1000) + "ms\n");
+		Sys.stderr().writeString("[new] loadMacroClass calls=" + lmCalls + " resolveAll=" + Std.int(lmResolve * 1000)
+			+ "ms installLazy=" + Std.int(lmInstall * 1000) + "ms\n");
 	}
 
 	public static function dumpKinds():Void {
