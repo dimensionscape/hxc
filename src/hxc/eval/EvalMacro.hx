@@ -1865,6 +1865,7 @@ class EvalMacro {
 							hxc.typing.TypeFields.forceClassFields(macroCom, c);
 						else {
 							var cf = c.statics.get(fieldName);
+							var fieldIsStatic = cf != null;
 							if (cf == null) cf = c.fields.get(fieldName);
 							if (cf != null) {
 								hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
@@ -1872,9 +1873,13 @@ class EvalMacro {
 								if (macroCtx != null) {
 									var key = EvalHash.pathHash(c.path);
 									var fieldHash = EvalHash.hash(fieldName);
-									var sp = macroCtx.staticPrototypes.get(key);
-									var ip = macroCtx.instancePrototypes.get(key);
-									if ((sp != null && !sp.pnames.exists(fieldHash)) || (ip != null && !ip.pnames.exists(fieldHash)))
+									// Consult only the prototype that COULD carry this field. Testing both made a static
+									// method permanently "missing" from the instance prototype, where it can never appear, so
+									// every macro call rebuilt the entire macro context: 1234 full rebuilds on the unit suite,
+									// each re-adding all 162 macro modules. That is exactly the O(N^2) the extend path further
+									// down exists to avoid.
+									var proto = fieldIsStatic ? macroCtx.staticPrototypes.get(key) : macroCtx.instancePrototypes.get(key);
+									if (proto != null && !proto.pnames.exists(fieldHash))
 										needsRebuild = true;
 								}
 								// A dependency or requested field typed only now, after its class's prototype
