@@ -1054,6 +1054,7 @@ class Filters {
 		stageMark("generation");
 		hxc.typing.TypeFields.dumpTypeTimes();
 		dumpStages();
+		hxc.optimization.Analyzer.Run.dumpAnalyzer();
 	}
 
 	// A module whose saveClassState ran in an earlier server request is cached; its types skip the

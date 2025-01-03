@@ -786,13 +786,19 @@ class Run {
 	}
 
 	static function backAgain(actx:AnalyzerContext, isRealFunction:Bool):TExpr {
+		var _b = haxe.Timer.stamp();
 		var e = AnalyzerTexprTransformer.toTexpr(actx);
+		if (anOn) anAdd("  backAgain:toTexpr", _b);
 		if (actx.com.debug) addDebugExpr(actx, "after to-texpr", e);
 		for (vi in actx.graph.varInfos)
 			vi.variable.extra = vi.extra;
+		_b = haxe.Timer.stamp();
 		if (actx.config.fusion) e = AnalyzerFusion.Fusion.apply(actx, e);
+		if (anOn) anAdd("  backAgain:Fusion", _b);
 		if (actx.com.debug) addDebugExpr(actx, "after fusion", e);
+		_b = haxe.Timer.stamp();
 		e = AnalyzerFusion.Cleanup.apply(actx.com, e);
+		if (anOn) anAdd("  backAgain:Cleanup", _b);
 		if (actx.com.debug) addDebugExpr(actx, "after cleanup", e);
 		if (!isRealFunction) {
 			// Remove the wrapping function and its return expressions
@@ -844,19 +850,70 @@ class Run {
 		return e;
 	}
 
+	// HXC_DBG_ANALYZER: the analyzer is the largest single item in the filter pipeline (about 1.9s
+	// against the reference's 364ms) and runs exactly once per field, so the cost is per stage rather
+	// than repeated work.
+	//
+	// READ the SUM, not the ROWS. Two runs over identical input moved `there` between 278ms and 639ms
+	// and backAgain between 552ms and 185ms while the total held near 1.38s: a collection lands in
+	// whichever stage is running. Only the total is stable enough to act on, and a single row is never
+	// evidence on its own.
+	public static var anTimes:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
+	public static var anOn:Bool = Sys.getEnv("HXC_DBG_ANALYZER") != null;
+	static inline function anAdd(k:String, t0:Float):Void {
+		var p = anTimes.get(k);
+		anTimes.set(k, (p == null ? 0.0 : p) + (haxe.Timer.stamp() - t0));
+	}
+	public static function dumpAnalyzer():Void {
+		if (!anOn) return;
+		var rows = [for (k in anTimes.keys()) {n: k, t: anTimes.get(k)}];
+		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var o = Sys.stderr();
+		for (r in rows) o.writeString("[analyzer] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms  " + r.n + "
+");
+		o.flush();
+	}
+
 	public static function runOnExpr(actx:AnalyzerContext, e:TExpr):TExpr {
+		if (!anOn) return runOnExprInner(actx, e);
+		var t0 = haxe.Timer.stamp();
+		var r = runOnExprInner(actx, e);
+		anAdd("TOTAL runOnExpr", t0);
+		return r;
+	}
+
+	static function runOnExprInner(actx:AnalyzerContext, e:TExpr):TExpr {
+		var _t = haxe.Timer.stamp();
 		var isRealFunction = there(actx, e);
+		if (anOn) anAdd("there (build graph)", _t);
+		_t = haxe.Timer.stamp();
 		actx.graph.inferImmediateDominators();
+		if (anOn) anAdd("inferImmediateDominators", _t);
+		_t = haxe.Timer.stamp();
 		actx.graph.inferScopes();
+		if (anOn) anAdd("inferScopes", _t);
+		_t = haxe.Timer.stamp();
 		actx.graph.inferVarWrites();
+		if (anOn) anAdd("inferVarWrites", _t);
 		if (actx.config.optimize && !actx.hasUnbound) {
 			actx.didOptimize = true;
+			_t = haxe.Timer.stamp();
 			Ssa.apply(actx);
+			if (anOn) anAdd("Ssa", _t);
+			_t = haxe.Timer.stamp();
 			if (actx.config.constPropagation) ConstPropagation.apply(actx);
+			if (anOn) anAdd("ConstPropagation", _t);
+			_t = haxe.Timer.stamp();
 			if (actx.config.copyPropagation) CopyPropagation.apply(actx);
+			if (anOn) anAdd("CopyPropagation", _t);
+			_t = haxe.Timer.stamp();
 			LocalDce.apply(actx);
+			if (anOn) anAdd("LocalDce", _t);
 		}
-		return backAgain(actx, isRealFunction);
+		_t = haxe.Timer.stamp();
+		var res = backAgain(actx, isRealFunction);
+		if (anOn) anAdd("backAgain", _t);
+		return res;
 	}
 
 	public static function reduceControlFlow(com:Context, e:TExpr):TExpr {
@@ -872,9 +929,13 @@ class Run {
 			return;
 		var config = AnalyzerConfig.updateConfigFromMeta(com, config, cf.meta);
 		var identifier = hxc.core.Globals.sTypePath(c.path) + "." + cf.name;
+		var _cc = haxe.Timer.stamp();
 		var actx = createAnalyzerContext(com, config, identifier, e);
+		if (anOn) anAdd("createAnalyzerContext (outside)", _cc);
 		var e = runOnExpr(actx, e);
+		var _rc = haxe.Timer.stamp();
 		e = reduceControlFlow(com, e);
+		if (anOn) anAdd("reduceControlFlow (outside runOnExpr)", _rc);
 		cf.expr = e;
 		// @:analyzer(full_debug) prints every collected stage AST.
 		if (config.debugKind.match(DebugFull)) {
