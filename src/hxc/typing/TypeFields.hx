@@ -577,7 +577,21 @@ class TypeFields {
 		_forcing.remove(cf);
 	}
 
+	// The scan below is O(declared fields of the class) and runs once per FORCE attempt, not once
+	// per field: a field with no body is re-scanned every time something asks for it, only to
+	// rediscover it has none. 58747 calls and 3.15M iterations on the unit suite. The result
+	// depends on the class's syntax field list, and a build macro that edits that list goes
+	// through rebuildFields, which registers new TClassField instances, so keying the memo on the
+	// field object invalidates exactly the entries that could have changed.
 	static function findFieldDecl(ctx:Context, c:TClass, cf:TClassField):Null<ClassField> {
+		var hit = ctx.fieldDeclCache.get(cf);
+		if (hit != null) return hit.d;
+		var d = findFieldDeclUncached(ctx, c, cf);
+		ctx.fieldDeclCache.set(cf, {d: d});
+		return d;
+	}
+
+	static function findFieldDeclUncached(ctx:Context, c:TClass, cf:TClassField):Null<ClassField> {
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return null;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return null; };

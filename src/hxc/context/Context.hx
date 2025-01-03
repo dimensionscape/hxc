@@ -163,6 +163,12 @@ class Context {
 	 */
 	public var lazyInstalled:StringMap<Int> = new StringMap();
 
+	/**
+	 * Key syntax declarations by typed field identity; rebuildFields creates new fields and
+	 * invalidates old entries.
+	 */
+	public var fieldDeclCache:haxe.ds.ObjectMap<TClassField, {d:Null<hxc.ast.Ast.ClassField>}> = new haxe.ds.ObjectMap();
+
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;
