@@ -897,6 +897,25 @@ class Filters {
 		}
 	}
 
+	// HXC_DBG_STAGES: wall time between the filter pipeline's stage boundaries, without the forced
+	// collection memProbe does. --times reports "filters" as one bucket, and the per-filter timer only
+	// covers the expression filters, so everything else (analyzer, DCE, destruction) was invisible.
+	static var stageT0:Float = -1;
+	public static var stageTimes:Array<{n:String, t:Float}> = [];
+	public static function stageMark(tag:String):Void {
+		if (Sys.getEnv("HXC_DBG_STAGES") == null) return;
+		var now = haxe.Timer.stamp();
+		if (stageT0 >= 0) stageTimes.push({n: tag, t: now - stageT0});
+		stageT0 = now;
+	}
+	public static function dumpStages():Void {
+		if (Sys.getEnv("HXC_DBG_STAGES") == null) return;
+		var o = Sys.stderr();
+		for (r in stageTimes) o.writeString("[stage] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms  " + r.n + "
+");
+		o.flush();
+	}
+
 	public static function memProbe(tag:String):Void {
 		if (Sys.getEnv("HXC_DBG_MEM") == null) return;
 		#if cpp
@@ -969,14 +988,14 @@ class Filters {
 			}
 		}
 		hxc.core.PerfCount.walk(com);
-		memProbe("filters:start");
+		stageMark("filters:start"); memProbe("filters:start");
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
 			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
-		memProbe("pass1:done");
+		stageMark("pass1:done"); memProbe("pass1:done");
 		var exceptionsFilter = com.platform.match(Eval) ? function(e) return e : hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "local_statics", f: function(e) return localStatics(tctx, e)},
@@ -990,7 +1009,7 @@ class Filters {
 			{name: "Exceptions_filter", f: exceptionsFilter},
 			{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(com, e)},
 		], t);
-		memProbe("pass1b:done");
+		stageMark("pass1b:done"); memProbe("pass1b:done");
 		// UnusedPure (pure-statement elimination) runs after inline_constructors so the trailing
 		// result-local read of an inlined value block reaches finalMap first (InlineConstructors unwraps
 		// the
@@ -998,7 +1017,7 @@ class Filters {
 		hxc.typing.UnusedPure.run(com);
 		// The analyzer runs between the pre-analyzer type filters and RenameVars
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
-		memProbe("analyzer:done");
+		stageMark("analyzer:done"); memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp),
 			com.platform.match(Js) && com.getEsVersion() >= 6);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
@@ -1015,7 +1034,7 @@ class Filters {
 			}},
 			{name: "mark_switch_break_loops", f: markSwitchBreakLoops},
 		], t);
-		memProbe("pass2:done");
+		stageMark("pass2:done"); memProbe("pass2:done");
 		// The onGenerate callbacks run after the expression passes and before saveClassState/destruction,
 		// so macro-side type mutation (e.g. cpp.cppia.HostClasses marking host classes extern) is invisible
 		// to the expression filters.
@@ -1030,9 +1049,11 @@ class Filters {
 		// carries the open-mono binding.
 		if (hxc.context.ServerCache.enabled) for (t in newTypes) saveClassState(com, t);
 		destruction(tctx, renameLocals);
-		memProbe("destruction:done");
+		stageMark("destruction:done"); memProbe("destruction:done");
 		FiltersCommon.dumpFilterTimes();
+		stageMark("generation");
 		hxc.typing.TypeFields.dumpTypeTimes();
+		dumpStages();
 	}
 
 	// A module whose saveClassState ran in an earlier server request is cached; its types skip the
@@ -1227,9 +1248,9 @@ class Filters {
 		};
 		hxc.optimization.Dce.stdPath = com.stdPath;
 		if (com.defines.rawDefined("dce_debug")) com.print = function(s) Sys.stderr().writeString(s);
-		memProbe("preDce");
+		stageMark("preDce"); memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
-		memProbe("dce:done");
+		stageMark("dce:done"); memProbe("dce:done");
 		// PASS 3: insert_save_stacks runs first (post-DCE so the feature flag is accurate), then
 		// patchConstructors with the other type filters. Both run after the analyzer and
 		// sanitize, so the blocks their inlined calls produce reach the generator untouched.
