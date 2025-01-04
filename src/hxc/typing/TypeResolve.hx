@@ -77,6 +77,7 @@ class TypeResolve {
 	}
 
 	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
 		switch ([mt, decl]) {
 			case [TClassDecl(c), EClass(d)]:
 				resolveClass(ctx, c, d, p);
@@ -284,7 +285,41 @@ class TypeResolve {
 		return out;
 	}
 
+	// Set_heritance, class super/implements.
+	// HXC_DBG_RESOLVETIMES: per-class heritage resolution cost. resolveAll is 637ms on an
+	// OpenFL build against 41ms on the unit suite despite HALF the types, so the cost is per
+	// class, not per call, and the shape says which classes.
+	public static var rcTimes:Array<{n:String, t:Float}> = [];
+	public static var rcOn:Bool = Sys.getEnv("HXC_DBG_RESOLVETIMES") != null;
+	static var rcStack:Array<Float> = [];
+	public static function dumpResolve():Void {
+		if (!rcOn) return;
+		rcTimes.sort(function(a, b) return a.t < b.t ? 1 : -1);
+		var o = Sys.stderr();
+		var tot = 0.0; for (r in rcTimes) tot += r.t;
+		o.writeString("[resolve] total=" + Std.int(tot * 1000) + "ms over " + rcTimes.length + " classes
+");
+		for (i in 0...(rcTimes.length < 10 ? rcTimes.length : 10))
+			o.writeString("[resolve] " + Std.int(rcTimes[i].t * 1000) + "ms  " + rcTimes[i].n + "
+");
+		o.flush();
+	}
+
 	public static function resolveClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		if (!rcOn) { resolveClassInner(ctx, c, d, p); return; }
+		// EXCLUSIVE: heritage resolution nests (a subclass waits on its whole super chain), so
+		// inclusive times just report the chain depth. Subtract what children spent.
+		var t0 = haxe.Timer.stamp();
+		rcStack.push(0);
+		resolveClassInner(ctx, c, d, p);
+		var child = rcStack.pop();
+		var el = haxe.Timer.stamp() - t0;
+		if (rcStack.length > 0) rcStack[rcStack.length - 1] += el;
+		rcTimes.push({n: hxc.core.Globals.sTypePath(c.path), t: el - child});
+	}
+
+	static function resolveClassInner(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
@@ -414,6 +449,7 @@ class TypeResolve {
 	}
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClassFields");
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
 		// (abstract member). Mirror that when locating the registered cf so the enum-abstract `var X`

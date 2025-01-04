@@ -900,6 +900,7 @@ class Compiler {
 			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
 			TypeResolve.resolveAll(ctx);
 			tResolve();
+			hxc.typing.TypeResolve.dumpResolve();
 			if (hxc.filters.ImportCheck.run(ctx)) abortOnDiagnostics(ctx, platform);
 			var tFields = hxc.core.Timer.timer(["typing", "fields"]);
 			TypeFields.typeAllModules(ctx);
