@@ -21,6 +21,13 @@ class HeapCensus {
 	static function push(v:Dynamic):Void {
 		if (v == null) return;
 		switch (Type.typeof(v)) {
+			// Closures are objects too and hxc retains a lot of them (every lazy field type is
+			// one). They cannot be descended into - captured variables are not reflectable - but
+			// counting them is what says whether the unwalked remainder is closures or not.
+			case TFunction:
+				if (visited.exists(v)) return;
+				visited.set(v, true);
+				tally("<closure>", 32);
 			case TObject | TClass(_) | TEnum(_):
 				if (visited.exists(v)) return;
 				visited.set(v, true);
@@ -127,7 +134,10 @@ class HeapCensus {
 			for (f in Reflect.fields(o)) {
 				var v:Dynamic = null;
 				try v = Reflect.field(o, f) catch (_:Dynamic) continue;
-				if (Reflect.isFunction(v)) continue;
+				if (Reflect.isFunction(v)) {
+					push(v);
+					continue;
+				}
 				nf++;
 				push(v);
 			}
