@@ -1675,13 +1675,16 @@ class ModuleLoader {
 		return findTypeInModuleOpt(m, sub);
 	}
 
+	// Resolves through find_type_in_module, which at requires `snd infos.path = tname` - an EXACT
+	// type-name match. A module that declares no type of the requested name does not answer here at
+	// all; it fails and the unqualified walk carries on outward, which is how a name that also happens
+	// to be a module file name still reaches the standard library. There is no first-declared-type
+	// fallback anywhere in the reference. Having one meant `pack/Type.hx`, declaring only `Foo` and
+	// `Bar`, claimed the name `Type` for `Foo` and made the stdlib Type unreachable from anywhere
+	// inside `pack`.
 	static function tryLoadModuleMain(ctx:Context, mp:Path, p:Position):Null<ModuleType> {
 		var m = try loadModule(ctx, mp, p) catch (_:ContextError) return null;
-		var byName = findTypeInModuleOpt(m, mp.name);
-		if (byName != null) return byName;
-		// "the type name is the module name" semantics being relaxed for a sub-named module).
-		for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate) return mt;
-		return null;
+		return findTypeInModuleOpt(m, mp.name);
 	}
 
 	static function samePack(a:Array<String>, b:Array<String>):Bool {
