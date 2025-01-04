@@ -414,8 +414,8 @@ class TypeUnification {
 	public static function doBind(m:TMono, t:T):Void {
 		journalMono(m);
 		m.type = t;
-		m.downConstraints = [];
-		m.upConstraints = [];
+		m.downConstraints = hxc.core.Type.TMono.NO_DOWN;
+		m.upConstraints = hxc.core.Type.TMono.NO_UP;
 	}
 
 	public static function monoBind(m:TMono, t:T):Void {

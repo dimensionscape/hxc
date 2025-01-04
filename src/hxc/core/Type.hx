@@ -81,11 +81,19 @@ class TMono {
 	public var downConstraints:Array<TMonoConstraint>;
 	public var upConstraints:Array<TUpConstraint>;
 	public static var nalloc:Int = 0;
+
+	// These two start as one shared empty constant rather than a fresh Array per monomorph: an hxcpp
+	// Array is an object plus its own backing store. Every write to these fields is a REASSIGNMENT
+	// built with concat, never an in-place push, so the empty case can share one value. KEEP it that
+	// WAY: pushing into either field would corrupt every monomorph at once.
+	public static final NO_DOWN:Array<TMonoConstraint> = [];
+	public static final NO_UP:Array<TUpConstraint> = [];
+
 	public function new(?type:T, ?downConstraints:Array<TMonoConstraint>, ?upConstraints:Array<TUpConstraint>) {
 		nalloc++;
 		this.type = type;
-		this.downConstraints = downConstraints == null ? [] : downConstraints;
-		this.upConstraints = upConstraints == null ? [] : upConstraints;
+		this.downConstraints = downConstraints == null ? NO_DOWN : downConstraints;
+		this.upConstraints = upConstraints == null ? NO_UP : upConstraints;
 	}
 }
 
