@@ -189,6 +189,13 @@ class Compiler {
 		try sock.close() catch (_:Dynamic) {}
 	}
 
+	// HXC_DBG_REQ: brackets a server request so the time hxc's --times does not account for becomes
+	// visible. Prints to STDOUT; stderr carries the protocol.
+	static var reqDbg:Bool = Sys.getEnv("HXC_DBG_REQ") != null;
+	static var _reqReset:Float = 0;
+	static var _reqRun:Float = 0;
+	static var _runT0:Float = 0;
+
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
 		while (true) {
 			var len = try {
@@ -273,7 +280,9 @@ class Compiler {
 			if (Sys.getEnv("HXC_WAIT_CHILD") == null) {
 				// The request compiles in this process over the persistent caches; a failing compile aborts
 				// only the request.
+				var _rq0 = reqDbg ? haxe.Timer.stamp() : 0.0;
 				resetForNextRequest();
+				if (reqDbg) { _reqReset = haxe.Timer.stamp() - _rq0; _rq0 = haxe.Timer.stamp(); }
 				// A request reuses cache-valid modules and only re-types the dirty subgraph;
 				// HXC_SERVER_NOREUSE=1 falls back to full recompilation.
 				// Only ever set here (the in-process wait server), so a one-shot compile is untouched.
@@ -282,6 +291,8 @@ class Compiler {
 				var failed = false;
 				try {
 					run(lines);
+					if (reqDbg) { _reqRun = haxe.Timer.stamp() - _rq0; _rq0 = haxe.Timer.stamp();
+						Sys.println("[req] resetForNextRequest=" + Std.int(_reqReset * 1000) + "ms run=" + Std.int(_reqRun * 1000) + "ms"); }
 				} catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) {
 					// A completion answer raised ANYWHERE in the compilation (an init-macro callback
 					// answering a display request, a macro calling send_json) is the request's answer and
@@ -347,6 +358,7 @@ class Compiler {
 	// directly around the run() call does not fire for a raise this deep, so an argument failure would
 	// escape to the runtime and print in its format ("Error : ...", on stdout, exit 127).
 	public static function run(args:Array<String>):Void {
+		_runT0 = reqDbg ? haxe.Timer.stamp() : 0.0;
 		try runInner(args)
 		catch (ra:RequestAbort) throw ra
 		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) throw mj
@@ -864,6 +876,7 @@ class Compiler {
 		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
 		try {
+			if (reqDbg) Sys.println("[req]   setup-before-load=" + Std.int((haxe.Timer.stamp() - _runT0) * 1000) + "ms");
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
 			checkDisplayFile(ctx);
 			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
@@ -1074,7 +1087,9 @@ class Compiler {
 				// context and the server's module check can report on them like any other.
 				var mw = hxc.eval.EvalMacro.macroWorld();
 				if (mw != null) hxc.context.DisplayJson.cache.cacheContext(mw);
+				if (reqDbg) Sys.println("[req]   at-cache-store=" + Std.int((haxe.Timer.stamp() - _runT0) * 1000) + "ms");
 				hxc.compiler.ServerMessage.cachedModules(ctx, "", ctx.modules.length);
+				if (reqDbg) Sys.println("[req]   after-cache-store=" + Std.int((haxe.Timer.stamp() - _runT0) * 1000) + "ms");
 			}
 			if (!isDisplay(ctx, "diagnostics")) abortOnDiagnostics(ctx, platform);
 			// The --xml / --json type descriptions are written after typing but before the target
