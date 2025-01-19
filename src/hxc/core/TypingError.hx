@@ -7,6 +7,7 @@ class TypingError extends haxe.Exception {
 	public final depth:Int;
 
 	public function new(message:String, pos:Position, depth:Int = 0) {
+		hxc.core.PerfCount.exn("TypingError");
 		super(message);
 		this.pos = pos;
 		this.depth = depth;

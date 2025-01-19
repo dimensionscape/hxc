@@ -281,7 +281,35 @@ class Calls {
 		};
 	}
 
+	// HXC_DBG_CALLS: ECall is 39% of exclusive typing time on ordinary code (744ms over 13651 call
+	// sites, 54us each), which is more than the reference spends on its entire typing phase. Split it:
+	// argument unification vs everything else in the call path.
+	public static var caOn:Bool = Sys.getEnv("HXC_DBG_CALLS") != null;
+	public static var caTime:Float = 0;
+	public static var caCalls:Int = 0;
+	public static var caArgs:Int = 0;
+	static var caStack:Array<Float> = [];
+	public static function dumpCalls():Void {
+		if (!caOn) return;
+		Sys.stderr().writeString("[calls] unifyCallArgs " + Std.int(caTime * 1000) + "ms over " + caCalls
+			+ " calls, " + caArgs + " args total
+");
+	}
+
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
+		if (caOn) { caCalls++; caArgs += el.length; caStack.push(0); }
+		var _t0 = caOn ? haxe.Timer.stamp() : 0.0;
+		var _res = unifyCallArgsTimed(ctx, el, args, r, callp);
+		if (caOn) {
+			var child = caStack.pop();
+			var el2 = haxe.Timer.stamp() - _t0;
+			if (caStack.length > 0) caStack[caStack.length - 1] += el2;
+			caTime += el2 - child;
+		}
+		return _res;
+	}
+
+	static function unifyCallArgsTimed(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
 		// ctx.inCallArgs is set around the argument loop.
 		var savedInCallArgs = ctx.inCallArgs;
 		ctx.inCallArgs = true;

@@ -80,6 +80,25 @@ class PerfCount {
 		}
 	}
 
+	public static var exnNotFound = 0;
+	public static var exnUnify = 0;
+	public static var exnTyping = 0;
+	public static var exnContext = 0;
+	public static inline function exn(k:String):Void {
+		switch (k) {
+			case "NotFound": exnNotFound++;
+			case "UnifyError": exnUnify++;
+			case "TypingError": exnTyping++;
+			case _: exnContext++;
+		}
+	}
+	public static function dumpExn():Void {
+		if (Sys.getEnv("HXC_DBG_EXN") == null) return;
+		Sys.stderr().writeString("[exn] NotFound=" + exnNotFound + " UnifyError=" + exnUnify
+			+ " TypingError=" + exnTyping + " ContextError=" + exnContext + "
+");
+	}
+
 	public static function dumpAllocs():Void {
 		if (Sys.getEnv("HXC_DBG_ALLOC") == null) return;
 		var o = Sys.stderr();

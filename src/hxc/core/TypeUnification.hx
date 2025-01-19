@@ -47,6 +47,7 @@ enum UnifyErrorKind {
 class UnifyError extends haxe.Exception {
 	public var errors:Array<UnifyErrorKind>;
 	public function new(errors:Array<UnifyErrorKind>) {
+		hxc.core.PerfCount.exn("UnifyError");
 		super("Unify_error");
 		this.errors = errors;
 	}

@@ -537,6 +537,7 @@ class ContextError {
 	public var depth:Int;
 
 	public function new(message:String, pos:Position, ?kind:ContextErrorKind, depth:Int = 0) {
+		hxc.core.PerfCount.exn("ContextError");
 		this.message = message;
 		this.pos = pos;
 		this.kind = kind == null ? Other : kind;
