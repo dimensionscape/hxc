@@ -44,6 +44,12 @@ enum UnifyErrorKind {
 	Unify_custom(s:String);
 }
 
+// Three-way probe result for the cast-field finders (see findCastFieldOpt).
+enum CastProbe {
+	NoCastNeeded;
+	CastField(c:TAbstractCast);
+}
+
 class UnifyError extends haxe.Exception {
 	public static var siteCounts:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
 	public var errors:Array<UnifyErrorKind>;
@@ -1555,27 +1561,48 @@ class TypeUnification {
 		return typeIseq(defaultUnificationContext, a, b);
 	}
 
-	// Uctx find: try non-transitive first, then transitive.
-	static function findCastField(uctx:UnificationContext, find:UnificationContext->Null<TAbstractCast>):TAbstractCast {
-		var found = try find(uctx.withAllowTransitiveCast(false)) catch (e:NotFound) find(uctx);
-		if (found == null) throw new NotFound("TypeUnification.hx:1566");
-		return found;
+	// Uctx find: try non-transitive first, then transitive. The finder protocol needs three states,
+	// which the old code spelled as value/null/throw: a probe that says "the types unify directly, no
+	// cast needed" must not retry transitively, while "no cast field found" must. Spelling the
+	// difference with an enum instead of an exception removes a ~1.3us hxcpp throw from every
+	// non-transitive miss (the common case in abstract-heavy code) while keeping the retry semantics
+	// bit-identical.
+	static function findCastFieldOpt(uctx:UnificationContext, find:UnificationContext->Null<CastProbe>):Null<TAbstractCast> {
+		var r = find(uctx.withAllowTransitiveCast(false));
+		if (r == null) r = find(uctx); // No field found non-transitively: retry transitively
+		return switch (r) {
+			case null: null;           // No field found at all
+			case NoCastNeeded: null;   // Unifies directly: surfaced as "no cast" without the retry
+			case CastField(c): c;
+		}
 	}
 
 	public static function findFieldFrom(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
 		// The cast field is forced lazily by following cf.type, so an unhinted cast target resolves
 		// before the candidate unifies against it; an unforced target is an open monomorph that matches
 		// anything without constraining the call.
+		var r = findFieldFromOpt(uctx, a, b, ab, tl);
+		if (r == null) throw new NotFound("find_field_from:miss");
+		return r;
+	}
+
+	public static function findFieldFromOpt(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Null<TAbstractCast> {
 		buildAbstract(ab);
 		for (c in ab.fromField) if (unifiesFromField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
-		throw new NotFound("TypeUnification.hx:1577");
+		return null;
 	}
 
 	public static function findFieldTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
 		// Same forcing as findFieldFrom.
+		var r = findFieldToOpt(uctx, a, b, ab, tl);
+		if (r == null) throw new NotFound("find_field_to:miss");
+		return r;
+	}
+
+	public static function findFieldToOpt(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Null<TAbstractCast> {
 		buildAbstract(ab);
 		for (c in ab.toField) if (unifiesToField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
-		throw new NotFound("TypeUnification.hx:1584");
+		return null;
 	}
 
 	// Uctx a ab tl: relate a concrete `a` to the abstract `ab` (the @:from direction). Returns the
@@ -1589,29 +1616,43 @@ class TypeUnification {
 	}
 
 	public static function findFrom(uctx:UnificationContext, a:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		var r = findFromOpt(uctx, a, ab, tl);
+		if (r == null) throw new NotFound("find_from:miss");
+		return r;
+	}
+
+	public static function findFromOpt(uctx:UnificationContext, a:T, ab:TAbstract, tl:Array<T>):Null<TAbstractCast> {
 		buildAbstract(ab);
 		if (TypeFunctions.follow(a) == TypeFunctions.tDynamic) {
 			for (c in ab.fromField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
-			throw new NotFound("TypeUnification.hx:1602");
+			return null;
 		}
 		var b:T = TAbstract(ab, tl);
-		return findCastField(uctx, function(uctx) {
-			if (unifiesFrom(uctx, a, b, ab, tl)) return null;
-			else return findFieldFrom(uctx, a, b, ab, tl);
+		return findCastFieldOpt(uctx, function(uctx) {
+			if (unifiesFrom(uctx, a, b, ab, tl)) return NoCastNeeded;
+			var f = findFieldFromOpt(uctx, a, b, ab, tl);
+			return f == null ? null : CastField(f);
 		});
 	}
 
 	// Uctx b ab tl: relate the abstract `ab` to a concrete `b` (the @:to
 	public static function findTo(uctx:UnificationContext, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
+		var r = findToOpt(uctx, b, ab, tl);
+		if (r == null) throw new NotFound("find_to:miss");
+		return r;
+	}
+
+	public static function findToOpt(uctx:UnificationContext, b:T, ab:TAbstract, tl:Array<T>):Null<TAbstractCast> {
 		buildAbstract(ab);
 		if (TypeFunctions.follow(b) == TypeFunctions.tDynamic) {
 			for (c in ab.toField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
-			throw new NotFound("TypeUnification.hx:1616");
+			return null;
 		}
 		var a:T = TAbstract(ab, tl);
-		return findCastField(uctx, function(uctx) {
-			if (unifiesTo(uctx, a, b, ab, tl)) return null;
-			else return findFieldTo(uctx, a, b, ab, tl);
+		return findCastFieldOpt(uctx, function(uctx) {
+			if (unifiesTo(uctx, a, b, ab, tl)) return NoCastNeeded;
+			var f = findFieldToOpt(uctx, a, b, ab, tl);
+			return f == null ? null : CastField(f);
 		});
 	}
 
@@ -1621,27 +1662,15 @@ class TypeUnification {
 		buildAbstract(a1);
 		buildAbstract(a2);
 		var side:{a:TAbstract, tl:Array<T>} = null;
-		var found:Null<TAbstractCast> = null;
-		var noCast = false;
-		try {
-			found = findCastField(uctx, function(uctx):Null<TAbstractCast> {
-				if (unifiesAbstracts(uctx, a, b, a1, tl1, a2, tl2)) { noCast = true; return null; }
-				else {
-					return try {
-						var tc = findFieldTo(uctx, a, b, a1, tl1);
-						side = {a: a1, tl: tl1};
-						tc;
-					} catch (e:NotFound) {
-						side = {a: a2, tl: tl2};
-						findFieldFrom(uctx, a, b, a2, tl2);
-					}
-				}
-			});
-		} catch (e:NotFound) {
-			if (noCast) return null;
-			throw e;
-		}
-		if (noCast || found == null) return null;
+		var found:Null<TAbstractCast> = findCastFieldOpt(uctx, function(uctx):Null<CastProbe> {
+			if (unifiesAbstracts(uctx, a, b, a1, tl1, a2, tl2)) return NoCastNeeded;
+			var tc = findFieldToOpt(uctx, a, b, a1, tl1);
+			if (tc != null) { side = {a: a1, tl: tl1}; return CastField(tc); }
+			var tf = findFieldFromOpt(uctx, a, b, a2, tl2);
+			if (tf != null) { side = {a: a2, tl: tl2}; return CastField(tf); }
+			return null;
+		});
+		if (found == null) return null;
 		return {a: side.a, tl: side.tl, castField: found};
 	}
 

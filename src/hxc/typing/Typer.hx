@@ -246,41 +246,43 @@ class Typer {
 		try return abstractCastLoop(ctx, e, t, e.type, [], p) catch (_:NotFound) return null;
 	}
 
-	static function abstractCastLoop(ctx:TyperContext, e:TExpr, tleft:T, tright:T, stack:Array<{l:T, r:T}>, p:Position):TExpr {
+	// Null protocol: null means "no implicit cast applies", exactly what the NotFound throws meant.
+	// makeAbstractCast can still raise NotFound (impl-less abstract, macro recursion probe), so the
+	// try/catch stays around it and around the whole loop at the caller; only the finder misses and
+	// the fall-throughs stop throwing.
+	static function abstractCastLoop(ctx:TyperContext, e:TExpr, tleft:T, tright:T, stack:Array<{l:T, r:T}>, p:Position):Null<TExpr> {
 		for (s in stack)
 			if (TypeUnification.fastEq(tleft, s.l) && TypeUnification.fastEq(tright, s.r))
-				throw new NotFound("Typer.hx:260");
+				return null;
 		var stack2 = [{l: tleft, r: tright}].concat(stack);
 		var uctx = TypeUnification.defaultUnificationContext;
 		switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
 				var found = TypeUnification.findToFrom(uctx, e.type, tleft, a2, tl2, a1, tl1);
-				if (found == null) throw new NotFound("Typer.hx:266");
+				if (found == null) return null;
 				return makeAbstractCast(ctx, found.a, found.tl, found.castField, e, tleft, p);
 			case [TAbstract(a, tl), _]:
-				try {
-					return makeAbstractCast(ctx, a, tl, TypeUnification.findFrom(uctx, e.type, a, tl), e, tleft, p);
-				} catch (_:NotFound) {
-					for (tc in a.from) {
-						var tnext = TypeFunctions.applyParams(a.params, tl, tc);
-						if (!TypeUnification.typeIseqDefault(tnext, tleft))
-							return abstractCastLoop(ctx, e, tnext, tright, stack2, p);
-					}
-					throw new NotFound("Typer.hx:277");
+				var ff = TypeUnification.findFromOpt(uctx, e.type, a, tl);
+				if (ff != null)
+					try return makeAbstractCast(ctx, a, tl, ff, e, tleft, p) catch (_:NotFound) {}
+				for (tc in a.from) {
+					var tnext = TypeFunctions.applyParams(a.params, tl, tc);
+					if (!TypeUnification.typeIseqDefault(tnext, tleft))
+						return abstractCastLoop(ctx, e, tnext, tright, stack2, p);
 				}
+				return null;
 			case [_, TAbstract(a, tl)]:
-				try {
-					return makeAbstractCast(ctx, a, tl, TypeUnification.findTo(uctx, tleft, a, tl), e, tleft, p);
-				} catch (_:NotFound) {
-					for (tc in a.to) {
-						var tnext = TypeFunctions.applyParams(a.params, tl, tc);
-						if (!TypeUnification.typeIseqDefault(tnext, tright))
-							return abstractCastLoop(ctx, e, tleft, tnext, stack2, p);
-					}
-					throw new NotFound("Typer.hx:288");
+				var ft = TypeUnification.findToOpt(uctx, tleft, a, tl);
+				if (ft != null)
+					try return makeAbstractCast(ctx, a, tl, ft, e, tleft, p) catch (_:NotFound) {}
+				for (tc in a.to) {
+					var tnext = TypeFunctions.applyParams(a.params, tl, tc);
+					if (!TypeUnification.typeIseqDefault(tnext, tright))
+						return abstractCastLoop(ctx, e, tleft, tnext, stack2, p);
 				}
+				return null;
 			case _:
-				throw new NotFound("Typer.hx:291");
+				return null;
 		}
 	}
 
