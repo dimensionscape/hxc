@@ -1111,11 +1111,11 @@ class TypeUnification {
 							switch (f2.kind) {
 								case Var(vk):
 									function checkAccessor(name:String):Void {
-										try {
-											var cf = TypeFunctions.rawClassField(makeType, c, tl, name).f;
-											if (!TypeFunctions.hasMeta(Meta.MaybeUsed, cf.meta))
-												cf.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(cf.meta);
-										} catch (e:NotFound) {}
+										var r = TypeFunctions.rawClassFieldOpt(makeType, c, tl, name);
+										if (r == null) return;
+										var cf = r.f;
+										if (!TypeFunctions.hasMeta(Meta.MaybeUsed, cf.meta))
+											cf.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(cf.meta);
 									}
 									switch (vk.read) { case AccCall: checkAccessor("get_" + f1.name); case _: }
 									switch (vk.write) { case AccCall: checkAccessor("set_" + f1.name); case _: }

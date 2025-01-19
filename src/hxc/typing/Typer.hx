@@ -3714,7 +3714,7 @@ class Typer {
 			// so a bare call to an inherited method resolves against `this`. The access uses the class the
 			// field was found in as its host.
 			if (!ctx.curfun.match(FunStatic)) {
-				var found = try TypeFunctions.rawClassField(function(f) return TypeFunctions.fieldType(f), ctx.curclass, TypeFunctions.extractParamTypes(ctx.curclass.params), i) catch (_:hxc.core.NotFound) null;
+				var found = TypeFunctions.rawClassFieldOpt(function(f) return TypeFunctions.fieldType(f), ctx.curclass, TypeFunctions.extractParamTypes(ctx.curclass.params), i);
 				if (found != null) {
 					var thisExpr = getThis(ctx, p);
 					var host:FieldHost = switch (found.c2) { case null: FHAnon; case cw: FHInstance(cw.c, cw.params); };

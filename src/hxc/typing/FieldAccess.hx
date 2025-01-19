@@ -126,14 +126,14 @@ class FieldAccessTools {
 									case TInst(ci, tli): c2 = ci; tl2 = tli;
 									case _:
 								}
-								try {
-									var r = TypeFunctions.rawClassField(function(f) return f.type, c2, tl2, name);
+								var r = TypeFunctions.rawClassFieldOpt(function(f) return f.type, c2, tl2, name);
+								if (r != null) {
 									var newHost = switch (r.c2) {
 										case null: FHAnon;
 										case cw: FHInstance(cw.c, cw.params);
 									};
 									AccessorFound({cf: r.f, host: newHost});
-								} catch (_:NotFound) {
+								} else {
 									TypeFunctions.hasClassFlag(c, CExtern) ? AccessorAnon : AccessorNotFound;
 								}
 							case FHAbstract(_, _, c):

@@ -40,7 +40,7 @@ class TypeloadCheck {
 			return;
 		}
 
-		var parent = try TypeFunctions.rawClassField(function(cf) return cf.type, sup.c, sup.params, f.name) catch (_:NotFound) null;
+		var parent = TypeFunctions.rawClassFieldOpt(function(cf) return cf.type, sup.c, sup.params, f.name);
 		if (parent == null) {
 			if (TypeFunctions.hasClassFieldFlag(f, CfOverride))
 				ctx.addDiagnostic("Field " + f.name + " is declared 'override' but doesn't override any field", f.namePos);
