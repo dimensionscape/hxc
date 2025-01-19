@@ -812,7 +812,7 @@ class Compiler {
 						var fp = displayModulePath(ctx, fc.file);
 						if (fp == null) continue;
 						var fnparts = fp.name.split(".");
-						var root = if (fnparts.length == 1) fp
+						var root:Null<Path> = if (fnparts.length == 1) fp
 							else if (fnparts.length == 2 && fnparts[1] != "macro") {pack: fp.pack, name: fnparts[0]}
 							else null;
 						if (root == null) continue;

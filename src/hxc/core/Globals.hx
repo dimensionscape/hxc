@@ -2,7 +2,15 @@ package hxc.core;
 
 import hxc.ast.Position;
 
-typedef Path = {pack:Array<String>, name:String};
+// A real class, not an anonymous structure: hxcpp compiles anon field reads into hashed __Field
+// lookups, and pack/name reads were what remained in the hot call-typing file after the TSignature
+// and FieldAccess conversions. @:structInit keeps the literals.
+@:structInit
+class Path {
+	public var pack:Array<String>;
+	public var name:String;
+	public function new(pack:Array<String>, name:String) { this.pack = pack; this.name = name; }
+}
 
 enum Located {
 	Message(msg:String, p:Position);

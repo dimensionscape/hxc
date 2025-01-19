@@ -1268,7 +1268,7 @@ class Typeload {
 		if (cached != null) { genericBuildCtx = savedGenericCtx; return cached; }
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
-		var path = {pack: c.path.pack, name: c.path.name + suffix};
+		var path:hxc.core.Globals.Path = {pack: c.path.pack, name: c.path.name + suffix};
 		// A user type already claiming the generated name blocks specialization; our own instances hit the
 		// cache above and never reach here. .
 		if (ctx.typeToModule.exists(Context.pathKey(path)))

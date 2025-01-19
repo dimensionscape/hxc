@@ -3191,7 +3191,7 @@ class Typer {
 				}
 			}
 			if (collect(e1) && segs.length >= 2) {
-				var mpath = {pack: segs.slice(0, segs.length - 1), name: segs[segs.length - 1]};
+				var mpath:hxc.core.Globals.Path = {pack: segs.slice(0, segs.length - 1), name: segs[segs.length - 1]};
 				var m = try hxc.context.ModuleLoader.loadModule(ctx.com, mpath, Position.nullPos) catch (_:Dynamic) null;
 				if (m != null) for (mt in m.types) {
 					var info = TypeFunctions.tInfos(mt);
@@ -4472,7 +4472,7 @@ class Typer {
 
 	static function externInlineImplClass(c:TClass):TClass {
 		var m = c.module;
-		var implPath = {pack: m.path.pack.concat(["_" + m.path.name]), name: m.path.name + "_Impl_"};
+		var implPath:hxc.core.Globals.Path = {pack: m.path.pack.concat(["_" + m.path.name]), name: m.path.name + "_Impl_"};
 		for (mt in m.types) switch (mt) {
 			case TClassDecl(c2) if (samePath(c2.path, implPath)):
 				return c2;

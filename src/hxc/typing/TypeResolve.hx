@@ -121,7 +121,7 @@ class TypeResolve {
 					if (usingClass != null) addUsing(mt, usingClass, param.pos);
 					continue;
 				}
-				var path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
+				var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
 				var um = try hxc.context.ModuleLoader.loadModule(ctx, path, param.pos) catch (_:Dynamic) null;
 				if (um != null) {
 					// filter_classes reverses the type list, then the result is prepended; unshifting in

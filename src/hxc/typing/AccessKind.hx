@@ -12,36 +12,60 @@ enum FieldHost {
 	FHAnon;
 }
 
-typedef FieldAccess = {
+// Real CLASSES, not anonymous typedefs: hxcpp compiles anon field reads into hashed __Field
+// lookups, and the generated call-typing code still showed field 22 / access 13 / host 11 such
+// sites after the TSignature conversion. These records ride through every field access the typer
+// resolves. @:structInit keeps the {on: ..., ...} literals working.
+@:structInit
+class FieldAccess {
 	// The expression on which the field is accessed (for abstracts, a type expression to the impl).
-	on:TExpr,
+	public var on:TExpr;
 	// The field being accessed (for overloads, the main field hosting overloads).
-	field:TClassField,
+	public var field:TClassField;
 	// The host of the field.
-	host:FieldHost,
+	public var host:FieldHost;
 	// Whether to inline the access (set for non-inline fields via `inline call` syntax).
-	isInline:Bool,
+	public var isInline:Bool;
 	// The position of the field-access expression in syntax.
-	pos:Position,
+	public var pos:Position;
+	public function new(on:TExpr, field:TClassField, host:FieldHost, isInline:Bool, pos:Position) {
+		this.on = on;
+		this.field = field;
+		this.host = host;
+		this.isInline = isInline;
+		this.pos = pos;
+	}
 }
 
-typedef StaticExtensionAccess = {
+@:structInit
+class StaticExtensionAccess {
 	// The `this` expression passed as the first argument.
-	thisExpr:TExpr,
+	public var thisExpr:TExpr;
 	// The field access information.
-	access:FieldAccess,
+	public var access:FieldAccess;
+	public function new(thisExpr:TExpr, access:FieldAccess) {
+		this.thisExpr = thisExpr;
+		this.access = access;
+	}
 }
 
 // Safe_nav_access (the `?.` chain).
-typedef SafeNavAccess = {
+@:structInit
+class SafeNavAccess {
 	// Position of the safe-navigation chain start (the initial `?.field` expression).
-	pos:Position,
+	public var pos:Position;
 	// Starting value to be checked for null.
-	base:TExpr,
+	public var base:TExpr;
 	// Temp var declaration to store a complex base expression.
-	tempVar:Null<TExpr>,
+	public var tempVar:Null<TExpr>;
 	// Safe-navigation access to be done if the base value is not null.
-	access:AccessKind,
+	public var access:AccessKind;
+	public function new(pos:Position, base:TExpr, tempVar:Null<TExpr>, access:AccessKind) {
+		this.pos = pos;
+		this.base = base;
+		this.tempVar = tempVar;
+		this.access = access;
+	}
 }
 
 enum AccessMode {

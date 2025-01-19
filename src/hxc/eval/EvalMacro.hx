@@ -980,7 +980,7 @@ class EvalMacro {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
 				if (t != null) {
-					var targetPath = {pack: t.pack, name: t.name};
+					var targetPath:hxc.core.Globals.Path = {pack: t.pack, name: t.name};
 					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
 					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, c.module);
 				}
@@ -1009,7 +1009,7 @@ class EvalMacro {
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
-					var targetPath = target == null ? null : {pack: target.pack, name: target.name};
+					var targetPath:Null<hxc.core.Globals.Path> = target == null ? null : {pack: target.pack, name: target.name};
 					var targetModule = targetPath == null ? null : com.typeToModule.get(Context.pathKey(targetPath));
 					var cf = target == null ? null : macroWorldField(targetPath, target.method, targetModule);
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };

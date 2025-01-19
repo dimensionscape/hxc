@@ -948,8 +948,8 @@ class Fields {
 
 	// Compiler-wide static extensions applied to every module: haxe.EnumTools.{EnumTools, EnumValueTools}
 	// (so EnumValue.getIndex / Enum.createByName resolve without an explicit `using`). .
-	static var globalUsingModules = [{pack: ["haxe"], name: "EnumTools"}];
-	static var macroToolsUsingModules = [
+	static var globalUsingModules:Array<hxc.core.Globals.Path> = [{pack: ["haxe"], name: "EnumTools"}];
+	static var macroToolsUsingModules:Array<hxc.core.Globals.Path> = [
 		{pack: ["haxe", "macro"], name: "ExprTools"},
 		{pack: ["haxe", "macro"], name: "ComplexTypeTools"},
 		{pack: ["haxe", "macro"], name: "TypeTools"},

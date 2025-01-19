@@ -451,7 +451,7 @@ class ModuleLoader {
 				return split.sub != null ? {pack: modulePath.pack.concat([modulePath.name]), name: split.sub} : modulePath;
 			}
 			if (split.modulePath.pack.length == 0 && m.path.pack.length > 0) {
-				var localModulePath = {pack: m.path.pack, name: split.modulePath.name};
+				var localModulePath:hxc.core.Globals.Path = {pack: m.path.pack, name: split.modulePath.name};
 				imports.usings.push(usingPath(localModulePath));
 				imports.usingImp.push(impIdx);
 			}

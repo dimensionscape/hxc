@@ -1290,7 +1290,7 @@ class Calls {
 	// Find or create the module-level container class for one @:genericClassPerMethod method
 	// specialization.
 	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, params:TParams):TClass {
-		var path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + genericSuffix(params)};
+		var path:hxc.core.Globals.Path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + genericSuffix(params)};
 		var key = hxc.context.Context.pathKey(path);
 		var existing = ctx.com.moduleLut.get(key);
 		if (existing != null) {

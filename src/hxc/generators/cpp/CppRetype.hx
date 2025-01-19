@@ -397,7 +397,7 @@ private class RetypeSession {
 				{def: CppTry(cppBlock, cppCatches), t: TCppVoid};
 			// TTypeExpr: a type reference becomes CppClassOf; the cpp.Int64 impl maps to cpp.Int64
 			case TTypeExpr(mt):
-				var path = switch (mt) {
+				var path:hxc.core.Globals.Path = switch (mt) {
 					case TClassDecl(c) if (c.path.pack.length == 2 && c.path.pack[0] == "cpp" && c.path.pack[1] == "_Int64" && c.path.name == "Int64_Impl_"): {pack: ["cpp"], name: "Int64"};
 					case _: CppTypeOf.tPath(mt);
 				};
