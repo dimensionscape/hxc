@@ -1085,7 +1085,7 @@ class EvalMacro {
 		var p = isInstance ? ec.instancePrototypes.get(EvalHash.pathHash(path)) : ec.staticPrototypes.get(EvalHash.pathHash(path));
 		if (p != null && p.pnames.exists(EvalHash.hash(field))) return p;
 		if (isInstance || macroCom == null) return p;
-		var m = try hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) null;
+		var m = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos) catch (_:Dynamic) null;
 		// Only the REQUESTED class (or the module-statics carrier) may satisfy the lookup; a same-module
 		// sibling with a same-named static must not shadow it (macros resolve by exact path + method).
 		if (m != null) for (mt in m.types) switch (mt) {
@@ -1103,14 +1103,14 @@ class EvalMacro {
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash({pack: t.pack, name: t.name}));
 		// `Module.method` prefers the module-level static over a same-named class's static.
 		if (t.moduleOnly) {
-			var mm = try hxc.context.ModuleLoader.loadModule(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+			var mm = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
 			if (mm != null && mm.statics != null && mm.statics.statics.exists(t.method)) {
 				var sproto = ec.staticPrototypes.get(EvalHash.pathHash(mm.statics.path));
 				if (sproto != null && sproto.pnames.exists(EvalHash.hash(t.method))) proto = sproto;
 			}
 		}
 		if (proto == null || !proto.pnames.exists(EvalHash.hash(t.method))) {
-			var m = try hxc.context.ModuleLoader.loadModule(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+			var m = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
 			if (m != null) for (mt in m.types) switch (mt) {
 				case TClassDecl(c) if (c.statics.exists(t.method)):
 					proto = ec.staticPrototypes.get(EvalHash.pathHash(c.path));

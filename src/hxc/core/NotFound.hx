@@ -19,6 +19,13 @@ class NotFound extends haxe.Exception {
 		for (k in hxc.core.TypeUnification.UnifyError.siteCounts.keys())
 			Sys.stderr().writeString("[uesite] " + StringTools.lpad(Std.string(hxc.core.TypeUnification.UnifyError.siteCounts.get(k)), " ", 9) + "  " + k + "
 ");
+		{
+			var cr = [for (k in hxc.context.Context.ContextError.msgCounts.keys()) {n: k, c: hxc.context.Context.ContextError.msgCounts.get(k)}];
+			cr.sort(function(a, b) return a.c < b.c ? 1 : -1);
+			for (i in 0...(cr.length < 8 ? cr.length : 8))
+				Sys.stderr().writeString("[cesite] " + StringTools.lpad(Std.string(cr[i].c), " ", 9) + "  " + cr[i].n + "
+");
+		}
 		var rows = [for (k in siteCounts.keys()) {n: k, c: siteCounts.get(k)}];
 		rows.sort(function(a, b) return a.c < b.c ? 1 : -1);
 		var o = Sys.stderr();

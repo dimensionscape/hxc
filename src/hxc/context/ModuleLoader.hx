@@ -274,7 +274,7 @@ class ModuleLoader {
 				var sub:Null<String> = null;
 				// Display a trailing static segment as an ordinary access on its module type or subtype.
 				function staticField(typeName:String, field:String, fp:Position):Void {
-					var m2 = try loadModule(ctx, {pack: pack, name: mod}, fp) catch (_:Dynamic) null;
+					var m2 = try loadModuleOpt(ctx, {pack: pack, name: mod}, fp) catch (_:Dynamic) null;
 					if (m2 == null) return;
 					// Build the class before display; merely loaded field signatures still contain open
 					// monomorphs.
@@ -305,7 +305,7 @@ class ModuleLoader {
 							// A lowercase segment following the module names a static of its main type, not a subtype.
 							if (isLower) staticField(mod, part.name, part.pos);
 							else {
-								var m2 = try loadModule(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
+								var m2 = try loadModuleOpt(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
 								if (m2 != null) for (mt in m2.types)
 									if (TypeFunctions.tInfos(mt).path.name == part.name)
 										hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
@@ -318,7 +318,7 @@ class ModuleLoader {
 					}
 					if (isLower) { pack.push(part.name); continue; }
 					if (hxc.typing.Typer.atDisplayPos(part.pos)) {
-						var m2 = try loadModule(ctx, {pack: pack, name: part.name}, part.pos) catch (_:Dynamic) null;
+						var m2 = try loadModuleOpt(ctx, {pack: pack, name: part.name}, part.pos) catch (_:Dynamic) null;
 						if (m2 != null) for (mt in m2.types)
 							if (TypeFunctions.tInfos(mt).path.name == part.name)
 								hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
@@ -1292,7 +1292,21 @@ class ModuleLoader {
 	// While a module is retyped, only modules already cached may load.
 	public static var loadOnlyCachedModules:Bool = false;
 
+	// Null for "no such module". The three not-found exits below each built a
+	// "Type not found : <path>" ContextError (a string concatenation per probe) and threw it
+	// ~39.5k times per unit-suite compile, almost all consumed by the unqualified-resolution
+	// walk probing package prefixes that do not exist. Genuine errors (parse failures,
+	// duplicate declarations) still raise from inside typeModule and propagate unchanged.
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
+		var r = loadModuleOpt(ctx, m, p);
+		if (r == null) {
+			m = ctx.remapPath(m);
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		}
+		return r;
+	}
+
+	public static function loadModuleOpt(ctx:Context, m:Path, p:Position):Null<ModuleDef> {
 		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
@@ -1307,9 +1321,9 @@ class ModuleLoader {
 		// what tells the retyper its signature depends on something the compilation no longer has (Could
 		// not load).
 		if (loadOnlyCachedModules)
-			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			return null;
 		if (ctx.moduleNonexistentLut.exists(key))
-			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+			return null;
 
 		var file:String;
 		var externDecls:Null<Array<hxc.ast.Ast.TypeDecl>> = null;
@@ -1325,7 +1339,7 @@ class ModuleLoader {
 			}
 			if (externDecls == null) {
 				ctx.moduleNonexistentLut.set(key, true);
-				throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+				return null;
 			}
 		}
 
@@ -1402,7 +1416,7 @@ class ModuleLoader {
 						var i = cpack.length;
 						while (i >= 1) {
 							var tryPack = cpack.slice(0, i);
-							var m = try loadModule(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
+							var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
 							if (m != null) {
 								try { return findTypeInModule(m, tname, p); } catch (_:ContextError) {}
 							}
@@ -1420,7 +1434,7 @@ class ModuleLoader {
 					var i = pack.length;
 					while (i >= 1) {
 						var tryPack = pack.slice(0, i);
-						var m = try loadModule(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
+						var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
 						if (m != null) {
 							try { return findTypeInModule(m, tname, p); } catch (_:ContextError) {}
 						}
@@ -1433,7 +1447,7 @@ class ModuleLoader {
 					// own; resolve the module from the last pack segment and find the sub-type in it.
 					var mname = path.pack[path.pack.length - 1];
 					var mpack = path.pack.slice(0, path.pack.length - 1);
-					var m = try loadModule(ctx, {pack: mpack, name: mname}, p) catch (_:ContextError) null;
+					var m = try loadModuleOpt(ctx, {pack: mpack, name: mname}, p) catch (_:ContextError) null;
 					if (m != null) {
 						try { return findTypeInModule(m, path.name, p); } catch (_:ContextError) {}
 					}
@@ -1489,11 +1503,11 @@ class ModuleLoader {
 					if (r != null) { imports.markImport(ni.impIdx); return r; }
 					continue;
 				}
-				var m = try loadModule(ctx, ni.modulePath, p) catch (_:ContextError) continue;
+				var m = { var _m = try loadModuleOpt(ctx, ni.modulePath, p) catch (_:ContextError) null; if (_m == null) continue; _m; };
 				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markImport(ni.impIdx); return mt; }
 			}
 			for (wp in imports.wildcards) {
-				var m = try loadModule(ctx, wp, p) catch (_:ContextError) continue;
+				var m = { var _m = try loadModuleOpt(ctx, wp, p) catch (_:ContextError) null; if (_m == null) continue; _m; };
 				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markWildcard(wp); return mt; }
 			}
 		}
@@ -1503,7 +1517,8 @@ class ModuleLoader {
 	// Load module `mp`, return its sub-type whose full path == `want` (or null). Used by the
 	// qualified-path-via-imports resolver above.
 	static function tryLoadSubFull(ctx:Context, mp:Path, want:Path, p:Position):Null<ModuleType> {
-		var m = try loadModule(ctx, mp, p) catch (_:ContextError) return null;
+		var m = try loadModuleOpt(ctx, mp, p) catch (_:ContextError) return null;
+		if (m == null) return null;
 		for (mt in m.types) {
 			var tp = TypeFunctions.tInfos(mt).path;
 			if (tp.name == want.name && samePack(tp.pack, want.pack)) return mt;
@@ -1657,7 +1672,7 @@ class ModuleLoader {
 				// shadowing the top-level std `Type` class (`Type.enumEq` -> crash). Matches the module name,
 				// so a module
 				// `pack/Name.hx` is only a hit when it actually declares the type `Name`.
-				var m = try loadModule(ctx, {pack: tryPack, name: name}, p) catch (_:ContextError) null;
+				var m = try loadModuleOpt(ctx, {pack: tryPack, name: name}, p) catch (_:ContextError) null;
 				if (m != null) {
 					var r = findTypeInModuleOpt(m, name);
 					if (r != null) return r;
@@ -1671,7 +1686,8 @@ class ModuleLoader {
 	// Load module `mp` and return its sub-type `sub` (or null on any failure). Idempotent /
 	// non-throwing, used by the speculative bare-name resolution above.
 	static function tryLoadSub(ctx:Context, mp:Path, sub:String, p:Position):Null<ModuleType> {
-		var m = try loadModule(ctx, mp, p) catch (_:ContextError) return null;
+		var m = try loadModuleOpt(ctx, mp, p) catch (_:ContextError) return null;
+		if (m == null) return null;
 		return findTypeInModuleOpt(m, sub);
 	}
 
@@ -1683,7 +1699,8 @@ class ModuleLoader {
 	// `Bar`, claimed the name `Type` for `Foo` and made the stdlib Type unreachable from anywhere
 	// inside `pack`.
 	static function tryLoadModuleMain(ctx:Context, mp:Path, p:Position):Null<ModuleType> {
-		var m = try loadModule(ctx, mp, p) catch (_:ContextError) return null;
+		var m = try loadModuleOpt(ctx, mp, p) catch (_:ContextError) return null;
+		if (m == null) return null;
 		return findTypeInModuleOpt(m, mp.name);
 	}
 
