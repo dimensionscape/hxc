@@ -109,7 +109,7 @@ class InterfaceCheck {
 			TypeUnification.unifyDefault(a, b);
 			if (TypeFunctions.isNull(a) != TypeFunctions.isNull(b)
 				|| (isDynamicT(TypeFunctions.follow(a)) && !isDynamicT(TypeFunctions.follow(b))))
-				throw new UnifyError([Cannot_unify(a, b)]);
+				throw new UnifyError([Cannot_unify(a, b)], "InterfaceCheck.hx:114");
 		}
 		// Type parameters: for equal non-empty param lists both types are applied to the same fresh
 		// placeholder types; any other param list leaves the types unchanged.
@@ -123,7 +123,7 @@ class InterfaceCheck {
 			case [Method(m1), Method(m2)] if (m1 != MethDynamic && m2 != MethDynamic):
 				switch [TypeFunctions.follow(pt1), TypeFunctions.follow(pt2)] {
 					case [TFun(sig1), TFun(sig2)]:
-						if (sig1.args.length != sig2.args.length) throw new UnifyError([Unify_custom("Different number of function arguments")]);
+						if (sig1.args.length != sig2.args.length) throw new UnifyError([Unify_custom("Different number of function arguments")], "InterfaceCheck.hx:129");
 						// `i` is 0 while checking the return, then the 1-based argument index. The failing
 						// position selects Invalid_return_type vs Invalid_function_argument.
 						var i = 0;
@@ -132,12 +132,12 @@ class InterfaceCheck {
 							for (k in 0...sig1.args.length) {
 								i = k + 1;
 								var a1 = sig1.args[k], a2 = sig2.args[k];
-								if (a1.opt != a2.opt) throw new UnifyError([Not_matching_optional(a1.name)]);
-								try valid(a2.t, a1.t) catch (_:UnifyError) throw new UnifyError([Cannot_unify(a1.t, a2.t)]);
+								if (a1.opt != a2.opt) throw new UnifyError([Not_matching_optional(a1.name)], "InterfaceCheck.hx:138");
+								try valid(a2.t, a1.t) catch (_:UnifyError) throw new UnifyError([Cannot_unify(a1.t, a2.t)], "InterfaceCheck.hx:139");
 							}
 						} catch (e:UnifyError) {
 							var msg:UnifyErrorKind = i == 0 ? Invalid_return_type : Invalid_function_argument(i, sig1.args.length);
-							throw new UnifyError([Cannot_unify(pt1, pt2), msg].concat(e.errors));
+							throw new UnifyError([Cannot_unify(pt1, pt2), msg].concat(e.errors), "InterfaceCheck.hx:143");
 						}
 					case _:
 				}
@@ -149,7 +149,7 @@ class InterfaceCheck {
 				valid(pt1, pt2);
 			case _:
 				TypeUnification.typeEqKind(EqStrict, pt1, pt2);
-				if (TypeFunctions.isNull(pt1) != TypeFunctions.isNull(pt2)) throw new UnifyError([Cannot_unify(pt1, pt2)]);
+				if (TypeFunctions.isNull(pt1) != TypeFunctions.isNull(pt2)) throw new UnifyError([Cannot_unify(pt1, pt2)], "InterfaceCheck.hx:155");
 		}
 	}
 

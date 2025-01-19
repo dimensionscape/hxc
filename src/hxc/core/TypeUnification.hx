@@ -45,9 +45,14 @@ enum UnifyErrorKind {
 }
 
 class UnifyError extends haxe.Exception {
+	public static var siteCounts:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
 	public var errors:Array<UnifyErrorKind>;
-	public function new(errors:Array<UnifyErrorKind>) {
+	public function new(errors:Array<UnifyErrorKind>, ?site:String) {
 		hxc.core.PerfCount.exn("UnifyError");
+		if (site != null) {
+			var c = siteCounts.get(site);
+			siteCounts.set(site, c == null ? 1 : c + 1);
+		}
 		super("Unify_error");
 		this.errors = errors;
 	}

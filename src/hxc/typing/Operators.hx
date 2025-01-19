@@ -681,7 +681,7 @@ class Operators {
 
 	static function checkNullArg(e:TExpr, t:T):Void {
 		switch (e.expr) {
-			case TConst(TNull) if (!TypeFunctions.isExplicitNull(t)): throw new UnifyError([]);
+			case TConst(TNull) if (!TypeFunctions.isExplicitNull(t)): throw new UnifyError([], "Operators.hx:694");
 			case _:
 		}
 	}

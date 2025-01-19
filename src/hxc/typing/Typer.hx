@@ -6041,7 +6041,7 @@ class Typer {
 		try {
 			TypeUnification.withMonoRollback(function():Bool {
 				try result = f() catch (e:haxe.Exception) thrown = e;
-				throw new UnifyError([]);
+				throw new UnifyError([], "Typer.hx:6225");
 			});
 		} catch (_:UnifyError) {}
 		if (thrown != null) throw thrown;
