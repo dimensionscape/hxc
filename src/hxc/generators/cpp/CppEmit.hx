@@ -552,7 +552,7 @@ class CppEmit {
 
 	// Arg types (optionally with names); an optional scalar arg is wrapped in ::hx::Null< > since a scalar
 	// cannot itself hold null.
-	function ctxTfunArgList(includeNames:Bool, args:Array<{name:String, opt:Bool, t:T}>):String {
+	function ctxTfunArgList(includeNames:Bool, args:Array<hxc.core.Type.TSignatureArg>):String {
 		function oType(o:Bool, argType:T):String {
 			var typeStr = CppTypeText.tcppToString(CppTypeOf.cppTypeOf(argType));
 			return (o && CppTypeOf.cppTypeOf(argType).match(TCppScalar(_)) && typeStr != "Dynamic")

@@ -120,8 +120,32 @@ enum TLazy {
 	LWait(f:Void->T);
 }
 
-typedef TSignatureArg = {name:String, opt:Bool, t:T};
-typedef TSignature = {args:Array<TSignatureArg>, ret:T};
+// Real CLASSES, not anonymous structures. hxcpp compiles every field read on an anon into a hashed
+// __Field lookup; the generated call-typing code did ~170 such lookups per site on exactly these
+// fields (args 45, t 37, ret 33, name 25, opt 15 in Calls.cpp), inside the unifyCallArgs machinery
+// that runs 19k times per compile at 26us each. @:structInit keeps every {name: ..., opt: ..., t:
+// ...} literal in the codebase working.
+@:structInit
+class TSignatureArg {
+	public var name:String;
+	public var opt:Bool;
+	public var t:T;
+	public function new(name:String, opt:Bool, t:T) {
+		this.name = name;
+		this.opt = opt;
+		this.t = t;
+	}
+}
+
+@:structInit
+class TSignature {
+	public var args:Array<TSignatureArg>;
+	public var ret:T;
+	public function new(args:Array<TSignatureArg>, ret:T) {
+		this.args = args;
+		this.ret = ret;
+	}
+}
 
 typedef TParams = Array<T>;
 

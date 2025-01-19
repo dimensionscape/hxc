@@ -337,7 +337,7 @@ class CppGenClass {
 	}
 
 	// The C++ arg list for a bare function signature, each optional scalar widened to ::hx::Null< T >.
-	function ctxTfunArgList(args:Array<{name:String, opt:Bool, t:T}>, includeNames:Bool):String {
+	function ctxTfunArgList(args:Array<hxc.core.Type.TSignatureArg>, includeNames:Bool):String {
 		return [for (a in args) {
 			var typeStr = ctxTypeString(a.t);
 			var t = (a.opt && CppTypeOf.cppTypeOf(a.t).match(TCppScalar(_)) && typeStr != "Dynamic") ? "::hx::Null< " + typeStr + " > " : typeStr;
@@ -1515,7 +1515,7 @@ class CppGenClass {
 	}
 
 	// The member-function-pointer cast text for a function type.
-	function cppTfunSig(ret:T, args:Array<{name:String, opt:Bool, t:T}>):String {
+	function cppTfunSig(ret:T, args:Array<hxc.core.Type.TSignatureArg>):String {
 		return "( " + ctxTypeString(ret) + " (::hx::Object::*)(" + ctxTfunArgList(args, false) + "))";
 	}
 

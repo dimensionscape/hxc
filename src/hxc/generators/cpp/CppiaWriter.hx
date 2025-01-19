@@ -457,7 +457,7 @@ class CppiaWriter {
 		genExpression(fieldExpression);
 	}
 
-	public function func(isStatic:Bool, isDynamic:Bool, funcName:String, ret:T, args:Array<{name:String, opt:Bool, t:T}>,
+	public function func(isStatic:Bool, isDynamic:Bool, funcName:String, ret:T, args:Array<hxc.core.Type.TSignatureArg>,
 			isInterface:Bool, fieldExpression:Null<TExpr>, abstractPos:Position):Void {
 		comment(funcName);
 		write(op(IaFunction) + staticText(isStatic) + " " + boolText(isDynamic) + " " + stringText(funcName) + " ");

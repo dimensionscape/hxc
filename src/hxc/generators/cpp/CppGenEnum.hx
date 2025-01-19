@@ -43,7 +43,7 @@ class CppGenEnum {
 	}
 
 	// The arg list with names: an optional scalar arg is wrapped in ::hx::Null< >.
-	static function tfunArgList(args:Array<{name:String, opt:Bool, t:T}>):String {
+	static function tfunArgList(args:Array<hxc.core.Type.TSignatureArg>):String {
 		function oType(o:Bool, argType:T):String {
 			var typeStr = CppTypeText.tcppToString(CppTypeOf.cppTypeOf(argType));
 			return (o && CppTypeOf.cppTypeOf(argType).match(TCppScalar(_)) && typeStr != "Dynamic")

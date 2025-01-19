@@ -1165,7 +1165,7 @@ class Typeload {
 					tl2 == null ? t : TAbstract(a, tl2);
 				case TFun(sig):
 					var changed = false;
-					var args = [for (a in sig.args) { var y = loop(a.t); if (y != a.t) changed = true; {name: a.name, opt: a.opt, t: y}; }];
+					var args:Array<hxc.core.Type.TSignatureArg> = [for (a in sig.args) { var y = loop(a.t); if (y != a.t) changed = true; ({name: a.name, opt: a.opt, t: y} : hxc.core.Type.TSignatureArg); }];
 					var ret = loop(sig.ret);
 					if (ret != sig.ret) changed = true;
 					changed ? TFun({args: args, ret: ret}) : t;

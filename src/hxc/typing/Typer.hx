@@ -1861,7 +1861,7 @@ class Typer {
 						if (retVoid && !withType.match(NoValue)) continue;
 						var rest = sig.args.slice(1);
 						sigs.push({
-							args: [for (x in rest) {name: x.name, opt: x.opt, t: TypeFunctions.applyParams(a.params, tl, x.t)}],
+							args: ([for (x in rest) ({name: x.name, opt: x.opt, t: TypeFunctions.applyParams(a.params, tl, x.t)} : hxc.core.Type.TSignatureArg)] : Array<hxc.core.Type.TSignatureArg>),
 							ret: TypeFunctions.applyParams(a.params, tl, sig.ret),
 							doc: cf.doc
 						});

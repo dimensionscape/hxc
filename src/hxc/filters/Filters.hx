@@ -726,7 +726,7 @@ class Filters {
 		function maybeCast(e:TExpr, t:T, p:Position):TExpr {
 			return TypeUnification.typeIseqDefault(e.type, t) ? e : TypeFunctions.mk(TCast(e, null), t, p);
 		}
-		function funType(fa:TFieldAccess):{t:T, args:Array<{name:String, opt:Bool, t:T}>, ret:T} {
+		function funType(fa:TFieldAccess):{t:T, args:Array<hxc.core.Type.TSignatureArg>, ret:T} {
 			var t = switch (fa) {
 				case FStatic(_, cf): cf.type;
 				case FInstance(c, tl, cf): TypeFunctions.applyParams(c.params, tl, cf.type);
