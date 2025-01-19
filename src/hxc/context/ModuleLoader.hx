@@ -133,22 +133,7 @@ class ModuleLoader {
 		return Position.getFileContent(file);
 	}
 
-	public static var rmfCalls:Int = 0;
-	public static var tMakeModule:Float = 0.0;
-	public static var tCreateTypes:Float = 0.0;
-	public static var tAddModule:Float = 0.0;
-	public static var tImports:Float = 0.0;
-	public static var typeModuleCalls:Int = 0;
-	public static var rmfSecs:Float = 0.0;
-	public static var defineTypeCalls:Int = 0;
-	public static var dbgResolve:Bool = Sys.getEnv("HXC_DBG_RESOLVE") != null;
-
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
-		if (dbgResolve) { rmfCalls++; var _t = haxe.Timer.stamp(); var _r = resolveModuleFileInner(ctx, m, p); rmfSecs += haxe.Timer.stamp() - _t; return _r; }
-		return resolveModuleFileInner(ctx, m, p);
-	}
-
-	static function resolveModuleFileInner(ctx:Context, m:Path, p:Position):String {
 		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
 		if (ctx.isMacro) {
 			try return findFile(ctx, prefix + ".macro.hx", m, p) catch (_:ContextError) {}
@@ -1148,18 +1133,13 @@ class ModuleLoader {
 	}
 
 	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
-		var _p = dbgResolve ? haxe.Timer.stamp() : 0.0;
 		var m = makeModule(ctx, mpath, file);
-		if (dbgResolve) { tMakeModule += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
-		if (dbgResolve) { tCreateTypes += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		addModule(ctx, m);
-		if (dbgResolve) { tAddModule += haxe.Timer.stamp() - _p; _p = haxe.Timer.stamp(); }
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
 		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
-		if (dbgResolve) { tImports += haxe.Timer.stamp() - _p; typeModuleCalls++; }
 		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
 		// dependency too. .
 		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
@@ -1177,7 +1157,6 @@ class ModuleLoader {
 		// The path check applies to Context.defineType too.
 		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
-		if (dbgResolve) defineTypeCalls++;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
 	}
@@ -1218,7 +1197,6 @@ class ModuleLoader {
 		// The path check reports at the first decoded type's position.
 		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;
-		if (dbgResolve) defineTypeCalls++;
 		ctx.moduleNonexistentLut = new StringMap();
 		return m;
 	}
@@ -1382,7 +1360,6 @@ class ModuleLoader {
 
 	public static function loadTypeDef(ctx:Context, path:Path, p:Position, ?sub:String):ModuleType {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("loadTypeDef");
-		hxc.core.PerfCount.gcSample();
 		var tname = sub != null ? sub : path.name;
 		// In-module sibling type: a bare unqualified name (no pack, no sub) is resolved
 		// `ctx.m.curmod` before the filesystem). This makes a module-level `enum`/class/etc.

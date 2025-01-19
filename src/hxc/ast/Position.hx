@@ -9,9 +9,7 @@ class Position {
 	public var min:Int;
 	public var max:Int;
 
-	public static var nalloc:Int = 0;
 	public function new(file:String, min:Int, max:Int) {
-		nalloc++;
 		this.file = file;
 		this.min = min;
 		this.max = max;
@@ -22,10 +20,6 @@ class Position {
 	static var fileCache:StringMap<PositionFile> = new StringMap();
 
 	// Clear cached contents between server requests so a changed file is reread.
-	public static function dbgRoots():Array<{name:String, root:Dynamic}> {
-		return [{name: "Position.fileCache", root: fileCache}];
-	}
-
 	public static function resetFileCache():Void {
 		fileCache = new StringMap();
 	}

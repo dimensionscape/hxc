@@ -539,7 +539,7 @@ class ContextError {
 	public static var msgCounts:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
 	public function new(message:String, pos:Position, ?kind:ContextErrorKind, depth:Int = 0) {
 		hxc.core.PerfCount.exn("ContextError");
-		{
+		if (hxc.core.PerfCount.exnDbg) {
 			// Group construction counts by message prefix.
 			var k = message.length > 24 ? message.substr(0, 24) : message;
 			var c = msgCounts.get(k);

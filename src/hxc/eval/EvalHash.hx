@@ -10,10 +10,6 @@ class EvalHash {
 	static var reverse:Map<Int, String> = new Map();
 	static var nextId:Int = 0;
 
-	public static function dbgRoots():Array<{name:String, root:Dynamic}> {
-		return [{name: "EvalHash.forward", root: forward}, {name: "EvalHash.reverse", root: reverse}];
-	}
-
 	public static function hash(s:String):Int {
 		var id = forward.get(s);
 		if (id != null) return id;

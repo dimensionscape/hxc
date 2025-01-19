@@ -12,9 +12,6 @@ class PerfCount {
 		counts.set(k, c == null ? 1 : c + 1);
 	}
 
-	// Live-instance census by class (HXC_DBG_CENSUS). Gc.trace walks the heap and counts
-	// instances, so unlike attribution-by-removal it is not confounded by the conservative
-	// stack scan pinning a structure whose only remaining reference is a dead local.
 	// HXC_DBG_WALK: count the nodes actually REACHABLE from the compiler's own roots.
 	// Unlike attribution-by-removal this cannot be confounded by the conservative stack
 	// scan, and unlike Gc.trace it needs no debug runtime. Answers one question: is the
@@ -59,27 +56,11 @@ class PerfCount {
 		o.flush();
 	}
 
-	// HXC_DBG_GCTRACE: sample the heap IN USE along a hot path without forcing a collection.
-	// A drop between samples means the collector ran, which is how a phase is shown to be
-	// collection-bound rather than slow at its own work.
-	public static var gcTrace:Bool = Sys.getEnv("HXC_DBG_GCTRACE") != null;
-	static var gcN:Int = 0;
-	static var gcLast:Float = 0;
-	public static inline function gcSample():Void {
-		if (gcTrace) {
-			gcN++;
-			if (gcN % 200 == 0) {
-				#if cpp
-				var cur = cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_CURRENT) / 1048576.0;
-				Sys.stderr().writeString("[gctrace] #" + gcN + " current=" + Std.int(cur) + "MB"
-					+ (cur < gcLast - 1 ? "  <-- COLLECTED" : "") + "
-");
-				gcLast = cur;
-				#end
-			}
-		}
-	}
-
+	// Exception-construction counters (HXC_DBG_EXN). The class-total bumps are always on (an int increment
+	// costs nothing next to the throw itself); the per-site StringMap counting in each exception
+	// constructor checks exnDbg first, and the dump is env-gated. hxcpp throws are expensive, and the typer
+	// uses exceptions for CONTROL FLOW.
+	public static var exnDbg:Bool = Sys.getEnv("HXC_DBG_EXN") != null;
 	public static var exnNotFound = 0;
 	public static var exnUnify = 0;
 	public static var exnTyping = 0;
@@ -97,18 +78,6 @@ class PerfCount {
 		Sys.stderr().writeString("[exn] NotFound=" + exnNotFound + " UnifyError=" + exnUnify
 			+ " TypingError=" + exnTyping + " ContextError=" + exnContext + "
 ");
-	}
-
-	public static function dumpAllocs():Void {
-		if (Sys.getEnv("HXC_DBG_ALLOC") == null) return;
-		var o = Sys.stderr();
-		inline function r(n:String, v:Int) o.writeString("[alloc] " + StringTools.lpad(Std.string(v), " ", 12) + "  " + n + "\n");
-		r("Position", hxc.ast.Position.nalloc);
-		r("TExpr", hxc.core.Type.TExpr.nalloc);
-		r("TMono", hxc.core.Type.TMono.nalloc);
-		r("TAnon", hxc.core.Type.TAnon.nalloc);
-		r("applyParams", hxc.core.TypeFunctions.napply);
-		o.flush();
 	}
 
 	public static function dump():Void {

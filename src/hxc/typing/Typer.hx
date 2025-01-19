@@ -99,39 +99,13 @@ class Typer {
 		return true;
 	}
 
-	public static var monoCalls:Int = 0;
-	public static var monoMaxLen:Int = 0;
-	public static var monoSecs:Float = 0.0;
-	public static var dbgMono:Bool = Sys.getEnv("HXC_DBG_MONO") != null;
-
 	public static function spawnMonomorph(ctx:TyperContext, p:Position):T {
 		var mono = TypeUnification.monoCreate();
-		if (dbgMono) {
-			monoCalls++;
-			var _t = haxe.Timer.stamp();
-			ctx.monomorphs.unshift({m: mono, p: p});
-			monoSecs += haxe.Timer.stamp() - _t;
-			if (ctx.monomorphs.length > monoMaxLen) monoMaxLen = ctx.monomorphs.length;
-			return TMono(mono);
-		}
 		ctx.monomorphs.unshift({m: mono, p: p}); // Prepends (newest first)
 		return TMono(mono);
 	}
 
-	public static var saveLocalsCalls:Int = 0;
-	public static var saveLocalsEntries:Int = 0;
-	public static var saveLocalsSecs:Float = 0.0;
-	public static var countSaveLocals:Bool = Sys.getEnv("HXC_DBG_SAVELOCALS") != null;
-
 	public static function saveLocals(ctx:TyperContext):Void->Void {
-		if (countSaveLocals) {
-			var t0 = haxe.Timer.stamp();
-			saveLocalsCalls++;
-			for (_ in ctx.locals.keys()) saveLocalsEntries++;
-			var sv = ctx.locals.copy();
-			saveLocalsSecs += haxe.Timer.stamp() - t0;
-			return function() ctx.locals = sv;
-		}
 		var saved = ctx.locals.copy();
 		return function() ctx.locals = saved;
 	}
@@ -801,83 +775,7 @@ class Typer {
 		return e;
 	}
 
-	// HXC_DBG_KINDS: EXCLUSIVE time per source construct through the typer dispatch.
-	// Wrapped rather than inlined around the switch because arms return early, which would
-	// leave the depth stack unbalanced and silently corrupt every later reading.
-	public static var kindTiming:Bool = Sys.getEnv("HXC_DBG_KINDS") != null;
-	static var kindStack:Array<Float> = [];
-	static var kindTime:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
-	static var kindCount:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
-
-	static function kindDone(k:String, t0:Float):Void {
-		var child = kindStack.pop();
-		var el = haxe.Timer.stamp() - t0;
-		if (kindStack.length > 0) kindStack[kindStack.length - 1] += el;
-		var prev = kindTime.get(k);
-		kindTime.set(k, (prev == null ? 0.0 : prev) + (el - child));
-		var c = kindCount.get(k);
-		kindCount.set(k, c == null ? 1 : c + 1);
-	}
-
-	public static var newTiming:Bool = Sys.getEnv("HXC_DBG_NEW") != null;
-	public static var newDeprTime:Float = 0;
-	public static var newLoadTime:Float = 0;
-	public static var newCalls:Int = 0;
-	public static var newThrew:Int = 0;
-	public static var newBuiltTime:Float = 0;
-	public static var newForceTime:Float = 0;
-	public static var newFindTime:Float = 0;
-	public static var newUnifyTime:Float = 0;
-	public static var ebForceFields:Float = 0;
-	public static var ebRunBuild:Float = 0;
-	public static var ebForceCalls:Int = 0;
-	public static var lmResolve:Float = 0;
-	public static var lmInstall:Float = 0;
-	public static var lmCalls:Int = 0;
-
-	public static function dumpNew():Void {
-		if (!newTiming) return;
-		Sys.stderr().writeString("[new] calls=" + newCalls + " deprecationGetType=" + Std.int(newDeprTime * 1000)
-			+ "ms (threw " + newThrew + ") loadInstance=" + Std.int(newLoadTime * 1000) + "ms\n");
-		Sys.stderr().writeString("[new] ensureBuilt=" + Std.int(newBuiltTime * 1000)
-			+ "ms forceCtorBody=" + Std.int(newForceTime * 1000)
-			+ "ms findCtorTypes=" + Std.int(newFindTime * 1000)
-			+ "ms unifyArgs=" + Std.int(newUnifyTime * 1000) + "ms\n");
-		Sys.stderr().writeString("[new] ensureBuilt split: forceClassFields=" + Std.int(ebForceFields * 1000)
-			+ "ms (" + ebForceCalls + " classes) runBuildMacros=" + Std.int(ebRunBuild * 1000) + "ms\n");
-		Sys.stderr().writeString("[new] loadMacroClass calls=" + lmCalls + " resolveAll=" + Std.int(lmResolve * 1000)
-			+ "ms installLazy=" + Std.int(lmInstall * 1000) + "ms\n");
-	}
-
-	public static function dumpKinds():Void {
-		if (!kindTiming) return;
-		var rows = [for (k in kindTime.keys()) {n: k, t: kindTime.get(k), c: kindCount.get(k)}];
-		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
-		var o = Sys.stderr();
-		var tot = 0.0;
-		for (r in rows) tot += r.t;
-		o.writeString("[kinds] exclusive total=" + Std.int(tot * 1000) + "ms\n");
-		var shown = 0;
-		for (r in rows) {
-			if (shown++ >= 18) break;
-			o.writeString("[kinds] " + StringTools.lpad(Std.string(Std.int(r.t * 1000)), " ", 7) + "ms "
-				+ StringTools.lpad(Std.string(r.c), " ", 9) + "x  " + r.n + "\n");
-		}
-		o.flush();
-	}
-
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
-		if (!kindTiming) return typeExprInner(ctx, e, withType, mode);
-		var k = std.Type.enumConstructor(e.expr);
-		var t0 = haxe.Timer.stamp();
-		kindStack.push(0);
-		var r = try typeExprInner(ctx, e, withType, mode)
-			catch (ex:Dynamic) { kindDone(k, t0); throw ex; };
-		kindDone(k, t0);
-		return r;
-	}
-
-	static function typeExprInner(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e)) {
 			var saved = hxc.parser.Parser.displaySuppressed;
 			hxc.parser.Parser.displaySuppressed = true;
@@ -5667,12 +5565,10 @@ class Typer {
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
 		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
-		var _nt0 = newTiming ? haxe.Timer.stamp() : 0.0;
 		try switch (ctx.com.getType({pack: tp.path.tpackage, name: tp.path.tname}, tp.pos, tp.path.tsub)) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx.com, td, tp.pos); hxc.filters.DeprecationCheck.markTypedefConstruction(p); hxc.filters.DeprecationCheck.markTypedefConstruction(tp.pos);
 			case _:
-		} catch (_:Dynamic) { if (newTiming) newThrew++; }
-		if (newTiming) { newDeprTime += haxe.Timer.stamp() - _nt0; newCalls++; }
+		} catch (_:Dynamic) {}
 		var t:T;
 		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
 		// request is answered, then re-raise.
@@ -5682,7 +5578,6 @@ class Typer {
 				break;
 			}
 		}
-		var _lt0 = newTiming ? haxe.Timer.stamp() : 0.0;
 		if (tp.path.tparams.length == 0) {
 			ctx.com.callArgumentStack.unshift(el);
 			try {
@@ -5697,7 +5592,6 @@ class Typer {
 			try t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false)
 			catch (e:Dynamic) { typeArgsForDisplay(); throw e; }
 		}
-		if (newTiming) newLoadTime += haxe.Timer.stamp() - _lt0;
 		// A construction reports its type path the way a type hint does, which under a completion request
 		// answers with the type set; the ENew wrapper around this call is what narrows that to the types
 		// something can actually be constructed from.
@@ -5725,27 +5619,20 @@ class Typer {
 				// An abstract class has no direct construction.
 				if (TypeFunctions.hasClassFlag(c, CAbstract))
 					throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " is abstract and cannot be constructed", p);
-				var _b0 = newTiming ? haxe.Timer.stamp() : 0.0;
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
-				if (newTiming) newBuiltTime += haxe.Timer.stamp() - _b0;
 				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
 				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
 				// the
 				// first call site binds those still-open param monos to its arg types, corrupting later
 				// constructions.
-				var _f0 = newTiming ? haxe.Timer.stamp() : 0.0;
 				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
-				if (newTiming) newForceTime += haxe.Timer.stamp() - _f0;
-				var _c0 = newTiming ? haxe.Timer.stamp() : 0.0;
 				var ctorTypes = findConstructorTypes(ctx, c, tl);
-				if (newTiming) newFindTime += haxe.Timer.stamp() - _c0;
 				if (ctorTypes.length == 0) throw new TypingError(c.path.name + " does not have a constructor", p);
 				if (c.constructor != null) Fields.checkConstructorAccess(ctx, c, c.constructor, p);
 				// Try each constructor signature, first success wins (overload retry).
 				var r:Dynamic = null;
 				var firstError:Null<Dynamic> = null;
 				var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
-				var _u0 = newTiming ? haxe.Timer.stamp() : 0.0;
 				for (ctorType in ctorTypes) {
 					var sig = switch (TypeFunctions.follow(ctorType)) {
 						case TFun(s): s;
@@ -5765,7 +5652,6 @@ class Typer {
 						if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
 					}
 				}
-				if (newTiming) newUnifyTime += haxe.Timer.stamp() - _u0;
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
 				// A construction reports the constructor the call resolved to, as the function that produces
 				// the instance - not the instance type, which is all the typed node itself carries.

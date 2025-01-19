@@ -56,23 +56,6 @@ class EvalMacro {
 	static var anonRefs:Map<Int, TAnon> = new Map();
 	static var nextAnonRefIdDummy:Int = 0;
 
-	// Named static roots, for heap attribution. Everything live but unreachable from the Context hangs
-	// off statics like these, so a census rooted only at the Context misses it.
-	public static function dbgRoots():Array<{name:String, root:Dynamic}> {
-		return [
-			{name: "EvalMacro.macroCtx", root: macroCtx},
-			{name: "EvalMacro.macroCom", root: macroCom},
-			{name: "EvalMacro.moduleTypeRefs", root: moduleTypeRefs},
-			{name: "EvalMacro.tvarRefs", root: tvarRefs},
-			{name: "EvalMacro.cfieldRefs", root: cfieldRefs},
-			{name: "EvalMacro.anonRefs", root: anonRefs},
-			{name: "EvalMacro.macroMonos", root: macroMonos},
-			{name: "EvalMacro.fakeModules", root: fakeModules},
-			{name: "EvalMacro.builtClasses", root: builtClasses},
-			{name: "EvalMacro.macroMessages", root: macroMessages}
-		];
-	}
-
 	public static function dumpRefStats():Void {
 		if (Sys.getEnv("HXC_DBG_REFS") == null) return;
 		inline function n<K, V>(m:Map<K, V>):Int { var c = 0; for (_ in m.keys()) c++; return c; }
@@ -937,7 +920,6 @@ class EvalMacro {
 		if (entries.length == 0) return;
 		// A build failure is recorded rather than raised so the rest of the module still types,
 		// but the compile fails; the class keeps its declared fields.
-		var _rb0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
 			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
@@ -947,13 +929,10 @@ class EvalMacro {
 		} catch (e:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
-		if (hxc.typing.Typer.newTiming) hxc.typing.Typer.ebRunBuild += haxe.Timer.stamp() - _rb0;
 		// The reference applies all @:build field transformations before typing field bodies. Doing
 		// this once also keeps a later build macro from invalidating the field table while the previous
 		// macro's bodies are still being forced.
-		var _fc0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 		hxc.typing.TypeFields.forceClassFields(com, c);
-		if (hxc.typing.Typer.newTiming) { hxc.typing.Typer.ebForceFields += haxe.Timer.stamp() - _fc0; hxc.typing.Typer.ebForceCalls++; }
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
@@ -1850,12 +1829,8 @@ class EvalMacro {
 				TypeFunctions.addDependency(dep, m, true);
 				dep.extra.processed = 0;
 			}
-			var _r0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 			hxc.typing.TypeResolve.resolveAll(macroCom);
-			if (hxc.typing.Typer.newTiming) hxc.typing.Typer.lmResolve += haxe.Timer.stamp() - _r0;
-			var _i0 = hxc.typing.Typer.newTiming ? haxe.Timer.stamp() : 0.0;
 			hxc.typing.TypeFields.installLazy(macroCom);
-			if (hxc.typing.Typer.newTiming) { hxc.typing.Typer.lmInstall += haxe.Timer.stamp() - _i0; hxc.typing.Typer.lmCalls++; }
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.

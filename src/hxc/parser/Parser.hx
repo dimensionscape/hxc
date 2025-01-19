@@ -2296,23 +2296,7 @@ class Parser {
 	/**
 		Lex + parse a whole module (file): `package` + type declarations until EOF.
 	*/
-	public static var parseCalls:Int = 0;
-	public static var parseSecs:Float = 0.0;
-	public static var parseBytes:Int = 0;
-	public static var dbgParse:Bool = Sys.getEnv("HXC_DBG_PARSE") != null;
-
 	public static function parseModuleString(src:String, file:String = "?", ?defines:Define):Package {
-		if (dbgParse) {
-			parseCalls++; parseBytes += src.length;
-			var _t = haxe.Timer.stamp();
-			var _r = parseModuleStringInner(src, file, defines);
-			parseSecs += haxe.Timer.stamp() - _t;
-			return _r;
-		}
-		return parseModuleStringInner(src, file, defines);
-	}
-
-	static function parseModuleStringInner(src:String, file:String = "?", ?defines:Define):Package {
 		var p = make(src, file, defines);
 		return p.parseFile();
 	}

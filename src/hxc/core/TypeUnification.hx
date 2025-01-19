@@ -55,7 +55,7 @@ class UnifyError extends haxe.Exception {
 	public var errors:Array<UnifyErrorKind>;
 	public function new(errors:Array<UnifyErrorKind>, ?site:String) {
 		hxc.core.PerfCount.exn("UnifyError");
-		if (site != null) {
+		if (site != null && hxc.core.PerfCount.exnDbg) {
 			var c = siteCounts.get(site);
 			siteCounts.set(site, c == null ? 1 : c + 1);
 		}
@@ -179,20 +179,7 @@ class TypeUnification {
 	// prior state and the exception is rethrown. On success the recorded states are discarded (the
 	// bindings stand), and any monos recorded here are merged into an enclosing frame so an outer
 	// rollback still undoes them.
-	public static var mrDbg:Bool = Sys.getEnv("HXC_DBG_MONOROLL") != null;
-	public static var mrMerges:Int = 0;
-	public static var mrIters:Float = 0;
-	public static var mrMaxOuter:Int = 0;
-	public static var mrCalls:Int = 0;
-	public static function dumpMr():Void {
-		if (!mrDbg) return;
-		Sys.stderr().writeString("[monoroll] calls=" + mrCalls + " merges=" + mrMerges
-			+ " mergeIterations=" + mrIters + " maxOuterFrame=" + mrMaxOuter + "
-");
-	}
-
 	public static function withMonoRollback<R>(f:Void->R):R {
-		if (mrDbg) mrCalls++;
 		var outer = monoJournal;
 		var frame:Array<{m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>}> = [];
 		monoJournal = frame;
@@ -201,7 +188,6 @@ class TypeUnification {
 			monoJournal = outer;
 			if (outer != null) {
 				// Preserve earliest-state entries for the enclosing frame.
-				if (mrDbg) { mrMerges++; mrIters += frame.length * outer.length; if (outer.length > mrMaxOuter) mrMaxOuter = outer.length; }
 				for (e in frame) {
 					var seen = false;
 					for (o in outer) if (o.m == e.m) { seen = true; break; }

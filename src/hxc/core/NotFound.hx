@@ -7,7 +7,7 @@ class NotFound extends haxe.Exception {
 
 	public function new(?site:String) {
 		hxc.core.PerfCount.exn("NotFound");
-		if (site != null) {
+		if (site != null && hxc.core.PerfCount.exnDbg) {
 			var c = siteCounts.get(site);
 			siteCounts.set(site, c == null ? 1 : c + 1);
 		}
