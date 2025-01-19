@@ -975,8 +975,11 @@ class TypeFunctions {
 		}
 	}
 
-	// Return the field, its type, and the optional declaring class with type parameters.
-	public static function rawClassField(buildType:TClassField->T, c:TClass, tl:TParams, i:String):{c2:Null<TClassWithParams>, t:T, f:TClassField} {
+	// Returns { c2: the declaring class and its params, or null; t; f }.
+	// Walks the super chain and the interfaces with null as the miss signal: a throw per missed level costs
+	// microseconds on hxcpp, and rawClassField misses are ordinary control flow all over the typer. The
+	// throwing wrapper keeps the external contract for callers that catch.
+	public static function rawClassFieldOpt(buildType:TClassField->T, c:TClass, tl:TParams, i:String):Null<{c2:Null<TClassWithParams>, t:T, f:TClassField}> {
 		var apply = function(x:T) return applyParams(c.params, tl, x);
 		if (c.fields.exists(i)) {
 			var f = c.fields.get(i);
@@ -992,11 +995,8 @@ class TypeFunctions {
 		}
 		switch (c.superClass) {
 			case sup if (sup != null):
-				try {
-					var r = rawClassField(buildType, sup.c, [for (x in sup.params) apply(x)], i);
-					return {c2: r.c2, t: applyParams(sup.c.params, sup.params, r.t), f: r.f};
-				} catch (e:NotFound) {
-				}
+				var r = rawClassFieldOpt(buildType, sup.c, [for (x in sup.params) apply(x)], i);
+				if (r != null) return {c2: r.c2, t: applyParams(sup.c.params, sup.params, r.t), f: r.f};
 			case _:
 		}
 		switch (c.kind) {
@@ -1009,25 +1009,27 @@ class TypeFunctions {
 								return {c2: null, t: buildType(f), f: f};
 							}
 						case TInst(c2, tl2):
-							try {
-								var r = rawClassField(buildType, c2, [for (x in tl2) apply(x)], i);
-								return {c2: r.c2, t: applyParams(c2.params, tl2, r.t), f: r.f};
-							} catch (e:NotFound) {}
+							var r = rawClassFieldOpt(buildType, c2, [for (x in tl2) apply(x)], i);
+							if (r != null) return {c2: r.c2, t: applyParams(c2.params, tl2, r.t), f: r.f};
 						case _:
 					}
 				}
-				throw new NotFound("TypeFunctions.hx:1024");
+				return null;
 			case _:
-				if (!hasClassFlag(c, CInterface)) throw new NotFound("TypeFunctions.hx:1026");
+				if (!hasClassFlag(c, CInterface)) return null;
 				// An interface can implement other interfaces without redeclaring fields
 				for (impl in c.interfaces) {
-					try {
-						var r = rawClassField(buildType, impl.c, [for (x in impl.params) apply(x)], i);
-						return {c2: r.c2, t: applyParams(impl.c.params, impl.params, r.t), f: r.f};
-					} catch (e:NotFound) {}
+					var r = rawClassFieldOpt(buildType, impl.c, [for (x in impl.params) apply(x)], i);
+					if (r != null) return {c2: r.c2, t: applyParams(impl.c.params, impl.params, r.t), f: r.f};
 				}
-				throw new NotFound("TypeFunctions.hx:1034");
+				return null;
 		}
+	}
+
+	public static function rawClassField(buildType:TClassField->T, c:TClass, tl:TParams, i:String):{c2:Null<TClassWithParams>, t:T, f:TClassField} {
+		var r = rawClassFieldOpt(buildType, c, tl, i);
+		if (r == null) throw new NotFound("rawClassField:miss");
+		return r;
 	}
 
 	public static function classField(c:TClass, tl:TParams, i:String):{c2:Null<TClassWithParams>, t:T, f:TClassField} {
