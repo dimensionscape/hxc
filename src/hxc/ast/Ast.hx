@@ -255,7 +255,7 @@ class Expr {
 		for (f in fl)
 			if (f.name == name)
 				return f.expr;
-		throw new NotFound();
+		throw new NotFound("Ast.hx:258");
 	}
 
 	public static function fieldMemAssoc(name:String, fl:Array<ObjectField>):Bool {

@@ -38,7 +38,7 @@ class TypeFunctions {
 
 	public static function getMeta(m:String, ml:Metadata):MetadataEntry {
 		for (entry in ml) if (entry.name == m) return entry;
-		throw new NotFound();
+		throw new NotFound("TypeFunctions.hx:41");
 	}
 
 	// Type.Flags already provides hasFlag/setFlag/unsetFlag over a bit index.
@@ -856,9 +856,12 @@ class TypeFunctions {
 	public static function extractParamTypes(l:TypeParams):TParams return [for (tp in l) tp.type];
 	public static function extractParamName(tp:TypedTypeParam):String return tp.name;
 
-	public static function lookupParam(n:String, l:TypeParams):T {
+	// Null for "no such parameter". Every bare-name type hint probes the type parameters first and
+	// usually misses, so a throwing miss would be costly (an hxcpp throw costs microseconds). The only
+	// caller null-shapes the result already.
+	public static function lookupParam(n:String, l:TypeParams):Null<T> {
 		for (tp in l) if (n == tp.name) return tp.type;
-		throw new NotFound();
+		return null;
 	}
 
 	public static function mkTypeParam(n:String, t:T, def:Null<T>):TypedTypeParam {
@@ -1005,9 +1008,9 @@ class TypeFunctions {
 						case _:
 					}
 				}
-				throw new NotFound();
+				throw new NotFound("TypeFunctions.hx:1024");
 			case _:
-				if (!hasClassFlag(c, CInterface)) throw new NotFound();
+				if (!hasClassFlag(c, CInterface)) throw new NotFound("TypeFunctions.hx:1026");
 				// An interface can implement other interfaces without redeclaring fields
 				for (impl in c.interfaces) {
 					try {
@@ -1015,7 +1018,7 @@ class TypeFunctions {
 						return {c2: r.c2, t: applyParams(impl.c.params, impl.params, r.t), f: r.f};
 					} catch (e:NotFound) {}
 				}
-				throw new NotFound();
+				throw new NotFound("TypeFunctions.hx:1034");
 		}
 	}
 
@@ -1034,27 +1037,27 @@ class TypeFunctions {
 			case TAnon(a):
 				switch (a.status.get()) {
 					case EnumStatics(e):
-						if (!e.constrs.exists(n)) throw new NotFound();
+						if (!e.constrs.exists(n)) throw new NotFound("TypeFunctions.hx:1053");
 						FEnum(e, e.constrs.get(n));
 					case Statics(c):
-						if (!c.statics.exists(n)) throw new NotFound();
+						if (!c.statics.exists(n)) throw new NotFound("TypeFunctions.hx:1056");
 						FStatic(c, c.statics.get(n));
 					case AbstractStatics(a):
 						switch (a.impl) {
 							case c if (c != null):
-								if (!c.statics.exists(n)) throw new NotFound();
+								if (!c.statics.exists(n)) throw new NotFound("TypeFunctions.hx:1061");
 								FStatic(c, c.statics.get(n)); // Is that right?
 							case _:
-								throw new NotFound();
+								throw new NotFound("TypeFunctions.hx:1064");
 						}
 					case _:
-						if (!a.fields.exists(n)) throw new NotFound();
+						if (!a.fields.exists(n)) throw new NotFound("TypeFunctions.hx:1067");
 						FAnon(a.fields.get(n));
 				}
 			case TDynamic(_):
 				FDynamic(n);
 			case TEnum(_, _) | TMono(_) | TAbstract(_, _) | TFun(_):
-				throw new NotFound();
+				throw new NotFound("TypeFunctions.hx:1073");
 			case TLazy(_) | TType(_, _):
 				throw "quick_field: unexpected TLazy/TType after follow";
 		}
@@ -1067,7 +1070,7 @@ class TypeFunctions {
 	public static function getConstructorClass(c:TClass, tl:TParams):{cf:TClassField, c:TClass, tl:TParams} {
 		return switch [c.constructor, c.superClass] {
 			case [cf, _] if (cf != null): {cf: cf, c: c, tl: tl};
-			case [_, null]: throw new NotFound();
+			case [_, null]: throw new NotFound("TypeFunctions.hx:1086");
 			case [_, sup]: getConstructorClass(sup.c, [for (x in sup.params) applyParams(c.params, tl, x)]);
 		}
 	}
@@ -1075,7 +1078,7 @@ class TypeFunctions {
 	public static function getConstructor(c:TClass):TClassField {
 		return switch [c.constructor, c.superClass] {
 			case [cf, _] if (cf != null): cf;
-			case [_, null]: throw new NotFound();
+			case [_, null]: throw new NotFound("TypeFunctions.hx:1094");
 			case [_, sup]: getConstructor(sup.c);
 		}
 	}

@@ -34,7 +34,7 @@ class InterfaceCheck {
 	static function classFieldNoInterf(c:TClass, name:String):{map:T->T, t:T, f:TClassField} {
 		var own = c.fields.get(name);
 		if (own != null) return {map: function(t) return t, t: own.type, f: own};
-		if (c.superClass == null) throw new NotFound();
+		if (c.superClass == null) throw new NotFound("InterfaceCheck.hx:38");
 		var sup = c.superClass;
 		var r = TypeFunctions.rawClassField(function(f) return f.type, sup.c, sup.params, name);
 		var map = function(t) return TypeFunctions.applyParams(sup.c.params, sup.params, t);

@@ -636,12 +636,7 @@ class Typeload {
 	static function loadInstance_(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
 		// Look up a bare type-parameter name before resolving a module.
 		if (t.tpackage.length == 0 && t.tsub == null) {
-			var pt:Null<T> = null;
-			try {
-				pt = TypeFunctions.lookupParam(t.tname, typeParams);
-			} catch (_:NotFound) {
-				pt = null;
-			}
+			var pt:Null<T> = TypeFunctions.lookupParam(t.tname, typeParams);
 			if (pt != null) {
 				if (t.tparams.length > 0)
 					throw new ContextError("Class type parameter " + t.tname + " can't have parameters", p);

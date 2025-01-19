@@ -456,17 +456,19 @@ class ConstPropagation {
 	}
 
 	static function commitAll(ctx:AnalyzerContext):Void {
-		function inlineCell(e:TExpr, i:Int):TExpr {
+		// Null means "cannot inline this cell". A nullable return instead of a throw: on hxcpp a
+		// throw+catch is expensive and this is a hot site. The result is consumed immediately at three
+		// local call sites below, so a nullable return is observationally identical.
+		function inlineCell(e:TExpr, i:Int):Null<TExpr> {
 			return switch (getCell(i)) {
 				case Top | Bottom | LEnumValue(_, _) | LNull(_):
-					throw new NotFound();
+					null;
 				case LConst(ct):
 					var e2 = TexprTools.typeConstant(ctx.com.basic, TypeFunctions.tconstToConst(ct), e.pos);
-					if (!AnalyzerTexpr.typeChangeOk(ctx.com, e2.type, e.type)) throw new NotFound();
-					e2;
+					if (!AnalyzerTexpr.typeChangeOk(ctx.com, e2.type, e.type)) null else e2;
 				case LModuleType(mt, t):
-					if (!AnalyzerTexpr.typeChangeOk(ctx.com, t, e.type)) throw new NotFound();
-					TypeFunctions.mk(TTypeExpr(mt), t, e.pos);
+					if (!AnalyzerTexpr.typeChangeOk(ctx.com, t, e.type)) null
+					else TypeFunctions.mk(TTypeExpr(mt), t, e.pos);
 			};
 		}
 		function isSpecialVar(v:TVar):Bool {
@@ -493,15 +495,15 @@ class ConstPropagation {
 		commit = function(e:TExpr):TExpr {
 			return switch (e.expr) {
 				case TLocal(v) if (!isSpecialVar(v) && !escaped.exists(v.id)):
-					try inlineCell(e, v.id) catch (_:NotFound) e;
+					var r = inlineCell(e, v.id);
+					r == null ? e : r;
 				case TBinop(op = OpAssign | OpAssignOp(_), e1 = {expr: TLocal(v)}, e2):
-					var e2 = try {
-						if (OptimizerTexpr.hasSideEffect(e2)) throw new NotFound();
-						inlineCell(e2, v.id);
-					} catch (_:NotFound) commit(e2);
+					var r = OptimizerTexpr.hasSideEffect(e2) ? null : inlineCell(e2, v.id);
+					var e2 = r == null ? commit(e2) : r;
 					TypeFunctions.mk(TBinop(op, e1, e2), e.type, e.pos);
 				case TVarExpr(v, e1) if (e1 != null && !OptimizerTexpr.hasSideEffect(e1)):
-					var e1 = try inlineCell(e1, v.id) catch (_:NotFound) commit(e1);
+					var r = inlineCell(e1, v.id);
+					var e1 = r == null ? commit(e1) : r;
 					TypeFunctions.mk(TVarExpr(v, e1), e.type, e.pos);
 				case _:
 					TexprTools.mapExpr(commit, e);
@@ -587,32 +589,38 @@ class CopyPropagation {
 		commit = function(bb:BasicBlock, e:TExpr):TExpr {
 			return switch (e.expr) {
 				case TLocal(v) if (!TypeFunctions.hasVarFlag(v, VCaptured)):
-					try {
-						var lat = getCell(v.id);
-						function leave():Dynamic {
-							lattice.remove(v.id);
-							throw new NotFound();
-						}
-						switch (lat) {
-							case CopyLocal(v2):
-								if (!AnalyzerTexpr.typeChangeOk(ctx.com, v2.type, v.type)) leave();
+					// Null means "keep the original local". A nullable return avoids a hot throw+catch on
+					// hxcpp. leave() clears the lattice cell - the side effect is the point, the null is
+					// only
+					// the exit.
+					var lat = getCell(v.id);
+					inline function leave():Null<TExpr> {
+						lattice.remove(v.id);
+						return null;
+					}
+					var r:Null<TExpr> = switch (lat) {
+						case CopyLocal(v2):
+							if (!AnalyzerTexpr.typeChangeOk(ctx.com, v2.type, v.type)) leave();
+							else {
 								var v3 = ctx.graph.getVarOrigin(v2);
 								// Only consider variables whose origin variables are assigned to at
 								// most once; multiple SSA vars may map back to the same origin var,
 								// creating interference the analysis does not track.
 								var writes = ctx.graph.getVarInfo(v3).writes;
-								switch (writes) {
-									case [bb2] if (BasicBlock.inScope(bb, bb2)):
-									case _: leave();
-								}
-								commit(bb, TypeFunctions.mk(TLocal(v2), e.type, e.pos));
-							case CopyThis(t):
-								if (!AnalyzerTexpr.typeChangeOk(ctx.com, t, v.type)) leave();
-								TypeFunctions.mk(TConst(TThis), t, e.pos);
-							case CopyTop | CopyBottom:
-								leave();
-						}
-					} catch (_:NotFound) e;
+								var inScope = switch (writes) {
+									case [bb2] if (BasicBlock.inScope(bb, bb2)): true;
+									case _: false;
+								};
+								if (!inScope) leave()
+								else commit(bb, TypeFunctions.mk(TLocal(v2), e.type, e.pos));
+							}
+						case CopyThis(t):
+							if (!AnalyzerTexpr.typeChangeOk(ctx.com, t, v.type)) leave();
+							else TypeFunctions.mk(TConst(TThis), t, e.pos);
+						case CopyTop | CopyBottom:
+							leave();
+					};
+					r == null ? e : r;
 				case TBinop(op = OpAssign | OpAssignOp(_), e1 = {expr: TLocal(_)}, e2):
 					var e2 = commit(bb, e2);
 					TypeFunctions.mk(TBinop(op, e1, e2), e.type, e.pos);

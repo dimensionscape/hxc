@@ -17,7 +17,7 @@ class Define {
 
 	public function rawDefinedValue(k:String):String {
 		if (!values.exists(k))
-			throw new NotFound();
+			throw new NotFound("Define.hx:20");
 		return values.get(k);
 	}
 

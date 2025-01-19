@@ -87,7 +87,7 @@ class Fields {
 						case ctor:
 							if (allowed(ctor)) direct = true;
 							else if (ctor.expr == null) direct = false;
-							else throw new NotFound();
+							else throw new NotFound("Fields.hx:90");
 					}
 				} else {
 					var ff = (stat ? c2.statics : c2.fields).get(cf.name);

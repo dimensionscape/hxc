@@ -524,7 +524,7 @@ class Operators {
 		return try {
 			switch (TypeFunctions.follow(e1.type)) {
 				case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, true, isAssignOp, withType, p);
-				case _: throw new NotFound();
+				case _: throw new NotFound("Operators.hx:533");
 			}
 		} catch (_:NotFound) {
 			try {
@@ -661,7 +661,7 @@ class Operators {
 					case _:
 				}
 			}
-			throw new NotFound();
+			throw new NotFound("Operators.hx:673");
 		}
 
 		// Right operand: only non-impl (bodyless) or @:commutative overloads may apply.

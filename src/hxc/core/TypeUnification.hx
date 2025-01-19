@@ -1553,7 +1553,7 @@ class TypeUnification {
 	// Uctx find: try non-transitive first, then transitive.
 	static function findCastField(uctx:UnificationContext, find:UnificationContext->Null<TAbstractCast>):TAbstractCast {
 		var found = try find(uctx.withAllowTransitiveCast(false)) catch (e:NotFound) find(uctx);
-		if (found == null) throw new NotFound();
+		if (found == null) throw new NotFound("TypeUnification.hx:1566");
 		return found;
 	}
 
@@ -1563,14 +1563,14 @@ class TypeUnification {
 		// anything without constraining the call.
 		buildAbstract(ab);
 		for (c in ab.fromField) if (unifiesFromField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
-		throw new NotFound();
+		throw new NotFound("TypeUnification.hx:1577");
 	}
 
 	public static function findFieldTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):TAbstractCast {
 		// Same forcing as findFieldFrom.
 		buildAbstract(ab);
 		for (c in ab.toField) if (unifiesToField(uctx, a, b, ab, tl, c.t, c.cf)) return c;
-		throw new NotFound();
+		throw new NotFound("TypeUnification.hx:1584");
 	}
 
 	// Uctx a ab tl: relate a concrete `a` to the abstract `ab` (the @:from direction). Returns the
@@ -1587,7 +1587,7 @@ class TypeUnification {
 		buildAbstract(ab);
 		if (TypeFunctions.follow(a) == TypeFunctions.tDynamic) {
 			for (c in ab.fromField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
-			throw new NotFound();
+			throw new NotFound("TypeUnification.hx:1602");
 		}
 		var b:T = TAbstract(ab, tl);
 		return findCastField(uctx, function(uctx) {
@@ -1601,7 +1601,7 @@ class TypeUnification {
 		buildAbstract(ab);
 		if (TypeFunctions.follow(b) == TypeFunctions.tDynamic) {
 			for (c in ab.toField) if (TypeFunctions.follow(c.t) == TypeFunctions.tDynamic) return c;
-			throw new NotFound();
+			throw new NotFound("TypeUnification.hx:1616");
 		}
 		var a:T = TAbstract(ab, tl);
 		return findCastField(uctx, function(uctx) {

@@ -229,19 +229,13 @@ class GenJS {
 	}
 
 	public static function moduleField(com:Context, m:ModuleDef, f:TClassField):String {
-		return try {
-			hxc.codegen.Codegen.getNativeName(com, f.meta).name;
-		} catch (_:hxc.core.NotFound) {
-			flatPath(m.path) + "_" + f.name;
-		}
+		var nn = hxc.codegen.Codegen.getNativeName(com, f.meta);
+		return nn != null ? nn.name : flatPath(m.path) + "_" + f.name;
 	}
 
 	public static function moduleFieldExposePath(com:Context, mpath:Path, f:TClassField):String {
-		return try {
-			hxc.codegen.Codegen.getNativeName(com, f.meta).name;
-		} catch (_:hxc.core.NotFound) {
-			dotPath(mpath) + "." + f.name;
-		}
+		var nn = hxc.codegen.Codegen.getNativeName(com, f.meta);
+		return nn != null ? nn.name : dotPath(mpath) + "." + f.name;
 	}
 
 	public static function dotPath(p:Path):String {

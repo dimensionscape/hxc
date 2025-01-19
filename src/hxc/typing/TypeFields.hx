@@ -85,6 +85,7 @@ class TypeFields {
 		hxc.typing.Typer.dumpKinds();
 		hxc.typing.Calls.dumpCalls();
 		hxc.core.PerfCount.dumpExn();
+		hxc.core.NotFound.dumpSites();
 		hxc.typing.Typer.dumpNew();
 		hxc.core.TypeUnification.dumpMr();
 		if (hxc.typing.Typer.dbgMono)

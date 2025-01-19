@@ -49,7 +49,7 @@ class FieldAccessTools {
 			case FHStatic(c): c;
 			case FHInstance(c, _): c;
 			case FHAbstract(_, _, c): c;
-			case FHAnon: throw new NotFound();
+			case FHAnon: throw new NotFound("FieldAccess.hx:52");
 		};
 	}
 

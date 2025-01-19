@@ -126,14 +126,13 @@ class Codegen {
 		}
 	}
 
-	// Use the first single-argument @:native entry; absence raises, and a non-string argument is an
-	// error.
-	public static function getNativeName(ctx:Context, meta:Metadata):{name:String, pos:Position} {
+	// Return the first single-argument @:native entry, or null. A non-string argument is an error.
+	public static function getNativeName(ctx:Context, meta:Metadata):Null<{name:String, pos:Position}> {
 		var found:Null<MetadataEntry> = null;
 		for (m in meta) {
 			if (m.name == ":native" && m.params.length == 1) { found = m; break; }
 		}
-		if (found == null) throw new NotFound();
+		if (found == null) return null;
 		switch (found.params[0].expr) {
 			case EConst(CString(name, _)):
 				return {name: name, pos: found.params[0].pos};

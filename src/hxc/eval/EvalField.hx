@@ -22,7 +22,7 @@ class EvalField {
 			if (idx != null) return p.pfields[idx];
 			p = p.pparent;
 		}
-		throw new NotFound();
+		throw new NotFound("EvalField.hx:25");
 	}
 
 	public static function instanceField(vi:VInstance, name:Int):EvalValue {
@@ -34,7 +34,7 @@ class EvalField {
 			case OProto(proto): o.ofields[EvalContext.getInstanceFieldIndexRaise(proto, name)];
 			case ODictionary(l):
 				var v = l.get(name);
-				if (v == null) throw new NotFound();
+				if (v == null) throw new NotFound("EvalField.hx:37");
 				v;
 		};
 	}

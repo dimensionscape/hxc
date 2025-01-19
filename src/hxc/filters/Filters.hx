@@ -502,11 +502,13 @@ class Filters {
 
 	public static function applyNativePaths(com:Context, t:ModuleType):Void {
 		function getRealName(meta:Metadata, name:String):Null<{meta:MetadataEntry, name:String}> {
-			var nn = try hxc.codegen.Codegen.getNativeName(com, meta) catch (_:hxc.core.NotFound) return null;
+			var nn = hxc.codegen.Codegen.getNativeName(com, meta);
+			if (nn == null) return null;
 			return {meta: {name: ":realPath", params: [new Expr(EConst(CString(name, SDoubleQuotes)), nn.pos)], pos: nn.pos}, name: nn.name};
 		}
 		function getRealPath(meta:Metadata, path:hxc.core.Globals.Path):Null<{meta:MetadataEntry, path:hxc.core.Globals.Path}> {
-			var nn = try hxc.codegen.Codegen.getNativeName(com, meta) catch (_:hxc.core.NotFound) return null;
+			var nn = hxc.codegen.Codegen.getNativeName(com, meta);
+			if (nn == null) return null;
 			return {meta: {name: ":realPath", params: [new Expr(EConst(CString(Context.sTypePath(path), SDoubleQuotes)), nn.pos)], pos: nn.pos}, path: Ast.parsePath(nn.name)};
 		}
 		switch (t) {

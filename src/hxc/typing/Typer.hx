@@ -249,13 +249,13 @@ class Typer {
 	static function abstractCastLoop(ctx:TyperContext, e:TExpr, tleft:T, tright:T, stack:Array<{l:T, r:T}>, p:Position):TExpr {
 		for (s in stack)
 			if (TypeUnification.fastEq(tleft, s.l) && TypeUnification.fastEq(tright, s.r))
-				throw new NotFound();
+				throw new NotFound("Typer.hx:260");
 		var stack2 = [{l: tleft, r: tright}].concat(stack);
 		var uctx = TypeUnification.defaultUnificationContext;
 		switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
 				var found = TypeUnification.findToFrom(uctx, e.type, tleft, a2, tl2, a1, tl1);
-				if (found == null) throw new NotFound();
+				if (found == null) throw new NotFound("Typer.hx:266");
 				return makeAbstractCast(ctx, found.a, found.tl, found.castField, e, tleft, p);
 			case [TAbstract(a, tl), _]:
 				try {
@@ -266,7 +266,7 @@ class Typer {
 						if (!TypeUnification.typeIseqDefault(tnext, tleft))
 							return abstractCastLoop(ctx, e, tnext, tright, stack2, p);
 					}
-					throw new NotFound();
+					throw new NotFound("Typer.hx:277");
 				}
 			case [_, TAbstract(a, tl)]:
 				try {
@@ -277,10 +277,10 @@ class Typer {
 						if (!TypeUnification.typeIseqDefault(tnext, tright))
 							return abstractCastLoop(ctx, e, tleft, tnext, stack2, p);
 					}
-					throw new NotFound();
+					throw new NotFound("Typer.hx:288");
 				}
 			case _:
-				throw new NotFound();
+				throw new NotFound("Typer.hx:291");
 		}
 	}
 
@@ -289,14 +289,14 @@ class Typer {
 		// inline casts like Any.__promote) goes through a static call, whose inliner binds a side-effectful
 		// receiver to a temp.
 		if (TypeFunctions.hasMeta(":multiType", castField.cf.meta)) return TypeFunctions.mk(TCast(e, null), t, p);
-		if (a.impl == null) throw new NotFound();
+		if (a.impl == null) throw new NotFound("Typer.hx:300");
 		// Macro @:from recursion probe.
 		if (hxc.eval.EvalMacro.isMacroField(castField.cf) && abstractCastStack.length > 0
 			&& abstractCastStack[0] == castField.cf) {
 			try {
 				TypeUnification.unifyDefault(e.type, t);
 			} catch (_:UnifyError) {
-				throw new NotFound();
+				throw new NotFound("Typer.hx:307");
 			}
 		}
 		if (castField.cf == ctx.curfield || abstractCastStack.indexOf(castField.cf) >= 0)
@@ -352,7 +352,7 @@ class Typer {
 			var result = hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p);
 			return try castOrUnify(ctx, t, result, p) catch (te:TypingError) {
 				if (te.message == "Recursive implicit cast") throw te;
-				throw new NotFound();
+				throw new NotFound("Typer.hx:364");
 			};
 		} catch (err:haxe.Exception) {
 			if (ctx.com.diagnostics.length > before) {
@@ -6068,7 +6068,7 @@ class Typer {
 			var m = TypeFunctions.mkMono();
 			var r = findMultitypeParams(a, pl);
 			var castField = TypeUnification.findTo(TypeUnification.defaultUnificationContext, m, a, r.tl);
-			for (t in r.definitive) if (TypeFunctions.hasMono(t)) throw new NotFound();
+			for (t in r.definitive) if (TypeFunctions.hasMono(t)) throw new NotFound("Typer.hx:6259");
 			return multitypeResult(castField, pl, m);
 		});
 	}
