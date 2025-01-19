@@ -918,7 +918,8 @@ class TypeResolve {
 
 	static function nativeFieldName(cf:TClassField):Null<String> {
 		return try {
-			var meta = TypeFunctions.getMeta(":native", cf.meta);
+			var meta = TypeFunctions.getMetaOpt(":native", cf.meta);
+			if (meta == null) return null;
 			switch (meta.params.length > 0 ? meta.params[0].expr : null) {
 				case EConst(CString(s, _)): s;
 				case _: null;

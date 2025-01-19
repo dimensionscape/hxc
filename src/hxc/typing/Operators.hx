@@ -521,19 +521,21 @@ class Operators {
 	// mono-rollback so a failed probe never leaves an unrelated mono bound), the other operand is
 	// implicitly cast.
 	static function tryAbstractBinop(ctx:TyperContext, op:Binop, e1:TExpr, e2:TExpr, isAssignOp:Bool, withType:WithType, p:Position):Null<BinopResult> {
-		return try {
-			switch (TypeFunctions.follow(e1.type)) {
-				case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, true, isAssignOp, withType, p);
-				case _: throw new NotFound("Operators.hx:533");
-			}
-		} catch (_:NotFound) {
-			try {
-				switch (TypeFunctions.follow(e2.type)) {
-					case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, false, isAssignOp, withType, p);
-					case _: null;
-				}
-			} catch (_:NotFound) null;
+		// A non-abstract e1 falls through to the e2 probe DIRECTLY rather than by throwing NotFound, which
+		// on hxcpp would cost a throw for every binop whose left side is not an abstract. The catches stay
+		// for findAbstractBinop's own NotFound, which still means "no overload matched".
+		switch (TypeFunctions.follow(e1.type)) {
+			case TAbstract(a, tl) if (a.impl != null):
+				try return findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, true, isAssignOp, withType, p)
+				catch (_:NotFound) {}
+			case _:
 		}
+		return try {
+			switch (TypeFunctions.follow(e2.type)) {
+				case TAbstract(a, tl) if (a.impl != null): findAbstractBinop(ctx, op, e1, e2, a, a.impl, tl, false, isAssignOp, withType, p);
+				case _: null;
+			}
+		} catch (_:NotFound) null;
 	}
 
 	// A NotFound in the overload search bubbles to tryAbstractBinop, which then tries the other operand.

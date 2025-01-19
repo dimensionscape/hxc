@@ -81,13 +81,12 @@ class EvalPrototype {
 	}
 
 	static function nativeFieldName(cf:TClassField):Null<String> {
-		return try {
-			var meta = TypeFunctions.getMeta(":native", cf.meta);
-			switch (meta.params.length > 0 ? meta.params[0].expr : null) {
-				case EConst(CString(s, _)): s;
-				case _: null;
-			}
-		} catch (_:Dynamic) null;
+		var meta = TypeFunctions.getMetaOpt(":native", cf.meta);
+		if (meta == null) return null;
+		return switch (meta.params.length > 0 ? meta.params[0].expr : null) {
+			case EConst(CString(s, _)): s;
+			case _: null;
+		}
 	}
 
 	static function addNameAlias(pnames:Map<Int, Int>, cf:TClassField, idx:Int, ?owner:TClass):Void {
@@ -340,12 +339,8 @@ class EvalPrototype {
 	}
 
 	static function fieldValueExpr(meta:Metadata):Null<Expr> {
-		try {
-			var m = TypeFunctions.getMeta(":value", meta);
-			return m.params.length == 1 ? m.params[0] : null;
-		} catch (_:Dynamic) {
-			return null;
-		}
+		var m = TypeFunctions.getMetaOpt(":value", meta);
+		return m != null && m.params.length == 1 ? m.params[0] : null;
 	}
 
 	static function rttiAccess(a:VarAccess):String {

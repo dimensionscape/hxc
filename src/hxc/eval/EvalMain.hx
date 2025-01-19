@@ -69,13 +69,12 @@ class EvalMain {
 	// and rewrite path to the enum's @:native path. There is no separate filter pass, so this runs just
 	// before the enum prototype is built.
 	static function nativeNameOf(meta:hxc.ast.Ast.Metadata):Null<String> {
-		return try {
-			var m = hxc.core.TypeFunctions.getMeta(":native", meta);
-			switch (m.params.length > 0 ? m.params[0].expr : null) {
-				case EConst(CString(s, _)): s;
-				case _: null;
-			}
-		} catch (_:Dynamic) null;
+		var m = hxc.core.TypeFunctions.getMetaOpt(":native", meta);
+		if (m == null) return null;
+		return switch (m.params.length > 0 ? m.params[0].expr : null) {
+			case EConst(CString(s, _)): s;
+			case _: null;
+		}
 	}
 
 	static function applyNativePathsEnum(en:TEnum):Void {

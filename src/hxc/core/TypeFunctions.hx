@@ -41,6 +41,14 @@ class TypeFunctions {
 		throw new NotFound("TypeFunctions.hx:41");
 	}
 
+	// Null for absence. The throwing form above throws NotFound; probes that
+	// EXPECT absence (the per-field :native/:value lookups, which nearly always miss) paid a
+	// ~1.3us hxcpp throw per miss, 12926 of them per unit-suite compile.
+	public static function getMetaOpt(m:String, ml:Metadata):Null<MetadataEntry> {
+		for (entry in ml) if (entry.name == m) return entry;
+		return null;
+	}
+
 	// Type.Flags already provides hasFlag/setFlag/unsetFlag over a bit index.
 	public static inline function hasFlag(flags:Int, flag:Int):Bool return Flags.hasFlag(flags, flag);
 	public static inline function setFlag(flags:Int, flag:Int):Int return Flags.setFlag(flags, flag);
