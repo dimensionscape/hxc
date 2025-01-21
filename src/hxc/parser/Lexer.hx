@@ -8,6 +8,26 @@ import hxc.ast.Position;
 import hxc.ast.Ast.InvalidEscapeSequence;
 
 class Lexer {
+	// Identifiers are the largest live String population in a compile: the same few thousand
+	// names repeat across every module, and each duplicate SURVIVES inside the AST. hxcpp
+	// charges a survivor about 183 bytes once the heap is fragmented, because Immix charges a
+	// 128-byte row whole when any live object touches it, so the duplicates are not paid for
+	// by their content but by the rows they scatter across. Pooling leaves one object per
+	// distinct name; the probe string built to look the pool up dies in the young generation,
+	// where allocation is nearly free. Sharing is invisible to the language (String compares
+	// by value, and nothing in hxc keys an ObjectMap by String).
+	//
+	// Deliberately static and never cleared: the pool is bounded by the number of distinct
+	// identifiers, and a compilation server wants the sharing to persist across requests.
+	static var identPool:haxe.ds.StringMap<String> = new haxe.ds.StringMap();
+
+	static inline function intern(s:String):String {
+		var hit = identPool.get(s);
+		if (hit != null) return hit;
+		identPool.set(s, s);
+		return s;
+	}
+
 	final src:String;
 	final file:String;
 	var pos:Int;
@@ -323,13 +343,13 @@ class Lexer {
 			pos++;
 		var s = text(start);
 		var kw = Keywords.lookup(s);
-		return kw != null ? mk(start, Kwd(kw)) : mk(start, Const(CIdent(s)));
+		return kw != null ? mk(start, Kwd(kw)) : mk(start, Const(CIdent(intern(s))));
 	}
 
 	function upperIdent(start:Int):TokenInfo {
 		while (isIdentChar(peek()))
 			pos++;
-		return mk(start, Const(CIdent(text(start))));
+		return mk(start, Const(CIdent(intern(text(start)))));
 	}
 
 	// '"' -> string (raw) -> unescape
