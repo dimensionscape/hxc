@@ -33,11 +33,16 @@ class Lexer {
 	var pos:Int;
 	final len:Int;
 
+	// See Position.utf8FirstInvalid. -1 when the source is clean, which is the overwhelming case
+	// and costs one comparison per token.
+	final malformedAt:Int;
+
 	public function new(src:String, file:String) {
 		this.src = src;
 		this.file = file;
 		this.pos = 0;
 		this.len = src.length;
+		this.malformedAt = Position.malformedAt(file);
 		skipHeader();
 	}
 
@@ -169,6 +174,11 @@ class Lexer {
 				break;
 		}
 		var start = pos;
+		// Sedlex raises MalFormed as it DECODES, so a syntax error earlier in the file is reported
+		// instead and the malformed one never surfaces. Checking as the cursor arrives reproduces that
+		// ordering; the reported position is the start of the file either way.
+		if (malformedAt >= 0 && pos >= malformedAt)
+			throw new LexerError(MalformedFile, new Position(file, 0, 0));
 		var c = peek();
 		if (c == -1)
 			return mk(start, Eof);

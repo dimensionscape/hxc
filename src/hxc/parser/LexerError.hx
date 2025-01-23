@@ -11,6 +11,9 @@ enum LexerErrorMsg {
 	InvalidEscape(c:Int, ?msg:String);
 	InvalidOption;
 	UnterminatedMarkup;
+	// An invalid UTF-8 sequence is reported with this message at position 0 (min and max both 0), so
+	// the diagnostic always names the start of the file rather than wherever the bad bytes were.
+	MalformedFile;
 }
 
 class LexerError extends haxe.Exception {
@@ -35,6 +38,7 @@ class LexerError extends haxe.Exception {
 			case InvalidEscape(c, msg): "Invalid escape sequence \\" + charEscaped(c) + ". " + msg;
 			case InvalidOption: "Invalid regular expression option";
 			case UnterminatedMarkup: "Unterminated markup literal";
+			case MalformedFile: "Malformed file. Source files must be encoded with UTF-8.";
 		}
 	}
 

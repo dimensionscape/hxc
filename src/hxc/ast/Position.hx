@@ -24,9 +24,62 @@ class Position {
 		fileCache = new StringMap();
 	}
 
-	public static function registerFileContent(file:String, content:String):String {
-		fileCache.set(file, new PositionFile(content));
+	public static function registerFileContent(file:String, content:String, malformedAt:Int = -1):String {
+		// Preserve the encoding verdict only when Parser.make registers unchanged contents. Stdin and
+		// generated sources supply their own verdict.
+		if (malformedAt < 0) {
+			var prev = fileCache.get(file);
+			if (prev != null && prev.content == content) malformedAt = prev.malformedAt;
+		}
+		var pf = new PositionFile(content);
+		pf.malformedAt = malformedAt;
+		fileCache.set(file, pf);
 		return content;
+	}
+
+	/**
+	 * Decoded-string offset of the first malformed UTF-8 sequence, or -1. See utf8FirstInvalid.
+	 */
+	public static function malformedAt(file:String):Int {
+		var c = fileCache.get(file);
+		return c == null ? -1 : c.malformedAt;
+	}
+
+	// Validate raw bytes before hxcpp's permissive decoder hides malformed sequences. Reject overlong
+	// encodings, surrogates and out-of-range values; return the UTF-16 offset used by the lexer.
+	public static function utf8FirstInvalid(b:haxe.io.Bytes):Int {
+		var i = 0, u16 = 0;
+		var n = b.length;
+		inline function cont(k:Int):Bool {
+			var c = b.get(k);
+			return c >= 0x80 && c <= 0xBF;
+		}
+		while (i < n) {
+			var c = b.get(i);
+			if (c < 0x80) { i++; u16++; continue; }
+			if (c >= 0xC2 && c <= 0xDF) {
+				if (i + 1 >= n || !cont(i + 1)) return u16;
+				i += 2; u16++; continue;
+			}
+			if (c >= 0xE0 && c <= 0xEF) {
+				if (i + 2 >= n || !cont(i + 1) || !cont(i + 2)) return u16;
+				var c1 = b.get(i + 1);
+				// E0 A0..BF rejects the overlong 3-byte forms; ED 80..9F rejects UTF-16 surrogates.
+				if (c == 0xE0 && c1 < 0xA0) return u16;
+				if (c == 0xED && c1 > 0x9F) return u16;
+				i += 3; u16++; continue;
+			}
+			if (c >= 0xF0 && c <= 0xF4) {
+				if (i + 3 >= n || !cont(i + 1) || !cont(i + 2) || !cont(i + 3)) return u16;
+				var c1 = b.get(i + 1);
+				if (c == 0xF0 && c1 < 0x90) return u16;   // overlong
+				if (c == 0xF4 && c1 > 0x8F) return u16;   // beyond U+10FFFF
+				i += 4; u16 += 2;                          // astral: a surrogate PAIR
+				continue;
+			}
+			return u16;  // C0, C1, F5..FF and stray continuation bytes
+		}
+		return -1;
 	}
 
 	// Preserve the file's line index during an inline parse under the same name.
@@ -42,7 +95,9 @@ class Position {
 	public static function getFileContent(file:String):String {
 		var cached = fileCache.get(file);
 		if (cached != null) return cached.content;
-		return registerFileContent(file, File.getContent(file));
+		// Read raw bytes so malformed UTF-8 can be detected before decoding.
+		var bytes = File.getBytes(file);
+		return registerFileContent(file, bytes.toString(), utf8FirstInvalid(bytes));
 	}
 
 	public static function lineNumber(p:Position):Int {
@@ -91,6 +146,12 @@ typedef PositionInfos = {
 
 private class PositionFile {
 	public final content:String;
+
+	/**
+	 * Decoded-string offset of the first malformed UTF-8 sequence, or -1, stored per file.
+	 */
+	public var malformedAt:Int = -1;
+
 	final lineStarts:Array<Int>;
 
 	// Store line starts in code-point offsets to match lexer positions, including astral characters.
