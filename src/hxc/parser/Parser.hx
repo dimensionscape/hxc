@@ -2820,18 +2820,22 @@ class Parser {
 		if (tokEq(peek(), BrOpen)) {
 			checkDisplay(new Position(p0.file, p0.max, peekInfo().pos.min));
 			expect(BrOpen);
-		} else if (isDisplayFile()) {
+		} else {
 			// An identifier under the cursor here is an incomplete relation keyword, answered with that name
-			// as the subject.
+			// as the subject. This is guarded on the CURSOR, not on the file, so outside display it simply
+			// never matches and control falls through.
 			var np = peekInfo().pos;
 			switch (peek()) {
-				case Const(CIdent(iname)) if (np.min <= displayOffset && displayOffset <= np.max):
+				case Const(CIdent(iname)) if (isDisplayFile() && np.min <= displayOffset && displayOffset <= np.max):
 					throw new hxc.compiler.DisplayXml.SyntaxCompletion(relationKeywords(), iname, np, 13);
 				case _:
 			}
+			// This arm is not display-only: syntaxError raises outside display and records inside it. Gating
+			// it on the display file would let a batch compile fall to expect(BrOpen) and report the bare
+			// `{` instead of the full alternative set.
 			checkDisplay(new Position(p0.file, p0.max, peekInfo().pos.max));
-			syntaxErrors.push({msg: Expected(["extends", "implements", "{"]), pos: peekInfo().pos});
-		} else expect(BrOpen);
+			syntaxError(Expected(["extends", "implements", "{"]));
+		}
 		var cf = parseClassFields(false, p1);
 		var flags = filterClassFlags(c).concat(n).concat(hl);
 		var def:Definition<ClassFlag, Array<ClassField>> = {
