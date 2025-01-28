@@ -1336,9 +1336,18 @@ class ModuleLoader {
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
-			var spack = function(l:Array<String>) return l.length == 0 ? "(root)" : l.join(".");
-			throw new ContextError("Invalid package : " + file + " declares package "
-				+ spack(pkg.pack) + " but module path is " + spack(m.pack), p);
+			// Two messages, chosen by whether the module was asked for by position or from the command line
+			// (a null position), and both are recorded and let typing continue rather than aborting - the
+			// compile goes on to report what the mismatched module could not resolve.
+			if (p == null || (p.min < 0 && p.max < 0 && p.file == Position.nullPos.file)) {
+				ctx.addDiagnostic("Invalid commandline class : " + Context.sTypePath(m)
+					+ " should be " + Context.sTypePath({pack: pkg.pack, name: m.name}), p);
+			} else {
+				var spack = function(l:Array<String>)
+					return l.length == 0 ? "`package;`" : "`package " + l.join(".") + ";`";
+				ctx.addDiagnostic(spack(pkg.pack) + " in " + file + " should be " + spack(m.pack),
+					new Position(p.file, p.min, p.min));
+			}
 		}
 		var requester = ctx.currentModule;
 		var loaded = typeModule(ctx, m, file, pkg.decls);
