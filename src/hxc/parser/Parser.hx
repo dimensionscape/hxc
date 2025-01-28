@@ -605,6 +605,10 @@ class Parser {
 		try {
 			acc.push(f());
 		} catch (e:ParserError) {
+			// A parse that consumed tokens before failing is a real error and propagates. Swallowing it
+			// turned `case (_.eq` into an empty pattern list, and the missing `:` got reported in place of
+			// the paren expression's own `Expected ) or , or :`.
+			if (idx != save) throw e;
 			idx = save;
 			return acc;
 		}
