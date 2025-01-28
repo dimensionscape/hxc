@@ -996,7 +996,12 @@ class Parser {
 			} else {
 				var cd = checkDisplay();
 				if (cd != null) return cd;
-				return err("Type name should start with an uppercase letter");
+				// After a lowercase path element, only a SEMICOLON earns the uppercase message - that is the
+				// shape of a `import pack.thing;` gone wrong. Every other token falls to `check_display
+				// serror`, which reports `Unexpected <token>`. Collapsing the two blamed the case of the name
+				// for what is really an unexpected token.
+				if (tokEq(peek(), Semicolon)) return err("Type name should start with an uppercase letter");
+				return serror();
 			}
 		}
 		var sub:Null<String> = null;
@@ -3015,6 +3020,10 @@ class Parser {
 		var pl = parseConstraintParams();
 		expect(POpen);
 		var args = psepTrailing(parseFunParam);
+		// This `)` is a pattern ELEMENT, and a mid-pattern token mismatch is reported as `Unexpected
+		// <actual token>`. Only a site that raises an explicit expectation reports `Expected )`, so
+		// expect() would name the wrong half of the mismatch here.
+		if (!tokEq(peek(), PClose)) serror();
 		expect(PClose);
 		var t = poptTypeHint();
 		var e:Null<Expr> = null;
