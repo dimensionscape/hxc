@@ -290,6 +290,10 @@ class TypeFields {
 	}
 
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
+		// The declaration itself did not resolve, so these fields are never bound (the class init raised
+		// inside the heritage). Typing them anyway would report every member inherited from the type that
+		// failed to load. See Context.declErrored.
+		if (ctx.declErrored.exists(Context.pathKey(c.path))) return;
 		// A @:coreApi class outside a -D core_api build queues its validation against the pristine core
 		// definition (delayed to PForce; display requests skip it).
 		if (Sys.getEnv("HXC_DBG_CORE") != null && TypeFunctions.hasMeta(":coreApi", c.meta)) Sys.println("[core] hook-check " + c.path.name + " core_api=" + ctx.defines.rawDefined("core_api") + " disp=" + (ctx.displaySpec != null));
@@ -514,6 +518,9 @@ class TypeFields {
 	// from the call site, so locate the syntactic field and run its body typing here.
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
+		// Same reason as installClassFields: the declaration never resolved, so there is no body to type
+		// here. The filters reach this path directly, so guarding the install site alone is not enough.
+		if (ctx.declErrored.exists(Context.pathKey(c.path))) return;
 		if (bodyTyped.exists(cf)) return;
 		switch (cf.type) {
 			case TLazy(r):

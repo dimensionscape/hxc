@@ -134,6 +134,12 @@ class Context {
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
 
 	/**
+	 * Types whose declarations failed resolution. Skip their unbound fields and bodies to avoid
+	 * cascading inherited-member errors.
+	 */
+	public var declErrored:StringMap<Bool> = new StringMap();
+
+	/**
 	 * Count unresolved field annotations; each retains a placeholder monomorph while resolution
 	 * continues.
 	 */

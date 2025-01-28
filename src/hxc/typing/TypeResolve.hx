@@ -32,11 +32,13 @@ class TypeResolve {
 				// rather than be recorded and swallowed here.
 				throw dc;
 			} catch (e:ContextError) {
-				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of
-				// the module still resolves but the compile fails.
+				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of the
+				// module still resolves but the compile fails.
+				ctx.declErrored.set(Context.pathKey(info.path), true);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (e:hxc.core.TypingError) {
+				ctx.declErrored.set(Context.pathKey(info.path), true);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (_:Dynamic) {
