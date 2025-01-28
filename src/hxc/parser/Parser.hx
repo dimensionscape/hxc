@@ -443,6 +443,12 @@ class Parser {
 		return e;
 	}
 
+	/**
+		Set when the class-field parse found no field FORM at all: the soft failure that ends the field
+		list. Consumed and reset by parseClassFields.
+	*/
+	var fieldFormFailed:Bool = false;
+
 	function serror():Dynamic {
 		throw new ParserError(Unexpected(peek()), cur().pos);
 	}
@@ -2627,6 +2633,9 @@ class Parser {
 				try {
 					return parseAbstract(doc, meta, convertAbstractFlags(c), p1);
 				} catch (e:ParserError) {
+					// Catching every error rewound over a fault deep inside the abstract's body and then reported
+					// `Unexpected <name>` from the retry, hiding the real one.
+					if (idx != save) throw e;
 					idx = save;
 					var c2 = parseCommonFlags();
 					var fp = parseClassFlags();
@@ -2872,7 +2881,25 @@ class Parser {
 				acc.push(cff);
 				continue;
 			}
-			acc.push(parseClassField(tdecl));
+			// The list ends on a soft failure, which means the field matched NOTHING at all; the missing
+			// brace is then reported by the expect below as `Expected }`. A parse that consumed tokens
+			// before failing is a non-soft error and stays fatal; letting every inner failure escape would
+			// report `Unexpected <token>` instead of `Expected }`.
+			var save = idx;
+			var cff:Null<ClassField> = null;
+			fieldFormFailed = false;
+			try cff = parseClassField(tdecl)
+			catch (er:ParserError) {
+				// End the list on a soft failure: either the field matched nothing at all, or it reached
+				// the form choice and none applied. Anything else consumed its way into a real syntax error
+				// and propagates.
+				if (!fieldFormFailed && idx != save) throw er;
+				// No rewind: the stream does not give back what getDoc and the metadata parse already took,
+				// so the list ends exactly where the field gave up and the expect below reports the missing
+				// brace at that token.
+				break;
+			}
+			acc.push(cff);
 		}
 		// A display-mode parse tolerates a body left unclosed by an earlier recovery (the file ends before
 		// the closing brace).
@@ -2935,11 +2962,19 @@ class Parser {
 				var ff = parseFunctionField(doc, meta, al);
 				name = ff.name; kind = ff.kind; meta = ff.meta; al = ff.al; fpos = ff.pos;
 			case _:
-				// Nothing follows the access flags, and the last of them is `override`: a cursor there asks
-				// which inherited field to override, so an empty method marked @:displayOverride stands in for
-				// the one being written.
+				// With no access flags consumed this is a soft failure, which ends the field list so the
+				// missing brace is reported by parseClassFields; with flags it is a hard serror(). Treating
+				// both as serror() would report `Unexpected <token>` instead of `Expected }`, and treating both
+				// as end-of-list the reverse.
 				var last = al.length == 0 ? null : al[al.length - 1];
-				if (last == null || !last.access.match(AOverride)) return serror();
+				if (last == null) {
+					fieldFormFailed = true;
+					return serror();
+				}
+				// The last flag is `override` and a cursor sits on it, so the request is which inherited
+				// field to override: an empty method marked @:displayOverride stands in for the one being
+				// written.
+				if (!last.access.match(AOverride)) return serror();
 				var cc = checkCompletion(last.pos, true);
 				if (cc == null) return serror();
 				name = {name: cc.name == null ? "" : cc.name, pos: cc.pos};
