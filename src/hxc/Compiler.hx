@@ -35,7 +35,7 @@ import sys.io.Process;
 </files>
 <linker id="exe" exe="link.exe" if="windows">
 	<flag value="-LARGEADDRESSAWARE"/>
-	<flag value="-STACK:134217728"/>
+	<flag value="-STACK:1073741824"/>
 </linker>
 <linker id="exe" if="emscripten">
 	<flag value="-sALLOW_MEMORY_GROWTH=1"/>
