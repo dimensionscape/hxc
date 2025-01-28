@@ -2799,7 +2799,13 @@ class Parser {
 		try {
 			return {path: parseTypePath(), resumed: false};
 		} catch (e:ParserError) {
+			var matchedNothing = idx == save;
 			idx = save;
+			// The path is the SECOND element after the relation keyword, and the type path parse has no
+			// fallback arm, so a path that matches nothing is a soft failure that the enclosing pattern
+			// turns into a non-soft error - reported as `Unexpected <token>`, not as dollarIdentMacro's own
+			// "Expected identifier".
+			if (matchedNothing && !isDisplayFile()) serror();
 			if (!wouldSkipDisplayPosition(pkeyword, true)) throw e;
 			var dp = new Position(pkeyword.file, displayOffset, displayOffset);
 			return {path: {path: magicTypePath(), pos: dp}, resumed: true};
