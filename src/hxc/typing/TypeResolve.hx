@@ -34,11 +34,11 @@ class TypeResolve {
 			} catch (e:ContextError) {
 				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of the
 				// module still resolves but the compile fails.
-				ctx.declErrored.set(Context.pathKey(info.path), true);
+				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (e:hxc.core.TypingError) {
-				ctx.declErrored.set(Context.pathKey(info.path), true);
+				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 			} catch (_:Dynamic) {
@@ -48,6 +48,15 @@ class TypeResolve {
 		for (mt in m.types) resolveUsingMetadata(ctx, mt);
 		ctx.currentModule = savedMod;
 	}
+
+	// The error raises out of module initialisation, so the module's DELAYED field typing never runs -
+	// for any of its types, not just the one that failed. A sibling class typed anyway reports every
+	// member it expected from the broken one.
+	static function markModuleErrored(ctx:Context, m:ModuleDef):Void {
+		for (mt in m.types)
+			ctx.declErrored.set(Context.pathKey(TypeFunctions.tInfos(mt).path), true);
+	}
+
 
 	/**
 	 * Resolve all loaded modules currently in the Context.

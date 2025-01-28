@@ -1497,7 +1497,7 @@ class Parser {
 		switch (peek()) {
 			case Kwd(KwdVar):
 				var p1 = next().pos;
-				var vl = parseVarDecls(false);
+				var vl = parseVarDecls(false, p1);
 				var p2 = semicolon();
 				return new Expr(EVars(vl), Position.union(p1, p2));
 			case Kwd(KwdFinal):
@@ -1511,11 +1511,11 @@ class Parser {
 						// its own.
 						var p2 = next().pos;
 						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
-						var vl = parseVarDecls(true);
+						var vl = parseVarDecls(true, p1);
 						var pEnd = semicolon();
 						return new Expr(EVars(vl), Position.union(p1, pEnd));
 					case Const(CIdent(_)), Dollar(_), At:
-						var vl = parseVarDecls(true);
+						var vl = parseVarDecls(true, p1);
 						var p2 = semicolon();
 						return new Expr(EVars(vl), Position.union(p1, p2));
 					case _:
@@ -1537,7 +1537,7 @@ class Parser {
 				if (tokEq(peek(), Kwd(KwdVar)) || tokEq(peek(), Kwd(KwdFinal))) {
 					var isFinal = tokEq(peek(), Kwd(KwdFinal));
 					var vp = next().pos;
-					var vl = parseVarDecls(isFinal);
+					var vl = parseVarDecls(isFinal, vp);
 					for (v in vl) v.evStatic = true;
 					var p2 = semicolon();
 					return new Expr(EVars(vl), Position.union(vp, p2));
@@ -1560,8 +1560,23 @@ class Parser {
 		return e;
 	}
 
-	function parseVarDecls(isFinal:Bool):Array<EVar> {
-		var vl:Array<EVar> = [parseVarDecl(isFinal)];
+	// A head that matches NOTHING is a soft failure and falls to the hard "Missing variable identifier" at
+	// p1, which names the `var` keyword rather than whatever token turned up in place of the name.
+	function parseVarDecls(isFinal:Bool, p1:Position):Array<EVar> {
+		var save = idx;
+		var first = try parseVarDecl(isFinal)
+		catch (er:ParserError) {
+			if (idx != save) throw er;
+			// A KEYWORD where the name belongs is a hard error that names the keyword ("Keyword final
+			// cannot be used as variable name"); anything else is a soft failure, and only that becomes
+			// "Missing variable identifier".
+			switch (peek()) {
+				case Kwd(_): throw er;
+				case _:
+			}
+			throw new ParserError(Custom("Missing variable identifier"), p1);
+		}
+		var vl:Array<EVar> = [first];
 		while (tokEq(peek(), Comma)) {
 			junk();
 			vl.push(parseVarDecl(isFinal));
@@ -1795,7 +1810,7 @@ class Parser {
 				return parseMacroExpr(p);
 			case Kwd(KwdVar):
 				var p1 = next().pos;
-				var vl = parseVarDecls(false);
+				var vl = parseVarDecls(false, p1);
 				return new Expr(EVars(vl), p1);
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
@@ -1807,7 +1822,7 @@ class Parser {
 						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case _:
 				}
-				var vl = parseVarDecls(true);
+				var vl = parseVarDecls(true, p1);
 				return new Expr(EVars(vl), p1);
 			case Const(c):
 				var p = next().pos;
