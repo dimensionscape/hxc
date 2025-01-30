@@ -575,10 +575,14 @@ class Parser {
 		}
 	}
 
+	// `ident` is a single arm with no fallback, so a non-match is a soft failure and the message comes
+	// from
+	// the caller's pattern - `Unexpected <token>`. Same correction as dollarIdent and
+	// dollarIdentMacro.
 	function identTok():PlacedName {
 		switch (peek()) {
 			case Const(CIdent(i)): var p = next().pos; return {name: i, pos: p};
-			case _: return err("Expected identifier");
+			case _: return serror();
 		}
 	}
 
