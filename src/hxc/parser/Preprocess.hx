@@ -339,7 +339,11 @@ class Preprocess {
 		var depth = 1;
 		var sub:Array<TokenInfo> = [];
 		while (true) {
-			if (i >= toks.length) throw new ParserError(Custom("Unclosed ( in conditional"), popen);
+			// A parenthesised condition is parsed by the ORDINARY expression parser straight off the token
+			// stream, so when the paren never closes `expr` simply runs on into the following lines and
+			// reports what it finds there. There is no "Unclosed (" message. Stop collecting at the end
+			// and let the sub-parse speak for itself.
+			if (i >= toks.length) break;
 			var ti = toks[i];
 			switch (ti.tok) {
 				case POpen: depth++; sub.push(ti); i++;
@@ -347,7 +351,7 @@ class Preprocess {
 					depth--;
 					if (depth == 0) { i++; break; }
 					sub.push(ti); i++;
-				case Eof: throw new ParserError(Custom("Unclosed ( in conditional"), popen);
+				case Eof: break;
 				// While a condition is parsed, keyword tokens are plain identifiers (e.g. `macro`,
 				// `interp`,
 				// `extern`, `dynamic` are define names, not keywords), so rewrite Kwd -> CIdent in the
