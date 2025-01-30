@@ -2661,6 +2661,8 @@ class Parser {
 				}
 				var name = typeName();
 				var tl = parseConstraintParams();
+				// This `{` is a pattern element, so a mismatch is `Unexpected <actual>`, not `Expected {`.
+				if (!tokEq(peek(), BrOpen)) serror();
 				expect(BrOpen);
 				var l:Array<EnumConstructor> = [];
 				while (!tokEq(peek(), BrClose) && !tokEq(peek(), Eof)) {
