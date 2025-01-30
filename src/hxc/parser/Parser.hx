@@ -2647,8 +2647,12 @@ class Parser {
 				if (tokEq(peek(), POpen)) {
 					junk();
 					var i1 = propertyIdent();
+					// `(get, set)`: the comma and the closing paren are pattern elements, so a mismatch on
+					// either is `Unexpected <actual>`.
+					if (!tokEq(peek(), Comma)) serror();
 					expect(Comma);
 					var i2 = propertyIdent();
+					if (!tokEq(peek(), PClose)) serror();
 					expect(PClose);
 					var t = poptTypeHint();
 					var a = parseVarFieldAssignment();
@@ -3011,8 +3015,12 @@ class Parser {
 				if (tokEq(peek(), POpen)) {
 					junk();
 					var i1 = propertyIdent();
+					// `(get, set)`: the comma and the closing paren are pattern elements, so a mismatch on
+					// either is `Unexpected <actual>`.
+					if (!tokEq(peek(), Comma)) serror();
 					expect(Comma);
 					var i2 = propertyIdent();
+					if (!tokEq(peek(), PClose)) serror();
 					expect(PClose);
 					var t = poptTypeHint();
 					var a = parseVarFieldAssignment();
