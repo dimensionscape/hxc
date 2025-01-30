@@ -1755,7 +1755,11 @@ class Parser {
 		try {
 			return expr();
 		} catch (er:ParserError) {
-			if (idx != save || displayFile == null) throw er;
+			if (idx != save) throw er;
+			// The fallback is the syntax error `Expected expression`, RAISED outside display rather than
+			// keeping whatever expr said: a stray `static` here is `Expected expression`, not `Unexpected
+			// keyword "static"`.
+			if (displayFile == null) throw new ParserError(Expected(["expression"]), np);
 			syntaxErrors.push({msg: Expected(["expression"]), pos: np});
 			var last = tokens[idx > 0 ? idx - 1 : 0];
 			var offset = switch (last.tok) {
