@@ -3055,6 +3055,9 @@ class Parser {
 		var p1 = expect(Kwd(KwdFunction));
 		var name = parseFunName();
 		var pl = parseConstraintParams();
+		// This `(` is a pattern element too, so a mismatch is `Unexpected <actual>`, the same as the
+		// closing one below.
+		if (!tokEq(peek(), POpen)) serror();
 		expect(POpen);
 		var args = psepTrailing(parseFunParam);
 		// This `)` is a pattern ELEMENT, and a mid-pattern token mismatch is reported as `Unexpected
