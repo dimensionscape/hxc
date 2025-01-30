@@ -675,7 +675,9 @@ class Parser {
 			// can complete at the position; otherwise the missing close reports as usual.
 			if (tokEq(peek(), PClose)) junk();
 			else if (!(isDisplayFile() && displayOffset >= pOpen.min && displayOffset <= peekInfo().pos.max))
-				throw new ParserError(Expected(params.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
+				// The argument list closes with a plain expect that names only `)`: `,` is never offered
+				// here because psepTrailing has already taken every comma it could.
+				throw new ParserError(Expected([")"]), peekInfo().pos);
 			// The entry position spans the name only; the arguments are excluded.
 		}
 		var entry = {name: name, params: params, pos: Position.union(p1, pEnd)};
