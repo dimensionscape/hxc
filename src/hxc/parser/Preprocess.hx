@@ -362,7 +362,11 @@ class Preprocess {
 				case _: sub.push(ti); i++;
 			}
 		}
-		sub.push(new TokenInfo(Eof, popen));
+		// The sentinel carries the position just PAST the last collected token, not the opening paren's.
+		// The condition is read straight off the stream, so an error at the end of it is reported there,
+		// not at the start of the condition.
+		var endPos = sub.length > 0 ? sub[sub.length - 1].pos : popen;
+		sub.push(new TokenInfo(Eof, new Position(endPos.file, endPos.max, endPos.max)));
 		var e = Parser.parseExprFromTokens(sub, "<cond>");
 		validateMacroCond(e);
 		return new Expr(EParenthesis(e), popen);
