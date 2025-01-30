@@ -1220,8 +1220,12 @@ class Parser {
 			if (pn.min <= displayOffset && displayOffset <= pn.max) displaySuppressed = true;
 		}
 		var pl = parseConstraintParams();
+		// Both parens of the parameter list are pattern elements, so a mismatch is `Unexpected <actual>`.
+		// Same as the field function at parseFunctionField.
+		if (!tokEq(peek(), POpen)) serror();
 		expect(POpen);
 		var al = psepTrailing(parseFunParam);
+		if (!tokEq(peek(), PClose)) serror();
 		expect(PClose);
 		var t = poptTypeHint();
 		var e = secureExpr();
@@ -2610,8 +2614,11 @@ class Parser {
 				var p1 = next().pos;
 				var name = dollarIdent();
 				var pl = parseConstraintParams();
+				// Same pattern elements as parseFunction above.
+				if (!tokEq(peek(), POpen)) serror();
 				expect(POpen);
 				var args = psepTrailing(parseFunParam);
+				if (!tokEq(peek(), PClose)) serror();
 				expect(PClose);
 				var t = poptTypeHint();
 				var e:Null<Expr> = null;
