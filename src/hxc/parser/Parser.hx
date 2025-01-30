@@ -582,11 +582,14 @@ class Parser {
 		}
 	}
 
+	// dollarIdent has two arms and no fallback, so a non-match is a soft failure and the message comes
+	// from whatever pattern the caller was in - `Unexpected <token>`. The "Expected identifier" texts
+	// are separate explicit errors on the import/using paths, which hxc raises there directly.
 	function dollarIdent():PlacedName {
 		switch (peek()) {
 			case Const(CIdent(i)): var p = next().pos; return {name: i, pos: p};
 			case Dollar(v): var p = next().pos; return {name: "$" + v, pos: p};
-			case _: return err("Expected identifier");
+			case _: return serror();
 		}
 	}
 
@@ -3082,10 +3085,14 @@ class Parser {
 		return {name: name, kind: FFun(f), meta: meta, al: al, pos: Position.union(p1, p2)};
 	}
 
+	// The function name has exactly two arms and no fallback, so anything else is a soft failure; the
+	// name is the second element after `function`, which makes it a non-soft error reported as
+	// `Unexpected <token>`, not dollarIdent's own "Expected identifier".
 	function parseFunName():PlacedName {
 		switch (peek()) {
 			case Kwd(KwdNew): var p = next().pos; return {name: "new", pos: p};
-			case _: return dollarIdent();
+			case Const(CIdent(_)) | Dollar(_): return dollarIdent();
+			case _: return serror();
 		}
 	}
 
