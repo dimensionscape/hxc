@@ -1318,11 +1318,14 @@ class Parser {
 				case Const(CString(name, _)): var p = next().pos; key = {name: name, pos: p, quotes: DoubleQuotes};
 				case _: break;
 			}
-			// A missing `:` after a field name is recorded and the value read anyway, so `{ a: 1, fie` still
-			// carries `fie` as a field for completion to answer on.
-			if (tokEq(peek(), DblDot)) junk();
-			else syntaxError(Expected([":"]));
+			// The missing-colon report is made only after the value expression has been read, so an error
+			// raised while reading the value pre-empts it entirely: `{_1: 1, ab }` is `Expected expression`,
+			// not `Expected :`. The colon is still recorded when the value parses, which is what keeps `{ a:
+			// 1, fie` carrying `fie` for completion.
+			var missingColon = !tokEq(peek(), DblDot);
+			if (!missingColon) junk();
 			var e = secureExpr();
+			if (missingColon) syntaxError(Expected([":"]), key.pos);
 			acc.push({name: key.name, pos: key.pos, quotes: key.quotes, expr: e});
 			pEnd = e.pos;
 		}
