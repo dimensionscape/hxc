@@ -182,7 +182,7 @@ class Parser {
 
 	// Lex `src` into a raw token list (comments filtered, ends in Eof), enforcing
 	// the lexer forward-progress invariant.
-	static function lexAll(src:String, file:String):Array<TokenInfo> {
+	static function lexAll(src:String, file:String, out:{err:Null<LexerError>}):Array<TokenInfo> {
 		var lex = new Lexer(src, file);
 		var toks:Array<TokenInfo> = [];
 		var lastSignificant:Null<Token> = null;
@@ -191,7 +191,7 @@ class Parser {
 		// Lexer progress invariant: every non-Eof token call must advance the
 		// stuck -> raise instead of spinning forever.
 		var lastOff = lex.offset();
-		while (true) {
+		try while (true) {
 			if (canStartMarkup(lastSignificant, lastWasMarkup)) {
 				var markup = lex.tryReadMarkupLiteral();
 				if (markup != null) {
@@ -259,6 +259,12 @@ class Parser {
 			}
 			lastOff = off;
 		}
+		catch (e:LexerError) {
+			// Deferring it made hxc report inventions from the cut-short stream instead.
+			if (e.msg.match(MalformedFile)) throw e;
+			out.err = e;
+			toks.push(new TokenInfo(Eof, e.pos));
+		}
 		return toks;
 	}
 
@@ -284,7 +290,8 @@ class Parser {
 
 	static function make(src:String, file:String, ?defines:Define, registerContent:Bool = true):Parser {
 		if (registerContent) Position.registerFileContent(file, src);
-		var toks = lexAll(src, file);
+		var lexOut:{err:Null<LexerError>} = {err: null};
+		var toks = lexAll(src, file, lexOut);
 		// Conditional-compilation preprocessing (#if/#else/#elseif/#end/#error/
 		// #line). Only run when the stream actually contains a Sharp token, so
 		// the common expression-grammar path pays nothing. The active define set comes
@@ -293,10 +300,18 @@ class Parser {
 			var d = defines == null ? new Define() : defines;
 			// handlePdi runs over the DISPLAY file's dead blocks only.
 			var dead:Null<Array<{p:Position, cond:Expr}>> = matchesDisplayFile(file) && displayOffset >= 0 ? [] : null;
-			toks = Preprocess.run(toks, d, dead);
+			// An unclosed #if is found by scanning the whole stream, but the preprocessor's verdicts belong
+			// to the pull that reaches them, so a parse error before the conditional is reported instead.
+			// Defer it on the same terms as a lexer fault.
+			var ppFail:{err:Null<ParserError>} = {err: null};
+			toks = Preprocess.run(toks, d, dead, ppFail);
+			if (ppFail.err != null && lexOut.err == null)
+				lexOut.err = new LexerError(Preprocessed(ppFail.err), ppFail.err.pos);
 			if (dead != null) handlePdi(d, dead);
 		}
-		return new Parser(toks, file, defines != null && defines.rawDefined("macro"));
+		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"));
+		pr.pendingLexError = lexOut.err;
+		return pr;
 	}
 
 	// Every DEAD block of the display file is re-evaluated with the defines ADAPTED to the MACRO
@@ -333,6 +348,14 @@ class Parser {
 			stall = 0;
 		}
 		var i = idx + o;
+		if (pendingLexError != null && i >= tokens.length - 1) {
+			var e = pendingLexError;
+			pendingLexError = null;
+			switch (e.msg) {
+				case Preprocessed(pe): throw pe;
+				case _: throw e;
+			}
+		}
 		return i < tokens.length ? tokens[i] : tokens[tokens.length - 1];
 	}
 
@@ -448,6 +471,10 @@ class Parser {
 		list. Consumed and reset by parseClassFields.
 	*/
 	var fieldFormFailed:Bool = false;
+
+	/** Lexing or preprocessing stopped early on a fault. peekInfo raises it once the cursor
+		reaches the truncated end, so a PARSE error inside the valid prefix is reported first. */
+	var pendingLexError:Null<LexerError> = null;
 
 	function serror():Dynamic {
 		throw new ParserError(Unexpected(peek()), cur().pos);

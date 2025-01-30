@@ -8,7 +8,7 @@ class Preprocess {
 	final toks:Array<TokenInfo>;
 	final defines:Define;
 	var i:Int;
-	final out:Array<TokenInfo>;
+	public final out:Array<TokenInfo>;
 	// Stack of `#if` start positions still open (for unclosed-conditional errors)
 	final mstack:Array<Position>;
 	// Every region the conditions turned off, with the condition that was in force there. Each one is
@@ -29,9 +29,17 @@ class Preprocess {
 	}
 
 	public static function run(toks:Array<TokenInfo>, defines:Define,
-			?deadOut:Array<{p:Position, cond:Expr}>):Array<TokenInfo> {
+			?deadOut:Array<{p:Position, cond:Expr}>, ?failOut:{err:Null<ParserError>}):Array<TokenInfo> {
 		var p = new Preprocess(toks, defines);
-		var r = p.process();
+		var r = try p.process()
+		catch (e:ParserError) {
+			// Preprocessing happens as the parser pulls, so a fault here does not discard what came before
+			// it: everything up to this point is already parsed. Hand back the PARTIAL stream (the raw one
+			// would put unprocessed #if tokens in front of the parser) and let the caller decide when to
+			// raise.
+			if (failOut != null) failOut.err = e;
+			p.out;
+		};
 		if (deadOut != null) for (b in p.deadBlocks) deadOut.push(b);
 		return r;
 	}
