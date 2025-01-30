@@ -1434,8 +1434,12 @@ class Parser {
 	function parseGuardOpt():Null<Expr> {
 		if (tokEq(peek(), Kwd(KwdIf))) {
 			junk();
+			// `if (expr)` - both parens are pattern elements, so a mismatch on either is `Unexpected
+			// <actual>`. A malformed guard like `case n if (n  2):` is `Unexpected 2`.
+			if (!tokEq(peek(), POpen)) serror();
 			expect(POpen);
 			var e = expr();
+			if (!tokEq(peek(), PClose)) serror();
 			expect(PClose);
 			return e;
 		}
