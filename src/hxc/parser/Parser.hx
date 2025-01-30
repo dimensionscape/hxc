@@ -3204,6 +3204,9 @@ class Parser {
 		if (tokEq(peek(), POpen)) {
 			junk();
 			st = parseComplexType();
+			// The underlying type is `( type )`, so the closing paren is a pattern element and a mismatch
+			// is `Unexpected <actual>`.
+			if (!tokEq(peek(), PClose)) serror();
 			expect(PClose);
 		}
 		// Any number of abstract relations (from/to)
