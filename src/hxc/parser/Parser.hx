@@ -1004,7 +1004,10 @@ class Parser {
 			case Kwd(KwdMacro) if (pack.length > 0): var p = next().pos; return {name: "macro", pos: p};
 			case Kwd(KwdExtern) if (pack.length > 0): var p = next().pos; return {name: "extern", pos: p};
 			case Kwd(KwdFunction) if (pack.length > 0): var p = next().pos; return {name: "function", pos: p};
-			case _: return err("Expected identifier");
+			// dollarIdentMacro is five arms with no fallback, so a non-match is a soft failure and the
+			// caller's pattern supplies the message, as for dollarIdent: a truncated `private typedef T =`
+			// reports `Unexpected <end of file>`, not "Expected identifier".
+			case _: return serror();
 		}
 	}
 
