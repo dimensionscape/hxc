@@ -3193,6 +3193,8 @@ class Parser {
 		if (tokEq(peek(), POpen)) {
 			junk();
 			args = psepTrailing(parseEnumParam);
+			// `( params )`: the closing paren is a pattern element, so a mismatch is `Unexpected <actual>`.
+			if (!tokEq(peek(), PClose)) serror();
 			expect(PClose);
 		}
 		var t = poptTypeHint();
