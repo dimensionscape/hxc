@@ -2414,7 +2414,10 @@ class Parser {
 		while (tokEq(peek(), Dot)) {
 			junk();
 			var n = lowerIdentOrMacroOpt();
-			if (n == null) break;
+			// A package is a dot-separated list of lowercase identifiers. Once the separator is taken, the
+			// element that follows it is a further pattern element, so a non-match is a non-soft error
+			// reported as `Unexpected <token>`: `package unit.{` is not `Missing ;`.
+			if (n == null) serror();
 			acc.push(n);
 		}
 		return acc;
