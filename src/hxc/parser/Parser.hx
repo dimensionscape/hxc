@@ -1952,6 +1952,10 @@ class Parser {
 					var e = expr();
 					return new Expr(EReturn(e), Position.union(p, e.pos));
 				} catch (er:ParserError) {
+					// `return` takes no value only on a soft failure, so a value that CONSUMED tokens
+					// before
+					// failing is a real error and must not be swallowed into a bare `return`.
+					if (idx != save) throw er;
 					idx = save;
 					return new Expr(EReturn(null), p);
 				}
@@ -2628,13 +2632,19 @@ class Parser {
 				var e:Null<Expr> = null;
 				var p2 = p1;
 				var save = idx;
-				try {
-					var ee = expr();
-					semicolon();
-					e = ee; p2 = ee.pos;
-				} catch (er:ParserError) {
+				var ee:Null<Expr> = null;
+				try ee = expr()
+				catch (er:ParserError) {
+					if (idx != save) throw er;
 					if (tokEq(tokens[save].tok, BrOpen)) throw er;
 					idx = save;
+				}
+				if (ee != null) {
+					// Committed arm, same as the class field: the semicolon runs in the action and its
+					// error stands.
+					semicolon();
+					e = ee; p2 = ee.pos;
+				} else {
 					p2 = semicolon();
 				}
 				var f:Func = {fParams: pl, fArgs: args, fType: t, fExpr: e};
