@@ -3109,13 +3109,23 @@ class Parser {
 		var e:Null<Expr> = null;
 		var p2 = p1;
 		var save = idx;
-		try {
-			var ee = expr();
-			semicolon();
-			e = ee; p2 = ee.pos;
-		} catch (er:ParserError) {
+		var ee:Null<Expr> = null;
+		try ee = expr()
+		catch (er:ParserError) {
+			// Only a body that matched NOTHING falls through to the semicolon-only arm; a parse
+			// that consumed tokens is a real error.
+			if (idx != save) throw er;
 			if (tokEq(tokens[save].tok, BrOpen)) throw er;
 			idx = save;
+		}
+		if (ee != null) {
+			// The first arm is an expression with the semicolon read in its action. Once expr has matched,
+			// the arm is committed and the semicolon error raised in its action is the one that stands;
+			// rewinding to before the body and calling semicolon again would report the missing `;` back at
+			// the body's first token instead of after it.
+			semicolon();
+			e = ee; p2 = ee.pos;
+		} else {
 			p2 = semicolon();
 		}
 		var f:Func = {fParams: pl, fArgs: args, fType: t, fExpr: e};
