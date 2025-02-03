@@ -44,11 +44,13 @@ class ImportCheck {
 			var k = imports.rawImports.length;
 			while (k-- > 0) {
 				var imp = imports.rawImports[k];
-				switch (imp.mode) { case IAll: continue; case _: }
 				if (imp.pos == null) continue;
 				var parts = imp.path;
 				var mi = -1;
 				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
+				// Only a PACKAGE wildcard (no uppercase segment) skips the load; `import a.Module.*` reaches
+				// do_load_module like a plain import and reports the same way when the module does not exist.
+				if (mi < 0 && imp.mode.match(IAll)) continue;
 				// The module named by the first uppercase segment and leaves everything after it to the mode
 				// switch, so a sub-type or a static-field import loads its module exactly like a plain one
 				// does. Requiring the module name to be the last segment meant an import of a sub-type nobody

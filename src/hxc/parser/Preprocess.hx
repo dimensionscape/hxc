@@ -4,6 +4,22 @@ import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.core.Define;
 
+/**
+	The condition HEAD matched nothing. err is null when the token after the lost one is Eof (the
+	stream just ends, cleanly).
+*/
+private class CondHeadFailure extends haxe.Exception {
+	public final err:Null<ParserError>;
+	/** Where the stream resumes (the token after the lost one); the truncated stream's
+		Eof sentinel sits here. */
+	public final endPos:Position;
+	public function new(err:Null<ParserError>, endPos:Position) {
+		super("CondHeadFailure");
+		this.err = err;
+		this.endPos = endPos;
+	}
+}
+
 class Preprocess {
 	final toks:Array<TokenInfo>;
 	final defines:Define;
@@ -11,6 +27,9 @@ class Preprocess {
 	public final out:Array<TokenInfo>;
 	// Stack of `#if` start positions still open (for unclosed-conditional errors)
 	final mstack:Array<Position>;
+	// Set when the stream ENDED with a live branch open; the check belongs after the parse, so it
+	// is handed out rather than thrown.
+	public var unclosedAtEnd:Null<Position> = null;
 	// Every region the conditions turned off, with the condition that was in force there. Each one is
 	// re-evaluated against the MACRO defines to decide whether the display position sits in macro-only
 	// code.
@@ -29,9 +48,16 @@ class Preprocess {
 	}
 
 	public static function run(toks:Array<TokenInfo>, defines:Define,
-			?deadOut:Array<{p:Position, cond:Expr}>, ?failOut:{err:Null<ParserError>}):Array<TokenInfo> {
+			?deadOut:Array<{p:Position, cond:Expr}>,
+			?failOut:{err:Null<ParserError>, unclosedAtEnd:Null<Position>}):Array<TokenInfo> {
 		var p = new Preprocess(toks, defines);
 		var r = try p.process()
+		catch (c:CondHeadFailure) {
+			if (failOut != null) failOut.err = c.err;
+			// The stream ends where the #if stood, but the parser still needs its Eof.
+			p.out.push(new TokenInfo(Eof, c.endPos));
+			p.out;
+		}
 		catch (e:ParserError) {
 			// Preprocessing happens as the parser pulls, so a fault here does not discard what came before
 			// it: everything up to this point is already parsed. Hand back the PARTIAL stream (the raw one
@@ -40,6 +66,7 @@ class Preprocess {
 			if (failOut != null) failOut.err = e;
 			p.out;
 		};
+		if (failOut != null) failOut.unclosedAtEnd = p.unclosedAtEnd;
 		if (deadOut != null) for (b in p.deadBlocks) deadOut.push(b);
 		return r;
 	}
@@ -188,7 +215,10 @@ class Preprocess {
 			}
 		}
 		if (mstack.length > 0) {
-			throw new ParserError(Unclosed_conditional, mstack[mstack.length - 1]);
+			// A LIVE branch's missing #end is checked after the parse, on its success path only. The stream
+			// here is COMPLETE - nothing to defer - so the verdict rides out as a field and Parser.parseFile
+			// raises or records it last.
+			unclosedAtEnd = mstack[mstack.length - 1];
 		}
 		return out;
 	}
@@ -302,7 +332,14 @@ class Preprocess {
 				var e = parseParenCond(ti.pos);
 				return e;
 			case _:
-				throw new ParserError(Custom("Invalid condition expression"), ti.pos);
+				// The offending token was already pulled into the condition stream's buffer and is LOST, the
+				// #if evaporates (no push, no skip), and the next fill resumes after it - at Eof the file
+				// simply ends (`#if<eof>` compiles CLEAN in the reference), otherwise the parser reports the
+				// token that follows.
+				i++;
+				var after = cur();
+				throw new CondHeadFailure(after.tok.match(Eof) ? null
+					: new ParserError(Unexpected(after.tok), after.pos), after.pos);
 		}
 	}
 
@@ -336,6 +373,7 @@ class Preprocess {
 	// Collect tokens up to the matching ')' and parse them as one expression with
 	// the full Parser, then validate to the conditional subset.
 	function parseParenCond(popen:Position):Expr {
+		var spanStart = i;
 		var depth = 1;
 		var sub:Array<TokenInfo> = [];
 		while (true) {
@@ -367,9 +405,21 @@ class Preprocess {
 		// not at the start of the condition.
 		var endPos = sub.length > 0 ? sub[sub.length - 1].pos : popen;
 		sub.push(new TokenInfo(Eof, new Position(endPos.file, endPos.max, endPos.max)));
-		var e = Parser.parseExprFromTokens(sub, "<cond>");
-		validateMacroCond(e);
-		return new Expr(EParenthesis(e), popen);
+		// The closing `)` fails at the first token the condition expression did not take - whether the
+		// paren never closed or the expression stopped short of it. That match PULLED the token into the
+		// condition stream's buffer, and the error handler then peeks the MAIN stream, whose fill takes
+		// the next lexer token - the buffered one is LOST and the report names the one after it. The
+		// collected span maps 1:1 onto the raw stream (every kept token pushed exactly one entry), so the
+		// indexes carry over.
+		var r = Parser.parseExprFromTokensCount(sub, "<cond>");
+		if (depth > 0 || r.count < sub.length - 1) {
+			var failIdx = spanStart + r.count;
+			var afterIdx = failIdx + 1 < toks.length ? failIdx + 1 : toks.length - 1;
+			var at = toks[afterIdx];
+			throw new ParserError(Unexpected(at.tok), at.pos);
+		}
+		validateMacroCond(r.e);
+		return new Expr(EParenthesis(r.e), popen);
 	}
 
 	static function validateMacroCond(e:Expr):Void {

@@ -180,6 +180,14 @@ class Parser {
 		return e;
 	}
 
+	/** Like parseExprFromTokens but reports HOW FAR the expression reached instead of
+		requiring Eof; the preprocessor needs the cut point of an unterminated condition. */
+	public static function parseExprFromTokensCount(toks:Array<TokenInfo>, file:String):{e:Expr, count:Int} {
+		var p = new Parser(toks, file);
+		var e = p.expr();
+		return {e: e, count: p.idx};
+	}
+
 	// Lex `src` into a raw token list (comments filtered, ends in Eof), enforcing
 	// the lexer forward-progress invariant.
 	/**
@@ -306,6 +314,7 @@ class Parser {
 		// #line). Only run when the stream actually contains a Sharp token, so
 		// the common expression-grammar path pays nothing. The active define set comes
 		// from the caller (CLI/Setup later); default is empty (no hardcoded define tables).
+		var ppUnclosed:Null<Position> = null;
 		if (hasSharp(toks)) {
 			var d = defines == null ? new Define() : defines;
 			// handlePdi runs over the DISPLAY file's dead blocks only.
@@ -313,14 +322,16 @@ class Parser {
 			// An unclosed #if is found by scanning the whole stream, but the preprocessor's verdicts belong
 			// to the pull that reaches them, so a parse error before the conditional is reported instead.
 			// Defer it on the same terms as a lexer fault.
-			var ppFail:{err:Null<ParserError>} = {err: null};
+			var ppFail:{err:Null<ParserError>, unclosedAtEnd:Null<Position>} = {err: null, unclosedAtEnd: null};
 			toks = Preprocess.run(toks, d, dead, ppFail);
 			if (ppFail.err != null && lexOut.err == null)
 				lexOut.err = new LexerError(Preprocessed(ppFail.err), ppFail.err.pos);
+			ppUnclosed = ppFail.unclosedAtEnd;
 			if (dead != null) handlePdi(d, dead);
 		}
 		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"));
 		pr.pendingLexError = lexOut.err;
+		pr.pendingUnclosedEnd = ppUnclosed;
 		return pr;
 	}
 
@@ -485,6 +496,14 @@ class Parser {
 	/** Lexing or preprocessing stopped early on a fault. peekInfo raises it once the cursor
 		reaches the truncated end, so a PARSE error inside the valid prefix is reported first. */
 	var pendingLexError:Null<LexerError> = null;
+
+	/**
+	 * A LIVE branch's missing #end. The conditional stack is checked after the entry parse, on its
+	 * success path only, so any parse error wins and the report comes at the END of the parse - unlike
+	 * a dead-block skip hitting Eof, which raises at the cursor. The stream itself is COMPLETE in this
+	 * case, so nothing defers through peekInfo.
+	 */
+	public var pendingUnclosedEnd:Null<Position> = null;
 
 	function serror():Dynamic {
 		throw new ParserError(Unexpected(peek()), cur().pos);
@@ -2503,10 +2522,20 @@ class Parser {
 			// lenient-but-faithful: require a semicolon to close the package.
 			semicolon();
 			var l = parseTypeDecls(pack, 1, tokens[idx > 0 ? idx - 1 : 0].pos.max);
+			checkUnclosedAtEnd();
 			return {pack: pack, decls: l};
 		}
 		var l = parseTypeDecls([]);
+		checkUnclosedAtEnd();
 		return {pack: [], decls: l};
+	}
+
+	// Checked before the trailing-token check: raised in batch, recorded in display.
+	function checkUnclosedAtEnd():Void {
+		if (pendingUnclosedEnd == null) return;
+		var p = pendingUnclosedEnd;
+		pendingUnclosedEnd = null;
+		syntaxError(Unclosed_conditional, p);
 	}
 
 	function parsePackage():Array<String> {
@@ -2808,6 +2837,8 @@ class Parser {
 				while (!tokEq(peek(), BrClose) && !tokEq(peek(), Eof)) {
 					l.push(parseEnumCtor());
 				}
+				// The CLOSING `}` is a pattern element too
+				if (!tokEq(peek(), BrClose)) serror();
 				var p2 = expect(BrClose);
 				var def:Definition<EnumFlag, Array<EnumConstructor>> = {
 					dName: name, dDoc: doc, dParams: tl, dMeta: meta,
