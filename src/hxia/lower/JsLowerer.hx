@@ -71,6 +71,13 @@ class JsLowerer {
 		// getStatic: prefer the script world, fall back to the host seam.
 		buf.add("var SC = {}, SS = {}, SV = {};\n");
 		buf.add("function $new(t, args){ var c = SC[t]; if (c) { var o = new c(); if (o.__ctor) o.__ctor.apply(o, args); return o; } return $host.construct(t, args); }\n");
+		// A store the cppia inlines from Bytes.set is `<recv>.b[i] = v`; mask to 0..255 when the
+		// receiver is a byte buffer, as the interpreter does at its ARRAYI store.
+		buf.add("function $bset(o, i, v){ $fld(o, \"b\")[i] = $host.isBytes(o) ? (v & 0xFF) : v; return v; }\n");
+		// The checked cast throws only for a SCRIPT instance that fails the script-type test (the
+		// interpreter's checkedCast); host values and Dynamic targets pass through.
+		buf.add("function $tcast(v, t){ if (v != null && v.__sc === true && t !== \"Dynamic\" && SC[t] && !$isType(v, t))"
+			+ " throw \"Cannot cast to \" + t; return v; }\n");
 		// A member call dispatches directly only on a SCRIPT instance (tagged __sc); every host value
 		// goes through the seam so the registry's bindings win, exactly as the interpreter's mediator
 		// does. Preferring the native JS method here would silently bypass bindings that exist because
@@ -80,20 +87,27 @@ class JsLowerer {
 		// Reading `o.method` as a value yields a bound method in Haxe, but a plain JS property read
 		// yields the unbound function - calling it later loses `this` (Lambda.array({iterator: m.keys})
 		// then sees an undefined receiver). Bind on read, caching per script instance so repeated reads
-		// give the same closure (Reflect.compareMethods), exactly as the interpreter does.
+		// give the same closure (Reflect.compareMethods), exactly as the interpreter does. An own
+		// function-valued field is already a closure and may be reassigned, so it is returned raw - only
+		// PROTOTYPE methods are bound and cached (the interpreter caches methods, never fields; caching a
+		// field would keep serving the stale closure after reassignment).
 		buf.add("function $fld(o, n){ if (o == null) throw \"Null Object Reference\"; var v = o[n]; if (typeof v !== \"function\") return v;"
-			+ " if (o.__sc === true) { var c = o.__b || (o.__b = {}); return c[n] || (c[n] = v.bind(o)); } return v.bind(o); }\n");
+			+ " if (o.__sc === true) { if (Object.prototype.hasOwnProperty.call(o, n)) return v;"
+			+ " var c = o.__b || (o.__b = {}); return c[n] || (c[n] = v.bind(o)); } return v.bind(o); }\n");
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
-		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c && v instanceof c) return true; return $host.isOfType(v, t); }
-");
+		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c && v instanceof c) return true;"
+			+ " if (v != null && v.__ifs && v.__ifs[t]) return true; return $host.isOfType(v, t); }\n");
 		buf.add("function $classof(t){ var c = SC[t]; if (c) return c; var e = ED[t]; if (e) return e; return $host.classOf(t); }
 ");
 		// A script enum value: {__e type, __i index, __n ctor name, __p params}. A no-argument
 		// constructor is interned per type+name so `A == A` holds, as it does in the interpreter.
 		buf.add("var EI = {};\n");
 		// The shared prototype carries toString so an enum stringifies as `Ctor(a,b)` like Haxe, and
-		// keeps it off the own-field set that Reflect.fields reports.
-		buf.add("var EP = { toString: function(){ return this.__p.length ? this.__n + \"(\" + this.__p.join(\",\") + \")\" : this.__n; } };\n");
+		// keeps it off the own-field set that Reflect.fields reports. A null parameter must print as
+		// "null" (JS Array.join renders null as ""), matching Haxe.
+		buf.add("var EP = { toString: function(){ if (!this.__p.length) return this.__n;"
+			+ " var s = []; for (var i = 0; i < this.__p.length; i++) { var x = this.__p[i]; s.push(x == null ? \"null\" : \"\" + x); }"
+			+ " return this.__n + \"(\" + s.join(\",\") + \")\"; } };\n");
 		buf.add("function $mkE(t, i, n, p){ var o = Object.create(EP); o.__e = t; o.__i = i; o.__n = n; o.__p = p; return o; }\n");
 		buf.add("function $enum(t, i, n, p){ if (p.length === 0) { var k = t + \".\" + n; var s = EI[k]; if (!s) { s = EI[k] = $mkE(t, i, n, []); } return s; } return $mkE(t, i, n, p); }\n");
 		// Enum constructor indices, so CREATEENUM/FENUM can resolve a ctor name to its index.
@@ -131,6 +145,10 @@ class JsLowerer {
 				var cn = jsStr(types[d.ints[0]]);
 				buf.add("SC[" + cn + "].prototype.__sc = true; SC[" + cn + "].prototype.__cname = " + cn
 					+ "; SC[" + cn + "].__cname = " + cn + ";\n");
+				// The transitive interface set, as prototype flags for $isType.
+				var ifs = transitiveInterfaces(d);
+				if (ifs.length > 0)
+					buf.add("SC[" + cn + "].prototype.__ifs = {" + [for (nm in ifs) jsStr(nm) + ": true"].join(", ") + "};\n");
 			}
 		// Hand the script tables to the host so Type.*/Reflect.* over a script value are answered by
 		// the script world, as the interpreter's typeReflect does.
@@ -184,6 +202,38 @@ class JsLowerer {
 		}
 		buf.add("})");
 		return buf.toString();
+	}
+
+	// The full interface set an instance of this class satisfies: direct interfaces, the super
+	// chain's, and everything those interfaces extend - the interpreter's scriptClassImplements
+	// BFS, computed once at lower time and emitted as prototype flags for $isType.
+	function transitiveInterfaces(d:DeclNode):Array<String> {
+		var byName:Map<String, DeclNode> = new Map();
+		for (x in tree.decls)
+			if (x.kind != "enum")
+				byName.set(types[x.ints[0]], x);
+		var seen:Map<String, Bool> = new Map();
+		var out:Array<String> = [];
+		function visit(x:Null<DeclNode>, isIface:Bool):Void {
+			if (x == null)
+				return;
+			var name = types[x.ints[0]];
+			if (isIface && !seen.exists(name)) {
+				seen.set(name, true);
+				out.push(name);
+			}
+			var nIfaces = x.ints[2];
+			for (k in 0...nIfaces) {
+				var idn = x.ints[3 + k];
+				if (idn >= 0 && idn < types.length && !seen.exists(types[idn]))
+					visit(byName.get(types[idn]), true);
+			}
+			var superId = x.ints[1];
+			if (superId >= 0 && superId < types.length)
+				visit(byName.get(types[superId]), isIface);
+		}
+		visit(d, false);
+		return out;
 	}
 
 	function emitClassMembers(d:DeclNode):Void {
@@ -457,11 +507,15 @@ class JsLowerer {
 				buf.add("(");
 				emitExpr(n.kids[0]);
 				buf.add(" != null)");
-			case "CAST", "CASTINT", "CASTBOOL", "TCAST", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
-				// CAST is identity on a dynamic heap. TCAST is a checked `cast(e, T)`; its throw-on-bad-
-				// cast is a later slice, so it is identity here (correct for a valid cast, which the
-				// pure-compute corpus only uses).
+			case "CAST", "CASTINT", "CASTBOOL", "TOINTERFACE", "TOINTERFACEARRAY", "TODATAARRAY", "TODYNARRAY":
+				// Identity coercions on a dynamic heap.
 				emitExpr(n.kids[0]);
+			case "TCAST":
+				// A checked `cast(e, T)`: throws on a script instance that is not of the target script
+				// type, like the interpreter's checkedCast; everything else passes through.
+				buf.add("$tcast(");
+				emitExpr(n.kids[0]);
+				buf.add(", " + jsStr(types[n.ints[0]]) + ")");
 			case _:
 				throw new LowerError("op '" + n.op + "' not lowered yet");
 		}
@@ -475,6 +529,19 @@ class JsLowerer {
 				emitExpr(n.kids[1]);
 				buf.add(")");
 			case "ARRAYI":
+				// A store the cppia inlined from Bytes.set is `<recv>.b[i] = v`; $bset masks it to
+				// 0..255 when the receiver is a byte buffer (the interpreter's ARRAYI-store rule).
+				var ak = lv.kids[0];
+				if ((ak.op == "FLINK" || ak.op == "FNAME") && strings[ak.ints[1]] == "b") {
+					buf.add("$bset(");
+					emitExpr(ak.kids[0]);
+					buf.add(", ");
+					emitExpr(lv.kids[1]);
+					buf.add(", ");
+					emitExpr(n.kids[1]);
+					buf.add(")");
+					return;
+				}
 				buf.add("(");
 				emitExpr(lv.kids[0]);
 				buf.add("[");

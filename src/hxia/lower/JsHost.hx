@@ -159,6 +159,11 @@ class JsHost {
 		};
 	}
 
+	// $bset masks a store into a Bytes backing array; the receiver test lives here because the
+	// lowered JS cannot see the Haxe NeutralBytes class.
+	public function isBytes(o:Dynamic):Bool
+		return Std.isOfType(o, hxia.interp.NeutralBytes);
+
 	public function classOf(t:String):Dynamic {
 		var cls = Type.resolveClass(t);
 		return cls != null ? (cls : Dynamic) : t;
