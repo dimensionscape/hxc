@@ -876,41 +876,18 @@ class Interp implements hxia.ScriptWorld {
 			}
 		}
 		if (type == "Reflect") {
+			// Script-value cases are the shared WorldReflect policy (the same code runs on T1);
+			// host-value cases keep this tier's seams below.
+			var handled = hxia.WorldReflect.reflect(this, member, args);
+			if (handled != hxia.WorldReflect.NotHandled)
+				return handled;
 			switch (member) {
-				case "field":
-					if (Std.isOfType(args[0], ScriptClass)) return staticGet(args[0], args[1], false);
-					return getMember(args[0], args[1]);
-				case "setField":
-					if (Std.isOfType(args[0], ScriptClass)) { staticSet(args[0], args[1], args[2], false); return null; }
-					setMember(args[0], args[1], args[2]); return null;
-				case "getProperty":
-					if (Std.isOfType(args[0], ScriptClass)) return staticGet(args[0], args[1], true);
-					if (Std.isOfType(args[0], ScriptObject)) {
-						// An instance property read must run its get_<name> accessor, not read the raw
-						// field: a pure property has no backing field and a computed one differs from it.
-						var getter = (args[0] : ScriptObject).cls.lookup("get_" + args[1]);
-						if (getter != null)
-							return invokeFun(getter, args[0], []);
-					}
-					return getMember(args[0], args[1]);
-				case "setProperty":
-					if (Std.isOfType(args[0], ScriptClass)) { staticSet(args[0], args[1], args[2], true); return null; }
-					if (Std.isOfType(args[0], ScriptObject)) {
-						var setter = (args[0] : ScriptObject).cls.lookup("set_" + args[1]);
-						if (setter != null) { invokeFun(setter, args[0], [args[2]]); return null; }
-					}
-					setMember(args[0], args[1], args[2]); return null;
-				case "fields":
-					if (Std.isOfType(args[0], ScriptObject))
-						return [for (k in (args[0] : ScriptObject).fields.keys()) k];
-					return mediator.fields(args[0]);
-				case "hasField":
-					if (Std.isOfType(args[0], ScriptObject)) {
-						var so:ScriptObject = args[0];
-						return so.fields.exists(args[1]) || so.cls.lookup(args[1]) != null;
-					}
-					return Reflect.hasField(args[0], args[1]);
-				case "isEnumValue": return Std.isOfType(args[0], EnumValue) || Reflect.isEnumValue(args[0]);
+				case "field": return getMember(args[0], args[1]);
+				case "setField": setMember(args[0], args[1], args[2]); return null;
+				case "getProperty": return getMember(args[0], args[1]);
+				case "setProperty": setMember(args[0], args[1], args[2]); return null;
+				case "fields": return mediator.fields(args[0]);
+				case "hasField": return Reflect.hasField(args[0], args[1]);
 				case _:
 			}
 		}
@@ -1155,6 +1132,30 @@ class Interp implements hxia.ScriptWorld {
 
 	public function enumToken(name:String):Dynamic
 		return scriptEnums.get(name);
+
+	public function memberRead(v:Dynamic, name:String):Dynamic
+		return getMember(v, name);
+
+	public function memberWrite(v:Dynamic, name:String, value:Dynamic):Void
+		setMember(v, name, value);
+
+	public function hasInstanceField(v:Dynamic, name:String):Bool {
+		var so:ScriptObject = v;
+		return so.fields.exists(name) || so.cls.lookup(name) != null;
+	}
+
+	public function accessor(v:Dynamic, name:String):Null<Array<Dynamic>->Dynamic> {
+		var fun = (v : ScriptObject).cls.lookup(name);
+		if (fun == null)
+			return null;
+		return function(args) return invokeFun(fun, v, args);
+	}
+
+	public function staticRead(name:String, field:String, prop:Bool):Dynamic
+		return staticGet(scriptClasses.get(name), field, prop);
+
+	public function staticWrite(name:String, field:String, value:Dynamic, prop:Bool):Void
+		staticSet(scriptClasses.get(name), field, value, prop);
 
 	// Bind haxe.Resource to the cppia's own embedded resources (from the RESOURCES tail), keyed by
 	// name resolved against the string table. The host's haxe.Resource sees the interpreter binary's

@@ -32,4 +32,19 @@ interface ScriptWorld {
 	function tokenName(v:Dynamic):String;
 	function classToken(name:String):Dynamic;
 	function enumToken(name:String):Dynamic;
+
+	// Member access with the tier's full lookup semantics (fields and methods; T3 binds through its
+	// descriptor, T1 through the prototype chain) - unlike getInstanceField, which is the raw
+	// own-field read unserialization uses.
+	function memberRead(v:Dynamic, name:String):Dynamic;
+	function memberWrite(v:Dynamic, name:String, value:Dynamic):Void;
+	// Own field or class member - Reflect.hasField over a script instance.
+	function hasInstanceField(v:Dynamic, name:String):Bool;
+	// A bound invoker for a method visible on the instance, or null when there is none
+	// (how shared code runs get_/set_ property accessors without seeing the representation).
+	function accessor(v:Dynamic, name:String):Null<Array<Dynamic>->Dynamic>;
+	// Static field access on a script class by name; prop routes through a get_/set_
+	// accessor when one exists (Reflect.getProperty/setProperty vs field/setField).
+	function staticRead(name:String, field:String, prop:Bool):Dynamic;
+	function staticWrite(name:String, field:String, value:Dynamic, prop:Bool):Void;
 }

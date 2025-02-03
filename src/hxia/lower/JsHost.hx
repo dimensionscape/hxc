@@ -87,9 +87,14 @@ class JsHost implements hxia.ScriptWorld {
 	// through the mediated seam (the same two-step the interpreter uses).
 	public function callStatic(type:String, member:String, args:Array<Dynamic>):Dynamic {
 		// Type.*/Reflect.* over a SCRIPT value cannot go to the host: a script instance is a plain JS
-		// object of a generated constructor, so the host reflection sees nothing. Answer it here, the
-		// way the interpreter's typeReflect does for its ScriptObject/ScriptClass descriptors.
-		if (type == "Type" || type == "Reflect") {
+		// object of a generated constructor, so the host reflection sees nothing. Reflect.* is the
+		// shared WorldReflect policy (the same code runs on T3); Type.* is still tier-local below.
+		if (type == "Reflect") {
+			var handled = hxia.WorldReflect.reflect(this, member, args);
+			if (handled != hxia.WorldReflect.NotHandled)
+				return handled;
+		}
+		if (type == "Type") {
 			var handled = scriptReflect(type, member, args);
 			if (handled != NotHandled)
 				return handled;
@@ -233,7 +238,7 @@ class JsHost implements hxia.ScriptWorld {
 		return Reflect.field(v, "__cname");
 
 	public function instanceFieldNames(v:Dynamic):Array<String>
-		return Reflect.fields(v).filter(function(f) return f != "__b");
+		return Reflect.fields(v).filter(function(f) return f != "__sc" && f != "__cname" && f != "__b");
 
 	public function getInstanceField(v:Dynamic, name:String):Dynamic
 		return Reflect.field(v, name);
@@ -290,6 +295,44 @@ class JsHost implements hxia.ScriptWorld {
 
 	public function enumToken(name:String):Dynamic
 		return Reflect.field(ED, name);
+
+	// Plain JS property semantics: a member read finds prototype methods too (unbound), the
+	// same access the pre-ScriptWorld Reflect cases used.
+	public function memberRead(v:Dynamic, name:String):Dynamic
+		return Reflect.field(v, name);
+
+	public function memberWrite(v:Dynamic, name:String, value:Dynamic):Void
+		Reflect.setField(v, name, value);
+
+	public function hasInstanceField(v:Dynamic, name:String):Bool
+		return Reflect.hasField(v, name) || Reflect.field(v, name) != null;
+
+	public function accessor(v:Dynamic, name:String):Null<Array<Dynamic>->Dynamic> {
+		var f = Reflect.field(v, name);
+		if (!Reflect.isFunction(f))
+			return null;
+		return function(args) return Reflect.callMethod(v, f, args);
+	}
+
+	public function staticRead(name:String, field:String, prop:Bool):Dynamic {
+		if (prop) {
+			var g = Reflect.field(SS, name + ".get_" + field);
+			if (g != null)
+				return Reflect.callMethod(null, g, []);
+		}
+		return staticReadRaw(name, field);
+	}
+
+	public function staticWrite(name:String, field:String, value:Dynamic, prop:Bool):Void {
+		if (prop) {
+			var st = Reflect.field(SS, name + ".set_" + field);
+			if (st != null) {
+				Reflect.callMethod(null, st, [value]);
+				return;
+			}
+		}
+		Reflect.setField(SV, name + "." + field, value);
+	}
 
 	// A script class is a generated JS constructor tagged __cname; its instances carry __sc. Anything
 	// not involving one of those is left to the host (NotHandled).
@@ -388,49 +431,6 @@ class JsHost implements hxia.ScriptWorld {
 			}
 			return NotHandled;
 		}
-		// Reflect.* over a script instance is plain JS field access; the fields live on the object. A
-		// script class receiver is a static access answered from the SS/SV tables, and getProperty/
-		// setProperty run the get_/set_ accessor when one exists - the interpreter's staticGet/ property
-		// routing.
-		switch (member) {
-			case "field":
-				if (isScriptValue(a0)) return Reflect.field(a0, args[1]);
-				if (isScriptClass(a0)) return staticRead(Reflect.field(a0, "__cname"), args[1]);
-			case "setField":
-				if (isScriptValue(a0)) { Reflect.setField(a0, args[1], args[2]); return null; }
-				if (isScriptClass(a0)) { Reflect.setField(SV, Reflect.field(a0, "__cname") + "." + args[1], args[2]); return null; }
-			case "getProperty":
-				if (isScriptValue(a0)) {
-					var g = Reflect.field(a0, "get_" + args[1]);
-					if (Reflect.isFunction(g)) return Reflect.callMethod(a0, g, []);
-					return Reflect.field(a0, args[1]);
-				}
-				if (isScriptClass(a0)) {
-					var cn = Reflect.field(a0, "__cname");
-					var g = Reflect.field(SS, cn + ".get_" + args[1]);
-					if (g != null) return Reflect.callMethod(null, g, []);
-					return staticRead(cn, args[1]);
-				}
-			case "setProperty":
-				if (isScriptValue(a0)) {
-					var st = Reflect.field(a0, "set_" + args[1]);
-					if (Reflect.isFunction(st)) { Reflect.callMethod(a0, st, [args[2]]); return null; }
-					Reflect.setField(a0, args[1], args[2]);
-					return null;
-				}
-				if (isScriptClass(a0)) {
-					var cn = Reflect.field(a0, "__cname");
-					var st = Reflect.field(SS, cn + ".set_" + args[1]);
-					if (st != null) { Reflect.callMethod(null, st, [args[2]]); return null; }
-					Reflect.setField(SV, cn + "." + args[1], args[2]);
-					return null;
-				}
-			case "fields":
-				if (isScriptValue(a0)) return Reflect.fields(a0).filter(function(f) return f != "__sc" && f != "__cname" && f != "__b");
-			case "hasField":
-				if (isScriptValue(a0)) return Reflect.hasField(a0, args[1]) || Reflect.field(a0, args[1]) != null;
-			case _:
-		}
 		return NotHandled;
 	}
 
@@ -471,7 +471,7 @@ class JsHost implements hxia.ScriptWorld {
 	}
 
 	// A static read: the var table first, then a static method as a value.
-	function staticRead(cn:String, name:String):Dynamic {
+	function staticReadRaw(cn:String, name:String):Dynamic {
 		var key = cn + "." + name;
 		if (Reflect.hasField(SV, key))
 			return Reflect.field(SV, key);
