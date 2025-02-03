@@ -129,10 +129,9 @@ class JsHost {
 	}
 
 	public function getStatic(type:String, member:String):Dynamic {
-		var neutral = registry.neutralStaticClass(type);
-		if (neutral != null)
-			return mediator.getField(neutral, member);
-		// Math's constants are inline/property statics on js, so reflection reads null.
+		// Math's constants before the neutral reflective read: native js Math has no "NaN"/"PI" property,
+		// so Reflect.field would return undefined and NaN comparisons silently change (undefined ==
+		// undefined is true where NaN == NaN must be false).
 		if (type == "Math") {
 			switch (member) {
 				case "NaN": return Math.NaN;
@@ -142,6 +141,9 @@ class JsHost {
 				case _:
 			}
 		}
+		var neutral = registry.neutralStaticClass(type);
+		if (neutral != null)
+			return mediator.getField(neutral, member);
 		var cls = Type.resolveClass(type);
 		return cls != null ? mediator.getField(cls, member) : null;
 	}
