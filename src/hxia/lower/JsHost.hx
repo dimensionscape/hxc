@@ -11,9 +11,9 @@ class JsHost implements hxia.ScriptWorld {
 	final registry:HostRegistry;
 	final mediator:Mediator;
 
-	public function new(registry:HostRegistry) {
+	public function new(registry:HostRegistry, ?mediator:Mediator) {
 		this.registry = registry;
-		this.mediator = new Mediator(null, function(t, m) return registry.memberBinding(t, m));
+		this.mediator = mediator != null ? mediator : new Mediator(null, function(t, m) return registry.memberBinding(t, m));
 	}
 
 	// The lowered module's script tables (classes, statics, static vars, enum descriptors) and its

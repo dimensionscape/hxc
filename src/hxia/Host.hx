@@ -1,5 +1,9 @@
 package hxia;
 
+import hxia.interp.HostRegistry;
+import hxia.interp.Mediator;
+import hxia.interp.NeutralStd;
+
 // The profile a script compiles and runs under. `System` rather than `Sys`: an enum
 // constructor named Sys shadows the Sys class wherever hxia.Host is imported.
 enum Profile {
@@ -14,40 +18,153 @@ enum LogLevel {
 	Error;
 }
 
-// An immutable description of what an application offers scripts. The shapes are
-// the contract; bodies are stubs.
+// An immutable description of what an application offers scripts. Everything a loaded
+// module can reach comes from here: the std surface, the exposed host classes, the granted
+// capability atoms, and the reflective-access policy that backs them.
 class HostBuilder {
+	var _profile:Profile = Core;
+	var _grants:Array<Capability> = [];
+	var _std:Bool = false;
+	var _classes:Array<Class<Dynamic>> = [];
+	var _packages:Array<String> = [];
+	var _pins:Array<String> = [];
+	var _signers:Array<{key:String, grants:Array<Capability>}> = [];
+	var _log:Null<(LogLevel, String, ScriptPos) -> Void> = null;
+
 	public function new() {}
 
-	public function profile(p:Profile):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function profile(p:Profile):HostBuilder {
+		_profile = p;
+		return this;
+	}
 
-	public function grant(c:Capability):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function grant(c:Capability):HostBuilder {
+		_grants.push(c);
+		return this;
+	}
 
-	public function exposeStd():HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	// The neutral std surface (ABI.md section 2). Also makes the reflective policy
+	// permissive: "std is available" is exactly the permissive default the Mediator
+	// documents, and a host that wants a closed surface simply does not call this.
+	public function exposeStd():HostBuilder {
+		_std = true;
+		return this;
+	}
 
-	public function expose(cls:Class<Dynamic>):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function expose(cls:Class<Dynamic>):HostBuilder {
+		_classes.push(cls);
+		return this;
+	}
 
-	public function exposePackage(dotPath:String):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function exposePackage(dotPath:String):HostBuilder {
+		_packages.push(dotPath);
+		return this;
+	}
 
-	public function pin(sha256:String):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	// An artifact whose sha256 matches a pin is trusted, which lets the Runtime pick a trusted-fast
+	// tier for it (see Runtime.load).
+	public function pin(sha256:String):HostBuilder {
+		_pins.push(sha256.toLowerCase());
+		return this;
+	}
 
-	public function trustSigner(pubKey:String, grants:Array<Capability>):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function trustSigner(pubKey:String, grants:Array<Capability>):HostBuilder {
+		_signers.push({key: pubKey, grants: grants});
+		return this;
+	}
 
-	public function logSink(f:(level:LogLevel, msg:String, pos:ScriptPos) -> Void):HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+	public function logSink(f:(level:LogLevel, msg:String, pos:ScriptPos) -> Void):HostBuilder {
+		_log = f;
+		return this;
+	}
 
 	public function build():Host
-		throw new haxe.exceptions.NotImplementedException();
+		return new Host(_profile, _grants, _std, _classes, _packages, _pins, _signers, _log);
 }
 
 class Host {
+	public var profile(default, null):Profile;
+	public var grants(default, null):haxe.ds.ReadOnlyArray<Capability>;
+	public var pins(default, null):haxe.ds.ReadOnlyArray<String>;
+	public var signers(default, null):haxe.ds.ReadOnlyArray<{key:String, grants:Array<Capability>}>;
+
+	final std:Bool;
+	final classes:Array<Class<Dynamic>>;
+	final packages:Array<String>;
+	final log:Null<(LogLevel, String, ScriptPos) -> Void>;
+	// Dotted name -> class, for every exposed class (and the members policy below).
+	final exposed:Map<String, Class<Dynamic>> = new Map();
+
+	public function new(profile:Profile, grants:Array<Capability>, std:Bool, classes:Array<Class<Dynamic>>,
+			packages:Array<String>, pins:Array<String>, signers:Array<{key:String, grants:Array<Capability>}>,
+			log:Null<(LogLevel, String, ScriptPos) -> Void>) {
+		this.profile = profile;
+		this.grants = grants.copy();
+		this.std = std;
+		this.classes = classes.copy();
+		this.packages = packages.copy();
+		this.pins = pins.copy();
+		this.signers = signers.copy();
+		this.log = log;
+		for (c in this.classes) {
+			var n = Type.getClassName(c);
+			if (n != null)
+				exposed.set(n, c);
+		}
+	}
+
 	public static function build():HostBuilder
-		throw new haxe.exceptions.NotImplementedException();
+		return new HostBuilder();
+
+	public function isExposed(typeName:String):Bool {
+		if (exposed.exists(typeName))
+			return true;
+		for (p in packages)
+			if (StringTools.startsWith(typeName, p + "."))
+				return true;
+		return false;
+	}
+
+	public function isTrusted(sha256:String):Bool
+		return pins.indexOf(sha256.toLowerCase()) >= 0;
+
+	public function emit(level:LogLevel, msg:String, pos:ScriptPos):Void {
+		if (log != null)
+			log(level, msg, pos);
+	}
+
+	// A registry carrying exactly this host's surface: the neutral std when exposeStd was
+	// asked for, plus every exposed class as a constructible, statically-callable type. One
+	// registry per module keeps module namespaces from sharing mutable binding state.
+	public function makeRegistry():HostRegistry {
+		var reg = new HostRegistry();
+		if (std)
+			NeutralStd.install(reg, function(line) emit(Info, line, {file: "", line: 0}));
+		for (name in exposed.keys()) {
+			var cls = exposed.get(name);
+			reg.markNeutralStatic(name, cls);
+			reg.bindNew(name, function(args) return Type.createInstance(cls, args));
+		}
+		return reg;
+	}
+
+	// The reflective-access policy the Mediator enforces. Without exposeStd the surface is
+	// closed: only exposed classes and whatever the registry was told about. The unnamed
+	// value shapes are always allowed - an anonymous object, a closure or null is not a host
+	// class, so there is no authority for a capability policy to gate there.
+	public function makePolicy(reg:HostRegistry):(String, String) -> Bool {
+		if (std)
+			return function(_, _) return true;
+		return function(typeName:String, member:String) {
+			return switch (typeName) {
+				case "Anon" | "Function" | "Null" | "?": true;
+				case _: isExposed(typeName)
+					|| reg.neutralStaticClass(typeName) != null
+					|| reg.memberBinding(typeName, member) != null;
+			};
+		};
+	}
+
+	public function makeMediator(reg:HostRegistry):Mediator
+		return new Mediator(makePolicy(reg), function(t, m) return reg.memberBinding(t, m));
 }

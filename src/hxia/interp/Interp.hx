@@ -177,13 +177,25 @@ class Interp implements hxia.ScriptWorld {
 	}
 
 	public function run():Void {
-		fuel = fuelLimit;
-		alloc = 0;
-		initStatics();
+		boot();
 		if (mainCall == null)
 			return;
 		compile(mainCall)(new Frame());
 	}
+
+	// Static vars + class initializers, without main: the embedding API's explicit boot step
+	// (PLATFORM.md's load -> verify -> link -> boot -> serve lifecycle). Idempotent, so a
+	// host that boots explicitly and then calls run does not initialize twice.
+	public function boot():Void {
+		fuel = fuelLimit;
+		alloc = 0;
+		if (booted)
+			return;
+		booted = true;
+		initStatics();
+	}
+
+	var booted:Bool = false;
 
 	// Invoke a script static method (its FUN node) with args already evaluated.
 	function invokeFun(fun:OpNode, thisv:Dynamic, args:Array<Dynamic>):Dynamic

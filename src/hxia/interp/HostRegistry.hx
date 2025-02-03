@@ -18,23 +18,36 @@ class HostRegistry {
 	// actual Class handle: passing it keeps the class alive through the host's DCE (a name string
 	// alone would let DCE drop a class the script needs) and avoids a lookup.
 	final neutralStatics:Map<String, Class<Dynamic>> = new Map();
+	// Every type name this registry holds any binding for. The load-time link check asks the question
+	// at type granularity ("can this module reach Sys at all"), which the per-member maps cannot
+	// answer without a scan.
+	final types:Map<String, Bool> = new Map();
 
 	public function new() {}
 
-	public function markNeutralStatic(type:String, cls:Class<Dynamic>):Void
+	public function knowsType(type:String):Bool
+		return types.exists(type);
+
+	public function markNeutralStatic(type:String, cls:Class<Dynamic>):Void {
 		neutralStatics.set(type, cls);
+		types.set(type, true);
+	}
 
 	public function neutralStaticClass(type:String):Null<Class<Dynamic>>
 		return neutralStatics.get(type);
 
-	public function bindMember(type:String, member:String, fn:(Dynamic, Array<Dynamic>) -> Dynamic):Void
+	public function bindMember(type:String, member:String, fn:(Dynamic, Array<Dynamic>) -> Dynamic):Void {
 		members.set(type + "." + member, fn);
+		types.set(type, true);
+	}
 
 	public function memberBinding(type:String, member:String):Null<(Dynamic, Array<Dynamic>) -> Dynamic>
 		return members.get(type + "." + member);
 
-	public function bindNew(type:String, fn:Array<Dynamic>->Dynamic):Void
+	public function bindNew(type:String, fn:Array<Dynamic>->Dynamic):Void {
 		ctors.set(type, fn);
+		types.set(type, true);
+	}
 
 	public function construct(type:String, args:Array<Dynamic>):Dynamic {
 		var fn = ctors.get(type);
@@ -46,8 +59,10 @@ class HostRegistry {
 	public function hasNew(type:String):Bool
 		return ctors.exists(type);
 
-	public function bindStatic(type:String, member:String, fn:Array<Dynamic>->Dynamic):Void
+	public function bindStatic(type:String, member:String, fn:Array<Dynamic>->Dynamic):Void {
 		statics.set(type + "." + member, fn);
+		types.set(type, true);
+	}
 
 	public function staticCall(type:String, member:String, args:Array<Dynamic>):Dynamic {
 		var fn = statics.get(type + "." + member);
