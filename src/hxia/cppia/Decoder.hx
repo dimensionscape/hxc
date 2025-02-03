@@ -8,23 +8,37 @@ import hxia.cppia.OpTree;
 // follow a regular shape (fixed int operands + fixed or count-given children); the
 // irregular ones (calls with a receiver, FUN, TRY, SWITCH, OBJDEF) have dedicated code.
 //
-// Text (CPPIA) decoding shares this grammar but needs a different front-end (names +
-// POSINFO prefixes); it is a later slice. Resources (the raw tail) are not modelled here.
+// Text (CPPIA) decoding shares this grammar through a second front-end: ops arrive as name
+// tokens instead of indices, and each expression is prefixed by `fileId line` (the writer's
+// debug flag equals asciiOut, so text modules always carry positions - the only place they
+// exist). The one no-pos expression is a FUN argument's inline scalar default, which the
+// writer emits via genExpressionOnly (CppiaWriter genFuncArgs).
 class Decoder {
-	final r:BinReader;
+	final br:Null<BinReader>;
+	final tr:Null<TextReader>;
 
 	// Name -> {ints, childFromIntIndex (-1 = use fixed), fixed}
 	static var regular:Map<String, {ints:Int, from:Int, fixed:Int}> = null;
 
-	function new(r:BinReader) {
-		this.r = r;
+	function new(br:Null<BinReader>, tr:Null<TextReader>) {
+		this.br = br;
+		this.tr = tr;
 	}
 
 	public static function decode(ir:ModuleIR):ModuleTree {
-		if (!ir.isBinary())
-			throw new DecodeError("Decoder handles binary (CPPIB) only for now; got " + ir.magic);
-		return new Decoder(new BinReader(ir.body)).module(ir.classCount);
+		return ir.isBinary()
+			? new Decoder(new BinReader(ir.body), null).module(ir.classCount)
+			: new Decoder(null, new TextReader(ir.body)).module(ir.classCount);
 	}
+
+	inline function readInt():Int
+		return br != null ? br.readInt() : tr.readInt();
+
+	inline function readBytes(len:Int):haxe.io.Bytes
+		return br != null ? br.readBytes(len) : tr.readBytes(len);
+
+	inline function at():Int
+		return br != null ? br.pos : tr.pos;
 
 	function module(classCount:Int):ModuleTree {
 		var m = new ModuleTree();
@@ -40,22 +54,24 @@ class Decoder {
 		// under-read anywhere, the cursor lands mid-operand and this fails.
 		var after = readOp();
 		if (after != "RESOURCES")
-			throw new DecodeError("op stream did not end at RESOURCES; got " + after + " at " + r.pos);
+			throw new DecodeError("op stream did not end at RESOURCES; got " + after + " at " + at());
 		// RESOURCES <count>, then <count> RESO <nameId> <len> headers, then the raw data blocks
 		// back to back (CppiaGen writes all headers first, then all data). Names are string ids.
-		var count = r.readInt();
+		var count = readInt();
 		var lens = [];
 		for (_ in 0...count) {
 			var head = readOp();
 			if (head != "RESO")
-				throw new DecodeError("expected RESO in resource table, got " + head + " at " + r.pos);
-			var nameId = r.readInt();
-			var len = r.readInt();
+				throw new DecodeError("expected RESO in resource table, got " + head + " at " + at());
+			var nameId = readInt();
+			var len = readInt();
 			m.resources.push({nameId: nameId, data: null});
 			lens.push(len);
 		}
+		if (tr != null)
+			tr.alignData(); // Consume the last header line's terminator, then raw data
 		for (i in 0...count)
-			m.resources[i].data = r.readBytes(lens[i]);
+			m.resources[i].data = readBytes(lens[i]);
 		return m;
 	}
 
@@ -70,13 +86,13 @@ class Decoder {
 
 	function classDecl(isInterface:Bool):DeclNode {
 		var d = new DeclNode(isInterface ? "interface" : "class");
-		var instId = r.readInt();
-		var superId = r.readInt();
-		var nIfaces = r.readInt();
+		var instId = readInt();
+		var superId = readInt();
+		var nIfaces = readInt();
 		d.ints = [instId, superId, nIfaces];
 		for (_ in 0...nIfaces)
-			d.ints.push(r.readInt());
-		var fieldCount = r.readInt();
+			d.ints.push(readInt());
+		var fieldCount = readInt();
 		for (_ in 0...fieldCount)
 			d.fields.push(field(isInterface));
 		return d;
@@ -87,18 +103,33 @@ class Decoder {
 		return switch (head) {
 			case "FUNCTION":
 				var f = new FieldNode("function");
-				var isStatic = r.readInt(), isDyn = r.readInt(), nameId = r.readInt(), retType = r.readInt(), nArgs = r.readInt();
+				var isStatic = readInt(), isDyn = readInt(), nameId = readInt(), retType = readInt(), nArgs = readInt();
 				f.ints = [isStatic, isDyn, nameId, retType, nArgs];
 				for (_ in 0...nArgs)
-					f.args.push([r.readInt(), r.readInt(), r.readInt()]);
+					f.args.push([readInt(), readInt(), readInt()]);
 				if (!isInterface)
 					f.body = expr();
 				f;
 			case "VAR":
 				var f = new FieldNode("var");
-				// Static, readAcc, writeAcc, extern, nameId, type, hasExpr
-				for (_ in 0...7)
-					f.ints.push(r.readInt());
+				// Static, readAcc, writeAcc, extern, nameId, type, hasExpr. The two accessors are OPS in
+				// operand position (writer: op(readAcc) op(writeAcc)) - the binary form is their opcode index
+				// (N=69 n=70 R=71 C=72), the text form the letter; map letters back to indices so both
+				// front-ends yield the same ints.
+				f.ints.push(readInt());
+				for (_ in 0...2) {
+					if (tr != null) {
+						var tok = tr.readToken();
+						var idx = OpCodes.byName(tok);
+						if (idx == null)
+							throw new DecodeError("unknown accessor op '" + tok + "' at " + at());
+						f.ints.push(idx);
+					} else {
+						f.ints.push(readInt());
+					}
+				}
+				for (_ in 0...4)
+					f.ints.push(readInt());
 				if (f.ints[6] == 1)
 					f.body = expr();
 				f;
@@ -115,37 +146,53 @@ class Decoder {
 
 	function enumDecl():DeclNode {
 		var d = new DeclNode("enum");
-		var enumId = r.readInt();
-		var nCtors = r.readInt();
+		var enumId = readInt();
+		var nCtors = readInt();
 		d.ints = [enumId, nCtors];
 		for (_ in 0...nCtors) {
-			var nameId = r.readInt();
-			var nArgs = r.readInt();
+			var nameId = readInt();
+			var nArgs = readInt();
 			var ctor = [nameId, nArgs];
 			for (_ in 0...nArgs) {
-				ctor.push(r.readInt()); // Arg name id
-				ctor.push(r.readInt()); // Arg type
+				ctor.push(readInt()); // Arg name id
+				ctor.push(readInt()); // Arg type
 			}
 			d.enumCtors.push(ctor);
 		}
-		var metaMarker = r.readInt();
+		var metaMarker = readInt();
 		if (metaMarker == 1)
 			d.enumMeta = expr();
 		return d;
 	}
 
 	function expr():OpNode {
+		// Text modules prefix every expression with `fileId line` (the writer's expression
+		// emission, genTreeExpr: beginExpr + writePos + op). Binary modules carry no positions.
+		var pfile = 0, pline = 0;
+		if (tr != null) {
+			pfile = tr.readInt();
+			pline = tr.readInt();
+		}
+		var n = exprBody();
+		n.file = pfile;
+		n.line = pline;
+		return n;
+	}
+
+	// The op + operands + children, without the position prefix. Also the read for the one
+	// expression the text writer emits bare: a FUN argument's inline scalar default.
+	function exprBody():OpNode {
 		var name = readOp();
 		return switch (name) {
 			// Receiver-then-args calls
 			case "CALLMEMBER":
-				var t = r.readInt(), n = r.readInt(), argc = r.readInt();
+				var t = readInt(), n = readInt(), argc = readInt();
 				var kids = [expr()]; // Receiver
 				for (_ in 0...argc)
 					kids.push(expr());
 				new OpNode(name, [t, n, argc], kids);
 			case "CALL":
-				var argc = r.readInt();
+				var argc = readInt();
 				var kids = [expr()]; // Func
 				for (_ in 0...argc)
 					kids.push(expr());
@@ -157,10 +204,10 @@ class Decoder {
 			case "SWITCH":
 				switchOp();
 			case "OBJDEF":
-				var count = r.readInt();
+				var count = readInt();
 				var ints = [count];
 				for (_ in 0...count)
-					ints.push(r.readInt()); // Field name ids
+					ints.push(readInt()); // Field name ids
 				var kids = [for (_ in 0...count) expr()];
 				new OpNode(name, ints, kids);
 			case _:
@@ -173,25 +220,29 @@ class Decoder {
 			buildRegular();
 		var spec = regular.get(name);
 		if (spec == null)
-			throw new DecodeError("no grammar for op '" + name + "' at " + r.pos);
-		var ints = [for (_ in 0...spec.ints) r.readInt()];
+			throw new DecodeError("no grammar for op '" + name + "' at " + at());
+		var ints = [for (_ in 0...spec.ints) readInt()];
 		var nKids = spec.from >= 0 ? ints[spec.from] : spec.fixed;
-		var kids = [for (_ in 0...nKids) expr()];
+		// TVARS children are the other bare emission: the writer prints each VARDECL/
+		// VARDECLI line directly (writeOp + writeVar), not through the expression emission, so they
+		// carry no position prefix - while a VARDECLI's init kid does (genTreeExpr).
+		var bare = name == "TVARS";
+		var kids = [for (_ in 0...nKids) bare ? exprBody() : expr()];
 		return new OpNode(name, ints, kids);
 	}
 
 	// FUN <type> <argc> [per arg: nameId id captured type initMarker (+const if 1)] body
 	function fun():OpNode {
-		var type = r.readInt(), argc = r.readInt();
+		var type = readInt(), argc = readInt();
 		var ints = [type, argc];
 		var kids = [];
 		for (_ in 0...argc) {
 			for (_ in 0...4)
-				ints.push(r.readInt());            
-			var marker = r.readInt();
+				ints.push(readInt());            
+			var marker = readInt();
 			ints.push(marker);
 			if (marker == 1)
-				kids.push(expr()); // Scalar default value
+				kids.push(exprBody()); // Scalar default: genExpressionOnly, no pos prefix
 		}
 		kids.push(expr()); // body
 		return new OpNode("FUN", ints, kids);
@@ -199,12 +250,12 @@ class Decoder {
 
 	// TRY <count> block [per catch: nameId id captured type catchBody]
 	function tryOp():OpNode {
-		var count = r.readInt();
+		var count = readInt();
 		var ints = [count];
 		var kids = [expr()]; // Guarded block
 		for (_ in 0...count) {
 			for (_ in 0...4)
-				ints.push(r.readInt()); // Catch var
+				ints.push(readInt()); // Catch var
 			kids.push(expr()); // Catch body
 		}
 		return new OpNode("TRY", ints, kids);
@@ -212,11 +263,11 @@ class Decoder {
 
 	// SWITCH <caseCount> <hasDefault> cond [per case: <nValues> values... body] [default]
 	function switchOp():OpNode {
-		var caseCount = r.readInt(), hasDefault = r.readInt();
+		var caseCount = readInt(), hasDefault = readInt();
 		var ints = [caseCount, hasDefault];
 		var kids = [expr()]; // Condition
 		for (_ in 0...caseCount) {
-			var nValues = r.readInt();
+			var nValues = readInt();
 			ints.push(nValues);
 			for (_ in 0...nValues)
 				kids.push(expr());
@@ -228,11 +279,18 @@ class Decoder {
 	}
 
 	function readOp():String {
-		var at = r.pos;
-		var idx = r.readInt();
+		if (tr != null) {
+			// Ops are name tokens in text mode. The one name containing spaces (" in ",
+			// index 123) tokenizes to "in"; map it back so both front-ends yield the same
+			// grammar keys.
+			var tok = tr.readToken();
+			return tok == "in" ? " in " : tok;
+		}
+		var here = at();
+		var idx = readInt();
 		var name = OpCodes.byIndex(idx);
 		if (name == null)
-			throw new DecodeError("unknown opcode index " + idx + " at " + at);
+			throw new DecodeError("unknown opcode index " + idx + " at " + here);
 		return name;
 	}
 

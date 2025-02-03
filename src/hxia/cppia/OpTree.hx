@@ -7,6 +7,10 @@ class OpNode {
 	public var op:String;
 	public var ints:Array<Int>;
 	public var kids:Array<OpNode>;
+	// Source position from a text (debug) module: string-table id of the file and 1-based
+	// line. 0/0 on binary modules, which carry no positions (writer debug = asciiOut).
+	public var file:Int = 0;
+	public var line:Int = 0;
 
 	public function new(op:String, ?ints:Array<Int>, ?kids:Array<OpNode>) {
 		this.op = op;
