@@ -94,6 +94,18 @@ class JsHost {
 			if (handled != NotHandled)
 				return handled;
 		}
+		// Std.isOfType with a RUNTIME token (the isTrue-loop shape): the token may be a script class
+		// constructor, an interface, a script-enum descriptor, or a primitive name string ($classof falls
+		// back to the type name when the host has no runtime Class, e.g. Int/Float on js).
+		if (type == "Std") {
+			switch (member) {
+				case "isOfType":
+					return stdIs(args[0], args[1]);
+				case "downcast", "instance":
+					return stdIs(args[0], args[1]) ? args[0] : null;
+				case _:
+			}
+		}
 		if (registry.hasStatic(type, member))
 			return wrapRet(registry.staticCall(type, member, args));
 		var neutral = registry.neutralStaticClass(type);
@@ -152,6 +164,27 @@ class JsHost {
 		return cls != null ? mediator.getField(cls, member) : null;
 	}
 
+	// Std.isOfType against a runtime token of any world - mirrors the interpreter's scriptIsOfType.
+	function stdIs(v:Dynamic, token:Dynamic):Bool {
+		if (token == null)
+			return false;
+		if (Std.isOfType(token, String))
+			return isOfType(v, token);
+		var pt = Reflect.field(token, "__ptype");
+		if (pt != null)
+			return isOfType(v, pt);
+		if (isScriptClass(token)) {
+			if (js.Syntax.instanceof(v, token))
+				return true;
+			// An interface constructor: instances never chain to it, so consult the __ifs flags.
+			var ifs:Dynamic = v != null ? Reflect.field(v, "__ifs") : null;
+			return ifs != null && Reflect.field(ifs, Reflect.field(token, "__cname")) == true;
+		}
+		if (isEnumDesc(token))
+			return isWrapper(v) && Reflect.field(v, "__e") == Reflect.field(token, "__ename");
+		return Std.isOfType(v, token);
+	}
+
 	// `is` against a host type, by name (the lowered code handles script classes itself).
 	public function isOfType(v:Dynamic, t:String):Bool {
 		return switch (t) {
@@ -159,6 +192,10 @@ class JsHost {
 			case "Int" | "UInt": Std.isOfType(v, Int);
 			case "Float" | "Single": Std.isOfType(v, Float);
 			case "Bool": Std.isOfType(v, Bool);
+			// A class/enum descriptor used as a value is an instance of Class / Enum (and nothing
+			// else) - the interpreter's PrimType.matches rule.
+			case "Class": isScriptClass(v);
+			case "Enum": isEnumDesc(v);
 			case _:
 				var cls = Type.resolveClass(t);
 				cls != null && Std.isOfType(v, cls);
@@ -170,9 +207,21 @@ class JsHost {
 	public function isBytes(o:Dynamic):Bool
 		return Std.isOfType(o, hxia.interp.NeutralBytes);
 
+	// A type with no runtime Class on this host (Int/Float/Class/Enum on js) resolves to an interned
+	// name TOKEN, not the raw string - a raw string would be indistinguishable from a string value
+	// (Type.typeof(Class) must be TObject, never TClass(String)). The interpreter's PrimType.of.
+	final primTokens:Map<String, Dynamic> = new Map();
+
 	public function classOf(t:String):Dynamic {
 		var cls = Type.resolveClass(t);
-		return cls != null ? (cls : Dynamic) : t;
+		if (cls != null)
+			return cls;
+		var tok = primTokens.get(t);
+		if (tok == null) {
+			tok = {__ptype: t};
+			primTokens.set(t, tok);
+		}
+		return tok;
 	}
 
 	// A script class is a generated JS constructor tagged __cname; its instances carry __sc. Anything
@@ -195,6 +244,17 @@ class JsHost {
 		if (type == "Type") {
 			// Enum reflection over the wrapper shape / script-enum descriptors.
 			switch (member) {
+				case "typeof":
+					// Build the ValueType wrapper DIRECTLY so the param survives (the interpreter's mkValueType):
+					// host typeof on a script value would just say TObject, and a class/enum token used as a value
+					// is TObject.
+					if (isScriptValue(a0)) return mkValueType("TClass", [Reflect.field(a0, "constructor")]);
+					if (isWrapper(a0)) {
+						var d = ED != null ? Reflect.field(ED, Reflect.field(a0, "__e")) : null;
+						return mkValueType("TEnum", [d != null ? d : Reflect.field(a0, "__he")]);
+					}
+					if (isScriptClass(a0) || isEnumDesc(a0) || (a0 != null && Reflect.field(a0, "__ptype") != null))
+						return mkValueType("TObject", []);
 				case "enumIndex":
 					if (isWrapper(a0)) return Reflect.field(a0, "__i");
 				case "enumConstructor":
@@ -261,12 +321,43 @@ class JsHost {
 			}
 			return NotHandled;
 		}
-		// Reflect.* over a script instance is plain JS field access; the fields live on the object.
+		// Reflect.* over a script instance is plain JS field access; the fields live on the object. A
+		// script class receiver is a static access answered from the SS/SV tables, and getProperty/
+		// setProperty run the get_/set_ accessor when one exists - the interpreter's staticGet/ property
+		// routing.
 		switch (member) {
 			case "field":
 				if (isScriptValue(a0)) return Reflect.field(a0, args[1]);
+				if (isScriptClass(a0)) return staticRead(Reflect.field(a0, "__cname"), args[1]);
 			case "setField":
 				if (isScriptValue(a0)) { Reflect.setField(a0, args[1], args[2]); return null; }
+				if (isScriptClass(a0)) { Reflect.setField(SV, Reflect.field(a0, "__cname") + "." + args[1], args[2]); return null; }
+			case "getProperty":
+				if (isScriptValue(a0)) {
+					var g = Reflect.field(a0, "get_" + args[1]);
+					if (Reflect.isFunction(g)) return Reflect.callMethod(a0, g, []);
+					return Reflect.field(a0, args[1]);
+				}
+				if (isScriptClass(a0)) {
+					var cn = Reflect.field(a0, "__cname");
+					var g = Reflect.field(SS, cn + ".get_" + args[1]);
+					if (g != null) return Reflect.callMethod(null, g, []);
+					return staticRead(cn, args[1]);
+				}
+			case "setProperty":
+				if (isScriptValue(a0)) {
+					var st = Reflect.field(a0, "set_" + args[1]);
+					if (Reflect.isFunction(st)) { Reflect.callMethod(a0, st, [args[2]]); return null; }
+					Reflect.setField(a0, args[1], args[2]);
+					return null;
+				}
+				if (isScriptClass(a0)) {
+					var cn = Reflect.field(a0, "__cname");
+					var st = Reflect.field(SS, cn + ".set_" + args[1]);
+					if (st != null) { Reflect.callMethod(null, st, [args[2]]); return null; }
+					Reflect.setField(SV, cn + "." + args[1], args[2]);
+					return null;
+				}
 			case "fields":
 				if (isScriptValue(a0)) return Reflect.fields(a0).filter(function(f) return f != "__sc" && f != "__cname" && f != "__b");
 			case "hasField":
@@ -291,6 +382,11 @@ class JsHost {
 		return mkEnum(Reflect.field(desc, "__ename"), idx, ctor, params != null ? params : []);
 	}
 
+	function mkValueType(ctor:String, params:Array<Dynamic>):Dynamic {
+		var vt:Enum<Dynamic> = Type.ValueType;
+		return mkWrapper(Type.getEnumName(vt), Type.getEnumConstructs(vt).indexOf(ctor), ctor, params, vt);
+	}
+
 	// Structural equality over the wrapper shape (either side may be a plain value).
 	function enumEq(a:Dynamic, b:Dynamic):Bool {
 		if (!isWrapper(a) || !isWrapper(b))
@@ -307,11 +403,28 @@ class JsHost {
 		return true;
 	}
 
+	// A static read: the var table first, then a static method as a value.
+	function staticRead(cn:String, name:String):Dynamic {
+		var key = cn + "." + name;
+		if (Reflect.hasField(SV, key))
+			return Reflect.field(SV, key);
+		return Reflect.field(SS, key);
+	}
+
 	function instantiate(cls:Dynamic, args:Null<Array<Dynamic>>):Dynamic {
 		var o = Type.createEmptyInstance(cls);
 		var ctor = Reflect.field(o, "__ctor");
 		if (ctor != null && args != null)
 			Reflect.callMethod(o, ctor, args);
+		// createEmptyInstance skips the constructor, and cpp zero-initialises value-typed fields;
+		// the lowered class carries those defaults (__vdef) so the cpp-compiled cppia's assertions
+		// hold - the interpreter's emptyFieldDefault.
+		if (args == null) {
+			var vd = Reflect.field(cls, "__vdef");
+			if (vd != null)
+				for (f in Reflect.fields(vd))
+					Reflect.setField(o, f, Reflect.field(vd, f));
+		}
 		return o;
 	}
 

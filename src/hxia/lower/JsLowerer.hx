@@ -153,6 +153,11 @@ class JsLowerer {
 				// vars then methods per class, extern property vars dropped, deduplicated). Instance
 				// vars live on instances, not the prototype, so the host cannot derive this itself.
 				buf.add("SC[" + cn + "].__ifields = [" + [for (nm in instanceFieldList(d)) jsStr(nm)].join(", ") + "];\n");
+				// Value-typed field defaults for Type.createEmptyInstance (cpp zero-initialises
+				// Int/Float/Bool fields when the constructor is skipped; the cppia asserts those).
+				var vd = valueDefaults(d);
+				if (vd.length > 0)
+					buf.add("SC[" + cn + "].__vdef = {" + vd.join(", ") + "};\n");
 			}
 		// Hand the script tables to the host so Type.*/Reflect.* over a script value are answered by
 		// the script world, as the interpreter's typeReflect does.
@@ -196,6 +201,14 @@ class JsLowerer {
 					buf.add("SC[" + jsStr(cn) + "].__meta__ = SV[" + jsStr(cn + ".__meta__") + "];
 ");
 			}
+		}
+		// Class __init__ static initializers run after the static vars exist, before main - the
+		// interpreter's initStatics/pendingInits ordering.
+		for (d in tree.decls) {
+			var cn = types[d.ints[0]];
+			for (f in d.fields)
+				if (f.kind == "function" && f.body != null && strings[f.ints[2]] == "__init__")
+					buf.add("SS[" + jsStr(cn + ".__init__") + "]();\n");
 		}
 		if (tree.hasMain && tree.main != null) {
 			buf.add("return function(){ ");
@@ -276,12 +289,55 @@ class JsLowerer {
 		return out;
 	}
 
+	// Zero defaults for value-typed instance vars down the super chain (the cppia type name is the
+	// native lowercase form: "int"/"float"/"bool"), for Type.createEmptyInstance.
+	function valueDefaults(d:DeclNode):Array<String> {
+		var byName:Map<String, DeclNode> = new Map();
+		for (x in tree.decls)
+			if (x.kind != "enum")
+				byName.set(types[x.ints[0]], x);
+		var out:Array<String> = [];
+		var seen:Map<String, Bool> = new Map();
+		var c:Null<DeclNode> = d;
+		while (c != null) {
+			for (f in c.fields) {
+				if (f.kind != "var" || f.ints[0] == 1 || f.ints[3] == 1)
+					continue;
+				var nm = strings[f.ints[4]];
+				if (seen.exists(nm))
+					continue;
+				seen.set(nm, true);
+				var tn = (f.ints[5] >= 0 && f.ints[5] < types.length) ? types[f.ints[5]] : "";
+				var i = tn.lastIndexOf(":");
+				if (i >= 0)
+					tn = tn.substr(i + 1);
+				switch (tn) {
+					case "Int" | "UInt" | "Int64" | "Int32" | "int" | "int64" | "unsigned int": out.push(jsStr(nm) + ": 0");
+					case "Float" | "Single" | "float" | "double": out.push(jsStr(nm) + ": 0");
+					case "Bool" | "bool": out.push(jsStr(nm) + ": false");
+					case _:
+				}
+			}
+			var superId = c.ints[1];
+			c = (superId >= 0 && superId < types.length) ? byName.get(types[superId]) : null;
+		}
+		return out;
+	}
+
 	function emitClassMembers(d:DeclNode):Void {
 		var cn = types[d.ints[0]];
 		for (f in d.fields) {
 			if (f.kind != "function" || f.body == null)
 				continue;
 			var name = strings[f.ints[2]];
+			// __init__'s body is a raw block, not a FUN node (the interpreter compiles it directly in
+			// pendingInits), so wrap it in a zero-arg function here.
+			if (name == "__init__") {
+				buf.add("SS[" + jsStr(cn + ".__init__") + "] = function(){ ");
+				emitStmt(f.body);
+				buf.add("; };\n");
+				continue;
+			}
 			// The constructor is emitted WITH the static flag but has a `this` body, so it must be
 			// matched by name before the static test (same rule as the interpreter's index()).
 			if (name == "new") {
