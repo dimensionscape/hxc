@@ -84,8 +84,10 @@ class JsLowerer {
 		buf.add("function $fld(o, n){ if (o == null) throw \"Null Object Reference\"; var v = o[n]; if (typeof v !== \"function\") return v;"
 			+ " if (o.__sc === true) { var c = o.__b || (o.__b = {}); return c[n] || (c[n] = v.bind(o)); } return v.bind(o); }\n");
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
-		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c) return v instanceof c; return $host.isOfType(v, t); }\n");
-		buf.add("function $classof(t){ var c = SC[t]; return c ? c : $host.classOf(t); }\n");
+		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c && v instanceof c) return true; return $host.isOfType(v, t); }
+");
+		buf.add("function $classof(t){ var c = SC[t]; if (c) return c; var e = ED[t]; if (e) return e; return $host.classOf(t); }
+");
 		// A script enum value: {__e type, __i index, __n ctor name, __p params}. A no-argument
 		// constructor is interned per type+name so `A == A` holds, as it does in the interpreter.
 		buf.add("var EI = {};\n");
@@ -132,7 +134,27 @@ class JsLowerer {
 			}
 		// Hand the script tables to the host so Type.*/Reflect.* over a script value are answered by
 		// the script world, as the interpreter's typeReflect does.
-		buf.add("$host.bindTables(SC, SS, SV);\n");
+		// Script-enum descriptors (constructor names/arities + __meta__), so the host can answer
+		// resolveEnum/createEnum/getEnumConstructs/rtti-Meta for enums that exist only in this module.
+		buf.add("var ED = {};
+");
+		for (d in tree.decls) {
+			if (d.kind != "enum")
+				continue;
+			var en = types[d.ints[0]];
+			var names = [for (c in d.enumCtors) jsStr(strings[c[0]])];
+			var arities = [for (c in d.enumCtors) Std.string(c[1])];
+			buf.add("ED[" + jsStr(en) + "] = {__ename: " + jsStr(en) + ", ctors: [" + names.join(", ") + "], arity: [" + arities.join(", ") + "]};
+");
+			if (d.enumMeta != null) {
+				buf.add("ED[" + jsStr(en) + "].__meta__ = ");
+				emitExpr(d.enumMeta);
+				buf.add(";
+");
+			}
+		}
+		buf.add("$host.bindTables(SC, SS, SV, ED, $enum);
+");
 		// Pass 3: members (instance methods onto the prototype, statics into SS).
 		for (d in tree.decls)
 			emitClassMembers(d);
@@ -142,9 +164,15 @@ class JsLowerer {
 			for (f in d.fields) {
 				if (f.kind != "var" || f.ints[0] != 1 || f.ints[3] == 1)
 					continue;
-				buf.add("SV[" + jsStr(cn + "." + strings[f.ints[4]]) + "] = ");
+				var vn = strings[f.ints[4]];
+				buf.add("SV[" + jsStr(cn + "." + vn) + "] = ");
 				if (f.body != null) emitExpr(f.body) else buf.add("null");
 				buf.add(";\n");
+				// The inlined haxe.rtti.Meta accessors read __meta__ as a direct field off the
+				// class token, so attach it to the constructor too.
+				if (vn == "__meta__" && d.kind != "enum")
+					buf.add("SC[" + jsStr(cn) + "].__meta__ = SV[" + jsStr(cn + ".__meta__") + "];
+");
 			}
 		}
 		if (tree.hasMain && tree.main != null) {
@@ -547,8 +575,14 @@ class JsLowerer {
 		var et = types[n.ints[0]];
 		var ctor = strings[n.ints[1]];
 		var idx = enumCtorIndex.get(et + "." + ctor);
-		if (idx == null)
-			throw new LowerError("enum constructor '" + et + "." + ctor + "' not declared in this module");
+		if (idx == null) {
+			// A host enum (haxe.ds.Option, ValueType, ...): the host builds the same wrapper
+			// shape, mirroring the interpreter's mkHostEnum.
+			buf.add("$host.hostEnum(" + jsStr(et) + ", " + jsStr(ctor) + ", ");
+			emitArgArray(args, 0);
+			buf.add(")");
+			return;
+		}
 		buf.add("$enum(" + jsStr(et) + ", " + idx + ", " + jsStr(ctor) + ", ");
 		emitArgArray(args, 0);
 		buf.add(")");
