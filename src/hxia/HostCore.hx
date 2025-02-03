@@ -34,6 +34,19 @@ class HostCore {
 		return registry.construct(type, args);
 	}
 
+	// The neutral std shims stand in for host types that cannot be used directly across the
+	// script boundary, so `is` against the real type must hold for them. Returns the type
+	// names a value answers to, or null when it is not a shim.
+	public static function shimTypeNames(v:Dynamic):Null<Array<String>> {
+		if (Std.isOfType(v, hxia.interp.NeutralBytes))
+			return ["haxe.io.Bytes", "Bytes"];
+		if (Std.isOfType(v, hxia.interp.NeutralStringBuf))
+			return ["StringBuf"];
+		if (Std.isOfType(v, hxia.interp.NeutralList))
+			return ["haxe.ds.List", "List"];
+		return null;
+	}
+
 	// The host-static tail every tier ends dispatch with: a registry binding first, else a
 	// reflective call on an authority-free (neutral-static) std class through the mediated
 	// seam, else the registry's own miss handling (which raises the unbound-static error).

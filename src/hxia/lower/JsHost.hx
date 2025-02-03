@@ -144,26 +144,24 @@ class JsHost implements hxia.ScriptWorld {
 		return cls != null ? mediator.getField(cls, member) : null;
 	}
 
-	// Std.isOfType against a runtime token of any world - mirrors the interpreter's scriptIsOfType.
-	function stdIs(v:Dynamic, token:Dynamic):Bool {
-		if (token == null)
-			return false;
-		if (Std.isOfType(token, String))
-			return isOfType(v, token);
-		var pt = Reflect.field(token, "__ptype");
-		if (pt != null)
-			return isOfType(v, pt);
-		if (isScriptClass(token)) {
-			if (js.Syntax.instanceof(v, token))
-				return true;
-			// An interface constructor: instances never chain to it, so consult the __ifs flags.
-			var ifs:Dynamic = v != null ? Reflect.field(v, "__ifs") : null;
-			return ifs != null && Reflect.field(ifs, Reflect.field(token, "__cname")) == true;
-		}
-		if (isEnumDesc(token))
-			return isWrapper(v) && Reflect.field(v, "__e") == Reflect.field(token, "__ename");
-		return Std.isOfType(v, token);
+	// Std.isOfType against a runtime token of any world - the shared dispatch over T1 tokens.
+	function stdIs(v:Dynamic, token:Dynamic):Bool
+		return hxia.WorldReflect.isOfType(this, v, token);
+
+	public function isOfTypeNamed(v:Dynamic, name:String):Bool
+		return isOfType(v, name);
+
+	public function instanceIsOfClass(v:Dynamic, className:String):Bool {
+		var c = Reflect.field(SC, className);
+		if (c != null && js.Syntax.instanceof(v, c))
+			return true;
+		// An interface: instances never chain to its constructor, so consult the __ifs flags.
+		var ifs:Dynamic = Reflect.field(v, "__ifs");
+		return ifs != null && Reflect.field(ifs, className) == true;
 	}
+
+	public function hostIsOfType(v:Dynamic, token:Dynamic):Bool
+		return Std.isOfType(v, token);
 
 	// A static write to a neutral-static host type reaches the real class (haxe.Serializer.USE_CACHE
 	// must be visible to the shim's constructor), the interpreter's setStatic host fallback.
@@ -181,13 +179,9 @@ class JsHost implements hxia.ScriptWorld {
 
 	// `is` against a host type, by name (the lowered code handles script classes itself).
 	public function isOfType(v:Dynamic, t:String):Bool {
-		// The std shims stand in for their host types (the interpreter's isOfTypeNamed rules).
-		if (Std.isOfType(v, hxia.interp.NeutralBytes))
-			return t == "haxe.io.Bytes" || t == "Bytes";
-		if (Std.isOfType(v, hxia.interp.NeutralStringBuf))
-			return t == "StringBuf";
-		if (Std.isOfType(v, hxia.interp.NeutralList))
-			return t == "haxe.ds.List" || t == "List";
+		var shim = hxia.HostCore.shimTypeNames(v);
+		if (shim != null)
+			return shim.indexOf(t) >= 0;
 		return switch (t) {
 			case "Dynamic": true;
 			case "Int" | "UInt": Std.isOfType(v, Int);

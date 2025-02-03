@@ -130,6 +130,29 @@ class WorldReflect {
 		return NotHandled;
 	}
 
+	// Std.isOfType/downcast against a RUNTIME token, which may belong to either world: a
+	// primitive/name token, a script enum descriptor, a script class, or a host Class. The
+	// dispatch order is the policy; each tier supplies the three leaf answers.
+	public static function isOfType(world:ScriptWorld, v:Dynamic, token:Dynamic):Bool {
+		// A null type is never matched (and TestReflect's isTrue does pass null).
+		if (token == null)
+			return false;
+		// A type with no runtime Class resolves to a name token; a bare string reaches here
+		// the same way from the lowered code's $classof fallback.
+		if (world.isPrimToken(token))
+			return world.isOfTypeNamed(v, world.primTokenName(token));
+		if (Std.isOfType(token, String))
+			return world.isOfTypeNamed(v, token);
+		if (world.isEnumToken(token))
+			return world.isEnumVal(v) && world.enumTypeName(v) == world.tokenName(token);
+		if (world.isClassToken(token))
+			return world.isInstance(v) && world.instanceIsOfClass(v, world.tokenName(token));
+		// A script instance is never an instance of a host class.
+		if (world.isInstance(v))
+			return false;
+		return world.hostIsOfType(v, token);
+	}
+
 	// Type.createEnum/createEnumIndex validation: both throw on an unknown constructor or a
 	// wrong argument count (TestReflect asserts the throws), then build through the world so
 	// no-arg values share the tier's interned singletons.

@@ -69,4 +69,11 @@ interface ScriptWorld {
 	// Type.typeof(Class) must be TObject, not TClass(String).
 	function isPrimToken(v:Dynamic):Bool;
 	function primTokenName(v:Dynamic):String;
+
+	// The three leaf answers of the shared isOfType dispatch: by compile-time type name, a script
+	// instance against a script class name (super chain + interfaces), and the tier's host-side
+	// fallback for a token that belongs to neither script world.
+	function isOfTypeNamed(v:Dynamic, name:String):Bool;
+	function instanceIsOfClass(v:Dynamic, className:String):Bool;
+	function hostIsOfType(v:Dynamic, token:Dynamic):Bool;
 }

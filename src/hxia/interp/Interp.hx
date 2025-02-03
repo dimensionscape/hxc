@@ -1123,7 +1123,7 @@ class Interp implements hxia.ScriptWorld {
 
 	// `x is T` resolved against the compile-time type name (from CLASSOF), which is exact even
 	// when the runtime Class object is unreliable across the neutral-static boundary.
-	function isOfTypeNamed(v:Dynamic, rawType:String):Bool {
+	public function isOfTypeNamed(v:Dynamic, rawType:String):Bool {
 		var name = stripPath(rawType);
 		if (name == "Dynamic")
 			return true;
@@ -1134,12 +1134,9 @@ class Interp implements hxia.ScriptWorld {
 			return scriptClasses.exists(rawType) && scriptIsOfType(v, scriptClasses.get(rawType));
 		if (Std.isOfType(v, EnumValue))
 			return scriptEnums.exists(rawType) && (v : EnumValue).enumType == rawType;
-		if (Std.isOfType(v, NeutralBytes))
-			return name == "haxe.io.Bytes" || name == "Bytes";
-		if (Std.isOfType(v, NeutralStringBuf))
-			return name == "StringBuf";
-		if (Std.isOfType(v, NeutralList))
-			return name == "haxe.ds.List" || name == "List";
+		var shim = hxia.HostCore.shimTypeNames(v);
+		if (shim != null)
+			return shim.indexOf(name) >= 0;
 		if (PrimType.isPrimitive(name))
 			return new PrimType(name).matches(v);
 		// A host value: prefer real Class identity, then a name comparison up the super chain
@@ -1150,37 +1147,27 @@ class Interp implements hxia.ScriptWorld {
 		return PrimType.nameInChain(v, name);
 	}
 
-	// isOfType that spans both worlds: a ScriptClass token matches a ScriptObject whose class
-	// chain reaches it; anything else defers to the host check.
-	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool {
-		// isOfType against a null type is always false (and the name-based fallback would read
-		// hostTokenNames.get(null), which derefs null.__id__ on js). TestReflect's isTrue passes null.
-		if (token == null)
-			return false;
-		if (Std.isOfType(token, PrimType))
-			return (token : PrimType).matches(v);
-		// The std shims stand in for their host types, so isOfType against the real class holds.
+	// isOfType that spans both worlds - the shared dispatch (WorldReflect.isOfType) over this
+	// tier's tokens.
+	function scriptIsOfType(v:Dynamic, token:Dynamic):Bool
+		return hxia.WorldReflect.isOfType(this, v, token);
+
+	public function instanceIsOfClass(v:Dynamic, className:String):Bool
+		return scriptClassImplements((v : ScriptObject).cls, className);
+
+	// The host-token leaf: a shim answers for the type it stands in for, then real Class
+	// identity, then a name comparison up the super chain - the host can hand out distinct
+	// Class objects for the same class across the neutral-static boundary (e.g. Lambda.list(x)
+	// vs new List() both haxe.ds.List), so a direct isOfType can miss.
+	public function hostIsOfType(v:Dynamic, token:Dynamic):Bool {
 		if (Std.isOfType(v, NeutralBytes))
 			return token == haxe.io.Bytes;
 		if (Std.isOfType(v, NeutralStringBuf))
 			return token == StringBuf;
 		if (Std.isOfType(v, NeutralList))
 			return token == haxe.ds.List;
-		if (Std.isOfType(token, ScriptEnum))
-			return Std.isOfType(v, EnumValue) && (v : EnumValue).enumType == (token : ScriptEnum).name;
-		if (Std.isOfType(token, ScriptClass)) {
-			if (!Std.isOfType(v, ScriptObject))
-				return false;
-			return scriptClassImplements((v : ScriptObject).cls, (token : ScriptClass).name);
-		}
-		// A script object is not an instance of any host class (except Dynamic-ish checks).
-		if (Std.isOfType(v, ScriptObject))
-			return false;
 		if (Std.isOfType(v, token))
 			return true;
-		// Fallback: the host can hand out distinct Class objects for the same class across the
-		// neutral-static boundary (e.g. `Lambda.list(x)` vs `new List()` both haxe.ds.List), so a
-		// direct isOfType can miss. Compare by class name up the value's super chain.
 		return sameByName(v, token);
 	}
 
