@@ -617,6 +617,7 @@ class Parser {
 			try {
 				v = f();
 			} catch (e:ParserError) {
+				if (e.soft) break;
 				if (idx != save) throw e;
 				idx = save;
 				break;
@@ -639,9 +640,8 @@ class Parser {
 		try {
 			acc.push(f());
 		} catch (e:ParserError) {
-			// A parse that consumed tokens before failing is a real error and propagates. Swallowing it
-			// turned `case (_.eq` into an empty pattern list, and the missing `:` got reported in place of
-			// the paren expression's own `Expected ) or , or :`.
+			// A parse that consumed tokens before failing is a real error and propagates.
+			if (e.soft) return acc;
 			if (idx != save) throw e;
 			idx = save;
 			return acc;
@@ -761,6 +761,9 @@ class Parser {
 		if (tokEq(peek(), POpen)) {
 			var p1 = next().pos;
 			var tl = psepTrailing(() -> parseComplexTypeMaybeNamed(true));
+			// The `)` is a plain pattern element, so failing it is an empty non-soft error that names the
+			// token that is there. Only an explicit syntaxError call spells out what was expected.
+			if (!tokEq(peek(), PClose)) serror();
 			var p2 = expect(PClose);
 			if (tl.length == 0) {
 				return parseFunctionTypeNext(tl, p1);
@@ -785,6 +788,8 @@ class Parser {
 			case POpen:
 				var p1 = next().pos;
 				var t = parseComplexType();
+				// The same rule as above
+				if (!tokEq(peek(), PClose)) serror();
 				var p2 = expect(PClose);
 				return {ct: CTParent(t), pos: Position.union(p1, p2)};
 			case BrOpen:
@@ -1128,12 +1133,11 @@ class Parser {
 		// The last alternative. Only a parameter that could not be read at all becomes the magic type
 		// path, so `Null<|>` completes on the types in scope while `Array<Strin|g` keeps the name the
 		// user is writing.
-		var saveE = idx;
 		try {
-			return TPExpr(expr());
+			return TPExpr(exprSoft());
 		} catch (er:ParserError) {
-			if (idx != saveE) throw er;
-			idx = saveE;
+			// Expr heads its alternative, so only a soft failure reaches the display fallback below
+			if (!er.soft) throw er;
 			if (!wouldSkipDisplayPosition(plt, false)) throw er;
 			return TPType({ct: CTPath(magicTypePath()), pos: new Position(plt.file, displayOffset, displayOffset)});
 		}
@@ -1389,7 +1393,7 @@ class Parser {
 	}
 
 	function parseCallParamsList():Array<Expr> {
-		var el = psepTrailing(expr);
+		var el = psepTrailing(exprSoft);
 		if (!tokEq(peek(), PClose))
 			throw new ParserError(Expected(el.length == 0 ? ["expression", ")"] : [",", ")"]), peekInfo().pos);
 		return el;
@@ -1526,6 +1530,9 @@ class Parser {
 			try {
 				e = parseBlockElt();
 			} catch (er:ParserError) {
+				// The soft-failure arm comes before the display arm, so a block element that matched nothing
+				// ends the block in either mode, and the tokens it consumed stay consumed.
+				if (er.soft) break;
 				// In the DISPLAY file a failed block element records its error and the block resumes from the
 				// stream position the failed attempt reached, so an incomplete construct under the cursor does
 				// not abort hover/definition requests elsewhere in the file. Skipping a token there instead let
@@ -1614,7 +1621,9 @@ class Parser {
 				return e;
 			case _:
 		}
-		var e = expr();
+		// The last alternative is an expression then a semicolon, whose head is expr itself, so an element
+		// that starts nothing ends the block instead of failing it.
+		var e = exprSoft();
 		semicolon();
 		return e;
 	}
@@ -1765,9 +1774,13 @@ class Parser {
 		var save = idx;
 		var np = peekInfo().pos;
 		try {
-			return expr();
+			return exprSoft();
 		} catch (er:ParserError) {
-			if (idx != save) throw er;
+			if (!er.soft && idx != save) throw er;
+			// The fallback arm takes the next position after the failed attempt, and the stream keeps
+			// whatever that attempt consumed, so a soft failure raised past the head of the expression
+			// reports at the token the attempt stopped on.
+			if (er.soft && idx != save) np = peekInfo().pos;
 			// The fallback is the syntax error `Expected expression`, RAISED outside display rather than
 			// keeping whatever expr said: a stray `static` here is `Expected expression`, not `Unexpected
 			// keyword "static"`.
@@ -1842,7 +1855,20 @@ class Parser {
 		return {decl: EClass(def), pos: Position.union(p1, cf.pos)};
 	}
 
+	// `expr` has no catch-all alternative, so a token that starts none of its arms is a soft failure, which
+	// becomes a non-soft error at every pattern position but the first. Every hxc caller sits at a later
+	// position except the few that hold expr as the head of their own pattern, so the conversion belongs
+	// here and the raw verdict is what exprSoft hands to those few.
 	function expr():Expr {
+		try {
+			return exprSoft();
+		} catch (er:ParserError) {
+			if (!er.soft) throw er;
+			throw new ParserError(er.msg, er.pos);
+		}
+	}
+
+	function exprSoft():Expr {
 		switch (peek()) {
 			case At:
 				var entry = parseMetaEntry();
@@ -1949,14 +1975,14 @@ class Parser {
 				var p = next().pos;
 				var save = idx;
 				try {
-					var e = expr();
+					var e = exprSoft();
 					return new Expr(EReturn(e), Position.union(p, e.pos));
 				} catch (er:ParserError) {
 					// `return` takes no value only on a soft failure, so a value that CONSUMED tokens
 					// before
 					// failing is a real error and must not be swallowed into a bare `return`.
-					if (idx != save) throw er;
-					idx = save;
+					if (!er.soft && idx != save) throw er;
+					if (!er.soft) idx = save;
 					return new Expr(EReturn(null), p);
 				}
 			case Kwd(KwdBreak):
@@ -2032,7 +2058,12 @@ class Parser {
 				var e = secureExpr();
 				return makeMeta(":inline", [], e, p);
 			case _:
-				return serror();
+				// No alternative starts here: a soft failure, not serror()'s hard error. The message is the
+				// same
+				// one serror would build, since a caller that converts it reports exactly what an empty
+				// hard
+				// error reports.
+				throw new ParserError(Unexpected(peek()), cur().pos, true);
 		}
 	}
 
@@ -2111,7 +2142,11 @@ class Parser {
 				idx = save;
 			}
 		}
-		var e = expr();
+		// After `(` a FRESH match opens whose third alternative is an expression, and that match has no
+		// catch-all, so an expr that starts nothing leaves the whole `(` arm as a soft failure rather than
+		// an error. The paren stays consumed either way, which is what puts the caller's report at the
+		// token after it rather than at the paren.
+		var e = exprSoft();
 		switch (peek()) {
 			case PClose:
 				var p2 = next().pos;
@@ -2169,7 +2204,10 @@ class Parser {
 	}
 
 	function arrowExpr():Expr {
-		expect(Arrow);
+		// The fallback is serror(), so a missing `->` reports the token that is there rather than naming
+		// the arrow.
+		if (!tokEq(peek(), Arrow)) serror();
+		junk();
 		return expr();
 	}
 
@@ -2233,7 +2271,7 @@ class Parser {
 					var r = parseCallParamsResume(p1);
 					return exprNext(new Expr(ECall(e1, r.el), Position.union(e1.pos, r.p2)));
 				}
-				var el = psepTrailing(expr);
+				var el = psepTrailing(exprSoft);
 				if (tokEq(peek(), PClose)) {
 					var p2 = next().pos;
 					return exprNext(new Expr(ECall(e1, el), Position.union(e1.pos, p2)));
@@ -2634,13 +2672,13 @@ class Parser {
 				var t = poptTypeHint();
 				var e:Null<Expr> = null;
 				var p2 = p1;
-				var save = idx;
 				var ee:Null<Expr> = null;
-				try ee = expr()
+				try ee = exprSoft()
 				catch (er:ParserError) {
-					if (idx != save) throw er;
-					if (tokEq(tokens[save].tok, BrOpen)) throw er;
-					idx = save;
+					// An expression heads the arm, so only a soft failure falls through to the
+					// semicolon-only alternative, and whatever the failed body consumed stays consumed for
+					// it.
+					if (!er.soft) throw er;
 				}
 				if (ee != null) {
 					// Committed arm, same as the class field: the semicolon runs in the action and its
@@ -3121,15 +3159,12 @@ class Parser {
 		var t = poptTypeHint();
 		var e:Null<Expr> = null;
 		var p2 = p1;
-		var save = idx;
 		var ee:Null<Expr> = null;
-		try ee = expr()
+		try ee = exprSoft()
 		catch (er:ParserError) {
-			// Only a body that matched NOTHING falls through to the semicolon-only arm; a parse
-			// that consumed tokens is a real error.
-			if (idx != save) throw er;
-			if (tokEq(tokens[save].tok, BrOpen)) throw er;
-			idx = save;
+			// Only a body that matched NOTHING is a soft failure and falls through to the semicolon-only
+			// arm; a parse that failed is a real error.
+			if (!er.soft) throw er;
 		}
 		if (ee != null) {
 			// The first arm is an expression with the semicolon read in its action. Once expr has matched,
