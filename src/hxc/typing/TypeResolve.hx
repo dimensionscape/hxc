@@ -32,21 +32,32 @@ class TypeResolve {
 				// rather than be recorded and swallowed here.
 				throw dc;
 			} catch (e:ContextError) {
-				// A declaration error (bad heritage, final extend, ...) is recorded so the rest of the
-				// module still resolves but the compile fails.
+				// A declaration error (bad heritage, final extend, ...) is recorded, and in a BATCH compile the
+				// rest of the module is ABANDONED: the reference's typing_error raises out of init_module_type,
+				// so no later declaration of that module is reached and exactly one such error is ever printed.
 				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
+				if (abortsOnDeclError(ctx)) break;
 			} catch (e:hxc.core.TypingError) {
 				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
+				if (abortsOnDeclError(ctx)) break;
 			} catch (_:Dynamic) {
 				ctx.currentModule = m;
 			}
 		}
 		for (mt in m.types) resolveUsingMetadata(ctx, mt);
 		ctx.currentModule = savedMod;
+	}
+
+	/**
+	 * A display request's job is to answer, so the errors that would cost the answer are skipped
+	 * rather than raised, and the module keeps resolving.
+	 */
+	static inline function abortsOnDeclError(ctx:Context):Bool {
+		return ctx.displaySpec == null;
 	}
 
 	// The error raises out of module initialisation, so the module's DELAYED field typing never runs -
