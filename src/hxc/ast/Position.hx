@@ -45,8 +45,9 @@ class Position {
 		return c == null ? -1 : c.malformedAt;
 	}
 
-	// Validate raw bytes before hxcpp's permissive decoder hides malformed sequences. Reject overlong
-	// encodings, surrogates and out-of-range values; return the UTF-16 offset used by the lexer.
+	// Validate raw bytes before hxcpp's permissive decoder hides malformed sequences. Accept overlong
+	// encodings, but reject surrogates, out-of-range values, invalid leads and truncated sequences.
+	// Return the UTF-16 offset used by the lexer.
 	public static function utf8FirstInvalid(b:haxe.io.Bytes):Int {
 		var i = 0, u16 = 0;
 		var n = b.length;
@@ -57,27 +58,26 @@ class Position {
 		while (i < n) {
 			var c = b.get(i);
 			if (c < 0x80) { i++; u16++; continue; }
-			if (c >= 0xC2 && c <= 0xDF) {
+			if (c >= 0xC0 && c <= 0xDF) {
 				if (i + 1 >= n || !cont(i + 1)) return u16;
 				i += 2; u16++; continue;
 			}
 			if (c >= 0xE0 && c <= 0xEF) {
 				if (i + 2 >= n || !cont(i + 1) || !cont(i + 2)) return u16;
-				var c1 = b.get(i + 1);
-				// E0 A0..BF rejects the overlong 3-byte forms; ED 80..9F rejects UTF-16 surrogates.
-				if (c == 0xE0 && c1 < 0xA0) return u16;
-				if (c == 0xED && c1 > 0x9F) return u16;
+				// ED A0..BF decodes into D800..DFFF, the UTF-16 surrogate range.
+				if (c == 0xED && b.get(i + 1) > 0x9F) return u16;
 				i += 3; u16++; continue;
 			}
 			if (c >= 0xF0 && c <= 0xF4) {
 				if (i + 3 >= n || !cont(i + 1) || !cont(i + 2) || !cont(i + 3)) return u16;
 				var c1 = b.get(i + 1);
-				if (c == 0xF0 && c1 < 0x90) return u16;   // overlong
 				if (c == 0xF4 && c1 > 0x8F) return u16;   // beyond U+10FFFF
-				i += 4; u16 += 2;                          // astral: a surrogate PAIR
+				// An overlong F0 8F sequence decodes below U+10000 and occupies one UTF-16 unit.
+				u16 += (c == 0xF0 && c1 < 0x90) ? 1 : 2;
+				i += 4;
 				continue;
 			}
-			return u16;  // C0, C1, F5..FF and stray continuation bytes
+			return u16;  // F5..FF leads and stray continuation bytes
 		}
 		return -1;
 	}

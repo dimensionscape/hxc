@@ -50,6 +50,10 @@ class Lexer {
 	public inline function offset():Int
 		return pos;
 
+	/** Position of the cursor itself, for the Eof sentinel a deferred fault leaves behind. */
+	public function curPos():Position
+		return mkPos(pos, pos);
+
 	// Source positions count UNICODE CODE POINTS, while a Haxe string indexes UTF-16 code units, so an
 	// astral character counts twice here; without conversion every position after it is one too far right.
 	// Convert at the single construction point; a source with no astral character (the overwhelming
@@ -85,6 +89,11 @@ class Lexer {
 
 	inline function peek(o:Int = 0):Int {
 		var i = pos + o;
+		// A malformed UTF-8 sequence is an error as soon as any read touches it: mid-string, mid-comment,
+		// and on the one-unit lookahead the DFA takes past a finished token. A clean file (malformedAt ==
+		// -1, the overwhelming case) pays one predictable comparison. Reported at the start of the file.
+		if (malformedAt >= 0 && i >= malformedAt)
+			throw new LexerError(MalformedFile, new Position(file, 0, 0));
 		return i < len ? src.charCodeAt(i) : -1;
 	}
 
@@ -174,11 +183,6 @@ class Lexer {
 				break;
 		}
 		var start = pos;
-		// Sedlex raises MalFormed as it DECODES, so a syntax error earlier in the file is reported
-		// instead and the malformed one never surfaces. Checking as the cursor arrives reproduces that
-		// ordering; the reported position is the start of the file either way.
-		if (malformedAt >= 0 && pos >= malformedAt)
-			throw new LexerError(MalformedFile, new Position(file, 0, 0));
 		var c = peek();
 		if (c == -1)
 			return mk(start, Eof);

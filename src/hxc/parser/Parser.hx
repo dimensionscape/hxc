@@ -182,6 +182,16 @@ class Parser {
 
 	// Lex `src` into a raw token list (comments filtered, ends in Eof), enforcing
 	// the lexer forward-progress invariant.
+	/**
+		A lexer fault is DEFERRED, not raised. A file is decoded as it is read, so when a PARSE error occurs
+		earlier that error is reported and the lexer never reaches the fault. hxc must lex the whole file up
+		front because #if preprocessing needs the complete stream, so it stops at the fault, keeps the
+		tokens before it, and hands the error back to be raised only if the parser gets that far.
+
+		MalformedFile defers on the same terms: decoding fails only when the parser PULLS the token that
+		needs the bad bytes, so a parse error in the clean prefix is reported first and the encoding fault
+		surfaces only when the parse reaches the cut.
+	*/
 	static function lexAll(src:String, file:String, out:{err:Null<LexerError>}):Array<TokenInfo> {
 		var lex = new Lexer(src, file);
 		var toks:Array<TokenInfo> = [];
@@ -260,10 +270,10 @@ class Parser {
 			lastOff = off;
 		}
 		catch (e:LexerError) {
-			// Deferring it made hxc report inventions from the cut-short stream instead.
-			if (e.msg.match(MalformedFile)) throw e;
+			// The MalformedFile error itself stays at 1:1 but its sentinel must sit where lexing STOPPED,
+			// or a diagnostic reported "at the next token" near the cut would name the start of the file.
 			out.err = e;
-			toks.push(new TokenInfo(Eof, e.pos));
+			toks.push(new TokenInfo(Eof, e.msg.match(MalformedFile) ? lex.curPos() : e.pos));
 		}
 		return toks;
 	}
@@ -1158,8 +1168,9 @@ class Parser {
 		} catch (er:ParserError) {
 			// A parameter list that could not be read at all junks a `>` so the follow-up parse is not
 			// thrown off by it, and records what was expected there. An attempt that consumed tokens is a
-			// real error.
-			if (idx != save) throw er;
+			// real error - and a soft failure from a later element (`f<T, 2>`) sits at a non-head position,
+			// so it hardens here.
+			if (idx != save) throw er.soft ? new ParserError(er.msg, er.pos) : er;
 			var pos = tokEq(peek(), TBinop(OpGt)) ? next().pos : null;
 			syntaxError(Expected(["type parameter"]), pos);
 			return [];
@@ -1168,6 +1179,14 @@ class Parser {
 
 	function parseConstraintParam():TypeParam {
 		var meta = parseMeta();
+		switch (peek()) {
+			case Const(CIdent(_)) | Dollar(_):
+			case _:
+				// With metadata and no name after it the parse fails hard (`Expected type name`); with none
+				// it is a soft failure and the enclosing list combinator decides.
+				if (meta.length > 0) throw new ParserError(Expected(["type name"]), peekInfo().pos);
+				throw new ParserError(Unexpected(peek()), cur().pos, true);
+		}
 		var name = typeName();
 		var cto:Null<TypeHint> = null;
 		if (tokEq(peek(), DblDot)) { junk(); cto = parseComplexType(); }
@@ -1180,12 +1199,18 @@ class Parser {
 		switch (peek()) {
 			case Const(CIdent(name)):
 				var p = next().pos;
-				if (isLowerIdent(name)) err("Type name should start with an uppercase letter");
+				// The report carries the name's position, and under a display mode it records and keeps the
+				// name rather than aborting the declaration.
+				if (isLowerIdent(name)) syntaxError(Custom("Type name should start with an uppercase letter"), p);
 				return {name: name, pos: p};
 			case Dollar(name):
 				var p = next().pos;
 				return {name: "$" + name, pos: p};
-			case _: return err("Expected type name");
+			case _:
+				// Has no catch-all: every caller holds it past the head of its own pattern (enum, typedef,
+				// abstract, the class content), so the implicit conversion makes the miss `Unexpected <token>`
+				// there.
+				return serror();
 		}
 	}
 
@@ -3373,7 +3398,15 @@ class Parser {
 								case Kwd(KwdExtern): var pk = next().pos; path.push({name: "extern", pos: pk});
 								case Kwd(KwdFunction): var pk = next().pos; path.push({name: "function", pos: pk});
 								case TBinop(OpMult): junk(); mode = IAll; done = true;
-								case _: done = true;
+								case _:
+									// The optional semicolon is read before the missing identifier is reported, and the
+									// semicolon combinator hard-raises `Missing ;` at the next token unless it can consume one
+									// (the optional wrapper only swallows a soft failure, which semicolon never raises). Only
+									// with a
+									// `;` there does `Expected identifier` land.
+									semicolon();
+									syntaxError(Expected(["identifier"]));
+									done = true;
 							}
 						case Kwd(KwdIn):
 							junk();
@@ -3388,8 +3421,10 @@ class Parser {
 					}
 				}
 			case _:
-				// `import |` leaves the path empty rather than failing, and that with every type in scope.
-				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after import");
+				// `import |` leaves the path empty rather than failing, and import handling answers that
+				// with every type in scope. Otherwise the missing identifier is reported and the empty import
+				// still forms.
+				if (!wouldSkipDisplayPosition(p1, true)) syntaxError(Expected(["identifier"]));
 		}
 		// The cursor standing where the semicolon would be is not an error at all, and a semicolon
 		// missing for any other reason is recorded, so the import the user has half-typed still reaches
@@ -3420,15 +3455,20 @@ class Parser {
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});
 								case Kwd(KwdExtern): var pk = next().pos; path.push({name: "extern", pos: pk});
 								case Kwd(KwdFunction): var pk = next().pos; path.push({name: "function", pos: pk});
-								case _: done = true;
+								case _:
+									// The element missing after the dot is its own report; a using has no
+									// optional-semicolon quirk.
+									syntaxError(Expected(["identifier"]));
+									done = true;
 							}
 						case _:
 							done = true;
 					}
 				}
 			case _:
-				// The same rule for `using |`.
-				if (!wouldSkipDisplayPosition(p1, true)) return err("Expected identifier after using");
+				// The same rule for `using |`. Otherwise the missing identifier is reported and the empty
+				// using still forms.
+				if (!wouldSkipDisplayPosition(p1, true)) syntaxError(Expected(["identifier"]));
 		}
 		// The same rule the import above carries
 		var p2 = if (tokEq(peek(), Semicolon)) next().pos
