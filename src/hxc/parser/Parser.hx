@@ -204,16 +204,18 @@ class Parser {
 		var lex = new Lexer(src, file);
 		var toks:Array<TokenInfo> = [];
 		var lastSignificant:Null<Token> = null;
+		var lastSignificant2:Null<Token> = null;
 		var lastWasMarkup = false;
 		var pendingDoc:Null<String> = null;
 		// Lexer progress invariant: every non-Eof token call must advance the
 		// stuck -> raise instead of spinning forever.
 		var lastOff = lex.offset();
 		try while (true) {
-			if (canStartMarkup(lastSignificant, lastWasMarkup)) {
+			if (canStartMarkup(lastSignificant, lastSignificant2, lastWasMarkup)) {
 				var markup = lex.tryReadMarkupLiteral();
 				if (markup != null) {
 					for (mt in markup) toks.push(mt);
+					lastSignificant2 = lastSignificant;
 					lastSignificant = markup[markup.length - 1].tok;
 					lastWasMarkup = true;
 					var moff = lex.offset();
@@ -264,6 +266,7 @@ class Parser {
 						pendingDoc = null;
 					}
 					toks.push(t);
+					lastSignificant2 = lastSignificant;
 					lastSignificant = t.tok;
 					lastWasMarkup = false;
 			}
@@ -286,11 +289,22 @@ class Parser {
 		return toks;
 	}
 
-	static function canStartMarkup(prev:Null<Token>, lastWasMarkup:Bool):Bool {
+	static function canStartMarkup(prev:Null<Token>, prev2:Null<Token>, lastWasMarkup:Bool):Bool {
 		if (lastWasMarkup || prev == null) return true;
+		// A `++`/`--` is POSTFIX when the token before it could end an expression, and after a postfix
+		// unop the `<` continues that expression (`i++ < 10` is a comparison); only a prefix unop stands
+		// where an expression starts.
+		switch (prev) {
+			case TUnop(_):
+				if (prev2 != null) switch (prev2) {
+					case Const(_) | PClose | BkClose | Kwd(KwdThis): return false;
+					case _:
+				}
+			case _:
+		}
 		return switch (prev) {
-			// BrClose: a markup literal may open a STATEMENT after a closed block; the XML
-			// name-start requirement keeps `{...} < b` comparisons lexing as operators.
+			// BrClose: a markup literal may open a STATEMENT after a closed block (`{} < 3` at statement
+			// position is markup too).
 			case POpen | BkOpen | BrOpen | BrClose | Comma | Semicolon | DblDot | Question | QuestionDot | Arrow
 				| At | TSpread | TBinop(_) | TUnop(_):
 				true;

@@ -783,8 +783,15 @@ class Lexer {
 			pos = save;
 			return null;
 		}
+		// A markup name may be empty (the fragment form), so every `<` at a markup position starts the
+		// scan
+		// - `{} < 3` at statement position is an unterminated markup literal, not a comparison. No
+		// name-start character is required: the comparisons never reach this point, because their `<`
+		// follows a value token that canStartMarkup already excludes.
+		// `<=` and `<<` are single tokens, so the grammar's `<` rule never fires on them and neither does
+		// this.
 		var n0 = peek(1);
-		if (n0 != ">".code && !isXmlNameStart(n0)) {
+		if (n0 == "=".code || n0 == "<".code) {
 			pos = save;
 			return null;
 		}
