@@ -20,11 +20,15 @@ class JsHost {
 	// $enum builder, handed over at load so reflection over a script type is answered by the script
 	// world and the host can construct script enum values (Type.createEnum).
 	var SC:Dynamic = null;
+	var SS:Dynamic = null;
+	var SV:Dynamic = null;
 	var ED:Dynamic = null;
 	var mkEnum:Dynamic = null;
 
 	public function bindTables(sc:Dynamic, ss:Dynamic, sv:Dynamic, ?ed:Dynamic, ?mk:Dynamic):Void {
 		this.SC = sc;
+		this.SS = ss;
+		this.SV = sv;
 		this.ED = ed;
 		this.mkEnum = mk;
 	}
@@ -234,7 +238,19 @@ class JsHost {
 				case "createEmptyInstance":
 					if (isScriptClass(a0)) return instantiate(a0, null);
 				case "getInstanceFields":
-					if (isScriptClass(a0)) return protoFields(a0);
+					if (isScriptClass(a0)) {
+						var lst:Array<Dynamic> = Reflect.field(a0, "__ifields");
+						return lst != null ? lst.copy() : protoFields(a0);
+					}
+				case "getClassFields":
+					if (isScriptClass(a0)) return classFields(Reflect.field(a0, "__cname"));
+				case "allEnums":
+					if (isEnumDesc(a0)) {
+						var ctors:Array<Dynamic> = Reflect.field(a0, "ctors");
+						var arity:Array<Dynamic> = Reflect.field(a0, "arity");
+						var en = Reflect.field(a0, "__ename");
+						return [for (i in 0...ctors.length) if (arity[i] == 0) mkEnum(en, i, ctors[i], [])];
+					}
 				case "getSuperClass":
 					if (isScriptClass(a0)) {
 						var proto = Reflect.field(a0, "prototype");
@@ -297,6 +313,23 @@ class JsHost {
 		if (ctor != null && args != null)
 			Reflect.callMethod(o, ctor, args);
 		return o;
+	}
+
+	// Static fields of a script class: the SS/SV keys with this class's prefix (method and var
+	// statics respectively), matching the interpreter's ScriptClass.staticFields.
+	function classFields(cn:String):Array<String> {
+		var out:Array<String> = [];
+		var prefix = cn + ".";
+		for (k in Reflect.fields(SS))
+			if (StringTools.startsWith(k, prefix) && k.indexOf(".", prefix.length) < 0)
+				out.push(k.substr(prefix.length));
+		for (k in Reflect.fields(SV))
+			if (StringTools.startsWith(k, prefix) && k.indexOf(".", prefix.length) < 0) {
+				var n = k.substr(prefix.length);
+				if (n != "__meta__" && out.indexOf(n) < 0)
+					out.push(n);
+			}
+		return out;
 	}
 
 	// Instance fields of a script class: every enumerable name up the prototype chain, minus the

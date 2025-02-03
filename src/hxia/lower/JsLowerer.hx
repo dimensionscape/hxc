@@ -149,6 +149,10 @@ class JsLowerer {
 				var ifs = transitiveInterfaces(d);
 				if (ifs.length > 0)
 					buf.add("SC[" + cn + "].prototype.__ifs = {" + [for (nm in ifs) jsStr(nm) + ": true"].join(", ") + "};\n");
+				// The Type.getInstanceFields list, in the interpreter's order (super chain first,
+				// vars then methods per class, extern property vars dropped, deduplicated). Instance
+				// vars live on instances, not the prototype, so the host cannot derive this itself.
+				buf.add("SC[" + cn + "].__ifields = [" + [for (nm in instanceFieldList(d)) jsStr(nm)].join(", ") + "];\n");
 			}
 		// Hand the script tables to the host so Type.*/Reflect.* over a script value are answered by
 		// the script world, as the interpreter's typeReflect does.
@@ -233,6 +237,42 @@ class JsLowerer {
 				visit(byName.get(types[superId]), isIface);
 		}
 		visit(d, false);
+		return out;
+	}
+
+	// Type.getInstanceFields for a script class, mirroring the interpreter's
+	// ScriptClass.instanceFields(): the super chain first, then this class; per class its instance
+	// vars (extern property vars dropped - VAR ints [static, read, write, extern, name, ...]) then
+	// its methods; deduplicated.
+	function instanceFieldList(d:DeclNode):Array<String> {
+		var byName:Map<String, DeclNode> = new Map();
+		for (x in tree.decls)
+			if (x.kind != "enum")
+				byName.set(types[x.ints[0]], x);
+		var chain:Array<DeclNode> = [];
+		var c:Null<DeclNode> = d;
+		while (c != null) {
+			chain.unshift(c);
+			var superId = c.ints[1];
+			c = (superId >= 0 && superId < types.length) ? byName.get(types[superId]) : null;
+		}
+		var out:Array<String> = [];
+		for (k in chain) {
+			for (f in k.fields) {
+				if (f.kind != "var" || f.ints[0] == 1 || f.ints[3] == 1)
+					continue;
+				var nm = strings[f.ints[4]];
+				if (out.indexOf(nm) < 0)
+					out.push(nm);
+			}
+			for (f in k.fields) {
+				if (f.kind != "function" || f.ints[0] == 1 || f.body == null)
+					continue;
+				var nm = strings[f.ints[2]];
+				if (nm != "new" && out.indexOf(nm) < 0)
+					out.push(nm);
+			}
+		}
 		return out;
 	}
 
