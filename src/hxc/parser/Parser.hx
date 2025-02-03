@@ -899,10 +899,13 @@ class Parser {
 		if (tokEq(peek(), BrClose)) return true;
 		// Leading `?` is always the short optional-field form.
 		if (tokEq(peek(), Question)) return true;
-		// `ident:` or `$ident:` with no preceding keyword/metadata => short form.
+		// The anonymous form is tried first, and its arm is HEADED by dollarIdent, so a bare identifier
+		// COMMITS to the short form - a missing `:` after it is then a hardened failure, not a
+		// fall-through to the class-field form. The long form only ever starts with var/function/flag
+		// keywords.
 		switch (peek()) {
 			case Const(CIdent(_)), Dollar(_):
-				return tokEq(peek(1), DblDot);
+				return true;
 			case _:
 				return false;
 		}
@@ -965,6 +968,9 @@ class Parser {
 			var qpos = Position.nullPos;
 			if (tokEq(peek(), Question)) { qpos = cur().pos; junk(); opt = true; }
 			var name = dollarIdent();
+			// The type hint sits past the arm's head, so a missing `:` names the token that is there, not
+			// the expectation.
+			if (!tokEq(peek(), DblDot)) serror();
 			var th = parseTypeHint();
 			var meta:Metadata = opt ? [{name: ":optional", params: [], pos: Position.nullPos}] : [];
 			var startPos = opt ? qpos : name.pos;
@@ -1074,10 +1080,13 @@ class Parser {
 				var cd = checkDisplay();
 				if (cd != null) return cd;
 				// After a lowercase path element, only a SEMICOLON earns the uppercase message - that is the
-				// shape of a `import pack.thing;` gone wrong. Every other token falls to `check_display
-				// serror`, which reports `Unexpected <token>`. Collapsing the two blamed the case of the name
-				// for what is really an unexpected token.
-				if (tokEq(peek(), Semicolon)) return err("Type name should start with an uppercase letter");
+				// shape of a `import pack.thing;` gone wrong - and it is reported at the name's position p1,
+				// with the semicolon consumed by the pattern. Every other token reports
+				// `Unexpected <token>`: that is an unexpected token, not a matter of the name's case.
+				if (tokEq(peek(), Semicolon)) {
+					junk();
+					throw new ParserError(Custom("Type name should start with an uppercase letter"), p1);
+				}
 				return serror();
 			}
 		}
