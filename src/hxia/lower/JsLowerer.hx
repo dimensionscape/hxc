@@ -25,6 +25,40 @@ class LowerError {
 	public function new(m:String) this.message = m;
 }
 
+// Output buffer that also tracks the generated line number and remembers, per generated
+// line, the first source anchor emitted on it (file id into the string table + 1-based
+// line). Anchors only exist when the module came from a text (debug) artifact - binary
+// cppia carries no positions - and feed the source map appended after emission.
+private class MapBuf {
+	final b = new StringBuf();
+	public var line:Int = 0;
+	public final anchors:Map<Int, {f:Int, l:Int}> = new Map();
+	public var hasAnchors:Bool = false;
+
+	public function new() {}
+
+	public function add(s:String):Void {
+		b.add(s);
+		var i = s.indexOf("\n");
+		while (i >= 0) {
+			line++;
+			i = s.indexOf("\n", i + 1);
+		}
+	}
+
+	// First anchor on a generated line wins: it is the statement/expression the line starts
+	// with, which is what a stack trace pointing at this line should resolve to.
+	public function mark(f:Int, l:Int):Void {
+		if (f == 0 || anchors.exists(line))
+			return;
+		anchors.set(line, {f: f, l: l});
+		hasAnchors = true;
+	}
+
+	public function toString():String
+		return b.toString();
+}
+
 class JsLowerer {
 	final strings:Array<String>;
 	final types:Array<String>;
@@ -32,7 +66,7 @@ class JsLowerer {
 	// Fully-qualified names of script statics ("Class.method"), so a CALLSTATIC to one is a direct
 	// call rather than a host dispatch.
 	final scriptStatics:Map<String, Bool> = new Map();
-	var buf:StringBuf;
+	var buf:MapBuf;
 	// Nesting counter for generated temporaries ($s0/$e0, ...) so nested switches/tries never collide.
 	var switchDepth = 0;
 	// "Enum.Ctor" -> constructor index, for CREATEENUM/FENUM.
@@ -65,7 +99,7 @@ class JsLowerer {
 		return new JsLowerer(ir, isNeutralStatic).emit();
 
 	function emit():String {
-		buf = new StringBuf();
+		buf = new MapBuf();
 		buf.add("(function($host){\n\"use strict\";\n");
 		// SC: script classes (constructor functions), SS: script statics (functions),
 		// SV: script static vars. The runtime helpers mirror the interpreter's construct/callMember/
@@ -222,7 +256,68 @@ class JsLowerer {
 			buf.add("return function(){};\n");
 		}
 		buf.add("})");
-		return buf.toString();
+		var out = buf.toString();
+		// A text (debug) module carries positions; turn its anchors into an inline source
+		// map so a stack trace through the eval'd code points at .hx lines (node needs
+		// --enable-source-maps, and the sourceURL is what keys its source-map cache).
+		if (buf.hasAnchors)
+			out += sourceMapTail();
+		return out;
+	}
+
+	// The v3 source map for the anchors collected during emission: one column-0 segment per
+	// anchored generated line, VLQ delta-encoded. sources are the script's own file names
+	// from the string table.
+	function sourceMapTail():String {
+		var files:Array<String> = [];
+		var fileIdx:Map<Int, Int> = new Map();
+		var mappings = new StringBuf();
+		var pf = 0, pl = 0;
+		for (gl in 0...buf.line + 1) {
+			if (gl > 0)
+				mappings.add(";");
+			var a = buf.anchors.get(gl);
+			if (a == null)
+				continue;
+			if (!fileIdx.exists(a.f)) {
+				fileIdx.set(a.f, files.length);
+				files.push(strings[a.f]);
+			}
+			var fi = fileIdx.get(a.f);
+			var sl = a.l - 1; // The map is 0-based, cppia lines are 1-based
+			// Segment fields: generated column (absolute per line), source file delta, source line delta,
+			// source column (always 0, delta 0)
+			mappings.add(vlq(0) + vlq(fi - pf) + vlq(sl - pl) + vlq(0));
+			pf = fi;
+			pl = sl;
+		}
+		var json = haxe.Json.stringify({
+			version: 3,
+			sources: files,
+			names: [],
+			mappings: mappings.toString()
+		});
+		var stem = files.length > 0 ? files[0].split("/").pop().split("\\").pop() : "module.hx";
+		return "\n//# sourceURL=hxia." + stem + ".js"
+			+ "\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,"
+			+ haxe.crypto.Base64.encode(haxe.io.Bytes.ofString(json)) + "\n";
+	}
+
+	// Base64 VLQ (source map v3): value shifted left with the sign in bit 0, then 5-bit
+	// groups least-significant first, bit 5 as the continuation flag.
+	static final B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	static function vlq(v:Int):String {
+		var x = v < 0 ? ((-v) << 1) | 1 : v << 1;
+		var out = "";
+		do {
+			var d = x & 31;
+			x >>>= 5;
+			if (x > 0)
+				d |= 32;
+			out += B64.charAt(d);
+		} while (x > 0);
+		return out;
 	}
 
 	// The full interface set an instance of this class satisfies: direct interfaces, the super
@@ -392,6 +487,7 @@ class JsLowerer {
 
 	// Emit a node in STATEMENT position (its value is discarded).
 	function emitStmt(n:OpNode):Void {
+		buf.mark(n.file, n.line);
 		switch (n.op) {
 			case "BLOCK", "TVARS":
 				buf.add("{\n");
@@ -452,6 +548,7 @@ class JsLowerer {
 
 	// Emit a node in EXPRESSION position (produces a JS value).
 	function emitExpr(n:OpNode):Void {
+		buf.mark(n.file, n.line);
 		switch (n.op) {
 			case "i": buf.add(Std.string(n.ints[0]));
 			case "f": buf.add(strings[n.ints[0]]);
@@ -862,10 +959,11 @@ class JsLowerer {
 		};
 	}
 
-	// Render a node to JS text without disturbing the main buffer.
+	// Render a node to JS text without disturbing the main buffer. Anchors inside the
+	// fragment are discarded; the enclosing statement's anchor covers its line.
 	function render(n:OpNode):String {
 		var save = buf;
-		buf = new StringBuf();
+		buf = new MapBuf();
 		emitExpr(n);
 		var out = buf.toString();
 		buf = save;
