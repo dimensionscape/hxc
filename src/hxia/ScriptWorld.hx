@@ -47,4 +47,26 @@ interface ScriptWorld {
 	// accessor when one exists (Reflect.getProperty/setProperty vs field/setField).
 	function staticRead(name:String, field:String, prop:Bool):Dynamic;
 	function staticWrite(name:String, field:String, value:Dynamic, prop:Bool):Void;
+
+	// Class shape, for Type.* over a script class.
+	function superClassName(name:String):Null<String>;
+	function classInstanceFields(name:String):Array<String>;
+	function classStaticFields(name:String):Array<String>;
+	function createInstance(name:String, args:Array<Dynamic>):Dynamic;
+	// createEmptyInstance: no constructor, but value-typed fields carry their zero defaults
+	// (cpp zero-initialises them, and the corpus asserts it).
+	function createDefaulted(name:String):Dynamic;
+
+	// Enum shape, for Type.* over a script enum.
+	function enumCtorNames(name:String):Array<String>;
+	function ctorArityOf(name:String, index:Int):Int;
+	// The real host Enum behind a wrapped host-enum value, or null for a script enum value.
+	function enumHostToken(v:Dynamic):Null<Enum<Dynamic>>;
+	function newHostEnum(he:Enum<Dynamic>, name:String, index:Int, ctor:String, params:Array<Dynamic>):Dynamic;
+
+	// A type with no runtime Class on the host (Int/Float/Class/Enum on js) is carried as an interned
+	// name token, never a raw string - a raw string is indistinguishable from a string value, and
+	// Type.typeof(Class) must be TObject, not TClass(String).
+	function isPrimToken(v:Dynamic):Bool;
+	function primTokenName(v:Dynamic):String;
 }

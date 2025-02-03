@@ -893,89 +893,11 @@ class Interp implements hxia.ScriptWorld {
 		}
 		// Type reflection must understand script classes and enums (they are not host types).
 		if (type == "Type") {
-			var handled = typeReflect(member, args);
-			if (handled != NotHandled)
+			var handled = hxia.WorldReflect.type(this, member, args);
+			if (handled != hxia.WorldReflect.NotHandled)
 				return handled;
 		}
 		return hxia.HostCore.callStaticTail(registry, mediator, type, member, args);
-	}
-
-	// Sentinel returned by typeReflect for a call it does not handle (distinct from a handled
-	// call that legitimately returns null).
-	static final NotHandled:Dynamic = {__notHandled: true};
-
-	// Type.* reflection that understands script classes/enums (which are not host types). Script
-	// tokens are ScriptClass/ScriptEnum descriptors; anything not involving a script type falls
-	// through (NotHandled) to the host Type via the neutral-static path.
-	function typeReflect(member:String, args:Array<Dynamic>):Dynamic {
-		var a0:Dynamic = args[0];
-		switch (member) {
-			case "getClass":
-				if (Std.isOfType(a0, ScriptObject)) return (a0 : ScriptObject).cls;
-				if (Std.isOfType(a0, EnumValue)) return null;
-			case "getClassName":
-				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).name;
-				if (Std.isOfType(a0, PrimType)) return (a0 : PrimType).name;
-			case "getEnumName":
-				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).name;
-			case "resolveClass":
-				if (scriptClasses.exists(a0)) return scriptClasses.get(a0);
-			case "resolveEnum":
-				if (scriptEnums.exists(a0)) return scriptEnums.get(a0);
-			case "getSuperClass":
-				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).superClass;
-			case "getInstanceFields":
-				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).instanceFields();
-			case "getClassFields":
-				if (Std.isOfType(a0, ScriptClass)) return (a0 : ScriptClass).staticFields.copy();
-			case "createInstance":
-				if (Std.isOfType(a0, ScriptClass)) return instantiate(a0, args[1]);
-			case "createEmptyInstance":
-				if (Std.isOfType(a0, ScriptClass)) {
-					var sc:ScriptClass = a0;
-					var so = new ScriptObject(sc);
-					var c = sc;
-					while (c != null) {
-						for (v in c.instanceVars) if (!so.fields.exists(v)) so.fields.set(v, emptyFieldDefault(c.instanceVarTypes.get(v)));
-						c = c.superClass;
-					}
-					return so;
-				}
-			case "getEnum":
-				if (Std.isOfType(a0, EnumValue)) {
-					var ev:EnumValue = a0;
-					return ev.hostEnum != null ? ev.hostEnum : scriptEnums.get(ev.enumType);
-				}
-			case "getEnumConstructs":
-				if (Std.isOfType(a0, ScriptEnum)) return (a0 : ScriptEnum).ctorNames.copy();
-			case "allEnums":
-				// All no-argument constructor VALUES of a script enum, in declaration order.
-				if (Std.isOfType(a0, ScriptEnum)) {
-					var se:ScriptEnum = a0;
-					return [for (i in 0...se.ctorNames.length) if (se.ctorArity[i] == 0) mkEnum(se.name, i, se.ctorNames[i], [])];
-				}
-			case "createEnum":
-				if (Std.isOfType(a0, ScriptEnum)) return makeEnum(a0, (a0 : ScriptEnum).indexOf(args[1]), args[1], args[2]);
-			case "createEnumIndex":
-				if (Std.isOfType(a0, ScriptEnum)) { var se:ScriptEnum = a0; return makeEnum(se, args[1], se.ctorNames[args[1]], args[2]); }
-			case "enumParameters":
-				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).params.copy();
-			case "enumConstructor":
-				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).name;
-			case "enumIndex":
-				if (Std.isOfType(a0, EnumValue)) return (a0 : EnumValue).index;
-			case "enumEq":
-				if (Std.isOfType(a0, EnumValue) || Std.isOfType(args[1], EnumValue)) return enumEq(a0, args[1]);
-			case "typeof":
-				if (Std.isOfType(a0, ScriptObject)) return mkValueType("TClass", [(a0 : ScriptObject).cls]);
-				if (Std.isOfType(a0, EnumValue)) return mkValueType("TEnum", [scriptEnums.get((a0 : EnumValue).enumType)]);
-				// A script class/enum referenced as a value is a plain object to the host: TObject.
-				// PrimType covers the interpreter tokens for Class/Enum/Int/... whose host Type.typeof
-				// would report TClass(PrimType); a class/enum value is a plain object at runtime (TObject).
-				if (Std.isOfType(a0, ScriptClass) || Std.isOfType(a0, ScriptEnum) || Std.isOfType(a0, PrimType)) return Type.ValueType.TObject;
-			case _:
-		}
-		return NotHandled;
 	}
 
 	function instantiate(sc:ScriptClass, args:Array<Dynamic>):Dynamic {
@@ -983,17 +905,6 @@ class Interp implements hxia.ScriptWorld {
 		if (sc.ctor != null)
 			invokeFun(sc.ctor, so, args != null ? args : []);
 		return so;
-	}
-
-	function makeEnum(se:ScriptEnum, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
-		// Type.createEnum/createEnumIndex throw on an unknown constructor or the wrong argument count;
-		// TestReflect asserts those throws (exc(...)).
-		if (index < 0 || index >= se.ctorNames.length)
-			throw "No such constructor " + ctor;
-		var np = params != null ? params.length : 0;
-		if (np != se.ctorArity[index])
-			throw "Invalid number of arguments : " + ctor;
-		return mkEnum(se.name, index, ctor, params != null ? params : []);
 	}
 
 	// Build a script enum value, returning the canonical singleton for a no-argument constructor
@@ -1009,17 +920,6 @@ class Interp implements hxia.ScriptWorld {
 			return s;
 		}
 		return new EnumValue(index, ctor, params, enumType);
-	}
-
-	// A host-enum value as our wrapper (see EnumValue.hostEnum). No-arg constructors are singletons
-	// so `A == A` holds, matching Haxe. `he` lets toHostEnum rebuild the real value at the boundary.
-	// Build a Type.ValueType wrapper DIRECTLY with the given params. typeof for a script class/enum
-	// must not go through a raw host `ValueType.TClass(scriptClass)` and let wrapHostEnum re-read the
-	// param: Type.enumParameters on a host enum holding a script Dynamic returns null on cpp (the
-	// hxcpp miscompile), dropping the class/enum. Constructing our wrapper here keeps the param.
-	function mkValueType(ctor:String, params:Array<Dynamic>):EnumValue {
-		var vt:Enum<Dynamic> = Type.ValueType;
-		return mkHostEnum(vt, Type.getEnumName(vt), Type.getEnumConstructs(vt).indexOf(ctor), ctor, params);
 	}
 
 	function mkHostEnum(he:Enum<Dynamic>, enumType:String, index:Int, ctor:String, params:Array<Dynamic>):EnumValue {
@@ -1157,6 +1057,51 @@ class Interp implements hxia.ScriptWorld {
 	public function staticWrite(name:String, field:String, value:Dynamic, prop:Bool):Void
 		staticSet(scriptClasses.get(name), field, value, prop);
 
+	public function superClassName(name:String):Null<String> {
+		var sup = scriptClasses.get(name).superClass;
+		return sup == null ? null : sup.name;
+	}
+
+	public function classInstanceFields(name:String):Array<String>
+		return scriptClasses.get(name).instanceFields();
+
+	public function classStaticFields(name:String):Array<String>
+		return scriptClasses.get(name).staticFields.copy();
+
+	public function createInstance(name:String, args:Array<Dynamic>):Dynamic
+		return instantiate(scriptClasses.get(name), args);
+
+	public function createDefaulted(name:String):Dynamic {
+		var sc = scriptClasses.get(name);
+		var so = new ScriptObject(sc);
+		var c = sc;
+		while (c != null) {
+			for (v in c.instanceVars)
+				if (!so.fields.exists(v))
+					so.fields.set(v, emptyFieldDefault(c.instanceVarTypes.get(v)));
+			c = c.superClass;
+		}
+		return so;
+	}
+
+	public function enumCtorNames(name:String):Array<String>
+		return scriptEnums.get(name).ctorNames.copy();
+
+	public function ctorArityOf(name:String, index:Int):Int
+		return scriptEnums.get(name).ctorArity[index];
+
+	public function enumHostToken(v:Dynamic):Null<Enum<Dynamic>>
+		return (v : EnumValue).hostEnum;
+
+	public function newHostEnum(he:Enum<Dynamic>, name:String, index:Int, ctor:String, params:Array<Dynamic>):Dynamic
+		return mkHostEnum(he, name, index, ctor, params);
+
+	public function isPrimToken(v:Dynamic):Bool
+		return Std.isOfType(v, PrimType);
+
+	public function primTokenName(v:Dynamic):String
+		return (v : PrimType).name;
+
 	// Bind haxe.Resource to the cppia's own embedded resources (from the RESOURCES tail), keyed by
 	// name resolved against the string table. The host's haxe.Resource sees the interpreter binary's
 	// resources, not the script's, so these must be served from the module, not reflected on the host.
@@ -1174,24 +1119,6 @@ class Interp implements hxia.ScriptWorld {
 			var b = byName.get(a[0]);
 			return b == null ? null : NeutralBytes.fromHost(b);
 		});
-	}
-
-	// Structural enum equality for script enums (host Type.enumEq cannot see them).
-	function enumEq(a:Dynamic, b:Dynamic):Bool {
-		if (!Std.isOfType(a, EnumValue) || !Std.isOfType(b, EnumValue))
-			return a == b;
-		var ea:EnumValue = a, eb:EnumValue = b;
-		// Two wrappers of the same host enum can carry DIFFERENT enumType strings: a script-built value
-		// (CREATEENUM) uses the cppia type string, while one wrapped from a host return (wrapHostEnum,
-		// e.g. Type.typeof -> ValueType) uses Type.getEnumName. Compare the host Enum reference when
-		// both have one (it is the canonical identity), falling back to the string for script enums.
-		var sameType = (ea.hostEnum != null && eb.hostEnum != null) ? ea.hostEnum == eb.hostEnum : ea.enumType == eb.enumType;
-		if (!sameType || ea.index != eb.index || ea.params.length != eb.params.length)
-			return false;
-		for (i in 0...ea.params.length)
-			if (!enumEq(ea.params[i], eb.params[i]) && ea.params[i] != eb.params[i])
-				return false;
-		return true;
 	}
 
 	// `x is T` resolved against the compile-time type name (from CLASSOF), which is exact even

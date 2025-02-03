@@ -87,16 +87,13 @@ class JsHost implements hxia.ScriptWorld {
 	// through the mediated seam (the same two-step the interpreter uses).
 	public function callStatic(type:String, member:String, args:Array<Dynamic>):Dynamic {
 		// Type.*/Reflect.* over a SCRIPT value cannot go to the host: a script instance is a plain JS
-		// object of a generated constructor, so the host reflection sees nothing. Reflect.* is the
-		// shared WorldReflect policy (the same code runs on T3); Type.* is still tier-local below.
-		if (type == "Reflect") {
-			var handled = hxia.WorldReflect.reflect(this, member, args);
+		// object of a generated constructor, so the host reflection sees nothing. Both are the shared
+		// WorldReflect policy, answered through this class's ScriptWorld implementation.
+		if (type == "Reflect" || type == "Type") {
+			var handled = type == "Reflect"
+				? hxia.WorldReflect.reflect(this, member, args)
+				: hxia.WorldReflect.type(this, member, args);
 			if (handled != hxia.WorldReflect.NotHandled)
-				return handled;
-		}
-		if (type == "Type") {
-			var handled = scriptReflect(type, member, args);
-			if (handled != NotHandled)
 				return handled;
 		}
 		// Std.isOfType with a RUNTIME token (the isTrue-loop shape): the token may be a script class
@@ -334,6 +331,45 @@ class JsHost implements hxia.ScriptWorld {
 		Reflect.setField(SV, name + "." + field, value);
 	}
 
+	public function superClassName(name:String):Null<String> {
+		var proto = Reflect.field(Reflect.field(SC, name), "prototype");
+		var sp = untyped __js__("Object.getPrototypeOf")(proto);
+		return (sp != null && Reflect.field(sp, "__cname") != null) ? Reflect.field(sp, "__cname") : null;
+	}
+
+	public function classInstanceFields(name:String):Array<String> {
+		var cls = Reflect.field(SC, name);
+		var lst:Array<String> = Reflect.field(cls, "__ifields");
+		return lst != null ? lst.copy() : protoFields(cls);
+	}
+
+	public function classStaticFields(name:String):Array<String>
+		return classFields(name);
+
+	public function createInstance(name:String, args:Array<Dynamic>):Dynamic
+		return instantiate(Reflect.field(SC, name), args);
+
+	public function createDefaulted(name:String):Dynamic
+		return instantiate(Reflect.field(SC, name), null);
+
+	public function enumCtorNames(name:String):Array<String>
+		return (Reflect.field(Reflect.field(ED, name), "ctors") : Array<String>).copy();
+
+	public function ctorArityOf(name:String, index:Int):Int
+		return (Reflect.field(Reflect.field(ED, name), "arity") : Array<Int>)[index];
+
+	public function enumHostToken(v:Dynamic):Null<Enum<Dynamic>>
+		return Reflect.field(v, "__he");
+
+	public function newHostEnum(he:Enum<Dynamic>, name:String, index:Int, ctor:String, params:Array<Dynamic>):Dynamic
+		return mkWrapper(name, index, ctor, params, he);
+
+	public function isPrimToken(v:Dynamic):Bool
+		return v != null && Reflect.field(v, "__ptype") != null;
+
+	public function primTokenName(v:Dynamic):String
+		return Reflect.field(v, "__ptype");
+
 	// A script class is a generated JS constructor tagged __cname; its instances carry __sc. Anything
 	// not involving one of those is left to the host (NotHandled).
 	static var NotHandled:Dynamic = {hxiaNotHandled: true};
@@ -348,127 +384,6 @@ class JsHost implements hxia.ScriptWorld {
 
 	static inline function isEnumDesc(v:Dynamic):Bool
 		return v != null && Reflect.field(v, "__ename") != null;
-
-	function scriptReflect(type:String, member:String, args:Array<Dynamic>):Dynamic {
-		var a0:Dynamic = args.length > 0 ? args[0] : null;
-		if (type == "Type") {
-			// Enum reflection over the wrapper shape / script-enum descriptors.
-			switch (member) {
-				case "typeof":
-					// Build the ValueType wrapper DIRECTLY so the param survives (the interpreter's mkValueType):
-					// host typeof on a script value would just say TObject, and a class/enum token used as a value
-					// is TObject.
-					if (isScriptValue(a0)) return mkValueType("TClass", [Reflect.field(a0, "constructor")]);
-					if (isWrapper(a0)) {
-						var d = ED != null ? Reflect.field(ED, Reflect.field(a0, "__e")) : null;
-						return mkValueType("TEnum", [d != null ? d : Reflect.field(a0, "__he")]);
-					}
-					if (isScriptClass(a0) || isEnumDesc(a0) || (a0 != null && Reflect.field(a0, "__ptype") != null))
-						return mkValueType("TObject", []);
-				case "enumIndex":
-					if (isWrapper(a0)) return Reflect.field(a0, "__i");
-				case "enumConstructor":
-					if (isWrapper(a0)) return Reflect.field(a0, "__n");
-				case "enumParameters":
-					if (isWrapper(a0)) return (Reflect.field(a0, "__p") : Array<Dynamic>).copy();
-				case "enumEq":
-					if (isWrapper(a0) || isWrapper(args[1])) return enumEq(a0, args[1]);
-				case "getEnum":
-					if (isWrapper(a0)) {
-						var he = Reflect.field(a0, "__he");
-						if (he != null) return he;
-						return Reflect.field(ED, Reflect.field(a0, "__e"));
-					}
-				case "getEnumName":
-					if (isEnumDesc(a0)) return Reflect.field(a0, "__ename");
-				case "resolveEnum":
-					var d = ED != null ? Reflect.field(ED, a0) : null;
-					if (d != null) return d;
-				case "getEnumConstructs":
-					if (isEnumDesc(a0)) return (Reflect.field(a0, "ctors") : Array<Dynamic>).copy();
-				case "createEnum":
-					if (isEnumDesc(a0)) return createScriptEnum(a0, args[1], args[2]);
-				case "createEnumIndex":
-					if (isEnumDesc(a0)) {
-						var ctors:Array<Dynamic> = Reflect.field(a0, "ctors");
-						return createScriptEnum(a0, ctors[args[1]], args[2]);
-					}
-				case _:
-			}
-			switch (member) {
-				case "getClass":
-					if (isScriptValue(a0)) return Reflect.field(a0, "constructor");
-				case "getClassName":
-					if (isScriptClass(a0)) return Reflect.field(a0, "__cname");
-				case "resolveClass":
-					var c = Reflect.field(SC, a0);
-					if (c != null) return c;
-				case "createInstance":
-					if (isScriptClass(a0)) return instantiate(a0, args[1]);
-				case "createEmptyInstance":
-					if (isScriptClass(a0)) return instantiate(a0, null);
-				case "getInstanceFields":
-					if (isScriptClass(a0)) {
-						var lst:Array<Dynamic> = Reflect.field(a0, "__ifields");
-						return lst != null ? lst.copy() : protoFields(a0);
-					}
-				case "getClassFields":
-					if (isScriptClass(a0)) return classFields(Reflect.field(a0, "__cname"));
-				case "allEnums":
-					if (isEnumDesc(a0)) {
-						var ctors:Array<Dynamic> = Reflect.field(a0, "ctors");
-						var arity:Array<Dynamic> = Reflect.field(a0, "arity");
-						var en = Reflect.field(a0, "__ename");
-						return [for (i in 0...ctors.length) if (arity[i] == 0) mkEnum(en, i, ctors[i], [])];
-					}
-				case "getSuperClass":
-					if (isScriptClass(a0)) {
-						var proto = Reflect.field(a0, "prototype");
-						var sp = untyped __js__("Object.getPrototypeOf")(proto);
-						return (sp != null && Reflect.field(sp, "__cname") != null) ? Reflect.field(sp, "constructor") : null;
-					}
-				case _:
-			}
-			return NotHandled;
-		}
-		return NotHandled;
-	}
-
-	// Type.createEnum over a script-enum descriptor: validate the constructor and arity (the
-	// interpreter's makeEnum throws on both), then build via the module's $enum so no-arg values
-	// share the module's interned singletons.
-	function createScriptEnum(desc:Dynamic, ctor:String, ?params:Array<Dynamic>):Dynamic {
-		var ctors:Array<Dynamic> = Reflect.field(desc, "ctors");
-		var idx = ctors.indexOf(ctor);
-		if (idx < 0)
-			throw "No such constructor " + ctor;
-		var arity:Array<Dynamic> = Reflect.field(desc, "arity");
-		var np = params != null ? params.length : 0;
-		if (np != arity[idx])
-			throw "Invalid number of arguments : " + ctor;
-		return mkEnum(Reflect.field(desc, "__ename"), idx, ctor, params != null ? params : []);
-	}
-
-	function mkValueType(ctor:String, params:Array<Dynamic>):Dynamic {
-		var vt:Enum<Dynamic> = Type.ValueType;
-		return mkWrapper(Type.getEnumName(vt), Type.getEnumConstructs(vt).indexOf(ctor), ctor, params, vt);
-	}
-
-	// Structural equality over the wrapper shape (either side may be a plain value).
-	function enumEq(a:Dynamic, b:Dynamic):Bool {
-		if (!isWrapper(a) || !isWrapper(b))
-			return a == b;
-		if (Reflect.field(a, "__e") != Reflect.field(b, "__e") || Reflect.field(a, "__i") != Reflect.field(b, "__i"))
-			return false;
-		var pa:Array<Dynamic> = Reflect.field(a, "__p");
-		var pb:Array<Dynamic> = Reflect.field(b, "__p");
-		if (pa.length != pb.length)
-			return false;
-		for (i in 0...pa.length)
-			if (!enumEq(pa[i], pb[i]) && pa[i] != pb[i])
-				return false;
-		return true;
-	}
 
 	// A static read: the var table first, then a static method as a value.
 	function staticReadRaw(cn:String, name:String):Dynamic {
