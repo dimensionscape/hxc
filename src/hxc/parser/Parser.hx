@@ -2312,6 +2312,9 @@ class Parser {
 				// `$ident{...}` macro reification meta: an EMeta named after the identifier
 				var p1 = next().pos;
 				var eparam = expr();
+				// The `}` is a plain pattern element past the arm's head, so a missing brace names the
+				// token that is there.
+				if (!tokEq(peek(), BrClose)) serror();
 				var p2 = expect(BrClose);
 				switch (e1.expr) {
 					case EConst(CIdent(n)):

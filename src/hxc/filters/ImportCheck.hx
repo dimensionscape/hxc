@@ -56,7 +56,22 @@ class ImportCheck {
 				// haxe.display.Position.Location for a `#if macro` signature, and the reference still loads
 				// that module and, through the typedef, haxe.display.FsPath - so under -dce no the FsPath
 				// abstract is generated.
-				if (mi < 0) continue;
+				if (mi < 0) {
+					// A path with no uppercase segment reaches the mode switch with rest = [], and anything but a
+					// wildcard is an error at the last element; init_module_type catches and records it, so the
+					// sweep continues. The sweep visits a module more than once, so the report dedups the same way
+					// a load does (plainImportsTried).
+					if (parts.length > 0) {
+						var lp = parts[parts.length - 1].pos;
+						var dkey = "lower!" + lp.file + "!" + lp.min + "!" + lp.max;
+						if (!ctx.plainImportsTried.exists(dkey)) {
+							ctx.plainImportsTried.set(dkey, true);
+							ctx.addDiagnostic("Module name must start with an uppercase letter", lp);
+							imports.markImportFailed(imp.pos);
+						}
+					}
+					continue;
+				}
 				var pack = [for (k in 0...mi) parts[k].name];
 				var key = pack.join(".") + "." + parts[mi].name;
 				if (ctx.plainImportsTried.exists(key)) continue;
