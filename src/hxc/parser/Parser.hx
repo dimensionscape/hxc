@@ -1150,6 +1150,9 @@ class Parser {
 		try {
 			var l = [parseConstraintParam()];
 			while (tokEq(peek(), Comma)) { junk(); l.push(parseConstraintParam()); }
+			// The `>` follows the list as a plain pattern element, so a list that parsed and then missed
+			// the `>` names the token that is there.
+			if (!tokEq(peek(), TBinop(OpGt))) serror();
 			expect(TBinop(OpGt));
 			return l;
 		} catch (er:ParserError) {
@@ -1406,6 +1409,9 @@ class Parser {
 			switch (peek()) {
 				case Kwd(KwdDefault):
 					var p1 = next().pos;
+					// The `:` is a plain pattern element after the keyword, so `default ;` reports the
+					// semicolon, not the missing colon.
+					if (!tokEq(peek(), DblDot)) serror();
 					var pdot = expect(DblDot);
 					var b = blockWithPos(p1);
 					if (def != null) err("Duplicate default");
@@ -1486,11 +1492,19 @@ class Parser {
 		var pmax = pmax0;
 		while (tokEq(peek(), Kwd(KwdCatch))) {
 			var p = next().pos;
+			// The `(` and the `)` after the hint are plain pattern elements past the arm's head, so missing
+			// either names the token found.
+			if (!tokEq(peek(), POpen)) serror();
 			expect(POpen);
 			var name = dollarIdent();
 			var t:Null<TypeHint> = null;
 			if (tokEq(peek(), DblDot)) {
 				t = parseTypeHint();
+				if (!tokEq(peek(), PClose)) serror();
+			} else if (!tokEq(peek(), PClose)) {
+				// The third alternative `'(_,p)` takes whatever token is there and reports the missing type
+				// hint.
+				throw new ParserError(Missing_type, peekInfo().pos);
 			}
 			expect(PClose);
 			var e = secureExpr();
@@ -1958,6 +1972,9 @@ class Parser {
 				return makeUnop(Neg, e, p1);
 			case Kwd(KwdFor):
 				var p = next().pos;
+				// The `(` is a plain pattern element past the arm's head, so a missing paren names the
+				// token that is there.
+				if (!tokEq(peek(), POpen)) serror();
 				expect(POpen);
 				var it = secureExpr();
 				// A missing `)` is recorded and the loop body stands in as null
@@ -1991,6 +2008,8 @@ class Parser {
 				var p = next().pos; return new Expr(EContinue, p);
 			case Kwd(KwdWhile):
 				var p1 = next().pos;
+				// Same plain pattern element as the for loop's
+				if (!tokEq(peek(), POpen)) serror();
 				expect(POpen);
 				var cond = secureExpr();
 				// A missing `)` is recorded and the loop body stands in as null
@@ -2012,6 +2031,8 @@ class Parser {
 					return e;
 				}
 				expect(Kwd(KwdWhile));
+				// Same plain pattern element as the for loop's
+				if (!tokEq(peek(), POpen)) serror();
 				expect(POpen);
 				var cond = secureExpr();
 				// Recorded rather than raised in the display file, as expectUnlessResume does
@@ -2072,17 +2093,23 @@ class Parser {
 		if (tokEq(peek(), POpen)) {
 			var pp = next().pos;
 			var e = expr();
+			// In each arm the `)` is a plain pattern element past the arm's head, and a `)` that heads the
+			// third arm and fails falls to serror(), so every missing paren here names the token that is
+			// there.
 			if (tokEq(peek(), Comma)) {
 				junk();
 				var t = parseComplexType();
+				if (!tokEq(peek(), PClose)) serror();
 				var p2 = expect(PClose);
 				return exprNext(new Expr(ECast(e, t), Position.union(p1, p2)));
 			} else if (tokEq(peek(), DblDot)) {
 				var t = parseTypeHint();
+				if (!tokEq(peek(), PClose)) serror();
 				var p2 = expect(PClose);
 				var ep = new Expr(EParenthesis(new Expr(ECheckType(e, t), Position.union(p1, p2))), Position.union(p1, p2));
 				return exprNext(new Expr(ECast(ep, null), Position.union(p1, ep.pos)));
 			} else {
+				if (!tokEq(peek(), PClose)) serror();
 				var p2 = expect(PClose);
 				var ep = exprNext(new Expr(EParenthesis(e), Position.union(pp, p2)));
 				return exprNext(new Expr(ECast(ep, null), Position.union(p1, ep.pos)));
@@ -2130,17 +2157,17 @@ class Parser {
 		}
 		// (?ident,...) ->...
 		if (tokEq(peek(), Question)) {
-			var save = idx;
-			try {
-				junk();
-				var al = psepTrailing(parseFunParam);
-				if (al.length > 0) al[0] = {name: al[0].name, opt: true, meta: [], type: al[0].type, value: al[0].value};
-				expect(PClose);
-				var er = arrowExpr();
-				return arrowFunction(p1, al, er);
-			} catch (e:ParserError) {
-				idx = save;
-			}
+			// Once `?` has matched, the arm is committed - a failure anywhere after it is a non-soft error,
+			// never a backtrack into the expr arm. The `)` is a plain pattern element, so it names the token
+			// found. (The al.length guard keeps an empty optional list, `(?) -> e`, from failing an
+			// assertion.)
+			junk();
+			var al = psepTrailing(parseFunParam);
+			if (al.length > 0) al[0] = {name: al[0].name, opt: true, meta: [], type: al[0].type, value: al[0].value};
+			if (!tokEq(peek(), PClose)) serror();
+			expect(PClose);
+			var er = arrowExpr();
+			return arrowFunction(p1, al, er);
 		}
 		// After `(` a FRESH match opens whose third alternative is an expression, and that match has no
 		// catch-all, so an expr that starts nothing leaves the whole `(` arm as a soft failure rather than
@@ -2154,6 +2181,8 @@ class Parser {
 			case Comma:
 				junk();
 				var al = psepTrailing(parseFunParam);
+				// The `)` is a plain pattern element here too
+				if (!tokEq(peek(), PClose)) serror();
 				expect(PClose);
 				var er = arrowExpr();
 				return arrowFunction(p1, [arrowFirstParam(e)].concat(al), er);
@@ -2166,6 +2195,8 @@ class Parser {
 					case Comma:
 						junk();
 						var al = psepTrailing(parseFunParam);
+						// Same plain pattern element
+						if (!tokEq(peek(), PClose)) serror();
 						expect(PClose);
 						var er = arrowExpr();
 						var r = arrowIdentCheckType(e);
@@ -2179,10 +2210,15 @@ class Parser {
 						if (tokEq(peek(), PClose)) {
 							junk();
 							al2 = [];
-						} else {
-							expect(Comma);
+						} else if (tokEq(peek(), Comma)) {
+							// The arms are `)`, `,` and serror(), and the `)` after the list is a plain
+							// pattern element.
+							junk();
 							al2 = psepTrailing(parseFunParam);
+							if (!tokEq(peek(), PClose)) serror();
 							expect(PClose);
+						} else {
+							return serror();
 						}
 						var er = arrowExpr();
 						switch (e.expr) {
@@ -2213,6 +2249,8 @@ class Parser {
 
 	function parseIf():Expr {
 		var p = next().pos;
+		// Same plain pattern element as the for loop's
+		if (!tokEq(peek(), POpen)) serror();
 		expect(POpen);
 		var cond = secureExpr();
 		// A missing `)` is recorded and the then-branch stands in as null
