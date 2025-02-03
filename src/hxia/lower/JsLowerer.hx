@@ -37,6 +37,7 @@ class JsLowerer {
 	var switchDepth = 0;
 	// "Enum.Ctor" -> constructor index, for CREATEENUM/FENUM.
 	final enumCtorIndex:Map<String, Int> = new Map();
+	final enumCtorArity:Map<String, Int> = new Map();
 
 	// Types the host provides natively (Math, haxe.Json, haxe.format.JsonParser, ...). The cppia may
 	// still carry a decl copy of such a type as DCE fallout, but running that copy would re-execute
@@ -115,8 +116,10 @@ class JsLowerer {
 			if (d.kind != "enum")
 				continue;
 			var en = types[d.ints[0]];
-			for (i in 0...d.enumCtors.length)
+			for (i in 0...d.enumCtors.length) {
 				enumCtorIndex.set(en + "." + strings[d.enumCtors[i][0]], i);
+				enumCtorArity.set(en + "." + strings[d.enumCtors[i][0]], d.enumCtors[i][1]);
+			}
 		}
 		// Pass 1: allocators, so a forward reference between classes resolves.
 		for (d in tree.decls) {
@@ -541,9 +544,9 @@ class JsLowerer {
 				var t = types[n.ints[0]], m = strings[n.ints[1]];
 				buf.add("$gs(" + jsStr(t + "." + m) + ", " + jsStr(t) + ", " + jsStr(m) + ")");
 			case "CREATEENUM":
-				emitEnumCtor(n, n.kids);
+				emitEnumCtor(n, n.kids, false);
 			case "FENUM":
-				emitEnumCtor(n, []);
+				emitEnumCtor(n, [], true);
 			case "ENUMI":
 				// Extract constructor parameter ints[1] from an enum value.
 				buf.add("(");
@@ -734,7 +737,7 @@ class JsLowerer {
 
 	// CREATEENUM/FENUM: ints[0] = enum type, ints[1] = constructor name; kids are the arguments
 	// (FENUM has none). A host enum is not lowered yet - the script enum table is authoritative here.
-	function emitEnumCtor(n:OpNode, args:Array<OpNode>):Void {
+	function emitEnumCtor(n:OpNode, args:Array<OpNode>, isRef:Bool):Void {
 		var et = types[n.ints[0]];
 		var ctor = strings[n.ints[1]];
 		var idx = enumCtorIndex.get(et + "." + ctor);
@@ -744,6 +747,13 @@ class JsLowerer {
 			buf.add("$host.hostEnum(" + jsStr(et) + ", " + jsStr(ctor) + ", ");
 			emitArgArray(args, 0);
 			buf.add(")");
+			return;
+		}
+		// A parametric constructor REFERENCED as a value (`var c = MyEnum.C`) is a factory function,
+		// not the enum value; a no-arg constructor is the constant itself (the interpreter's FENUM).
+		if (isRef && enumCtorArity.get(et + "." + ctor) > 0) {
+			buf.add("function(){ return $enum(" + jsStr(et) + ", " + idx + ", " + jsStr(ctor)
+				+ ", Array.prototype.slice.call(arguments)); }");
 			return;
 		}
 		buf.add("$enum(" + jsStr(et) + ", " + idx + ", " + jsStr(ctor) + ", ");
