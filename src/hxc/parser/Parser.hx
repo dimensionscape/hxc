@@ -1207,10 +1207,11 @@ class Parser {
 				var p = next().pos;
 				return {name: "$" + name, pos: p};
 			case _:
-				// Has no catch-all: every caller holds it past the head of its own pattern (enum, typedef,
-				// abstract, the class content), so the implicit conversion makes the miss `Unexpected <token>`
-				// there.
-				return serror();
+				// The type name has no catch-all: the miss is a soft failure, and WHERE it lands decides what
+				// it means. A class declaration calls it from an ACTION and the enum arm holds it at its inner
+				// match's head, so there it escapes to the decl list (`class<eof>` compiles CLEAN); typedef
+				// holds it as a pattern element and abstract falls to serror(), so those harden it.
+				throw new ParserError(Unexpected(peek()), cur().pos, true);
 		}
 	}
 
@@ -2651,17 +2652,20 @@ class Parser {
 			try {
 				td = parseTypeDecl(mode);
 			} catch (e:ParserError) {
-				// In the display file the error is recorded and the scan skips to the next plausible
-				// declaration, so one broken declaration does not cost the answer for the rest of the file.
+				// The three alternatives of the declaration list. A soft failure leaves the attempt's
+				// tokens CONSUMED (the stream is destructive): Eof next ends the list CLEANLY (`class<eof>`
+				// compiles), anything else is the catch-all's empty error, `Unexpected <token>`.
+				if (e.soft && tokEq(peek(), Eof)) break;
 				if (isDisplayFile()) {
-					syntaxErrors.push({msg: e.msg, pos: e.pos});
+					// In the display file the error is recorded and the scan skips to the next plausible
+					// declaration, so one broken declaration does not cost the answer for the rest of the file.
+					if (e.soft) syntaxErrors.push({msg: Unexpected(peek()), pos: peekInfo().pos});
+					else syntaxErrors.push({msg: e.msg, pos: e.pos});
 					if (idx == save) idx++;
 					resumeScan(false, false);
 					continue;
 				}
-				// No error-recovery in batch mode: rethrow if we made progress past EOF
-				idx = save;
-				if (tokEq(peek(), Eof)) break;
+				if (e.soft) throw new ParserError(Unexpected(peek()), peekInfo().pos);
 				throw e;
 			}
 			acc.push(td);
@@ -2815,7 +2819,8 @@ class Parser {
 				return parseClassContent(doc, meta, c, fp.flags, fp.pos);
 			case Kwd(KwdTypedef):
 				var p1 = next().pos;
-				var name = typeName();
+				// The type name is a pattern element past the keyword, so its soft failure hardens here.
+				var name = try typeName() catch (e:ParserError) { if (!e.soft) throw e; throw new ParserError(e.msg, e.pos); };
 				var tl = parseConstraintParams();
 				// The `=` is a plain pattern element, so a different token there is an error with no message,
 				// reported as `Unexpected <token>`, not as an expectation.
@@ -2837,9 +2842,13 @@ class Parser {
 				try {
 					return parseAbstract(doc, meta, convertAbstractFlags(c), p1);
 				} catch (e:ParserError) {
-					// Catching every error rewound over a fault deep inside the abstract's body and then reported
+					// The `abstract class` form is the SECOND ALTERNATIVE, so it is reached only on a soft failure
+					// - parseAbstract matching nothing at all. Once parseAbstract has consumed tokens the failure
+					// is a non-soft error and propagates (a soft one hardens: the type name heads the arm but
+					// everything after it is a pattern element). Catching every error would rewind over a fault
+					// deep inside the abstract's body and then report
 					// `Unexpected <name>` from the retry, hiding the real one.
-					if (idx != save) throw e;
+					if (idx != save) throw e.soft ? new ParserError(e.msg, e.pos) : e;
 					idx = save;
 					var c2 = parseCommonFlags();
 					var fp = parseClassFlags();
@@ -2871,7 +2880,9 @@ class Parser {
 					idx = beforeFinal;
 				}
 				checkTypeDeclFlagCompletion(mode, c);
-				return serror();
+				// Past the completion checks this is a soft failure - the decl list decides, and consumed flags
+				// STAY consumed
+				throw new ParserError(Unexpected(peek()), cur().pos, true);
 		}
 	}
 
