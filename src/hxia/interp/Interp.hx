@@ -920,14 +920,7 @@ class Interp implements hxia.ScriptWorld {
 			if (handled != NotHandled)
 				return handled;
 		}
-		if (registry.hasStatic(type, member))
-			return registry.staticCall(type, member, args);
-		// Authority-free std class: resolve the static reflectively through the mediated seam
-		// (the policy still governs it; the class is the receiver Reflect.field reads from).
-		var neutral = registry.neutralStaticClass(type);
-		if (neutral != null)
-			return mediator.callMethod(neutral, member, args);
-		return registry.staticCall(type, member, args);
+		return hxia.HostCore.callStaticTail(registry, mediator, type, member, args);
 	}
 
 	// Sentinel returned by typeReflect for a call it does not handle (distinct from a handled
@@ -1316,18 +1309,7 @@ class Interp implements hxia.ScriptWorld {
 				invokeFun(sc.ctor, so, args);
 			return so;
 		}
-		// The cppia flattens generic type params into the type name (`new Array<Object>()` ->
-		// "Array.Object"), but constructors are registered under the base name. If the full name is
-		// not bound, strip trailing param segments until a registered ctor is found.
-		if (!registry.hasNew(type)) {
-			var t = type;
-			while (t.indexOf(".") >= 0) {
-				t = t.substr(0, t.lastIndexOf("."));
-				if (registry.hasNew(t))
-					return registry.construct(t, args);
-			}
-		}
-		return registry.construct(type, args);
+		return hxia.HostCore.construct(registry, type, args);
 	}
 
 	// Member access that understands script instances: a ScriptObject stores its fields in a
@@ -1398,7 +1380,7 @@ class Interp implements hxia.ScriptWorld {
 		// The cppia map remap (setString/getInt/...) only applies to map receivers; translating
 		// it unconditionally would clobber same-named methods elsewhere (e.g. Bytes.getString).
 		if (Std.isOfType(obj, haxe.Constraints.IMap))
-			name = mapMethodShim(name);
+			name = hxia.HostCore.mapMethodShim(name);
 		return mediator.callMethod(obj, name, args);
 	}
 
@@ -1517,13 +1499,6 @@ class Interp implements hxia.ScriptWorld {
 
 	// The cppia map remap turns set/get on typed maps into setInt/getString etc.; the neutral
 	// host map has set/get, so translate back.
-	static function mapMethodShim(m:String):String {
-		return switch (m) {
-			case "setInt" | "setString" | "setFloat" | "setBool" | "setInt64" | "setObject": "set";
-			case "getInt" | "getString" | "getFloat" | "getBool" | "getInt64" | "getObject": "get";
-			case _: m;
-		};
-	}
 
 	static function emptyFieldDefault(type:String):Dynamic {
 		if (type == null) return null;

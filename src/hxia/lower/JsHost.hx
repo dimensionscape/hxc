@@ -106,43 +106,21 @@ class JsHost implements hxia.ScriptWorld {
 				case _:
 			}
 		}
-		if (registry.hasStatic(type, member))
-			return wrapRet(registry.staticCall(type, member, args));
-		var neutral = registry.neutralStaticClass(type);
-		if (neutral != null)
-			return wrapRet(mediator.callMethod(neutral, member, args));
-		return wrapRet(registry.staticCall(type, member, args));
+		return wrapRet(hxia.HostCore.callStaticTail(registry, mediator, type, member, args));
 	}
 
-	// The cppia flattens generic type params into the type name ("Array.Object"), but constructors
-	// are registered under the base name; strip trailing segments until one is bound.
 	public function construct(type:String, args:Array<Dynamic>):Dynamic {
-		if (!registry.hasNew(type)) {
-			var t = type;
-			while (t.indexOf(".") >= 0) {
-				t = t.substr(0, t.lastIndexOf("."));
-				if (registry.hasNew(t))
-					return registry.construct(t, args);
-			}
-		}
-		return registry.construct(type, args);
+		return hxia.HostCore.construct(registry, type, args);
 	}
 
 	public function callMember(o:Dynamic, member:String, args:Array<Dynamic>):Dynamic {
 		// The cppia map remap (setString/getInt/...) applies only to map receivers; translating it
 		// unconditionally would clobber same-named methods elsewhere (e.g. Bytes.getString).
 		if (Std.isOfType(o, haxe.Constraints.IMap))
-			member = mapMethodShim(member);
+			member = hxia.HostCore.mapMethodShim(member);
 		return wrapRet(mediator.callMethod(o, member, args));
 	}
 
-	static function mapMethodShim(m:String):String {
-		return switch (m) {
-			case "setInt" | "setString" | "setFloat" | "setBool" | "setInt64" | "setObject": "set";
-			case "getInt" | "getString" | "getFloat" | "getBool" | "getInt64" | "getObject": "get";
-			case _: m;
-		};
-	}
 
 	public function getStatic(type:String, member:String):Dynamic {
 		// Math's constants before the neutral reflective read: native js Math has no "NaN"/"PI" property,
