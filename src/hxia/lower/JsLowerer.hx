@@ -97,7 +97,8 @@ class JsLowerer {
 			+ " var c = o.__b || (o.__b = {}); return c[n] || (c[n] = v.bind(o)); } return v.bind(o); }\n");
 		// A script class is a JS constructor, so `is` against it is a prototype-chain test.
 		buf.add("function $isType(v, t){ if (t === \"Dynamic\") return true; var c = SC[t]; if (c && v instanceof c) return true;"
-			+ " if (v != null && v.__ifs && v.__ifs[t]) return true; return $host.isOfType(v, t); }\n");
+			+ " if (v != null && v.__ifs && v.__ifs[t]) return true;"
+			+ " if (ED[t]) return v != null && v.__e === t; return $host.isOfType(v, t); }\n");
 		buf.add("function $classof(t){ var c = SC[t]; if (c) return c; var e = ED[t]; if (e) return e; return $host.classOf(t); }
 ");
 		// A script enum value: {__e type, __i index, __n ctor name, __p params}. A no-argument
@@ -542,6 +543,12 @@ class JsLowerer {
 				buf.add("$fld(this, " + jsStr(strings[n.ints[1]]) + ")");
 			case "FSTATIC":
 				var t = types[n.ints[0]], m = strings[n.ints[1]];
+				// A neutral-static type's statics live on the host (haxe.Serializer.USE_CACHE must reach the
+				// real class the shim reads), never in the module's SV.
+				if (isNeutralStatic(t)) {
+					buf.add("$host.getStatic(" + jsStr(t) + ", " + jsStr(m) + ")");
+					return;
+				}
 				buf.add("$gs(" + jsStr(t + "." + m) + ", " + jsStr(t) + ", " + jsStr(m) + ")");
 			case "CREATEENUM":
 				emitEnumCtor(n, n.kids, false);
@@ -659,7 +666,14 @@ class JsLowerer {
 				emitExpr(n.kids[1]);
 				buf.add(")");
 			case "FSTATIC":
-				buf.add("(SV[" + jsStr(types[lv.ints[0]] + "." + strings[lv.ints[1]]) + "] = ");
+				var st = types[lv.ints[0]];
+				if (isNeutralStatic(st)) {
+					buf.add("$host.setStatic(" + jsStr(st) + ", " + jsStr(strings[lv.ints[1]]) + ", ");
+					emitExpr(n.kids[1]);
+					buf.add(")");
+					return;
+				}
+				buf.add("(SV[" + jsStr(st + "." + strings[lv.ints[1]]) + "] = ");
 				emitExpr(n.kids[1]);
 				buf.add(")");
 			case _:

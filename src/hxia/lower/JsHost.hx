@@ -7,7 +7,7 @@ import hxia.interp.Mediator;
 // the same NeutralStd bindings) the T3 interpreter uses. Sharing the registry means a T1/T3
 // difference is always a lowering difference, never two different std surfaces. The dispatch order
 // follows Interp.callStatic/construct/callMember.
-class JsHost {
+class JsHost implements hxia.ScriptWorld {
 	final registry:HostRegistry;
 	final mediator:Mediator;
 
@@ -185,8 +185,29 @@ class JsHost {
 		return Std.isOfType(v, token);
 	}
 
+	// A static write to a neutral-static host type reaches the real class (haxe.Serializer.USE_CACHE
+	// must be visible to the shim's constructor), the interpreter's setStatic host fallback.
+	public function setStatic(type:String, member:String, v:Dynamic):Dynamic {
+		var neutral = registry.neutralStaticClass(type);
+		if (neutral != null) {
+			mediator.setField(neutral, member, v);
+			return v;
+		}
+		var cls = Type.resolveClass(type);
+		if (cls != null)
+			mediator.setField(cls, member, v);
+		return v;
+	}
+
 	// `is` against a host type, by name (the lowered code handles script classes itself).
 	public function isOfType(v:Dynamic, t:String):Bool {
+		// The std shims stand in for their host types (the interpreter's isOfTypeNamed rules).
+		if (Std.isOfType(v, hxia.interp.NeutralBytes))
+			return t == "haxe.io.Bytes" || t == "Bytes";
+		if (Std.isOfType(v, hxia.interp.NeutralStringBuf))
+			return t == "StringBuf";
+		if (Std.isOfType(v, hxia.interp.NeutralList))
+			return t == "haxe.ds.List" || t == "List";
 		return switch (t) {
 			case "Dynamic": true;
 			case "Int" | "UInt": Std.isOfType(v, Int);
@@ -223,6 +244,74 @@ class JsHost {
 		}
 		return tok;
 	}
+
+	// ---- hxia.ScriptWorld: the tier-neutral script-value surface, answered with the lowered
+	// module's tables and wrapper shapes. The script-aware serializer programs against this, so the
+	// exact same serializer code runs on T1 and T3.
+	public function isInstance(v:Dynamic):Bool
+		return isScriptValue(v);
+
+	public function instanceClassName(v:Dynamic):String
+		return Reflect.field(v, "__cname");
+
+	public function instanceFieldNames(v:Dynamic):Array<String>
+		return Reflect.fields(v).filter(function(f) return f != "__b");
+
+	public function getInstanceField(v:Dynamic, name:String):Dynamic
+		return Reflect.field(v, name);
+
+	public function setInstanceField(v:Dynamic, name:String, value:Dynamic):Void
+		Reflect.setField(v, name, value);
+
+	public function hasClass(name:String):Bool
+		return SC != null && Reflect.field(SC, name) != null;
+
+	public function createEmpty(name:String):Dynamic
+		return Type.createEmptyInstance(Reflect.field(SC, name));
+
+	public function isEnumVal(v:Dynamic):Bool
+		return isWrapper(v);
+
+	public function enumTypeName(v:Dynamic):String
+		return Reflect.field(v, "__e");
+
+	public function enumIndex(v:Dynamic):Int
+		return Reflect.field(v, "__i");
+
+	public function enumCtor(v:Dynamic):String
+		return Reflect.field(v, "__n");
+
+	public function enumParams(v:Dynamic):Array<Dynamic>
+		return Reflect.field(v, "__p");
+
+	public function hasEnum(name:String):Bool
+		return ED != null && Reflect.field(ED, name) != null;
+
+	public function ctorIndexOf(name:String, ctor:String):Int
+		return (Reflect.field(Reflect.field(ED, name), "ctors") : Array<Dynamic>).indexOf(ctor);
+
+	public function ctorNameOf(name:String, index:Int):String
+		return (Reflect.field(Reflect.field(ED, name), "ctors") : Array<Dynamic>)[index];
+
+	public function newEnum(name:String, index:Int, ctor:String, params:Array<Dynamic>):Dynamic
+		return mkEnum(name, index, ctor, params);
+
+	public function isClassToken(v:Dynamic):Bool
+		return isScriptClass(v);
+
+	public function isEnumToken(v:Dynamic):Bool
+		return isEnumDesc(v);
+
+	public function tokenName(v:Dynamic):String {
+		var cn = Reflect.field(v, "__cname");
+		return cn != null ? cn : Reflect.field(v, "__ename");
+	}
+
+	public function classToken(name:String):Dynamic
+		return Reflect.field(SC, name);
+
+	public function enumToken(name:String):Dynamic
+		return Reflect.field(ED, name);
 
 	// A script class is a generated JS constructor tagged __cname; its instances carry __sc. Anything
 	// not involving one of those is left to the host (NotHandled).

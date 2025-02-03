@@ -12,7 +12,7 @@ import hxia.Errors;
 // first, then to the host registry (the capability boundary). Execution is metered (fuel at loop
 // back-edges and calls, call depth, allocation) for DoS resistance; the meter does not bound time
 // spent inside a host native (SECURITY.md 4).
-class Interp {
+class Interp implements hxia.ScriptWorld {
 	final strings:Array<String>;
 	final types:Array<String>;
 	final registry:HostRegistry;
@@ -1095,15 +1095,73 @@ class Interp {
 	// values via this interpreter's descriptors. Wired here (not in NeutralStd) because the
 	// script tables are only known after index().
 	function installSerialization():Void {
-		registry.bindStatic("haxe.Serializer", "run", function(a) return NeutralSerializer.run(a[0]));
-		registry.bindNew("haxe.Serializer", function(_) return new NeutralSerializer());
-		var self = this;
-		registry.bindStatic("haxe.Unserializer", "run", function(a) return NeutralUnserializer.run(a[0], self));
-		registry.bindNew("haxe.Unserializer", function(a) return new NeutralUnserializer(a[0], self));
-		// USE_ENUM_INDEX / USE_CACHE static reads/writes still resolve to the host class.
-		registry.markNeutralStatic("haxe.Serializer", haxe.Serializer);
-		registry.markNeutralStatic("haxe.Unserializer", haxe.Unserializer);
+		NeutralSerializer.install(registry, this);
 	}
+
+	// ---- hxia.ScriptWorld: the tier-neutral script-value surface, answered with the interpreter's
+	// descriptors. Shared host policy (the script-aware serializer today) programs against this.
+	public function isInstance(v:Dynamic):Bool
+		return Std.isOfType(v, ScriptObject);
+
+	public function instanceClassName(v:Dynamic):String
+		return (v : ScriptObject).cls.name;
+
+	public function instanceFieldNames(v:Dynamic):Array<String>
+		return [for (k in (v : ScriptObject).fields.keys()) k];
+
+	public function getInstanceField(v:Dynamic, name:String):Dynamic
+		return (v : ScriptObject).fields.get(name);
+
+	public function setInstanceField(v:Dynamic, name:String, value:Dynamic):Void
+		(v : ScriptObject).fields.set(name, value);
+
+	public function hasClass(name:String):Bool
+		return scriptClasses.exists(name);
+
+	public function createEmpty(name:String):Dynamic
+		return new ScriptObject(scriptClasses.get(name));
+
+	public function isEnumVal(v:Dynamic):Bool
+		return Std.isOfType(v, EnumValue);
+
+	public function enumTypeName(v:Dynamic):String
+		return (v : EnumValue).enumType;
+
+	public function enumIndex(v:Dynamic):Int
+		return (v : EnumValue).index;
+
+	public function enumCtor(v:Dynamic):String
+		return (v : EnumValue).name;
+
+	public function enumParams(v:Dynamic):Array<Dynamic>
+		return (v : EnumValue).params;
+
+	public function hasEnum(name:String):Bool
+		return scriptEnums.exists(name);
+
+	public function ctorIndexOf(name:String, ctor:String):Int
+		return scriptEnums.get(name).indexOf(ctor);
+
+	public function ctorNameOf(name:String, index:Int):String
+		return scriptEnums.get(name).ctorNames[index];
+
+	public function newEnum(name:String, index:Int, ctor:String, params:Array<Dynamic>):Dynamic
+		return mkEnum(name, index, ctor, params);
+
+	public function isClassToken(v:Dynamic):Bool
+		return Std.isOfType(v, ScriptClass);
+
+	public function isEnumToken(v:Dynamic):Bool
+		return Std.isOfType(v, ScriptEnum);
+
+	public function tokenName(v:Dynamic):String
+		return Std.isOfType(v, ScriptClass) ? (v : ScriptClass).name : (v : ScriptEnum).name;
+
+	public function classToken(name:String):Dynamic
+		return scriptClasses.get(name);
+
+	public function enumToken(name:String):Dynamic
+		return scriptEnums.get(name);
 
 	// Bind haxe.Resource to the cppia's own embedded resources (from the RESOURCES tail), keyed by
 	// name resolved against the string table. The host's haxe.Resource sees the interpreter binary's

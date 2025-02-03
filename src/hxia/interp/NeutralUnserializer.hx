@@ -1,85 +1,71 @@
 package hxia.interp;
 
-import hxia.interp.Interp.ScriptObject;
-import hxia.interp.Interp.EnumValue;
-import hxia.interp.Interp.ScriptClass;
-import hxia.interp.Interp.ScriptEnum;
+import hxia.ScriptWorld;
 import hxia.interp.NeutralBytes;
 import hxia.interp.NeutralList;
 
-// The reverse of NeutralSerializer. Overrides unserialize() to reconstruct the four script
-// value shapes from their descriptors (script classes/enums are not host types, so the parent's
-// resolver + Type.createEmptyInstance/createEnum cannot build them). unserialize() recurses
-// virtually, so nested script values inside host arrays/maps/objects are handled here too; the
-// script codes (c/w/j/A/B) fall back to the host path when the name is not a script type, and
-// every other code defers to super.
+// The reverse of NeutralSerializer. Overrides unserialize() to reconstruct the script value
+// shapes through the tier-neutral ScriptWorld (script classes/enums are not host types, so the
+// parent's resolver + Type.createEmptyInstance/createEnum cannot build them). unserialize()
+// recurses virtually, so nested script values inside host arrays/maps/objects are handled here
+// too; the script codes (c/w/j/A/B) fall back to the host path when the name is not a script
+// type, and every other code defers to super.
 @:access(haxe.Unserializer)
-@:access(hxia.interp.Interp)
 class NeutralUnserializer extends haxe.Unserializer {
-	final interp:Interp;
+	final world:ScriptWorld;
 
-	public function new(s:String, interp:Interp) {
+	public function new(s:String, world:ScriptWorld) {
 		super(s);
-		this.interp = interp;
+		this.world = world;
 	}
-
-	inline function scriptClass(name:String):ScriptClass
-		return interp.scriptClasses.get(name);
-
-	inline function scriptEnum(name:String):ScriptEnum
-		return interp.scriptEnums.get(name);
 
 	override public function unserialize():Dynamic {
 		switch (get(pos)) {
 			case "c".code: // Class instance
 				pos++;
 				var name:String = unserialize();
-				var sc = scriptClass(name);
-				if (sc == null)
+				if (!world.hasClass(name))
 					return unserializeHostClass(name);
-				var o = new ScriptObject(sc);
+				var o = world.createEmpty(name);
 				cache.push(o);
 				while (get(pos) != "g".code) {
 					var field:String = unserialize();
-					o.fields.set(field, unserialize());
+					world.setInstanceField(o, field, unserialize());
 				}
 				pos++; // Consume 'g'
 				return o;
 			case "w".code: // Enum by constructor name
 				pos++;
 				var name:String = unserialize();
-				var se = scriptEnum(name);
-				if (se == null)
+				if (!world.hasEnum(name))
 					return unserializeHostEnum(name, false);
 				var ctor:String = unserialize();
-				var e = interp.mkEnum(name, se.indexOf(ctor), ctor, readEnumParams());
+				var e = world.newEnum(name, world.ctorIndexOf(name, ctor), ctor, readEnumParams());
 				cache.push(e);
 				return e;
 			case "j".code: // Enum by index
 				pos++;
 				var name:String = unserialize();
-				var se = scriptEnum(name);
-				if (se == null)
+				if (!world.hasEnum(name))
 					return unserializeHostEnum(name, true);
 				pos++; // Consume ':'
 				var index = readDigits();
-				var e = interp.mkEnum(name, index, se.ctorNames[index], readEnumParams());
+				var e = world.newEnum(name, index, world.ctorNameOf(name, index), readEnumParams());
 				cache.push(e);
 				return e;
 			case "A".code: // Class value
 				pos++;
 				var name:String = unserialize();
-				return interp.scriptClasses.exists(name) ? (scriptClass(name) : Dynamic) : resolver.resolveClass(name);
+				return world.hasClass(name) ? world.classToken(name) : resolver.resolveClass(name);
 			case "B".code: // Enum type value
 				pos++;
 				var name:String = unserialize();
-				return interp.scriptEnums.exists(name) ? (scriptEnum(name) : Dynamic) : resolver.resolveEnum(name);
-			case "s".code: // Host Bytes -> the interpreter's Bytes shim
+				return world.hasEnum(name) ? world.enumToken(name) : resolver.resolveEnum(name);
+			case "s".code: // Host Bytes -> the Bytes shim
 				return NeutralBytes.fromHost(super.unserialize());
 			case "l".code:
-				// Build the List through the registry constructor the script's `new List()` uses,
-				// so its Class matches the script's `is List` (the host Unserializer's internal List
-				// is a distinct Class object across the neutral-static boundary on the interpreter).
+				// Build the List through the shim the script's `new List()` uses, so its Class matches
+				// the script's `is List` across the neutral-static boundary.
 				pos++;
 				var l = new NeutralList();
 				cache.push(l);
@@ -133,8 +119,8 @@ class NeutralUnserializer extends haxe.Unserializer {
 		return e;
 	}
 
-	public static function run(s:String, interp:Interp):Dynamic {
-		var u = new NeutralUnserializer(s, interp);
+	public static function run(s:String, world:ScriptWorld):Dynamic {
+		var u = new NeutralUnserializer(s, world);
 		return u.unserialize();
 	}
 }
