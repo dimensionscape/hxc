@@ -1234,15 +1234,37 @@ class Typeload {
 				}
 			case _:
 		}
-		if (f.expr == null) TypeFields.forceFieldBody(ctx, c, f);
 		var cf = TypeFunctions.copyField(f);
 		if (f.params.length > 0) cf.params = newParams;
-		cf.type = subst(f.type);
-		// Expression substitution is DEFERRED (TLazy exc_protect) until the specialized class shell is
-		// complete, so field accesses inside bodies re-resolve against the registered specialized fields
-		// instead of falling back to the base's.
 		cf.expr = null;
 		cf.exprUnoptimized = null;
+		// The specialized field's TLazy substitutes its type and expression together on first read.
+		// Eagerly forcing the base body during heritage resolution reports errors that a later failing
+		// declaration should preempt. Inside the lazy callback, force the base body with forceFieldBody,
+		// substitute the type after the lazy signature resolves, and restore genericBuildCtx. The context
+		// is required for cascading instances created by cloneExpr, including classes reached by
+		// re-resolving a super from a nested cloned body.
+		var baseCls = c;
+		var computed:Null<T> = null;
+		var lr = new Ref(LAvailable(TypeFunctions.tDynamic));
+		lr.set(LWait(function():T {
+			if (computed != null) return computed;
+			if (f.expr == null) TypeFields.forceFieldBody(ctx, baseCls, f);
+			var t = subst(f.type);
+			computed = t;
+			lr.set(LProcessing(function() return t));
+			cf.type = t;
+			if (f.expr != null) {
+				var savedGCtx = genericBuildCtx;
+				genericBuildCtx = ctx;
+				cf.expr = cloneExpr(f.expr, subst, new Map(), gsubst2);
+				cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
+				genericBuildCtx = savedGCtx;
+			}
+			lr.set(LAvailable(t));
+			return t;
+		}));
+		cf.type = TLazy(lr);
 		fillQueue.push({cf: cf, f: f, subst: subst, gsubst2: gsubst2});
 		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o, fillQueue)];
 		return cf;
@@ -1307,11 +1329,14 @@ class Typeload {
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
 		}
-		// Fill the bodies only after every specialized field is registered above.
-		for (q in fillQueue) {
-			q.cf.expr = q.f.expr == null ? null : cloneExpr(q.f.expr, q.subst, new Map(), q.gsubst2);
-			q.cf.exprUnoptimized = q.f.exprUnoptimized == null ? null : cloneExpr(q.f.exprUnoptimized, q.subst, new Map(), q.gsubst2);
-		}
+		// The lazies fire on first read, which keeps the base's bodies out of declaration resolution;
+		// forcing them here would put the force back exactly where it was. They are also queued at
+		// PTypeField so an instance nobody reads by type still materializes - hxc's back end reads expr
+		// directly - and PTypeField is the pass inside typeAllModules' stability loop, which reaches the
+		// modules a flush creates.
+		ctx.delay(hxc.context.Context.PTypeField, function() {
+			for (q in fillQueue) TypeFunctions.follow(q.cf.type);
+		});
 		// In rare cases the specialized name gets too long, so it is replaced by a generated @:native.
 		// Without this a target that derives file names from the type name can exceed the platform path
 		// limit.
