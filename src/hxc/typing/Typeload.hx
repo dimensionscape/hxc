@@ -1203,7 +1203,7 @@ class Typeload {
 	}
 
 	static function cloneField(ctx:Context, c:TClass, gsubst:Array<GenericSubstEntry>, f:TClassField,
-			fillQueue:Array<{cf:TClassField, f:TClassField, subst:T->T, gsubst2:Array<GenericSubstEntry>}>):TClassField {
+			lazyFields:Array<TClassField>):TClassField {
 		// The method's own type parameters are cloned so their constraints can be substituted without
 		// touching the originals; the clone maps into the substitution so occurrences in the signature and
 		// body follow.
@@ -1265,8 +1265,8 @@ class Typeload {
 			return t;
 		}));
 		cf.type = TLazy(lr);
-		fillQueue.push({cf: cf, f: f, subst: subst, gsubst2: gsubst2});
-		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o, fillQueue)];
+		lazyFields.push(cf);
+		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o, lazyFields)];
 		return cf;
 	}
 
@@ -1322,10 +1322,10 @@ class Typeload {
 		}];
 		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.dynamicType);
 		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.arrayAccess);
-		var fillQueue:Array<{cf:TClassField, f:TClassField, subst:T->T, gsubst2:Array<GenericSubstEntry>}> = [];
-		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, fillQueue);
+		var lazyFields:Array<TClassField> = [];
+		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, lazyFields);
 		for (f in c.orderedFields) {
-			var cf = cloneField(ctx, c, gsubst, f, fillQueue);
+			var cf = cloneField(ctx, c, gsubst, f, lazyFields);
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
 		}
@@ -1335,7 +1335,7 @@ class Typeload {
 		// directly - and PTypeField is the pass inside typeAllModules' stability loop, which reaches the
 		// modules a flush creates.
 		ctx.delay(hxc.context.Context.PTypeField, function() {
-			for (q in fillQueue) TypeFunctions.follow(q.cf.type);
+			for (cf in lazyFields) TypeFunctions.follow(cf.type);
 		});
 		// In rare cases the specialized name gets too long, so it is replaced by a generated @:native.
 		// Without this a target that derives file names from the type name can exceed the platform path
