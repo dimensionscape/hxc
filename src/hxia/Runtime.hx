@@ -45,6 +45,13 @@ class Runtime {
 		if (missing.length > 0)
 			throw new PermissionError(missing);
 
+		// Then the surface contract, still before linkage: a module built against a different SDK version
+		// is refused as a version mismatch rather than reported later as a pile of unresolved members.
+		// Only checked when both sides declared a hash.
+		if (host.sdkSurfaceHash != null && manifest.sdkSurfaceHash != null
+			&& host.sdkSurfaceHash != manifest.sdkSurfaceHash)
+			throw new SurfaceError(host.sdkSurfaceHash, manifest.sdkSurfaceHash);
+
 		var name = id != null ? id : "mod" + (counter++);
 		if (byId.exists(name))
 			throw new LoadError("module id already loaded: " + name);

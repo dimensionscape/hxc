@@ -21,6 +21,19 @@ class PermissionError extends LoadError {
 	}
 }
 
+// The module was built against a different version of the host's SDK surface. Both hashes
+// are carried so a build system can say which side is stale.
+class SurfaceError extends LoadError {
+	public var expected:String;
+	public var found:String;
+
+	public function new(expected:String, found:String) {
+		super("sdk surface mismatch: host " + expected + ", module " + found);
+		this.expected = expected;
+		this.found = found;
+	}
+}
+
 class LinkError extends LoadError {
 	public var unresolved:Array<String>;
 

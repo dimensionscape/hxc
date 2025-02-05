@@ -30,6 +30,7 @@ class HostBuilder {
 	var _pins:Array<String> = [];
 	var _signers:Array<{key:String, grants:Array<Capability>}> = [];
 	var _log:Null<(LogLevel, String, ScriptPos) -> Void> = null;
+	var _sdkHash:Null<String> = null;
 
 	public function new() {}
 
@@ -78,8 +79,17 @@ class HostBuilder {
 		return this;
 	}
 
+	// The surface hash of the SDK this host actually implements (hxia-sdk.hash, produced by
+	// hxia.macro.Sdk when the externs were emitted). A module built against a different
+	// version of that surface is refused at load instead of failing later on a member that
+	// moved: declaring the hash is how a host opts into that check.
+	public function sdkSurface(hash:String):HostBuilder {
+		_sdkHash = hash;
+		return this;
+	}
+
 	public function build():Host
-		return new Host(_profile, _grants, _std, _classes, _packages, _pins, _signers, _log);
+		return new Host(_profile, _grants, _std, _classes, _packages, _pins, _signers, _log, _sdkHash);
 }
 
 class Host {
@@ -87,6 +97,8 @@ class Host {
 	public var grants(default, null):haxe.ds.ReadOnlyArray<Capability>;
 	public var pins(default, null):haxe.ds.ReadOnlyArray<String>;
 	public var signers(default, null):haxe.ds.ReadOnlyArray<{key:String, grants:Array<Capability>}>;
+	// Null when the host did not declare one, which means "do not check".
+	public var sdkSurfaceHash(default, null):Null<String>;
 
 	final std:Bool;
 	final classes:Array<Class<Dynamic>>;
@@ -97,7 +109,8 @@ class Host {
 
 	public function new(profile:Profile, grants:Array<Capability>, std:Bool, classes:Array<Class<Dynamic>>,
 			packages:Array<String>, pins:Array<String>, signers:Array<{key:String, grants:Array<Capability>}>,
-			log:Null<(LogLevel, String, ScriptPos) -> Void>) {
+			log:Null<(LogLevel, String, ScriptPos) -> Void>, sdkSurfaceHash:Null<String>) {
+		this.sdkSurfaceHash = sdkSurfaceHash;
 		this.profile = profile;
 		this.grants = grants.copy();
 		this.std = std;
