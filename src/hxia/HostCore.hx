@@ -8,10 +8,19 @@ import hxia.interp.Mediator;
 // that does goes through ScriptWorld instead). A rule here lands on every tier at once,
 // which is the point - these all started as duplicated code that had to be fixed twice.
 class HostCore {
+	// HXCPP-ARTIFACT IMPERSONATION. A standard cppia artifact calls hxcpp's typed map methods
+	// (setInt/getString/...), which exist on no other host, so every tier translates them back to
+	// the IMap API. A NEUTRAL artifact (hxc -D hxia) never emits them, and a host that only ever
+	// loads neutral artifacts can turn the impersonation off - which also proves an artifact's
+	// neutrality instead of asserting it.
+	public static var impersonateArtifacts:Bool = true;
+
 	// The cppia carries typed map methods (setInt/getString/...); they resolve to set/get
 	// on the IMap interface. Apply only to map RECEIVERS - translating unconditionally
 	// clobbers same-named methods elsewhere (e.g. Bytes.getString).
 	public static function mapMethodShim(m:String):String {
+		if (!impersonateArtifacts)
+			return m;
 		return switch (m) {
 			case "setInt" | "setString" | "setFloat" | "setBool" | "setInt64" | "setObject": "set";
 			case "getInt" | "getString" | "getFloat" | "getBool" | "getInt64" | "getObject": "get";

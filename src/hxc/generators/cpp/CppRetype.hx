@@ -45,6 +45,10 @@ class CppRetype {
 private class RetypeSession {
 	final com:Context;
 	final forCppia:Bool;
+	// -D hxia: emit a NEUTRAL artifact - std reached at API level, with no platform-std
+	// internals baked in, so the artifact links against any Haxe host's std by name instead of
+	// against hxcpp's shape. Only the map specialization differs here (see the map call sites).
+	final neutral:Bool;
 	final fileId:{v:Int};
 	var declarations:Map<String, Bool>;
 	var undeclared:Map<String, TVar>;
@@ -64,6 +68,7 @@ private class RetypeSession {
 		this.com = com;
 		this.fileId = fileId;
 		this.forCppia = com.defines.rawDefined("cppia");
+		this.neutral = com.defines.rawDefined("hxia");
 		this.declarations = new Map();
 		this.undeclared = new Map();
 		this.undeclaredOrder = [];
@@ -570,10 +575,12 @@ private class RetypeSession {
 			// Typed-array concat keeps its concrete element type for every argument.
 			case FuncInstance(obj, InstPtr, member) if (isArrayConcatCall(obj, member)):
 				{def: CppCall(FuncInstance(obj, InstPtr, member), [for (a in args) retype(obj.ctype, a)]), t: returnType};
-			// Use typed getters for scalar and String values.
+			// Maps use typed getters for scalar and String values. A NEUTRAL
+			// artifact keeps the API-level `get`: the typed variants are the hxcpp map shape, and
+			// a non-cpp host would have to impersonate them to link it.
 			case FuncInstance(obj, InstPtr, member) if (isMapGetCall(obj, member)):
 				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
-				var getter:{name:String, type:CppType} = switch (returnType) {
+				var getter:{name:String, type:CppType} = if (neutral) {name: "get", type: TCppDynamic} else switch (returnType) {
 					case TCppVoid | TCppScalar("bool"): {name: forCppia ? "getBool" : "get_bool", type: returnType};
 					case TCppScalar("int"): {name: forCppia ? "getInt" : "get_int", type: returnType};
 					case TCppScalar("::cpp::Int64"): {name: forCppia ? "getInt64" : "get_int64", type: returnType};
@@ -584,8 +591,9 @@ private class RetypeSession {
 				var mapMember = TypeFunctions.copyField(member);
 				mapMember.name = getter.name;
 				{def: CppCall(FuncInstance(obj, InstPtr, mapMember), retypedArgs), t: getter.type};
-			// Maps use typed setters for scalar and String values.
-			case FuncInstance(obj, InstPtr, member) if (forCppia && isMapSetCall(obj, member)):
+			// Cppia maps use typed setters for scalar and String values. Skipped
+			// entirely for a neutral artifact, which calls `set` like any other Haxe code.
+			case FuncInstance(obj, InstPtr, member) if (forCppia && !neutral && isMapSetCall(obj, member)):
 				var retypedArgs = [for (a in args) retype(TCppDynamic, a)];
 				var fname = switch (retypedArgs) {
 					case [_, {ctype: TCppScalar("bool")}]: "setBool";

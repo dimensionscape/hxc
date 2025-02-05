@@ -75,7 +75,13 @@ class JsHost implements hxia.ScriptWorld {
 	// A host enum value RETURNED from a host call (Type.typeof -> ValueType, ...) is wrapped so the
 	// lowered code's __Index reads and switches see the wrapper shape (the interpreter's wrapHostEnum).
 	function wrapRet(v:Dynamic):Dynamic {
-		if (v != null && !isWrapper(v) && Reflect.isEnumValue(v)) {
+		// The script's value world has null, not undefined. A js host hands back undefined for an absent
+		// value (haxe.ds.StringMap.get on a missing key), and while it compares equal to null it does not
+		// print as one: the script would see "undefined" where T3 and every other host say "null".
+		// Normalize at the seam, which is the only place it can leak in.
+		if (v == null)
+			return null;
+		if (!isWrapper(v) && Reflect.isEnumValue(v)) {
 			var he = Type.getEnum(v);
 			return mkWrapper(Type.getEnumName(he), Type.enumIndex(v), Type.enumConstructor(v),
 				[for (p in Type.enumParameters(v)) wrapRet(p)], he);
@@ -139,9 +145,9 @@ class JsHost implements hxia.ScriptWorld {
 		}
 		var neutral = registry.neutralStaticClass(type);
 		if (neutral != null)
-			return mediator.getField(neutral, member);
+			return wrapRet(mediator.getField(neutral, member));
 		var cls = Type.resolveClass(type);
-		return cls != null ? mediator.getField(cls, member) : null;
+		return cls != null ? wrapRet(mediator.getField(cls, member)) : null;
 	}
 
 	// Std.isOfType against a runtime token of any world - the shared dispatch over T1 tokens.
