@@ -67,21 +67,35 @@ class Main {
 		var requires = opt(args, "--require");
 		var cps = multi(args, "--cp");
 
-		var cmd = ["-main", main, "-cppia", out, "--hxia", profile];
-		for (cp in cps) { cmd.push("-cp"); cmd.push(cp); }
-		if (requires != null) { cmd.push("--require"); cmd.push(requires); }
-		var rc = run(hxcBin(), cmd);
-		if (rc != 0)
-			return rc;
-
 		var m:Manifest = {
 			profile: profile,
 			requires: requires == null ? [] : requires.split(","),
 			formatVersion: 1,
 			abiLevel: 430
 		};
-		sys.io.File.saveContent(out + ".manifest", ManifestIo.serialize(m));
-		Sys.println("built " + out + " (+ .manifest)");
+		var sdkHash = opt(args, "--sdk-hash");
+		if (sdkHash != null)
+			m.sdkSurfaceHash = sdkHash;
+
+		// The manifest travels inside the artifact, as the RESOURCES entry hxia.Runtime reads at load: a
+		// capability request that can be separated from what it describes is not a contract. Written to a
+		// temp file first because --resource takes a path.
+		var mtext = ManifestIo.serialize(m);
+		var mfile = out + ".manifest";
+		sys.io.File.saveContent(mfile, mtext);
+
+		var cmd = ["-main", main, "-cppia", out, "--hxia", profile];
+		for (cp in cps) { cmd.push("-cp"); cmd.push(cp); }
+		if (requires != null) { cmd.push("--require"); cmd.push(requires); }
+		cmd.push("--resource");
+		cmd.push(mfile + "@hxia.manifest");
+		var rc = run(hxcBin(), cmd);
+		if (rc != 0)
+			return rc;
+
+		// The side file stays for tooling that inspects without loading (and for `hxia
+		// inspect` on a host with no runtime), but the embedded copy is the authoritative one.
+		Sys.println("built " + out + " (manifest embedded, + .manifest for tooling)");
 		return 0;
 	}
 
@@ -91,17 +105,39 @@ class Main {
 			Sys.println("hxia inspect: expected an artifact path");
 			return 1;
 		}
-		var mf = file + ".manifest";
-		if (!sys.FileSystem.exists(mf)) {
-			Sys.println("no manifest for " + file);
-			return 1;
+		// The EMBEDDED manifest is authoritative; the side file is only a fallback for an
+		// artifact built before it travelled inside (or by a plain haxe -cppia).
+		var m = embeddedManifest(file);
+		var from = "embedded";
+		if (m == null) {
+			var mf = file + ".manifest";
+			if (!sys.FileSystem.exists(mf)) {
+				Sys.println("no manifest for " + file);
+				return 1;
+			}
+			m = ManifestIo.parse(sys.io.File.getContent(mf));
+			from = mf;
 		}
-		var m = ManifestIo.parse(sys.io.File.getContent(mf));
 		Sys.println("artifact: " + file);
+		Sys.println("manifest: " + from);
 		Sys.println("profile:  " + m.profile);
 		Sys.println("requires: " + (m.requires.length == 0 ? "(none)" : m.requires.join(", ")));
 		Sys.println("abi:      " + m.abiLevel);
+		if (m.sdkSurfaceHash != null)
+			Sys.println("sdk:      " + m.sdkSurfaceHash);
 		return 0;
+	}
+
+	static function embeddedManifest(file:String):Null<Manifest> {
+		try {
+			var ir = hxia.cppia.Loader.parse(sys.io.File.getBytes(file));
+			var tree = hxia.cppia.Decoder.decode(ir);
+			var names = [for (b in ir.strings) b.getString(0, b.length)];
+			for (res in tree.resources)
+				if (names[res.nameId] == "hxia.manifest")
+					return ManifestIo.parse(res.data.getString(0, res.data.length));
+		} catch (_:Dynamic) {}
+		return null;
 	}
 
 	static function sdk(args:Array<String>):Int {
