@@ -1122,7 +1122,11 @@ class Operators {
 				// The retry runs at the access kind's own position, not the compound's: AKNo's position
 				// (the field's) replaces the outer p before the operator resolution is re-entered.
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				switch (makeBinop(ctx, sub, te1, te2, true, withType, np)) {
+				// With `abstract_overload_only`, so the retry can only SUCCEED with an overload or raise
+				// NotFound - it never reports the binop's own type error. `false += 1` is a write error in the
+				// reference, not a `Cannot add Bool and Int`.
+				var retry = try makeBinop(ctx, sub, te1, te2, true, withType, np) catch (_:TypingError) null;
+				switch (retry) {
 					case BinopSpecial(opCall, false): opCall;
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
 				}
@@ -1192,12 +1196,6 @@ class Operators {
 				throw new TypingError("Spread unary operator is only allowed for unpacking the last argument in a call with rest arguments", p);
 			case Increment | Decrement:
 				var pre = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (_:Dynamic) null;
-			if (pre != null && !abstractHasUnop(pre.type, op) && !abstractUnopWrites(ctx, pre.type, op)) switch (pre.expr) {
-				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)): checkAssign(ctx, pre);
-				case TField(_, _):
-					try checkAssign(ctx, pre) catch (err:TypingError) { throw err; }
-				case _:
-			}
 				// `a[k]++` / `--a[k]` on an abstract @:arrayAccess: bind base+key to temps, then get, op
 				// with 1, and set, yielding the old value for postfix and the new value for prefix.
 				switch (e.expr) {
@@ -1217,7 +1215,11 @@ class Operators {
 					case AKExpr(te):
 						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
-						if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
+						// With no abstract overload, an increment/decrement checks the target is assignable
+						// and only then that it is Int: `--"s"` is an Invalid assign, not a `String should
+						// be Int`. The other access kinds never get here - a field re-resolves to a TField,
+						// which checkAssign always allows, and an accessor writes through its setter.
+						if (abs != null) abs else { checkAssign(ctx, te); makeUnop(ctx, op, flag, te, p); }
 					case AKField(fa):
 						var accCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall) || k.write.match(AccCall); case _: false; };
 						if (accCall) accessorIncr(ctx, op, flag, fa, withType, p) else {
@@ -1243,7 +1245,10 @@ class Operators {
 						};
 						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
-						if (abs != null) abs else { checkAssign(ctx, te); throw new TypingError("This expression cannot be accessed for writing", np); }
+						// There is no checkAssign on this path: an unwritable access either resolves through an
+						// abstract overload or is a write error, whatever the operand looks like. Checking first
+						// would report `Invalid assign` for `++null`.
+						if (abs != null) abs else throw new TypingError("This expression cannot be accessed for writing", np);
 					case _: throw new TypingError("This increment target is not yet ported", p);
 				}
 			case Not | Neg | NegBits:

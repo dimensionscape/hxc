@@ -3603,10 +3603,39 @@ class Typer {
 					case _:
 						ctx.com.basic.tnull(spawnMonomorph(ctx, p));
 				};
-				return AKExpr(TypeFunctions.mk(TConst(TNull), tnull, p));
-			case "true": return AKExpr(TexprTools.makeBool(ctx.com.basic, true, p));
-			case "false": return AKExpr(TexprTools.makeBool(ctx.com.basic, false, p));
-			case "this": return AKExpr(getThis(ctx, p));
+				// The null literal is readable but never writable, and the AKNo is what makes a write
+				// report "This expression cannot be accessed for writing" rather than falling through to
+				// the assignment check's "Invalid assign" (`null = 1`, `null += 1`, `++null`).
+				var accNull = AKExpr(TypeFunctions.mk(TConst(TNull), tnull, p));
+				return mode.match(MGet) ? accNull : AKNo(accNull, p);
+			case "true":
+				var accT = AKExpr(TexprTools.makeBool(ctx.com.basic, true, p));
+				return mode.match(MGet) ? accT : AKNo(accT, p);
+			case "false":
+				var accF = AKExpr(TexprTools.makeBool(ctx.com.basic, false, p));
+				return mode.match(MGet) ? accF : AKNo(accF, p);
+			// `this` reads freely but is only WRITABLE inside an abstract, where the write is the
+			// abstract's underlying value; anywhere else the access is AKNo, which makes `this = x` report
+			// "cannot be accessed for writing" instead of "Invalid assign". MCall gets the same treatment.
+			case "this":
+				var accThis = AKExpr(getThis(ctx, p));
+				return switch (mode) {
+					case MSet(_):
+						if (ctx.curfield != null) TypeFunctions.addClassFieldFlag(ctx.curfield, CfModifiesThis);
+						switch (ctx.curclass.kind) {
+							case KAbstractImpl(_):
+								if (!assignToThisIsAllowed(ctx))
+									throw new TypingError("Abstract 'this' value can only be modified inside an inline function", p);
+								accThis;
+							case _: AKNo(accThis, p);
+						}
+					case MCall(_):
+						switch (ctx.curclass.kind) {
+							case KAbstractImpl(_): accThis;
+							case _: AKNo(accThis, p);
+						}
+					case MGet: accThis;
+				};
 			case _:
 		}
 		if (ctx.curclass != TypeFunctions.nullClass) {
