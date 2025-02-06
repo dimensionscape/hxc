@@ -1776,6 +1776,12 @@ class TexprConverter {
 				if (!hasTrue) missing.push("true");
 				if (!hasFalse) missing.push("false");
 				return missing;
+			// A non-coreType abstract enumerates the constructors of its UNDERLYING type, so `abstract
+			// O(Option<Int>)` covers Some and None; otherwise the list is null and a switch missing a
+			// constructor reports nothing. Bool and the enum abstracts are matched above; Int and Float are
+			// @:coreType and stay Infinite.
+			case TAbstract(a, pl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				return unmatchedFiniteCoverage(com, TypeFunctions.getUnderlyingType(a, pl), cases);
 			case _:
 				return null;
 		}
