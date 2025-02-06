@@ -1457,9 +1457,49 @@ class TypeResolve {
 		var keptMeta:Metadata = [];
 		for (m in cf.meta) {
 			var converted = false;
-			if (m.name != ":overload" || m.params.length != 1) { keptMeta.push(m); continue; }
+			if (m.name != ":overload") { keptMeta.push(m); continue; }
+			// The arms after the function form. A BARE @:overload marks native platform overloading and is
+			// only legal where the platform has it; anything else that is not a function literal is a
+			// malformed declaration.
+			if (m.params.length == 0) {
+				if (!ctx.platformConfig.supportsOverload)
+					throw new ContextError("This platform does not support this kind of overload declaration. Try @:overload(function()... {}) instead", m.pos);
+				TypeFunctions.addClassFieldFlag(cf, CfOverload);
+				// A native overload cannot infer its argument types, so an unbound monomorph in the
+				// signature is an
+				// error naming the argument.
+				switch (TypeFunctions.follow(cf.type)) {
+					case TFun(sig):
+						for (a in sig.args) switch (a.t) {
+							case TMono(r) if (r.type == null):
+								throw new ContextError("Explicit type required for overload functions
+... For function argument '" + a.name + "'", cf.pos);
+							case _:
+						}
+					case _:
+				}
+				keptMeta.push(m);
+				continue;
+			}
+			if (m.params.length != 1) throw new ContextError("Invalid @:overload metadata format", m.pos);
 			switch (m.params[0].expr) {
-				case EFunction(_, f):
+				case EFunction(fk, f):
+					// Three shape checks the declaration has to pass before any of it is loaded. The body
+					// must be
+					// exactly `{}` - an overload declares a SIGNATURE, and a real body would silently never
+					// run.
+					switch (fk) {
+						case FKNamed(_, _): throw new ContextError("Function name must not be part of @:overload", m.params[0].pos);
+						case _:
+					}
+					switch (f.fExpr == null ? null : f.fExpr.expr) {
+						case EBlock(el) if (el.length == 0):
+						case _: throw new ContextError("Overload must only declare an empty method body {}", m.params[0].pos);
+					}
+					switch (cf.kind) {
+						case Method(MethInline): throw new ContextError("Cannot @:overload inline function", m.params[0].pos);
+						case _:
+					}
 					// Method-local type params on the overload function (rare for the std/externs
 					// we touch; load them so arg/ret hints referencing them resolve).
 					var localParams = typeParams;
@@ -1489,7 +1529,8 @@ class TypeResolve {
 					converted = true;
 				case _:
 			}
-			if (!converted) keptMeta.push(m);
+			// A single parameter that is not a function literal is the malformed form too.
+			if (!converted) throw new ContextError("Invalid @:overload metadata format", m.pos);
 		}
 		cf.meta = keptMeta;
 		if (overloads.length > 0) cf.overloads = overloads;
