@@ -12,7 +12,14 @@ import hxc.core.Globals;
 import hxc.core.TypingError;
 
 // Signals that a decision-tree column holds an extractor pattern; compile catches it and routes to
-// compileExtractors. Extractor.
+// compileExtractors. How many values the SUBJECT can take, which decides whether an inexhaustive
+// match is an error.
+private enum abstract Finiteness(Int) {
+	var FInfinite;
+	var FRunTimeFinite;
+	var FCompileTimeFinite;
+}
+
 private class MatchExtractor extends haxe.Exception {
 	public function new() super("match-extractor");
 }
@@ -1793,6 +1800,19 @@ class TexprConverter {
 
 	// A nested sub-subject (an enum parameter or field read, possibly through a bound temp) wraps the
 	// counter-example in its constructor context, e.g. Node(Node, _).
+	// The subject's finiteness only (the value/enum/length kind is tracked separately by hxc's pattern
+	// compilation).
+	static function finitenessOf(t:T):Finiteness {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): FRunTimeFinite;
+			case TAbstract(a, _) if (a.isEnum && a.impl != null): FCompileTimeFinite;
+			case TAbstract(a, pl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				finitenessOf(TypeFunctions.getUnderlyingType(a, pl));
+			case TEnum(_, _): FRunTimeFinite;
+			case _: FInfinite;
+		}
+	}
+
 	static function sSubject(s:String, e:TExpr):String {
 		function loop(top:Bool, s:String, e:TExpr):String {
 			return switch (e.expr) {
@@ -1925,29 +1945,20 @@ class TexprConverter {
 				// no-value exhaustiveness error.
 				var droppedCompleteDefault = complete && runtimeFinite;
 				var defE = droppedCompleteDefault ? null : toTexprRec(ctx, tSwitch, withType, def, nextRec, inheritedDefault);
-				var nullaryMissing = switch (TypeFunctions.follow(effT)) {
-					case TEnum(en, _) if (unmatched != null):
-						var ok = true;
-						var missingNames = unmatched == null ? [] : unmatched;
-						for (name in missingNames) {
-							var ef = en.constrs.get(name);
-							if (ef == null) ok = false;
-							switch (ef == null ? null : TypeFunctions.follow(ef.type)) {
-								case TFun(sig) if (sig.args.length > 0): ok = false;
-								case _:
-							}
-						}
-						ok;
-					case _: false;
-				};
-				var reportFiniteNoValue = topLevel && runtimeFinite && !branchHasDefault && nullaryMissing;
-				// An enum abstract is compile-time finite: a missing member reports even for a statement
-				// switch. (only NoValue+Infinite stays silent; CompileTimeFinite is silent only when
-				// unmatched is empty).
-				var compileTimeFiniteUnmatched = unmatched != null && unmatched.length > 0 && switch (TypeFunctions.follow(effT)) {
-					case TAbstract(a, _) if (a.isEnum && a.impl != null): true;
-					case _: false;
-				};
+				// It is the SUBJECT's finiteness that decides whether an inexhaustive match is an error,
+				// never the shape of what is missing. Bool and enums are RunTimeFinite, an enum abstract is
+				// CompileTimeFinite, a non-core abstract takes its underlying type, and everything else
+				// (Int, String, Array, anons, instances, type parameters) is Infinite. Keying on a missing
+				// NULLARY constructor instead would let a statement `switch(e) { case A: }` whose unmatched
+				// constructors all carry arguments compile clean.
+				var finiteness = finitenessOf(effT);
+				var unmatchedEmpty = unmatched == null || unmatched.length == 0;
+				// An Infinite subject in statement position is silent, so any finite one with something
+				// unmatched reports. The finiteness is the SUBJECT's, not whether a NULLARY constructor is
+				// missing. The tree-level guards below still apply: this question is only asked when the branch
+				// produced no expression, which an inherited or branch default prevents.
+				var reportFiniteNoValue = topLevel && finiteness != FInfinite && !branchHasDefault && !unmatchedEmpty;
+				var compileTimeFiniteUnmatched = !unmatchedEmpty && finiteness == FCompileTimeFinite;
 				// Under a display request an inexhaustive match is no expression rather than an error, so the
 				// request still answers from what did type.
 				if (defE == null && !complete && (!withType.match(NoValue) || reportFiniteNoValue || compileTimeFiniteUnmatched)) {
