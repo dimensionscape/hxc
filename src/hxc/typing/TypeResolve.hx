@@ -413,6 +413,9 @@ class TypeResolve {
 	// Classes whose property accessors have already been checked. Same never-reset pattern as
 	// buildState: a TClass instance belongs to one compile, so a stale entry cannot collide.
 	static var propAccessorsChecked = new haxe.ds.ObjectMap<TClass, Bool>();
+	// The same, for the post-heritage field collision checks. resolveClassFields runs more than
+	// once for some classes and only its IDEMPOTENT work may repeat.
+	static var fieldChecksDone = new haxe.ds.ObjectMap<TClass, Bool>();
 	static inline var BUILDING = 1;
 	static inline var BUILT = 2;
 
@@ -526,6 +529,61 @@ class TypeResolve {
 			}
 		}
 		linkPropertyAccessors(ctx, c, isAbsImpl);
+		checkInheritedFieldCollisions(ctx, c, isAbsImpl);
+	}
+
+	// The nearest class UP the CHAIN declaring an instance field of this name - the superclass, then
+	// its super, then the interfaces of each, depth first. Interfaces count, which superClass alone
+	// does not reach.
+	static function getDeclaredIn(sup:Null<{c:TClass, params:Array<T>}>, name:String):Null<TClass> {
+		if (sup == null) return null;
+		var c = sup.c;
+		if (c.fields.exists(name)) return c;
+		var r = getDeclaredIn(c.superClass, name);
+		if (r != null) return r;
+		for (i in c.interfaces) {
+			var r2 = getDeclaredIn(i, name);
+			if (r2 != null) return r2;
+		}
+		return null;
+	}
+
+	// Two checks that can only run once the HERITAGE is resolved, which is why they do not live
+	// with the rest of the field registration in ModuleLoader.
+	static function checkInheritedFieldCollisions(ctx:Context, c:TClass, isAbsImpl:Bool):Void {
+		if (ctx == null || isAbsImpl) return;
+		// The two checks do not share an exemption list. The static/instance collision is skipped on an
+		// EXTERN class; the variable redefinition check is not - an extern subclass redeclaring an
+		// inherited variable is still an error. Both skip @:libType.
+		if (TypeFunctions.hasMeta(":libType", c.meta)) return;
+		if (fieldChecksDone.exists(c)) return;
+		fieldChecksDone.set(c, true);
+		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+		// The half ModuleLoader cannot see: for a static field the superclass chain's instance fields
+		// collide too. Skipped when the same-class half has already reported, since the reference
+		// computes one `dup` and reports once.
+		if (!isExtern) for (cf in c.orderedStatics) {
+			if (cf.name == "__init__" || c.fields.exists(cf.name)) continue;
+			if (getDeclaredIn(c.superClass, cf.name) != null)
+				ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cf.pos);
+		}
+		// The redefinition check runs when a variable binds, so it applies to VARIABLES and properties only
+		// -
+		// a method legally overrides one.
+		for (cf in c.orderedFields) {
+			switch (cf.kind) {
+				case Var(_):
+					var csup = getDeclaredIn(c.superClass, cf.name);
+					if (csup == null) continue;
+					// An interface declaration reached from a @:csNative class is exempt, a .NET-lib
+					// artifact no
+					// supported target produces.
+					if (TypeFunctions.hasClassFlag(csup, CInterface) && TypeFunctions.hasMeta(":csNative", c.meta)) continue;
+					ctx.addDiagnostic("Redefinition of variable " + cf.name + " in subclass is not allowed. Previously declared at "
+						+ hxc.core.Globals.sTypePath(csup.path), cf.namePos);
+				case _:
+			}
+		}
 	}
 
 	// The same-named instance field on the nearest superclass.
