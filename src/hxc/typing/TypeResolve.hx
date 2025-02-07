@@ -1292,6 +1292,9 @@ class TypeResolve {
 		// enum's statics anon.
 		var staticsFields = new haxe.ds.StringMap<hxc.core.Type.TClassField>();
 		for (c in d.dData) {
+			// Checked before the constructor is loaded so the first declaration is the one that stands.
+			if (e.constrs.exists(c.ecName.name))
+				throw new ContextError("Duplicate constructor " + c.ecName.name, c.ecName.pos);
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
 			if (c.ecParams.length > 0)
@@ -1313,7 +1316,18 @@ class TypeResolve {
 				rt;
 			} else {
 				var args:Array<TSignatureArg> = [];
+				// An argument may not be Void, and two arguments of one constructor may not share a name. Both
+				// report at the constructor, except the Void one which names the offending type hint.
+				var pnames = new haxe.ds.StringMap<Bool>();
 				for (a in c.ecArgs) {
+					switch (a.type == null ? null : a.type.ct) {
+						case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Void"):
+							throw new ContextError("Arguments of type Void are not allowed in enum constructors", a.type.pos);
+						case _:
+					}
+					if (pnames.exists(a.name))
+						throw new ContextError("Duplicate argument `" + a.name + "` in enum constructor " + c.ecName.name, c.ecPos);
+					pnames.set(a.name, true);
 					var at = Typeload.loadTypeHint(ctx, localParams, a.type, false);
 					if (a.opt) at = ctx.basic.tnull(at);
 					args.push({name: a.name, opt: a.opt, t: at});
