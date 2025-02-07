@@ -671,6 +671,49 @@ class TypeResolve {
 				return {msg: "Method " + accName + " required by property " + propName + " is missing", pos: propPos};
 			return null;
 		}
+		// The checks that run once the accessor has been found. They sit in a PForce delay, because
+		// unifying earlier can resolve a TLazy and generate interface fields too late, so they land after
+		// the body typing.
+		function checkFoundAccessor(acc:TClassField, propName:String, propPos:Position, pt:T, isSetter:Bool, propIsImpl:Bool):Void {
+			// Not gated on extern: the extern exemption belongs to the accessor-not-found case, so an extern
+			// property whose accessor is declared with the wrong signature still reports. isLib skips the
+			// whole accessor check, and an interface's accessor is generated rather than found.
+			// reportAccessors keeps an abstract impl, whose fields resolve more than once, from queueing the
+			// delay twice.
+			if (isLib || TypeFunctions.hasClassFlag(c, CInterface) || !reportAccessors) return;
+			ctx.delay(hxc.context.Context.PForce, function() {
+				// A macro method cannot serve as an accessor. Two reports: the property
+				// carries the complaint, the accessor is pointed at as a continuation.
+				switch (acc.kind) {
+					case Method(MethMacro):
+						ctx.addDiagnostic(acc.name + ": Macro methods cannot be used as property accessor", propPos);
+						// Hxc's formatter does not add the continuation marker; callers do (see InterfaceCheck's "...
+						// " + betterErrorMessage).
+						ctx.addDiagnostic("... " + acc.name + ": Accessor method is here", acc.pos, 1);
+					case _:
+				}
+				// The accessor's type must unify with the expected one: `Void -> ret` for a getter and
+				// `(value:ret) -> ret` for a setter, and for an abstract member property both carry the
+				// `this` argument first.
+				var ta = switch (c.kind) {
+					case KAbstractImpl(a) if (propIsImpl): TypeFunctions.applyParams(a.params, TypeFunctions.extractParamTypes(a.params), a.thisType);
+					case _: null;
+				};
+				var args:Array<TSignatureArg> = [];
+				if (ta != null) args.push({name: "this", opt: false, t: ta});
+				if (isSetter) args.push({name: "value", opt: false, t: pt});
+				var expected:T = TFun({args: args, ret: pt});
+				try TypeUnification.unifyDefault(acc.type, expected)
+				catch (ue:hxc.core.TypeUnification.UnifyError) {
+					ctx.addDiagnostic("In method " + acc.name + " required by property " + propName, acc.pos);
+					ctx.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), acc.pos);
+				}
+				// An abstract's own property and a plain static accessor cannot be mixed.
+				var accIsImpl = TypeFunctions.hasClassFieldFlag(acc, CfImpl);
+				if ((propIsImpl && !accIsImpl) || (accIsImpl && !propIsImpl))
+					ctx.addDiagnostic("Mixing abstract implementation and static properties/accessors is not allowed", acc.pos);
+			});
+		}
 		function usePropertyType(slot:T, pt:T):Void {
 			switch (TypeFunctions.follow(slot)) {
 				case TMono(r) if (r.type == null):
@@ -707,9 +750,12 @@ class TypeResolve {
 						var accSet:Null<{msg:String, pos:Position}> = null;
 						if (vk.read.match(AccCall)) {
 							var g = fields.get("get_" + name);
-							if (g != null) switch (TypeFunctions.follow(g.type)) {
-								case TFun(sig): usePropertyType(sig.ret, pt);
-								case _:
+							if (g != null) {
+								switch (TypeFunctions.follow(g.type)) {
+									case TFun(sig): usePropertyType(sig.ret, pt);
+									case _:
+								}
+								checkFoundAccessor(g, name, cf.pos, pt, false, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
 								var acc = genAccessor("get_" + name, pt, false);
@@ -720,11 +766,14 @@ class TypeResolve {
 						}
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
-							if (st != null) switch (TypeFunctions.follow(st.type)) {
-								case TFun(sig):
-									if (sig.args.length > 0) usePropertyType(sig.args[sig.args.length - 1].t, pt);
-									usePropertyType(sig.ret, pt);
-								case _:
+							if (st != null) {
+								switch (TypeFunctions.follow(st.type)) {
+									case TFun(sig):
+										if (sig.args.length > 0) usePropertyType(sig.args[sig.args.length - 1].t, pt);
+										usePropertyType(sig.ret, pt);
+									case _:
+								}
+								checkFoundAccessor(st, name, cf.pos, pt, true, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
 								var acc = genAccessor("set_" + name, pt, true);
