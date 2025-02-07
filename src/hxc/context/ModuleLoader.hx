@@ -803,6 +803,31 @@ class ModuleLoader {
 		return a.name == b.name && sameArray(a.pack, b.pack);
 	}
 
+	// Bodyless native abstract operations are declarations only and do not register fields, allowing
+	// repeated names.
+	static function isAbsImplDeclOnly(c:TClass, cff:ClassField):Bool {
+		var a = switch (c.kind) { case KAbstractImpl(ab): ab; case _: return false; };
+		if (!cff.cffKind.match(FFun(_))) return false;
+		switch (cff.cffKind) {
+			case FFun(fd) if (fd.fExpr == null):
+			case _: return false;
+		}
+		return TypeFunctions.hasMeta(":coreType", a.meta)
+			|| TypeFunctions.hasMeta(":op", cff.cffMeta)
+			|| TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)
+			|| TypeFunctions.hasMeta(":resolve", cff.cffMeta);
+	}
+
+	// Unbuilt superclass instance fields are absent from lookup until their class builds.
+	static function superHasInstanceField(sup:Null<{c:TClass, params:Array<T>}>, name:String):Bool {
+		var cur = sup;
+		while (cur != null) {
+			if (cur.c.fields.exists(name)) return true;
+			cur = cur.c.superClass;
+		}
+		return false;
+	}
+
 	static function classFieldHasBody(cff:ClassField):Bool {
 		return switch (cff.cffKind) {
 			case FFun(f): f.fExpr != null;
@@ -982,6 +1007,14 @@ class ModuleLoader {
 			if (cf.name != "new" && TypeFunctions.hasClassFieldFlag(cf, CfOverload) && isMethod
 					&& dupTable.exists(cf.name)) {
 				var mainf = dupTable.get(cf.name);
+				// The existing overload must also be a method with the modifier; report both conflicts at that
+				// existing field.
+				if (ctx != null) {
+					if (mainf.kind.match(Var(_)))
+						ctx.addDiagnostic("Cannot declare a variable with same name as a method", mainf.pos);
+					if (!TypeFunctions.hasClassFieldFlag(mainf, CfOverload))
+						ctx.addDiagnostic("Overloaded methods must have 'overload' accessor", mainf.pos);
+				}
 				mainf.overloads = [cf].concat(cf.overloads).concat(mainf.overloads);
 				continue;
 			}
@@ -1008,9 +1041,21 @@ class ModuleLoader {
 				if (bad != null)
 					ctx.addDiagnostic("Invalid accessor '" + bad.name + "' for " + bad.kind + " " + cff.cffName.name, acc.pos);
 			}
-			// Reject duplicate names by declaring kind except overload methods and bodyless abstract
-			// operation declarations.
-			if (ctx != null && classFieldHasBody(cff) && cf.name != "new" && dupTable.exists(cf.name)) {
+			// Reject static/instance name collisions, including superclass instances for statics. Report at
+			// the field; exempt constructors, __init__, externs and native classes.
+			if (ctx != null && cf.name != "new" && cf.name != "__init__"
+					&& !TypeFunctions.hasClassFlag(c, CExtern)) {
+				var collides = if (isStatic)
+					c.fields.exists(cf.name) || superHasInstanceField(c.superClass, cf.name)
+				else
+					c.statics.exists(cf.name);
+				if (collides)
+					ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cff.cffPos);
+			}
+			// Reject same-name declarations by their declaring kind, except valid overloads and
+			// declaration-only abstract operations.
+			var declOnly = isAbsImplDeclOnly(c, cff);
+			if (ctx != null && !declOnly && cf.name != "new" && dupTable.exists(cf.name)) {
 				var kindPath = switch (c.kind) {
 					case KAbstractImpl(a): {kind: "abstract", path: a.path};
 					case _: {kind: "class", path: c.path};
