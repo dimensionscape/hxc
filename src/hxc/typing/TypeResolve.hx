@@ -410,6 +410,9 @@ class TypeResolve {
 	// Only buildClassFields consults them; the ordinary resolution path just records that it happened, and
 	// an explicit re-resolution after a @:build macro rewrites the definition deliberately bypasses this.
 	static var buildState = new haxe.ds.ObjectMap<TClass, Int>();
+	// Classes whose property accessors have already been checked. Same never-reset pattern as
+	// buildState: a TClass instance belongs to one compile, so a stale entry cannot collide.
+	static var propAccessorsChecked = new haxe.ds.ObjectMap<TClass, Bool>();
 	static inline var BUILDING = 1;
 	static inline var BUILT = 2;
 
@@ -536,6 +539,26 @@ class TypeResolve {
 		return null;
 	}
 
+	// Whether the property was declared with the literal `get`/`set` accessor, which is the only form
+	// that requires a method to exist. `dynamic` produces the same AccCall and requires nothing, so the
+	// typed field cannot answer this.
+	static function declaresAccessorMethod(ctx:Context, c:TClass, propName:String, isRead:Bool):Bool {
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return false;
+		switch (entry.decl) {
+			case EClass(d):
+				for (cff in d.dData) {
+					if (cff.cffName.name != propName) continue;
+					switch (cff.cffKind) {
+						case FProp(g, st, _, _): return (isRead ? g.name == "get" : st.name == "set");
+						case _: return false;
+					}
+				}
+			case _:
+		}
+		return false;
+	}
+
 	static function extendsPublic(c:TClass):Bool {
 		if (TypeFunctions.hasMeta(":publicFields", c.meta)) return true;
 		return c.superClass != null && extendsPublic(c.superClass.c);
@@ -548,12 +571,29 @@ class TypeResolve {
 		// A property accessor placed with the wrong staticness (a member accessor for a static property, or
 		// vice versa) is reported.
 		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
-		function checkAccessor(accName:String, propName:String, ownColl:StringMap<TClassField>, otherColl:StringMap<TClassField>, propIsStatic:Bool):Void {
-			if (isExtern || TypeFunctions.hasClassFlag(c, CInterface)) return;
-			if (ownColl.get(accName) != null) return;
+		// The method check is scheduled only for a class that is not a library type.
+		var isLib = TypeFunctions.hasMeta(":libType", c.meta);
+		// The signature LINKING below is idempotent, so it does not matter that an abstract impl resolves
+		// its fields more than once; the accessor COMPLAINTS are not, so each check runs exactly once per
+		// property declaration.
+		var reportAccessors = !propAccessorsChecked.exists(c);
+		propAccessorsChecked.set(c, true);
+		var pendingAccessorErrors:Array<{at:Int, items:Array<{msg:String, pos:Position}>}> = [];
+		function checkAccessor(accName:String, propName:String, ownColl:StringMap<TClassField>, otherColl:StringMap<TClassField>, propIsStatic:Bool, propPos:Position, isRead:Bool):Null<{msg:String, pos:Position}> {
+			if (isExtern || isLib || TypeFunctions.hasClassFlag(c, CInterface)) return null;
+			if (ownColl.get(accName) != null) return null;
+			// A member accessor is looked up through the overloads, which walks the superclass chain, so an
+			// inherited getter satisfies the property. A static one is a plain lookup in statics only.
+			if (!propIsStatic && getParentField(c, accName) != null) return null;
 			var other = otherColl.get(accName);
 			if (other != null)
-				ctx.addDiagnostic("Method " + accName + " is no valid accessor for " + propName + " because it is " + (propIsStatic ? "not " : "") + "static", other.pos);
+				return {msg: "Method " + accName + " is no valid accessor for " + propName + " because it is " + (propIsStatic ? "not " : "") + "static", pos: other.pos};
+			// The accessor exists nowhere. Only a literal `get`/`set` requires one - `dynamic` maps to
+			// AccCall too but declares no method - and kind cannot tell those apart, so the declaration
+			// decides.
+			if (declaresAccessorMethod(ctx, c, propName, isRead))
+				return {msg: "Method " + accName + " required by property " + propName + " is missing", pos: propPos};
+			return null;
 		}
 		function usePropertyType(slot:T, pt:T):Void {
 			switch (TypeFunctions.follow(slot)) {
@@ -587,6 +627,8 @@ class TypeResolve {
 				if (pt == null) continue;
 				switch (cf.kind) {
 					case Var(vk):
+						var accGet:Null<{msg:String, pos:Position}> = null;
+						var accSet:Null<{msg:String, pos:Position}> = null;
 						if (vk.read.match(AccCall)) {
 							var g = fields.get("get_" + name);
 							if (g != null) switch (TypeFunctions.follow(g.type)) {
@@ -598,7 +640,7 @@ class TypeResolve {
 								fields.set(acc.name, acc);
 								genAccessors.push(acc);
 							}
-							else checkAccessor("get_" + name, name, fields, other, propIsStatic);
+							else accGet = checkAccessor("get_" + name, name, fields, other, propIsStatic, cf.pos, true);
 						}
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
@@ -613,8 +655,15 @@ class TypeResolve {
 								fields.set(acc.name, acc);
 								genAccessors.push(acc);
 							}
-							else checkAccessor("set_" + name, name, fields, other, propIsStatic);
+							else accSet = checkAccessor("set_" + name, name, fields, other, propIsStatic, cf.pos, false);
 						}
+						// A delay prepends and a flush takes the HEAD, so of the two checks property creation
+						// schedules (get, then set) the set one runs first - and across properties the last declared
+						// one runs first, so the whole batch is emitted in reverse declaration order below.
+						var perProp:Array<{msg:String, pos:Position}> = [];
+						if (accSet != null) perProp.push(accSet);
+						if (accGet != null) perProp.push(accGet);
+						if (perProp.length > 0) pendingAccessorErrors.push({at: cf.pos.min, items: perProp});
 					case _:
 				}
 			}
@@ -626,6 +675,12 @@ class TypeResolve {
 		}
 		loop(c.statics, c.fields, true);
 		if (!isAbsImpl) loop(c.fields, c.statics, false);
+		// A check is scheduled per property over one declaration-ordered field list; hxc walks statics
+		// and members separately, so the batch is re-ordered by declaration position here. Reverse,
+		// because the delay bucket flushes LIFO.
+		pendingAccessorErrors.sort(function(a, b) return b.at - a.at);
+		if (reportAccessors)
+			for (pe in pendingAccessorErrors) for (e in pe.items) ctx.addDiagnostic(e.msg, e.pos);
 	}
 
 	// Whether c's inheritance chain (itself, supers, implemented interfaces) reaches target.
