@@ -973,7 +973,21 @@ class ModuleLoader {
 						delayAccessorDisplay(ctx, c, "get_" + cff.cffName.name, get.pos, isStatic);
 					if (hxc.typing.Typer.atDisplayPos(set.pos) && set.name == "set")
 						delayAccessorDisplay(ctx, c, "set_" + cff.cffName.name, set.pos, isStatic);
-					Var({read: propAccess(get.name, true), write: propAccess(set.name, false)});
+					var vread = propAccess(get.name, true);
+					var vwrite = propAccess(set.name, false);
+					if (ctx != null) {
+						// Report obsolete custom accessors but retain AccCall behavior so the property remains
+						// usable.
+						if (!knownPropAccess(get.name, true))
+							ctx.addDiagnostic(cff.cffName.name + ": Custom property accessor is no longer supported, please use `get`", get.pos);
+						if (!knownPropAccess(set.name, false))
+							ctx.addDiagnostic(cff.cffName.name + ": Custom property accessor is no longer supported, please use `set`", set.pos);
+						// Unlike recoverable accessor errors, a property with neither readable nor writable access
+						// raises.
+						if (vread == AccNever && vwrite == AccNever)
+							throw new ContextError(cff.cffName.name + ": Unsupported property combination", cff.cffPos);
+					}
+					Var({read: vread, write: vwrite});
 			}
 			var isMethod = switch (cf.kind) { case Method(_): true; case _: false; };
 			// Without native overload support, do not flag constructors as CfOverload; merging duplicate
@@ -1115,8 +1129,20 @@ class ModuleLoader {
 		});
 	}
 
-	// Map property accessor names to VarAccess. Unknown custom accessors retain AccCall behavior after
-	// reporting an error.
+	// Map an `FProp` accessor identifier to a VarAccess. `isRead` selects the read-side vs write-side
+	// defaults (only `get`/`set` differ: a custom `get`/`set` means "call `get_<name>`/`set_<name>`" =
+	// AccCall). An unrecognized accessor (a custom method name) is no longer supported in Haxe -> AccCall.
+	// The accessor identifiers each side accepts: `get` reads and `set` writes, so naming the wrong one is
+	// as unsupported as inventing a name.
+	static function knownPropAccess(id:String, isRead:Bool):Bool {
+		return switch (id) {
+			case "null" | "never" | "dynamic" | "default": true;
+			case "get": isRead;
+			case "set": !isRead;
+			case _: false;
+		};
+	}
+
 	static function propAccess(id:String, isRead:Bool):VarAccess {
 		return switch (id) {
 			case "null": AccNo;
