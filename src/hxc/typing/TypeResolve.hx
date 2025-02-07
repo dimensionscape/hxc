@@ -471,7 +471,14 @@ class TypeResolve {
 			// binds nothing; falling through to `cf` rebinds the surviving constructor to the rejected
 			// declaration.
 			if (cff.cffName.name == "new" && occ > 0 && cf.overloads.length < occ) continue;
-			var target = if (occ > 0 && cf.overloads.length >= occ) cf.overloads[cf.overloads.length - occ] else cf;
+			// A real `overload` sibling lives in overloads. Without that - two declarations of one name that
+			// are not overloads, which an abstract's body-less @:op set is - the k-th declaration is the
+			// k-th REGISTERED field of that name, since ModuleLoader adds them in declaration order. The
+			// by-name lookup above cannot express that: statics holds one entry per name and hands back the
+			// last, so every earlier declaration resolved onto it and its own field never got a signature at
+			// all.
+			var target = if (occ > 0 && cf.overloads.length >= occ) cf.overloads[cf.overloads.length - occ]
+				else nthFieldNamed(isStatic ? c.orderedStatics : c.orderedFields, cff.cffName.name, occ, cf);
 			if (isAbstractMember) TypeFunctions.addClassFieldFlag(target, CfImpl);
 			try {
 				var params = if (isAbsImpl && abstractTypeParams != null && TypeFunctions.hasClassFieldFlag(target, CfImpl))
@@ -615,6 +622,17 @@ class TypeResolve {
 			case _:
 		}
 		return false;
+	}
+
+	// The n-th field of this name in declaration order, or `fallback` when there is no such field
+	// (a constructor, or a promoted member that is not in this list).
+	static function nthFieldNamed(ordered:Array<TClassField>, name:String, n:Int, fallback:TClassField):TClassField {
+		var seen = 0;
+		for (x in ordered) if (x.name == name) {
+			if (seen == n) return x;
+			seen++;
+		}
+		return fallback;
 	}
 
 	static function extendsPublic(c:TClass):Bool {
@@ -905,21 +923,31 @@ class TypeResolve {
 		a.ops = [];
 		a.unops = [];
 		a.array = [];
-		// Each SYNTAX field with the cf built from it, so an OVERLOADED @:op name reaches every
-		// declaration. Looking the field up by name cannot do that: it hands back the same cf twice, and
-		// once a body-less declaration removes that one from statics the sibling is never visited and
-		// survives into the output. Pair positionally instead, by taking the next not-yet-handled field
-		// of that name.
-		var handled:Array<TClassField> = [];
+		// Each SYNTAX field is processed with the field built from it, so an OVERLOADED @:op name reaches
+		// every declaration. Looking the field up by name cannot do that: statics holds one entry per
+		// name, so it hands back the same cf twice, one operator is registered against a field whose
+		// signature never resolved, and once a body-less declaration removes that one from statics the
+		// sibling is never visited and survives into the output. ModuleLoader builds the impl class from
+		// `[for (f in d.dData) transformAbstractField(...)]`, one impl field per declaration and in the
+		// same order, so the k-th declaration of a name is the k-th impl field of that name: pair
+		// positionally on that, taking the next not-yet-handled field of that name. The snapshot is taken
+		// before the loop because the decl-only removal below mutates orderedStatics as it goes.
+		var implSnapshot = c.orderedStatics.copy();
+		var nameOccurrence = new haxe.ds.StringMap<Int>();
 		for (cff in d.dData) {
-			// Locate the impl cf (member -> promoted static; static -> static). Resolve it up front: both
-			// the @:op arms and the @:arrayAccess arm need it.
-			var cf = abstractImplField(c, cff.cffName.name);
-			if (cf == null || handled.indexOf(cf) >= 0) {
-				for (x in c.orderedStatics) if (x.name == cff.cffName.name && handled.indexOf(x) < 0) { cf = x; break; }
+			var fname = cff.cffName.name;
+			var occ = nameOccurrence.exists(fname) ? nameOccurrence.get(fname) : 0;
+			nameOccurrence.set(fname, occ + 1);
+			var cf:Null<TClassField> = null;
+			var seen = 0;
+			for (x in implSnapshot) if (x.name == fname) {
+				if (seen == occ) { cf = x; break; }
+				seen++;
 			}
-			if (cf == null || handled.indexOf(cf) >= 0) continue;
-			handled.push(cf);
+			// A member field promoted to a static under a different name, or one this class never
+			// registered, still falls back to the by-name lookup.
+			if (cf == null) cf = abstractImplField(c, fname);
+			if (cf == null) continue;
 			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
 			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
 			// the field (loop cf.meta). starts set for a @:coreType abstract, and allow_no_expr() is called
