@@ -28,6 +28,18 @@ class NeutralStringBuf {
 		charBuf = null;
 	}
 
+	// A NEUTRAL artifact (hxc -D hxia) calls `add` for real instead of inlining it into b/charBuf
+	// pokes, so the shim needs the API-level method a standard cppia artifact never asks for.
+	public function add(x:Dynamic):Void {
+		if (charBuf != null)
+			flush();
+		var s = Std.string(x);
+		if (b == null)
+			b = [s];
+		else
+			b.push(s);
+	}
+
 	public function addChar(c:Int):Void {
 		if (charBuf == null)
 			charBuf = [];

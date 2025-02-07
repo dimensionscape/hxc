@@ -175,6 +175,13 @@ class NeutralStd {
 		reg.bindMember("haxe.crypto.BaseCode", "encodeBytes", function(o, a) return NeutralBytes.fromHost((o : haxe.crypto.BaseCode).encodeBytes((a[0] : NeutralBytes).toHost())));
 		reg.bindMember("haxe.crypto.BaseCode", "decodeBytes", function(o, a) return NeutralBytes.fromHost((o : haxe.crypto.BaseCode).decodeBytes((a[0] : NeutralBytes).toHost())));
 
+		// Interfaces a script can name (a signature, an `is` test, a cast) without ever calling anything
+		// on them: the load-time link check has to resolve the name, and there is no member, static or
+		// constructor to bind. Map is the typedef every `new Map()` goes through, IMap the interface its
+		// instances satisfy.
+		for (iface in ["haxe.IMap", "haxe.Constraints.IMap", "Map", "haxe.ds.Map"])
+			reg.knowType(iface);
+
 		// Map methods bound as typed IMap calls: on some targets (js) the map .set/.get are
 		// inlined and DCE'd, so reflective dispatch cannot reach them. Interface dispatch does.
 		for (mapType in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap", "haxe.ds.EnumValueMap"]) {
@@ -227,6 +234,7 @@ class NeutralStd {
 		// StringBuf's non-inline methods are keyed by the shim's runtime type name (cppia inlines
 		// `add` into field ops on `b`/`charBuf`, which the shim exposes directly).
 		var sbuf = Type.getClassName(NeutralStringBuf);
+		reg.bindMember(sbuf, "add", function(o, a) { (o : NeutralStringBuf).add(a[0]); return null; });
 		reg.bindMember(sbuf, "flush", function(o, a) { (o : NeutralStringBuf).flush(); return null; });
 		reg.bindMember(sbuf, "addChar", function(o, a) { (o : NeutralStringBuf).addChar(a[0]); return null; });
 		reg.bindMember(sbuf, "addSub", function(o, a) { (o : NeutralStringBuf).addSub(a[0], a[1], a[2]); return null; });

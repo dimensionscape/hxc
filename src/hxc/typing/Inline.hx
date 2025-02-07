@@ -62,8 +62,13 @@ class Inline {
 			case Method(MethInline):
 				// D no-inline suppresses regular inlining; an extern-inline (a member of an extern class,
 				// or a field flagged @:extern) is forced and still expands. + is_forced_inline.
-				if (!forceInline && ctx.com.defines.rawDefined("no_inline")
-					&& !((c != null && TypeFunctions.hasClassFlag(c, CExtern)) || TypeFunctions.hasMeta(":extern", cf.meta)))
+				var forced = (c != null && TypeFunctions.hasClassFlag(c, CExtern)) || TypeFunctions.hasMeta(":extern", cf.meta);
+				if (!forceInline && ctx.com.defines.rawDefined("no_inline") && !forced)
+					return null;
+				// -D hxia narrows that to the callees that actually make an artifact
+				// platform-specific: a target's own std override (hxc.hxia.NeutralInline).
+				if (!forceInline && !forced && ctx.com.defines.rawDefined("hxia")
+					&& hxc.hxia.NeutralInline.isPlatformStd(c))
 					return null;
 			case _ if (forceInline):
 			case _: return null;

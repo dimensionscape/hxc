@@ -28,6 +28,12 @@ class HostRegistry {
 	public function knowsType(type:String):Bool
 		return types.exists(type);
 
+	// Declare a type reachable without binding anything on it. Interfaces are the case that
+	// needs this: a script names haxe.IMap in a signature or an `is` test, so the load-time
+	// link check must resolve it, but there is no static, member or constructor to bind.
+	public function knowType(type:String):Void
+		types.set(type, true);
+
 	public function markNeutralStatic(type:String, cls:Class<Dynamic>):Void {
 		neutralStatics.set(type, cls);
 		types.set(type, true);
