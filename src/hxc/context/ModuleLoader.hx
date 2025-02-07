@@ -1032,6 +1032,48 @@ class ModuleLoader {
 				mainf.overloads = [cf].concat(cf.overloads).concat(mainf.overloads);
 				continue;
 			}
+			// Report at most one invalid-modifier or unexpected-expression error per field. For interface
+			// methods with bodies, the body error takes precedence.
+			var hadFieldError = false;
+			function fieldError(msg:String, ep:Position):Void {
+				if (hadFieldError || ctx == null) return;
+				hadFieldError = true;
+				ctx.addDiagnostic(msg, ep);
+			}
+			var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
+			var inlineAcc:Null<PlacedAccess> = null;
+			var isMacroAcc = false;
+			for (acc in cff.cffAccess) switch (acc.access) {
+				case AInline: inlineAcc = acc;
+				case AMacro: isMacroAcc = true;
+				case _:
+			}
+			var bodyless = switch (cff.cffKind) {
+				case FFun(fd): fd.fExpr == null;
+				case _: true;
+			};
+			if (isInterface) {
+				if (cff.cffName.name == "new" && !isStatic)
+					throw new ContextError("An interface cannot have a constructor", cff.cffPos);
+				if (!isStatic && cff.cffKind.match(FFun(_)) && !bodyless)
+					fieldError("An interface method cannot have a body", cff.cffPos);
+				if (inlineAcc != null) fieldError("Invalid modifier: inline on method of interface", cff.cffPos);
+			}
+			// Warn about bodies on extern or interface fields unless inline or macro. Exclude __init__,
+			// which has its own field kind and initialization path.
+			if (ctx != null && !bodyless && inlineAcc == null && !isMacroAcc
+					&& cff.cffName.name != "__init__"
+					&& (isInterface || TypeFunctions.hasClassFlag(c, CExtern)))
+				ctx.warning(hxc.core.WarningList.Warning.WExternWithExpr, [],
+					"Extern non-inline function may not have an expression", cff.cffPos);
+			// Static interface fields warn before this error; instance interface fields report their body
+			// error before warning.
+			if (isInterface && isStatic && cff.cffName.name != "__init__"
+					&& !TypeFunctions.hasClassFlag(c, CExtern) && !TypeFunctions.hasMeta(":libType", c.meta))
+				throw new ContextError("You can only declare static fields in extern interfaces", cff.cffPos);
+			// Inline variables must be static because their values are substituted without an instance.
+			if (inlineAcc != null && !isStatic && cff.cffKind.match(FVar(_, _)))
+				fieldError("Invalid modifier: inline on non-static variable", cff.cffPos);
 			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern) && cff.cffKind.match(FFun(_))) {
 				var finalAcc:Null<PlacedAccess> = null;
 				var staticAcc = false;

@@ -574,6 +574,16 @@ class TypeResolve {
 			if (getDeclaredIn(c.superClass, cf.name) != null)
 				ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cf.pos);
 		}
+		// `override` needs a parent to override. Like the checks above this cannot run at registration -
+		// superClass is not resolved yet, so every legitimately-overriding field in the std would be
+		// reported.
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (c.superClass == null && !TypeFunctions.hasClassFlag(c, CInterface)) switch (entry != null ? entry.decl : null) {
+			case EClass(d):
+				for (cff in d.dData) for (acc in cff.cffAccess) if (acc.access == AOverride)
+					ctx.addDiagnostic("Invalid modifier: override on field of class that has no parent", acc.pos);
+			case _:
+		}
 		// The redefinition check runs when a variable binds, so it applies to VARIABLES and properties only
 		// -
 		// a method legally overrides one.
