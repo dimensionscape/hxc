@@ -1059,8 +1059,55 @@ class ModuleLoader {
 					fieldError("An interface method cannot have a body", cff.cffPos);
 				if (inlineAcc != null) fieldError("Invalid modifier: inline on method of interface", cff.cffPos);
 			}
-			// Warn about bodies on extern or interface fields unless inline or macro. Exclude __init__,
-			// which has its own field kind and initialization path.
+			// Extern and interface bodies warn unless inline or macro. Require normally optional hints when
+			// no body can infer their types; inline extern expressions are exempt.
+			if (ctx != null) {
+				var fieldIsExtern = false;
+				for (acc in cff.cffAccess) if (acc.access == AExtern) fieldIsExtern = true;
+				var trulyExtern = (TypeFunctions.hasClassFlag(c, CExtern) || fieldIsExtern) && inlineAcc == null;
+				var needsHint = trulyExtern || isInterface;
+				var coreApi = TypeFunctions.hasMeta(":coreApi", c.meta);
+				var isFinalField = false;
+				for (acc in cff.cffAccess) if (acc.access == AFinal) isFinalField = true;
+				var isEnumAbstractMember = switch (c.kind) {
+					case KAbstractImpl(ab): ab.isEnum;
+					case _: false;
+				};
+				var isAbstractFn = false;
+				for (acc in cff.cffAccess) if (acc.access == AAbstract) isAbstractFn = true;
+				function requireHint(th:Null<TypeHint>, hp:Position):Void {
+					if (th != null) return;
+					if (needsHint) ctx.addDiagnostic("Type required for extern classes and interfaces", hp);
+					else if (coreApi) ctx.addDiagnostic("Type required for core api classes", hp);
+					else if (isAbstractFn) ctx.addDiagnostic("Type required for abstract functions", hp);
+				}
+				if (cff.cffName.name != "__init__") switch (cff.cffKind) {
+					case FFun(fd):
+						// Constructor returns are implicitly Void and need no hint.
+						if (cff.cffName.name != "new") requireHint(fd.fType, cff.cffPos);
+						for (fa in fd.fArgs) requireHint(fa.type, fa.name.pos);
+					// Missing variable hints and initializers report at the name before extern checks. Bare
+					// enum-abstract variables are exempt because the abstract supplies their type and value.
+					case FVar(th, e) if (th == null && e == null && isEnumAbstractMember):
+					// Leave uninitialized finals to their earlier-priority check in the later phase.
+					case FVar(th, e) if (th == null && e == null && isFinalField):
+					case FVar(th, e) if (th == null && e == null):
+						fieldError("Variable requires type-hint or initialization", cff.cffName.pos);
+					case FProp(_, _, th, e) if (th == null && e == null):
+						throw new ContextError("Property requires type-hint or initialization", cff.cffPos);
+					// Extern variables cannot have initializers. Enum-abstract modifier checks take the
+					// one-error-per-field slot first.
+					case FVar(_, _) if (isEnumAbstractMember):
+					case FVar(_, e) if (e != null && (TypeFunctions.hasClassFlag(c, CExtern) || fieldIsExtern)):
+						if (!isStatic) fieldError("on extern non-static variable", cff.cffPos);
+						else if (inlineAcc == null) fieldError("on extern non-inline variable", cff.cffPos);
+					// Variable initializers infer their types; only functions and properties require explicit
+					// hints here.
+					case FVar(_, _):
+					case FProp(_, _, th, _): requireHint(th, cff.cffPos);
+				}
+			}
+			// Handle __init__ separately from ordinary extern-expression warnings.
 			if (ctx != null && !bodyless && inlineAcc == null && !isMacroAcc
 					&& cff.cffName.name != "__init__"
 					&& (isInterface || TypeFunctions.hasClassFlag(c, CExtern)))
