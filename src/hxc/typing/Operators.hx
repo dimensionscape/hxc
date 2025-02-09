@@ -30,6 +30,12 @@ enum BinopResult {
 	BinopSpecial(e:TExpr, needsAssign:Bool);
 }
 
+// Raised as a typing error that propagates PAST the candidate loop - it is a verdict on a matched overload,
+// not a "this candidate does not apply". The loop catches TypingError to move to the next candidate, so the
+// verdict needs to be distinguishable or the search silently falls through to the underlying-type path and
+// the operation compiles.
+class AbstractOpResultError extends TypingError {}
+
 class Operators {
 	static function storedSyntax(ctx:TyperContext, e:TExpr):Expr {
 		var id = hxc.context.Context.allocStoredTypedExprId("storedSyntax");
@@ -567,7 +573,7 @@ class Operators {
 						switch (TypeFunctions.follow(tret)) {
 							case TAbstract(ra, rtl) if (TypeUnification.typeIseqDefault(TypeFunctions.getUnderlyingType(ra, rtl), tExpected)):
 							case _:
-								throw new TypingError("The result of this operation (" + hxc.core.TPrinting.sTypeStr(tExpected) + ") is not compatible with declared return type " + hxc.core.TPrinting.sTypeStr(tret), p);
+								throw new AbstractOpResultError("The result of this operation (" + hxc.core.TPrinting.sTypeStr(tExpected) + ") is not compatible with declared return type " + hxc.core.TPrinting.sTypeStr(tret), p);
 						}
 					}
 				}
@@ -651,13 +657,15 @@ class Operators {
 						try {
 							return check(e1, e2, false);
 						} catch (_:UnifyError) {
-						} catch (_:TypingError) {
+						} catch (te:TypingError) {
+							if (Std.isOfType(te, AbstractOpResultError)) throw te;
 						}
 						if (TypeFunctions.hasMeta(":commutative", cf.meta)) {
 							try {
 								return check(e2, e1, true);
 							} catch (_:UnifyError) {
-							} catch (_:TypingError) {
+							} catch (te:TypingError) {
+								if (Std.isOfType(te, AbstractOpResultError)) throw te;
 							}
 						}
 					case _:
