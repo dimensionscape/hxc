@@ -42,12 +42,26 @@ class CoreApi {
 	// The class path resolves in the core context (a @:native class keeps its source path).
 	static function loadCoreClass(ctx:Context, c:TClass):Null<TClass> {
 		var ctx2 = coreContext(ctx);
-		var mt = try ctx2.getType(c.path, c.pos) catch (_:Dynamic) return null;
+		// An abstract's IMPL class is looked up under the ABSTRACT's path - `haxe.Rest`, never
+		// `haxe._Rest.Rest_Impl_`, which exists in no std file. Using path for both would make every
+		// abstract core class fail to load and the comparison silently do nothing (the swallow below
+		// would hide it).
+		var tpath = switch (c.kind) {
+			case KAbstractImpl(a): a.path;
+			case _: c.path;
+		};
+		// loadInstance does not catch: with the path above correct, a failure here means the
+		// class genuinely has no counterpart in the std, which is `Type not found : <name>`.
+		var mt = ctx2.getType(tpath, c.pos);
 		return switch (mt) {
+			// A TInst or a TAbstract with an impl is accepted, taking the impl in that case.
 			case TClassDecl(cc):
 				// The core class types fully in its own context (loading answers a typed class)
 				hxc.typing.TypeFields.installAndForce(ctx2);
 				cc;
+			case TAbstractDecl(ab) if (ab.impl != null):
+				hxc.typing.TypeFields.installAndForce(ctx2);
+				ab.impl;
 			case _: null;
 		};
 	}
