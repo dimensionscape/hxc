@@ -1052,6 +1052,26 @@ class ModuleLoader {
 				case FFun(fd): fd.fExpr == null;
 				case _: true;
 			};
+			if (cff.cffName.name == "new" && isStatic) {
+				fieldError("Invalid modifier: static on constructor", cff.cffPos);
+				continue;
+			}
+			// Record an invalid constructor return type at the whole field, then drop the constructor; use
+			// sites can also report that none exists.
+			if (cff.cffName.name == "new") {
+				var badRet = switch (cff.cffKind) {
+					case FFun(fd) if (fd.fType != null):
+						switch (fd.fType.ct) {
+							case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Void"): false;
+							case _: true;
+						}
+					case _: false;
+				};
+				if (badRet) {
+					fieldError("A class constructor can't have a return type", cff.cffPos);
+					continue;
+				}
+			}
 			if (isInterface) {
 				if (cff.cffName.name == "new" && !isStatic)
 					throw new ContextError("An interface cannot have a constructor", cff.cffPos);

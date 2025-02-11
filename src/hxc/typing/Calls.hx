@@ -671,7 +671,9 @@ class Calls {
 
 	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position):TExpr {
 		var sup = ctx.curclass.superClass;
-		if (sup == null) throw new TypingError("Class does not have a super class", p);
+		// At the super call site the message says "super", not "superclass" - that wording belongs to a
+		// bare `super` expression.
+		if (sup == null) throw new TypingError("Current class does not have a super", p);
 		var c = sup.c;
 		// Type the super constructor's body first so an unannotated parameter is inferred from the body
 		// (binding its monomorph to the class parameter) before the call arguments unify; otherwise the
