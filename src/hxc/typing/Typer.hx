@@ -426,23 +426,30 @@ class Typer {
 		return false;
 	}
 
-	static function normalizeCatchType(ctx:TyperContext, t:T, p:Position):T {
+	/**
+	 * The three complaints report at three DIFFERENT positions and the distinction is not cosmetic:
+	 * the type-parameter one is about the try as a whole (`pTry`), the parameter check is about the
+	 * hint that was written (`pHint`), and the catch-all is about the catch body (`pBody`), because by
+	 * then the hint has been followed through typedefs and abstracts and no longer corresponds to any
+	 * span the user wrote.
+	 */
+	static function normalizeCatchType(ctx:TyperContext, t:T, pTry:Position, pHint:Position, pBody:Position):T {
 		function loop(t:T):T {
 			return switch (TypeFunctions.follow(t)) {
 				case TInst(c, _) if (c.kind.match(KTypeParameter(_)) && !isGenericCatchParameter(ctx, c)):
-					throw new TypingError("Cannot catch non-generic type parameter", p);
+					throw new TypingError("Cannot catch non-generic type parameter", pTry);
 				case TInst(_, params) | TEnum(_, params):
-					checkCatchTypeParams(params, p);
+					checkCatchTypeParams(params, pHint);
 					t;
 				case TAbstract(a, params) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)):
-					checkCatchTypeParams(params, p);
+					checkCatchTypeParams(params, pHint);
 					t;
 				case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
 					loop(TypeFunctions.getUnderlyingType(a, tl));
 				case TDynamic(_):
 					t;
 				case _:
-					throw new TypingError("Catch type must be a class, an enum or Dynamic", p);
+					throw new TypingError("Catch type must be a class, an enum or Dynamic", pBody);
 			}
 		}
 		return loop(t);
@@ -992,6 +999,13 @@ class Typer {
 				var savedTypeParams = ctx.typeParams;
 				var localParams:TypeParams = [];
 				if (f.fParams.length > 0) {
+					// An unnamed local function has no name to specialise under, and a local function used as a
+					// value cannot carry parameters at all. The first is recorded, the second raises, so `var f =
+					// function<T>(v:T) ...` prints both.
+					if (!kind.match(FKNamed(_, _)))
+						ctx.com.addDiagnostic("Type parameters not supported in unnamed local functions", p);
+					if (!withType.match(NoValue))
+						throw new TypingError("Type parameters are not supported for rvalue functions", p);
 					// A local function's own type parameters (`function foo<T>(...)`) are in scope for its
 					// argument/return hints and body.
 					var declPath:hxc.core.Globals.Path = {pack: [], name: switch (kind) { case FKNamed(n, _): n.name; case _: "`localfun"; }};
@@ -1525,7 +1539,7 @@ class Typer {
 				for (c in catches) {
 					var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
 					var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
-					var normalizedCatchType = normalizeCatchType(ctx, catchType, th.pos);
+					var normalizedCatchType = normalizeCatchType(ctx, catchType, p, th.pos, c.expr.pos);
 					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
 					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
@@ -1563,14 +1577,30 @@ class Typer {
 				} else {
 					var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, ct);
 					// The runtime-checked cast target: an abstract without @:runtimeValue resolves to its
-					// underlying type, so the eval safe-cast check sees the concrete class (or the
-					// @:runtimeValue basic).
+					// underlying type, so the eval safe-cast check sees the concrete class (or the @:runtimeValue
+					// basic). A runtime cast can only check a nominal type, so the target has to reduce to a class
+					// or an enum, its parameters have to be erased (they do not exist at runtime), and a type
+					// parameter is not a target at all. All three report at the type, not the cast expression.
+					function checkParam(pt:T):Void switch (TypeFunctions.follow(pt)) {
+						// An unbound monomorph means Dynamic was never bound (issue #4675).
+						case TMono(_):
+						case TDynamic(_):
+						case _: throw new TypingError("Cast type parameters must be Dynamic", ct.pos);
+					}
 					function loop(t:T):Null<ModuleType> return switch (TypeFunctions.follow(t)) {
-						case TInst(c, _): TClassDecl(c);
-						case TEnum(en, _): TEnumDecl(en);
-						case TAbstract(a, _) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)): TAbstractDecl(a);
+						case TInst(c, params):
+							for (pt in params) checkParam(pt);
+							if (c.kind.match(KTypeParameter(_)))
+								throw new TypingError("Can't cast to a type parameter", ct.pos);
+							TClassDecl(c);
+						case TEnum(en, params):
+							for (pt in params) checkParam(pt);
+							TEnumDecl(en);
+						case TAbstract(a, params) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)):
+							for (pt in params) checkParam(pt);
+							TAbstractDecl(a);
 						case TAbstract(a, params): loop(TypeFunctions.getUnderlyingType(a, params));
-						case _: null;
+						case _: throw new TypingError("Cast type must be a class or an enum", ct.pos);
 					};
 					TypeFunctions.mk(TCast(te, loop(t)), t, p);
 				}
@@ -4813,7 +4843,19 @@ class Typer {
 						// `super.field` resolves the field against the superclass with a TSuper receiver, so
 						// the call dispatches to the inherited definition rather than an override.
 						var sup = ctx.curclass.superClass;
-						if (sup == null) throw new TypingError("Current class does not have a super class", p);
+						// The ident is typed first, so all of this reports at the `super` TOKEN rather than over the
+						// whole field access, and the superclass check comes before the current-function one (an
+						// abstract has no superclass, so it is told that rather than that it is an abstract).
+						if (sup == null) throw new TypingError("Current class does not have a superclass", e1.pos);
+						switch (ctx.curfun) {
+							case FunMember | FunConstructor:
+							case FunMemberAbstract:
+								throw new TypingError("Cannot access super inside an abstract function", e1.pos);
+							case FunStatic:
+								throw new TypingError("Cannot access super inside a static function", e1.pos);
+							case FunMemberClassLocal | FunMemberAbstractLocal:
+								throw new TypingError("Cannot access super inside a local function", e1.pos);
+						}
 						var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(sup.c, sup.params), e1.pos);
 						return Fields.typeField(ctx, superExpr, field, p, mode, withType);
 					case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
@@ -5145,7 +5187,7 @@ class Typer {
 				var te = castOrUnify(ctx, ctx.ret, teRaw, p);
 				if (isVoid(TypeFunctions.follow(te.type))) {
 					switch (te.expr) {
-						case TConst(TNull): throw new TypingError("Cannot return null from Void-function", p);
+						case TConst(TNull): throw new TypingError("Cannot return `null` from Void-function", p);
 						case _:
 					}
 					var t = monoOrDynamic(ctx, withType, p);

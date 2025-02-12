@@ -311,13 +311,16 @@ class TypeFields {
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		for (cff in d.dData) {
 			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
-			// build-macro fields are covered. via typeloadFields (create_field).
-			if (cff.cffName.name != "new") {
+			// build-macro fields are covered. The check is skipped entirely on an extern class or an
+			// @:native field - the Haxe-side name is not what gets emitted there - and reports at the whole
+			// field, not at its name.
+			if (cff.cffName.name != "new"
+				&& !TypeFunctions.hasClassFlag(c, CExtern) && !TypeFunctions.hasMeta(":native", cff.cffMeta)) {
 				var fname = cff.cffName.name;
 				if (StringTools.startsWith(fname, "$"))
-					addDiagnosticOnce(ctx, "Field names starting with a dollar are not allowed: \"" + fname + "\"", cff.cffName.pos);
+					addDiagnosticOnce(ctx, "Field names starting with a dollar are not allowed: \"" + fname + "\"", cff.cffPos);
 				else if (!hxc.core.StringHelper.isValidIdentifier(fname))
-					addDiagnosticOnce(ctx, "\"" + hxc.core.StringHelper.sEscape(fname) + "\" is not a valid field name.", cff.cffName.pos);
+					addDiagnosticOnce(ctx, "\"" + hxc.core.StringHelper.sEscape(fname) + "\" is not a valid field name.", cff.cffPos);
 			}
 			var hasStatic = false, hasOverride = false, hasDynamic = false, hasInline = false, hasAbstract = false, hasFinal = false;
 			for (a in cff.cffAccess) switch (a.access) {

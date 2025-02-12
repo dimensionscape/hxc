@@ -72,7 +72,14 @@ class TexprTools {
 			case TAbstractDecl(a):
 				wrap(a.module, "Abstract", a.path, a.pos,
 					TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null));
-			case _: throw new TypingError("Invalid module type", p);
+			// A typedef that follows to something with no runtime identity (an anon, a function) is named by
+			// its own path, not by whatever it resolved to, because the resolved thing has no name to print.
+			case _:
+				var named = switch (mt) {
+					case TTypeDecl(td): hxc.core.Globals.sTypePath(td.path);
+					case _: null;
+				};
+				throw new TypingError(named != null ? named + " is not a value" : "Invalid module type", p);
 		};
 		return TypeFunctions.mk(TTypeExpr(resolved), t, p);
 	}

@@ -578,6 +578,9 @@ class ModuleLoader {
 					hasDeclaration = true;
 					var priv = hasEnumFlag(d.dFlags, EPrivate);
 					var path = makePath(name, priv, p);
+					// Reject @:fakeEnum at the enum declaration position, excluding metadata.
+					if (TypeFunctions.hasMeta(":fakeEnum", d.dMeta))
+						throw new ContextError("@:fakeEnum enums is no longer supported in Haxe 4, use extern enum abstract instead", p);
 					var patch = applyTypePatches(ctx, path, d.dMeta);
 					for (p in ctx.typePatches) if (p.path.name == path.name && sameArray(p.path.pack, path.pack) && p.field != null)
 						throw new ContextError("Field type patch not supported for enums", d.dName.pos);
