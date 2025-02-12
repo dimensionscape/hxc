@@ -896,12 +896,24 @@ class TypeResolve {
 			return Typeload.loadComplexType(ctx, a.params, th);
 		}
 
+		// A non-core abstract checks at every from/to it loads that the underlying type is already
+		// declared - the flags are processed in source order, so this is what a from/to with no `(T)`
+		// reports. It is a DIFFERENT message from the one an abstract that ends with no underlying type
+		// at all gets. The hint is loaded first, so a broken from/to type reports before this.
+		function requireUnderlying():Void {
+			if (!isCore && !isType)
+				throw new ContextError("Missing underlying type declaration or @:coreType declaration", p);
+		}
 		var fromPos:Array<Position> = [];
 		var toPos:Array<Position> = [];
 		for (f in d.dFlags) switch (f) {
-			case AbFrom(th): a.from.push(loadType(th)); fromPos.push(th.pos);
-			case AbTo(th): a.to.push(loadType(th)); toPos.push(th.pos);
+			case AbFrom(th): a.from.push(loadType(th)); requireUnderlying(); fromPos.push(th.pos);
+			case AbTo(th): a.to.push(loadType(th)); requireUnderlying(); toPos.push(th.pos);
 			case AbOver(th):
+				// The implementation check comes first: a @:coreType abstract with no fields has no impl class,
+				// and that is what it is told, not that it cannot have an underlying type.
+				if (a.impl == null)
+					throw new ContextError("Abstracts with underlying type must have an implementation", a.pos);
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
 				var at = Typeload.loadComplexType(ctx, a.params, th);
 				a.thisType = at;
@@ -1413,6 +1425,11 @@ class TypeResolve {
 				return inner;
 			}));
 			tt = TLazy(r);
+			// A protected lazy schedules a PForce that forces it by default. The recursion check is
+			// therefore run whether or not anything ever uses the typedef, which makes a `typedef T = T`
+			// nobody references still report. The TLazy WRAPPER stays in type either way, so the deferral
+			// the XML output depends on is unaffected.
+			ctx.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(r));
 		}
 		switch (td.type) {
 			case TMono(r) if (r.type == null):
@@ -1515,7 +1532,8 @@ class TypeResolve {
 					switch (TypeFunctions.follow(t)) {
 						case TEnum(te, _) if (te == e):
 						case _:
-							throw new ContextError("Explicit enum type must be of the same enum type", c.ecPos);
+							// Reported at the type HINT's own position, not over the whole constructor declaration.
+							throw new ContextError("Explicit enum type must be of the same enum type", th.pos);
 					}
 					t;
 			};

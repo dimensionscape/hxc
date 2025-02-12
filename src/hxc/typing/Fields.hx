@@ -336,13 +336,10 @@ class Fields {
 	}
 
 	static function fieldNotFound(t:T, i:String, p:Position):TypingError {
-		// The APPLIED type prints, with a suggestion over the type's own field names.
-		// (StringError.string_error over .
-		var shown = switch (TypeFunctions.follow(t)) {
-			case TInst(_, _) | TAbstract(_, _) | TEnum(_, _): hxc.core.TPrinting.sTypeStr(TypeFunctions.follow(t));
-			case _: typeName(t);
-		};
-		var msg = shown + " has no field " + i;
+		// The APPLIED type prints, with a suggestion over the type's own field names. It is the
+		// plain printed type, so a function type keeps its signature, and it prints UNFOLLOWED, so
+		// an alias keeps its own name (`Iterator<Int>`, not the anon it stands for).
+		var msg = hxc.core.TPrinting.sTypeStr(t) + " has no field " + i;
 		if (i != "") {
 			var names:Array<String> = switch (TypeFunctions.follow(t)) {
 				case TInst(c, _):
@@ -360,21 +357,6 @@ class Fields {
 			msg = hxc.core.StringError.stringError(i, names, msg);
 		}
 		return new FieldNotFoundError(msg, p);
-	}
-
-	static function typeName(t:T):String {
-		return switch (TypeFunctions.follow(t)) {
-			case TInst(c, _): hxc.core.Globals.sTypePath(c.path);
-			case TAbstract(a, _): hxc.core.Globals.sTypePath(a.path);
-			case TEnum(e, _): hxc.core.Globals.sTypePath(e.path);
-			case TAnon(a): switch (a.status.get()) {
-				case Statics(c): "Class<" + hxc.core.Globals.sTypePath(c.path) + ">";
-				case EnumStatics(e): "Enum<" + hxc.core.Globals.sTypePath(e.path) + ">";
-				case AbstractStatics(ab): "Abstract<" + hxc.core.Globals.sTypePath(ab.path) + ">";
-				case _: hxc.core.TPrinting.sTypeStr(t);
-			};
-			case _: "Type";
-		};
 	}
 
 	// A field access that did not resolve, in a run whose job is to REPORT, records the field the

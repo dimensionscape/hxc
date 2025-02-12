@@ -3402,6 +3402,9 @@ class Parser {
 		var opt = false;
 		if (tokEq(peek(), Question)) { junk(); opt = true; }
 		var n = identTok();
+		// The type hint is a pattern element after the name, and its own `:` sits at its first position,
+		// so a missing hint is an empty non-soft error here - `Unexpected )`, not `Expected :`.
+		if (!tokEq(peek(), DblDot)) serror();
 		var t = parseTypeHint();
 		return {name: n.name, opt: opt, type: t};
 	}
