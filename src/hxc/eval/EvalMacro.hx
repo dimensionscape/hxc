@@ -952,8 +952,18 @@ class EvalMacro {
 		var declEntry = com.declOfType.get(Context.pathKey(c.path));
 		if (declEntry == null) return;
 		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
-		if (entry.params.length == 0) return;
+		// The argument has to be exactly one call, and both complaints here point at the METADATA rather
+		// than at whatever was written inside it.
+		var callIsWellFormed = entry.params.length == 1 && entry.params[0].expr.match(ECall(_, _));
+		if (!callIsWellFormed) throw new TypingError("Invalid build parameters", entry.pos);
 		var callExpr = entry.params[0];
+		// A macro path is split on "." and needs at least `Type.method`; a bare
+		// `foo()` has no type to look the method up on.
+		switch (callExpr.expr) {
+			case ECall(callee, _) if (macroTarget(callee) == null):
+				throw new TypingError("Invalid macro path", entry.pos);
+			case _:
+		}
 		// Load the macro's own module into the macro world so the interpreter includes it.
 		switch (callExpr.expr) {
 			case ECall(callee, _):

@@ -946,7 +946,16 @@ class ModuleLoader {
 			// Set CfEnum on synthesized :enum fields so reads inline-fold and patterns participate in
 			// exhaustiveness checks.
 			if (TypeFunctions.hasMeta(":enum", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfEnum);
-			if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfGeneric);
+			if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) {
+				TypeFunctions.addClassFieldFlag(cf, CfGeneric);
+				// @:generic functions require their own type parameters; enclosing class parameters do not
+				// qualify.
+				switch (cff.cffKind) {
+					case FFun(fd) if (fd.fParams.length == 0):
+						throw new ContextError("Generic functions must have type parameters", cff.cffPos);
+					case _:
+				}
+			}
 			if (isExtern) TypeFunctions.addClassFieldFlag(cf, CfExtern);
 			if (isFinalField) TypeFunctions.addClassFieldFlag(cf, CfFinal);
 			if (c.module != null) {
@@ -1959,6 +1968,17 @@ class ModuleLoader {
 		for (acc in f.cffAccess) if (acc.access == AStatic) stat = true;
 		var p = f.cffPos;
 		switch (f.cffKind) {
+			// A non-static abstract property may only read through get or never and write through set or
+			// never. An abstract has no storage to back anything else, and an @:enum field is exempt
+			// because it is a constant, not a property.
+			case FProp(get, set, _, _) if (!stat
+				&& !((get.name == "get" || get.name == "never") && (set.name == "set" || set.name == "never"))
+				&& !TypeFunctions.hasMeta(":enum", f.cffMeta)):
+				throw new ContextError("Member property accessors must be get/set or never", p);
+			// @:isVar asks for exactly the storage an abstract does not have. Reporting it here keeps its
+			// order relative to the accessor check above, which runs first either way.
+			case FProp(_, _, _, _) if (!stat && TypeFunctions.hasMeta(":isVar", f.cffMeta)):
+				throw new ContextError("Abstract properties cannot be real variables", p);
 			case FVar(_, _) if (!stat && !a.isEnum):
 				// A plain member var has no storage on an abstract; enum abstract constants stay legal.
 				throw new ContextError("Cannot declare member variable in abstract", p);
@@ -2010,6 +2030,10 @@ class ModuleLoader {
 					cffMeta: meta, cffAccess: withStatic(access, p), cffKind: FFun(fu2)
 				};
 			case FFun(fu) if (!stat):
+				// A cast function is called with no receiver, so it has to be static; the member form would
+				// never be reachable.
+				if (TypeFunctions.hasMeta(":from", f.cffMeta))
+					throw new ContextError("@:from cast functions must be static", f.cffPos);
 				// A member (non-static) method. For a member impl method only when `not fctx.is_macro`. A macro
 				// member abstract method does not get the underlying `this` prepended, instead its first
 				// DECLARED arg first argument which will contain the this expression"). So for a macro member

@@ -127,7 +127,9 @@ class TypeResolve {
 			if (meta.name != ":using") continue;
 			for (param in meta.params) {
 				var parts = exprPath(param);
-				if (parts == null || parts.length == 0) continue;
+				// Anything that is not a dot path is rejected, and that is reported at the argument.
+				if (parts == null || parts.length == 0)
+					throw new ContextError("dot path expected", param.pos);
 				// A Module.SubType path (second-to-last segment capitalized) names a single type; a plain
 				// module path brings in every non-private class of the module, like a using statement.
 				var subOf:Null<{pack:Array<String>, moduleName:String, sub:String}> = null;
@@ -1111,7 +1113,9 @@ class TypeResolve {
 								a.call.overloads.unshift(cf);
 							allowsNoExpr = true;
 						case EField(_, _, _):
-							registerResolveField(a, cf, cff, opExpr.pos);
+							// Reported at pos - the whole field - not at the @:op argument, so a duplicate points at the
+							// declaration.
+							registerResolveField(a, cf, cff, cf.pos);
 							allowsNoExpr = true;
 						case _:
 					}
