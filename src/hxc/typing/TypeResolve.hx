@@ -832,12 +832,38 @@ class TypeResolve {
 		return c.superClass != null && extendsChain(c.superClass.c, target);
 	}
 
+	static function isBasicClassPath(path:hxc.core.Globals.Path):Bool {
+		return path.pack.length == 0
+			&& (path.name == "Array" || path.name == "String" || path.name == "Date" || path.name == "Xml");
+	}
+
+	// The parameter belongs either to the current field, which then has to be @:generic, or to the
+	// current class, which then has to be KGeneric. Only the class half can apply here - heritage is
+	// resolved with no current field, whose empty parameter list never matches - so the question is
+	// just whether the class is generic.
+	static function isGenericParameter(c:TClass, csup:TClass):Bool {
+		var name = csup.path.name;
+		for (tp in c.params) if (tp.name == name) return c.kind.match(KGeneric);
+		return false;
+	}
+
 	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position):Void {
 		if (isExtends) {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
 				case TInst(csup, params):
+					// Array/String/Date/Xml cannot be extended unless both sides are extern.
+					if (isBasicClassPath(csup.path)
+						&& !(TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasClassFlag(csup, CExtern)))
+						throw new ContextError("Cannot extend basic class", p);
 					if (extendsChain(csup, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(csup.path)) != null ? heritagePositions.get(Context.pathKey(csup.path)) : p);
+					// A type parameter is never a base. The generic wording is reserved for a parameter of a
+					// @:generic field or class (the field's params are checked before the class's).
+					if (csup.kind.match(KTypeParameter(_))) {
+						if (isGenericParameter(c, csup))
+							throw new ContextError("Extending generic type parameters is no longer allowed in Haxe 4", p);
+						throw new ContextError("Cannot extend type parameters", p);
+					}
 					// A final class or interface cannot be extended; @:hack lifts the check for an extern
 					// super, and a
 					// type-parameter class is exempt.
@@ -881,6 +907,10 @@ class TypeResolve {
 					inheritAutoBuild(ctx, c, intf);
 				case TDynamic(dt):
 					if (c.dynamicType != null) throw new ContextError("Cannot have several dynamics", p);
+					// This is recorded as a display error and the class still gets its dynamic - which is why two
+					// of them print this once and then the several-dynamics error.
+					if (!TypeFunctions.hasClassFlag(c, CExtern))
+						ctx.addDiagnostic("In haxe 4, implements Dynamic is only supported on externs", p);
 					c.dynamicType = (dt == null) ? TypeFunctions.tDynamic : dt;
 				case _:
 					throw new ContextError("Should implement by using an interface", p);
