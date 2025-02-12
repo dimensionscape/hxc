@@ -4274,15 +4274,27 @@ class Typer {
 				}
 			}
 			if (r != null) return r;
-			// An existing module with no type of the looked-up name reports the module error Type_not_found
-			// Not_defined).
-			var missMod = try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null;
-			if (missMod != null && hxc.context.ModuleLoader.findTypeInModuleOpt(missMod, name) == null && rest.length == 0)
-				throw new TypingError("Module " + hxc.core.Globals.sTypePath(missMod.path) + " does not define type " + name, p);
-			// A qualified type path has its own missing-type diagnostic. Keep the
-			// package prefix in the message instead of reporting the first segment
-			// as an unknown value.
-			throw new TypingError("Type not found : " + segs.join("."), p);
+			// The last guess: the report names the module - the leading lowercase package plus the first
+			// uppercase segment - and never the trailing field segments, which is why `Priv.four` complains
+			// about `Priv`. It points at the segment the scan stopped on: the first uppercase one, or the
+			// SECOND when the path has two in a row (a module and its sub-type), so `Nope.Sub.f` spans
+			// `Nope.Sub` while still naming only `Nope`. The `std` prefix is already stripped out of `pack`
+			// above, and stays in the span but not the message.
+			var stopIdx = typeIdx;
+			var sub:Null<String> = null;
+			if (typeIdx + 1 < segs.length) {
+				var c1 = segs[typeIdx + 1].charCodeAt(0);
+				if (c1 >= "A".code && c1 <= "Z".code) { sub = segs[typeIdx + 1]; stopIdx = typeIdx + 1; }
+			}
+			var pStop = p.max;
+			for (j in (stopIdx + 1)...segs.length) pStop -= segs[j].length + 1;
+			var pName = new Position(p.file, p.min, pStop);
+			// The module has to be loaded already for the "does not define" wording; anything else is
+			// Module_not_found /:286).
+			if (ctx.com.moduleLut.exists(hxc.context.Context.pathKey({pack: pack, name: name})))
+				throw new TypingError("Module " + hxc.core.Globals.sTypePath({pack: pack, name: name})
+					+ " does not define type " + (sub != null ? sub : name), pName);
+			throw new TypingError("Type not found : " + hxc.core.Globals.sTypePath({pack: pack, name: name}), pName);
 		}
 		if (rest.length > 0) {
 			// A module-level static wins over a same-named static of the module's main
@@ -5257,6 +5269,17 @@ class Typer {
 			case _ if (bodyHadError):
 			case _:
 				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
+		}
+		// A constructor whose class inherits a constructor has to call super(). When the inherited one is
+		// @:compilerGenerated the call is SYNTHESIZED instead of complaining (Filters.insertMissingSuper
+		// does that), so only a user-written inherited constructor makes the omission an error - and it
+		// is recorded, leaving the constructor otherwise typed.
+		if (fmode.match(FunConstructor) && ctx.curclass != null && ctx.curclass.superClass != null) {
+			var sup = try TypeFunctions.getConstructorClass(ctx.curclass.superClass.c, ctx.curclass.superClass.params)
+				catch (_:hxc.core.NotFound) null;
+			if (sup != null && !TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)
+				&& !hxc.filters.Filters.bodyCallsSuper(te))
+				ctx.com.addDiagnostic("Missing super constructor call", p);
 		}
 		// A member whose local functions captured `this` declares the `this local, inserted before its
 		// first use so a constructor's super() call stays first when possible.

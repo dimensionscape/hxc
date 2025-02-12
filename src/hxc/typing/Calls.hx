@@ -670,6 +670,11 @@ class Calls {
 	}
 
 	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position):TExpr {
+		// The current function is checked before the class: a super call from a closure inside the
+		// constructor is out of place even when the class does have a super, and this complaint takes
+		// precedence over the missing-super one.
+		if (!ctx.curfun.match(FunConstructor))
+			throw new TypingError("Cannot call super constructor outside class constructor", p);
 		var sup = ctx.curclass.superClass;
 		// At the super call site the message says "super", not "superclass" - that wording belongs to a
 		// bare `super` expression.

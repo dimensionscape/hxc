@@ -140,6 +140,12 @@ class Context {
 	public var declErrored:StringMap<Bool> = new StringMap();
 
 	/**
+	 * Modules with incomplete declaration initialization, keyed by path. An unresolved using prevents
+	 * initialization of every declaration in the module.
+	 */
+	public var moduleAborted:StringMap<Bool> = new StringMap();
+
+	/**
 	 * Count unresolved field annotations; each retains a placeholder monomorph while resolution
 	 * continues.
 	 */
@@ -578,6 +584,9 @@ class ModuleImports {
 	public var usings:Array<Path>;
 	public var globals:StringMap<ImportedGlobal>;
 	public var rawImports:Array<Import>;
+	// Load using modules eagerly in declaration order, with importPositions indices, so resolution
+	// errors retain their place among imports.
+	public var rawUsings:Array<{path:Array<PlacedName>, pos:Position, idx:Int}> = [];
 	// Track usage per import declaration. Unset flags become unused-import diagnostics; wildcardImp
 	// and usingImp index these flags.
 	public var importPositions:Array<{p:Position, used:Bool, ?failed:Bool}> = [];
@@ -591,6 +600,17 @@ class ModuleImports {
 		}
 		importPositions.push({p: p, used: false});
 		return importPositions.length - 1;
+	}
+
+	/**
+	 * Declaration-order index across imports and usings, assigned by addImportPosition.
+	 */
+	public function importPositionIndex(p:Position):Int {
+		for (i in 0...importPositions.length) {
+			var e = importPositions[i];
+			if (e.p.min == p.min && e.p.max == p.max && e.p.file == p.file) return i;
+		}
+		return -1;
 	}
 
 	public function markImport(idx:Null<Int>):Void {

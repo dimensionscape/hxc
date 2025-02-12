@@ -19,6 +19,13 @@ class TypeResolve {
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
 		if (m.extra.resolved >= 1) return;
 		m.extra.resolved = 1;
+		// An unresolvable `using` aborts the module's initialisation before it reaches a single
+		// declaration, so the types exist but none of them is ever initialised. Resolving them anyway
+		// prints a cascade of follow-on errors.
+		if (ctx.moduleAborted.exists(Context.pathKey(m.path)) && abortsOnDeclError(ctx)) {
+			markModuleErrored(ctx, m);
+			return;
+		}
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
 		for (mt in m.types) {

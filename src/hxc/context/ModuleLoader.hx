@@ -422,6 +422,9 @@ class ModuleLoader {
 			}
 			checkPathDisplay(path);
 			var impIdx = imports.addImportPosition(declPos);
+			// Load using modules in declaration order alongside imports so unresolved usings report at their
+			// declared position.
+			imports.rawUsings.push({path: path, pos: declPos, idx: impIdx});
 			var parts = [for (pn in path) pn.name];
 			var split = splitImportPath(parts);
 			if (split == null) return;

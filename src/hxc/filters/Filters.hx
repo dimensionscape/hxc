@@ -1278,8 +1278,10 @@ class Filters {
 
 	// A class with an explicit constructor whose body never calls super, when the superclass has a
 	// compiler-generated (no required argument) constructor, gets an auto super() prepended so the
-	// inherited field initializers run was_forced branch).
-	static function bodyCallsSuper(e:TExpr):Bool {
+	// inherited field initializers run. The walk does not descend into a nested TFunction, so a super
+	// call made from a closure does not satisfy the constructor. Typer.typeFunction shares it for the
+	// missing-super report.
+	public static function bodyCallsSuper(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TCall({expr: TConst(TSuper)}, _): true;
 			case TFunction(_): false;

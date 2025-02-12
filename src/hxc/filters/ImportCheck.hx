@@ -38,13 +38,37 @@ class ImportCheck {
 		try {
 			var imports = ctx.moduleImports.get(Context.pathKey(m.path));
 			if (imports == null) { ctx.currentModule = savedMod; return; }
+			// The sweep runs again from loadPlainImports. A module whose declaration walk was already
+			// abandoned has no further declarations to reach, so the second visit must not pick up where
+			// the abort left off and report the ones never reached.
+			if (ctx.moduleAborted.exists(Context.pathKey(m.path))) { ctx.currentModule = savedMod; return; }
 			// rawImports is built by unshifting, so it runs newest-first; init_module_type walks the
 			// declarations in the order they were written, and with an import.hx in play that is the
-			// difference between reporting its first entry and its last.
+			// difference between reporting its first entry and its last. The usings interleave by
+			// their importPositions index, because init_module_type makes no distinction between the
+			// two kinds - it walks one declaration list.
+			var work:Array<{i:Int, imp:Null<Import>, us:Null<{path:Array<PlacedName>, pos:Position, idx:Int}>}> = [];
 			var k = imports.rawImports.length;
 			while (k-- > 0) {
-				var imp = imports.rawImports[k];
-				if (imp.pos == null) continue;
+				var imp0 = imports.rawImports[k];
+				if (imp0.pos == null) continue;
+				work.push({i: imports.importPositionIndex(imp0.pos), imp: imp0, us: null});
+			}
+			for (u in imports.rawUsings) work.push({i: u.idx, imp: null, us: u});
+			work.sort(function(a, b) return a.i - b.i);
+			for (w in work) {
+				if (w.imp == null) {
+					// A using that cannot be resolved ABANDONS the module: an import's error is caught and
+					// recorded, a using's is not, so the error raises and no later declaration of the
+					// module is reached. Two bad usings print one message, and a bad using before a bad
+					// import prints only the using.
+					if (loadUsing(ctx, m, imports, w.us)) {
+						ctx.moduleAborted.set(Context.pathKey(m.path), true);
+						break;
+					}
+					continue;
+				}
+				var imp = w.imp;
 				var parts = imp.path;
 				var mi = -1;
 				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
@@ -93,6 +117,121 @@ class ImportCheck {
 			}
 		} catch (e:haxe.Exception) { ctx.currentModule = savedMod; throw e; }
 		ctx.currentModule = savedMod;
+	}
+
+	/**
+	    Loads a `using` declaration and queues its classes. Returns true when the load failed and the module
+	    has to be abandoned.
+	**/
+	static function loadUsing(ctx:Context, m:hxc.core.Type.ModuleDef, imports:hxc.context.Context.ModuleImports,
+			us:{path:Array<PlacedName>, pos:Position, idx:Int}):Bool {
+		var parts = [for (pn in us.path) pn.name];
+		if (parts.length == 0) return false;
+		// The path is read POSITIONALLY off its tail, not by hunting the first uppercase segment the way
+		// an import is: the last element is the type, and the one before it decides whether it names a
+		// package (so the module is the last element) or a module (so the last element is a sub-type of
+		// it).
+		var tpack:Array<String>;
+		var tname:String;
+		var tsub:Null<String> = null;
+		if (parts.length >= 2) {
+			var s1 = parts[parts.length - 1];
+			var s2 = parts[parts.length - 2];
+			if (hxc.ast.Ast.isLowerIdent(s2)) {
+				tpack = parts.slice(0, parts.length - 1);
+				tname = s1;
+			} else {
+				tsub = s1;
+				tname = s2;
+				tpack = parts.slice(0, parts.length - 2);
+			}
+		} else {
+			tpack = [];
+			tname = parts[0];
+		}
+		// The sweep visits a module more than once (typeModule, then loadPlainImports), so the
+		// report dedups on the declaration exactly as the plain imports do.
+		var dkey = "using!" + us.pos.file + "!" + us.pos.min + "!" + us.pos.max;
+		if (ctx.plainImportsTried.exists(dkey)) return false;
+		ctx.plainImportsTried.set(dkey, true);
+		// The two forms take DIFFERENT loaders, and the difference is not cosmetic: the bare form loads a
+		// module, the sub form loads a type. A module load resolves the literal path only, so `using
+		// Helper` inside `package foo` does not find foo/Helper.hx and is an error; a type load with an
+		// empty package walks OUT from the current package (loadUnqualifiedSub), which makes `using
+		// MyClass.UsingBase` inside `package unit` resolve unit.MyClass. The report covers the whole
+		// using declaration, where an import narrows to the type path.
+		var failed:Null<{msg:String, pos:Position, depth:Int}> = null;
+		try {
+			if (tsub == null) {
+				ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, us.pos);
+			} else if (tpack.length > 0) {
+				// A qualified sub-type: one module, and a missing sub-type raises.
+				var md = ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, us.pos);
+				if (md != null) failed = subTypeError(ctx, md, tsub, us.pos);
+			} else {
+				failed = loadUnqualifiedSub(ctx, tname, tsub, us.pos);
+			}
+		} catch (e:hxc.context.Context.ContextError) {
+			failed = {msg: e.message, pos: e.pos, depth: e.depth};
+		}
+		// A parse failure is not a load error: it passes straight through and aborts the compile.
+		catch (pe:hxc.parser.ParserError) { throw pe; }
+		catch (_:Dynamic) { imports.markImportFailed(us.pos); return false; }
+		if (failed == null) return false;
+		ctx.addDiagnostic(failed.msg, failed.pos, failed.depth);
+		imports.markImportFailed(us.pos);
+		return true;
+	}
+
+	/**
+	 * A `using` sub-type with no package: the wildcard-imported packages first, then the current
+	 * package outward to the root. Every candidate but the last looks the sub-type up without raising
+	 * and moves on; only the root-package attempt reports. Returns null on success.
+	 */
+	static function loadUnqualifiedSub(ctx:Context, tname:String, tsub:String, p:Position):Null<{msg:String, pos:Position, depth:Int}> {
+		function tryPack(pack:Array<String>):Bool {
+			var md = try ModuleLoader.loadModule(ctx, {pack: pack, name: tname}, p) catch (_:Dynamic) null;
+			return md != null && ModuleLoader.findTypeInModuleOpt(md, tsub) != null;
+		}
+		var m = ctx.currentModule;
+		var imports = m == null ? null : ctx.moduleImports.get(Context.pathKey(m.path));
+		if (imports != null)
+			for (w in imports.wildcards)
+				if (tryPack(w.pack.concat([w.name]))) return null;
+		if (m != null) {
+			var cp = m.path.pack;
+			var i = cp.length;
+			while (i >= 1) {
+				if (tryPack(cp.slice(0, i))) return null;
+				i--;
+			}
+		}
+		// The root attempt is the one that reports: a module that will not load is
+		// "Type not found", one that loads without the sub-type is "does not define type".
+		var md:Null<hxc.core.Type.ModuleDef> = null;
+		try md = ModuleLoader.loadModule(ctx, {pack: [], name: tname}, p)
+		catch (e:hxc.context.Context.ContextError) return {msg: e.message, pos: e.pos, depth: e.depth};
+		if (md == null)
+			return {msg: "Module " + tname + " does not define type " + tsub, pos: p, depth: 0};
+		return subTypeError(ctx, md, tsub, p);
+	}
+
+	/**
+	    A PRIVATE sub-type is reachable from its own module - which is what a `using pack.Mod.Helper` inside
+	    Mod.hx relies on - and the two ways to miss have different messages. Returns null when the type is
+	    there.
+	**/
+	static function subTypeError(ctx:Context, md:hxc.core.Type.ModuleDef, tname:String,
+			p:Position):Null<{msg:String, pos:Position, depth:Int}> {
+		for (mt in md.types) {
+			var ti = TypeFunctions.tInfos(mt);
+			if (ti.path.name != tname) continue;
+			if (ti.isPrivate && ctx.currentModule != ti.module)
+				return {msg: "Cannot access private type " + tname + " in module " + Context.sTypePath(md.path),
+					pos: p, depth: 0};
+			return null;
+		}
+		return {msg: "Module " + Context.sTypePath(md.path) + " does not define type " + tname, pos: p, depth: 0};
 	}
 
 	static function isUpper(s:String):Bool {
