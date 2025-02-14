@@ -405,6 +405,10 @@ class Typeload {
 			var pf = f.cffName.pos;
 			if (fields.exists(n)) throw new ContextError("Duplicate field declaration : " + n, pf);
 
+			// A structure field called `new` predates haxe.Constraints.Constructible and is on its way out.
+			if (n == "new")
+				ctx.warning(hxc.core.WarningList.Warning.WDeprecated, hxc.core.WarningList.fromMeta(f.cffMeta),
+					"Structures with new are deprecated, use haxe.Constraints.Constructible instead", f.cffPos);
 			// `p` is the field's position for the whole body of this loop, so a complaint points at the
 			// field, not at the enclosing structure.
 			var p = f.cffPos;
@@ -1322,6 +1326,17 @@ class Typeload {
 		];
 		cg.meta = [{name: ":noDoc", params: [], pos: Position.nullPos}]
 			.concat([for (m in c.meta) if (carried.indexOf(m.name) >= 0) m]);
+		// A generic class is copied per type argument, so anything that exists once cannot come along: an
+		// __init__ block, or any static field. A macro method is the one exception, and only outside the
+		// macro context, where it is never called.
+		if (c.init != null) throw new TypingError("This class can't be generic", p);
+		for (cf in c.orderedStatics) {
+			// The reference lifts __init__ out of the statics into init, so its list never
+			// contains one; hxc keeps it as a static, and it is covered by the check above.
+			if (cf.name == "__init__") continue;
+			if (cf.kind.match(Method(MethMacro)) && !ctx.isMacro) continue;
+			throw new TypingError("A generic class can't have static fields", cf.pos);
+		}
 		cg.kind = KGenericInstance(c, params);
 		cg.flags = c.flags;
 		cg.usings = c.usings;
