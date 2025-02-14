@@ -565,7 +565,14 @@ class Compiler {
 					ctx.defines.rawDefine("no_inline");
 					deprecations.push("--no-inline has been deprecated, use -D no-inline instead");
 				case "--dce" | "-dce":
-					ctx.defines.rawDefineValue("dce", argValue(args, i++, a));
+					// The mode is validated where the argument is read, so a bad one is a command-line error
+					// rather than something the DCE filter discovers later.
+					var dceMode = argValue(args, i++, a);
+					switch (dceMode) {
+						case "std" | "full" | "no":
+						case _: throw "Invalid DCE mode, expected std | full | no";
+					}
+					ctx.defines.rawDefineValue("dce", dceMode);
 				case "-java" | "--java":
 					// No generator, but the deprecated --java + -D jvm spelling still warns after the
 					// arguments are known.
@@ -630,6 +637,9 @@ class Compiler {
 					var wpos = new Position("-w " + spec, 0, 0);
 					ctx.warningOptions.unshift(hxc.core.WarningList.parseOptions(spec, wpos));
 				case _:
+					// An unrecognised argument is an error, reported with the message below. Falling
+					// through in silence would let a typo'd flag look like it had been honoured.
+					if (StringTools.startsWith(a, "-")) throw "unknown option '" + a + "'";
 					// A bare uppercase argument is a compilation root (never the startup class: only -main
 					// sets that); a bare lowercase argument includes the package.
 					if (!StringTools.startsWith(a, "-")) {
@@ -3278,6 +3288,11 @@ class Compiler {
 		var file = parts[0];
 		var name = parts.length == 1 ? file : parts[1];
 		if (ctx.resources.exists(name)) throw "Duplicate resource name " + name;
-		ctx.addResource(name, sys.io.File.getBytes(file));
+		// A read failure becomes a message that names the file; letting the underlying error out would
+		// print the raw exception value.
+		// The failure is reported PLAIN (ArgFailure); a String thrown here would take the bad-argument
+		// shape instead and come out as `: <msg>.`
+		var bytes = try sys.io.File.getBytes(file) catch (_:Dynamic) throw new ArgFailure("Resource file not found: " + file);
+		ctx.addResource(name, bytes);
 	}
 }

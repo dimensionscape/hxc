@@ -1155,7 +1155,21 @@ class EvalMacro {
 			// Every position inside an init-macro expression is the one "--macro <expr>" position with min
 			// -1 (printed "(unknown)"): a non-inline parse flattens sub-positions to p.
 			var macroPos = new Position("--macro " + s, -1, -1);
-			var e = hxc.parser.Parser.parseExprString(s, macroPos.file, com.defines);
+			// The trailing-semicolon check sits inside the same try as the parse, so both failures record
+			// "Could not parse `<e>`" first and then report themselves - two lines, both at the macro
+			// position. The failure is re-thrown as a TypingError so it travels the normal message path; a
+			// raw ParserError would print nothing but "Error: ParserError".
+			var e:Expr = null;
+			try {
+				if (StringTools.endsWith(s, ";")) throw new TypingError("Unexpected ;", macroPos);
+				e = hxc.parser.Parser.parseExprString(s, macroPos.file, com.defines);
+			} catch (te:TypingError) {
+				com.addDiagnostic("Could not parse `" + s + "`", macroPos);
+				throw new TypingError(te.message, macroPos);
+			} catch (pe:hxc.parser.ParserError) {
+				com.addDiagnostic("Could not parse `" + s + "`", macroPos);
+				throw new TypingError(hxc.parser.ParserError.errorMsg(pe.msg), macroPos);
+			}
 			function flatten(e2:Expr):Expr {
 				var m = Ast.mapExpr(flatten, e2);
 				return new Expr(m.expr, macroPos);
