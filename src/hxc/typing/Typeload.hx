@@ -405,9 +405,18 @@ class Typeload {
 			var pf = f.cffName.pos;
 			if (fields.exists(n)) throw new ContextError("Duplicate field declaration : " + n, pf);
 
+			// `p` is the field's position for the whole body of this loop, so a complaint points at the
+			// field, not at the enclosing structure.
+			var p = f.cffPos;
+
 			function topt(t:Null<TypeHint>):T {
 				if (t == null) throw new ContextError("Explicit type required for field " + n, p);
 				return loadComplexType(ctx, typeParams, t, allowDisplay);
+			}
+			// noExpr: a structure describes a SHAPE, so nothing in it may carry a value:
+			// not a field initialiser, not a method body, not an argument default.
+			function noExpr(e:Null<Expr>):Void {
+				if (e != null) throw new ContextError("Expression not allowed here", e.pos);
 			}
 
 			var pub = true;
@@ -418,30 +427,35 @@ class Typeload {
 				case APrivate: pub = false;
 				case ADynamic if (switch (f.cffKind) { case FFun(_): true; case _: false; }): dyn = true;
 				case AFinal: isFinal = true;
-				case other: throw new ContextError("Invalid access " + Std.string(other), p);
+				// The message prints the ACCESS KEYWORD (Ast.sAccess), not the enum constructor name.
+				case other: throw new ContextError("Invalid access " + hxc.ast.Ast.sAccess(other), p);
 			}
 
 			var t:T;
 			var access:FieldKind;
 			var params:TypeParams = [];
 			switch (f.cffKind) {
-				case FVar(th, _) if (isFinal):
+				// The FINAL arm comes first, so `final a:Void` is never reached by the Void
+				// check below.
+				case FVar(th, e) if (isFinal):
+					noExpr(e);
 					if (th == null) throw new ContextError("Type required for structure property", p);
 					t = loadComplexType(ctx, typeParams, th, allowDisplay);
 					access = Var({read: AccNormal, write: AccNever});
-				case FVar(th, _):
-					// Reject an explicit Void field type.
-					switch (th) {
-						case {ct: CTPath(tp)} if (tp.tpackage.length == 0 && tp.tname == "Void"):
-							throw new ContextError("Fields of type Void are not allowed in structures", p);
-						case _:
-					}
+				// One arm covers both a Void variable and a Void property.
+				case FVar({ct: CTPath(tp)}, _) | FProp(_, _, {ct: CTPath(tp)}, _)
+					if (tp.tpackage.length == 0 && tp.tname == "Void"):
+					throw new ContextError("Fields of type Void are not allowed in structures", p);
+				case FVar(th, e):
+					noExpr(e);
 					t = topt(th);
 					access = Var({read: AccNormal, write: AccNormal});
 				case FFun(fd):
 					// Function field: TFun(args, ret) from hints (subset: no type-param scope
 					// extension for method-local params, annotations only).
 					if (fd.fParams.length > 0) params = typeTypeParams(ctx, {pack: [], name: n}, fd.fParams, typeParams);
+					noExpr(fd.fExpr);
+					for (fa in fd.fArgs) noExpr(fa.value);
 					var localTypeParams = params.length > 0 ? params.concat(typeParams) : typeParams;
 					function ftopt(th:Null<TypeHint>):T {
 						if (th != null) return loadComplexType(ctx, localTypeParams, th);
@@ -453,7 +467,8 @@ class Typeload {
 					var fargs:Array<TSignatureArg> = [for (fa in fd.fArgs) {name: fa.name.name, opt: fa.opt, t: ftopt(fa.type)}];
 					t = TFun({args: fargs, ret: ftopt(fd.fType)});
 					access = Method(dyn ? MethDynamic : MethNormal);
-				case FProp(get, set, th, _):
+				case FProp(get, set, th, e):
+					noExpr(e);
 					function acc(m:PlacedName, isGet:Bool):VarAccess {
 						return switch (m.name) {
 							case "null": AccNo;

@@ -1043,6 +1043,10 @@ class Parser {
 	}
 
 	function parseFunctionTypeNext(tl:Array<TypeHint>, p1:Position):TypeHint {
+		// The arrow is a pattern element at the first position of its own alternative, so a missing one
+		// is an empty non-soft error - `Unexpected =`, not `Expected ->`. `(a:T)` with nothing after it
+		// is only ever the start of a function type, which is why there is no other arm to fall to.
+		if (!tokEq(peek(), Arrow)) serror();
 		var pa = expect(Arrow);
 		var tret = missingTypeAtCursor(pa, function() return parseComplexTypeInner(false));
 		return {ct: CTFunction(tl, tret), pos: Position.union(p1, tret.pos)};
