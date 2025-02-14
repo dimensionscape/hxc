@@ -4324,7 +4324,7 @@ class Typer {
 			if (ctx.com.moduleLut.exists(hxc.context.Context.pathKey({pack: pack, name: name})))
 				throw new TypingError("Module " + hxc.core.Globals.sTypePath({pack: pack, name: name})
 					+ " does not define type " + (sub != null ? sub : name), pName);
-			throw new TypingError("Type not found : " + hxc.core.Globals.sTypePath({pack: pack, name: name}), pName);
+			throw new hxc.core.TypingError.ModuleNotFoundError("Type not found : " + hxc.core.Globals.sTypePath({pack: pack, name: name}), pName);
 		}
 		if (rest.length > 0) {
 			// A module-level static wins over a same-named static of the module's main

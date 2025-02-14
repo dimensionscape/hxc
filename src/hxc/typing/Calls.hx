@@ -310,14 +310,30 @@ class Calls {
 		var skipped:Array<{name:String, msg:String, pos:Position, depth:Int}> = [];
 		// Annotate the argument's error with the parameter name; the have/want rendering drops the
 		// trailing annotation.
-		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int):TypingError {
+		/**
+		 * The decision is by error KIND, not by message text: every error except a call error or a
+		 * module-not-found one picks up the annotation, as what becomes a WithTypeError. Those two kinds
+		 * describe the call or an unresolved path, neither of which is an argument failing to unify, and
+		 * describing them as one reads wrong.
+		 *
+		 * `src` is the original exception where one is available, so the kind can be asked for
+		 * directly; the string list below it is what remains, and every entry is a case hxc raises inside
+		 * this wrapper although it belongs outside - see the note on each. They are compensations for
+		 * hxc's eager evaluation, not part of the rule.
+		 */
+		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int, ?src:TypingError):TypingError {
+			if (src != null && (Std.isOfType(src, hxc.core.TypingError.CallError)
+				|| Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError)))
+				return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
-			// A call error from typing the argument itself is not an argument-unification failure; it
-			// reports plain. (handle_errors keeps Call_error out of WithTypeError).
+			// Call_error reaching here from a nested call that hxc typed eagerly.
 			if (StringTools.startsWith(msg, "Not enough arguments") || StringTools.startsWith(msg, "Too many arguments")) return new TypingError(msg, pos, depth);
+			// Raised by the multi-type resolution, which hxc runs here rather than later.
 			if (StringTools.startsWith(msg, "Type parameters of multi type abstracts must be known")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
+			// A field failure describes the receiver, not the argument slot it sits in.
 			if (msg.indexOf(" has no field ") >= 0) return new TypingError(msg, pos, depth);
+			// Already annotated by an inner call; annotating twice stutters.
 			if (msg.indexOf("For function argument '") >= 0) return new TypingError(msg, pos, depth);
 			return new TypingError(msg + "\nFor " + (opt ? "optional " : "") + "function argument '" + name + "'", pos, depth);
 		}
@@ -399,7 +415,7 @@ class Calls {
 						if (ctx.com.platformConfig.supportsRestArgs) return [];
 						return [typeAgainst(a.name, a.t, new Expr(EArrayDecl([]), callp))];
 					}
-					if (!a.opt) throw new TypingError("Not enough arguments, expected " + [for (x in args.slice(k)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
+					if (!a.opt) throw new hxc.core.TypingError.CallError("Not enough arguments, expected " + [for (x in args.slice(k)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
 					var rest = tailLoop(k + 1);
 					var pi = makePosInfosArg(ctx, a.t, callp);
 					if (rest.length == 0 && !ctx.com.platformConfig.padNulls)
@@ -418,7 +434,7 @@ class Calls {
 				if (hxc.parser.Parser.displayFile != null && ctx.com.displaySpec != null
 					&& ctx.com.displaySpec.indexOf("@diagnostics") < 0)
 					for (k in ei...el.length) try Typer.typeExpr(ctx, el[k], WithTypeTools.value) catch (_:TypingError) {};
-				throw new TypingError("Too many arguments", el[ei].pos);
+				throw new hxc.core.TypingError.CallError("Too many arguments", el[ei].pos);
 			} else {
 				var a = args[ai];
 				// Optional-argument skipping: if the value does not fit this optional parameter but more
@@ -435,7 +451,7 @@ class Calls {
 						// Report the first skipped parameter's own error, not this one.
 						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
 					} else {
-						throw argError(err.message, a.name, a.opt, err.pos, err.depth);
+						throw argError(err.message, a.name, a.opt, err.pos, err.depth, err);
 					}
 				}
 				if (skip) {
