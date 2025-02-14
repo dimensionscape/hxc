@@ -1004,7 +1004,7 @@ class EvalMacro {
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-					var result = resolveMacroFn(ec, callee, callExpr.pos)(values);
+					var result = resolveMacroFn(ec, callee, entry.pos)(values);
 					result;
 				case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
 			};
@@ -1107,9 +1107,13 @@ class EvalMacro {
 				case _:
 			}
 		}
-		if (proto == null) throw new TypingError("@:build macro class not loaded: " + t.name, p);
+		// Both failures report at the METADATA (`p`), not at the call expression inside it.
+		if (proto == null)
+			throw new TypingError("Type not found : " + hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}), p);
 		var idx = proto.pnames.get(EvalHash.hash(t.method));
-		if (idx == null) throw new TypingError("@:build macro not found: " + t.method, p);
+		if (idx == null)
+			throw new TypingError("Method " + t.method + " not found on class "
+				+ hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}), p);
 		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
 	}
 
