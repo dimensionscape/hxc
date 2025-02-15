@@ -386,6 +386,17 @@ class TypeFields {
 		}
 	}
 
+	/**
+	    Every field of a @:coreType abstract may go without an expression: each is a declaration the target
+	    implements natively.
+	*/
+	static function isCoreTypeAbstractField(c:TClass):Bool {
+		return switch (c.kind) {
+			case KAbstractImpl(a): TypeFunctions.hasMeta(":coreType", a.meta);
+			case _: false;
+		};
+	}
+
 	static function hasFieldBody(cff:ClassField):Bool {
 		return switch (cff.cffKind) {
 			case FVar(_, eo) | FProp(_, _, _, eo): eo != null;
@@ -540,9 +551,37 @@ class TypeFields {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fforce] no decl for " + c.path.name + "." + cf.name);
 			return;
 		}
-		if (!hasFieldBody(cff)) return;
 		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
-		if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && !isInlineField && cf.name != "__init__") return;
+		// The bind rule - whether this field's body is typed at all:
+		// ((not (class extern || field extern) || inline) && not abstract-method && not interface)
+		// || it is __init__
+		var isExternish = TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
+		var isAbstractMethod = false;
+		for (a in cff.cffAccess) if (a.access == AAbstract) isAbstractMethod = true;
+		var doBind = (((!isExternish || isInlineField) && !isAbstractMethod && !TypeFunctions.hasClassFlag(c, CInterface))
+			|| cf.name == "__init__");
+		if (!hasFieldBody(cff)) {
+			// A method that requires binding but has no body is an error. The check must follow all binding
+			// exclusions:
+			// - Externs, interface methods, and abstract methods are not bound.
+			// - Abstract checks exempt a @:multiType _new and bodyless fields allowed by allowsNoExpr.
+			// @:coreType defaults to allowing them; its later @:noExpr tag is not yet available here.
+			// Non-coreType bodyless fields are removed before this pass.
+			// - Host-context macro fields bind in the macro world, whose #if macro branch contains their
+			// bodies.
+			// For display requests, treat the missing body as an empty block so typing can answer.
+			if (doBind && cff.cffKind.match(FFun(_))
+				&& !isCoreTypeAbstractField(c)
+				&& !skipMacroBodyInHost(ctx, cf)
+				&& !ctx.ignoreError()) {
+				var isMemberOfAbstractClass = TypeFunctions.hasClassFlag(c, CAbstract)
+					&& !TypeFunctions.hasClassFieldFlag(cf, CfStatic) && cf.name != "__init__";
+				throw new hxc.core.TypingError(isMemberOfAbstractClass
+					? "Function body or abstract modifier required" : "Function body required", cff.cffPos);
+			}
+			return;
+		}
+		if (!doBind) return;
 		if (skipMacroBodyInHost(ctx, cf)) return;
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var isStatic = false;
