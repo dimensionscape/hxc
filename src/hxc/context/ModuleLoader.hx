@@ -568,6 +568,9 @@ class ModuleLoader {
 						c.kind = KGenericBuild(d.dData);
 					} else if (TypeFunctions.hasMeta(":generic", c.meta) && c.params.length > 0)
 						c.kind = KGeneric;
+					// Identify haxe.macro.MacroType by path after metadata kinds so KMacroType takes precedence.
+					if (path.name == "MacroType" && path.pack.length == 2 && path.pack[0] == "haxe" && path.pack[1] == "macro")
+						c.kind = KMacroType;
 					// Register field shells before resolving their types and bodies.
 					registerFields(c, d.dData, ctx);
 					decls.push(TClassDecl(c));

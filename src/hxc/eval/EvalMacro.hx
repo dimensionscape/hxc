@@ -2420,6 +2420,61 @@ class EvalMacro {
 		}
 	}
 
+	// haxe.macro.MacroType<[Cls.method(args)]> runs the macro and becomes the type it returns. The call
+	// arrives as the KExpr class the instance load makes for a TPExpr parameter, bracketed or bare.
+	public static function runMacroType(com:Context, params:TParams, p:Position, ?callerTypeParams:TypeParams):T {
+		var callExpr:Null<Expr> = switch (params) {
+			case [TInst({kind: KExpr(e)}, _)]:
+				switch (e.expr) {
+					case ECall(_, _): e;
+					case EArrayDecl([e1]): switch (e1.expr) { case ECall(_, _): e1; case _: null; };
+					case _: null;
+				}
+			case _: null;
+		};
+		if (callExpr == null) throw new TypingError("MacroType requires a single expression call parameter", p);
+		var callee = switch (callExpr.expr) { case ECall(c, _): c; case _: null; };
+		// Flattens the callee to (path, field). Its own failure is "Invalid macro call". A BARE ident
+		// resolved through curclass/module_globals is not reachable here: hxc loads the instance without
+		// a typer context to look either up in.
+		var target = callee == null ? null : macroTarget(callee);
+		if (target == null) throw new TypingError("Invalid macro call", p);
+		loadMacroClass(com, {pack: target.pack, name: target.module}, target.method);
+		var ec = getContext(com);
+		var savedTctx = curTctx;
+		var savedPos = curPos;
+		try {
+			var tctx = new TyperContext(com);
+			// A type-building macro runs in the CALLER's context untouched, so a type param of
+			// the enclosing declaration still resolves inside Context.resolveType.
+			tctx.typeParams = callerTypeParams != null ? callerTypeParams : [];
+			curTctx = tctx;
+			// Context.currentPos() is the INSTANTIATION position: the position of the type instance
+			// being loaded.
+			curPos = p;
+			var args = switch (callExpr.expr) { case ECall(_, a): a; case _: []; };
+			var cf = macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+			var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+			var values = macroArgs(ec, args, sig == null ? null : sig.args);
+			if (sig != null) while (values.length < sig.args.length) values.push(VNull);
+			var result = resolveMacroFn(ec, callee, p)(values);
+			// A macro that returns nothing leaves a fresh monomorph behind.
+			var ret:T = if (result == VNull) TypeFunctions.mkMono() else {
+				// A MacroType macro may return the legacy Type result as well as a ComplexType one; only a
+				// value that fails to decode as a ComplexType falls back to Type.
+				var ct:Null<ComplexType> = try decodeComplexType(ec, result, p) catch (e:TypingError) null;
+				ct != null ? hxc.typing.Typeload.loadComplexType(com, tctx.typeParams, {ct: ct, pos: p}) : decodeType(ec, result);
+			}
+			curTctx = savedTctx;
+			curPos = savedPos;
+			return ret;
+		} catch (e:haxe.Exception) {
+			curTctx = savedTctx;
+			curPos = savedPos;
+			throw e;
+		}
+	}
+
 	static function restElemType(t:T):Null<T> {
 		return switch (TypeFunctions.follow(t)) {
 			case TAbstract(a, params) if (params.length == 1 && a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest"): params[0];

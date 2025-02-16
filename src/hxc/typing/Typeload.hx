@@ -842,6 +842,9 @@ class Typeload {
 						TLazy(r);
 					case KGenericBuild(fields):
 						hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p, callerTypeParams);
+					case KMacroType:
+						// The instance is the macro's result, and the single parameter carries the call. .
+						hxc.eval.EvalMacro.runMacroType(ctx, params, p, callerTypeParams);
 					case _:
 						TInst(c, params);
 				}
