@@ -51,7 +51,8 @@ class TypeResolve {
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 				if (abortsOnDeclError(ctx)) break;
-			} catch (_:Dynamic) {
+			} catch (e:Dynamic) {
+				if (hxc.parser.ParserError.isParseFailure(e)) throw e;
 				ctx.currentModule = m;
 			}
 		}
@@ -443,7 +444,9 @@ class TypeResolve {
 				buildState.set(c, BUILDING);
 				var savedModule = ctx.currentModule;
 				if (c.module != null) ctx.currentModule = c.module;
-				try resolveClassFields(ctx, c, d, p) catch (_:Dynamic) {}
+				try resolveClassFields(ctx, c, d, p) catch (e:Dynamic) {
+					if (hxc.parser.ParserError.isParseFailure(e)) { ctx.currentModule = savedModule; throw e; }
+				}
 				ctx.currentModule = savedModule;
 				buildState.set(c, BUILT);
 				return true;

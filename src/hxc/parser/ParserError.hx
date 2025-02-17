@@ -38,6 +38,15 @@ class ParserError extends haxe.Exception {
 		this.soft = soft;
 	}
 
+	/**
+	    Loading a module type records a LOAD error and lets the compile carry on. A PARSE failure is a
+	    different exception and passes straight through every such recovery, ending the compile where
+	    it happened.
+	*/
+	public static function isParseFailure(e:Dynamic):Bool {
+		return Std.isOfType(e, ParserError) || Std.isOfType(e, LexerError);
+	}
+
 	public static function errorMsg(m:ParserErrorMsg):String {
 		return switch m {
 			case Unexpected(Kwd(k)): "Unexpected keyword \"" + Ast.sKeyword(k) + "\"";

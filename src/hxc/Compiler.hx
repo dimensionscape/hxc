@@ -855,6 +855,15 @@ class Compiler {
 			ctx.addDiagnostic(e.message, e.pos, e.depth);
 			flushPendingMessages(ctx);
 			exitRequest(1);
+		} catch (e:hxc.parser.LexerError) {
+			// The top-level handler wraps the whole compilation, init macros included, so a module an init
+			// macro pulls in reports its parse failure like any other one does. Without these two the
+			// failure would reach the outermost handler and print as "Error: ParserError".
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, hxc.parser.LexerError.errorMsg(e.msg), e.pos, 4);
+			abortWithMessage(ctx, hxc.parser.LexerError.errorMsg(e.msg), e.pos);
+		} catch (e:hxc.parser.ParserError) {
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos, 4);
+			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 		}
 
 		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=

@@ -196,6 +196,13 @@ class TypeFields {
 			for (cp in re.callPositions)
 				if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
 			ctx.addDiagnosticStack(stack);
+		} else if (Std.isOfType(e, hxc.parser.ParserError) || Std.isOfType(e, hxc.parser.LexerError)) {
+			// A PARSE failure in a module this field reached is not a field error: an `Error` is recorded
+			// and typing carries on, and anything else passes straight through and ends the compile where
+			// it happened (the same rule the import arm in ImportCheck follows). Counting it as an
+			// unresolved field would drop the message and leave the consequential "found Unknown<0>" as the
+			// only thing reported.
+			throw e;
 		} else if (Std.isOfType(e, haxe.Exception)) {
 			ctx.unresolvedFields++;
 		} else {
