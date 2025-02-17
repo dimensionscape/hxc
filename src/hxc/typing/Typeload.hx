@@ -127,30 +127,15 @@ class Typeload {
 				r.set(TypeFunctions.lazyAvailable(t));                     
 				ctx.currentModule = savedMod;
 				return t;
-			} catch (e:ContextError) {
-				// DEFER-WITH-NOTE: a constraint type that hxc cannot RESOLVE (a pre-existing import
-				// gap unrelated to Gap #8, notably SUB-TYPE imports like
-				// `import js.node.stream.Writable.IWritable;` used by hxnodejs `Readable.pipe<T:IWritable>`,
-				// regress the bootstrap on stdlib type params whose constraint type is unresolvable.
-				// Degrade gracefully to the prior behaviour (no constraint) so field access through
-				// extra constraint-driven lookups). Resolution-class errors only, real constraint
-				// problems (recursion, genuine unify failures) still propagate.
-				if (StringTools.startsWith(e.message, "Module not found")
-					|| StringTools.startsWith(e.message, "Type not found")) {
-					if (Sys.getEnv("HXC_DEBUG_CONSTRAINT") != null)
-						Sys.println("[cdegrade] " + n + " on " + Context.sTypePath(c.path) + ": " + e.message);
-					c.kind = KTypeParameter([]);
-					r.set(TypeFunctions.lazyAvailable(t));
-					ctx.currentModule = savedMod;
-					return t;
-				}
-				ctx.currentModule = savedMod;
-				throw e;
 			} catch (e:Dynamic) {
 				ctx.currentModule = savedMod;
 				throw e;
 			}
 		}));
+		// A protected lazy is forced at PForce by default, so the constraint load is scheduled whether or
+		// not anything ever uses the parameter. Without that a constraint naming a type that does not
+		// resolve is never forced, and the declaration compiles clean.
+		ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 

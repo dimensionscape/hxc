@@ -318,11 +318,10 @@ class Context {
 	// Clone configuration with separate module tables and macro defines so host modules remain
 	// unchanged.
 	public function cloneForMacro():Context {
-		// Replace target overlays with eval/_std before loading macro modules; target-specific bodies may
-		// use unavailable syntax.
-		var macroCp = [for (s in this.classPath)
-			if (this.stdPath.indexOf(s) < 0 && !StringTools.endsWith(StringTools.replace(s, "\\", "/"), "/_std/")) s];
-		macroCp = macroCp.concat([for (p in this.stdPath) p + "eval/_std/"]).concat(this.stdPath);
+		// Remove target overlays and prepend eval/_std before user and library paths. Otherwise libraries
+		// such as hxnodejs can supply incompatible macro-world sys modules.
+		var macroCp = [for (s in this.classPath) if (StringTools.replace(s, "\\", "/").indexOf("/_std/") < 0) s];
+		macroCp = [for (p in this.stdPath) p + "eval/_std/"].concat(macroCp);
 		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();
 		for (source in this.packageRemaps.keys()) c.packageRemaps.set(source, this.packageRemaps.get(source));
