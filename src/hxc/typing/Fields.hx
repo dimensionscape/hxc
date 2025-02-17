@@ -234,6 +234,17 @@ class Fields {
 					case FHAbstract(a, tl, c):
 						AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, tl, c, f, e, false, pfull));
 					case _:
+						// A method READ rather than called. A macro cannot be a value at all, and neither can a
+						// @:generic function. Both are recorded and the access is built anyway.
+						if (mode.match(MGet) && !m.match(MethInline)) {
+							if (m.match(MethMacro))
+								ctx.com.addDiagnostic("Macro functions must be called immediately", pfield);
+							else if (TypeFunctions.hasClassFieldFlag(f, CfGeneric))
+								ctx.com.addDiagnostic("Cannot create closure on generic function", pfield);
+						}
+						// And `super.f` read as a value rather than called.
+						if (fh.match(FHInstance(_, _)) && e.expr.match(TConst(TSuper)) && !mode.match(MCall(_)))
+							ctx.com.addDiagnostic("Cannot create closure on super method", pfield);
 						AKField(methodAccess());
 				}
 				case Var(vk):
@@ -1062,7 +1073,10 @@ class Fields {
 			for (param in meta.params) switch (param.expr) {
 				case EConst(CIdent(n)) if (n == i): return true;
 				case EConst(CString(n, _)) if (n == i): return true;
-				case _:
+				// The scan stops at the first name that matches, so an argument that is neither an identifier
+				// nor a string is only reported once an earlier one has not already answered.
+				case EConst(CIdent(_)) | EConst(CString(_, _)):
+				case _: throw new TypingError("Identifier or string expected as argument to @:forward", param.pos);
 			}
 			return false;
 		}

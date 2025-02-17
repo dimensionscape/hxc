@@ -4611,6 +4611,10 @@ class Typer {
 				// the definition position records here where the field is still known.
 				if (fa.isInline && displayDefinition && displayFound == null && atDisplayPos(fa.pos))
 					displayFound = [fa.field.namePos];
+				// A macro field turned into a value is an error, except under a display request, where the
+				// cursor is probably on the subject of a macro call.
+				if (fa.field.kind.match(Method(MethMacro)) && hxc.parser.Parser.displayFile == null)
+					throw new TypingError("Invalid macro access", fa.pos);
 				fa.isInline ? inlineRead(ctx, fa) : FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
 			// Under a display request the unreadable access still yields its own expression, so what the
 			// cursor is on can be reported.
@@ -5927,7 +5931,7 @@ class Typer {
 				// ranked against it rather than against nothing.
 				if (atDisplayPos(e.pos))
 					typeExpr(ctx, e, mapParams == null ? WithTypeTools.value : WithTypeTools.withType(tkey));
-				else throw new TypingError("Invalid map literal entry", e.pos);
+				else throw new TypingError("Expected a => b", e.pos);
 		}
 		if (mapParams == null) {
 			tkey = unifyMinRaise(ctx, keys);
