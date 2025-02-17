@@ -727,11 +727,29 @@ class Typeload {
 					case TPType(th): th.pos;
 					case TPExpr(e): e.pos;
 				};
+				// A CONSTANT is accepted only where the declaration asks for one (a parameter named Const,
+				// or one
+				// carrying @:const) or tolerates one (a parameter named Rest), and a parameter that asks
+				// for one
+				// takes nothing else. Both report over the whole path, not the parameter.
+				var declName = types[i2].name;
+				var checkConst = function(c2:TClass):Void {
+					var isExpression = switch (loaded) { case TInst({kind: KExpr(_)}, _): true; case _: false; };
+					var expectsExpression = declName == "Const" || TypeFunctions.hasMeta(":const", c2.meta);
+					if (isExpression) {
+						if (!expectsExpression && declName != "Rest")
+							throw new ContextError("Constant value unexpected here", p);
+					} else if (expectsExpression)
+						throw new ContextError("Type parameter is expected to be a constant value", p);
+				};
 				// Following the declaration param forces its constraint lazy; an unconstrained param of a
 				// non-generic type needs no check.
 				switch (TypeFunctions.follow(types[i2].type)) {
-					case TInst({kind: KTypeParameter([])}, []) if (!isGeneric):
-					case TInst(c2, []): checks.push({t: loaded, c: c2, p: pt});
+					case TInst(c2 = {kind: KTypeParameter([])}, []) if (!isGeneric):
+						checkConst(c2);
+					case TInst(c2, []):
+						checkConst(c2);
+						checks.push({t: loaded, c: c2, p: pt});
 					case _:
 				}
 				params.push(loaded);

@@ -4771,7 +4771,9 @@ class Typer {
 				}
 			case _: null;
 		};
-		if (target == null) return null;
+		// The `X.new` arm has no fallthrough. A receiver that is not a class type is this error, over the
+		// whole access and whatever the mode.
+		if (target == null) throw new TypingError("Binding new is only allowed on class types", p);
 		if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
 		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.c.path) + "()' instead", p);
 		hxc.eval.EvalMacro.ensureBuilt(ctx.com, target.c);
