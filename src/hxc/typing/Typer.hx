@@ -1353,7 +1353,7 @@ class Typer {
 				// the literal and types plainly.
 				// RAISED so the var-initializer recovery records it and no further unify runs.
 				if (scHit != null && scSig == null)
-					throw new TypingError(scHit.c.path.name + " does not have a constructor", p);
+					throw new TypingError(hxc.core.Globals.sTypePath(scHit.c.path) + " does not have a constructor", p);
 				if (scHit != null && scSig != null) {
 					// Type each provided field against its constructor-arg type in the object literal
 					// source order; build the call in the constructor declared arg order, hoisting a field
@@ -5461,6 +5461,10 @@ class Typer {
 		}
 	}
 
+	public static function ensureStructInitCtorFor(ctx:TyperContext, c:TClass):Void {
+		try ensureStructInitCtor(ctx, c) catch (_:Dynamic) {}
+	}
+
 	static function ensureStructInitCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (!TypeFunctions.hasMeta(":structInit", c.meta)) return;
@@ -5628,6 +5632,11 @@ class Typer {
 		return false;
 	}
 
+	// The missing-constructor error names the abstract, not the impl class that carries _new.
+	public static function noConstructorPath(c:TClass):hxc.core.Globals.Path {
+		return switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };
+	}
+
 	// Construct a value of the underlying type a @:forward.new abstract forwards to: a class via its
 	// constructor, an abstract via its _new impl, or a nested @:forward.new abstract by recursing on
 	// its underlying. .
@@ -5636,7 +5645,7 @@ class Typer {
 			case TInst(uc, upl):
 				hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
 				var ctorType = findConstructorType(ctx, uc, upl);
-				if (ctorType == null) throw new TypingError(uc.path.name + " does not have a constructor", p);
+				if (ctorType == null) throw new TypingError(hxc.core.Globals.sTypePath(uc.path) + " does not have a constructor", p);
 				var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
 				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				TypeFunctions.mk(TNew(uc, upl, r.el), TInst(uc, upl), p);
@@ -5697,7 +5706,7 @@ class Typer {
 					if (!isGenericParameter(ctx, c)) throw new TypingError("Only generic type parameters can be constructed", p);
 					var ctl = switch (c.kind) { case KTypeParameter(x): x; case _: []; };
 					switch (getConstructibleConstraint(ctx, ctl, p)) {
-						case null: throw new TypingError(c.path.name + " does not have a constructor", p);
+						case null: throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " does not have a constructor", p);
 						case cc:
 							var r = Calls.unifyCallArgs(ctx, el, cc.args, cc.ret, p);
 							TypeFunctions.mk(TNew(c, params, r.el), t, p);
@@ -5721,7 +5730,7 @@ class Typer {
 				// constructions.
 				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
 				var ctorTypes = findConstructorTypes(ctx, c, tl);
-				if (ctorTypes.length == 0) throw new TypingError(c.path.name + " does not have a constructor", p);
+				if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
 				if (c.constructor != null) Fields.checkConstructorAccess(ctx, c, c.constructor, p);
 				// Try each constructor signature, first success wins (overload retry).
 				var r:Dynamic = null;

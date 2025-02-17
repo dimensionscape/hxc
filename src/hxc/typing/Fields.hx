@@ -120,6 +120,10 @@ class Fields {
 	// Recorded (not raised) so typing continues; a missing constructor is left to the caller (a null
 	// constructor is handled there).
 	public static function checkConstructorAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
+		// A constructor the compiler wrote (@:structInit) is not one the source may call. It is recorded
+		// rather than raised, so the call goes on to report its arguments too.
+		if (TypeFunctions.hasMeta(":compilerGenerated", f.meta))
+			ctx.com.addDiagnostic(hxc.core.Globals.sTypePath(c.path) + " does not have a constructor", p);
 		if (!ctx.untypedMode && !(canAccess(ctx, c, f, true) || TypeFunctions.extendsClass(ctx.curclass, c))) {
 			// An abstract impl reports the abstract's path.
 			var path = switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };

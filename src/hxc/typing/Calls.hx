@@ -702,6 +702,12 @@ class Calls {
 		// typing drops the field assignment on a unification failure.
 		if (c.constructor != null && c.constructor.expr == null)
 			TypeFields.forceFieldBody(ctx.com, c, c.constructor);
+		// Super() on a compiler-written constructor is reported here too, and recorded rather than
+		// raised, so the arguments are still checked against it. The @:structInit one is materialized on
+		// demand in hxc, so ask for it before reading its meta.
+		Typer.ensureStructInitCtorFor(ctx, c);
+		if (c.constructor != null && TypeFunctions.hasMeta(":compilerGenerated", c.constructor.meta))
+			ctx.com.addDiagnostic(hxc.core.Globals.sTypePath(c.path) + " does not have a constructor", p);
 		// The super constructor resolves through overloads, trying every @:overload variant. Gather the
 		// constructor signatures (primary + overloads, walking up and applying the super's type
 		// params) and try each, first success wins (like typeNew's overload retry).

@@ -1583,7 +1583,7 @@ class ModuleLoader {
 		}
 		try {
 			var m = loadModule(ctx, path, p);
-			return findTypeInModule(m, tname, p);
+			return findTypeInModule(ctx, m, tname, p);
 		} catch (e:ContextError) {
 			// Bare unqualified type (empty pack, no sub) with no own `Name.hx`: it may be a sub-type of an
 			// implicitly-imported module. The core types in StdTypes (Void/Int/Float/Bool/Null/Dynamic/...)
@@ -1602,14 +1602,14 @@ class ModuleLoader {
 							var tryPack = cpack.slice(0, i);
 							var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
 							if (m != null) {
-								try { return findTypeInModule(m, tname, p); } catch (_:ContextError) {}
+								try { return findTypeInModule(ctx, m, tname, p); } catch (_:ContextError) {}
 							}
 							i--;
 						}
 					}
 					var std = loadModule(ctx, {pack: [], name: "StdTypes"}, p);
 					try {
-						return findTypeInModule(std, tname, p);
+						return findTypeInModule(ctx, std, tname, p);
 					} catch (_:ContextError) {
 						throw e; // Surface the original (more specific) error
 					}
@@ -1620,7 +1620,7 @@ class ModuleLoader {
 						var tryPack = pack.slice(0, i);
 						var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
 						if (m != null) {
-							try { return findTypeInModule(m, tname, p); } catch (_:ContextError) {}
+							try { return findTypeInModule(ctx, m, tname, p); } catch (_:ContextError) {}
 						}
 						i--;
 					}
@@ -1633,7 +1633,7 @@ class ModuleLoader {
 					var mpack = path.pack.slice(0, path.pack.length - 1);
 					var m = try loadModuleOpt(ctx, {pack: mpack, name: mname}, p) catch (_:ContextError) null;
 					if (m != null) {
-						try { return findTypeInModule(m, path.name, p); } catch (_:ContextError) {}
+						try { return findTypeInModule(ctx, m, path.name, p); } catch (_:ContextError) {}
 					}
 					throw e;
 				case _:
@@ -1642,15 +1642,18 @@ class ModuleLoader {
 		}
 	}
 
-	public static function findTypeInModule(m:ModuleDef, tname:String, p:Position):ModuleType {
+	// The first type of that name decides. Reaching a private one from outside its own module and
+	// finding none at all are two different errors, with two different wordings.
+	public static function findTypeInModule(ctx:Context, m:ModuleDef, tname:String, p:Position):ModuleType {
 		for (mt in m.types) {
 			var info = TypeFunctions.tInfos(mt);
-			if (info.path.name == tname && !info.isPrivate) return mt;
+			if (info.path.name != tname) continue;
+			if (ctx.currentModule != info.module && info.isPrivate)
+				throw new ContextError("Cannot access private type " + tname + " in module " + Context.sTypePath(m.path),
+					p, TypeNotFound({pack: m.path.pack, name: tname}));
+			return mt;
 		}
-		for (mt in m.types) {
-			if (TypeFunctions.tPath(mt).name == tname) return mt;
-		}
-		throw new ContextError("Type not found : " + tname + " in module " + Context.sTypePath(m.path),
+		throw new ContextError("Module " + Context.sTypePath(m.path) + " does not define type " + tname,
 			p, TypeNotFound({pack: m.path.pack, name: tname}));
 	}
 

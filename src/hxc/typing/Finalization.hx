@@ -34,17 +34,13 @@ class Finalization {
 		}
 		if (f == null) {
 			// The main type is the one named exactly like the module (never a scan for any class carrying a
-			// main). When the module defines no such type the raise renders as Not_defined, which propagates
-			// rather than degrading to "does not have static function main".
-			var t = try ModuleLoader.findTypeInModule(m, path.name, Position.nullPos) catch (_:ContextError)
-				throw new TypingError("Module " + Context.sTypePath(m.path) + " does not define type " + path.name, Position.nullPos);
+			// main), and its failure - private type, or the module not defining it - propagates rather than
+			// degrading to "does not have static function main". Only the missing `main` field is recovered.
+			var t = ModuleLoader.findTypeInModule(ctx, m, path.name, Position.nullPos);
 			switch (t) {
 				case null:
 				case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 					throw new TypingError("Invalid -main : " + Context.sTypePath(path) + " is not a class", Position.nullPos);
-				case TClassDecl(c2) if (c2.isPrivate):
-					// The main class resolves from outside its module. (Type_not_found Private_type).
-					throw new TypingError("Cannot access private type " + path.name + " in module " + Context.sTypePath(m.path), Position.nullPos);
 				case TClassDecl(c2):
 					errPos = c2.namePos;
 					var cf = c2.statics.get("main");
