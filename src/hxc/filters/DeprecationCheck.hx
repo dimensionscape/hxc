@@ -51,7 +51,13 @@ class DeprecationCheck {
 		for (entry in td.meta) if (entry.name == ":deprecated") {
 			var msg = switch (entry.params) {
 				case [{expr: EConst(CString(m, _))}]: m;
-				case _: "This typedef is deprecated in favor of " + hxc.core.TPrinting.sTypeStr(td.type);
+				case _:
+					// The typedef's TARGET. A forward reference from a field hint (`var v:T;` above
+					// `typedef T = {...}`) reaches the declaration before its own resolution has bound it,
+					// and the message then reads Unknown<0>.
+					if (TypeFunctions.follow(td.type).match(TMono(_)))
+						hxc.typing.TypeResolve.resolveTypeOnDemand(com, TTypeDecl(td));
+					"This typedef is deprecated in favor of " + hxc.core.TPrinting.sTypeStr(td.type);
 			};
 			warnDeprecation(com, [], [], msg, p);
 			return;
