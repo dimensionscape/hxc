@@ -1290,12 +1290,32 @@ class ModuleLoader {
 		return t;
 	}
 
+	// Use registration epochs to detect duplicate type names only within one compilation. Retain older
+	// macro-context entries for generic module lookup.
+	static function checkModuleTypes(ctx:Context, m:ModuleDef, mt:ModuleType):Void {
+		var key = Context.pathKey(TypeFunctions.tPath(mt));
+		var prev = ctx.typeToModule.get(key);
+		if (prev == null || ctx.typeToModuleEpoch.get(key) != ctx.compilationEpoch) return;
+		if (Context.pathKey(prev) == Context.pathKey(m.path)) return;
+		var mPrev = ctx.moduleLut.get(Context.pathKey(prev));
+		var hex1 = m.extra != null && m.extra.sign != null ? m.extra.sign : "";
+		var hex2 = mPrev != null && mPrev.extra != null && mPrev.extra.sign != null ? mPrev.extra.sign : "";
+		if (Context.sTypePath(prev).toLowerCase() == Context.sTypePath(m.path).toLowerCase())
+			throw new ContextError("Module " + Context.sTypePath(prev) + " is loaded with a different case than "
+				+ Context.sTypePath(m.path), Position.nullPos);
+		var s = hex1 == hex2 ? hex1 : "was " + hex2 + ", is " + hex1;
+		throw new ContextError("Type name " + Context.sTypePath(TypeFunctions.tPath(mt))
+			+ " is redefined from module " + Context.sTypePath(prev) + " (" + s + ")", Position.nullPos);
+	}
+
 	static function addModule(ctx:Context, m:ModuleDef):Void {
 		ctx.moduleLut.set(Context.pathKey(m.path), m);
 		ctx.modules.push(m);
 		for (mt in m.types) {
 			ctx.types.push(mt);
+			checkModuleTypes(ctx, m, mt);
 			ctx.typeToModule.set(Context.pathKey(TypeFunctions.tPath(mt)), m.path);
+			ctx.typeToModuleEpoch.set(Context.pathKey(TypeFunctions.tPath(mt)), ctx.compilationEpoch);
 		}
 	}
 
@@ -1376,7 +1396,9 @@ class ModuleLoader {
 		for (mt in added) {
 			m.types.push(mt);
 			ctx.types.push(mt);
+			checkModuleTypes(ctx, m, mt);
 			ctx.typeToModule.set(Context.pathKey(TypeFunctions.tPath(mt)), m.path);
+			ctx.typeToModuleEpoch.set(Context.pathKey(TypeFunctions.tPath(mt)), ctx.compilationEpoch);
 		}
 		return added;
 	}

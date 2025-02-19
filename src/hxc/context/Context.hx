@@ -86,6 +86,14 @@ class Context {
 	 */
 	public var typeToModule:StringMap<Path>;
 
+	/**
+	 * Track registration epochs to distinguish redefinitions from entries retained by a reused macro
+	 * context. Keep the map for generic module lookup.
+	 */
+	public var typeToModuleEpoch:StringMap<Int>;
+
+	public var compilationEpoch:Int = 0;
+
 	public var moduleNonexistentLut:StringMap<Bool>;
 
 	/** Registration order. */
@@ -278,6 +286,7 @@ class Context {
 		this.displaySpec = null;
 		this.moduleLut = new StringMap();
 		this.typeToModule = new StringMap();
+		this.typeToModuleEpoch = new StringMap();
 		this.moduleNonexistentLut = new StringMap();
 		this.modules = [];
 		this.types = [];

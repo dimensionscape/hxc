@@ -1631,6 +1631,10 @@ class EvalMacro {
 	static var pendingMacroReuse:Bool = false;
 
 	public static function resetPerRequest():Void {
+		// The macro context is reused across compilations, so its per-compilation registrations are told
+		// apart by EPOCH rather than cleared, which the generic lookups still need. The module
+		// redefinition check is what needs it.
+		if (macroCom != null) macroCom.compilationEpoch++;
 		pendingDisplayEvict = true;
 		pendingMacroReuse = true;
 		// The build macros a compilation ran are its own: a new request must run them again, since its
