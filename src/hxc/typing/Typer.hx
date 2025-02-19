@@ -4732,7 +4732,10 @@ class Typer {
 	// `T.new` is the constructor as a value: a function `(args) -> new T(args)`. Handles a class and a
 	// @:forward.new abstract (whose construction forwards to the underlying class).
 	static function constructorValue(ctx:TyperContext, e1:Expr, mode:AccessMode, p:Position):Null<AccessKind> {
-		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return null;
+		// The receiver types as a value and its failure stands: `Nope.new` is an unknown identifier, not
+		// a missing type. Swallowing it here would drop through to the dot-path resolver, which would
+		// answer about the path instead.
+		var te1 = typeExpr(ctx, e1, WithTypeTools.value);
 		// An abstract with its own constructor: `A.new` is a closure over the impl `_new` static.
 		switch (te1.expr) {
 			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && !TypeFunctions.hasMeta(":forward.new", a.meta) && a.impl.statics.exists("_new")):

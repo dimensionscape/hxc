@@ -331,8 +331,11 @@ class Calls {
 			// Raised by the multi-type resolution, which hxc runs here rather than later.
 			if (StringTools.startsWith(msg, "Type parameters of multi type abstracts must be known")) return new TypingError(msg, pos, depth);
 			if (StringTools.startsWith(msg, "Cannot use null as ternary condition")) return new TypingError(msg, pos, depth);
-			// A field failure describes the receiver, not the argument slot it sits in.
-			if (msg.indexOf(" has no field ") >= 0) return new TypingError(msg, pos, depth);
+			// A field failure raised while typing the argument EXPRESSION describes the receiver and never
+			// reaches the reference's arg_error at all, so it carries no annotation. One that is a SUB-LINE
+			// of a unify failure does: by error KIND, and Unify is among them. Testing the whole compound
+			// text for the phrase suppressed the annotation on those too.
+			if (msg.indexOf(" has no field ") >= 0 && msg.indexOf("\n") < 0) return new TypingError(msg, pos, depth);
 			// Already annotated by an inner call; annotating twice stutters.
 			if (msg.indexOf("For function argument '") >= 0) return new TypingError(msg, pos, depth);
 			return new TypingError(msg + "\nFor " + (opt ? "optional " : "") + "function argument '" + name + "'", pos, depth);
