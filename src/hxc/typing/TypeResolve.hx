@@ -497,6 +497,15 @@ class TypeResolve {
 					abstractTypeParams
 				else
 					c.params;
+				// @:generic exists to specialise per type argument, so a function with none of its own has
+				// nothing to specialise on. It is raised here, at the field's own position, so the error is
+				// recorded and the field dropped; raised at registration instead it ends the module and the
+				// second message, about the now-unknown name, never comes.
+				if (TypeFunctions.hasClassFieldFlag(target, CfGeneric)) switch (cff.cffKind) {
+					case FFun(fd) if (fd.fParams.length == 0):
+						throw new hxc.core.TypingError("Generic functions must have type parameters", cff.cffPos);
+					case _:
+				}
 				resolveFieldType(ctx, params, target, cff, c.module);
 				// A field-level @:require wins; a class-level one covers statics and the constructor.
 				var req = checkRequire(ctx, cff.cffMeta);
@@ -545,6 +554,23 @@ class TypeResolve {
 				// the cases a report is meant to survive.
 				ctx.unresolvedFields++;
 				throw e;
+			} catch (e:hxc.core.TypingError) {
+				// A Custom error raised at the field'S own position is recorded and the field is DROPPED, so
+				// the module keeps typing and a later use of that name reports for itself. Any other position
+				// or kind propagates and ends the module, which is what the declaration-error abort is for.
+				var own = e.pos != null && cff.cffPos != null && e.pos.file == cff.cffPos.file
+					&& e.pos.min == cff.cffPos.min && e.pos.max == cff.cffPos.max;
+				if (!own || cff.cffName.name == "new"
+					|| Std.isOfType(e, hxc.core.TypingError.ModuleNotFoundError)
+					|| Std.isOfType(e, hxc.core.TypingError.CallError)) throw e;
+				ctx.addDiagnostic(e.message, e.pos, e.depth);
+				if (isStatic) {
+					c.statics.remove(target.name);
+					c.orderedStatics.remove(target);
+				} else {
+					c.fields.remove(target.name);
+					c.orderedFields.remove(target);
+				}
 			}
 		}
 		linkPropertyAccessors(ctx, c, isAbsImpl);

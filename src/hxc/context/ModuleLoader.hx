@@ -961,13 +961,6 @@ class ModuleLoader {
 			if (TypeFunctions.hasMeta(":enum", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfEnum);
 			if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) {
 				TypeFunctions.addClassFieldFlag(cf, CfGeneric);
-				// @:generic functions require their own type parameters; enclosing class parameters do not
-				// qualify.
-				switch (cff.cffKind) {
-					case FFun(fd) if (fd.fParams.length == 0):
-						throw new ContextError("Generic functions must have type parameters", cff.cffPos);
-					case _:
-				}
 			}
 			if (isExtern) TypeFunctions.addClassFieldFlag(cf, CfExtern);
 			if (isFinalField) TypeFunctions.addClassFieldFlag(cf, CfFinal);
