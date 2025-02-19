@@ -372,6 +372,12 @@ class ModuleLoader {
 						var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
 						ctx.delay(hxc.context.Context.PBuildModule, function() {
 							var mt = try ctx.getType(wpath, declPos, wsub) catch (_:Dynamic) return;
+							// Follow typedefs before static lookup; report types that still offer no statics.
+							switch (mt) {
+								case TTypeDecl(td):
+									try mt = TypeFunctions.moduleTypeOfType(TypeFunctions.follow(td.type)) catch (_:Dynamic) {}
+								case _:
+							}
 							inline function put(name:String) imports.globals.set(name,
 								{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
 							switch (mt) {
@@ -384,6 +390,7 @@ class ModuleLoader {
 									for (name in en.names)
 										if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta)) put(name);
 								case _:
+									ctx.addDiagnostic("No statics to import from this type", declPos);
 							}
 						});
 					}

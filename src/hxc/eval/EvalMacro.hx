@@ -1114,7 +1114,8 @@ class EvalMacro {
 		if (idx == null)
 			throw new TypingError("Method " + t.method + " not found on class "
 				+ hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}), p);
-		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Not a macro: " + t.method, p); };
+		// The resolved field has to BE a function.
+		return switch (proto.pfields[idx]) { case VFunction(f, _): f; case _: throw new TypingError("Macro call should be a method", p); };
 	}
 
 	// A typed constant argument reduced to its runtime value.
@@ -1315,7 +1316,13 @@ class EvalMacro {
 		var recursive = a[2] == VTrue;
 		var toTypes = a[3] == VTrue;
 		var toFields = a[4] == VTrue;
-		var e = hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines);
+		var e = try hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines)
+			// Only a parse failure is caught: hxc routes DISPLAY answers through exceptions too, and
+			// swallowing one of those would lose the request.
+			catch (e:Dynamic) {
+				if (!hxc.parser.ParserError.isParseFailure(e)) throw e;
+				throw new TypingError("Malformed metadata string", curPos);
+			};
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
 				com.globalMetadata.unshift({filter: filter == "" ? [] : filter.split("."), meta: m, recursive: recursive, toTypes: toTypes, toFields: toFields});
@@ -1332,7 +1339,13 @@ class EvalMacro {
 		var className = strOf(a[1]);
 		var field = a.length < 3 || a[2] == VNull ? null : strOf(a[2]);
 		var isStatic = a.length > 3 && a[3] == VTrue;
-		var e = hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines);
+		var e = try hxc.parser.Parser.parseExprString(metaSrc + " null", "--macro", com.defines)
+			// Only a parse failure is caught: hxc routes DISPLAY answers through exceptions too, and
+			// swallowing one of those would lose the request.
+			catch (e:Dynamic) {
+				if (!hxc.parser.ParserError.isParseFailure(e)) throw e;
+				throw new TypingError("Malformed metadata string", curPos);
+			};
 		var entries:Array<MetadataEntry> = [];
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
