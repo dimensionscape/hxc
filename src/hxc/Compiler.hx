@@ -462,9 +462,26 @@ class Compiler {
 		var helpUserDefines = false;
 		var helpUserMetas = false;
 		var helpTables = false;
+		// An argument that has already DONE its job (--version, the help tables, --cwd) leaves nothing to
+		// compile without that being a mistake, so the compile exits quietly instead of printing the usage
+		// screen.
+		var didSomething = false;
+		// A SECOND target is refused whatever it is. The targets hxc has no generator for still occupy the
+		// slot, so `-swf x -js y` is a "Multiple targets" error too.
+		var targetTaken = false;
+		// The usage-screen gate asks whether the compile roots are still only Std, and a few arguments add
+		// a root of their own: --php and the cppia define.
+		var namedARoot = false;
 		var platform:Platform = Cross;
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 		var javaOutSeen = false;
+		// A target may be chosen once. The second one is a failure, which prints as `Error: <msg>` at a
+		// null position.
+		inline function setPlatform(p:hxc.core.Globals.Platform):Void {
+			if (platform != Cross || targetTaken) throw new ArgFailure("Multiple targets");
+			targetTaken = true;
+			platform = p;
+		}
 		// Legacy flag deprecations queue during parsing and are emitted together once the arguments are
 		// processed, before -D no-deprecation-warnings disables them.
 		var deprecations:Array<String> = [];
@@ -516,36 +533,36 @@ class Compiler {
 					if (eq < 0) ctx.defines.rawDefine(StringTools.replace(kv, "-", "_"));
 					else ctx.defines.rawDefineValue(StringTools.replace(kv.substr(0, eq), "-", "_"), kv.substr(eq + 1));
 				case "--interp":
-					platform = Eval;
+					setPlatform(Eval);
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");                                   
 				case "-x":
 					// X <class>: interpret <class>, i.e. --interp plus a startup class. .
-					platform = Eval;
+					setPlatform(Eval);
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");
 					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
 				case "--run":
 					// Run <module> [args...]: like -x but the trailing arguments are the program's own argv, not
 					// compiler flags. (rewrites to `-x cl` with sys_args = rest).
-					platform = Eval;
+					setPlatform(Eval);
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");
 					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
 					i = args.length; // Remaining args belong to the interpreted program
 				case "-js" | "--js":
-					platform = Js;
+					setPlatform(Js);
 					targetDir = "js";
 					ctx.file = argValue(args, i++, a);
 				case "-cpp" | "--cpp":
-					platform = Cpp;
+					setPlatform(Cpp);
 					targetDir = "cpp";
 					ctx.file = argValue(args, i++, a);
 				case "-cppia" | "--cppia":
 					// Cppia is the cpp platform with the cppia define, and the output value is a file rather than
 					// a directory.
 					ctx.defines.rawDefine("cppia");
-					platform = Cpp;
+					setPlatform(Cpp);
 					targetDir = "cpp";
 					ctx.file = argValue(args, i++, a);
 				case "--macro":
@@ -577,26 +594,38 @@ class Compiler {
 					// No generator, but the deprecated --java + -D jvm spelling still warns after the
 					// arguments are known.
 					javaOutSeen = true;
-					i++;
+		// A target may be chosen once. The second one is a failure, which prints as `Error: <msg>` at a
+		// null position.
+		inline function setPlatform(p:hxc.core.Globals.Platform):Void {
+			if (platform != Cross || targetTaken) throw new ArgFailure("Multiple targets");
+			targetTaken = true;
+			platform = p;
+		}
 				case "-neko" | "--neko":
 					// No neko GENERATOR here, but the platform must still be set: it is set for every
 					// target and only OUTPUT is gated on --no-output, so typing, the filter pipeline and
 					// the analyzer all run and report. Leaving it Cross would skip every one of them and
 					// accept anything targeted at neko in silence.
-					platform = Neko;
+					setPlatform(Neko);
 					targetDir = "neko";
 					ctx.file = argValue(args, i++, a);
-				case "-php" | "--php" | "-swf" | "--swf" | "-as3" | "-cs" | "--cs"
+				case "-php" | "--php" | "-swf" | "--swf" | "-cs" | "--cs"
 					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
+					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
+					targetTaken = true;
+					// --php brings its own compile root (php.Boot), so the command line has named something even
+					// when nothing else did. hxc has no php generator and cannot type that root, so only the fact
+					// is recorded.
+					if (a == "-php" || a == "--php") namedARoot = true;
 					i++;
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
-					| "-java-lib-extern" | "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
+					| "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
 					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
@@ -610,23 +639,34 @@ class Compiler {
 						exitRequest(1);
 					}
 					Sys.setCwd(dir);
+					didSomething = true;
 				case "--cmd" | "-cmd":
 					cmds.push(unquote(argValue(args, i++, a)));
 				case "--version" | "-version":
 					// Recorded as an info message, not printed directly: macros can see and filter it through
 					// Context.getMessages.
 					ctx.addDiagnostic(Globals.sVersionFull, Position.nullPos, 0, MessageSeverity.Information);
+					didSomething = true;
+				// `--help` answers with the usage screen and nothing else.
+				case "--help" | "-help" | "-h":
+					Sys.stdout().writeString(hxc.compiler.Usage.help());
+					Sys.stdout().flush();
+					exitRequest(0);
 				case "--help-metas":
 					// MetaRegistry embeds meta.json verbatim, so the doc text is already here; only the
 					// internal entries are withheld.
 					printCompilerDocs(true);
 					helpTables = true;
+					didSomething = true;
 				case "--help-defines":
 					printCompilerDocs(false);
 					helpTables = true;
+					didSomething = true;
 				case "--help-user-defines":
+					didSomething = true;
 					helpUserDefines = true;
 				case "--help-user-metas":
+					didSomething = true;
 					helpUserMetas = true;
 				case "--no-output":
 					noOutput = true;
@@ -639,7 +679,24 @@ class Compiler {
 				case _:
 					// An unrecognised argument is an error, reported with the message below. Falling
 					// through in silence would let a typo'd flag look like it had been honoured.
-					if (StringTools.startsWith(a, "-")) throw "unknown option '" + a + "'";
+					if (StringTools.startsWith(a, "-")) {
+						// The name is read back out of the message with `[-A-Za-z]+`, so a trailing digit
+						// is not part of what is looked for, and the near misses are appended.
+						var name = "";
+						for (k in 0...a.length) {
+							var c = a.charCodeAt(k);
+							if (c == "-".code || (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)) name += a.charAt(k);
+							else break;
+						}
+						var hint = hxc.compiler.Usage.suggest(name);
+						// Arg frames a handler-raised Bad as `": " ^ msg ^ "."`, and appends the suggestion to that,
+						// so the period belongs after the first line rather than after the block. With one, the
+						// message is already framed.
+						if (hint != null) throw new ArgFailure(": unknown option '" + a + "'.
+Did you mean:
+" + (hint.length > 0 ? hint.substr(0, hint.length - 1) : ""));
+						throw "unknown option '" + a + "'";
+					}
 					// A bare uppercase argument is a compilation root (never the startup class: only -main
 					// sets that); a bare lowercase argument includes the package.
 					if (!StringTools.startsWith(a, "-")) {
@@ -665,11 +722,25 @@ class Compiler {
 			catch (msg:String) throw ": " + msg + ".";
 		}
 
+		// The cppia define on the cpp target adds cpp.cppia.HostClasses as a compile root, which is why
+		// `-cpp out -D cppia` alone is not an empty command line.
+		if (platform == Cpp && ctx.defines.rawDefined("cppia")) {
+			extraClasses.push("cpp.cppia.HostClasses");
+			namedARoot = true;
+		}
+
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
 		// works without a std. The accumulated messages (the -version info line) still print.
 		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
-			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && !helpTables && platform == Cross
+			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && !helpTables && !namedARoot
 			&& ctx.displaySpec == null) {
+			// The gate is "the compile roots are only Std and typing is not forced", and it does not look at
+			// the target - a bare target flag prints the usage screen and never loads the std it just added.
+			// An argument that already did its job exits quietly instead.
+			if (!didSomething) {
+				Sys.stdout().writeString(hxc.compiler.Usage.text());
+				Sys.stdout().flush();
+			}
 			flushPendingMessages(ctx);
 			return;
 		}
