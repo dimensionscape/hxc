@@ -594,13 +594,11 @@ class Compiler {
 					// No generator, but the deprecated --java + -D jvm spelling still warns after the
 					// arguments are known.
 					javaOutSeen = true;
-		// A target may be chosen once. The second one is a failure, which prints as `Error: <msg>` at a
-		// null position.
-		inline function setPlatform(p:hxc.core.Globals.Platform):Void {
-			if (platform != Cross || targetTaken) throw new ArgFailure("Multiple targets");
-			targetTaken = true;
-			platform = p;
-		}
+					// No java generator here, but the flag still occupies the target slot, so a second
+					// target is the same "Multiple targets" error.
+					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
+					targetTaken = true;
+					i++;
 				case "-neko" | "--neko":
 					// No neko GENERATOR here, but the platform must still be set: it is set for every
 					// target and only OUTPUT is gated on --no-output, so typing, the filter pipeline and
@@ -610,7 +608,7 @@ class Compiler {
 					targetDir = "neko";
 					ctx.file = argValue(args, i++, a);
 				case "-php" | "--php" | "-swf" | "--swf" | "-cs" | "--cs"
-					| "-jvm" | "--jvm" | "-python" | "--python" | "-lua" | "--lua"
+					| "--jvm" | "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
