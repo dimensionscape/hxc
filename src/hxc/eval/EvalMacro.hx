@@ -1002,6 +1002,17 @@ class EvalMacro {
 					var targetModule = targetPath == null ? null : com.typeToModule.get(Context.pathKey(targetPath));
 					var cf = target == null ? null : macroWorldField(targetPath, target.method, targetModule);
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
+					// The macro's DECLARED return is unified against what the mode expects, at the macro
+					// field's own position: Array<haxe.macro.Expr.Field> for a @:build. Without it a macro
+					// returning something else would fail later, or silently.
+					if (sig != null && cf != null) {
+						var fieldsT = try hxc.typing.Typeload.loadInstance(macroCom, [], 
+							{tpackage: [], tname: "Array", tsub: null, tparams: [TPType({ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tsub: "Field", tparams: []}), pos: cf.pos})]},
+							cf.pos, false) catch (_:Dynamic) null;
+						if (fieldsT != null) try hxc.core.TypeUnification.unifyDefault(sig.ret, fieldsT)
+							catch (ue:hxc.core.TypeUnification.UnifyError)
+								com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
+					}
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
 					var result = resolveMacroFn(ec, callee, entry.pos)(values);
