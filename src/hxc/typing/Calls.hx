@@ -166,14 +166,20 @@ class Calls {
 		}
 		var pt = Typer.spawnMonomorph(ctx, p);
 		var t = ctx.com.basic.tarray(pt);
+		// A receiver that is not indexable is a SOFT error outside call arguments, and it also cancels
+		// the index check, so typing goes on past the first of the expression's complaints.
+		var baseOk = true;
 		try {
 			TypeUnification.unifyDefault(effType, t);
 		} catch (_:UnifyError) {
 			// Untyped code swallows both failures
-			if (!ctx.untypedMode)
-				throw new TypingError("Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type), e1.pos);
+			if (!ctx.untypedMode) {
+				baseOk = false;
+				var msg = "Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type);
+				if (ctx.inCallArgs) throw new TypingError(msg, e1.pos) else ctx.com.addDiagnostic(msg, e1.pos);
+			}
 		}
-		try {
+		if (baseOk) try {
 			TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint);
 		} catch (_:UnifyError) {
 			if (!ctx.untypedMode)

@@ -590,7 +590,7 @@ class PatternMaker {
 		}
 		return null;
 	}
-	static function objectPatternFieldTypes(ctx:TyperContext, t:T):Null<{types:Map<String, T>, order:Array<String>, methods:Map<String, Bool>}> {
+	static function objectPatternFieldTypes(ctx:TyperContext, t:T, p:Position):Null<{types:Map<String, T>, order:Array<String>, methods:Map<String, Bool>}> {
 		var types = new Map<String, T>();
 		var methods = new Map<String, Bool>();
 		var order:Array<String> = [];
@@ -636,10 +636,14 @@ class PatternMaker {
 					}
 					if (TypeFunctions.hasMeta(":forward", a.meta)) {
 						var fwd = forwardFilter(a);
-						var inner = objectPatternFieldTypes(ctx, TypeFunctions.getUnderlyingType(a, tl));
+						var inner = objectPatternFieldTypes(ctx, TypeFunctions.getUnderlyingType(a, tl), p);
 						if (inner != null) for (name in inner.order) if (fwd == null || fwd.exists(name)) add(name, inner.types.get(name));
 					}
 				case _:
+					// A structure pattern needs a type whose fields can be enumerated. Answering "no fields"
+					// instead let the pattern go on to be matched field by field, so the first name written in it
+					// was reported as missing rather than the subject being reported as unmatchable.
+					throw new TypingError("Cannot field-match against " + hxc.core.TPrinting.sTypeStr(t), p);
 			}
 		}
 		collect(t);
@@ -807,7 +811,7 @@ class PatternMaker {
 				// Structure pattern: match named fields against the expected anon type. Fields the pattern
 				// omits are filled with wildcards so every structure pattern for the type carries the same
 				// field set (and arity) -- the matcher then treats them as one constructor. (record fill).
-				var fieldTypes = objectPatternFieldTypes(ctx, t);
+				var fieldTypes = objectPatternFieldTypes(ctx, t, p);
 				var mentioned = new Map<String, Expr>();
 				for (f in fields) mentioned.set(f.name, f.expr);
 				// The field order is the collect_fields visit order (already correct per type kind);
@@ -1373,11 +1377,19 @@ class DtCompile {
 					case _: [];
 				}
 			case ConArray(n):
-				// Builds each array-element access at the subject position (e.pos), not the per-element pattern
-				// position, so an element read shared across cases takes the array subject's line rather than
-				// the first pattern's.
-				var et = switch (TypeFunctions.follow(e.type)) { case TInst(_, [t]): t; case _: TypeFunctions.tDynamic; };
-				[for (i in 0...n) TypeFunctions.mk(TArray(e, TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos)), et, e.pos)];
+				// Each array-element access is built at the subject position (e.pos), not the per-element
+				// pattern position, so an element read shared across cases takes the array subject's line
+				// rather than the first pattern's.
+				// It goes through the ordinary array-access typing, so an @:arrayAccess abstract subject
+				// resolves through its accessor and a subject with no array access at all says so; reading
+				// the element type off TInst would build a TArray node over a receiver that cannot be
+				// indexed.
+				[
+					for (i in 0...n) {
+						var ei = TexprTools.makeInt(mctx.ctx.com.basic, i, e.pos);
+						Typer.accGet(mctx.ctx, Calls.arrayAccess(mctx.ctx, e, ei, MGet, e.pos));
+					}
+				];
 			case ConFields(fields):
 				// Each field extraction is positioned at the SUBJECT position (e.pos), not the per-field
 				// pattern position, so a field shared across cases takes the object subject's line rather
@@ -1509,14 +1521,32 @@ class DtCompile {
 		return {sigma: sigma, nullCases: nullCases};
 	}
 
-	static function checkCompatiblePatterns(subject:TExpr, sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>, casePos:Position}>):Void {
-		if (sigma.length == 0) return;
-		var kind = switch (TypeFunctions.follow(subject.type)) {
+	// The subject's switch kind alone (the constructor collection happens elsewhere). Bool and an enum
+	// abstract answer for themselves; any other abstract that is not @:coreType switches on what it
+	// stands for, which lets an abstract over Array take an array pattern.
+	static function subjectKind(t:T):String {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): "value";
+			case TAbstract(a, _) if (a.impl != null && a.isEnum): "value";
+			case TAbstract(a, pl) if (!TypeFunctions.hasMeta(":coreType", a.meta)): subjectKind(TypeFunctions.getUnderlyingType(a, pl));
 			case TInst(c, _) if (c.path.pack.length == 0 && c.path.name == "Array"): "length";
 			case TEnum(_, _): "enum";
-			case TDynamic(_) | TMono(_): switch (sigma[0].con.kind) { case ConArray(_): "length"; case ConEnum(_, _): "enum"; case _: "value"; };
-			case TAbstract(a, _) if (a.impl != null && a.isEnum): "value";
 			case _: "value";
+		};
+	}
+
+	static function checkCompatiblePatterns(subject:TExpr, sigma:Array<{con:Con, unguarded:Bool, argPositions:Array<Position>, casePos:Position}>):Void {
+		if (sigma.length == 0) return;
+		// The converter drops a switch whose single case is a structure pattern before asking what kind
+		// its subject is, so switch is never asked. A structure pattern over an abstract standing for an
+		// Array is the case that shows it: the subject reads as "length" while the constructor is
+		// ConFields.
+		if (sigma.length == 1 && sigma[0].con.kind.match(ConFields(_))) return;
+		var kind = switch (TypeFunctions.follow(subject.type)) {
+			// The switch kind is inferred from the first constructor when the subject type is still open;
+			// everything else reads the kind off the type itself.
+			case TDynamic(_) | TMono(_): switch (sigma[0].con.kind) { case ConArray(_): "length"; case ConEnum(_, _): "enum"; case _: "value"; };
+			case t2: subjectKind(t2);
 		};
 		for (s in sigma) switch [kind, s.con.kind] {
 			case ["length", ConArray(_)]:
