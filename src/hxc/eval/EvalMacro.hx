@@ -956,6 +956,11 @@ class EvalMacro {
 		// than at whatever was written inside it.
 		var callIsWellFormed = entry.params.length == 1 && entry.params[0].expr.match(ECall(_, _));
 		if (!callIsWellFormed) throw new TypingError("Invalid build parameters", entry.pos);
+		// A @:build on a type the MACRO context loads cannot run: the macro would have to be interpreted
+		// while it is itself being compiled. This is reached when the built type shares a module with the
+		// macro function that builds it.
+		if (com.isMacro)
+			throw new TypingError("You cannot use @:build inside a macro : make sure that your type is not used in macro", entry.pos);
 		var callExpr = entry.params[0];
 		// A macro path is split on "." and needs at least `Type.method`; a bare
 		// `foo()` has no type to look the method up on.

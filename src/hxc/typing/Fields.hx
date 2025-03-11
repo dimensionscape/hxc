@@ -484,7 +484,29 @@ class Fields {
 					}
 					if (constrained != null) constrained else {
 						var u = tryUsing(ctx, e, i, p);
-						if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
+						if (u != null) u else {
+							// The TInst fallback. It runs after the using extensions, so a matching extension still
+							// wins. A class declaring `implements Dynamic<T>` reads any unknown field at T; the
+							// declaration is inherited, so the walk continues up superClass.
+							var dynT:Null<T> = null;
+							var cur = c, curTl = tl;
+							while (cur != null) {
+								if (cur.dynamicType != null) {
+									dynT = TypeFunctions.applyParams(cur.params, curTl, cur.dynamicType);
+									break;
+								}
+								if (cur.superClass == null) break;
+								curTl = [for (st in cur.superClass.params) TypeFunctions.applyParams(cur.params, curTl, st)];
+								cur = cur.superClass.c;
+							}
+							if (dynT != null) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), dynT, p));
+							// Naming a static through an instance is its own message, and it is checked on the class the
+							// receiver has, not on the superclass the dynamic walk ended at.
+							else if (c.statics.exists(i))
+								throw new TypingError("Cannot access static field " + i + " from a class instance", pfield);
+							else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p))
+							else throw fieldNotFound(e.type, i, pfield);
+						}
 					}
 				}
 			case TAnon(a):

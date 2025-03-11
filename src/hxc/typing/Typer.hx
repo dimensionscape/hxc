@@ -733,7 +733,7 @@ class Typer {
 	// plus each single-argument @:from field whose monomorphized return matches the abstract strictly (a
 	// macro @:from degrades to Dynamic and fails this check, so it never leaks a Dynamic expectation).
 	// Duplicated params keep the probe from binding the real expected parameters.
-	static function getAbstractFroms(ctx:TyperContext, a:TAbstract, pl:Array<T>):Array<T> {
+	public static function getAbstractFroms(ctx:TyperContext, a:TAbstract, pl:Array<T>):Array<T> {
 		var acc:Array<T> = [for (t in a.from) TypeFunctions.applyParams(a.params, pl, t)];
 		for (fc in a.fromField) {
 			var f = fc.cf;

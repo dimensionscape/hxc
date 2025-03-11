@@ -6,6 +6,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.NotFound;
 import hxc.core.TypeUnification;
+import hxc.core.TPrinting;
 import hxc.core.Ref;
 import hxc.context.Context;
 import hxc.context.Context.ContextError;
@@ -1087,6 +1088,21 @@ class TypeResolve {
 			// registered, still falls back to the by-name lookup.
 			if (cf == null) cf = abstractImplField(c, fname);
 			if (cf == null) continue;
+			// The operand type the @:op and @:resolve checks compare against. A field declared without
+			// `static`
+			// in an abstract is an abstract member and its operand is the UNDERLYING type, because `this`
+			// has been prepended to the signature; a static one compares against the abstract itself.
+			var isStatic = false;
+			var isMacroField = false;
+			for (acc in cff.cffAccess) switch (acc.access) {
+				case AStatic: isStatic = true;
+				case AMacro: isMacroField = true;
+				case _:
+			}
+			var isAbstractMember = !isStatic;
+			var ta = TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]);
+			var tthis = (isAbstractMember || TypeFunctions.hasMeta(":to", cf.meta)) ? TypeFunctions.monomorphs(a.params, a.thisType) : a.thisType;
+			var targ = isAbstractMember ? tthis : ta;
 			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
 			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
 			// the field (loop cf.meta). starts set for a @:coreType abstract, and allow_no_expr() is called
@@ -1099,7 +1115,7 @@ class TypeResolve {
 			}
 			// @:resolve routes to the same read/write registration as @:op([EField]).
 			if (TypeFunctions.hasMeta(":resolve", cff.cffMeta)) {
-				registerResolveField(a, cf, cff, cf.pos);
+				registerResolveField(ctx, a, cf, cff, cf.pos, targ, isMacroField);
 				allowsNoExpr = true;
 			}
 			// The @:op meta survives transformAbstractField (it concats f.cffMeta), so read it off
@@ -1126,6 +1142,28 @@ class TypeResolve {
 						case ETernary(_, _, _):
 							throw new ContextError("Ternary overloading is not supported", cf.pos);
 						case EBinop(op, _, _):
+							// A binary operator overload must take the operand type on at least one side,
+							// and the ARITY that
+							// is wrong is reported differently for a member and a static, because the
+							// member signature carries
+							// the implicit `this`. A trailing optional PosInfos argument does not count
+							// toward the arity either
+							// way.
+							var leftEq = false, rightEq = false;
+							switch (TypeFunctions.follow(cf.type)) {
+								case TFun(sig) if (sig.args.length == 2
+									|| (sig.args.length == 3 && sig.args[2].opt && isPosInfos(sig.args[2].t))):
+									leftEq = TypeUnification.typeIseqDefault(targ, sig.args[0].t);
+									rightEq = TypeUnification.typeIseqDefault(targ, sig.args[1].t);
+								case _:
+									throw new ContextError(isAbstractMember ? "Member @:op functions must accept exactly one argument" : "Static @:op functions must accept exactly two arguments",
+										cf.pos);
+							}
+							if (!leftEq && !rightEq)
+								throw new ContextError("The left or right argument type must be " + TPrinting.sTypeStr(targ), cf.pos);
+							if (rightEq && TypeFunctions.hasMeta(":commutative", cf.meta))
+								throw new ContextError("Invalid metadata: @:commutative is only allowed if the right argument is not " + TPrinting.sTypeStr(targ),
+									cf.pos);
 							a.ops.push({op: op, cf: cf});
 							allowsNoExpr = true;
 						// `@:op(unop A)` / `@:op(A unop)`: register
@@ -1144,11 +1182,19 @@ class TypeResolve {
 						case EField(_, _, _):
 							// Reported at pos - the whole field - not at the @:op argument, so a duplicate points at the
 							// declaration.
-							registerResolveField(a, cf, cff, cf.pos);
+							registerResolveField(ctx, a, cf, cff, cf.pos, targ, isMacroField);
 							allowsNoExpr = true;
 						case _:
 					}
 				}
+			}
+			// A body-less function in an abstract cannot have its return type inferred from anything, so it
+			// must be written out. This precedes the @:noExpr tagging below and applies to every body-less
+			// function of the abstract, whether or not the metadata on it allows the missing body.
+			switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null && fd.fType == null):
+					throw new ContextError("Functions without expressions must have an explicit return type", cf.pos);
+				case _:
 			}
 			// A body-less function on such a field is a declaration only (the operation is performed
 			// natively): tag it @:noExpr and, unless the abstract is @:coreType, never add it to the
@@ -1198,19 +1244,31 @@ class TypeResolve {
 		} catch (_:NotFound) null;
 	}
 
-	static function registerResolveField(a:TAbstract, cf:TClassField, cff:ClassField, p:Position):Void {
+	static function registerResolveField(ctx:Context, a:TAbstract, cf:TClassField, cff:ClassField, p:Position, targ:T, isMacroField:Bool):Void {
 		// A resolve read is (this, String) and a write is (this, String, value); each may carry a trailing
 		// optional PosInfos argument (auto-filled at the call site), so only the leading count
-		// distinguishes them. is_empty_or_pos_infos on the tail.
+		// distinguishes
+		// them (isEmptyOrPosInfos on the tail).
+		// The two leading arguments are checked against the operand type and String, and a macro field is
+		// exempt because its arguments are Exprs.
+		function checkFun(t1:T, t2:T):Void {
+			if (isMacroField) return;
+			if (!TypeUnification.typeIseqDefault(targ, t1))
+				throw new ContextError("First argument type must be " + TPrinting.sTypeStr(targ), cf.pos);
+			if (!TypeUnification.typeIseqDefault(ctx.basic.tstring, t2))
+				throw new ContextError("Second argument type must be String", cf.pos);
+		}
 		switch (TypeFunctions.follow(cf.type)) {
 			case TFun(sig) if (sig.args.length >= 2 && isEmptyOrPosInfos(sig.args.slice(2))):
 				if (a.read != null) throw new ContextError("Multiple resolve-read methods are not supported", p);
+				checkFun(sig.args[0].t, sig.args[1].t);
 				a.read = cf;
 			case TFun(sig) if (sig.args.length >= 3 && isEmptyOrPosInfos(sig.args.slice(3))):
 				if (a.write != null) throw new ContextError("Multiple resolve-write methods are not supported", p);
+				checkFun(sig.args[0].t, sig.args[1].t);
 				a.write = cf;
 			case _:
-				throw new ContextError("Field type of resolve must be " + cff.cffName.name + " -> String -> T", p);
+				throw new ContextError("Field type of resolve must be " + TPrinting.sTypeStr(targ) + " -> String -> T", p);
 		}
 	}
 

@@ -654,6 +654,12 @@ class PatternMaker {
 		var ctx = pctx.ctx;
 		var p = e.pos;
 		var basic = ctx.com.basic;
+		// Fail: every arm that runs out of pattern shapes reports the same thing, and it reports the
+		// whole pattern the user wrote (fail closes over make's `e`), not the sub-expression the arm was
+		// looking at.
+		function fail():Dynamic {
+			throw new TypingError("Unrecognized pattern: " + hxc.ast.Printer.sExpr(e), p);
+		}
 		function hasStringInterpolation(s:String):Bool {
 			var i = 0;
 			while (i + 1 < s.length) {
@@ -748,7 +754,7 @@ class PatternMaker {
 					case EParenthesis(inner):
 						return make(pctx, toplevel, t, new Expr(EBinop(OpAssign, inner, e2), p));
 					case _:
-						throw new TypingError("Unrecognized pattern", p);
+						fail();
 				}
 			case EBinop(OpArrow, e1, e2):
 				// Extractor pattern `expr => subpattern`: bind `_` to the subject, type the extractor
@@ -774,8 +780,29 @@ class PatternMaker {
 				var pat = make(pctx, toplevel, te1.type, e2);
 				return {pat: PatExtractor(v, te1, pat), pos: p};
 			case EArrayDecl(el):
-				var et = switch (TypeFunctions.follow(t)) { case TInst(_, [x]): x; case _: TypeFunctions.tDynamic; };
-				PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
+				// An array pattern needs an Array (or Dynamic) subject. An abstract is followed through its
+				// @:from types, but only when exactly one applies, and a type already met on the way down is
+				// not re-entered. Anything else is not a pattern at all: taking Dynamic as the element type for
+				// any other subject would accept invalid patterns.
+				var seen:Array<T> = [];
+				function arrayPattern(t2:T):PatKind {
+					var ft = TypeFunctions.follow(t2);
+					return switch (ft) {
+						case TInst(c, [et]) if (c.path.pack.length == 0 && c.path.name == "Array"):
+							PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, et, e2)]);
+						case TDynamic(_):
+							PatConstructor(Constructor.make(ConArray(el.length), p), [for (e2 in el) make(pctx, false, ft, e2)]);
+						case TAbstract(a, tl) if (!Lambda.exists(seen, function(t3) return TypeUnification.shallowEq(ft, t3))):
+							switch (Typer.getAbstractFroms(ctx, a, tl)) {
+								case [t3]:
+									seen.push(ft);
+									arrayPattern(t3);
+								case _: fail();
+							}
+						case _: fail();
+					}
+				}
+				arrayPattern(t);
 			case EObjectDecl(fields):
 				// Structure pattern: match named fields against the expected anon type. Fields the pattern
 				// omits are filled with wildcards so every structure pattern for the type carries the same
@@ -815,7 +842,7 @@ class PatternMaker {
 							case TFun(sig):
 								var headTl = switch (TypeFunctions.follow(sig.ret)) {
 									case TEnum(_, tl): tl;
-									case _: throw new TypingError("This pattern is not yet ported", p);
+									case _: fail();
 								};
 								var declaredTl = switch (TypeFunctions.follow(ef.type)) {
 									case TFun(declared):
@@ -839,7 +866,7 @@ class PatternMaker {
 									case TFun(sig2):
 										unifyExpected(sig2.ret);
 										sig2.args;
-									case _: throw new TypingError("This pattern is not yet ported", p);
+									case _: fail();
 								};
 								// A single `_` argument matches every constructor argument; otherwise match
 								// positionally, filling omitted trailing optional args with wildcards.
@@ -855,9 +882,9 @@ class PatternMaker {
 								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
 								TypeParameterFrame.unapply(ef.params, monos);
 								PatConstructor(Constructor.make(ConEnum(en, ef), ec.pos), subs);
-							case _: throw new TypingError("This pattern is not yet ported", p);
+							case _: fail();
 						}
-					case _: throw new TypingError("This pattern is not yet ported", p);
+					case _: fail();
 				}
 			case EField(_, field, _):
 				// A qualified value pattern (Type.Const / Type.EnumCtor / static const) matches by value.
@@ -886,7 +913,7 @@ class PatternMaker {
 						// matchable constant; suggest near-miss values first.
 						reportPatternTypo(t, TypeFunctions.fieldName(fa), pctx, p);
 						throw new TypingError("Only inline or read-only (default, never) fields can be used as a pattern", p);
-					case _: throw new TypingError("This pattern is not yet ported", p);
+					case _: fail();
 				}
 			case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
 				// A stored typed expression re-enters the pattern as its syntax.
@@ -897,7 +924,7 @@ class PatternMaker {
 				}, ctx.com.storedTypedExprs.get(id));
 				return make(pctx, toplevel, t, Calls.texprToSyntax(ctx, te));
 			case _:
-				throw new TypingError("This pattern is not yet ported", p);
+				fail();
 		};
 		return {pat: kind, pos: p};
 	}
