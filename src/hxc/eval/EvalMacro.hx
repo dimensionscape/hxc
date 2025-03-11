@@ -31,6 +31,9 @@ class EvalMacro {
 	static var expectedTypeStack:Array<WithType> = [];
 	static var curBuildFields:EvalValue = VNull;
 	static var curBuildClass:Null<TClass> = null;
+	// Context.getLocalType answers the built type, which is not always a class: an enum build has no
+	// curBuildClass at all.
+	static var curBuildType:Null<T> = null;
 	static var curBuildParams:TParams = [];
 	static var currentCom:Null<Context> = null;
 	static var macroMessages:Array<EvalValue> = [];
@@ -501,7 +504,7 @@ class EvalMacro {
 			return null;
 		}
 		reg2("getLocalType", "get_local_type", function(a) {
-			if (curBuildClass != null) return encodeType(ec, TInst(curBuildClass, curBuildParams));
+			if (curBuildType != null) return encodeType(ec, curBuildType);
 			var c = localClass();
 			return c == null ? VNull : encodeType(ec, TInst(c, []));
 		});
@@ -948,10 +951,11 @@ class EvalMacro {
 		runBuildInner(com, c, entry);
 	}
 
-	static function runBuildInner(com:Context, c:TClass, entry:MetadataEntry):Void {
-		var declEntry = com.declOfType.get(Context.pathKey(c.path));
-		if (declEntry == null) return;
-		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
+	// The part that does not care what kind of type is being built: check the metadata shape, load the
+	// macro's own module, run it in MBuild mode and decode the Array<Field> it answers with. Null
+	// means the macro returned null, which the reference treats as "keep the fields you were given".
+	static function callBuildMacro(com:Context, entry:MetadataEntry, modul:ModuleDef, cls:Null<TClass>, selfType:T, params:TParams,
+			typeParams:TypeParams, fields:Array<ClassField>, namePos:Position):Null<Array<ClassField>> {
 		// The argument has to be exactly one call, and both complaints here point at the METADATA rather
 		// than at whatever was written inside it.
 		var callIsWellFormed = entry.params.length == 1 && entry.params[0].expr.match(ECall(_, _));
@@ -976,30 +980,38 @@ class EvalMacro {
 				if (t != null) {
 					var targetPath:hxc.core.Globals.Path = {pack: t.pack, name: t.name};
 					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, c.module);
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, modul);
 				}
 			case _:
 		}
 		var ec = getContext(com);
 		var savedBuildClass = curBuildClass;
+		var savedBuildType = curBuildType;
 		var savedBuildParams = curBuildParams;
 		var savedBuildFields = curBuildFields;
 		var savedTctx = curTctx;
 		var savedPos = curPos;
 		var savedMod = com.currentModule;
+		function restore():Void {
+			curBuildClass = savedBuildClass;
+			curBuildType = savedBuildType;
+			curBuildParams = savedBuildParams;
+			curBuildFields = savedBuildFields;
+		}
 		try {
 			var buildTctx = new TyperContext(com);
-			buildTctx.curclass = c;
-			buildTctx.typeParams = c.params;
-			buildTctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
-			com.currentModule = c.module;
+			if (cls != null) buildTctx.curclass = cls;
+			buildTctx.typeParams = typeParams;
+			buildTctx.tthis = selfType;
+			com.currentModule = modul;
 			curTctx = buildTctx;
 			// Context.currentPos() in a build macro is the @:build meta's own position, not
 			// the inner call.
 			curPos = entry.pos;
-			curBuildClass = c;
-			curBuildParams = TypeFunctions.extractParamTypes(c.params);
-			curBuildFields = encodeArray([for (f in d.dData) encodeField(ec, f)]);
+			curBuildClass = cls;
+			curBuildType = selfType;
+			curBuildParams = params;
+			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
@@ -1011,7 +1023,7 @@ class EvalMacro {
 					// field's own position: Array<haxe.macro.Expr.Field> for a @:build. Without it a macro
 					// returning something else would fail later, or silently.
 					if (sig != null && cf != null) {
-						var fieldsT = try hxc.typing.Typeload.loadInstance(macroCom, [], 
+						var fieldsT = try hxc.typing.Typeload.loadInstance(macroCom, [],
 							{tpackage: [], tname: "Array", tsub: null, tparams: [TPType({ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tsub: "Field", tparams: []}), pos: cf.pos})]},
 							cf.pos, false) catch (_:Dynamic) null;
 						if (fieldsT != null) try hxc.core.TypeUnification.unifyDefault(sig.ret, fieldsT)
@@ -1028,35 +1040,115 @@ class EvalMacro {
 			curPos = savedPos;
 			com.currentModule = savedMod;
 			if (result == VNull) {
-				curBuildClass = savedBuildClass;
-				curBuildParams = savedBuildParams;
-				curBuildFields = savedBuildFields;
-				return;
+				restore();
+				return null;
 			}
-			var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, d.dName.pos)];
-			var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
-			com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
-			curBuildClass = savedBuildClass;
-			curBuildParams = savedBuildParams;
-			curBuildFields = savedBuildFields;
-			hxc.context.ModuleLoader.rebuildFields(c, newFields);
-			// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
-			// private typedef used in a field signature) resolve; a build triggered from another module's
-			// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
-			var savedResolveMod = com.currentModule;
-			com.currentModule = c.module;
-			// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
-			// just the field signatures (resolveClass would re-process extends and reject the set super).
-			hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
-			com.currentModule = savedResolveMod;
+			var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, namePos)];
+			restore();
+			return newFields;
 		} catch (e:haxe.Exception) {
-			curBuildClass = savedBuildClass;
-			curBuildParams = savedBuildParams;
-			curBuildFields = savedBuildFields;
+			restore();
 			curTctx = savedTctx;
 			curPos = savedPos;
 			com.currentModule = savedMod;
 			throw e;
+		}
+	}
+
+	static function runBuildInner(com:Context, c:TClass, entry:MetadataEntry):Void {
+		var declEntry = com.declOfType.get(Context.pathKey(c.path));
+		if (declEntry == null) return;
+		var d = switch (declEntry.decl) { case EClass(dd): dd; case _: return; };
+		var newFields = callBuildMacro(com, entry, c.module, c, TInst(c, TypeFunctions.extractParamTypes(c.params)),
+			TypeFunctions.extractParamTypes(c.params), c.params, d.dData, d.dName.pos);
+		if (newFields == null) return;
+		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
+		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
+		hxc.context.ModuleLoader.rebuildFields(c, newFields);
+		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
+		// private typedef used in a field signature) resolve; a build triggered from another module's
+		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
+		var savedResolveMod = com.currentModule;
+		com.currentModule = c.module;
+		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
+		// just the field signatures (resolveClass would re-process extends and reject the set super).
+		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
+		com.currentModule = savedResolveMod;
+	}
+
+	// An enum's constructors are shown to a build macro as ordinary fields, so a no-argument constructor
+	// without type parameters reads as a var and every other one reads as a body-less function.
+	static function enumConstructsAsFields(constructs:Array<EnumConstructor>):Array<ClassField> {
+		return [
+			for (c in constructs)
+				new ClassField(c.ecName, c.ecDoc, c.ecPos, c.ecMeta, [], if (c.ecArgs.length == 0 && c.ecParams.length == 0) {
+					FVar(c.ecType, null);
+				} else {
+					FFun({
+						fParams: c.ecParams,
+						fType: c.ecType,
+						fExpr: null,
+						fArgs: [for (a in c.ecArgs) ({name: {name: a.name, pos: Position.nullPos}, opt: a.opt, meta: [], type: a.type, value: null} : FunctionArg)]
+					});
+				})
+		];
+	}
+
+	// The other direction: what the macro answered with, read back as enum constructors. A constructor may
+	// only be a var or a function with no body (or an empty block).
+	static function fieldsAsEnumConstructs(fields:Array<ClassField>, p:Position):Array<EnumConstructor> {
+		return [
+			for (f in fields) {
+				var args:Array<{name:String, opt:Bool, type:TypeHint}> = [];
+				var params:Array<TypeParam> = [];
+				var t:Null<TypeHint> = null;
+				switch (f.cffKind) {
+					case FVar(vt, null):
+						t = vt;
+					case FFun(fd) if (fd.fExpr == null || fd.fExpr.expr.match(EBlock([]))):
+						args = [
+							for (a in fd.fArgs) {
+								if (a.type == null) throw new TypingError("Missing function parameter type", f.cffPos);
+								{name: a.name.name, opt: a.opt, type: a.type};
+							}
+						];
+						params = fd.fParams;
+						t = fd.fType;
+					case _:
+						throw new TypingError("Invalid enum constructor in @:build result", p);
+				}
+				({
+					ecName: f.cffName,
+					ecDoc: f.cffDoc,
+					ecMeta: f.cffMeta,
+					ecPos: f.cffPos,
+					ecArgs: args,
+					ecParams: params,
+					ecType: t
+				} : EnumConstructor);
+			}
+		];
+	}
+
+	// The build of an enum. TypeResolve.resolveEnum calls this before it walks the constructors, which is
+	// where they are replaced too.
+	public static function runEnumBuild(com:Context, e:TEnum, d:Definition<EnumFlag, Array<EnumConstructor>>):Void {
+		var entries = [for (m in e.meta) if (m.name == ":build") m];
+		if (entries.length == 0) return;
+		var params = TypeFunctions.extractParamTypes(e.params);
+		for (entry in entries) try {
+			var newFields = callBuildMacro(com, entry, e.module, null, TEnum(e, params), params, e.params,
+				enumConstructsAsFields(d.dData), d.dName.pos);
+			if (newFields == null) continue;
+			d.dData = fieldsAsEnumConstructs(newFields, entry.pos);
+		} catch (ex:TypingError) {
+			com.addDiagnostic(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos, ex.depth);
+		} catch (ex:EvalExceptions.EvalRunTimeException) {
+			var info = runtimeMacroError(ex);
+			if (info != null) com.addDiagnostic(info.message, info.pos);
+			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+		} catch (ex:haxe.Exception) {
+			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 	}
 
@@ -2390,6 +2482,7 @@ class EvalMacro {
 		}
 		var ec = getContext(com);
 		var savedBuildClass = curBuildClass;
+		var savedBuildType = curBuildType;
 		var savedBuildParams = curBuildParams;
 		var savedBuildFields = curBuildFields;
 		var savedTctx = curTctx;
@@ -2409,6 +2502,7 @@ class EvalMacro {
 			// which uses the meta position.
 			curPos = p;
 			curBuildClass = c;
+			curBuildType = TInst(c, params);
 			curBuildParams = params;
 			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
 			var result = switch (callExpr.expr) {
@@ -2423,6 +2517,7 @@ class EvalMacro {
 			};
 			if (result == VNull) {
 				curBuildClass = savedBuildClass;
+				curBuildType = savedBuildType;
 				curBuildParams = savedBuildParams;
 				curBuildFields = savedBuildFields;
 				curTctx = savedTctx;
@@ -2436,6 +2531,7 @@ class EvalMacro {
 			var ct:Null<ComplexType> = try decodeComplexType(ec, result, p) catch (e:TypingError) null;
 			var ret:T = ct != null ? hxc.typing.Typeload.loadComplexType(com, buildTctx.typeParams, {ct: ct, pos: p}) : decodeType(ec, result);
 			curBuildClass = savedBuildClass;
+			curBuildType = savedBuildType;
 			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;
 			curTctx = savedTctx;
@@ -2444,6 +2540,7 @@ class EvalMacro {
 			return ret;
 		} catch (e:haxe.Exception) {
 			curBuildClass = savedBuildClass;
+			curBuildType = savedBuildType;
 			curBuildParams = savedBuildParams;
 			curBuildFields = savedBuildFields;
 			curTctx = savedTctx;

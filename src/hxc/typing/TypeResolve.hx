@@ -1629,6 +1629,9 @@ class TypeResolve {
 	}
 
 	static function resolveEnum(ctx:Context, e:TEnum, d:Definition<EnumFlag, Array<EnumConstructor>>, p:Position):Void {
+		// The enum's @:build macros run here, before the constructors are walked, because what they
+		// answer with replaces the declared constructor list.
+		hxc.eval.EvalMacro.runEnumBuild(ctx, e, d);
 		// The enum self-type, with its declared params applied.
 		var et = TEnum(e, TypeFunctions.extractParamTypes(e.params));
 		var index = 0;
