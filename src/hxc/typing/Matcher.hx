@@ -535,23 +535,35 @@ class PatternMaker {
 			return pat;
 		}
 		hxc.parser.Parser.displaySuppressed = true;
+		// The error catch covers typing the identifier only and is restored before the pattern is
+		// checked, so the pattern's own unification against the subject type is an ordinary error.
+		// Holding the catch open over the check as well would swallow it, and `case String:` on an Int
+		// would fall through to be reported as an unknown identifier instead of as the type mismatch it
+		// is.
+		var typed:Null<TExpr> = null;
 		try {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
 			// from another module.
 			var oldUntyped = pctx.ctx.untypedMode;
 			pctx.ctx.untypedMode = true;
-			var e = try Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t)) catch (ex:Dynamic) {
+			typed = try Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t)) catch (ex:Dynamic) {
 				pctx.ctx.untypedMode = oldUntyped;
 				throw ex;
 			};
 			pctx.ctx.untypedMode = oldUntyped;
-			var pat = checkTyped(e);
-			if (pat != null) return answerDisplay(pat);
 		} catch (err:TypingError) {
 			if (err.message == "Invalid match: Not enough patterns") {
 				hxc.parser.Parser.displaySuppressed = savedSuppressed;
 				throw err;
 			}
+			typed = null;
+		}
+		if (typed != null) {
+			var pat = try checkTyped(typed) catch (err:TypingError) {
+				hxc.parser.Parser.displaySuppressed = savedSuppressed;
+				throw err;
+			}
+			if (pat != null) return answerDisplay(pat);
 		}
 		// An ident that typed to a non-pattern value (e.g. a same-named local) or failed to type is
 		// resolved as a field of the subject's module type (an enum-abstract constant), and only captures
