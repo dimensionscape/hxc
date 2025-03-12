@@ -684,8 +684,7 @@ class Parser {
 			acc.push(f());
 		} catch (e:ParserError) {
 			// A parse that consumed tokens before failing is a real error and propagates.
-			if (e.soft) return acc;
-			if (idx != save) throw e;
+			if (!e.soft) throw e;
 			idx = save;
 			return acc;
 		}
@@ -2478,9 +2477,11 @@ class Parser {
 
 	function block1(p1:Position):ExprDef {
 		switch (peek()) {
-			case Const(CIdent(name)):
-				var p = next().pos;
-				return block2({name: name, pos: p, quotes: NoQuotes}, CIdent(name), p);
+			// This name is read with dollarIdent, not ident, so the first key of an object literal may start
+			// with `$` where a later one may not: `{$a: 1}` parses and `{b: 1, $a: 2}` does not.
+			case Const(CIdent(_)) | Dollar(_):
+				var pn = dollarIdent();
+				return block2({name: pn.name, pos: pn.pos, quotes: NoQuotes}, CIdent(pn.name), pn.pos);
 			case Const(CString(name, qs)):
 				var p = next().pos;
 				return block2({name: name, pos: p, quotes: DoubleQuotes}, CString(name, qs), p);
