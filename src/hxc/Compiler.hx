@@ -175,14 +175,12 @@ class Compiler {
 		}
 		var port = Std.parseInt(portStr);
 		if (port == null) {
-			Sys.stderr().writeString("Invalid port
-");
+			Sys.stderr().writeString("Invalid port\n");
 			Sys.exit(1);
 		}
 		var sock = new sys.net.Socket();
 		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
-			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "
-");
+			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "\n");
 			Sys.exit(1);
 		}
 		runWaitLoop(sock.input, sock.output);
@@ -687,12 +685,13 @@ class Compiler {
 							else break;
 						}
 						var hint = hxc.compiler.Usage.suggest(name);
-						// Arg frames a handler-raised Bad as `": " ^ msg ^ "."`, and appends the suggestion to that,
-						// so the period belongs after the first line rather than after the block. With one, the
-						// message is already framed.
-						if (hint != null) throw new ArgFailure(": unknown option '" + a + "'.
-Did you mean:
-" + (hint.length > 0 ? hint.substr(0, hint.length - 1) : ""));
+						// The argument parser frames a handler's failure as `: <msg>.`, and the suggestion is
+						// appended to that, so the period belongs after the first line rather than after the block.
+						// With one, the message is already framed. The separators are escapes, not literal newlines:
+						// this file is checked out with CRLF, and a literal newline inside the string puts a CR in
+						// the message.
+						if (hint != null) throw new ArgFailure(": unknown option '" + a + "'.\nDid you mean:\n"
+							+ (hint.length > 0 ? hint.substr(0, hint.length - 1) : ""));
 						throw "unknown option '" + a + "'";
 					}
 					// A bare uppercase argument is a compilation root (never the startup class: only -main
