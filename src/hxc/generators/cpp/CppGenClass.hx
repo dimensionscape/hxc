@@ -444,8 +444,7 @@ class CppGenClass {
 				if (!isStatic && isGcElement(tcpp)) {
 					var ts2 = CppTypeText.tcppToString(tcpp);
 					var getPtr = tcpp.match(TCppString) ? ".raw_ref()" : ".mPtr";
-					w.write("		inline " + ts2 + " _hx_set_" + remapName + "(::hx::StackContext *_hx_ctx," + ts2 + " _hx_v) { HX_OBJ_WB(this,_hx_v" + getPtr + ") return " + remapName + "=_hx_v; }
-");
+					w.write("		inline " + ts2 + " _hx_set_" + remapName + "(::hx::StackContext *_hx_ctx," + ts2 + " _hx_v) { HX_OBJ_WB(this,_hx_v" + getPtr + ") return " + remapName + "=_hx_v; }\n");
 				}
 				// Unify variable/function access: a function-typed var gets a _dyn() accessor (judged
 				// through followWithAbstracts, so a cpp.Callable var counts).

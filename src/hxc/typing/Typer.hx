@@ -5521,8 +5521,7 @@ class Typer {
 			var assign = TypeFunctions.mk(TBinop(OpAssign, ef, ev), cf.type, c.pos);
 			switch (Ast.genDocTextOpt(cf.doc)) {
 				case null:
-				case d: docBuf.add("@param " + cf.name + " " + StringTools.trim(d) + "
-");
+				case d: docBuf.add("@param " + cf.name + " " + StringTools.trim(d) + "\n");
 			}
 			if (dflt) {
 				// If (arg != null) this.field = arg -- the field keeps its declared default otherwise

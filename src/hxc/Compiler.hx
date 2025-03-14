@@ -8,6 +8,7 @@ import hxc.typing.TypeFields;
 import hxc.core.Globals;
 import hxc.core.Globals.Platform;
 import hxc.core.Globals.Path;
+import hxc.core.Json.JsonValue;
 import hxc.core.TypeFunctions;
 import hxc.core.TPrinting;
 import hxc.core.Type;
@@ -248,13 +249,21 @@ class Compiler {
 					// Print the response verbatim without a trailing newline.
 					out.add(o.output);
 				} catch (e:hxc.core.JsonRpc.InvalidArgument) {
-					out.add("Invalid_argument(\"" + e.arg + "\")
-
-");
+					// It is recorded as an error at a null position and the server answers the request with
+					// those messages. Only the server has a request to answer; the one-shot --display
+					// prints the message plainly and exits 1.
+					var id = try hxc.core.JsonRpc.parseRequest(displayArg).id catch (_:Dynamic) JNull;
+					out.add(hxc.core.Json.stringOfJson(hxc.core.JsonRpc.error(id, 0, "Compiler error", JArray([
+						JObject([
+							{name: "severity", value: JInt(1)},
+							{name: "location", value: JNull},
+							{name: "message", value: JString("Invalid_argument(\"" + e.arg + "\")")}
+						])
+					]))));
 				} catch (e:Dynamic) {
-					out.add("Error: " + Std.string(e) + "
-
-");
+					// The answer is "\x02\n" + estr: the marker line first, then the exception string, with
+					// nothing appended after it.
+					out.add("\x02\n" + Std.string(e));
 				}
 				var body = haxe.io.Bytes.ofString(out.toString());
 				var head = haxe.io.Bytes.alloc(4);
@@ -1129,8 +1138,7 @@ class Compiler {
 							answerOut(jsonRpcAnswer(ctx, "null"));
 							return;
 						}
-						answerOut("Error: No completion point was found
-");
+						answerOut("Error: No completion point was found\n");
 						exitRequest(1);
 					case _:
 				}

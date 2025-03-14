@@ -1835,8 +1835,7 @@ class TypeResolve {
 					case TFun(sig):
 						for (a in sig.args) switch (a.t) {
 							case TMono(r) if (r.type == null):
-								throw new ContextError("Explicit type required for overload functions
-... For function argument '" + a.name + "'", cf.pos);
+								throw new ContextError("Explicit type required for overload functions\n... For function argument '" + a.name + "'", cf.pos);
 							case _:
 						}
 					case _:
