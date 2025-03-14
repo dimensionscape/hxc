@@ -1316,6 +1316,24 @@ class EvalMacro {
 						curPos = savedPos;
 						continue;
 					}
+					// The same for addGlobalMetadata, whose std half is only a defaulting wrapper over
+					// add_global_metadata_impl. Running it through the interpreter would make a malformed
+					// meta string surface as an uncaught interpreter exception with a "Called from here"
+					// frame; raised from the primitive, it has nothing under it. The wrapper's own defaults
+					// have to be supplied here (macro/Compiler.hx:487).
+					if (t.pack.join(".") == "haxe.macro" && t.name == "Compiler" && t.method == "addGlobalMetadata") {
+						var ec = getContext(com);
+						var savedPos = curPos;
+						curPos = e.pos;
+						var values = [for (a in args) initMacroConstArg(ec, a)];
+						while (values.length < 5) values.push(VNull);
+						if (values[2] == VNull) values[2] = VTrue;
+						if (values[3] == VNull) values[3] = VTrue;
+						if (values[4] == VNull) values[4] = VFalse;
+						addGlobalMetadataValue(com, values);
+						curPos = savedPos;
+						continue;
+					}
 					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true);
 					var ec = getContext(com);
 					var savedPos = curPos;
