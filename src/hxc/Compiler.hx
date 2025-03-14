@@ -103,8 +103,19 @@ class Compiler {
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
+	static var argFailureCtx:Null<Context> = null;
+
 	static function fatalArgError(msg:String):Void {
-		Sys.stderr().writeString("Error: " + msg + "\n");
+		// Goes through `error ctx`, which appends to the message list and leaves the flush to the end, so
+		// anything an earlier argument queued (the --version line, a --help-defines dump) still prints,
+		// and prints first. Writing straight to stderr threw all of that away.
+		var ctx = argFailureCtx;
+		if (ctx != null) {
+			ctx.addDiagnostic("Error: " + msg, Position.nullPos);
+			flushPendingMessages(ctx);
+		} else {
+			Sys.stderr().writeString("Error: " + msg + "\n");
+		}
 		Sys.exit(1);
 	}
 
@@ -419,6 +430,10 @@ class Compiler {
 			return;
 		}
 		var ctx = new Context();
+		// The top-level handler holds the same context whose message list the argument handlers have been
+		// appending to, so an argument failure reports through that list rather than past it. Recorded
+		// here so the top-level handler can reach it.
+		argFailureCtx = ctx;
 		ctx.args = args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
