@@ -192,6 +192,9 @@ class Context {
 	public var moduleImports:StringMap<ModuleImports>;
 
 	public var currentModule:Null<ModuleDef> = null;
+	// Current signature-resolution class, used to resolve a bare static identifier in
+	// MacroType<[f()]>.
+	public var resolvingClass:Null<hxc.core.Type.TClass> = null;
 
 	public var callArgumentStack:Array<Array<Expr>>;
 

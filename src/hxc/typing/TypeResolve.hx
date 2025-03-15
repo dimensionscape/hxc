@@ -458,6 +458,18 @@ class TypeResolve {
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClassFields");
+		// The class whose fields are being built, for everything a field signature loads; it nests, because
+		// loading one signature can resolve another class's fields.
+		var savedResolvingClass = ctx.resolvingClass;
+		ctx.resolvingClass = c;
+		try resolveClassFieldsInner(ctx, c, d, p) catch (e:Dynamic) {
+			ctx.resolvingClass = savedResolvingClass;
+			throw e;
+		}
+		ctx.resolvingClass = savedResolvingClass;
+	}
+
+	static function resolveClassFieldsInner(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
 		// (abstract member). Mirror that when locating the registered cf so the enum-abstract `var X`

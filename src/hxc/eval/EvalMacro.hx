@@ -2582,10 +2582,25 @@ class EvalMacro {
 		};
 		if (callExpr == null) throw new TypingError("MacroType requires a single expression call parameter", p);
 		var callee = switch (callExpr.expr) { case ECall(c, _): c; case _: null; };
-		// Flattens the callee to (path, field). Its own failure is "Invalid macro call". A BARE ident
-		// resolved through curclass/module_globals is not reachable here: hxc loads the instance without
-		// a typer context to look either up in.
+		// The callee flattens to (path, field). Its own failure is "Invalid macro call".
 		var target = callee == null ? null : macroTarget(callee);
+		// A BARE ident is a static of the ENCLOSING class, so it resolves against the class whose signature
+		// is being loaded rather than against a dotted path. hxc records that class on the Context while
+		// field signatures resolve.
+		if (target == null) switch (callee != null ? callee.expr : null) {
+			case EConst(CIdent(i)):
+				var cur = com.resolvingClass;
+				if (cur != null && cur.statics.exists(i)) {
+					target = {pack: cur.path.pack, module: cur.module != null ? cur.module.path.name : cur.path.name, name: cur.path.name, method: i, moduleOnly: false};
+					// Everything downstream reads the path back off the callee, so write the
+					// resolved one in: the bare ident becomes the dotted pack.Class.method it names.
+					var e = new Expr(EConst(CIdent(cur.path.pack.length > 0 ? cur.path.pack[0] : cur.path.name)), callee.pos);
+					for (k in 1...cur.path.pack.length) e = new Expr(EField(e, cur.path.pack[k], EFNormal), callee.pos);
+					if (cur.path.pack.length > 0) e = new Expr(EField(e, cur.path.name, EFNormal), callee.pos);
+					callee = new Expr(EField(e, i, EFNormal), callee.pos);
+				}
+			case _:
+		}
 		if (target == null) throw new TypingError("Invalid macro call", p);
 		loadMacroClass(com, {pack: target.pack, name: target.module}, target.method);
 		var ec = getContext(com);
