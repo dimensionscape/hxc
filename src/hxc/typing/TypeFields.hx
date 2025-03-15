@@ -29,6 +29,7 @@ class TypeFields {
 	public static function resetPerRequest():Void {
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
+		macroForced = new haxe.ds.ObjectMap();
 		_forcing = [];
 	}
 
@@ -423,6 +424,24 @@ class TypeFields {
 		return !ctx.isMacro && cf.kind.match(Method(MethMacro));
 	}
 
+	// Fields already put through the macro world by the rule above. The host reaches a given macro
+	// field several times (once per pass that forces it), and the load is not free.
+	static var macroForced:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
+
+	// Forcing a macro field. The error it raises is swallowed only in a DISPLAY run, where answering the
+	// request is the point.
+	static function forceMacroFieldInMacroWorld(ctx:Context, c:TClass, cf:TClassField):Void {
+		if (macroForced.exists(cf)) return;
+		macroForced.set(cf, true);
+		if (c.module == null) return;
+		var isDisplay = hxc.parser.Parser.displayFile != null;
+		// The declaring module's path, not the class's: a class whose name differs from its module file
+		// (common in display requests) is not loadable by its own path.
+		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path)
+		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
+		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
+	}
+
 	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
 		// Idempotent: a field already lazy or already typed is left alone so typeAllModules can
 		// be re-run to pick up modules loaded on demand.
@@ -567,6 +586,15 @@ class TypeFields {
 		for (a in cff.cffAccess) if (a.access == AAbstract) isAbstractMethod = true;
 		var doBind = (((!isExternish || isInlineField) && !isAbstractMethod && !TypeFunctions.hasClassFlag(c, CInterface))
 			|| cf.name == "__init__");
+		// A macro field in the host is not simply left untyped, it is DIVERTED to the macro world, which
+		// loads it there - the only place its body can type. That load is where a macro nothing calls still
+		// reports a broken body, and where a macro with no body at all reports having none. Returning early
+		// would mean neither is ever seen: the guard below suppresses the host's own complaint (correctly,
+		// the host does not type this body), so nothing would be left to report it.
+		if (skipMacroBodyInHost(ctx, cf)) {
+			forceMacroFieldInMacroWorld(ctx, c, cf);
+			return;
+		}
 		if (!hasFieldBody(cff)) {
 			// A method that requires binding but has no body is an error. The check must follow all binding
 			// exclusions:
