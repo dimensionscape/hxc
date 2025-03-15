@@ -231,7 +231,8 @@ class Compiler {
 			// per request.
 			var displayArg:Null<String> = null;
 			for (i in 0...lines.length)
-				if (lines[i] == "--display" && i + 1 < lines.length && StringTools.startsWith(lines[i + 1], "{"))
+				if (lines[i] == "--display" && i + 1 < lines.length
+						&& (StringTools.startsWith(lines[i + 1], "{") || StringTools.startsWith(lines[i + 1], "[")))
 					displayArg = lines[i + 1];
 			var parentMethod = false;
 			if (displayArg != null) {
@@ -796,10 +797,13 @@ class Compiler {
 		// -D no-deprecation-warnings disables WDeprecated globally.
 		if (ctx.defines.rawDefined("no_deprecation_warnings"))
 			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
-		// A JSON payload on --display selects the JSON-RPC display protocol it to DisplayJson.parse_input).
-		// An immediate response travels the Completion channel and ends the run; a handler that only
-		// configures state (diagnostics) lets compilation continue and answers at report time.
-		if (ctx.displaySpec != null && StringTools.startsWith(ctx.displaySpec, "{")) {
+		// A JSON payload on --display selects the JSON-RPC display protocol. An immediate response travels
+		// the Completion channel and ends the run; a handler that only configures state (diagnostics) lets
+		// compilation continue and answers at report time.
+		// Either bracket starts a JSON payload, so a malformed array payload is a JSON parse error rather
+		// than a legacy file@position argument.
+		if (ctx.displaySpec != null
+				&& (StringTools.startsWith(ctx.displaySpec, "{") || StringTools.startsWith(ctx.displaySpec, "["))) {
 			try {
 				hxc.context.DisplayJson.parseInput(ctx, ctx.displaySpec);
 			} catch (out:hxc.context.DisplayJson.JsonDisplayOutput) {

@@ -78,10 +78,8 @@ class Json {
 	// A recursive-descent reader into the ordered model; the grammar is plain JSON.
 	public static function parse(s:String):JsonValue {
 		var reader = new JsonReader(s);
-		var v = reader.parseValue();
-		reader.skipWs();
-		if (!reader.eof()) throw new JsonError("Unexpected trailing characters at position " + reader.posOf());
-		return v;
+		// Reads one value and never looks at what follows it.
+		return reader.parseValue();
 	}
 }
 
@@ -106,8 +104,9 @@ private class JsonReader {
 		}
 	}
 
+	// A JSON error carries the message alone, with no position.
 	function fail(msg:String):Dynamic {
-		throw new JsonError(msg + " at position " + pos);
+		throw new JsonError(msg);
 	}
 
 	public function parseValue():JsonValue {
@@ -131,7 +130,7 @@ private class JsonReader {
 	}
 
 	function expectWord(w:String):Void {
-		if (s.substr(pos, w.length) != w) fail("Expected " + w);
+		if (s.substr(pos, w.length) != w) fail("Invalid token");
 		pos += w.length;
 	}
 
@@ -145,19 +144,18 @@ private class JsonReader {
 		}
 		while (true) {
 			skipWs();
-			if (eof() || StringTools.fastCodeAt(s, pos) != '"'.code) fail("Expected object key");
+			if (eof() || StringTools.fastCodeAt(s, pos) != '"'.code) fail("Expected string");
 			var name = parseString();
 			skipWs();
-			if (eof() || StringTools.fastCodeAt(s, pos) != ":".code) fail("Expected :");
+			if (eof() || StringTools.fastCodeAt(s, pos) != ":".code) fail("Expected ':'");
 			pos++;
 			var value = parseValue();
 			fields.push({name: name, value: value});
 			skipWs();
-			if (eof()) fail("Unterminated object");
-			switch (StringTools.fastCodeAt(s, pos)) {
+			switch (eof() ? -1 : StringTools.fastCodeAt(s, pos)) {
 				case ",".code: pos++;
 				case "}".code: pos++; return JObject(fields);
-				case _: fail("Expected , or }");
+				case _: fail("Expected ',' or '}'");
 			}
 		}
 	}
@@ -173,11 +171,10 @@ private class JsonReader {
 		while (true) {
 			values.push(parseValue());
 			skipWs();
-			if (eof()) fail("Unterminated array");
-			switch (StringTools.fastCodeAt(s, pos)) {
+			switch (eof() ? -1 : StringTools.fastCodeAt(s, pos)) {
 				case ",".code: pos++;
 				case "]".code: pos++; return JArray(values);
-				case _: fail("Expected , or ]");
+				case _: fail("Expected ',' or ']'");
 			}
 		}
 	}
@@ -186,12 +183,12 @@ private class JsonReader {
 		pos++; // "
 		var buf = new StringBuf();
 		while (true) {
-			if (eof()) fail("Unterminated string");
+			if (eof()) fail("Unexpected end of input");
 			var c = StringTools.fastCodeAt(s, pos++);
 			switch (c) {
 				case '"'.code: return buf.toString();
 				case "\\".code:
-					if (eof()) fail("Unterminated escape");
+					if (eof()) fail("Invalid escape sequence");
 					var e = StringTools.fastCodeAt(s, pos++);
 					switch (e) {
 						case '"'.code: buf.addChar('"'.code);
@@ -203,25 +200,38 @@ private class JsonReader {
 						case "r".code: buf.addChar("\r".code);
 						case "t".code: buf.addChar("\t".code);
 						case "u".code:
-							var hex = s.substr(pos, 4);
-							if (hex.length < 4) fail("Invalid unicode escape");
-							var code = Std.parseInt("0x" + hex);
-							if (code == null) fail("Invalid unicode escape");
+							var code = hex4(pos);
+							if (code == null) fail("Invalid escape sequence");
 							pos += 4;
 							// A surrogate pair combines into one code point.
-							if (code >= 0xD800 && code <= 0xDBFF && s.substr(pos, 2) == "\\u") {
-								var hex2 = s.substr(pos + 2, 4);
-								var low = Std.parseInt("0x" + hex2);
-								if (low != null && low >= 0xDC00 && low <= 0xDFFF) {
-									pos += 6;
-									buf.addChar(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00));
-								} else buf.addChar(code);
+							if (code >= 0xD800 && code <= 0xDBFF) {
+								var low = s.substr(pos, 2) == "\\u" ? hex4(pos + 2) : null;
+								if (low == null)
+									fail("Missing escape sequence representing low surrogate for code point beyond U+FFFF");
+								if (low < 0xDC00 || low > 0xDFFF)
+									fail("Invalid low surrogate for code point beyond U+FFFF");
+								pos += 6;
+								buf.addChar(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00));
 							} else buf.addChar(code);
-						case _: fail("Invalid escape");
+						case _: fail("Invalid escape sequence");
 					}
 				case _: buf.addChar(c);
 			}
 		}
+	}
+
+	function hex4(at:Int):Null<Int> {
+		if (at + 4 > s.length) return null;
+		var v = 0;
+		for (i in 0...4) {
+			var c = StringTools.fastCodeAt(s, at + i);
+			var d = if (c >= "0".code && c <= "9".code) c - "0".code
+				else if (c >= "a".code && c <= "f".code) c - "a".code + 10
+				else if (c >= "A".code && c <= "F".code) c - "A".code + 10
+				else return null;
+			v = (v << 4) | d;
+		}
+		return v;
 	}
 
 	function parseNumber():JsonValue {
@@ -238,17 +248,17 @@ private class JsonReader {
 				case _: break;
 			}
 		}
-		if (pos == start) fail("Invalid character");
+		if (pos == start) fail("Invalid token");
 		var text = s.substr(start, pos - start);
 		if (isFloat) {
 			var f = Std.parseFloat(text);
-			if (Math.isNaN(f)) fail("Invalid number");
+			if (Math.isNaN(f)) fail("Invalid token");
 			return JFloat(f);
 		}
 		var i = Std.parseInt(text);
 		if (i == null) {
 			var f = Std.parseFloat(text);
-			if (Math.isNaN(f)) fail("Invalid number");
+			if (Math.isNaN(f)) fail("Invalid token");
 			return JFloat(f);
 		}
 		return JInt(i);
