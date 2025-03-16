@@ -1085,13 +1085,17 @@ class Inline {
 						var recv = ethis != null ? ethis
 							: (vthis != null ? TypeFunctions.mk(TLocal(vthis), vthis.type, e.pos) : throw new InlineBail());
 						var r = typeInlineCtor(ctx, sc, scf, stf, recv, el, e.pos);
-						if (r == null) throw new InlineBail();
+						// A parent constructor the inliner cannot expand is an error, not a reason to abandon the
+						// inline and emit an ordinary call instead.
+						if (r == null) throw new TypingError("Could not inline super constructor call", e.pos);
 						return m(r);
 					case _:
-						throw new InlineBail();
+						throw new TypingError("Cannot inline function containing super", e.pos);
 				}
+			// And so is `super` reached any other way, which is what the receiver
+			// of a `super.f()` call inside an inline body is.
 			case TConst(TSuper):
-				throw new InlineBail();
+				throw new TypingError("Cannot inline function containing super", e.pos);
 			case TConst(_): e.expr;
 			case TLocal(v):
 				if (subst.exists(v.id)) {
