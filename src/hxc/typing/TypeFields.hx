@@ -186,17 +186,7 @@ class TypeFields {
 				addDiagnosticOnce(ctx, info.message, info.pos);
 				return;
 			}
-			var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
-			frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
-			var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
-			if (explicit && frames.length > 0) frames.shift();
-			var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: explicit ? re.pos : Position.nullPos}];
-			for (p in frames) stack.push({message: "Called from here", pos: p});
-			// The macro invocation sites close the stack (the reference's api-call envs), recorded
-			// on the exception by EvalMacro.run as it unwound each frame, innermost first.
-			for (cp in re.callPositions)
-				if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
-			ctx.addDiagnosticStack(stack);
+			ctx.addDiagnosticStack(hxc.eval.EvalMacro.uncaughtExceptionStack(re));
 		} else if (Std.isOfType(e, hxc.parser.ParserError) || Std.isOfType(e, hxc.parser.LexerError)) {
 			// A PARSE failure in a module this field reached is not a field error: an `Error` is recorded
 			// and typing carries on, and anything else passes straight through and ends the compile where

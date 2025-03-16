@@ -926,9 +926,25 @@ class EvalMacro {
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
 			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
+			// A Context.error abort carries its own message; anything else the macro threw is an UNCAUGHT
+			// exception and reports as one, at the throwing expression with the call chain under it. The
+			// reference says "Build failure" only when the macro returns nothing which is not this.
 			var info = runtimeMacroError(e);
-			if (info != null) com.addDiagnostic(info.message, info.pos);
-			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build failure"
+			// case a raw throw never gets there.
+			if (info != null) {
+				com.addDiagnostic(info.message, info.pos);
+				com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			}
+			else {
+				// The @:build metadata is the call site here, and the build path invokes the macro directly, so
+				// it is not among the positions the unwind recorded.
+				var stack = uncaughtExceptionStack(e);
+				var last = stack[stack.length - 1];
+				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
+					stack.push({message: "Called from here", pos: entry.pos});
+				com.addDiagnosticStack(stack);
+			}
 		} catch (e:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
@@ -1055,6 +1071,21 @@ class EvalMacro {
 		}
 	}
 
+	// An uncaught macro-time exception reports at the throwing expression with a "Called from here"
+	// frame per enclosing call, innermost first, closing with the macro invocation sites the unwind
+	// recorded.
+	public static function uncaughtExceptionStack(re:EvalExceptions.EvalRunTimeException):Array<{message:String, pos:Position}> {
+		var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
+		frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
+		var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
+		if (explicit && frames.length > 0) frames.shift();
+		var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: explicit ? re.pos : Position.nullPos}];
+		for (p in frames) stack.push({message: "Called from here", pos: p});
+		for (cp in re.callPositions)
+			if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
+		return stack;
+	}
+
 	static function runBuildInner(com:Context, c:TClass, entry:MetadataEntry):Void {
 		var declEntry = com.declOfType.get(Context.pathKey(c.path));
 		if (declEntry == null) return;
@@ -1145,8 +1176,21 @@ class EvalMacro {
 			com.addDiagnostic(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos, ex.depth);
 		} catch (ex:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(ex);
-			if (info != null) com.addDiagnostic(info.message, info.pos);
-			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build failure"
+			// case a raw throw never gets there.
+			if (info != null) {
+				com.addDiagnostic(info.message, info.pos);
+				com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			}
+			else {
+				// The @:build metadata is the call site here, and the build path invokes the macro directly, so
+				// it is not among the positions the unwind recorded.
+				var stack = uncaughtExceptionStack(ex);
+				var last = stack[stack.length - 1];
+				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
+					stack.push({message: "Called from here", pos: entry.pos});
+				com.addDiagnosticStack(stack);
+			}
 		} catch (ex:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
