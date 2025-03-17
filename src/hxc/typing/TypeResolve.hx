@@ -370,7 +370,11 @@ class TypeResolve {
 				}
 			case _:
 		}
-		resolveClassFields(ctx, c, d, p);
+		// Build with `fun() -> Built` once a class is built, so every later reach for its fields is a
+		// no-op. This is the same one-shot: an abstract's implementation is reached both from its
+		// abstract and from the ordinary class path, and without the check whichever ran second derived
+		// every signature a second time.
+		if (buildState.get(c) != BUILT) resolveClassFields(ctx, c, d, p);
 		markClassBuilt(c);
 		TypeFields.addImplicitInterfaceFields(c);
 	}
@@ -455,6 +459,7 @@ class TypeResolve {
 				return false;
 		}
 	}
+
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClassFields");
@@ -1056,13 +1061,11 @@ class TypeResolve {
 		resolveAbstractCasts(ctx, a, d);
 
 		if (a.impl != null) {
-			var implEntry = ctx.declOfType.get(Context.pathKey(a.impl.path));
-			switch (implEntry != null ? implEntry.decl : null) {
-				case EClass(impl):
-					resolveClassFields(ctx, a.impl, impl, p);
-					markClassBuilt(a.impl);
-				case _:
-			}
+			// / for a class's fields with `ignore(c.build())`, which is one-shot: whoever gets there first
+			// does the work and everyone after is a no-op. Deriving the impl here as well as through the
+			// ordinary class path meant every abstract implementation in the program had its field
+			// signatures built twice - the only classes in a compile that did.
+			buildClassFields(ctx, a.impl, p);
 		}
 
 		resolveAbstractOps(ctx, a, d);
