@@ -2615,6 +2615,12 @@ class EvalMacro {
 	// haxe.macro.MacroType<[Cls.method(args)]> runs the macro and becomes the type it returns. The call
 	// arrives as the KExpr class the instance load makes for a TPExpr parameter, bracketed or bare.
 	public static function runMacroType(com:Context, params:TParams, p:Position, ?callerTypeParams:TypeParams):T {
+		// A macro is not called from within the macro context - the call is replaced by a `throw
+		// "macro-in-macro"` expression, and a MacroType then leaves a fresh monomorph behind. The macro
+		// world loads the module holding the macro, so without this the same MacroType would run a second
+		// time there, where a Context.getType for a type declared beside the caller is not found - and
+		// that failing run would throw the host's answer away.
+		if (com.isMacro) return TypeFunctions.mkMono();
 		var callExpr:Null<Expr> = switch (params) {
 			case [TInst({kind: KExpr(e)}, _)]:
 				switch (e.expr) {
