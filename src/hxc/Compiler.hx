@@ -442,6 +442,14 @@ class Compiler {
 		// lookup.
 		hxc.core.TypeUnification.buildAbstractRef = function(a:hxc.core.Type.TAbstract) {
 			if (a.impl == null) return;
+			// Same world selection as forceOpenMethodHook below: this hook is global but closes over the
+			// host context, so a unification performed while typing in the macro world reached here and
+			// typed a macro-world body with the host's basic types. The two worlds have separate StdTypes,
+			// so the result was a Float that cannot unify with Float.
+			var actx = ctx;
+			var amc = hxc.eval.EvalMacro.getMacroCom();
+			if (amc != null && a.module != null && amc.moduleLut.get(Context.pathKey(a.module.path)) == a.module)
+				actx = amc;
 			// The recorded cast pair is a SNAPSHOT taken at load time, not the impl field itself, so
 			// an unhinted @:to's return stays an open monomorph on it while the real field's return
 			// settles during typing. The reference shares one node and never has to reconcile them.
@@ -451,7 +459,7 @@ class Compiler {
 			inline function forceReal(c:hxc.core.Type.TAbstractCast, isTo:Bool):Void {
 				var real = a.impl.statics.get(c.cf.name);
 				if (real == null) return;
-				if (real.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx, a.impl, real);
+				if (real.expr == null) hxc.typing.TypeFields.forceFieldBody(actx, a.impl, real);
 				// Only an UNHINTED @:to leaves an open monomorph on the snapshot; a declared cast type is
 				// already correct. The snapshot carries its own params, so the built signature may only be read
 				// when there are none - otherwise substitution would mix two sets of parameter nodes and every
