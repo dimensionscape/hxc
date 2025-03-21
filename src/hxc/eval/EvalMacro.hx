@@ -2046,6 +2046,38 @@ class EvalMacro {
 			}
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
+			// The macro load finalizes the MACRO context, which types every body that context holds - not
+			// just the macro field about to be called. So a module carrying a macro is genuinely compiled
+			// twice, once per world, and the `#if macro` half is type-checked in the macro world only;
+			// forcing the named field alone would leave an error in that half unreported. Errors are
+			// recorded here rather than raised: they are reported and the compilation carries on.
+			var savedRaise = macroCom.raiseTypingErrors;
+			macroCom.raiseTypingErrors = false;
+			// A body typed only now, after its class's prototype was built, leaves that prototype without a
+			// live slot. forceReachableStatics below decides that from the fields it types, so typing them
+			// here first would consume the signal and the interpreter would keep a prototype that is missing
+			// the field: a macro-defined class then reported "Type not found" at its own call site. Account
+			// for it the same way it does.
+			var preStale = false;
+			function force(c:TClass, cf:TClassField):Void {
+				if (cf.expr != null) return;
+				hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
+				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
+					preStale = true;
+			}
+			for (mt in m.types) switch (mt) {
+				case TClassDecl(c):
+					for (cf in c.orderedStatics) force(c, cf);
+					for (cf in c.orderedFields) force(c, cf);
+					if (c.constructor != null) force(c, c.constructor);
+				case _:
+			}
+			macroCom.raiseTypingErrors = savedRaise;
+			if (preStale && macroCtx != null) {
+				staleMacroCtx = macroCtx;
+				macroCtx = null;
+				lastModuleCount = -1;
+			}
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.
@@ -2188,6 +2220,14 @@ class EvalMacro {
 	public static var lastExpansionAst:Null<Expr> = null;
 
 	public static function run(tctx:TyperContext, fa:FieldAccess, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		// A macro is not CALLED from within the macro context. The call is replaced by `throw
+		// "macro-in-macro"`, which is then typed like any expression. The macro world holds the module
+		// carrying the macro, so its own bodies contain calls to it; running them there would execute
+		// every macro a second time, out of order with the host's own calls (a macro keeping state in a
+		// static would then answer the host's first call with the value its own macro-world run had left
+		// behind).
+		if (tctx.com.isMacro)
+			return Typer.typeExpr(tctx, {expr: EThrow({expr: EConst(CString("macro-in-macro", SDoubleQuotes)), pos: p}), pos: p}, withType);
 		// Saved before the call position is installed: a nested run (an @:from cast macro reached while
 		// typing an outer macro's argument) must put back the OUTER call's position, as a per-call API
 		// record would.

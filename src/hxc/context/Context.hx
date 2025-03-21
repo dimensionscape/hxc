@@ -449,10 +449,11 @@ class Context {
 			pos = relocateNullPosTo;
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
-		if (forwardWarningsTo != null && severity != null && severity != Error) {
+		// Forward macro-world diagnostics to the host; errors exclusive to macro compilation must also be
+		// reported.
+		if (forwardWarningsTo != null)
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
-			return;
-		}
+		// Keep a local diagnostic copy for report-once checks even when forwarding it to the host.
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 

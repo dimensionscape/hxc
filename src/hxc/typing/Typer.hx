@@ -942,7 +942,8 @@ class Typer {
 					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
 					// expression (a macro body reifies these before typing).
 					var reificationMessage = "Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression";
-					ctx.com.addDiagnostic(reificationMessage, m.pos);
+					// Reported once per world. A module that also holds a macro is compiled once per world, and
+					// each compilation reports it, so it prints twice for that shape and once for every other.
 					ctx.com.addDiagnostic(reificationMessage, m.pos);
 					typeExpr(ctx, e1, withType);
 				case EMeta(_, e1):
