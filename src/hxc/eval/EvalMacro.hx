@@ -2046,38 +2046,6 @@ class EvalMacro {
 			}
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
-			// The macro load finalizes the MACRO context, which types every body that context holds - not
-			// just the macro field about to be called. So a module carrying a macro is genuinely compiled
-			// twice, once per world, and the `#if macro` half is type-checked in the macro world only;
-			// forcing the named field alone would leave an error in that half unreported. Errors are
-			// recorded here rather than raised: they are reported and the compilation carries on.
-			var savedRaise = macroCom.raiseTypingErrors;
-			macroCom.raiseTypingErrors = false;
-			// A body typed only now, after its class's prototype was built, leaves that prototype without a
-			// live slot. forceReachableStatics below decides that from the fields it types, so typing them
-			// here first would consume the signal and the interpreter would keep a prototype that is missing
-			// the field: a macro-defined class then reported "Type not found" at its own call site. Account
-			// for it the same way it does.
-			var preStale = false;
-			function force(c:TClass, cf:TClassField):Void {
-				if (cf.expr != null) return;
-				hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
-					preStale = true;
-			}
-			for (mt in m.types) switch (mt) {
-				case TClassDecl(c):
-					for (cf in c.orderedStatics) force(c, cf);
-					for (cf in c.orderedFields) force(c, cf);
-					if (c.constructor != null) force(c, c.constructor);
-				case _:
-			}
-			macroCom.raiseTypingErrors = savedRaise;
-			if (preStale && macroCtx != null) {
-				staleMacroCtx = macroCtx;
-				macroCtx = null;
-				lastModuleCount = -1;
-			}
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.
@@ -2114,6 +2082,61 @@ class EvalMacro {
 							}
 						}
 				case _:
+			}
+			// The macro load finalizes the MACRO context, which types every body that context holds - not
+			// just the macro field about to be called. So a module carrying a macro is genuinely compiled
+			// twice, once per world, and the `#if macro` half is type-checked in the macro world only;
+			// forcing the named field alone would leave an error in that half unreported. Errors are
+			// recorded here rather than raised: they are reported and the compilation carries on.
+			var savedRaise = macroCom.raiseTypingErrors;
+			macroCom.raiseTypingErrors = false;
+			// These bodies can never be a display subject. A display request reaches the macro world only by
+			// loading the display module in the macro context; what finalize types on the way to a macro
+			// call is not the marked node. hxc decides by position, so without this the macro world's copy
+			// of the display file would answer - with the macro-in-macro stand-in's type, so a hover on a
+			// macro's result would read Unknown<0>. ... except on the route that does carry a display
+			// request into the macro world: loading the display module in the macro context, which finalizes
+			// there for exactly that reason. That is the forceAll / no-field route above, which types the
+			// whole module unsuppressed. The DISPLAY file's own module is left alone entirely. The host owns
+			// every answer about it - hover, position and @usage - and a second typed copy in the macro
+			// world would be counted again by the @usage statistics, which recurse into the macro context on
+			// purpose.
+			var df = hxc.parser.Parser.displayFile;
+			var mf = m.extra == null ? null : m.extra.file;
+			inline function samePath(a:String, b:String):Bool {
+				var x = StringTools.replace(a, "\\", "/").toLowerCase();
+				var y = StringTools.replace(b, "\\", "/").toLowerCase();
+				return x == y || StringTools.endsWith(x, "/" + y) || StringTools.endsWith(y, "/" + x);
+			}
+			var isDisplayFile = df != null && mf != null && samePath(mf, df);
+			var displayRoute = forceAll || fieldName == null;
+			var savedSuppressed = hxc.parser.Parser.displaySuppressed;
+			if (!displayRoute) hxc.parser.Parser.displaySuppressed = true;
+			// A body typed only now, after its class's prototype was built, leaves that prototype without a
+			// live slot. forceReachableStatics below decides that from the fields it types, so typing them
+			// without this would consume the signal and the interpreter would keep a prototype that is
+			// missing the field: a macro-defined class then reported "Type not found" at its own call site.
+			// Account for it the same way it does.
+			var preStale = false;
+			function force(c:TClass, cf:TClassField):Void {
+				if (cf.expr != null) return;
+				hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
+				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
+					preStale = true;
+			}
+			if (!isDisplayFile) for (mt in m.types) switch (mt) {
+				case TClassDecl(c):
+					for (cf in c.orderedStatics) force(c, cf);
+					for (cf in c.orderedFields) force(c, cf);
+					if (c.constructor != null) force(c, c.constructor);
+				case _:
+			}
+			macroCom.raiseTypingErrors = savedRaise;
+			if (!displayRoute) hxc.parser.Parser.displaySuppressed = savedSuppressed;
+			if (preStale && macroCtx != null) {
+				staleMacroCtx = macroCtx;
+				macroCtx = null;
+				lastModuleCount = -1;
 			}
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
