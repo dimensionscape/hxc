@@ -64,6 +64,11 @@ class Preprocess {
 			// would put unprocessed #if tokens in front of the parser) and let the caller decide when to
 			// raise.
 			if (failOut != null) failOut.err = e;
+			// Terminated, for the same reason the CondHeadFailure branch above terminates its
+			// own: the parser pulls until Eof, and a display request does not RAISE the deferred
+			// error, so a stream that never ends is a HANG. The parser's stall guard cannot see
+			// it because the index keeps advancing past the end and reads the last token forever.
+			p.out.push(new TokenInfo(Eof, e.pos));
 			p.out;
 		};
 		if (failOut != null) failOut.unclosedAtEnd = p.unclosedAtEnd;
