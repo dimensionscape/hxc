@@ -15,6 +15,5 @@ class Aedifex {
 		.license("GPL2")
 		.defineToken("HXCPP_GC_BIG_BLOCKS")
 		.defineToken("HXCPP_M64")
-		.defineToken("HXCPP_GC_GENERATIONAL")
 		.done();
 }
