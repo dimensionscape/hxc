@@ -182,9 +182,13 @@ class Parser {
 
 	/** Like parseExprFromTokens but reports HOW FAR the expression reached instead of
 		requiring Eof; the preprocessor needs the cut point of an unterminated condition. */
-	public static function parseExprFromTokensCount(toks:Array<TokenInfo>, file:String):{e:Expr, count:Int} {
+	// `count` is how many tokens the expression took. A FAILED parse reports it too, with a null
+	// expression: the condition is matched as `( expr )`, so a failure anywhere in that pattern is one
+	// error and the caller applies the same lost-token rule either way - it needs to know WHERE the stream
+	// stopped, not what went wrong.
+	public static function parseExprFromTokensCount(toks:Array<TokenInfo>, file:String):{e:Null<Expr>, count:Int} {
 		var p = new Parser(toks, file);
-		var e = p.expr();
+		var e = try p.expr() catch (_:ParserError) null;
 		return {e: e, count: p.idx};
 	}
 

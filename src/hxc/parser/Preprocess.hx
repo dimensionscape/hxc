@@ -417,7 +417,11 @@ class Preprocess {
 		// collected span maps 1:1 onto the raw stream (every kept token pushed exactly one entry), so the
 		// indexes carry over.
 		var r = Parser.parseExprFromTokensCount(sub, "<cond>");
-		if (depth > 0 || r.count < sub.length - 1) {
+		// A condition that did not parse is the same error as one that stopped short of its `)`, so it
+		// takes the lost-token path below rather than reporting its own message: what `expr` disliked is
+		// never reported, only which token the enclosing pattern was left holding - the one after the
+		// token the expression choked on.
+		if (r.e == null || depth > 0 || r.count < sub.length - 1) {
 			var failIdx = spanStart + r.count;
 			var afterIdx = failIdx + 1 < toks.length ? failIdx + 1 : toks.length - 1;
 			var at = toks[afterIdx];
