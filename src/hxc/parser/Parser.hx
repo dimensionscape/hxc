@@ -387,7 +387,10 @@ class Parser {
 			var e = pendingLexError;
 			pendingLexError = null;
 			switch (e.msg) {
-				case Preprocessed(pe): throw pe;
+				// Unwrapped, so the #error route and every other consumer keep seeing the parser error they
+				// handle today - but marked, because the display file's recovery arms must decline it the way
+				// the reference's decline a Parser.Error.
+				case Preprocessed(pe): throw new ParserError(pe.msg, pe.pos, pe.soft, true);
 				case _: throw e;
 			}
 		}
@@ -1622,7 +1625,7 @@ class Parser {
 				// stream position the failed attempt reached, so an incomplete construct under the cursor does
 				// not abort hover/definition requests elsewhere in the file. Skipping a token there instead let
 				// the block run past the field it stopped at and swallow every sibling declaration after it.
-				if (isDisplayFile() && !er.msg.match(Missing_semicolon)) {
+				if (isDisplayFile() && !er.fromPreprocessor && !er.msg.match(Missing_semicolon)) {
 					if (idx == save) break;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
 					continue;
@@ -2713,7 +2716,7 @@ class Parser {
 				// tokens CONSUMED (the stream is destructive): Eof next ends the list CLEANLY (`class<eof>`
 				// compiles), anything else is the catch-all's empty error, `Unexpected <token>`.
 				if (e.soft && tokEq(peek(), Eof)) break;
-				if (isDisplayFile()) {
+				if (isDisplayFile() && !e.fromPreprocessor) {
 					// In the display file the error is recorded and the scan skips to the next plausible
 					// declaration, so one broken declaration does not cost the answer for the rest of the file.
 					if (e.soft) syntaxErrors.push({msg: Unexpected(peek()), pos: peekInfo().pos});
@@ -3149,6 +3152,8 @@ class Parser {
 			if (isDisplayFile()) {
 				var save = idx;
 				var cff = try parseClassField(tdecl) catch (er:ParserError) {
+					// A preprocessor fault is not a field that failed to parse.
+					if (er.fromPreprocessor) throw er;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
 					// Without rewinding, a sibling type after an unclosed body was eaten by the body and
 					// vanished from the module.

@@ -31,11 +31,21 @@ class ParserError extends haxe.Exception {
 	*/
 	public final soft:Bool;
 
-	public function new(msg:ParserErrorMsg, pos:Position, soft:Bool = false) {
+	/**
+		Raised by the PREPROCESSOR, not by a grammar alternative. A conditional-compilation fault is
+		raised from the token stream's own fill, while a production that did not match is a syntax
+		error, and the recovery arms catch only the latter - so the fault travels past them and is
+		reported. hxc funnels both through this one type and a Haxe try/catch cannot tell them apart,
+		so the verdict travels on the error, exactly as `soft` above carries the no-match one.
+	*/
+	public final fromPreprocessor:Bool;
+
+	public function new(msg:ParserErrorMsg, pos:Position, soft:Bool = false, fromPreprocessor:Bool = false) {
 		super("ParserError");
 		this.msg = msg;
 		this.pos = pos;
 		this.soft = soft;
+		this.fromPreprocessor = fromPreprocessor;
 	}
 
 	/**
