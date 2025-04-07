@@ -562,7 +562,15 @@ class Fields {
 									// static-access error, not a missing field.
 									else switch (a.status.get()) {
 										case Statics(c) if (c.fields.exists(i)):
-											throw new TypingError("Static access to instance field " + i + " is not allowed", pfield);
+											// This is REPORTED, and the access falls through to a dynamic
+											// access over a fresh
+											// monomorph. Raising instead would let the failure reach
+											// unifyCallArgs, which appends
+											// "... For function argument 'v'" - a decoration that does not
+											// belong here, because the
+											// monomorph unifies and the call never fails.
+											ctx.com.addDiagnostic("Static access to instance field " + i + " is not allowed", pfield);
+											AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p));
 										case _: throw fieldNotFound(e.type, i, pfield);
 									}
 							}
