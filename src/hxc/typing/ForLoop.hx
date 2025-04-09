@@ -390,6 +390,15 @@ class ForLoop {
 			return ForLoopFaithful.typeNormalForLoop(ctx, vName, e1Expr, e2, p, pi);
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
+		// Iterating a Dynamic is REPORTED (and the loop still lowers dynamically, which is what this lane
+		// does anyway). The faithful lowering above carries the check, so every other target had it and
+		// eval - the one lane that keeps the legacy path - silently compiled the loop and let the program
+		// die with a null access.
+		switch (TypeFunctions.follow(e1.type)) {
+			case TDynamic(_) | TMono(_):
+				ctx.com.addDiagnostic("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e1.pos);
+			case _:
+		}
 		var intLoop = typeIntIteratorForLoop(ctx, vName, e1, e2, p);
 		if (intLoop != null) return intLoop;
 		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself. If e1 exposes no iterator,
