@@ -405,8 +405,10 @@ class ForLoop {
 		// fall back to array-access iteration for array-like values.
 		var iterExpr = e1;
 		var pt = TypeFunctions.mkMono();
+		// Choose which failure to report when loop strategies fail.
+		var iterErr:Null<TypingError> = null;
 		try {
-			iterExpr = try call0(ctx, e1, "iterator", p) catch (_:TypingError) e1;
+			iterExpr = try call0(ctx, e1, "iterator", p) catch (er:TypingError) { iterErr = er; e1; };
 			// When the iterator candidate is an abstract that does not expose next directly, follow it to its
 			// underlying type (the reference casts to Iterator<_>) so an abstract over an Iterator iterates.
 			var nextCallee = try methodCallee(ctx, iterExpr, "next", p) catch (_:TypingError) {
@@ -419,9 +421,22 @@ class ForLoop {
 				case _: TypeFunctions.mkMono();
 			};
 		} catch (err:TypingError) {
-			var aa = tryArrayAccessForLoop(ctx, vName, e1Expr, e2, p);
+			// The array-access route is a PROBE: its own complaint (`has no field length`) must not become
+			// the loop's message. is a STRUCTURAL test - arrayAccess plus an Int `length`, no typing at
+			// all. hxc's legacy probe instead TYPES a synthesized `arr[i]`/`arr.length` block, and when the
+			// compile is in recording mode that probe does not fail - it RECORDS `has no field length` and
+			// succeeds, so the probe's own complaint became the loop's message.
+			var arrayAccessApplies = try { ForLoopFaithful.ofTexprByArrayAccess(ctx, e1, p); true; } catch (_:Dynamic) false;
+			var aa = arrayAccessApplies ? (try tryArrayAccessForLoop(ctx, vName, e1Expr, e2, p) catch (_:TypingError) null) : null;
 			if (aa != null) return aa;
-			throw err;
+			// No iterator at all: report the lookup's verdict, at the SUBJECT subject's position).
+			if (iterErr != null) throw new TypingError(iterErr.message, e1.pos);
+			// An iterator that is not one: the verdict and the unification detail beneath it, then stands
+			// in with a null of Dynamic - which dynamic_iterator then reports in turn. Three messages, all
+			// at the subject.
+			ctx.com.addDiagnostic("Field iterator has an invalid type", e1.pos);
+			ctx.com.addDiagnostic(hxc.core.TPrinting.unifyErrorMsg(iterExpr.type, TypeFunctions.follow(ForLoopFaithful.tIterator(ctx).t)), e1.pos, 1);
+			throw new TypingError("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e1.pos);
 		}
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
@@ -489,7 +504,7 @@ class ForLoopFaithful {
 	}
 
 	// The Iterator<mono> typedef applied to a fresh monomorph
-	static function tIterator(ctx:TyperContext):{t:T, pt:T} {
+	public static function tIterator(ctx:TyperContext):{t:T, pt:T} {
 		var mt = ctx.com.getType({pack: [], name: "StdTypes"}, Position.nullPos, "Iterator");
 		return switch (mt) {
 			case TTypeDecl(td):
@@ -627,7 +642,7 @@ class ForLoopFaithful {
 		return {e: e1, pt: it.pt};
 	}
 
-	static function ofTexprByArrayAccess(ctx:TyperContext, e:TExpr, p:Position):{kind:IterationKindKind, e:TExpr, pt:T} {
+	public static function ofTexprByArrayAccess(ctx:TyperContext, e:TExpr, p:Position):{kind:IterationKindKind, e:TExpr, pt:T} {
 		switch (TypeFunctions.follow(e.type)) {
 			case TInst(c, pl) if (c.arrayAccess != null
 					&& c.fields.exists("length")
