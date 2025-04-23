@@ -82,12 +82,21 @@ class TypeResolve {
 	 * Resolve all loaded modules currently in the Context.
 	 */
 	public static function resolveAll(ctx:Context):Void {
-		// Snapshot: resolution may load more modules (which append to ctx.modules).
-		var i = 0;
-		while (i < ctx.modules.length) {
+		// NEWEST module first. Field signatures are typed in a DELAYED pass, and a pass bucket is LIFO (a
+		// delay prepends, a flush takes the head), so the module delayed first drains last. hxc derives
+		// signatures eagerly here, so walking forward reports anything a type load emits on the way (the
+		// deprecated-typedef warning is the observable one) in the opposite order. Same reasoning as
+		// runBuildMacros, which iterates modules in reverse because PBuildClass delays are LIFO. Modules
+		// loaded DURING resolution are appended, and those still resolve in order.
+		var n = ctx.modules.length;
+		var i = n - 1;
+		while (i >= 0) {
 			resolveModule(ctx, ctx.modules[i]);
-			i++;
+			i--;
 		}
+		// Anything newly appended still resolves forward
+		var j = n;
+		while (j < ctx.modules.length) { resolveModule(ctx, ctx.modules[j]); j++; }
 	}
 
 	// On-demand resolution of one type (a forward-referenced typedef used in an intersection
