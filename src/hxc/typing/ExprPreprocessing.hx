@@ -27,9 +27,16 @@ class ExprPreprocessing {
 		answer the request; otherwise the annotated expression.
 	**/
 	public static function process(e:Expr):Null<Expr> {
-		// Runs find_before_pos for the modes that ask about an expression, and find_display_call (hxc:
-		// the parser's signature mark) for DMSignature.
-		if (!hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.displayHoverMode) return e;
+		// The pass runs the before-position search for the modes that ask about an expression, and the
+		// parser's signature mark for DMSignature. That is SIX modes, not two: DMDefinition and
+		// DMTypeDefinition are among them alongside completion and hover. That is what lets @position
+		// tell "there IS an expression here, it just has no declaration" (the display loop falls through
+		// and the empty positions are raised, which is an answer) from "no expression here at all"
+		// (nothing is marked, nothing raises, and the missing point is reported). Only the pass's VERDICT
+		// and its marked NODE are consumed either way, so this annotates nothing new.
+		if (!hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.displayHoverMode
+			&& !hxc.typing.Typer.displayDefinition && !hxc.typing.Typer.displayTypeDefinition
+			&& !hxc.typing.Typer.displayUsage && !hxc.typing.Typer.displayImplementation) return e;
 		dpos = hxc.parser.Parser.displayOffset;
 		if (dpos < 0) return e;
 		// DMDefault encloses inclusively and is a completion; DMHover's upper bound is strict; every
@@ -40,7 +47,16 @@ class ExprPreprocessing {
 		inPattern = false;
 		gaveUp = false;
 		var r = map(e);
-		return gaveUp ? null : r;
+		// Giving up unwinds the whole walk, so nothing annotated on the way survives. hxc records the
+		// verdict in a flag and keeps walking, so an ENCLOSING node could still mark itself after an
+		// inner one had declined - a cursor in the gap of `var| q` gives up at the EVars arm and the
+		// block around it would mark itself anyway, which reads downstream as "there is an expression
+		// here". Dropping the mark with the verdict is that unwind.
+		if (gaveUp) {
+			markedNode = null;
+			return null;
+		}
+		return r;
 	}
 
 	public static function inDisplayFile(p:Position):Bool {
