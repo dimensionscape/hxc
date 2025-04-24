@@ -2545,7 +2545,16 @@ class Parser {
 	*/
 	public static function parseModuleString(src:String, file:String = "?", ?defines:Define):Package {
 		var p = make(src, file, defines);
-		return p.parseFile();
+		try {
+			return p.parseFile();
+		} catch (e:LexerError) {
+			// An encoding fault is the one lexer fault not reported as a lexer error: it is re-raised here
+			// as a typing error. So it carries the general error kind everywhere after this point, which is
+			// what a diagnostics request sees as DKCompilerMessage rather than DKParserError.
+			if (e.msg.match(MalformedFile))
+				throw new hxc.core.TypingError(LexerError.errorMsg(e.msg), e.pos);
+			throw e;
+		}
 	}
 
 	function parseFile():Package {
