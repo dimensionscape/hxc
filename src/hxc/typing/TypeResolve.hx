@@ -327,6 +327,26 @@ class TypeResolve {
 		return out;
 	}
 
+	// A heritage entry whose type is a BARE unresolved name is DROPPED, silently, whenever a display
+	// mode is active: there is no super class and no error. It is the one heritage arm that swallows
+	// rather than reports, so a request answered from a file whose `extends` no longer resolves still
+	// answers. A PACKAGED path is not covered (it still reports `Type not found : unit.Test`), and
+	// neither is a plain compile.
+	//
+	// The guard is the display mode, not the ignore-errors check: that check arms the has-error flag
+	// as a side effect, and the flag decides between aborting with the recorded errors and reporting
+	// the missing completion point. So this reads the setting without arming the flag.
+	static function heritageDropped(ctx:Context, err:ContextError):Bool {
+		return switch (err.kind) {
+			case ModuleNotFound(m) if (m.pack.length == 0 && ctx.ignoreErrors):
+				// Called directly rather than through a delay.
+				if (ctx.errorInDiagnosticsRun(err.pos))
+					hxc.typing.Typer.handleUnresolvedIdentifier(ctx, m.name, err.pos);
+				true;
+			case _: false;
+		};
+	}
+
 	public static function resolveClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
@@ -334,9 +354,9 @@ class TypeResolve {
 			case HExtends(pt):
 				heritagePositions.set(Context.pathKey(c.path), pt.pos);
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, true, pt.pos);
-				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
-					throw err;
+					if (heritageDropped(ctx, err)) null else throw err;
 				}
 				// A heritage path that answered a type HINT completion is re-raised filtered for the position,
 				// carrying that answer's own subject.
@@ -345,13 +365,13 @@ class TypeResolve {
 					answerHeritCompletion(ctx, c, true, pt.pos, tc.subjectName, tc.subjectPos);
 					throw tc;
 				};
-				checkHerit(ctx, c, t, true, pt.pos, p);
+				if (t != null) checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
 				heritagePositions.set(Context.pathKey(c.path), pt.pos);
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, false, pt.pos);
-				var t = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
-					throw err;
+					if (heritageDropped(ctx, err)) null else throw err;
 				}
 				// A heritage path that answered a type HINT completion is re-raised filtered for the position,
 				// carrying that answer's own subject.
@@ -360,7 +380,7 @@ class TypeResolve {
 					answerHeritCompletion(ctx, c, false, pt.pos, tc.subjectName, tc.subjectPos);
 					throw tc;
 				};
-				checkHerit(ctx, c, t, false, pt.pos);
+				if (t != null) checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
 		// A non-static method whose inherited parent field is MethDynamic is dynamic itself even without
