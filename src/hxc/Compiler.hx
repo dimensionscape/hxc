@@ -1034,25 +1034,37 @@ class Compiler {
 					var mt = displayTypeAtName(ctx);
 					found = mt == null ? [] : [TypeFunctions.tInfos(mt).namePos];
 				}
-				// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
-				if (ctx.jsonRpcId != null)
-					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
-				else
-					answerOut(hxc.compiler.DisplayXml.printPositions(found) + "\n");
-				return;
+				// A mode that EXITS DURING typing DMDefinition that setting) and reached the end without
+				// raising has not answered - it aborts with the errors it recorded, or reports the missing
+				// point. An empty answer is not one of the outcomes: raise_positions is only ever reached with
+				// something to report. Answering `<list></list>` at exit 0 told a client "no definition here"
+				// for what is really a failed compile.
+				if (found.length > 0) {
+					// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
+					if (ctx.jsonRpcId != null)
+						answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
+					else
+						answerOut(hxc.compiler.DisplayXml.printPositions(found) + "\n");
+					return;
+				}
 			}
 			if (hxc.typing.Typer.displayTypeDefinition) {
 				// The captured expression's type resolves to its declaration name position.
 				var h = hxc.typing.Typer.hoverFound;
 				var hf = h == null ? hoverOnFieldName(ctx) : null;
 				var t:Null<T> = h != null ? h.t : (hf != null ? hf.t : null);
-				var p = t == null ? null : typeDefinitionPos(t);
-				var locs = p == null ? "[null]" : "[" + jsonLocation(p) + "]";
-				if (ctx.jsonRpcId != null)
-					answerOut(jsonRpcAnswer(ctx, locs))
-				else
-					answerOut(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
-				return;
+				// Same rule as definition above. The two cases are not the same: no type at the cursor never
+				// resolves a type position at all and falls through, while a type that has no module type
+				// answers [null position], and that single null entry is the answer.
+				if (t != null) {
+					var p = typeDefinitionPos(t);
+					var locs = p == null ? "[null]" : "[" + jsonLocation(p) + "]";
+					if (ctx.jsonRpcId != null)
+						answerOut(jsonRpcAnswer(ctx, locs))
+					else
+						answerOut(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
+					return;
+				}
 			}
 			if (hxc.typing.Typer.displayHover) {
 				if (ctx.jsonRpcId != null) {
