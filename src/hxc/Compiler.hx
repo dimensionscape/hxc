@@ -2570,6 +2570,15 @@ class Compiler {
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
 
+	// Every reported position goes through the real-path lookup, which on Windows canonicalizes
+	// separators and case alike - absolute paths included, so a diagnostic on a file found under an
+	// absolute class path reports backslashes, not the forward slashes the class-path join produced.
+	// The lookup falls back to its own argument on failure, which is what the catch is.
+	static function diagnosticsFile(pfile:String):String {
+		if (pfile == "?") return pfile;
+		return try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
+	}
+
 	// The report covers only the requested display file (plus fileless positions).
 	static function isDiagnosticsFile(ctx:Context, pfile:String):Bool {
 		var parts = displayParts(ctx);
@@ -2749,9 +2758,7 @@ class Compiler {
 		// anything else a typo suggestion naming it (kind 1).
 		for (u in ctx.unresolvedIdentifiers) {
 			if (!isDiagnosticsFile(ctx, u.pos.file)) continue;
-			var displayFile = u.pos.file;
-			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
-				displayFile = FileSystem.fullPath(displayFile);
+			var displayFile = diagnosticsFile(u.pos.file);
 			var args = "[" + [for (x in u.suggestions) '{"kind":' + x.kind + ',"name":' + haxe.Json.stringify(x.name) + "}"].join(",") + "]";
 			var item = '{"kind":1,"severity":1,"range":' + posAsRange(u.pos)
 				+ ',"args":' + args + ',"relatedInformation":[]}';
@@ -2763,9 +2770,7 @@ class Compiler {
 		for (d in ctx.diagnostics) {
 			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
 			var i = Position.getInfos(d.pos);
-			var displayFile = d.pos.file;
-			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
-				displayFile = FileSystem.fullPath(displayFile);
+			var displayFile = diagnosticsFile(d.pos.file);
 			var severity = switch (d.severity) {
 				case Information: 3;
 				case Warning: 2;
@@ -2788,9 +2793,7 @@ class Compiler {
 		for (m in ctx.modules) {
 			for (e in m.extra.display.importPositions) {
 				if (e.used || e.failed == true || !isDiagnosticsFile(ctx, e.p.file)) continue;
-				var displayFile = e.p.file;
-				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
-					displayFile = FileSystem.fullPath(displayFile);
+				var displayFile = diagnosticsFile(e.p.file);
 				var item = '{"kind":' + DK_UNUSED_IMPORT + ',"severity":2,"range":' + posAsRange(e.p)
 					+ ',"args":[],"relatedInformation":[]}';
 				var group = null;
@@ -2843,9 +2846,7 @@ class Compiler {
 				var args = '{"moduleType":' + hxc.core.Json.stringOfJson(gen.generateModuleType(mt))
 					+ ',"moduleFile":' + haxe.Json.stringify(mfile)
 					+ ',"entries":[' + entries.join(",") + ']}';
-				var displayFile = g[0].pos.file;
-				if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
-					displayFile = FileSystem.fullPath(displayFile);
+				var displayFile = diagnosticsFile(g[0].pos.file);
 				var item = '{"kind":7,"severity":1,"range":' + posAsRange(g[0].pos)
 					+ ',"args":' + args + ',"relatedInformation":[]}';
 				var group = null;
@@ -2858,9 +2859,7 @@ class Compiler {
 		// delete (null when the declaration is shared).
 		for (r in hxc.compiler.Diagnostics.removableCode) {
 			if (!isDiagnosticsFile(ctx, r.p.file)) continue;
-			var displayFile = r.p.file;
-			if (displayFile != "?" && !StringTools.startsWith(displayFile, "/") && displayFile.indexOf(":") != 1)
-				displayFile = FileSystem.fullPath(displayFile);
+			var displayFile = diagnosticsFile(r.p.file);
 			var args = '{"description":' + haxe.Json.stringify(r.s) + ',"range":'
 				+ (r.prange == null || r.prange.min < 0 ? "null" : posAsRange(r.prange)) + "}";
 			var item = '{"kind":' + DK_REMOVABLE_CODE + ',"severity":2,"range":' + posAsRange(r.p)
