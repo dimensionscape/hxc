@@ -65,6 +65,8 @@ class Typer {
 		displayFound = null;
 		displayHover = false;
 		hoverFound = null;
+		hoverWalked = new haxe.ds.ObjectMap();
+		definitionWalked = new haxe.ds.ObjectMap();
 		exprDisplayOff = false;
 		hxc.typing.ExprPreprocessing.markedNode = null;
 		displayTypeDefinition = false;
@@ -2003,7 +2005,20 @@ class Typer {
 		hoverFound = {t: te.type, p: p, e: te, wt: withType, tctx: ctx};
 	}
 
+	// Typing is POST-ORDER, so by the time an enclosing node runs this its inner nodes have
+	// already run it themselves, and the descent below re-walks exactly what they covered. On a
+	// chain of N nodes that all enclose the cursor - N nested parentheses is the plain case -
+	// that is O(N^2), and a display request on a deeply nested expression stops answering at all
+	// while a plain compile of the same file is unaffected. Skipping a node this request already
+	// walked cannot change the answer: the winner is the SMALLEST enclosing range, the comparison
+	// below is strict, so a second visit to the same node never updates what the first recorded.
+	// The descent itself has to stay - a synthesized sub-node never runs the tail check on its
+	// own, which is what it is here for.
+	static var hoverWalked:haxe.ds.ObjectMap<TExpr, Bool> = new haxe.ds.ObjectMap();
+
 	static function checkDisplayHover(ctx:TyperContext, te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
+		if (hoverWalked.exists(te)) return;
+		hoverWalked.set(te, true);
 		switch (te.expr) {
 			// Recurse only into a PROPER sub-range: a synthetic receiver (the module type expr
 			// under an unqualified enum constructor) reuses the whole ident's position and must
@@ -3178,8 +3193,16 @@ class Typer {
 		return null;
 	}
 
+	// The same post-order redundancy as checkDisplayHover, and the same memo. This one only
+	// short-circuits once a declaration is found; until then every enclosing node re-walks the whole
+	// subtree, so an expression that answers nothing (a chain of parentheses around a literal) is the
+	// quadratic case.
+	static var definitionWalked:haxe.ds.ObjectMap<TExpr, Bool> = new haxe.ds.ObjectMap();
+
 	static function checkDisplayDefinition(ctx:TyperContext, te:TExpr):Void {
 		if (displayFound != null) return;
+		if (definitionWalked.exists(te)) return;
+		definitionWalked.set(te, true);
 		// A sub-expression that still encloses the offset is the more precise match: recurse
 		// into any PROPER enclosing sub-range first (an assignment target or call argument
 		// types inside a wrapper whose own node carries no declaration).
