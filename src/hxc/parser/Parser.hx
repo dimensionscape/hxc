@@ -211,6 +211,9 @@ class Parser {
 		var lastSignificant2:Null<Token> = null;
 		var lastWasMarkup = false;
 		var pendingDoc:Null<String> = null;
+		// Offset of a line comment that answered the request below. Lexing stops there, so nothing past it
+		// is read; see the catch at the bottom.
+		var commentAnsweredAt = -1;
 		// Lexer progress invariant: every non-Eof token call must advance the
 		// stuck -> raise instead of spinning forever.
 		var lastOff = lex.offset();
@@ -252,7 +255,10 @@ class Parser {
 					// > 0 guard is for a comment at the very start of the file.
 					if (matchesDisplayFile(file) && displayOffset >= 0 && t.pos.min > 0) {
 						var lo = displayCompletionMode ? t.pos.min + 1 : t.pos.min;
-						if (lo <= displayOffset && displayOffset <= t.pos.max) displaySuppressed = true;
+						if (lo <= displayOffset && displayOffset <= t.pos.max) {
+							displaySuppressed = true;
+							if (commentAnsweredAt < 0) commentAnsweredAt = t.pos.min;
+						}
 					}
 				case _:
 					// A completion whose position sits on a string or a REGEXP constant aborts the whole marking
@@ -285,8 +291,18 @@ class Parser {
 			lastOff = off;
 		}
 		catch (e:LexerError) {
-			// The MalformedFile error itself stays at 1:1 but its sentinel must sit where lexing STOPPED,
-			// or a diagnostic reported "at the next token" near the cut would name the start of the file.
+			// The MalformedFile error itself stays at 1:1, but its sentinel must sit where lexing STOPPED,
+			// or a diagnostic reported "at the next token" near the cut would name the start of the file. A
+			// comment that already answered the request is a HARD STOP: the comment completion is raised
+			// from inside the token read, so the lexer never advances past it and a fault further down the
+			// file does not exist as far as that request is concerned. hxc cannot raise there - it lexes the
+			// whole file up front because #if preprocessing needs the complete stream, and a raise routed
+			// out through the parse plumbing gets converted before it reaches the top level - so the fault
+			// is dropped instead. Only faults after the comment: one before it is reached first either way.
+			if (commentAnsweredAt >= 0 && commentAnsweredAt < lex.curPos().min) {
+				toks.push(new TokenInfo(Eof, lex.curPos()));
+				return toks;
+			}
 			out.err = e;
 			toks.push(new TokenInfo(Eof, e.msg.match(MalformedFile) ? lex.curPos() : e.pos));
 		}
