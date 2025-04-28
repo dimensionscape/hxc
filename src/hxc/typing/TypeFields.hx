@@ -25,7 +25,25 @@ class TypeFields {
 	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 
-	// Per-request reset for the wait server (a fresh request re-types loaded bodies).
+	// Per-request reset for the wait server (a fresh request re-types loaded bodies). The class
+	// context's `this` is the class instance only when the class is not an abstract implementation.
+	// For an abstract, `this` is the abstract's UNDERLYING type - that is what a member
+	// function sees - and the impl class never appears. The one exception is an underlying type that
+	// is
+	// still an unbound monomorph, where the abstract itself stands in. With TInst(impl), anything
+	// reading ctx.tthis for an abstract member would see `_MyAbstract.MyAbstract_Impl_` instead of
+	// `Int`, and the missing-fields diagnostic, which asks about `this`, would report it verbatim.
+	static function classContextThis(c:TClass):T {
+		return switch (c.kind) {
+			case KAbstractImpl(a):
+				switch (a.thisType) {
+					case TMono(r) if (r.type == null): TAbstract(a, TypeFunctions.extractParamTypes(c.params));
+					case t: t;
+				}
+			case _: TInst(c, TypeFunctions.extractParamTypes(c.params));
+		};
+	}
+
 	public static function resetPerRequest():Void {
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
@@ -304,7 +322,7 @@ class TypeFields {
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
 		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		for (cff in d.dData) {
@@ -508,7 +526,7 @@ class TypeFields {
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
 		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
@@ -615,7 +633,7 @@ class TypeFields {
 		var tctx = new TyperContext(ctx);
 		tctx.curclass = c;
 		tctx.typeParams = c.params;
-		tctx.tthis = TInst(c, TypeFunctions.extractParamTypes(c.params));
+		tctx.tthis = classContextThis(c);
 		_forcing.push(cf);
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
