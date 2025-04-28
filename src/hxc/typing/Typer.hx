@@ -2162,10 +2162,19 @@ class Typer {
 
 	public static var identSpeculation:Int = 0;
 
-	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind
-	// 0); anything else is a typo suggestion naming it (kind 1).
+	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind 0);
+	// anything else is a typo suggestion naming it (kind 1).
+	// The candidate set for an unresolved identifier includes the KEYWORDS and the `trace` builtin. hxc's
+	// collectToplevel has the LEGACY shape (the XML @toplevel lane emits no keyword items), so they are
+	// added here. Without them a typo one edit from a keyword would suggest nothing.
+	static final unresolvedKeywords = [
+		"function", "var", "final", "if", "else", "while", "do", "for", "break", "return",
+		"continue", "switch", "try", "new", "throw", "untyped", "cast", "inline", "trace"
+	];
+
 	static function recordUnresolvedIdentifier(ctx:TyperContext, i:String, p:Position):Void {
 		var items = try collectToplevel(ctx) catch (_:Dynamic) return;
+		items = items.concat([for (k in unresolvedKeywords) {kind: "keyword", name: k}]);
 		var scored = [];
 		for (it in items) {
 			var d = hxc.core.StringError.levenshtein(i, it.name);
