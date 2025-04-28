@@ -67,6 +67,13 @@ private class RequestAbort extends haxe.Exception {
 	public function new(code:Int) { super("request abort " + code); this.code = code; }
 }
 
+// The two Win32 entries exitProcess needs, declared rather than pulling in <windows.h>: that
+// header is not included in generated code and dragging it in would put its macro soup over
+// every name in this file.
+#if cpp
+@:cppFileCode('extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess(void);
+extern "C" __declspec(dllimport) int __stdcall TerminateProcess(void*, unsigned int);')
+#end
 class Compiler {
 	public function new() run(Sys.args());
 	public static function main() {
@@ -101,6 +108,25 @@ class Compiler {
 		catch (ra:RequestAbort) throw ra
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
+		exitProcess(0);
+	}
+
+	/**
+	 * hxcpp marker threads can outlive CRT teardown and enter destroyed allocator locks, causing
+	 * intermittent access violations. Flush the streams before terminating without CRT teardown; _exit
+	 * does not flush them.
+	 */
+	static function exitProcess(code:Int):Void {
+		try Sys.stdout().flush() catch (_:Dynamic) {}
+		try Sys.stderr().flush() catch (_:Dynamic) {}
+		#if cpp
+		// TerminateProcess, not exit()/_exit(): both of those route through the UCRT's
+		// common_exit, and _exit only promises to skip atexit - it is not a guarantee that no
+		// teardown touches the locks. TerminateProcess ends the process outright, so there is
+		// provably no window between destroying a lock and a GC worker taking it.
+		untyped __cpp__("::TerminateProcess(::GetCurrentProcess(), {0})", code);
+		#end
+		Sys.exit(code);
 	}
 
 	static var argFailureCtx:Null<Context> = null;
@@ -116,7 +142,7 @@ class Compiler {
 		} else {
 			Sys.stderr().writeString("Error: " + msg + "\n");
 		}
-		Sys.exit(1);
+		exitProcess(1);
 	}
 
 	// The wait loop: length-prefixed request/response over stdin/stderr; each request is one
@@ -188,12 +214,12 @@ class Compiler {
 		var port = Std.parseInt(portStr);
 		if (port == null) {
 			Sys.stderr().writeString("Invalid port\n");
-			Sys.exit(1);
+			exitProcess(1);
 		}
 		var sock = new sys.net.Socket();
 		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
 			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "\n");
-			Sys.exit(1);
+			exitProcess(1);
 		}
 		runWaitLoop(sock.input, sock.output);
 		try sock.close() catch (_:Dynamic) {}
@@ -412,7 +438,7 @@ class Compiler {
 					break;
 				}
 			}
-			Sys.exit(exitCode);
+			exitProcess(exitCode);
 		}
 		// --wait stdio: the compilation-server loop. Requests arrive on stdin as 4-byte little-endian
 		// length-prefixed blocks of newline-separated argument lines; each response goes to stderr with the
@@ -2632,7 +2658,7 @@ class Compiler {
 	// A failing one-shot compile exits the process; an in-process wait-server request
 	// aborts only the request.
 	static function exitRequest(code:Int):Void {
-		if (requestOutput != null) throw new RequestAbort(code) else Sys.exit(code);
+		if (requestOutput != null) throw new RequestAbort(code) else exitProcess(code);
 	}
 
 	// A macro can push a raw json value out as the request result, through the same envelope every other
