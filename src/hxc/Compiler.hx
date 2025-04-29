@@ -1027,6 +1027,13 @@ class Compiler {
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
+			// When the unresolved name is the display subject, so the error answers the request. hxc catches
+			// that raise while recovering the field body, so the answer path has to defer to it explicitly -
+			// and only to it: an error anywhere else must still leave the answer alone.
+			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displaySubjectError != null) {
+				var se = hxc.typing.Typer.displaySubjectError;
+				abortWithMessage(ctx, se.msg, se.pos);
+			}
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
 				if (found == null) {

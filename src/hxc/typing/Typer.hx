@@ -63,6 +63,7 @@ class Typer {
 		expectedArrayAllowDynamic = false;
 		displayDefinition = false;
 		displayFound = null;
+		displaySubjectError = null;
 		displayHover = false;
 		hoverFound = null;
 		hoverWalked = new haxe.ds.ObjectMap();
@@ -1684,8 +1685,15 @@ class Typer {
 	// Legacy --display @position: the innermost typed expression enclosing the display offset yields its
 	// declaration position; post-order typing makes the first enclosing match the innermost.
 	public static var displayDefinition:Bool = false;
-	// First (innermost) hit wins; recorded rather than raised so the surrounding
-	// call-argument recovery cannot swallow it.
+	// First (innermost) hit wins; recorded rather than raised so the surrounding call-argument
+	// recovery cannot swallow it. When the cursor is on the unresolved name the error is the answer -
+	// the request reports the identifier rather than returning positions. hxc throws there, but a
+	// field-body recovery catches it and the answer path would then return an empty position list, so
+	// the error would never surface. Recording that the SUBJECT failed is what lets the answer defer
+	// to it. Deliberately not a general has-error test: an error elsewhere must not suppress an
+	// answer.
+	public static var displaySubjectError:Null<{msg:String, pos:Position}> = null;
+
 	public static var displayFound:Null<Array<Position>> = null;
 
 	// Legacy --display @type: the innermost typed expression enclosing the display offset reports its type;
@@ -3887,6 +3895,9 @@ class Typer {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
+			if (identSpeculation == 0 && ctx.com.displaySpec != null && atDisplayPos(p)
+					&& displaySubjectError == null)
+				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
 		switch (mt) {
