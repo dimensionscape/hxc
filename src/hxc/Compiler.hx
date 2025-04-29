@@ -1031,8 +1031,10 @@ class Compiler {
 			// that raise while recovering the field body, so the answer path has to defer to it explicitly -
 			// and only to it: an error anywhere else must still leave the answer alone.
 			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displaySubjectError != null) {
-				var se = hxc.typing.Typer.displaySubjectError;
-				abortWithMessage(ctx, se.msg, se.pos);
+				// The recovery that caught the raise already recorded the message; re-adding it here printed it
+				// twice. Only the decision to stop instead of answering belongs here.
+				flushPendingMessages(ctx);
+				exitRequest(1);
 			}
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
