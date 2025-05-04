@@ -72,6 +72,11 @@ class Context {
 	public var mainClass:Null<Path>;
 
 	public var displaySpec:Null<String>;
+
+	/**
+	 * Position-specific display modes type only the cursor's field and bodies demanded by it.
+	 */
+	public var displayFullTyping:Bool = true;
 	// Suppress errors that would prevent an answer to a position-specific display request.
 	public var ignoreErrors:Bool = false;
 
@@ -287,6 +292,7 @@ class Context {
 		this.defines = defines == null ? new Define() : defines;
 		this.mainClass = null;
 		this.displaySpec = null;
+		this.displayFullTyping = true;
 		this.moduleLut = new StringMap();
 		this.typeToModule = new StringMap();
 		this.typeToModuleEpoch = new StringMap();

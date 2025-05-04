@@ -131,6 +131,10 @@ class TypeFields {
 		// signature so downstream consumers never see a TLazy.
 		tt("forcePendingSignatures", function() {
 		for (cf in pending) {
+			// Under a display request a field that is not the one the cursor is in keeps its lazy, so its
+			// body is typed only if something demands the type. Forcing every signature here types every
+			// body, which is what dms_full_typing switches off.
+			if (!ctx.displayFullTyping && !isDisplayField(cf)) continue;
 			switch (cf.type) {
 				case TLazy(r):
 					try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
@@ -153,9 +157,13 @@ class TypeFields {
 					// Extern classes stay in the walk: forceFieldBody itself types an
 					// extern INLINE body (haxe.EnumTools) and skips true externs.
 					case TClassDecl(c):
-						for (cf in c.orderedFields) if (cf.expr == null) forceFieldBody(ctx, c, cf);
-						for (cf in c.orderedStatics) if (cf.expr == null) forceFieldBody(ctx, c, cf);
-						if (c.constructor != null && c.constructor.expr == null) forceFieldBody(ctx, c, c.constructor);
+						// This bucket is the dms_full_typing branch. A display request takes instead, where only the
+						// display field gets a body.
+						var full = ctx.displayFullTyping;
+						for (cf in c.orderedFields) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
+						for (cf in c.orderedStatics) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
+						if (c.constructor != null && c.constructor.expr == null
+							&& (full || isDisplayField(c.constructor))) forceFieldBody(ctx, c, c.constructor);
 					case _:
 				}
 			});
@@ -563,7 +571,17 @@ class TypeFields {
 
 	// Type a single field body on demand. Inline expansion needs a callee body that may not be
 	// installed yet (its module is processed later, or loaded on demand); the owning class is known
-	// from the call site, so locate the syntactic field and run its body typing here.
+	// from the call site, so locate the syntactic field and run its body typing here. isDisplayField:
+	// the field whose declaration range holds the cursor, in the display file. pos is the whole
+	// declaration, so the range test is an enclosed-in check.
+	static function isDisplayField(cf:TClassField):Bool {
+		var off = hxc.parser.Parser.displayOffset;
+		if (hxc.parser.Parser.displayFile == null || off < 0) return false;
+		var p = cf.pos;
+		if (p == null || !hxc.parser.Parser.matchesDisplayFile(p.file)) return false;
+		return p.min <= off && p.max >= off;
+	}
+
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
 		// Same reason as installClassFields: the declaration never resolved, so there is no body to type
@@ -948,6 +966,10 @@ class TypeFields {
 					case TFunction(tf): tf.expr;
 					case _: null;
 				};
+				// Reached only which creates the check from the constructor body as it is typed. A constructor
+				// whose body was never typed therefore never reaches it; only 's no-constructor branch runs on
+				// its own.
+				if (c.constructor != null && body == null) continue;
 				var finalVars:Map<String, Bool> = new Map();
 				var ordered:Array<TClassField> = [];
 				function collect(c2:TClass):Void {

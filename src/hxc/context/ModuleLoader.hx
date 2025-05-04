@@ -739,7 +739,13 @@ class ModuleLoader {
 
 		if (keepTypes) m.types = m.types.concat(decls) else m.types = decls;
 		applyGlobalMetadata(ctx, m, decls);
-		ctx.moduleImports.set(Context.pathKey(m.path), imports);
+		ctx.moduleImports.set(Context.pathKey(m.path), imports);
+		// Build import alias typedefs before their first use so display requests on the alias name have
+		// an answer.
+		for (ni in imports.order)
+			if (ni.aliased == true && ni.aliasName != null && ni.aliasPos != null
+					&& hxc.typing.Typer.atDisplayPos(ni.aliasPos))
+				try resolveNamedImportType(ctx, m, ni.aliasName, ni.aliasPos) catch (_:Dynamic) {}
 		// Share import records so later usage marks remain visible on the module.
 		m.extra.display.importPositions = imports.importPositions;
 	}

@@ -892,7 +892,12 @@ class Compiler {
 					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
 					// the typer consults that (ignoreError) at the handful of places where an error would
 					// cost the answer rather than describe it.
-					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
+					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
+					// Only the modes that report the COMPILE keep full typing. A mode that answers about
+					// one position leaves it false, and the field typer reads that to type only the field
+					// under the cursor.
+					ctx.displayFullTyping = dmode == "diagnostics" || dmode == "statistics"
+						|| dmode == "usage" || dmode == "implementation";
 					// The report mode is diagnostics only for a diagnostics request, so isDiagnosticsFile
 					// answers false everywhere else.
 					ctx.diagnosticsFileFilter = dmode != "diagnostics" ? null
