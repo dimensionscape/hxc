@@ -3777,9 +3777,14 @@ class Typer {
 						// enum constructor: look it up as an @:enum static on the abstract's impl class.
 						var cf = a.impl.statics.get(i);
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
-							cf.type = TAbstract(a, tl);
+							// The access over FHAbstract with the abstract's own params and leaves the field alone.
+							// Rebinding type to the EXPECTED type's params instead overwrote the member's declared type
+							// on the shared field, so `var fruit:TagE<Tag1>` came back as TagE<T> and a `case fruit:` no
+							// longer narrowed T. Typing the initializer put the declared type back, which is what hid
+							// it.
 							var typeExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
-							return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), typeExpr, p);
+							return Fields.fieldAccess(ctx, mode, cf,
+								FHAbstract(a, TypeFunctions.extractParamTypes(a.params), a.impl), typeExpr, p);
 						}
 					case _:
 				}
