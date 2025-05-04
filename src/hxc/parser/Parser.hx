@@ -1797,7 +1797,8 @@ class Parser {
 				case Const(CIdent(n)): displayDotName = n; displayDotPos = np;
 				case _:
 			}
-			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, p));
+			var eEnd = displayDotPos != null ? displayDotPos : p;
+			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, eEnd));
 			// 's resume arm returns the display node - it does not run expr_next, so whatever follows the
 			// dot stays in the stream and is parsed on its own. That is what ends the enclosing block at
 			// `this.` + `.resume`, which in turn lets a declaration after it belong to the class rather
