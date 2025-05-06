@@ -2719,6 +2719,11 @@ class Parser {
 
 	function checkTypeDeclCompletion(mode:Int, pmax:Int):Void {
 		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return;
+		// A COMMENT holding the cursor stops the lexer, so the parser never reaches a declaration position
+		// to record this list. hxc lexes the whole file up front (the #if pass needs the complete stream)
+		// and cannot stop there, so the comment's verdict is honoured here instead: a request already
+		// answered by a comment has no type-decl keywords.
+		if (displaySuppressed) return;
 		var nextPmin = tokEq(peek(), Eof) ? 0x3FFFFFFF : peekInfo().pos.min;
 		if (!(pmax <= displayOffset && nextPmin >= displayOffset)) return;
 		delayedSyntaxCompletion = typeDeclKeywords(mode);
