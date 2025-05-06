@@ -2788,6 +2788,21 @@ class Typer {
 		return false;
 	}
 
+	// ctx.inDisplay is on while the marked expression types, so an unresolved name raises ANYWHERE
+	// inside that subtree, not only for one the cursor is on. hxc reads the marked node's range rather
+	// than carrying a flag: a flag would have to survive the raise this very arm performs, and a
+	// display flag outliving its subtree is an easy mistake to make. Positions nest, so being inside
+	// the span is being inside the subtree.
+	static function inMarkedSubtree(p:Position):Bool {
+		var mn = hxc.typing.ExprPreprocessing.markedNode;
+		if (mn == null || mn.pos == null || p == null) return false;
+		if (!hxc.typing.ExprPreprocessing.inDisplayFile(p)) return false;
+		// Either its marked node differs here or something downstream declines; settling it needs the
+		// instrumented reference, and the exclusion stands on the sweep until then.
+		switch (mn.expr) { case EBlock(_): return false; case _: }
+		return mn.pos.min <= p.min && p.max <= mn.pos.max;
+	}
+
 	public static function atDisplayPos(p:Position):Bool {
 		// A position the preprocessor refused to annotate is not a display position for anything downstream
 		// either.
@@ -3896,12 +3911,13 @@ class Typer {
 			// elsewhere in it. the raise for the display SUBJECT, which here is the identifier the cursor is
 			// on - there the raise is how the request gets answered. adds a fake local, but only behind
 			// ServerConfig.legacy_completion, a JSON-RPC initialize option that hxc has no way to set.
-			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)) {
+			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)
+					&& !inMarkedSubtree(p)) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
-			if (identSpeculation == 0 && ctx.com.displaySpec != null && atDisplayPos(p)
-					&& displaySubjectError == null)
+			if (identSpeculation == 0 && ctx.com.displaySpec != null
+					&& (atDisplayPos(p) || inMarkedSubtree(p)) && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
