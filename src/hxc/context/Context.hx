@@ -171,7 +171,10 @@ class Context {
 	// Group missing-field diagnostics by position and emit one DKMissingFields with its owning module
 	// type.
 	public var missingFields:Array<{pos:Position, on:ModuleType, scope:hxc.core.Type.ClassFieldScope,
-		fields:Array<{cf:hxc.core.Type.TClassField, t:T}>, cause:String}> = [];
+		fields:Array<{cf:hxc.core.Type.TClassField, t:T,
+			// Serialize completion types when recording the diagnostic, before filters bind open monomorphs
+			// to Dynamic.
+			ct:hxc.core.CompletionItem.CompletionType}>, cause:String}> = [];
 
 	public var warningOptions:Array<Array<hxc.core.WarningList.WarningOption>>;
 

@@ -431,8 +431,12 @@ class Fields {
 		}
 		if (isPublic) TypeFunctions.addClassFieldFlag(cf, CfPublic);
 		if (scope == CFSStatic) TypeFunctions.addClassFieldFlag(cf, CfStatic);
+		// The conversion happens here, with the record. This site is only reached in a diagnostics run
+		// (the errorInDiagnosticsRun check at the call site), so it cannot disturb an ordinary compile.
+		var ct = hxc.core.CompletionItem.CompletionTypeTools.fromType(
+			function(_) return hxc.core.CompletionItem.ImportStatus.Imported, t);
 		ctx.com.missingFields.push({pos: pfield, on: mt, scope: scope,
-			fields: [{cf: cf, t: t}], cause: "FieldAccess"});
+			fields: [{cf: cf, t: t, ct: ct}], cause: "FieldAccess"});
 	}
 
 	// A bare name that did not resolve is a missing field of the enclosing STATICS in a static

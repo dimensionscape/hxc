@@ -2837,7 +2837,8 @@ class Compiler {
 		{
 			var order:Array<String> = [];
 			var groups2 = new haxe.ds.StringMap<Array<{pos:Position, on:hxc.core.Type.ModuleType,
-				scope:hxc.core.Type.ClassFieldScope, fields:Array<{cf:hxc.core.Type.TClassField, t:T}>, cause:String}>>();
+				scope:hxc.core.Type.ClassFieldScope, fields:Array<{cf:hxc.core.Type.TClassField, t:T,
+					ct:hxc.core.CompletionItem.CompletionType}>, cause:String}>>();
 			for (mf in ctx.missingFields) {
 				if (!isDiagnosticsFile(ctx, mf.pos.file)) continue;
 				var key = mf.pos.file + ":" + mf.pos.min + ":" + mf.pos.max;
@@ -2858,9 +2859,8 @@ class Compiler {
 				for (mf in g) {
 					var fields:Array<String> = [];
 					for (fe in mf.fields) {
-						var ct = hxc.core.CompletionItem.CompletionTypeTools.toJson(gen,
-							hxc.core.CompletionItem.CompletionTypeTools.fromType(
-								function(_) return hxc.core.CompletionItem.ImportStatus.Imported, fe.t));
+						// Use the type serialized when this record was created.
+						var ct = hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, fe.ct);
 						fields.push(hxc.core.Json.stringOfJson(hxc.core.Json.JsonValue.JObject([
 							{name: "field", value: gen.generateClassField(mf.scope, fe.cf)},
 							{name: "type", value: ct},
