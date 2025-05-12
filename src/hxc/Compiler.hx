@@ -1176,7 +1176,12 @@ class Compiler {
 					answerOut(hxc.compiler.DisplayXml.printKeywords(hxc.parser.Parser.delayedSyntaxCompletion));
 				return;
 			}
-			if (hxc.parser.Parser.displayFile != null && !ctx.hasError()) {
+			// The request aborts with the recorded errors before reporting a missing point - but a COMMENT
+			// that answered the request means lexing stopped there and the file was never typed at all, so
+			// there are no errors to abort with. hxc lexes ahead and types, so its errors have to step
+			// aside here.
+			if (hxc.parser.Parser.displayFile != null
+					&& (!ctx.hasError() || hxc.parser.Parser.commentAnswered)) {
 				var dm = displayParts(ctx);
 				var dmode = dm.length >= 3 ? dm[2] : "";
 				// No completion point was found, and the display file has a block only the MACRO context turns

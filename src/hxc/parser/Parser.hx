@@ -73,6 +73,14 @@ class Parser {
 	// A position the preprocessor refuses to annotate answers NOTHING, however many later stages would
 	// happily complete there.
 	public static var displaySuppressed:Bool = false;
+
+	/**
+	    Set only by a COMMENT that answered the request, where displaySuppressed is shared with the string
+	    and regexp rule. The two are not the same stop: a comment halts the LEXER, so the file is never
+	    typed and there are no errors to report, while a string or regexp only aborts the MARKING pass and
+	    typing continues.
+	**/
+	public static var commentAnswered:Bool = false;
 	// The display file has a conditional block that would be LIVE in the macro context.
 	public static var displayModuleHasMacroDefines:Bool = false;
 	// The display mode is a HOVER (it uses the enclosing-position test with a strict upper bound).
@@ -103,6 +111,7 @@ class Parser {
 		displayMetaFound = false;
 		displayMetaName = null;
 		displaySuppressed = false;
+		commentAnswered = false;
 		displayModuleHasMacroDefines = false;
 		displayHoverMode = false;
 		wasAutoTriggered = false;
@@ -263,6 +272,7 @@ class Parser {
 						if (lo <= displayOffset && displayOffset <= t.pos.max) {
 							displaySuppressed = true;
 							if (commentAnsweredAt < 0) commentAnsweredAt = t.pos.min;
+							commentAnswered = true;
 						}
 					}
 				case _:
