@@ -126,6 +126,11 @@ class Parser {
 	}
 
 	function atDisplayDot(dotPos:Position):Bool {
+		// A comment holding the cursor already answered this request: the lexer stops there, so nothing
+		// past it is reachable. This rule spans a GAP between two tokens, and a comment sits in exactly
+		// such a gap, so without this it fires ACROSS the comment and answers for a cursor the lexer never
+		// reached.
+		if (displaySuppressed) return false;
 		if (displayFile == null || displayOffset < 0) return false;
 		var f = StringTools.replace(file, "\\", "/");
 		var df = StringTools.replace(displayFile, "\\", "/");
@@ -488,6 +493,11 @@ class Parser {
 	// The span from the end of this token to the end of the next one contains the cursor, so whatever
 	// belongs between them was never written.
 	function wouldSkipDisplayPosition(p1:Position, plusOne:Bool):Bool {
+		// A comment holding the cursor already answered this request: the lexer stops there, so nothing
+		// past it is reachable. This rule spans a GAP between two tokens, and a comment sits in exactly
+		// such a gap, so without this it fires ACROSS the comment and answers for a cursor the lexer never
+		// reached.
+		if (displaySuppressed) return false;
 		if (!isDisplayFile() || displayOffset < 0) return false;
 		var p2 = peekInfo().pos;
 		var lo = p1.max + (plusOne ? 1 : 0);
@@ -497,6 +507,11 @@ class Parser {
 	// The cursor sitting in the GAP between the end of this token and the start of the next one, in the
 	// display file and in completion mode.
 	function checkResumeRange(p:Position):Bool {
+		// A comment holding the cursor already answered this request: the lexer stops there, so nothing
+		// past it is reachable. This rule spans a GAP between two tokens, and a comment sits in exactly
+		// such a gap, so without this it fires ACROSS the comment and answers for a cursor the lexer never
+		// reached.
+		if (displaySuppressed) return false;
 		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return false;
 		return p.min < displayOffset && peekInfo().pos.min >= displayOffset;
 	}
