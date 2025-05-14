@@ -2797,8 +2797,13 @@ class Typer {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (mn == null || mn.pos == null || p == null) return false;
 		if (!hxc.typing.ExprPreprocessing.inDisplayFile(p)) return false;
-		// Either its marked node differs here or something downstream declines; settling it needs the
-		// instrumented reference, and the exclusion stands on the sweep until then.
+		// A BLOCK mark is excluded. What differs is what happens next, and it is TEMPORAL. type_block
+		// catches Error PER STATEMENT and records it, so the block itself types cleanly and the display
+		// walk raises its answer before typing ends - the answer wins, and the recorded error never
+		// reaches . With the call marked instead, typing the marked node itself raises, no answer is ever
+		// produced, and aborts with the error. So the real discriminator is whether the marked NODE typed
+		// cleanly, and excluding a block stands in for the one case where a statement error is swallowed
+		// under it. Giving hxc that signal directly would retire this exclusion.
 		switch (mn.expr) { case EBlock(_): return false; case _: }
 		return mn.pos.min <= p.min && p.max <= mn.pos.max;
 	}
