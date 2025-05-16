@@ -787,7 +787,10 @@ class Parser {
 	// Every part must sit IMMEDIATELY after what precedes it (p.min = p1.max). A following '.' needs no
 	// adjacency of its own, but the part after it must be adjacent to the dot.
 	function metaNameParts(prev:Position, acc:Array<String>):Array<String> {
-		if (peekInfo().pos.min != prev.max) throw new ParserError(Expected(["metadata name"]), peekInfo().pos);
+		// The adjacency is a GUARD on the match, so a token that is not adjacent simply fails to match and
+		// is reported as `Unexpected <token>`. A worded expectation is printed only where the grammar
+		// supplies one.
+		if (peekInfo().pos.min != prev.max) throw new ParserError(Unexpected(peek()), peekInfo().pos);
 		acc.push(metaNamePart());
 		if (tokEq(peek(), Dot)) return metaNameParts(next().pos, acc);
 		return acc;
@@ -813,7 +816,8 @@ class Parser {
 		switch (peek()) {
 			case Const(CIdent(i)): junk(); return i;
 			case Kwd(k): junk(); return Ast.sKeyword(k);
-			case _: return err("Expected meta name");
+			// No fallback arm here either
+			case _: throw new ParserError(Unexpected(peek()), cur().pos);
 		}
 	}
 
@@ -3421,7 +3425,10 @@ class Parser {
 			case Kwd(KwdDynamic): var p = next().pos; return {name: "dynamic", pos: p};
 			case Kwd(KwdDefault): var p = next().pos; return {name: "default", pos: p};
 			case Kwd(KwdNull): var p = next().pos; return {name: "null", pos: p};
-			case _: return err("Expected property accessor");
+			// The property identifier has no fallback arm: a token that matches none of these fails the
+			// match, and a BARE failure is reported as `Unexpected <token>`. A worded expectation is printed
+			// only where the grammar supplies one.
+			case _: throw new ParserError(Unexpected(peek()), cur().pos);
 		}
 	}
 
