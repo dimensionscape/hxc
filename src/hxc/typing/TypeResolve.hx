@@ -514,6 +514,7 @@ class TypeResolve {
 			case _: null;
 		};
 		for (cff in d.dData) {
+			checkFieldAccessModifiers(ctx, cff);
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			var isAbstractMember = isAbsImpl && !isStatic && cff.cffName.name != "new";
@@ -1499,6 +1500,40 @@ class TypeResolve {
 						}
 					}
 				case _:
+			}
+		}
+	}
+
+	// Run once per field before its context is built. Two arms over the access list, in order: the
+	// same modifier twice -> `Duplicate access modifier x` at the later one, with `Previously defined
+	// here` as a sub-message at the earlier; public against private -> `Conflicting access modifier x`
+	// with `Conflicts with this`. A repeat is not added to the accumulator, so three `public` report
+	// against the first. Both arms carry null-position guards: a synthesized modifier has nothing to
+	// point at. Both sub-messages carry the "... " sub-message prefix, which the enum abstract site
+	// deliberately does not apply - the two `Conflicts with this` messages are not spelled the same
+	// way.
+	static function checkFieldAccessModifiers(ctx:Context, cff:ClassField):Void {
+		if (ctx == null) return;
+		var acc:Array<PlacedAccess> = [];
+		for (a in cff.cffAccess) {
+			var dup:Null<PlacedAccess> = null;
+			for (prev in acc) if (prev.access == a.access) { dup = prev; break; }
+			if (dup != null) {
+				if (a.pos != Position.nullPos && dup.pos != Position.nullPos) {
+					ctx.addDiagnostic("Duplicate access modifier " + hxc.ast.Ast.sAccess(a.access), a.pos);
+					ctx.addDiagnostic("... Previously defined here", dup.pos, 1);
+				}
+				continue;
+			}
+			switch (a.access) {
+				case APublic | APrivate:
+					var other:Null<PlacedAccess> = null;
+					for (prev in acc) switch (prev.access) { case APublic | APrivate: other = prev; break; case _: }
+					if (other != null) {
+						ctx.addDiagnostic("Conflicting access modifier " + hxc.ast.Ast.sAccess(a.access), a.pos);
+						ctx.addDiagnostic("... Conflicts with this", other.pos, 1);
+					} else acc.push(a);
+				case _: acc.push(a);
 			}
 		}
 	}
