@@ -1047,8 +1047,18 @@ class Parser {
 				cffAccess: [],
 				cffKind: FVar(th, null),
 			});
-			if (tokEq(peek(), Comma)) junk();
-			else break;
+			if (tokEq(peek(), Comma)) {
+				junk();
+				// Past the comma, `}` or ANOTHER field is taken, and the third alternative is serror() - so
+				// a comma followed by anything else NAMES that token. The `Expected , or }` of
+				// closeAnonFields belongs to the no-comma case alone.
+				// An anonymous field heads on Question or dollarIdent, so those are what can follow; the
+				// loop head re-tests `}` and closes on it.
+				switch (peek()) {
+					case BrClose | Question | Const(CIdent(_)) | Dollar(_):
+					case _: serror();
+				}
+			} else break;
 		}
 		return fields;
 	}
