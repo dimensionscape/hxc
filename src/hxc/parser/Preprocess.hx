@@ -409,7 +409,15 @@ class Preprocess {
 		// The condition is read straight off the stream, so an error at the end of it is reported there,
 		// not at the start of the condition.
 		var endPos = sub.length > 0 ? sub[sub.length - 1].pos : popen;
-		sub.push(new TokenInfo(Eof, new Position(endPos.file, endPos.max, endPos.max)));
+		var eofPos = new Position(endPos.file, endPos.max, endPos.max);
+		// ...EXCEPT when the condition ran to the real end of the stream. `expr` then pulls the ACTUAL
+		// Eof token, which trailing whitespace has already carried past the last condition token, so a
+		// file ending in a newline reports the start of the next line.
+		if (i < toks.length) switch (toks[i].tok) {
+			case Eof: eofPos = toks[i].pos;
+			case _:
+		}
+		sub.push(new TokenInfo(Eof, eofPos));
 		// The closing `)` fails at the first token the condition expression did not take - whether the
 		// paren never closed or the expression stopped short of it. That match PULLED the token into the
 		// condition stream's buffer, and the error handler then peeks the MAIN stream, whose fill takes
@@ -422,6 +430,16 @@ class Preprocess {
 		// never reported, only which token the enclosing pattern was left holding - the one after the
 		// token the expression choked on.
 		if (r.e == null || depth > 0 || r.count < sub.length - 1) {
+			// The condition's `expr` is the ORDINARY expression parser, so a syntaxError raised inside it
+			// (which raises outside a display request) is not a stream outcome at all: it leaves the
+			// condition parse entirely and is the message. Only a stream error reaches the enclosing `)` and
+			// takes the lost-token path, and that is what hxc's serror() carries as Unexpected. Funnelling
+			// both into the lost-token throw would hide a nested paren's `Expected ) or , or :` behind
+			// `Unexpected <eof>`.
+			if (r.err != null && !r.err.soft) switch (r.err.msg) {
+				case Unexpected(_):
+				case _: throw r.err;
+			}
 			var failIdx = spanStart + r.count;
 			var afterIdx = failIdx + 1 < toks.length ? failIdx + 1 : toks.length - 1;
 			var at = toks[afterIdx];

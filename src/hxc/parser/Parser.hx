@@ -200,10 +200,11 @@ class Parser {
 	// expression: the condition is matched as `( expr )`, so a failure anywhere in that pattern is one
 	// error and the caller applies the same lost-token rule either way - it needs to know WHERE the stream
 	// stopped, not what went wrong.
-	public static function parseExprFromTokensCount(toks:Array<TokenInfo>, file:String):{e:Null<Expr>, count:Int} {
+	public static function parseExprFromTokensCount(toks:Array<TokenInfo>, file:String):{e:Null<Expr>, count:Int, err:Null<ParserError>} {
 		var p = new Parser(toks, file);
-		var e = try p.expr() catch (_:ParserError) null;
-		return {e: e, count: p.idx};
+		var err:Null<ParserError> = null;
+		var e = try p.expr() catch (ex:ParserError) { err = ex; null; };
+		return {e: e, count: p.idx, err: err};
 	}
 
 	// Lex `src` into a raw token list (comments filtered, ends in Eof), enforcing
