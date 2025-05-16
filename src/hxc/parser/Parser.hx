@@ -2607,9 +2607,14 @@ class Parser {
 		if (tokEq(peek(), Kwd(KwdPackage))) {
 			junk();
 			var pack = parsePackage();
-			// `package <Ident>` with empty pack is an error in the reference,
-			// but only when pack=[] and next is an uppercase ident; we keep it
-			// lenient-but-faithful: require a semicolon to close the package.
+			// An identifier where the package should be, with NOTHING lowercase accepted before it, is this
+			// message and not a missing semicolon. It is raised hard rather than as a syntax error, so it
+			// is not recorded and resumed the way a display-mode syntax error would be.
+			switch (peek()) {
+				case Const(CIdent(_)) if (pack.length == 0):
+					throw new ParserError(Custom("Package name must start with a lowercase character"), peekInfo().pos);
+				case _:
+			}
 			semicolon();
 			var l = parseTypeDecls(pack, 1, tokens[idx > 0 ? idx - 1 : 0].pos.max);
 			checkUnclosedAtEnd();
@@ -2964,9 +2969,14 @@ class Parser {
 				return {decl: ETypedef(def), pos: Position.union(p1, t.pos)};
 			case Kwd(KwdAbstract):
 				var p1 = next().pos;
+				// The abstract flags are converted before the abstract parse is entered, so an unsupported flag
+				// raises past the empty alternative, which is reached only on a soft failure. Converting inside
+				// the try would let that error rewind into the `abstract class` retry and resurface as
+				// `Unexpected <name>`.
+				var abFlags = convertAbstractFlags(c);
 				var save = idx;
 				try {
-					return parseAbstract(doc, meta, convertAbstractFlags(c), p1);
+					return parseAbstract(doc, meta, abFlags, p1);
 				} catch (e:ParserError) {
 					// The `abstract class` form is the SECOND ALTERNATIVE, so it is reached only on a soft failure
 					// - parseAbstract matching nothing at all. Once parseAbstract has consumed tokens the failure
@@ -3052,7 +3062,28 @@ class Parser {
 		return acc;
 	}
 
-	static function filterModuleFieldFlags(c:Array<PlacedDeclFlag>):Array<PlacedAccess> {
+	static function sDeclFlag(f:DeclFlag):String {
+		return switch (f) {
+			case DPrivate: "private";
+			case DExtern: "extern";
+			case DFinal: "final";
+			case DMacro: "macro";
+			case DDynamic: "dynamic";
+			case DInline: "inline";
+			case DPublic: "public";
+			case DStatic: "static";
+			case DOverload: "overload";
+		}
+	}
+
+	// The flag is REPORTED and then dropped, so the declaration keeps the flags it is allowed to have.
+	// syntaxError raises outside a display request and records inside one, so the first bad flag on a
+	// declaration is the only one reported.
+	function unsupportedDeclFlag(decl:String, f:PlacedDeclFlag):Void {
+		syntaxError(Custom(sDeclFlag(f.flag) + " modifier is not supported for " + decl), f.pos);
+	}
+
+	function filterModuleFieldFlags(c:Array<PlacedDeclFlag>):Array<PlacedAccess> {
 		var out:Array<PlacedAccess> = [];
 		for (f in c) {
 			var a:Null<Access> = switch (f.flag) {
@@ -3062,40 +3093,40 @@ class Parser {
 				case DInline: AInline;
 				case DOverload: AOverload;
 				case DExtern: AExtern;
-				case _: null; // DFinal/DPublic/DStatic unsupported at module-field level
+				case _: unsupportedDeclFlag("module-level fields", f); null;
 			}
 			if (a != null) out.push({access: a, pos: f.pos});
 		}
 		return out;
 	}
 
-	static function filterEnumFlags(c:Array<PlacedDeclFlag>):Array<EnumFlag> {
+	function filterEnumFlags(c:Array<PlacedDeclFlag>):Array<EnumFlag> {
 		var out:Array<EnumFlag> = [];
 		for (f in c) switch (f.flag) {
 			case DPrivate: out.push(EPrivate);
 			case DExtern: out.push(EExtern);
-			case _:
+			case _: unsupportedDeclFlag("enums", f);
 		}
 		return out;
 	}
 
-	static function convertAbstractFlags(c:Array<PlacedDeclFlag>):Array<AbstractFlag> {
+	function convertAbstractFlags(c:Array<PlacedDeclFlag>):Array<AbstractFlag> {
 		var out:Array<AbstractFlag> = [];
 		for (f in c) switch (f.flag) {
 			case DPrivate: out.push(AbPrivate);
 			case DExtern: out.push(AbExtern);
-			case _:
+			case _: unsupportedDeclFlag("abstracts", f);
 		}
 		return out;
 	}
 
-	static function filterClassFlags(c:Array<PlacedDeclFlag>):Array<ClassFlag> {
+	function filterClassFlags(c:Array<PlacedDeclFlag>):Array<ClassFlag> {
 		var out:Array<ClassFlag> = [];
 		for (f in c) switch (f.flag) {
 			case DPrivate: out.push(HPrivate);
 			case DExtern: out.push(HExtern);
 			case DFinal: out.push(HFinal);
-			case _:
+			case _: unsupportedDeclFlag("classes", f);
 		}
 		return out;
 	}
