@@ -360,28 +360,36 @@ class Calls {
 					var rt = args[ai].t;
 					var remaining = el.slice(ei);
 					var spreadInner:Null<Expr> = (remaining.length == 1) ? (switch (remaining[0].expr) { case EUnop(Spread, Prefix, e): e; case _: null; }) : null;
+					// Every failure on the rest path goes through argError, so it carries the rest
+					// parameter's name
+					// the same way an ordinary argument's does.
+					function restAgainst(t2:T, e2:Expr):TExpr {
+						try return typeAgainst(name, t2, e2)
+						catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er);
+					}
 					// Platforms with native rest args pass each argument individually; a lone spread stays
 					// a
 					// spread unop
 					if (ctx.com.platformConfig.supportsRestArgs) {
 						if (spreadInner != null) {
-							var te = typeAgainst(name, rt, spreadInner);
+							var te = restAgainst(rt, spreadInner);
 							out.push(TypeFunctions.mk(TUnop(Spread, Prefix, te), rt, remaining[0].pos));
 						} else if (TypeFunctions.follow(argT).match(TMono(_))) {
 							var tel:Array<TExpr> = [];
 							for (e in remaining) {
 								switch (e.expr) {
-									case EUnop(Spread, Prefix, _): throw new TypingError("Cannot spread arguments with additional rest arguments", e.pos);
-									case _: tel.push(typeAgainst(name, Typer.spawnMonomorph(ctx, e.pos), e));
+									case EUnop(Spread, Prefix, _): throw argError("Cannot spread arguments with additional rest arguments", name, false, e.pos, 0);
+									case _: tel.push(restAgainst(Typer.spawnMonomorph(ctx, e.pos), e));
 								}
 							}
-							TypeUnification.unifyDefault(Typer.unifyMinRaise(ctx, tel), argT);
+							try TypeUnification.unifyDefault(Typer.unifyMinRaise(ctx, tel), argT)
+							catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er);
 							for (te in tel) out.push(te);
 						} else {
 							for (e in remaining) {
 								switch (e.expr) {
-									case EUnop(Spread, Prefix, _): throw new TypingError("Cannot spread arguments with additional rest arguments", e.pos);
-									case _: out.push(typeAgainst(name, argT, e));
+									case EUnop(Spread, Prefix, _): throw argError("Cannot spread arguments with additional rest arguments", name, false, e.pos, 0);
+									case _: out.push(restAgainst(argT, e));
 								}
 							}
 						}
@@ -391,11 +399,21 @@ class Calls {
 					}
 					var restExpr:TExpr;
 					if (spreadInner != null) {
-						restExpr = typeAgainst(name, rt, spreadInner);
+						restExpr = restAgainst(rt, spreadInner);
 					} else if (remaining.length == 0) {
-						restExpr = typeAgainst(name, rt, new Expr(EArrayDecl([]), callp));
+						restExpr = restAgainst(rt, new Expr(EArrayDecl([]), callp));
 					} else {
-						var arr = new Expr(EArrayDecl(remaining), callp);
+						// Building the synthesized array's position walks the arguments, and any spread met on the
+						// way is an unexpected spread - the same message the native path gives. Wrapped unchecked,
+						// the spread would be typed as an ordinary array element and typeUnop would report an
+						// invented complaint about the operator instead.
+						var pArr = remaining[0].pos;
+						for (re in remaining) switch (re.expr) {
+							case EUnop(Spread, Prefix, _):
+								throw argError("Cannot spread arguments with additional rest arguments", name, false, re.pos, 0);
+							case _: pArr = Position.union(pArr, re.pos);
+						}
+						var arr = new Expr(EArrayDecl(remaining), pArr);
 						var toType = switch (TypeFunctions.follow(argT)) {
 							case TDynamic(_):
 								var dynHint:TypeHint = {ct: CTPath({tpackage: [], tname: "Dynamic", tparams: [], tsub: null}), pos: callp};
@@ -403,7 +421,7 @@ class Calls {
 								new Expr(ECheckType(arr, arrHint), callp);
 							case _: arr;
 						};
-						restExpr = typeAgainst(name, rt, toType);
+						restExpr = restAgainst(rt, toType);
 					}
 					out.push(restExpr);
 					ei = el.length;
