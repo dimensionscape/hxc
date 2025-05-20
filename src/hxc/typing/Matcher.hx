@@ -849,6 +849,16 @@ class PatternMaker {
 						else make(pctx, false, cf != null ? cf : TypeFunctions.tDynamic, fe);
 					pairs.push({name: name, sub: sub});
 				}
+				// Once the constructor is built from the type's own fields, every name the pattern gave that
+				// the collected set does not carry is an error, reported at that field's value expression. hxc
+				// drove the pattern from the type's field list alone, so a name the type does not have was
+				// silently dropped and the pattern matched anyway.
+				if (fieldTypes != null) {
+					var collected = new Map<String, Bool>();
+					for (pr in pairs) collected.set(pr.name, true);
+					for (f in fields) if (!collected.exists(f.name))
+						throw new TypingError(hxc.core.TPrinting.sTypeStr(t) + " has no field " + f.name, f.expr.pos);
+				}
 				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
 			case ECall(ec, el):
 				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
@@ -887,15 +897,31 @@ class PatternMaker {
 								// A single `_` argument matches every constructor argument; otherwise match
 								// positionally, filling omitted trailing optional args with wildcards.
 								var single = el.length == 1 && (switch (el[0].expr) { case EConst(CIdent("_")): true; case _: false; });
-								var subs:Array<Pattern> = [];
+								// Constructor arguments are patterned from the last to the first: the REST of the arguments
+								// are patterned before the current one, and the arity checks fire from the deepest
+								// recursion before any of them. Two observable effects: the arity error precedes every
+								// sub-pattern, and `case C(x,x)` reports the first x as bound multiple times, not the
+								// second. Pairing is decided first so the arity checks keep that precedence; a tuple
+								// pattern works left to right, so it does not share this.
+								var pairIdx:Array<Int> = [];
 								var ei = 0;
 								for (ai in 0...args.length) {
-									if (single) subs.push({pat: PatAny, pos: el[0].pos});
-									else if (ei < el.length) { subs.push(make(pctx, false, args[ai].t, el[ei])); ei++; }
-									else if (args[ai].opt) subs.push({pat: PatAny, pos: p});
+									if (single) pairIdx.push(-1);
+									else if (ei < el.length) { pairIdx.push(ei); ei++; }
+									else if (args[ai].opt) pairIdx.push(-1);
 									else throw new TypingError("Not enough arguments", p);
 								}
 								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
+								var subs:Array<Pattern> = [];
+								var ai = args.length - 1;
+								while (ai >= 0) {
+									var idx = pairIdx[ai];
+									subs.push(idx < 0
+										? ({pat: PatAny, pos: single ? el[0].pos : p} : Pattern)
+										: make(pctx, false, args[ai].t, el[idx]));
+									ai--;
+								}
+								subs.reverse();
 								TypeParameterFrame.unapply(ef.params, monos);
 								PatConstructor(Constructor.make(ConEnum(en, ef), ec.pos), subs);
 							case _: fail();
@@ -1089,8 +1115,15 @@ class CaseMaker {
 						pc.currentLocals.set(name, entry);
 					}
 					{pat: PatOr(pat1, pat2), pos: ex.pos};
-				case EArrayDecl(elems) if (elems.length == mappedTypes.length):
-					{pat: PatTuple([for (i in 0...mappedTypes.length) PatternMaker.make(pc, true, mappedTypes[i], elems[i])]), pos: ex.pos};
+				case EArrayDecl(elems):
+					// The elements that PAIR are patterned first, left to right, and only then does an arity check
+					// fire - "Not enough arguments" against the whole pattern, "Too many arguments" at the first
+					// EXTRA ELEMENT's own position.
+					var paired = elems.length < mappedTypes.length ? elems.length : mappedTypes.length;
+					var tsubs = [for (i in 0...paired) PatternMaker.make(pc, true, mappedTypes[i], elems[i])];
+					if (elems.length < mappedTypes.length) throw new TypingError("Not enough arguments", ex.pos);
+					if (elems.length > mappedTypes.length) throw new TypingError("Too many arguments", elems[mappedTypes.length].pos);
+					{pat: PatTuple(tsubs), pos: ex.pos};
 				case EConst(CIdent("_")):
 					// `_` over a tuple is a tuple of anys, keeping every row the same width.
 					{pat: PatTuple([for (_ in 0...mappedTypes.length) ({pat: PatAny, pos: ex.pos} : Pattern)]), pos: ex.pos};
