@@ -6104,17 +6104,11 @@ class Typer {
 		if (TypeUnification.buildAbstractRef != null) TypeUnification.buildAbstractRef(a);
 	}
 
+	// The specialization runs without a mono-rollback frame: findTo's partial bindings persist. This
+	// wrapper marks where such a frame would go; forceCastFields still runs first, since building the
+	// abstract really does force the impl class.
 	static function specializeRolledBack<R>(f:Void->R):R {
-		var result:Null<R> = null;
-		var thrown:Null<haxe.Exception> = null;
-		try {
-			TypeUnification.withMonoRollback(function():Bool {
-				try result = f() catch (e:haxe.Exception) thrown = e;
-				throw new UnifyError([], "Typer.hx:6225");
-			});
-		} catch (_:UnifyError) {}
-		if (thrown != null) throw thrown;
-		return result;
+		return f();
 	}
 
 	// Resolve through findTo against a fresh monomorph; raises NotFound (get_underlying_type falls
