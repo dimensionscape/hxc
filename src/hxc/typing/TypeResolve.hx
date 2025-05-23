@@ -348,6 +348,14 @@ class TypeResolve {
 	}
 
 	public static function resolveClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		// A build marks the class BUILDING at its START, so a class reached again while it is building does
+		// NOTHING further rather than re-running its heritage. There are two entry points - the module loop
+		// and forceBuild - so the state belongs to the build, not to one of its callers: forcing a super
+		// the loop is already resolving must not run the heritage twice and trip `superClass != null` as
+		// "Cannot extend several classes".
+		var st0 = buildState.get(c);
+		if (st0 == BUILDING || st0 == BUILT) return;
+		buildState.set(c, BUILDING);
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
@@ -479,7 +487,6 @@ class TypeResolve {
 		if (entry == null) return Built;
 		switch (entry.decl) {
 			case EClass(d):
-				buildState.set(c, BUILDING);
 				var savedModule = ctx.currentModule;
 				if (c.module != null) ctx.currentModule = c.module;
 				try resolveClass(ctx, c, d, entry.pos)
@@ -997,6 +1004,15 @@ class TypeResolve {
 						c.superClass = {c: csup, params: params};
 						TypeFunctions.addDescendant(csup, c);
 					}
+					// Each heritage entry yields a closure that runs before field initialisation: the super
+					// is FORCED
+					// first, so a base declared later in the module is built before anything reads it, and
+					// then its
+					// metadata is processed. hxc does not cancel and reschedule the build when the super is
+					// not Built;
+					// it forces and continues - forceBuild's own BUILDING guard is what stops a cycle
+					// recursing.
+					forceBuild(ctx, csup);
 					inheritAutoBuild(ctx, c, csup);
 				case _:
 					throw new ContextError("Should extend by using a class", p);
@@ -1016,6 +1032,8 @@ class TypeResolve {
 					// Prepended, so interfaces holds reverse source order
 					c.interfaces.unshift({c: intf, params: params});
 					TypeFunctions.addDescendant(intf, c);
+					// An implemented interface is forced the same way.
+					forceBuild(ctx, intf);
 					inheritAutoBuild(ctx, c, intf);
 				case TDynamic(dt):
 					if (c.dynamicType != null) throw new ContextError("Cannot have several dynamics", p);
