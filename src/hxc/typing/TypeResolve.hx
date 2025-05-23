@@ -463,6 +463,39 @@ class TypeResolve {
 	static inline var BUILDING = 1;
 	static inline var BUILT = 2;
 
+	/**
+	 * Forcing a class runs its heritage and then its field initialisation, and it becomes Built only
+	 * after both. While the build runs it answers `Building [c]`, which is how a reentrant force sees
+	 * the cycle, and a class whose build FAILED is marked Built rather than retried forever.
+	 *
+	 * Forcing on demand from every site that needs a class (an anon unified against a class, the
+	 * Iterator.next lookup, ...) is what lets declarations build in any order.
+	 */
+	public static function forceBuild(ctx:Context, c:TClass):BuildState {
+		var st = buildState.get(c);
+		if (st == BUILT) return Built;
+		if (st == BUILDING) return Building([c]);
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return Built;
+		switch (entry.decl) {
+			case EClass(d):
+				buildState.set(c, BUILDING);
+				var savedModule = ctx.currentModule;
+				if (c.module != null) ctx.currentModule = c.module;
+				try resolveClass(ctx, c, d, entry.pos)
+				catch (e:Dynamic) {
+					ctx.currentModule = savedModule;
+					buildState.set(c, BUILT);
+					throw e;
+				}
+				ctx.currentModule = savedModule;
+				buildState.set(c, BUILT);
+				return Built;
+			case _:
+				return Built;
+		}
+	}
+
 	public static function markClassBuilt(c:TClass):Void {
 		buildState.set(c, BUILT);
 	}

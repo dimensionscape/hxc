@@ -544,9 +544,9 @@ class ModuleLoader {
 					d.dMeta = patch.meta;
 					d.dData = patch.fields;
 					var c = TypeFunctions.mkClass(m, path, p, d.dName.pos);
-					// Classes are built eagerly during module resolution; structural unification must not trigger
-					// a placeholder build failure.
-					c.build = function():BuildState return Built;
+					// forceBuild initializes heritage and fields once, returning Building on reentry. Synthetic
+					// shells remain Built.
+					c.build = function():BuildState return hxc.typing.TypeResolve.forceBuild(ctx, c);
 					c.module = m;
 					c.isPrivate = priv;
 					c.doc = d.dDoc;
