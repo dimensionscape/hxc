@@ -1076,6 +1076,14 @@ class TypeResolve {
 					throw new ContextError("Abstracts with underlying type must have an implementation", a.pos);
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
 				var at = Typeload.loadComplexType(ctx, a.params, th);
+				// The underlying type through load_instance, where a typedef is a TLazy the reference forces on
+				// demand. hxc resolves declarations eagerly in source order, so a typedef declared after this
+				// abstract is still a bare shell here. Force it; resolveTypeOnDemand's own re-entry guard is
+				// what makes a RECURSIVE typedef terminate.
+				switch (at) {
+					case TType(td, _): resolveTypeOnDemand(ctx, TTypeDecl(td));
+					case _:
+				}
 				a.thisType = at;
 				isType = true;
 				// A recursive underlying chain reports once the involved abstracts have resolved (a PForce
