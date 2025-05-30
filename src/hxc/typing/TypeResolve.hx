@@ -1052,8 +1052,34 @@ class TypeResolve {
 		var isCore = TypeFunctions.hasMeta(":coreType", a.meta);
 		var isType = false; // Set true once an underlying (AbOver) is seen
 
-		function loadType(th:TypeHint):T {
-			return Typeload.loadComplexType(ctx, a.params, th);
+		// Wraps each from/to in exc_protect and stores the result as TLazy, so the compatibility unify
+		// runs when the type is FORCED, not when it is declared. That deferral is what lets the reference
+		// build declarations in any order: an abstract declared before the type it converts to still
+		// checks out, because the check happens later. hxc used to unify eagerly in a loop after the
+		// flags, which fires while the underlying types may still be shells.
+		function loadType(th:TypeHint, ?from:Bool):T {
+			var t = Typeload.loadComplexType(ctx, a.params, th);
+			if (isCore || from == null) return t;
+			if (!isType)
+				throw new ContextError("Missing underlying type declaration or @:coreType declaration", p);
+			var isFrom = from;
+			var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(t));
+			r.set(TypeFunctions.lazyWait(function():T {
+				r.set(TypeFunctions.lazyProcessing(function():T return t));
+				try {
+					if (isFrom) hxc.core.TypeUnification.unifyDefault(t, a.thisType);
+					else hxc.core.TypeUnification.unifyDefault(a.thisType, t);
+				} catch (_:hxc.core.TypeUnification.UnifyError) {
+					throw new ContextError("You can only declare from/to with compatible types", th.pos);
+				}
+				return t;
+			}));
+			// A protected lazy type DELAYS A PForce that FORCES it by default. Without it the check is
+			// deferred into oblivion: an abstract nobody converts through never has its from/to unified and
+			// an incompatible one compiles clean. The deferral and the force are one mechanism; keeping only
+			// the deferral loses the check.
+			ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
+			return TLazy(r);
 		}
 
 		// A non-core abstract checks at every from/to it loads that the underlying type is already
@@ -1067,8 +1093,8 @@ class TypeResolve {
 		var fromPos:Array<Position> = [];
 		var toPos:Array<Position> = [];
 		for (f in d.dFlags) switch (f) {
-			case AbFrom(th): a.from.push(loadType(th)); requireUnderlying(); fromPos.push(th.pos);
-			case AbTo(th): a.to.push(loadType(th)); requireUnderlying(); toPos.push(th.pos);
+			case AbFrom(th): a.from.push(loadType(th, true)); requireUnderlying(); fromPos.push(th.pos);
+			case AbTo(th): a.to.push(loadType(th, false)); requireUnderlying(); toPos.push(th.pos);
 			case AbOver(th):
 				// The implementation check comes first: a @:coreType abstract with no fields has no impl class,
 				// and that is what it is told, not that it cannot have an underlying type.
@@ -1111,22 +1137,6 @@ class TypeResolve {
 				// stays a real extern field rather than getting a synthesized ordinal value.
 				if (a.impl != null) TypeFunctions.addClassFlag(a.impl, CExtern);
 			case AbPrivate | AbEnum:
-		}
-
-		// From/to declarations must unify with the underlying type (the unification also marks
-		// structure-matched class fields @:?used for DCE)
-		if (!isCore && isType) {
-			// Report the error at the from/to type hint.
-			for (i in 0...a.from.length) {
-				try hxc.core.TypeUnification.unifyDefault(a.from[i], a.thisType)
-				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", i < fromPos.length ? fromPos[i] : a.pos);
-			}
-			for (i in 0...a.to.length) {
-				try hxc.core.TypeUnification.unifyDefault(a.thisType, a.to[i])
-				catch (_:hxc.core.TypeUnification.UnifyError)
-					throw new ContextError("You can only declare from/to with compatible types", i < toPos.length ? toPos[i] : a.pos);
-			}
 		}
 
 		// The check hangs off LOADING a from/to type hint: a core abstract with neither is fine with
