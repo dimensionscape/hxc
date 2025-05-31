@@ -1308,8 +1308,11 @@ class Typeload {
 		// `ignore(c.build())` - 'make sure the super class is already setup' before build_field
 		// substitutes over its signatures. A @:generic reached from a HERITAGE clause specializes before
 		// the base class has had its field types resolved, and substituting an open monomorph only yields
-		// another one.
-		hxc.typing.TypeResolve.buildClassFields(ctx, c, p);
+		// another one. build is the whole build - set_heritance then init_class - so this has to force
+		// both. It used to call buildClassFields, which does the field half only, and the specialised
+		// copy then had no superClass: `super()` in the generic's constructor reported "Current class
+		// does not have a super" as soon as the base was not already resolved.
+		hxc.typing.TypeResolve.forceBuild(ctx, c);
 		var key = genericKey(c, params);
 		var cached = genericInstances.get(key);
 		if (cached != null) { genericBuildCtx = savedGenericCtx; return cached; }
