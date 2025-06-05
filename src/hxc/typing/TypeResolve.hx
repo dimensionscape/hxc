@@ -29,9 +29,7 @@ class TypeResolve {
 		}
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
-		var declOrder = m.types;
-		if (Sys.getEnv("HXC_LIFO_DECLS") != null) { declOrder = m.types.copy(); declOrder.reverse(); }
-		for (mt in declOrder) {
+		for (mt in m.types) {
 			var info = TypeFunctions.tInfos(mt);
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
