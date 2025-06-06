@@ -450,6 +450,11 @@ class Compiler {
 			var amc = hxc.eval.EvalMacro.getMacroCom();
 			if (amc != null && a.module != null && amc.moduleLut.get(Context.pathKey(a.module.path)) == a.module)
 				actx = amc;
+			// Building an abstract means building its impl class, so the hook forces it before the
+			// cast-snapshot syncing below. Otherwise a member of an abstract whose impl is not yet built
+			// sees its statics still private: every member of an enum abstract reads as "Cannot access
+			// private field" when the reading class is built first.
+			hxc.typing.TypeResolve.forceBuild(actx, a.impl);
 			// The recorded cast pair is a SNAPSHOT taken at load time, not the impl field itself, so
 			// an unhinted @:to's return stays an open monomorph on it while the real field's return
 			// settles during typing. The reference shares one node and never has to reconcile them.
