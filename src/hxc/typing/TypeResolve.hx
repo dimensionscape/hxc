@@ -1108,6 +1108,7 @@ class TypeResolve {
 				// what makes a RECURSIVE typedef terminate.
 				switch (at) {
 					case TType(td, _): resolveTypeOnDemand(ctx, TTypeDecl(td));
+					// Not the same for an abstract OVER ANOTHER abstract.
 					case _:
 				}
 				a.thisType = at;
