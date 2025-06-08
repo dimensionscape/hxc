@@ -2166,7 +2166,13 @@ class ModuleLoader {
 								setField(field, effCt, new Expr(EConst(CInt(Std.string(intCounter), null)), Position.nullPos));
 								intCounter++;
 							} else {
-								throw new ContextError("Value required", field.cffPos);
+								// "Value required" is recorded and the build carries on to the next member. Raising would
+								// reach resolveModule's ContextError arm, mark the whole module errored and abandon every
+								// declaration after it; on an abstract whose underlying type is not resolved yet, that one
+								// raise would cascade into every sibling enum abstract reading as "Cannot access private
+								// field", because their impls were never built. The member simply gets no synthesised
+								// value.
+								if (com != null) com.addDiagnostic("Value required", field.cffPos);
 							}
 						case e:
 							// Re-syncs the counter to that+1.
