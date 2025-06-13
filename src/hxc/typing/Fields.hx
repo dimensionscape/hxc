@@ -296,6 +296,10 @@ class Fields {
 						});
 						if (bypassAccessor || selfAccess) {
 							if (!TypeFunctions.isPhysicalField(f))
+								// RECORDING them here instead of throwing was TRIED and REVERTED: a caller CATCHES this
+								// TypingError and recovers through another access path, so recording made hxc report on
+								// legitimate code (unit.issues.Issue5011 fails to compile at all). The hint needs that
+								// caller's recovery understood first - see task #88.
 								throw new TypingError("This field cannot be accessed because it is not a real variable", pfield);
 							AKField(makeAccess(false));
 						} else {

@@ -544,6 +544,10 @@ class TypeResolve {
 	}
 
 	static function resolveClassFieldsInner(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		// The first thing field initialisation does after the @:libType check: a class carrying @:macro is
+		// a Haxe 3 leftover and is REPORTED (as a display error, so the class still builds).
+		if (TypeFunctions.hasMeta(":macro", c.meta))
+			ctx.addDiagnostic("Macro classes are no longer allowed in haxe 3", c.pos);
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
 		// (abstract member). Mirror that when locating the registered cf so the enum-abstract `var X`
