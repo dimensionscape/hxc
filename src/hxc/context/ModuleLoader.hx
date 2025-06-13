@@ -2129,7 +2129,10 @@ class ModuleLoader {
 					var visibility:Null<PlacedAccess> = null; // Null => VUnknown
 					for (acc in field.cffAccess) switch (acc.access) {
 						case AExtern:
-							throw new ContextError("Invalid modifier: extern on field of enum abstract", acc.pos);
+							// The error is recorded and the access loop continues, so a second extern member reports
+							// too; raising would end the module at the first one. Same shape as the Value required arm
+							// below.
+							if (com != null) com.addDiagnostic("Invalid modifier: extern on field of enum abstract", acc.pos);
 						case APrivate | APublic:
 							// A second visibility reports against the previous one, then becomes the
 							// tracked visibility itself.

@@ -5977,7 +5977,12 @@ class Typer {
 		function checkKey(k:TExpr):Void {
 			switch (k.expr) {
 				case TConst(c):
-					for (prev in seenKeys) if (std.Type.enumEq(prev.expr, k.expr)) throw new TypingError("Duplicate key", k.pos);
+					for (prev in seenKeys) if (std.Type.enumEq(prev.expr, k.expr)) {
+						// The first message is recorded at the new key, then the sub-message raises at depth 1
+						// against the previous key, so a duplicate map key keeps its "previously here" half.
+						ctx.com.addDiagnostic("Duplicate key", k.pos);
+						throw new TypingError("... Previously defined here", prev.pos, 1);
+					}
 					seenKeys.push(k);
 				case _:
 			}
