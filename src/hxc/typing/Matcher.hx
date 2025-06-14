@@ -422,6 +422,9 @@ class PatternMaker {
 			var entry = pctx.orLocals.get(name);
 			if (entry == null) throw new TypingError("Variable " + name + " must appear exactly once in each sub-pattern", p);
 			var v = entry.v;
+			// P is the position stored with the first sub-pattern binding, so a conflict reports where the
+			// variable was first bound, not where it was rebound.
+			var p = entry.p;
 			unify(pctx.ctx, t, v.type, p);
 			if (isFinal) TypeFunctions.addVarFlag(v, VFinal);
 			pctx.currentLocals.set(name, {v: v, p: p});
