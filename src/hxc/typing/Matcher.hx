@@ -2041,7 +2041,10 @@ class TexprConverter {
 					case TEnum(_, _):
 						for (sc in cases) {
 							switch (sc.con.kind) {
-							case ConEnum(_, ef) if (Constructor.arity(sc.con) > 0 && hasFail(sc.dt)):
+							// Only an UNGUARDED case can be reported deeper. A constructor leaves the unmatched set only
+							// when some case matches it without a guard, so a guarded one is still unmatched here and
+							// reports whole, at the subject, rather than as a partial match inside the case.
+							case ConEnum(_, ef) if (sc.unguarded && Constructor.arity(sc.con) > 0 && hasFail(sc.dt)):
 								throw new TypingError("Unmatched patterns: " + ef.name + "(_)", sc.con.subPos == null ? sc.con.pos : sc.con.subPos);
 							case _:
 							}
