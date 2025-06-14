@@ -56,6 +56,15 @@ class TyperContext {
 		this.bypassAccessor = 0;
 		this.privateAccess = 0;
 	}
+
+	// A unification failure while typing is recorded, not raised, unless we are inside call arguments
+	// (where the caller retries another overload). Recording is what lets a second, later error on the
+	// same expression be reported.
+	public static function raiseOrDisplay(ctx:TyperContext, msg:String, p:hxc.ast.Position):Void {
+		if (ctx.untypedMode) return;
+		if (ctx.inCallArgs) throw new hxc.core.TypingError(msg, p);
+		ctx.com.addDiagnostic(msg, p);
+	}
 }
 
 // The kinds of current function that typing a local function or a return distinguishes.

@@ -47,7 +47,20 @@ class Operators {
 		try {
 			TypeUnification.unifyDefault(a, b);
 		} catch (e:UnifyError) {
-			// Untyped code ignores unification failures.
+			// raiseOrDisplay, all three arms: untyped swallows, call arguments raise so the caller can try
+			// another overload, everything else RECORDS and carries on.
+			TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), p);
+		}
+	}
+
+	// The RAISING unify. Only OpEq/OpNotEq wants it, to pick the other direction when the first does not
+	// unify (castOrUnifyRaise inside a try whose fallback is the recording cast). Everywhere else uses the
+	// recording unify above, and raising there would swallow every later complaint.
+	static function unifyRaise(ctx:TyperContext, a:T, b:T, p:Position):Void {
+		DebugDump.unify("operator", a, b, p);
+		try {
+			TypeUnification.unifyDefault(a, b);
+		} catch (e:UnifyError) {
 			if (ctx.untypedMode) return;
 			throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 		}
@@ -430,8 +443,8 @@ class Operators {
 					case _:
 				}
 				var c1 = e1, c2 = e2;
-				try unify(ctx, c1.type, c2.type, p) catch (_:TypingError) {
-					try unify(ctx, c2.type, c1.type, p) catch (_:TypingError) {
+				try unifyRaise(ctx, c1.type, c2.type, p) catch (_:TypingError) {
+					try unifyRaise(ctx, c2.type, c1.type, p) catch (_:TypingError) {
 						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an abstract
 						// compares against its underlying type (plain unify does not chase method casts); the failure
 						// reports at the BINOP position without aborting, so a boolean context around the comparison
