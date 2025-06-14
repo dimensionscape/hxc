@@ -1134,7 +1134,8 @@ class Typer {
 						// optional). This records a constraint on the argument monomorph that survives to its close,
 						// so a later use that links it to another mono can resolve to the default's type.
 						var target = fa.opt ? ctx.com.basic.tnull(at) : at;
-						try TypeUnification.unifyDefault(args[i].c.type, target) catch (_:UnifyError) {};
+						try TypeUnification.unifyDefault(args[i].c.type, target)
+						catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), fa.value.pos);
 					}
 					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
 				}
@@ -5228,8 +5229,10 @@ class Typer {
 				var v = ctx.com.basic.tvoid;
 				try {
 					TypeUnification.unifyDefault(v, ctx.ret);
-				} catch (_:UnifyError) {
-					throw new TypingError("Void should be " + "the function's return type", p);
+				} catch (e:UnifyError) {
+					// Recording, so the verdict is the ordinary "Void should be <ret>" and typing carries
+					// on to build the TReturn.
+					TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 				}
 				var expectVoid = switch (withType) {
 					case WithType(t, _): isVoid(t);

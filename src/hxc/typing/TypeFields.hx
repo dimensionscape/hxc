@@ -1193,7 +1193,15 @@ class TypeFields {
 			if (kind.match(VAbstractThis)) v.meta = [{name: ":this", params: [], pos: hxc.ast.Position.nullPos}].concat(v.meta);
 			// The default value unifies into the argument type so an inferred argument settles from its
 			// default (x = 1 gives x:Int).
-			var def:Null<TExpr> = if (fa.value != null) Typer.castOrUnify(tctx, at, Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at)), fa.value.pos)
+			var def:Null<TExpr> = if (fa.value != null) {
+					var te0 = Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at));
+					// The verdict and keeps the typed expression, so a bad default does not stop the rest of the
+					// function being checked.
+					try Typer.castOrUnify(tctx, at, te0, fa.value.pos) catch (err:TypingError) {
+						TyperContext.raiseOrDisplay(tctx, err.message, err.pos, err.depth);
+						te0;
+					}
+				}
 				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
 				else null;
 			// The STORED default is the reduced constant: a cast unwraps to its inner expr, so an

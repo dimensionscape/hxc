@@ -145,14 +145,14 @@ class Calls {
 				if (c.path.pack.length == 0 && c.path.name == "Array") switch (tl) {
 					case [td] if (TypeFunctions.follow(td).match(TDynamic(null))):
 						try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
-						catch (_:UnifyError) throw new TypingError("Array index must be of type Int", e2.pos);
+						catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), e2.pos);
 						return AKExpr(TypeFunctions.mk(TArray(e1, e2), TypeFunctions.tDynamic, p));
 					case _:
 				}
 				var elem = arrayAccessElem(c, tl);
 				if (elem != null) {
 					try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
-					catch (_:UnifyError) throw new TypingError("Array index must be of type Int", e2.pos);
+					catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), e2.pos);
 					return AKExpr(TypeFunctions.mk(TArray(e1, e2), elem, p));
 				}
 				var kv = imapKV(c, tl);
@@ -181,9 +181,10 @@ class Calls {
 		}
 		if (baseOk) try {
 			TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint);
-		} catch (_:UnifyError) {
-			if (!ctx.untypedMode)
-				throw new TypingError("Array index must be of type Int", e2.pos);
+		} catch (e:UnifyError) {
+			// With a failed receiver the key still goes through the recording unify against Int, whose
+			// verdict is the ordinary "X should be Int". There is no separate message.
+			TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), e2.pos);
 		}
 		return AKExpr(TypeFunctions.mk(TArray(e1, e2), pt, p));
 	}
