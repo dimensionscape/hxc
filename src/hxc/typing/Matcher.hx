@@ -414,6 +414,15 @@ class PatternMaker {
 		try TypeUnification.unifyDefault(a, b) catch (e:UnifyError) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
 	}
 
+	// Pattern unification RECORDS a failure rather than raising, and the constructor is built afterwards
+	// regardless. An ill-typed pattern therefore still narrows the subject, so the exhaustiveness check
+	// still runs; raising here would lose every later complaint about the switch, including the unmatched
+	// constructors.
+	static function unifyRecord(ctx:TyperContext, a:T, b:T, p:Position):Void {
+		try TypeUnification.unifyDefault(a, b)
+		catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), p);
+	}
+
 	static function addLocal(pctx:PatternContext, isFinal:Bool, name:String, t:T, p:Position):TVar {
 		var isWildcard = name == "_";
 		if (!isWildcard && pctx.isPostfixMatch) throw new TypingError("Pattern variables are not allowed in .match patterns", p);
@@ -425,7 +434,9 @@ class PatternMaker {
 			// P is the position stored with the first sub-pattern binding, so a conflict reports where the
 			// variable was first bound, not where it was rebound.
 			var p = entry.p;
-			unify(pctx.ctx, t, v.type, p);
+			// This records too, so an or-pattern whose bindings conflict still yields a pattern and the
+			// switch is still checked for exhaustiveness.
+			unifyRecord(pctx.ctx, t, v.type, p);
 			if (isFinal) TypeFunctions.addVarFlag(v, VFinal);
 			pctx.currentLocals.set(name, {v: v, p: p});
 			return v;
@@ -689,7 +700,7 @@ class PatternMaker {
 			}
 			return false;
 		}
-		function unifyExpected(t2:T) unify(ctx, t2, t, p);
+		function unifyExpected(t2:T) unifyRecord(ctx, t2, t, p);
 
 		// A display position on A PATTERN answers with the pattern's own expected type. hxc has no
 		// EDisplay node here (the parser stands a null in directly), so the position is the trigger; the
