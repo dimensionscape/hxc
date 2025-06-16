@@ -295,12 +295,14 @@ class Fields {
 							case _: false;
 						});
 						if (bypassAccessor || selfAccess) {
-							if (!TypeFunctions.isPhysicalField(f))
-								// RECORDING them here instead of throwing was TRIED and REVERTED: a caller CATCHES this
-								// TypingError and recovers through another access path, so recording made hxc report on
-								// legitimate code (unit.issues.Issue5011 fails to compile at all). The hint needs that
-								// caller's recovery understood first - see task #88.
-								throw new TypingError("This field cannot be accessed because it is not a real variable", pfield);
+							// Both are recorded, and the access carries on as a plain field access.
+							// Inside a pattern probe the first lands in the probed span and aborts the
+							// probe, which is
+							// why the hint does not double up there.
+							if (!TypeFunctions.isPhysicalField(f)) {
+								ctx.com.addDiagnostic("This field cannot be accessed because it is not a real variable", pfield);
+								ctx.com.addDiagnostic("Add @:isVar here to enable it", f.pos);
+							}
 							AKField(makeAccess(false));
 						} else {
 							hxc.filters.DeprecationCheck.checkPropertyUse(ctx, f, pfield);

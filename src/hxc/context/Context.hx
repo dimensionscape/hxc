@@ -446,6 +446,9 @@ class Context {
 	// During macro expression typing, raise errors immediately so the macro can catch and annotate
 	// them.
 	public var raiseTypingErrors:Bool = false;
+	// An error overlapping the pattern-probe span aborts that probe; errors outside it remain
+	// reportable.
+	public var catchErrorsSpan:Null<Position> = null;
 	// Forward diagnostics to this context, normally from the macro world to its host.
 	public var forwardWarningsTo:Null<Context> = null;
 
@@ -456,6 +459,9 @@ class Context {
 		// Relocate null positions only in diagnostics. Keep AST positions unchanged for generated code.
 		if (relocateNullPosTo != null && pos != null && pos.min < 0 && pos.max < 0 && pos.file == Position.nullPos.file)
 			pos = relocateNullPosTo;
+		if (catchErrorsSpan != null && pos != null && (severity == null || severity == Error)
+			&& pos.file == catchErrorsSpan.file && pos.max >= catchErrorsSpan.min && pos.min <= catchErrorsSpan.max)
+			throw new hxc.core.TypingError(message, pos, depth);
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
 		// Forward macro-world diagnostics to the host; errors exclusive to macro compilation must also be

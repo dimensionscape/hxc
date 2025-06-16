@@ -559,12 +559,16 @@ class PatternMaker {
 			// Pattern expressions type in untyped mode so a private enum-abstract constant still matches
 			// from another module.
 			var oldUntyped = pctx.ctx.untypedMode;
+			var oldSpan = pctx.ctx.com.catchErrorsSpan;
+			pctx.ctx.com.catchErrorsSpan = p;
 			pctx.ctx.untypedMode = true;
 			typed = try Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t)) catch (ex:Dynamic) {
 				pctx.ctx.untypedMode = oldUntyped;
+				pctx.ctx.com.catchErrorsSpan = oldSpan;
 				throw ex;
 			};
 			pctx.ctx.untypedMode = oldUntyped;
+			pctx.ctx.com.catchErrorsSpan = oldSpan;
 		} catch (err:TypingError) {
 			if (err.message == "Invalid match: Not enough patterns") {
 				hxc.parser.Parser.displaySuppressed = savedSuppressed;
