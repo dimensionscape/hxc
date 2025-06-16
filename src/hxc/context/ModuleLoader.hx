@@ -1209,6 +1209,7 @@ class ModuleLoader {
 				};
 				ctx.addDiagnostic("Duplicate " + kindPath.kind + " field declaration : "
 					+ hxc.core.Globals.sTypePath(kindPath.path) + "." + cf.name, cf.namePos);
+				ctx.droppedFieldDecls.set(cff, true);
 				continue;
 			}
 			if (isStatic) {

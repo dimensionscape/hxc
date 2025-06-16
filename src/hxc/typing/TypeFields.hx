@@ -384,6 +384,9 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
+			// name hands it the field it merely collided with.
+			if (ctx.droppedFieldDecls.exists(cff)) continue;
 			if (hasAbstract && !TypeFunctions.hasClassFlag(c, CAbstract)
 				&& !TypeFunctions.hasClassFlag(c, CInterface) && !hasStatic && !hasFinal && !hasInline) {
 				addDiagnosticOnce(ctx, "This class should be declared abstract because it has at least one abstract field", c.namePos);
@@ -545,6 +548,9 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null || cf.expr != null) continue;
+			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
+			// name hands it the field it merely collided with.
+			if (ctx.droppedFieldDecls.exists(cff)) continue;
 			// A member var with a null expr after filters had its initializer moved into
 			// the constructor by patch_constructors; re-typing it would rebuild the raw init
 			// without the filter pipeline.

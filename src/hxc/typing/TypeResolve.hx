@@ -567,6 +567,9 @@ class TypeResolve {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
+			// name hands it the field it merely collided with.
+			if (ctx.droppedFieldDecls.exists(cff)) continue;
 			var key = (isStatic ? "s:" : "i:") + cff.cffName.name;
 			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
 			nameSeen.set(key, occ + 1);
@@ -1645,6 +1648,9 @@ class TypeResolve {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
 			if (cf == null) continue;
+			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
+			// name hands it the field it merely collided with.
+			if (ctx.droppedFieldDecls.exists(cff)) continue;
 			try {
 				// An abstract-impl field resolves against the abstract's type parameters. The impl class is
 				// declared with none of its own, so a synthesized enum value hinted `Name<T>` has nothing to
