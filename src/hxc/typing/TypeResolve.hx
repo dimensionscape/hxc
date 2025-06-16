@@ -1631,6 +1631,15 @@ class TypeResolve {
 			CTPath({tpackage: a.module.path.pack, tname: a.module.path.name, tparams: aTParams, tsub: a.path.name});
 		var aT:TypeHint = {ct: aCt, pos: p};
 		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData, ctx);
+		// An EAOther member gets no synthesised value and no hint, so it is still a bare `var A;` when
+		// the field loop reaches it and reports the missing hint on top of "Value required".
+		// registerFields runs that check before this build and so cannot know the mode; it exempts every
+		// enum-abstract member there and asks again here.
+		for (cff in d.dData) switch (cff.cffKind) {
+			case FVar(null, null) if (hxc.core.TypeFunctions.hasMeta(":enum", cff.cffMeta)):
+				ctx.addDiagnostic("Variable requires type-hint or initialization", cff.cffName.pos);
+			case _:
+		}
 		// Member-var objects are the same references we just mutated, so they now carry the
 		// static-inline-`@:enum` shape. Rebuild statics/fields/cl_ordered_* from it.
 		var implEntry = ctx.declOfType.get(Context.pathKey(c.path));
