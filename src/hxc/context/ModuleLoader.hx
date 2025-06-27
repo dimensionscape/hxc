@@ -1376,9 +1376,23 @@ class ModuleLoader {
 		return m;
 	}
 
+	// The file a macro-created module is attributed to: the defining module's, falling back to
+	// the one being typed. Only a module with no file at all keeps the placeholder.
+	static function macroDefFile(ctx:Context, mdep:Null<ModuleDef>):String {
+		var src = mdep != null ? mdep : ctx.currentModule;
+		if (src == null || src.extra == null) return "<macro>";
+		var f = src.extra.file;
+		return (f == null || f == "") ? "<macro>" : f;
+	}
+
 	/** Register a macro-created type definition (`Context.defineType`) as a fake module. */
-	public static function defineTypeDecl(ctx:Context, mpath:Path, decl:TypeDef, pos:Position):ModuleDef {
-		var m = typeModule(ctx, mpath, "<macro>", [{decl: decl, pos: pos}]);
+	public static function defineTypeDecl(ctx:Context, mpath:Path, decl:TypeDef, pos:Position, ?mdep:ModuleDef):ModuleDef {
+		// A definition types against the file of the module named by the moduleDependency argument, or of
+		// the CALLING module when there is none. That file is what the server's file check then watches, so
+		// the fake module goes dirty when its definer is edited. A placeholder name cannot be stat-ed, and
+		// hxcpp reports a failed stat as mtime 0 rather than raising, so it would compare equal to the 0
+		// recorded at creation and the module would read as reusable on every request forever.
+		var m = typeModule(ctx, mpath, macroDefFile(ctx, mdep), [{decl: decl, pos: pos}]);
 		// The path check applies to Context.defineType too.
 		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
@@ -1411,7 +1425,7 @@ class ModuleLoader {
 	}
 
 	/** Register a macro-created module (`Context.defineModule`) from decoded AST declarations. */
-	public static function defineModuleDecls(ctx:Context, mpath:Path, types:Array<TypeDecl>, imports:Array<Import>, usings:Array<PlacedTypePath>, pos:Position):ModuleDef {
+	public static function defineModuleDecls(ctx:Context, mpath:Path, types:Array<TypeDecl>, imports:Array<Import>, usings:Array<PlacedTypePath>, pos:Position, ?mdep:ModuleDef):ModuleDef {
 		var decls:Array<TypeDecl> = [];
 		for (imp in imports) decls.push({decl: EImport(imp), pos: pos});
 		for (u in usings) {
@@ -1420,7 +1434,8 @@ class ModuleLoader {
 			decls.push({decl: EUsing([for (n in names) ({name: n, pos: u.pos} : PlacedName)]), pos: u.pos});
 		}
 		decls = decls.concat(types);
-		var m = typeModule(ctx, mpath, "<macro>", decls);
+		// Use the calling module's file, as defineTypeDecl does.
+		var m = typeModule(ctx, mpath, macroDefFile(ctx, mdep), decls);
 		// The path check reports at the first decoded type's position.
 		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;

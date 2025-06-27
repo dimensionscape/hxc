@@ -255,7 +255,14 @@ class ServerCache {
 	static function addModules(com:Context, mRoot:ModuleDef, p:Position):Void {
 		function add(tabs:String, m0:ModuleDef, m:ModuleDef):Void {
 			if (m.extra.added >= compilationStep) return;
-			switch [m0.extra.kind, m.extra.kind] {
+			// The kind of the WALK ROOT, not of the module's immediate parent, so a macro-created (MFake)
+			// root matches neither exclusion arm and its whole transitive subgraph is added, macro-world
+			// modules included. A fake root belongs to whichever world is compiling it, so it is filtered as
+			// that world's kind.
+			var rootKind = m0.extra.kind == MFake
+				? (com.isMacro ? MMacro : MCode)
+				: m0.extra.kind;
+			switch [rootKind, m.extra.kind] {
 				case [MCode, MMacro] | [MMacro, MCode]:
 					// A cross-context dependency was only checked; do not add it, just its resources.
 					for (name in m.extra.bindedRes.keys())

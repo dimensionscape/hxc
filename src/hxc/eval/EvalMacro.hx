@@ -485,7 +485,11 @@ class EvalMacro {
 					case _:
 				}
 			} else {
-				var m = hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp);
+				// Typed against the CALLING module's file, and depending on it, so editing the definer
+				// dirties what the macro produced.
+				var mdep = com.currentModule;
+				var m = hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp, mdep);
+				addMacroTypeDependency(com, m, mdep);
 				hxc.typing.TypeResolve.resolveModule(com, m);
 				for (mt in m.types) switch (mt) {
 					case TClassDecl(c): hxc.typing.TypeFields.forceClassFields(com, c);
@@ -762,9 +766,10 @@ class EvalMacro {
 		var path = macroTypeDefinitionPath(ec, v);
 		var td = decodeTypeDefinition(ec, v, dp);
 		var hasMacroFields = isMacroClassDecl(td.decl);
-		var hostModule = hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos);
+		var hostDep = macroTypeDep(com, moduleDependency, dp);
+		var hostModule = hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos, hostDep);
 		hostModule.extra.kind = MFake;
-		addMacroTypeDependency(com, hostModule, moduleDependency, dp);
+		addMacroTypeDependency(com, hostModule, hostDep);
 		hxc.typing.TypeResolve.resolveModule(com, hostModule);
 		forceModuleClassFields(com, hostModule);
 
@@ -775,9 +780,10 @@ class EvalMacro {
 				hxc.context.ModuleLoader.initBasicTypes(macroCom);
 			}
 			var macroTd = decodeTypeDefinition(ec, v, dp);
-			var macroModule = hxc.context.ModuleLoader.defineTypeDecl(macroCom, path, macroTd.decl, macroTd.pos);
+			var macroDep = macroTypeDep(macroCom, moduleDependency, dp);
+			var macroModule = hxc.context.ModuleLoader.defineTypeDecl(macroCom, path, macroTd.decl, macroTd.pos, macroDep);
 			macroModule.extra.kind = MMacro;
-			addMacroTypeDependency(macroCom, macroModule, moduleDependency, dp);
+			addMacroTypeDependency(macroCom, macroModule, macroDep);
 			hxc.typing.TypeResolve.resolveModule(macroCom, macroModule);
 			forceModuleClassFields(macroCom, macroModule);
 			staleMacroCtx = macroCtx;
@@ -786,13 +792,16 @@ class EvalMacro {
 		}
 	}
 
-	static function addMacroTypeDependency(com:Context, m:ModuleDef, moduleDependency:EvalValue, p:Position):Void {
-		if (moduleDependency != VNull) {
-			var dep = hxc.context.ModuleLoader.loadModule(com, pathFromDotted(strOf(moduleDependency)), p);
-			TypeFunctions.addDependency(m, dep);
-		} else if (com.currentModule != null) {
-			TypeFunctions.addDependency(m, com.currentModule);
-		}
+	// The module a macro-created one is attributed to and depends on: the named one, else the current
+	// module. Resolved before the definition, because the definition types against this module's file.
+	static function macroTypeDep(com:Context, moduleDependency:EvalValue, p:Position):Null<ModuleDef> {
+		if (moduleDependency != VNull)
+			return hxc.context.ModuleLoader.loadModule(com, pathFromDotted(strOf(moduleDependency)), p);
+		return com.currentModule;
+	}
+
+	static function addMacroTypeDependency(com:Context, m:ModuleDef, mdep:Null<ModuleDef>):Void {
+		if (mdep != null) TypeFunctions.addDependency(m, mdep);
 	}
 
 	static function macroTypeDefinitionPath(ec:EvalContext, v:EvalValue):hxc.core.Globals.Path {
