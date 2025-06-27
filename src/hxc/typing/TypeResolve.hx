@@ -14,7 +14,6 @@ import hxc.typing.Typeload.TypeParamHost;
 import haxe.ds.StringMap;
 
 class TypeResolve {
-	static var heritagePositions:Map<String,Position> = new Map();
 	static final pNull = Position.nullPos;
 
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
@@ -29,7 +28,17 @@ class TypeResolve {
 		}
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
-		for (mt in m.types) {
+		// The reference splits this in two. init_module_type runs over the declarations IN order, and
+		// everything but a plain class does its work there and then (init_abstract at init_enum,
+		// init_typedef); a class only queues its build `delay ctx PBuildClass`). That bucket drains LIFO
+		// takes the head), so the classes build last declaration first, after the rest of the module is
+		// already initialised. hxc resolves eagerly, so it builds the same list by hand.
+		var rest = [], classes = [];
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.kind.match(KNormal)): classes.unshift(mt);
+			case _: rest.push(mt);
+		}
+		for (mt in rest.concat(classes)) {
 			var info = TypeFunctions.tInfos(mt);
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
@@ -360,7 +369,6 @@ class TypeResolve {
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
-				heritagePositions.set(Context.pathKey(c.path), pt.pos);
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, true, pt.pos);
 				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
@@ -375,7 +383,6 @@ class TypeResolve {
 				};
 				if (t != null) checkHerit(ctx, c, t, true, pt.pos, p);
 			case HImplements(pt):
-				heritagePositions.set(Context.pathKey(c.path), pt.pos);
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, false, pt.pos);
 				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
@@ -982,7 +989,7 @@ class TypeResolve {
 					if (isBasicClassPath(csup.path)
 						&& !(TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasClassFlag(csup, CExtern)))
 						throw new ContextError("Cannot extend basic class", p);
-					if (extendsChain(csup, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(csup.path)) != null ? heritagePositions.get(Context.pathKey(csup.path)) : p);
+					if (extendsChain(csup, c)) throw new ContextError("Recursive class", p);
 					// A type parameter is never a base. The generic wording is reserved for a parameter of a
 					// @:generic field or class (the field's params are checked before the class's).
 					if (csup.kind.match(KTypeParameter(_))) {
@@ -1033,7 +1040,7 @@ class TypeResolve {
 				case TInst(intf, params):
 					if (TypeFunctions.hasClassFlag(c, CInterface))
 						throw new ContextError("Interfaces cannot implement another interface (use extends instead)", p);
-					if (extendsChain(intf, c)) throw new ContextError("Recursive class", heritagePositions.get(Context.pathKey(intf.path)) != null ? heritagePositions.get(Context.pathKey(intf.path)) : p);
+					if (extendsChain(intf, c)) throw new ContextError("Recursive class", p);
 					if (!TypeFunctions.hasClassFlag(intf, CInterface))
 						throw new ContextError("You can only implement an interface", p);
 					// Prepended, so interfaces holds reverse source order
