@@ -1387,6 +1387,16 @@ class Typeload {
 		ctx.moduleLut.set(Context.pathKey(path), mg);
 		ctx.typeToModule.set(Context.pathKey(path), path);
 		TypeFunctions.addDependency(mg, c.module);
+		// The module USING the instance depends on it. Without that edge nothing re-registers the instance
+		// on a warm rebuild - the using module is served from the cache and the walk over its deps never
+		// reaches the instance's module - so the class is still REFERENCED by the generated code but never
+		// EMITTED, and the output fails at runtime with no error reported. A one-shot compile cannot see
+		// this: the instance is created fresh every time and pushed onto ctx.modules right here.
+		// ModuleLoader.addDependency, not the TypeFunctions one: a dependency clears only the
+		// POST-PROCESSING mark, and the using module is mid-typing here. Clearing hxc's own resolve gate as
+		// well re-derives signatures the bodies have already bound, which reports a duplicate
+		// constructor.
+		hxc.context.ModuleLoader.addDependency(ctx.currentModule, mg);
 		genericBuildCtx = savedGenericCtx;
 		return cg;
 	}

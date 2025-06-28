@@ -1339,6 +1339,11 @@ class Calls {
 		ctx.com.moduleLut.set(key, mg);
 		ctx.com.typeToModule.set(key, path);
 		TypeFunctions.addDependency(mg, host.module);
+		// The same edge a generic class records: the module using the specialization depends on it, so a
+		// warm rebuild that serves the user from the cache still re-registers it. ModuleLoader's variant
+		// rather than TypeFunctions.addDependency, which clears only the post-processing mark, because
+		// the using module is mid-typing here.
+		hxc.context.ModuleLoader.addDependency(ctx.com.currentModule, mg);
 		return cg;
 	}
 
