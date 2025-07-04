@@ -957,12 +957,6 @@ class Filters {
 				case TClassDecl(cls):
 					for (i in cls.interfaces) TypeFunctions.addDescendant(i.c, cls);
 					if (cls.superClass != null) TypeFunctions.addDescendant(cls.superClass.c, cls);
-					if (reuse && !cached) {
-						inline function fld(cf:TClassField) cf.exprUnoptimized = cf.expr;
-						for (cf in cls.orderedFields) fld(cf);
-						for (cf in cls.orderedStatics) fld(cf);
-						if (cls.constructor != null) fld(cls.constructor);
-					}
 				case _:
 			}
 			if (!cached) newTypes.push(t);
@@ -991,6 +985,21 @@ class Filters {
 			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
+		// exprUnoptimized before the passes, so the next compilation inlines from the original body
+		// rather than the analyzer-transformed one. hxc has to take it after pass 1: the reference
+		// resolves a @:multiType construction while typing, so its saved body already names the concrete
+		// type, while hxc defers that to resolve_deferred_multitype above and a body saved before it
+		// still holds TNew on the @:multiType impl. reduce_expression inlines from this body on the next
+		// compilation which put `new haxe_ds_Map()` back into a warm rebuild where a one-shot compile
+		// emitted the inlined IntMap.
+		if (reuse) for (t in newTypes) switch (t) {
+			case TClassDecl(cls):
+				inline function fld(cf:TClassField) cf.exprUnoptimized = cf.expr;
+				for (cf in cls.orderedFields) fld(cf);
+				for (cf in cls.orderedStatics) fld(cf);
+				if (cls.constructor != null) fld(cls.constructor);
+			case _:
+		}
 		stageMark("pass1:done"); memProbe("pass1:done");
 		var exceptionsFilter = com.platform.match(Eval) ? function(e) return e : hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
