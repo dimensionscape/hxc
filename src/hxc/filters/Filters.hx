@@ -1251,7 +1251,10 @@ class Filters {
 		// patchConstructors with the other type filters. Both run after the analyzer and
 		// sanitize, so the blocks their inlined calls produce reach the generator untouched.
 		var saveStacks = hxc.filters.Exceptions.insertSaveStacks(tctx);
-		for (t in com.types) FiltersCommon.runExpressionFilters(tctx, [{name: "insert_save_stacks", f: saveStacks}], t);
+		// This pass alone ignores the processed status. Otherwise a field reused from the server cache
+		// still carries CfPostProcessed from the compilation that produced it, so runExpressionFilters
+		// would skip it and the catch would never get its haxe.NativeStackTrace.saveStack call.
+		for (t in com.types) FiltersCommon.runExpressionFilters(tctx, [{name: "insert_save_stacks", f: saveStacks}], t, true);
 		hxc.typing.ExceptionFilters.run(com);
 		for (t in com.types) {
 			switch (t) {
