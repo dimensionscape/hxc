@@ -257,7 +257,13 @@ class RenameVarsRun {
 		var ordered = scope.ownVars.copy();
 		ordered.reverse();
 		for (entry in ordered) maybeRenameVar(reserved, entry);
-		for (child in scope.children) renameVars(child);
+		// Children are renamed in REVERSE creation order. hxc appends them, so it has to reverse here - the
+		// same asymmetry ownVars is corrected for just above. Sibling scopes reserve names as they are
+		// walked, so the order decides which of two same-named vars keeps the base name and which gets the
+		// suffix.
+		var kids = scope.children.copy();
+		kids.reverse();
+		for (child in kids) renameVars(child);
 	}
 
 	/**
