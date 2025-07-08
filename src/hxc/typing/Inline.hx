@@ -569,7 +569,7 @@ class Inline {
 				// to VGenerated only when it is read at most once and never written. Keeping the VInlined
 				// kind in the other case is what stops the analyzer (for which neither VUser nor VInlined
 				// counts as compiler generated) from fusing the local without -D analyzer-optimize.
-				var nv = TypeFunctions.allocVar(declareKind(av), av.name, av.type, p);
+				var nv = TypeFunctions.allocVar(declareKind(av), declareName(av), av.type, p);
 				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, absThisCast(substLocal(nv, p)));
@@ -1034,7 +1034,7 @@ class Inline {
 				// shared type (return_type).
 				var body = terminal(e1);
 				var mappedCatches = [for (c in catches) {
-					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(c.v), declareName(c.v), c.v.type, c.v.pos);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: terminal(c.expr)};
 				}];
@@ -1054,8 +1054,18 @@ class Inline {
 		}
 	}
 
-	// A body-declared local re-declared while inlining keeps its original kind, except a user var becomes
-	// VInlined rather than VGenerated.
+	// A body-declared local re-declared while inlining keeps its original kind, except a user
+	// var becomes VInlined rather than VGenerated. VInlined is still not compiler-generated, so
+	// the analyzer leaves it un-fused under -debug (where user-var fusion is off), preserving the
+	// source variable for the debugger.
+	// The copy takes the var's :realPath name when it has one. renameVars records the
+	// pre-collision name there, so a body inlined on a later compilation starts from `_g` again
+	// rather than from the `_g1` the previous rename left behind.
+	static inline function declareName(v:TVar):String {
+		var real = hxc.ast.Ast.getMetaString(v.meta, ":realPath");
+		return real == null ? v.name : real;
+	}
+
 	static inline function declareKind(v:TVar):TVarKind {
 		return switch (v.kind) {
 			case VUser(_): VInlined;
@@ -1180,7 +1190,7 @@ class Inline {
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
-				var nv = TypeFunctions.allocVar(declareKind(v), v.name, v.type, v.pos);
+				var nv = TypeFunctions.allocVar(declareKind(v), declareName(v), v.type, v.pos);
 				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
 				// type behind an IMap-typed temp.
 				nv.extra = v.extra;
@@ -1191,7 +1201,7 @@ class Inline {
 				var me1 = m(e1);
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
-				var nv = TypeFunctions.allocVar(declareKind(v), v.name, v.type, v.pos);
+				var nv = TypeFunctions.allocVar(declareKind(v), declareName(v), v.type, v.pos);
 				subst.set(v.id, substLocal(nv, v.pos));
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
@@ -1218,7 +1228,7 @@ class Inline {
 				// re-declares as a fresh local (state#declare).
 				var me1 = m(e1);
 				TTry(me1, [for (c in catches) {
-					var nv = TypeFunctions.allocVar(declareKind(c.v), c.v.name, c.v.type, c.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(c.v), declareName(c.v), c.v.type, c.v.pos);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: m(c.expr)};
 				}]);
@@ -1229,7 +1239,7 @@ class Inline {
 				// the
 				// inlined bindings rather than the callee's argument vars.
 				var nargs:Array<TFuncArg> = [for (a in f.args) {
-					var nv = TypeFunctions.allocVar(declareKind(a.v), a.v.name, a.v.type, a.v.pos);
+					var nv = TypeFunctions.allocVar(declareKind(a.v), declareName(a.v), a.v.type, a.v.pos);
 					subst.set(a.v.id, substLocal(nv, a.v.pos));
 					{v: nv, c: a.c == null ? null : m(a.c)};
 				}];
