@@ -1319,9 +1319,12 @@ class Typeload {
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path:hxc.core.Globals.Path = {pack: c.path.pack, name: c.path.name + suffix};
-		// A user type already claiming the generated name blocks specialization; our own instances hit the
-		// cache above and never reach here. .
-		if (ctx.typeToModule.exists(Context.pathKey(path)))
+		// A user type already claiming the generated name blocks specialization; our own instances hit
+		// the cache above and never reach here. The name is looked up in the state of this compilation;
+		// the reused macro context still maps the instance it generated for the previous one, which
+		// claims nothing (the epoch rule ModuleLoader.checkModuleTypes uses).
+		if (ctx.typeToModule.exists(Context.pathKey(path))
+			&& ctx.typeToModuleEpoch.get(Context.pathKey(path)) == ctx.compilationEpoch)
 			throw new TypingError("Cannot specialize @:generic because the generated type name is already used: " + path.name, p);
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
 		mg.extra.resolved = 2;
@@ -1386,6 +1389,7 @@ class Typeload {
 		ctx.types.push(TClassDecl(cg));
 		ctx.moduleLut.set(Context.pathKey(path), mg);
 		ctx.typeToModule.set(Context.pathKey(path), path);
+		ctx.typeToModuleEpoch.set(Context.pathKey(path), ctx.compilationEpoch);
 		TypeFunctions.addDependency(mg, c.module);
 		// The module USING the instance depends on it. Without that edge nothing re-registers the instance
 		// on a warm rebuild - the using module is served from the cache and the walk over its deps never

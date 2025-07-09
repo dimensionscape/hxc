@@ -1731,6 +1731,7 @@ class EvalMacro {
 	static function getContext(com:Context):EvalContext {
 		hostCom = com;
 		evictDisplayModule();
+		evictStaleMacroModules();
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
@@ -1803,6 +1804,7 @@ class EvalMacro {
 	// hook, and answer empty. Dropping just that module keeps the guarantee without rebuilding the
 	// whole macro world each request.
 	static var pendingDisplayEvict:Bool = false;
+	static var pendingStaleSweep:Bool = false;
 
 	// A compilation that finds a cached interpreter reuses it and resets the static prototypes - every
 	// non-persistent static initializer runs again. That is what puts a macro-world static back at its
@@ -1815,6 +1817,7 @@ class EvalMacro {
 		// redefinition check is what needs it.
 		if (macroCom != null) macroCom.compilationEpoch++;
 		pendingDisplayEvict = true;
+		pendingStaleSweep = true;
 		pendingMacroReuse = true;
 		// The build macros a compilation ran are its own: a new request must run them again, since its
 		// classes are typed from source again.
@@ -1863,6 +1866,40 @@ class EvalMacro {
 		evictMacroModulesOfFile(df);
 	}
 
+	// The module OBJECT survives as a dependency of whatever it built, and that is the copy the
+	// dirty-subgraph walk consults, so it is tainted as well as dropped.
+	static function dropMacroModule(m:ModuleDef, ?taintReason:String):Void {
+		if (taintReason != null) m.extra.cacheState = MSBad(Tainted(taintReason));
+		macroCom.modules.remove(m);
+		macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
+		// com.types is rebuilt from the surviving modules on every compilation, so a retired module must
+		// never leave types behind. This one is a live static: leaving them would make a re-load APPEND a
+		// second copy of the same class, and anything walking com.types - the @usage statistics, for one -
+		// would count every occurrence once per request that had touched the file.
+		for (mt in m.types) macroCom.types.remove(mt);
+	}
+
+	// Every macro-world module is loaded again and revalidated per compilation. hxc keeps one macro com for
+	// the whole process, and a moduleLut hit returns the module before any check runs, so without this an
+	// edited macro would keep running the code of the request before. Same check, over what survived that
+	// request.
+	static function evictStaleMacroModules():Void {
+		if (!pendingStaleSweep) return;
+		pendingStaleSweep = false;
+		if (macroCom == null || !hxc.context.ServerCache.enabled) return;
+		var stale:Array<ModuleDef> = [];
+		for (m in macroCom.modules)
+			if (hxc.context.ServerCache.checkModule(macroCom, m, Position.nullPos) != null) stale.push(m);
+		if (stale.length == 0) return;
+		for (m in stale) dropMacroModule(m);
+		// The interpreter's prototypes still point at the retired fields, so it is rebuilt.
+		if (macroCtx != null) {
+			staleMacroCtx = macroCtx;
+			macroCtx = null;
+			lastModuleCount = -1;
+		}
+	}
+
 	// Tainting walks every signature context, so a file invalidated over the protocol taints its
 	// macro-context module too and the next compilation re-types it. hxc keeps the macro world in a
 	// live process static rather than serving it back out of the cache, so the module is dropped from
@@ -1877,17 +1914,7 @@ class EvalMacro {
 			if (f == null) continue;
 			var k = key(f);
 			if (k != want && !StringTools.endsWith(k, "/" + want) && !StringTools.endsWith(want, "/" + k)) continue;
-			// The module OBJECT survives as a dependency of whatever it built, and that is the copy
-			// the dirty-subgraph walk consults, so it is tainted as well as dropped.
-			if (taintReason != null) m.extra.cacheState = MSBad(Tainted(taintReason));
-			macroCom.modules.remove(m);
-			macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
-			// com.types is rebuilt from the surviving modules on every compilation and the reference's
-			// macro com is a fresh clone each time, so a retired module never leaves types behind. This one
-			// is a live static: leaving them meant a re-load APPENDED a second copy of the same class, and
-			// anything walking com.types - @usage, for one - counted every occurrence in it once per
-			// request that had touched the file.
-			for (mt in m.types) macroCom.types.remove(mt);
+			dropMacroModule(m, taintReason);
 			dropped = true;
 		}
 		// The interpreter's prototypes still point at the retired fields, so it is rebuilt (macro
@@ -2034,6 +2061,7 @@ class EvalMacro {
 
 	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef):Void {
 		evictDisplayModule();
+		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;

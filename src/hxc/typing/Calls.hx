@@ -1338,6 +1338,7 @@ class Calls {
 		ctx.com.types.push(TClassDecl(cg));
 		ctx.com.moduleLut.set(key, mg);
 		ctx.com.typeToModule.set(key, path);
+		ctx.com.typeToModuleEpoch.set(key, ctx.com.compilationEpoch);
 		TypeFunctions.addDependency(mg, host.module);
 		// The same edge a generic class records: the module using the specialization depends on it, so a
 		// warm rebuild that serves the user from the cache still re-registers it. ModuleLoader's variant
