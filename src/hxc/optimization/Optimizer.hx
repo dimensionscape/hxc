@@ -356,7 +356,7 @@ class Optimizer {
 						var inl = try hxc.typing.Inline.typeInline(ctx, null, cf, fn, ethis, el, rt, e.pos, true) catch (_:Dynamic) null;
 						if (inl == null) reduceExpr(ctx, e) else reduceLoop(ctx, inl);
 					case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (cf.kind.match(Method(MethInline)) && !stackHas(cf)):
-						var inl = hxc.typing.Inline.tryInline(ctx, TexprTools.skip(e1), el, e.type, e.pos);
+						var inl = hxc.typing.Inline.tryInline(ctx, TexprTools.skip(e1), el, e.type, e.pos, false, false);
 						if (inl == null) reduceExpr(ctx, e)
 						else recStackDefault(cf, function() return reduceLoop(ctx, inl), inl);
 					case TField({expr: TTypeExpr(TClassDecl(c))}, field):

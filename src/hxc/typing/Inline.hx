@@ -40,7 +40,7 @@ class Inline {
 	// self-recursive inline function stays a call.
 	static var cfStack:Array<TClassField> = [];
 
-	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false):Null<TExpr> {
+	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
@@ -90,12 +90,16 @@ class Inline {
 		// installed yet, so type it on demand from its owning class, then follow the lazy as a backstop.
 		if (c != null) TypeFields.forceFieldBody(ctx.com, c, cf);
 		TypeFunctions.follow(cf.type);
-		// Inline from exprUnoptimized when it is set (the pre-analyzer body saved by save_class_state),
-		// falling back to expr. This only matters for a module reused from the compilation cache, whose
-		// expr has been analyzer-transformed; inlining that into a fresh caller would carry
-		// analyzer-split temps into a body the pre-analyzer checks still visit. A freshly typed field has
-		// exprUnoptimized = null, so the one-shot path is unaffected.
-		var body = switch (cf.exprUnoptimized) {
+		// Inline from exprUnoptimized when it is set (the pre-analyzer body saved with the class
+		// state), falling back to expr. This only matters for a module reused from the compilation
+		// cache, whose expr has been analyzer-transformed; inlining that into a fresh caller would
+		// carry analyzer-split temps into a body the pre-analyzer checks still visit. A freshly typed
+		// field has exprUnoptimized = null, so the one-shot path is unaffected.
+		// Only a call reads it: the optimizer's loop reduction inlines from expr, which by then
+		// has been through the filters this compilation runs. Taking the saved body there would paste
+		// a pre-filter one back in, and whatever the filters had already resolved in it (a
+		// @:multiType construction, for one) would stay unresolved because those filters have run.
+		var body = switch (useUnoptimized ? cf.exprUnoptimized : null) {
 			case some if (some != null && some.expr.match(TFunction(_))): some;
 			case _: cf.expr;
 		};

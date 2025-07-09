@@ -979,15 +979,6 @@ class Filters {
 		}
 		hxc.core.PerfCount.walk(com);
 		stageMark("filters:start"); memProbe("filters:start");
-		// The reference resolves a @:multiType construction while typing, so by saved body already names
-		// the concrete type. hxc defers that here, so the resolution has to run before the save or the
-		// saved body still holds TNew on the @:multiType impl - and reduce_expression inlines from that
-		// body on the next compilation which put `new haxe_ds_Map()` back into a warm rebuild. Only this
-		// resolution moves ahead of the save; the rest of pass 1 stays after it, so the saved body still
-		// matches what the reference saves.
-		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
-			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
-		], t);
 		// Inline from the original body on the next compilation, not the analyzer-transformed one.
 		if (reuse) for (t in newTypes) switch (t) {
 			case TClassDecl(cls):
@@ -1000,6 +991,7 @@ class Filters {
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
+			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		stageMark("pass1:done"); memProbe("pass1:done");
