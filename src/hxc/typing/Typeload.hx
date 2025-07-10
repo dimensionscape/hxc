@@ -887,6 +887,10 @@ class Typeload {
 	// hxc's substitution state is a bare gsubst array, so hold the typer here for the duration of a
 	// specialization instead.
 	static var genericBuildCtx:Null<Context> = null;
+	// The instance is attached to the module current when the generic build STARTED. hxc has one
+	// Context whose currentModule moves on, and a cascaded instance is built from a lazy that fires once
+	// it is null, so the module travels alongside genericBuildCtx.
+	static var genericBuildModule:Null<hxc.core.Type.ModuleDef> = null;
 
 	public static function canSpecializeGeneric(params:TParams):Bool {
 		return !hasOpenMono(params) && !hasTypeParameterParams(params);
@@ -1270,6 +1274,7 @@ class Typeload {
 		// is required for cascading instances created by cloneExpr, including classes reached by
 		// re-resolving a super from a nested cloned body.
 		var baseCls = c;
+		var declModule = ctx.currentModule;
 		var computed:Null<T> = null;
 		var lr = new Ref(LAvailable(TypeFunctions.tDynamic));
 		lr.set(LWait(function():T {
@@ -1281,10 +1286,13 @@ class Typeload {
 			cf.type = t;
 			if (f.expr != null) {
 				var savedGCtx = genericBuildCtx;
+				var savedGMod = genericBuildModule;
 				genericBuildCtx = ctx;
+				genericBuildModule = declModule;
 				cf.expr = cloneExpr(f.expr, subst, new Map(), gsubst2);
 				cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
 				genericBuildCtx = savedGCtx;
+				genericBuildModule = savedGMod;
 			}
 			lr.set(LAvailable(t));
 			return t;
@@ -1305,6 +1313,8 @@ class Typeload {
 
 	public static function specializeGenericClass(ctx:Context, c:TClass, params:TParams, p:Position):TClass {
 		var savedGenericCtx = genericBuildCtx; genericBuildCtx = ctx;
+		var savedGenericMod = genericBuildModule;
+		if (ctx.currentModule != null) genericBuildModule = ctx.currentModule;
 		// `ignore(c.build())` - 'make sure the super class is already setup' before build_field
 		// substitutes over its signatures. A @:generic reached from a HERITAGE clause specializes before
 		// the base class has had its field types resolved, and substituting an open monomorph only yields
@@ -1315,7 +1325,7 @@ class Typeload {
 		hxc.typing.TypeResolve.forceBuild(ctx, c);
 		var key = genericKey(c, params);
 		var cached = genericInstances.get(key);
-		if (cached != null) { genericBuildCtx = savedGenericCtx; return cached; }
+		if (cached != null) { genericBuildCtx = savedGenericCtx; genericBuildModule = savedGenericMod; return cached; }
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path:hxc.core.Globals.Path = {pack: c.path.pack, name: c.path.name + suffix};
@@ -1400,8 +1410,9 @@ class Typeload {
 		// POST-PROCESSING mark, and the using module is mid-typing here. Clearing hxc's own resolve gate as
 		// well re-derives signatures the bodies have already bound, which reports a duplicate
 		// constructor.
-		hxc.context.ModuleLoader.addDependency(ctx.currentModule, mg);
+		hxc.context.ModuleLoader.addDependency(ctx.currentModule != null ? ctx.currentModule : genericBuildModule, mg);
 		genericBuildCtx = savedGenericCtx;
+		genericBuildModule = savedGenericMod;
 		return cg;
 	}
 }
