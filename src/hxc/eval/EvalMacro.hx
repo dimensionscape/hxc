@@ -1767,6 +1767,7 @@ class EvalMacro {
 			} catch (e:Dynamic) { building = false; throw e; }
 			building = false;
 		}
+		doReuse(com);
 		EvalContext.setCtx(macroCtx);
 		currentCom = com;
 		return macroCtx;
@@ -1833,7 +1834,6 @@ class EvalMacro {
 	// Resets the static prototypes for a new compilation.
 	static function doReuse(com:Context):Void {
 		if (!pendingMacroReuse) return;
-		pendingMacroReuse = false;
 		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
 		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
 		// is re-synced here.
@@ -1845,7 +1845,12 @@ class EvalMacro {
 			// recovering to Dynamic.
 			macroCom.ignoreErrors = com.ignoreErrors;
 		}
+		// The reset needs an interpreter. When the sweep retired one, the flag has to SURVIVE this call:
+		// the rebuild below migrates the retired context's static values across, so without a reset
+		// afterwards a macro-world static keeps what the previous compilation left in it (a @:genericBuild
+		// whose defineType is guarded by one then never re-runs).
 		if (macroCtx == null) return;
+		pendingMacroReuse = false;
 		var ec = macroCtx;
 		// Reuse also swaps in the new compilation's api: every macro API closure holds the com it was
 		// registered with, and the previous request's is dead.
