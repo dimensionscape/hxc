@@ -1553,7 +1553,7 @@ class Calls {
 	// The raw type names the part (no eager follow), so a typedef parameter keeps its typedef path
 	// (Issue7985 gen_..._Rec); only a non-top unknown degrades to "_" through follow_or, and Dynamic
 	// spells "Dynamic" only at top.
-	static function setTypeParameterDependencies(mg:Null<ModuleDef>, tl:TParams):Void {
+	public static function setTypeParameterDependencies(mg:Null<ModuleDef>, tl:TParams):Void {
 		if (mg == null) return;
 		var depStack:Array<T> = [];
 		function loop(t:T):Void {

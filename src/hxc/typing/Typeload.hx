@@ -891,6 +891,9 @@ class Typeload {
 	// Context whose currentModule moves on, and a cascaded instance is built from a lazy that fires once
 	// it is null, so the module travels alongside genericBuildCtx.
 	static var genericBuildModule:Null<hxc.core.Type.ModuleDef> = null;
+	// The module of the instance CURRENTLY being built, which differs from the module that asked for
+	// it. Each cascading instance hangs off this one.
+	static var genericInstanceModule:Null<hxc.core.Type.ModuleDef> = null;
 
 	public static function canSpecializeGeneric(params:TParams):Bool {
 		return !hasOpenMono(params) && !hasTypeParameterParams(params);
@@ -1179,7 +1182,13 @@ class Typeload {
 							// registered in the cache before its fields are substituted, so specializeGenericClass
 							// returns the cached instance instead of recursing, and the field points at GenericCell_Int
 							// rather than the base GenericCell.
-							TInst(specializeGenericClass(ctx, gc, tl2 != null ? tl2 : tl, p), []);
+							var inst = specializeGenericClass(ctx, gc, tl2 != null ? tl2 : tl, p);
+							// The instance being built DEPENDS on every cascading instance its substitution
+							// created, so reusing
+							// it from the cache brings them back with it.
+							if (genericInstanceModule != null)
+								hxc.context.ModuleLoader.addDependency(genericInstanceModule, inst.module);
+							TInst(inst, []);
 						case _:
 							tl2 == null ? t : TInst(gc, tl2);
 					}
@@ -1275,6 +1284,7 @@ class Typeload {
 		// re-resolving a super from a nested cloned body.
 		var baseCls = c;
 		var declModule = ctx.currentModule;
+		var declInstModule = genericInstanceModule;
 		var computed:Null<T> = null;
 		var lr = new Ref(LAvailable(TypeFunctions.tDynamic));
 		lr.set(LWait(function():T {
@@ -1287,12 +1297,15 @@ class Typeload {
 			if (f.expr != null) {
 				var savedGCtx = genericBuildCtx;
 				var savedGMod = genericBuildModule;
+				var savedIMod = genericInstanceModule;
 				genericBuildCtx = ctx;
 				genericBuildModule = declModule;
+				genericInstanceModule = declInstModule;
 				cf.expr = cloneExpr(f.expr, subst, new Map(), gsubst2);
 				cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
 				genericBuildCtx = savedGCtx;
 				genericBuildModule = savedGMod;
+				genericInstanceModule = savedIMod;
 			}
 			lr.set(LAvailable(t));
 			return t;
@@ -1329,6 +1342,33 @@ class Typeload {
 		var suffix = "_" + genericSuffix(params);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path:hxc.core.Globals.Path = {pack: c.path.pack, name: c.path.name + suffix};
+		// The generated path is looked up first and an instance of the same base class is handed back;
+		// only something else under that name is the error below. Without it, a warm rebuild
+		// re-specializes from a base class whose body has since been through the filters, and
+		// GenericStack_Int's `null` comes out typed Dynamic (`null()`) instead of `0`. The lookup checks
+		// the whole subgraph, so a dirty base
+		// class or type parameter still rebuilds, and the cascading-instance dependency brings those
+		// instances back along with it.
+		if (hxc.context.ServerCache.enabled) {
+			var cachedM = try hxc.context.ServerCache.typeModule(ctx, path, p) catch (_:Dynamic) null;
+			if (cachedM != null) {
+				for (mt in cachedM.types) switch (mt) {
+					case TClassDecl(cgOld):
+						switch (cgOld.kind) {
+							case KGenericInstance(base, _) if (base == c):
+								genericInstances.set(key, cgOld);
+								hxc.context.ModuleLoader.addDependency(ctx.currentModule != null ? ctx.currentModule : genericBuildModule, cachedM);
+								if (genericInstanceModule != null)
+									hxc.context.ModuleLoader.addDependency(genericInstanceModule, cachedM);
+								genericBuildCtx = savedGenericCtx;
+								genericBuildModule = savedGenericMod;
+								return cgOld;
+							case _:
+						}
+					case _:
+				}
+			}
+		}
 		// A user type already claiming the generated name blocks specialization; our own instances hit
 		// the cache above and never reach here. The name is looked up in the state of this compilation;
 		// the reused macro context still maps the instance it generated for the previous one, which
@@ -1338,6 +1378,8 @@ class Typeload {
 			throw new TypingError("Cannot specialize @:generic because the generated type name is already used: " + path.name, p);
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
 		mg.extra.resolved = 2;
+		var savedInstMod = genericInstanceModule;
+		genericInstanceModule = mg;
 		var cg = TypeFunctions.mkClass(mg, path, c.pos, c.namePos);
 		cg.doc = c.doc;
 		// Only a whitelist of the source class's metadata carries over to the instance, and @:noDoc leads
@@ -1411,6 +1453,11 @@ class Typeload {
 		// well re-derives signatures the bodies have already bound, which reports a duplicate
 		// constructor.
 		hxc.context.ModuleLoader.addDependency(ctx.currentModule != null ? ctx.currentModule : genericBuildModule, mg);
+		// The instance also depends on the modules of the types it was specialized for, so one of those
+		// changing marks it dirty. Without it a cached instance can be handed back after its parameter's
+		// module was re-typed.
+		hxc.typing.Calls.setTypeParameterDependencies(mg, params);
+		genericInstanceModule = savedInstMod;
 		genericBuildCtx = savedGenericCtx;
 		genericBuildModule = savedGenericMod;
 		return cg;
