@@ -166,14 +166,18 @@ class TypeResolve {
 						case _: null;
 					}
 				}
+				// A `using` does one lookup, of the module or of the sub-type, and lets it RAISE when the path
+				// names nothing; swallowing it here accepts `@:using(nosuchpkg)`.
+				var lookupErr:Dynamic = null;
 				if (subOf != null) {
-					var used = try ctx.getType({pack: subOf.pack, name: subOf.moduleName}, param.pos, subOf.sub) catch (_:Dynamic) null;
+					var used = try ctx.getType({pack: subOf.pack, name: subOf.moduleName}, param.pos, subOf.sub) catch (e:Dynamic) { lookupErr = e; null; };
 					var usingClass = classOf(used);
 					if (usingClass != null) addUsing(mt, usingClass, param.pos);
+					else if (lookupErr != null) throw lookupErr;
 					continue;
 				}
 				var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
-				var um = try hxc.context.ModuleLoader.loadModule(ctx, path, param.pos) catch (_:Dynamic) null;
+				var um = try hxc.context.ModuleLoader.loadModule(ctx, path, param.pos) catch (e:Dynamic) { lookupErr = e; null; };
 				if (um != null) {
 					// filter_classes reverses the type list, then the result is prepended; unshifting in
 					// module order produces the same final order.
@@ -184,9 +188,10 @@ class TypeResolve {
 					}
 					continue;
 				}
-				var used = try ctx.getType(path, param.pos, null) catch (_:Dynamic) null;
+				var used = try ctx.getType(path, param.pos, null) catch (e:Dynamic) { if (lookupErr == null) lookupErr = e; null; };
 				var usingClass = classOf(used);
 				if (usingClass != null) addUsing(mt, usingClass, param.pos);
+				else if (lookupErr != null) throw lookupErr;
 			}
 		}
 	}
