@@ -44,6 +44,7 @@ class TypeResolve {
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
 			try {
 				resolveType(ctx, mt, entry.decl, entry.pos);
+				resolveUsingMetadata(ctx, mt);
 			} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
 				// A display completion is an answer, not a declaration error: it has to reach the responder
 				// rather than be recorded and swallowed here.
@@ -66,7 +67,6 @@ class TypeResolve {
 				ctx.currentModule = m;
 			}
 		}
-		for (mt in m.types) resolveUsingMetadata(ctx, mt);
 		ctx.currentModule = savedMod;
 	}
 
