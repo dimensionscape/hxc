@@ -2937,7 +2937,16 @@ class Parser {
 				if (tokEq(peek(), Kwd(KwdAbstract))) {
 					var p1b = next().pos;
 					var flags = [AbEnum].concat(convertAbstractFlags(c));
-					return parseAbstract(doc, meta, flags, p1b);
+					// The enum abstract form holds the abstract parse as the SECOND element after
+					// `abstract`, so a soft failure raised inside it is a non-soft error and cannot end the
+					// declaration list. The plain `abstract` arm holds it at its inner match's HEAD
+					// instead, which is why `class<eof>` ends the list cleanly but `enum abstract<eof>`
+					// does not.
+					try return parseAbstract(doc, meta, flags, p1b)
+					catch (e:ParserError) {
+						if (e.soft) throw new ParserError(Unexpected(peek()), peekInfo().pos);
+						throw e;
+					}
 				}
 				var name = typeName();
 				var tl = parseConstraintParams();
