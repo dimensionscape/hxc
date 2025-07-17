@@ -373,8 +373,20 @@ class Parser {
 			// to the pull that reaches them, so a parse error before the conditional is reported instead.
 			// Defer it on the same terms as a lexer fault.
 			var ppFail:{err:Null<ParserError>, unclosedAtEnd:Null<Position>} = {err: null, unclosedAtEnd: null};
+			// Where LEXING stopped, captured before Preprocess.run replaces the list. A lexer fault
+			// leaves its Eof sentinel there (see the catch above); MalformedFile reports 1:1 no matter
+			// where the bad bytes were, so its own pos cannot be compared against.
+			var lexStop = (lexOut.err != null && toks.length > 0) ? toks[toks.length - 1].pos : null;
 			toks = Preprocess.run(toks, d, dead, ppFail);
-			if (ppFail.err != null && lexOut.err == null)
+			// Lexing and preprocessing count as one pull, so the fault the scan reaches first is the one
+			// reported. hxc lexes the whole file up front, so a lexer fault later in the file must not beat
+			// an earlier bad directive: `@#op` on line 2 with an undecodable byte on line 5 reports the
+			// directive. An UNCLOSED conditional is the exception: the scan only knows it ran out of tokens
+			// when it reaches the end, so it is detected after everything the lexer read even though it is
+			// reported at the `#if`. It never beats an earlier lexer fault.
+			var ppEarlier = ppFail.err != null && lexStop != null && !ppFail.err.msg.match(Unclosed_conditional)
+				&& ppFail.err.pos.min < lexStop.min;
+			if (ppFail.err != null && (lexOut.err == null || ppEarlier))
 				lexOut.err = new LexerError(Preprocessed(ppFail.err), ppFail.err.pos);
 			ppUnclosed = ppFail.unclosedAtEnd;
 			if (dead != null) handlePdi(d, dead);
