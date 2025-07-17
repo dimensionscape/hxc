@@ -1256,6 +1256,11 @@ class Parser {
 		} catch (er:ParserError) {
 			// Expr heads its alternative, so only a soft failure reaches the display fallback below
 			if (!er.soft) throw er;
+			// The magic-type-path and soft-failure arms are both display-file only; a batch compile takes
+			// serror(). That is a non-soft error, and psep backtracks only over a soft failure, so it
+			// escapes the parameter list: `Array<;` is `Unexpected ;`, not the caller's `Expected >`. A list
+			// that READ a parameter still reports `Expected >`.
+			if (!isDisplayFile()) return serror();
 			if (!wouldSkipDisplayPosition(plt, false)) throw er;
 			return TPType({ct: CTPath(magicTypePath()), pos: new Position(plt.file, displayOffset, displayOffset)});
 		}
