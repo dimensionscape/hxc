@@ -348,7 +348,25 @@ class Preprocess {
 		}
 	}
 
-	// Reconstruct a dotted define path `a.b.c` from Dot-split tokens (the array-based equivalent of
+	// Reconstruct a dotted define path `a.b.c` from Dot-split tokens. In a condition `a.b.c` is one
+	// identifier while the characters are CONTIGUOUS; hxc lexes the condition with the ordinary lexer,
+	// so a dotted name is several tokens. This walks to the last segment of the run starting at
+	// `from`. Same adjacency rule as parseMacroCondFieldChain, so `#if sys .replace` still splits.
+	function lastDottedSegment(from:Int):Int {
+		var last = from;
+		if (from >= toks.length) return last;
+		var head = toks[from].tok;
+		if (!head.match(Const(CIdent(_))) && !head.match(Kwd(_))) return last;
+		while (last + 2 < toks.length) {
+			var d = toks[last + 1];
+			var n = toks[last + 2];
+			if (!d.tok.match(Dot) || toks[last].pos.max != d.pos.min || d.pos.max != n.pos.min) break;
+			if (!n.tok.match(Const(CIdent(_))) && !n.tok.match(Kwd(_))) break;
+			last += 2;
+		}
+		return last;
+	}
+
 	function parseMacroCondFieldChain(e:Expr):Expr {
 		var acc = e;
 		while (true) {
@@ -440,7 +458,9 @@ class Preprocess {
 				case Unexpected(_):
 				case _: throw r.err;
 			}
-			var failIdx = spanStart + r.count;
+			// The token the enclosing `)` was left holding is the whole dotted name, since a condition lexes
+			// it as one: the report names the token after `a.b`, not the `.`.
+			var failIdx = lastDottedSegment(spanStart + r.count);
 			var afterIdx = failIdx + 1 < toks.length ? failIdx + 1 : toks.length - 1;
 			var at = toks[afterIdx];
 			throw new ParserError(Unexpected(at.tok), at.pos);
