@@ -3050,6 +3050,11 @@ class Parser {
 					};
 					return {decl: EStatic(def), pos: Position.union(p1, a.pos)};
 				} catch (er:ParserError) {
+					// The name is the first element of its match, so only its failure is a soft failure that
+					// backtracks to the flag completion. The type hint and the assignment come after it, and a
+					// failure there is a non-soft error that is the message: `final w(x:Float)` at module level is
+					// `Missing ;` at the paren, not `Unexpected w`.
+					if (idx != beforeFinal) throw er;
 					idx = beforeFinal;
 				}
 				checkTypeDeclFlagCompletion(mode, c);
