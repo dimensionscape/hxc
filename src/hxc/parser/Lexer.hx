@@ -765,7 +765,14 @@ class Lexer {
 			case ")".code: pos++; return mk(start, PClose);
 			case "@".code: pos++; return mk(start, At);
 			case _:
-				throw new LexerError(InvalidCharacter(c), mkPos(start, start));
+				// The error reports the decoded CODE POINT. hxc reads UTF-16 units, so an astral character
+				// arrives as its high SURROGATE; decode it so an emoji reports 0x1F600, not 0xD83D.
+				var cp = c;
+				if (c >= 0xD800 && c <= 0xDBFF) {
+					var lo = peek(1);
+					if (lo >= 0xDC00 && lo <= 0xDFFF) cp = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
+				}
+				throw new LexerError(InvalidCharacter(cp), mkPos(start, start));
 		}
 	}
 
