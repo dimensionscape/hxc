@@ -1708,13 +1708,25 @@ class Parser {
 	function blockWithPos(p:Position):{exprs:Array<Expr>, pos:Position} {
 		var acc:Array<Expr> = [];
 		var lastPos = p;
+		// A block element holds the block var in its first alternative, so a soft failure there moves on
+		// to the next one; the pull that failed is this loop's own peek, so the verdict is carried into
+		// the element parse.
+		var blockVarArm = true;
 		while (true) {
-			if (tokEq(peek(), BrClose) || tokEq(peek(), Eof)) break;
-			if (tokEq(peek(), Kwd(KwdCase)) || tokEq(peek(), Kwd(KwdDefault))) break;
+			var t = try peek() catch (c:CondFailure) { blockVarArm = false; peek(); };
+			if (tokEq(t, BrClose) || tokEq(t, Eof)) break;
+			if (tokEq(t, Kwd(KwdCase)) || tokEq(t, Kwd(KwdDefault))) break;
 			var save = idx;
 			var e:Expr;
 			try {
-				e = parseBlockElt();
+				e = parseBlockElt(blockVarArm);
+				blockVarArm = true;
+			} catch (c:CondFailure) {
+				// Only an element that matched NOTHING ends the block. Once the element has consumed, the
+				// same failure has already become a non-soft error and stays fatal, so a #if inside an
+				// array literal is not the block's business.
+				if (idx != save) throw c;
+				break;
 			} catch (er:ParserError) {
 				// The soft-failure arm comes before the display arm, so a block element that matched nothing
 				// ends the block in either mode, and the tokens it consumed stay consumed.
@@ -1745,14 +1757,17 @@ class Parser {
 		return {exprs: acc, pos: lastPos};
 	}
 
-	function parseBlockElt():Expr {
+	// varArm is false when the pull that reached this element raised: the block var is the first
+	// alternative, so alternative is the one dropped. The last alternative is plain `expr`, which
+	// carries a var production of its own, so a var statement still parses through it.
+	function parseBlockElt(varArm:Bool = true):Expr {
 		switch (peek()) {
-			case Kwd(KwdVar):
+			case Kwd(KwdVar) if (varArm):
 				var p1 = next().pos;
 				var vl = parseVarDecls(false, p1);
 				var p2 = semicolon();
 				return new Expr(EVars(vl), Position.union(p1, p2));
-			case Kwd(KwdFinal):
+			case Kwd(KwdFinal) if (varArm):
 				// Could be `final x =...` var decl
 				var save = idx;
 				var p1 = next().pos;
@@ -2578,10 +2593,16 @@ class Parser {
 	}
 
 	function block1(p1:Position):ExprDef {
-		switch (peek()) {
+		// dollarIdent heads the first alternative, so its soft failure is caught there and the next
+		// alternative is tried, whose own peek re-fills the stream. A #if whose condition did not parse
+		// therefore rules out the object-literal key and the same token is read as a block by the third
+		// alternative.
+		var keyArm = true;
+		var t = try peek() catch (c:CondFailure) { keyArm = false; peek(); };
+		switch (t) {
 			// This name is read with dollarIdent, not ident, so the first key of an object literal may start
 			// with `$` where a later one may not: `{$a: 1}` parses and `{b: 1, $a: 2}` does not.
-			case Const(CIdent(_)) | Dollar(_):
+			case Const(CIdent(_)) | Dollar(_) if (keyArm):
 				var pn = dollarIdent();
 				return block2({name: pn.name, pos: pn.pos, quotes: NoQuotes}, CIdent(pn.name), pn.pos);
 			case Const(CString(name, qs)):
