@@ -30,6 +30,20 @@ class DisplayInMacroBlock extends haxe.Exception {
 	public function new() super("display in macro block");
 }
 
+// Macro condition parsing has no catch-all, so an #if whose condition does not parse fails inside
+// the token stream's own fill. It surfaces at whichever production was pulling. Such a failure
+// backtracks only at a production's first element; at any later one it becomes an empty non-soft
+// error, and one that escapes the entry is reported as `Unexpected <the token the retrying peek
+// yields>` - which is exactly the token the mark sits on.
+private class CondFailure extends ParserError {
+	public function new(tok:Token, pos:Position) {
+		// Not soft. `soft` means "no alternative matched", which hxc's recovery arms answer by RETRYING
+		// the production a different way; this failure came from the token stream's own fill, so no arm
+		// may see it, and it has to reach the top the way a non-soft error does.
+		super(Unexpected(tok), pos);
+	}
+}
+
 class Parser {
 	final tokens:Array<TokenInfo>;
 	var idx:Int;
@@ -442,7 +456,14 @@ class Parser {
 				case _: throw e;
 			}
 		}
-		return i < tokens.length ? tokens[i] : tokens[tokens.length - 1];
+		var ti = i < tokens.length ? tokens[i] : tokens[tokens.length - 1];
+		if (ti.condBreak > 0 && o == 0) {
+			// Cleared first: the parser re-peeks after a backtrack and the fill succeeds that time,
+			// so a production that catches this one sees the token itself.
+			ti.condBreak--;
+			throw new CondFailure(ti.tok, ti.pos);
+		}
+		return ti;
 	}
 
 	// Position of the current token without going through the guarded peek path.
@@ -2803,7 +2824,11 @@ class Parser {
 		var acc:Array<TypeDecl> = [];
 		while (true) {
 			checkTypeDeclCompletion(mode, pmax);
-			if (tokEq(peek(), Eof)) break;
+			// Same plist rule as parseClassFields. Ending the list here leaves the declaration standing,
+			// and it: `Unexpected <token>`.
+			var brk = try tokEq(peek(), Eof)
+				catch (c:CondFailure) { if (acc.length > 0) throw c; break; };
+			if (brk) break;
 			var save = idx;
 			var td:TypeDecl;
 			try {
@@ -3276,7 +3301,10 @@ class Parser {
 	function parseClassFields(tdecl:Bool, p1:Position):{fields:Array<ClassField>, pos:Position} {
 		var acc:Array<ClassField> = [];
 		while (true) {
-			if (tokEq(peek(), BrClose) || tokEq(peek(), Eof)) {
+			// `plist (parse_class_field tdecl)` = `[< v = f; l = plist f >]`.
+			var brk = try { tokEq(peek(), BrClose) || tokEq(peek(), Eof); }
+				catch (c:CondFailure) { if (acc.length > 0) throw c; break; };
+			if (brk) {
 				// A field parse is ATTEMPTED at the closing brace: its getDoc consumes any pending doc
 				// before the attempt fails, so a trailing doc comment in a body never leaks onto the next
 				// declaration.

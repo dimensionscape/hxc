@@ -92,9 +92,13 @@ class Preprocess {
 	// declaration.
 	var pendingDoc:Null<String> = null;
 
+	var pendingCondBreak:Int = 0;
+	var condPoisoned:Bool = false;
+
 	inline function keep(ti:TokenInfo):Void {
 		if (ti.doc != null) pendingDoc = null
 		else if (pendingDoc != null) { ti.doc = pendingDoc; pendingDoc = null; }
+		if (pendingCondBreak > 0) { ti.condBreak = pendingCondBreak; pendingCondBreak = 0; }
 		out.push(ti);
 	}
 
@@ -198,7 +202,17 @@ class Preprocess {
 				case Sharp("if"):
 					var p = ti.pos;
 					i++;
-					enterMacro(true, p);
+					// A condition that does not parse is a no-match, not the end of the file: the #if evaporates
+					// and the pull RESUMES, so the token it resumes on carries the failure (condBreak). The
+					// condition stream is built once per file, so the token the failed match declined stays in its
+					// buffer: every later #if re-reads that token and fails too, without touching the lexer and
+					// whatever its own condition says.
+					if (condPoisoned) pendingCondBreak++;
+					else try enterMacro(true, p)
+					catch (c:CondHeadFailure) {
+						condPoisoned = true;
+						pendingCondBreak++;
+					}
 				case Sharp("error"):
 					i++;
 					// The error points at the message string.
@@ -337,11 +351,14 @@ class Preprocess {
 				var e = parseParenCond(ti.pos);
 				return e;
 			case _:
-				// The offending token was already pulled into the condition stream's buffer and is LOST, the
-				// #if evaporates (no push, no skip), and the next fill resumes after it - at Eof the file
-				// simply ends (`#if<eof>` compiles CLEAN in the reference), otherwise the parser reports the
-				// token that follows.
-				i++;
+				// The condition production has no catch-all: the miss is a no-match raised inside the main
+				// stream's fill. The offending token was already pulled into the condition stream's buffer and
+				// is LOST, the #if evaporates (no push, no skip), and the next fill resumes after it - at Eof
+				// the file simply ends (`#if<eof>` compiles CLEAN), otherwise the parser reports the token that
+				// follows. Eof is idempotent: the condition lexer returning it does not move the lexer, so the
+				// main stream still yields Eof on the next fill. Advancing past it here would drop the sentinel
+				// and leave the parser reading the last real token forever.
+				if (!ti.tok.match(Eof)) i++;
 				var after = cur();
 				throw new CondHeadFailure(after.tok.match(Eof) ? null
 					: new ParserError(Unexpected(after.tok), after.pos), after.pos);
