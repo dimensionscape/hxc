@@ -1002,8 +1002,11 @@ class Parser {
 	}
 
 	function parseBraceType(p1:Position):TypeHint {
-		// Either anonymous { fields }, or extension { > T, fields }
-		if (tokEq(peek(), TBinop(OpGt))) {
+		// Either anonymous { fields }, or extension { > T, fields }. The anonymous form is tried first
+		// and the structural extension second, so the extension test is hxc's own path selection, not a
+		// pull - it reads the token without taking it, leaving a failed #if condition for the anonymous
+		// parse to absorb.
+		if (tokEq(rawTok(), TBinop(OpGt))) {
 			var tl:Array<PlacedTypePath> = [parseStructuralExtension()];
 			while (tokEq(peek(), TBinop(OpGt))) {
 				tl.push(parseStructuralExtension());
@@ -1018,13 +1021,20 @@ class Parser {
 			var r = parseClassFields(true, p1);
 			return {ct: CTExtend(tl, r.fields), pos: Position.union(p1, r.pos)};
 		}
-		// Discriminate between the short anon-var form and the class-field body
-		// form (which allows `function`/`var`/access/metadata fields), exactly as
-		// the reference falls through from parse_type_anonymous to parse_class_fields.
-		if (isAnonVarBody()) {
-			var fields = parseAnonFields();
-			var p2 = closeAnonFields();
-			return {ct: CTAnonymous(fields), pos: Position.union(p1, p2)};
+		// Discriminate between the short anon-var form and the class-field body form (which allows
+		// `function`/`var`/access/metadata fields), falling through from the anonymous form to the
+		// class-fields form. That alternative is headed by the anonymous parse, a NON-TERMINAL, so a soft
+		// failure inside it is absorbed and the next alternative - the class fields - reads from wherever
+		// the failed attempt stopped. Its own closer is then what speaks, which is why a #if with an
+		// unparseable condition between two structure fields reports Expected } rather than naming the
+		// field after it.
+		var anon = try isAnonVarBody() catch (c:CondFailure) isAnonVarBody();
+		if (anon) {
+			try {
+				var fields = parseAnonFields();
+				var p2 = closeAnonFields();
+				return {ct: CTAnonymous(fields), pos: Position.union(p1, p2)};
+			} catch (c:CondFailure) {}
 		}
 		var r = parseClassFields(true, p1);
 		return {ct: CTAnonymous(r.fields), pos: Position.union(p1, r.pos)};
@@ -1103,10 +1113,15 @@ class Parser {
 	// `@:optional` metadata.
 	function parseAnonFields():Array<ClassField> {
 		var fields:Array<ClassField> = [];
-		while (!tokEq(peek(), BrClose) && !tokEq(peek(), Eof)) {
+		while (true) {
+			// An anonymous field opens with an optional `?`, and that option's first alternative is a
+			// NON-TERMINAL, so a soft failure there is absorbed and the empty one taken; the field's own
+			// match then re-peeks and reads the field.
+			var t = try peek() catch (c:CondFailure) peek();
+			if (tokEq(t, BrClose) || tokEq(t, Eof)) break;
 			var opt = false;
 			var qpos = Position.nullPos;
-			if (tokEq(peek(), Question)) { qpos = cur().pos; junk(); opt = true; }
+			if (tokEq(t, Question)) { qpos = cur().pos; junk(); opt = true; }
 			var name = dollarIdent();
 			// The type hint sits past the arm's head, so a missing `:` names the token that is there, not
 			// the expectation.
@@ -1541,8 +1556,14 @@ class Parser {
 		while (tokEq(peek(), Comma)) {
 			junk();
 			var key:{name:String, pos:Position, quotes:QuoteStatus};
-			switch (peek()) {
-				case Const(CIdent(name)): var p = next().pos; key = {name: name, pos: p, quotes: NoQuotes};
+			// The key's first alternative is `ident`, a non-terminal, so a soft failure there is absorbed
+			// and the next alternative re-peeks. A #if whose condition did not parse therefore drops that
+			// alternative, no key matches, and the literal ends - leaving its `}` to be reported by the
+			// closer, not by this switch.
+			var identArm = true;
+			var kt = try peek() catch (c:CondFailure) { identArm = false; peek(); };
+			switch (kt) {
+				case Const(CIdent(name)) if (identArm): var p = next().pos; key = {name: name, pos: p, quotes: NoQuotes};
 				case Const(CString(name, _)): var p = next().pos; key = {name: name, pos: p, quotes: DoubleQuotes};
 				case _: break;
 			}
