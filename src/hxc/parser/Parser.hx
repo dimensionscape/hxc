@@ -239,6 +239,7 @@ class Parser {
 		var lastSignificant:Null<Token> = null;
 		var lastSignificant2:Null<Token> = null;
 		var lastWasMarkup = false;
+		var pendingMarkupFail = -1;
 		var pendingDoc:Null<String> = null;
 		// Offset of a line comment that answered the request below. Lexing stops there, so nothing past it
 		// is read; see the catch at the bottom.
@@ -249,6 +250,12 @@ class Parser {
 		try while (true) {
 			if (canStartMarkup(lastSignificant, lastSignificant2, lastWasMarkup)) {
 				var markup = lex.tryReadMarkupLiteral();
+				// A scan that ran off the end declines instead of raising; the `<` it gives back
+				// carries the verdict to whichever parser position reads it.
+				if (markup == null && lex.markupFailedAt >= 0) {
+					pendingMarkupFail = lex.markupFailedAt;
+					lex.markupFailedAt = -1;
+				}
 				if (markup != null) {
 					for (mt in markup) toks.push(mt);
 					lastSignificant2 = lastSignificant;
@@ -304,6 +311,10 @@ class Parser {
 					if (pendingDoc != null) {
 						t.doc = pendingDoc;
 						pendingDoc = null;
+					}
+					if (pendingMarkupFail == t.pos.min) {
+						t.markupFailed = true;
+						pendingMarkupFail = -1;
 					}
 					toks.push(t);
 					lastSignificant2 = lastSignificant;
@@ -473,6 +484,20 @@ class Parser {
 	}
 
 	inline function peek(o:Int = 0):Token return peekInfo(o).tok;
+
+	// Only three grammar positions read a markup literal, so they are the only ones where a `<` is markup
+	// at all. A scan the lexer already ran and declined becomes an error here and nowhere else - which is
+	// what keeps `class P { < }` reporting Expected } rather than the lexer's complaint.
+	inline function markupDeclined():Bool {
+		var i = idx < tokens.length ? idx : tokens.length - 1;
+		return tokens[i].markupFailed;
+	}
+
+	function markupError():LexerError {
+		var t = tokens[idx < tokens.length ? idx : tokens.length - 1];
+		// Reported at the opening `<` with an empty span
+		return new LexerError(UnterminatedMarkup, new Position(t.pos.file, t.pos.min, t.pos.min));
+	}
 
 	// A LOOKAHEAD, not a pull. A failed #if condition surfaces at the pull that reached the token, so a
 	// check hxc makes on its own account - one the grammar itself does not make - must not be what consumes
@@ -1778,6 +1803,8 @@ class Parser {
 	// carries a var production of its own, so a var statement still parses through it.
 	function parseBlockElt(varArm:Bool = true):Expr {
 		switch (peek()) {
+			// parse_block_elt's own markup alternative.
+			case TBinop(OpLt) if (markupDeclined()): throw markupError();
 			case Kwd(KwdVar) if (varArm):
 				var p1 = next().pos;
 				var vl = parseVarDecls(false, p1);
@@ -2094,6 +2121,7 @@ class Parser {
 		var metaArm = true;
 		var t = try peek() catch (c:CondFailure) { metaArm = false; peek(); };
 		switch (t) {
+			case TBinop(OpLt) if (markupDeclined()): throw markupError();
 			case At if (metaArm):
 				var entry = parseMetaEntry();
 				var e = secureExpr();

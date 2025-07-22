@@ -19,6 +19,12 @@ class TokenInfo {
 	// `Unexpected <token>` - is the list parser's own rule, so the list loops decide it.
 	public var condBreak:Int = 0;
 
+	// Set on a `<` whose markup scan ran to the end of the file. Markup is lexed on DEMAND, from the
+	// three grammar positions that accept a markup literal, so it is never scanned at a position
+	// where no expression is expected. hxc lexes the whole file up front, so the scan happens
+	// anyway and its FAILURE waits for the parser to say whether a scan belongs there at all.
+	public var markupFailed:Bool = false;
+
 	public function new(tok:Token, pos:Position) {
 		this.tok = tok;
 		this.pos = pos;

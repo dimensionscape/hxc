@@ -776,6 +776,9 @@ class Lexer {
 		}
 	}
 
+	/** Offset of a `<` whose markup scan ran off the end, or -1. Read once by lexAll. */
+	public var markupFailedAt:Int = -1;
+
 	public function tryReadMarkupLiteral():Null<Array<TokenInfo>> {
 		var save = pos;
 		while (true) {
@@ -802,7 +805,15 @@ class Lexer {
 			pos = save;
 			return null;
 		}
-		var xml = lexXml(); // Scans from '<' through the close; leaves pos after the literal
+		var xml = try lexXml() catch (e:LexerError) {
+			// An unterminated scan is not a verdict the LEXER gets to make: the reference would
+			// only have scanned here if the parser had asked. Rewind and hand back the `<`,
+			// marked, so the parser raises this exactly where handle_xml_literal is called.
+			if (!e.msg.match(UnterminatedMarkup)) throw e;
+			pos = save;
+			markupFailedAt = start;
+			return null;
+		};
 		var end = pos;
 		// A markup literal builds the EMeta node directly and has no tokens here, so this prefix is
 		// synthetic either way. It must still be CONTIGUOUS: the grammar reads a metadata name as parts
