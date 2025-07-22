@@ -857,7 +857,13 @@ class Parser {
 
 	function parseMeta():Metadata {
 		var acc:Metadata = [];
-		while (tokEq(peek(), At)) {
+		// Metadata is an entry followed by more metadata, or nothing. The first alternative is headed by a
+		// NON-TERMINAL, so a soft failure raised inside it is absorbed and the empty one is taken instead.
+		// That is what lets a caller like the function-parameter parse carry on after an #if whose
+		// condition did not parse: its own match re-peeks and reads the parameter. A production without
+		// this prefix - the enum parameter parse is the one to compare against - gets no such absorption
+		// and stays fatal.
+		while (try tokEq(peek(), At) catch (c:CondFailure) false) {
 			acc.push(parseMetaEntry());
 		}
 		return acc;
