@@ -474,6 +474,14 @@ class Parser {
 
 	inline function peek(o:Int = 0):Token return peekInfo(o).tok;
 
+	// A LOOKAHEAD, not a pull. A failed #if condition surfaces at the pull that reached the token, so a
+	// check hxc makes on its own account - one the grammar itself does not make - must not be what consumes
+	// it.
+	inline function rawTok(o:Int = 0):Token {
+		var i = idx + o;
+		return (i < tokens.length ? tokens[i] : tokens[tokens.length - 1]).tok;
+	}
+
 	inline function cur():TokenInfo return peekInfo(0);
 
 	inline function junk():Void idx++;
@@ -750,7 +758,9 @@ class Parser {
 			acc.push(v);
 			if (tokEq(peek(), Comma)) {
 				junk();
-				if (tokEq(peek(), Comma)) throw new ParserError(Unexpected(Comma), peekInfo().pos);
+				// Straight into `v = f` here; the doubled-separator check is hxc's own, so it reads the token
+				// without pulling it.
+				if (tokEq(rawTok(), Comma)) throw new ParserError(Unexpected(Comma), cur0());
 				continue;
 			}
 			break;
@@ -2077,8 +2087,14 @@ class Parser {
 	}
 
 	function exprSoft():Expr {
-		switch (peek()) {
-			case At:
+		// Expr's first alternative is a metadata entry, a NON-TERMINAL, so a soft failure raised inside
+		// it is absorbed and the next alternative is tried, whose own peek re-fills the stream. An #if
+		// whose condition did not parse therefore rules out the metadata alternative and the expression
+		// after it is read from the same token.
+		var metaArm = true;
+		var t = try peek() catch (c:CondFailure) { metaArm = false; peek(); };
+		switch (t) {
+			case At if (metaArm):
 				var entry = parseMetaEntry();
 				var e = secureExpr();
 				return makeMeta(entry.name, entry.params, e, entry.pos);
