@@ -2014,8 +2014,10 @@ class Parser {
 	}
 
 	function secureExpr():Expr {
-		// A token that cannot start an expression reports Expected expression there. .
-		switch (peek()) {
+		// A token that cannot start an expression reports Expected expression there.
+		// This test stands in for the fallback arm that answers once expr has failed, so it reads the token
+		// without pulling it and leaves a failed #if condition for expr's own first alternative to absorb.
+		switch (rawTok()) {
 			case PClose | BrClose | BkClose | Semicolon | Comma | Eof:
 				var np = peekInfo().pos;
 				// Under a display mode the error is recorded rather than raised, and a null stands in for the
@@ -2042,7 +2044,9 @@ class Parser {
 		// NOTHING (a soft failure); a partially consumed one propagates, which is the `idx != save` test.
 		// Outside a display file the original error stands, so no existing message changes.
 		var save = idx;
-		var np = peekInfo().pos;
+		// Read, not pulled: this position belongs to the fallback arm, after expr has already failed, so
+		// capturing it here must not be what fails expr.
+		var np = cur0();
 		try {
 			return exprSoft();
 		} catch (er:ParserError) {
