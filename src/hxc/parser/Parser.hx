@@ -1724,7 +1724,11 @@ class Parser {
 	// Zero-catch `try e` still spans the body.
 	function parseCatches(catches:Array<Catch>, pmax0:Position):{catches:Array<Catch>, max:Position} {
 		var pmax = pmax0;
-		while (tokEq(peek(), Kwd(KwdCatch))) {
+		// The catch list is a catch followed by more catches, or nothing. The catch parse heads the first
+		// alternative and is a NON-TERMINAL, so a soft failure there is absorbed and the empty one is
+		// taken: a failed #if condition ends the catch list, and the `catch` still standing is left for the
+		// enclosing block to complain about.
+		while (try tokEq(peek(), Kwd(KwdCatch)) catch (c:CondFailure) false) {
 			var p = next().pos;
 			// The `(` and the `)` after the hint are plain pattern elements past the arm's head, so missing
 			// either names the token found.
