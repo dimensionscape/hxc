@@ -3397,9 +3397,16 @@ class Parser {
 	function parseClassFields(tdecl:Bool, p1:Position):{fields:Array<ClassField>, pos:Position} {
 		var acc:Array<ClassField> = [];
 		while (true) {
-			// `plist (parse_class_field tdecl)` = `[< v = f; l = plist f >]`.
+			// The field list is a field followed by the rest of the list. The first element backtracks a
+			// soft failure and the list ends cleanly, so the `}` check below speaks; the RECURSIVE list is
+			// a later element, so once a field has been read the same failure is a non-soft error and stays
+			// fatal.
+			// A failed #if condition met at the HEAD of a field attempt is raised by getDoc's own peek,
+			// before the field's nested match exists, so it goes straight to the list's first position and
+			// the list ends cleanly whatever was read before. What decides fatality is where the failure
+			// SURFACES - see the catch below.
 			var brk = try { tokEq(peek(), BrClose) || tokEq(peek(), Eof); }
-				catch (c:CondFailure) { if (acc.length > 0) throw c; break; };
+				catch (c:CondFailure) { break; };
 			if (brk) {
 				// A field parse is ATTEMPTED at the closing brace: its getDoc consumes any pending doc
 				// before the attempt fails, so a trailing doc comment in a body never leaks onto the next
@@ -3435,6 +3442,13 @@ class Parser {
 			var cff:Null<ClassField> = null;
 			fieldFormFailed = false;
 			try cff = parseClassField(tdecl)
+			catch (c:CondFailure) {
+				// A failure raised inside the field - the optional-semicolon peek after a block body is the one
+				// that meets a failed #if - falls into the nested match's catch-all, which backtracks with no
+				// modifiers and is a non-soft error with any. Both end here; only one of them is an error.
+				if (fieldRights > 0) throw c;
+				break;
+			}
 			catch (er:ParserError) {
 				// End the list on a soft failure: either the field matched nothing at all, or it reached
 				// the form choice and none applied. Anything else consumed its way into a real syntax error
@@ -3455,10 +3469,19 @@ class Parser {
 		return {fields: acc, pos: p2};
 	}
 
+	// Modifier count of the field attempt in flight. When a field's body arm is a soft failure, the
+	// field's catch-all answers with a soft failure if there are no modifiers and serror() otherwise -
+	// so the same failed #if condition after a block body ends the list cleanly for `function a(){}`
+	// and is fatal for
+	// `static function a(){}`.
+	var fieldRights:Int = 0;
+
 	function parseClassField(tdecl:Bool):ClassField {
+		fieldRights = 0;
 		var doc = getDoc();
 		var meta = parseMeta();
 		var al = parseCfRights();
+		fieldRights = al.length;
 		var name:PlacedName;
 		var kind:ClassFieldKind;
 		var fpos:Position;
