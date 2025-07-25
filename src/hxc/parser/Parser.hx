@@ -170,10 +170,15 @@ class Parser {
 		throw new TypePathCompletion(segments.copy(), null, isImport);
 	}
 
-	function new(tokens:Array<TokenInfo>, file:String, inMacro:Bool = false) {
+	// The source text, for the on-demand markup scan. Null for the token-only entry points, which parse
+	// conditional-compilation expressions - no markup there.
+	final src:Null<String>;
+
+	function new(tokens:Array<TokenInfo>, file:String, inMacro:Bool = false, ?src:String) {
 		this.tokens = tokens;
 		this.idx = 0;
 		this.file = file;
+		this.src = src;
 		this.lastIdx = -1;
 		this.stall = 0;
 		this.inMacro = inMacro;
@@ -416,7 +421,7 @@ class Parser {
 			ppUnclosed = ppFail.unclosedAtEnd;
 			if (dead != null) handlePdi(d, dead);
 		}
-		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"));
+		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"), src);
 		pr.pendingLexError = lexOut.err;
 		pr.pendingUnclosedEnd = ppUnclosed;
 		return pr;
@@ -491,6 +496,38 @@ class Parser {
 	inline function markupDeclined():Bool {
 		var i = idx < tokens.length ? idx : tokens.length - 1;
 		return tokens[i].markupFailed;
+	}
+
+	// True at a token the three markup positions read as a literal: the `@` the pre-pass
+	// synthesised for one it scanned, or a `<` it did not scan (declined or never asked).
+	inline function markupHere():Bool {
+		var t = tokens[idx < tokens.length ? idx : tokens.length - 1];
+		return t.markupSynthetic || (t.tok.match(TBinop(OpLt)) && (t.markupFailed || src != null));
+	}
+
+	// Read a markup literal at one of those three positions. The result is handed back as is - none of
+	// the three applies exprNext - which is why `<a></a>.length` is Missing ; and not a field access.
+	// The pre-pass already scanned the literal when its token history let it; here the parser scans
+	// the one it declined, from the same `<`, with the same lexer. Both build the same node.
+	function markupLiteral():Expr {
+		var t = tokens[idx];
+		if (t.markupSynthetic) {
+			// `@` `:` `markup` `"xml"`, synthesised contiguously by tryReadMarkupLiteral.
+			var atPos = t.pos;
+			idx += 3;
+			var s = tokens[idx];
+			idx++;
+			return switch (s.tok) {
+				case Const(CString(xml, _)): makeMeta(":markup", [], new Expr(EConst(CString(xml, SDoubleQuotes)), s.pos), atPos);
+				case _: throw new haxe.Exception("synthetic markup tokens out of shape");
+			}
+		}
+		if (t.markupFailed) throw markupError();
+		if (t.rawPmin < 0 || src == null) return serror();
+		var r = new Lexer(src, file).scanMarkupAt(t.rawPmin);
+		// Every token the pre-pass cut out of the literal's span is text inside it now.
+		while (idx < tokens.length && tokens[idx].pos.min < r.end.max && !tokens[idx].tok.match(Eof)) idx++;
+		return makeMeta(":markup", [], new Expr(EConst(CString(r.xml, SDoubleQuotes)), r.end), r.start);
 	}
 
 	function markupError():LexerError {
@@ -1828,8 +1865,12 @@ class Parser {
 	// carries a var production of its own, so a var statement still parses through it.
 	function parseBlockElt(varArm:Bool = true):Expr {
 		switch (peek()) {
-			// parse_block_elt's own markup alternative.
-			case TBinop(OpLt) if (markupDeclined()): throw markupError();
+			// The block element's own markup alternative: the literal, then an optional semicolon -
+			// accepted, not expected.
+			case TBinop(OpLt) | At if (markupHere()):
+				var e = markupLiteral();
+				if (tokEq(peek(), Semicolon)) junk();
+				return e;
 			case Kwd(KwdVar) if (varArm):
 				var p1 = next().pos;
 				var vl = parseVarDecls(false, p1);
@@ -2150,7 +2191,8 @@ class Parser {
 		var metaArm = true;
 		var t = try peek() catch (c:CondFailure) { metaArm = false; peek(); };
 		switch (t) {
-			case TBinop(OpLt) if (markupDeclined()): throw markupError();
+			// A `<` here is a markup literal, and the `@` the pre-pass synthesised stands for the same `<`
+			case TBinop(OpLt) | At if (markupHere()): return markupLiteral();
 			case At if (metaArm):
 				var entry = parseMetaEntry();
 				var e = secureExpr();
@@ -3670,6 +3712,13 @@ class Parser {
 	function parseVarFieldAssignment():{e:Null<Expr>, pos:Position} {
 		if (tokEq(peek(), TBinop(OpAssign))) {
 			junk();
+			// A `<` (markup) comes before the general expression, and after the literal the semicolon is
+			// optional: its position if present, otherwise the literal's.
+			if (markupHere()) {
+				var e = markupLiteral();
+				var p2 = if (tokEq(peek(), Semicolon)) next().pos else e.pos;
+				return {e: e, pos: p2};
+			}
 			var e = expr();
 			var p2 = semicolon();
 			return {e: e, pos: p2};

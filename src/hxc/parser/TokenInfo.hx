@@ -25,6 +25,16 @@ class TokenInfo {
 	// anyway and its FAILURE waits for the parser to say whether a scan belongs there at all.
 	public var markupFailed:Bool = false;
 
+	// Raw (UTF-16 unit) offset of the token's start, or -1 for a synthetic token. Markup is re-lexed
+	// from the position of a `<` the PARSER chose; hxc's positions are code-point offsets, so the
+	// lexer needs this to seek there.
+	public var rawPmin:Int = -1;
+
+	// Set on the `@` the pre-pass synthesises for a markup literal it scanned itself, so the
+	// parser can tell it from a user-written `@:markup` and give it a markup literal's
+	// shape (no exprNext) rather than a metadata entry's.
+	public var markupSynthetic:Bool = false;
+
 	public function new(tok:Token, pos:Position) {
 		this.tok = tok;
 		this.pos = pos;

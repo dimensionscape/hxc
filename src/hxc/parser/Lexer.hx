@@ -117,8 +117,24 @@ class Lexer {
 		pos++;
 	}
 
-	inline function mk(start:Int, t:Token):TokenInfo
-		return new TokenInfo(t, mkPos(start, pos));
+	function mk(start:Int, t:Token):TokenInfo {
+		var ti = new TokenInfo(t, mkPos(start, pos));
+		ti.rawPmin = start;
+		return ti;
+	}
+
+	/**
+	 * Scan a markup literal from the raw offset of a `<` the parser has decided is markup, exactly as
+	 * the pre-pass would have. An unterminated scan raises the lexer's own error at the `<`. `start`
+	 * is the
+	 * `<` alone (the span the metadata entry gets), `end` the whole literal.
+	 */
+	public function scanMarkupAt(raw:Int):{xml:String, start:Position, end:Position} {
+		pos = raw;
+		if (peek() != "<".code) throw new haxe.Exception("scanMarkupAt: not at `<`");
+		var xml = lexXml();
+		return {xml: xml, start: mkPos(raw, raw + 1), end: mkPos(raw, pos)};
+	}
 
 	static inline function isDigit(c:Int):Bool
 		return c >= "0".code && c <= "9".code;
@@ -822,8 +838,10 @@ class Lexer {
 		// so the entry position unions back to exactly that span.
 		var atPos = mkPos(start, start + 1);
 		var afterAt = mkPos(start + 1, start + 1);
+		var at = new TokenInfo(At, atPos);
+		at.markupSynthetic = true;
 		return [
-			new TokenInfo(At, atPos),
+			at,
 			new TokenInfo(DblDot, afterAt),
 			new TokenInfo(Const(CIdent("markup")), afterAt),
 			new TokenInfo(Const(CString(xml, SDoubleQuotes)), mkPos(start, end)),
