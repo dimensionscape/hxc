@@ -530,8 +530,20 @@ class TypeResolve {
 				buildState.set(c, BUILDING);
 				var savedModule = ctx.currentModule;
 				if (c.module != null) ctx.currentModule = c.module;
+				// A typing error raised while binding the fields comes OUT of the build, and the
+				// module-level
+				// handler records it as the declaration's one error. Swallowing it here lets an abstract
+				// whose field
+				// names a type that does not exist compile clean, with its @:op check reading a signature
+				// that was
+				// never built. The one-shot state is still set on the way out: the build is Built whether
+				// or not it
+				// raised, so a second caller does not rebuild and re-raise.
 				try resolveClassFields(ctx, c, d, p) catch (e:Dynamic) {
-					if (hxc.parser.ParserError.isParseFailure(e)) { ctx.currentModule = savedModule; throw e; }
+					ctx.currentModule = savedModule;
+					buildState.set(c, BUILT);
+					if (hxc.parser.ParserError.isParseFailure(e)) throw e;
+					if (Std.isOfType(e, ContextError) || Std.isOfType(e, hxc.core.TypingError)) throw e;
 				}
 				ctx.currentModule = savedModule;
 				buildState.set(c, BUILT);
