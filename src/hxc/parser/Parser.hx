@@ -245,6 +245,7 @@ class Parser {
 		var lastSignificant2:Null<Token> = null;
 		var lastWasMarkup = false;
 		var pendingMarkupFail = -1;
+		var pendingMarkupErr:Null<hxc.parser.LexerError> = null;
 		var pendingDoc:Null<String> = null;
 		// Offset of a line comment that answered the request below. Lexing stops there, so nothing past it
 		// is read; see the catch at the bottom.
@@ -259,7 +260,9 @@ class Parser {
 				// carries the verdict to whichever parser position reads it.
 				if (markup == null && lex.markupFailedAt >= 0) {
 					pendingMarkupFail = lex.markupFailedAt;
+					pendingMarkupErr = lex.markupFailedErr;
 					lex.markupFailedAt = -1;
+					lex.markupFailedErr = null;
 				}
 				if (markup != null) {
 					for (mt in markup) toks.push(mt);
@@ -319,7 +322,9 @@ class Parser {
 					}
 					if (pendingMarkupFail == t.pos.min) {
 						t.markupFailed = true;
+						t.markupDeclinedErr = pendingMarkupErr;
 						pendingMarkupFail = -1;
+						pendingMarkupErr = null;
 					}
 					toks.push(t);
 					lastSignificant2 = lastSignificant;
@@ -522,7 +527,8 @@ class Parser {
 				case _: throw new haxe.Exception("synthetic markup tokens out of shape");
 			}
 		}
-		if (t.markupFailed) throw markupError();
+		// The scan already met its error; raise that one, not a guess at which it was.
+		if (t.markupFailed) throw t.markupDeclinedErr != null ? t.markupDeclinedErr : markupError();
 		if (t.rawPmin < 0 || src == null) return serror();
 		var r = new Lexer(src, file).scanMarkupAt(t.rawPmin);
 		// Every token the pre-pass cut out of the literal's span is text inside it now.

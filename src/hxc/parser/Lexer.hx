@@ -794,6 +794,8 @@ class Lexer {
 
 	/** Offset of a `<` whose markup scan ran off the end, or -1. Read once by lexAll. */
 	public var markupFailedAt:Int = -1;
+	/** The error the declined scan met, to be raised where the parser asks for the literal. */
+	public var markupFailedErr:Null<LexerError> = null;
 
 	public function tryReadMarkupLiteral():Null<Array<TokenInfo>> {
 		var save = pos;
@@ -822,12 +824,16 @@ class Lexer {
 			return null;
 		}
 		var xml = try lexXml() catch (e:LexerError) {
-			// An unterminated scan is not a verdict the LEXER gets to make: the reference would
-			// only have scanned here if the parser had asked. Rewind and hand back the `<`,
-			// marked, so the parser raises this exactly where handle_xml_literal is called.
-			if (!e.msg.match(UnterminatedMarkup)) throw e;
+			// An unterminated scan is not a verdict the LEXER gets to make: markup is scanned only when the
+			// parser asks for it. Rewind and hand back the `<`, marked, so the parser raises this exactly
+			// where it reads the markup literal.
+			// A malformed byte inside the span declines the same way: the decoder reaches it only if the
+			// parser asks for markup at this `<`, and at a declaration position it never does - it reports
+			// the `<` itself and stops before the byte.
+			if (!e.msg.match(UnterminatedMarkup) && !e.msg.match(MalformedFile)) throw e;
 			pos = save;
 			markupFailedAt = start;
+			markupFailedErr = e;
 			return null;
 		};
 		var end = pos;

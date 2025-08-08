@@ -24,6 +24,9 @@ class TokenInfo {
 	// where no expression is expected. hxc lexes the whole file up front, so the scan happens
 	// anyway and its FAILURE waits for the parser to say whether a scan belongs there at all.
 	public var markupFailed:Bool = false;
+	// The error that scan met - unterminated, or a malformed byte inside the span - so the parser, at
+	// a position where markup is expected, raises that same one.
+	public var markupDeclinedErr:Null<LexerError> = null;
 
 	// Raw (UTF-16 unit) offset of the token's start, or -1 for a synthetic token. Markup is re-lexed
 	// from the position of a `<` the PARSER chose; hxc's positions are code-point offsets, so the
