@@ -164,6 +164,10 @@ class Context {
 	 */
 	public var unresolvedFields:Int = 0;
 
+	// A declaration failure aborts remaining field typing, parameter following and PForce work; retain
+	// diagnostics already recorded.
+	public var declAborted:Bool = false;
+
 	// Hold field diagnostics until heritage resolves and class initialization runs; failed heritage
 	// must not emit them.
 	final pendingFieldDiagnostics = new haxe.ds.ObjectMap<hxc.core.Type.TClass, Array<{msg:String, pos:hxc.ast.Position}>>();

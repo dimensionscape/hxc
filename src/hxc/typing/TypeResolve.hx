@@ -56,12 +56,12 @@ class TypeResolve {
 				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
-				if (abortsOnDeclError(ctx)) break;
+				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
 			} catch (e:hxc.core.TypingError) {
 				markModuleErrored(ctx, m);
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
-				if (abortsOnDeclError(ctx)) break;
+				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
 			} catch (e:Dynamic) {
 				if (hxc.parser.ParserError.isParseFailure(e)) throw e;
 				ctx.currentModule = m;

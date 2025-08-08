@@ -123,9 +123,14 @@ class TypeFields {
 			tt("installModuleFields", function() { installModuleFields(ctx, mres, pending); return 0; });
 			i++;
 		}
-		// context_init before the module's fields type, which is what puts a wildcard import's statics
-		// into module_globals in time for anything that reads them. hxc queues that work as a
+		// A module's context init runs BEFORE its fields type, which is what puts a wildcard import's
+		// statics into the module globals in time for anything that reads them. hxc queues that work as a
 		// PBuildModule delay, so the bucket is drained here, ahead of the bodies rather than with them.
+		// The raise that ended a module's build leaves the compile. Recovery records it and stops that
+		// module; the passes below must not run either, or PForce would force a type-parameter constraint
+		// that is only followed at the end of a build that got that far, and `class M<T:C> extends Nope`
+		// would print a second error after the heritage one.
+		if (ctx.declAborted) return;
 		tt("flush:PBuildModule", function() { ctx.flushPass(hxc.context.Context.PBuildModule); return 0; });
 		// Force any field not reached on demand, then unwrap the lazy back to its concrete
 		// signature so downstream consumers never see a TLazy.
