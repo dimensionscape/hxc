@@ -164,6 +164,23 @@ class Context {
 	 */
 	public var unresolvedFields:Int = 0;
 
+	// Hold field diagnostics until heritage resolves and class initialization runs; failed heritage
+	// must not emit them.
+	final pendingFieldDiagnostics = new haxe.ds.ObjectMap<hxc.core.Type.TClass, Array<{msg:String, pos:hxc.ast.Position}>>();
+
+	public function deferFieldDiagnostic(c:hxc.core.Type.TClass, msg:String, pos:hxc.ast.Position):Void {
+		var l = pendingFieldDiagnostics.get(c);
+		if (l == null) { l = []; pendingFieldDiagnostics.set(c, l); }
+		l.push({msg: msg, pos: pos});
+	}
+
+	public function flushFieldDiagnostics(c:hxc.core.Type.TClass):Void {
+		var l = pendingFieldDiagnostics.get(c);
+		if (l == null) return;
+		pendingFieldDiagnostics.remove(c);
+		for (d in l) addDiagnostic(d.msg, d.pos);
+	}
+
 	public var diagnostics:Array<CompilerDiagnostic>;
 	// Capture unresolved-identifier candidates when typing fails; the typer context is gone by
 	// diagnostics reporting.

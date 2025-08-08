@@ -1000,12 +1000,11 @@ class ModuleLoader {
 					var vread = propAccess(get.name, true);
 					var vwrite = propAccess(set.name, false);
 					if (ctx != null) {
-						// Report obsolete custom accessors but retain AccCall behavior so the property remains
-						// usable.
+						// Report obsolete accessors after heritage resolves, retaining AccCall behavior.
 						if (!knownPropAccess(get.name, true))
-							ctx.addDiagnostic(cff.cffName.name + ": Custom property accessor is no longer supported, please use `get`", get.pos);
+							ctx.deferFieldDiagnostic(c, cff.cffName.name + ": Custom property accessor is no longer supported, please use `get`", get.pos);
 						if (!knownPropAccess(set.name, false))
-							ctx.addDiagnostic(cff.cffName.name + ": Custom property accessor is no longer supported, please use `set`", set.pos);
+							ctx.deferFieldDiagnostic(c, cff.cffName.name + ": Custom property accessor is no longer supported, please use `set`", set.pos);
 						// Unlike recoverable accessor errors, a property with neither readable nor writable access
 						// raises.
 						if (vread == AccNever && vwrite == AccNever)
@@ -1062,7 +1061,8 @@ class ModuleLoader {
 			function fieldError(msg:String, ep:Position):Void {
 				if (hadFieldError || ctx == null) return;
 				hadFieldError = true;
-				ctx.addDiagnostic(msg, ep);
+				// Choose the field's first error here, but defer reporting until the class build creates it.
+				ctx.deferFieldDiagnostic(c, msg, ep);
 			}
 			var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
 			var inlineAcc:Null<PlacedAccess> = null;
@@ -1207,7 +1207,9 @@ class ModuleLoader {
 					case KAbstractImpl(a): {kind: "abstract", path: a.path};
 					case _: {kind: "class", path: c.path};
 				};
-				ctx.addDiagnostic("Duplicate " + kindPath.kind + " field declaration : "
+				// Drop duplicate declarations during registration but defer their diagnostics until class
+				// build.
+				ctx.deferFieldDiagnostic(c, "Duplicate " + kindPath.kind + " field declaration : "
 					+ hxc.core.Globals.sTypePath(kindPath.path) + "." + cf.name, cf.namePos);
 				ctx.droppedFieldDecls.set(cff, true);
 				continue;

@@ -555,6 +555,9 @@ class TypeResolve {
 
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		// TypeloadFields.init_class: heritage is already set by the time this runs, from either
+		// build path, so the field-level reports held since module load are released here.
+		ctx.flushFieldDiagnostics(c);
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClassFields");
 		// The class whose fields are being built, for everything a field signature loads; it nests, because
 		// loading one signature can resolve another class's fields.
