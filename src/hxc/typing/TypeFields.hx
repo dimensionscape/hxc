@@ -52,6 +52,11 @@ class TypeFields {
 	}
 
 	public static function typeAllModules(ctx:Context):Void {
+		// The raise that ended a module's build leaves the compile, and a @:build runs inside a class's own
+		// PBuildClass build - never reached after it. Running every class's build macros here, after
+		// resolveAll has already recorded that raise, would make a macro path that did not resolve print a
+		// second error after the heritage one.
+		if (ctx.declAborted) return;
 		if (!ctx.isMacro) hxc.eval.EvalMacro.runBuildMacros(ctx);
 		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat
 		// at the top level until the module set is closed (installAndForce stays re-entrancy-safe
