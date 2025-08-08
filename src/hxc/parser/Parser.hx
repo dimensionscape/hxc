@@ -1617,7 +1617,10 @@ class Parser {
 			var missingColon = !tokEq(peek(), DblDot);
 			if (!missingColon) junk();
 			var e = secureExpr();
-			if (missingColon) syntaxError(Expected([":"]), key.pos);
+			// With no position given, the syntax error takes the next token's, computed after the value was
+			// read: the report sits on the token that follows the value, not on the key. `{ a:1, b { x:1 }
+			// }` is Expected : at the closing brace after the object.
+			if (missingColon) syntaxError(Expected([":"]), peekInfo().pos);
 			acc.push({name: key.name, pos: key.pos, quotes: key.quotes, expr: e});
 			pEnd = e.pos;
 		}
