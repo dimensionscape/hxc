@@ -1342,7 +1342,18 @@ class TypeResolve {
 			// function of the abstract, whether or not the metadata on it allows the missing body.
 			switch (cff.cffKind) {
 				case FFun(fd) if (fd.fExpr == null && fd.fType == null):
-					throw new ContextError("Functions without expressions must have an explicit return type", cf.pos);
+					// Raised at pos, the field's own position, so it is recorded and the field is skipped: the
+					// module keeps going and a second body-less field reports as well. Raising it out of this pass
+					// instead ends the module on the first one, and leaves a later heritage error of the same
+					// module unreported.
+					ctx.addDiagnostic("Functions without expressions must have an explicit return type", cf.pos);
+					ctx.droppedFieldDecls.set(cff, true);
+					// Every implementation field is a static, so not adding the field means removing it
+					// from
+					// the statics.
+					c.statics.remove(cf.name);
+					c.orderedStatics.remove(cf);
+					continue;
 				case _:
 			}
 			// A body-less function on such a field is a declaration only (the operation is performed
