@@ -424,6 +424,10 @@ class TypeResolve {
 		// abstract and from the ordinary class path, and without the check whichever ran second derived
 		// every signature a second time.
 		if (buildState.get(c) != BUILT) resolveClassFields(ctx, c, d, p);
+		// A build that got past its heritage and fields forces the class's own type parameters here, so a
+		// constraint naming an unknown type reports at the end of this build - before any later
+		// declaration is built - and never at all for a build that raised earlier.
+		for (tp in c.params) TypeFunctions.follow(tp.type);
 		markClassBuilt(c);
 		TypeFields.addImplicitInterfaceFields(c);
 	}
