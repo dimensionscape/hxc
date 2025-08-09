@@ -774,6 +774,12 @@ class TypeFields {
 							// position). (KAbstractImpl, CfEnum).
 							switch (tctx.curclass != null ? tctx.curclass.kind : KNormal) {
 								case KAbstractImpl(a) if (a.isEnum && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
+									// Unifies the member's DECLARED type with the abstract itself, at the field: `var A:Int =
+									// 1` in `enum abstract E(Int)` is `Int should be E`. It was trivially true while every
+									// member's type was overwritten with the abstract; it speaks now that a hint is kept.
+									try hxc.core.TypeUnification.unifyDefault(sigType, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
+									catch (ue:hxc.core.TypeUnification.UnifyError)
+										tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
 									var e1 = switch (checked.expr) { case TCast(inner, null): inner; case _: checked; };
 									try hxc.core.TypeUnification.unifyDefault(e1.type, a.thisType)
 									catch (ue:hxc.core.TypeUnification.UnifyError)

@@ -1708,8 +1708,15 @@ class TypeResolve {
 				// bind T to without them.
 				var params = TypeFunctions.hasClassFieldFlag(cf, CfImpl) ? a.params : c.params;
 				resolveFieldType(ctx, params, cf, cff, c.module);
-				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
-					cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
+				// An enum-abstract member keeps a hint it DECLARED, and only one that declared none is
+				// typed as the
+				// abstract, so `var A:Int = 1` in `enum abstract E(Int)` is rejected - by the binding's
+				// check, below
+				// in TypeFields.
+				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) switch (cff.cffKind) {
+					case FVar(null, _):
+						cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
+					case _:
 				}
 			} catch (e:ContextError) {
 				// A field's signature is typed under protection, so a hint that does not resolve is an error
