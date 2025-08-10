@@ -663,7 +663,12 @@ class Parser {
 		Set when the class-field parse found no field FORM at all: the soft failure that ends the field
 		list. Consumed and reset by parseClassFields.
 	*/
-	var fieldFormFailed:Bool = false;
+	// The idx a field attempt began at when its form choice (var, function, ...) matched nothing, or -1.
+	// Keyed to the attempt because a NESTED field list - the anonymous structure in a type hint - fails its
+	// own form choice the same way, and the error its closer then raises passes through the enclosing list,
+	// which must not read that verdict as its own field's: `var a : { var x:Int; = 1;` reports the missing
+	// brace at the `=` rather than ending the class body at the statement.
+	var fieldFormFailedAt:Int = -1;
 
 	/** Lexing or preprocessing stopped early on a fault. peekInfo raises it once the cursor
 		reaches the truncated end, so a PARSE error inside the valid prefix is reported first. */
@@ -3495,7 +3500,7 @@ class Parser {
 			// report `Unexpected <token>` instead of `Expected }`.
 			var save = idx;
 			var cff:Null<ClassField> = null;
-			fieldFormFailed = false;
+			fieldFormFailedAt = -1;
 			try cff = parseClassField(tdecl)
 			catch (c:CondFailure) {
 				// A failure raised inside the field - the optional-semicolon peek after a block body is the one
@@ -3508,7 +3513,7 @@ class Parser {
 				// End the list on a soft failure: either the field matched nothing at all, or it reached
 				// the form choice and none applied. Anything else consumed its way into a real syntax error
 				// and propagates.
-				if (!fieldFormFailed && idx != save) throw er;
+				if (fieldFormFailedAt != save && idx != save) throw er;
 				// No rewind: the stream does not give back what getDoc and the metadata parse already took,
 				// so the list ends exactly where the field gave up and the expect below reports the missing
 				// brace at that token.
@@ -3532,6 +3537,7 @@ class Parser {
 	var fieldRights:Int = 0;
 
 	function parseClassField(tdecl:Bool):ClassField {
+		var attemptStart = idx;
 		fieldRights = 0;
 		var doc = getDoc();
 		var meta = parseMeta();
@@ -3596,7 +3602,7 @@ class Parser {
 				// as end-of-list the reverse.
 				var last = al.length == 0 ? null : al[al.length - 1];
 				if (last == null) {
-					fieldFormFailed = true;
+					fieldFormFailedAt = attemptStart;
 					return serror();
 				}
 				// The last flag is `override` and a cursor sits on it, so the request is which inherited
