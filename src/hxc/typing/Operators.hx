@@ -363,7 +363,7 @@ class Operators {
 					case KAbstract(a, tl):
 						// An abstract with no toString is converted to String by its @:to String cast when
 						// it has one; otherwise it stringifies as its underlying value.
-						try Typer.castOrUnify(ctx, tstring, e, p) catch (_:Dynamic) loop(TypeFunctions.getUnderlyingType(a, tl));
+						try Typer.castOrUnifyRaise(ctx, tstring, e, p) catch (_:Dynamic) loop(TypeFunctions.getUnderlyingType(a, tl));
 				};
 			}
 			return loop(e.type);
@@ -448,11 +448,10 @@ class Operators {
 						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an abstract
 						// compares against its underlying type (plain unify does not chase method casts); the failure
 						// reports at the BINOP position without aborting, so a boolean context around the comparison
-						// still checks. (AbstractCast.cast_or_unify ... p).
-						try c1 = Typer.castOrUnify(ctx, c2.type, c1, p) catch (_:TypingError) {
-							try c2 = Typer.castOrUnify(ctx, c1.type, c2, p) catch (te:TypingError) {
-								ctx.com.addDiagnostic(te.message, te.pos, te.depth);
-							}
+						// still checks. The first operand goes through castOrUnifyRaise, and on its failure the
+						// second through castOrUnify, which records its own verdict.
+						try c1 = Typer.castOrUnifyRaise(ctx, c2.type, c1, p) catch (_:TypingError) {
+							c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
 						}
 					}
 				}
@@ -649,10 +648,12 @@ class Operators {
 									var lhsT = isImpl ? TypeFunctions.followWithAbstracts(ce1.type) : ce1.type;
 									TypeUnification.typeEqKind(EqStrict, lhsT, t1);
 									re1 = ce1;
-									re2 = Typer.castOrUnify(ctx, t2, ce2, p);
+									// An overload ATTEMPT casts its operand through castOrUnifyRaise; the
+									// failure is what moves the search on.
+									re2 = Typer.castOrUnifyRaise(ctx, t2, ce2, p);
 								} else {
 									TypeUnification.typeEqKind(EqStrict, ce2.type, t2);
-									re1 = Typer.castOrUnify(ctx, t1, ce1, p);
+									re1 = Typer.castOrUnifyRaise(ctx, t1, ce1, p);
 									re2 = ce2;
 								}
 								// Null operand only allowed against an explicitly-nullable arg (issue #3376).
@@ -957,11 +958,11 @@ class Operators {
 						// The resolve name is built at Position.nullPos, so it contributes no source
 						// mapping at all.
 						var eName = TexprTools.makeString(ctx.com.basic, name, hxc.ast.Position.nullPos);
-						var nameArg = Typer.castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
+						var nameArg = Typer.castOrUnifyRaise(ctx, sig.args[1].t, eName, eName.pos);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(sig.args[2].t));
 						// The cast is made at the argument's own position (e.pos), so an implicit @:from wrapper sits
 						// on the value, not the assignment.
-						var valArg = Typer.castOrUnify(ctx, sig.args[2].t, te2, te2.pos);
+						var valArg = Typer.castOrUnifyRaise(ctx, sig.args[2].t, te2, te2.pos);
 						hxc.typing.Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg, valArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);

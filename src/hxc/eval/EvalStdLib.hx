@@ -2452,8 +2452,12 @@ class EvalStdLib {
 		// An absolute path resolves to itself; the classpath walk falls back to the raw relative path when
 		// no empty classpath was listed.
 		if (haxe.io.Path.isAbsolute(file)) return mkStr(file);
+		// The lookup walks the current compilation's class path - the host's, for a macro called from it
+		// - not a copy. The eval context's own list is whatever it was created with, and the macro
+		// world's is empty, so with either one every class-path relative name would be "File not found".
+		var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
 		var hadEmpty = false;
-		for (cp in ctx.classPath) {
+		for (cp in (com != null ? com.classPath : ctx.classPath)) {
 			if (cp == "") hadEmpty = true;
 			var path = cp == "" ? file : cp + file;
 			if (sys.FileSystem.exists(path)) return mkStr(path);

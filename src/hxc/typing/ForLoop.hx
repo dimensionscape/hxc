@@ -601,7 +601,8 @@ class ForLoopFaithful {
 		var dynamicIterator:Null<TExpr> = null;
 		ForLoop.forceOpenIteratorFields(ctx, e.type);
 		var e1 = try {
-			var e2 = Typer.castOrUnify(ctx, it.t, e, p);
+			// A castOrUnifyRaise failure selects the next iteration strategy.
+			var e2 = Typer.castOrUnifyRaise(ctx, it.t, e, p);
 			switch (TypeFunctions.followWithAbstracts(e2.type)) {
 				case TDynamic(_) | TMono(_):
 					dynamicIterator = e2;

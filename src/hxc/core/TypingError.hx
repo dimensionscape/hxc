@@ -33,3 +33,21 @@ class ModuleNotFoundError extends TypingError {}
     not the argument being placed.
 */
 class CallError extends TypingError {}
+
+/**
+ * A fatal error. An Error that escapes the closure typing a field - the body of a method, the
+ * initializer of a variable - is raised again as this, and nothing between that closure and the
+ * driver handles it: the error is reported and the compile ends. Its own class rather than a
+ * TypingError so the recovery arms an Error meets on the way up (the per-statement recovery and its
+ * kin) let it pass.
+ */
+class FatalError extends haxe.Exception {
+	public final pos:Position;
+	public final depth:Int;
+
+	public function new(message:String, pos:Position, depth:Int = 0) {
+		super(message);
+		this.pos = pos;
+		this.depth = depth;
+	}
+}

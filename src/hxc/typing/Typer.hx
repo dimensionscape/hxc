@@ -163,11 +163,14 @@ class Typer {
 			TypeUnification.unifyDefault(e.type, t);
 			return e;
 		} catch (ue:UnifyError) { uerr = ue.errors; }
-		// Untyped code swallows the unification failure and keeps the value . The RAISING variant does
-		// not consult untyped: always raises, and call-argument typing needs that failure so
+		// The raising variant always raises, and call-argument typing needs that failure so
 		// optional-argument SKIPPING still happens inside untyped code.
-		if (!raiseOnFail && ctx.untypedMode) return e;
-		throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
+		if (raiseOnFail) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
+		// The verdict goes through raiseOrDisplay (dropped in untyped code, raised inside call arguments,
+		// recorded anywhere else) and the value is returned as it was. Throwing here would end the whole
+		// expression at its first verdict: `[x = "s", nope]` would lose its second error.
+		TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(uerr), p);
+		return e;
 	}
 
 	// Never consults untyped.
@@ -329,7 +332,7 @@ class Typer {
 		var fa = FieldAccessTools.create(implExpr, cf, FHStatic(implC), false, p);
 		try {
 			var result = hxc.eval.EvalMacro.run(ctx, fa, [Calls.typedExprToSyntax(ctx, e)], WithTypeTools.withType(t), p);
-			return try castOrUnify(ctx, t, result, p) catch (te:TypingError) {
+			return try castOrUnifyRaise(ctx, t, result, p) catch (te:TypingError) {
 				if (te.message == "Recursive implicit cast") throw te;
 				throw new NotFound("Typer.hx:364");
 			};
@@ -848,7 +851,17 @@ class Typer {
 				if (!ctx.inLoop) throw new TypingError("Continue outside loop", p);
 				TypeFunctions.mk(TContinue, monoOrDynamic(ctx, withType, p), p);
 			case EThrow(e1):
-				var te = typeExpr(ctx, e1, WithTypeTools.value);
+				// A throw whose value fails to type records the error and throws null instead, so the
+				// statements after it are still typed.
+				var te = try typeExpr(ctx, e1, WithTypeTools.value)
+					catch (err:TypingError) {
+						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
+					}
+					catch (ce:hxc.context.Context.ContextError) {
+						ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
+					};
 				TypeFunctions.mk(TThrow(te), monoOrDynamic(ctx, withType, p), p);
 			case EUntyped(e1):
 				var old = ctx.untypedMode;
@@ -1658,15 +1671,8 @@ class Typer {
 					case _:
 				}
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
-				var te2 = try castOrUnify(ctx, t, te, p) catch (err:TypingError) {
-					switch (TypeFunctions.follow(t)) {
-						case TAnon(_) if (err.message.indexOf(" should ") >= 0):
-							ctx.com.addDiagnostic(err.message, err.pos, err.depth);
-							te;
-						case _:
-							throw err;
-					}
-				};
+				// castOrUnify records the verdict and keeps the expression, whatever the target type.
+				var te2 = castOrUnify(ctx, t, te, p);
 				// PHYSICAL identity, not structural. A monomorph bound to t is still a distinct TMono
 				// object, so the reification cast is kept (matters on cpp where throwing (getNull():Int)
 				// must materialize the int).
@@ -4782,7 +4788,7 @@ class Typer {
 						// The resolve name is built at Position.nullPos, so it contributes no source
 						// mapping at all.
 						var eName = TexprTools.makeString(ctx.com.basic, name, hxc.ast.Position.nullPos);
-						var nameArg = castOrUnify(ctx, sig.args[1].t, eName, eName.pos);
+						var nameArg = castOrUnifyRaise(ctx, sig.args[1].t, eName, eName.pos);
 						Calls.makeCall(ctx, ce, Calls.padPosInfos(ctx, sig.args, [se.thisExpr, nameArg], se.access.pos), sig.ret, se.access.pos);
 					case _:
 						throw new TypingError("Resolve target is not a function", se.access.pos);
@@ -5089,6 +5095,11 @@ class Typer {
 				merge(typeExpr(ctx, el[i], wt));
 			} catch (err:TypingError) {
 				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+			} catch (ce:hxc.context.Context.ContextError) {
+				// A module that fails to load raises a typing error like anything else, so it is caught
+				// here too. hxc raises it as ContextError; letting it escape would drop every statement
+				// after a `new Unknown()`.
+				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
 			}
 			i++;
 		}
@@ -5283,6 +5294,11 @@ class Typer {
 					ctx.com.addDiagnostic(err.message, err.pos, err.depth);
 					if (StringTools.startsWith(err.message, "Int should be haxe.ds.Option"))
 						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
+					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
+				} catch (ce:hxc.context.Context.ContextError) {
+					if (ctx.com.isMacro || ctx.inCallArgs) throw ce;
+					ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				}
@@ -6227,7 +6243,8 @@ class Typer {
 					case TFun(sig) if (sig.args.length == typedArgs.length + 1):
 						var args:Array<TExpr> = [];
 						for (i in 0...typedArgs.length) {
-							args.push(castOrUnify(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
+							// An attempt inside the @:to search: the failure moves it to the next candidate.
+							args.push(castOrUnifyRaise(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
 						}
 						var receiver = TypeFunctions.applyParams(a.params, atl, a.thisType);
 						TypeUnification.unifyDefault(receiver, sig.args[0].t);

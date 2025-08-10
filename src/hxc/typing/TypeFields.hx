@@ -24,6 +24,8 @@ class TypeFields {
 	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
 	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
+	// The extern fields whose default values have been checked (the extern check runs once per field).
+	static var externDefaultsChecked:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 
 	// Per-request reset for the wait server (a fresh request re-types loaded bodies). The class
 	// context's `this` is the class instance only when the class is not an abstract implementation.
@@ -47,6 +49,7 @@ class TypeFields {
 	public static function resetPerRequest():Void {
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
+		externDefaultsChecked = new haxe.ds.ObjectMap();
 		macroForced = new haxe.ds.ObjectMap();
 		_forcing = [];
 	}
@@ -193,10 +196,35 @@ class TypeFields {
 		tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
 	}
 
+	// An error that escapes the closure typing a field's body or initializer is raised again as a
+	// FatalError, and that closure is forced under a delay with no handler of its own, so the error ends
+	// the compile. Everything recoverable on the way - a statement, a return, a throw, a variable - was
+	// caught before it could get here. A bare `static function a() new Nope();` is what escapes: it is
+	// reported and the compile stops.
+	static function fatalFieldError(ctx:Context, e:Dynamic):Void {
+		// It stays recorded on a display request until selective typing lands.
+		if (hxc.parser.Parser.displayFile != null) return recordFieldError(ctx, e);
+		if (Std.isOfType(e, haxe.ValueException)) {
+			var inner = (cast e : haxe.ValueException).value;
+			if (inner != null && inner != e) return fatalFieldError(ctx, inner);
+		}
+		if (Std.isOfType(e, TypingError)) {
+			var te:TypingError = cast e;
+			throw new hxc.core.TypingError.FatalError(te.message, te.pos, te.depth);
+		}
+		if (Std.isOfType(e, ContextError)) {
+			var ce:ContextError = cast e;
+			throw new hxc.core.TypingError.FatalError(ce.message, ce.pos, ce.depth);
+		}
+		recordFieldError(ctx, e);
+	}
+
 	static function recordFieldError(ctx:Context, e:Dynamic):Void {
 		// A display result is the compile's answer, not a field error.
 		if (Std.isOfType(e, hxc.compiler.DisplayXml.DisplayPositions)) throw e;
 		if (Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion)) throw e;
+		// A fatal error is on its way to the driver; recording it here would swallow the abort.
+		if (Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e)
 			+ (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : "")
 			+ (Std.isOfType(e, hxc.parser.ParserError) ? " " + hxc.parser.ParserError.errorMsg((cast e : hxc.parser.ParserError).msg) + " at " + Std.string((cast e : hxc.parser.ParserError).pos) : ""));
@@ -517,7 +545,7 @@ class TypeFields {
 					if (childStack.length > 0) childStack[childStack.length - 1] += _el;
 					fieldTimes.push({n: _nm, t: _el - _kids});
 				} else typeFieldBody(tctx, cf, cff, isStatic, sigType);
-			} catch (e:Dynamic) recordFieldError(ctx, e);
+			} catch (e:Dynamic) fatalFieldError(ctx, e);
 			ctx.currentModule = savedMod;
 			_forcing.remove(cf);
 			r.set(LAvailable(sigType));
@@ -571,7 +599,7 @@ class TypeFields {
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			try {
 				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
-			} catch (e:Dynamic) recordFieldError(ctx, e);
+			} catch (e:Dynamic) fatalFieldError(ctx, e);
 		}
 		ctx.currentModule = savedMod;
 	}
@@ -673,7 +701,7 @@ class TypeFields {
 		ctx.currentModule = c.module;
 		try {
 			typeFieldBody(tctx, cf, cff, isStatic, cf.type);
-		} catch (e:Dynamic) recordFieldError(ctx, e);
+		} catch (e:Dynamic) fatalFieldError(ctx, e);
 		ctx.currentModule = savedMod;
 		_forcing.remove(cf);
 	}
@@ -1281,6 +1309,11 @@ class TypeFields {
 	}
 
 	static function checkExternDefaults(ctx:Context, tctx:TyperContext, cf:TClassField, fd:Func, isStatic:Bool):Void {
+		// The extern default check runs once per field, when the field is created. The install loop
+		// re-visits a module whenever its declared shape changes, and re-checking the defaults on every
+		// visit would report one verdict several times.
+		if (externDefaultsChecked.exists(cf)) return;
+		externDefaultsChecked.set(cf, true);
 		var sig = switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 		if (sig == null) return;
 		var oldFun = tctx.curfun;

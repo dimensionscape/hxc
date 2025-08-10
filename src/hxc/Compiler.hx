@@ -969,6 +969,12 @@ class Compiler {
 			ctx.addDiagnostic(e.message, e.pos, e.depth);
 			flushPendingMessages(ctx);
 			exitRequest(1);
+		} catch (e:hxc.core.TypingError.FatalError) {
+			// A field's fatal error is reported like any other, and that is the end of the compile.
+			ctx.raiseTypingErrors = false;
+			ctx.addDiagnostic(e.message, e.pos, e.depth);
+			flushPendingMessages(ctx);
+			exitRequest(1);
 		} catch (e:hxc.parser.LexerError) {
 			// The top-level handler wraps the whole compilation, init macros included, so a module an init
 			// macro pulls in reports its parse failure like any other one does. Without these two the
@@ -1382,6 +1388,10 @@ class Compiler {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.TypingError) {
+			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
+			abortWithMessage(ctx, e.message, e.pos, e.depth);
+		} catch (e:hxc.core.TypingError.FatalError) {
+			// On the request path.
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {

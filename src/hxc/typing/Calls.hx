@@ -218,10 +218,11 @@ class Calls {
 						// does not
 						// unify with this instantiation is skipped.
 						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
-						// 166 cast the key with `p`, the array-access position, not with the key's own. Using the
-						// key's position made the generated cast call start at the key instead of at the access it
-						// belongs to.
-						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, p);
+						// The key is cast with `p`, the array-access position, not with the key's own, so the
+						// generated cast call starts at the access it belongs to. A CANDIDATE: the key casts through
+						// castOrUnifyRaise, and the failure is what moves the search to the next @:arrayAccess
+						// function.
+						var key = Typer.castOrUnifyRaise(ctx, sig.args[1].t, ekey, p);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
 						var implExpr = TexprTools.makeStaticThis(c, p);
@@ -253,13 +254,14 @@ class Calls {
 				case TFun(sig) if (sig.args.length == 3 || (sig.args.length == 4 && sig.args[3].opt)):
 					try {
 						TypeUnification.unifyDefault(sig.args[0].t, arrayAccessThisType(a, tl, cf));
-						// 166 cast the key with `p`, the array-access position, not with the key's own. Using the
-						// key's position made the generated cast call start at the key instead of at the access it
-						// belongs to.
-						var key = Typer.castOrUnify(ctx, sig.args[1].t, ekey, p);
+						// The key is cast with `p`, the array-access position, not with the key's own, so the
+						// generated cast call starts at the access it belongs to. A CANDIDATE: key and value cast
+						// through castOrUnifyRaise; the failure moves the search on. Recording here would print "Int
+						// should be String" on a valid `a[12] = "foo"` whose first setter takes a String.
+						var key = Typer.castOrUnifyRaise(ctx, sig.args[1].t, ekey, p);
 						var val = valueFn(sig.args[2].t);
 						lastVal = val;
-						val = Typer.castOrUnify(ctx, sig.args[2].t, val, p);
+						val = Typer.castOrUnifyRaise(ctx, sig.args[2].t, val, p);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
 							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
@@ -973,7 +975,8 @@ class Calls {
 									throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
 								}
 							case _ if (isMultiType(recvThis.type) || isMultiType(sig.args[0].t)):
-								recvThis = Typer.castOrUnify(ctx, sig.args[0].t, recvThis, recvThis.pos);
+								// castOrUnifyRaise when a multi-type abstract is involved.
+								recvThis = Typer.castOrUnifyRaise(ctx, sig.args[0].t, recvThis, recvThis.pos);
 							case _:
 								try {
 									hxc.core.TypeUnification.unifyDefault(recvThis.type, sig.args[0].t);

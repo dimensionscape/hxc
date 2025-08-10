@@ -1997,7 +1997,9 @@ class EvalMacro {
 	public static function macroFieldDisplayType(host:Context, c:TClass, cf:TClassField):Null<T> {
 		if (!isMacroField(cf) || host.isMacro) return null;
 		var mpath = c.module == null ? c.path : c.module.path;
-		try loadMacroClass(host, c.path, cf.name, false, mpath) catch (_:Dynamic) {}
+		try loadMacroClass(host, c.path, cf.name, false, mpath)
+			catch (e:hxc.core.TypingError.FatalError) throw e
+			catch (_:Dynamic) {}
 		if (macroCom == null) return null;
 		var m = macroCom.moduleLut.get(hxc.context.Context.pathKey(mpath));
 		if (m == null) return null;
@@ -2088,6 +2090,11 @@ class EvalMacro {
 			}
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
+			// Loading the module raises what the declarations report, and from here on it is finalization
+			// typing bodies, which RECORDS. Keeping the raise mode on for the macro class's own fields would
+			// turn a recorded verdict in a macro body into a throw that abandons the rest of the module's
+			// macro-world typing.
+			macroCom.raiseTypingErrors = false;
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.
@@ -2186,8 +2193,9 @@ class EvalMacro {
 		} catch (e:Dynamic) {
 			macroCom.raiseTypingErrors = oldRaise;
 			// A display answer raised while typing a macro body is the request's result, not a macro-loading
-			// failure to swallow. only Error.
-			if (isDisplayResult(e)) throw e;
+			// failure to swallow. only Error. Neither is a fatal error: raises the Fatal_error of a body the
+			// macro world could not type straight out of the macro world, and the compile on it.
+			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
