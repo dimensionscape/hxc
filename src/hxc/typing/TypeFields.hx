@@ -371,6 +371,7 @@ class TypeFields {
 		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
+		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool}> = [];
 		for (cff in d.dData) {
 			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
 			// build-macro fields are covered. The check is skipped entirely on an extern class or an
@@ -440,7 +441,7 @@ class TypeFields {
 			}
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
 				switch (cff.cffKind) {
-					case FFun(fd): checkExternDefaults(ctx, tctx, cf, fd, isStatic);
+					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic});
 					case _:
 				}
 				continue;
@@ -449,6 +450,10 @@ class TypeFields {
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
+		// Each extern function's verify_extern into PTypeField, and drains a bucket last-in first-out:
+		// the field declared last reports its default-value verdict first.
+		externChecks.reverse();
+		for (x in externChecks) checkExternDefaults(ctx, tctx, x.cf, x.fd, x.isStatic);
 	}
 
 	/**

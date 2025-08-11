@@ -541,9 +541,17 @@ class Inline {
 			// (the abstract this is the :this-meta var, which `_new`'s params lack).
 			var isAbsThis = absThisArg && i == 0;
 			// A WRITTEN abstract `this` always substitutes so the assignment writes back through the
-			// caller's lvalue; otherwise an abstract `this` substitutes only when it is a plain local and
-			// any other receiver follows the ordinary read-count rules, so a multi-read field chain binds a
-			// `this` temp.
+			// caller's lvalue; otherwise an abstract `this` substitutes only when it is a plain local,
+			// and any other receiver follows the ordinary read-count rules, so a multi-read field chain
+			// binds a `this` temp.
+			// A closure argument the body ASSIGNS cannot be inlined at all.
+			if (use.writes && param.expr.match(TFunction(_)))
+				throw new TypingError("Cannot modify a closure parameter inside inline method", p);
+			// A body that writes the abstract `this` needs a receiver it can write through: a local, an
+			// enum parameter, an array element, a non-final field, or a cast of one of those.
+			// `f().inc()` on an abstract with a writing inline method is "Cannot modify the abstract
+			// value, store it into a local first".
+			if (isAbsThis && use.writes) checkReceiverWrite(param, p);
 			var substitutable = (isAbsThis && use.writes)
 				|| (!forceTemp && !hasRuntimeDefault
 				&& !(use.captured && !isConstantForCapture(param))
@@ -746,9 +754,29 @@ class Inline {
 		return count;
 	}
 
-	// Abstract operator bodies may write through their abstract receiver. Preserve the reference
-	// check_write diagnostics after receiver substitution, in particular for final fields and locals
-	// passed to the inline operator.
+	// Abstract operator bodies may write through their abstract receiver. Keep the write-check
+	// diagnostics after receiver substitution, in particular for final fields and locals passed
+	// to the inline operator.
+	// The write check, applied to the receiver bound to the abstract `this`.
+	static function checkReceiverWrite(e:TExpr, p:Position):Void {
+		switch (e.expr) {
+			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)):
+				throw new TypingError("Cannot modify abstract value of final local", p);
+			case TField(_, fa):
+				var cf = switch (fa) {
+					case FInstance(_, _, f) | FStatic(_, f) | FAnon(f) | FClosure(_, f): f;
+					case FEnum(_, _) | FDynamic(_): null;
+				};
+				if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfFinal))
+					throw new TypingError("Cannot modify abstract value of final field", p);
+			case TLocal(_) | TEnumParameter(_, _, _) | TArray(_, _):
+			case TCast(e1, null):
+				checkReceiverWrite(e1, p);
+			case _:
+				throw new TypingError("Cannot modify the abstract value, store it into a local first", p);
+		}
+	}
+
 	static function checkAbstractWrite(root:TExpr, ?errorPos:Position):Void {
 		var ep = function(e:TExpr) return errorPos == null ? e.pos : errorPos;
 		function check(e:TExpr):Void {

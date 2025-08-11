@@ -985,6 +985,15 @@ class EvalMacro {
 		// than at whatever was written inside it.
 		var callIsWellFormed = entry.params.length == 1 && entry.params[0].expr.match(ECall(_, _));
 		if (!callIsWellFormed) throw new TypingError("Invalid build parameters", entry.pos);
+		// The callee has to be a dotted identifier chain, and it is checked before the macro-context test
+		// below: the path conversion raises at the expression that is not one, and the build names it
+		// there.
+		switch (entry.params[0].expr) {
+			case ECall(callee, _):
+				try hxc.ast.Ast.stringListOfExprPathRaise(callee) catch (_:Dynamic)
+					throw new TypingError("Build call parameter must be a class path", callee.pos);
+			case _:
+		}
 		// A @:build on a type the MACRO context loads cannot run: the macro would have to be interpreted
 		// while it is itself being compiled. This is reached when the built type shares a module with the
 		// macro function that builds it.

@@ -34,7 +34,9 @@ class ModuleLoader {
 		for (dir in ctx.classPath) {
 			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
-			if (FileSystem.exists(full) && !FileSystem.isDirectory(full)) {
+			// Allow directory entries to resolve as modules; opening them produces Could not open rather
+			// than Type not found.
+			if (FileSystem.exists(full)) {
 				// Require exact spelling from the directory listing even on case-insensitive filesystems.
 				var canon = canonicalFileName(ctx, full);
 				var reqBase = { var i = relPath.lastIndexOf("/"); relPath.substr(i + 1); };
@@ -1154,7 +1156,9 @@ class ModuleLoader {
 			// Handle __init__ separately from ordinary extern-expression warnings.
 			if (ctx != null && !bodyless && inlineAcc == null && !isMacroAcc
 					&& cff.cffName.name != "__init__"
-					&& (isInterface || TypeFunctions.hasClassFlag(c, CExtern)))
+					// Include a field's own extern modifier and the AExtern added to @:multiType constructors.
+					&& (isInterface || TypeFunctions.hasClassFlag(c, CExtern)
+						|| [for (acc in cff.cffAccess) if (acc.access == AExtern) true].length > 0))
 				ctx.warning(hxc.core.WarningList.Warning.WExternWithExpr, [],
 					"Extern non-inline function may not have an expression", cff.cffPos);
 			// Static interface fields warn before this error; instance interface fields report their body
@@ -1574,7 +1578,9 @@ class ModuleLoader {
 			return loaded0;
 		}
 
-		var src = moduleFileContent(ctx, file);
+		// The file resolved, but open_in_bin failed - a directory named like a module, an unreadable
+		// file. Not a missing type.
+		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		reportDisplayParseError(ctx, file);
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
@@ -1950,7 +1956,14 @@ class ModuleLoader {
 	 */
 	public static function initBasicTypes(ctx:Context):BasicTypes {
 		var p = Position.nullPos;
-		var stdTypes = loadModule(ctx, {pack: [], name: "StdTypes"}, p);
+		// StdTypes not loading means the standard library itself was not found, and the message says where
+		// the compiler looked.
+		var stdTypes = try loadModule(ctx, {pack: [], name: "StdTypes"}, p) catch (_:ContextError) {
+			var env = Sys.getEnv("HAXE_STD_PATH");
+			throw new hxc.core.TypingError(env != null
+				? "Standard library not found. Please check your `HAXE_STD_PATH` environment variable (current value: \"" + env + "\")"
+				: "Standard library not found. You may need to set your `HAXE_STD_PATH` environment variable", Position.nullPos);
+		};
 		var stringMod = loadModule(ctx, {pack: [], name: "String"}, p);
 		var arrayMod = loadModule(ctx, {pack: [], name: "Array"}, p);
 

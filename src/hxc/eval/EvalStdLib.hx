@@ -2456,13 +2456,20 @@ class EvalStdLib {
 		// - not a copy. The eval context's own list is whatever it was created with, and the macro
 		// world's is empty, so with either one every class-path relative name would be "File not found".
 		var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+		// The found path is rebuilt from the directory LISTING as `dir/name`, or the bare name when the
+		// directory is ".", so `-cp .` yields "P.hx", not "./P.hx".
+		function found(path:String):EvalValue {
+			var dir = haxe.io.Path.directory(path);
+			var own = haxe.io.Path.withoutDirectory(path);
+			return mkStr(dir == "" || dir == "." ? own : dir + "/" + own);
+		}
 		var hadEmpty = false;
 		for (cp in (com != null ? com.classPath : ctx.classPath)) {
 			if (cp == "") hadEmpty = true;
 			var path = cp == "" ? file : cp + file;
-			if (sys.FileSystem.exists(path)) return mkStr(path);
+			if (sys.FileSystem.exists(path)) return found(path);
 		}
-		if (!hadEmpty && sys.FileSystem.exists(file)) return mkStr(file);
+		if (!hadEmpty && sys.FileSystem.exists(file)) return found(file);
 		return EvalExceptions.excString(ctx, "File not found '" + file + "'");
 	}
 

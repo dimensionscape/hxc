@@ -796,7 +796,14 @@ class Compiler {
 		}
 		Setup.initPlatform(ctx, platform);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
-		ModuleLoader.initBasicTypes(ctx);
+		try ModuleLoader.initBasicTypes(ctx) catch (e:hxc.core.TypingError) {
+			// The standard library is missing; reported like any other error, and that is the end of the
+			// request.
+			ctx.raiseTypingErrors = false;
+			ctx.addDiagnostic(e.message, e.pos, e.depth);
+			flushPendingMessages(ctx);
+			exitRequest(1);
+		}
 		// The startup class is known from -main during argument handling, so an init macro's
 		// Context.getMainExpr / Compiler.getConfiguration already sees it.
 		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
