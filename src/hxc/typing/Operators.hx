@@ -999,7 +999,12 @@ class Operators {
 						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, bb.e, bk.e, p);
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 						var eop = toTexpr(makeBinop(ctx, sub, get.expr, te2, true, withType, p));
-						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, bb.e, get.key, function(_) return eop, p);
+						var setter:Null<TClassField> = null;
+						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, bb.e, get.key, function(_) return eop, p, true, function(cf) setter = cf);
+						// Getter and setter must be both bodied (calls) or both bodiless (a plain TArray on the
+						// underlying value); one of each has no form to build.
+						if (setter != null && ((setter.expr == null) != (get.cf.expr == null)))
+							throw new TypingError("Invalid array access getter/setter combination", p);
 						var block:Array<TExpr> = [];
 						if (bk.decl != null) block.push(bk.decl);
 						if (bb.decl != null) block.push(bb.decl);

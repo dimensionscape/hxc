@@ -954,6 +954,11 @@ class EvalMacro {
 					stack.push({message: "Called from here", pos: entry.pos});
 				com.addDiagnosticStack(stack);
 			}
+		} catch (e:hxc.core.TypingError.FatalError) {
+			// The macro world's own fatal error out of Finalization.finalize): its message and ends the
+			// compile. `@:build(P.b())` with the macro in P's own module is "You cannot use @:build inside a
+			// macro", not "Build failure".
+			throw e;
 		} catch (e:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
@@ -1209,6 +1214,8 @@ class EvalMacro {
 					stack.push({message: "Called from here", pos: entry.pos});
 				com.addDiagnosticStack(stack);
 			}
+		} catch (ex:hxc.core.TypingError.FatalError) {
+			throw ex;
 		} catch (ex:haxe.Exception) {
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}

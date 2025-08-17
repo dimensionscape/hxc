@@ -208,7 +208,7 @@ class Calls {
 			: TAbstract(a, tl);
 	}
 
-	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr} {
+	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr, cf:TClassField} {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
@@ -224,10 +224,10 @@ class Calls {
 						// function.
 						var key = Typer.castOrUnifyRaise(ctx, sig.args[1].t, ekey, p);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
-							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key};
+							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key, cf: cf};
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key};
+						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key, cf: cf};
 					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
 				case _:
 			}
@@ -246,7 +246,7 @@ class Calls {
 
 	// Setter call with an already-computed value; valueFn receives the setter's value-parameter type so a
 	// plain write can infer its literal, while a compound write supplies the precomputed op result.
-	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position, throwOnFail:Bool = true):Null<TExpr> {
+	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position, throwOnFail:Bool = true, ?onChosen:TClassField->Void):Null<TExpr> {
 		var lastVal:Null<TExpr> = null;
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
@@ -262,6 +262,10 @@ class Calls {
 						var val = valueFn(sig.args[2].t);
 						lastVal = val;
 						val = Typer.castOrUnifyRaise(ctx, sig.args[2].t, val, p);
+						// The candidate has matched: a compound assignment checks it against its getter
+						// from outside
+						// this attempt, where a verdict is not a miss.
+						if (onChosen != null) onChosen(cf);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
 							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
