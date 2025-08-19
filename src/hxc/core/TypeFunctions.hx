@@ -300,6 +300,8 @@ class TypeFunctions {
 
 	public static function addDependency(m:ModuleDef, mdep:ModuleDef, skip_postprocess:Bool = false):Void {
 		if (m != nullModule && m != mdep) {
+			if (Sys.getEnv("HXC_TRACE_DEPS") != null)
+				Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 			m.extra.deps.set(mdep.id, mdep);
 			// A new dependency invalidates the RESOLVE gate (a later resolveModule re-runs), not the
 			// save_class_state cache mark (processed). The reference's save_class_state comment is explicit

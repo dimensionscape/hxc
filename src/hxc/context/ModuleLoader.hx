@@ -265,8 +265,8 @@ class ModuleLoader {
 					if (m2 == null) return;
 					// Build the class before display; merely loaded field signatures still contain open
 					// monomorphs.
-					try hxc.typing.TypeResolve.resolveModule(ctx, m2) catch (_:Dynamic) {}
-					try hxc.typing.TypeFields.installLazy(ctx) catch (_:Dynamic) {}
+					try hxc.typing.TypeResolve.resolveModule(ctx, m2) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+					try hxc.typing.TypeFields.installLazy(ctx) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 					for (mt in m2.types) {
 						var c:Null<TClass> = switch (mt) {
 							case TClassDecl(c2) if (c2.path.name == typeName): c2;
@@ -276,7 +276,7 @@ class ModuleLoader {
 						if (c == null) continue;
 						var cf = c.statics.get(field);
 						if (cf != null) {
-							try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (_:Dynamic) {}
+							try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 							hxc.typing.Typer.displayClassField(c, false, cf, fp);
 						}
 					}
@@ -384,11 +384,11 @@ class ModuleLoader {
 								{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
 							switch (mt) {
 								case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
-									try hxc.typing.TypeResolve.resolveModule(ctx, cl.module) catch (_:Dynamic) {}
+									try hxc.typing.TypeResolve.resolveModule(ctx, cl.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 									for (cf in cl.orderedStatics)
 										if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) put(cf.name);
 								case TEnumDecl(en):
-									try hxc.typing.TypeResolve.resolveModule(ctx, en.module) catch (_:Dynamic) {}
+									try hxc.typing.TypeResolve.resolveModule(ctx, en.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 									for (name in en.names)
 										if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta)) put(name);
 								case _:
@@ -1507,6 +1507,8 @@ class ModuleLoader {
 	// Record mdep in m's deps (self and null-module loads record nothing).
 	public static function addDependency(m:Null<ModuleDef>, mdep:ModuleDef):Void {
 		if (m == null || m == mdep) return;
+		if (Sys.getEnv("HXC_TRACE_DEPS") != null)
+			Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 		m.extra.deps.set(mdep.id, mdep);
 		// Adding a dependency also clears the POST-PROCESSING mark: a module whose dependency set changed
 		// runs the filters again, which retakes its class state snapshot - so a @:generic specialization
@@ -1819,7 +1821,7 @@ class ModuleLoader {
 					// target module (idempotent, gated by resolved): an alias used before that module was
 					// resolved would otherwise capture the class with superClass still unset, and the alias
 					// then fails to unify with its own supertypes.
-					try hxc.typing.TypeResolve.resolveModule(ctx, mi.module) catch (_:Dynamic) {}
+					try hxc.typing.TypeResolve.resolveModule(ctx, mi.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 					var tPath:Path = {pack: mi.module.path.pack.concat(["_" + mi.module.path.name]), name: named.aliasName};
 					// The typedef sits at the ALIAS's own position, which is the declaration every request
 					// through the alias reports.

@@ -4133,19 +4133,23 @@ class Typer {
 	// `Module.field` where Module is not a type bound in the current module context: the unqualified
 	// module
 	// walk resolves the module's statics field before its types.
-	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode):Null<AccessKind> {
+	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode, checkContext:Bool = true):Null<AccessKind> {
 		if (ctx.locals.exists(modName)) return null;
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
-		for (mt in m.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-		if (imports != null) {
-			if (imports.names.exists(modName)) return null;
-			for (key in imports.names.keys()) {
-				var ni = imports.names.get(key);
-				if (ni.sub != null || ni.aliased == true) continue;
-				var im = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
-				for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
+		// Ahead of the identifier attempt this must not claim a name the module context binds; after a
+		// field miss on such a head 's NotFound) the walk runs regardless.
+		if (checkContext) {
+			for (mt in m.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
+			if (imports != null) {
+				if (imports.names.exists(modName)) return null;
+				for (key in imports.names.keys()) {
+					var ni = imports.names.get(key);
+					if (ni.sub != null || ni.aliased == true) continue;
+					var im = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
+					for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
+				}
 			}
 		}
 		function resolveMod(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
@@ -4944,14 +4948,10 @@ class Typer {
 						}
 						var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(sup.c, sup.params), e1.pos);
 						return Fields.typeField(ctx, superExpr, field, p, mode, withType);
-					case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
-						// An uppercase ident not bound in the current module context (its own types, imports)
-						// resolves as a module, whose module-level statics win over the module's types >
-						// resolve_in_module: resolve_module_field runs first).
-						var acc = unqualifiedModuleStaticField(ctx, modName, field, p, mode);
-						if (acc != null) return acc;
 					case _:
 				}
+				// The head is tried as an identifier first (type_ident_raise: locals, this-fields, the current
+				// class's statics) and only on NotFound as a dot path.
 				try {
 					// Is the SPECULATIVE lookup: it raises and reports nothing, and uses it for a dot path's head
 					// so a package prefix falls through to the type-path route below. hxc reaches that head
@@ -4985,23 +4985,18 @@ class Typer {
 						var c0 = segs0[0].charCodeAt(0);
 						c0 >= "a".code && c0 <= "z".code;
 					};
-					// A base bound in the current module context (own types, NAMED imports)
-					// falls back to the module walk on a field miss (resolve_unqualified's
-					// type_field ~resume -> find_in_unqualified_modules); a wildcard- or
-					// package-resolved base keeps its field error.
-					var contextBound = false;
-					if (!lowerLed && !baseUnresolved && segs0 != null && segs0.length > 0) {
-						var curM2 = ctx.com.currentModule;
-						if (curM2 != null) {
-							for (mt2 in curM2.types) if (TypeFunctions.tInfos(mt2).path.name == segs0[0]) { contextBound = true; break; }
-							if (!contextBound) {
-								var imps2 = ctx.com.moduleImports.get(hxc.context.Context.pathKey(curM2.path));
-								if (imps2 != null && imps2.names.exists(segs0[0])) contextBound = true;
-							}
-						}
-					}
-					if (!lowerLed && !baseUnresolved && !contextBound) throw err;
-					var acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
+					// One `with NotFound` wraps the identifier attempt and its field chain, so a field miss on a
+					// capitalized head falls to resolve_dot_path whatever bound the head: tries the module
+					// context, then find_in_unqualified_modules walks the packages, and resolve_in_module puts a
+					// module's statics before its types.
+					// `AnalyzerTexpr.TexprFilter` - a same-package module's sub-type through its main
+					// class's name - is that walk.
+					var acc = switch (e1.expr) {
+						case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
+							unqualifiedModuleStaticField(ctx, modName, field, p, mode, false);
+						case _: null;
+					};
+					if (acc == null) acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
 					if (acc == null) throw err;
 					acc;
 				}

@@ -50,4 +50,9 @@ class FatalError extends haxe.Exception {
 		this.pos = pos;
 		this.depth = depth;
 	}
+
+	/** For a catch-all: a fatal error is on its way to the driver and is never swallowed. */
+	public static function pass(e:Dynamic):Void {
+		if (Std.isOfType(e, FatalError)) throw e;
+	}
 }

@@ -917,7 +917,10 @@ class EvalMacro {
 	// Runs a class's build macros the first time the class is resolved: its own @:build plus any
 	// @:autoBuild inherited from a superclass or implemented interface.
 	public static function ensureBuilt(com:Context, c:TClass):Void {
-		var key = c.path.pack.join(".") + "." + c.path.name;
+		// Per world: the built mark is on the class object, and the macro context holds its own copy of
+		// every class. Keyed by path alone, a class the host had built would be skipped in the macro
+		// world and its @:build would never run.
+		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
 		if (builtClasses.exists(key)) return;
 		// The super chain and interfaces build first so a child's build macro sees the parent's macro-added
 		// fields.
@@ -960,6 +963,8 @@ class EvalMacro {
 			// macro", not "Build failure".
 			throw e;
 		} catch (e:haxe.Exception) {
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+				Sys.println("[buildfail] " + Type.getClassName(Type.getClass(e)) + ": " + e.message);
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 		// The reference applies all @:build field transformations before typing field bodies. Doing
@@ -1001,9 +1006,11 @@ class EvalMacro {
 		}
 		// A @:build on a type the MACRO context loads cannot run: the macro would have to be interpreted
 		// while it is itself being compiled. This is reached when the built type shares a module with the
-		// macro function that builds it.
+		// macro function that builds it. Raised while the macro context builds the class, it leaves the
+		// macro world the way 's Fatal_error out of Finalization.finalize does: reported by and the
+		// compile ends there.
 		if (com.isMacro)
-			throw new TypingError("You cannot use @:build inside a macro : make sure that your type is not used in macro", entry.pos);
+			throw new hxc.core.TypingError.FatalError("You cannot use @:build inside a macro : make sure that your type is not used in macro", entry.pos);
 		var callExpr = entry.params[0];
 		// A macro path is split on "." and needs at least `Type.method`; a bare
 		// `foo()` has no type to look the method up on.
@@ -1217,6 +1224,8 @@ class EvalMacro {
 		} catch (ex:hxc.core.TypingError.FatalError) {
 			throw ex;
 		} catch (ex:haxe.Exception) {
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+				Sys.println("[buildfail:enum] " + Type.getClassName(Type.getClass(ex)) + ": " + ex.message);
 			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 	}
@@ -2111,6 +2120,9 @@ class EvalMacro {
 			// turn a recorded verdict in a macro body into a throw that abandons the rest of the module's
 			// macro-world typing.
 			macroCom.raiseTypingErrors = false;
+			// The classes the macro world holds build here too (typeloadModule init_class ->
+			// build_module_def in the macro context), which is where for a @:build met inside a macro.
+			hxc.eval.EvalMacro.runBuildMacros(macroCom);
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.

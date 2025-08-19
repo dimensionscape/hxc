@@ -60,7 +60,10 @@ class TypeFields {
 		// resolveAll has already recorded that raise, would make a macro path that did not resolve print a
 		// second error after the heritage one.
 		if (ctx.declAborted) return;
-		if (!ctx.isMacro) hxc.eval.EvalMacro.runBuildMacros(ctx);
+		// The macro world runs them too: a @:build met there a hard error ("You cannot use @:build inside a
+		// macro"). Skipping them accepted the class and let the host call a macro whose result then failed
+		// to decode.
+		hxc.eval.EvalMacro.runBuildMacros(ctx);
 		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat
 		// at the top level until the module set is closed (installAndForce stays re-entrancy-safe
 		// for the nested call build macros make).

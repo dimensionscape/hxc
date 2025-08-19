@@ -64,6 +64,7 @@ class TypeResolve {
 				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
 			} catch (e:Dynamic) {
 				if (hxc.parser.ParserError.isParseFailure(e)) throw e;
+				hxc.core.TypingError.FatalError.pass(e);
 				ctx.currentModule = m;
 			}
 		}
@@ -361,6 +362,100 @@ class TypeResolve {
 		};
 	}
 
+	// Heritage: class super/implements.
+	// Remoting proxy: parse T's module, turn its class into Remoting_T / Async_T - a `__cnx` connection
+	// field, a constructor taking it, and one public instance method per public method of T that
+	// resolves and calls it over the connection - type that module, and make it this class's super. The
+	// std shipped with 4.3.7 carries no haxe.remoting, so the built class reports its connection type
+	// as not found.
+	static function extendRemoting(ctx:Context, c:TClass, t:TypePath, p:Position, async:Bool, prot:Bool):Void {
+		if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
+		var path:hxc.core.Globals.Path = {pack: t.tpackage, name: t.tname};
+		var newName = (async ? "Async_" : "Remoting_") + t.tname;
+		var np = Position.nullPos;
+		// Check if the proxy already exists
+		var mt:Null<ModuleType> = try hxc.context.ModuleLoader.loadTypeDef(ctx, {pack: t.tpackage, name: newName}, p) catch (_:ContextError) null;
+		if (mt == null) {
+			// Build it
+			var file = try hxc.context.ModuleLoader.resolveModuleFile(ctx, path, p) catch (_:ContextError)
+				throw new ContextError("Could not load proxy module " + Context.sTypePath(path) + (t.tpackage.length == 0 ? " (try using absolute path)" : ""), p);
+			var pkg = hxc.parser.Parser.parseModuleString(hxc.context.ModuleLoader.moduleFileContent(ctx, file), file, ctx.defines);
+			function ident(s:String):Expr return new Expr(EConst(CIdent(s)), p);
+			function connectionHint():TypeHint
+				return {ct: CTPath({tpackage: ["haxe", "remoting"], tname: async ? "AsyncConnection" : "Connection", tparams: [], tsub: null}), pos: np};
+			var cnxField:ClassField = {cffName: {name: "__cnx", pos: np}, cffPos: p, cffDoc: null, cffMeta: [], cffAccess: [],
+				cffKind: FVar(connectionHint(), null)};
+			var newField:ClassField = {cffName: {name: "new", pos: np}, cffPos: p, cffDoc: null, cffMeta: [], cffAccess: [{access: APublic, pos: np}],
+				cffKind: FFun({fParams: [], fArgs: [{name: {name: "c", pos: np}, opt: false, meta: [], type: null, value: null}], fType: null,
+					fExpr: new Expr(EBinop(OpAssign, ident("__cnx"), ident("c")), p)})};
+			var tvoid:TypeHint = {ct: CTPath({tpackage: [], tname: "Void", tparams: [], tsub: null}), pos: np};
+			function hasAccess(f:ClassField, a:Access):Bool return [for (x in f.cffAccess) if (x.access == a) true].length > 0;
+			function buildField(isPublic:Bool, f:ClassField):Null<ClassField> {
+				if (f.cffName.name == "new") return null;
+				return switch (f.cffKind) {
+					case FFun(fd) if ((isPublic || hasAccess(f, APublic)) && !hasAccess(f, AStatic)):
+						for (a in fd.fArgs) if (a.type == null)
+							throw new ContextError("Field " + f.cffName.name + " type is not complete and cannot be used by RemotingProxy", p);
+						var eargs = [new Expr(EArrayDecl([for (a in fd.fArgs) ident(a.name.name)]), p)];
+						var ftype:Null<TypeHint> = switch (fd.fType) {
+							case {ct: CTPath({tpackage: [], tname: "Void"})}: null;
+							case th: th;
+						};
+						var fargs = fd.fArgs;
+						if (async) {
+							if (ftype != null)
+								fargs = fd.fArgs.concat([{name: {name: "__callb", pos: np}, opt: true, meta: [],
+									type: {ct: CTFunction([ftype], tvoid), pos: np}, value: null}]);
+							else
+								eargs = eargs.concat([ident("null")]);
+						}
+						var id:Expr = new Expr(EConst(CString(f.cffName.name, SDoubleQuotes)), p);
+						if (!prot) id = new Expr(ECall(ident("__unprotect__"), [id]), p);
+						var resolved = new Expr(ECall(new Expr(EField(ident("__cnx"), "resolve", EFNormal), p), [id]), p);
+						var expr = new Expr(ECall(new Expr(EField(resolved, "call", EFNormal), p), eargs), p);
+						if (!async && ftype != null) expr = new Expr(EReturn(expr), p);
+						var nfd:Func = {fParams: fd.fParams, fArgs: fargs, fType: async ? null : ftype, fExpr: new Expr(EBlock([expr]), p)};
+						({cffName: f.cffName, cffPos: f.cffPos, cffDoc: null, cffMeta: [], cffAccess: [{access: APublic, pos: np}], cffKind: FFun(nfd)} : ClassField);
+					case _: null;
+				}
+			}
+			var types:Array<TypeDecl> = [], imports:Array<Import> = [], usings:Array<PlacedTypePath> = [];
+			for (decl in pkg.decls) switch (decl.decl) {
+				case EImport(i): imports.push(i);
+				case EUsing(names):
+					var last = names[names.length - 1];
+					usings.push({path: {tpackage: [for (n in names.slice(0, names.length - 1)) n.name], tname: last.name, tparams: [], tsub: null}, pos: last.pos});
+				case EClass(cd) if (cd.dName.name == t.tname):
+					// The proxy reads the built class's parameters, which are this declaration's, before
+					// any of its
+					// fields are typed; hxc's typeModule resolves the hints on the way, so the check comes
+					// first.
+					if (cd.dParams.length > 0) throw new ContextError("Remoting proxy must be a class without parameters", p);
+					var isPublic = [for (fl in cd.dFlags) if (fl.match(HExtern) || fl.match(HInterface)) true].length > 0;
+					// The fields: the constructor, the connection, then the methods in declaration order.
+					var fields:Array<ClassField> = [newField, cnxField];
+					for (f in cd.dData) { var b = buildField(isPublic, f); if (b != null) fields.push(b); }
+					types.push({decl: EClass({dName: {name: newName, pos: cd.dName.pos}, dDoc: cd.dDoc, dParams: cd.dParams, dMeta: cd.dMeta, dFlags: [], dData: fields}), pos: decl.pos});
+				case _: types.push(decl);
+			}
+			var m = hxc.context.ModuleLoader.defineModuleDecls(ctx, {pack: t.tpackage, name: newName}, types, imports, usings, p);
+			TypeFunctions.addDependency(c.module, m);
+			for (x in m.types) if (TypeFunctions.tInfos(x).path.name == newName) mt = x;
+			if (mt == null) throw new ContextError("Module " + Context.sTypePath(path) + " does not define type " + t.tname, p);
+		}
+		switch (mt) {
+			case TClassDecl(c2) if (c2.params.length == 0):
+				// The module's fields resolve here, after the parameter check, so a generic target reports
+				// only
+				// that check.
+				resolveModule(ctx, c2.module);
+				forceBuild(ctx, c2);
+				c.superClass = {c: c2, params: []};
+			case _:
+				throw new ContextError("Remoting proxy must be a class without parameters", p);
+		}
+	}
+
 	public static function resolveClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
 		// A build marks the class BUILDING at its START, so a class reached again while it is building does
 		// NOTHING further rather than re-running its heritage. There are two entry points - the module loop
@@ -374,6 +469,18 @@ class TypeResolve {
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
 			case HExtends(pt):
+				// `haxe.remoting.Proxy<T>` / `AsyncProxy<T>` in an extends clause is not a heritage but a
+				// request
+				// to BUILD a proxy class for T's module.
+				if (pt.path.tpackage.length == 2 && pt.path.tpackage[0] == "haxe" && pt.path.tpackage[1] == "remoting"
+						&& (pt.path.tname == "Proxy" || pt.path.tname == "AsyncProxy") && pt.path.tparams.length == 1) {
+					switch (pt.path.tparams[0]) {
+						case TPType({ct: CTPath(target)}):
+							extendRemoting(ctx, c, target, p, pt.path.tname == "AsyncProxy", true);
+							continue;
+						case _:
+					}
+				}
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, true, pt.pos);
 				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
@@ -547,6 +654,7 @@ class TypeResolve {
 					ctx.currentModule = savedModule;
 					buildState.set(c, BUILT);
 					if (hxc.parser.ParserError.isParseFailure(e)) throw e;
+					hxc.core.TypingError.FatalError.pass(e);
 					if (Std.isOfType(e, ContextError) || Std.isOfType(e, hxc.core.TypingError)) throw e;
 				}
 				ctx.currentModule = savedModule;
