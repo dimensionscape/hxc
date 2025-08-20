@@ -3032,6 +3032,7 @@ class Compiler {
 		} else {
 			// A pure package prefix lists the package's modules and sub-packages across the classpaths. .
 			var seen = new haxe.ds.StringMap<Bool>();
+			var found = 0;
 			for (cp in ctx.classPath) {
 				var dir = cp + tc.pack.join("/");
 				if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir)) continue;
@@ -3042,16 +3043,26 @@ class Compiler {
 						var name = entry.substr(0, entry.length - 3);
 						if (name.length > 0 && name.charCodeAt(0) >= "A".code && name.charCodeAt(0) <= "Z".code) {
 							seen.set(entry, true);
+							found++;
 							fields.push({kind: "type", name: name, type: "", doc: null});
 							jitems.push(moduleRefToJson(tc.pack, name, jitems.length));
 						}
 					} else if (FileSystem.isDirectory(full) && entry.length > 0
 							&& entry.charCodeAt(0) >= "a".code && entry.charCodeAt(0) <= "z".code) {
 						seen.set(entry, true);
+						found++;
 						fields.push({kind: "package", name: entry, type: "", doc: null});
 						jitems.push(hxc.core.CompletionItem.CompletionItem.packageToJson(tc.pack.concat([entry]), jitems.length));
 					}
 				}
+			}
+			// A package with neither modules nor sub-packages is an abort at the null position, "No modules
+			// found in <pack>", not an empty list. Reported the way an abort is - the bare message - rather
+			// than thrown from inside this completion handler, where only the request path's generic catch
+			// would see it.
+			if (found == 0) {
+				abortWithMessage(ctx, "No modules found in " + tc.pack.join("."), Position.nullPos);
+				return;
 			}
 		}
 		if (ctx.jsonRpcId != null) {
