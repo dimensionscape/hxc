@@ -592,11 +592,11 @@ class Typeload {
 	// the parameters the load was given are recorded here.
 	public static var currentTypeParams:TypeParams = [];
 
-	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false):T {
+	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false, ?tctx:hxc.typing.TyperContext):T {
 		var savedTp = currentTypeParams;
 		currentTypeParams = typeParams;
 		try {
-			var res = loadInstanceInner(ctx, typeParams, t, p, allowNoParams, specializeGeneric, allowDisplay);
+			var res = loadInstanceInner(ctx, typeParams, t, p, allowNoParams, specializeGeneric, allowDisplay, tctx);
 			currentTypeParams = savedTp;
 			return res;
 		} catch (e:Dynamic) {
@@ -605,11 +605,11 @@ class Typeload {
 		}
 	}
 
-	static function loadInstanceInner(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false):T {
+	static function loadInstanceInner(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false, ?tctx:hxc.typing.TyperContext):T {
 		// A type path that does not resolve, with the cursor on it, is a completion request rather than
 		// an error - the name is what the user is still typing.
 		var r = if (hxc.parser.Parser.displayCompletionMode && hxc.typing.Typer.atDisplayPos(p))
-			try loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric)
+			try loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric, tctx)
 			catch (e:ContextError) {
 				if (e.message.indexOf("Type not found") != 0) throw e;
 				// The subject is the path the user wrote, and the range it replaces is that path's own span.
@@ -619,7 +619,7 @@ class Typeload {
 				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, sp, sfull);
 				throw e;
 			}
-		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric);
+		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric, tctx);
 		// The hint list only feeds the reference searches, so it is collected only for them.
 		if (hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation)
 			typeHints.push({m: ctx.currentModule, p: p, t: r});
@@ -637,7 +637,7 @@ class Typeload {
 		return r;
 	}
 
-	static function loadInstance_(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true):T {
+	static function loadInstance_(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, ?tctx:hxc.typing.TyperContext):T {
 		// Look up a bare type-parameter name before resolving a module.
 		if (t.tpackage.length == 0 && t.tsub == null) {
 			var pt:Null<T> = TypeFunctions.lookupParam(t.tname, typeParams);
@@ -654,7 +654,7 @@ class Typeload {
 		ensureResolved(ctx, TypeFunctions.tInfos(mt).module);
 		var types = TypeFunctions.tInfos(mt).params;
 		var declPath = TypeFunctions.tPath(mt);
-		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams);
+		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams, tctx);
 		var isGenericBuild = switch (mt) {
 			case TClassDecl(c): switch (c.kind) { case KGenericBuild(_): true; case _: false; }
 			case _: false;
@@ -826,12 +826,32 @@ class Typeload {
 		}
 	}
 
-	// Do_build_instance (subset): for the non-generic case it is just
-	// `apply_params decl_params actual_params (type_of_module_type mt)`-style construction.
-	// TInst/TEnum/TType/TAbstract with the given params. We build directly.
-	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool, ?callerTypeParams:TypeParams):T {
+	// Do_build_instance (subset): for the non-generic case it is just `apply_params decl_params
+	// actual_params (type_of_module_type mt)`-style construction. TInst/TEnum/TType/TAbstract with the
+	// given params. We build directly. a type argument that is a type parameter of something other
+	// than the caller's own generic class or field, and carries a constructor constraint, cannot be
+	// used at a @:generic build.
+	static function checkCtorConstraintArg(tctx:hxc.typing.TyperContext, t:T, p:Position):Void {
+		switch (TypeFunctions.follow(t)) {
+			case TInst(c2, tl):
+				switch (c2.kind) {
+					case KTypeParameter(_):
+						if (!hxc.typing.Typer.isGenericParameter(tctx, c2) && TypeFunctions.hasCtorConstraint(c2))
+							throw new TypingError("Type parameters with a constructor cannot be used non-generically", p);
+					case _:
+				}
+				for (t2 in tl) checkCtorConstraintArg(tctx, t2, p);
+			case _:
+		}
+	}
+
+	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool, ?callerTypeParams:TypeParams, ?tctx:hxc.typing.TyperContext):T {
 		return switch (mt) {
 			case TClassDecl(c):
+				// Over the arguments before deciding between a normal instance and a specialization;
+				// is_generic_parameter needs the typer's current class and field, which the reference's
+				// load_instance carries and only the typer's own loads pass here.
+				if (tctx != null && c.kind.match(KGeneric)) for (t in params) checkCtorConstraintArg(tctx, t, p);
 				switch (c.kind) {
 					case KGeneric if (specializeGeneric && canSpecializeGeneric(params)):
 						var fallback = TInst(c, params);

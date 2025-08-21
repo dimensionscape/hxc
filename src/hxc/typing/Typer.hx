@@ -412,7 +412,7 @@ class Typer {
 		return loop(tl);
 	}
 
-	static function isGenericParameter(ctx:TyperContext, c:TClass):Bool {
+	public static function isGenericParameter(ctx:TyperContext, c:TClass):Bool {
 		if (ctx.curclass != null) {
 			switch (ctx.curclass.kind) {
 				case KGeneric:
@@ -1743,7 +1743,7 @@ class Typer {
 		// An empty argument list counts as marked, so the parentheses on their own are enough to ask for
 		// the signature.
 		if (!marked && !(el.length == 0 && atDisplayPos(p))) return;
-		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true) catch (_:Dynamic) return;
+		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx) catch (_:Dynamic) return;
 		// A type parameter is constructed through its Constructible constraint, and the function that
 		// constraint names is the signature.
 		switch (TypeFunctions.follow(t)) {
@@ -5776,7 +5776,7 @@ class Typer {
 		if (tp.path.tparams.length == 0) {
 			ctx.com.callArgumentStack.unshift(el);
 			try {
-				t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true);
+				t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx);
 				ctx.com.callArgumentStack.shift();
 			} catch (e:Dynamic) {
 				ctx.com.callArgumentStack.shift();
@@ -5784,7 +5784,7 @@ class Typer {
 				throw e;
 			}
 		} else {
-			try t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false)
+			try t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, false, true, false, ctx)
 			catch (e:Dynamic) { typeArgsForDisplay(); throw e; }
 		}
 		// A construction reports its type path the way a type hint does, which under a completion request
