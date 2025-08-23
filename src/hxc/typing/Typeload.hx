@@ -1438,6 +1438,20 @@ class Typeload {
 		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.arrayAccess);
 		var lazyFields:Array<TClassField> = [];
 		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, lazyFields);
+		// A specialization with no constructor of its own and none declared, over a base class, is
+		// "Please define a constructor for this class to use it as generic".
+		else if (cg.constructor == null && c.superClass != null) {
+			// The reference's class already carries its inherited constructor in constructor when this match
+			// runs (init_class copies the super's); hxc leaves it on the super, so the verdict walks the
+			// chain: only a class with no constructor anywhere above it fails.
+			var sup = c.superClass;
+			var inherited = false;
+			while (sup != null) {
+				if (sup.c.constructor != null) { inherited = true; break; }
+				sup = sup.c.superClass;
+			}
+			if (!inherited) throw new TypingError("Please define a constructor for this class in order to use it as generic", c.pos);
+		}
 		for (f in c.orderedFields) {
 			var cf = cloneField(ctx, c, gsubst, f, lazyFields);
 			cg.fields.set(cf.name, cf);

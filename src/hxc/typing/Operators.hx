@@ -937,11 +937,16 @@ class Operators {
 				var fa = se.access;
 				var implC = FieldAccessTools.getHostClassRaise(fa.host);
 				var setterCf = implC.statics.get("set_" + fa.field.name);
-				if (setterCf == null) throw new TypingError("This expression cannot be accessed for writing", p);
-				// The accessor keeps the abstract host so its signature gets the instance's type parameters
-				// applied.
-				var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, fa.host, false, fa.pos);
-				hxc.typing.Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: setterFa}), [e2], WithTypeTools.value, p);
+				// A write through an abstract's accessor takes a found accessor only; anything else is
+				// "Could not resolve accessor" at the assignment (the READ is the one that falls to the
+				// anon route).
+				if (setterCf == null) throw new TypingError("Could not resolve accessor", p);
+				{
+					// The accessor keeps the abstract host so its signature gets the instance's type
+					// parameters applied.
+					var setterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), setterCf, fa.host, false, fa.pos);
+					hxc.typing.Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: setterFa}), [e2], WithTypeTools.value, p);
+				}
 			case AKResolve(se, name):
 				// `e.name = value` on an abstract with a resolve-write (@:op(a.b) taking name and value)
 				// calls resolveWrite(this, name, value).

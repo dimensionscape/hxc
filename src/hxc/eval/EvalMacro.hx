@@ -1378,7 +1378,8 @@ class EvalMacro {
 						case _:
 					}
 					var t = macroTarget(callee);
-					if (t == null) throw new TypingError("--macro target must be a static call", e.pos);
+					// A --macro whose callee is not a dotted identifier chain.
+					if (t == null) throw new TypingError("Invalid macro call", e.pos);
 					// Compiler.addMetadata is a std wrapper around meta_patch, not a macro method.
 					if (t.pack.join(".") == "haxe.macro" && t.name == "Compiler" && t.method == "addMetadata") {
 						var ec = getContext(com);

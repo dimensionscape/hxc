@@ -4720,11 +4720,19 @@ class Typer {
 				var fa = se.access;
 				var implC = FieldAccessTools.getHostClassRaise(fa.host);
 				var getterCf = implC.statics.get("get_" + fa.field.name);
-				if (getterCf == null) throw new TypingError("This field cannot be accessed for reading", fa.pos);
-				// The accessor keeps the abstract host so its signature gets the instance's type parameters
-				// applied.
-				var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, fa.host, false, fa.pos);
-				Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
+				if (getterCf == null) {
+					// The abstract arm answers AccessorAnon when the accessor is missing, and the accessor
+					// call then synthesizes a dynamic get_<name>() call on the value; the missing method is
+					// the declaration's complaint, not the read's.
+					var t = fa.field.type;
+					var tf = TFun({args: [], ret: t});
+					Calls.makeCall(ctx, TypeFunctions.mk(TField(se.thisExpr, TypeFunctions.quickFieldDynamic(se.thisExpr.type, "get_" + fa.field.name)), tf, fa.pos), [], t, fa.pos);
+				} else {
+					// The accessor keeps the abstract host so its signature gets the instance's type
+					// parameters applied.
+					var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, fa.host, false, fa.pos);
+					Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
+				}
 			case AKUsingField(se):
 				// Reading an abstract/static-extension field: a property calls its impl getter with the
 				// receiver; otherwise read the impl field directly.
