@@ -986,9 +986,20 @@ class EvalMacro {
 		runBuildInner(com, c, entry);
 	}
 
-	// The part that does not care what kind of type is being built: check the metadata shape, load the
-	// macro's own module, run it in MBuild mode and decode the Array<Field> it answers with. Null
-	// means the macro returned null, which the reference treats as "keep the fields you were given".
+	// The part of a type's build that does not care what kind of type is being built: check the metadata
+	// shape, load the macro's own module, run it in build mode and decode the Array<Field> it answers with.
+	// Null means the macro returned null, which means "keep the fields you were given".
+	// A decoding failure's report goes to <dump>/decoding_error.txt (the dump path defaults to "dump") and
+	// the error names the expected type and the value's string form.
+	static function decodingError(v:EvalValue, expected:String, detail:String, p:Position):TypingError {
+		var path = "dump/decoding_error";
+		try {
+			if (!sys.FileSystem.exists("dump")) sys.FileSystem.createDirectory("dump");
+			sys.io.File.saveContent(path + ".txt", "Expected " + expected + "\n" + detail + "\nline 1: " + EvalStdLib.stringOf(v));
+		} catch (_:Dynamic) {}
+		return new TypingError("Expected " + expected + " but got " + EvalStdLib.stringOf(v) + " (see " + path + ".txt for details)", p);
+	}
+
 	static function callBuildMacro(com:Context, entry:MetadataEntry, modul:ModuleDef, cls:Null<TClass>, selfType:T, params:TParams,
 			typeParams:TypeParams, fields:Array<ClassField>, namePos:Position):Null<Array<ClassField>> {
 		// The argument has to be exactly one call, and both complaints here point at the METADATA rather
@@ -1073,8 +1084,12 @@ class EvalMacro {
 							{tpackage: [], tname: "Array", tsub: null, tparams: [TPType({ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tsub: "Field", tparams: []}), pos: cf.pos})]},
 							cf.pos, false) catch (_:Dynamic) null;
 						if (fieldsT != null) try hxc.core.TypeUnification.unifyDefault(sig.ret, fieldsT)
-							catch (ue:hxc.core.TypeUnification.UnifyError)
+							catch (ue:hxc.core.TypeUnification.UnifyError) {
 								com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
+								// The interpreter answers nothing once an error has been displayed, and
+								// nothing is "Build failure" at the metadata: the macro is not run.
+								throw new TypingError("Build failure", entry.pos);
+							}
 					}
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
@@ -1089,7 +1104,13 @@ class EvalMacro {
 				restore();
 				return null;
 			}
-			var newFields = [for (fv in arrOf(result)) decodeField(ec, fv, namePos)];
+			// A result the decoder rejects is reported as what was expected against what came back, at the
+			// metadata, with the decoding report written to dump/decoding_error.txt. The decoder's own
+			// complaints are plain strings.
+			var newFields = try [for (fv in arrOf(result)) decodeField(ec, fv, namePos)] catch (s:String) {
+				if (!StringTools.startsWith(s, "macro decode:")) throw s;
+				throw decodingError(result, "Array<Field>", s, entry.pos);
+			};
 			restore();
 			return newFields;
 		} catch (e:haxe.Exception) {
@@ -1275,6 +1296,15 @@ class EvalMacro {
 	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
 		var t = macroTarget(callee);
 		if (t == null) throw new TypingError("@:build target must be a static call", p);
+		// The path names a type of the loaded module, and only a class carries macros - a typedef, enum
+		// or abstract is "Macro should be called on a class".
+		var tm = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+		if (tm != null) for (mt in tm.types) {
+			if (TypeFunctions.tInfos(mt).path.name == t.name) switch (mt) {
+				case TClassDecl(_):
+				case _: throw new TypingError("Macro should be called on a class", p);
+			}
+		}
 		var proto = ec.staticPrototypes.get(EvalHash.pathHash({pack: t.pack, name: t.name}));
 		// `Module.method` prefers the module-level static over a same-named class's static.
 		if (t.moduleOnly) {
