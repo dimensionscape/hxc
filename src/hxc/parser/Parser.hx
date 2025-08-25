@@ -3,6 +3,7 @@ package hxc.parser;
 import hxc.ast.Ast;
 import hxc.ast.Position;
 import hxc.core.Define;
+import hxc.parser.ParserError.PreprocessorAbort;
 
 using hxc.ast.Position;
 
@@ -195,6 +196,9 @@ class Parser {
 			if (!p.tokEq(p.peek(), Eof)) p.serror();
 			if (registerContent) hxc.ast.Position.restoreFileEntry(file, saved);
 			return e;
+		} catch (a:PreprocessorAbort) {
+			if (registerContent) hxc.ast.Position.restoreFileEntry(file, saved);
+			throw a.err;
 		} catch (err:Dynamic) {
 			if (registerContent) hxc.ast.Position.restoreFileEntry(file, saved);
 			throw err;
@@ -470,10 +474,11 @@ class Parser {
 			var e = pendingLexError;
 			pendingLexError = null;
 			switch (e.msg) {
-				// Unwrapped, so the #error route and every other consumer keep seeing the parser error they
-				// handle today - but marked, because the display file's recovery arms must decline it the way
-				// the reference's decline a Parser.Error.
-				case Preprocessed(pe): throw new ParserError(pe.msg, pe.pos, pe.soft, true);
+				// Unwrapped at the parse entries, so the #error route and every other consumer keep seeing
+				// the parser error they handle; inside the grammar it travels as a PreprocessorAbort, which
+				// no alternative catches - an error raised from the stream's fill passes every soft-failure
+				// handler the same way.
+				case Preprocessed(pe): throw new PreprocessorAbort(new ParserError(pe.msg, pe.pos, pe.soft, true));
 				case _: throw e;
 			}
 		}
@@ -2798,6 +2803,9 @@ class Parser {
 		var p = make(src, file, defines);
 		try {
 			return p.parseFile();
+		} catch (a:PreprocessorAbort) {
+			// The stream's own fault, back in the form every consumer handles.
+			throw a.err;
 		} catch (e:LexerError) {
 			// An encoding fault is the one lexer fault not reported as a lexer error: it is re-raised here
 			// as a typing error. So it carries the general error kind everywhere after this point, which is

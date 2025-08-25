@@ -16,6 +16,23 @@ enum ParserErrorMsg {
 	Custom(s:String);
 }
 
+/**
+ * The token stream's own fill raising. A conditional-compilation fault is raised from inside the
+ * token stream, so nothing in the grammar can absorb one: it leaves the whole parse. hxc's grammar
+ * catches ParserError at thirty sites, and a backtracking one (psepTrailing, the first-element
+ * alternatives) would take the fault for "no element here" and report its own message at the
+ * truncated stream. The fault travels as a class none of them catch, and the parse entries hand the
+ * ParserError it carries back out.
+ */
+class PreprocessorAbort extends haxe.Exception {
+	public final err:ParserError;
+
+	public function new(err:ParserError) {
+		super("PreprocessorAbort");
+		this.err = err;
+	}
+}
+
 class ParserError extends haxe.Exception {
 	public final msg:ParserErrorMsg;
 	public final pos:Position;

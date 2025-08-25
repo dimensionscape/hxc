@@ -416,6 +416,7 @@ class Preprocess {
 		var spanStart = i;
 		var depth = 1;
 		var sub:Array<TokenInfo> = [];
+		var close:Null<TokenInfo> = null;
 		while (true) {
 			// A parenthesised condition is parsed by the ORDINARY expression parser straight off the token
 			// stream, so when the paren never closes `expr` simply runs on into the following lines and
@@ -427,7 +428,7 @@ class Preprocess {
 				case POpen: depth++; sub.push(ti); i++;
 				case PClose:
 					depth--;
-					if (depth == 0) { i++; break; }
+					if (depth == 0) { close = ti; i++; break; }
 					sub.push(ti); i++;
 				case Eof: break;
 				// While a condition is parsed, keyword tokens are plain identifiers (e.g. `macro`,
@@ -445,6 +446,10 @@ class Preprocess {
 		// not at the start of the condition.
 		var endPos = sub.length > 0 ? sub[sub.length - 1].pos : popen;
 		var eofPos = new Position(endPos.file, endPos.max, endPos.max);
+		// When the paren did close, the token `expr` is left holding is the `)` itself: a syntax error
+		// raised inside the expression reports the whole next token, so it names that span,
+		// `characters 17-18` for `#if (ja[va || cs)`, not a point past the last condition token.
+		if (close != null) eofPos = close.pos;
 		// ...EXCEPT when the condition ran to the real end of the stream. `expr` then pulls the ACTUAL
 		// Eof token, which trailing whitespace has already carried past the last condition token, so a
 		// file ending in a newline reports the start of the next line.
