@@ -502,7 +502,7 @@ class TypeFields {
 		var isDisplay = hxc.parser.Parser.displayFile != null;
 		// The declaring module's path, not the class's: a class whose name differs from its module file
 		// (common in display requests) is not loadable by its own path.
-		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path)
+		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos)
 		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
 		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
 	}
@@ -753,7 +753,18 @@ class TypeFields {
 		return null;
 	}
 
+	// The typer pass, as far as instance building needs it: being past PBuildClass is true while a body is
+	// being typed, and that is when a class named by an instance builds on the spot. hxc has no pass
+	// counter; this counts the open bodies instead.
+	public static var bodyDepth:Int = 0;
+
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
+		bodyDepth++;
+		try typeFieldBodyInner(tctx, cf, cff, isStatic, sigType) catch (e:Dynamic) { bodyDepth--; throw e; }
+		bodyDepth--;
+	}
+
+	static function typeFieldBodyInner(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
 		bodyTyped.set(cf, true);
 		var restore = Typer.saveLocals(tctx);
 		// A field body starts with no locals in scope. Lazy typing can force one body while another is

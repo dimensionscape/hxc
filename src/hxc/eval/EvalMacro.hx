@@ -904,7 +904,14 @@ class EvalMacro {
 				var ti = types.length - 1;
 				while (ti >= 0) {
 					switch (types[ti]) {
-						case TClassDecl(c): ensureBuilt(com, c);
+						case TClassDecl(c):
+							try ensureBuilt(com, c) catch (e:TypingError) {
+								// The pass runner catches nothing, so a build's error ends the compile. The
+								// macro world's finalize hands it to the macro load's caller instead.
+								if (com.isMacro) throw e;
+								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[buildfatal] " + Context.sTypePath(c.path));
+								throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+							}
 						case _:
 					}
 					ti--;
@@ -933,39 +940,54 @@ class EvalMacro {
 		builtClasses.set(key, true);
 		var entries = collectBuildEntries(c);
 		if (entries.length == 0) return;
-		// A build failure is recorded rather than raised so the rest of the module still types,
-		// but the compile fails; the class keeps its declared fields.
+		// A build's failure is RAISED out of the class build before any field is added, so the class is
+		// left with none. It goes to whoever FORCED the build: the PBuildClass pass runner (which has no
+		// handler, so the compile ends with it, after everything recorded so far) or an expression that
+		// needed the class, whose own handlers record it and type on against the fieldless class.
+		// runBuildMacros is the pass runner here.
+		function fail(message:String, pos:Position, ?src:TypingError):Void {
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+				Sys.println("[buildraise] " + Context.sTypePath(c.path) + (com.isMacro ? " (macro): " : ": ") + message);
+			c.fields = new haxe.ds.StringMap();
+			c.statics = new haxe.ds.StringMap();
+			c.orderedFields = [];
+			c.orderedStatics = [];
+			c.constructor = null;
+			// The KIND leaves with it: a macro module that did not load is Module_not_found, which from the
+			// argument annotation.
+			if (src != null && Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError))
+				throw new hxc.core.TypingError.ModuleNotFoundError(message, pos);
+			throw new TypingError(message, pos);
+		}
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
-			com.addDiagnostic(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e.depth);
+			fail(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
-			// A Context.error abort carries its own message; anything else the macro threw is an UNCAUGHT
-			// exception and reports as one, at the throwing expression with the call chain under it. The
-			// reference says "Build failure" only when the macro returns nothing which is not this.
 			var info = runtimeMacroError(e);
-			// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build failure"
-			// case a raw throw never gets there.
 			if (info != null) {
+				// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build
+				// failure" case a raw throw never gets there.
 				com.addDiagnostic(info.message, info.pos);
-				com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+				fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 			}
 			else {
-				// The @:build metadata is the call site here, and the build path invokes the macro directly, so
-				// it is not among the positions the unwind recorded.
+				// An UNCAUGHT exception reports at the throwing expression with the call chain under it. The
+				// @:build metadata is the call site here, and the build path invokes the macro directly, so it
+				// is not among the positions the unwind recorded. The chain is one error in the reference, and
+				// its last line is the one that ends the compile.
 				var stack = uncaughtExceptionStack(e);
 				var last = stack[stack.length - 1];
 				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
 					stack.push({message: "Called from here", pos: entry.pos});
-				com.addDiagnosticStack(stack);
+				var tail = stack.pop();
+				if (stack.length > 0) com.addDiagnosticStack(stack);
+				fail(tail.message, tail.pos);
 			}
 		} catch (e:hxc.core.TypingError.FatalError) {
-			// The macro world's own fatal error out of Finalization.finalize): its message and ends the
-			// compile. `@:build(P.b())` with the macro in P's own module is "You cannot use @:build inside a
-			// macro", not "Build failure".
 			throw e;
 		} catch (e:haxe.Exception) {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 				Sys.println("[buildfail] " + Type.getClassName(Type.getClass(e)) + ": " + e.message);
-			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 		// The reference applies all @:build field transformations before typing field bodies. Doing
 		// this once also keeps a later build macro from invalidating the field table while the previous
@@ -1018,10 +1040,12 @@ class EvalMacro {
 		// A @:build on a type the MACRO context loads cannot run: the macro would have to be interpreted
 		// while it is itself being compiled. This is reached when the built type shares a module with the
 		// macro function that builds it. Raised while the macro context builds the class, it leaves the
-		// macro world the way 's Fatal_error out of Finalization.finalize does: reported by and the
-		// compile ends there.
+		// macro world the way a fatal error out of finalization does: reported, and the compile ends
+		// there. It is RAISED out of the macro world's class build; who catches it decides the rest. A
+		// macro call that loaded the class records it and types on (a second call then meets the method
+		// missing from the failed build); a field force lets it end the compile.
 		if (com.isMacro)
-			throw new hxc.core.TypingError.FatalError("You cannot use @:build inside a macro : make sure that your type is not used in macro", entry.pos);
+			throw new TypingError("You cannot use @:build inside a macro : make sure that your type is not used in macro", entry.pos);
 		var callExpr = entry.params[0];
 		// A macro path is split on "." and needs at least `Type.method`; a bare
 		// `foo()` has no type to look the method up on.
@@ -1037,7 +1061,7 @@ class EvalMacro {
 				if (t != null) {
 					var targetPath:hxc.core.Globals.Path = {pack: t.pack, name: t.name};
 					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, modul);
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, modul, entry.pos);
 				}
 			case _:
 		}
@@ -1111,6 +1135,26 @@ class EvalMacro {
 				if (!StringTools.startsWith(s, "macro decode:")) throw s;
 				throw decodingError(result, "Array<Field>", s, entry.pos);
 			};
+			// A `macro` function in a class build's result, for a class the macro context has already
+			// compiled (its path is in that world's type table), is refused at the build unless a macro of
+			// that name stood in the fields the build started from: such a macro is assumed unchanged by the
+			// @:build.
+			if (cls != null && macroCom != null && macroCom.typeToModule.exists(Context.pathKey(cls.path))) {
+				inline function isMacroField(f:ClassField):Bool {
+					var r = false;
+					for (a in f.cffAccess) if (a.access == AMacro) r = true;
+					return r;
+				}
+				// The names compare as PLACED names, position included: only a
+				// macro the build handed back as it stood matches, not one it re-created at its own
+				// position under a name the class already had.
+				for (nf in newFields) if (isMacroField(nf)) {
+					var had = false;
+					for (f in fields) if (f.cffName.name == nf.cffName.name && f.cffName.pos.file == nf.cffName.pos.file
+							&& f.cffName.pos.min == nf.cffName.pos.min && f.cffName.pos.max == nf.cffName.pos.max && isMacroField(f)) had = true;
+					if (!had) throw new TypingError("Class build macro cannot return a macro function when the class has already been compiled into the macro context", entry.pos);
+				}
+			}
 			restore();
 			return newFields;
 		} catch (e:haxe.Exception) {
@@ -1218,36 +1262,46 @@ class EvalMacro {
 		var entries = [for (m in e.meta) if (m.name == ":build") m];
 		if (entries.length == 0) return;
 		var params = TypeFunctions.extractParamTypes(e.params);
+		// The enum's build runs at module init and its failure is RAISED out of it, so the module's load
+		// ends there for whoever loaded it.
+		function fail(message:String, pos:Position):Void {
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+				Sys.println("[buildraise:enum] " + Context.sTypePath(e.path) + ": " + message);
+			throw new TypingError(message, pos);
+		}
 		for (entry in entries) try {
 			var newFields = callBuildMacro(com, entry, e.module, null, TEnum(e, params), params, e.params,
 				enumConstructsAsFields(d.dData), d.dName.pos);
 			if (newFields == null) continue;
 			d.dData = fieldsAsEnumConstructs(newFields, entry.pos);
 		} catch (ex:TypingError) {
-			com.addDiagnostic(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos, ex.depth);
+			fail(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos);
 		} catch (ex:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(ex);
-			// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build failure"
-			// case a raw throw never gets there.
 			if (info != null) {
+				// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build
+				// failure" case a raw throw never gets there.
 				com.addDiagnostic(info.message, info.pos);
-				com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+				fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 			}
 			else {
 				// The @:build metadata is the call site here, and the build path invokes the macro directly, so
-				// it is not among the positions the unwind recorded.
+				// it is not among the positions the unwind recorded. The chain is one error in the reference,
+				// and its last line is what leaves the build.
 				var stack = uncaughtExceptionStack(ex);
 				var last = stack[stack.length - 1];
 				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
 					stack.push({message: "Called from here", pos: entry.pos});
-				com.addDiagnosticStack(stack);
+				var tail = stack.pop();
+				if (stack.length > 0) com.addDiagnosticStack(stack);
+				fail(tail.message, tail.pos);
 			}
 		} catch (ex:hxc.core.TypingError.FatalError) {
 			throw ex;
 		} catch (ex:haxe.Exception) {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 				Sys.println("[buildfail:enum] " + Type.getClassName(Type.getClass(ex)) + ": " + ex.message);
-			com.addDiagnostic("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
+			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 	}
 
@@ -1270,7 +1324,9 @@ class EvalMacro {
 			var ch = typeSegs[i].charCodeAt(0);
 			if (ch >= "A".code && ch <= "Z".code) { typeIdx = i; break; }
 		}
-		if (typeIdx < 0) return null;
+		// The segment before the method is the class whatever its case, so `--macro nope.bar()` asks for
+		// module `nope` and reports it missing.
+		if (typeIdx < 0) typeIdx = typeSegs.length - 1;
 		// moduleOnly: `Module.method` (a single type segment) can target a module-level
 		// static, which wins over a same-named class's static; `Module.Class.method`
 		// always targets the class.
@@ -1324,8 +1380,20 @@ class EvalMacro {
 			}
 		}
 		// Both failures report at the METADATA (`p`), not at the call expression inside it.
-		if (proto == null)
-			throw new TypingError("Type not found : " + hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}), p);
+		if (proto == null) {
+			// The module loaded but holds no type of that name - `--macro haxe.macro.Compiler.Nope.bar()` -
+			// is "Module X does not define type Y"; a module that does not load at all is the plain Type
+			// not found.
+			var mm = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
+			if (mm != null && t.name != t.module) {
+				var defined = false;
+				for (mt in mm.types) if (TypeFunctions.tInfos(mt).path.name == t.name) defined = true;
+				if (!defined) throw new TypingError("Module " + hxc.core.Globals.sTypePath(mm.path) + " does not define type " + t.name, p);
+			}
+			// A missing module prints as "Type not found : <module>"; the KIND is what exempts it from the
+			// argument annotation when typing against an argument.
+			throw new hxc.core.TypingError.ModuleNotFoundError("Type not found : " + hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}), p);
+		}
 		var idx = proto.pnames.get(EvalHash.hash(t.method));
 		if (idx == null)
 			throw new TypingError("Method " + t.method + " not found on class "
@@ -1560,7 +1628,10 @@ class EvalMacro {
 			};
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
-				com.globalMetadata.unshift({filter: filter == "" ? [] : filter.split("."), meta: m, recursive: recursive, toTypes: toTypes, toFields: toFields});
+				// Every entry parsed from the string is re-placed at the API call's position, which for a
+				// --macro call is null - "(unknown)" - rather than at the string's own offsets.
+				var placed:MetadataEntry = {name: m.name, params: m.params, pos: curPos};
+				com.globalMetadata.unshift({filter: filter == "" ? [] : filter.split("."), meta: placed, recursive: recursive, toTypes: toTypes, toFields: toFields});
 				collect(e1);
 			case _:
 		}
@@ -1584,7 +1655,8 @@ class EvalMacro {
 		var entries:Array<MetadataEntry> = [];
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
-				entries.push(m);
+				// Every entry is re-placed at the API call's position, null for a --macro call.
+				entries.push({name: m.name, params: m.params, pos: curPos});
 				collect(e1);
 			case _:
 		}
@@ -2122,7 +2194,7 @@ class EvalMacro {
 		if (loaded != null) forceModuleClassFields(macroCom, loaded);
 	}
 
-	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef):Void {
+	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position):Void {
 		evictDisplayModule();
 		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
@@ -2245,6 +2317,25 @@ class EvalMacro {
 				staleMacroCtx = macroCtx;
 				macroCtx = null;
 				lastModuleCount = -1;
+			}
+			// The class the path names has to carry the method among its statics, else "Method f not found
+			// on class P" at the caller's position. A `macro` function a build macro ADDED in the host is
+			// exactly that: the macro world built its copy of the class without the host's metadata, so the
+			// method is not there. Only the callers that pass a position take the raise; the others verify
+			// the method themselves afterwards. after the bodies: the macro load finalizes before it looks
+			// the method up, so what the macro world's copy of the class records (an Unknown identifier for
+			// the very method the host is asking about) precedes the miss.
+			if (p != null && fieldName != null && !forceAll) {
+				var named:Null<TClass> = null;
+				var carried = false;
+				for (mt in m.types) switch (mt) {
+					case TClassDecl(c):
+						if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) named = c;
+						if (c.statics.exists(fieldName) || c.fields.exists(fieldName)) carried = true;
+					case _:
+				}
+				if (named != null && !carried)
+					throw new TypingError("Method " + fieldName + " not found on class " + hxc.core.Globals.sTypePath(path), p);
 			}
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
@@ -2387,13 +2478,13 @@ class EvalMacro {
 			// The macro field is absent because the host parsed the class without macro defined; load
 			// the class from the macro world so its #if macro members are present.
 			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
-				tctx.curclass != null ? tctx.curclass.module : null);
+				tctx.curclass != null ? tctx.curclass.module : null, p);
 			ec = getContext(tctx.com);
 			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
 		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
-		if (idx == null) throw new TypingError("Macro not found: " + fa.field.name, p);
+		if (idx == null) throw new TypingError("Method " + fa.field.name + " not found on class " + hxc.core.Globals.sTypePath(path), p);
 		var fn = switch (proto.pfields[idx]) {
 			case VFunction(f, _): f;
 			case _: throw new TypingError("Not a macro function: " + fa.field.name, p);
@@ -3531,7 +3622,9 @@ class EvalMacro {
 		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: pos} : PlacedAccess)];
 		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), pos);
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
-		return new ClassField({name: name, pos: pos}, null, pos, meta, access, kind);
+		// `name_pos`, defaulting to the field's pos.
+		var namePos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), pos);
+		return new ClassField({name: name, pos: namePos}, null, pos, meta, access, kind);
 	}
 
 	static function decodeMetadata(ec:EvalContext, v:EvalValue, dp:Position):Metadata {
@@ -3897,6 +3990,10 @@ class EvalMacro {
 	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("name"), mkString(f.cffName.name));
+		// `name_pos` carries the placed name's position, and decoding the field restores it, so a field a
+		// build macro hands back unchanged keeps its name where the parser put it - which the build's
+		// placed-name equality check relies on.
+		fields.set(EvalHash.hash("name_pos"), encPos(f.cffName.pos));
 		fields.set(EvalHash.hash("doc"), VNull);
 		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));

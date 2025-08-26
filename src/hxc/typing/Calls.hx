@@ -487,6 +487,23 @@ class Calls {
 					} else {
 						throw argError(err.message, a.name, a.opt, err.pos, err.depth, err);
 					}
+				} catch (ce:hxc.context.Context.ContextError) {
+					// A build the argument forced (Typeload.forceBuildInBody) failing is an Error like any
+					// other
+					// here: typing against the parameter turns every Error but a call error and a
+					// module-not-found
+					// into WithTypeError, and argError annotates it. Back to the plain class - the callee
+					// is
+					// resolved by now, so nothing downstream mistakes it for a miss.
+					if (ce.kind != null && ce.kind.match(ModuleNotFound(_))) throw new TypingError(ce.message, ce.pos, ce.depth);
+					if (a.opt && mightSkip) {
+						skip = true;
+						skipped.push({name: a.name, msg: ce.message, pos: ce.pos, depth: ce.depth});
+					} else if (skipped.length > 0) {
+						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
+					} else {
+						throw argError(ce.message, a.name, a.opt, ce.pos, ce.depth);
+					}
 				}
 				if (skip) {
 					var pi = makePosInfosArg(ctx, a.t, callp);

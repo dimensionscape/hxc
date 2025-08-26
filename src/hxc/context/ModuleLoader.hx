@@ -754,6 +754,9 @@ class ModuleLoader {
 
 	static function applyGlobalMetadata(ctx:Context, m:ModuleDef, decls:Array<ModuleType>):Void {
 		if (ctx.globalMetadata.length == 0) return;
+		// Apply global metadata only to the host world; macro-world copies must not run host metadata
+		// builds again.
+		if (ctx.isMacro) return;
 		function isLower(s:String):Bool {
 			var c = s.charCodeAt(0);
 			return !(c >= "A".code && c <= "Z".code);
@@ -1968,6 +1971,10 @@ class ModuleLoader {
 		};
 		var stringMod = loadModule(ctx, {pack: [], name: "String"}, p);
 		var arrayMod = loadModule(ctx, {pack: [], name: "Array"}, p);
+		// haxe.EnumTools (the global `using`) loads at typer creation, before any init macro runs, so
+		// global metadata registered by one never reaches it: `addGlobalMetadata("", "@:build(...)")`
+		// does not build it.
+		loadModule(ctx, {pack: ["haxe"], name: "EnumTools"}, p);
 
 		function abstractOf(m:ModuleDef, name:String):TAbstract {
 			for (mt in m.types) switch (mt) {

@@ -978,6 +978,7 @@ class Compiler {
 			exitRequest(1);
 		} catch (e:hxc.core.TypingError.FatalError) {
 			// A field's fatal error is reported like any other, and that is the end of the compile.
+			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fatal-driver] " + e.message);
 			ctx.raiseTypingErrors = false;
 			ctx.addDiagnostic(e.message, e.pos, e.depth);
 			flushPendingMessages(ctx);
@@ -3445,6 +3446,8 @@ class Compiler {
 	// A fatal error joins the message store before printing, so -D message.reporting picks the configured
 	// formatter (every abort prints through it).
 	static function abortWithMessage(ctx:Context, msg:String, pos:Position, depth:Int = 0):Void {
+		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[abort] " + msg.split("
+")[0]);
 		ctx.raiseTypingErrors = false;
 		ctx.addDiagnostic(msg, pos, depth);
 		flushPendingMessages(ctx);

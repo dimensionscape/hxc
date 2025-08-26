@@ -493,6 +493,9 @@ class Context {
 		if (forwardWarningsTo != null)
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
 		// Keep a local diagnostic copy for report-once checks even when forwarding it to the host.
+		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
+			Sys.println("[diag" + (isMacro ? ":macro" : "") + " #" + diagnostics.length + (forwardWarningsTo != null ? " fwd" : "") + "] " + message.split("
+")[0]);
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
 	}
 

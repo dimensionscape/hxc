@@ -1060,9 +1060,21 @@ class Parser {
 		// pull - it reads the token without taking it, leaving a failed #if condition for the anonymous
 		// parse to absorb.
 		if (tokEq(rawTok(), TBinop(OpGt))) {
-			var tl:Array<PlacedTypePath> = [parseStructuralExtension()];
+			// Structural extension. A `>` that no type path follows is a soft failure after the `>` was
+			// taken - from the first extension, and from the list for the later ones - so the enclosing
+			// match moves on to the class-fields form from where the stream stands, and `{ > ?f:Int }`
+			// reports that production's Expected } at the `?` rather than the type path's complaint.
+			var tl:Array<PlacedTypePath> = [];
+			var ext = try parseStructuralExtension() catch (er:ParserError) { if (!er.soft) throw er; null; };
+			if (ext == null) {
+				var r = parseClassFields(true, p1);
+				return {ct: CTAnonymous(r.fields), pos: Position.union(p1, r.pos)};
+			}
+			tl.push(ext);
 			while (tokEq(peek(), TBinop(OpGt))) {
-				tl.push(parseStructuralExtension());
+				var more = try parseStructuralExtension() catch (er:ParserError) { if (!er.soft) throw er; null; };
+				if (more == null) break;
+				tl.push(more);
 			}
 			// After the extension list, the remaining body is EITHER the short anon-var form or a full
 			// class-field body
@@ -1150,7 +1162,8 @@ class Parser {
 		try t = parseTypePath() catch (er:ParserError) {
 			if (idx != save) throw er;
 			idx = save;
-			if (!wouldSkipDisplayPosition(p1, false)) throw er;
+			// A soft failure: the `>` stays taken and the caller's next alternative reads on from here
+			if (!wouldSkipDisplayPosition(p1, false)) throw new ParserError(er.msg, er.pos, true);
 			if (tokEq(peek(), Comma)) junk();
 			return {path: magicTypePath(), pos: new Position(p1.file, displayOffset, displayOffset)};
 		}

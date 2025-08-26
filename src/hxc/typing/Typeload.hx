@@ -845,6 +845,29 @@ class Typeload {
 		}
 	}
 
+	// An Error out of a class build is an Error, not the miss a resolution failure raises: the
+	// identifier and dot-path fallbacks let it pass and the statement records it. hxc signals a miss
+	// with a TypingError, so a build's failure travels as a ContextError instead, which those fallbacks
+	// do not catch and typeBlock records; taken for a miss, the fallback re-resolves the now fieldless
+	// class and reports its missing field.
+	public static function forceBuildInBody(ctx:Context, c:TClass):Void {
+		// A build carries its own heritage; hxc sets a class's heritage in resolveModule, and ensureBuilt
+		// reads it for the inherited @:autoBuild. A class forced before its module resolved is marked built
+		// with the parent's autoBuild unseen, so the module resolves first, and a module whose resolution
+		// is
+		// still open is left to the install path that builds it on the way.
+		var m = c.module;
+		if (m != null && m.extra.resolved == 0) hxc.typing.TypeResolve.resolveModule(ctx, m);
+		if (m != null && hxc.typing.TypeResolve.resolving.exists(m)) return;
+		try hxc.eval.EvalMacro.ensureBuilt(ctx, c)
+		catch (e:hxc.core.TypingError) {
+			// The kind survives the change of class: a macro module that did not load is
+			// Module_not_found, which the argument annotation leaves alone.
+			var kind = Std.isOfType(e, hxc.core.TypingError.ModuleNotFoundError) ? ModuleNotFound(c.path) : Other;
+			throw new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+		}
+	}
+
 	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool, ?callerTypeParams:TypeParams, ?tctx:hxc.typing.TyperContext):T {
 		return switch (mt) {
 			case TClassDecl(c):
@@ -869,6 +892,10 @@ class Typeload {
 						// The instance is the macro's result, and the single parameter carries the call. .
 						hxc.eval.EvalMacro.runMacroType(ctx, params, p, callerTypeParams);
 					case _:
+						// `if ctx.pass > PBuildClass then ignore(c.build())`. A class named while a body
+						// is being typed builds right there, and its build's failure is that expression's
+						// error.
+						if (hxc.typing.TypeFields.bodyDepth > 0) forceBuildInBody(ctx, c);
 						TInst(c, params);
 				}
 			case TEnumDecl(e): TEnum(e, params);

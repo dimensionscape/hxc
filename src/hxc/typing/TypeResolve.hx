@@ -16,8 +16,20 @@ import haxe.ds.StringMap;
 class TypeResolve {
 	static final pNull = Position.nullPos;
 
+	// The modules whose resolution is OPEN right now. resolved is set at the start, so it
+	// cannot tell an in-progress module from a finished one; a build forced from a body
+	// (Typeload.forceBuildInBody) has to know, because a class's inherited @:autoBuild is read
+	// from a heritage that resolution is still setting.
+	public static var resolving:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
+
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
 		if (m.extra.resolved >= 1) return;
+		resolving.set(m, true);
+		try resolveModuleInner(ctx, m) catch (e:Dynamic) { resolving.remove(m); throw e; }
+		resolving.remove(m);
+	}
+
+	static function resolveModuleInner(ctx:Context, m:ModuleDef):Void {
 		m.extra.resolved = 1;
 		// An unresolvable `using` aborts the module's initialisation before it reaches a single
 		// declaration, so the types exist but none of them is ever initialised. Resolving them anyway

@@ -1667,7 +1667,7 @@ class Typer {
 				// (building an instance runs the class build past PBuildClass); expression typing is late
 				// enough.
 				switch (TypeFunctions.follow(t)) {
-					case TInst(hc, _): hxc.eval.EvalMacro.ensureBuilt(ctx.com, hc);
+					case TInst(hc, _): forceBuild(ctx, hc);
 					case _:
 				}
 				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
@@ -1796,7 +1796,7 @@ class Typer {
 					activeArg: active
 				};
 			case TAbstract(a, tl):
-				if (a.impl != null) hxc.eval.EvalMacro.ensureBuilt(ctx.com, a.impl);
+				if (a.impl != null) forceBuild(ctx, a.impl);
 				var sigs = [];
 				for (cf in a.array) switch (TypeFunctions.follow(cf.type)) {
 					case TFun(sig) if (sig.args.length > 0):
@@ -3940,7 +3940,7 @@ class Typer {
 		// Hxc resolves field types in a separate pass; resolve the referenced module so its
 		// statics have real types (idempotent via processed).
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
-		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
+		switch (mt) { case TClassDecl(c): forceBuild(ctx, c); case _: }
 		return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p));
 	}
 
@@ -4028,7 +4028,7 @@ class Typer {
 			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 			switch (mt) {
 				case TClassDecl(c):
-					hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
+					forceBuild(ctx, c);
 					var cf = c.statics.get(lookupName);
 					if (cf != null && wildcard && TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) cf = null;
 					if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(c), TexprTools.makeTypeExpr(TClassDecl(c), p), p);
@@ -4167,7 +4167,7 @@ class Typer {
 				for (mt2 in mod.types) {
 					var ti = TypeFunctions.tInfos(mt2);
 					if (ti.path.name == field && !(ti.isPrivate && mod != ctx.com.currentModule)) {
-						switch (mt2) { case TClassDecl(c2): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c2); case _: }
+						switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
 						return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p));
 					}
 				}
@@ -4343,7 +4343,7 @@ class Typer {
 				for (mt2 in mod.types) {
 					var ti = TypeFunctions.tInfos(mt2);
 					if (ti.path.name == rest[0] && !(ti.isPrivate && mod != ctx.com.currentModule)) {
-						switch (mt2) { case TClassDecl(c2): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c2); case _: }
+						switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
 						return rest.length == 1
 							? AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p))
 							: chainFrom(AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), new Position(p.file, p.min, ends[0]))), 1, ends);
@@ -4419,7 +4419,7 @@ class Typer {
 			case _:
 		}
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
-		switch (mt) { case TClassDecl(c): hxc.eval.EvalMacro.ensureBuilt(ctx.com, c); case _: }
+		switch (mt) { case TClassDecl(c): forceBuild(ctx, c); case _: }
 		// Each chain link's source span ends at its own segment (reconstructed from the right edge), so
 		// field errors narrow to the field name like the reference's per-EField positions do pfield).
 		var ends:Array<Int> = [];
@@ -4872,7 +4872,7 @@ class Typer {
 		if (target == null) throw new TypingError("Binding new is only allowed on class types", p);
 		if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
 		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.c.path) + "()' instead", p);
-		hxc.eval.EvalMacro.ensureBuilt(ctx.com, target.c);
+		forceBuild(ctx, target.c);
 		// An inherited constructor resolves on the nearest ancestor declaring one, with the ancestor's
 		// parameters applied along the chain; none anywhere is "does not have a constructor".
 		var ownerC = target.c;
@@ -5110,6 +5110,16 @@ class Typer {
 		return TypeFunctions.mk(TBlock(acc), t, p);
 	}
 
+	// Building an instance runs the class build once the pass is past PBuildClass, and an error out of it
+	// is a real error, not the not-found a resolution miss raises: the identifier and dot-path fallbacks
+	// must let it pass so the statement records it. hxc signals a miss with a TypingError, so a build's
+	// failure arriving the same way would be taken for a miss, and the fallback would re-resolve the now
+	// fieldless class and report its missing field instead. It travels as a ContextError, which those
+	// fallbacks do not catch and typeBlock records.
+	static function forceBuild(ctx:TyperContext, c:TClass):Void {
+		Typeload.forceBuildInBody(ctx.com, c);
+	}
+
 	static function typeVars(ctx:TyperContext, vl:Array<EVar>, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var out:Array<{v:TVar, e:Null<TExpr>}> = [];
@@ -5135,6 +5145,8 @@ class Typer {
 				// everything after it - the initializer is not typed, the variable is not the one the user
 				// declared, and nothing answers a display request from it.
 				var t:T = ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
+				// A hinted class builds when the hint loads.
+				if (ev.evType != null) switch (TypeFunctions.follow(t)) { case TInst(hc, _): forceBuild(ctx, hc); case _: }
 				var e:Null<TExpr> = switch (ev.evExpr) {
 					case null: null;
 					case ex:
@@ -5695,7 +5707,7 @@ class Typer {
 				return [instantiate(cf)].concat([for (o in cf.overloads) instantiate(o)]);
 			}
 			if (cur.superClass == null) return [];
-			hxc.eval.EvalMacro.ensureBuilt(ctx.com, cur.superClass.c);
+			forceBuild(ctx, cur.superClass.c);
 			var superTl = [for (sp in cur.superClass.params) TypeFunctions.applyParams(cur.params, curTl, sp)];
 			cur = cur.superClass.c;
 			curTl = superTl;
@@ -5743,7 +5755,7 @@ class Typer {
 	static function constructForwarded(ctx:TyperContext, t:T, el:Array<Expr>, withType:WithType, p:Position):TExpr {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(uc, upl):
-				hxc.eval.EvalMacro.ensureBuilt(ctx.com, uc);
+				forceBuild(ctx, uc);
 				var ctorType = findConstructorType(ctx, uc, upl);
 				if (ctorType == null) throw new TypingError(hxc.core.Globals.sTypePath(uc.path) + " does not have a constructor", p);
 				var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
@@ -5822,7 +5834,7 @@ class Typer {
 				// An abstract class has no direct construction.
 				if (TypeFunctions.hasClassFlag(c, CAbstract))
 					throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " is abstract and cannot be constructed", p);
-				hxc.eval.EvalMacro.ensureBuilt(ctx.com, c);
+				forceBuild(ctx, c);
 				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
 				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
 				// the
