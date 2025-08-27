@@ -44,10 +44,12 @@ class TypeResolve {
 		// everything but a plain class does its work there and then (init_abstract at init_enum,
 		// init_typedef); a class only queues its build `delay ctx PBuildClass`). That bucket drains LIFO
 		// takes the head), so the classes build last declaration first, after the rest of the module is
-		// already initialised. hxc resolves eagerly, so it builds the same list by hand.
+		// already initialised. hxc resolves eagerly, so it builds the same list by hand. Every EClass
+		// declaration takes that delay - a @:generic class, a @:genericBuild one, the module's statics
+		// carrier - and only an abstract's implementation is built eagerly by init_abstract.
 		var rest = [], classes = [];
 		for (mt in m.types) switch (mt) {
-			case TClassDecl(c) if (c.kind.match(KNormal)): classes.unshift(mt);
+			case TClassDecl(c) if (!c.kind.match(KAbstractImpl(_))): classes.unshift(mt);
 			case _: rest.push(mt);
 		}
 		for (mt in rest.concat(classes)) {
