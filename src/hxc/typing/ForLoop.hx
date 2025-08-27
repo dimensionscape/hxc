@@ -214,8 +214,8 @@ class ForLoop {
 	}
 
 	// Resolve a method access `e.name` for a 0-argument call, returning the callee texpr.
-	static function methodCallee(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
-		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
+	static function methodCallee(ctx:TyperContext, e:TExpr, name:String, p:Position, resume:Bool = false):TExpr {
+		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value, true, resume);
 		forceOpenMethod(ctx, acc);
 		return switch (acc) {
 			case AKField(fa): FieldAccessTools.getFieldExpr(fa, FCall);
@@ -227,8 +227,8 @@ class ForLoop {
 
 	// Build a 0-argument call `e.name`, dispatched through the full call machinery so an iterator
 	// supplied by an abstract method (e.g. Map.iterator via its _Impl_) resolves like any other call.
-	static function call0(ctx:TyperContext, e:TExpr, name:String, p:Position):TExpr {
-		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value);
+	static function call0(ctx:TyperContext, e:TExpr, name:String, p:Position, resume:Bool = false):TExpr {
+		var acc = Fields.typeField(ctx, e, name, p, MCall([]), WithTypeTools.value, true, resume);
 		forceOpenMethod(ctx, acc);
 		return Calls.buildCall(ctx, acc, [], WithTypeTools.value, p);
 	}
@@ -236,12 +236,12 @@ class ForLoop {
 	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var rhsTyped = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
-		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p) catch (kvErr:TypingError) {
+		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p, true) catch (kvErr:TypingError) {
 			// rhsTyped may itself be a KeyValueIterator (exposing hasNext/next); use it directly then. If
 			// it is neither iterable nor exposes keyValueIterator, the missing accessor is the real
 			// problem, so surface that error rather than a later hasNext failure. from
 			// IterationKind.check_iterator .
-			try { call0(ctx, rhsTyped, "hasNext", p); call0(ctx, rhsTyped, "next", p); rhsTyped; }
+			try { call0(ctx, rhsTyped, "hasNext", p, true); call0(ctx, rhsTyped, "next", p, true); rhsTyped; }
 			catch (_:TypingError) throw kvErr;
 		};
 		var oldLoop = ctx.inLoop;
@@ -408,13 +408,13 @@ class ForLoop {
 		// Choose which failure to report when loop strategies fail.
 		var iterErr:Null<TypingError> = null;
 		try {
-			iterExpr = try call0(ctx, e1, "iterator", p) catch (er:TypingError) { iterErr = er; e1; };
+			iterExpr = try call0(ctx, e1, "iterator", p, true) catch (er:TypingError) { iterErr = er; e1; };
 			// When the iterator candidate is an abstract that does not expose next directly, follow it to its
 			// underlying type (the reference casts to Iterator<_>) so an abstract over an Iterator iterates.
-			var nextCallee = try methodCallee(ctx, iterExpr, "next", p) catch (_:TypingError) {
+			var nextCallee = try methodCallee(ctx, iterExpr, "next", p, true) catch (_:TypingError) {
 				var ut = TypeFunctions.followWithAbstracts(iterExpr.type);
 				iterExpr = TypeFunctions.mk(TCast(iterExpr, null), ut, iterExpr.pos);
-				methodCallee(ctx, iterExpr, "next", p);
+				methodCallee(ctx, iterExpr, "next", p, true);
 			};
 			pt = switch (TypeFunctions.follow(nextCallee.type)) {
 				case TFun(sig): sig.ret;
@@ -630,12 +630,12 @@ class ForLoopFaithful {
 				}
 			}
 			try {
-				var acc = Fields.typeField(ctx, e, s, e.pos, MCall([]), WithTypeTools.withType(it.t));
+				var acc = Fields.typeField(ctx, e, s, e.pos, MCall([]), WithTypeTools.withType(it.t), true, true);
 				tryAcc(acc);
 			} catch (_:Fields.FieldNotFoundError) {
 				tryLastResort(function() {
 					if (dynamicIterator != null) return dynamicIterator;
-					var acc = Fields.typeField(ctx, e, s, e.pos, MCall([]), WithTypeTools.withType(it.t));
+					var acc = Fields.typeField(ctx, e, s, e.pos, MCall([]), WithTypeTools.withType(it.t), true, true);
 					return tryAcc(acc);
 				});
 			}
@@ -770,8 +770,8 @@ class ForLoopFaithful {
 					var eTmp = TexprTools.makeLocal(vTmp, vTmp.pos);
 					// Probe next/hasNext without the @:op(a.b) resolve fallback: a resolve would claim any name,
 					// and this probe must fail over to the iterator() lookup instead.
-					var accNext = Fields.typeField(ctx, eTmp, "next", p, MCall([]), WithTypeTools.value, false);
-					var accHasNext = Fields.typeField(ctx, eTmp, "hasNext", p, MCall([]), WithTypeTools.withType(ctx.com.basic.tbool), false);
+					var accNext = Fields.typeField(ctx, eTmp, "next", p, MCall([]), WithTypeTools.value, false, true);
+					var accHasNext = Fields.typeField(ctx, eTmp, "hasNext", p, MCall([]), WithTypeTools.withType(ctx.com.basic.tbool), false, true);
 					switch [accNext, accHasNext] {
 						case [AKExpr({expr: TField(_, FDynamic(_))}), _] | [_, AKExpr({expr: TField(_, FDynamic(_))})]:
 							throw new hxc.core.NotFound();

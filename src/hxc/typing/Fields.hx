@@ -386,6 +386,10 @@ class Fields {
 	// Exit means there is nothing usable to describe and nothing is recorded.
 	public static function handleMissingFieldRaise(ctx:TyperContext, tthis:T, i:String, mode:AccessMode,
 			withType:WithType, pfield:Position):Void {
+		// This check comes first: outside a diagnostics run nothing below runs, and in particular the
+		// call's arguments are not typed here to describe the missing method - the call types them
+		// itself, and typing them twice would report a bad argument twice.
+		if (!ctx.com.errorInDiagnosticsRun(pfield)) return;
 		// The RETURN type: what is expected, a fresh monomorph for a plain value, and for a
 		// NoValue access whatever the assigned expression turns out to be.
 		var tret:Null<T> = switch (withType) {
@@ -458,19 +462,37 @@ class Fields {
 		try handleMissingFieldRaise(ctx, tthis, i, mode, withType, p) catch (_:Dynamic) {}
 	}
 
-	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
+	// Once no strategy answers, the verdict is recorded and the access recovers as a dynamic field
+	// over a fresh monomorph, so typing goes on - a call's arguments are still typed after a bad
+	// callee, and `Q.a(Q.b())` reports both. Only a `resume` site gets the not-found error back
+	// instead: the for-loop iterator probes and dot-path resolution, and hxc's own probes - the
+	// abstract forward and constraint walks, the accessor lookups, the dot-path chains, the iterator
+	// shapes - since they catch the raise to try something else.
+	public static function notFound(ctx:TyperContext, e:TExpr, i:String, p:Position, pfield:Position, mode:AccessMode, withType:WithType, resume:Bool):AccessKind {
+		var err = fieldNotFound(e.type, i, pfield);
+		if (resume) throw err;
+		if (!ctx.untypedMode) {
+			// Records what a diagnostics run can offer to create; Exit means nothing, and the plain
+			// verdict follows either way.
+			try handleMissingFieldRaise(ctx, e.type, i, mode, withType, pfield) catch (_:Dynamic) {}
+			ctx.com.addDiagnostic(err.message, pfield);
+		}
+		return AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p));
+	}
+
+	public static function typeField(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true, resume:Bool = false):AccessKind {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("typeField");
 		if (ctx.untypedMode) {
-			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve)
+			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve, resume)
 			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
 		}
-		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve);
+		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve, resume);
 	}
 
 	// Every FDynamic access is built at `p`, the full field position; the name slice `pfield` serves
 	// only for error reporting. An `untyped b.field` access therefore starts with its receiver and
 	// does not become a separate source map segment.
-	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true):AccessKind {
+	static function typeFieldInner(ctx:TyperContext, e:TExpr, i:String, p:Position, mode:AccessMode, withType:WithType, allowResolve:Bool = true, resume:Bool = false):AccessKind {
 		// The field's own position is the trailing name-length slice of the access span.
 		var pfield = (e.pos.file == p.file && e.pos.min == p.min && e.pos.max == p.max)
 			? p : new Position(p.file, p.max - i.length, p.max);
@@ -483,7 +505,7 @@ class Fields {
 							for (t in constraints) switch (TypeFunctions.follow(t)) {
 								case TAbstract(_, _):
 									try {
-										constrained = typeField(ctx, TypeFunctions.mkCast(e, t, p), i, p, mode, withType);
+										constrained = typeField(ctx, TypeFunctions.mkCast(e, t, p), i, p, mode, withType, true, true);
 										break;
 									} catch (_:NotFound) {
 									} catch (_:TypingError) {
@@ -515,7 +537,7 @@ class Fields {
 							else if (c.statics.exists(i))
 								throw new TypingError("Cannot access static field " + i + " from a class instance", pfield);
 							else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p))
-							else throw fieldNotFound(e.type, i, pfield);
+							else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 						}
 					}
 				}
@@ -527,7 +549,7 @@ class Fields {
 						if (en.constrs.exists(i)) enumConstructor(ctx, en, e, i, p);
 						else {
 							var u = tryUsing(ctx, e, i, p);
-							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
+							if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 						}
 					case _:
 						var f = a.fields.get(i);
@@ -559,10 +581,10 @@ class Fields {
 										var mt = TypeFunctions.moduleTypeOfType(ab.thisType);
 										// The underlying type expression with p and re-enters the same lookup, so the forwarded
 										// access keeps the full span, not the name slice.
-										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, p), i, p, mode, withType);
+										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, p), i, p, mode, withType, true, resume);
 									} catch (_:hxc.core.ExitException) {
 										var u = tryUsing(ctx, e, i, p);
-										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
+										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 									}
 								case _:
 									var u = tryUsing(ctx, e, i, p);
@@ -581,7 +603,7 @@ class Fields {
 											// monomorph unifies and the call never fails.
 											ctx.com.addDiagnostic("Static access to instance field " + i + " is not allowed", pfield);
 											AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p));
-										case _: throw fieldNotFound(e.type, i, pfield);
+										case _: notFound(ctx, e, i, p, pfield, mode, withType, resume);
 									}
 							}
 						}
@@ -623,13 +645,13 @@ class Fields {
 								// A CLOSED structural monomorph (e.g. bound by an intersection constraint
 								// A & B) still consults the module's using extensions before failing.
 								var u = tryUsing(ctx, e, i, p);
-								if (u != null) u else throw fieldNotFound(e.type, i, pfield);
+								if (u != null) u else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 							}
 						case CTypes(tl):
 							var res:AccessKind = null;
 							var err:Dynamic = null;
 							for (tc in tl) {
-								try { res = typeField(ctx, TypeFunctions.mk(e.expr, tc.t, e.pos), i, p, mode, withType); break; }
+								try { res = typeField(ctx, TypeFunctions.mk(e.expr, tc.t, e.pos), i, p, mode, withType, true, true); break; }
 								catch (ex:NotFound) err = ex
 								catch (ex:TypingError) err = ex;
 							}
@@ -687,7 +709,7 @@ class Fields {
 							var recv = ctx.com.platform.match(Cs)
 								? TypeFunctions.mk(e.expr, underlying, e.pos)
 								: TypeFunctions.mk(TCast(e, null), underlying, e.pos);
-							return typeField(ctx, recv, i, pfield, mode, withType, false);
+							return typeField(ctx, recv, i, pfield, mode, withType, false, true);
 						} catch (_:FieldNotFoundError) {}
 					}
 					var u = tryUsing(ctx, e, i, p);
@@ -709,13 +731,13 @@ class Fields {
 						if (forwardsField(a, i)) {
 							var underlying = TypeFunctions.applyParams(a.params, params, a.thisType);
 							try {
-								return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType);
+								return typeField(ctx, TypeFunctions.mk(e.expr, underlying, e.pos), i, pfield, mode, withType, true, true);
 							} catch (_:FieldNotFoundError) {}
 						}
 					}
 					if (staticCf != null && !TypeFunctions.hasClassFieldFlag(staticCf, CfImpl))
 						throw new TypingError("Invalid call to static function " + i + " through abstract instance", pfield);
-					throw fieldNotFound(e.type, i, pfield);
+					return notFound(ctx, e, i, p, pfield, mode, withType, resume);
 				}
 				// A property (get/set accessors) dispatches through its accessor via fieldAccess (which
 				// yields AKUsingAccessor for an abstract host); other fields are a direct impl access.
@@ -728,7 +750,7 @@ class Fields {
 				else AKUsingField(FieldAccessTools.makeAbstractStaticExtensionAccess(a, params, a.impl, cf, e, false, Position.union(e.pos, pfield)));
 			case TAbstract(_, _):
 				var u = tryUsing(ctx, e, i, p);
-				if (u != null) u else throw fieldNotFound(e.type, i, pfield);
+				if (u != null) u else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 			case TDynamic(dt):
 				// A using extension applies to a Dynamic receiver before the dynamic-field fallback.
 				// A field on Dynamic<T> reads at T, plain Dynamic otherwise.
@@ -738,7 +760,7 @@ class Fields {
 				// A field not found on an enum or other value may come from a `using` static extension
 				// (e.g. the global EnumValueTools on an enum value).
 				var u = tryUsing(ctx, e, i, p);
-				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else throw fieldNotFound(e.type, i, pfield);
+				if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 		};
 	}
 

@@ -591,7 +591,9 @@ class PatternMaker {
 		try {
 			var mt = TypeFunctions.moduleTypeOfType(t);
 			var emt = TexprTools.makeTypeExpr(mt, p);
-			var acc = Fields.typeField(pctx.ctx, emt, i, p, MGet, WithTypeTools.value);
+			// This probe runs with the report mode off, so a miss raises into the catch below rather than
+			// recording `Enum<E> has no field x` for every capture name.
+			var acc = Fields.typeField(pctx.ctx, emt, i, p, MGet, WithTypeTools.value, true, true);
 			var pat = checkTyped(Typer.accGet(pctx.ctx, acc));
 			if (pat != null) return answerDisplay(pat);
 		} catch (_:Dynamic) {}

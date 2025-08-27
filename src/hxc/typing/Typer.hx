@@ -4320,6 +4320,10 @@ class Typer {
 			for (i in fromIdx...rest.length) {
 				var isLast = i == rest.length - 1;
 				var segP = new Position(p.file, p.min, ends[i]);
+				// Walks the segments after a resolved module type with the default config, so a miss here is
+				// the recorded verdict of the access recovers; 's resume covers only the statics-before-types
+				// decision, which the sub-type lookup above has already made. Raising here abandoned the
+				// statement, arguments and all, on `Q.a(Q.b())`.
 				acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
 			}
 			return acc;
@@ -4960,6 +4964,18 @@ class Typer {
 				}
 				// The head is tried as an identifier first (type_ident_raise: locals, this-fields, the current
 				// class's statics) and only on NotFound as a dot path.
+				var lastRecv:TExpr = null;
+				// A chain whose HEAD is not an identifier - a lowercase package segment - is a dot path
+				// resolved as a whole never field by field. hxc walks it field by field and retries the whole
+				// path on a miss, so on such a path the lookup resumes whatever the receiver is:
+				// `hxc.core.WithType.WithType.WithType(t, null)` reaches the enum's constructor through the
+				// enum, not through the constructor of the same name that the module's main type answered
+				// first.
+				var segsAll = flattenIdentPath(EField(e1, field, EFNormal));
+				var lowerLedPath = segsAll != null && segsAll.length > 0 && {
+					var c0 = segsAll[0].charCodeAt(0);
+					c0 >= "a".code && c0 <= "z".code;
+				};
 				try {
 					// Is the SPECULATIVE lookup: it raises and reports nothing, and uses it for a dot path's head
 					// so a package prefix falls through to the type-path route below. hxc reaches that head
@@ -4979,7 +4995,12 @@ class Typer {
 								access: Fields.typeField(ctx, accGet(ctx, sn.access), field, p, mode, withType)
 							});
 						case _:
-							Fields.typeField(ctx, accGet(ctx, acc), field, p, mode, withType);
+							var recv = accGet(ctx, acc);
+							lastRecv = recv;
+							// A field asked of a type while a dotted path is walked resumes (TypeFieldConfig.create
+							// true), so the module's own sub-type or a same-package module can still answer below; a
+							// plain receiver takes the recorded verdict of .
+							Fields.typeField(ctx, recv, field, p, mode, withType, true, recv.expr.match(TTypeExpr(_)) || lowerLedPath);
 					}
 				} catch (err:TypingError) {
 					// The dot-path route only applies when the path COULD be a package-led type path (leading
@@ -5005,7 +5026,13 @@ class Typer {
 						case _: null;
 					};
 					if (acc == null) acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
-					if (acc == null) throw err;
+					if (acc == null) {
+						// Nothing answered, so the verdict is recorded and the access recovers - the recovery the
+						// resumed lookup above skipped on purpose.
+						if (Std.isOfType(err, Fields.FieldNotFoundError) && lastRecv != null && (lastRecv.expr.match(TTypeExpr(_)) || lowerLedPath))
+							return Fields.notFound(ctx, lastRecv, field, p, err.pos, mode, withType, false);
+						throw err;
+					}
 					acc;
 				}
 			case EArray(e1, e2):

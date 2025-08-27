@@ -1392,7 +1392,7 @@ class Operators {
 			// The property access already governs visibility; the getter dispatch is internal and must not
 			// re-check the (usually private) accessor's own visibility.
 			ctx.privateAccess++;
-			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value);
+			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value, true, true);
 			ctx.privateAccess--;
 			var call = Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
 			return switch (call.expr) {
@@ -1420,7 +1420,7 @@ class Operators {
 			// See accessorReadOn: the setter dispatch is internal, so bypass the accessor's
 			// own visibility check (the property access already governed it).
 			ctx.privateAccess++;
-			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value));
+			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value, true, true));
 			ctx.privateAccess--;
 			return Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos), [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
 		}
