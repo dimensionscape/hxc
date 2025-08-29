@@ -853,12 +853,26 @@ class TypeResolve {
 		fieldChecksDone.set(c, true);
 		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
 		// The half ModuleLoader cannot see: for a static field the superclass chain's instance fields
-		// collide too. Skipped when the same-class half has already reported, since the reference
-		// computes one `dup` and reports once.
-		if (!isExtern) for (cf in c.orderedStatics) {
-			if (cf.name == "__init__" || c.fields.exists(cf.name)) continue;
-			if (getDeclaredIn(c.superClass, cf.name) != null)
-				ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cf.pos);
+		// collide too. Skipped when the same-class half has already reported, since one duplicate is
+		// computed and reported once. In declaration order: the field being added collides with what the
+		// class already holds - a static with the instance fields (the superclass chain's included), an
+		// instance field with the statics - and reports at the whole field. It cannot run at
+		// registration, before the heritage resolves: a
+		// class with a missing parent must not report the collision.
+		if (!isExtern) {
+			var all = c.orderedStatics.concat(c.orderedFields);
+			all.sort(function(a, b) return a.pos.min - b.pos.min);
+			var seenStatic = new haxe.ds.StringMap<Bool>(), seenInstance = new haxe.ds.StringMap<Bool>();
+			for (cf in all) {
+				if (cf.name == "new" || cf.name == "__init__") continue;
+				var isStatic = c.statics.get(cf.name) == cf;
+				var collides = isStatic
+					? (seenInstance.exists(cf.name) || getDeclaredIn(c.superClass, cf.name) != null)
+					: seenStatic.exists(cf.name);
+				if (collides)
+					ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cf.pos);
+				(isStatic ? seenStatic : seenInstance).set(cf.name, true);
+			}
 		}
 		// `override` needs a parent to override. Like the checks above this cannot run at registration -
 		// superClass is not resolved yet, so every legitimately-overriding field in the std would be

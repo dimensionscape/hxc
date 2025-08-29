@@ -153,10 +153,10 @@ class EvalMacro {
 		// never reset, so in server mode every request after the first would run its init macros with the
 		// flag already true, and Context.assertInitMacro would warn on every Compiler init-only API.
 		reg2("initMacrosDone", "init_macros_done", function(a) return com.initMacrosDone ? VTrue : VFalse);
-		// Error/fatal_error abort at the given position. "error"/"fatal_error" (vfun3 msg p depth ->
-		// raise (Error.Fatal_error (located msg p, depth))).
-		reg2("error", "error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
-		reg2("fatalError", "fatal_error", function(a) { throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
+		// Error/fatal_error abort at the given position. A null position fails to decode, which the macro
+		// sees as an uncaught "Invalid expression"; the message is never reported.
+		reg2("error", "error", function(a) { if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression"); throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
+		reg2("fatalError", "fatal_error", function(a) { if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression"); throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
 		reg2("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
 		// Warning/info report through the compiler's message list; get_messages/filter_messages read and
 		// filter that same list.
@@ -197,14 +197,14 @@ class EvalMacro {
 		reg2("do_parse", "do_parse", function(a) {
 			var p = posArg(ec, a, 1, curPos);
 			var inlined = a.length > 2 && a[2] == VTrue;
-			var e = hxc.parser.Parser.parseExprString(strOf(a[0]), p.file, com.defines, inlined);
+			var e = parseApiString(strOf(a[0]), p, inlined, com.defines);
 			return encodeExpr(ec, inlined ? e : reanchorExpr(e, p));
 		});
 		reg2("parse", "parse", function(a) {
 			var p = posArg(ec, a, 1, curPos);
-			return encodeExpr(ec, reanchorExpr(hxc.parser.Parser.parseExprString(strOf(a[0]), p.file, com.defines), p));
+			return encodeExpr(ec, reanchorExpr(parseApiString(strOf(a[0]), p, false, com.defines), p));
 		});
-		reg2("parseInlineString", "parse_inline_string", function(a) return encodeExpr(ec, hxc.parser.Parser.parseExprString(strOf(a[0]), posArg(ec, a, 1, curPos).file, com.defines, true)));
+		reg2("parseInlineString", "parse_inline_string", function(a) { var p = posArg(ec, a, 1, curPos); return encodeExpr(ec, parseApiString(strOf(a[0]), p, true, com.defines)); });
 		// The CALLER's position is passed through, so every expression MacroStringTools.formatString builds
 		// lands inside the string it was given rather than on the macro call.
 		reg2("formatString", "format_string",
@@ -329,6 +329,14 @@ class EvalMacro {
 			if (curModule != null) com.currentModule = curModule;
 			var t = try Typeload.loadInstance(com, [], tpath, curPos, true) catch (e:Dynamic) {
 				com.currentModule = savedGetTypeMod;
+				// A type the typer cannot find is `failwith ("Type not found '...'")`, an UNCAUGHT exception in
+				// the macro reported with its call chain, not a typing error at the call. Anything else the
+				// load raised stays what it is.
+				var msg:Null<String> = Std.isOfType(e, TypingError) ? (e : TypingError).message
+					: Std.isOfType(e, hxc.context.Context.ContextError) ? (e : hxc.context.Context.ContextError).message : null;
+				if (msg != null && (StringTools.startsWith(msg, "Type not found : ")
+						|| (StringTools.startsWith(msg, "Module ") && msg.indexOf(" does not define type ") >= 0)))
+					return EvalExceptions.excString(ec, "Type not found '" + strOf(a[0]) + "'");
 				throw e;
 			};
 			com.currentModule = savedGetTypeMod;
@@ -767,7 +775,10 @@ class EvalMacro {
 		var td = decodeTypeDefinition(ec, v, dp);
 		var hasMacroFields = isMacroClassDecl(td.decl);
 		var hostDep = macroTypeDep(com, moduleDependency, dp);
-		var hostModule = hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos, hostDep);
+		// The module-types check reports at the position the definition carries (defineType passes the API
+		// call's); the loader raises it without one.
+		var hostModule = try hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos, hostDep)
+			catch (e:hxc.context.Context.ContextError) { throw new TypingError(e.message, curPos); };
 		hostModule.extra.kind = MFake;
 		addMacroTypeDependency(com, hostModule, hostDep);
 		hxc.typing.TypeResolve.resolveModule(com, hostModule);
@@ -1174,7 +1185,12 @@ class EvalMacro {
 		frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
 		var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
 		if (explicit && frames.length > 0) frames.shift();
-		var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: explicit ? re.pos : Position.nullPos}];
+		// A raise with no position of its own - an API native's failure, an invalid expression, a Null
+		// Access - heads its report at the position the catcher passes, the macro invocation, the same one
+		// that closes the "Called from here" chain.
+		var invocation = re.callPositions.length > 0 ? re.callPositions[re.callPositions.length - 1] : null;
+		var head = explicit ? re.pos : (invocation != null && invocation.file != "?" && invocation.min >= 0 ? invocation : Position.nullPos);
+		var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: head}];
 		for (p in frames) stack.push({message: "Called from here", pos: p});
 		for (cp in re.callPositions)
 			if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
@@ -1842,9 +1858,9 @@ class EvalMacro {
 						|| vi.iproto.ppath == EvalHash.hash("haxe.ds.EnumValueMap")):
 					mk(EArrayDecl([for (entry in m) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
 				case _:
-					EvalExceptions.excString(ec, "Cannot convert " + EvalExceptions.sValueKind(v) + " to expr");
+					EvalExceptions.excString(ec, "Cannot convert " + EvalStdLib.stringOf(v) + " to expr");
 			}
-			case other: EvalExceptions.excString(ec, "Cannot convert " + EvalExceptions.sValueKind(other) + " to expr");
+			case other: EvalExceptions.excString(ec, "Cannot convert " + EvalStdLib.stringOf(other) + " to expr");
 		};
 	}
 
@@ -2516,6 +2532,9 @@ class EvalMacro {
 			expectedTypeStack.push(withType);
 			var result = fn(args);
 			expectedTypeStack.pop();
+			// The expression the macro answers with is decoded under the same guard as a build's fields -
+			// null is "Expected Expr but got null".
+			if (result == VNull) { curTctx = savedTctx; curPos = savedPos; curModule = savedModule; throw decodingError(result, "Expr", "", p); }
 			var astExpr = decodeExpr(ec, result, p);
 			curTctx = savedTctx;
 			curPos = savedPos;
@@ -3179,6 +3198,9 @@ class EvalMacro {
 	}
 
 	static function decodeType(ec:EvalContext, v:EvalValue):T {
+		// Decoding a type reads the enum's fields off the value: null is a Null Access the macro sees as an
+		// uncaught exception, not a type the compiler accepts.
+		if (v == VNull) return EvalExceptions.excString(ec, "Null Access");
 		var args = eargs(v);
 		return switch (ctorName(ec, v)) {
 			case "TMono":
@@ -4586,6 +4608,16 @@ class EvalMacro {
 				try new Position(strOf(EvalField.field(ec, v, EvalHash.hash("file"))), intOf(EvalField.field(ec, v, EvalHash.hash("min"))), intOf(EvalField.field(ec, v, EvalHash.hash("max"))))
 				catch (_:Dynamic) fallback;
 		};
+	}
+
+	// The string is padded with p.min spaces, so an error inside it carries the caller's file offsets
+	// when inlining; when not, parse_string reports the failure at p itself, the whole API call.
+	static function parseApiString(src:String, p:Position, inlined:Bool, defines:hxc.core.Define):Expr {
+		return try hxc.parser.Parser.parseExprString(src, p.file, defines, inlined)
+		catch (e:hxc.parser.ParserError) {
+			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
+			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), at);
+		}
 	}
 
 	static function posArg(ec:EvalContext, args:Array<EvalValue>, index:Int, fallback:Position):Position {

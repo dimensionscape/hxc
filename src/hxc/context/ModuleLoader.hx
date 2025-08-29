@@ -1195,19 +1195,9 @@ class ModuleLoader {
 				if (bad != null)
 					ctx.addDiagnostic("Invalid accessor '" + bad.name + "' for " + bad.kind + " " + cff.cffName.name, acc.pos);
 			}
-			// Reject static/instance name collisions, including superclass instances for statics. Report at
-			// the field; exempt constructors, __init__, externs and native classes.
-			if (ctx != null && cf.name != "new" && cf.name != "__init__"
-					&& !TypeFunctions.hasClassFlag(c, CExtern)) {
-				var collides = if (isStatic)
-					c.fields.exists(cf.name) || superHasInstanceField(c.superClass, cf.name)
-				else
-					c.statics.exists(cf.name);
-				if (collides)
-					ctx.addDiagnostic("Same field name can't be used for both static and instance : " + cf.name, cff.cffPos);
-			}
-			// Reject same-name declarations by their declaring kind, except valid overloads and
-			// declaration-only abstract operations.
+			// Check static/instance collisions after heritage resolves, in declaration order. Failed
+			// heritage suppresses field diagnostics. Reject duplicate declarations except valid overloads
+			// and declaration-only abstract operations.
 			var declOnly = isAbsImplDeclOnly(c, cff);
 			if (ctx != null && !declOnly && cf.name != "new" && dupTable.exists(cf.name)) {
 				var kindPath = switch (c.kind) {
@@ -1312,11 +1302,15 @@ class ModuleLoader {
 		var key = Context.pathKey(TypeFunctions.tPath(mt));
 		var prev = ctx.typeToModule.get(key);
 		if (prev == null || ctx.typeToModuleEpoch.get(key) != ctx.compilationEpoch) return;
-		if (Context.pathKey(prev) == Context.pathKey(m.path)) return;
+		// There is no same-module exemption: `Context.defineType` of a name already defined this
+		// compilation - the same module path included - is "Type name X is redefined from module X
+		// (<sign>)". The lookup below reads the module the name was registered by, so the caller
+		// registers after this check.
 		var mPrev = ctx.moduleLut.get(Context.pathKey(prev));
 		var hex1 = m.extra != null && m.extra.sign != null ? m.extra.sign : "";
 		var hex2 = mPrev != null && mPrev.extra != null && mPrev.extra.sign != null ? mPrev.extra.sign : "";
-		if (Context.sTypePath(prev).toLowerCase() == Context.sTypePath(m.path).toLowerCase())
+		if (Context.pathKey(prev) != Context.pathKey(m.path)
+				&& Context.sTypePath(prev).toLowerCase() == Context.sTypePath(m.path).toLowerCase())
 			throw new ContextError("Module " + Context.sTypePath(prev) + " is loaded with a different case than "
 				+ Context.sTypePath(m.path), Position.nullPos);
 		var s = hex1 == hex2 ? hex1 : "was " + hex2 + ", is " + hex1;
@@ -1325,11 +1319,12 @@ class ModuleLoader {
 	}
 
 	static function addModule(ctx:Context, m:ModuleDef):Void {
+		// The names are checked against what the tables hold before this module replaces it.
+		for (mt in m.types) checkModuleTypes(ctx, m, mt);
 		ctx.moduleLut.set(Context.pathKey(m.path), m);
 		ctx.modules.push(m);
 		for (mt in m.types) {
 			ctx.types.push(mt);
-			checkModuleTypes(ctx, m, mt);
 			ctx.typeToModule.set(Context.pathKey(TypeFunctions.tPath(mt)), m.path);
 			ctx.typeToModuleEpoch.set(Context.pathKey(TypeFunctions.tPath(mt)), ctx.compilationEpoch);
 		}
