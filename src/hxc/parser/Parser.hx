@@ -836,9 +836,10 @@ class Parser {
 			acc.push(v);
 			if (tokEq(peek(), Comma)) {
 				junk();
-				// Straight into `v = f` here; the doubled-separator check is hxc's own, so it reads the token
-				// without pulling it.
-				if (tokEq(rawTok(), Comma)) throw new ParserError(Unexpected(Comma), cur0());
+				// The list recurses straight into the element here, so a doubled separator is just an
+				// element that matches nothing: the list ENDS with the second comma in the stream, and the
+				// caller's own closer names it - the call parameters' "Expected , or )", a parameter list's
+				// terminal `)` "Unexpected ,".
 				continue;
 			}
 			break;
@@ -860,7 +861,10 @@ class Parser {
 		}
 		while (tokEq(peek(), sep)) {
 			junk();
-			acc.push(f());
+			// The separator is a consumed terminal, so an element that then matches nothing is a non-soft
+			// error, not the soft failure that ends the list at its head - `macro var a = 1, 2` is
+			// Unexpected 2.
+			acc.push(try f() catch (e:ParserError) { if (e.soft) serror(); throw e; });
 		}
 		return acc;
 	}
@@ -1832,6 +1836,14 @@ class Parser {
 	function parseVarDecl(isFinal:Bool):EVar {
 		var meta = parseMeta();
 		noKeyword("variable name");
+		// The var declaration head opens with metadata, which consumes nothing on a plain miss, so a token
+		// that is no name leaves the production as a soft failure: the reification list ends on it, the
+		// expression arm turns it into a non-soft error, and only the block statement names the missing
+		// identifier. A keyword is the hard noKeyword error above in every case.
+		if (meta.length == 0) switch (peek()) {
+			case Const(CIdent(_)) | Dollar(_):
+			case _: throw new ParserError(Unexpected(peek()), peekInfo().pos, true);
+		}
 		var name = dollarIdent();
 		var t = poptTypeHint();
 		var eo:Null<Expr> = null;
@@ -1989,7 +2001,9 @@ class Parser {
 		var vl:Array<EVar> = [first];
 		while (tokEq(peek(), Comma)) {
 			junk();
-			vl.push(parseVarDecl(isFinal));
+			// The comma is a consumed terminal, so a declaration that then matches nothing is a non-soft
+			// error - `var a = 1, 2` is Unexpected 2 - not the soft failure the head's miss is.
+			vl.push(try parseVarDecl(isFinal) catch (e:ParserError) { if (e.soft) serror(); throw e; });
 		}
 		return vl;
 	}
@@ -2254,8 +2268,11 @@ class Parser {
 				return parseMacroExpr(p);
 			case Kwd(KwdVar):
 				var p1 = next().pos;
-				var vl = parseVarDecls(false, p1);
-				return new Expr(EVars(vl), p1);
+				// `var` here takes one declaration, and its miss is the second element's non-soft error -
+				// `(var)` is Unexpected ), where the block statement's parseVarDecls says Missing variable
+				// identifier.
+				var v = try parseVarDecl(false) catch (e:ParserError) { if (!e.soft) throw e; serror(); };
+				return new Expr(EVars([v]), p1);
 			case Kwd(KwdFinal):
 				var p1 = next().pos;
 				// The redundant `var` is recorded as an error and consumed, so the declaration still parses as
@@ -2266,8 +2283,8 @@ class Parser {
 						syntaxError(Custom("`final var` is not supported, use `final` instead"), Position.union(p1, p2));
 					case _:
 				}
-				var vl = parseVarDecls(true, p1);
-				return new Expr(EVars(vl), p1);
+				var v = try parseVarDecl(true) catch (e:ParserError) { if (!e.soft) throw e; serror(); };
+				return new Expr(EVars([v]), p1);
 			case Const(c):
 				var p = next().pos;
 				return exprNext(new Expr(EConst(c), p));
@@ -3610,6 +3627,9 @@ class Parser {
 						fpos = Position.union(p1, a.pos);
 					case _:
 						var al2 = parseCfRights();
+						// After `final` and any rights, what is neither a name nor `function` is Unexpected
+						// <token> - `static final 144` - not the function field's own Expected function.
+						if (!tokEq(peek(), Kwd(KwdFunction))) serror();
 						var ff = parseFunctionField(doc, meta, al.concat([{access: AFinal, pos: p1}]).concat(al2));
 						name = ff.name; kind = ff.kind; meta = ff.meta; al = ff.al; fpos = ff.pos;
 				}

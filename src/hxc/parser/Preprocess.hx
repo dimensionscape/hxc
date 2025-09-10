@@ -343,7 +343,9 @@ class Preprocess {
 			case TUnop(op):
 				i++;
 				var e = parseMacroCond();
-				return new Expr(EUnop(op, Prefix, e), ti.pos);
+				// The unary expression spans the operator and its operand, so an unsupported one (`#if ~macro`)
+				// is reported over the whole expression.
+				return new Expr(EUnop(op, Prefix, e), Position.union(ti.pos, e.pos));
 			case POpen:
 				// Parenthesised full conditional expression: parse the sub-token
 				// span up to the matching close paren and run the real parser.
