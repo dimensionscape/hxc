@@ -763,13 +763,10 @@ class EvalEmitter {
 	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
 		switch (callee.expr) {
 			case TIdent("$__mk_pos__"):
-				// Reification's position builtin: build a Position value from (file, min, max).
-				var a = [for (x in argExprs) eval(ctx, x)];
-				var m = new Map<Int, EvalValue>();
-				m.set(EvalHash.hash("file"), a[0]);
-				m.set(EvalHash.hash("min"), a[1]);
-				m.set(EvalHash.hash("max"), a[2]);
-				return VObject(new VObject([], ODictionary(m)));
+				// Reification's position builtin: build a position value from (file, min, max) - an IPos
+				// instance, which prints as `#pos(file:line: characters a-b)` - not the {file, min, max} object
+				// the reification wrote, so a reified expression thrown out of a macro prints the position.
+				return EvalMacro.mkPosValue([for (x in argExprs) eval(ctx, x)]);
 			case TConst(TSuper):
 				var args = [for (a in argExprs) eval(ctx, a)];
 				var vthis = EvalContext.getEval(ctx).env.vthis;

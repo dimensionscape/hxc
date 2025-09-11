@@ -228,7 +228,7 @@ class TypeFields {
 		if (Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion)) throw e;
 		// A fatal error is on its way to the driver; recording it here would swallow the abort.
 		if (Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
-		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] " + Std.string(e)
+		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fielderr] at " + hxc.eval.EvalMacro.debugCurPos() + " " + Std.string(e)
 			+ (Std.isOfType(e, EvalRunTimeException) ? " value=" + EvalStdLib.stringOf((cast e : EvalRunTimeException).value) : "")
 			+ (Std.isOfType(e, hxc.parser.ParserError) ? " " + hxc.parser.ParserError.errorMsg((cast e : hxc.parser.ParserError).msg) + " at " + Std.string((cast e : hxc.parser.ParserError).pos) : ""));
 		// An intermediate `catch (e:haxe.Exception)` re-throw wraps a plain error object in a

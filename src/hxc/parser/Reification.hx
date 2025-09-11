@@ -128,7 +128,11 @@ class Reification {
 	}
 
 	function toEncPos(p:Position):Expr {
+		// Inside the macro world the encoded position is toPos itself, the `$__mk_pos__` builtin's
+		// Position value; only outside it does the {file, min, max} record go through
+		// Context.makePosition.
 		if (curPos != null) return curPos;
+		if (inMacro) return toPos(p);
 		return new Expr(ECall(contextField("makePosition", p), [toPos(p)]), p);
 	}
 
@@ -301,10 +305,7 @@ class Reification {
 							], e1.pos)
 						]);
 					case _:
-						// `haxe.macro.Context.makeExpr(e1, to_enc_pos)`.
-						// To_enc_pos (in_macro=false) = `Context.makePosition`; our
-						// makePosition is identity over the {file,min,max} object, so we pass the
-						// position object directly (decodePos accepts it either way).
+						// `haxe.macro.Context.makeExpr(e1, to_enc_pos (pos e1))`.
 						return new Expr(ECall(contextField("makeExpr", p), [e1, toEncPos(e1.pos)]), p);
 				}
 			// `$p{ e }`: haxe.macro.MacroStringTools.toFieldExpr(e).

@@ -26,6 +26,7 @@ class EvalMacro {
 	static var lastModuleCount:Int = -1;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
+	public static function debugCurPos():Position return curPos;
 	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;
 	static var expectedTypeStack:Array<WithType> = [];
@@ -1584,23 +1585,42 @@ class EvalMacro {
 		for (cb in onGenerateCallbacks) {
 			EvalContext.setCtx(cb.ec);
 			var types = [for (t in com.types) encodeType(cb.ec, TypeFunctions.typeOfModuleType(t))];
-			switch (cb.fn) {
+			runCallback(cb.ec, function() switch (cb.fn) {
 				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
 				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
 				case _:
-			}
+			});
 		}
+	}
+
+	// A callback runs with no macro call in progress: Context.currentPos() is the null position there, so
+	// what Context.warning records prints with no position, and a Context.error (the haxe.macro.Error the
+	// native boundary made of it) leaves the callback as an Error that ends the compile with its message
+	// alone at the null position. A raw throw in a callback stays what it is.
+	static function runCallback(ec:EvalContext, call:Void->Void):Void {
+		var savedPos = curPos;
+		EvalContext.setCtx(ec);
+		try call() catch (ex:EvalExceptions.EvalRunTimeException) {
+			curPos = savedPos;
+			var info = runtimeMacroError(ex);
+			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos);
+			throw ex;
+		} catch (e:Dynamic) {
+			curPos = savedPos;
+			throw e;
+		}
+		curPos = savedPos;
 	}
 
 	public static function runAfterTypingCallbacks(com:Context):Void {
 		for (cb in onAfterTypingCallbacks) {
 			EvalContext.setCtx(cb.ec);
 			var types = [for (t in com.types) encodeModuleType(cb.ec, t)];
-			switch (cb.fn) {
+			runCallback(cb.ec, function() switch (cb.fn) {
 				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
 				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
 				case _:
-			}
+			});
 		}
 	}
 
@@ -1609,12 +1629,11 @@ class EvalMacro {
 			// The registering context may have been retired by a macro-context rebuild; run in the current
 			// one so statics (migrated forward) and late-registered modules are visible, as if a single
 			// interpreter stayed alive for the whole compilation.
-			EvalContext.setCtx(macroCtx != null ? macroCtx : cb.ec);
-			switch (cb.fn) {
+			runCallback(macroCtx != null ? macroCtx : cb.ec, function() switch (cb.fn) {
 				case VFunction(f, _): f([]);
 				case VFieldClosure(recv, f): f([recv]);
 				case _:
-			}
+			});
 		}
 	}
 
@@ -3032,7 +3051,7 @@ class EvalMacro {
 	}
 
 	static function strOf(v:EvalValue):String {
-		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw "macro decode: expected string"; };
+		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw "macro decode: expected string, got " + EvalStdLib.stringOf(v); };
 	}
 
 	// The module check policies, in the order haxe.macro.CompilationServer declares them.
@@ -4577,6 +4596,11 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return thunk(), true));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+
+	// The reification's `$__mk_pos__(file, min, max)` builtin.
+	public static function mkPosValue(a:Array<EvalValue>):EvalValue {
+		return encPos(new Position(strOf(a[0]), intOf(a[1]), intOf(a[2])));
 	}
 
 	static function encPos(p:Position):EvalValue {

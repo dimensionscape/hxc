@@ -46,10 +46,14 @@ class TypeResolve {
 		// takes the head), so the classes build last declaration first, after the rest of the module is
 		// already initialised. hxc resolves eagerly, so it builds the same list by hand. Every EClass
 		// declaration takes that delay - a @:generic class, a @:genericBuild one, the module's statics
-		// carrier - and only an abstract's implementation is built eagerly by init_abstract.
+		// carrier - and only an abstract's implementation is built eagerly by init_abstract. An
+		// abstract's implementation is one of them: module_pass_1 declares it as an EClass, so it takes
+		// the delay too, and everything that needs its fields - the enum-abstract members, the
+		// @:from/@:to methods, the operators - happens in that slot (see resolveAbstract), after a later
+		// class's heritage.
 		var rest = [], classes = [];
 		for (mt in m.types) switch (mt) {
-			case TClassDecl(c) if (!c.kind.match(KAbstractImpl(_))): classes.unshift(mt);
+			case TClassDecl(c): classes.unshift(mt);
 			case _: rest.push(mt);
 		}
 		for (mt in rest.concat(classes)) {
@@ -57,7 +61,26 @@ class TypeResolve {
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
 			try {
+				var impl:Null<{a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position}> = null;
+				switch (mt) {
+					case TClassDecl(c): switch (c.kind) {
+						case KAbstractImpl(a):
+							var ad = ctx.declOfType.get(Context.pathKey(a.path));
+							if (ad != null) switch (ad.decl) {
+								case EAbstract(dd): impl = {a: a, d: dd, p: ad.pos};
+								case _:
+							}
+						case _:
+					}
+					case _:
+				}
+				// build_enum_abstract rewrites the member declarations (the access list, @:enum, the
+				// synthesised values) at the START of the implementation's field build, so create_field's
+				// own access check never sees `public private`; running it after the class build reported
+				// the conflict twice.
+				if (impl != null && impl.a.isEnum) buildEnumAbstractFields(ctx, impl.a, impl.d, impl.p);
 				resolveType(ctx, mt, entry.decl, entry.pos);
+				if (impl != null) resolveAbstractImpl(ctx, impl.a, impl.d, impl.p);
 				resolveUsingMetadata(ctx, mt);
 			} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
 				// A display completion is an answer, not a declaration error: it has to reach the responder
@@ -1325,25 +1348,30 @@ class TypeResolve {
 				throw new ContextError("Abstract is missing underlying type declaration", a.pos);
 		}
 
-		// At PBuildModule timing, when `kind = KAbstractImpl a &&
-		// (where `thisType` is now resolved, so the Int/String/Other mode can be decided) over the
-		// FVar; then re-register + re-resolve the impl fields so the new shape takes effect.
-		if (a.isEnum && a.impl != null) {
-			buildEnumAbstractFields(ctx, a, d, p);
-		}
+		// The abstract's own slot does the HEADER and no more: the underlying type, the metadata casts, the
+		// flags. Everything that needs the implementation's FIELDS - the enum-abstract members, the
+		// @:from/@:to cast methods, the operators, the field signatures themselves - is the implementation
+		// class's own build, which takes the PBuildClass delay like every class (it is declared as a class)
+		// and so runs in that bucket's last-declaration-first order, AFTER a later class's heritage: with
+		// `abstract A { function g():Nope2 }` before `class P extends Nope`, Nope is reported and the
+		// module
+		// stops. resolveModule calls resolveAbstractImpl at the implementation's slot; an abstract without
+		// one has nothing to wait for.
+		if (a.impl == null) resolveAbstractImpl(ctx, a, d, p);
+	}
 
+	// The implementation's build (see resolveAbstract): the cast methods, the field signatures,
+	// the operators. The enum-abstract members are rewritten by buildEnumAbstractFields before
+	// the implementation class resolves (resolveModule).
+	public static function resolveAbstractImpl(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position):Void {
 		resolveAbstractCasts(ctx, a, d);
-
 		if (a.impl != null) {
-			// / for a class's fields with `ignore(c.build())`, which is one-shot: whoever gets there first
-			// does the work and everyone after is a no-op. Deriving the impl here as well as through the
-			// ordinary class path meant every abstract implementation in the program had its field
-			// signatures built twice - the only classes in a compile that did.
+			// Reaching for a class's fields is one-shot: whoever gets there first does the work and
+			// everyone
+			// after is a no-op.
 			buildClassFields(ctx, a.impl, p);
 		}
-
 		resolveAbstractOps(ctx, a, d);
-
 	}
 
 	static function resolveAbstractOps(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>):Void {
