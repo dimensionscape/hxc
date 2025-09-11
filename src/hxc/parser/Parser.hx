@@ -37,6 +37,14 @@ class DisplayInMacroBlock extends haxe.Exception {
 // error, and one that escapes the entry is reported as `Unexpected <the token the retrying peek
 // yields>` - which is exactly the token the mark sits on.
 private class CondFailure extends ParserError {
+	// A failure raised at any element but a production's first becomes an empty non-soft error, and
+	// only the unconverted form backtracks: secureExpr's catch-all arm and a list head answer it, a
+	// later element of a token-headed arm does not. hxc has no element positions, so the failure
+	// carries the bit: it is raised converted, the shape every site propagates, and the one raise that
+	// stays unconverted - the one out of exprNext's arm body, which leaves `expr` as a soft failure -
+	// clears it.
+	public var converted:Bool = true;
+
 	public function new(tok:Token, pos:Position) {
 		// Not soft. `soft` means "no alternative matched", which hxc's recovery arms answer by RETRYING
 		// the production a different way; this failure came from the token stream's own fill, so no arm
@@ -828,7 +836,14 @@ class Parser {
 			try {
 				v = f();
 			} catch (e:ParserError) {
-				if (e.soft) break;
+				// A failure that consumed nothing means no list element starts here; a failure mid-element
+				// is a real syntax error (a soft failure backtracks, any other error propagates). A soft
+				// failure that DID consume ends the list too - `v = f` heads every alternative here - and
+				// the tokens it took stay taken, since the stream is destructive and the caller reports
+				// from where it left.
+				// `v = f` is the first element of both trailing-separator arms, so an unconverted failure
+				// out of f ends the list wherever the attempt stopped.
+				if (e.soft || (e is CondFailure && !(cast e:CondFailure).converted)) break;
 				if (idx != save) throw e;
 				idx = save;
 				break;
@@ -854,7 +869,18 @@ class Parser {
 		try {
 			acc.push(f());
 		} catch (e:ParserError) {
-			// A parse that consumed tokens before failing is a real error and propagates.
+			// The empty result is the SECOND ALTERNATIVE and is reached only on a soft failure - f matching
+			// nothing at all. A parse that consumed tokens before failing is a real error and propagates;
+			// swallowing it would turn `case (_.eq` into an empty pattern list and report the missing `:`
+			// in place of the paren expression's own `Expected ) or , or :`.
+			// The nonempty list holds `v = f` at the head of its own pattern, so a soft failure lands on
+			// the empty alternative however much f consumed first.
+			// The empty alternative belongs to soft failures alone, which is what `soft` records. A RAISED
+			// error never reaches it, however little it consumed: `case:` has secureExpr raise `Expected
+			// expression` at the colon without moving, and treating that as an empty pattern list would
+			// report a later complaint at the wrong place.
+			// `v = f` heads psep's arm; an unconverted failure backtracks to `[]`.
+			if (e is CondFailure && !(cast e:CondFailure).converted) return acc;
 			if (!e.soft) throw e;
 			idx = save;
 			return acc;
@@ -864,7 +890,10 @@ class Parser {
 			// The separator is a consumed terminal, so an element that then matches nothing is a non-soft
 			// error, not the soft failure that ends the list at its head - `macro var a = 1, 2` is
 			// Unexpected 2.
-			acc.push(try f() catch (e:ParserError) { if (e.soft) serror(); throw e; });
+			acc.push(try f() catch (e:ParserError) {
+				if (e is CondFailure) { (cast e:CondFailure).converted = true; throw e; }
+				if (e.soft) serror(); throw e;
+			});
 		}
 		return acc;
 	}
@@ -2136,6 +2165,12 @@ class Parser {
 		var np = cur0();
 		try {
 			return exprSoft();
+		} catch (c:CondFailure) {
+			// The catch-all arm answers expr's soft failure whatever it consumed, at the token the pull
+			// resumed on; a converted one propagates.
+			if (c.converted) throw c;
+			np = peekInfo().pos;
+			return secureExprFallback(np);
 		} catch (er:ParserError) {
 			if (!er.soft && idx != save) throw er;
 			// The fallback arm takes the next position after the failed attempt, and the stream keeps
@@ -2145,16 +2180,20 @@ class Parser {
 			// The fallback is the syntax error `Expected expression`, RAISED outside display rather than
 			// keeping whatever expr said: a stray `static` here is `Expected expression`, not `Unexpected
 			// keyword "static"`.
-			if (displayFile == null) throw new ParserError(Expected(["expression"]), np);
-			syntaxErrors.push({msg: Expected(["expression"]), pos: np});
-			var last = tokens[idx > 0 ? idx - 1 : 0];
-			var offset = switch (last.tok) {
-				case Const(_) | Kwd(_) | Dollar(_): 1;
-				case _: 0;
-			};
-			return new Expr(EConst(CIdent("null")),
-				new Position(last.pos.file, last.pos.max + offset, np.max - 1));
+			return secureExprFallback(np);
 		}
+	}
+
+	function secureExprFallback(np:Position):Expr {
+		if (displayFile == null) throw new ParserError(Expected(["expression"]), np);
+		syntaxErrors.push({msg: Expected(["expression"]), pos: np});
+		var last = tokens[idx > 0 ? idx - 1 : 0];
+		var offset = switch (last.tok) {
+			case Const(_) | Kwd(_) | Dollar(_): 1;
+			case _: 0;
+		};
+		return new Expr(EConst(CIdent("null")),
+			new Position(last.pos.file, last.pos.max + offset, np.max - 1));
 	}
 
 	function parseMacroExpr(p:Position):Expr {
@@ -2640,7 +2679,10 @@ class Parser {
 	}
 
 	function exprNext(e1:Expr):Expr {
-		switch (peek()) {
+		// exprNext is called from the body of expr's arms, and its own arms are all token-headed, so the
+		// failed #if its peek meets leaves expr as an unconverted soft failure: `[1 #if #end ]` is
+		// secureExpr's "Expected expression" at the resumed token, and a list head ends its list on it.
+		switch (try peek() catch (c:CondFailure) { c.converted = false; throw c; }) {
 			case BrOpen if (isDollarIdent(e1)):
 				// `$ident{...}` macro reification meta: an EMeta named after the identifier
 				var p1 = next().pos;
