@@ -205,8 +205,6 @@ class TypeFields {
 	// caught before it could get here. A bare `static function a() new Nope();` is what escapes: it is
 	// reported and the compile stops.
 	static function fatalFieldError(ctx:Context, e:Dynamic):Void {
-		// It stays recorded on a display request until selective typing lands.
-		if (hxc.parser.Parser.displayFile != null) return recordFieldError(ctx, e);
 		if (Std.isOfType(e, haxe.ValueException)) {
 			var inner = (cast e : haxe.ValueException).value;
 			if (inner != null && inner != e) return fatalFieldError(ctx, inner);
