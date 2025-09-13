@@ -567,7 +567,12 @@ class Fields {
 										ctx.com.addDiagnostic("This field cannot be accessed explicitly", pfield);
 									fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
 								case AbstractStatics(ab) if (ab.impl != null):
-									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) || TypeFunctions.hasClassFieldFlag(f, CfEnum))
+									// An abstract with an implementation types as that class, so a field reached through the
+									// type is 's `Statics c -> field_access f (FHStatic c)`. An enum member in particular must
+									// be FHStatic here: the FHAbstract host is what freshens the abstract's parameters
+									// through, and `E.A` of `E<T>` keeps E<T> in the reference while the bare `A` reads
+									// E<Unknown>. hxc keeps the FHAbstract host for a CfImpl member named through the type.
+									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) && !TypeFunctions.hasClassFieldFlag(f, CfEnum))
 										? FHAbstract(ab, TypeFunctions.extractParamTypes(ab.params), ab.impl)
 										: FHStatic(ab.impl);
 									checkAbstractFieldAccess(ctx, ab, f, pfield);

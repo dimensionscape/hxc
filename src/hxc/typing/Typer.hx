@@ -3823,12 +3823,13 @@ class Typer {
 				return Fields.enumConstructor(ctx, en, TexprTools.makeTypeExpr(TEnumDecl(en), p), i, p);
 			case TAbstractDecl(a) if (a.impl != null):
 				var cf = a.impl.statics.get(i);
-				// Without an expected type the value's abstract parameters are fresh constrained
-				// monomorphs, not the declared type parameters. (the enum field type unifies with
-				// TAbstract(a, spawnConstrainedMonos ...)).
-				if (TypeFunctions.hasClassFieldFlag(cf, CfEnum))
-					cf.type = TAbstract(a, TypeUnification.spawnConstrainedMonos(function(t) return t, a.params));
-				return Fields.fieldAccess(ctx, mode, cf, FHStatic(a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
+				// A bare member is an FHAbstract(a, params, impl) access, inline when the member is; an
+				// inline read then applies FRESH constrained monomorphs to the abstract's parameters at
+				// each read through that host, so `A` of `E<T>` reads as E<Unknown> while `E.A` (an
+				// FHStatic access) keeps E<T>. type is never rewritten: overwriting it on every bare use
+				// would turn a member with a declared hint (`var A:Int = 1`) back into the abstract, so
+				// `case A:` would report "E should be Int" after the binding's own error.
+				return Fields.fieldAccess(ctx, mode, cf, FHAbstract(a, TypeFunctions.extractParamTypes(a.params), a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 			case _:
 		}
 		// A module-level field (Haxe 4.2 module-level `var`/`function`, stored in the synthetic
@@ -4655,17 +4656,26 @@ class Typer {
 				switch (cf.expr) {
 					case null: throw new TypingError("Recursive inline is not supported", p);
 					case e:
-						// apply_params is the identity for static/instance hosts, so substituting the stored value
-						// only moves it to the access position; a TCast bridges any type mismatch. a read of an
-						// inline var RECURSIVELY: let rec loop e = Type.map_expr loop { e with pos = p; ... } Moving
-						// only the outer node leaves everything under it at its declaration position, and
-						// build_enum_abstract wraps every value in an ECast, so the constant underneath keeps the
-						// declaring file. On js that drags the declaring module into the source map's `sources`,
-						// which shifts every later source index and desynchronises the mappings.
+						// Applying params is the identity for static/instance hosts, so substituting the stored value
+						// only moves it to the access position; a TCast bridges any type mismatch. A read of an
+						// inline var is repositioned RECURSIVELY. Moving only the outer node leaves everything under
+						// it at its declaration position, and enum abstract values are each wrapped in an ECast, so
+						// the constant underneath keeps the declaring file. On js that drags the declaring module
+						// into the source map's `sources`, which shifts every later source index and desynchronises
+						// the mappings. An enum abstract's members are statics with type parameters, so a read
+						// through an FHAbstract host applies fresh constrained monomorphs to the abstract's
+						// parameters; every other host is the identity.
+						var applyP:T->T = switch (fa.host) {
+							case FHAbstract(a, _, _) if (a.isEnum):
+								var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, a.params);
+								function(t:T):T return TypeFunctions.applyParams(a.params, monos, t);
+							case _:
+								function(t:T):T return t;
+						};
 						function reposition1(x:TExpr):TExpr
-							return TexprTools.mapExpr(reposition1, TypeFunctions.mk(x.expr, x.type, p));
+							return TexprTools.mapExpr(reposition1, TypeFunctions.mk(x.expr, applyP(x.type), p));
 						var e2 = reposition1(e);
-						var tf = cf.type;
+						var tf = applyP(cf.type);
 						TypeUnification.typeIseqDefault(tf, e2.type) ? e2 : TypeFunctions.mk(TCast(e2, null), tf, p);
 				}
 		};
