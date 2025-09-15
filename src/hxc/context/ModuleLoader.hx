@@ -1296,9 +1296,13 @@ class ModuleLoader {
 		return t;
 	}
 
-	// Use registration epochs to detect duplicate type names only within one compilation. Retain older
-	// macro-context entries for generic module lookup.
-	static function checkModuleTypes(ctx:Context, m:ModuleDef, mt:ModuleType):Void {
+	// A type name belongs to one module per compilation. hxc reuses the macro context, so each entry
+	// carries the epoch that made it and only the current one can be a redefinition. Clearing the map
+	// instead would break @:generic instantiation, which looks modules up through it and needs the
+	// entries the reused context still refers to. Reported at the module's position - for
+	// Context.defineModule its first definition's.
+	static function checkModuleTypes(ctx:Context, m:ModuleDef, mt:ModuleType, ?pos:Position):Void {
+		if (pos == null) pos = Position.nullPos;
 		var key = Context.pathKey(TypeFunctions.tPath(mt));
 		var prev = ctx.typeToModule.get(key);
 		if (prev == null || ctx.typeToModuleEpoch.get(key) != ctx.compilationEpoch) return;
@@ -1312,15 +1316,15 @@ class ModuleLoader {
 		if (Context.pathKey(prev) != Context.pathKey(m.path)
 				&& Context.sTypePath(prev).toLowerCase() == Context.sTypePath(m.path).toLowerCase())
 			throw new ContextError("Module " + Context.sTypePath(prev) + " is loaded with a different case than "
-				+ Context.sTypePath(m.path), Position.nullPos);
+				+ Context.sTypePath(m.path), pos);
 		var s = hex1 == hex2 ? hex1 : "was " + hex2 + ", is " + hex1;
 		throw new ContextError("Type name " + Context.sTypePath(TypeFunctions.tPath(mt))
-			+ " is redefined from module " + Context.sTypePath(prev) + " (" + s + ")", Position.nullPos);
+			+ " is redefined from module " + Context.sTypePath(prev) + " (" + s + ")", pos);
 	}
 
-	static function addModule(ctx:Context, m:ModuleDef):Void {
+	static function addModule(ctx:Context, m:ModuleDef, ?pos:Position):Void {
 		// The names are checked against what the tables hold before this module replaces it.
-		for (mt in m.types) checkModuleTypes(ctx, m, mt);
+		for (mt in m.types) checkModuleTypes(ctx, m, mt, pos);
 		ctx.moduleLut.set(Context.pathKey(m.path), m);
 		ctx.modules.push(m);
 		for (mt in m.types) {
@@ -1421,7 +1425,7 @@ class ModuleLoader {
 		for (mt in added) {
 			m.types.push(mt);
 			ctx.types.push(mt);
-			checkModuleTypes(ctx, m, mt);
+			checkModuleTypes(ctx, m, mt, pos);
 			ctx.typeToModule.set(Context.pathKey(TypeFunctions.tPath(mt)), m.path);
 			ctx.typeToModuleEpoch.set(Context.pathKey(TypeFunctions.tPath(mt)), ctx.compilationEpoch);
 		}

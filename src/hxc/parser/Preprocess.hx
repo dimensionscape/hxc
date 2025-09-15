@@ -342,7 +342,9 @@ class Preprocess {
 				return new Expr(EConst(CFloat(v, sfx)), ti.pos);
 			case TUnop(op):
 				i++;
-				var e = parseMacroCond();
+				var e = try parseMacroCond() catch (f:CondHeadFailure) {
+					throw f.err != null ? f.err : new ParserError(Unexpected(Eof), f.endPos);
+				};
 				// The unary expression spans the operator and its operand, so an unsupported one (`#if ~macro`)
 				// is reported over the whole expression.
 				return new Expr(EUnop(op, Prefix, e), Position.union(ti.pos, e.pos));

@@ -3502,12 +3502,18 @@ class Typer {
 					var depth = 1;
 					var j = i + 2;
 					var sb = new StringBuf();
+					var opens = [i + 1];
 					while (j < n && depth > 0) {
 						var cj = str.charCodeAt(j);
-						if (cj == "{".code) { depth++; sb.addChar(cj); }
-						else if (cj == "}".code) { depth--; if (depth > 0) sb.addChar(cj); }
+						if (cj == "{".code) { depth++; opens.push(j); sb.addChar(cj); }
+						else if (cj == "}".code) { depth--; opens.pop(); if (depth > 0) sb.addChar(cj); }
 						else sb.addChar(cj);
 						j++;
+					}
+					// The string ends inside a group, reported on the innermost brace still open.
+					if (depth > 0) {
+						var g = opens[opens.length - 1];
+						throw new TypingError("Unclosed brace", new Position(p.file, p.min + 1 + byteOff(g) + aposAt(g), p.min + 2 + byteOff(g) + aposAt(g)));
 					}
 					if (StringTools.trim(sb.toString()) == "")
 						throw new TypingError("Expression cannot be empty", new Position(p.file, p.min + byteOff(i) + 3, p.min + byteOff(j)));

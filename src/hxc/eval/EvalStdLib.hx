@@ -2218,6 +2218,27 @@ class EvalStdLib {
 		}
 	}
 
+	public static function valueKind(v:EvalValue):String {
+		return switch (v) {
+			case VNull: "VNull";
+			case VTrue: "VTrue";
+			case VFalse: "VFalse";
+			case VInt(_): "VInt";
+			case VFloat(_): "VFloat";
+			case VEnumValue(_): "VEnumValue";
+			case VString(_): "VString";
+			case VArray(_): "VArray";
+			case VVector(_): "VVector";
+			case VInstance(_): "VInstance";
+			case VPrototype(_): "VPrototype";
+			case VFunction(_, _): "VFunction";
+			case VFieldClosure(_, _): "VFieldClosure";
+			case VLazy(_): "VLazy";
+			case VNativeString(_): "VNativeString";
+			case _: "VHandle";
+		};
+	}
+
 	static function pathToString(ctx:EvalContext, v:EvalValue):String {
 		var dir = EvalField.field(ctx, v, EvalHash.hash("dir"));
 		var file = EvalField.field(ctx, v, EvalHash.hash("file"));

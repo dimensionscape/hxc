@@ -606,11 +606,13 @@ class EvalEmitter {
 				var recv = eval(ctx, e1);
 				switch (recv) {
 					case VNull:
-						// Reference splits the null receiver by field kind: a method-call receiver is
-						// caught by emit_null_check -> "Null Access", a var read by
-						// emit_instance_field_read -> "field access on null" .
+						// A null receiver splits by field kind: a method-call receiver fails the null check
+						// with "Null Access", a var read fails with "field access on null".
+						// An Array's length read decodes the array, whose null is "Null Access".
 						switch (cf.kind) {
 							case Method(_): EvalExceptions.excString(ctx, "Null Access", e1.pos);
+							case Var(_) if (cf.name == "length" && c.path.pack.length == 0 && c.path.name == "Array"):
+								EvalExceptions.excString(ctx, "Null Access", e1.pos);
 							case Var(_): EvalExceptions.excString(ctx, "field access on null", e1.pos);
 						}
 					case _:

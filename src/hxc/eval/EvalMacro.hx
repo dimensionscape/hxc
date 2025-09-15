@@ -27,6 +27,14 @@ class EvalMacro {
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
 	public static function debugCurPos():Position return curPos;
+
+	// Where the running macro frame is, i.e. the API call itself.
+	static function apiCallPos():Position {
+		var ec = EvalContext.getCtx();
+		var env = ec == null ? null : EvalContext.getEval(ec).env;
+		if (env == null) return curPos;
+		return env.parent != null ? env.parent.leavePos : env.leavePos;
+	}
 	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;
 	static var expectedTypeStack:Array<WithType> = [];
@@ -93,7 +101,8 @@ class EvalMacro {
 		var wrapped:VFunc = function(a:Array<EvalValue>):EvalValue {
 			try return f(a)
 			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos)
-			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos);
+			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos)
+			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
 		// A new compilation swaps in its own API. Every closure here holds the com it was registered
 		// with, so a re-registration must REPLACE the entry: a lookup through load("<snake>") ->
@@ -126,7 +135,8 @@ class EvalMacro {
 					var cand = cp + file;
 					if (sys.FileSystem.exists(cand)) { found = cand; break; }
 				}
-				if (found == null) throw new TypingError("unable to find file for inclusion: " + file, curPos);
+				// The macro's uncaught exception, not a typing error.
+				if (found == null) return EvalExceptions.excString(ec, "unable to find file for inclusion: " + file);
 				found;
 			};
 			com.includeFiles.push({file: resolved, position: position});
@@ -426,8 +436,10 @@ class EvalMacro {
 			var key = Context.pathKey(m.path);
 			var old = com.moduleImports.get(key);
 			var next = cloneImports(old);
-			for (iv in arrOf(a[0])) addImportSpec(next, strOf(iv));
-			for (uv in arrOf(a[1])) next.usings.push(pathFromDotted(strOf(uv)));
+			// init_import / init_using LOAD each module now, so a missing one is "Type not found" here, not
+			// at some later lookup that may never come.
+			for (iv in arrOf(a[0])) { var spec = strOf(iv); addImportSpec(next, spec); loadImportModule(com, spec); }
+			for (uv in arrOf(a[1])) { var spec = strOf(uv); next.usings.push(pathFromDotted(spec)); loadImportModule(com, spec); }
 			com.moduleImports.set(key, next);
 			try {
 				var ret = applyFn(ec, a[2], []);
@@ -468,6 +480,9 @@ class EvalMacro {
 		});
 		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
 		reg2("defineType", "define_type", function(a) {
+			// A definition the decoder rejects is reported as what was expected against what came back, at
+			// the call.
+			if (a[0] == VNull) throw decodingError(a[0], "TypeDefinition", "Null Access", curPos);
 			defineMacroType(ec, com, a[0], a.length > 1 ? a[1] : VNull);
 			return VNull;
 		});
@@ -476,8 +491,9 @@ class EvalMacro {
 		reg2("defineModule", "define_module", function(a) {
 			var parts = strOf(a[0]).split(".");
 			var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
-			var dp = Position.nullPos;
-			var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, dp)];
+			var types = [for (tv in arrOf(a[1])) decodeTypeDefinition(ec, tv, Position.nullPos)];
+			// The module's position is its first definition's, and the redefinition check reports there.
+			var dp = types.length > 0 ? types[0].pos : Position.nullPos;
 			var imports = (a.length > 2 && a[2] != VNull) ? [for (iv in arrOf(a[2])) decodeImport(ec, iv, dp)] : [];
 			var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
 			var existing = com.moduleLut.get(Context.pathKey(path));
@@ -881,6 +897,23 @@ class EvalMacro {
 		return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
 	}
 
+	// The module an import or using names: the dotted path up to its first capitalised segment
+	// (`a.b.C.d` and `a.b.C as X` both load a.b.C); a package wildcard loads nothing.
+	static function loadImportModule(com:Context, raw:String):Void {
+		var head = raw.split(" ")[0];
+		var parts = head.split(".");
+		var pack = [];
+		for (seg in parts) {
+			if (seg == "*" || seg == "") return;
+			var c = seg.charCodeAt(0);
+			if (c >= "A".code && c <= "Z".code) {
+				hxc.context.ModuleLoader.loadModule(com, {pack: pack, name: seg}, Position.nullPos);
+				return;
+			}
+			pack.push(seg);
+		}
+	}
+
 	static function addImportSpec(imports:hxc.context.Context.ModuleImports, raw:String):Void {
 		var spec = StringTools.trim(raw);
 		var alias:Null<String> = null;
@@ -1143,9 +1176,8 @@ class EvalMacro {
 			// A result the decoder rejects is reported as what was expected against what came back, at the
 			// metadata, with the decoding report written to dump/decoding_error.txt. The decoder's own
 			// complaints are plain strings.
-			var newFields = try [for (fv in arrOf(result)) decodeField(ec, fv, namePos)] catch (s:String) {
-				if (!StringTools.startsWith(s, "macro decode:")) throw s;
-				throw decodingError(result, "Array<Field>", s, entry.pos);
+			var newFields = try [for (fv in arrOf(result)) decodeField(ec, fv, namePos)] catch (d:DecodeFailure) {
+				throw decodingError(result, "Array<Field>", d.text, entry.pos);
 			};
 			// A `macro` function in a class build's result, for a class the macro context has already
 			// compiled (its path is in that world's type table), is refused at the build unless a macro of
@@ -1659,7 +1691,7 @@ class EvalMacro {
 			// swallowing one of those would lose the request.
 			catch (e:Dynamic) {
 				if (!hxc.parser.ParserError.isParseFailure(e)) throw e;
-				throw new TypingError("Malformed metadata string", curPos);
+				throw new TypingError("Malformed metadata string", apiCallPos());
 			};
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
@@ -1685,7 +1717,7 @@ class EvalMacro {
 			// swallowing one of those would lose the request.
 			catch (e:Dynamic) {
 				if (!hxc.parser.ParserError.isParseFailure(e)) throw e;
-				throw new TypingError("Malformed metadata string", curPos);
+				throw new TypingError("Malformed metadata string", apiCallPos());
 			};
 		var entries:Array<MetadataEntry> = [];
 		function collect(e:Expr):Void switch (e.expr) {
@@ -3040,18 +3072,29 @@ class EvalMacro {
 		return switch (v) {
 			case VEnumValue(ev): switch (ec.typeCache.get(ev.epath)) {
 				case TEnumDecl(en): en.names[ev.eindex];
-				case _: throw "macro decode: not an enum value";
+				case _: throw unexpectedValue(v, "enum value");
 			};
-			case _: throw "macro decode: expected enum value";
+			case _: throw unexpectedValue(v, "enum value");
 		};
 	}
 
 	static function eargs(v:EvalValue):Array<EvalValue> {
-		return switch (v) { case VEnumValue(ev): ev.eargs; case _: throw "macro decode: expected enum value"; };
+		return switch (v) { case VEnumValue(ev): ev.eargs; case _: throw unexpectedValue(v, "enum value"); };
+	}
+
+	// A decoder handed the wrong kind of value raises the macro's own uncaught exception - "Null Access"
+	// for null, otherwise the value and the kind expected. The failure travels as a DecodeFailure so a
+	// build's decoding guard can turn it into its decoding report; anything else that meets it at the
+	// native boundary makes it a string exception.
+	static function unexpectedValue(v:EvalValue, expected:String):DecodeFailure {
+		return new DecodeFailure(switch (v) {
+			case VNull: "Null Access";
+			case _: "Unexpected value " + EvalStdLib.valueKind(v) + "(" + EvalStdLib.stringOf(v) + "), expected " + expected;
+		});
 	}
 
 	static function strOf(v:EvalValue):String {
-		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw "macro decode: expected string, got " + EvalStdLib.stringOf(v); };
+		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw unexpectedValue(v, "string"); };
 	}
 
 	// The module check policies, in the order haxe.macro.CompilationServer declares them.
@@ -3066,7 +3109,7 @@ class EvalMacro {
 	}
 
 	static function intOf(v:EvalValue):Int {
-		return switch (v) { case VInt(i): i; case _: throw "macro decode: expected int"; };
+		return switch (v) { case VInt(i): i; case _: throw unexpectedValue(v, "int"); };
 	}
 
 	static function strOpt(v:EvalValue):Null<String> {
@@ -3078,7 +3121,7 @@ class EvalMacro {
 	}
 
 	static function arrOf(v:EvalValue):Array<EvalValue> {
-		return switch (v) { case VArray(a): a.avalues.slice(0, a.alength); case VNull: []; case _: throw "macro decode: expected array"; };
+		return switch (v) { case VArray(a): a.avalues.slice(0, a.alength); case VNull: []; case _: throw unexpectedValue(v, "array"); };
 	}
 
 	static function refGet(ec:EvalContext, v:EvalValue):EvalValue {
@@ -3334,7 +3377,9 @@ class EvalMacro {
 	}
 
 	static function decodeExpr(ec:EvalContext, v:EvalValue, dp:Position):Expr {
-		if (v == VNull) return new Expr(EConst(CIdent("null")), dp);
+		// Decoding an expression reads the value's pos first, and a null pos is an invalid expression:
+		// `Context.typeof(null)` is "Invalid expression", not the constant null.
+		if (v == VNull) throw new DecodeFailure("Invalid expression");
 		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
 		var ed = decodeExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
 		return new Expr(ed, p);
@@ -3587,7 +3632,7 @@ class EvalMacro {
 			expr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
 			// Read the hidden pos field, the null position when a macro built the case object without it
 			// (the match then falls back to the body position).
-			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), Position.nullPos)
+			pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("pos")))
 		};
 	}
 
@@ -3601,10 +3646,10 @@ class EvalMacro {
 		// catch variable prints at line 1. Falling back to the enclosing position would put it on the
 		// switch line and shift the line markers after it.
 		return {
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), Position.nullPos)},
+			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")))},
 			type: tv == VNull ? null : decodeTypeHint(ec, tv, dp),
 			expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), Position.nullPos)
+			pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("pos")))
 		};
 	}
 
@@ -3645,7 +3690,8 @@ class EvalMacro {
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
 		return {
-			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), dp)},
+			// A missing name_pos defaults to p.
+			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posDefault(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), dp)},
 			evFinal: boolOf(EvalField.field(ec, v, EvalHash.hash("isFinal"))),
 			evStatic: boolOf(EvalField.field(ec, v, EvalHash.hash("isStatic"))),
 			evType: { var tv = EvalField.field(ec, v, EvalHash.hash("type")); tv == VNull ? null : decodeTypeHint(ec, tv, dp); },
@@ -3664,7 +3710,7 @@ class EvalMacro {
 		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), pos);
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
 		// `name_pos`, defaulting to the field's pos.
-		var namePos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), pos);
+		var namePos = posDefault(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), pos);
 		return new ClassField({name: name, pos: namePos}, null, pos, meta, access, kind);
 	}
 
@@ -3684,7 +3730,7 @@ class EvalMacro {
 			case "APublic": APublic; case "APrivate": APrivate; case "AStatic": AStatic; case "AOverride": AOverride;
 			case "ADynamic": ADynamic; case "AInline": AInline; case "AMacro": AMacro; case "AFinal": AFinal;
 			case "AExtern": AExtern; case "AAbstract": AAbstract; case "AOverload": AOverload;
-			case other: throw "macro decode: unhandled Access " + other;
+			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected Access");
 		};
 	}
 
@@ -3694,7 +3740,7 @@ class EvalMacro {
 			case "FVar": FVar((a.length > 0 && a[0] != VNull) ? decodeTypeHint(ec, a[0], dp) : null, decodeExprOpt(ec, a.length > 1 ? a[1] : VNull, dp));
 			case "FFun": FFun(decodeFunc(ec, a[0], dp));
 			case "FProp": FProp({name: strOf(a[0]), pos: dp}, {name: strOf(a[1]), pos: dp}, (a.length > 2 && a[2] != VNull) ? decodeTypeHint(ec, a[2], dp) : null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
-			case other: throw "macro decode: unhandled FieldType " + other;
+			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected FieldType");
 		};
 	}
 
@@ -3738,7 +3784,7 @@ class EvalMacro {
 			// EFunction with an invalid argument name then reports at the macro call position, where a null
 			// fallback would print the error with no position at all.
 			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-				pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
+				pos: posDefault(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
 			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
 			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp),
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
@@ -3899,7 +3945,7 @@ class EvalMacro {
 				CString(strOf(a[0]), kind);
 			case "CIdent": CIdent(strOf(a[0]));
 			case "CRegexp": CRegexp(strOf(a[0]), strOf(a[1]));
-			case other: throw "macro decode: unhandled Constant " + other;
+			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected Constant");
 		};
 	}
 
@@ -3912,7 +3958,7 @@ class EvalMacro {
 			case "OpAssign": OpAssign; case "OpInterval": OpInterval; case "OpArrow": OpArrow; case "OpIn": OpIn;
 			case "OpNullCoal": OpNullCoal;
 			case "OpAssignOp": OpAssignOp(decodeBinop(ec, eargs(v)[0]));
-			case other: throw "macro decode: unhandled Binop " + other;
+			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected Binop");
 		};
 	}
 
@@ -3920,7 +3966,7 @@ class EvalMacro {
 		return switch (ctorName(ec, v)) {
 			case "OpIncrement": Increment; case "OpDecrement": Decrement;
 			case "OpNot": Not; case "OpNeg": Neg; case "OpNegBits": NegBits; case "OpSpread": Spread;
-			case other: throw "macro decode: unhandled Unop " + other;
+			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected Unop");
 		};
 	}
 
@@ -4622,8 +4668,11 @@ class EvalMacro {
 
 	static function posOf(ec:EvalContext, v:EvalValue, fallback:Position):Position {
 		return switch (v) {
+			// Anything but a Position value is an invalid expression; a null handed for a position is
+			// "Invalid expression", not the caller's fallback (which stands in only for an argument that
+			// was never passed, see posArg).
 			case VNull:
-				fallback;
+				throw new DecodeFailure("Invalid expression");
 			case VInstance(vi): switch (vi.ikind) {
 				case IPos(p): p;
 				case _: fallback;
@@ -4642,6 +4691,16 @@ class EvalMacro {
 			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
 			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), at);
 		}
+	}
+
+	// A missing position takes the caller's default.
+	static function posDefault(ec:EvalContext, v:EvalValue, fallback:Position):Position {
+		return v == VNull ? fallback : posOf(ec, v, fallback);
+	}
+
+	// A missing position is the null position.
+	static function posMaybe(ec:EvalContext, v:EvalValue):Position {
+		return v == VNull ? Position.nullPos : posOf(ec, v, Position.nullPos);
 	}
 
 	static function posArg(ec:EvalContext, args:Array<EvalValue>, index:Int, fallback:Position):Position {
@@ -5027,5 +5086,15 @@ class EvalMacro {
 		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
 		fields.set(EvalHash.hash("t"), encodeType(ec, a.t));
 		return VObject(new VObject([], ODictionary(fields)));
+	}
+}
+
+// A decoder handed the wrong kind of value. Converted at the native boundary into the macro's uncaught
+// exception, or by a build's decoding guard into its decoding report.
+class DecodeFailure extends haxe.Exception {
+	public final text:String;
+	public function new(text:String) {
+		super(text);
+		this.text = text;
 	}
 }
