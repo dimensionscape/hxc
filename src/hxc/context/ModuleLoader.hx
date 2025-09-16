@@ -1681,10 +1681,13 @@ class ModuleLoader {
 						i--;
 					}
 					throw e;
-				case ModuleNotFound(_) if (sub == null && path.pack.length >= 1):
+				case ModuleNotFound(_) if (sub == null && path.pack.length >= 1 && isModuleName(path.pack[path.pack.length - 1])):
 					// A flattened sub-type path (pack ends in the module name, `name` is the sub-type, e.g.
-					// `pack.Module.Sub` stored as {pack: [pack, Module], name: Sub}) has no module file of its
-					// own; resolve the module from the last pack segment and find the sub-type in it.
+					// `pack.Module.Sub` stored as {pack: [pack, Module], name: Sub}) has no module file of
+					// its own; resolve the module from the last pack segment and find the sub-type in it.
+					// Only a CAPITALISED segment can be that module: the grammar ends the package at the
+					// first one, and a qualified type loads (pack, name) alone, so `nope.Missing` never
+					// asks the not-found hook about a module `nope`.
 					var mname = path.pack[path.pack.length - 1];
 					var mpack = path.pack.slice(0, path.pack.length - 1);
 					var m = try loadModuleOpt(ctx, {pack: mpack, name: mname}, p) catch (_:ContextError) null;
@@ -1696,6 +1699,12 @@ class ModuleLoader {
 					throw e;
 			}
 		}
+	}
+
+	static function isModuleName(seg:String):Bool {
+		if (seg.length == 0) return false;
+		var c = seg.charCodeAt(0);
+		return c >= "A".code && c <= "Z".code;
 	}
 
 	// The first type of that name decides. Reaching a private one from outside its own module and

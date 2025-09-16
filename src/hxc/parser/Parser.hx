@@ -1963,12 +1963,13 @@ class Parser {
 						var vl = parseVarDecls(true, p1);
 						var pEnd = semicolon();
 						return new Expr(EVars(vl), Position.union(p1, pEnd));
-					case Const(CIdent(_)), Dollar(_), At:
+					case _:
+						// After `final` the block arm always enters parseVarDecls, whose empty alternative is
+						// "Missing variable identifier" at the keyword; nothing after it is reached. So a file ending
+						// in `final` reports that, not `Unexpected <end of file>`.
 						var vl = parseVarDecls(true, p1);
 						var p2 = semicolon();
 						return new Expr(EVars(vl), Position.union(p1, p2));
-					case _:
-						idx = save;
 				}
 			case Kwd(KwdInline):
 				var p1 = next().pos;

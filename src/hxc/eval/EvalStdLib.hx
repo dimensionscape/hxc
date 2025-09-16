@@ -2689,7 +2689,12 @@ class EvalStdLib {
 		if (start < s.length) Sys.print(s.substr(start));
 		// Eval's println appends the PLATFORM line end explicitly (stdout itself is binary), so
 		// interpreted output keeps \r\n on Windows.
-		if (newline) Sys.print(Sys.systemName() == "Windows" ? "\r\n" : "\n");
+		if (newline) {
+			Sys.print(Sys.systemName() == "Windows" ? "\r\n" : "\n");
+			// print_endline flushes; a macro's println must reach the terminal before a
+			// diagnostic the compiler then writes to stderr, as it does in the reference.
+			Sys.stdout().flush();
+		}
 	}
 
 	static function flushStdout():Void {

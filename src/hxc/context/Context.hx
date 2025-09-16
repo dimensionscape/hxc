@@ -497,6 +497,12 @@ class Context {
 			Sys.println("[diag" + (isMacro ? ":macro" : "") + " #" + diagnostics.length + (forwardWarningsTo != null ? " fwd" : "") + "] " + message.split("
 ")[0]);
 		diagnostics.push({message: message, pos: pos, depth: depth, severity: severity == null ? Error : severity});
+		// Errors outside a macro call's span gain a Called from macro here entry one level deeper.
+		// Relocated errors inside the call do not.
+		var span = relocateNullPosTo;
+		if (span != null && (severity == null || severity == Error) && pos != null
+				&& (pos.file != span.file || pos.max < span.min || pos.min > span.max))
+			diagnostics.push({message: "... Called from macro here", pos: span, depth: depth + 1, severity: Error});
 	}
 
 	public function remapPath(path:Path):Path {

@@ -764,6 +764,11 @@ class EvalEmitter {
 
 	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
 		switch (callee.expr) {
+			case TField(_, FEnum(en, ef)):
+				// An enum value remembers where it was constructed. A reified type hint is such a value
+				// (with a zero-width position), and decoding it as a complex type reports on it.
+				var args = [for (a in argExprs) eval(ctx, a)];
+				return VEnumValue(new VEnumValue(ef.index, args, EvalHash.pathHash(en.path), p));
 			case TIdent("$__mk_pos__"):
 				// Reification's position builtin: build a position value from (file, min, max) - an IPos
 				// instance, which prints as `#pos(file:line: characters a-b)` - not the {file, min, max} object

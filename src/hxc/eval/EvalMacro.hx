@@ -1854,7 +1854,22 @@ class EvalMacro {
 
 	// Build an AST expression that evaluates to the given runtime value; Context.makeExpr / `$v{...}` reify
 	// a value back into a haxe.macro.Expr.
+	static var valueToExprDepth = 0;
+
+	// Converting a value recurses without a guard, and a cyclic object has to end as the macro's uncaught
+	// "Stack overflow". hxcpp's stack is deep enough that the recursion would effectively never return, so
+	// the depth is bounded here at a figure no acyclic value reaches.
 	static function valueToExpr(ec:EvalContext, v:EvalValue, p:Position):Expr {
+		if (++valueToExprDepth > 8000) {
+			valueToExprDepth = 0;
+			return EvalExceptions.excString(ec, "Stack overflow");
+		}
+		var e = try valueToExprInner(ec, v, p) catch (x:Dynamic) { valueToExprDepth--; throw x; };
+		valueToExprDepth--;
+		return e;
+	}
+
+	static function valueToExprInner(ec:EvalContext, v:EvalValue, p:Position):Expr {
 		inline function mk(ed:ExprDef):Expr return new Expr(ed, p);
 		return switch (EvalValue.EvalValueTools.vresolve(v)) {
 			case VNull: mk(EConst(CIdent("null")));
@@ -2559,6 +2574,10 @@ class EvalMacro {
 		var savedTctx = curTctx;
 		var savedPos = savedPos0;
 		var savedModule = curModule;
+		// The macro's RESULT is typed after the macro returns, with the interpreter's env stack popped: an
+		// exception raised there - the not-found hook throwing while the result's type hint loads - reports
+		// with no "Called from here" for this invocation.
+		var resultPhase = false;
 		try {
 			// The argument signature comes from the macro world: the host-context signature of a macro
 			// method degrades its types to Dynamic, which would hide the Expr parameters.
@@ -2595,6 +2614,7 @@ class EvalMacro {
 			// clearing it.
 			var savedRelocate = tctx.com.relocateNullPosTo;
 			tctx.com.relocateNullPosTo = p;
+			resultPhase = true;
 			var typed = try Typer.typeExpr(tctx, astExpr, withType)
 				catch (te:haxe.Exception) { tctx.com.relocateNullPosTo = savedRelocate; throw te; }
 			tctx.com.relocateNullPosTo = savedRelocate;
@@ -2609,7 +2629,7 @@ class EvalMacro {
 			// innermost first: reading curPos at catch time instead only ever worked because the
 			// restore was putting back this frame's own position rather than the caller's.
 			var rte = Std.downcast(e, hxc.eval.EvalExceptions.EvalRunTimeException);
-			if (rte != null) rte.callPositions.push(p);
+			if (rte != null && !resultPhase) rte.callPositions.push(p);
 			curTctx = savedTctx;
 			curPos = savedPos;
 			curModule = savedModule;
