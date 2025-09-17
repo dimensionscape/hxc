@@ -338,6 +338,14 @@ class Calls {
 			if (src != null && (Std.isOfType(src, hxc.core.TypingError.CallError)
 				|| Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError)))
 				return new TypingError(msg, pos, depth);
+			// A Stack error (a macro's uncaught exception with its chain) keeps every line and takes the
+			// annotation as one more Stack element, at the error's own position and without compl_msg's
+			// "...".
+			if (src != null && src.callChain != null) {
+				var te = new TypingError(src.message, src.pos, src.depth);
+				te.callChain = src.callChain.concat([{message: "For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: src.pos, depth: 0}]);
+				return te;
+			}
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
 			// Call_error reaching here from a nested call that hxc typed eagerly.
 			if (StringTools.startsWith(msg, "Not enough arguments") || StringTools.startsWith(msg, "Too many arguments")) return new TypingError(msg, pos, depth);
@@ -1091,7 +1099,7 @@ class Calls {
 		}
 		var candidates = [fa.field].concat(fa.field.overloads);
 		// Each failed candidate: the overload field, its rendered error, and the error position.
-		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
+		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int, ?chain:Array<{message:String, pos:Position, ?depth:Int}>}> = [];
 		// With several candidates an argument error must RAISE so the next overload is tried: a lambda
 		// body error inside a block would otherwise be recorded as a batch diagnostic and the first
 		// candidate would win with a poisoned result. Trial diagnostics roll back per attempt.
@@ -1176,7 +1184,7 @@ class Calls {
 			} catch (e:TypingError) {
 				restore();
 				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
-				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth});
+				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth, chain: e.callChain});
 			} catch (e:haxe.Exception) {
 				restore();
 				throw e;
@@ -1210,13 +1218,20 @@ class Calls {
 		// A single candidate (or several failing identically) raises the one error; distinct failures
 		// report each overload with its own reason (duplicates removed by message, then either the one
 		// located error or the "reasons follow" block).
-		var distinct:Array<{cf:TClassField, msg:String, pos:Position, depth:Int}> = [];
+		var distinct:Array<{cf:TClassField, msg:String, pos:Position, depth:Int, ?chain:Array<{message:String, pos:Position, ?depth:Int}>}> = [];
 		for (f in failures) {
 			var seen = false;
 			for (d in distinct) if (d.msg == f.msg) { seen = true; break; }
 			if (!seen) distinct.push(f);
 		}
-		if (distinct.length == 1) throw new TypingError(distinct[0].msg, distinct[0].pos, distinct[0].depth);
+		if (distinct.length == 1) {
+			// The one candidate's error is raised as it came, chain included: a macro's uncaught exception
+			// in
+			// an argument keeps its "Called from here" lines and the annotation the argument added.
+			var te = new TypingError(distinct[0].msg, distinct[0].pos, distinct[0].depth);
+			te.callChain = distinct[0].chain;
+			throw te;
+		}
 		ctx.com.addDiagnostic("Could not find a suitable overload, reasons follow", p);
 		for (f in distinct) {
 			ctx.com.addDiagnostic("Overload resolution failed for " + hxc.core.TPrinting.sTypeStr(f.cf.type), p, 1);

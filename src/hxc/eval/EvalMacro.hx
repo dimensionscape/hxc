@@ -26,6 +26,7 @@ class EvalMacro {
 	static var lastModuleCount:Int = -1;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
+	static var macroCallDepth = 0;
 	public static function debugCurPos():Position return curPos;
 
 	// Where the running macro frame is, i.e. the API call itself.
@@ -1213,7 +1214,7 @@ class EvalMacro {
 	// An uncaught macro-time exception reports at the throwing expression with a "Called from here"
 	// frame per enclosing call, innermost first, closing with the macro invocation sites the unwind
 	// recorded.
-	public static function uncaughtExceptionStack(re:EvalExceptions.EvalRunTimeException):Array<{message:String, pos:Position}> {
+	public static function uncaughtExceptionStack(re:EvalExceptions.EvalRunTimeException):Array<{message:String, pos:Position, ?depth:Int}> {
 		var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
 		frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
 		var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
@@ -2578,6 +2579,7 @@ class EvalMacro {
 		// exception raised there - the not-found hook throwing while the result's type hint loads - reports
 		// with no "Called from here" for this invocation.
 		var resultPhase = false;
+		macroCallDepth++;
 		try {
 			// The argument signature comes from the macro world: the host-context signature of a macro
 			// method degrades its types to Dynamic, which would hide the Expr parameters.
@@ -2621,6 +2623,7 @@ class EvalMacro {
 			// Recorded after the inner typing so nested macro runs cannot overwrite the OUTERMOST expansion;
 			// the assign check reads it to judge a macro call lvalue.
 			lastExpansionAst = astExpr;
+			macroCallDepth--;
 			return typed;
 		} catch (e:haxe.Exception) {
 			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
@@ -2633,6 +2636,27 @@ class EvalMacro {
 			curTctx = savedTctx;
 			curPos = savedPos;
 			curModule = savedModule;
+			macroCallDepth--;
+			// What the macro does not catch is a typing error at the invocation, raised - a block records it
+			// per statement and goes on, an initializer's escape ends the compile - and reported as the
+			// interpreter prints it (the head and its "Called from here" chain). The conversion waits for
+			// the OUTERMOST macro frame so nested expansions keep adding their invocation to the chain.
+			if (rte != null && macroCallDepth == 0) {
+				var info = runtimeMacroError(rte);
+				if (info != null && isAbortValue(EvalContext.getCtx(), rte.value)) {
+					// "error": display_error, then Abort; the interpreter answers None and the call types
+					// `null` instead .
+					tctx.com.addDiagnostic(info.message, info.pos);
+					return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
+				}
+				// A thrown haxe.macro.Error is the typing error it names, raised at its own position with no
+				// "Uncaught exception" head and no chain.
+				if (info != null) throw new TypingError(info.message, info.pos);
+				var stack = uncaughtExceptionStack(rte);
+				var te = new TypingError(stack[0].message, stack[0].pos);
+				te.callChain = stack;
+				throw te;
+			}
 			throw e;
 		}
 	}
@@ -4762,11 +4786,16 @@ class EvalMacro {
 		ensureInstanceSlot(proto, EvalHash.hash("pos"));
 		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
 		ensureInstanceSlot(proto, EvalHash.hash("toString"));
+		ensureInstanceSlot(proto, EvalHash.hash("__hxcAbort"));
 		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
 		EvalField.setField(ec, v, EvalHash.hash("message"), mkString(msg), pos);
 		EvalField.setField(ec, v, EvalHash.hash("get_message"), VFunction(function(_) return mkString(msg), false), pos);
 		EvalField.setField(ec, v, EvalHash.hash("pos"), posValue, pos);
 		EvalField.setField(ec, v, EvalHash.hash("childErrors"), VNull, pos);
+		// The value Context.error raises through the native boundary; a haxe.macro.Error a macro throws
+		// itself is an uncaught exception like any other value Abort for the former and nothing
+		// distinguishes the latter from a string).
+		EvalField.setField(ec, v, EvalHash.hash("__hxcAbort"), VTrue, pos);
 		// haxe.Exception.toString() yields the message, so Std.string(err) is the message text.
 		EvalField.setField(ec, v, EvalHash.hash("toString"), VFunction(function(_) return mkString(msg), false), pos);
 		return v;
@@ -4801,11 +4830,23 @@ class EvalMacro {
 		if (com != null) com.addDiagnostic(msg, pos);
 	}
 
+	// The value hxc's own Context.error raises + Abort), as opposed to a haxe.macro.Error a macro throws
+	// itself.
+	static function isAbortValue(ec:EvalContext, v:EvalValue):Bool {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VInstance(_): EvalField.field(ec, v, EvalHash.hash("__hxcAbort")) == VTrue;
+			case _: false;
+		};
+	}
+
 	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position}> {
 		var ec = try EvalContext.getCtx() catch (_:Dynamic) null;
 		if (ec == null) return null;
 		return switch (EvalValueTools.vresolve(ex.value)) {
-			case VInstance(_):
+			// Only a haxe.macro.Error instance reads as an error of its own (its message at its position);
+			// any other thrown value is uncaught.
+			case VInstance(vi) if (vi.iproto != null && (vi.iproto == ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"))
+					|| vi.iproto == ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error")))):
 				// A user built haxe.macro.Error keeps message behind the Exception property
 				// whose backing slot is __exceptionMessage; the raw message slot is null.
 				var msgRaw = EvalField.field(ec, ex.value, EvalHash.hash("message"));

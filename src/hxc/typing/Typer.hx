@@ -855,7 +855,7 @@ class Typer {
 				// statements after it are still typed.
 				var te = try typeExpr(ctx, e1, WithTypeTools.value)
 					catch (err:TypingError) {
-						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+						ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
 					}
 					catch (ce:hxc.context.Context.ContextError) {
@@ -5140,7 +5140,7 @@ class Typer {
 			try {
 				merge(typeExpr(ctx, el[i], wt));
 			} catch (err:TypingError) {
-				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+				ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 			} catch (ce:hxc.context.Context.ContextError) {
 				// A module that fails to load raises a typing error like anything else, so it is caught
 				// here too. hxc raises it as ContextError; letting it escape would drop every statement
@@ -5216,7 +5216,7 @@ class Typer {
 				// Record the error, then a generated local at Dynamic with no initializer. VGenerated, not the
 				// user origin: the declaration did not survive, so it is not the variable the user wrote and
 				// must not be reported as one.
-				ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+				ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 				out.push({v: addLocal(ctx, VGenerated, n, TypeFunctions.tDynamic, pv), e: null});
 			} catch (ce:hxc.context.Context.ContextError) {
 				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
@@ -5349,9 +5349,9 @@ class Typer {
 					// Inside call arguments the failure raises so the argument boundary annotates it with the
 					// parameter name .
 					if (ctx.com.isMacro || ctx.inCallArgs) throw err;
-					ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+					ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 					if (StringTools.startsWith(err.message, "Int should be haxe.ds.Option"))
-						ctx.com.addDiagnostic(err.message, err.pos, err.depth);
+						ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				} catch (ce:hxc.context.Context.ContextError) {

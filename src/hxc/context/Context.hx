@@ -514,11 +514,17 @@ class Context {
 		return {pack: pack, name: path.name};
 	}
 
-	public function addDiagnosticStack(stack:Array<{message:String, pos:Position}>, depth:Int = 0, ?severity:MessageSeverity):Void {
+	// Record a caught typing error with its call chain when present.
+	public function addTypingError(message:String, pos:Position, depth:Int, stack:Null<Array<{message:String, pos:Position, ?depth:Int}>>):Void {
+		if (stack != null) addDiagnosticStack(stack, depth) else addDiagnostic(message, pos, depth);
+	}
+
+	public function addDiagnosticStack(stack:Array<{message:String, pos:Position, ?depth:Int}>, depth:Int = 0, ?severity:MessageSeverity):Void {
 		if (stack.length == 0) return;
 		var sev = severity == null ? Error : severity;
 		addDiagnostic(stack[0].message, stack[0].pos, depth, sev);
-		for (i in 1...stack.length) addDiagnostic(stack[i].message, stack[i].pos, depth + 1, sev);
+		// Entries with explicit depths keep them; remaining entries are nested under the stack head.
+		for (i in 1...stack.length) addDiagnostic(stack[i].message, stack[i].pos, stack[i].depth != null ? stack[i].depth : depth + 1, sev);
 	}
 
 	// Drop disabled warnings; prefix enabled non-generic warnings with (WName).

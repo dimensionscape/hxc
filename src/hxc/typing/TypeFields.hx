@@ -211,7 +211,9 @@ class TypeFields {
 		}
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
-			throw new hxc.core.TypingError.FatalError(te.message, te.pos, te.depth);
+			var fe = new hxc.core.TypingError.FatalError(te.message, te.pos, te.depth);
+			fe.callChain = te.callChain;
+			throw fe;
 		}
 		if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
@@ -237,7 +239,8 @@ class TypeFields {
 		}
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
-			addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
+			if (te.callChain != null) ctx.addDiagnosticStack(te.callChain, te.depth)
+			else addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
 		} else if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
 			addDiagnosticOnce(ctx, ce.message, ce.pos, ce.depth);

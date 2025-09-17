@@ -980,7 +980,7 @@ class Compiler {
 			// A field's fatal error is reported like any other, and that is the end of the compile.
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fatal-driver] " + e.message);
 			ctx.raiseTypingErrors = false;
-			ctx.addDiagnostic(e.message, e.pos, e.depth);
+			ctx.addTypingError(e.message, e.pos, e.depth, e.callChain);
 			flushPendingMessages(ctx);
 			exitRequest(1);
 		} catch (e:hxc.parser.LexerError) {
@@ -1401,7 +1401,7 @@ class Compiler {
 		} catch (e:hxc.core.TypingError.FatalError) {
 			// On the request path.
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
-			abortWithMessage(ctx, e.message, e.pos, e.depth);
+			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
@@ -3445,11 +3445,11 @@ class Compiler {
 
 	// A fatal error joins the message store before printing, so -D message.reporting picks the configured
 	// formatter (every abort prints through it).
-	static function abortWithMessage(ctx:Context, msg:String, pos:Position, depth:Int = 0):Void {
+	static function abortWithMessage(ctx:Context, msg:String, pos:Position, depth:Int = 0, ?stack:Array<{message:String, pos:Position, ?depth:Int}>):Void {
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[abort] " + msg.split("
 ")[0]);
 		ctx.raiseTypingErrors = false;
-		ctx.addDiagnostic(msg, pos, depth);
+		ctx.addTypingError(msg, pos, depth, stack);
 		flushPendingMessages(ctx);
 		exitRequest(1);
 	}

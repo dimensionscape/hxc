@@ -5,6 +5,10 @@ import hxc.ast.Position;
 class TypingError extends haxe.Exception {
 	public final pos:Position;
 	public final depth:Int;
+	// An uncaught macro exception reports as the interpreter prints it: its head line and the "Called from
+	// here" chain. The error travels with the whole report so whoever records it - a block per statement,
+	// the field, the driver - prints all of it.
+	public var callChain:Null<Array<{message:String, pos:Position, ?depth:Int}>> = null;
 
 	public function new(message:String, pos:Position, depth:Int = 0) {
 		hxc.core.PerfCount.exn("TypingError");
@@ -44,6 +48,7 @@ class CallError extends TypingError {}
 class FatalError extends haxe.Exception {
 	public final pos:Position;
 	public final depth:Int;
+	public var callChain:Null<Array<{message:String, pos:Position, ?depth:Int}>> = null;
 
 	public function new(message:String, pos:Position, depth:Int = 0) {
 		super(message);
