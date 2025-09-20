@@ -1954,7 +1954,12 @@ class EvalMacro {
 				// (macro defined, its own parse cache), never the host com. Context API queries still
 				// target the host com (defines/types reflect the program being compiled).
 				hxc.typing.TypeResolve.resolveAll(macroCom);
-				hxc.typing.TypeFields.installLazy(macroCom);
+				// Flushing the macro context types every field body of every module the macro world has loaded
+				// before a macro runs. That is what fills the missing-module memo (shared with the host) with
+				// the same-package misses of the std's own haxe.macro modules before any Context.onTypeNotFound
+				// hook exists. Lazy typers would leave those bodies to whoever needed them first - the host,
+				// after the macro ran - and the hook would be asked about haxe.macro.Reflect and its kind.
+				hxc.typing.TypeFields.typeAllModules(macroCom);
 				if (macroCtx == null) {
 					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] FULL BUILD, modules=" + macroCom.modules.length);
 					var ec = EvalMain.create(true);
@@ -2055,6 +2060,8 @@ class EvalMacro {
 			// normal policy, so a macro argument whose type does not resolve would fail there instead of
 			// recovering to Dynamic.
 			macroCom.ignoreErrors = com.ignoreErrors;
+			// And the memo of missing module paths: the macro com shares this compilation's.
+			macroCom.moduleNonexistentLut = com.moduleNonexistentLut;
 		}
 		// The reset needs an interpreter. When the sweep retired one, the flag has to SURVIVE this call:
 		// the rebuild below migrates the retired context's static values across, so without a reset
@@ -2250,10 +2257,20 @@ class EvalMacro {
 	}
 
 	// A display file whose module name is Name.macro is not a compile root, so nothing in the host
-	// compilation would ever load it. It is loaded into the MACRO context instead, and dropped from
-	// that context's lookups first so it types again in display mode even if an earlier --macro
-	// already typed it (issue #7017).
+	// compilation would ever load it. It is loaded into the MACRO context instead, and dropped from that
+	// context's lookups first so it types again in display mode even if an earlier --macro already typed
+	// it.
+	// The display file's module loads in the macro context with the macro-module load's display flag on:
+	// the window in which the macro world's typing answers the request, since only it types a `#if macro`
+	// body.
 	public static function loadDisplayModuleInMacro(host:Context, path:hxc.core.Globals.Path):Void {
+		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
+		hxc.typing.TypeFields.macroDisplayWindow = true;
+		try loadDisplayModuleInMacroInner(host, path) catch (e:Dynamic) { hxc.typing.TypeFields.macroDisplayWindow = oldWindow; throw e; }
+		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
+	}
+
+	static function loadDisplayModuleInMacroInner(host:Context, path:hxc.core.Globals.Path):Void {
 		if (macroCom == null) initMacroContext(host);
 		var key = hxc.context.Context.pathKey(path);
 		var m = macroCom.moduleLut.get(key);
@@ -2277,12 +2294,16 @@ class EvalMacro {
 		if (loaded != null) forceModuleClassFields(macroCom, loaded);
 	}
 
-	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position):Void {
+	// displayWindow: the load is the display macro mode, and the macro world keeps the display position
+	// through the load and the finalize.
+	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position, displayWindow:Bool = false):Void {
 		evictDisplayModule();
 		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;
+		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
+		if (displayWindow) hxc.typing.TypeFields.macroDisplayWindow = true;
 		try {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
@@ -2300,15 +2321,21 @@ class EvalMacro {
 				dep.extra.processed = 0;
 			}
 			hxc.typing.TypeResolve.resolveAll(macroCom);
-			hxc.typing.TypeFields.installLazy(macroCom);
 			// Loading the module raises what the declarations report, and from here on it is finalization
 			// typing bodies, which RECORDS. Keeping the raise mode on for the macro class's own fields would
 			// turn a recorded verdict in a macro body into a throw that abandons the rest of the module's
 			// macro-world typing.
 			macroCom.raiseTypingErrors = false;
-			// The classes the macro world holds build here too (typeloadModule init_class ->
-			// build_module_def in the macro context), which is where for a @:build met inside a macro.
-			hxc.eval.EvalMacro.runBuildMacros(macroCom);
+			// That finalize runs right after the macro module is loaded, before the method is even looked
+			// up, and it types every field body of every module the macro world holds - the macro module's
+			// own `using` targets included. That is what fills the missing-module memo (shared with the
+			// host) with the same-package misses of Printer, ExprTools and the rest before any
+			// Context.onTypeNotFound hook exists. Lazy typers forcing only the called field would leave
+			// those bodies to the host, after the macro had run and registered its hook, which would then be
+			// asked about haxe.macro.Reflect and its kind. The classes the macro world holds build here too
+			// (class init in the macro context), which is where a @:build met inside a macro raises;
+			// typeAllModules runs those first.
+			hxc.typing.TypeFields.typeAllModules(macroCom);
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.
@@ -2422,15 +2449,18 @@ class EvalMacro {
 			}
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
+			hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 			throw e;
 		} catch (e:Dynamic) {
 			macroCom.raiseTypingErrors = oldRaise;
+			hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 			// A display answer raised while typing a macro body is the request's result, not a macro-loading
 			// failure to swallow. only Error. Neither is a fatal error: raises the Fatal_error of a body the
 			// macro world could not type straight out of the macro world, and the compile on it.
 			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
+		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {

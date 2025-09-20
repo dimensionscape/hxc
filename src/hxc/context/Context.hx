@@ -374,6 +374,9 @@ class Context {
 		// with a non-sys host target.
 		hxc.context.Setup.initPlatform(c, Eval);
 		c.isMacro = true;
+		// Share missing-path results with the host so later extern-loader hooks are not called again for
+		// known misses.
+		c.moduleNonexistentLut = this.moduleNonexistentLut;
 		// Forward macro-world warnings to the main context; keep macro recovery diagnostics local.
 		c.forwardWarningsTo = this;
 		// Copy debug settings while starting a fresh feature table.

@@ -32,6 +32,11 @@ class CoreApi {
 		c.platform = ctx.platform;
 		c.platformConfig = ctx.platformConfig;
 		c.isMacro = ctx.isMacro;
+		// The clone keeps the memo of paths already known to be missing: it is the one map every world
+		// shares. A core context with its own map would memoize the same-package misses it met
+		// (haxe.exceptions.Exception from PosException) where the host could not see them, and the host
+		// would probe them again later - with a macro's Context.onTypeNotFound hook registered by then.
+		c.moduleNonexistentLut = ctx.moduleNonexistentLut;
 		ModuleLoader.attach(c);
 		ModuleLoader.initBasicTypes(c);
 		hxc.context.DisplayJson.cache.maybeAddContextSign(c, "load_core_class");

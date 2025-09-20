@@ -4017,8 +4017,10 @@ class EvalStdLib {
 						com.classPath.unshift(cp);
 						var mcom = EvalMacro.getMacroCom();
 						if (mcom != null) mcom.classPath.unshift(cp);
-						com.moduleNonexistentLut = new haxe.ds.StringMap();
-						if (mcom != null) mcom.moduleNonexistentLut = new haxe.ds.StringMap();
+						// The memo the two worlds share is cleared in place
+						if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR add_class_path");
+						com.moduleNonexistentLut.clear();
+						if (mcom != null && mcom.moduleNonexistentLut != com.moduleNonexistentLut) mcom.moduleNonexistentLut.clear();
 						return VNull;
 					}, true);
 				case "get_output":

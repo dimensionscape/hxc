@@ -24,6 +24,11 @@ class TypeFields {
 	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
 	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
+	// Queues a field's typing once, when its class is built, so a finalize (Finalization.finalize, the
+	// flush of that queue) costs what is new. The installer re-walked every module on every call; with
+	// the macro world finalizing at each macro module load and each interpreter build over a closure
+	// of a few hundred modules, the installs alone doubled a macro-heavy compile.
+	static var finalizedModules:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
 	// The extern fields whose default values have been checked (the extern check runs once per field).
 	static var externDefaultsChecked:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 
@@ -49,12 +54,49 @@ class TypeFields {
 	public static function resetPerRequest():Void {
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
+		finalizedModules = new haxe.ds.ObjectMap();
 		externDefaultsChecked = new haxe.ds.ObjectMap();
 		macroForced = new haxe.ds.ObjectMap();
 		_forcing = [];
 	}
 
+	// The macro context inherits the display settings but requires normal typing: nothing the macro world
+	// types answers a display request; the host does. hxc's display position is the pair of parser statics
+	// every answer site reads (Typer, TypeFields, Typeload, ModuleLoader), so typing in the macro world
+	// runs with them withdrawn, under a depth so nested entries are one scope.
+	static var macroWorldDepth = 0;
+	static var savedDisplayFile:Null<String> = null;
+	static var savedDisplayOffset = -1;
+	// While a macro module loads for a DISPLAY request (a display-mode macro load, which only forcing a
+	// macro field asks for) the macro context carries the host's display settings through the load and the
+	// finalize, and the restore afterwards closes the window. That is how a request inside a macro body,
+	// which only the macro world types, is answered.
+	public static var macroDisplayWindow = false;
+	public static function enterMacroWorld(ctx:Context):Bool {
+		if (!ctx.isMacro || macroDisplayWindow) return false;
+		if (macroWorldDepth++ == 0) {
+			savedDisplayFile = hxc.parser.Parser.displayFile;
+			savedDisplayOffset = hxc.parser.Parser.displayOffset;
+			hxc.parser.Parser.displayFile = null;
+			hxc.parser.Parser.displayOffset = -1;
+		}
+		return true;
+	}
+	public static function leaveMacroWorld(entered:Bool):Void {
+		if (!entered) return;
+		if (--macroWorldDepth == 0) {
+			hxc.parser.Parser.displayFile = savedDisplayFile;
+			hxc.parser.Parser.displayOffset = savedDisplayOffset;
+		}
+	}
+
 	public static function typeAllModules(ctx:Context):Void {
+		var mw = enterMacroWorld(ctx);
+		try typeAllModulesInner(ctx) catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+		leaveMacroWorld(mw);
+	}
+
+	static function typeAllModulesInner(ctx:Context):Void {
 		// The raise that ended a module's build leaves the compile, and a @:build runs inside a class's own
 		// PBuildClass build - never reached after it. Running every class's build macros here, after
 		// resolveAll has already recorded that raise, would make a macro path that did not resolve print a
@@ -130,6 +172,7 @@ class TypeFields {
 			// a `super(...)` in one of its constructors types against a null superClass. resolveModule is
 			// idempotent (processed gate).
 			var mres = ctx.modules[i];
+			if (finalizedModules.exists(mres)) { i++; continue; }
 			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
 			tt("installModuleFields", function() { installModuleFields(ctx, mres, pending); return 0; });
 			i++;
@@ -165,6 +208,8 @@ class TypeFields {
 		var mi = ctx.modules.length - 1;
 		while (mi >= 0) {
 			var m = ctx.modules[mi];
+			if (finalizedModules.exists(m)) { mi--; continue; }
+			finalizedModules.set(m, true);
 			ctx.delay(hxc.context.Context.PTypeField, function() {
 				// Heritage must resolve before bodies force, or a `super(...)` types
 				// against a null superClass. resolveModule is idempotent.
@@ -308,6 +353,12 @@ class TypeFields {
 	}
 
 	static function installModuleFields(ctx:Context, m:ModuleDef, pending:Array<TClassField>):Void {
+		var mw = enterMacroWorld(ctx);
+		try installModuleFieldsInner(ctx, m, pending) catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+		leaveMacroWorld(mw);
+	}
+
+	static function installModuleFieldsInner(ctx:Context, m:ModuleDef, pending:Array<TClassField>):Void {
 		TypeResolve.resolveModule(ctx, m);
 		for (mt in m.types) {
 			switch (mt) {
@@ -503,7 +554,7 @@ class TypeFields {
 		var isDisplay = hxc.parser.Parser.displayFile != null;
 		// The declaring module's path, not the class's: a class whose name differs from its module file
 		// (common in display requests) is not loadable by its own path.
-		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos)
+		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos, true)
 		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
 		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
 	}
@@ -523,7 +574,7 @@ class TypeFields {
 					&& tctx.curclass != null) {
 				// The declaring module's path, not the class's: a class whose name differs from its module file
 				// (common in display requests) is not loadable by its own path.
-				try hxc.eval.EvalMacro.loadMacroClass(ctx, tctx.curclass.path, cf.name, false, m.path)
+				try hxc.eval.EvalMacro.loadMacroClass(ctx, tctx.curclass.path, cf.name, false, m.path, null, null, true)
 				catch (_:hxc.core.TypingError) {}
 				catch (_:hxc.context.Context.ContextError) {}
 			}
@@ -636,6 +687,12 @@ class TypeFields {
 	}
 
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
+		var mw = enterMacroWorld(ctx);
+		try forceFieldBodyInner(ctx, c, cf) catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+		leaveMacroWorld(mw);
+	}
+
+	static function forceFieldBodyInner(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
 		// Same reason as installClassFields: the declaration never resolved, so there is no body to type
 		// here. The filters reach this path directly, so guarding the install site alone is not enough.

@@ -1976,6 +1976,17 @@ class Compiler {
 		walkTypes(ctx.types);
 		var mw = hxc.eval.EvalMacro.macroWorld();
 		if (mw != null && mw != ctx) walkTypes(mw.types);
+		// A relation is recorded once per position, so an occurrence both worlds typed - the display file's
+		// own classes in a module the macro world loaded whole and finalized - is one usage.
+		var seenPos = new Map<String, Bool>();
+		var uniq:Array<Position> = [];
+		for (o in out) {
+			var k = o.file + ":" + o.min + ":" + o.max;
+			if (seenPos.exists(k)) continue;
+			seenPos.set(k, true);
+			uniq.push(o);
+		}
+		out = uniq;
 		out.sort(function(a, b) {
 			if (a.file != b.file) return a.file < b.file ? -1 : 1;
 			return a.min - b.min;

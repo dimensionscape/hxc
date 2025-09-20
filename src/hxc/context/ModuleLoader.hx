@@ -1404,7 +1404,8 @@ class ModuleLoader {
 		// The path check applies to Context.defineType too.
 		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
-		ctx.moduleNonexistentLut = new StringMap();
+		if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
+		ctx.moduleNonexistentLut.clear(); // Clear the host and macro worlds' shared memo in place.
 		return m;
 	}
 
@@ -1447,7 +1448,8 @@ class ModuleLoader {
 		// The path check reports at the first decoded type's position.
 		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;
-		ctx.moduleNonexistentLut = new StringMap();
+		if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
+		ctx.moduleNonexistentLut.clear(); // Clear the host and macro worlds' shared memo in place.
 		return m;
 	}
 
@@ -1552,8 +1554,10 @@ class ModuleLoader {
 		// not load).
 		if (loadOnlyCachedModules)
 			return null;
-		if (ctx.moduleNonexistentLut.exists(key))
+		if (ctx.moduleNonexistentLut.exists(key)) {
+			if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] memo-hit " + (ctx.isMacro ? "macro" : "host") + " " + key + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
 			return null;
+		}
 
 		var file:String;
 		var externDecls:Null<Array<hxc.ast.Ast.TypeDecl>> = null;
@@ -1563,6 +1567,7 @@ class ModuleLoader {
 			// Nothing to parse, so the extern-type loaders get a turn. The first one that answers names the
 			// module's file; only an exhausted list is not-found.
 			file = null;
+			if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] miss " + (ctx.isMacro ? "macro" : "host") + " " + key + " hooks=" + ctx.loadExternType.length + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
 			for (h in ctx.loadExternType) {
 				var r = h.load(m, p);
 				if (r != null) { file = h.name; externDecls = r; break; }
@@ -1637,6 +1642,25 @@ class ModuleLoader {
 			var imported = resolveNamedImportType(ctx, ctx.currentModule, tname, p);
 			if (imported != null) return imported;
 		}
+		// An unqualified path, with or without a sub-type, walks the current PACKAGE up to the root, the
+		// root last. Trying the root first would let a root `Printer.hx` shadow haxe.macro.Printer inside
+		// package haxe.macro, and make the root miss one more path for the extern-type loaders.
+		// resolveBareType is that walk, with the wildcard imports and the implicit StdTypes import ahead
+		// of it.
+		if (path.pack.length == 0 && ctx.currentModule != null) {
+			if (sub == null) {
+				var r = resolveBareType(ctx, ctx.currentModule, tname, p);
+				if (r != null) return r;
+			} else {
+				var cpack = ctx.currentModule.path.pack;
+				var i = cpack.length;
+				while (i >= 1) {
+					var r = tryLoadSub(ctx, {pack: cpack.slice(0, i), name: path.name}, sub, p);
+					if (r != null) return r;
+					i--;
+				}
+			}
+		}
 		try {
 			var m = loadModule(ctx, path, p);
 			return findTypeInModule(ctx, m, tname, p);
@@ -1646,41 +1670,15 @@ class ModuleLoader {
 			// are accessible by bare name via the implicit `import StdTypes`.
 			switch (e.kind) {
 				case ModuleNotFound(_) | TypeNotFound(_) if (sub == null && path.pack.length == 0 && path.name != "StdTypes"):
-					// A bare unqualified module name may be a sibling module in the current package (e.g.
-					// `ModA` inside `mp.Main` meaning `mp.ModA`). The reference resolves an unqualified
-					// name against the current package before the implicit StdTypes import . Without this a
-					// `Module.SubType.staticField` chain whose leading package was already consumed cannot
-					// re-resolve.
-					if (ctx.currentModule != null) {
-						var cpack = ctx.currentModule.path.pack;
-						var i = cpack.length;
-						while (i >= 1) {
-							var tryPack = cpack.slice(0, i);
-							var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
-							if (m != null) {
-								try { return findTypeInModule(ctx, m, tname, p); } catch (_:ContextError) {}
-							}
-							i--;
-						}
-					}
+					// The walk above found nothing (or there is no current module yet): the one
+					// implicit import left is StdTypes itself, read here while it is still being
+					// bootstrapped and resolveBareType cannot see it in the LUT.
 					var std = loadModule(ctx, {pack: [], name: "StdTypes"}, p);
 					try {
 						return findTypeInModule(ctx, std, tname, p);
 					} catch (_:ContextError) {
 						throw e; // Surface the original (more specific) error
 					}
-				case ModuleNotFound(_) if (sub != null && path.pack.length == 0 && ctx.currentModule != null):
-					var pack = ctx.currentModule.path.pack;
-					var i = pack.length;
-					while (i >= 1) {
-						var tryPack = pack.slice(0, i);
-						var m = try loadModuleOpt(ctx, {pack: tryPack, name: path.name}, p) catch (_:ContextError) null;
-						if (m != null) {
-							try { return findTypeInModule(ctx, m, tname, p); } catch (_:ContextError) {}
-						}
-						i--;
-					}
-					throw e;
 				case ModuleNotFound(_) if (sub == null && path.pack.length >= 1 && isModuleName(path.pack[path.pack.length - 1])):
 					// A flattened sub-type path (pack ends in the module name, `name` is the sub-type, e.g.
 					// `pack.Module.Sub` stored as {pack: [pack, Module], name: Sub}) has no module file of

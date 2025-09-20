@@ -23,6 +23,13 @@ class TypeResolve {
 	public static var resolving:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
 
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
+		// No display answers come from the macro world (see TypeFields).
+		var mw = hxc.typing.TypeFields.enterMacroWorld(ctx);
+		try resolveModuleEntry(ctx, m) catch (e:Dynamic) { hxc.typing.TypeFields.leaveMacroWorld(mw); throw e; }
+		hxc.typing.TypeFields.leaveMacroWorld(mw);
+	}
+
+	static function resolveModuleEntry(ctx:Context, m:ModuleDef):Void {
 		if (m.extra.resolved >= 1) return;
 		resolving.set(m, true);
 		try resolveModuleInner(ctx, m) catch (e:Dynamic) { resolving.remove(m); throw e; }
