@@ -69,9 +69,15 @@ class TexprTools {
 				TType(e.type, [for (_ in e.params) TypeFunctions.mkMono()]);
 			case TEnumDecl(e):
 				wrap(e.module, "Enum", e.path, e.pos, TypeFunctions.mkAnon(new Ref(EnumStatics(e))));
+			// An abstract WITH an implementation types as the implementation class's own type expression,
+			// `TTypeExpr(TClassDecl c)` over the Statics c anon; only one without keeps an AbstractStatics
+			// anon, and only a @:runtimeValue one may stand as a value.
+			case TAbstractDecl(a) if (a.impl != null):
+				return makeTypeExpr(TClassDecl(a.impl), p);
 			case TAbstractDecl(a):
-				wrap(a.module, "Abstract", a.path, a.pos,
-					TypeFunctions.mkAnon(new Ref(AbstractStatics(a)), a.impl != null ? a.impl.statics : null));
+				if (!TypeFunctions.hasMeta(":runtimeValue", a.meta))
+					throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " is not a value", p);
+				wrap(a.module, "Abstract", a.path, a.pos, TypeFunctions.mkAnon(new Ref(AbstractStatics(a))));
 			// A typedef that follows to something with no runtime identity (an anon, a function) is named by
 			// its own path, not by whatever it resolved to, because the resolved thing has no name to print.
 			case _:

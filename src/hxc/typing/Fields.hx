@@ -117,6 +117,11 @@ class Fields {
 		}
 	}
 
+	static function checkAbstractFieldAccess(ctx:TyperContext, a:TAbstract, f:TClassField, p:Position):Void {
+		if (a.impl != null && TypeFunctions.hasClassFieldFlag(f, CfImpl))
+			checkFieldAccess(ctx, a.impl, f, true, p);
+	}
+
 	// Recorded (not raised) so typing continues; a missing constructor is left to the caller (a null
 	// constructor is handled there).
 	public static function checkConstructorAccess(ctx:TyperContext, c:TClass, f:TClassField, p:Position):Void {
@@ -129,11 +134,6 @@ class Fields {
 			var path = switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };
 			ctx.com.addDiagnostic("Cannot access private constructor of " + hxc.core.Globals.sTypePath(path), p);
 		}
-	}
-
-	static function checkAbstractFieldAccess(ctx:TyperContext, a:TAbstract, f:TClassField, p:Position):Void {
-		if (a.impl != null && TypeFunctions.hasClassFieldFlag(f, CfImpl))
-			checkFieldAccess(ctx, a.impl, f, true, p);
 	}
 
 	// The @:require failure text: names the flag, with special phrasing for sys and flash
@@ -566,28 +566,21 @@ class Fields {
 									if (TypeFunctions.hasClassFieldFlag(f, CfNoLookup))
 										ctx.com.addDiagnostic("This field cannot be accessed explicitly", pfield);
 									fieldAccess(ctx, mode, f, FHStatic(c), e, pfield);
-								case AbstractStatics(ab) if (ab.impl != null):
-									// An abstract with an implementation types as that class, so a field reached through the
-									// type is 's `Statics c -> field_access f (FHStatic c)`. An enum member in particular must
-									// be FHStatic here: the FHAbstract host is what freshens the abstract's parameters
-									// through, and `E.A` of `E<T>` keeps E<T> in the reference while the bare `A` reads
-									// E<Unknown>. hxc keeps the FHAbstract host for a CfImpl member named through the type.
-									var host = (TypeFunctions.hasClassFieldFlag(f, CfImpl) && !TypeFunctions.hasClassFieldFlag(f, CfEnum))
-										? FHAbstract(ab, TypeFunctions.extractParamTypes(ab.params), ab.impl)
-										: FHStatic(ab.impl);
-									checkAbstractFieldAccess(ctx, ab, f, pfield);
-									fieldAccess(ctx, mode, f, host, e, pfield);
 								case _: fieldAccess(ctx, mode, f, FHAnon, e, pfield);
 							}
 						} else {
 							switch (a.status.get()) {
-								case AbstractStatics(ab) if (ab.impl != null && forwardsStaticField(ab, i)):
-									try {
+								// The implementation class's statics forward under @:forwardStatics.
+								case Statics({kind: KAbstractImpl(ab)}) if (forwardsStaticField(ab, i)):
+									// The underlying type expression is built with p and the lookup re-enters typeField, which
+									// raises on a miss (so the forwarded access keeps the full span, not the name slice, and a
+									// miss is the ORIGINAL receiver's: `Abstract<F> has no field`, at the field).
+									var fwd:Null<AccessKind> = try {
 										var mt = TypeFunctions.moduleTypeOfType(ab.thisType);
-										// The underlying type expression with p and re-enters the same lookup, so the forwarded
-										// access keeps the full span, not the name slice.
-										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, p), i, p, mode, withType, true, resume);
-									} catch (_:hxc.core.ExitException) {
+										typeField(ctx, hxc.core.TexprTools.makeTypeExpr(mt, p), i, p, mode, withType, true, true);
+									} catch (_:hxc.core.ExitException) null catch (_:FieldNotFoundError) null;
+									if (fwd != null) fwd
+									else {
 										var u = tryUsing(ctx, e, i, p);
 										if (u != null) u else if (ctx.untypedMode) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p)) else notFound(ctx, e, i, p, pfield, mode, withType, resume);
 									}
@@ -1122,6 +1115,8 @@ class Fields {
 				// step at a time; the guarded traversal raises on a recursive chain.
 				a.usings.concat(typeUsings(TypeFunctions.getUnderlyingTypeFirst(a, tl), i));
 			case TAbstract(a, _): a.usings;
+			// A statics anon maps back to its class, enum or abstract. An abstract's own @:using stays on
+			// the abstract, so the Statics anon of its implementation offers none of it.
 			case TAnon(a): switch (a.status.get()) {
 				case Statics(c): c.usings;
 				case EnumStatics(e): e.usings;

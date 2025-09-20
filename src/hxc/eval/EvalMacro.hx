@@ -3209,7 +3209,19 @@ class EvalMacro {
 			case "TMono":
 				var t = refGet(ec, args[0]);
 				t == VNull ? "Unknown<0>" : macroTypeString(ec, t);
-			case "TEnum" | "TInst" | "TType" | "TAbstract":
+			case "TType":
+				// The private typedef over an abstract implementation's statics anon (the type of the
+				// abstract's name as a value) prints as Abstract<A>; the s_type native prints the decoded
+				// type, which takes that arm.
+				var head = switch (moduleTypeFromRef(ec, args[0])) {
+					case TTypeDecl({type: TAnon(an)}): switch (an.status.get()) {
+						case Statics({kind: KAbstractImpl(a)}): "Abstract<" + hxc.core.Globals.sTypePath(a.path) + ">";
+						case _: null;
+					}
+					case _: null;
+				};
+				(head != null ? head : refString(ec, args[0])) + params(arrOf(args[1]));
+			case "TEnum" | "TInst" | "TAbstract":
 				refString(ec, args[0]) + params(arrOf(args[1]));
 			case "TFun":
 				var funArgs = arrOf(args[0]);

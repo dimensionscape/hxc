@@ -1633,10 +1633,6 @@ class Typer {
 						// The cursor on the type of an `is` answers with that type, not with the whole expression,
 						// and it answers the DECLARED type - the redirect below is only for codegen.
 						if (atDisplayPos(th.pos)) displayModuleType(ctx.com, mt, th.pos);
-						switch (mt) {
-							case TAbstractDecl(a) if (a.impl != null): mt = TClassDecl(a.impl);
-							case _:
-						}
 						var eType = TexprTools.makeTypeExpr(mt, th.pos);
 						var std = switch (Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, p)) {
 							case TClassDecl(c): c;
@@ -3108,7 +3104,23 @@ class Typer {
 								pushOriginClass = savedC;
 							case _:
 						}
-					for (name in an.fields.keys()) push(an.fields.get(name));
+					switch (an.status.get()) {
+						case Statics(sc) if (sc.kind.match(KAbstractImpl(_))):
+							// Through the abstract's own type expression its implementation offers a static that is not
+							// an @:impl member, or an enum member, with the abstract as origin (classDecl maps the
+							// implementation class to it).
+							var savedC = pushOriginClass;
+							pushOriginAnon = savedAnon;
+							pushOriginClass = sc;
+							for (name in an.fields.keys()) {
+								var cf = an.fields.get(name);
+								if (shouldAccess(sc, cf, false) && (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || TypeFunctions.hasClassFieldFlag(cf, CfEnum)))
+									push(cf);
+							}
+							pushOriginClass = savedC;
+						case _:
+							for (name in an.fields.keys()) push(an.fields.get(name));
+					}
 					pushOriginAnon = savedAnon;
 				// A function has no field except the magic bind, which takes and returns the same signature
 				// with every argument made optional.
@@ -3131,7 +3143,9 @@ class Typer {
 			case _:
 		}
 		if (typed != null) switch (typed.expr) {
-			case TTypeExpr(TClassDecl(c)):
+			// An abstract's implementation class the abstract's name as it) is listed through the anon arm
+			// below, under the abstract.
+			case TTypeExpr(TClassDecl(c)) if (!c.kind.match(KAbstractImpl(_))):
 				// Private statics complete inside their declaring class.
 				pushScope = CFSStatic;
 				pushOriginClass = c;
@@ -4845,11 +4859,16 @@ class Typer {
 		// a missing type. Swallowing it here would drop through to the dot-path resolver, which would
 		// answer about the path instead.
 		var te1 = typeExpr(ctx, e1, WithTypeTools.value);
-		// An abstract with its own constructor: `A.new` is a closure over the impl `_new` static.
+		// The receiver is a class type expression, an abstract's being its implementation class, told apart
+		// by kind; the call-form message names that class. An abstract with its own constructor: `A.new`
+		// is a closure over the impl `_new` static.
 		switch (te1.expr) {
-			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && !TypeFunctions.hasMeta(":forward.new", a.meta) && a.impl.statics.exists("_new")):
+			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})) if (!TypeFunctions.hasMeta(":forward.new", a.meta)):
 				if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
-				if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(a.path) + "()' instead", p);
+				if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(a.impl.path) + "()' instead", p);
+				// The impl's `_new`, or "does not have a constructor" on the abstract.
+				if (!a.impl.statics.exists("_new"))
+					throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " does not have a constructor", p);
 				// Building the closure over `_new` can fail for a complex (e.g. inline, generic) ctor; fall
 				// back to the normal access path rather than dropping the whole enclosing field.
 				return try {
@@ -4873,25 +4892,28 @@ class Typer {
 			case _:
 		}
 		// (target class, its params, the value type of `new`, an optional cast target for an abstract)
-		var target:Null<{c:TClass, tl:TParams, vt:T, castTo:Null<T>}> = switch (te1.expr) {
+		// recv is the class the receiver names (for the call-form message); noCtor the module type a
+		// missing constructor is reported on: the abstract, not the class @:forward.new construction went
+		// to.
+		var target:Null<{c:TClass, tl:TParams, vt:T, castTo:Null<T>, recv:TClass, noCtor:hxc.core.Globals.Path}> = switch (te1.expr) {
+			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
+				var atl:TParams = [for (_ in a.params) TypeFunctions.mkMono()];
+				switch (TypeFunctions.follow(a.thisType)) {
+					case TInst(uc, upl): {c: uc, tl: upl, vt: TInst(uc, upl), castTo: TAbstract(a, atl), recv: a.impl, noCtor: a.path};
+					case _: null;
+				}
 			case TTypeExpr(TClassDecl(c)):
 				// Constrained monos so a class param's constraint still checks when the closure's call
 				// binds it.
 				var monos:TParams = TypeUnification.spawnConstrainedMonos(function(t) return t, c.params);
-				{c: c, tl: monos, vt: TInst(c, monos), castTo: null};
-			case TTypeExpr(TAbstractDecl(a)) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
-				var atl:TParams = [for (_ in a.params) TypeFunctions.mkMono()];
-				switch (TypeFunctions.follow(a.thisType)) {
-					case TInst(uc, upl): {c: uc, tl: upl, vt: TInst(uc, upl), castTo: TAbstract(a, atl)};
-					case _: null;
-				}
+				{c: c, tl: monos, vt: TInst(c, monos), castTo: null, recv: c, noCtor: c.path};
 			case _: null;
 		};
 		// The `X.new` arm has no fallthrough. A receiver that is not a class type is this error, over the
 		// whole access and whatever the mode.
 		if (target == null) throw new TypingError("Binding new is only allowed on class types", p);
 		if (mode.match(MSet(_))) throw new TypingError("Cannot set constructor", p);
-		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.c.path) + "()' instead", p);
+		if (mode.match(MCall(_))) throw new TypingError("Cannot call constructor like this, use 'new " + hxc.core.Globals.sTypePath(target.recv.path) + "()' instead", p);
 		forceBuild(ctx, target.c);
 		// An inherited constructor resolves on the nearest ancestor declaring one, with the ancestor's
 		// parameters applied along the chain; none anywhere is "does not have a constructor".
@@ -4905,7 +4927,7 @@ class Typer {
 			ctor = ownerC.constructor;
 		}
 		if (ctor == null)
-			throw new TypingError(hxc.core.Globals.sTypePath(target.c.path) + " does not have a constructor", p);
+			throw new TypingError(hxc.core.Globals.sTypePath(target.noCtor) + " does not have a constructor", p);
 		if (TypeFunctions.hasClassFlag(target.c, CAbstract))
 			throw new TypingError(hxc.core.Globals.sTypePath(target.c.path) + " is abstract and cannot be constructed", p);
 		hxc.typing.TypeFields.forceFieldBody(ctx.com, ownerC, ctor);

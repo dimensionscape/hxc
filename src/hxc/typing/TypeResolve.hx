@@ -217,8 +217,10 @@ class TypeResolve {
 				var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
 				var um = try hxc.context.ModuleLoader.loadModule(ctx, path, param.pos) catch (e:Dynamic) { lookupErr = e; null; };
 				if (um != null) {
-					// filter_classes reverses the type list, then the result is prepended; unshifting in
-					// module order produces the same final order.
+					// The using list is built by reversing the type list and prepending the result; unshifting in
+					// module order produces the same final order. The module's statics class comes first in the
+					// input, so it lands last.
+					if (um.statics != null) addUsing(mt, um.statics, param.pos);
 					for (umt in um.types) {
 						if (TypeFunctions.tInfos(umt).isPrivate) continue;
 						var usingClass = classOf(umt);
@@ -226,10 +228,9 @@ class TypeResolve {
 					}
 					continue;
 				}
-				var used = try ctx.getType(path, param.pos, null) catch (e:Dynamic) { if (lookupErr == null) lookupErr = e; null; };
-				var usingClass = classOf(used);
-				if (usingClass != null) addUsing(mt, usingClass, param.pos);
-				else if (lookupErr != null) throw lookupErr;
+				// A plain path is a module, loaded as a module and nothing else; a type of the current module
+				// under that name is not found, so `@:using(SameModuleType)` is rejected.
+				throw lookupErr;
 			}
 		}
 	}
@@ -247,6 +248,11 @@ class TypeResolve {
 	static function addUsing(mt:ModuleType, c:TClass, p:Position):Void {
 		var u = {c: c, pos: p};
 		switch (mt) {
+			// An implementation class carries the abstract's @:using (the metadata is copied onto it), and
+			// it registers on the abstract; the implementation's own list stays empty, so a static extension
+			// reached through the abstract's type expression (its Statics anon) is not found.
+			case TClassDecl({kind: KAbstractImpl(a)}):
+				a.usings.unshift(u);
 			case TClassDecl(c2):
 				c2.usings.unshift(u);
 			case TEnumDecl(e):

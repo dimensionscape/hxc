@@ -394,10 +394,6 @@ class Filters {
 							throw new TypingError("Cannot use abstract as value", e.pos);
 						case _:
 					}
-				// Hxc keeps the abstract decl itself in type exprs where the reference holds the impl class;
-				// both spellings are the same value misuse.
-				case TTypeExpr(TAbstractDecl(a)) if (!TypeFunctions.hasMeta(":runtimeValue", a.meta)):
-					throw new TypingError("Cannot use abstract as value", e.pos);
 				case _:
 					TexprTools.iter(loop, e);
 			}

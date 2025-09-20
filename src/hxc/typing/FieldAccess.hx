@@ -83,15 +83,6 @@ class FieldAccessTools {
 		switch (fa.host) {
 			case FHStatic(c):
 				faAcc = FStatic(c, cf);
-				// The type expression of an abstract WITH an implementation is the implementation class's own,
-				// `TTypeExpr (TClassDecl c)`. hxc types the name `E` as its AbstractStatics anon instead, so a
-				// static reached through it an FHStatic access) rebuilds the receiver the reference would have
-				// had, and codegen prints the implementation's (possibly @:native) name.
-				switch (fa.on.expr) {
-					case TTypeExpr(TAbstractDecl(a)) if (a.impl == c):
-						return TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), fa.pos), faAcc), t, fa.pos);
-					case _:
-				}
 			case FHInstance(c, tl):
 				faAcc = switch (cf.kind) {
 					case Method(_) if (mode.match(FRead)): FClosure({c: c, params: tl}, cf);
@@ -101,14 +92,6 @@ class FieldAccessTools {
 			case FHAbstract(a, tl, c):
 				faAcc = FStatic(c, cf);
 				t = TypeFunctions.applyParams(a.params, tl, t);
-				// A static access reached through the abstract's own type name emits the implementation
-				// class as the receiver, so codegen uses the implementation's (possibly @:native) name
-				// rather than the abstract's. A value receiver (an abstract instance) is left untouched.
-				switch (fa.on.expr) {
-					case TTypeExpr(_):
-						return TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), fa.pos), faAcc), t, fa.pos);
-					case _:
-				}
 			case FHAnon:
 				faAcc = switch (cf.kind) {
 					case Method(_) if (mode.match(FRead)): FClosure(null, cf);
