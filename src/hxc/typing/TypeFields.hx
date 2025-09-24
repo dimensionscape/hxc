@@ -24,10 +24,11 @@ class TypeFields {
 	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
 	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
-	// Queues a field's typing once, when its class is built, so a finalize (Finalization.finalize, the
-	// flush of that queue) costs what is new. The installer re-walked every module on every call; with
-	// the macro world finalizing at each macro module load and each interpreter build over a closure
-	// of a few hundred modules, the installs alone doubled a macro-heavy compile.
+	// A field's typing is queued once, when its class is built, so a finalize (Finalization.finalize,
+	// the flush of that queue) costs what is new. Re-walking every module on every call is too costly
+	// with the MACRO world finalizing at each macro module load and each interpreter build over a
+	// closure of a few hundred modules. HOST-EXEMPT: the host finalizes a bounded number of times and
+	// skipping a host module drops its coreApi doc-copy push (which --xml output shows).
 	static var finalizedModules:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
 	// The extern fields whose default values have been checked (the extern check runs once per field).
 	static var externDefaultsChecked:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
@@ -172,7 +173,7 @@ class TypeFields {
 			// a `super(...)` in one of its constructors types against a null superClass. resolveModule is
 			// idempotent (processed gate).
 			var mres = ctx.modules[i];
-			if (finalizedModules.exists(mres)) { i++; continue; }
+			if (ctx.isMacro && finalizedModules.exists(mres)) { i++; continue; }
 			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
 			tt("installModuleFields", function() { installModuleFields(ctx, mres, pending); return 0; });
 			i++;
@@ -208,8 +209,10 @@ class TypeFields {
 		var mi = ctx.modules.length - 1;
 		while (mi >= 0) {
 			var m = ctx.modules[mi];
-			if (finalizedModules.exists(m)) { mi--; continue; }
-			finalizedModules.set(m, true);
+			if (ctx.isMacro) {
+				if (finalizedModules.exists(m)) { mi--; continue; }
+				finalizedModules.set(m, true);
+			}
 			ctx.delay(hxc.context.Context.PTypeField, function() {
 				// Heritage must resolve before bodies force, or a `super(...)` types
 				// against a null superClass. resolveModule is idempotent.
