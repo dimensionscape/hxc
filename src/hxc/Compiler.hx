@@ -657,10 +657,13 @@ class Compiler {
 					i++;
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
+				case "-c-arg" | "--c-arg":
+					// The argument is prepended to cArgs.
+					ctx.cArgs.unshift(argValue(args, i++, a));
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
 					| "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
-					| "--net-std" | "-c-arg" | "--c-arg" | "--connect" | "--neko-lib-path":
+					| "--net-std" | "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
 					// directory is consumed and dropped.

@@ -116,9 +116,10 @@ class EvalEmitter {
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
-		case TThrow(e1):
-				var throwPos = new Position(e.pos.file, e.pos.min, e.pos.min + 5);
-			EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), throwPos);
+			case TThrow(e1):
+				// A throw raises at its own position. A written throw carries the keyword's span; the throw
+				// the typer builds for a macro called inside the macro world carries the call's whole span.
+				EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
 			case TObjectDecl(fields):
 				var m = new Map<Int, EvalValue>();

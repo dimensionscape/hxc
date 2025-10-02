@@ -3529,6 +3529,17 @@ class EvalStdLib {
 		};
 	}
 
+	// A string or nothing. A null is a Null Access and any other value an Unexpected value, both
+	// uncaught exceptions of the macro; stringOf answers "null".
+	public static function decodeString(ctx:EvalContext, v:EvalValue):String {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VString(s): s.sstring;
+			case VNativeString(s): s;
+			case VNull: EvalExceptions.excString(ctx, "Null Access");
+			case r: EvalExceptions.excString(ctx, "Unexpected value " + valueKind(r) + "(" + stringOf(r) + "), expected string");
+		}
+	}
+
 	public static function stringOf(v:EvalValue):String {
 		return stringOfDepth(v, 0);
 	}
@@ -3923,7 +3934,8 @@ class EvalStdLib {
 				case "class_path":
 					VFunction(function(args) return valueArray([for (p in ctx.classPath) mkStr(p)]), true);
 				case "resolve_path":
-					VFunction(function(args) return resolveMacroPath(ctx, stringOf(arg(args, 0))), true);
+					// The file is decoded before the search.
+					VFunction(function(args) return resolveMacroPath(ctx, decodeString(ctx, arg(args, 0))), true);
 				case "error" | "fatal_error":
 					VFunction(function(args) {
 						var posValue = args.length > 1 ? arg(args, 1) : mkPos(ctx, EvalMacro.currentPosition());
@@ -4006,13 +4018,13 @@ class EvalStdLib {
 				case "meta_patch":
 					VFunction(function(args) return EvalMacro.metaPatchValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...4) arg(args, i)]), true);
 				case "allow_package":
-					// Hxc has no forbidden package rules, so this is the same no-op as Common.allow_package when
-					// the requested package has no rule.
-					VFunction(function(args) return VNull, true);
+					// The name first; then removes a Forbidden package rule, and hxc has no package rules, so the
+					// name is a no-op.
+					VFunction(function(args) { decodeString(ctx, arg(args, 0)); return VNull; }, true);
 				case "add_class_path":
 					VFunction(function(args) {
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
-						var cp = stringOf(arg(args, 0));
+						var cp = decodeString(ctx, arg(args, 0));
 						if (!StringTools.endsWith(cp, "/") && !StringTools.endsWith(cp, "\\")) cp += "/";
 						com.classPath.unshift(cp);
 						var mcom = EvalMacro.getMacroCom();
@@ -4100,6 +4112,34 @@ class EvalStdLib {
 							case _: EvalExceptions.excString(ctx, "Invalid expression");
 						}
 						case _: EvalExceptions.excString(ctx, "Invalid expression");
+					}, true);
+				case "flush_disk_cache":
+					// The file lookup and readdir caches of the API's own com are cleared; a clone has
+					// fresh ones.
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						com.readdirCache.clear();
+						return VNull;
+					}, true);
+				case "add_native_lib":
+					// The file is decoded, then only a flash, java or cs library is accepted and every
+					// other
+					// platform fails.
+					VFunction(function(args) {
+						var file = decodeString(ctx, arg(args, 0));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return EvalExceptions.excString(ctx, "Target " + hxc.core.Globals.platformName(com.platform)
+							+ " does not support native libraries (trying to load " + file + ")");
+					}, true);
+				case "add_native_arg":
+					// Java, cs and cpp prepend the argument to cArgs.
+					VFunction(function(args) {
+						var narg = decodeString(ctx, arg(args, 0));
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return switch (com.platform) {
+							case Java | Cs | Cpp: com.cArgs.unshift(narg); VNull;
+							case _: EvalExceptions.excString(ctx, "Unsupported platform");
+						}
 					}, true);
 				case _:
 					EvalExceptions.excString(ctx, "Macro API not implemented: " + name);
@@ -4743,8 +4783,10 @@ class EvalStdLib {
 			mkStrLen(s, haxe.io.Bytes.ofString(s).length);
 		}));
 
+		// Escape, map, match, matchSub, replace and split each decode_string their subject and
+		// replacement; a null subject is a Null Access.
 		reg(inst, "EReg", "match", vmethod(a -> {
-			var s = stringOf(arg(a, 1));
+			var s = decodeString(ctx, arg(a, 1));
 			EvalValueTools.vbool(regexMatch(thisRegex(a), s));
 		}));
 		reg(inst, "EReg", "matched", vmethod(a -> try {
@@ -4779,11 +4821,11 @@ class EvalStdLib {
 		}));
 		reg(inst, "EReg", "matchSub", vmethod(a -> {
 			var len = a.length > 3 && arg(a, 3) != VNull ? toInt(arg(a, 3)) : -1;
-			EvalValueTools.vbool(regexMatchSub(thisRegex(a), stringOf(arg(a, 1)), toInt(arg(a, 2)), len));
+			EvalValueTools.vbool(regexMatchSub(thisRegex(a), decodeString(ctx, arg(a, 1)), toInt(arg(a, 2)), len));
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
 			var re = thisRegex(a);
-			var s = stringOf(arg(a, 1));
+			var s = decodeString(ctx, arg(a, 1));
 			var info = regexInfo(re);
 			if (info != null) info.lastSubject = s;
 			var parts = regexSplit(re, s);
@@ -4792,8 +4834,8 @@ class EvalStdLib {
 		reg(inst, "EReg", "replace", vmethod(a -> {
 			var re = thisRegex(a);
 			var info = regexInfo(re);
-			var by = stringOf(arg(a, 2));
-			var s = stringOf(arg(a, 1));
+			var by = decodeString(ctx, arg(a, 2));
+			var s = decodeString(ctx, arg(a, 1));
 			if (info != null) info.lastSubject = s;
 			mkStr(regexReplace(re, s, by));
 		}));
@@ -4801,7 +4843,7 @@ class EvalStdLib {
 			var recv = arg(a, 0);
 			var fn = arg(a, 2);
 			var re = thisRegex(a);
-			var s = stringOf(arg(a, 1));
+			var s = decodeString(ctx, arg(a, 1));
 			var info = regexInfo(re);
 			if (info != null) info.lastSubject = s;
 			mkStr(re.map(s, function(_) {
@@ -4809,7 +4851,7 @@ class EvalStdLib {
 				return stringOf(callValueOn(recv, fn, [recv]));
 			}));
 		}));
-		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(stringOf(arg(a, 0))))));
+		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(decodeString(ctx, arg(a, 0))))));
 
 		reg(inst, "haxe.ds.List", "add", vmethod(a -> {
 			var list = thisList(a);

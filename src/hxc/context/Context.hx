@@ -64,6 +64,8 @@ class Context {
 
 	public var platform:Platform = Cross;
 	public var platformConfig:PlatformConfig = PlatformConfig.defaults();
+	// --c-arg values and Compiler.addNativeArg, newest first.
+	public var cArgs:Array<String> = [];
 
 	// True only in the macro-world context, including when macro is temporarily defined during host
 	// build-macro parsing.

@@ -479,7 +479,11 @@ class EvalMacro {
 			} else fwa(t);
 			return encodeType(ec, t1);
 		});
-		reg2("s_type", "s_type", function(a) return mkString(macroTypeString(ec, a[0])));
+		// Decodes its argument (decode_type): a null is a Null Access.
+		reg2("s_type", "s_type", function(a) {
+			if (a[0] == VNull) throw unexpectedValue(a[0], "enum");
+			return mkString(macroTypeString(ec, a[0]));
+		});
 		reg2("defineType", "define_type", function(a) {
 			// A definition the decoder rejects is reported as what was expected against what came back, at
 			// the call.
@@ -648,6 +652,11 @@ class EvalMacro {
 		// normal output.
 		reg2("setCustomJSGenerator", "set_custom_js_generator", function(a) {
 			var fn = a[0];
+			// prepareCallback: anything but a function is an invalid expression.
+			switch (fn) {
+				case VFunction(_, _) | VFieldClosure(_, _):
+				case _: return EvalExceptions.excString(ec, "Invalid expression");
+			}
 			com.jsGen = function() {
 				EvalContext.setCtx(ec);
 				var dir = haxe.io.Path.directory(com.file);
@@ -746,7 +755,6 @@ class EvalMacro {
 			if (list != null) for (e in list) if (e.name == key) return e.v;
 			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
-		regBuiltin(ec, "haxe.macro.TypeTools", "toString", function(a) return mkString(macroTypeString(ec, a[0])));
 	}
 
 	static function createFakeModule(com:Context, file:String):ModuleDef {
