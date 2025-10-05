@@ -240,11 +240,12 @@ class EvalMacro {
 			return encodeTypedExpr(ec, te);
 		});
 		// store_expr(e): type a syntax expression and store the typed expression, returning the syntax
-		// marker `@:storedTypedExpr(id)` that re-types to it. /
+		// marker `@:storedTypedExpr(id)` that re-types to it, so the macro gets the marker back and not its
+		// syntax again.
 		reg2("storeExpr", "store_expr", function(a) {
 			if (curTctx == null) throw new TypingError("storeExpr outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
-			return encodeExpr(ec, Calls.texprToSyntax(curTctx, te));
+			return storedTypedExprMarker(ec, te);
 		});
 		// Type the expression and retain its type.
 		reg2("typeAndStoreExpr", "type_and_store_expr", function(a) {
@@ -267,10 +268,7 @@ class EvalMacro {
 		reg2("storeTypedExpr", "store_typed_expr", function(a) {
 			if (curTctx == null) throw new TypingError("storeTypedExpr outside a macro", curPos);
 			var te = decodeStoredTypedExpr(ec, a[0]);
-			var id = hxc.context.Context.allocStoredTypedExprId("api.storeTypedExpr");
-			curTctx.com.storedTypedExprs.set(id, te);
-			var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
-			return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
+			return storedTypedExprMarker(ec, te);
 		});
 		// map_anon_ref(a, fn): rebuild the anonymous structure with every field's type passed through fn,
 		// keeping each field's kind, metadata and flags.
@@ -322,6 +320,8 @@ class EvalMacro {
 			// sub-type (Module.Sub / pack.Module.Sub).
 			var parts = strOf(a[0]).split(".");
 			var last = parts[parts.length - 1];
+			// An empty module name is the macro's uncaught exception, before anything is typed.
+			if (last == "") return EvalExceptions.excString(ec, "Empty module name is not allowed");
 			var packParts = parts.slice(0, parts.length - 1);
 			var tpath:TypePath;
 			if (packParts.length > 0) {
@@ -341,13 +341,16 @@ class EvalMacro {
 			if (curModule != null) com.currentModule = curModule;
 			var t = try Typeload.loadInstance(com, [], tpath, curPos, true) catch (e:Dynamic) {
 				com.currentModule = savedGetTypeMod;
-				// A type the typer cannot find is `failwith ("Type not found '...'")`, an UNCAUGHT exception in
-				// the macro reported with its call chain, not a typing error at the call. Anything else the
-				// load raised stays what it is.
+				// Context.getType answers nothing only for a missing module raised at the call's position,
+				// which is reported as the uncaught exception "Type not found '...'". A module that exists but
+				// lacks the type ("Module X does not define type Y") and a miss inside the module being loaded
+				// stay the typing errors they are.
 				var msg:Null<String> = Std.isOfType(e, TypingError) ? (e : TypingError).message
 					: Std.isOfType(e, hxc.context.Context.ContextError) ? (e : hxc.context.Context.ContextError).message : null;
-				if (msg != null && (StringTools.startsWith(msg, "Type not found : ")
-						|| (StringTools.startsWith(msg, "Module ") && msg.indexOf(" does not define type ") >= 0)))
+				var epos:Null<Position> = Std.isOfType(e, TypingError) ? (e : TypingError).pos
+					: Std.isOfType(e, hxc.context.Context.ContextError) ? (e : hxc.context.Context.ContextError).pos : null;
+				if (msg != null && StringTools.startsWith(msg, "Type not found : ") && epos != null
+						&& epos.file == curPos.file && epos.min == curPos.min && epos.max == curPos.max)
 					return EvalExceptions.excString(ec, "Type not found '" + strOf(a[0]) + "'");
 				throw e;
 			};
@@ -421,8 +424,9 @@ class EvalMacro {
 			var t = Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: decodeComplexType(ec, a[0], p), pos: p});
 			return encodeType(ec, t);
 		});
+		// A type that cannot convert (ExitException) answers null.
 		reg2("toComplexType", "to_complex_type", function(a) {
-			var ct = typeToComplexType(decodeType(ec, a[0]));
+			var ct = try typeToComplexType(decodeType(ec, a[0])) catch (_:hxc.core.ExitException) null;
 			return ct == null ? VNull : encodeComplexType(ec, {ct: ct, pos: hxc.ast.Position.nullPos});
 		});
 		reg2("typeToModuleType", "type_to_module_type", function(a) {
@@ -479,10 +483,11 @@ class EvalMacro {
 			} else fwa(t);
 			return encodeType(ec, t1);
 		});
-		// Decodes its argument (decode_type): a null is a Null Access.
+		// The host printer over the decoded type (one print context numbers the unbound monomorphs, an
+		// anonymous structure lists its fields in descending name order). A null is a Null Access.
 		reg2("s_type", "s_type", function(a) {
 			if (a[0] == VNull) throw unexpectedValue(a[0], "enum");
-			return mkString(macroTypeString(ec, a[0]));
+			return mkString(hxc.core.TPrinting.sType(hxc.core.TPrinting.printContext(), decodeType(ec, a[0])));
 		});
 		reg2("defineType", "define_type", function(a) {
 			// A definition the decoder rejects is reported as what was expected against what came back, at
@@ -1971,6 +1976,8 @@ class EvalMacro {
 				if (macroCtx == null) {
 					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] FULL BUILD, modules=" + macroCom.modules.length);
 					var ec = EvalMain.create(true);
+					// An error the macro com reports marks the interpreter .
+					hxc.context.Context.onMacroWorldError = function() ec.hadError = true;
 					registerContext(ec, com);
 					EvalMain.addModules(ec, macroCom.modules);
 					// A rebuild must not reset macro-world static state; carry static var values over from
@@ -2058,6 +2065,9 @@ class EvalMacro {
 	// Resets the static prototypes for a new compilation.
 	static function doReuse(com:Context):Void {
 		if (!pendingMacroReuse) return;
+		// An error dropped the cached interpreter, so the next compilation began on a fresh one with
+		// had_error clear; hxc keeps its one interpreter and clears it.
+		if (macroCtx != null) macroCtx.hadError = false;
 		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
 		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
 		// is re-synced here.
@@ -2174,6 +2184,8 @@ class EvalMacro {
 	// pulled in by typing a method body on demand mid-eval) to the running interpreter.
 	public static function syncMacroModules():Void {
 		if (macroCtx == null || macroCom == null || building) return;
+		// Nothing is added once the world has an error.
+		if (macroCtx.hadError) return;
 		if (macroCom.modules.length > lastModuleCount) {
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
@@ -2604,9 +2616,13 @@ class EvalMacro {
 			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
-		if (proto == null) throw new TypingError("Macro type not loaded: " + path.name, p);
-		if (idx == null) throw new TypingError("Method " + fa.field.name + " not found on class " + hxc.core.Globals.sTypePath(path), p);
-		var fn = switch (proto.pfields[idx]) {
+		// Once the macro world has reported an error (the macro com's error hook marks the interpreter, and
+		// adding types then adds nothing), no macro is called: the call answers nothing and types as `null`
+		// once its arguments are typed like any call's.
+		var skipCall = ec.hadError;
+		if (proto == null && !skipCall) throw new TypingError("Macro type not loaded: " + path.name, p);
+		if (idx == null && !skipCall) throw new TypingError("Method " + fa.field.name + " not found on class " + hxc.core.Globals.sTypePath(path), p);
+		var fn = skipCall ? null : switch (proto.pfields[idx]) {
 			case VFunction(f, _): f;
 			case _: throw new TypingError("Not a macro function: " + fa.field.name, p);
 		};
@@ -2639,6 +2655,13 @@ class EvalMacro {
 			curTctx = tctx;
 			curPos = p;
 			curModule = callModule;
+			if (skipCall) {
+				curTctx = savedTctx;
+				curPos = savedPos;
+				curModule = savedModule;
+				macroCallDepth--;
+				return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
+			}
 			expectedTypeStack.push(withType);
 			var result = fn(args);
 			expectedTypeStack.pop();
@@ -4414,7 +4437,9 @@ class EvalMacro {
 		}
 		return switch (t) {
 			case TMono(r):
-				r.type == null ? null : typeToComplexType(r.type);
+				// An unbound monomorph raises Exit through the whole conversion, however deep it sits; the
+				// callers answer nothing for it.
+				r.type == null ? throw new hxc.core.ExitException() : typeToComplexType(r.type);
 			case TLazy(f):
 				typeToComplexType(TypeFunctions.lazyType(f));
 			case TInst(c, tl):
@@ -4455,7 +4480,7 @@ class EvalMacro {
 							return switch (TypeFunctions.follow(t)) {
 								case TMono(_): null;
 								case _:
-									var ct = typeToComplexType(t);
+									var ct = try typeToComplexType(t) catch (_:hxc.core.ExitException) null;
 									ct == null ? null : {ct: ct, pos: Position.nullPos};
 							};
 						}
@@ -4778,12 +4803,27 @@ class EvalMacro {
 	}
 
 	// The string is padded with p.min spaces, so an error inside it carries the caller's file offsets
-	// when inlining; when not, parse_string reports the failure at p itself, the whole API call.
+	// when inlining; when not, the failure reports at p itself, the whole API call. The stored id, as
+	// the `@:storedTypedExpr(id)` marker that re-types to it.
+	static function storedTypedExprMarker(ec:EvalContext, te:TExpr):EvalValue {
+		var id = hxc.context.Context.allocStoredTypedExprId("api.storeTypedExpr");
+		curTctx.com.storedTypedExprs.set(id, te);
+		var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
+		return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
+	}
+
 	static function parseApiString(src:String, p:Position, inlined:Bool, defines:hxc.core.Define):Expr {
+		// An empty string is an invalid expression before any parsing.
+		if (src == "") throw new DecodeFailure("Invalid expression");
+		// A parser's or the lexer's error is a typing error at its own place in the caller-offset string
+		// when inlined, at the caller otherwise.
 		return try hxc.parser.Parser.parseExprString(src, p.file, defines, inlined)
 		catch (e:hxc.parser.ParserError) {
 			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
 			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), at);
+		} catch (e:hxc.parser.LexerError) {
+			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
+			throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), at);
 		}
 	}
 

@@ -253,6 +253,7 @@ class Finalization {
 		var r = sortTypes(ctx);
 		ctx.main = getMain(ctx, r.types);
 		ctx.types = r.types;
+		ctx.typesGenerated = true;
 		ctx.modules = r.modules;
 	}
 }

@@ -434,7 +434,10 @@ class EvalStdLib {
 		return switch (EvalValueTools.vresolve(fn)) {
 			case VFunction(f, isStatic): isStatic ? f(args) : f([recv].concat(args));
 			case VFieldClosure(recv2, f): f([recv2].concat(args));
-			case _: VNull;
+			// A callback that is not a function is "Cannot call <value>", the macro's uncaught exception
+			// with
+			// no position of its own.
+			case v: EvalExceptions.excString(EvalContext.getCtx(), "Cannot call " + stringOf(v));
 		};
 	}
 
@@ -1288,9 +1291,10 @@ class EvalStdLib {
 		return serializerBoolField(ctx, serializer, "useCache", serializerBoolField(ctx, classValue(ctx, EvalHash.hash("haxe.Serializer")), "USE_CACHE", false));
 	}
 
-	static function serializeEval(ctx:EvalContext, value:EvalValue, useEnumIndex:Bool, useCache:Bool):String {
+	static function serializeEval(ctx:EvalContext, value:EvalValue, useEnumIndex:Bool, useCache:Bool, forSignature:Bool = false):String {
 		var buf = new StringBuf();
 		var cache:Array<EvalValue> = [];
+		var customCount = 0;
 		var shash = new Map<String, Int>();
 		var scount = 0;
 		function stringTag(s:String):Void {
@@ -1310,6 +1314,7 @@ class EvalStdLib {
 				case [VInstance(ai), VInstance(bi)]: ai == bi;
 				case [VEnumValue(ae), VEnumValue(be)]: ae == be;
 				case [VPrototype(ap), VPrototype(bp)]: ap == bp;
+				case [VFunction(af, _), VFunction(bf, _)]: Reflect.compareMethods(af, bf);
 				case _: false;
 			}
 		}
@@ -1440,7 +1445,10 @@ class EvalStdLib {
 					}
 					stringTag(EvalHash.revHash(proto.ppath));
 				case VFunction(_, _) | VFieldClosure(_, _):
-					EvalExceptions.excString(ctx, "Cannot serialize function");
+					// A function is a custom entity, 'F' and a running count, cached like any value;
+					// haxe.Serializer refuses it.
+					if (!forSignature) EvalExceptions.excString(ctx, "Cannot serialize function")
+					else if (!serializeRef(v)) { buf.add("F"); buf.add(customCount++); }
 				case VLazy(_):
 					EvalExceptions.excString(ctx, "unreachable");
 			}
@@ -3930,7 +3938,13 @@ class EvalStdLib {
 						return ctx.defines.rawDefined(key) ? mkStr(ctx.defines.rawDefinedValue(key)) : VNull;
 					}, true);
 				case "get_defines":
-					VFunction(function(args) return mkStringMap(ctx, definesForExternal(ctx.defines.values)), true);
+					// The API's com (the host's) defines with their external spellings; the interpreter's
+					// own table
+					// is not it.
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return mkStringMap(ctx, definesForExternal(com.defines.values));
+					}, true);
 				case "class_path":
 					VFunction(function(args) return valueArray([for (p in ctx.classPath) mkStr(p)]), true);
 				case "resolve_path":
@@ -3998,7 +4012,9 @@ class EvalStdLib {
 				case "local_vars":
 					VFunction(function(args) return mkStringMap(ctx, new Map()), true);
 				case "signature":
-					VFunction(function(args) return mkStr(haxe.crypto.Md5.encode(serializeEval(ctx, arg(args, 0), false, false))), true);
+					// haxe.Serializer's format with the value cache and enum indices, and a function
+					// serialized as a custom entity rather than refused.
+					VFunction(function(args) return mkStr(haxe.crypto.Md5.encode(serializeEval(ctx, arg(args, 0), true, true, true))), true);
 				case "add_resource":
 					VFunction(function(args) {
 						var name = stringOf(arg(args, 0));
@@ -4054,9 +4070,11 @@ class EvalStdLib {
 						return com.main == null ? VNull : EvalMacro.encodeTypedExpr(ctx, com.main);
 					}, true);
 				case "get_module_types":
+					// The API's com.types, which only generation fills (Finalization.run) - empty while the
+					// compilation is still typing.
 					VFunction(function(args) {
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
-						var types = [for (t in com.types) EvalMacro.encodeModuleType(ctx, t)];
+						var types = com.typesGenerated ? [for (t in com.types) EvalMacro.encodeModuleType(ctx, t)] : [];
 						return VArray(new VArray(types, types.length));
 					}, true);
 				case "s_expr":
@@ -4112,6 +4130,14 @@ class EvalStdLib {
 							case _: EvalExceptions.excString(ctx, "Invalid expression");
 						}
 						case _: EvalExceptions.excString(ctx, "Invalid expression");
+					}, true);
+				case "timer":
+					// A timer under the current one's id, closed by the function returned.
+					VFunction(function(args) {
+						var cur = hxc.core.Timer.currentId();
+						var full = (cur == null ? [] : cur.copy()).concat([decodeString(ctx, arg(args, 0))]);
+						var stop = hxc.core.Timer.timer(full);
+						return VFunction(function(a2) { stop(); return VNull; }, true);
 					}, true);
 				case "flush_disk_cache":
 					// The file lookup and readdir caches of the API's own com are cleared; a clone has

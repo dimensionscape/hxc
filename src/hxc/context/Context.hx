@@ -70,6 +70,8 @@ class Context {
 	// True only in the macro-world context, including when macro is temporarily defined during host
 	// build-macro parsing.
 	public var isMacro:Bool = false;
+	// The macro com's error hook; the interpreter marks itself as having had an error.
+	public static var onMacroWorldError:Null<Void->Void> = null;
 
 	public var mainClass:Null<Path>;
 
@@ -108,6 +110,8 @@ class Context {
 
 	/** All loaded types, registration order. */
 	public var types:Array<ModuleType>;
+	// The macro API sees no module types until Finalization.run fills com.types.
+	public var typesGenerated:Bool = false;
 
 	/** Embedded resources from `--resource file@name`. */
 	public var resources:StringMap<haxe.io.Bytes>;
@@ -493,8 +497,9 @@ class Context {
 			throw new hxc.core.TypingError(message, pos, depth);
 		if (raiseTypingErrors && (severity == null || severity == Error))
 			throw new hxc.core.TypingError(message, pos, depth);
-		// Forward macro-world diagnostics to the host; errors exclusive to macro compilation must also be
-		// reported.
+		// Forward macro-world diagnostics to the host. Mark interpreter errors so later macro calls are
+		// skipped for this compilation.
+		if (isMacro && (severity == null || severity == Error) && onMacroWorldError != null) onMacroWorldError();
 		if (forwardWarningsTo != null)
 			forwardWarningsTo.addDiagnostic(message, pos, depth, severity);
 		// Keep a local diagnostic copy for report-once checks even when forwarding it to the host.

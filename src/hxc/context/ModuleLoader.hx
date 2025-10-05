@@ -30,7 +30,20 @@ class ModuleLoader {
 		};
 	}
 
+	public static function isAbsolutePath(f:String):Bool {
+		if (f.length == 0) return false;
+		var c = f.charCodeAt(0);
+		if (c == "/".code) return true;
+		if ((c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code))
+			return hxc.core.Globals.isWindows && f.length > 1 && f.charCodeAt(1) == ":".code;
+		if (c == 92) return hxc.core.Globals.isWindows;               
+		return false;
+	}
+
 	public static function findFile(ctx:Context, relPath:String, m:Path, p:Position):String {
+		// Return absolute paths unchecked; opening an absent file must report Could not open rather than
+		// Type not found.
+		if (isAbsolutePath(relPath)) return relPath;
 		for (dir in ctx.classPath) {
 			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
 			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;

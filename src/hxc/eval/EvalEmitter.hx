@@ -554,7 +554,12 @@ class EvalEmitter {
 		return switch (EvalValueTools.vresolve(EvalField.dynamicField(ctx, recv, EvalHash.hash(name)))) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(r, f): callAt(ctx, p, f, [r].concat(args));
-			case v: EvalExceptions.unexpectedValue(ctx, v, "function", p);
+			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
+			// emitter records before any call.
+			case v:
+				var ev = EvalContext.getEval(ctx);
+				if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
+				EvalExceptions.excString(ctx, "Cannot call " + EvalStdLib.stringOf(v));
 		}
 	}
 
@@ -833,7 +838,12 @@ class EvalEmitter {
 		return switch (fn) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(recv, f): callAt(ctx, p, f, [recv].concat(args));
-			case v: EvalExceptions.unexpectedValue(ctx, v, "function", p);
+			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
+			// emitter records before any call.
+			case v:
+				var ev = EvalContext.getEval(ctx);
+				if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
+				EvalExceptions.excString(ctx, "Cannot call " + EvalStdLib.stringOf(v));
 		};
 	}
 

@@ -81,6 +81,10 @@ class Timer {
 		return function() close(getTime(), t);
 	}
 
+	public static function currentId():Null<Array<String>> {
+		return curtime.length == 0 ? null : curtime[0].id;
+	}
+
 	public static function closeTimes():Void {
 		while (curtime.length > 0) close(getTime(), curtime[0]);
 	}

@@ -66,6 +66,8 @@ class Setup {
 		d.rawDefineValue("haxe_ver", haxeVer());
 		d.rawDefine("haxe3");
 		d.rawDefine("haxe4");
+		// `true` is a define (Context.getDefines lists it).
+		d.rawDefine("true");
 		d.rawDefineValue("haxe", Globals.sVersion);
 		d.rawDefine("true");
 		d.rawDefineValue("dce", "std");
