@@ -866,7 +866,21 @@ class TypeFields {
 						setValueMeta(cf, [eo]);
 						// A field initializer is outside any function (a return in it reports).
 						tctx.inFunction = false;
+						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
+						// property that is no physical variable is reported at the field, once (maybe_display_error),
+						// before the initializer is typed.
+						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
+						var isInlineVar = cf.kind.match(Var({read: AccInline}));
+						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
+							else if (externVar && !isInlineVar) "on extern non-inline variable"
+							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
+							else null;
+						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+						// require_constant_expression, the extern inline variable's arm, at the field.
+						if (externVar && isStatic && isInlineVar && initComplaint == null
+								&& hxc.optimization.Optimizer.makeConstantExpression(tctx, te) == null)
+							tctx.com.addDiagnostic("Extern variable initialization must be a constant value", cff.cffPos);
 						tctx.inFunction = true;
 						if (!isStatic) checkThisInVarInit(tctx, te);
 						var checked = checkCast(te, sigType);
@@ -944,7 +958,21 @@ class TypeFields {
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
 					if (eo != null) {
 						setValueMeta(cf, [eo]);
+						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
+						// property that is no physical variable is reported at the field, once (maybe_display_error),
+						// before the initializer is typed.
+						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
+						var isInlineVar = cf.kind.match(Var({read: AccInline}));
+						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
+							else if (externVar && !isInlineVar) "on extern non-inline variable"
+							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
+							else null;
+						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+						// require_constant_expression, the extern inline variable's arm, at the field.
+						if (externVar && isStatic && isInlineVar && initComplaint == null
+								&& hxc.optimization.Optimizer.makeConstantExpression(tctx, te) == null)
+							tctx.com.addDiagnostic("Extern variable initialization must be a constant value", cff.cffPos);
 						if (!isStatic) checkThisInVarInit(tctx, te);
 						cf.expr = checkCast(te, sigType);
 					}

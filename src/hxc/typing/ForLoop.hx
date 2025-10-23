@@ -236,7 +236,8 @@ class ForLoop {
 	static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var rhsTyped = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
-		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", p, true) catch (kvErr:TypingError) {
+		// The keyValueIterator call sits at the subject, and so does what it inlines.
+		var iterExpr = try call0(ctx, rhsTyped, "keyValueIterator", rhsTyped.pos, true) catch (kvErr:TypingError) {
 			// rhsTyped may itself be a KeyValueIterator (exposing hasNext/next); use it directly then. If
 			// it is neither iterable nor exposes keyValueIterator, the missing accessor is the real
 			// problem, so surface that error rather than a later hasNext failure. from
@@ -247,8 +248,9 @@ class ForLoop {
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
-		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_kvit", iterExpr.type, p);
-		var eIt = TexprTools.makeLocal(vIt, p);
+		// The key-value iterator temporary sits at the iterated expression.
+		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_kvit", iterExpr.type, rhsTyped.pos);
+		var eIt = TexprTools.makeLocal(vIt, rhsTyped.pos);
 		var ehasnext = call0(ctx, eIt, "hasNext", p);
 		// hasNext must yield Bool (the Iterator<T> contract); reference types it with WithType Bool.
 		try hxc.core.TypeUnification.unifyDefault(ehasnext.type, basic.tbool)
@@ -401,6 +403,23 @@ class ForLoop {
 		}
 		var intLoop = typeIntIteratorForLoop(ctx, vName, e1, e2, p);
 		if (intLoop != null) return intLoop;
+		// An Array iterates by INDEX (gen_int_iter), never through its iterator. This lane probed
+		// `.iterator()` first, and the inlined ArrayIterator moved every report to the loop's position;
+		// the
+		// index loop is the faithful shape, with this lane's per-iteration capture wrap around the body.
+		switch (TypeFunctions.follow(e1.type)) {
+			case TInst({path: {pack: [], name: "Array"}}, [pt0]):
+				var oldLoop = ctx.inLoop;
+				var oldLocals = Typer.saveLocals(ctx);
+				ctx.inLoop = true;
+				var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, pt0, pi);
+				var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
+				ctx.inLoop = oldLoop;
+				oldLocals();
+				var iterBody = (needsLoopVarWrap(ctx) && containsClosure(body) && !hasBareLoopControl(body)) ? wrapLoopVarsBody(ctx, [v], body, p) : body;
+				return ForLoopFaithful.toTexpr(ctx, v, {kind: IteratorArray, e: e1, pt: pt0}, iterBody, p);
+			case _:
+		}
 		// The iterator is e1.iterator when e1 is iterable, otherwise e1 itself. If e1 exposes no iterator,
 		// fall back to array-access iteration for array-like values.
 		var iterExpr = e1;
@@ -441,8 +460,9 @@ class ForLoop {
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
-		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_it", iterExpr.type, p);
-		var eIt = TexprTools.makeLocal(vIt, p);
+		// The iterator temporary sits at the iterated expression, where a null is reported.
+		var vIt = Typer.addLocal(ctx, VGenerated, "_hx_it", iterExpr.type, e1.pos);
+		var eIt = TexprTools.makeLocal(vIt, e1.pos);
 		var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, pt, p);
 		var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
 		ctx.inLoop = oldLoop;

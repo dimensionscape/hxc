@@ -717,9 +717,11 @@ class TypeResolve {
 
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
-		// TypeloadFields.init_class: heritage is already set by the time this runs, from either
-		// build path, so the field-level reports held since module load are released here.
-		ctx.flushFieldDiagnostics(c);
+		// Heritage is already set by the time this runs, from either build path, so the field-level
+		// reports held since module load are released here.
+		// The build macros run before any field check: with a build still to run, the verdicts wait for the
+		// resolve the build performs over the fields it leaves.
+		if (!hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) ctx.flushFieldDiagnostics(c);
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClassFields");
 		// The class whose fields are being built, for everything a field signature loads; it nests, because
 		// loading one signature can resolve another class's fields.
@@ -885,6 +887,8 @@ class TypeResolve {
 		// EXTERN class; the variable redefinition check is not - an extern subclass redeclaring an
 		// inherited variable is still an error. Both skip @:libType.
 		if (TypeFunctions.hasMeta(":libType", c.meta)) return;
+		// The same wait as the field verdicts: the checks are for the fields a build leaves.
+		if (hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) return;
 		if (fieldChecksDone.exists(c)) return;
 		fieldChecksDone.set(c, true);
 		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);

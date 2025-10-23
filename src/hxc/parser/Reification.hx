@@ -305,15 +305,18 @@ class Reification {
 							], e1.pos)
 						]);
 					case _:
-						// `haxe.macro.Context.makeExpr(e1, to_enc_pos (pos e1))`.
-						return new Expr(ECall(contextField("makeExpr", p), [e1, toEncPos(e1.pos)]), p);
+						// `haxe.macro.Context.makeExpr(e1, <encoded pos of e1>)`, the call at the `$v`
+						// token's own
+						// position (a frame names it there).
+						return new Expr(ECall(contextField("makeExpr", m.pos), [e1, toEncPos(e1.pos)]), m.pos);
 				}
 			// `$p{ e }`: haxe.macro.MacroStringTools.toFieldExpr(e).
 			case EMeta(m, e1) if (m.name == "$p"):
-				var hx = new Expr(EConst(CIdent("haxe")), p);
-				var mac = new Expr(EField(hx, "macro", EFNormal), p);
-				var mst = new Expr(EField(mac, "MacroStringTools", EFNormal), p);
-				return new Expr(ECall(new Expr(EField(mst, "toFieldExpr", EFNormal), p), [e1]), p);
+				// The call at the `$p` token's own position, like `$v`.
+				var hx = new Expr(EConst(CIdent("haxe")), m.pos);
+				var mac = new Expr(EField(hx, "macro", EFNormal), m.pos);
+				var mst = new Expr(EField(mac, "MacroStringTools", EFNormal), m.pos);
+				return new Expr(ECall(new Expr(EField(mst, "toFieldExpr", EFNormal), m.pos), [e1]), m.pos);
 			// Generic `@m e` meta reifies to EMeta.
 			case EMeta(m, e1):
 				// The `expr` wrapper still carries the outer expr pos.

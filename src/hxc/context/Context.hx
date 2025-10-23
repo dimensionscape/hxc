@@ -184,6 +184,11 @@ class Context {
 		l.push({msg: msg, pos: pos});
 	}
 
+	// Discard old declaration diagnostics when a build macro replaces the class fields.
+	public function dropFieldDiagnostics(c:hxc.core.Type.TClass):Void {
+		pendingFieldDiagnostics.remove(c);
+	}
+
 	public function flushFieldDiagnostics(c:hxc.core.Type.TClass):Void {
 		var l = pendingFieldDiagnostics.get(c);
 		if (l == null) return;

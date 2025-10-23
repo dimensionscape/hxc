@@ -574,7 +574,9 @@ class EvalEmitter {
 		return onUnmatched();
 	}
 
-	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position):EvalValue {
+	// `pre` is the receiver already evaluated by a call (evaluated once, before the null check); without it
+	// the field read evaluates e1 itself.
+	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position, ?pre:EvalValue):EvalValue {
 		return switch (fa) {
 			case FStatic(c, cf):
 				// A static field missing from the prototype means its owning body was not typed and
@@ -600,7 +602,7 @@ class EvalEmitter {
 				catch (_:hxc.core.NotFound) EvalExceptions.excString(ctx, "hxc: " + en.path.name + "." + ef.name + " is not available (compiler typing gap)", p);
 			case FClosure(cwp, cf):
 				// A bound-method value read off a null receiver is simply null (no raise).
-				var recv = eval(ctx, e1);
+				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
 					case VNull: VNull;
 					case _:
@@ -609,7 +611,7 @@ class EvalEmitter {
 						if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
 				}
 			case FInstance(c, _, cf):
-				var recv = eval(ctx, e1);
+				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
 					case VNull:
 						// A null receiver splits by field kind: a method-call receiver fails the null check
@@ -635,7 +637,7 @@ class EvalEmitter {
 			case FAnon(cf):
 				// On a class instance/builtin viewed structurally an instance method binds its receiver
 				// (e.g. iterator via Iterable); on a plain anonymous object the field is a raw value.
-				var recv = eval(ctx, e1);
+				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
 					case VObject(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
 					// A structure's field read raises on a null receiver.
@@ -645,7 +647,7 @@ class EvalEmitter {
 						if (v == VNull) lateInstanceMethodByName(ctx, recv, cf.name, p) else v;
 				}
 			case FDynamic(s):
-				EvalField.dynamicField(ctx, eval(ctx, e1), EvalHash.hash(s));
+				EvalField.dynamicField(ctx, pre != null ? pre : eval(ctx, e1), EvalHash.hash(s));
 		};
 	}
 
@@ -825,7 +827,15 @@ class EvalEmitter {
 				}
 			case _:
 		}
-		var fn = EvalValueTools.vresolve(eval(ctx, callee));
+		var fn = switch (callee.expr) {
+			// A field call on anything but a static or an enum constructor evaluates its receiver first and
+			// null-checks it at the receiver's position, whatever kind of field the call then reads.
+			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
+				var recv = eval(ctx, e1);
+				if (recv == VNull) EvalExceptions.excString(ctx, "Null Access", e1.pos);
+				EvalValueTools.vresolve(evalField(ctx, e1, fa, callee.pos, recv));
+			case _: EvalValueTools.vresolve(eval(ctx, callee));
+		};
 		var args = [for (a in argExprs) eval(ctx, a)];
 		var isTrace = switch (callee.expr) {
 			case TField(_, FStatic(c, cf)) if (c.path.pack.join(".") == "haxe" && c.path.name == "Log" && cf.name == "trace"): true;

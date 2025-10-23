@@ -39,7 +39,7 @@ class EvalMacro {
 	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;
 	static var expectedTypeStack:Array<WithType> = [];
-	static var curBuildFields:EvalValue = VNull;
+	static var curBuildFields:Null<Array<ClassField>> = null;
 	static var curBuildClass:Null<TClass> = null;
 	// Context.getLocalType answers the built type, which is not always a class: an enum build has no
 	// curBuildClass at all.
@@ -339,6 +339,7 @@ class EvalMacro {
 			// invocation); the host com's own currentModule is whatever typing left behind.
 			var savedGetTypeMod = com.currentModule;
 			if (curModule != null) com.currentModule = curModule;
+			var modulesBefore = com.modules.length;
 			var t = try Typeload.loadInstance(com, [], tpath, curPos, true) catch (e:Dynamic) {
 				com.currentModule = savedGetTypeMod;
 				// Context.getType answers nothing only for a missing module raised at the call's position,
@@ -355,10 +356,11 @@ class EvalMacro {
 				throw e;
 			};
 			com.currentModule = savedGetTypeMod;
-			// The loaded type's build macros run inside the call, like the reference's
-			// PBuildClass delays flushing during get_type (an @:autoBuild subclass in the
-			// same module reports from here).
-			switch (TypeFunctions.follow(t)) {
+			// Loading a new module while a field is typed flushes the PBuildClass delays, so the loaded
+			// type's build macros run inside the call (an @:autoBuild subclass in the same module reports
+			// from here). A type the macro defined (defineType adds its module without that flush) is built
+			// at the next flush, after the macro returns.
+			if (com.modules.length > modulesBefore) switch (TypeFunctions.follow(t)) {
 				case TInst(c, _) if (c.module != null):
 					for (mt in c.module.types) switch (mt) {
 						case TClassDecl(c2): ensureBuilt(com, c2);
@@ -533,7 +535,10 @@ class EvalMacro {
 			}
 			return VNull;
 		});
-		reg2("getBuildFields", "get_build_fields", function(a) return curBuildFields);
+		// getBuildFields encodes the fields anew on every call: two calls answer two arrays of two sets of
+		// objects, and what a macro changes in one is not in the other.
+		reg2("getBuildFields", "get_build_fields", function(a)
+			return curBuildFields == null ? VNull : encodeArray([for (f in curBuildFields) encodeField(ec, f)]));
 		// Context.getLocalType / getLocalClass (std reads TInst from this): the @:build target's type, or
 		// outside a build macro the class containing the macro call (none for the null class), with empty
 		// params.
@@ -982,6 +987,13 @@ class EvalMacro {
 
 	// Runs a class's build macros the first time the class is resolved: its own @:build plus any
 	// @:autoBuild inherited from a superclass or implemented interface.
+	// The build macros precede the field checks: a class whose build has not run yet has no final field
+	// list to check.
+	public static function hasPendingBuild(com:Context, c:TClass):Bool {
+		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
+		return !builtClasses.exists(key) && collectBuildEntries(c).length > 0;
+	}
+
 	public static function ensureBuilt(com:Context, c:TClass):Void {
 		// Per world: the built mark is on the class object, and the macro context holds its own copy of
 		// every class. Keyed by path alone, a class the host had built would be skipped in the macro
@@ -1151,7 +1163,7 @@ class EvalMacro {
 			curBuildClass = cls;
 			curBuildType = selfType;
 			curBuildParams = params;
-			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
+			curBuildFields = fields;
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
@@ -1253,7 +1265,10 @@ class EvalMacro {
 		if (newFields == null) return;
 		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
-		hxc.context.ModuleLoader.rebuildFields(c, newFields);
+		// The FINAL field list is checked, the build's included (a duplicate name, a variable without hint
+		// or value, an accessor name, a modifier): with the com, the registration reports them for what the
+		// macro returned.
+		hxc.context.ModuleLoader.rebuildFields(c, newFields, com);
 		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
 		// private typedef used in a field signature) resolve; a build triggered from another module's
 		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
@@ -3004,7 +3019,7 @@ class EvalMacro {
 			curBuildClass = c;
 			curBuildType = TInst(c, params);
 			curBuildParams = params;
-			curBuildFields = encodeArray([for (f in fields) encodeField(ec, f)]);
+			curBuildFields = fields;
 			var result = switch (callExpr.expr) {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
@@ -3823,7 +3838,10 @@ class EvalMacro {
 		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
 		// when the field omits pos.
 		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
-		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av), pos: pos} : PlacedAccess)];
+		// The modifier's position is the enum VALUE's own (the null position without one), so a modifier
+		// the macro wrote reports inside haxe/macro/Expr.hx, where its constructor is declared.
+		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av),
+			pos: switch (av) { case VEnumValue(ev) if (ev.enpos != null): ev.enpos; case _: Position.nullPos; }} : PlacedAccess)];
 		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), pos);
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
 		// `name_pos`, defaulting to the field's pos.
@@ -3853,16 +3871,20 @@ class EvalMacro {
 
 	static function decodeFieldKind(ec:EvalContext, v:EvalValue, dp:Position):ClassFieldKind {
 		var a = eargs(v);
+		// A property's accessor names carry the null position.
 		return switch (ctorName(ec, v)) {
 			case "FVar": FVar((a.length > 0 && a[0] != VNull) ? decodeTypeHint(ec, a[0], dp) : null, decodeExprOpt(ec, a.length > 1 ? a[1] : VNull, dp));
 			case "FFun": FFun(decodeFunc(ec, a[0], dp));
-			case "FProp": FProp({name: strOf(a[0]), pos: dp}, {name: strOf(a[1]), pos: dp}, (a.length > 2 && a[2] != VNull) ? decodeTypeHint(ec, a[2], dp) : null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
+			case "FProp": FProp({name: strOf(a[0]), pos: Position.nullPos}, {name: strOf(a[1]), pos: Position.nullPos}, (a.length > 2 && a[2] != VNull) ? decodeTypeHint(ec, a[2], dp) : null, decodeExprOpt(ec, a.length > 3 ? a[3] : VNull, dp));
 			case other: throw new DecodeFailure("Unexpected value " + Std.string(other) + ", expected FieldType");
 		};
 	}
 
 	static function decodeFunc(ec:EvalContext, v:EvalValue, dp:Position):Func {
-		var args = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) decodeFunctionArg(ec, av, dp)];
+		// `args` decodes as an array: a null is an invalid expression.
+		var argsV = EvalField.field(ec, v, EvalHash.hash("args"));
+		if (argsV == VNull) throw new DecodeFailure("Invalid expression");
+		var args = [for (av in arrOf(argsV)) decodeFunctionArg(ec, av, dp)];
 		var retV = EvalField.field(ec, v, EvalHash.hash("ret"));
 		return {fParams: decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp), fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
 	}
@@ -4199,20 +4221,24 @@ class EvalMacro {
 		// placed-name equality check relies on.
 		fields.set(EvalHash.hash("name_pos"), encPos(f.cffName.pos));
 		fields.set(EvalHash.hash("doc"), VNull);
-		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access)]));
+		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access, pa.pos)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
 		fields.set(EvalHash.hash("pos"), encPos(f.cffPos));
 		fields.set(EvalHash.hash("meta"), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function encodeAccess(ec:EvalContext, a:Access):EvalValue {
+	// A modifier keeps its position through a build's round trip, so a duplicate reports where it was
+	// written.
+	static function encodeAccess(ec:EvalContext, a:Access, ?pos:Position):EvalValue {
 		var name = switch (a) {
 			case APublic: "APublic"; case APrivate: "APrivate"; case AStatic: "AStatic"; case AOverride: "AOverride";
 			case ADynamic: "ADynamic"; case AInline: "AInline"; case AMacro: "AMacro"; case AFinal: "AFinal";
 			case AExtern: "AExtern"; case AAbstract: "AAbstract"; case AOverload: "AOverload";
 		};
-		return mkEnumValue(ec, "Access", name, []);
+		var v = mkEnumValue(ec, "Access", name, []);
+		if (pos != null) switch (v) { case VEnumValue(ev): ev.enpos = pos; case _: }
+		return v;
 	}
 
 	static function encodeFieldKind(ec:EvalContext, k:ClassFieldKind):EvalValue {

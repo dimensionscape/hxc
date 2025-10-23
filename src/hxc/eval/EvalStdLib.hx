@@ -926,8 +926,6 @@ class EvalStdLib {
 	static var nativeBytesInputs = new haxe.ds.ObjectMap<VInstance, {bytes:haxe.io.Bytes, pos:Int, len:Int, totlen:Int}>();
 	static var nativeProcesses = new haxe.ds.ObjectMap<VInstance, sys.io.Process>();
 	static var nativeLists = new haxe.ds.ObjectMap<VInstance, Array<EvalValue>>();
-	static var nativeArrayIterators = new haxe.ds.ObjectMap<VInstance, {array:VArray, current:Int}>();
-	static var nativeMapKeyValueIterators = new haxe.ds.ObjectMap<VInstance, {entries:Array<MapEntry>, current:Int}>();
 	static var nativeMapOrders = new haxe.ds.ObjectMap<VInstance, Array<String>>();
 	static var threadMutexes = new haxe.ds.ObjectMap<VInstance, {mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int}>();
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
@@ -2331,52 +2329,31 @@ class EvalStdLib {
 		setInstanceFieldIfExists(vi, "totlen", VInt(input.totlen));
 	}
 
+	// Array.iterator: a native's iterator is an OBJECT with hasNext and next over the live array.
+	// The std's haxe.iterators classes have no natives and are interpreted, so their frames and null
+	// handling are the code's own.
 	static function arrayIteratorValue(ctx:EvalContext, arrayValue:EvalValue):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.ArrayIterator"));
-		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		nativeArrayIterators.set(vi, {array: thisArray([arrayValue]), current: 0});
-		setInstanceFieldIfExists(vi, "array", arrayValue);
-		setInstanceFieldIfExists(vi, "current", VInt(0));
-		return VInstance(vi);
+		var arr = thisArray([arrayValue]);
+		var i = 0;
+		return mkObject([
+			{name: "hasNext", value: VFunction(function(a) return EvalValueTools.vbool(i < arr.alength), true)},
+			{name: "next", value: VFunction(function(a) return i < arr.alength ? arr.avalues[i++] : VNull, true)}
+		]);
 	}
 
-	static function thisArrayIterator(a:Array<EvalValue>):{array:VArray, current:Int} {
-		var vi = thisInstance(a, "ArrayIterator");
-		var it = nativeArrayIterators.get(vi);
-		if (it == null) throw "Unexpected value for ArrayIterator";
-		return it;
+	// hasNext and next over a snapshot (a map's keys or values).
+	static function listIteratorValue(items:Array<EvalValue>):EvalValue {
+		var i = 0;
+		return mkObject([
+			{name: "hasNext", value: VFunction(function(a) return EvalValueTools.vbool(i < items.length), true)},
+			{name: "next", value: VFunction(function(a) return i < items.length ? items[i++] : VNull, true)}
+		]);
 	}
 
-	static function arrayIteratorSetCurrent(v:EvalValue, current:Int):Void {
-		switch (v) {
-			case VInstance(vi): setInstanceFieldIfExists(vi, "current", VInt(current));
-			case _:
-		}
-	}
-
+	// The std's MapKeyValueIterator, constructed and run through its own interpreted constructor over
+	// the map.
 	static function mapKeyValueIteratorValue(ctx:EvalContext, mapValue:EvalValue):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.iterators.MapKeyValueIterator"));
-		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		var entries = orderedMapEntries(mapValue);
-		if (entries.length == 0) {
-			var keys = applyFn(EvalField.dynamicField(ctx, mapValue, EvalHash.hash("keys")), []);
-			while (EvalMisc.isTrue(callValueOn(keys, EvalField.dynamicField(ctx, keys, EvalHash.hash("hasNext")), []))) {
-				var key = callValueOn(keys, EvalField.dynamicField(ctx, keys, EvalHash.hash("next")), []);
-				var value = callValueOn(mapValue, EvalField.dynamicField(ctx, mapValue, EvalHash.hash("get")), [key]);
-				entries.push({key: key, value: value});
-			}
-		}
-		nativeMapKeyValueIterators.set(vi, {entries: entries, current: 0});
-		setInstanceFieldIfExists(vi, "map", mapValue);
-		setInstanceFieldIfExists(vi, "keys", arrayIteratorValue(ctx, VArray(new VArray([for (e in entries) e.key], entries.length))));
-		return VInstance(vi);
-	}
-
-	static function thisMapKeyValueIterator(a:Array<EvalValue>):{entries:Array<MapEntry>, current:Int} {
-		var vi = thisInstance(a, "MapKeyValueIterator");
-		var it = nativeMapKeyValueIterators.get(vi);
-		if (it == null) throw "Unexpected value for MapKeyValueIterator";
-		return it;
+		return hxc.eval.EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.MapKeyValueIterator"), [mapValue]);
 	}
 
 	static function nativeStringOf(v:EvalValue):String {
@@ -4285,29 +4262,6 @@ class EvalStdLib {
 			setDynamicField(self, EvalHash.hash("min"), VInt(min + 1));
 			VInt(min);
 		}));
-		reg(inst, "haxe.iterators.ArrayIterator", "hasNext", vmethod(a -> {
-			var it = thisArrayIterator(a);
-			EvalValueTools.vbool(it.current < it.array.alength);
-		}));
-		reg(inst, "haxe.iterators.ArrayIterator", "next", vmethod(a -> {
-			var it = thisArrayIterator(a);
-			if (it.current >= it.array.alength) VNull else {
-				var value = it.array.avalues[it.current++];
-				arrayIteratorSetCurrent(arg(a, 0), it.current);
-				value;
-			}
-		}));
-		reg(inst, "haxe.iterators.MapKeyValueIterator", "hasNext", vmethod(a -> {
-			var it = thisMapKeyValueIterator(a);
-			EvalValueTools.vbool(it.current < it.entries.length);
-		}));
-		reg(inst, "haxe.iterators.MapKeyValueIterator", "next", vmethod(a -> {
-			var it = thisMapKeyValueIterator(a);
-			if (it.current >= it.entries.length) VNull else {
-				var entry = it.entries[it.current++];
-				mkObject([{name: "value", value: entry.value}, {name: "key", value: entry.key}]);
-			}
-		}));
 		reg(inst, "Array", "keyValueIterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayKeyValueIterator"), [a[0]])));
 		reg(inst, "Array", "slice", vmethod(a -> {
 			var va = thisArray(a);
@@ -4653,81 +4607,8 @@ class EvalStdLib {
 			var fn = arg(a, 1); var args = argList(arg(a, 2));
 			if (fn == VNull) EvalExceptions.excString(ctx, "Cannot call null") else callValueOn(arg(a, 0), fn, args);
 		}));
-		reg(s, "Lambda", "array", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)))));
-		reg(s, "Lambda", "list", vfn(a -> {
-			listValue(ctx, iterableValues(ctx, arg(a, 0)));
-		}));
-		reg(s, "Lambda", "map", vfn(a -> valueArray([for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [v])])));
-		reg(s, "Lambda", "mapi", vfn(a -> {
-			var i = 0;
-			valueArray([for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [VInt(i++), v])]);
-		}));
-		reg(s, "Lambda", "flatten", vfn(a -> {
-			var out:Array<EvalValue> = [];
-			for (it in iterableValues(ctx, arg(a, 0))) out = out.concat(iterableValues(ctx, it));
-			valueArray(out);
-		}));
-		reg(s, "Lambda", "flatMap", vfn(a -> {
-			var out:Array<EvalValue> = [];
-			for (v in iterableValues(ctx, arg(a, 0))) out = out.concat(iterableValues(ctx, applyFn(arg(a, 1), [v])));
-			valueArray(out);
-		}));
-		reg(s, "Lambda", "has", vfn(a -> {
-			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(EvalMisc.opEq(v, arg(a, 1)))) return VTrue;
-			VFalse;
-		}));
-		reg(s, "Lambda", "exists", vfn(a -> {
-			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VTrue;
-			VFalse;
-		}));
-		reg(s, "Lambda", "foreach", vfn(a -> {
-			for (v in iterableValues(ctx, arg(a, 0))) if (!EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VFalse;
-			VTrue;
-		}));
-		reg(s, "Lambda", "iter", vfn(a -> {
-			for (v in iterableValues(ctx, arg(a, 0))) applyFn(arg(a, 1), [v]);
-			VNull;
-		}));
-		reg(s, "Lambda", "filter", vfn(a -> valueArray([for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) v])));
-		reg(s, "Lambda", "fold", vfn(a -> {
-			var acc = arg(a, 2);
-			for (v in iterableValues(ctx, arg(a, 0))) acc = applyFn(arg(a, 1), [v, acc]);
-			acc;
-		}));
-		reg(s, "Lambda", "foldi", vfn(a -> {
-			var acc = arg(a, 2);
-			var i = 0;
-			for (v in iterableValues(ctx, arg(a, 0))) acc = applyFn(arg(a, 1), [v, acc, VInt(i++)]);
-			acc;
-		}));
-		reg(s, "Lambda", "count", vfn(a -> {
-			var n = 0;
-			var pred = arg(a, 1);
-			for (v in iterableValues(ctx, arg(a, 0))) if (pred == VNull || EvalMisc.isTrue(applyFn(pred, [v]))) n++;
-			VInt(n);
-		}));
-		reg(s, "Lambda", "empty", vfn(a -> EvalValueTools.vbool(iterableValues(ctx, arg(a, 0)).length == 0)));
-		reg(s, "Lambda", "indexOf", vfn(a -> {
-			var i = 0;
-			for (v in iterableValues(ctx, arg(a, 0))) {
-				if (EvalMisc.isTrue(EvalMisc.opEq(v, arg(a, 1)))) return VInt(i);
-				i++;
-			}
-			VInt(-1);
-		}));
-		reg(s, "Lambda", "find", vfn(a -> {
-			for (v in iterableValues(ctx, arg(a, 0))) if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return v;
-			VNull;
-		}));
-		reg(s, "Lambda", "findIndex", vfn(a -> {
-			var i = 0;
-			for (v in iterableValues(ctx, arg(a, 0))) {
-				if (EvalMisc.isTrue(applyFn(arg(a, 1), [v]))) return VInt(i);
-				i++;
-			}
-			VInt(-1);
-		}));
-		reg(s, "Lambda", "concat", vfn(a -> valueArray(iterableValues(ctx, arg(a, 0)).concat(iterableValues(ctx, arg(a, 1))))));
+		// Lambda is the std's Haxe code, with no natives, so its frames and null handling are the code's
+		// own.
 
 		var ctors = ctx.builtins.constructorBuiltins;
 		var emptyCtors = ctx.builtins.emptyConstructorBuiltins;
@@ -4956,7 +4837,7 @@ class EvalStdLib {
 
 		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
-			return arrayIteratorValue(ctx, VArray(new VArray(items, items.length)));
+			return listIteratorValue(items);
 		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
@@ -5027,8 +4908,6 @@ class EvalStdLib {
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
 		emptyCtors.set(EvalHash.hash("Array"), function() return VArray(new VArray([], 0)));
-		ctors.set(EvalHash.hash("haxe.iterators.ArrayIterator"), function(a) return arrayIteratorValue(ctx, arg(a, 0)));
-		ctors.set(EvalHash.hash("haxe.iterators.MapKeyValueIterator"), function(a) return mapKeyValueIteratorValue(ctx, arg(a, 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) {
 			var length = toInt(arg(a, 0));
 			if (length < 0) EvalExceptions.excString(ctx, "Vector size must be >= 0", EvalContext.getEval(ctx).currentPos);

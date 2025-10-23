@@ -812,13 +812,15 @@ class ModuleLoader {
 		}
 	}
 
-	public static function rebuildFields(c:TClass, fields:Array<ClassField>):Void {
+	public static function rebuildFields(c:TClass, fields:Array<ClassField>, ?ctx:Context):Void {
 		c.fields = new StringMap<TClassField>();
 		c.statics = new StringMap<TClassField>();
 		c.orderedFields = [];
 		c.orderedStatics = [];
 		c.constructor = null;
-		registerFields(c, fields);
+		// Drop diagnostics from the replaced field list; check the new fields during resolution.
+		if (ctx != null) ctx.dropFieldDiagnostics(c);
+		registerFields(c, fields, ctx);
 	}
 
 	static function classFieldIsStatic(c:TClass, cff:ClassField):Bool {
@@ -1153,6 +1155,9 @@ class ModuleLoader {
 					case FVar(th, e) if (th == null && e == null && isEnumAbstractMember):
 					// Leave uninitialized finals to their earlier-priority check in the later phase.
 					case FVar(th, e) if (th == null && e == null && isFinalField):
+					// Report a missing inline initializer before checking its type hint, at the whole field.
+					case FVar(_, null) if (inlineAcc != null):
+						fieldError("Inline variable must be initialized", cff.cffPos);
 					case FVar(th, e) if (th == null && e == null):
 						fieldError("Variable requires type-hint or initialization", cff.cffName.pos);
 					case FProp(_, _, th, e) if (th == null && e == null):
