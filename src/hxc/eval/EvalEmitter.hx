@@ -177,7 +177,11 @@ class EvalEmitter {
 			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), true);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
-			case TNew(c, params, newArgs): evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos, newArgs.length == 0 ? null : newArgs[0].pos);
+			case TNew(c, params, newArgs):
+				// A class with a special (native) constructor constructs natively, with no depth check; any
+				// other through a constructor call, whose depth check precedes the arguments.
+				if (!ctx.builtins.constructorBuiltins.exists(EvalHash.pathHash(c.path))) checkStackDepth(ctx);
+				evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos, newArgs.length == 0 ? null : newArgs[0].pos);
 			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef);
 			case TEnumParameter(e1, _, index):
 				switch (eval(ctx, e1)) {
@@ -551,6 +555,8 @@ class EvalEmitter {
 	}
 
 	static function callField(ctx:EvalContext, recv:EvalValue, name:String, args:Array<EvalValue>, p:Position):EvalValue {
+		// The lowered iterator calls are field calls: the depth check comes first.
+		checkStackDepth(ctx);
 		return switch (EvalValueTools.vresolve(EvalField.dynamicField(ctx, recv, EvalHash.hash(name)))) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(r, f): callAt(ctx, p, f, [r].concat(args));
@@ -619,7 +625,12 @@ class EvalEmitter {
 						// An Array's length read decodes the array, whose null is "Null Access".
 						switch (cf.kind) {
 							case Method(_): EvalExceptions.excString(ctx, "Null Access", e1.pos);
-							case Var(_) if (cf.name == "length" && c.path.pack.length == 0 && c.path.name == "Array"):
+							// Array, eval.Vector and haxe.io.Bytes have their own length reads, whose null
+							// is "Null Access".
+							case Var(_) if (cf.name == "length" && switch (c.path) {
+								case {pack: [], name: "Array"} | {pack: ["haxe", "io"], name: "Bytes"} | {pack: ["eval"], name: "Vector"}: true;
+								case _: false;
+							}):
 								EvalExceptions.excString(ctx, "Null Access", e1.pos);
 							case Var(_): EvalExceptions.excString(ctx, "field access on null", e1.pos);
 						}
@@ -770,6 +781,14 @@ class EvalEmitter {
 		}
 	}
 
+	// Every call begins by checking the CALLER's depth, before its receiver and arguments, so the deepest
+	// environment is created and reports "Stack overflow" at its first call, with its leave position still
+	// at the file start.
+	static inline function checkStackDepth(ctx:EvalContext):Void {
+		var env = EvalContext.getEval(ctx).env;
+		if (env != null && env.stackDepth > ctx.maxStackDepth) EvalExceptions.excString(ctx, "Stack overflow");
+	}
+
 	static function evalCall(ctx:EvalContext, callee:TExpr, argExprs:Array<TExpr>, p:Position):EvalValue {
 		switch (callee.expr) {
 			case TField(_, FEnum(en, ef)):
@@ -783,6 +802,9 @@ class EvalEmitter {
 				// the reification wrote, so a reified expression thrown out of a macro prints the position.
 				return EvalMacro.mkPosValue([for (x in argExprs) eval(ctx, x)]);
 			case TConst(TSuper):
+				// Super() checks the depth first; a native-backed parent's special super call records no leave
+				// position, an interpreted parent's is recorded after the arguments (callAt).
+				checkStackDepth(ctx);
 				var args = [for (a in argExprs) eval(ctx, a)];
 				var vthis = EvalContext.getEval(ctx).env.vthis;
 				switch (TypeFunctions.follow(callee.type)) {
@@ -819,14 +841,39 @@ class EvalEmitter {
 					var proto = ctx.instancePrototypes.get(EvalHash.pathHash(c.path));
 					var m = superProtoMethod(proto, EvalHash.hash(cf.name));
 					var vthis = EvalContext.getEval(ctx).env.vthis;
+					// A super field call: the depth check, the arguments, and the call with no leave position
+					// recorded.
+					checkStackDepth(ctx);
 					var args = [for (a in argExprs) eval(ctx, a)];
 					switch (m) {
-						case VFunction(f, _): return callAt(ctx, p, f, [vthis].concat(args));
+						case VFunction(f, _): return f([vthis].concat(args));
 						case _:
 					}
 				}
 			case _:
 		}
+		switch (callee.expr) {
+			// StringTools.fastCodeAt and unsafeCodeAt are intrinsics, not calls: no depth check, and the
+			// environment's leave position stays where the last call left it. The string is decoded as a
+			// string, the index as an Int at its position.
+			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
+				var s = EvalStdLib.decodeString(ctx, eval(ctx, argExprs[0]));
+				var index = switch (eval(ctx, argExprs[1])) {
+					case VInt(i): i;
+					case VFloat(f): Std.int(f);
+					case v: EvalExceptions.unexpectedValue(ctx, v, "int", p);
+				};
+				return EvalStdLib.stringFastCodeAt(s, index);
+			case _:
+		}
+		checkStackDepth(ctx);
+		// The emitter is picked by the callee: a proper method records the leave position after its
+		// arguments, any other field and any other callee before them.
+		var leaveFirst = switch (callee.expr) {
+			case TField(_, FStatic(_, cf)): !isProperMethod(cf);
+			case TField(_, FInstance(_, _, cf)): !isProperMethod(cf);
+			case _: true;
+		};
 		var fn = switch (callee.expr) {
 			// A field call on anything but a static or an enum constructor evaluates its receiver first and
 			// null-checks it at the receiver's position, whatever kind of field the call then reads.
@@ -836,6 +883,8 @@ class EvalEmitter {
 				EvalValueTools.vresolve(evalField(ctx, e1, fa, callee.pos, recv));
 			case _: EvalValueTools.vresolve(eval(ctx, callee));
 		};
+		var caller = EvalContext.getEval(ctx);
+		if (leaveFirst && caller.env != null) EvalExceptions.setLeavePosition(caller.env, p);
 		var args = [for (a in argExprs) eval(ctx, a)];
 		var isTrace = switch (callee.expr) {
 			case TField(_, FStatic(c, cf)) if (c.path.pack.join(".") == "haxe" && c.path.name == "Log" && cf.name == "trace"): true;
@@ -846,8 +895,8 @@ class EvalEmitter {
 		if (isEvalTarget(ctx) && isTrace && argExprs.length > 1)
 			args[1] = normalizeTraceValue(argExprs[1], args[1]);
 		return switch (fn) {
-			case VFunction(f, _): callAt(ctx, p, f, args);
-			case VFieldClosure(recv, f): callAt(ctx, p, f, [recv].concat(args));
+			case VFunction(f, _): leaveFirst ? f(args) : callAt(ctx, p, f, args);
+			case VFieldClosure(recv, f): leaveFirst ? f([recv].concat(args)) : callAt(ctx, p, f, [recv].concat(args));
 			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
 			// emitter records before any call.
 			case v:
@@ -875,6 +924,15 @@ class EvalEmitter {
 				}
 				v;
 			case _: v;
+		};
+	}
+
+	// A proper method: a Method other than a dynamic one.
+	static function isProperMethod(cf:TClassField):Bool {
+		return switch (cf.kind) {
+			case Method(MethDynamic): false;
+			case Method(_): true;
+			case Var(_): false;
 		};
 	}
 
@@ -974,7 +1032,8 @@ class EvalEmitter {
 			var oldPos = ev.currentPos;
 			if (argPos != null) ev.currentPos = argPos;
 			var result:EvalValue;
-			try result = callAt(ctx, p, special, args) catch (ex:Dynamic) { ev.currentPos = oldPos; throw ex; }
+			// A native constructor records no leave position.
+			try result = special(args) catch (ex:Dynamic) { ev.currentPos = oldPos; throw ex; }
 			ev.currentPos = oldPos;
 			return result;
 		}

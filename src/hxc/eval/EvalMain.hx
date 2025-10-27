@@ -273,7 +273,12 @@ class EvalMain {
 			runStaticInits(ctx);
 			if (ctx.com == null || ctx.com.main == null)
 				throw "No entry expression: Finalization.run must populate com.main before runMain";
-			var r = EvalEmitter.eval(ctx, ctx.com.main);
+			// The entry expression runs inside an EKEntrypoint environment, the depth the recursion limit
+			// counts from; its leave position, the main call's null position, never prints.
+			var entryEval = EvalContext.getEval(ctx);
+			var entryEnv = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, ctx.com.main.pos, EKEntrypoint, 0, 0));
+			var r = try EvalEmitter.eval(ctx, ctx.com.main) catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
+			EvalContext.popEnvironment(ctx, entryEnv);
 			EvalStdLib.gilLeave();
 			return r;
 		} catch (e:haxe.Exception) {

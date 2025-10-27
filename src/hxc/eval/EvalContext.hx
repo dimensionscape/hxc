@@ -60,7 +60,10 @@ class EvalEnv {
 		this.parent = parent;
 		this.stackDepth = stackDepth;
 		this.eval = eval;
-		this.leavePos = new Position(info.file == 0 ? "?" : EvalHash.revHash(info.file), info.min, info.max);
+		// A fresh environment's leave position is the file start, (0,0); a call site moves it before the
+		// call and a positioned throw to the throw . An environment that raises before its first call
+		// reports at line 1.
+		this.leavePos = new Position(info.file == 0 ? "?" : EvalHash.revHash(info.file), 0, 0);
 		this.slots = new Map();
 		this.vthis = null;
 	}
@@ -146,14 +149,12 @@ class EvalContext {
 		this.evalTls = new sys.thread.Tls();
 		this.evalTls.value = this.eval;
 		this.defines = defines == null ? new Define() : defines;
-		// Soft call-depth cap for the RUNNING program. Well above any legitimate runtime recursion in
-		// the corpus, but far below where the host's native stack is exhausted, so runaway interpreted
-		// recursion raises a catchable exception (matching the reference eval) instead of crashing the
-		// whole process. Compile-time macro evaluation is exempt (see pushEnvironment): corpus-assembly
-		// macros legitimately recurse much deeper, and a macro that truly loops is a separate concern.
-		var depthText = this.defines.rawDefinedValueSafe("eval_call_stack_depth", "20000");
+		// The interpreter's call depth limit, `-D eval-call-stack-depth` with a default of 1000; past it
+		// a call raises "Stack overflow", a catchable exception, in every world, so a runaway macro
+		// reports instead of exhausting the native stack.
+		var depthText = this.defines.rawDefinedValueSafe("eval_call_stack_depth", "1000");
 		var parsedDepth = Std.parseInt(depthText);
-		this.maxStackDepth = parsedDepth == null ? 20000 : parsedDepth;
+		this.maxStackDepth = parsedDepth == null ? 1000 : parsedDepth;
 		// Value printing truncates to <...> past this depth (default 5, overridable with -D
 		// eval.print.depth).
 		var printDepth = Std.parseInt(this.defines.rawDefinedValueSafe("eval_print_depth", "5"));
@@ -202,7 +203,6 @@ class EvalContext {
 		var locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
 		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];
 		var stackDepth = eval.env == null ? 1 : eval.env.stackDepth + 1;
-		if (!ctx.isMacro && stackDepth >= ctx.maxStackDepth) hxc.eval.EvalExceptions.excString(ctx, "Stack overflow");
 		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval);
 		eval.env = env;
 		return env;

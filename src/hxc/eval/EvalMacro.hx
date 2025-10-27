@@ -1236,12 +1236,13 @@ class EvalMacro {
 		}
 	}
 
-	// An uncaught macro-time exception reports at the throwing expression with a "Called from here"
-	// frame per enclosing call, innermost first, closing with the macro invocation sites the unwind
-	// recorded.
+	// An uncaught macro-time exception reports at the throwing expression with a "Called from here" frame
+	// per enclosing call, innermost first, closing with the invocation's entry environment, whose leave
+	// position is the call; a nested invocation's chain runs on into its caller's frames the same way.
 	public static function uncaughtExceptionStack(re:EvalExceptions.EvalRunTimeException):Array<{message:String, pos:Position, ?depth:Int}> {
 		var frames = [for (env in re.envStack) hxc.eval.EvalExceptions.envPosition(env)];
-		frames = [for (p in frames) if (p != null && p.file != "?" && p.min >= 0) p];
+		// Only a frame at the null position is dropped; a fresh environment's (0,0) prints as line 1.
+		frames = [for (p in frames) if (p != null && !hxc.eval.EvalExceptions.isNullPos(p)) p];
 		var explicit = re.pos != null && !(re.pos.file == "?" && re.pos.min < 0);
 		if (explicit && frames.length > 0) frames.shift();
 		// A raise with no position of its own - an API native's failure, an invalid expression, a Null
@@ -1251,8 +1252,6 @@ class EvalMacro {
 		var head = explicit ? re.pos : (invocation != null && invocation.file != "?" && invocation.min >= 0 ? invocation : Position.nullPos);
 		var stack = [{message: "Uncaught exception " + EvalStdLib.stringOf(re.value), pos: head}];
 		for (p in frames) stack.push({message: "Called from here", pos: p});
-		for (cp in re.callPositions)
-			if (cp != null && cp.file != "?" && cp.min >= 0) stack.push({message: "Called from here", pos: cp});
 		return stack;
 	}
 
@@ -2678,7 +2677,14 @@ class EvalMacro {
 				return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
 			}
 			expectedTypeStack.push(withType);
-			var result = fn(args);
+			// The macro runs inside an entry environment at the call, whose leave position is the call
+			// itself: the chain's last "Called from here" and the depth the recursion limit counts from. An
+			// exception leaves it popped (catch_exceptions restores the environment it started with).
+			var entryEval = EvalContext.getEval(ec);
+			var entryEnv = EvalContext.pushEnvironment(ec, EvalContext.createEnvInfo(true, p, EKEntrypoint, 0, 0));
+			hxc.eval.EvalExceptions.setLeavePosition(entryEnv, p);
+			var result = try fn(args) catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
+			EvalContext.popEnvironment(ec, entryEnv);
 			expectedTypeStack.pop();
 			// The expression the macro answers with is decoded under the same guard as a build's fields -
 			// null is "Expected Expr but got null".
@@ -2703,10 +2709,10 @@ class EvalMacro {
 			return typed;
 		} catch (e:haxe.Exception) {
 			if (expectedTypeStack.length > 0 && expectedTypeStack[expectedTypeStack.length - 1] == withType) expectedTypeStack.pop();
-			// The macro INVOCATION site closes the eval stack (the reference's api-call env, which
-			// its env stack carries naturally). Record it on the exception as it leaves this frame,
-			// innermost first: reading curPos at catch time instead only ever worked because the
-			// restore was putting back this frame's own position rather than the caller's.
+			// The catcher's position, the macro invocation, heads a report whose raise has no position of
+			// its own (the chain itself ends at the entry environment). Recorded on the exception as it
+			// leaves this frame, innermost first: curPos read at catch time is whatever the restore put
+			// back.
 			var rte = Std.downcast(e, hxc.eval.EvalExceptions.EvalRunTimeException);
 			if (rte != null && !resultPhase) rte.callPositions.push(p);
 			curTctx = savedTctx;

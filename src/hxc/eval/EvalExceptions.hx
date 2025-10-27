@@ -55,34 +55,35 @@ class EvalExceptions {
 		return acc;
 	}
 
+	// A positioned raise moves the current environment's leave position to the throw; a raise at the null
+	// position (a native's failure, the depth check, a decode) leaves it where the last call left it.
 	public static function throwValue(ctx:EvalContext, v:EvalValue, p:Position):Dynamic {
 		var eval = EvalContext.getEval(ctx);
-		if (eval.env != null) setLeavePosition(eval.env, p);
+		if (eval.env != null && p != null && !isNullPos(p)) eval.env.leavePos = p;
 		throw new EvalRunTimeException(v, callStack(eval), p);
 	}
 
-	public static function addCallSite(ex:EvalRunTimeException, p:Position):Void {
-		if (p == null || p.min < 0) return;
-		var env = ex.envStack.length > 1 ? ex.envStack[1] : (ex.envStack.length == 0 ? null : ex.envStack[0]);
-		if (env != null) setLeavePosition(env, p);
+	public static inline function isNullPos(p:Position):Bool {
+		return p.file == "?" && p.min == -1 && p.max == -1;
 	}
 
+	// A call site records itself as the environment's leave position, whatever the position is.
 	public static function setLeavePosition(env:EvalEnv, p:Position):Void {
-		if (p != null && p.min >= 0) env.leavePos = p;
+		if (p != null) env.leavePos = p;
 	}
 
+	// A frame is its environment's leave position.
 	public static function envPosition(env:EvalEnv):Position {
-		if (env.leavePos != null && env.leavePos.min >= 0) return env.leavePos;
-		var file = env.info.file == 0 ? "?" : EvalHash.revHash(env.info.file);
-		if (file == null) file = "?";
-		return new Position(file, env.info.min, env.info.max);
+		return env.leavePos;
 	}
 
+	// Only a frame at the null position is dropped; one at the file start (a fresh environment) prints
+	// as line 1.
 	public static function exceptionStack(ex:EvalRunTimeException):Array<{pos:Position, kind:EvalEnvKind}> {
 		var out:Array<{pos:Position, kind:EvalEnvKind}> = [];
 		for (env in ex.envStack) {
 			var p = envPosition(env);
-			if (p != null && p.min >= 0) out.push({pos: p, kind: env.info.kind});
+			if (p != null && !isNullPos(p)) out.push({pos: p, kind: env.info.kind});
 		}
 		return out;
 	}

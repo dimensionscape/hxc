@@ -1601,16 +1601,8 @@ class Compiler {
 		// Frames run innermost first; an explicit throw position drops the innermost frame it
 		// duplicates, and the catch position closes the stack (the reference's api-call env).
 		var frames = [for (env in ex.envStack) qualifyStdPosition(ctx, hxc.eval.EvalExceptions.envPosition(env))];
-		frames = [for (p in frames) if (p != null && p.file != "?") p];
-		if (hxc.eval.EvalStdLib.stringOf(ex.value) == "Stack overflow") {
-			var entryPos:Null<Position> = null;
-			if (ctx.mainClass != null) for (mt in ctx.types) switch (mt) {
-				case TClassDecl(c) if (c.path.pack.join(".") == ctx.mainClass.pack.join(".") && c.path.name == ctx.mainClass.name): entryPos = new Position(c.pos.file, c.pos.min, c.pos.min);
-				case _:
-				}
-			if (entryPos == null && ctx.main != null) entryPos = ctx.main.pos;
-			if (entryPos != null && entryPos.file != "?") frames.unshift(entryPos);
-		}
+		// Only a frame at the null position is dropped.
+		frames = [for (p in frames) if (p != null && !hxc.eval.EvalExceptions.isNullPos(p)) p];
 		var explicit = ex.pos != null && !(ex.pos.file == "?" && ex.pos.min < 0);
 		if (explicit && frames.length > 0) frames.shift();
 		if (!(catchPos.file == "?" && catchPos.min < 0)) frames.push(catchPos);
