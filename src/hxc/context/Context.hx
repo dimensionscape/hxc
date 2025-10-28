@@ -54,6 +54,9 @@ class Context {
 
 	/** Command-line package remaps, keyed by the first package segment. */
 	public var packageRemaps:StringMap<String>;
+	// Forbidden target packages, excluding those allowed by Compiler.allowPackage. Remaps are stored
+	// separately.
+	public var forbiddenPackages:StringMap<Bool>;
 	// Compiler.includeFile entries: resolved path and top, inline or closure placement.
 	public var includeFiles:Array<{file:String, position:String}> = [];
 
@@ -327,6 +330,7 @@ class Context {
 		this.stdPath = [];
 		this.classPath = classPath == null ? [] : classPath;
 		this.packageRemaps = new StringMap();
+		this.forbiddenPackages = new StringMap();
 		this.defines = defines == null ? new Define() : defines;
 		this.mainClass = null;
 		this.displaySpec = null;

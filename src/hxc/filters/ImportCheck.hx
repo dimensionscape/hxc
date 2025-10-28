@@ -113,6 +113,9 @@ class ImportCheck {
 				// init_module_type wraps init_import in `with Error(err,p,depth) -> display_error_ext`,
 				// which catches a LOAD error and records it.
 				catch (pe:hxc.parser.ParserError) { throw pe; }
+				// ForbidPackage is not a typing error either: it passes the declaration handler and ends
+				// the compile.
+				catch (fp:hxc.core.TypingError.ForbidPackage) { throw fp; }
 				catch (_:Dynamic) { imports.markImportFailed(imp.pos); }
 			}
 		} catch (e:haxe.Exception) { ctx.currentModule = savedMod; throw e; }

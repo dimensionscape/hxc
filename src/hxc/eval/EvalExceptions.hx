@@ -103,7 +103,7 @@ class EvalExceptions {
 			case VNull: "VNull";
 			case VTrue: "VTrue";
 			case VFalse: "VFalse";
-			case VInt(_): "VInt";
+			case VInt(_): "VInt32";
 			case VFloat(_): "VFloat";
 			case VEnumValue(_): "VEnumValue";
 			case VObject(_): "VObject";
@@ -122,7 +122,8 @@ class EvalExceptions {
 	public static function unexpectedValue(ctx:EvalContext, v:EvalValue, expected:String, ?p:Position):Dynamic {
 		var str = switch (v) {
 			case VNull: "Null Access";
-			case _: "Unexpected value " + sValueKind(v) + ", expected " + expected;
+			// The kind and the value.
+			case _: "Unexpected value " + sValueKind(v) + "(" + EvalStdLib.stringOf(v) + "), expected " + expected;
 		};
 		return excString(ctx, str, p);
 	}
@@ -130,4 +131,10 @@ class EvalExceptions {
 	public static function invalidCallArgNumber(ctx:EvalContext, expected:Int, got:Int, ?p:Position):Dynamic {
 		return excString(ctx, "Invalid number of call arguments: Expected " + expected + ", got " + got, p);
 	}
+}
+
+// Context.error ends with an abort: the macro's own error is reported and its call answers nothing (typed
+// as null). An internal exception, so no macro try/catch sees it and no build failure routing converts it.
+class MacroAbort extends haxe.Exception {
+	public function new() super("Macro abort");
 }

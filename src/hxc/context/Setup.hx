@@ -91,7 +91,12 @@ class Setup {
 		// A static target raises both target.static and the legacy `static` define that many std #if
 		// static blocks test.
 		if (cfg.isStatic) { ctx.defines.rawDefine("target.static"); ctx.defines.rawDefine("static"); }
+		// Every other platform's package name (jvm too) is Forbidden, and sys when the target has none; a
+		// name that already has a rule keeps it.
+		for (other in ["jvm"].concat([for (pf2 in Globals.platforms) Globals.platformName(pf2)]))
+			if (other != name && !ctx.forbiddenPackages.exists(other) && !ctx.packageRemaps.exists(other)) ctx.forbiddenPackages.set(other, true);
 		if (cfg.sys) { ctx.defines.rawDefine("target.sys"); ctx.defines.rawDefine("sys"); }
+		else ctx.forbiddenPackages.set("sys", true);
 		if (cfg.supportsThreads) ctx.defines.rawDefine("target.threaded");
 		// A utf16 target raises both target.utf16 and the plain utf16 define that the std's #if utf16
 		// blocks (StringTools.utf16CodePointAt) test

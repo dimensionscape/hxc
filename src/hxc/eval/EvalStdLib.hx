@@ -2376,6 +2376,13 @@ class EvalStdLib {
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
+	public static function mkStringMapValues(ctx:EvalContext, values:Map<String, EvalValue>):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var m:Map<String, MapEntry> = new Map();
+		for (k => v in values) m.set(k, {key: mkStr(k), value: v});
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
+	}
+
 	static function mkStringBytesMap(ctx:EvalContext, values:haxe.ds.StringMap<haxe.io.Bytes>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
 		var m:Map<String, MapEntry> = new Map();
@@ -3976,11 +3983,11 @@ class EvalStdLib {
 				case "get_expected_type" | "get_call_arguments":
 					VFunction(function(args) return VNull, true);
 				case "get_local_using":
-					VFunction(function(args) return VArray(new VArray([], 0)), true);
+					VFunction(function(args) return EvalMacro.localUsingValue(ctx), true);
 				case "get_local_imports":
 					VFunction(function(args) return localImports(ctx), true);
 				case "local_vars":
-					VFunction(function(args) return mkStringMap(ctx, new Map()), true);
+					VFunction(function(args) return EvalMacro.localVarsValue(ctx, arg(args, 0)), true);
 				case "signature":
 					// haxe.Serializer's format with the value cache and enum indices, and a function
 					// serialized as a custom entity rather than refused.
@@ -4004,9 +4011,15 @@ class EvalStdLib {
 				case "meta_patch":
 					VFunction(function(args) return EvalMacro.metaPatchValue(ctx.com != null ? ctx.com : EvalMacro.hostCom, [for (i in 0...4) arg(args, i)]), true);
 				case "allow_package":
-					// The name first; then removes a Forbidden package rule, and hxc has no package rules, so the
-					// name is a no-op.
-					VFunction(function(args) { decodeString(ctx, arg(args, 0)); return VNull; }, true);
+					// The name is decoded first; then a Forbidden package rule for it is removed (any other
+					// rule
+					// stays).
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						var name = decodeString(ctx, arg(args, 0));
+						if (com.forbiddenPackages.exists(name)) com.forbiddenPackages.remove(name);
+						return VNull;
+					}, true);
 				case "add_class_path":
 					VFunction(function(args) {
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
@@ -4050,10 +4063,14 @@ class EvalStdLib {
 				case "s_expr":
 					VFunction(function(args) {
 						var e = EvalMacro.decodeTypedExpr(ctx, arg(args, 0));
+						// Pretty prints the expression, the default dumps the tagged tree, both over one print
+						// context.
 						var pretty = arg(args, 1) == VTrue;
+						var pctx = hxc.core.TPrinting.printContext();
+						var st = function(t:hxc.core.Type.T):String return hxc.core.TPrinting.sType(pctx, t);
 						var s = pretty
-							? hxc.core.TPrinting.sExprPretty(false, "", false, hxc.core.TPrinting.sTypeStr, e)
-							: hxc.core.TPrinting.sExpr(hxc.core.TPrinting.sTypeStr, e);
+							? hxc.core.TPrinting.sExprPretty(false, "", false, st, e)
+							: hxc.core.TPrinting.sExprAst(true, "", st, e);
 						return mkStr(s);
 					}, true);
 				case "format_string":
@@ -4869,7 +4886,13 @@ class EvalStdLib {
 		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> { sys.FileSystem.createDirectory(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> { sys.FileSystem.deleteDirectory(stringOf(arg(a, 0))); VNull; }));
 		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> { sys.FileSystem.deleteFile(stringOf(arg(a, 0))); VNull; }));
-		reg(s, "sys.FileSystem", "fullPath", vfn(a -> mkStr(sys.FileSystem.fullPath(stringOf(arg(a, 0))))));
+		// fullPath: the decode sits inside the native's catch-all handler, so a null argument's Null
+		// Access prints as the runtime exception value, and a refused empty path prints as the
+		// get_full_path failure.
+		reg(s, "sys.FileSystem", "fullPath", vfn(a -> {
+			var f = try decodeString(ctx, arg(a, 0)) catch (_:EvalExceptions.EvalRunTimeException) EvalExceptions.excString(ctx, "EvalContext.RunTimeException(_, _, _)");
+			f == "" ? EvalExceptions.excString(ctx, "Failure(\"get_full_path\")") : mkStr(sys.FileSystem.fullPath(f));
+		}));
 		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
 		reg(s, "sys.FileSystem", "rename", vfn(a -> { sys.FileSystem.rename(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
 		reg(s, "sys.FileSystem", "stat", vfn(a -> mkFileStat(ctx, sys.FileSystem.stat(stringOf(arg(a, 0))))));

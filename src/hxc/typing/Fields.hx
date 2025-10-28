@@ -210,8 +210,9 @@ class Fields {
 		hxc.hxia.CapabilityMask.check(ctx, fh, f.name, pfield);
 		// Each field access consumes one @:bypassAccessor from the pending count.
 		var bypassAccessor = if (ctx.bypassAccessor > 0) { ctx.bypassAccessor--; true; } else false;
+		// An access is inline only where inlining is allowed (ctx.allowInline).
 		function makeAccess(isInline:Bool):FieldAccess {
-			return FieldAccessTools.create(e, f, fh, isInline, pfull);
+			return FieldAccessTools.create(e, f, fh, isInline && ctx.allowInline, pfull);
 		}
 		switch [f.kind, fh, e.expr] {
 			case [Var(v), FHInstance(_, _), TConst(TSuper)]:
@@ -281,8 +282,8 @@ class Fields {
 						AKField(makeAccess(true));
 					// A property access the display position is on does not resolve to its accessor - it stays a
 					// plain field access to the property itself, which is the declaration the request is asking
-					// about, not the getter's.
-					case AccCall if (hxc.typing.Typer.atDisplayPos(pfull)):
+					// about, not the getter's. The same holds with transforms off (Context.withOptions).
+					case AccCall if (!ctx.allowTransform || hxc.typing.Typer.atDisplayPos(pfull)):
 						AKField(makeAccess(false));
 					case AccCall:
 						// Reading/writing a property through its own accessor (or under @:bypassAccessor)
@@ -1017,6 +1018,27 @@ class Fields {
 
 	static function isMacroToolsUsing(path:hxc.core.Globals.Path):Bool {
 		return path.pack.length == 2 && path.pack[0] == "haxe" && path.pack[1] == "macro" && path.name == "Tools";
+	}
+
+	// The classes one `using` contributes, as module_using holds them - a module's statics class and
+	// non-private types (a typedef resolved, an abstract its impl) last-declared first
+	// (filter_classes), or the single named type.
+	public static function usingClasses(com:hxc.context.Context, up:hxc.core.Globals.Path, p:Position):Array<TClass> {
+		var out:Array<TClass> = [];
+		function add(mt:ModuleType):Void switch (TypeFunctions.resolveTypedef(mt)) {
+			case TClassDecl(c): out.unshift(c);
+			case TAbstractDecl(a) if (a.impl != null): out.unshift(a.impl);
+			case _:
+		}
+		var um = try hxc.context.ModuleLoader.loadModule(com, up, p) catch (_:Dynamic) null;
+		if (um != null) {
+			if (um.statics != null) add(TClassDecl(um.statics));
+			for (mt in um.types) if (!TypeFunctions.tInfos(mt).isPrivate) add(mt);
+			return out;
+		}
+		var mt = try com.getType(up, p, null) catch (_:Dynamic) null;
+		if (mt != null) add(mt);
+		return out;
 	}
 
 	static function tryUsingList(ctx:TyperContext, usings:Array<TClassUsing>, e:TExpr, i:String, p:Position):Null<AccessKind> {

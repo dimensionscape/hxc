@@ -401,6 +401,19 @@ class ForLoop {
 				ctx.com.addDiagnostic("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e1.pos);
 			case _:
 		}
+		// With transforms off (Context.withOptions) the loop stays a TFor over the iterated expression
+		// itself , its variable typed by of_texpr.
+		if (!ctx.allowTransform) {
+			var iterator = ForLoopFaithful.ofTexpr(ctx, e1, null, p);
+			var oldLoop = ctx.inLoop;
+			var oldLocals = Typer.saveLocals(ctx);
+			ctx.inLoop = true;
+			var v = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, iterator.pt, pi);
+			var body = Typer.typeExpr(ctx, Expr.ensureBlock(e2), WithTypeTools.noValue);
+			ctx.inLoop = oldLoop;
+			oldLocals();
+			return TypeFunctions.mk(TFor(v, iterator.e, body), basic.tvoid, p);
+		}
 		var intLoop = typeIntIteratorForLoop(ctx, vName, e1, e2, p);
 		if (intLoop != null) return intLoop;
 		// An Array iterates by INDEX (gen_int_iter), never through its iterator. This lane probed
@@ -733,7 +746,8 @@ class ForLoopFaithful {
 			if (arrayAccessResult != null) return arrayAccessResult;
 			return switch (TypeFunctions.followWithAbstracts(r.e.type)) {
 				case TMono(_) | TDynamic(_): dynamicIterator(r.e);
-				case _: {kind: IteratorIterator, e: r.e, pt: r.pt};
+				// With transforms off, the iterated expression itself, not its .iterator().
+				case _: {kind: IteratorIterator, e: ctx.allowTransform ? r.e : e, pt: r.pt};
 			};
 		}
 		function tryForwardArrayIterator():{kind:IterationKindKind, e:TExpr, pt:T} {
@@ -881,6 +895,8 @@ class ForLoopFaithful {
 			return TypeFunctions.mk(TBlock(el), tVoid, p);
 		}
 		return switch (iterator.kind) {
+			// With transforms off (Context.withOptions) the loop stays a TFor.
+			case _ if (!ctx.allowTransform): TypeFunctions.mk(TFor(v, e1, e2), tVoid, p);
 			case IteratorIntUnroll(offset, length, ascending):
 				checkLoopVarModification([v], e2);
 				if (!ascending) throw new TypingError("Cannot iterate backwards", p);

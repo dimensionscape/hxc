@@ -509,6 +509,10 @@ class Compiler {
 		// a root of their own: --php and the cppia define.
 		var namedARoot = false;
 		var platform:Platform = Cross;
+		// The chosen platform's own package is exempt from the Forbidden rules, and --jvm lifts jvm; a
+		// target with no generator here leaves the platform Cross, so its exemption is applied by hand once
+		// the rules exist.
+		var ownPackages:Array<String> = [];
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 		var javaOutSeen = false;
 		// A target may be chosen once. The second one is a failure, which prints as `Error: <msg>` at a
@@ -630,6 +634,7 @@ class Compiler {
 					// No generator, but the deprecated --java + -D jvm spelling still warns after the
 					// arguments are known.
 					javaOutSeen = true;
+					ownPackages = ["java"];
 					// No java generator here, but the flag still occupies the target slot, so a second
 					// target is the same "Multiple targets" error.
 					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
@@ -654,6 +659,15 @@ class Compiler {
 					// when nothing else did. hxc has no php generator and cannot type that root, so only the fact
 					// is recorded.
 					if (a == "-php" || a == "--php") namedARoot = true;
+					ownPackages = switch (a) {
+						case "-php" | "--php": ["php"];
+						case "-swf" | "--swf": ["flash"];
+						case "-cs" | "--cs": ["cs"];
+						case "--jvm": ["java", "jvm"];
+						case "-python" | "--python": ["python"];
+						case "-lua" | "--lua": ["lua"];
+						case _: ["hl"];
+					};
 					i++;
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
@@ -798,6 +812,7 @@ class Compiler {
 				ctx.defines.rawDefine("hxcpp_smart_strings");
 		}
 		Setup.initPlatform(ctx, platform);
+		for (pk in ownPackages) ctx.forbiddenPackages.remove(pk);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		try ModuleLoader.initBasicTypes(ctx) catch (e:hxc.core.TypingError) {
 			// The standard library is missing; reported like any other error, and that is the end of the

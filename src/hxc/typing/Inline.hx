@@ -60,8 +60,12 @@ class Inline {
 		}
 		switch (cf.kind) {
 			case Method(MethInline):
-				// D no-inline suppresses regular inlining; an extern-inline (a member of an extern class,
-				// or a field flagged @:extern) is forced and still expands. + is_forced_inline.
+				// -D no-inline suppresses regular inlining; an extern-inline (a member of an extern class,
+				// or a field flagged @:extern) is forced and still expands.
+				// allowInline (Context.withOptions) gates every inline that is not an explicit `inline
+				// f()`,
+				// the forced ones included.
+				if (!forceInline && !ctx.allowInline) return null;
 				var forced = (c != null && TypeFunctions.hasClassFlag(c, CExtern)) || TypeFunctions.hasMeta(":extern", cf.meta);
 				if (!forceInline && ctx.com.defines.rawDefined("no_inline") && !forced)
 					return null;
@@ -180,7 +184,7 @@ class Inline {
 	}
 
 	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
-		return cf.kind.match(Method(MethInline)) && ctx.com.foptimize;
+		return cf.kind.match(Method(MethInline)) && ctx.allowInline && ctx.com.foptimize;
 	}
 
 	// The inliner entry with an explicit callee: class, field, function and receiver expression

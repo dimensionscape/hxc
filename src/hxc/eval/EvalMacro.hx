@@ -93,6 +93,23 @@ class EvalMacro {
 		f.set(EvalHash.hash("$"), VInt(refId));
 	}
 
+	// The API wrapper turns a decode failure into the macro's uncaught "Invalid expression"; a typing
+	// error a reporting native raises (under an outer API's typingTimer) is not its own to convert -
+	// it climbs to the API that ran the typer.
+	static function regBuiltinRaw(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
+		var key = EvalHash.hash(typeName);
+		var list = ec.builtins.staticBuiltins.get(key);
+		if (list == null) { list = []; ec.builtins.staticBuiltins.set(key, list); }
+		var wrapped:VFunc = function(a:Array<EvalValue>):EvalValue {
+			try return f(a)
+			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
+		};
+		var nameKey = EvalHash.hash(fieldName);
+		var entry = {name: nameKey, v: VFunction(wrapped, true)};
+		for (i in 0...list.length) if (list[i].name == nameKey) { list[i] = entry; return; }
+		list.push(entry);
+	}
+
 	static function regBuiltin(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
 		var list = ec.builtins.staticBuiltins.get(key);
@@ -123,6 +140,10 @@ class EvalMacro {
 		function reg2(camel:String, snake:String, f:VFunc):Void {
 			regBuiltin(ec, "haxe.macro.Context", camel, f);
 			if (snake != camel) regBuiltin(ec, "haxe.macro.Context", snake, f);
+		}
+		function reg2Raw(camel:String, snake:String, f:VFunc):Void {
+			regBuiltinRaw(ec, "haxe.macro.Context", camel, f);
+			if (snake != camel) regBuiltinRaw(ec, "haxe.macro.Context", snake, f);
 		}
 		reg2("defined", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
 		// Resolve against cwd then the class path; the generator splices the raw contents at the requested
@@ -167,9 +188,59 @@ class EvalMacro {
 		reg2("initMacrosDone", "init_macros_done", function(a) return com.initMacrosDone ? VTrue : VFalse);
 		// Error/fatal_error abort at the given position. A null position fails to decode, which the macro
 		// sees as an uncaught "Invalid expression"; the message is never reported.
-		reg2("error", "error", function(a) { if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression"); throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
-		reg2("fatalError", "fatal_error", function(a) { if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression"); throw new TypingError(strOf(a[0]), posArg(ec, a, 1, curPos)); });
-		reg2("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
+		reg2Raw("error", "error", function(a) {
+			if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression");
+			// Report the error, then abort with an exception no macro try catches; the interpreter answers
+			// nothing and the call types `null`.
+			reportError(strOf(a[0]), posArg(ec, a, 1, curPos));
+			throw new hxc.eval.EvalExceptions.MacroAbort();
+		});
+		reg2("fatalError", "fatal_error", function(a) {
+			if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression");
+			// A fatal error, which nothing catches before the compiler prints it and ends the compile - not
+			// a macro try, not a build's failure routing.
+			throw new hxc.core.TypingError.FatalError(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0);
+		});
+		reg2Raw("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
+		// Context.withOptions: the caller's typer context takes its inlining and transform switches from
+		// the options (a null field leaves one alone, anything but a Bool is unexpected), the callback runs
+		// (prepareCallback), and Std.finally restores.
+		reg2Raw("withOptions", "with_options", function(a) {
+			function opt(name:String):Null<Bool> return switch (EvalValueTools.vresolve(EvalField.field(ec, a[0], EvalHash.hash(name)))) {
+				case VNull: null;
+				case VTrue: true;
+				case VFalse: false;
+				case v: EvalExceptions.unexpectedValue(ec, v, "bool");
+			};
+			var inl = opt("allowInlining");
+			var tr = opt("allowTransform");
+			var f = prepareCallback(ec, a[1]);
+			var tctx = curTctx;
+			var oldInline = tctx != null ? tctx.allowInline : true;
+			var oldTransform = tctx != null ? tctx.allowTransform : true;
+			if (tctx != null) {
+				if (inl != null) tctx.allowInline = inl;
+				if (tr != null) tctx.allowTransform = tr;
+			}
+			function restore() if (tctx != null) { tctx.allowInline = oldInline; tctx.allowTransform = oldTransform; }
+			// Runs the callback under catch_exceptions: an Abort answers null, a thrown haxe.macro.Error is
+			// the typing error it names, anything else left uncaught is the compile's error with its chain
+			// none of them a macro try's.
+			var result = try applyFn(ec, f, [])
+				catch (_:hxc.eval.EvalExceptions.MacroAbort) { restore(); return VNull; }
+				catch (rte:EvalExceptions.EvalRunTimeException) {
+					restore();
+					var info = runtimeMacroError(rte);
+					if (info != null) throw new TypingError(info.message, info.pos);
+					var stack = uncaughtExceptionStack(rte);
+					var te = new TypingError(stack[0].message, stack[0].pos);
+					te.callChain = stack;
+					throw te;
+				}
+				catch (e:Dynamic) { restore(); throw e; };
+			restore();
+			return result;
+		});
 		// Warning/info report through the compiler's message list; get_messages/filter_messages read and
 		// filter that same list.
 		reg2("warning", "warning", function(a) {
@@ -340,7 +411,7 @@ class EvalMacro {
 			var savedGetTypeMod = com.currentModule;
 			if (curModule != null) com.currentModule = curModule;
 			var modulesBefore = com.modules.length;
-			var t = try Typeload.loadInstance(com, [], tpath, curPos, true) catch (e:Dynamic) {
+			var t = try typingTimer(com, function() return Typeload.loadInstance(com, [], tpath, curPos, true)) catch (e:Dynamic) {
 				com.currentModule = savedGetTypeMod;
 				// Context.getType answers nothing only for a missing module raised at the call's position,
 				// which is reported as the uncaught exception "Type not found '...'". A module that exists but
@@ -374,10 +445,11 @@ class EvalMacro {
 		// in turn when a module path has no file. A null answer means "not mine" and the next loader gets a
 		// turn; anything else is decoded as a TypeDefinition and becomes the module.
 		reg2("onTypeNotFound", "on_type_not_found", function(a) {
-			var fn = a[0];
+			var fn = prepareCallback(ec, a[0]);
 			var ec2 = ec;
 			com.loadExternType.push({name: "onTypeNotFound", load: function(path, p) {
-				var v = applyFn(ec2, fn, [mkString(hxc.core.Globals.sTypePath(path))]);
+				// prepareCallback: an abort answers nothing, null here.
+				var v = try applyFn(ec2, fn, [mkString(hxc.core.Globals.sTypePath(path))]) catch (_:hxc.eval.EvalExceptions.MacroAbort) VNull;
 				if (v == VNull) return null;
 				var dp = posOf(ec2, EvalField.field(ec2, v, EvalHash.hash("pos")), p);
 				return [decodeTypeDefinition(ec2, v, dp)];
@@ -401,7 +473,7 @@ class EvalMacro {
 			var cur = com.currentModule;
 			var oldDeps = cur != null ? cur.extra.deps : null;
 			if (cur != null) cur.extra.deps = [for (k => v in oldDeps) k => v];
-			var m = hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(mpath), curPos);
+			var m = typingTimer(com, function() return hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(mpath), curPos));
 			if (cur != null) cur.extra.deps = oldDeps;
 			TypeFunctions.addDependency(m, createFakeModule(com, file));
 			return VNull;
@@ -409,7 +481,7 @@ class EvalMacro {
 		reg2("getModule", "get_module", function(a) {
 			// Context.getModule: type the whole module at the given path and return the list of module
 			// types it declares.
-			var m = hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(strOf(a[0])), curPos);
+			var m = typingTimer(com, function() return hxc.context.ModuleLoader.loadModule(com, Ast.parsePath(strOf(a[0])), curPos));
 			return encodeArray([for (mt in m.types) encodeType(ec, TypeFunctions.typeOfModuleType(mt))]);
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
@@ -423,7 +495,8 @@ class EvalMacro {
 		reg2("resolveType", "resolve_type", function(a) {
 			if (curTctx == null) throw new TypingError("resolveType outside a macro", curPos);
 			var p = posArg(ec, a, 1, curPos);
-			var t = Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: decodeComplexType(ec, a[0], p), pos: p});
+			var ct = decodeComplexType(ec, a[0], p);
+			var t = typingTimer(curTctx.com, function() return Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: ct, pos: p}));
 			return encodeType(ec, t);
 		});
 		// A type that cannot convert (ExitException) answers null.
@@ -601,28 +674,34 @@ class EvalMacro {
 			}
 			return VNull;
 		});
-		// Compiler.registerCustomDefine / registerCustomMetadata store user documentation entries. /
-		// register_metadata_impl.
-		inline function decodeUserDoc(o:EvalValue, src:EvalValue):hxc.context.Context.UserDocEntry {
-			function strField(n:String):Null<String> {
-				var v = EvalField.field(ec, o, EvalHash.hash(n));
-				return v == VNull ? null : strOf(v);
-			}
+		// Compiler.registerCustomDefine / registerCustomMetadata store user documentation entries.
+		// The arrays are optional string arrays (a null array is empty, a null element a Null Access); a
+		// platform and a target are parsed by name, each failure the macro's uncaught exception; the doc is
+		// a string (a null a Null Access) and the name decodes last.
+		inline function decodeUserDoc(o:EvalValue, src:EvalValue, withTargets:Bool):hxc.context.Context.UserDocEntry {
 			function arrField(n:String):Array<String> {
 				var v = EvalField.field(ec, o, EvalHash.hash(n));
 				return v == VNull ? [] : [for (x in arrOf(v)) strOf(x)];
 			}
-			return {doc: strField("doc"), params: arrField("params"), platforms: arrField("platforms"),
-				targets: arrField("targets"), links: arrField("links"), source: src == VNull ? null : strOf(src)};
+			var platforms = arrField("platforms");
+			for (pl in platforms) if (platformNames.indexOf(pl) < 0) EvalExceptions.excString(ec, "invalid platform " + pl);
+			var targets = withTargets ? arrField("targets") : [];
+			for (t in targets) if (metadataTargetNames.indexOf(t) < 0) EvalExceptions.excString(ec, "invalid metadata target " + t);
+			var params = arrField("params");
+			var links = arrField("links");
+			var doc = strOf(EvalField.field(ec, o, EvalHash.hash("doc")));
+			return {doc: doc, params: params, platforms: platforms, targets: targets, links: links, source: src == VNull ? null : strOf(src)};
 		}
 		reg2("registerDefineImpl", "register_define_impl", function(a) {
+			var entry = decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull, false);
 			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("define")));
-			com.userDefines.set(name, decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull));
+			com.userDefines.set(name, entry);
 			return VNull;
 		});
 		reg2("registerMetadataImpl", "register_metadata_impl", function(a) {
+			var entry = decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull, true);
 			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("metadata")));
-			com.userMetas.set(name, decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull));
+			com.userMetas.set(name, entry);
 			return VNull;
 		});
 		// The name of the method the macro was called from.
@@ -655,7 +734,7 @@ class EvalMacro {
 		});
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
 		reg2("onGenerate", "on_generate", function(a) {
-			onGenerateCallbacks.push({ec: ec, fn: a[0]});
+			onGenerateCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
 			return VNull;
 		});
 		// The callback runs at generate time with a JSGenApi bound to a fresh GenJS context, replacing the
@@ -720,15 +799,15 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("onAfterInitMacros", "on_after_init_macros", function(a) {
-			onAfterInitMacrosCallbacks.push({ec: ec, fn: a[0]});
+			onAfterInitMacrosCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
 			return VNull;
 		});
 		reg2("onAfterGenerate", "on_after_generate", function(a) {
-			onAfterGenerateCallbacks.push({ec: ec, fn: a[0]});
+			onAfterGenerateCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
 			return VNull;
 		});
 		reg2("onAfterTyping", "on_after_typing", function(a) {
-			onAfterTypingCallbacks.push({ec: ec, fn: a[0]});
+			onAfterTypingCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
 			return VNull;
 		});
 		reg2("getClassPath", "class_path", function(a) {
@@ -768,11 +847,13 @@ class EvalMacro {
 	}
 
 	static function createFakeModule(com:Context, file:String):ModuleDef {
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		// A path whose full path cannot be resolved stays as it is, and a failing stat is swallowed;
+		// hxcpp's fullPath and stat fail fast on an empty path instead of throwing.
+		var full = file == "" ? file : (try sys.FileSystem.fullPath(file) catch (_:Dynamic) file);
 		var key = StringTools.replace(full, "\\", "/").toLowerCase();
 		var mdep = fakeModules.get(key);
 		if (mdep == null) {
-			var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+			var time = full == "" ? 0.0 : (try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0);
 			mdep = {
 				id: TypeFunctions.allocMid(),
 				path: {pack: ["$DEP"], name: full},
@@ -1609,7 +1690,9 @@ class EvalMacro {
 						[for (a in args) initMacroConstArg(ec, a)];
 					}
 					if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
-					resolveMacroFn(ec, callee, e.pos)(vargs);
+					// Runs through Interp.call_path, whose catch_exceptions answers None to Context.error's Abort
+					// the message is reported and the compilation goes on.
+					try resolveMacroFn(ec, callee, e.pos)(vargs) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
 					curPos = savedPos;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
@@ -1629,6 +1712,8 @@ class EvalMacro {
 				case VFunction(f, _): f([]);
 				case VFieldClosure(recv, f): f([recv]);
 				case _:
+			} catch (_:hxc.eval.EvalExceptions.MacroAbort) {
+				// An Abort answers None; the message is reported already.
 			} catch (te:hxc.core.TypingError) {
 				var mainCom = macroCom != null && macroCom.forwardWarningsTo != null ? macroCom.forwardWarningsTo : macroCom;
 				if (mainCom != null) mainCom.addDiagnostic(te.message, te.pos, te.depth);
@@ -1665,6 +1750,10 @@ class EvalMacro {
 			var info = runtimeMacroError(ex);
 			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos);
 			throw ex;
+		} catch (a:hxc.eval.EvalExceptions.MacroAbort) {
+			// prepareCallback: an abort answers nothing; the message is already reported and the callback
+			// has no value.
+			curPos = savedPos;
 		} catch (e:Dynamic) {
 			curPos = savedPos;
 			throw e;
@@ -1797,16 +1886,14 @@ class EvalMacro {
 		}
 		function packageRules():EvalValue {
 			var entries:Array<EvalValue> = [];
-			var current = hxc.core.Globals.platformName(com.platform);
-			var names = ["python", "php", "neko", "lua", "jvm", "js", "java", "hl", "flash", "eval", "cs", "cpp"];
-			if (!com.platformConfig.sys) names = ["sys"].concat(names);
-			for (name in names)
-				if (name != current) {
-					var entry:Map<Int, EvalValue> = new Map();
-					entry.set(EvalHash.hash("key"), mkString(name));
-					entry.set(EvalHash.hash("value"), mkEnumValue(ec, "PackageRule", "Forbidden", []));
-					entries.push(VObject(new VObject([], ODictionary(entry))));
-				}
+			var names = [for (k in com.forbiddenPackages.keys()) k].concat([for (k in com.packageRemaps.keys()) if (!com.forbiddenPackages.exists(k)) k]);
+			names.sort(function(a, b) return a < b ? 1 : (a > b ? -1 : 0));
+			for (name in names) {
+				var entry:Map<Int, EvalValue> = new Map();
+				entry.set(EvalHash.hash("key"), mkString(name));
+				entry.set(EvalHash.hash("value"), com.forbiddenPackages.exists(name) ? mkEnumValue(ec, "PackageRule", "Forbidden", []) : mkEnumValue(ec, "PackageRule", "Remap", [mkString(com.packageRemaps.get(name))]));
+				entries.push(VObject(new VObject([], ODictionary(entry))));
+			}
 			var fields:Map<Int, EvalValue> = new Map();
 			fields.set(EvalHash.hash("keyValueIterator"), VFunction(function(_) {
 				var i = 0;
@@ -2719,6 +2806,9 @@ class EvalMacro {
 			curPos = savedPos;
 			curModule = savedModule;
 			macroCallDepth--;
+			// Context.error aborts once its message is reported: the interpreter answers nothing and the
+			// call types `null`, at any depth.
+			if (Std.isOfType(e, hxc.eval.EvalExceptions.MacroAbort)) return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
 			// What the macro does not catch is a typing error at the invocation, raised - a block records it
 			// per statement and goes on, an initializer's escape ends the compile - and reported as the
 			// interpreter prints it (the head and its "Called from here" chain). The conversion waits for
@@ -4871,6 +4961,52 @@ class EvalMacro {
 
 	static function posArg(ec:EvalContext, args:Array<EvalValue>, index:Int, fallback:Position):Position {
 		return args.length > index ? posOf(ec, args[index], fallback) : fallback;
+	}
+
+	// The platform and metadata-usage names each parser accepts.
+	static final platformNames = ["cross", "js", "lua", "neko", "flash", "php", "cpp", "cs", "java", "python", "hl", "eval"];
+	static final metadataTargetNames = ["TClass", "TClassField", "TAbstract", "TAbstractField", "TEnum", "TTypedef", "TAnyField", "TExpr", "TTypeParameter", "TVariable"];
+
+	// A callback is a function or a bound method; anything else is an invalid expression at registration
+	// (the API wrapper's "Invalid expression").
+	static function prepareCallback(ec:EvalContext, v:EvalValue):EvalValue {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VFunction(_, _) | VFieldClosure(_, _): v;
+			case _: EvalExceptions.excString(ec, "Invalid expression");
+		};
+	}
+
+	// Context.getLocalUsing: the caller module's usings as class refs, in module order - each using
+	// prepends its classes, so the last declared comes first.
+	public static function localUsingValue(ec:EvalContext):EvalValue {
+		var com = currentCompiler();
+		var m = currentModule();
+		var classes:Array<TClass> = [];
+		if (com != null && m != null) {
+			var imports = com.moduleImports.get(Context.pathKey(m.path));
+			if (imports != null) for (up in imports.usings) classes = hxc.typing.Fields.usingClasses(com, up, curPos).concat(classes);
+		}
+		return encodeArray([for (c in classes) encodeClassRef(ec, c)]);
+	}
+
+	// The caller's locals as a StringMap of TVars or of their types.
+	public static function localVarsValue(ec:EvalContext, asVar:EvalValue):EvalValue {
+		var entries:Map<String, EvalValue> = new Map();
+		if (curTctx != null) for (name => v in curTctx.locals) entries.set(name, asVar == VTrue ? encodeTVar(ec, v) : encodeType(ec, v.type));
+		return EvalStdLib.mkStringMapValues(ec, entries);
+	}
+
+	// typingTimer: while an API types or loads, a reported error is RAISED and the report mode is off; both
+	// are restored on the way out. What the raise reaches is the API's wrapper, which makes it the macro's
+	// Error value.
+	static function typingTimer<T>(com:Context, f:Void->T):T {
+		var oldRaise = com.raiseTypingErrors;
+		com.raiseTypingErrors = true;
+		var restoreReport = com.disableReportMode();
+		var r = try f() catch (e:Dynamic) { com.raiseTypingErrors = oldRaise; restoreReport(); throw e; };
+		com.raiseTypingErrors = oldRaise;
+		restoreReport();
+		return r;
 	}
 
 	static function applyFn(ec:EvalContext, fn:EvalValue, args:Array<EvalValue>):EvalValue {

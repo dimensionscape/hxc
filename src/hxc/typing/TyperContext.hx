@@ -32,6 +32,10 @@ class TyperContext {
 	public var vthis:Null<TVar>;
 	// @:bypassAccessor nesting counter: each field access consumes one, forcing a raw field access.
 	public var bypassAccessor:Int;
+	// Context.withOptions turns these off for one callback; field access, calls, call-argument
+	// unification and for-loop typing read them.
+	public var allowInline:Bool = true;
+	public var allowTransform:Bool = true;
 	public var privateAccess:Int;
 
 	public function new(com:Context) {

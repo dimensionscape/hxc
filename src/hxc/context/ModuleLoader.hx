@@ -1542,11 +1542,31 @@ class ModuleLoader {
 	// While a module is retyped, only modules already cached may load.
 	public static var loadOnlyCachedModules:Bool = false;
 
-	// Null for "no such module". The three not-found exits below each built a
-	// "Type not found : <path>" ContextError (a string concatenation per probe) and threw it
-	// ~39.5k times per unit-suite compile, almost all consumed by the unqualified-resolution
-	// walk probing package prefixes that do not exist. Genuine errors (parse failures,
-	// duplicate declarations) still raise from inside typeModule and propagate unchanged.
+	// Null for "no such module". The three not-found exits below each built a "Type not found : <path>"
+	// ContextError (a string concatenation per probe) and threw it ~39.5k times per unit-suite compile,
+	// almost all consumed by the unqualified-resolution walk probing package prefixes that do not exist.
+	// Genuine errors (parse failures, duplicate declarations) still raise from inside typeModule and
+	// propagate unchanged. the first type declared (imports and usings skipped) and its metadata.
+	static function hasNoPackageRestrict(decls:Array<hxc.ast.Ast.TypeDecl>):Bool {
+		for (d in decls) {
+			var meta:Array<hxc.ast.Ast.MetadataEntry> = switch (d.decl) {
+				case EClass(def): def.dMeta;
+				case EEnum(def): def.dMeta;
+				case EAbstract(def): def.dMeta;
+				case ETypedef(def): def.dMeta;
+				case EStatic(def): def.dMeta;
+				case EImport(_) | EUsing(_): continue;
+			};
+			for (mm in meta) if (mm.name == ":noPackageRestrict") return true;
+			return false;
+		}
+		return false;
+	}
+
+	static function addForbidReference(fp:hxc.core.TypingError.ForbidPackage, p:Position):Void {
+		if (p != null && !(p.file == Position.nullPos.file && p.min < 0 && p.max < 0)) fp.addReference(p);
+	}
+
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
 		var r = loadModuleOpt(ctx, m, p);
 		if (r == null) {
@@ -1599,7 +1619,7 @@ class ModuleLoader {
 		// The decls the loader produced are typed as an extern module.
 		if (externDecls != null) {
 			var requester0 = ctx.currentModule;
-			var loaded0 = typeModule(ctx, m, file, externDecls);
+			var loaded0 = try typeModule(ctx, m, file, externDecls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 			loaded0.extra.kind = MExtern;
 			addDependency(requester0, loaded0);
 			return loaded0;
@@ -1611,6 +1631,11 @@ class ModuleLoader {
 		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		reportDisplayParseError(ctx, file);
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
+		// A module whose first package segment another platform owns is refused once its file resolves,
+		// unless the first type declared carries @:noPackageRestrict; the platform named is the macro
+		// world's "macro" .
+		if (m.pack.length > 0 && ctx.forbiddenPackages.exists(m.pack[0]) && !hasNoPackageRestrict(pkg.decls))
+			throw new hxc.core.TypingError.ForbidPackage(m.pack[0], m, p, ctx.isMacro ? "macro" : hxc.core.Globals.platformName(ctx.platform));
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
 			// Two messages, chosen by whether the module was asked for by position or from the command line
@@ -1627,7 +1652,9 @@ class ModuleLoader {
 			}
 		}
 		var requester = ctx.currentModule;
-		var loaded = typeModule(ctx, m, file, pkg.decls);
+		// A forbidden package met while typing this module adds the position this module was requested at
+		// ("referenced here"), unless that is the null position.
+		var loaded = try typeModule(ctx, m, file, pkg.decls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 		addDependency(requester, loaded);
 		return loaded;
 	}

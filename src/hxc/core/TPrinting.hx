@@ -414,7 +414,77 @@ class TPrinting {
 		return sExpr(function(t) return sType(ctx, t), e);
 	}
 
-	// Haxe-syntax expression printer; variable IDs are omitted by default.
+	// Default tagged-tree format for TypedExprTools.toString.
+	public static function sExprAst(printVarIds:Bool, tabs:String, sType:T->String, e:TExpr):String {
+		function loop(x:TExpr, extraTabs:String = ""):String return sExprAst(printVarIds, tabs + "\t" + extraTabs, sType, x);
+		function tagArgs(tabs:String, sl:Array<String>):String {
+			return switch (sl) {
+				case []: "";
+				case [s] if (s.indexOf("\n") < 0): " " + s;
+				case _: var t = "\n" + tabs + "\t"; t + sl.join(t);
+			}
+		}
+		function tag(s:String, sl:Array<String>, ?t:T, extraTabs:String = ""):String {
+			return "[" + s + ":" + sType(t == null ? e.type : t) + "]" + tagArgs(tabs + extraTabs, sl);
+		}
+		function varId(v:TVar):Int return printVarIds ? v.id : 0;
+		function local(v:TVar, ?t:T):String return "[Local " + v.name + "(" + varId(v) + "):" + sType(v.type) + (t == null ? "" : ":" + sType(t)) + "]";
+		function moduleType(mt:ModuleType):String return "[TypeExpr " + Globals.sTypePath(TypeFunctions.tPath(mt)) + ":" + sType(e.type) + "]";
+		return switch (e.expr) {
+			case TConst(c): tag("Const", [sConst(c)], e.type);
+			case TLocal(v): local(v, e.type);
+			case TArray(e1, e2): tag("Array", [loop(e1), loop(e2)]);
+			case TBinop(op, e1, e2): tag("Binop", [loop(e1), Ast.sBinop(op), loop(e2)]);
+			case TUnop(op, flag, e1): tag("Unop", [Ast.sUnop(op), flag.match(Postfix) ? "Postfix" : "Prefix", loop(e1)]);
+			case TEnumParameter(e1, ef, i): tag("EnumParameter", [loop(e1), ef.name, Std.string(i)]);
+			case TEnumIndex(e1): tag("EnumIndex", [loop(e1)]);
+			case TField(e1, fa):
+				var sfa = switch (fa) {
+					case FInstance(c, tl, cf): tag("FInstance", [sType(TInst(c, tl)), cf.name + ":" + sType(cf.type)], null, "\t");
+					case FStatic(c, cf): tag("FStatic", [Globals.sTypePath(c.path), cf.name + ":" + sType(cf.type)], null, "\t");
+					case FClosure(co, cf): tag("FClosure", [co == null ? "None" : sType(TInst(co.c, co.params)), cf.name + ":" + sType(cf.type)], null, "\t");
+					case FAnon(cf): tag("FAnon", [cf.name + ":" + sType(cf.type)], null, "\t");
+					case FDynamic(s): tag("FDynamic", [s], null, "\t");
+					case FEnum(en, ef): tag("FEnum", [Globals.sTypePath(en.path), ef.name], null, "\t");
+				};
+				tag("Field", [loop(e1), sfa]);
+			case TTypeExpr(mt): moduleType(mt);
+			case TParenthesis(e1): tag("Parenthesis", [loop(e1)]);
+			case TObjectDecl(fl): tag("ObjectDecl", [for (f in fl) Ast.sObjectKeyName(f.key.name, f.key.quotes) + ": " + loop(f.expr)]);
+			case TArrayDecl(el): tag("ArrayDecl", [for (x in el) loop(x)]);
+			case TCall(e1, el): tag("Call", [loop(e1)].concat([for (x in el) loop(x)]));
+			case TNew(c, tl, el): tag("New", [sType(TInst(c, tl))].concat([for (x in el) loop(x)]));
+			case TFunction(f):
+				function arg(a:TFuncArg):String return tag("Arg", a.c == null ? [local(a.v)] : [local(a.v), loop(a.c)], a.v.type, "\t");
+				tag("Function", [for (a in f.args) arg(a)].concat([loop(f.expr)]));
+			case TVarExpr(v, eo): "[Var " + v.name + "(" + varId(v) + "):" + sType(v.type) + "]" + tagArgs(tabs, eo == null ? [] : [loop(eo)]);
+			case TBlock(el): tag("Block", [for (x in el) loop(x)]);
+			case TIf(econd, e1, e2): tag("If", [loop(econd), "[Then:" + sType(e1.type) + "] " + loop(e1)].concat(e2 == null ? [] : ["[Else:" + sType(e2.type) + "] " + loop(e2)]));
+			case TCast(e1, null): tag("Cast", [loop(e1)]);
+			case TCast(e1, mt): tag("Cast", [loop(e1), moduleType(mt)]);
+			case TThrow(e1): tag("Throw", [loop(e1)]);
+			case TBreak: tag("Break", []);
+			case TContinue: tag("Continue", []);
+			case TReturn(null): tag("Return", []);
+			case TReturn(e1): tag("Return", [loop(e1)]);
+			case TWhile(e1, e2, NormalWhile): tag("While", [loop(e1), loop(e2)]);
+			case TWhile(e1, e2, DoWhile): tag("Do", [loop(e1), loop(e2)]);
+			case TFor(v, e1, e2): tag("For", [local(v), loop(e1), loop(e2)]);
+			case TTry(e1, catches):
+				var sl = [for (c in catches) "Catch " + local(c.v) + tagArgs(tabs + "\t", [loop(c.expr, "\t")])];
+				tag("Try", [loop(e1)].concat(sl));
+			case TSwitch(e1, cases, eo):
+				var sl = [for (c in cases) tag("Case", [for (x in c.values) loop(x)].concat([loop(c.expr, "\t")]), c.expr.type, "\t")];
+				if (eo != null) sl.push(tag("Default", [loop(eo, "\t")], eo.type, "\t"));
+				tag("Switch", [loop(e1)].concat(sl));
+			case TMeta(m, e1):
+				var ms = m.name;
+				if (m.params.length > 0) ms += "(" + [for (x in m.params) hxc.ast.Ast.Printer.sExpr(x)].join(", ") + ")";
+				tag("Meta", [ms, loop(e1)]);
+			case TIdent(s): tag("Ident", [s]);
+		};
+	}
+
 	public static function sExprPretty(printVarIds:Bool, tabs:String, topLevel:Bool, st:T->String, e:TExpr):String {
 		function loop(x:TExpr):String return sExprPretty(printVarIds, tabs, false, st, x);
 		inline function clist(f:TExpr->String, l:Array<TExpr>):String return l.map(f).join(", ");

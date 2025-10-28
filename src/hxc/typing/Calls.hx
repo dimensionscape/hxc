@@ -121,7 +121,9 @@ class Calls {
 			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0 && mode.match(MSet(_))):
 				return AKAccess(a, tl, a.impl, e1, e2);
 			case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
-				return AKExpr(abstractArrayGet(ctx, a, tl, a.impl, e1, e2, p).expr);
+				var got = abstractArrayGet(ctx, a, tl, a.impl, e1, e2, p);
+				// With transforms off the access stays a TArray at the getter's type.
+				return AKExpr(ctx.allowTransform ? got.expr : TypeFunctions.mk(TArray(e1, e2), got.expr.type, p));
 			case _:
 		}
 		// A class-level @:arrayAccess abstract (no @:arrayAccess methods) forwards array access to its
@@ -458,6 +460,10 @@ class Calls {
 						return [typeAgainst(a.name, a.t, new Expr(EArrayDecl([]), callp))];
 					}
 					if (!a.opt) throw new hxc.core.TypingError.CallError("Not enough arguments, expected " + [for (x in args.slice(k)) x.name + ":" + hxc.core.TPrinting.sTypeStr(x.t)].join(", "), callp);
+					// With transforms off nothing fills a trailing optional parameter, though the tail is
+					// still
+					// checked.
+					if (!ctx.allowTransform) { tailLoop(k + 1); return []; }
 					var rest = tailLoop(k + 1);
 					var pi = makePosInfosArg(ctx, a.t, callp);
 					if (rest.length == 0 && !ctx.com.platformConfig.padNulls)
@@ -571,7 +577,7 @@ class Calls {
 				// is dropped.
 				var infos = makePosInfosArg(ctx, arg.t, p);
 				if (infos != null) callArgs.push(infos);
-				else if (ctx.com.platformConfig.padNulls) callArgs.push(TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, p));
+				else if (ctx.com.platformConfig.padNulls && ctx.allowTransform) callArgs.push(TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, p));
 				continue;
 			}
 			if (pi >= params.length || isUnderscore) {
@@ -848,6 +854,8 @@ class Calls {
 	// with a temp when e needs one
 	public static function callToString(ctx:TyperContext, e:TExpr):TExpr {
 		var tstring = ctx.com.basic.tstring;
+		// With transforms off the operand is retyped as String, no toString call.
+		if (!ctx.allowTransform) return TypeFunctions.mk(e.expr, tstring, e.pos);
 		function genToString(x:TExpr):TExpr {
 			// Ignore visibility of the toString field
 			ctx.privateAccess++;
@@ -1017,7 +1025,15 @@ class Calls {
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
-						makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
+						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
+						// With transforms off an abstract's XXXImpl.field(this, args) reads back as
+						// this.field(args),
+						// the field typed Dynamic.
+						switch [se.access.host, call.expr] {
+							case [FHAbstract(_, _, _), TCall(fe = {expr: TField(_, name)}, args)] if (!ctx.allowTransform && args.length > 0):
+								TypeFunctions.mk(TCall(TypeFunctions.mk(TField(args[0], name), TypeFunctions.tDynamic, fe.pos), args.slice(1)), call.type, call.pos);
+							case _: call;
+						}
 					case _: throw new TypingError("Static-extension target is not a function", p);
 				}
 			case AKNo(_, pp): throw new TypingError("This expression cannot be called", pp);

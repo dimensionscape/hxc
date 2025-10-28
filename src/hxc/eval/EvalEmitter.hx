@@ -139,6 +139,11 @@ class EvalEmitter {
 				} catch (ex:Dynamic) {
 					// Control-flow signals must reach their own handlers, never a program try/catch.
 					if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)) throw ex;
+					// A try catches runtime exceptions alone: Context.error's abort and a fatal error are
+					// internal exceptions no macro try sees.
+					// A typing error raised while a macro API call runs the typer is the same: it reaches
+					// the API boundary, where it becomes the macro's Error value.
+					if (Std.isOfType(ex, hxc.eval.EvalExceptions.MacroAbort) || Std.isOfType(ex, hxc.core.TypingError.FatalError) || Std.isOfType(ex, hxc.core.TypingError)) throw ex;
 					// Any other host exception is an hxc-internal failure escaping the interpreter (a dropped
 					// field, a native builtin error). Present it to the running program as a normal thrown
 					// value so its own try/catch (e.g. the utest runner) records an error and continues,

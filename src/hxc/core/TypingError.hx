@@ -61,3 +61,33 @@ class FatalError extends haxe.Exception {
 		if (Std.isOfType(e, FatalError)) throw e;
 	}
 }
+
+// A forbidden package access: the refused package, module and position, the positions the module was
+// referenced through (each module load adds its own) and the platform name. The driver prints "You cannot
+// access the %s package while %s (for %s)" and a "... referenced here" per referencing position at depth 1,
+// and the compile ends; a FatalError so every recovery arm lets it pass. (The display-mode handling, which
+// clears the messages when the request has a next one, is not implemented.)
+class ForbidPackage extends FatalError {
+	public final pack:String;
+	public final path:hxc.core.Globals.Path;
+	public final platform:String;
+	public final referenced:Array<Position> = [];
+
+	public function new(pack:String, path:hxc.core.Globals.Path, pos:Position, platform:String) {
+		super("You cannot access the " + pack + " package while " + (platform == "macro" ? "in a macro" : "targeting " + platform) + " (for " + hxc.core.Globals.sTypePath(path) + ")", pos);
+		this.pack = pack;
+		this.path = path;
+		this.platform = platform;
+		refreshChain();
+	}
+
+	public function addReference(p:Position):Void {
+		referenced.push(p);
+		refreshChain();
+	}
+
+	function refreshChain():Void {
+		callChain = [{message: message, pos: pos}];
+		for (r in referenced) callChain.push({message: "... referenced here", pos: r, depth: 1});
+	}
+}
