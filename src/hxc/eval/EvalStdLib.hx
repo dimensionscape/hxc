@@ -125,8 +125,11 @@ class EvalStdLib {
 		return keys;
 	}
 
+	// An instance's field keys in the name-map fold's order, the same one an object's fields take.
+	// Not slot order: that is declaration order, which Reflect.fields of an instance (and a value
+	// signature over one) never lists.
 	static function instanceFieldKeys(proto:VPrototype):Array<Int> {
-		return sortedFieldKeys(proto.pinstanceNames);
+		return ptmapOrderedKeys([for (k in proto.pinstanceNames.keys()) k]);
 	}
 
 	static inline function rotl32(x:Int, n:Int):Int {
@@ -221,13 +224,18 @@ class EvalStdLib {
 		return r;
 	}
 
-	static function objectDictionaryKeys(fields:Map<Int, EvalValue>):Array<Int> {
-		var keys = [for (k in fields.keys()) k];
+	// An object's fields and an instance's come from the same fold over the name map, prepending, so
+	// both come out in the same ptmap order, never in declaration order.
+	static function ptmapOrderedKeys(keys:Array<Int>):Array<Int> {
 		keys.sort(function(a, b) {
 			var d = ptmapOrderKey(seededStringHash(EvalHash.revHash(a))) - ptmapOrderKey(seededStringHash(EvalHash.revHash(b)));
 			return d != 0 ? d : Reflect.compare(EvalHash.revHash(a), EvalHash.revHash(b));
 		});
 		return keys;
+	}
+
+	static function objectDictionaryKeys(fields:Map<Int, EvalValue>):Array<Int> {
+		return ptmapOrderedKeys([for (k in fields.keys()) k]);
 	}
 
 	static function isReflectHidden(path:Int, name:Int, isStatic:Bool):Bool {
@@ -1443,10 +1451,13 @@ class EvalStdLib {
 					}
 					stringTag(EvalHash.revHash(proto.ppath));
 				case VFunction(_, _) | VFieldClosure(_, _):
-					// A function is a custom entity, 'F' and a running count, cached like any value;
-					// haxe.Serializer refuses it.
+					// A function is a custom entity, 'F' and a running count. custom_name is defined ABOVE loop
+					// and closes over value_signature's own parameter, so the cache entry it takes is the
+					// TOP-LEVEL value, not the function: the first custom entity in a value registers that
+					// top-level value and every later one finds it and prints 'r<index>'. Caching the
+					// function itself gave a second F where the reference back-references.
 					if (!forSignature) EvalExceptions.excString(ctx, "Cannot serialize function")
-					else if (!serializeRef(v)) { buf.add("F"); buf.add(customCount++); }
+					else if (!serializeRef(value)) { buf.add("F"); buf.add(customCount++); }
 				case VLazy(_):
 					EvalExceptions.excString(ctx, "unreachable");
 			}

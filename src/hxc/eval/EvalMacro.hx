@@ -3537,10 +3537,8 @@ class EvalMacro {
 
 	static function decodeAnonRef(ec:EvalContext, v:EvalValue):T {
 		// A ref built here round-trips the anon itself.
-		switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
-			case VInt(id) if (anonRefs.exists(id)): return TAnon(anonRefs.get(id));
-			case _:
-		}
+		var handle = refHandle(ec, v);
+		if (handle != null && anonRefs.exists(handle)) return TAnon(anonRefs.get(handle));
 		var payload = refGet(ec, v);
 		var fields = new haxe.ds.StringMap<TClassField>();
 		for (fv in arrOf(EvalField.field(ec, payload, EvalHash.hash("fields")))) {
@@ -3564,24 +3562,20 @@ class EvalMacro {
 		return cf;
 	}
 
+	// The mono id rides in the Ref's ikind like every other handle (encodeRef).
 	static function decodeMonoRef(ec:EvalContext, v:EvalValue):TMono {
-		return switch (EvalField.field(ec, v, EvalHash.hash("__hxc_mono_id"))) {
-			case VInt(id):
-				var m = macroMonos.get(id);
-				if (m == null) throw new TypingError("Macro decode: unknown monomorph", curPos);
-				m;
-			case _:
-				throw new TypingError("Macro decode: expected monomorph ref", curPos);
-		};
+		var handle = refHandle(ec, v);
+		if (handle == null) throw new TypingError("Macro decode: expected monomorph ref", curPos);
+		var m = macroMonos.get(handle);
+		if (m == null) throw new TypingError("Macro decode: unknown monomorph", curPos);
+		return m;
 	}
 
 	static function moduleTypeFromRef(ec:EvalContext, v:EvalValue):ModuleType {
 		// A ref built here round-trips the module type itself through the hidden `$` handle; the path
 		// lookup below covers everything else.
-		switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
-			case VInt(id) if (moduleTypeRefs.exists(id)): return moduleTypeRefs.get(id);
-			case _:
-		}
+		var handle = refHandle(ec, v);
+		if (handle != null && moduleTypeRefs.exists(handle)) return moduleTypeRefs.get(handle);
 		var path = pathFromDotted(refString(ec, v));
 		var key = EvalHash.pathHash(path);
 		var cached = ec.typeCache.get(key);
@@ -3628,17 +3622,15 @@ class EvalMacro {
 
 	// The tvar itself round-trips through the hidden `$` handle.
 	static function decodeTVar(ec:EvalContext, v:EvalValue):TVar {
-		return switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
-			case VInt(id) if (tvarRefs.exists(id)): tvarRefs.get(id);
-			case _: throw new TypingError("macro decode: expected tvar", curPos);
-		};
+		var handle = refHandle(ec, v);
+		if (handle == null || !tvarRefs.exists(handle)) throw new TypingError("macro decode: expected tvar", curPos);
+		return tvarRefs.get(handle);
 	}
 
 	static function classFieldFromRef(ec:EvalContext, v:EvalValue):TClassField {
-		return switch (EvalField.field(ec, v, EvalHash.hash("$"))) {
-			case VInt(id) if (cfieldRefs.exists(id)): cfieldRefs.get(id);
-			case _: throw new TypingError("macro decode: expected class field ref", curPos);
-		};
+		var handle = refHandle(ec, v);
+		if (handle == null || !cfieldRefs.exists(handle)) throw new TypingError("macro decode: expected class field ref", curPos);
+		return cfieldRefs.get(handle);
 	}
 
 	static function decodeTConstValue(ec:EvalContext, v:EvalValue):TConstant {
@@ -4745,7 +4737,8 @@ class EvalMacro {
 		var fields:Map<Int, EvalValue> = new Map();
 		var refId = nextTvarRefId++;
 		tvarRefs.set(refId, v);
-		fields.set(EvalHash.hash("$"), VInt(refId));
+		// The tvar object's handle is an Unsafe instance, not a number.
+		fields.set(EvalHash.hash("$"), unsafeValue(ec, refId));
 		fields.set(EvalHash.hash("id"), VInt(v.id));
 		fields.set(EvalHash.hash("name"), mkString(v.name));
 		fields.set(EvalHash.hash("t"), encodeType(ec, v.type));
@@ -4822,23 +4815,19 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
+	// A macro Ref<T> exposes get() and toString(); the dot path when it stands for a named type, "<extend>"
+	// for the anonymous extension list.
 	static function encodeRef(ec:EvalContext, payload:EvalValue, ?path:hxc.core.Globals.Path):EvalValue {
-		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload, true));
-		// A macro Ref<T> also exposes toString() -- the type's dot path -- which Std.string of the
-		// encoded Type enum uses; without it a base-type ref renders as its raw {get: ...} structure.
-		if (path != null) fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(path)), true));
-		return VObject(new VObject([], ODictionary(fields)));
+		return makeRef(ec, function(_) return payload,
+			function(_) return mkString(path == null ? "<extend>" : Context.pathKey(path)), 0);
 	}
 
 	static function encodeMonoRef(ec:EvalContext, m:TMono):EvalValue {
 		var id = ++macroMonoId;
 		macroMonos.set(id, m);
-		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("get"), VFunction(function(_) return m.type == null ? VNull : encodeType(ec, m.type), true));
-		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<mono>"), true));
-		fields.set(EvalHash.hash("__hxc_mono_id"), VInt(id));
-		return VObject(new VObject([], ODictionary(fields)));
+		// The mono id rides in the ikind like every other handle, so the Ref has its two fields and nothing
+		// more.
+		return makeRef(ec, function(_) return m.type == null ? VNull : encodeType(ec, m.type), function(_) return mkString("<mono>"), id);
 	}
 
 	static function encodeAnonRef(ec:EvalContext, an:TAnon):EvalValue {
@@ -4851,13 +4840,9 @@ class EvalMacro {
 			fields.set(EvalHash.hash("status"), encodeAnonStatus(ec, an.status.get()));
 			return VObject(new VObject([], ODictionary(fields)));
 		}
-		var fields:Map<Int, EvalValue> = new Map();
 		var refId = nextAnonRefId++;
 		anonRefs.set(refId, an);
-		fields.set(EvalHash.hash("$"), VInt(refId));
-		fields.set(EvalHash.hash("get"), VFunction(function(_) return payload(), true));
-		fields.set(EvalHash.hash("toString"), VFunction(function(_) return mkString("<anonymous>"), true));
-		return VObject(new VObject([], ODictionary(fields)));
+		return makeRef(ec, function(_) return payload(), function(_) return mkString("<anonymous>"), refId);
 	}
 
 	static function encodeAnonStatus(ec:EvalContext, status:AnonStatus):EvalValue {
@@ -5234,46 +5219,78 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
+	// A macro Ref is a haxe.macro.Ref instance whose only fields are get and toString; the value it
+	// stands for rides in the ikind (IRef), which is not a field at all, so no walk over a Ref -
+	// Reflect.fields, and the value signature above all - sees an extra field. A standalone prototype
+	// that is not one of the context's types, so Type.getClass of a Ref finds nothing.
+	static var refProtoCache:Null<VPrototype> = null;
+
+	static function refProto(ec:EvalContext):VPrototype {
+		if (refProtoCache != null) return refProtoCache;
+		var names:Map<Int, Int> = new Map();
+		names.set(EvalHash.keyGet, 0);
+		names.set(EvalHash.key_toString, 1);
+		var proto = new VPrototype(EvalHash.hash("haxe.macro.Ref"), [], new Map(), [VNull, VNull], names, null, PInstance, VNull);
+		proto.pvalue = VPrototype(proto);
+		refProtoCache = proto;
+		return proto;
+	}
+
+	// A bare haxe.macro.Unsafe instance with no fields, holding the value in its ikind. It is what a
+	// tvar object's `$` field carries.
+	static var unsafeProtoCache:Null<VPrototype> = null;
+
+	static function unsafeValue(ec:EvalContext, id:Int):EvalValue {
+		if (unsafeProtoCache == null) {
+			var proto = new VPrototype(EvalHash.hash("haxe.macro.Unsafe"), [], new Map(), [], new Map(), null, PInstance, VNull);
+			proto.pvalue = VPrototype(proto);
+			unsafeProtoCache = proto;
+		}
+		return VInstance(new VInstance([], unsafeProtoCache, IRef(VInt(id))));
+	}
+
+	// The Ref itself: get and toString in the prototype's slot order, the handle in the ikind.
+	static function makeRef(ec:EvalContext, getFn:VFunc, toStringFn:VFunc, id:Int):EvalValue {
+		return VInstance(new VInstance([VFunction(getFn, true), VFunction(toStringFn, true)], refProto(ec), IRef(VInt(id))));
+	}
+
+	// The handle a Ref (or a tvar object's `$`) carries, or null when the value is not one of ours.
+	static function refHandle(ec:EvalContext, v:EvalValue):Null<Int> {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VInstance({ikind: IRef(VInt(id))}): id;
+			case VObject(_): refHandle(ec, EvalField.field(ec, v, EvalHash.hash("$")));
+			case _: null;
+		};
+	}
+
 	static function encodeClassRef(ec:EvalContext, c:TClass):EvalValue {
-		var f:Map<Int, EvalValue> = new Map();
-		stashModuleTypeRef(f, TClassDecl(c));
-		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassType(ec, c), true));
-		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(c.path)), true));
-		return VObject(new VObject([], ODictionary(f)));
+		var refId = nextModuleTypeRefId++;
+		moduleTypeRefs.set(refId, TClassDecl(c));
+		return makeRef(ec, function(_) return encodeClassType(ec, c), function(_) return mkString(Context.pathKey(c.path)), refId);
 	}
 
 	static function encodeClassFieldRef(ec:EvalContext, cf:TClassField):EvalValue {
-		var f:Map<Int, EvalValue> = new Map();
 		var refId = nextCfieldRefId++;
 		cfieldRefs.set(refId, cf);
-		f.set(EvalHash.hash("$"), VInt(refId));
-		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeClassField(ec, cf), true));
-		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(cf.name), true));
-		return VObject(new VObject([], ODictionary(f)));
+		return makeRef(ec, function(_) return encodeClassField(ec, cf), function(_) return mkString(cf.name), refId);
 	}
 
 	static function encodeEnumRef(ec:EvalContext, e:TEnum):EvalValue {
-		var f:Map<Int, EvalValue> = new Map();
-		stashModuleTypeRef(f, TEnumDecl(e));
-		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeEnumType(ec, e), true));
-		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(e.path)), true));
-		return VObject(new VObject([], ODictionary(f)));
+		var refId = nextModuleTypeRefId++;
+		moduleTypeRefs.set(refId, TEnumDecl(e));
+		return makeRef(ec, function(_) return encodeEnumType(ec, e), function(_) return mkString(Context.pathKey(e.path)), refId);
 	}
 
 	static function encodeDefRef(ec:EvalContext, d:TDef):EvalValue {
-		var f:Map<Int, EvalValue> = new Map();
-		stashModuleTypeRef(f, TTypeDecl(d));
-		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeDefType(ec, d), true));
-		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(d.path)), true));
-		return VObject(new VObject([], ODictionary(f)));
+		var refId = nextModuleTypeRefId++;
+		moduleTypeRefs.set(refId, TTypeDecl(d));
+		return makeRef(ec, function(_) return encodeDefType(ec, d), function(_) return mkString(Context.pathKey(d.path)), refId);
 	}
 
 	static function encodeAbstractRef(ec:EvalContext, a:TAbstract):EvalValue {
-		var f:Map<Int, EvalValue> = new Map();
-		stashModuleTypeRef(f, TAbstractDecl(a));
-		f.set(EvalHash.hash("get"), VFunction(function(_) return encodeAbstractType(ec, a), true));
-		f.set(EvalHash.hash("toString"), VFunction(function(_) return mkString(Context.pathKey(a.path)), true));
-		return VObject(new VObject([], ODictionary(f)));
+		var refId = nextModuleTypeRefId++;
+		moduleTypeRefs.set(refId, TAbstractDecl(a));
+		return makeRef(ec, function(_) return encodeAbstractType(ec, a), function(_) return mkString(Context.pathKey(a.path)), refId);
 	}
 
 	static function classWithParamsValue(ec:EvalContext, c:TClassWithParams):EvalValue {
