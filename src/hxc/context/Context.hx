@@ -566,6 +566,13 @@ class Context {
 		return diagnostics.length > 0;
 	}
 
+	// Distinguish reported diagnostics from the context's error flag; ignored or parse errors can set
+	// the flag without a message.
+	public function hasReportedError():Bool {
+		for (d in diagnostics) if (d.severity == Error) return true;
+		return false;
+	}
+
 	public function hasError():Bool {
 		if (forcedError) return true;
 		for (d in diagnostics) if (d.severity == Error) return true;

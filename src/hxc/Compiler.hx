@@ -1218,7 +1218,12 @@ class Compiler {
 			// there are no errors to abort with. hxc lexes ahead and types, so its errors have to step
 			// aside here.
 			if (hxc.parser.Parser.displayFile != null
-					&& (!ctx.hasError() || hxc.parser.Parser.commentAnswered)) {
+				// The abort reads the compilation context's error flag, which is set only where an error was
+				// MESSAGED. A display run SWALLOWS the display file's own errors under the ignore-errors policy
+				// and sets com's flag alone, reporting nothing. Asking com here would exit 1 in SILENCE on any
+				// display file carrying a swallowed error, where the missing completion point must still be
+				// reported.
+					&& (!ctx.hasReportedError() || hxc.parser.Parser.commentAnswered)) {
 				var dm = displayParts(ctx);
 				var dmode = dm.length >= 3 ? dm[2] : "";
 				// No completion point was found, and the display file has a block only the MACRO context turns
