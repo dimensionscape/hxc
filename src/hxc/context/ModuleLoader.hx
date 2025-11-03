@@ -703,11 +703,13 @@ class ModuleLoader {
 								|| mm.name == ":deprecated" || mm.name == ":phpGlobal" || mm.name == ":publicFields") mm];
 						implMeta.reverse();
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
-							dName: {name: implName, pos: p}, dDoc: null, dParams: [], dMeta: implMeta,
+							// Use the abstract name's position for the implementation class; a declaration-wide span
+							// would create false display matches on keywords and braces.
+							dName: {name: implName, pos: d.dName.pos}, dDoc: null, dParams: [], dMeta: implMeta,
 							dFlags: [HPrivate], dData: implFields
 						};
 						var implDecl:TypeDef = EClass(implDef);
-						var c = TypeFunctions.mkClass(m, implPath, p, p);
+						var c = TypeFunctions.mkClass(m, implPath, p, d.dName.pos);
 						c.build = function():BuildState return Built;
 						c.module = m;
 						c.meta = implMeta;

@@ -1098,7 +1098,7 @@ class Compiler {
 					if (ctx.jsonRpcId != null)
 						answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
 					else
-						answerOut(hxc.compiler.DisplayXml.printPositions(found) + "\n");
+						answerOut(hxc.compiler.DisplayXml.printPositions(found));
 					return;
 				}
 			}
@@ -1116,7 +1116,7 @@ class Compiler {
 					if (ctx.jsonRpcId != null)
 						answerOut(jsonRpcAnswer(ctx, locs))
 					else
-						answerOut(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]) + "\n");
+						answerOut(hxc.compiler.DisplayXml.printPositions(p == null ? [] : [p]));
 					return;
 				}
 			}
@@ -1155,7 +1155,7 @@ class Compiler {
 				if (ctx.jsonRpcId != null)
 					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in impls) jsonLocation(p)].join(",") + "]"))
 				else
-					answerOut(hxc.compiler.DisplayXml.printPositions(impls) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(impls));
 				return;
 			}
 			if (hxc.typing.Typer.displayUsage) {
@@ -1163,7 +1163,7 @@ class Compiler {
 				if (ctx.jsonRpcId != null)
 					answerOut(jsonRpcAnswer(ctx, "[" + [for (p in usages) jsonLocation(p)].join(",") + "]"))
 				else
-					answerOut(hxc.compiler.DisplayXml.printPositions(usages) + "\n");
+					answerOut(hxc.compiler.DisplayXml.printPositions(usages));
 				return;
 			}
 			if (hxc.typing.Typer.fieldCompletionFound != null) {
@@ -1372,7 +1372,7 @@ class Compiler {
 			handleTypePathCompletion(ctx, tc);
 			return;
 		} catch (dp:hxc.compiler.DisplayXml.DisplayPositions) {
-			answerOut(hxc.compiler.DisplayXml.printPositions(dp.positions) + "\n");
+			answerOut(hxc.compiler.DisplayXml.printPositions(dp.positions));
 			return;
 		} catch (sc:hxc.compiler.DisplayXml.SyntaxCompletion) {
 			if (ctx.jsonRpcId != null)
