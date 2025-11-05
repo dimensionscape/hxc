@@ -600,6 +600,11 @@ class Context {
 		return function() diagnosticsFileFilter = old;
 	}
 
+	// The diagnostics file filter is set only for diagnostics report modes.
+	public function isDiagnosticsRun():Bool {
+		return diagnosticsFileFilter != null;
+	}
+
 	public function errorInDiagnosticsRun(p:Position):Bool {
 		if (diagnosticsFileFilter == null) return false;
 		if (!diagnosticsFileFilter(p.file)) return false;

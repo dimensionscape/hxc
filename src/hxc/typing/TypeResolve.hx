@@ -98,11 +98,13 @@ class TypeResolve {
 				// rest of the module is ABANDONED: the reference's typing_error raises out of init_module_type,
 				// so no later declaration of that module is reached and exactly one such error is ever printed.
 				markModuleErrored(ctx, m);
+				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
 			} catch (e:hxc.core.TypingError) {
 				markModuleErrored(ctx, m);
+				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
 				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
@@ -119,8 +121,19 @@ class TypeResolve {
 	 * A display request's job is to answer, so the errors that would cost the answer are skipped
 	 * rather than raised, and the module keeps resolving.
 	 */
+	// A diagnostics run does not ignore errors, so the raise leaves the typing stage and
+	// run_or_diagnose's handler records the message and emits the report on the spot. Nothing gathered
+	// after typing reaches that report - com.modules above all, which only in finalize_typing - so a
+	// module's unused imports cannot appear in it.
+	static inline function escapesDeclError(ctx:Context):Bool {
+		return abortsOnDeclError(ctx) && ctx.isDiagnosticsRun();
+	}
+
 	static inline function abortsOnDeclError(ctx:Context):Bool {
-		return ctx.displaySpec == null;
+		// 217: every mode that answers about one position carries dms_error_policy = EPIgnore, while the
+		// modes that report the compile itself keep EPShow. ctx.ignoreErrors is that flag, and asking it
+		// here rather than `is this a display request` lets a diagnostics run take the reference's abort.
+		return !ctx.ignoreErrors;
 	}
 
 	// The error raises out of module initialisation, so the module's DELAYED field typing never runs -

@@ -2823,7 +2823,10 @@ class Compiler {
 	static inline var DK_REMOVABLE_CODE = 3;
 	static inline var DK_PARSER_ERROR = 4;
 
+	// A position that never had one is NULL, not a range. null_pos is min = -1 and the same test
+	// guards generate_pos_as_location.
 	static function posAsRange(p:Position):String {
+		if (p.min == -1) return "null";
 		var i = Position.getInfos(p);
 		return '{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
 			+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn + '}}';
@@ -2852,7 +2855,6 @@ class Compiler {
 		}
 		for (d in ctx.diagnostics) {
 			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
-			var i = Position.getInfos(d.pos);
 			var displayFile = diagnosticsFile(d.pos.file);
 			var severity = switch (d.severity) {
 				case Information: 3;
@@ -2863,27 +2865,11 @@ class Compiler {
 			var kind = d.kind == null ? 2 : d.kind;
 			var args = haxe.Json.stringify(d.message);
 			var item = '{"kind":' + kind + ',"severity":' + severity
-				+ ',"range":{"start":{"line":' + (i.line - 1) + ',"character":' + i.column
-				+ '},"end":{"line":' + (i.endLine - 1) + ',"character":' + i.endColumn
-				+ '}},"args":' + args + ',"relatedInformation":[]}';
+				+ ',"range":' + posAsRange(d.pos) + ',"args":' + args + ',"relatedInformation":[]}';
 			var group = null;
 			for (g in groups) if (g.file == displayFile) { group = g; break; }
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
 			group.items.push(item);
-		}
-		// An import declaration nothing ever resolved through. reads them off com.modules, not off the
-		// typer, so a module served back from the CACHE still reports its unused imports.
-		for (m in ctx.modules) {
-			for (e in m.extra.display.importPositions) {
-				if (e.used || e.failed == true || !isDiagnosticsFile(ctx, e.p.file)) continue;
-				var displayFile = diagnosticsFile(e.p.file);
-				var item = '{"kind":' + DK_UNUSED_IMPORT + ',"severity":2,"range":' + posAsRange(e.p)
-					+ ',"args":[],"relatedInformation":[]}';
-				var group = null;
-				for (g in groups) if (g.file == displayFile) { group = g; break; }
-				if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
-				group.items.push(item);
-			}
 		}
 		// The MissingFields records are grouped by position, and one DKMissingFields is printed per
 		// group: the module type the fields would be added to, the file it lives in, and one entry per
@@ -2938,13 +2924,30 @@ class Compiler {
 				group.items.push(item);
 			}
 		}
+		// An import declaration nothing ever resolved through. They are read off com.modules, not off the
+		// typer, so a module served back from the CACHE still reports its unused imports. com.modules is
+		// empty until typing is finalized, so a report emitted for an error that escaped the typing stage
+		// carries no import positions at all. hxc registers a module at LOAD time, so its list is full
+		// long before generation - ask the flag instead.
+		if (ctx.typesGenerated) for (m in ctx.modules) {
+			for (e in m.extra.display.importPositions) {
+				if (e.used || e.failed == true || !isDiagnosticsFile(ctx, e.p.file)) continue;
+				var displayFile = diagnosticsFile(e.p.file);
+				var item = '{"kind":' + DK_UNUSED_IMPORT + ',"severity":2,"range":' + posAsRange(e.p)
+					+ ',"args":[],"relatedInformation":[]}';
+				var group = null;
+				for (g in groups) if (g.file == displayFile) { group = g; break; }
+				if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
+				group.items.push(item);
+			}
+		}
 		// The removable code follows the messages, carrying its description and the range an editor would
 		// delete (null when the declaration is shared).
 		for (r in hxc.compiler.Diagnostics.removableCode) {
 			if (!isDiagnosticsFile(ctx, r.p.file)) continue;
 			var displayFile = diagnosticsFile(r.p.file);
 			var args = '{"description":' + haxe.Json.stringify(r.s) + ',"range":'
-				+ (r.prange == null || r.prange.min < 0 ? "null" : posAsRange(r.prange)) + "}";
+				+ (r.prange == null ? "null" : posAsRange(r.prange)) + "}";
 			var item = '{"kind":' + DK_REMOVABLE_CODE + ',"severity":2,"range":' + posAsRange(r.p)
 				+ ',"args":' + args + ',"relatedInformation":[]}';
 			var group = null;
@@ -2952,7 +2955,10 @@ class Compiler {
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
 			group.items.push(item);
 		}
-		var out = [for (g in groups) '{"file":' + haxe.Json.stringify(g.file) + ',"diagnostics":[' + g.items.join(",") + ']}'];
+		// A fileless position buckets under the null position's own file, "?" (kept verbatim rather than
+		// resolved), and that bucket prints as null.
+		var out = [for (g in groups) '{"file":' + (g.file == "?" ? "null" : haxe.Json.stringify(g.file))
+			+ ',"diagnostics":[' + g.items.join(",") + ']}'];
 		var raw = "[" + out.join(",") + "]";
 		// A JSON-RPC-initiated diagnostics run answers with the protocol envelope; the legacy arg prints
 		// the raw array. No trailing newline: the raw print.
