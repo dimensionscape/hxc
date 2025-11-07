@@ -31,6 +31,13 @@ class DisplayInMacroBlock extends haxe.Exception {
 	public function new() super("display in macro block");
 }
 
+// A HOVER whose cursor sits in a block this compilation switched off has no result at all - neither
+// an empty answer nor a missing completion point. The legacy lane answers with the empty string and
+// the json lane with null, both at exit 0.
+class DisplayNoResult extends haxe.Exception {
+	public function new() super("display no result");
+}
+
 // Macro condition parsing has no catch-all, so an #if whose condition does not parse fails inside
 // the token stream's own fill. It surfaces at whichever production was pulling. Such a failure
 // backtracks only at a production's first element; at any later one it becomes an empty non-soft
@@ -457,7 +464,12 @@ class Parser {
 			var inside = displayHoverMode
 				? (b.p.min <= displayOffset && b.p.max > displayOffset)
 				: (b.p.min <= displayOffset && b.p.max >= displayOffset);
-			if (inside && hasMacroDefine) throw new DisplayInMacroBlock();
+			if (inside) {
+				if (hasMacroDefine) throw new DisplayInMacroBlock();
+				// Only a HOVER gives up here. Every other mode goes on to type the file and answers, or
+				// reports the missing completion point.
+				if (displayHoverMode) throw new DisplayNoResult();
+			}
 		}
 	}
 

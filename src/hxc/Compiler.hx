@@ -917,7 +917,7 @@ class Compiler {
 					hxc.parser.Parser.displaySignatureMode = dmode == "signature";
 					// Hover is the mode whose enclosure test takes the upper bound STRICTLY, which the
 					// display position handling branches on.
-					hxc.parser.Parser.displayHoverMode = dmode == "type" || dmode == "typeDefinition";
+					hxc.parser.Parser.displayHoverMode = dmode == "type";
 					hxc.parser.Parser.displayCompletionMode = dmode == "" || dmode == "toplevel";
 					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
 					// the typer consults that (ignoreError) at the handful of places where an error would
@@ -1407,6 +1407,12 @@ class Compiler {
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
+		} catch (_:hxc.parser.Parser.DisplayNoResult) {
+			// It was raised while the display file was parsed and it unwinds the whole compile, as any
+			// display answer does. The legacy lane answers with an empty completion - nothing printed, exit
+			// 0 - and the json lane with a null result.
+			if (ctx.jsonRpcId != null) answerOut(jsonRpcAnswer(ctx, "null"));
+			return;
 		} catch (e:hxc.parser.LexerError) {
 			// A failure under diagnostics reporting emits the JSON report instead of the plain message;
 			// parser and lexer failures use DKParserError.
