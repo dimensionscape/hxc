@@ -5231,8 +5231,12 @@ class Typer {
 				if (ev.evFinal) TypeFunctions.addVarFlag(v, VFinal);
 				if (ev.evStatic) TypeFunctions.addVarFlag(v, VStatic);
 				// The cursor on the DECLARED name answers with the variable itself, which makes a hover there a
-				// Local rather than the expression around it.
-				if (atDisplayPos(pv)) displayVariable(ctx, v, pv);
+				// Local rather than the expression around it. ctx.inDisplay is required as well, and the
+				// enclosure test is INCLUSIVE, so the declaration answers only while the marked subtree is
+				// being typed. A cursor one past the name is inside the name by that test but outside it by the
+				// hover enclosure the preprocessor marks with, so nothing is marked there and the request
+				// reports no completion point.
+				if (inMarkedSubtree(pv) && atDisplayPos(pv)) displayVariable(ctx, v, pv);
 				out.push({v: v, e: e});
 			} catch (err:TypingError) {
 				// Record the error, then a generated local at Dynamic with no initializer. VGenerated, not the
