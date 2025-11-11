@@ -38,6 +38,28 @@ class DisplayNoResult extends haxe.Exception {
 	public function new() super("display no result");
 }
 
+// Condition display answers about the `#if` CONDITION the cursor is in, and it raises the hover
+// there and then - before the file is typed at all.
+enum CondHover {
+	// A bare name in a condition is a DEFINE: its type is always String and its value is
+	// whatever the define holds (null when it holds nothing).
+	CHDefine(name:String, value:Null<String>);
+	// The `version(...)` builtin, reported at the name with its own documentation.
+	CHVersion;
+	// Anything else reports the value the sub-expression evaluates to.
+	CHLiteral(v:Preprocess.SmallType);
+}
+
+class DisplayConditionHover extends haxe.Exception {
+	public final pos:Position;
+	public final kind:CondHover;
+	public function new(pos:Position, kind:CondHover) {
+		super("display condition hover");
+		this.pos = pos;
+		this.kind = kind;
+	}
+}
+
 // Macro condition parsing has no catch-all, so an #if whose condition does not parse fails inside
 // the token stream's own fill. It surfaces at whichever production was pulling. Such a failure
 // backtracks only at a production's first element; at any later one it becomes an empty non-soft
@@ -423,6 +445,7 @@ class Parser {
 			var d = defines == null ? new Define() : defines;
 			// handlePdi runs over the DISPLAY file's dead blocks only.
 			var dead:Null<Array<{p:Position, cond:Expr}>> = matchesDisplayFile(file) && displayOffset >= 0 ? [] : null;
+			var conds:Null<Array<Expr>> = dead == null ? null : [];
 			// An unclosed #if is found by scanning the whole stream, but the preprocessor's verdicts belong
 			// to the pull that reaches them, so a parse error before the conditional is reported instead.
 			// Defer it on the same terms as a lexer fault.
@@ -431,7 +454,7 @@ class Parser {
 			// leaves its Eof sentinel there (see the catch above); MalformedFile reports 1:1 no matter
 			// where the bad bytes were, so its own pos cannot be compared against.
 			var lexStop = (lexOut.err != null && toks.length > 0) ? toks[toks.length - 1].pos : null;
-			toks = Preprocess.run(toks, d, dead, ppFail);
+			toks = Preprocess.run(toks, d, dead, ppFail, conds);
 			// Lexing and preprocessing count as one pull, so the fault the scan reaches first is the one
 			// reported. hxc lexes the whole file up front, so a lexer fault later in the file must not beat
 			// an earlier bad directive: `@#op` on line 2 with an undecodable byte on line 5 reports the
@@ -443,7 +466,7 @@ class Parser {
 			if (ppFail.err != null && (lexOut.err == null || ppEarlier))
 				lexOut.err = new LexerError(Preprocessed(ppFail.err), ppFail.err.pos);
 			ppUnclosed = ppFail.unclosedAtEnd;
-			if (dead != null) handlePdi(d, dead);
+			if (dead != null) handlePdi(d, dead, conds);
 		}
 		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"), src);
 		pr.pendingLexError = lexOut.err;
@@ -455,7 +478,8 @@ class Parser {
 	// context. A block that would be live there means the module has macro-only code; the cursor
 	// sitting inside such a block means the whole question belongs to the macro world, and the normal
 	// typing is abandoned for it.
-	static function handlePdi(defines:Define, dead:Array<{p:Position, cond:Expr}>):Void {
+	static function handlePdi(defines:Define, dead:Array<{p:Position, cond:Expr}>,
+			conds:Array<Expr>):Void {
 		var macroDefines = Define.adaptToMacroContext(defines);
 		for (b in dead) {
 			var hasMacroDefine = try Preprocess.isTrueExpr(macroDefines, b.cond) catch (_:Dynamic) false;
@@ -471,6 +495,37 @@ class Parser {
 				if (displayHoverMode) throw new DisplayNoResult();
 			}
 		}
+		// Only hover requests inspect the preprocessor conditions themselves.
+		if (displayHoverMode && conds != null) for (c in conds) checkCondition(defines, c);
+	}
+
+	// Walk the condition, and answer for whichever sub-expression the cursor is in. The expression check
+	// runs on the way DOWN so the `version` call and a define name win over the value they compute; the
+	// literal hover on the way back up therefore reports the INNERMOST node that is neither.
+	static function checkCondition(defines:Define, root:Expr):Void {
+		// The upper bound is strict for a hover, like every other display test here.
+		inline function at(p:Position):Bool
+			return p.min <= displayOffset && p.max > displayOffset;
+		function checkExpr(e:Expr):Void switch (e.expr) {
+			case ECall({expr: EConst(CIdent("version")), pos: pn}, _):
+				if (at(pn)) throw new DisplayConditionHover(pn, CHVersion);
+			case EConst(CIdent(n)):
+				var v = try Preprocess.evalSmall(defines, e) catch (_:Dynamic) Preprocess.SmallType.TNull;
+				throw new DisplayConditionHover(e.pos, CHDefine(n, switch (v) {
+					case TString(s): s;
+					case _: null;
+				}));
+			case _:
+		}
+		function loop(e:Expr):Void {
+			if (at(e.pos)) checkExpr(e);
+			hxc.ast.Ast.iterExpr(loop, e);
+			if (at(e.pos)) {
+				var v = try Preprocess.evalSmall(defines, e) catch (_:Dynamic) Preprocess.SmallType.TNull;
+				throw new DisplayConditionHover(e.pos, CHLiteral(v));
+			}
+		}
+		loop(root);
 	}
 
 	static function hasSharp(toks:Array<TokenInfo>):Bool {

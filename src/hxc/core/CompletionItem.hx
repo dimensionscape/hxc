@@ -387,6 +387,18 @@ class CompletionItem {
 		].concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
+	// {kind: Define, args: {name, value}} plus the type, which is always String.
+	public static function defineToJson(gen:Genjson, name:String, value:Null<String>, ct:CompletionType):JsonValue {
+		return JObject(([
+			{name: "kind", value: JString("Define")},
+			{name: "args", value: JObject(([
+				{name: "name", value: JString(name)},
+				{name: "value", value: value == null ? JNull : JString(value)}
+			]:Array<JsonField>))},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]:Array<JsonField>));
+	}
+
 	// {kind: Literal, args: {name}} plus the type.
 	public static function literalToJson(gen:Genjson, name:String, ct:CompletionType, ?index:Int):JsonValue {
 		return JObject(([

@@ -34,6 +34,11 @@ class Preprocess {
 	// re-evaluated against the MACRO defines to decide whether the display position sits in macro-only
 	// code.
 	public final deadBlocks:Array<{p:Position, cond:Expr}> = [];
+	// Every `#if` and `#elseif` condition in the file, live or dead. A HOVER walks them, so a cursor
+	// on a define inside a condition answers about the define rather than about the code around it.
+	// Two conditions can never enclose one position, so the order the list is walked in cannot change
+	// which one answers.
+	public final conditions:Array<Expr> = [];
 	// The stack of open conditions, with negate and conjoin.
 	final condStack:Array<Expr> = [];
 	final condDepths:Array<Int> = [];
@@ -49,7 +54,8 @@ class Preprocess {
 
 	public static function run(toks:Array<TokenInfo>, defines:Define,
 			?deadOut:Array<{p:Position, cond:Expr}>,
-			?failOut:{err:Null<ParserError>, unclosedAtEnd:Null<Position>}):Array<TokenInfo> {
+			?failOut:{err:Null<ParserError>, unclosedAtEnd:Null<Position>},
+			?condOut:Array<Expr>):Array<TokenInfo> {
 		var p = new Preprocess(toks, defines);
 		var r = try p.process()
 		catch (c:CondHeadFailure) {
@@ -73,7 +79,15 @@ class Preprocess {
 		};
 		if (failOut != null) failOut.unclosedAtEnd = p.unclosedAtEnd;
 		if (deadOut != null) for (b in p.deadBlocks) deadOut.push(b);
+		if (condOut != null) for (c in p.conditions) condOut.push(c);
 		return r;
+	}
+
+	// The value a conditional expression carries, which is what a hover over the condition reports (as
+	// a literal and its type).
+	public static function evalSmall(defines:Define, e:Expr):SmallType {
+		var p = new Preprocess([], defines);
+		return p.eval(e);
 	}
 
 	// Evaluate a conditional expression against the defines, as #if does. Used by @:require.
@@ -137,7 +151,8 @@ class Preprocess {
 		return e;
 	}
 
-	function condIfInner(e:Expr):Void condStack.unshift(e);
+	// condIfInner records the condition and pushes it on the stack.
+	function condIfInner(e:Expr):Void { conditions.push(e); condStack.unshift(e); }
 
 	function condIf(e:Expr):Void { condIfInner(e); condDepths.unshift(1); }
 
@@ -492,7 +507,9 @@ class Preprocess {
 			throw new ParserError(Unexpected(at.tok), at.pos);
 		}
 		validateMacroCond(r.e);
-		return new Expr(EParenthesis(r.e), popen);
+		// The parenthesised condition spans from the OPEN paren to the CLOSE. A hover over the condition
+		// is answered from exactly this span, so it must cover a cursor anywhere past the `(`.
+		return new Expr(EParenthesis(r.e), close == null ? popen : Position.union(popen, close.pos));
 	}
 
 	static function validateMacroCond(e:Expr):Void {

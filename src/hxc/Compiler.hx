@@ -1407,6 +1407,9 @@ class Compiler {
 			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, Position.nullPos);
+		} catch (ch:hxc.parser.Parser.DisplayConditionHover) {
+			answerConditionHover(ctx, ch);
+			return;
 		} catch (_:hxc.parser.Parser.DisplayNoResult) {
 			// It was raised while the display file was parsed and it unwinds the whole compile, as any
 			// display answer does. The legacy lane answers with an empty completion - nothing printed, exit
@@ -2828,6 +2831,67 @@ class Compiler {
 	static inline var DK_COMPILER_MESSAGE = 2;
 	static inline var DK_REMOVABLE_CODE = 3;
 	static inline var DK_PARSER_ERROR = 4;
+
+	// The condition hover is raised during the PARSE, so this is the whole answer: nothing is typed and
+	// nothing else can win. The evaluated value is turned into the type the legacy lane prints.
+	static function answerConditionHover(ctx:Context, ch:hxc.parser.Parser.DisplayConditionHover):Void {
+		var basic = ctx.basic;
+		// The SemVer type is a synthetic class in no module; only its name is ever printed.
+		inline function tSemver():T
+			return TInst(TypeFunctions.mkClass(TypeFunctions.nullModule,
+				new hxc.core.Globals.Path([], "SemVer"), Position.nullPos, Position.nullPos), []);
+		var doc:Null<String> = null;
+		var t:T;
+		var item:Null<hxc.core.Json.JsonValue> = null;
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		function ct(t:T):hxc.core.CompletionItem.CompletionType
+			return hxc.core.CompletionItem.CompletionTypeTools.fromType(
+				function(_) return hxc.core.CompletionItem.ImportStatus.Imported, t);
+		switch (ch.kind) {
+			case CHDefine(name, value):
+				t = basic.tstring;
+				item = hxc.core.CompletionItem.CompletionItem.defineToJson(gen, name, value, ct(t));
+			case CHVersion:
+				t = TFun({args: [{name: "s", opt: false, t: basic.tstring}], ret: tSemver()});
+				var cf = TypeFunctions.mkField("version", t, Position.nullPos, Position.nullPos, false, false);
+				cf.doc = hxc.ast.Ast.docFromString(VERSION_DOC);
+				cf.kind = Method(MethNormal);
+				TypeFunctions.addClassFieldFlag(cf, CfPublic);
+				doc = hxc.ast.Ast.genDocText(cf.doc);
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen,
+					hxc.core.Type.ClassFieldScope.CFSStatic, cf,
+					hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn, true, ct(t));
+			case CHLiteral(v):
+				// The literal's TEXT and the type that goes with it.
+				var lit:String;
+				switch (v) {
+					case TNull: lit = "null"; t = TMono(hxc.core.TypeUnification.monoCreate());
+					case TBool(b): lit = b ? "true" : "false"; t = basic.tbool;
+					case TFloat(f):
+						// Float text must contain a decimal point.
+						lit = Std.string(f);
+						if (~/^-?[0-9]+$/.match(lit)) lit += ".";
+						t = basic.tfloat;
+					case TString(str): lit = '"' + hxc.core.StringHelper.sEscape(str) + '"'; t = basic.tstring;
+					case TVersion(ver): lit = ver; t = tSemver();
+				}
+				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, lit, ct(t));
+		}
+		if (ctx.jsonRpcId != null) {
+			answerOut(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(
+				hxc.core.Json.JsonValue.JObject([
+					{name: "documentation", value: doc == null ? hxc.core.Json.JsonValue.JNull : hxc.core.Json.JsonValue.JString(doc)},
+					{name: "range", value: gen.generatePosAsRange(ch.pos)},
+					{name: "item", value: item},
+					{name: "expected", value: hxc.core.Json.JsonValue.JNull}
+				]))));
+			return;
+		}
+		answerOut(hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(t), ch.pos, doc));
+	}
+
+	// Verbatim: the `version()` builtin's documentation.
+	static inline var VERSION_DOC = "Allows comparing defines (such as the version of a Haxelib or Haxe) with SemVer semantics.\r\nBoth the define and the string passed to `version()` must be valid semantic versions.\r\n\r\nExample:\r\n```haxe\r\n#if (haxe >= version(\"4.0.0-rc.3\"))\n\r\n```\r\n\r\nNote: this syntax does not parse with Haxe versions earlier than 4.0.0-rc.3,\r\nso it should be avoided if backwards-compatibility with earlier versions is needed.\r\n\r\n@see https://semver.org/";
 
 	// A position that never had one is NULL, not a range. null_pos is min = -1 and the same test
 	// guards generate_pos_as_location.
