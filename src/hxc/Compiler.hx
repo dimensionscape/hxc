@@ -3025,9 +3025,18 @@ class Compiler {
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
 			group.items.push(item);
 		}
+		// The file buckets come out in hash-table fold order, and that fold CONSES, so the printed array is
+		// the REVERSE of the bucket visit order. The table starts at size 0 and is keyed by the bucket's
+		// own name, and the groups here are in insertion order, which is what the model needs.
+		var order = new hxc.core.NameHash.HashTableOrder();
+		for (g in groups) order.add(g.file, hxc.core.NameHash.NameHash.stringHash(g.file));
+		var visit = order.visitOrder();
+		var ordered:Array<{file:String, items:Array<String>}> = [];
+		var i = visit.length;
+		while (i-- > 0) for (g in groups) if (g.file == visit[i]) { ordered.push(g); break; }
 		// A fileless position buckets under the null position's own file, "?" (kept verbatim rather than
 		// resolved), and that bucket prints as null.
-		var out = [for (g in groups) '{"file":' + (g.file == "?" ? "null" : haxe.Json.stringify(g.file))
+		var out = [for (g in ordered) '{"file":' + (g.file == "?" ? "null" : haxe.Json.stringify(g.file))
 			+ ',"diagnostics":[' + g.items.join(",") + ']}'];
 		var raw = "[" + out.join(",") + "]";
 		// A JSON-RPC-initiated diagnostics run answers with the protocol envelope; the legacy arg prints
