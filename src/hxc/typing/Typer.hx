@@ -3264,20 +3264,32 @@ class Typer {
 		// A sub-expression that still encloses the offset is the more precise match: recurse
 		// into any PROPER enclosing sub-range first (an assignment target or call argument
 		// types inside a wrapper whose own node carries no declaration).
+		var childEnclosed = false;
 		TexprTools.iter(function(child) {
 			if (displayFound == null && atDisplayPos(child.pos)
-				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max))
+				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max)) {
+				childEnclosed = true;
 				checkDisplayDefinition(ctx, child);
+			}
 		}, te);
 		if (displayFound != null) return;
+		// Only the marked node is asked - there is no walk outward. A node one of whose CHILDREN encloses
+		// the cursor is not the marked one, so when that child's subtree answers nothing, nothing is the
+		// answer: `method(2|, "s")` reports an empty position list, not the enclosing call's callee
+		// declaration. The arms below still descend STRUCTURALLY into a callee that does not enclose the
+		// cursor, which is a different question.
+		if (childEnclosed) return;
 		var pl:Array<Position> = switch (te.expr) {
 			case TField(_, FEnum(_, ef)): [ef.namePos];
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): [cf.namePos];
 			case TLocal(v): [v.pos];
-			// A declaration reports itself, but only when the cursor sits on the name; an offset inside the
-			// initializer whose own extraction found nothing must not claim it. The `this` an abstract
-			// constructor is rewritten around carries the whole constructor's position, so without this it
-			// claimed every cursor inside the body.
+			// A TLocal or TVar answers its pos with no test on the name when it is the marked node. hxc's
+			// walk reaches this arm for cursors no TVar is marked for - the preprocessor gives up in the
+			// gaps of a var declaration - so the name test stands in for the mark; without it every offset
+			// inside `var x = 1` would answer the declaration instead of an empty list. Modelling the
+			// var-declaration mark would retire it. Only a variable the USER declared can be the subject:
+			// the `this` an abstract constructor is rewritten around carries the whole constructor's
+			// position.
 			case TVarExpr(v, _) if (v.kind.match(VUser(_)) && atDisplayPos(v.pos)): [v.pos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];

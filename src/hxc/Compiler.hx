@@ -1133,7 +1133,11 @@ class Compiler {
 				var metaDoc = displayMetaDoc(ctx);
 				if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
-				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound.e);
+				// The documentation comes from the hover's ITEM, and a type path answers with a type item,
+				// whose documentation is the type's own - there is no expression to read it off. Asking the
+				// expression only would print a type HINT's hover with no d attribute. The json lane builds the
+				// item and so already asks the module type.
+				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound);
 				if (h == null) h = hoverOnFieldName(ctx);
 				if (h == null) {
 					var mt = displayTypeAtName(ctx);
@@ -2691,7 +2695,13 @@ class Compiler {
 
 	// Through hxc's serializer. a hover reports the documentation of the ITEM under the cursor, which
 	// is the field's, the enum constructor's or the type's own doc.
-	static function hoverDocumentation(e:Null<hxc.core.Type.TExpr>):Null<String> {
+	static function hoverDocumentation(h:Null<{?e:hxc.core.Type.TExpr, ?mt:hxc.core.Type.ModuleType}>):Null<String> {
+		if (h == null) return null;
+		if (h.mt != null) {
+			var mdoc = hxc.core.TypeFunctions.tInfos(h.mt).doc;
+			return mdoc == null ? null : hxc.ast.Ast.genDocText(mdoc);
+		}
+		var e = h.e;
 		if (e == null) return null;
 		var doc:hxc.ast.Ast.Documentation = switch (e.expr) {
 			case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf)): cf.doc;
