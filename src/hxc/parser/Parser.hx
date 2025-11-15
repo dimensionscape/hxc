@@ -3620,6 +3620,14 @@ class Parser {
 				// before the attempt fails, so a trailing doc comment in a body never leaks onto the next
 				// declaration.
 				getDoc();
+				// In the display file the body ends on a BrClose and on NOTHING else: an Eof matches no arm
+				// and falls to an empty error, whose handler reads the token sitting there and records
+				// `Unexpected` over it. So a class body that runs to the end of the display file carries a
+				// recorded syntax error, which diagnostics then report.
+				// The non-display branch is unaffected: there the list ends and the expect below still says
+				// `Expected }`, which is what a plain compile prints.
+				if (isDisplayFile() && tokEq(peek(), Eof))
+					syntaxErrors.push({msg: Unexpected(Eof), pos: peekInfo().pos});
 				break;
 			}
 			// In the display file a failed field is recorded and the scan looks for the next plausible field
