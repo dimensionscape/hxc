@@ -225,8 +225,13 @@ class Calls {
 						// castOrUnifyRaise, and the failure is what moves the search to the next @:arrayAccess
 						// function.
 						var key = Typer.castOrUnifyRaise(ctx, sig.args[1].t, ekey, p);
-						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern))
+						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+							// A non-extern @:arrayAccess field with no expression cannot be called - the typing looped -
+							// so the access falls back to a raw TArray and the loop is REPORTED, unless @:noExpr says
+							// the field is meant to have no body.
+							if (!TypeFunctions.hasMeta(":noExpr", cf.meta)) ctx.com.addDiagnostic("Recursive array get method", p);
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key, cf: cf};
+						}
 						var implExpr = TexprTools.makeStaticThis(c, p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key, cf: cf};
@@ -269,6 +274,8 @@ class Calls {
 						// this attempt, where a verdict is not a miss.
 						if (onChosen != null) onChosen(cf);
 						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+							// The write half of the same rule.
+							if (!TypeFunctions.hasMeta(":noExpr", cf.meta)) ctx.com.addDiagnostic("Recursive array set method", p);
 							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
 						}
