@@ -57,12 +57,26 @@ class ParserError extends haxe.Exception {
 	*/
 	public final fromPreprocessor:Bool;
 
-	public function new(msg:ParserErrorMsg, pos:Position, soft:Bool = false, fromPreprocessor:Bool = false) {
+	/**
+	 * Raised by the parser's `error`, not by a production that failed to match. The recovery arms
+	 * (class field resume among them) catch only a syntax error, so this one travels straight past
+	 * them and ends the whole file parse, even in the display file where a syntaxError would have been
+	 * recorded and resumed (it raises only when not in display). hxc funnels both through this one
+	 * type, so the verdict travels on the error, exactly as `soft` and `fromPreprocessor` do. A
+	 * display file can reach four such sites: a package name's case, a type name's case, a missing
+	 * variable identifier, and a keyword where an identifier is expected. Everything else in the
+	 * grammar is serror or syntaxError.
+	 */
+	public final hard:Bool;
+
+	public function new(msg:ParserErrorMsg, pos:Position, soft:Bool = false, fromPreprocessor:Bool = false,
+		hard:Bool = false) {
 		super("ParserError");
 		this.msg = msg;
 		this.pos = pos;
 		this.soft = soft;
 		this.fromPreprocessor = fromPreprocessor;
+		this.hard = hard;
 	}
 
 	/**

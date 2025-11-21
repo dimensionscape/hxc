@@ -1420,7 +1420,8 @@ class Parser {
 				// `Unexpected <token>`: that is an unexpected token, not a matter of the name's case.
 				if (tokEq(peek(), Semicolon)) {
 					junk();
-					throw new ParserError(Custom("Type name should start with an uppercase letter"), p1);
+					// Raised as a hard error, so the display file cannot resume past it
+					throw new ParserError(Custom("Type name should start with an uppercase letter"), p1, false, false, true);
 				}
 				return serror();
 			}
@@ -1924,7 +1925,9 @@ class Parser {
 	// A keyword where a name is expected gets a specific message instead of "Expected identifier".
 	function noKeyword(what:String):Void {
 		switch (peek()) {
-			case Kwd(kwd): err("Keyword " + Ast.sKeyword(kwd) + " cannot be used as " + what);
+			// This one is HARD: a display file's field recovery cannot absorb it
+			case Kwd(kwd): throw new ParserError(Custom("Keyword " + Ast.sKeyword(kwd)
+				+ " cannot be used as " + what), cur().pos, false, false, true);
 			case _:
 		}
 	}
@@ -1976,9 +1979,13 @@ class Parser {
 				if (er.soft) break;
 				// In the DISPLAY file a failed block element records its error and the block resumes from the
 				// stream position the failed attempt reached, so an incomplete construct under the cursor does
-				// not abort hover/definition requests elsewhere in the file. Skipping a token there instead let
-				// the block run past the field it stopped at and swallow every sibling declaration after it.
-				if (isDisplayFile() && !er.fromPreprocessor && !er.msg.match(Missing_semicolon)) {
+				// not abort hover/definition requests elsewhere in the file. Only a PARTIALLY consumed element
+				// recovers that way: a soft failure, an attempt that consumed nothing, ends the block. Skipping
+				// a token there instead would let the block run past the field it stopped at and swallow every
+				// sibling declaration after it. The recovery takes non-hard errors only, so a hard error is not
+				// a block element that failed to match: it leaves the parse rather than being recorded and
+				// resumed past.
+				if (isDisplayFile() && !er.fromPreprocessor && !er.hard && !er.msg.match(Missing_semicolon)) {
 					if (idx == save) break;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
 					continue;
@@ -2093,7 +2100,8 @@ class Parser {
 				case Kwd(_): throw er;
 				case _:
 			}
-			throw new ParserError(Custom("Missing variable identifier"), p1);
+			// Raised hard too, so it is never resumed past
+			throw new ParserError(Custom("Missing variable identifier"), p1, false, false, true);
 		}
 		var vl:Array<EVar> = [first];
 		while (tokEq(peek(), Comma)) {
@@ -2965,7 +2973,8 @@ class Parser {
 			// is not recorded and resumed the way a display-mode syntax error would be.
 			switch (peek()) {
 				case Const(CIdent(_)) if (pack.length == 0):
-					throw new ParserError(Custom("Package name must start with a lowercase character"), peekInfo().pos);
+					throw new ParserError(Custom("Package name must start with a lowercase character"), peekInfo().pos,
+						false, false, true);
 				case _:
 			}
 			semicolon();
@@ -3142,7 +3151,8 @@ class Parser {
 				// tokens CONSUMED (the stream is destructive): Eof next ends the list CLEANLY (`class<eof>`
 				// compiles), anything else is the catch-all's empty error, `Unexpected <token>`.
 				if (e.soft && tokEq(peek(), Eof)) break;
-				if (isDisplayFile() && !e.fromPreprocessor) {
+				// The same recovery: display file only, and never for a preprocessor fault or a hard error
+				if (isDisplayFile() && !e.fromPreprocessor && !e.hard) {
 					// In the display file the error is recorded and the scan skips to the next plausible
 					// declaration, so one broken declaration does not cost the answer for the rest of the file.
 					if (e.soft) syntaxErrors.push({msg: Unexpected(peek()), pos: peekInfo().pos});
@@ -3638,6 +3648,10 @@ class Parser {
 				var cff = try parseClassField(tdecl) catch (er:ParserError) {
 					// A preprocessor fault is not a field that failed to parse.
 					if (er.fromPreprocessor) throw er;
+					// The field recovery catches non-hard errors and nothing else, so a hard error is not a
+					// field that failed to match: it leaves the parse, the module is never built, and a
+					// diagnostics run reports that one message and nothing else.
+					if (er.hard) throw er;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
 					// Without rewinding, a sibling type after an unclosed body was eaten by the body and
 					// vanished from the module.
