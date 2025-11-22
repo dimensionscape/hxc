@@ -50,10 +50,23 @@ class FatalError extends haxe.Exception {
 	public final depth:Int;
 	public var callChain:Null<Array<{message:String, pos:Position, ?depth:Int}>> = null;
 
-	public function new(message:String, pos:Position, depth:Int = 0) {
+	/**
+	 * A true fatal error is raised here, rather than an Error the driver simply meets uncaught. The
+	 * diagnostics driver catches typing, parser and lexer errors and not a fatal error, so only a true
+	 * fatal error travels past the diagnostics machinery and is printed plainly - a diagnostics
+	 * request that meets one gets no json report at all. hxc's FatalError does double duty: it also
+	 * stands for an ordinary Error that nothing between the raise and the driver catches (flushing a
+	 * typing pass catches nothing, so a build's error ends the compile). That second kind is still an
+	 * ordinary Error to the diagnostics driver and must still be REPORTED - `Build failure` from a
+	 * @:build macro is one, and it belongs inside the json report.
+	 */
+	public final bypassesDiagnostics:Bool;
+
+	public function new(message:String, pos:Position, depth:Int = 0, bypassesDiagnostics:Bool = false) {
 		super(message);
 		this.pos = pos;
 		this.depth = depth;
+		this.bypassesDiagnostics = bypassesDiagnostics;
 	}
 
 	/** For a catch-all: a fatal error is on its way to the driver and is never swallowed. */

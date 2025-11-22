@@ -199,7 +199,8 @@ class EvalMacro {
 			if (a.length > 1 && a[1] == VNull) return EvalExceptions.excString(ec, "Invalid expression");
 			// A fatal error, which nothing catches before the compiler prints it and ends the compile - not
 			// a macro try, not a build's failure routing.
-			throw new hxc.core.TypingError.FatalError(strOf(a[0]), posArg(ec, a, 1, curPos), a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0);
+			throw new hxc.core.TypingError.FatalError(strOf(a[0]), posArg(ec, a, 1, curPos),
+				a.length > 2 && a[2].match(VInt(_)) ? intOf(a[2]) : 0, true);
 		});
 		reg2Raw("reportError", "report_error", function(a) { reportError(strOf(a[0]), posArg(ec, a, 1, curPos)); return VNull; });
 		// Context.withOptions: the caller's typer context takes its inlining and transform switches from

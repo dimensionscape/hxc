@@ -259,13 +259,15 @@ class TypeFields {
 		}
 		if (Std.isOfType(e, TypingError)) {
 			var te:TypingError = cast e;
-			var fe = new hxc.core.TypingError.FatalError(te.message, te.pos, te.depth);
+			// An error escaping the field's lazy closure is re-raised as a FatalError, which is the kind
+			// the diagnostics runner does not catch.
+			var fe = new hxc.core.TypingError.FatalError(te.message, te.pos, te.depth, true);
 			fe.callChain = te.callChain;
 			throw fe;
 		}
 		if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
-			throw new hxc.core.TypingError.FatalError(ce.message, ce.pos, ce.depth);
+			throw new hxc.core.TypingError.FatalError(ce.message, ce.pos, ce.depth, true);
 		}
 		recordFieldError(ctx, e);
 	}
@@ -750,8 +752,11 @@ class TypeFields {
 				&& !ctx.ignoreError()) {
 				var isMemberOfAbstractClass = TypeFunctions.hasClassFlag(c, CAbstract)
 					&& !TypeFunctions.hasClassFieldFlag(cf, CfStatic) && cf.name != "__init__";
-				throw new hxc.core.TypingError(isMemberOfAbstractClass
-					? "Function body or abstract modifier required" : "Function body required", cff.cffPos);
+				// This is raised from inside function typing, which is what the field's lazy closure holds, so
+				// it is re-raised as a FatalError - the one error class the diagnostics runner does not catch.
+				// A diagnostics request that meets it gets a plain message at exit 1 and no report.
+				throw new hxc.core.TypingError.FatalError(isMemberOfAbstractClass
+					? "Function body or abstract modifier required" : "Function body required", cff.cffPos, 0, true);
 			}
 			return;
 		}

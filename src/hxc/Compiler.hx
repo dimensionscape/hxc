@@ -1435,8 +1435,11 @@ class Compiler {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.TypingError.FatalError) {
-			// On the request path.
-			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
+			// On the request path. Only a true fatal error travels past the diagnostics machinery: typing,
+			// parser and lexer errors are caught there, so one of those still becomes a report even though
+			// nothing on the way caught it. hxc's FatalError carries which kind it is.
+			if (!e.bypassesDiagnostics && isDisplay(ctx, "diagnostics"))
+				return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
@@ -3570,6 +3573,7 @@ class Compiler {
 		if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[abort] " + msg.split("
 ")[0]);
 		ctx.raiseTypingErrors = false;
+		if (ctx.isDiagnosticsRun()) ctx.diagnostics = [];
 		ctx.addTypingError(msg, pos, depth, stack);
 		flushPendingMessages(ctx);
 		exitRequest(1);
