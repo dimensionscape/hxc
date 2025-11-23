@@ -263,9 +263,9 @@ class ModuleLoader {
 			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
 		}
 
-		// Answer the segment containing the display position, including cursors inside a segment rather
-		// than at its dot.
-		function checkPathDisplay(path:Array<PlacedName>):Void {
+		// Answer the segment containing the cursor. Load its module at the whole declaration position so
+		// unresolved imports report the entire statement.
+		function checkPathDisplay(path:Array<PlacedName>, declPos:Position):Void {
 			// Hovering a module or subtype path segment returns its type, as an expression type path does.
 			if (hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition
 					|| hxc.typing.Typer.displayDefinition) {
@@ -318,7 +318,9 @@ class ModuleLoader {
 					}
 					if (isLower) { pack.push(part.name); continue; }
 					if (hxc.typing.Typer.atDisplayPos(part.pos)) {
-						var m2 = try loadModuleOpt(ctx, {pack: pack, name: part.name}, part.pos) catch (_:Dynamic) null;
+						// Let module-load failures propagate at the declaration position. On the module segment,
+						// unresolved imports report the complete statement.
+						var m2 = loadModule(ctx, {pack: pack, name: part.name}, declPos);
 						if (m2 != null) for (mt in m2.types)
 							if (TypeFunctions.tInfos(mt).path.name == part.name)
 								hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
@@ -371,7 +373,7 @@ class ModuleLoader {
 					new Position(declPos.file, declPos.max, declPos.max), null, 8);
 				return;
 			}
-			checkPathDisplay(imp.path);
+			checkPathDisplay(imp.path, declPos);
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
@@ -442,7 +444,7 @@ class ModuleLoader {
 					new Position(declPos.file, declPos.max, declPos.max), null, 9);
 				return;
 			}
-			checkPathDisplay(path);
+			checkPathDisplay(path, declPos);
 			var impIdx = imports.addImportPosition(declPos);
 			// Load using modules in declaration order alongside imports so unresolved usings report at their
 			// declared position.
