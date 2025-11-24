@@ -1031,19 +1031,33 @@ class Compiler {
 		ctx.mainClass = path;
 		try {
 			var tLoad = hxc.core.Timer.timer(["parsing"]);
-			checkDisplayFile(ctx);
-			ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
-			// The parse of the display file raises DisplayInMacroBlock when the cursor is in a block only
-			// the macro context turns on. The normal typing is abandoned and the module is loaded in that
-			// context instead where the display hook fires against the macro-world types.
+			// Std is always in the compile roots and loads before the main class. Every display mode that is
+			// not a report mode checks the display file against the cache before the compile roots load. The
+			// DisplayInMacroBlock handler wraps the whole typing stage, and checking the display file is the
+			// first thing that stage runs - so a display file whose cursor sits in a macro-only block raises
+			// from there too. Guarding only the display root's own load would print the exception as `Error:
+			// display in macro block` instead of recovering and reporting the missing completion point.
 			try {
-				if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
-				for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
+				checkDisplayFile(ctx);
+				ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 			} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
 				if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
 			}
-			var m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
-			for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
+			// The parse of the display file raises DisplayInMacroBlock when the cursor is in a block only
+			// the macro context turns on. The normal typing is abandoned and the module is loaded in that
+			// context instead, where the display hook fires against the macro-world types. The handler wraps
+			// the whole typing stage, which is the display-file check plus every root module load. The
+			// display file can be reached through any of them, not only through its own root, so guarding
+			// only that one would let the exception print itself as `Error: display in macro block`.
+			var m:Null<ModuleDef> = null;
+			try {
+				if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
+				for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
+				m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
+				for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
+			} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
+				if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
+			}
 			// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots are
 			// typed in reverse insertion order).
 			if (platform == Cpp && ctx.defines.rawDefined("cppia"))
