@@ -63,6 +63,7 @@ class Typer {
 		expectedArrayAllowDynamic = false;
 		displayDefinition = false;
 		displayFound = null;
+		markedNodeFailed = false;
 		displaySubjectError = null;
 		displayHover = false;
 		hoverFound = null;
@@ -788,7 +789,24 @@ class Typer {
 		return e;
 	}
 
+	/**
+	 * Typing the marked expression produces the answer. If typing that expression raises, no answer is
+	 * ever produced - even when a recovery site further out records the error and the compile carries
+	 * on (typeBlock catches per statement); the request then aborts with the recorded errors. hxc
+	 * records answers by position, so without this an enclosing node that typed cleanly would still
+	 * offer one. The verdict is recorded here, at the only place the marked node is known by identity.
+	 */
+	public static var markedNodeFailed:Bool = false;
+
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
+		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
+			try return typeExprInner(ctx, e, withType, mode)
+			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
+		}
+		return typeExprInner(ctx, e, withType, mode);
+	}
+
+	static function typeExprInner(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e)) {
 			var saved = hxc.parser.Parser.displaySuppressed;
 			hxc.parser.Parser.displaySuppressed = true;

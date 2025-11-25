@@ -1146,7 +1146,10 @@ class Compiler {
 				// registry does not know (a custom metadata) answers nothing.
 				var metaDoc = displayMetaDoc(ctx);
 				if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
-				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.hoverFound;
+				// The answer is raised from the marked expression's typing, so if that typing raised instead
+				// there is no answer at all and with the recorded errors. hxc records by position, so an
+				// enclosing node that typed cleanly still had a candidate.
+				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.markedNodeFailed ? null : hxc.typing.Typer.hoverFound;
 				// The documentation comes from the hover's ITEM, and a type path answers with a type item,
 				// whose documentation is the type's own - there is no expression to read it off. Asking the
 				// expression only would print a type HINT's hover with no d attribute. The json lane builds the
