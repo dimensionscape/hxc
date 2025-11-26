@@ -1099,15 +1099,13 @@ class Compiler {
 					var mt = displayTypeAtName(ctx);
 					found = mt == null ? [] : [TypeFunctions.tInfos(mt).namePos];
 				}
-				// A mode that EXITS DURING typing DMDefinition that setting) and reached the end without
-				// raising has not answered - it aborts with the errors it recorded, or reports the missing
-				// point. An empty answer is not one of the outcomes: raise_positions is only ever reached with
-				// something to report. Answering `<list></list>` at exit 0 told a client "no definition here"
-				// for what is really a failed compile. An empty list is an answer when an expression was
-				// marked: it for a declaration, falls through to [] for anything that has none (a literal, a
-				// parenthesis chain), and raises that empty list. Only a cursor the preprocessor marked NOTHING
-				// for falls through to the missing-point report.
-				if (found.length > 0 || hxc.typing.ExprPreprocessing.markedNode != null) {
+				// A display mode that exits during typing must raise its answer. Otherwise, report recorded
+				// errors or the missing completion point. An empty definition list is valid only when the
+				// marked expression was typed successfully and has no declaration. Errors from typing that
+				// expression abort the request. A cursor for which the preprocessor marks nothing reaches the
+				// missing-point report.
+				if (!hxc.typing.Typer.markedNodeFailed
+					&& (found.length > 0 || hxc.typing.ExprPreprocessing.markedNode != null)) {
 					// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
 					if (ctx.jsonRpcId != null)
 						answerOut(jsonRpcAnswer(ctx, "[" + [for (p in found) jsonLocation(p)].join(",") + "]"))
