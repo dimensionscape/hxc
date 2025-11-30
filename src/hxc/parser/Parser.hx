@@ -3614,6 +3614,11 @@ class Parser {
 
 	function parseClassFields(tdecl:Bool, p1:Position):{fields:Array<ClassField>, pos:Position} {
 		var acc:Array<ClassField> = [];
+		// A field is retried from wherever the resume scan left the stream, with no progress test of its
+		// own: on a destructive stream a retry that fails again fails FURTHER on, so the recursion always
+		// terminates. hxc rewinds to model a soft failure, so the retry can start where the last one did;
+		// allow each index one retry, which keeps that rewind from looping.
+		var retriedAt = -1;
 		while (true) {
 			// The field list is a field followed by the rest of the list. The first element backtracks a
 			// soft failure and the list ends cleanly, so the `}` check below speaks; the RECURSIVE list is
@@ -3653,12 +3658,28 @@ class Parser {
 					// diagnostics run reports that one message and nothing else.
 					if (er.hard) throw er;
 					syntaxErrors.push({msg: er.msg, pos: er.pos});
-					// Without rewinding, a sibling type after an unclosed body was eaten by the body and
-					// vanished from the module.
-					idx = save;
-					// With no field start left, the body ends here (acc, last_pos) - there is no closing brace to
-					// expect.
-					if (resumeScan(tdecl, true) && idx > save) continue;
+					// After a failed field parse, resume from the remaining destructive token stream and let
+					// junkTokens walk back to the next field start. Rewinding repeats the failure and loses later
+					// fields. Rewind only when the attempt did not begin at a field, such as a type declaration
+					// after a malformed abstract header. Count common flags, including private, and
+					// field-production starts. Exclude @: junkTokens must walk back to the metadata so its field
+					// is preserved. Using the resume scan's narrower set causes excessive rewinding.
+					var startedAtField = switch (tokens[save].tok) {
+						case Kwd(KwdStatic) | Kwd(KwdPublic) | Kwd(KwdPrivate) | Kwd(KwdVar) | Kwd(KwdFinal)
+							| Kwd(KwdOverride) | Kwd(KwdDynamic) | Kwd(KwdInline) | Kwd(KwdOverload)
+							| Kwd(KwdMacro) | Kwd(KwdFunction) | Kwd(KwdNew): true;
+						case _: false;
+					};
+					if (!startedAtField) idx = save;
+					// With no field start left, the body ends here (acc, last position) - there is no closing
+					// brace to expect. resumeScan returning true means a field start is here - junkTokens may well
+					// have junked nothing, as it does for a bare `static`. Requiring the index to have MOVED would
+					// throw that retry away, so the body would end at the first broken field and every later field
+					// go with it, along with any display answer inside one.
+					if (resumeScan(tdecl, true) && (idx > save || retriedAt != idx)) {
+						retriedAt = idx;
+						continue;
+					}
 					return {fields: acc, pos: tokens[save > 0 ? save - 1 : 0].pos};
 				};
 				acc.push(cff);
