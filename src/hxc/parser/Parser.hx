@@ -2754,7 +2754,35 @@ class Parser {
 		}
 	}
 
+	// exprNext is a WRAPPER: under a display request a non-soft error from the continuation is
+	// recorded and e1 returned. The field parse's own dead end (serror) is such an error, so under a
+	// display request
+	// `Std.in` RECORDS the message and the receiver `Std` stands in for the whole access, leaving the
+	// statement it belongs to intact. Without the wrapper the failure would escape exprNext entirely:
+	// the enclosing statement would be dropped, its identifier never typed (so no
+	// unresolved-identifier diagnostic), and the message would come from whichever outer arm caught it
+	// instead. An empty message becomes `Unexpected` over the token sitting there; hxc's serror
+	// already carries that token, so the caught error is recorded as it stands, which is what every
+	// other recovery arm here does.
 	function exprNext(e1:Expr):Expr {
+		if (displayFile == null) return exprNextInner(e1);
+		var start = idx;
+		return try exprNextInner(e1) catch (er:ParserError) {
+			// A preprocessor fault is not an expression that failed to parse, and a hard error passes this
+			// handler rather than entering it.
+			if (er.fromPreprocessor || er.hard) throw er;
+			// Returning e1 unconditionally relies on a DESTRUCTIVE stream: there the attempt that raised has
+			// already consumed, so the caller always resumes further on, and recording the error only PEEKS,
+			// adding no progress of its own. hxc parses over an index, so an attempt that raised without
+			// consuming would hand the caller the same token and spin. Rethrowing there is what a
+			// destructive stream guarantees, not an extra condition on the rule.
+			if (idx <= start) throw er;
+			syntaxErrors.push({msg: er.msg, pos: er.pos});
+			e1;
+		}
+	}
+
+	function exprNextInner(e1:Expr):Expr {
 		// exprNext is called from the body of expr's arms, and its own arms are all token-headed, so the
 		// failed #if its peek meets leaves expr as an unconverted soft failure: `[1 #if #end ]` is
 		// secureExpr's "Expected expression" at the resumed token, and a list head ends its list on it.
