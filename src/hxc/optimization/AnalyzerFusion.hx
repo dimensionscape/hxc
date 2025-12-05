@@ -942,7 +942,7 @@ class PurityInference {
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c):
 				try applyToClass(com, c) catch (conflict:PurityConflict) {
-					com.addDiagnostic("Impure field overrides/implements field which was explicitly marked as @:pure", conflict.node.field.pos);
+					com.addPrintedError("Impure field overrides/implements field which was explicitly marked as @:pure", conflict.node.field.pos);
 					com.addDiagnostic("Pure field is here", conflict.pos, 1);
 				}
 			case _:

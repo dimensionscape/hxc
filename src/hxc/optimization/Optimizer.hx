@@ -99,7 +99,7 @@ class Optimizer {
 							case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
 								loop(TypeFunctions.applyParams(a.params, tl, a.thisType));
 							case _:
-								com.addDiagnostic("On static platforms, null can't be used as basic type " + hxc.core.TPrinting.sTypeStr(e.type), e.pos);
+								com.addPrintedError("On static platforms, null can't be used as basic type " + hxc.core.TPrinting.sTypeStr(e.type), e.pos);
 						}
 					}
 					loop(e.type);

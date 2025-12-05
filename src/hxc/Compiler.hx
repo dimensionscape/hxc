@@ -2952,6 +2952,10 @@ class Compiler {
 			group.items.push(item);
 		}
 		for (d in ctx.diagnostics) {
+			// The report is filled from the diagnostics message store ALONE, so a message reported through
+			// addPrintedError is printed by a plain compile and never appears here - the optimizer's
+			// null-on-a-static-platform check is one, and it runs either way.
+			if (d.printedOnly == true) continue;
 			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
 			var displayFile = diagnosticsFile(d.pos.file);
 			var severity = switch (d.severity) {

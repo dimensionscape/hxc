@@ -524,6 +524,14 @@ class Context {
 			diagnostics.push({message: "... Called from macro here", pos: span, depth: depth + 1, severity: Error});
 	}
 
+	// Printed errors use ordinary diagnostic routing but are excluded from diagnostics-report
+	// findings.
+	public function addPrintedError(message:String, pos:Position, depth:Int = 0):Void {
+		addDiagnostic(message, pos, depth);
+		var last = diagnostics[diagnostics.length - 1];
+		if (last != null && last.message == message) last.printedOnly = true;
+	}
+
 	public function remapPath(path:Path):Path {
 		if (path.pack.length == 0) return path;
 		var target = packageRemaps.get(path.pack[0]);
@@ -637,6 +645,11 @@ typedef CompilerDiagnostic = {
 	var severity:MessageSeverity;
 	// MessageKind for diagnostics-mode JSON output; null reads as DKCompilerMessage.
 	var ?kind:Int;
+	/**
+	 * Exclude printed-only errors from JSON diagnostics while retaining them for ordinary compiler
+	 * output.
+	 */
+	var ?printedOnly:Bool;
 };
 
 class ContextError {

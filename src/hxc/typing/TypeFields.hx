@@ -1117,7 +1117,7 @@ class TypeFields {
 				if (!TypeFunctions.hasClassFlag(sup, CExtern) && sup.constructor != null
 					&& sup.constructor != c.constructor
 					&& TypeFunctions.hasClassFieldFlag(sup.constructor, CfFinal))
-					ctx.addDiagnostic("Cannot override final constructor", c.constructor.pos);
+					ctx.addPrintedError("Cannot override final constructor", c.constructor.pos);
 			case _:
 		}
 		if (ctx.hasError()) return;
