@@ -8,6 +8,8 @@ import hxc.core.TypeUnification;
 import hxc.core.TypeUnification.UnifyError;
 import hxc.core.NotFound;
 import hxc.context.Context;
+import hxc.context.PurityState;
+import hxc.context.PurityState.Purity;
 
 // A class that implements an interface must provide each interface field with a compatible signature; a
 // missing field or an incompatible redefinition is an error.
@@ -110,6 +112,26 @@ class InterfaceCheck {
 			if (TypeFunctions.isNull(a) != TypeFunctions.isNull(b)
 				|| (isDynamicT(TypeFunctions.follow(a)) && !isDynamicT(TypeFunctions.follow(b))))
 				throw new UnifyError([Cannot_unify(a, b)], "InterfaceCheck.hx:114");
+		}
+		// A field that OVERRIDES a pure one, and carries no purity metadata of its own, is marked
+		// `@:pure(expect, <the parent's position>)` here. That is what turns the override's purity node
+		// into ExpectPure, so taint raises a purity conflict on it instead of quietly marking it Impure -
+		// the whole `Impure field overrides a @:pure one` report hangs off this one line. Reading the
+		// child's own metadata alone can never see it.
+		switch [PurityState.getPurityFromMeta(f2.meta), PurityState.getPurityFromMeta(f1.meta)] {
+			case [Pure, MaybePure]:
+				f1.meta = [{
+					name: ":pure",
+					params: [new hxc.ast.Ast.Expr(EConst(CIdent("expect")), f2.pos)],
+					pos: Position.nullPos
+				}].concat(f1.meta);
+			case [ExpectPure(p), MaybePure]:
+				f1.meta = [{
+					name: ":pure",
+					params: [new hxc.ast.Ast.Expr(EConst(CIdent("expect")), p)],
+					pos: Position.nullPos
+				}].concat(f1.meta);
+			case _:
 		}
 		// Type parameters: for equal non-empty param lists both types are applied to the same fresh
 		// placeholder types; any other param list leaves the types unchanged.

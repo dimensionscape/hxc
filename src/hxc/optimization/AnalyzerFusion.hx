@@ -943,7 +943,7 @@ class PurityInference {
 			case TClassDecl(c):
 				try applyToClass(com, c) catch (conflict:PurityConflict) {
 					com.addPrintedError("Impure field overrides/implements field which was explicitly marked as @:pure", conflict.node.field.pos);
-					com.addDiagnostic("Pure field is here", conflict.pos, 1);
+					com.addDiagnostic("... Pure field is here", conflict.pos, 1);
 				}
 			case _:
 		}
