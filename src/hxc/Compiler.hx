@@ -1315,7 +1315,21 @@ class Compiler {
 			}
 			// The shared filter pipeline also runs for eval, where it supplies inline constructors,
 			// exception lowering, and closure/local passes before interpretation. Filters run even under
-			// --no-output only generation on no_output), so analyzer value checks still report.
+			// --no-output (only generation is gated on it), so analyzer value checks still report. In a
+			// report mode an error MESSAGED during typing aborts here, before typing is finalized and before
+			// the filters. A diagnostics request that meets one therefore gets no json report at all and the
+			// message is printed plainly, exit 1. It reads the compilation context's printed-error flag,
+			// which only addPrintedError sets - adding a diagnostics message does not - so an ordinary
+			// typing error still produces the report as usual.
+			if (isDisplay(ctx, "diagnostics") && ctx.hasPrintedError()) {
+				// Only the printed errors (addPrintedError) are printed. Under a diagnostics request
+				// everything else was
+				// routed to the diagnostics store instead - an ordinary typing error goes there, and so do
+				// info and warnings - and that store is only ever rendered by the report, which this path
+				// does not produce.
+				ctx.diagnostics = ctx.diagnostics.filter(function(d) return d.printedOnly == true);
+				abortOnDiagnostics(ctx, platform);
+			}
 			{
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
@@ -2921,8 +2935,21 @@ class Compiler {
 	// Verbatim: the `version()` builtin's documentation.
 	static inline var VERSION_DOC = "Allows comparing defines (such as the version of a Haxelib or Haxe) with SemVer semantics.\r\nBoth the define and the string passed to `version()` must be valid semantic versions.\r\n\r\nExample:\r\n```haxe\r\n#if (haxe >= version(\"4.0.0-rc.3\"))\n\r\n```\r\n\r\nNote: this syntax does not parse with Haxe versions earlier than 4.0.0-rc.3,\r\nso it should be avoided if backwards-compatibility with earlier versions is needed.\r\n\r\n@see https://semver.org/";
 
-	// A position that never had one is NULL, not a range. null_pos is min = -1 and the same test
-	// guards generate_pos_as_location.
+	// A position that never had one is NULL, not a range. The null position has min = -1, and the same
+	// test guards the location form.
+	// One relatedInformation entry.
+	static function relatedJson(p:Position, depth:Int, message:String):String {
+		return '{"location":' + posAsLocation(p) + ',"depth":' + depth
+			+ ',"message":' + haxe.Json.stringify(message) + '}';
+	}
+
+	// The file plus the range, null on the same test.
+	static function posAsLocation(p:Position):String {
+		if (p.min == -1) return "null";
+		return '{"file":' + haxe.Json.stringify(diagnosticsFile(p.file))
+			+ ',"range":' + posAsRange(p) + '}';
+	}
+
 	static function posAsRange(p:Position):String {
 		if (p.min == -1) return "null";
 		var i = Position.getInfos(p);
@@ -2937,26 +2964,48 @@ class Compiler {
 		var groups:Array<{file:String, items:Array<String>}> = [];
 		// The unresolved identifiers are their own kind (1) whose args are the suggestion list, and they
 		// are emitted before the compiler messages, from the recorded list rather than from any error - a
-		// name that recovered (a type hint, an identifier under never produced one. scores each
-		// candidate: an exact match is an IMPORT suggestion carrying the full type path (kind 0),
-		// anything else a typo suggestion naming it (kind 1).
+		// name that recovered (a type hint, a recovered identifier) never produced one. Each candidate is
+		// scored: an exact match is an IMPORT suggestion carrying the full type path (kind 0), anything
+		// else a typo suggestion naming it (kind 1).
+		// Every diagnostic added becomes the `current` one, the unresolved identifiers included, and a
+		// position in a file this report does not cover CLEARS it rather than leaving the previous one
+		// standing.
+		var curGroup:Null<{file:String, items:Array<String>}> = null;
+		var curIndex = -1;
+		var curHead = "";
+		var curRelated:Array<String> = [];
 		for (u in ctx.unresolvedIdentifiers) {
-			if (!isDiagnosticsFile(ctx, u.pos.file)) continue;
+			if (!isDiagnosticsFile(ctx, u.pos.file)) { curGroup = null; curIndex = -1; continue; }
 			var displayFile = diagnosticsFile(u.pos.file);
 			var args = "[" + [for (x in u.suggestions) '{"kind":' + x.kind + ',"name":' + haxe.Json.stringify(x.name) + "}"].join(",") + "]";
-			var item = '{"kind":1,"severity":1,"range":' + posAsRange(u.pos)
-				+ ',"args":' + args + ',"relatedInformation":[]}';
+			var head = '{"kind":1,"severity":1,"range":' + posAsRange(u.pos) + ',"args":' + args;
 			var group = null;
 			for (g in groups) if (g.file == displayFile) { group = g; break; }
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
-			group.items.push(item);
+			group.items.push(head + ',"relatedInformation":[]}');
+			curGroup = group; curIndex = group.items.length - 1; curHead = head; curRelated = [];
 		}
 		for (d in ctx.diagnostics) {
 			// The report is filled from the diagnostics message store ALONE, so a message reported through
 			// addPrintedError is printed by a plain compile and never appears here - the optimizer's
 			// null-on-a-static-platform check is one, and it runs either way.
 			if (d.printedOnly == true) continue;
-			if (!isDiagnosticsFile(ctx, d.pos.file)) continue;
+			// A message at depth > 0 is not a diagnostic of its own. It joins the relatedInformation of the
+			// one most recently added, and with none to join - its depth-0 line went to the other store, or
+			// stood in a file this report does not cover - it is DROPPED, not promoted to the top level.
+			if (d.depth > 0) {
+				if (curGroup == null || curIndex < 0) continue;
+				var lines = d.message.split("
+");
+				// The EXTRA lines are prepended to the list and the head line last, and the list is then
+				// reverse-mapped, so a multi-line message prints its sub-lines before the line they belong to,
+				// each carrying the continuation prefix.
+				for (i in 1...lines.length) curRelated.push(relatedJson(d.pos, d.depth, "... " + lines[i]));
+				curRelated.push(relatedJson(d.pos, d.depth, lines[0]));
+				curGroup.items[curIndex] = curHead + ',"relatedInformation":[' + curRelated.join(",") + ']}';
+				continue;
+			}
+			if (!isDiagnosticsFile(ctx, d.pos.file)) { curGroup = null; curIndex = -1; continue; }
 			var displayFile = diagnosticsFile(d.pos.file);
 			var severity = switch (d.severity) {
 				case Information: 3;
@@ -2966,12 +3015,13 @@ class Compiler {
 			};
 			var kind = d.kind == null ? 2 : d.kind;
 			var args = haxe.Json.stringify(d.message);
-			var item = '{"kind":' + kind + ',"severity":' + severity
-				+ ',"range":' + posAsRange(d.pos) + ',"args":' + args + ',"relatedInformation":[]}';
+			var head = '{"kind":' + kind + ',"severity":' + severity
+				+ ',"range":' + posAsRange(d.pos) + ',"args":' + args;
 			var group = null;
 			for (g in groups) if (g.file == displayFile) { group = g; break; }
 			if (group == null) { group = {file: displayFile, items: []}; groups.push(group); }
-			group.items.push(item);
+			group.items.push(head + ',"relatedInformation":[]}');
+			curGroup = group; curIndex = group.items.length - 1; curHead = head; curRelated = [];
 		}
 		// The MissingFields records are grouped by position, and one DKMissingFields is printed per
 		// group: the module type the fields would be added to, the file it lives in, and one entry per

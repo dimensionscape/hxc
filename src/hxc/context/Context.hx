@@ -581,6 +581,13 @@ class Context {
 		return false;
 	}
 
+	// Only addPrintedError sets this flag; ordinary diagnostics do not. Display processing
+	// distinguishes the two.
+	public function hasPrintedError():Bool {
+		for (d in diagnostics) if (d.printedOnly == true && d.severity == Error) return true;
+		return false;
+	}
+
 	public function hasError():Bool {
 		if (forcedError) return true;
 		for (d in diagnostics) if (d.severity == Error) return true;

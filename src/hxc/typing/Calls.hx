@@ -986,7 +986,9 @@ class Calls {
 				// A super call to a dynamic method is rejected.
 				switch [fa.on.expr, fa.field.kind] {
 					case [TConst(TSuper), Method(MethDynamic)]:
-						throw new TypingError("Cannot call super." + fa.field.name + " since it's a dynamic method", p);
+						// This is reported as a printed error and typing returns: the call is still built, so
+						// whatever follows it is typed too. A printed error never appears in the json report.
+						ctx.com.addPrintedError("Cannot call super." + fa.field.name + " since it's a dynamic method", p);
 					case _:
 				}
 				callFieldAccess(ctx, fa, el, p, withType, forceInline, forcePos);
