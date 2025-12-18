@@ -385,15 +385,34 @@ class Fields {
 	// code implies - its name, the type the context wants and the kind the access mode implies -
 	// so the report can offer to create it.
 	// Exit means there is nothing usable to describe and nothing is recorded.
+	/**
+			LOAD the bare name and compare. The same path back is Imported, a different one Shadowed,
+			and a name that will not load at all is Unimported - the synthesized argument type
+			`Class<Std>` is one.
+	*/
+	static function getImportStatus(ctx:TyperContext, path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus {
+		var mt = try hxc.context.ModuleLoader.loadTypeDef(ctx.com, {pack: [], name: path.name}, Position.nullPos)
+			catch (_:Dynamic) null;
+		if (mt == null) return Unimported;
+		var got = TypeFunctions.tInfos(mt).path;
+		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
+	}
+
 	public static function handleMissingFieldRaise(ctx:TyperContext, tthis:T, i:String, mode:AccessMode,
 			withType:WithType, pfield:Position):Void {
 		// This check comes first: outside a diagnostics run nothing below runs, and in particular the
 		// call's arguments are not typed here to describe the missing method - the call types them
 		// itself, and typing them twice would report a bad argument twice.
 		if (!ctx.com.errorInDiagnosticsRun(pfield)) return;
+		// Hxc threads a call's withType into the access, because its enum resolution reads the
+		// expectation there. That has to stop at this reading: a call target is described as typed
+		// against a plain value. Left as NoValue, the MCall arm below would bind the synthesized method's
+		// return type to Void instead of leaving a free monomorph, and the report would describe a method
+		// the user has not written yet as returning Void.
+		var wt = mode.match(MCall(_)) ? WithTypeTools.value : withType;
 		// The RETURN type: what is expected, a fresh monomorph for a plain value, and for a
 		// NoValue access whatever the assigned expression turns out to be.
-		var tret:Null<T> = switch (withType) {
+		var tret:Null<T> = switch (wt) {
 			case WithType(t, _): t;
 			case Value(_): TypeFunctions.mkMono();
 			case NoValue: switch (mode) {
@@ -445,7 +464,7 @@ class Fields {
 		// The conversion happens here, with the record. This site is only reached in a diagnostics run
 		// (the errorInDiagnosticsRun check at the call site), so it cannot disturb an ordinary compile.
 		var ct = hxc.core.CompletionItem.CompletionTypeTools.fromType(
-			function(_) return hxc.core.CompletionItem.ImportStatus.Imported, t);
+			function(path) return getImportStatus(ctx, path), t);
 		ctx.com.missingFields.push({pos: pfield, on: mt, scope: scope,
 			fields: [{cf: cf, t: t, ct: ct}], cause: "FieldAccess"});
 	}
