@@ -1910,9 +1910,10 @@ class Parser {
 				t = parseTypeHint();
 				if (!tokEq(peek(), PClose)) serror();
 			} else if (!tokEq(peek(), PClose)) {
-				// The third alternative `'(_,p)` takes whatever token is there and reports the missing type
-				// hint.
-				throw new ParserError(Missing_type, peekInfo().pos);
+				// The third alternative takes whatever token is there and reports the missing type hint. It
+				// is HARD, one of the few such sites in the grammar. A display file's recovery arms catch
+				// non-hard errors only, so this one leaves the parse and the module is never built.
+				throw new ParserError(Missing_type, peekInfo().pos, false, false, true);
 			}
 			expect(PClose);
 			var e = secureExpr();
