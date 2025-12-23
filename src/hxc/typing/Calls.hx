@@ -1255,9 +1255,12 @@ class Calls {
 		// arguments written, and the call itself Dynamic at the call's own position. A display file
 		// holding one bad call still answers the request, and the block around it types Dynamic.
 		if (!multi && ctx.com.ignoreError()) {
-			var tf = TFun({args: [for (_ in el) {name: "", opt: false, t: TypeFunctions.tDynamic}],
-				ret: TypeFunctions.tDynamic});
-			var ef = TypeFunctions.mk(TField(fa.on, FieldAccessTools.applyFa(fa.field, fa.host)), tf, fa.pos);
+			// This TField keeps the field's own type, not the all-Dynamic signature just built: hxc RECORDS
+			// a
+			// display answer on the callee and carries on, so an all-Dynamic node would overwrite it and
+			// report the callee as (Dynamic...) -> Dynamic.
+			var ef = TypeFunctions.mk(TField(fa.on, FieldAccessTools.applyFa(fa.field, fa.host)),
+				fa.field.type, fa.pos);
 			return TypeFunctions.mk(TCall(ef, []), TypeFunctions.tDynamic, p);
 		}
 		if (distinct.length == 1) {
