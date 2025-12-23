@@ -23,6 +23,15 @@ class ExprPreprocessing {
 	static var gaveUp:Bool = false;
 
 	/**
+			The same verdict, but STICKY for the whole request. `gaveUp` is per expression and is cleared on
+			the next one, yet giving up is the END of the matter: nothing is marked, the display handler
+			is never reached, and a missing completion point is reported. hxc answers from a SECOND route
+			as well - the narrowest typed node enclosing the cursor - and that route has to honour the
+			same verdict or it answers where the request must decline.
+	*/
+	public static var gaveUpAtDisplay:Bool = false;
+
+	/**
 		Returns null when the pass gave up, which is hxc's signal that no expression in this body may
 		answer the request; otherwise the annotated expression.
 	**/
@@ -150,7 +159,7 @@ class ExprPreprocessing {
 		switch (e.expr) {
 			// The cursor on a local function's name answers nothing at all.
 			case EFunction(FKNamed(name, _), _) if (isAnnotated(name.pos) && isCompletion):
-				gaveUp = true;
+				gaveUp = true; gaveUpAtDisplay = true;
 				return e;
 
 			// The cursor on a var name marks nothing (the declaration answers it, and every var after it is
@@ -186,7 +195,7 @@ class ExprPreprocessing {
 				// The declarations come back out in reverse order.
 				acc.reverse();
 				if (!wasAnnotated) {
-					gaveUp = true;
+					gaveUp = true; gaveUpAtDisplay = true;
 					return e;
 				}
 				return new Expr(EVars(acc), e.pos);
@@ -279,7 +288,7 @@ class ExprPreprocessing {
 
 			// The parser already produced a display node, so there is nothing left to decide.
 			case EDisplay(_, _):
-				gaveUp = true;
+				gaveUp = true; gaveUpAtDisplay = true;
 				return e;
 
 			case EMeta(m, {expr: EConst(CString(_, _)), pos: pm}) if (m.name == ":markup" && isAnnotated(pm)):
@@ -289,11 +298,11 @@ class ExprPreprocessing {
 			// Parser.displaySuppressed for both; kept here so the pass gives the same verdict on its own.
 			case EConst(CString(_, q)) if (isAnnotated(e.pos) && isCompletion
 				&& (q != SSingleQuotes || hxc.parser.Parser.wasAutoTriggered)):
-				gaveUp = true;
+				gaveUp = true; gaveUpAtDisplay = true;
 				return e;
 
 			case EConst(CRegexp(_, _)) if (isAnnotated(e.pos) && isCompletion):
-				gaveUp = true;
+				gaveUp = true; gaveUpAtDisplay = true;
 				return e;
 
 			// Outside a completion, a var declaration answers only from a var name. Anywhere else in it -
@@ -302,7 +311,7 @@ class ExprPreprocessing {
 			// answer (if the cursor is in one) comes from loadComplexType instead.
 			case EVars(vl) if (isAnnotated(e.pos)):
 				for (v in vl) if (isAnnotated(v.evName.pos)) return annotateMarked(e);
-				gaveUp = true;
+				gaveUp = true; gaveUpAtDisplay = true;
 				return e;
 
 			case _:

@@ -71,6 +71,7 @@ class Typer {
 		definitionWalked = new haxe.ds.ObjectMap();
 		exprDisplayOff = false;
 		hxc.typing.ExprPreprocessing.markedNode = null;
+		hxc.typing.ExprPreprocessing.gaveUpAtDisplay = false;
 		displayTypeDefinition = false;
 		displaySignature = false;
 		signatureFound = null;
@@ -1724,7 +1725,14 @@ class Typer {
 	// access, local, enum field).
 	// hexpected: the with-type at the hover point, encoded as `expected`.
 	// tctx is the scope the hovered expression was typed in; the isQualified retype needs it.
-	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType}> = null;
+	/**
+	 * `fromWalk` marks a record the ENCLOSING-NODE WALK made rather than one of the hooks that stand
+	 * for a raise site. A hover is answered only from the node ExprPreprocessing marked, so when the
+	 * preprocessor gave up the walk's record must go with it. The hooks must not: should the display
+	 * position be on the type hint, it is picked up while loading the type, whatever the expression
+	 * walk decided.
+	 */
+	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}> = null;
 
 	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
 	// position.
@@ -2031,7 +2039,7 @@ class Typer {
 	// narrowest-wins rule as checkDisplayHover, so a real node inside the span still wins.
 	static function noteLiteralHover(ctx:TyperContext, te:TExpr, p:Position, ?withType:hxc.core.WithType.WithType):Void {
 		if (hoverFound != null && (p.max - p.min) >= (hoverFound.p.max - hoverFound.p.min)) return;
-		hoverFound = {t: te.type, p: p, e: te, wt: withType, tctx: ctx};
+		hoverFound = {t: te.type, p: p, e: te, wt: withType, tctx: ctx, fromWalk: true};
 	}
 
 	// Typing is POST-ORDER, so by the time an enclosing node runs this its inner nodes have
@@ -2070,7 +2078,7 @@ class Typer {
 			case _: te.type;
 		};
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: ht, p: te.pos, e: te, wt: withType, tctx: ctx};
+			hoverFound = {t: ht, p: te.pos, e: te, wt: withType, tctx: ctx, fromWalk: true};
 	}
 
 	// A field item is "qualified" when typing its BARE name in the same scope, against the same expected

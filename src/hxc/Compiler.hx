@@ -1102,8 +1102,8 @@ class Compiler {
 				// A display mode that exits during typing must raise its answer. Otherwise, report recorded
 				// errors or the missing completion point. An empty definition list is valid only when the
 				// marked expression was typed successfully and has no declaration. Errors from typing that
-				// expression abort the request. A cursor for which the preprocessor marks nothing reaches the
-				// missing-point report.
+				// expression abort the request. If the preprocessor marks nothing, report the missing
+				// completion point; do not infer an answer from an enclosing, unmarked node.
 				if (!hxc.typing.Typer.markedNodeFailed
 					&& (found.length > 0 || hxc.typing.ExprPreprocessing.markedNode != null)) {
 					// A JSON-RPC request answers with Location objects; the legacy arg prints XML.
@@ -1145,9 +1145,14 @@ class Compiler {
 				var metaDoc = displayMetaDoc(ctx);
 				if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
 				// The answer is raised from the marked expression's typing, so if that typing raised instead
-				// there is no answer at all and with the recorded errors. hxc records by position, so an
-				// enclosing node that typed cleanly still had a candidate.
-				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.markedNodeFailed ? null : hxc.typing.Typer.hoverFound;
+				// there is no answer at all and the request aborts with the recorded errors. Answers are
+				// recorded by position, so an enclosing node that typed cleanly would still have a candidate.
+				// The preprocessor giving up vetoes the WALK's record only. A hook standing for a raise site
+				// still answers - a cursor on a type hint is picked up while LOADING the type, whatever the
+				// expression walk decided about it.
+				var hf = hxc.typing.Typer.hoverFound;
+				if (hf != null && hf.fromWalk == true && hxc.typing.ExprPreprocessing.gaveUpAtDisplay) hf = null;
+				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.markedNodeFailed ? null : hf;
 				// The documentation comes from the hover's ITEM, and a type path answers with a type item,
 				// whose documentation is the type's own - there is no expression to read it off. Asking the
 				// expression only would print a type HINT's hover with no d attribute. The json lane builds the
