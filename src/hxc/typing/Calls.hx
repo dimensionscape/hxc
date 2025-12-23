@@ -1249,6 +1249,17 @@ class Calls {
 			for (d in distinct) if (d.msg == f.msg) { seen = true; break; }
 			if (!seen) distinct.push(f);
 		}
+		// With a SINGLE candidate the failure is swallowed when errors are ignored - a display request
+		// whose job is to answer rather than to complain - and failFun stands a recovery in its place: a
+		// call to the same field with no arguments, the field typed as (Dynamic...) -> Dynamic over the
+		// arguments written, and the call itself Dynamic at the call's own position. A display file
+		// holding one bad call still answers the request, and the block around it types Dynamic.
+		if (!multi && ctx.com.ignoreError()) {
+			var tf = TFun({args: [for (_ in el) {name: "", opt: false, t: TypeFunctions.tDynamic}],
+				ret: TypeFunctions.tDynamic});
+			var ef = TypeFunctions.mk(TField(fa.on, FieldAccessTools.applyFa(fa.field, fa.host)), tf, fa.pos);
+			return TypeFunctions.mk(TCall(ef, []), TypeFunctions.tDynamic, p);
+		}
 		if (distinct.length == 1) {
 			// The one candidate's error is raised as it came, chain included: a macro's uncaught exception
 			// in
