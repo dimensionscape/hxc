@@ -2190,7 +2190,7 @@ class Parser {
 						// A dangling dot at the display position is a field-completion request: keep an
 						// empty field access so typing resolves (and reports on) the receiver.
 						// (display_expr EDisplay DKDot).
-						if (atDisplayDot(p)) return exprNext(new Expr(EField(e1, "", EFNormal), Position.union(e1.pos, p)));
+						if (atDisplayDot(p)) return new Expr(EField(e1, "", EFNormal), Position.union(e1.pos, p));
 						return serror();
 				}
 		}
