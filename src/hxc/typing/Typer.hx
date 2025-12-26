@@ -4980,7 +4980,23 @@ class Typer {
 		return AKExpr(TypeFunctions.mk(TFunction(tf), TFun({args: sig.args, ret: retT}), p));
 	}
 
+	// The answer from the marked expression's own typing, so if that typing raised instead there is no
+	// answer at all and with the recorded errors. typeExpr carries that verdict already, but a call
+	// TARGET never reaches typeExpr - typeCallTarget hands its callee straight to typeAccess - so an
+	// unknown identifier in callee position raised, went unrecorded, and the answer came out of the
+	// enclosing node instead. The identity test is on the marked node's own def and span, since there
+	// is no Expr here to compare.
 	public static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		var mn = hxc.typing.ExprPreprocessing.markedNode;
+		if (mn != null && mn.expr == edef && mn.pos.min == p.min && mn.pos.max == p.max
+			&& mn.pos.file == p.file) {
+			try return typeAccessInner(ctx, edef, p, mode, withType)
+			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
+		}
+		return typeAccessInner(ctx, edef, p, mode, withType);
+	}
+
+	static function typeAccessInner(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		return switch (edef) {
 			case EConst(CIdent(s)):
 				typeIdent(ctx, s, p, mode, withType);
