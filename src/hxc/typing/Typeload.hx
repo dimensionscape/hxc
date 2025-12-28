@@ -45,6 +45,10 @@ class Typeload {
 		c.meta = tp.tpMeta;
 		var t = TInst(c, []);
 		var p = tp.tpName.pos;
+		// `if ctx.is_display_file && display_position#enclosed_in (pos tp.tp_name) then
+		// DisplayEmitter.display_type ctx t (pos tp.tp_name)`.
+		if (hxc.typing.ExprPreprocessing.inDisplayFile(p) && hxc.typing.Typer.atDisplayPos(p))
+			hxc.typing.Typer.displayTypeParam(t, p);
 		var declModulePath:Path = {pack: declPath.pack, name: declPath.name};
 		// A method/constructor/enum-constructor type param has a synthetic declPath ({[], name}) that
 		// names no module, so moduleLut cannot recover its declaring module when the constraint is forced

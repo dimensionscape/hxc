@@ -2695,6 +2695,19 @@ class Typer {
 				wt: hxc.core.WithType.WithTypeTools.namedArgument("value")};
 	}
 
+	// A cursor on a type parameter's own name answers with the parameter's type, straight from where
+	// the parameter is created - there is no expression to find it through, exactly as for a variable
+	// declaration below. This is a HOOK standing for a reference raise site, not the enclosing-node
+	// walk, so it carries no fromWalk and stands even where the expression walk gave up.
+	public static function displayTypeParam(t:T, p:Position):Void {
+		if (displayDefinition || displayTypeDefinition) {
+			if (displayFound == null) displayFound = [p];
+			return;
+		}
+		if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
+			hoverFound = {t: t, p: p};
+	}
+
 	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [v.pos];
