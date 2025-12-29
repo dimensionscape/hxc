@@ -3694,9 +3694,13 @@ class Parser {
 					// field-production starts. Exclude @: junkTokens must walk back to the metadata so its field
 					// is preserved. Using the resume scan's narrower set causes excessive rewinding.
 					var startedAtField = switch (tokens[save].tok) {
-						case Kwd(KwdStatic) | Kwd(KwdPublic) | Kwd(KwdPrivate) | Kwd(KwdVar) | Kwd(KwdFinal)
-							| Kwd(KwdOverride) | Kwd(KwdDynamic) | Kwd(KwdInline) | Kwd(KwdOverload)
-							| Kwd(KwdMacro) | Kwd(KwdFunction) | Kwd(KwdNew): true;
+						case Kwd(KwdMacro) | Kwd(KwdPublic) | Kwd(KwdStatic) | Kwd(KwdVar) | Kwd(KwdFinal)
+							| Kwd(KwdOverride) | Kwd(KwdDynamic) | Kwd(KwdInline) | Kwd(KwdOverload): true;
+						case Kwd(KwdFunction):
+							switch (save + 1 < tokens.length ? tokens[save + 1].tok : Eof) {
+								case Const(_) | Kwd(KwdNew): true;
+								case _: false;
+							}
 						case _: false;
 					};
 					if (!startedAtField) idx = save;
