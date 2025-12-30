@@ -2839,14 +2839,12 @@ class Typer {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (mn == null || mn.pos == null || p == null) return false;
 		if (!hxc.typing.ExprPreprocessing.inDisplayFile(p)) return false;
-		// A BLOCK mark is excluded. What differs is what happens next, and it is TEMPORAL. type_block
-		// catches Error PER STATEMENT and records it, so the block itself types cleanly and the display
-		// walk raises its answer before typing ends - the answer wins, and the recorded error never
-		// reaches . With the call marked instead, typing the marked node itself raises, no answer is ever
-		// produced, and aborts with the error. So the real discriminator is whether the marked NODE typed
-		// cleanly, and excluding a block stands in for the one case where a statement error is swallowed
-		// under it. Giving hxc that signal directly would retire this exclusion.
-		switch (mn.expr) { case EBlock(_): return false; case _: }
+		// A block mark is not excluded here. With the cursor in a gap the block itself is the marked
+		// node, and it still answers. The difference from a call is TEMPORAL, not spatial: typeBlock
+		// catches errors PER STATEMENT, so the marked block types cleanly and the display walk still
+		// raises its answer, while a marked call raises out of its own typing and leaves nothing to
+		// answer with. That verdict is markedNodeFailed's, recorded where the marked node is known by
+		// identity, so the spatial test is just the span again.
 		return mn.pos.min <= p.min && p.max <= mn.pos.max;
 	}
 

@@ -1083,10 +1083,15 @@ class Compiler {
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
-			// When the unresolved name is the display subject, so the error answers the request. hxc catches
-			// that raise while recovering the field body, so the answer path has to defer to it explicitly -
-			// and only to it: an error anywhere else must still leave the answer alone.
-			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displaySubjectError != null) {
+			// The typer raises when the unresolved name is the display subject, so the error answers the
+			// request. That raise is caught while recovering the field body, so the answer path has to defer
+			// to it explicitly - and only to it: an error anywhere else must still leave the answer alone.
+			// Raising is not by itself the end of the request. The answer is raised from the marked
+			// expression's own typing, so only a raise that escaped that typing leaves nothing to answer -
+			// one caught inside it (a block's per-statement recovery) still lets the walk answer.
+			// markedNodeFailed is that verdict, and the answer gate below already reads it.
+			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displaySubjectError != null
+				&& hxc.typing.Typer.markedNodeFailed) {
 				// The recovery that caught the raise already recorded the message; re-adding it here printed it
 				// twice. Only the decision to stop instead of answering belongs here.
 				flushPendingMessages(ctx);
