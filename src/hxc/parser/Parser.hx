@@ -2187,10 +2187,10 @@ class Parser {
 					case EConst(CInt(v, null)):
 						return exprNext(new Expr(EConst(CFloat(v + ".", null)), Position.union(p, e1.pos)));
 					case _:
-						// A dangling dot at the display position is a field-completion request: keep an
-						// empty field access so typing resolves (and reports on) the receiver.
-						// (display_expr EDisplay DKDot).
-						if (atDisplayDot(p)) return new Expr(EField(e1, "", EFNormal), Position.union(e1.pos, p));
+						// The field parse ends with serror() and nothing else: the only field-completion
+						// arm is checkResume at the top, gated on completion mode (DMDefault alone). A
+						// dangling dot outside completion mode is a syntax error, and the enclosing call is
+						// marked instead.
 						return serror();
 				}
 		}
