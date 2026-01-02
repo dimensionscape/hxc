@@ -1510,14 +1510,8 @@ class Compiler {
 		for (en in entries) if (en.name.length > maxLen) maxLen = en.name.length;
 		for (en in entries) {
 			var d = en.entry;
-			var params = d.params.length == 0 ? "" : (en.isMeta ? "(<" + d.params.join(">, <") + ">) " : "<" + d.params.join(">, <") + "> ");
-			var pfs = switch (d.platforms.length) {
-				case 0: "";
-				case 1: " (" + d.platforms[0] + " only)";
-				case _: " (for " + d.platforms.join(",") + ")";
-			};
-			var origin = d.source == null ? "" : " (from " + d.source + ")";
-			Sys.println(" " + StringTools.rpad(en.name, " ", maxLen) + ": " + limitString(params + d.doc + pfs + origin, maxLen + 3));
+			var doc = docString(d.params, d.doc, d.platforms, en.isMeta, d.source);
+			Sys.println(" " + StringTools.rpad(en.name, " ", maxLen) + ": " + limitString(doc, maxLen + 3));
 		}
 	}
 
@@ -1531,29 +1525,42 @@ class Compiler {
 			if (R.boolField(e, "internal")) continue;
 			var name = R.stringField(e, isMeta ? "metadata" : "define", "");
 			if (name == "") continue;
-			var params = [for (p in R.arrayField(e, "params")) switch (p) { case JString(v): v; case _: ""; }];
-			var pstr = params.length == 0 ? ""
-				: (isMeta ? "(<" + params.join(">, <") + ">) " : "<" + params.join(">, <") + "> ");
-			// The platform list holds the json order and is printed reversed. The params are collected by
-			// prepending per entry and then reversed, which restores json order - which is why params are
-			// not reversed here.
-			var plats = [for (p in R.arrayField(e, "platforms")) switch (p) { case JString(v): v; case _: ""; }];
-			plats.reverse();
-			var pfs = switch (plats.length) {
-				case 0: "";
-				case 1: " (" + plats[0] + " only)";
-				case _: " (for " + plats.join(",") + ")";
-			};
 			// A define's documented name joins its `_`-separated parts with dashes, so a define is listed
 			// with dashes; a metadata keeps its name and gains the leading `@`. The rename happens before
 			// the list is sorted, so it decides the ordering too.
 			var shown = isMeta ? "@" + name : name.split("_").join("-");
-			rows.push({name: shown, doc: pstr + R.stringField(e, "doc", "") + pfs});
+			rows.push({name: shown, doc: registryDoc(e, isMeta)});
 		}
 		rows.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 		var maxLen = 0;
 		for (r in rows) if (r.name.length > maxLen) maxLen = r.name.length;
 		for (r in rows) Sys.println(" " + StringTools.rpad(r.name, " ", maxLen) + ": " + limitString(r.doc, maxLen + 3));
+	}
+
+	static function registryDoc(e:Array<hxc.core.Json.JsonField>, isMeta:Bool):String {
+		var R = hxc.context.MetaRegistry;
+		var params = [for (p in R.arrayField(e, "params")) switch (p) { case JString(v): v; case _: ""; }];
+		// The platform list holds the json order and is printed reversed. The params are collected by
+		// prepending per entry and then reversed, which restores json order - which is why params are not
+		// reversed here.
+		var plats = [for (p in R.arrayField(e, "platforms")) switch (p) { case JString(v): v; case _: ""; }];
+		plats.reverse();
+		return docString(params, R.stringField(e, "doc", ""), plats, isMeta);
+	}
+
+	// The documentation is one assembled string and every reader prints it: the --help list, the user
+	// variants, and the hover `<metadata>` answer. The parts are the params prefix, the doc, the
+	// platform list and the origin; a define differs only in how it brackets the params.
+	static function docString(params:Array<String>, doc:String, platforms:Array<String>, isMeta:Bool,
+			?origin:String):String {
+		var pstr = params.length == 0 ? ""
+			: (isMeta ? "(<" + params.join(">, <") + ">) " : "<" + params.join(">, <") + "> ");
+		var pfs = switch (platforms.length) {
+			case 0: "";
+			case 1: " (" + platforms[0] + " only)";
+			case _: " (for " + platforms.join(",") + ")";
+		};
+		return pstr + doc + pfs + (origin == null ? "" : " (from " + origin + ")");
 	}
 
 	// Word-wraps at 80 columns, continuing lines indented to the given offset.
@@ -3358,16 +3365,20 @@ class Compiler {
 	}
 
 	// The documentation registered for the metadata name the cursor is on, or null when the registry
-	// has no entry for it (which is every Meta.Custom, the case that answers nothing).
+	// has no entry for it (every custom metadata, which answers nothing). The hover gets the same
+	// assembled string the --help list prints - params prefix, doc, platforms, origin - not the bare
+	// doc. An internal entry has no documentation and answers nothing.
 	static function displayMetaDoc(ctx:Context):Null<String> {
 		var want = hxc.parser.Parser.displayMetaName;
 		if (want == null) return null;
 		var user = ctx.userMetas.get(want.charAt(0) == ":" ? want.substr(1) : want);
-		if (user != null) return user.doc;
+		if (user != null) return docString(user.params, user.doc, user.platforms, true, user.source);
 		for (mv in hxc.context.MetaRegistry.metas())
 			if (hxc.context.MetaRegistry.stringField(mv, "metadata", "") == want) {
-				var doc = hxc.context.MetaRegistry.stringField(mv, "doc", "");
-				return doc == "" ? null : doc;
+				// Only an INTERNAL entry has no documentation, so an entry with an empty doc still answers
+				// with whatever its platforms add.
+				if (hxc.context.MetaRegistry.boolField(mv, "internal")) return null;
+				return registryDoc(mv, true);
 			}
 		return null;
 	}
