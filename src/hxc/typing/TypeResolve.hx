@@ -1753,11 +1753,27 @@ class TypeResolve {
 							var regPos = cff.cffPos;
 							var r:Ref<TLazy> = new Ref(null);
 							r.set(TypeFunctions.lazyWait(function():T {
+								// The return of the one field it has, which is the impl static the generator later reads.
+								// hxc's modelled cast entry is a separate object and its return can diverge from that
+								// static's: an inferred `return v` left the model at the abstract while the static
+								// correctly held the method's own type parameter, so the check compared the abstract with
+								// itself and passed. Read the static when it exists.
+								var checkRet = declaredRet;
+								if (a.impl != null) {
+									var impl = a.impl.statics.get(cf.name);
+									if (impl != null) switch (TypeFunctions.follow(impl.type)) {
+										case TFun(isig): checkRet = isig.ret;
+										case _:
+									}
+								}
 								// The return type of a from-function must be the abstract, not the underlying type
 								if (!fromMacro) {
-									try TypeUnification.typeEqKind(EqStrict, declaredRet, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
+									// A plain TypingError is recorded and the lazy, which caches only on
+									// success, re-ran on the next force and reported twice.
+									try TypeUnification.typeEqKind(EqStrict, checkRet, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
 									catch (ue:hxc.core.TypeUnification.UnifyError)
-										throw new hxc.core.TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), regPos);
+										throw new hxc.core.TypingError.FatalError(
+											hxc.core.TPrinting.betterErrorMessage(ue.errors), regPos, 0, true);
 								}
 								var t2:T = switch (TypeFunctions.follow(cf.type)) {
 									case TFun(sig) if (sig.args.length == fromIdx + 1):
@@ -1771,27 +1787,11 @@ class TypeResolve {
 								return t2;
 							}));
 							a.fromField.push({t: TLazy(r), cf: cf});
-							// A @:from's return to the abstract, and in the reference that constraint lands on the same
-							// field the generator later reads. hxc keeps a separate modelled cast field on purpose
-							// (forcing the real one during unification recurses, see the note above), so the constraint
-							// reached only the model: an UNCALLED @:from with no declared return type kept the monomorph
-							// its body never bound, and a target lowered that to Dynamic instead of the abstract. The
-							// impl static's signature is still a bare monomorph here, so this has to wait for PForce,
-							// which is where cast signatures anyway.
-							if (isFrom && a.impl != null) {
-								var castName = cff.cffName.name;
-								ctx.delay(hxc.context.Context.PForce, function() {
-									var implCf = a.impl.statics.get(castName);
-									if (implCf == null) return;
-									switch (TypeFunctions.follow(implCf.type)) {
-										case TFun(isig) if (TypeFunctions.follow(isig.ret).match(TMono(_))):
-											try TypeUnification.typeEqKind(EqStrict, isig.ret,
-												TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
-											catch (_:hxc.core.TypeUnification.UnifyError) {}
-										case _:
-									}
-								});
-							}
+							// That is the only write to the return type there, and it reports when it
+							// fails. Binding the impl static's return to the abstract here instead
+							// performed the same unification with the failure SWALLOWED, so a @:from whose
+							// return is not the abstract compiled clean.
+							ctx.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(r));
 						}
 					}
 					if (isTo) {

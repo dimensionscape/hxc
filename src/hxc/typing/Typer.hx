@@ -706,7 +706,11 @@ class Typer {
 				case TAnon(_):
 					getIterableParam(t);
 				case TAbstract(a, tl):
-					for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return null;
+					// The guard uses shallowEq, which stops at the type constructor. fastEq compares the
+					// parameters too, and getAbstractFroms hands back the abstract over DUPLICATED params, so a
+					// @:from taking the abstract itself would produce a fresh pair every turn, the guard would
+					// never match, and the walk would recurse until the stack ran out.
+					for (seenT in seen) if (TypeUnification.shallowEq(seenT, t)) return null;
 					var hits:Array<T> = [];
 					for (ft in getAbstractFroms(ctx, a, tl)) {
 						var et = loop(seen.concat([t]), ft);
