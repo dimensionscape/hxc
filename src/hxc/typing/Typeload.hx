@@ -221,7 +221,21 @@ class Typeload {
 				var resolved = [for (th in tl) {t: try loadComplexType(ctx, typeParams, th, allowDisplay)
 						catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) throw structExtensionCompletion(ctx, tc, true),
 					pos: th.pos}];
-				makeExtensionType(ctx, resolved, p);
+				// The extension is not built here: a monomorph is made, and the extension is built inside a
+				// protected lazy that binds it on first force. The members of an intersection can name the
+				// typedef being defined, so building eagerly follows one that has not been resolved yet and
+				// reports "Can only extend structures" for a valid recursive structure.
+				var tr = TypeFunctions.monomorphCreateRef();
+				var t = TMono(tr);
+				var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(t));
+				r.set(TypeFunctions.lazyWait(function():T {
+					r.set(TypeFunctions.lazyProcessing(function():T return t));
+					var ta = makeExtensionType(ctx, resolved, p);
+					TypeFunctions.monomorphBindRef(tr, ta);
+					r.set(TypeFunctions.lazyAvailable(ta));
+					return ta;
+				}));
+				TLazy(r);
 
 			case CTExtend(paths, fields):
 				var anonT = loadComplexTypePrime(ctx, typeParams, CTAnonymous(fields), p, allowDisplay);
