@@ -3847,7 +3847,10 @@ class EvalStdLib {
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
-		reg(s, "Sys", "exit", vfn(a -> { Sys.exit(toInt(arg(a, 0))); VNull; }));
+		// Sys.exit raises an exit exception; the compiler marks the compile failed for a non-zero code
+		// and flushes the message list before returning it. Exiting the host process here would throw away
+		// every warning a macro had queued, including the ones explaining why it was exiting.
+		reg(s, "Sys", "exit", vfn(a -> throw new hxc.eval.EvalExceptions.EvalSysExit(toInt(arg(a, 0)))));
 		reg(s, "Sys", "getCwd", vfn(a -> mkStr(Sys.getCwd())));
 		reg(s, "Sys", "getEnv", vfn(a -> {
 			var v = Sys.getEnv(stringOf(arg(a, 0)));

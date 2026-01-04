@@ -2577,9 +2577,12 @@ class EvalMacro {
 			macroCom.raiseTypingErrors = oldRaise;
 			hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 			// A display answer raised while typing a macro body is the request's result, not a macro-loading
-			// failure to swallow. only Error. Neither is a fatal error: raises the Fatal_error of a body the
-			// macro world could not type straight out of the macro world, and the compile on it.
-			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
+			// failure to swallow; only a typing Error is swallowed. Neither is a fatal error: finalization
+			// raises the fatal error of a body the macro world could not type straight out of the macro
+			// world, and the compile ends on it. An exit is re-raised past the catchall, so a macro that
+			// exits ends the compile there rather than leaving typing to carry on without its result.
+			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)
+				|| Std.isOfType(e, hxc.eval.EvalExceptions.EvalSysExit)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;

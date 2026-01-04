@@ -370,6 +370,13 @@ class Compiler {
 		try runInner(args)
 		catch (ra:RequestAbort) throw ra
 		catch (mj:hxc.context.DisplayJson.JsonDisplayOutput) throw mj
+		catch (se:hxc.eval.EvalExceptions.EvalSysExit) {
+			// A non-zero exit code marks the compile failed, then the accumulated messages are FLUSHED
+			// before the code is returned. The macro that exits has usually queued the warnings saying why.
+			var c = argFailureCtx;
+			if (c != null) flushPendingMessages(c);
+			Sys.exit(se.code);
+		}
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
@@ -1487,6 +1494,10 @@ class Compiler {
 		} catch (e:RequestAbort) {
 			// The request already reported and chose its exit code; it unwinds to the wait loop
 			// rather than being reported a second time as an unexpected error.
+			throw e;
+		} catch (e:hxc.eval.EvalExceptions.EvalSysExit) {
+			// An exit request is re-raised past the catch-all so it reaches the exit handler with its code
+			// intact.
 			throw e;
 		} catch (e:Dynamic) {
 			answerOut("Error: " + Std.string(e) + "\n");
