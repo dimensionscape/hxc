@@ -65,6 +65,7 @@ class Typer {
 		displayFound = null;
 		markedNodeFailed = false;
 		displaySubjectError = null;
+		hxc.typing.Typeload.resetSynthesizedHints();
 		displayHover = false;
 		hoverFound = null;
 		hoverWalked = new haxe.ds.ObjectMap();

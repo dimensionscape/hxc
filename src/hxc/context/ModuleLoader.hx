@@ -685,7 +685,7 @@ class ModuleLoader {
 						var aTParams:Array<TypeParamOrConst> = [
 							for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 						];
-						var aT:TypeHint = {ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p};
+						var aT:TypeHint = hxc.typing.Typeload.synthesizedHint({ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p});
 						var thisT:TypeHint = aT;
 						for (fl in d.dFlags) switch (fl) { case AbOver(t): thisT = t; break; case _: }
 						var implFields:Array<ClassField> = [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
@@ -2089,7 +2089,7 @@ class ModuleLoader {
 		var aTParams:Array<TypeParamOrConst> = [
 			for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 		];
-		var aT:TypeHint = {ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p};
+		var aT:TypeHint = hxc.typing.Typeload.synthesizedHint({ct: CTPath({tpackage: [], tname: d.dName.name, tparams: aTParams, tsub: null}), pos: p});
 		var thisT:TypeHint = aT;
 		for (fl in d.dFlags) switch (fl) { case AbOver(t): thisT = t; break; case _: }
 		return [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];

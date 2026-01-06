@@ -174,6 +174,29 @@ class Typeload {
 		return TypeFunctions.mkMono();
 	}
 
+	/**
+	 * Type hints hxc SYNTHESISES rather than reads from syntax: an abstract's own self-type and the
+	 * parameter paths inside it, built with the declaration's position. They are never displayed:
+	 * display is allowed for a type the user WROTE and not for one built internally. The hook is
+	 * reached through a call shape that cannot tell the two apart, so the verdict rides on the hint
+	 * itself, the way Typer.synthesized carries it for an expression.
+	 *
+	 * Keyed by identity and not drained on use, since one hint is loaded once per field that carries
+	 * it. Cleared per compilation: the server reuses this context, and a registry that only grows
+	 * leaks across requests.
+	 */
+	public static var synthesizedHints:haxe.ds.ObjectMap<TypeHint, Bool> = new haxe.ds.ObjectMap();
+
+	public static function synthesizedHint(th:TypeHint):TypeHint {
+		synthesizedHints.set(th, true);
+		return th;
+	}
+
+	public static function resetSynthesizedHints():Void {
+		synthesizedHints = new haxe.ds.ObjectMap();
+	}
+
+
 	// A PACKAGE-LESS path that does not resolve recovers to Dynamic wherever the run tolerates errors,
 	// so the rest of the declaration still types and the report can describe the name rather than stop
 	// at it. A PACKAGED path keeps its error, and so does a bare one with the cursor inside the hint,
@@ -181,6 +204,14 @@ class Typeload {
 	// unresolved identifier instead, which is what turns it into DKUnresolvedIdentifier rather than a
 	// compiler error.
 	public static function loadComplexType(ctx:Context, typeParams:TypeParams, th:TypeHint, allowDisplay:Bool = false):T {
+		if (th != null && synthesizedHints.exists(th)) {
+			var saved = hxc.parser.Parser.displaySuppressed;
+			hxc.parser.Parser.displaySuppressed = true;
+			var r = try loadComplexTypePrime(ctx, typeParams, th.ct, th.pos, allowDisplay)
+				catch (e:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw e; };
+			hxc.parser.Parser.displaySuppressed = saved;
+			return r;
+		}
 		return try loadComplexTypePrime(ctx, typeParams, th.ct, th.pos, allowDisplay)
 		catch (exc:ContextError) {
 			var name = switch (exc.kind) {
@@ -647,7 +678,10 @@ class Typeload {
 			// answers Foo and not Array.
 			var strings = t.tsub != null ? [t.tsub, t.tname].concat(t.tpackage) : [t.tname].concat(t.tpackage);
 			var pName = new Position(p.file, p.min, p.min + strings.join(".").length);
-			if (hxc.typing.Typer.atDisplayPos(pName)) {
+			// The cursor test covers the whole path, parameters included, and narrows to the dotted name
+			// only for the answer, so `new H<Int>()` asked on the `(` answers `H`, not the whole new
+			// expression.
+			if (hxc.typing.Typer.atDisplayPos(p)) {
 				var mt = try TypeFunctions.moduleTypeOfType(r) catch (_:hxc.core.ExitException) null;
 				if (mt != null) hxc.typing.Typer.displayModuleType(ctx, mt, pName, allowDisplay);
 			}

@@ -1865,7 +1865,7 @@ class TypeResolve {
 			CTPath({tpackage: a.path.pack, tname: a.path.name, tparams: aTParams, tsub: null});
 		else
 			CTPath({tpackage: a.module.path.pack, tname: a.module.path.name, tparams: aTParams, tsub: a.path.name});
-		var aT:TypeHint = {ct: aCt, pos: p};
+		var aT:TypeHint = hxc.typing.Typeload.synthesizedHint({ct: aCt, pos: p});
 		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData, ctx);
 		// An EAOther member gets no synthesised value and no hint, so it is still a bare `var A;` when
 		// the field loop reaches it and reports the missing hint on top of "Value required".
