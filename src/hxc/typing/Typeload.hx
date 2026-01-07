@@ -61,7 +61,20 @@ class Typeload {
 			if (tp.tpDefault == null) return null;
 			var r:Ref<TLazy> = new Ref(TypeFunctions.lazyWait(function():T {
 				var savedMod = ctx.currentModule;
+				// Same recovery the constraint lazy below does, and for the same reason: declModulePath is the
+				// declaring type's path, which names a module only for a module's PRIMARY type. A second or
+				// private type in the module misses, and the default then resolves without that module's
+				// imports - `T = Option<String>` under `import haxe.ds.Option` reported Type not found. Only
+				// --json with -dce no forces it, which is why no compile lane saw it.
 				var declMod = ctx.moduleLut.get(Context.pathKey(declModulePath));
+				if (declMod == null) {
+					var mp = ctx.typeToModule.get(Context.pathKey(declModulePath));
+					if (mp != null) declMod = ctx.moduleLut.get(Context.pathKey(mp));
+				}
+				// Pmod is the module this parameter was declared in, captured above while it was current;
+				// declaringModule is null for a TYPE-level param, which is exactly the
+				// case that misses.
+				if (declMod == null) declMod = declaringModule != null ? declaringModule : pmod;
 				if (declMod != null) ctx.currentModule = declMod;
 				try {
 					var def = loadComplexType(ctx, getParams(), tp.tpDefault);
