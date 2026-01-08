@@ -3909,7 +3909,14 @@ class EvalMacro {
 			case VEnumValue(ev) if (ev.eindex == 1): DoubleQuotes;
 			case _: NoQuotes;
 		};
-		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: dp, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		// Takes the field's own name_pos; a macro that builds an object field by hand may omit it, and
+		// decode_placed_name then falls back to the enclosing position, which is what dp is here. uses
+		// maybe_decode_pos, which swallows Invalid_expr and yields null_pos: a macro that builds an
+		// object field by hand has no name_pos, and the STRICT decode_pos would fail the whole
+		// Array<Field>.
+		var np = try posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)
+			catch (_:Dynamic) Position.nullPos;
+		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
 	}
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
@@ -4415,6 +4422,11 @@ class EvalMacro {
 	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("field"), mkString(f.name));
+		// The field name's own position is encoded as `name_pos` and decoded back. Without it every field
+		// of a structure that went through a build macro would come back carrying the enclosing literal's
+		// position, which the typer then unions into pos - so --json would print `{x: x, y: y}` as the
+		// span of both x and y.
+		fields.set(EvalHash.hash("name_pos"), encPos(f.pos));
 		fields.set(EvalHash.hash("expr"), encodeExpr(ec, f.expr));
 		fields.set(EvalHash.hash("quotes"), mkEnumValue(ec, "QuoteStatus", (switch (f.quotes) { case NoQuotes: "Unquoted"; case DoubleQuotes: "Quoted"; }), []));
 		return VObject(new VObject([], ODictionary(fields)));
