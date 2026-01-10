@@ -1420,9 +1420,20 @@ class Operators {
 			// See accessorReadOn: the setter dispatch is internal, so bypass the accessor's
 			// own visibility check (the property access already governed it).
 			ctx.privateAccess++;
-			var setterExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MGet, WithTypeTools.value, true, true));
+			// The accessor is CALLED as a field, exactly as the getter above is. Resolving it with MGet and
+			// then calling the resulting expression would make it a closure over the setter, which GenJS
+			// prints as `$bind(c,c.set_x)(...)` instead of `c.set_x(...)`.
+			var sAcc = hxc.typing.Fields.typeField(ctx, er, "set_" + name, fa.pos, MCall([]),
+				WithTypeTools.value, true, true);
 			ctx.privateAccess--;
-			return Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos), [Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
+			// accGet on a method access yields a CLOSURE over it, which GenJS prints as
+			// `$bind(c,c.set_x)`. Take the field expression with the call flavour instead.
+			var setterExpr = switch (sAcc) {
+				case AKField(sfa) | AKAccessor(sfa): FieldAccessTools.getFieldExpr(sfa, FCall);
+				case _: Typer.accGet(ctx, sAcc);
+			};
+			return Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos),
+				[Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
