@@ -1117,8 +1117,12 @@ class Operators {
 		function accessorInstanceCompound(fa:hxc.typing.AccessKind.FieldAccess):TExpr {
 			var recv = fa.on;
 			var tvoid = ctx.com.basic.tvoid;
-			var tmp = maybeTempReceiver(ctx, recv, p);
-			var er = tmp.expr;
+			// The receiver binds through the same value reference the increment path uses, with no exemption
+			// for a stable lvalue: `c.next.x += 1` emits `var fh = c.next; fh.set_x(fh.get_x() + 1)`, not
+			// `c.next.set_x(c.next.get_x() + 1)`, which would re-evaluate it once per accessor.
+			var recvVars:Array<TExpr> = [];
+			var er = vrGetExprAux(ctx, recvVars, 1, "fh", recv);
+			var tmp = {expr: er, init: recvVars.length > 0 ? recvVars[0] : null};
 			var readVal = accessorReadOn(ctx, er, fa);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var br = makeBinop(ctx, sub, readVal, te2, true, withType, p);
