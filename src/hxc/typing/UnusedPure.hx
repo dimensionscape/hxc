@@ -43,6 +43,11 @@ class UnusedPure {
 		return switch (e.expr) {
 			case TConst(_) | TLocal(_) | TTypeExpr(_) | TIdent(_): true;
 			case TField(e1, fa):
+				// The analyzer keeps a TField whose access is EXPLICITLY IMPURE, before any of the
+				// no-side-effect arms: `@:pure(false)` on the field says the read has an effect regardless
+				// of its accessor kind. This filter stands in for that pass and has to honour the same
+				// marker, or `impure;` as a statement disappears.
+				if (hxc.context.PurityState.isExplicitlyImpure(fa)) return false;
 				// A property read dispatches its accessor; only a plain var read (or a method closure
 				// read) is effect-free.
 				var readPure = switch (fa) {
