@@ -132,6 +132,24 @@ class EvalMacro {
 		list.push(entry);
 	}
 
+	// An expression-filter list to every macro-world type through Filters.apply_filters_once , so each
+	// type is filtered exactly once before the interpreter sees it. hxc ran none of them: without
+	// captured_vars a macro-world closure's mutable captures are never boxed, which is invisible while
+	// a closure reads a LIVE parent frame and fatal the moment one snapshots its captures.
+	static var macroFiltered:haxe.ds.ObjectMap<Dynamic, Bool> = new haxe.ds.ObjectMap();
+
+	public static function applyMacroWorldFilters(mcom:Context, mods:Array<ModuleDef>):Void {
+		var tctx = new TyperContext(mcom);
+		for (m in mods) for (t in m.types) {
+			switch (t) { case TClassDecl(c) if (!macroFiltered.exists(c)): macroFiltered.set(c, true); case _: continue; }
+			hxc.filters.FiltersCommon.runExpressionFilters(tctx, [
+				{name: "local_statics", f: function(e) return hxc.filters.Filters.localStatics(tctx, e)},
+				{name: "VarLazifier", f: function(e) return hxc.filters.Filters.varLazifier(mcom, e)},
+				{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(mcom, e)},
+			], t);
+		}
+	}
+
 	static function registerContext(ec:EvalContext, com:Context):Void {
 		// Each macro API is registered under both its public camelCase name (for direct calls to the
 		// standard Context method) and its internal underscore-separated ABI name (reached via
@@ -2081,6 +2099,7 @@ class EvalMacro {
 					// An error the macro com reports marks the interpreter .
 					hxc.context.Context.onMacroWorldError = function() ec.hadError = true;
 					registerContext(ec, com);
+					applyMacroWorldFilters(macroCom, macroCom.modules);
 					EvalMain.addModules(ec, macroCom.modules);
 					// A rebuild must not reset macro-world static state; carry static var values over from
 					// the retired context.
@@ -2094,6 +2113,7 @@ class EvalMacro {
 					// Extend the existing context with only the newly loaded modules. Rebuilding the whole
 					// macro context on every macro-load (a suite macro-loads O(N) classes) would be O(N^2)
 					// and exhaust the GC ("Too many heap sections").
+					applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
 					EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 				}
 				lastModuleCount = macroCom.modules.length;
@@ -2291,6 +2311,7 @@ class EvalMacro {
 		if (macroCom.modules.length > lastModuleCount) {
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
+			applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
 			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 			lastModuleCount = macroCom.modules.length;
 		}
@@ -2589,6 +2610,7 @@ class EvalMacro {
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
+			applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
 			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
 			lastModuleCount = macroCom.modules.length;
 			if (fieldName != null) {

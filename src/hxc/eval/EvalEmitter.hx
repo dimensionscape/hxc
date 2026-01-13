@@ -979,11 +979,66 @@ class EvalEmitter {
 		return provided;
 	}
 
+	static var freeVarCache:haxe.ds.ObjectMap<TFunc, Array<Int>> = new haxe.ds.ObjectMap();
+
+	// The variable ids a closure body reads from an ENCLOSING scope: the closure's capture set. hxc walks
+	// the body and caches it, since a var id is unique per declaration.
+	static function freeVarIds(tf:TFunc):Array<Int> {
+		var cached = freeVarCache.get(tf);
+		if (cached != null) return cached;
+		var declared = new Map<Int, Bool>();
+		var seen = new Map<Int, Bool>();
+		var free:Array<Int> = [];
+		for (a in tf.args) declared.set(a.v.id, true);
+		function walk(e:TExpr):Void {
+			switch (e.expr) {
+				case TVarExpr(v, _): declared.set(v.id, true);
+				case TFor(v, _, _): declared.set(v.id, true);
+				case TTry(_, catches): for (c in catches) declared.set(c.v.id, true);
+				case TFunction(f2): for (a in f2.args) declared.set(a.v.id, true);
+				case TLocal(v):
+					if (!declared.exists(v.id) && !seen.exists(v.id)) {
+						seen.set(v.id, true);
+						free.push(v.id);
+					}
+				case _:
+			}
+			hxc.core.TexprTools.iter(walk, e);
+		}
+		walk(tf.expr);
+		freeVarCache.set(tf, free);
+		return free;
+	}
+
+	// The captured values are read OUT of the enclosing env when the closure value is created, so each
+	// closure keeps its own copy. A captured var that is ASSIGNED was array-boxed first by
+	// CapturedVars, so the copy shares that box and mutation still propagates; a read-only capture is
+	// snapshotted, which is what gives each iteration of a loop its own value. Chaining to the live
+	// parent instead would make every closure built in a loop read the final slot.
+	static function snapshotCaptures(tf:TFunc, captured:Null<EvalEnv>):Null<EvalEnv> {
+		if (captured == null) return null;
+		var ids = freeVarIds(tf);
+		if (ids.length == 0) return captured;
+		var snap = new EvalEnv(captured.info, [], [], captured.parent, captured.stackDepth, captured.eval);
+		snap.vthis = captured.vthis;
+		// Anything the walk did not account for still resolves along the real chain.
+		snap.lexicalParent = captured;
+		for (vid in ids) {
+			var owner = findEnv(captured, vid);
+			var os = owner.slots.get(vid);
+			if (os == null) continue;
+			snap.slots.set(vid, snap.locals.length);
+			snap.locals.push(owner.locals[os]);
+		}
+		return snap;
+	}
+
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
+		var snap = snapshotCaptures(tf, captured);
 		return function(args:Array<EvalValue>):EvalValue {
 			var env2 = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(0), 0, 0));
-			env2.lexicalParent = captured;
+			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {
 				env2.locals[slot(env2, tf.args[i].v.id)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
