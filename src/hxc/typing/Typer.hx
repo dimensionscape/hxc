@@ -971,7 +971,7 @@ class Typer {
 					accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, p, true, m.pos));
 				case EMeta(m, {expr: ENew(tp, el)}) if (m.name == ":inline"):
 					// A forced-inline construction keeps the marker for the inline-constructor filter.
-					var te = typeNew(ctx, tp, el, withType, p);
+					var te = typeNew(ctx, tp, el, withType, p, true, true);
 					TypeFunctions.mk(TMeta({name: ":inline", params: [], pos: Position.nullPos}, te), te.type, te.pos);
 				case EMeta(m, e1) if (m.name == ":inline"):
 					// Only a call or constructor may follow the inline keyword; anything else (an anonymous
@@ -5915,7 +5915,7 @@ class Typer {
 	}
 
 	// userWritten: a construction the user actually spelled.
-	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position, userWritten:Bool = true):TExpr {
+	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position, userWritten:Bool = true, forceInline:Bool = false):TExpr {
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
 		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
@@ -6119,7 +6119,7 @@ class Typer {
 				TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(a, atl, a.impl), false, p);
-				Calls.buildCall(ctx, AKField(fa), el, withType, p);
+				Calls.buildCall(ctx, AKField(fa), el, withType, p, forceInline);
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
 				// and cast it to the abstract. . Apply the abstract's type arguments so `new
