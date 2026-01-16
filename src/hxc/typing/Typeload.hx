@@ -748,11 +748,15 @@ class Typeload {
 			return switch (tp) {
 				case TPType(th): loadComplexType(ctx, typeParams, th);
 				case TPExpr(e):
+					// The synthetic const-parameter class from the CONSTANT only: "S"^s, "I"^const, "F"^const, and
+					// the literal "Expr" for everything else, EDisplay included. Printing the expression instead
+					// named `Gen<true>`'s parameter `true` where the reference names it `Expr`, which --xml/--json
+					// print and a generic specialization's path is built from.
 					var name = switch (e.expr) {
 						case EConst(CString(s, _)): "S" + s;
 						case EConst(CInt(v, _)): "I" + v;
 						case EConst(CFloat(f, _)): "F" + f;
-						case _: hxc.ast.Printer.sExprInner("", e);
+						case _: "Expr";
 					};
 					var m = ctx.currentModule != null ? ctx.currentModule : TypeFunctions.nullModule;
 					var c = TypeFunctions.mkClass(m, {pack: [], name: name}, p, e.pos);
