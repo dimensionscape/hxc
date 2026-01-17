@@ -573,7 +573,8 @@ class Filters {
 		}
 		switch (t) {
 			case TClassDecl(c) if (hasRtti(c) && !c.statics.exists("__rtti")):
-				var f = TypeFunctions.mkField("__rtti", com.basic.tstring, c.pos, Position.nullPos, false, true);
+				// The __rtti field is PUBLIC; with false here --xml/--json would report it private.
+				var f = TypeFunctions.mkField("__rtti", com.basic.tstring, c.pos, Position.nullPos, true, true);
 				var str = hxc.codegen.GenXml.genTypeString(com, t);
 				f.expr = TypeFunctions.mk(TConst(TString(str)), f.type, c.pos);
 				c.orderedStatics.unshift(f);
