@@ -1086,10 +1086,13 @@ class TypeResolve {
 			}
 		}
 		function loop(fields:StringMap<TClassField>, other:StringMap<TClassField>, propIsStatic:Bool):Void {
-			inline function genAccessor(accName:String, propType:T, isSetter:Bool):TClassField {
+			inline function genAccessor(accName:String, propType:T, isSetter:Bool, propPos:Position):TClassField {
 				// Generate the virtual accessor for an interface property.
 				var ft = isSetter ? TFun({args: [{name: "value", opt: false, t: propType}], ret: propType}) : TFun({args: [], ret: propType});
-				var acc = TypeFunctions.mkField(accName, ft, c.pos, c.pos, true, false);
+				// The accessor's position is the PROPERTY field's own: it stands for `x(get, set)`, not for
+				// the
+				// whole declaration, and --xml/--json print it.
+				var acc = TypeFunctions.mkField(accName, ft, propPos, Position.nullPos, true, false);
 				acc.kind = Method(MethNormal);
 				acc.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}, {name: ":noCompletion", params: [], pos: Position.nullPos}];
 				return acc;
@@ -1121,7 +1124,7 @@ class TypeResolve {
 								checkFoundAccessor(g, name, cf.pos, pt, false, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
-								var acc = genAccessor("get_" + name, pt, false);
+								var acc = genAccessor("get_" + name, pt, false, cf.pos);
 								fields.set(acc.name, acc);
 								genAccessors.push(acc);
 							}
@@ -1139,7 +1142,7 @@ class TypeResolve {
 								checkFoundAccessor(st, name, cf.pos, pt, true, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
-								var acc = genAccessor("set_" + name, pt, true);
+								var acc = genAccessor("set_" + name, pt, true, cf.pos);
 								fields.set(acc.name, acc);
 								genAccessors.push(acc);
 							}
