@@ -959,8 +959,25 @@ class ModuleLoader {
 				case AAbstract: abstractPos = a.pos;
 				case _:
 			}
-			if (TypeFunctions.hasMeta(":final", cff.cffMeta)) isFinalField = true;
-			if (TypeFunctions.hasMeta(":extern", cff.cffMeta)) isExtern = true;
+			// Apply deprecated :final and :extern metadata, warning only at real positions. One metadata
+			// traversal preserves warning order.
+			for (m in cff.cffMeta) {
+				var real = ctx != null && m.pos != null
+					&& !(m.pos.min < 0 && m.pos.max < 0 && m.pos.file == Position.nullPos.file);
+				switch (m.name) {
+					case ":final":
+						isFinalField = true;
+						if (real) ctx.warning(hxc.core.WarningList.Warning.WDeprecated,
+							hxc.core.WarningList.fromMeta(cff.cffMeta),
+							"`@:final` is deprecated in favor of `final`", m.pos);
+					case ":extern":
+						isExtern = true;
+						if (real) ctx.warning(hxc.core.WarningList.Warning.WDeprecated,
+							hxc.core.WarningList.fromMeta(cff.cffMeta),
+							"`@:extern` is deprecated in favor of `extern`", m.pos);
+					case _:
+				}
+			}
 			var isAbstractImplMember = false;
 			if (!isStatic) switch (c.kind) {
 				case KAbstractImpl(_): isStatic = true; isAbstractImplMember = true;
@@ -1194,17 +1211,9 @@ class ModuleLoader {
 			// Inline variables must be static because their values are substituted without an instance.
 			if (inlineAcc != null && !isStatic && cff.cffKind.match(FVar(_, _)))
 				fieldError("Invalid modifier: inline on non-static variable", cff.cffPos);
-			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern) && cff.cffKind.match(FFun(_))) {
-				var finalAcc:Null<PlacedAccess> = null;
-				var staticAcc = false;
-				for (acc in cff.cffAccess) switch (acc.access) {
-					case AFinal: finalAcc = acc;
-					case AStatic: staticAcc = true;
-					case _:
-				}
-				if (finalAcc != null && staticAcc)
-					ctx.addDiagnostic("Invalid modifier combination: final + static", finalAcc.pos);
-			}
+			// Check final static methods during class build after heritage resolves; failed heritage must
+			// suppress field-modifier diagnostics. Method-only modifiers also reject variables and
+			// properties, except inline variables.
 			if (ctx != null && !TypeFunctions.hasClassFlag(c, CExtern)) for (acc in cff.cffAccess) {
 				var bad = switch [acc.access, cff.cffKind] {
 					case [APublic | APrivate | AStatic | AFinal | AExtern, _]: null;

@@ -1444,9 +1444,11 @@ class TypeResolve {
 			// has been prepended to the signature; a static one compares against the abstract itself.
 			var isStatic = false;
 			var isMacroField = false;
+			var isInlineField = false;
 			for (acc in cff.cffAccess) switch (acc.access) {
 				case AStatic: isStatic = true;
 				case AMacro: isMacroField = true;
+				case AInline: isInlineField = true;
 				case _:
 			}
 			var isAbstractMember = !isStatic;
@@ -1537,6 +1539,14 @@ class TypeResolve {
 						case _:
 					}
 				}
+			}
+			// This and the return-type check below sit in the same body-less block, and the inline one comes
+			// first. It is recorded, not raised, so the return-type check still runs after it on the same
+			// field.
+			switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null && isInlineField):
+					ctx.addDiagnostic("Inline functions must have an expression", cf.pos);
+				case _:
 			}
 			// A body-less function in an abstract cannot have its return type inferred from anything, so it
 			// must be written out. This precedes the @:noExpr tagging below and applies to every body-less

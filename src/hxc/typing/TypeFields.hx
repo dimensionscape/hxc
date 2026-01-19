@@ -465,6 +465,41 @@ class TypeFields {
 				case FFun(fd) if (fd.fExpr != null): addDiagnosticOnce(ctx, "Abstract methods may not have an expression", cff.cffPos);
 				case _:
 			}
+			// The final-static-method check, made from the field init's FFun arm. Three parts of it are not
+			// in the access list:
+			// - `@:final` metadata also makes the field final, and warns when the meta has a real position
+			//   (a build macro can add one with none).
+			// - an abstract's members are all static, its constructor included.
+			// - the position is the `final` access, else the @:final meta, else `static`, else the whole
+			//   field.
+			var finalMetaPos:Null<Position> = null;
+			for (m in cff.cffMeta) if (m.name == ":final" && finalMetaPos == null) finalMetaPos = m.pos;
+			if ((hasFinal || finalMetaPos != null) && (hasStatic || isAbsImpl)
+					&& !TypeFunctions.hasClassFlag(c, CExtern)) switch (cff.cffKind) {
+				case FFun(_):
+					var fp = cff.cffPos;
+					var finalAcc:Null<Position> = null, staticAcc:Null<Position> = null;
+					for (a in cff.cffAccess) switch (a.access) {
+						case AFinal: if (finalAcc == null) finalAcc = a.pos;
+						case AStatic: if (staticAcc == null) staticAcc = a.pos;
+						case _:
+					}
+					if (finalAcc != null) fp = finalAcc;
+					else if (finalMetaPos != null) fp = finalMetaPos;
+					else if (staticAcc != null) fp = staticAcc;
+					addDiagnosticOnce(ctx, "Invalid modifier combination: final + static", fp);
+				case _:
+			}
+			// Binding a variable's expression opens with this, ahead of the @:value meta and of typing the
+			// initializer: an interface field may not carry one at all. It is EAGER, so the bind rule
+			// (which excludes every interface) does not reach it, and it reports at the INITIALIZER rather
+			// than at the field.
+			switch (cff.cffKind) {
+				case FVar(_, eo) | FProp(_, _, _, eo) if (eo != null
+						&& TypeFunctions.hasClassFlag(c, CInterface)):
+					addDiagnosticOnce(ctx, "Initialization on field of interface", eo.pos);
+				case _:
+			}
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
