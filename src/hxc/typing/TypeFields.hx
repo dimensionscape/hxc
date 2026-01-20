@@ -455,16 +455,20 @@ class TypeFields {
 				case AFinal: hasFinal = true;
 				case _:
 			}
-			if (hasOverride && hasStatic) addDiagnosticOnce(ctx, "Invalid modifier combination: override + static", cff.cffPos);
-			if (hasDynamic && hasInline) addDiagnosticOnce(ctx, "Invalid modifier combination: dynamic + inline", cff.cffPos);
-			if (hasAbstract && hasDynamic) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + dynamic", cff.cffPos);
-			if (hasAbstract && hasFinal) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + final", cff.cffName.pos);
-			if (hasAbstract && hasInline) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + inline", cff.cffName.pos);
-			if (hasAbstract && hasStatic) addDiagnosticOnce(ctx, "Invalid modifier combination: abstract + static", cff.cffName.pos);
-			if (hasAbstract) switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr != null): addDiagnosticOnce(ctx, "Abstract methods may not have an expression", cff.cffPos);
-				case _:
+			// At most one of these is reported per field: the first latches the field's error flag, which
+			// every FieldError function goes through. So the order decides which one survives, and it is the
+			// call order, not a reading order: abstract+static, abstract+final and abstract+inline run while
+			// the field context is created, ahead of everything else in the field init, while
+			// abstract+dynamic, dynamic+inline and override+static are late, inside method creation.
+			var slotTaken = false;
+			function modError(msg:String, mp:Position):Void {
+				if (slotTaken) return;
+				slotTaken = true;
+				addDiagnosticOnce(ctx, msg, mp);
 			}
+			if (hasAbstract && hasStatic) modError("Invalid modifier combination: abstract + static", cff.cffName.pos);
+			if (hasAbstract && hasFinal) modError("Invalid modifier combination: abstract + final", cff.cffName.pos);
+			if (hasAbstract && hasInline) modError("Invalid modifier combination: abstract + inline", cff.cffName.pos);
 			// The final-static-method check, made from the field init's FFun arm. Three parts of it are not
 			// in the access list:
 			// - `@:final` metadata also makes the field final, and warns when the meta has a real position
@@ -487,7 +491,15 @@ class TypeFields {
 					if (finalAcc != null) fp = finalAcc;
 					else if (finalMetaPos != null) fp = finalMetaPos;
 					else if (staticAcc != null) fp = staticAcc;
-					addDiagnosticOnce(ctx, "Invalid modifier combination: final + static", fp);
+					modError("Invalid modifier combination: final + static", fp);
+				case _:
+			}
+			if (hasAbstract && hasDynamic) modError("Invalid modifier combination: abstract + dynamic", cff.cffPos);
+			if (hasDynamic && hasInline) modError("Invalid modifier combination: dynamic + inline", cff.cffPos);
+			if (hasOverride && hasStatic) modError("Invalid modifier combination: override + static", cff.cffPos);
+			// The last of the checks a method field gets.
+			if (hasAbstract) switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr != null): modError("Abstract methods may not have an expression", cff.cffPos);
 				case _:
 			}
 			// Binding a variable's expression opens with this, ahead of the @:value meta and of typing the
@@ -497,7 +509,7 @@ class TypeFields {
 			switch (cff.cffKind) {
 				case FVar(_, eo) | FProp(_, _, _, eo) if (eo != null
 						&& TypeFunctions.hasClassFlag(c, CInterface)):
-					addDiagnosticOnce(ctx, "Initialization on field of interface", eo.pos);
+					modError("Initialization on field of interface", eo.pos);
 				case _:
 			}
 			var isStatic = false;
