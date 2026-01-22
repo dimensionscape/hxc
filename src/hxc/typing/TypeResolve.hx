@@ -1462,6 +1462,8 @@ class TypeResolve {
 			// by @:from / @:to). A bodiless function in such a field is a declaration only.
 			var allowsNoExpr = TypeFunctions.hasMeta(":coreType", a.meta);
 			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)) {
+				// This arm covers @:arrayAccess and @:op([]).
+				if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on array-access function", cff.cffPos);
 				a.array.push(cf);
 				allowsNoExpr = true;
 			}
@@ -1483,6 +1485,7 @@ class TypeResolve {
 						// `@:op([])` (EArrayDecl) -> array (same arm as the
 						// @:arrayAccess meta handled above).
 						case EArrayDecl(_):
+							if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on array-access function", cff.cffPos);
 							a.array.push(cf);
 							allowsNoExpr = true;
 						// Assignment / null-coalescing / ternary overloads
@@ -1494,6 +1497,8 @@ class TypeResolve {
 						case ETernary(_, _, _):
 							throw new ContextError("Ternary overloading is not supported", cf.pos);
 						case EBinop(op, _, _):
+							// This comes before the arity check below, which raises.
+							if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on operator function", cff.cffPos);
 							// A binary operator overload must take the operand type on at least one side,
 							// and the ARITY that
 							// is wrong is reported differently for a member and a static, because the
@@ -1521,6 +1526,7 @@ class TypeResolve {
 						// `@:op(unop A)` / `@:op(A unop)`: register
 						// (op, flag, cf) in unops.
 						case EUnop(op, flag, _):
+							if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on operator function", cff.cffPos);
 							a.unops.push({op: op, flag: flag, cf: cf});
 							allowsNoExpr = true;
 						// `@:op(a)` call overload. The first method
@@ -1682,7 +1688,9 @@ class TypeResolve {
 			switch (cff.cffKind) {
 				case FFun(fd):
 					// A @:to cast's arity is fixed: a static one takes the value, a member one takes only the
-					// implicit this; one trailing optional argument is allowed either way. (are_valid_args).
+					// implicit this; one trailing optional argument is allowed either way. (are_valid_args). the
+					// @:to arm, ahead of the arity check.
+					if (isTo && isMacro) ctx.addDiagnostic("Invalid modifier: macro on cast function", cff.cffPos);
 					if (isTo && !TypeFunctions.hasMeta(":multiType", a.meta)) {
 						inline function optAt(k:Int):Bool return fd.fArgs[k].opt || fd.fArgs[k].value != null;
 						var declared = fd.fArgs.length;
