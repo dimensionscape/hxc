@@ -177,14 +177,22 @@ class Context {
 	// diagnostics already recorded.
 	public var declAborted:Bool = false;
 
-	// Hold field diagnostics until heritage resolves and class initialization runs; failed heritage
-	// must not emit them.
-	final pendingFieldDiagnostics = new haxe.ds.ObjectMap<hxc.core.Type.TClass, Array<{msg:String, pos:hxc.ast.Position}>>();
+	// Release field diagnostics only after heritage succeeds. Keep warnings and errors in the same
+	// insertion-ordered queue so neither overtakes the other.
+	final pendingFieldDiagnostics = new haxe.ds.ObjectMap<hxc.core.Type.TClass, Array<{msg:String, pos:hxc.ast.Position,
+		?warn:hxc.core.WarningList.Warning, ?warnOptions:Array<Array<hxc.core.WarningList.WarningOption>>}>>();
 
 	public function deferFieldDiagnostic(c:hxc.core.Type.TClass, msg:String, pos:hxc.ast.Position):Void {
 		var l = pendingFieldDiagnostics.get(c);
 		if (l == null) { l = []; pendingFieldDiagnostics.set(c, l); }
 		l.push({msg: msg, pos: pos});
+	}
+
+	public function deferFieldWarning(c:hxc.core.Type.TClass, w:hxc.core.WarningList.Warning,
+			options:Array<Array<hxc.core.WarningList.WarningOption>>, msg:String, pos:hxc.ast.Position):Void {
+		var l = pendingFieldDiagnostics.get(c);
+		if (l == null) { l = []; pendingFieldDiagnostics.set(c, l); }
+		l.push({msg: msg, pos: pos, warn: w, warnOptions: options});
 	}
 
 	// Discard old declaration diagnostics when a build macro replaces the class fields.
@@ -196,7 +204,7 @@ class Context {
 		var l = pendingFieldDiagnostics.get(c);
 		if (l == null) return;
 		pendingFieldDiagnostics.remove(c);
-		for (d in l) addDiagnostic(d.msg, d.pos);
+		for (d in l) if (d.warn != null) warning(d.warn, d.warnOptions, d.msg, d.pos) else addDiagnostic(d.msg, d.pos);
 	}
 
 	public var diagnostics:Array<CompilerDiagnostic>;

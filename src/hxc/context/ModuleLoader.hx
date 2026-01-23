@@ -1204,7 +1204,8 @@ class ModuleLoader {
 					// Include a field's own extern modifier and the AExtern added to @:multiType constructors.
 					&& (isInterface || TypeFunctions.hasClassFlag(c, CExtern)
 						|| [for (acc in cff.cffAccess) if (acc.access == AExtern) true].length > 0))
-				ctx.warning(hxc.core.WarningList.Warning.WExternWithExpr, [],
+				// Queue the extern-expression warning after the method's interface-body diagnostic.
+				ctx.deferFieldWarning(c, hxc.core.WarningList.Warning.WExternWithExpr, [],
 					"Extern non-inline function may not have an expression", cff.cffPos);
 			// Static interface fields warn before this error; instance interface fields report their body
 			// error before warning.
