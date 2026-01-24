@@ -1573,6 +1573,12 @@ class TypeResolve {
 					continue;
 				case _:
 			}
+			// Reads `fd.f_expr = None`, and gives a macro field no body in the host, so a macro field on one
+			// of these arms clears doBind exactly like a body-less one.
+			if (allowsNoExpr) switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null || isMacroField): ctx.abstractNoExprFields.set(cf, true);
+				case _:
+			}
 			// A body-less function on such a field is a declaration only (the operation is performed
 			// natively): tag it @:noExpr and, unless the abstract is @:coreType, never add it to the
 			// implementation class, so no storage or dispatch is generated for it.

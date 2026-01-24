@@ -188,6 +188,10 @@ class Context {
 		l.push({msg: msg, pos: pos});
 	}
 
+	// Unbound abstract fields tagged @:noExpr never trigger macro forcing, including host-side macro
+	// fields without bodies.
+	public final abstractNoExprFields = new haxe.ds.ObjectMap<hxc.core.Type.TClassField, Bool>();
+
 	public function deferFieldWarning(c:hxc.core.Type.TClass, w:hxc.core.WarningList.Warning,
 			options:Array<Array<hxc.core.WarningList.WarningOption>>, msg:String, pos:hxc.ast.Position):Void {
 		var l = pendingFieldDiagnostics.get(c);

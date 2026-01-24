@@ -780,7 +780,10 @@ class TypeFields {
 		// would mean neither is ever seen: the guard below suppresses the host's own complaint (correctly,
 		// the host does not type this body), so nothing would be left to report it.
 		if (skipMacroBodyInHost(ctx, cf)) {
-			forceMacroFieldInMacroWorld(ctx, c, cf);
+			// Binding a method is gated on the bind rule and the macro forcing lives inside it, so an
+			// abstract field whose arm allowed no expr is never loaded into the macro world. Forcing it
+			// anyway would run the abstract check a second time there and report its verdict twice.
+			if (!ctx.abstractNoExprFields.exists(cf)) forceMacroFieldInMacroWorld(ctx, c, cf);
 			return;
 		}
 		if (!hasFieldBody(cff)) {
