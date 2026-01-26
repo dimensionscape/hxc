@@ -1438,6 +1438,9 @@ class TypeResolve {
 			// registered, still falls back to the by-name lookup.
 			if (cf == null) cf = abstractImplField(c, fname);
 			if (cf == null) continue;
+			// The @:to verdict above raises in the reference, so field is never bound and never forced into
+			// the macro world; carry it over now that the cf is resolvable.
+			if (ctx.abstractToArityFailed.exists(cff)) ctx.abstractNoExprFields.set(cf, true);
 			// The operand type the @:op and @:resolve checks compare against. A field declared without
 			// `static`
 			// in an abstract is an abstract member and its operand is the UNDERLYING type, because `this`
@@ -1701,11 +1704,16 @@ class TypeResolve {
 						inline function optAt(k:Int):Bool return fd.fArgs[k].opt || fd.fArgs[k].value != null;
 						var declared = fd.fArgs.length;
 						var validStatic = declared == 1 || (declared == 2 && optAt(1));
-						var validMember = declared == 0 || (declared == 1 && optAt(0));
+						// 1338 rebuilds a MACRO field in the host with no implicit `this`, so its effective arity is
+						// the declared one and are_valid_args wants exactly one argument. The message still follows
+						// is_abstract_member.
+						var validMember = isMacro ? validStatic : (declared == 0 || (declared == 1 && optAt(0)));
 						if (!isAbstractMember && !validStatic)
 							ctx.addDiagnostic("static @:to method should have one argument", cff.cffPos);
-						else if (isAbstractMember && !validMember)
+						else if (isAbstractMember && !validMember) {
 							ctx.addDiagnostic("@:to method should have no arguments", cff.cffPos);
+							ctx.abstractToArityFailed.set(cff, true);
+						}
 					}
 					// Method-local type params + abstract params in scope for the signature.
 					var methodParams:TypeParams = [];
