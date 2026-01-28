@@ -2253,10 +2253,17 @@ class ModuleLoader {
 						case _:
 					}
 					field.cffAccess = [visibility != null ? visibility : {access: APublic, pos: Position.nullPos}];
-					// create_variable prepends `:impl` to an abstract member var, which is what an enum abstract
-					// value is (it is not declared static).
-					field.cffMeta = [{name: ":impl", params: [], pos: Position.nullPos},
-						{name: ":enum", params: [], pos: Position.nullPos}].concat(field.cffMeta);
+					// An abstract member var gets `:impl` prepended, which is what an enum abstract value is (it
+					// is not declared static). It goes on after `:enum` and before the `:value` the
+					// var binding adds, so the three print in the order value, impl, enum.
+					// This is the one site that adds it, in variable creation. A value-less member of an EXTERN
+					// enum abstract becomes a property instead, which goes through property creation and never
+					// gets it - `:enum` alone prints there.
+					var staysVar = !(eo == null && TypeFunctions.hasClassFlag(c, CExtern));
+					field.cffMeta = (staysVar
+						? [{name: ":impl", params: [], pos: Position.nullPos},
+							{name: ":enum", params: [], pos: Position.nullPos}]
+						: [{name: ":enum", params: [], pos: Position.nullPos}]).concat(field.cffMeta);
 					var effCt:TypeHint = ct != null ? ct : aT;
 
 					switch (eo) {
