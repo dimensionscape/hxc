@@ -1031,7 +1031,7 @@ class Calls {
 								}
 						}
 						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
-						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, withType);
+						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, p, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
 						var call = makeCall(ctx, ce, [recvThis].concat(r.el), ret, p, forceInline, forcePos);
@@ -1186,7 +1186,7 @@ class Calls {
 									case WithType(t, _): try TypeUnification.unifyDefault(sig.ret, t) catch (_:hxc.core.TypeUnification.UnifyError) {}
 									case _:
 								}
-							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, withType);
+							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, p, withType);
 							if (faCall != fa2) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 							var ret = switch (TypeFunctions.follow(ce.type)) {
 								case TFun(sig2): sig2.ret;
@@ -1306,7 +1306,9 @@ class Calls {
 		return monomorphizeParamsWith(ctx, cf, ce, fa).expr;
 	}
 
-	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T, ?withType:WithType):FieldAccess {
+	// `callPos` is the call expression's position, not the field access's: fa.pos is the callee
+	// name alone.
+	static function genericFieldAccess(ctx:TyperContext, fa:FieldAccess, cf:TClassField, monos:TParams, callType:T, callPos:Position, ?withType:WithType):FieldAccess {
 		if (cf.params.length == 0 || !TypeFunctions.hasClassFieldFlag(cf, CfGeneric)) return fa;
 		// A constructor is never specialized: typeNew builds a constructor call, which bypasses the
 		// CfGeneric dispatch of an ordinary field call, so a @:generic (abstract) constructor keeps its
@@ -1372,9 +1374,9 @@ class Calls {
 			// complete on or apply a static extension through, and it is marked as an instance of a
 			// generic. All three carry the call position, not the field's.
 			cf2.meta = [
-				{name: ":noCompletion", params: [], pos: fa.pos},
-				{name: ":noUsing", params: [], pos: fa.pos},
-				{name: ":genericInstance", params: [], pos: fa.pos}
+				{name: ":noCompletion", params: [], pos: callPos},
+				{name: ":noUsing", params: [], pos: callPos},
+				{name: ":genericInstance", params: [], pos: callPos}
 			].concat(cf.meta);
 			cf2.kind = cf.kind;
 			cf2.expr = Typeload.cloneExpr(cf.expr, subst, new Map());
