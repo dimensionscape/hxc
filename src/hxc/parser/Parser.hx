@@ -3166,10 +3166,10 @@ class Parser {
 		var acc:Array<TypeDecl> = [];
 		while (true) {
 			checkTypeDeclCompletion(mode, pmax);
-			// Same plist rule as parseClassFields. Ending the list here leaves the declaration standing,
-			// and it: `Unexpected <token>`.
+			// An end of file there ends the list CLEANLY however many declarations came before; anything
+			// else is `[< >] -> Error ""`, which handle_stream_error reports as Unexpected <that token>.
 			var brk = try tokEq(peek(), Eof)
-				catch (c:CondFailure) { if (acc.length > 0) throw c; break; };
+				catch (c:CondFailure) { if (!tokEq(peek(), Eof)) throw c; true; };
 			if (brk) break;
 			var save = idx;
 			var td:TypeDecl;
