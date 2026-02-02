@@ -2323,6 +2323,9 @@ class Parser {
 					break;
 			}
 		}
+		// This `{` is a pattern element at a NON-first position, so a mismatch is `Unexpected <actual>`,
+		// not `Expected {` - the same rule the enum declaration applies below.
+		if (!tokEq(peek(), BrOpen)) serror();
 		expect(BrOpen);
 		var cf = parseClassFields(true, p1); // Tdecl is true: this class needs no name
 		var flags = fp.flags.concat(hl);
