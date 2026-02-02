@@ -1259,10 +1259,13 @@ class ModuleLoader {
 					if (TypeFunctions.hasClassFieldFlag(cf, CfOverload) && TypeFunctions.hasClassFieldFlag(c.constructor, CfOverload))
 						c.constructor.overloads.unshift(cf);
 					else if (ctx != null)
-						ctx.addDiagnostic("If using overloaded constructors, all constructors must be declared with 'overload'",
+						ctx.deferFieldDiagnostic(c, "If using overloaded constructors, all constructors must be declared with 'overload'",
 							TypeFunctions.hasClassFieldFlag(cf, CfOverload) ? c.constructor.pos : cf.pos);
 				} else if (ctx != null) {
-					ctx.addDiagnostic("Duplicate constructor", cff.cffPos);
+					// This is reported inside the class BUILD, so it waits for heritage like the `Duplicate
+					// ... field declaration` verdict below it does, and a module abandoned by an earlier
+					// failure (a missing import) never prints it.
+					ctx.deferFieldDiagnostic(c, "Duplicate constructor", cff.cffPos);
 				}
 			} else {
 				c.fields.set(cf.name, cf);
