@@ -197,13 +197,26 @@ class Preprocess {
 				case Sharp("elseif"):
 					if (mstack.length == 0) { keep(ti); i++; }
 					else {
-						mstack.pop();
 						i++;
-						// Leaving a LIVE branch for an elseif opens a dead block that runs to the matching #end.
-						var ce = parseMacroCond();
-						condElseif(ce);
-						openDeadBlock(ce.pos);
-						skipTokens(ti.pos, false);
+						// Leaving a LIVE branch for an elseif opens a dead block that runs to the matching #end. But
+						// the condition is parsed first, before mstack changes and before anything is skipped: one
+						// that fails at its head escapes with the live #if still on the stack and nothing skipped, so
+						// the #elseif evaporates and the pull resumes as ORDINARY code - the #if arm's rule below,
+						// including the poisoned condition stream. Popping first would surface the failure as
+						// `Unexpected <token>` instead of ending the class body.
+						var ce = null;
+						if (condPoisoned) pendingCondBreak++;
+						else try ce = parseMacroCond()
+						catch (c:CondHeadFailure) {
+							condPoisoned = true;
+							pendingCondBreak++;
+						}
+						if (ce != null) {
+							mstack.pop();
+							condElseif(ce);
+							openDeadBlock(ce.pos);
+							skipTokens(ti.pos, false);
+						}
 					}
 				case Sharp("else"):
 					if (mstack.length == 0) { keep(ti); i++; }
