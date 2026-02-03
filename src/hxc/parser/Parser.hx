@@ -1809,6 +1809,7 @@ class Parser {
 	function parseSwitchCases():{cases:Array<SwitchCase>, def:Null<{e:Null<Expr>, pos:Position}>} {
 		var cases:Array<SwitchCase> = [];
 		var def:Null<{e:Null<Expr>, pos:Position}> = null;
+		var defaultKeywords:Array<Position> = [];
 		while (true) {
 			switch (peek()) {
 				case Kwd(KwdDefault):
@@ -1818,7 +1819,7 @@ class Parser {
 					if (!tokEq(peek(), DblDot)) serror();
 					var pdot = expect(DblDot);
 					var b = blockWithPos(p1);
-					if (def != null) err("Duplicate default");
+					defaultKeywords.push(p1);
 					def = (b.exprs.length == 0) ? {e: null, pos: pdot} : {e: new Expr(EBlock(b.exprs), Position.union(p1, b.pos)), pos: Position.union(p1, b.pos)};
 					// The default's own body gets the same mark when the cursor is in the gap after it, so
 					// `default:` with nothing written still answers.
@@ -1849,6 +1850,17 @@ class Parser {
 				case _:
 					break;
 			}
+		}
+		// A default's frame RECURSES through every remaining case first and only then asks whether they
+		// held a default, reporting at its own keyword. Unwinding innermost-first, every default but the
+		// last reports, from the second-to-last back to the first; a batch compile raises on the first
+		// report. So two defaults report at the first one's keyword, and a syntax error anywhere in a
+		// later
+		// case wins over the duplicate.
+		var k = defaultKeywords.length - 2;
+		while (k >= 0) {
+			syntaxError(Duplicate_default, defaultKeywords[k]);
+			k--;
 		}
 		return {cases: cases, def: def};
 	}
