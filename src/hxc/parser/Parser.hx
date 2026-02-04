@@ -553,7 +553,7 @@ class Parser {
 				// the parser error they handle; inside the grammar it travels as a PreprocessorAbort, which
 				// no alternative catches - an error raised from the stream's fill passes every soft-failure
 				// handler the same way.
-				case Preprocessed(pe): throw new PreprocessorAbort(new ParserError(pe.msg, pe.pos, pe.soft, true));
+				case Preprocessed(pe): throw new PreprocessorAbort(new ParserError(pe.msg, pe.pos, pe.soft, true, pe.hard));
 				case _: throw e;
 			}
 		}
@@ -3177,19 +3177,41 @@ class Parser {
 		delayedSyntaxSubject = {name: sname, pos: np};
 	}
 
+	// In the display file a non-soft error here is recorded and the scan resumes. A condition that fails to
+	// PARSE after its head is such an error, so it is caught here like any other; everything else the
+	// preprocessor raises is a hard error no handler catches, and still ends the parse (`hard`). hxc's
+	// pre-tokenizer stops at the fault, so nothing but Eof follows it: recording and ending the list is
+	// where the resume would arrive. Anything else rethrows unchanged.
+	function recordSoftPreprocessorFault(a:PreprocessorAbort):Void {
+		if (!isDisplayFile() || a.err.hard) throw a;
+		syntaxErrors.push({msg: a.err.msg, pos: a.err.pos});
+	}
+
 	function parseTypeDecls(pack:Array<String>, mode:Int = 0, pmax:Int = -1):Array<TypeDecl> {
 		var acc:Array<TypeDecl> = [];
 		while (true) {
 			checkTypeDeclCompletion(mode, pmax);
-			// An end of file there ends the list CLEANLY however many declarations came before; anything
-			// else is `[< >] -> Error ""`, which handle_stream_error reports as Unexpected <that token>.
+			// The declaration list is not a plain list: its first arm is the non-terminal type declaration,
+			// so a failed #if condition met here backtracks (a production's first element allows that) and
+			// the Eof arm re-peeks once the pull has resumed. An end of file there ends the list CLEANLY
+			// however many declarations came before; anything else is an empty error, reported as Unexpected
+			// <that token>. So an import followed by a bare #if at the end of the file compiles, and a
+			// package line, a bare #if, a brace and then a class is rejected at the class. A failure on a
+			// file's FIRST token never gets here: parseFile's `package` peek is token-headed and lets it
+			// escape. The recovery wraps all three arms, so the loop-head peek is covered too: a soft
+			// preprocessor fault that surfaces after a completed declaration arrives here, not only around
+			// parseTypeDecl.
 			var brk = try tokEq(peek(), Eof)
-				catch (c:CondFailure) { if (!tokEq(peek(), Eof)) throw c; true; };
+				catch (c:CondFailure) { if (!tokEq(peek(), Eof)) throw c; true; }
+				catch (a:PreprocessorAbort) { recordSoftPreprocessorFault(a); true; };
 			if (brk) break;
 			var save = idx;
 			var td:TypeDecl;
 			try {
 				td = parseTypeDecl(mode);
+			} catch (a:PreprocessorAbort) {
+				recordSoftPreprocessorFault(a);
+				break;
 			} catch (e:ParserError) {
 				// The three alternatives of the declaration list. A soft failure leaves the attempt's
 				// tokens CONSUMED (the stream is destructive): Eof next ends the list CLEANLY (`class<eof>`

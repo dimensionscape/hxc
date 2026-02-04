@@ -245,17 +245,17 @@ class Preprocess {
 					i++;
 					// The error points at the message string.
 					switch (peekTok()) {
-						case Const(CString(s, _)): throw new ParserError(Custom(s), cur().pos);
-						case _: throw new ParserError(Unimplemented, ti.pos);
+						case Const(CString(s, _)): throw new ParserError(Custom(s), cur().pos, false, false, true);
+						case _: throw new ParserError(Unimplemented, ti.pos, false, false, true);
 					}
 				case Sharp("line"):
 					i++;
 					switch (peekTok()) {
 						case Const(CInt(_, _)): i++;
-						case _: throw new ParserError(Custom("Could not parse line number"), ti.pos);
+						case _: throw new ParserError(Custom("Could not parse line number"), ti.pos, false, false, true);
 					}
 				case Sharp(s):
-					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos);
+					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos, false, false, true);
 				case _:
 					keep(ti);
 					i++;
@@ -291,7 +291,7 @@ class Preprocess {
 	function skipTokensLoop(p:Position, test:Bool):Void {
 		while (true) {
 			if (i >= toks.length) {
-				throw new ParserError(Unclosed_conditional, p);
+				throw new ParserError(Unclosed_conditional, p, false, false, true);
 			}
 			var ti = toks[i];
 			// No dropDoc here: skipping pulls tokens straight from the lexer, bypassing the step that
@@ -300,7 +300,7 @@ class Preprocess {
 			// inside it.
 			switch (ti.tok) {
 				case Eof:
-					throw new ParserError(Unclosed_conditional, p);
+					throw new ParserError(Unclosed_conditional, p, false, false, true);
 				case Sharp("end"):
 					condEnd();
 					closeDeadBlock(ti.pos);
@@ -341,7 +341,7 @@ class Preprocess {
 				case Sharp("error"), Sharp("line"):
 					i++;
 				case Sharp(s):
-					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos);
+					throw new ParserError(Custom(hxc.core.StringError.stringError("#" + s, ["#if", "#elseif", "#else", "#end", "#error", "#line"], "Unknown token")), ti.pos, false, false, true);
 				case _:
 					i++;
 			}
@@ -510,7 +510,7 @@ class Preprocess {
 			// `Unexpected <eof>`.
 			if (r.err != null && !r.err.soft) switch (r.err.msg) {
 				case Unexpected(_):
-				case _: throw r.err;
+				case _: throw new ParserError(r.err.msg, r.err.pos, r.err.soft, false, true);
 			}
 			// The token the enclosing `)` was left holding is the whole dotted name, since a condition lexes
 			// it as one: the report names the token after `a.b`, not the `.`.
@@ -535,9 +535,9 @@ class Preprocess {
 			case ECall(c, args):
 				switch (c.expr) {
 					case EConst(CIdent(_)): for (a in args) validateMacroCond(a);
-					case _: throw new ParserError(Custom("Invalid condition expression"), e.pos);
+					case _: throw new ParserError(Custom("Invalid condition expression"), e.pos, false, false, true);
 				}
-			case _: throw new ParserError(Custom("Invalid condition expression"), e.pos);
+			case _: throw new ParserError(Custom("Invalid condition expression"), e.pos, false, false, true);
 		}
 	}
 
@@ -556,11 +556,11 @@ class Preprocess {
 								// Parsed eagerly so a malformed string reports at the literal even when the
 								// version is never
 								// compared.
-								try Semver.parseVersion(s) catch (ex:haxe.Exception) throw new ParserError(Custom(ex.message), args[0].pos);
+								try Semver.parseVersion(s) catch (ex:haxe.Exception) throw new ParserError(Custom(ex.message), args[0].pos, false, false, true);
 								return TVersion(s);
-							case _: throw new ParserError(Custom("Invalid version()"), e.pos);
+							case _: throw new ParserError(Custom("Invalid version()"), e.pos, false, false, true);
 						}
-					case _: throw new ParserError(Custom("Invalid condition expression"), e.pos);
+					case _: throw new ParserError(Custom("Invalid condition expression"), e.pos, false, false, true);
 				}
 			case EBinop(OpBoolAnd, e1, e2): return TBool(isTrue(eval(e1)) && isTrue(eval(e2)));
 			case EBinop(OpBoolOr, e1, e2): return TBool(isTrue(eval(e1)) || isTrue(eval(e2)));
@@ -572,10 +572,10 @@ class Preprocess {
 				return evalCompare(op, v1, v2, e.pos, e1.pos, e2.pos);
 			case EField(_, _, _):
 				var path = fieldPath(e);
-				if (path == null) throw new ParserError(Custom("Invalid condition expression"), e.pos);
+				if (path == null) throw new ParserError(Custom("Invalid condition expression"), e.pos, false, false, true);
 				return defines.rawDefined(path) ? TString(defines.rawDefinedValue(path)) : TNull;
 			case _:
-				throw new ParserError(Custom("Invalid condition expression"), e.pos);
+				throw new ParserError(Custom("Invalid condition expression"), e.pos, false, false, true);
 		}
 	}
 
@@ -608,7 +608,7 @@ class Preprocess {
 			case OpGte: TBool(c != null && c >= 0);
 			case OpLt: TBool(c != null && c < 0);
 			case OpLte: TBool(c != null && c <= 0);
-			case _: throw new ParserError(Custom("Unsupported operation"), p);
+			case _: throw new ParserError(Custom("Unsupported operation"), p, false, false, true);
 		}
 	}
 
@@ -622,11 +622,11 @@ class Preprocess {
 			case [TBool(a), TBool(b)]: (a == b) ? 0 : (!a ? -1 : 1);
 			case [TVersion(a), TVersion(b)] | [TVersion(a), TString(b)] | [TString(a), TVersion(b)]:
 				// A version string that fails to parse reports at its own side of the compare.
-				var av = try Semver.parseVersion(a) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p1);
-				var bv = try Semver.parseVersion(b) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p2);
+				var av = try Semver.parseVersion(a) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p1, false, false, true);
+				var bv = try Semver.parseVersion(b) catch (e:haxe.Exception) throw new ParserError(Custom(e.message), p2, false, false, true);
 				Semver.compareVersion(av, bv);
 			case _:
-				throw new ParserError(Custom("Cannot compare " + sValue(v1) + " and " + sValue(v2)), p);
+				throw new ParserError(Custom("Cannot compare " + sValue(v1) + " and " + sValue(v2)), p, false, false, true);
 		}
 	}
 
