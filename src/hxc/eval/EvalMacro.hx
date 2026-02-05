@@ -2447,6 +2447,12 @@ class EvalMacro {
 		macroCom.raiseTypingErrors = true;
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
 		if (displayWindow) hxc.typing.TypeFields.macroDisplayWindow = true;
+		// The macro com takes the host's whole display record for this load, the full-typing flag
+		// included: under a display request the macro module is typed selectively, and a sibling of the
+		// forced macro stays lazy. Carrying only the display position would type every field, so a caller
+		// of the macro would report errors selective typing never reaches.
+		var oldFullTyping = macroCom.displayFullTyping;
+		if (displayWindow) macroCom.displayFullTyping = host.displayFullTyping;
 		try {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
@@ -2593,10 +2599,12 @@ class EvalMacro {
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
 			hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
+			macroCom.displayFullTyping = oldFullTyping;
 			throw e;
 		} catch (e:Dynamic) {
 			macroCom.raiseTypingErrors = oldRaise;
 			hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
+			macroCom.displayFullTyping = oldFullTyping;
 			// A display answer raised while typing a macro body is the request's result, not a macro-loading
 			// failure to swallow; only a typing Error is swallowed. Neither is a fatal error: finalization
 			// raises the fatal error of a body the macro world could not type straight out of the macro
@@ -2607,6 +2615,7 @@ class EvalMacro {
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
+		macroCom.displayFullTyping = oldFullTyping;
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
