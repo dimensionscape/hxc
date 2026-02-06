@@ -1328,7 +1328,12 @@ class Calls {
 		}
 		propagateGenericConstraints(ctx, cf.params, monos, hostParamMap(fa));
 		closeGenericMonos(monos);
-		var params = [for (m in monos) TypeFunctions.follow(m)];
+		// Maps each type parameter to the raw bound mono (generic_check_const_expr t2), not to its
+		// follow: a typedef argument stays the typedef and Null<X> stays nullable in the specialization.
+		// `follow` expanded `Rec = {field:Rec}` to its structure in the specialized signature, and it
+		// also named a @:genericClassPerMethod container from the followed list while the method name
+		// below already used the raw one.
+		var params = [for (m in monos) resolveGenericMonos(m)];
 		// Names from the raw bound monos (its loop resolves one step per follow_or), so a typedef-typed
 		// parameter keeps its typedef path.
 		var name = cf.name + "_" + genericSuffix(monos);
