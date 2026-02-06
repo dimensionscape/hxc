@@ -2177,10 +2177,12 @@ class TypeResolve {
 				// specialization cloned from a HERITAGE clause - before the base's body is typed - still
 				// copies its
 				// :value.
-				if (eo != null) hxc.typing.TypeFields.setValueMeta(cf, [eo]);
+				dropGeneratedMeta(cf);
+				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
 			case FProp(_, _, th, eo):
 				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
-				if (eo != null) hxc.typing.TypeFields.setValueMeta(cf, [eo]);
+				dropGeneratedMeta(cf);
+				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
 			case FFun(fd):
 				// Method -> TFun(args, ret). Faithful: optional arg -> Null<T>; missing hint
 				// > fresh mono (the typer infers it).
@@ -2248,7 +2250,11 @@ class TypeResolve {
 				cf.params = methodParams;
 				// The argument metadata is generated at field CREATION, so a body-less function (an extern
 				// declaration) records its defaults too.
-				hxc.typing.TypeFields.setFunctionValueMeta(cf, fd);
+				dropGeneratedMeta(cf);
+				// The reference passes the DECLARED arguments; the `this` an abstract member's lowering
+				// prepends (marked :implicitThis) is only added to its typed arguments .
+				var declaredArgs = fd.fArgs.length > 0 && TypeFunctions.hasMeta(":implicitThis", fd.fArgs[0].meta) ? fd.fArgs.slice(1) : fd.fArgs;
+				Typeload.generateArgsMeta(declaredArgs, m -> cf.meta = [m].concat(cf.meta));
 				// Build a TFun signature from each
 				// `@:overload(function(args):ret {})` meta and store it in overloads. This is
 				// `(fd,data:Dynamic,?position)` / `(fd,data,position,encoding)` alternates) be
@@ -2263,6 +2269,14 @@ class TypeResolve {
 	// checks are faithful but lenient here (the std/externs we load are well-formed). The
 	// `@:overload` (no-args, supportsOverload "proper" overloads) form is not applicable to the JS
 	// target (`supportsOverload = false` for js), so we only handle the meta-with-function form.
+	// An enum abstract's implementation fields are resolved twice here (buildEnumAbstractFields,
+	// then resolveClassFields) where the reference creates each field once. What the first pass
+	// generated is dropped before the second adds it again; it is the only metadata carrying the
+	// shared null position, so a user's own @:value survives.
+	static function dropGeneratedMeta(cf:TClassField):Void {
+		cf.meta = [for (m in cf.meta) if (m.pos != Position.nullPos || (m.name != ":value" && m.name != ":haxe.arguments")) m];
+	}
+
 	static function initMetaOverloads(ctx:Context, typeParams:TypeParams, cf:TClassField):Void {
 		var overloads:Array<TClassField> = [];
 		// The filter REBUILDS meta: an @:overload(function(){}) entry is consumed into overloads and
@@ -2339,6 +2353,8 @@ class TypeResolve {
 					ocf.overloads = [];
 					// Drop the @:overload/@:value metas from the clone.
 					ocf.meta = [for (mm in cf.meta) if (mm.name != ":overload" && mm.name != ":value") mm];
+					// The overload's own defaults and argument metadata.
+					Typeload.generateArgsMeta(f.fArgs, m -> ocf.meta = [m].concat(ocf.meta));
 					overloads.push(ocf);
 					converted = true;
 				case _:

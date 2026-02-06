@@ -183,6 +183,22 @@ class Typeload {
 		return opt ? ctx.basic.tnull(ty) : ty;
 	}
 
+	// The defaults are gathered by a prepending fold, so the object lists them in reverse declaration
+	// order.
+	public static function generateArgsMeta(args:Array<FunctionArg>, addMeta:MetadataEntry->Void):Void {
+		var values:Array<ObjectField> = [];
+		for (a in args) if (a.value != null)
+			values.unshift({name: a.name.name, pos: a.name.pos, quotes: NoQuotes, expr: a.value});
+		if (values.length > 0)
+			addMeta({name: ":value", params: [new Expr(EObjectDecl(values), pNull)], pos: pNull});
+		var withMeta = false;
+		for (a in args) if (a.meta != null && a.meta.length > 0) withMeta = true;
+		if (withMeta) {
+			var fn:Func = {fParams: [], fArgs: args, fType: null, fExpr: null};
+			addMeta({name: ":haxe.arguments", params: [new Expr(EFunction(FKAnonymous, fn), pNull)], pos: pNull});
+		}
+	}
+
 	static function spawnMonomorph():T {
 		return TypeFunctions.mkMono();
 	}

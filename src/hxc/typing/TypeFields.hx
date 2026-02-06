@@ -1219,20 +1219,6 @@ class TypeFields {
 		}
 	}
 
-	public static function setValueMeta(cf:TClassField, params:Array<Expr>):Void {
-		cf.meta = [{name: ":value", params: params, pos: cf.pos}].concat([for (m in cf.meta) if (m.name != ":value") m]);
-	}
-
-	public static function setFunctionValueMeta(cf:TClassField, fd:Func):Void {
-		// The values accumulate through a prepending fold, so the object lists the defaulted arguments in
-		// REVERSE declaration order.
-		var fields:Array<ObjectField> = [];
-		for (arg in fd.fArgs) if (arg.value != null)
-			fields.unshift({name: arg.name.name, pos: arg.name.pos, quotes: NoQuotes, expr: arg.value});
-		if (fields.length > 0)
-			setValueMeta(cf, [new Expr(EObjectDecl(fields), cf.pos)]);
-	}
-
 	static function hasVarHint(k:ClassFieldKind):Bool {
 		return switch (k) {
 			case FVar(th, _) | FProp(_, _, th, _): th != null;
