@@ -2169,12 +2169,18 @@ class TypeResolve {
 	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef):Void {
 		var fieldModule = ownerModule == null ? ctx.currentModule : ownerModule;
 		switch (cff.cffKind) {
-			case FVar(th, _):
+			case FVar(th, eo):
 				// Var/final field with an explicit hint -> resolve; else leave the mono
 				// the typer would infer from the initializer expr in Phase 3 pt c.
 				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
-			case FProp(_, _, th, _):
+				// The initializer is recorded at field CREATION, after the hint loads, so a @:generic
+				// specialization cloned from a HERITAGE clause - before the base's body is typed - still
+				// copies its
+				// :value.
+				if (eo != null) hxc.typing.TypeFields.setValueMeta(cf, [eo]);
+			case FProp(_, _, th, eo):
 				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
+				if (eo != null) hxc.typing.TypeFields.setValueMeta(cf, [eo]);
 			case FFun(fd):
 				// Method -> TFun(args, ret). Faithful: optional arg -> Null<T>; missing hint
 				// > fresh mono (the typer infers it).

@@ -918,7 +918,6 @@ class TypeFields {
 			switch (cff.cffKind) {
 				case FVar(_, eo):
 					if (eo != null) {
-						setValueMeta(cf, [eo]);
 						// A field initializer is outside any function (a return in it reports).
 						tctx.inFunction = false;
 						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
@@ -1012,7 +1011,6 @@ class TypeFields {
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
 					if (eo != null) {
-						setValueMeta(cf, [eo]);
 						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
 						// property that is no physical variable is reported at the field, once (maybe_display_error),
 						// before the initializer is typed.
@@ -1221,7 +1219,7 @@ class TypeFields {
 		}
 	}
 
-	static function setValueMeta(cf:TClassField, params:Array<Expr>):Void {
+	public static function setValueMeta(cf:TClassField, params:Array<Expr>):Void {
 		cf.meta = [{name: ":value", params: params, pos: cf.pos}].concat([for (m in cf.meta) if (m.name != ":value") m]);
 	}
 
