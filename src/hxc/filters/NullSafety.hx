@@ -48,9 +48,14 @@ class NullSafety {
 				new ClassChecker(cls, immediateExecution, report).check();
 			case _:
 		}
-		// Registered report callbacks consume the errors instead of failing the compile. .
+		// Registered report callbacks consume the errors instead of failing the compile.
+		// Both lists are built by prepending and neither is reversed here, so the newest callback runs
+		// first and gets the newest error first.
 		if (com.nullSafetyReportCallbacks.length > 0) {
-			for (cb in com.nullSafetyReportCallbacks) cb(report);
+			var errors = report.copy();
+			errors.reverse();
+			var i = com.nullSafetyReportCallbacks.length;
+			while (i-- > 0) com.nullSafetyReportCallbacks[i](errors);
 		} else {
 			for (err in report) com.addDiagnostic(err.msg, err.pos);
 		}

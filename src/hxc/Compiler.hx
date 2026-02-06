@@ -1081,7 +1081,7 @@ class Compiler {
 			// Unused plain imports load once the build pipeline has run, so their declaration errors
 			// surface; the second typing pass covers them (an import always loads its module).
 			hxc.filters.ImportCheck.loadPlainImports(ctx);
-			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx);
+			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
 			TypeFields.typeAllModules(ctx);
 			tType();
 			TypeFields.checkAbstractInheritance(ctx);

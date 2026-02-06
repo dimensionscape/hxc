@@ -1780,15 +1780,27 @@ class EvalMacro {
 		curPos = savedPos;
 	}
 
-	public static function runAfterTypingCallbacks(com:Context):Void {
-		for (cb in onAfterTypingCallbacks) {
-			EvalContext.setCtx(cb.ec);
-			var types = [for (t in com.types) encodeModuleType(cb.ec, t)];
-			runCallback(cb.ec, function() switch (cb.fn) {
-				case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
-				case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
-				case _:
-			});
+	// Finalization: callbacks are prepended and the list runs as it is, so the newest callback runs first.
+	// A round hands over only the types no earlier round saw and then flushes, and one that added types is
+	// followed by another. The callbacks are the ones registered before the first round.
+	public static function runAfterTypingCallbacks(com:Context, flush:Void->Void):Void {
+		if (onAfterTypingCallbacks.length == 0) return;
+		var fl = onAfterTypingCallbacks.copy();
+		fl.reverse();
+		var handled = 0;
+		while (com.types.length > handled) {
+			var newTypes = com.types.slice(handled);
+			handled = com.types.length;
+			for (cb in fl) {
+				EvalContext.setCtx(cb.ec);
+				var types = [for (t in newTypes) encodeModuleType(cb.ec, t)];
+				runCallback(cb.ec, function() switch (cb.fn) {
+					case VFunction(f, _): f([VArray(new VArray(types, types.length))]);
+					case VFieldClosure(recv, f): f([recv, VArray(new VArray(types, types.length))]);
+					case _:
+				});
+			}
+			flush();
 		}
 	}
 
