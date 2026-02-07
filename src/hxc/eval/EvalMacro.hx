@@ -51,6 +51,7 @@ class EvalMacro {
 	static var onAfterInitMacrosCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterTypingCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
+	static var onGenerateAfterSaveCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var macroMonoId:Int = 0;
 	// One fake module per file, kept for the whole process so a later compilation depends on the same
@@ -752,8 +753,10 @@ class EvalMacro {
 			return VNull;
 		});
 		reg2("getPosInfos", "get_pos_infos", function(a) return posInfosValue(ec, posArg(ec, a, 0, curPos)));
+		// A persistent callback runs before the save state, a non-persistent one after it, so the latter
+		// always runs after the former.
 		reg2("onGenerate", "on_generate", function(a) {
-			onGenerateCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
+			(a[1] == VFalse ? onGenerateAfterSaveCallbacks : onGenerateCallbacks).push({ec: ec, fn: prepareCallback(ec, a[0])});
 			return VNull;
 		});
 		// The callback runs at generate time with a JSGenApi bound to a fresh GenJS context, replacing the
@@ -1745,8 +1748,8 @@ class EvalMacro {
 		}
 	}
 
-	public static function runGenerateCallbacks(com:Context):Void {
-		for (cb in onGenerateCallbacks) {
+	public static function runGenerateCallbacks(com:Context, afterSave:Bool = false):Void {
+		for (cb in (afterSave ? onGenerateAfterSaveCallbacks : onGenerateCallbacks)) {
 			EvalContext.setCtx(cb.ec);
 			var types = [for (t in com.types) encodeType(cb.ec, TypeFunctions.typeOfModuleType(t))];
 			runCallback(cb.ec, function() switch (cb.fn) {
@@ -2193,6 +2196,7 @@ class EvalMacro {
 		onAfterInitMacrosCallbacks = [];
 		onAfterTypingCallbacks = [];
 		onGenerateCallbacks = [];
+		onGenerateAfterSaveCallbacks = [];
 		onAfterGenerateCallbacks = [];
 	}
 

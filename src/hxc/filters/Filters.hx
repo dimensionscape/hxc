@@ -1044,6 +1044,8 @@ class Filters {
 		// matrix's sources diverge. The dependency registration above has no such coupling and is what
 		// carries the open-mono binding.
 		if (hxc.context.ServerCache.enabled) for (t in newTypes) saveClassState(com, t);
+		// After the save: onGenerate(f, false).
+		hxc.eval.EvalMacro.runGenerateCallbacks(com, true);
 		destruction(tctx, renameLocals);
 		stageMark("destruction:done"); memProbe("destruction:done");
 		FiltersCommon.dumpFilterTimes();
