@@ -4221,8 +4221,19 @@ class EvalMacro {
 			case "TDStructure":
 				var def:Definition<hxc.ast.Ast.EnumFlag, TypeHint> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: {ct: CTAnonymous(fields), pos: pos}};
 				{decl: ETypedef(def), pos: pos};
+			case "TDAlias":
+				var def:Definition<hxc.ast.Ast.EnumFlag, TypeHint> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: decodeTypeHint(ec, eargs(kind)[0], pos)};
+				{decl: ETypedef(def), pos: pos};
+			case "TDField":
+				// A module-level field, its access list decoded like a field's.
+				var a = eargs(kind);
+				var fk = decodeFieldKind(ec, a[0], pos);
+				var al = (a.length > 1 && a[1] != VNull) ? [for (av in arrOf(a[1])) ({access: decodeAccess(ec, av),
+					pos: switch (av) { case VEnumValue(ev) if (ev.enpos != null): ev.enpos; case _: Position.nullPos; }} : PlacedAccess)] : [];
+				var def:Definition<PlacedAccess, ClassFieldKind> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: al, dData: fk};
+				{decl: EStatic(def), pos: pos};
 			case other:
-				throw new TypingError("defineType supports only TDClass/TDAbstract/TDEnum/TDStructure, got " + other, dp);
+				throw new TypingError("Invalid expression", dp);
 		};
 	}
 
