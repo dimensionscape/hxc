@@ -43,6 +43,7 @@ class Typeload {
 		var c = TypeFunctions.mkClass(pmod, {pack: declPath.pack.concat([declPath.name]), name: n}, tp.tpName.pos, tp.tpName.pos);
 		c.kind = KTypeParameter([]);
 		c.meta = tp.tpMeta;
+		if (host == TPHEnumConstructor) c.meta = [{name: ":enumConstructorParam", params: [], pos: pNull}].concat(c.meta);
 		var t = TInst(c, []);
 		var p = tp.tpName.pos;
 		// `if ctx.is_display_file && display_position#enclosed_in (pos tp.tp_name) then

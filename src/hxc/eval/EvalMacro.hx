@@ -5371,7 +5371,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("namePos"), encPos(ef.namePos));
 		f.set(EvalHash.hash("doc"), VNull);
 		f.set(EvalHash.hash("index"), VInt(ef.index));
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
 		return VObject(new VObject([], ODictionary(f)));
 	}
