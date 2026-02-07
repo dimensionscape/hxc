@@ -91,7 +91,8 @@ class EvalMacro {
 	static function stashModuleTypeRef(f:Map<Int, EvalValue>, mt:ModuleType):Void {
 		var refId = nextModuleTypeRefId++;
 		moduleTypeRefs.set(refId, mt);
-		f.set(EvalHash.hash("$"), VInt(refId));
+		// A module type's decl rides in `__t`, an opaque TypeDecl instance, which decode reads back.
+		f.set(EvalHash.hash("__t"), opaqueValue("haxe.macro.TypeDecl", refId));
 	}
 
 	// The API wrapper turns a decode failure into the macro's uncaught "Invalid expression"; a typing
@@ -4431,11 +4432,12 @@ class EvalMacro {
 	// elided like the field/arg encoders.
 	static function encodeTparamDecl(ec:EvalContext, tp:TypeParam):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
+		// No defaultType is encoded.
 		fields.set(EvalHash.hash("name"), mkString(tp.tpName.name));
+		fields.set(EvalHash.hash("name_pos"), encPos(tp.tpName.pos));
 		fields.set(EvalHash.hash("params"), encodeArray([for (p in tp.tpParams) encodeTparamDecl(ec, p)]));
 		fields.set(EvalHash.hash("constraints"), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints)]));
-		fields.set(EvalHash.hash("defaultType"), tp.tpDefault == null ? VNull : encodeComplexType(ec, tp.tpDefault));
-		fields.set(EvalHash.hash("meta"), encodeArray([]));
+		fields.set(EvalHash.hash("meta"), encodeArray([for (m in tp.tpMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5256,7 +5258,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("name"), mkString(cf.name));
 		f.set(EvalHash.hash("type"), encodeType(ec, cf.type));
 		f.set(EvalHash.hash("isPublic"), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
-		f.set(EvalHash.hash("params"), encodeArray([]));
+		f.set(EvalHash.hash("params"), encodeArray([for (tp in cf.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
 		// ClassField.expr(): the field's typed expression, typing the body on demand when the owner is
 		// known.
@@ -5270,9 +5272,9 @@ class EvalMacro {
 		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
 		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(cf.doc)));
 		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([for (ocf in cf.overloads) encodeClassField(ec, ocf)])));
-		f.set(EvalHash.hash("isExtern"), VFalse);
-		f.set(EvalHash.hash("isFinal"), VFalse);
-		f.set(EvalHash.hash("isAbstract"), VFalse);
+		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFieldFlag(cf, CfExtern) ? VTrue : VFalse);
+		f.set(EvalHash.hash("isFinal"), TypeFunctions.hasClassFieldFlag(cf, CfFinal) ? VTrue : VFalse);
+		f.set(EvalHash.hash("isAbstract"), TypeFunctions.hasClassFieldFlag(cf, CfAbstract) ? VTrue : VFalse);
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -5326,6 +5328,18 @@ class EvalMacro {
 	// tvar object's `$` field carries.
 	static var unsafeProtoCache:Null<VPrototype> = null;
 
+	static var opaqueProtos:Map<String, VPrototype> = new Map();
+
+	static function opaqueValue(path:String, id:Int):EvalValue {
+		var proto = opaqueProtos.get(path);
+		if (proto == null) {
+			proto = new VPrototype(EvalHash.hash(path), [], new Map(), [], new Map(), null, PInstance, VNull);
+			proto.pvalue = VPrototype(proto);
+			opaqueProtos.set(path, proto);
+		}
+		return VInstance(new VInstance([], proto, IRef(VInt(id))));
+	}
+
 	static function unsafeValue(ec:EvalContext, id:Int):EvalValue {
 		if (unsafeProtoCache == null) {
 			var proto = new VPrototype(EvalHash.hash("haxe.macro.Unsafe"), [], new Map(), [], new Map(), null, PInstance, VNull);
@@ -5344,8 +5358,26 @@ class EvalMacro {
 	static function refHandle(ec:EvalContext, v:EvalValue):Null<Int> {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VInstance({ikind: IRef(VInt(id))}): id;
-			case VObject(_): refHandle(ec, EvalField.field(ec, v, EvalHash.hash("$")));
+			case VObject(_):
+				// A module type's `__t`, or a tvar object's `$`
+				var t = EvalField.field(ec, v, EvalHash.hash("__t"));
+				refHandle(ec, t != VNull ? t : EvalField.field(ec, v, EvalHash.hash("$")));
 			case _: null;
+		};
+	}
+
+	// The class kind; KGenericBuild carries nothing.
+	static function encodeClassKind(ec:EvalContext, k:TClassKind):EvalValue {
+		return switch (k) {
+			case KNormal: mkEnumValue(ec, "ClassKind", "KNormal", []);
+			case KTypeParameter(tl): mkEnumValue(ec, "ClassKind", "KTypeParameter", [encodeArray([for (t in tl) encodeType(ec, t)])]);
+			case KModuleFields(m): mkEnumValue(ec, "ClassKind", "KModuleFields", [mkString(Context.pathKey(m.path))]);
+			case KExpr(e): mkEnumValue(ec, "ClassKind", "KExpr", [encodeExpr(ec, e)]);
+			case KGeneric: mkEnumValue(ec, "ClassKind", "KGeneric", []);
+			case KGenericInstance(cl, params): mkEnumValue(ec, "ClassKind", "KGenericInstance", [encodeClassRef(ec, cl), encodeArray([for (t in params) encodeType(ec, t)])]);
+			case KMacroType: mkEnumValue(ec, "ClassKind", "KMacroType", []);
+			case KAbstractImpl(a): mkEnumValue(ec, "ClassKind", "KAbstractImpl", [encodeAbstractRef(ec, a)]);
+			case KGenericBuild(_): mkEnumValue(ec, "ClassKind", "KGenericBuild", []);
 		};
 	}
 
@@ -5409,22 +5441,35 @@ class EvalMacro {
 		f.set(EvalHash.hash("name"), mkString(c.path.name));
 		f.set(EvalHash.hash("module"), mkString(c.module == null ? c.path.name : Context.pathKey(c.module.path)));
 		f.set(EvalHash.hash("pos"), encPos(c.pos));
-		f.set(EvalHash.hash("isPrivate"), VFalse);
+		f.set(EvalHash.hash("isPrivate"), c.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
 		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(c.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in c.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("kind"), mkEnumValue(ec, "ClassKind", "KNormal", []));
+		f.set(EvalHash.hash("kind"), encodeClassKind(ec, c.kind));
 		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
 		f.set(EvalHash.hash("isInterface"), TypeFunctions.hasClassFlag(c, CInterface) ? VTrue : VFalse);
 		f.set(EvalHash.hash("isFinal"), TypeFunctions.hasClassFlag(c, CFinal) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isAbstract"), VFalse);
+		f.set(EvalHash.hash("isAbstract"), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
 		f.set(EvalHash.hash("superClass"), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalHash.hash("interfaces"), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
 		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
-		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.statics) encodeClassField(ec, cf, c)])));
+		// orderedStatics, and without __init__: hxc keeps that as a static where the reference
+		// makes it the class's init (see `init` below).
+		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) if (cf.name != "__init__") encodeClassField(ec, cf, c)])));
 		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
-		f.set(EvalHash.hash("init"), VNull);
-		f.set(EvalHash.hash("overrides"), encodeArray([]));
+		f.set(EvalHash.hash("init"), {
+			var init = c.init;
+			var initField = c.statics.get("__init__");
+			if (init == null && initField != null) {
+				if (initField.expr == null && currentCompiler() != null) hxc.typing.TypeFields.forceFieldBody(currentCompiler(), c, initField);
+				switch (initField.expr != null ? initField.expr.expr : null) {
+					case TFunction(tf): init = tf.expr;
+					case _:
+				}
+			}
+			init == null ? VNull : encodeTypedExpr(ec, init);
+		});
+		f.set(EvalHash.hash("overrides"), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
 		// Exclude() makes the class extern and drops its init.
 		f.set(EvalHash.hash("exclude"), VFunction(function(_) {
 			TypeFunctions.addClassFlag(c, CExtern);
@@ -5479,6 +5524,9 @@ class EvalMacro {
 		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(d.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in d.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("type"), encodeType(ec, d.type));
+		// A typedef is never extern and exclude() does nothing.
+		f.set(EvalHash.hash("isExtern"), VFalse);
+		f.set(EvalHash.hash("exclude"), VFunction(function(_) return VNull, true));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -5500,6 +5548,8 @@ class EvalMacro {
 		f.set(EvalHash.hash("from"), encodeArray([for (t in a.from) encodeAbstractCast(ec, t, null)].concat([for (c in a.fromField) encodeAbstractCast(ec, c.t, c.cf)])));
 		f.set(EvalHash.hash("to"), encodeArray([for (t in a.to) encodeAbstractCast(ec, t, null)].concat([for (c in a.toField) encodeAbstractCast(ec, c.t, c.cf)])));
 		f.set(EvalHash.hash("impl"), a.impl == null ? VNull : encodeClassRef(ec, a.impl));
+		f.set(EvalHash.hash("resolve"), a.read == null ? VNull : encodeClassFieldRef(ec, a.read));
+		f.set(EvalHash.hash("resolveWrite"), a.write == null ? VNull : encodeClassFieldRef(ec, a.write));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
