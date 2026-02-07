@@ -876,8 +876,7 @@ class Calls {
 		if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
 			return genToString(e);
 		var stringNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
-		var simple = switch (e.expr) { case TLocal(_) | TConst(_) | TTypeExpr(_): true; case _: false; };
-		if (!simple) {
+		if (needsTempVar(e)) {
 			var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, e.pos);
 			var tmpLocal = TexprTools.makeLocal(tmp, tmp.pos);
 			var checkNull = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(tmp.type, tmp.pos)), ctx.com.basic.tbool, e.pos);
