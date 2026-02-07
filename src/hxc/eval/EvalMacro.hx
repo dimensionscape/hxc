@@ -5425,12 +5425,13 @@ class EvalMacro {
 		f.set(EvalHash.hash("isExtern"), e.isExtern ? VTrue : VFalse);
 		// Exclude() makes the enum extern.
 		f.set(EvalHash.hash("exclude"), VFunction(function(_) { e.isExtern = true; return VNull; }, true));
-		var constrs:Map<Int, EvalValue> = new Map();
+		// A haxe.ds.StringMap, so get/exists/keys work on it.
+		var constrs:Map<String, EvalValue> = new Map();
 		for (name in e.names) {
 			var ef = e.constrs.get(name);
-			if (ef != null) constrs.set(EvalHash.hash(name), encodeEnumField(ec, ef));
+			if (ef != null) constrs.set(name, encodeEnumField(ec, ef));
 		}
-		f.set(EvalHash.hash("constructs"), VObject(new VObject([], ODictionary(constrs))));
+		f.set(EvalHash.hash("constructs"), EvalStdLib.mkStringMapValues(ec, constrs));
 		f.set(EvalHash.hash("names"), encodeArray([for (name in e.names) mkString(name)]));
 		return VObject(new VObject([], ODictionary(f)));
 	}
