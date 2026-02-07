@@ -342,10 +342,6 @@ class Optimizer {
 		return sanitizeExpr(ctx.com, switch (e.expr) {
 			case TCall(e1, el):
 				switch (TexprTools.skip(e1).expr) {
-					case TFunction(fn) if (e1.expr.match(TMeta({name: ":loopCapture"}, _))):
-						// The eval loop-capture wrapper must keep its own frame per iteration;
-						// it is not an inline candidate (see ForLoop.wrapLoopVarsBody).
-						reduceExpr(ctx, e);
 					case TFunction(fn):
 						// An immediately-called closure inlines against a synthetic field and a this receiver, so
 						// `(f)(x)` folds to the function body with x bound.
