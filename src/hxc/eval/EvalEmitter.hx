@@ -17,6 +17,8 @@ import hxc.eval.EvalExceptions;
 // each expression to a closure; that and the bytecode tier are a performance concern left for
 // later.
 class EvalEmitter {
+	static var forRemapCache:haxe.ds.ObjectMap<TExpr, TExpr> = new haxe.ds.ObjectMap();
+
 	static function slot(env:EvalEnv, vid:Int):Int {
 		var s = env.slots.get(vid);
 		if (s != null) return s;
@@ -112,7 +114,17 @@ class EvalEmitter {
 				else VNull;
 			case TWhile(econd, body, flag): evalWhile(ctx, econd, body, flag);
 			case TFor(v, eiter, body):
-				evalFor(ctx, v, eiter, body, e.pos);
+				// A TFor runs as its hasNext/next while loop, lowered once per node and kept.
+				// The basic types are the current API's com, the macro com in a macro.
+				var com = ctx.com != null ? ctx.com : @:privateAccess hxc.eval.EvalMacro.macroCom;
+				if (com == null) evalFor(ctx, v, eiter, body, e.pos) else {
+					var r = forRemapCache.get(e);
+					if (r == null) {
+						r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, eiter, body, e.pos);
+						forRemapCache.set(e, r);
+					}
+					eval(ctx, r);
+				}
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
