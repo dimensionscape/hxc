@@ -4210,7 +4210,7 @@ class Typer {
 	// `Module.field` where Module is not a type bound in the current module context: the unqualified
 	// module
 	// walk resolves the module's statics field before its types.
-	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode, checkContext:Bool = true):Null<AccessKind> {
+	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode, withType:WithType, headPos:Position, checkContext:Bool = true):Null<AccessKind> {
 		if (ctx.locals.exists(modName)) return null;
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
@@ -4247,6 +4247,16 @@ class Typer {
 						switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
 						return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p));
 					}
+				}
+			}
+			// Otherwise the module's own main type (find_type_in_module skips a private one), at the head's
+			// position, and field_chain types the field on it - a miss there is an error, not a reason to
+			// try the next module.
+			for (mt2 in mod.types) {
+				var ti = TypeFunctions.tInfos(mt2);
+				if (ti.path.name == mod.path.name && !ti.isPrivate) {
+					switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
+					return Fields.typeField(ctx, TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, headPos), headPos), field, p, mode, withType);
 				}
 			}
 			return null;
@@ -5132,7 +5142,7 @@ class Typer {
 					// class's name - is that walk.
 					var acc = switch (e1.expr) {
 						case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
-							unqualifiedModuleStaticField(ctx, modName, field, p, mode, false);
+							unqualifiedModuleStaticField(ctx, modName, field, p, mode, withType, e1.pos, false);
 						case _: null;
 					};
 					if (acc == null) acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
