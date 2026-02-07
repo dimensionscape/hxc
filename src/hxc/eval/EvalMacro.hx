@@ -3609,6 +3609,7 @@ class EvalMacro {
 			namePos,
 			boolOf(EvalField.field(ec, v, EvalHash.hash("isPublic")))
 		);
+		cf.doc = decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc")));
 		cf.meta = [];
 		return cf;
 	}
@@ -3992,7 +3993,12 @@ class EvalMacro {
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
 		// `name_pos`, defaulting to the field's pos.
 		var namePos = posDefault(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), pos);
-		return new ClassField({name: name, pos: namePos}, null, pos, meta, access, kind);
+		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc"))), pos, meta, access, kind);
+	}
+
+	// The string becomes the doc's own text, with nothing inherited.
+	static function decodeDoc(v:EvalValue):Documentation {
+		return v == VNull ? null : Ast.docFromString(strOf(v));
 	}
 
 	static function decodeMetadata(ec:EvalContext, v:EvalValue, dp:Position):Metadata {
@@ -4180,14 +4186,15 @@ class EvalMacro {
 		var isExtern = boolOf(EvalField.field(ec, v, EvalHash.hash("isExtern")));
 		var params = decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), pos);
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
+		var doc = decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc")));
 		return switch (ctorName(ec, kind)) {
 			case "TDClass":
 				var flags = decodeClassFlags(ec, kind, isExtern, pos);
-				var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				var def:Definition<ClassFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
 				{decl: EClass(def), pos: pos};
 			case "TDAbstract":
 				var flags = decodeAbstractFlags(ec, kind, isExtern, pos);
-				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
+				var def:Definition<AbstractFlag, Array<ClassField>> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: flags, dData: fields};
 				{decl: EAbstract(def), pos: pos};
 			case "TDEnum":
 				// Each field converts to an enum constructor: a variable keeps no arguments, a function
@@ -4207,12 +4214,12 @@ class EvalMacro {
 							etype = fd.fType;
 						case _: throw new TypingError("Invalid expression", dp);
 					}
-					({ecName: f.cffName, ecDoc: null, ecMeta: f.cffMeta, ecArgs: eargs, ecPos: f.cffPos, ecParams: eparams, ecType: etype} : hxc.ast.Ast.EnumConstructor);
+					({ecName: f.cffName, ecDoc: f.cffDoc, ecMeta: f.cffMeta, ecArgs: eargs, ecPos: f.cffPos, ecParams: eparams, ecType: etype} : hxc.ast.Ast.EnumConstructor);
 				}];
-				var def:Definition<hxc.ast.Ast.EnumFlag, Array<hxc.ast.Ast.EnumConstructor>> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: ctors};
+				var def:Definition<hxc.ast.Ast.EnumFlag, Array<hxc.ast.Ast.EnumConstructor>> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: ctors};
 				{decl: EEnum(def), pos: pos};
 			case "TDStructure":
-				var def:Definition<hxc.ast.Ast.EnumFlag, TypeHint> = {dName: {name: name, pos: pos}, dDoc: null, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: {ct: CTAnonymous(fields), pos: pos}};
+				var def:Definition<hxc.ast.Ast.EnumFlag, TypeHint> = {dName: {name: name, pos: pos}, dDoc: doc, dParams: params, dMeta: meta, dFlags: isExtern ? [EExtern] : [], dData: {ct: CTAnonymous(fields), pos: pos}};
 				{decl: ETypedef(def), pos: pos};
 			case other:
 				throw new TypingError("defineType supports only TDClass/TDAbstract/TDEnum/TDStructure, got " + other, dp);
@@ -4275,6 +4282,11 @@ class EvalMacro {
 		var ef = en.constrs.get(ctor);
 		if (ef == null) throw "macro encode: no constructor " + ctor + " in " + enumName;
 		return VEnumValue(new VEnumValue(ef.index, args, EvalHash.pathHash(en.path), null));
+	}
+
+	// A missing doc is null, not an empty string.
+	static function encodeDoc(s:Null<String>):EvalValue {
+		return s == null ? VNull : mkString(s);
 	}
 
 	static function mkString(s:String):EvalValue {
@@ -4366,7 +4378,7 @@ class EvalMacro {
 		// build macro hands back unchanged keeps its name where the parser put it - which the build's
 		// placed-name equality check relies on.
 		fields.set(EvalHash.hash("name_pos"), encPos(f.cffName.pos));
-		fields.set(EvalHash.hash("doc"), VNull);
+		fields.set(EvalHash.hash("doc"), encodeDoc(Ast.genDocTextOpt(f.cffDoc)));
 		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access, pa.pos)]));
 		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
 		fields.set(EvalHash.hash("pos"), encPos(f.cffPos));
@@ -5245,7 +5257,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("kind"), encodeTFieldKind(ec, cf.kind));
 		f.set(EvalHash.hash("pos"), encPos(cf.pos));
 		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(cf.doc)));
 		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([for (ocf in cf.overloads) encodeClassField(ec, ocf)])));
 		f.set(EvalHash.hash("isExtern"), VFalse);
 		f.set(EvalHash.hash("isFinal"), VFalse);
@@ -5369,7 +5381,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("type"), encodeType(ec, ef.type));
 		f.set(EvalHash.hash("pos"), encPos(ef.pos));
 		f.set(EvalHash.hash("namePos"), encPos(ef.namePos));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(ef.doc)));
 		f.set(EvalHash.hash("index"), VInt(ef.index));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
@@ -5388,7 +5400,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("pos"), encPos(c.pos));
 		f.set(EvalHash.hash("isPrivate"), VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(c.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in c.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("kind"), mkEnumValue(ec, "ClassKind", "KNormal", []));
 		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
@@ -5420,7 +5432,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("pos"), encPos(e.pos));
 		f.set(EvalHash.hash("isPrivate"), e.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return e.meta, function(m) e.meta = m));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(e.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in e.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("isExtern"), e.isExtern ? VTrue : VFalse);
 		// Exclude() makes the enum extern.
@@ -5453,7 +5465,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("pos"), encPos(d.pos));
 		f.set(EvalHash.hash("isPrivate"), d.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return d.meta, function(m) d.meta = m));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(d.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in d.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("type"), encodeType(ec, d.type));
 		return VObject(new VObject([], ODictionary(f)));
@@ -5468,7 +5480,7 @@ class EvalMacro {
 		f.set(EvalHash.hash("pos"), encPos(a.pos));
 		f.set(EvalHash.hash("isPrivate"), a.isPrivate ? VTrue : VFalse);
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return a.meta, function(m) a.meta = m));
-		f.set(EvalHash.hash("doc"), VNull);
+		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(a.doc)));
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in a.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("type"), encodeType(ec, a.thisType));
 		f.set(EvalHash.hash("binops"), encodeArray([for (op in a.ops) encodeAbstractBinop(ec, op)]));
