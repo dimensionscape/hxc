@@ -126,8 +126,10 @@ class ForLoopFaithful {
 		var mt = ctx.com.getType({pack: [], name: "StdTypes"}, Position.nullPos, "Iterator");
 		return switch (mt) {
 			case TTypeDecl(td):
+				// The applied typedef, the structure itself, which is what a failed unification against it
+				// prints.
 				var pt = TypeFunctions.mkMono();
-				{t: TType(td, [pt]), pt: pt};
+				{t: TypeFunctions.applyTypedef(td, [pt]), pt: pt};
 			case _:
 				throw new TypingError("Standard library Iterator typedef not found", Position.nullPos);
 		};
@@ -240,10 +242,14 @@ class ForLoopFaithful {
 				return try {
 					hxc.core.TypeUnification.unifyDefault(accExpr.type, it.t);
 					accExpr;
-				} catch (_:hxc.core.TypeUnification.UnifyError) {
+				} catch (ue:hxc.core.TypeUnification.UnifyError) {
+					// Both messages are recorded at the failed unification, and the loop goes on over a Dynamic
+					// null, which ofTexpr then reports as a Dynamic iteration.
 					tryLastResort(function() {
 						if (dynamicIterator != null) return dynamicIterator;
-						throw new TypingError("Field iterator has an invalid type", accExpr.pos);
+						ctx.com.addDiagnostic("Field iterator has an invalid type", accExpr.pos, unifyErr.depth);
+						ctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), accExpr.pos, unifyErr.depth + 1);
+						return TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, accExpr.pos);
 					});
 				}
 			}
@@ -318,8 +324,10 @@ class ForLoopFaithful {
 	}
 
 	public static function ofTexpr(ctx:TyperContext, e:TExpr, unrollWeight:Null<Int>, p:Position):{kind:IterationKindKind, e:TExpr, pt:T} {
+		// Recorded, and the loop still lowers as a Dynamic iteration.
 		function dynamicIterator(e2:TExpr):{kind:IterationKindKind, e:TExpr, pt:T} {
-			throw new TypingError("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e2.pos);
+			ctx.com.addDiagnostic("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e2.pos);
+			return {kind: IteratorDynamic, e: e2, pt: TypeFunctions.tDynamic};
 		}
 		function doCheckIterator():{kind:IterationKindKind, e:TExpr, pt:T} {
 			var arrayAccessResult:Null<{kind:IterationKindKind, e:TExpr, pt:T}> = null;
