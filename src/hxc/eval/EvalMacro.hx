@@ -4830,8 +4830,14 @@ class EvalMacro {
 		fields.set(EvalHash.hash("id"), VInt(v.id));
 		fields.set(EvalHash.hash("name"), mkString(v.name));
 		fields.set(EvalHash.hash("t"), encodeType(ec, v.type));
-		fields.set(EvalHash.hash("capture"), VFalse);
-		fields.set(EvalHash.hash("extra"), VNull);
+		// A local function's var reads as captured: the VFinal INDEX is stored as its flags.
+		fields.set(EvalHash.hash("capture"), TypeFunctions.hasVarFlag(v, VCaptured) ? VTrue : VFalse);
+		fields.set(EvalHash.hash("extra"), v.extra == null ? VNull : {
+			var x:Map<Int, EvalValue> = new Map();
+			x.set(EvalHash.hash("params"), encodeArray([for (tp in v.extra.params) encodeTypeParameterValue(ec, tp)]));
+			x.set(EvalHash.hash("expr"), v.extra.expr == null ? VNull : encodeTypedExpr(ec, v.extra.expr));
+			VObject(new VObject([], ODictionary(x)));
+		});
 		fields.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return v.meta, function(m) v.meta = m));
 		fields.set(EvalHash.hash("isStatic"), TypeFunctions.hasVarFlag(v, VStatic) ? VTrue : VFalse);
 		return VObject(new VObject([], ODictionary(fields)));
