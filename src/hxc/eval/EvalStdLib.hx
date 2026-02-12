@@ -3641,9 +3641,14 @@ class EvalStdLib {
 	// Type.typeof builds a ValueType enum value; constructor indices match the std declaration
 	// order (TNull,TInt,TFloat,TBool,TObject,TFunction,TClass,TEnum,TUnknown).
 	static function typeofValue(ctx:EvalContext, v:EvalValue):EvalValue {
+		// Type.typeof and Type.getClass go through the same static-prototype value lookup, so the class
+		// here is the one Type.getClass gives, a synthetic prototype's (haxe.macro.Position) included; a
+		// bare static-prototype lookup would leave that TClass(null).
 		function classVal(path:Int):EvalValue {
-			var p = ctx.staticPrototypes.get(path);
-			return p == null ? VNull : p.pvalue;
+			return switch (classValue(ctx, path)) {
+				case VNull: coreClassValue(ctx, path);
+				case cv: cv;
+			};
 		}
 		var idx:Int;
 		var args:Array<EvalValue> = [];
