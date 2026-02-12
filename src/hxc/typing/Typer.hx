@@ -5928,6 +5928,17 @@ class Typer {
 
 	// userWritten: a construction the user actually spelled.
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position, userWritten:Bool = true, forceInline:Bool = false):TExpr {
+		// A path a macro built has a null position, so a better one is taken from the `new` expression -
+		// after `new `, up to the first argument's opening bracket.
+		if (tp.pos.file == Position.nullPos.file && tp.pos.min == Position.nullPos.min && tp.pos.max == Position.nullPos.max) {
+			var np = p;
+			if (el.length > 0 && el[0].pos.file == p.file && p.min < el[0].pos.min) {
+				var pmin = p.min + "new ".length;
+				var pmax = el[0].pos.min - 2;
+				np = new Position(p.file, pmin < pmax ? pmin : p.min, pmax);
+			}
+			tp = {path: tp.path, pos: np};
+		}
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
 		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);

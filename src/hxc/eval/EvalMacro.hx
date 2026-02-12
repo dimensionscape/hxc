@@ -3872,7 +3872,7 @@ class EvalMacro {
 			case "EVars": EVars([for (vv in arrOf(a[0])) decodeVar(ec, vv, dp)]);
 			case "EThrow": EThrow(decodeExpr(ec, a[0], dp));
 			case "EMeta": EMeta(decodeMetadataEntry(ec, a[0], dp), decodeExpr(ec, a[1], dp));
-			case "ENew": ENew({path: decodeTypePath(ec, a[0]), pos: dp}, [for (e in arrOf(a[1])) decodeExpr(ec, e, dp)]);
+			case "ENew": ENew(decodePlacedTypePath(ec, a[0]), [for (e in arrOf(a[1])) decodeExpr(ec, e, dp)]);
 			case "EFunction": EFunction(decodeFunctionKind(ec, a[0], dp), decodeFunc(ec, a[1], dp));
 			case "EFor": EFor(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp));
 			case "EWhile": EWhile(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp), boolOf(a[2]) ? NormalWhile : DoWhile);
@@ -3944,7 +3944,7 @@ class EvalMacro {
 			case "TParent": CTParent(decodeTypeHint(ec, a[0], dp));
 			case "TOptional": CTOptional(decodeTypeHint(ec, a[0], dp));
 			case "TNamed": CTNamed({name: strOf(a[0]), pos: dp}, decodeTypeHint(ec, a[1], dp));
-			case "TExtend": CTExtend([for (p in arrOf(a[0])) {path: decodeTypePath(ec, p), pos: dp}], [for (f in arrOf(a[1])) decodeField(ec, f, dp)]);
+			case "TExtend": CTExtend([for (p in arrOf(a[0])) decodePlacedTypePath(ec, p)], [for (f in arrOf(a[1])) decodeField(ec, f, dp)]);
 			case "TIntersection": CTIntersection([for (x in arrOf(a[0])) decodeTypeHint(ec, x, dp)]);
 			case other: throw new TypingError("Macro decode: unhandled ComplexType " + other, dp);
 		};
@@ -4082,6 +4082,12 @@ class EvalMacro {
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
 			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
 		};
+	}
+
+	// The path's own pos, the null position when the object has none.
+	static function decodePlacedTypePath(ec:EvalContext, v:EvalValue):PlacedTypePath {
+		var pv = EvalField.field(ec, v, EvalHash.hash("pos"));
+		return {path: decodeTypePath(ec, v), pos: pv == VNull ? Position.nullPos : posOf(ec, pv, Position.nullPos)};
 	}
 
 	static function decodeTypePath(ec:EvalContext, v:EvalValue):TypePath {
@@ -4331,7 +4337,7 @@ class EvalMacro {
 			case EVars(vl): mkEnumValue(ec, "ExprDef", "EVars", [encodeArray([for (v in vl) encodeVar(ec, v)])]);
 			case EThrow(e1): mkEnumValue(ec, "ExprDef", "EThrow", [encodeExpr(ec, e1)]);
 			case EObjectDecl(fl): mkEnumValue(ec, "ExprDef", "EObjectDecl", [encodeArray([for (f in fl) encodeObjField(ec, f)])]);
-			case ENew(tp, el): mkEnumValue(ec, "ExprDef", "ENew", [encodeTypePath(ec, tp.path), encodeArray([for (e in el) encodeExpr(ec, e)])]);
+			case ENew(tp, el): mkEnumValue(ec, "ExprDef", "ENew", [encodeTypePath(ec, tp.path, tp.pos), encodeArray([for (e in el) encodeExpr(ec, e)])]);
 			case EFunction(kind, f): mkEnumValue(ec, "ExprDef", "EFunction", [encodeFunctionKind(ec, kind), encodeFunc(ec, f)]);
 			case EFor(it, e1): mkEnumValue(ec, "ExprDef", "EFor", [encodeExpr(ec, it), encodeExpr(ec, e1)]);
 			case EWhile(c, e1, flag): mkEnumValue(ec, "ExprDef", "EWhile", [encodeExpr(ec, c), encodeExpr(ec, e1), (switch (flag) { case NormalWhile: VTrue; case DoWhile: VFalse; })]);
@@ -4504,12 +4510,15 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function encodeTypePath(ec:EvalContext, tp:TypePath):EvalValue {
+	// A placed path carries its position (a TPath's is the null position), and `sub` is left out when there
+	// is none.
+	static function encodeTypePath(ec:EvalContext, tp:TypePath, pos:Position):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("pack"), encodeArray([for (s in tp.tpackage) mkString(s)]));
 		fields.set(EvalHash.hash("name"), mkString(tp.tname));
 		fields.set(EvalHash.hash("params"), encodeArray([for (tpc in tp.tparams) encodeTypeParam(ec, tpc)]));
-		fields.set(EvalHash.hash("sub"), tp.tsub == null ? VNull : mkString(tp.tsub));
+		fields.set(EvalHash.hash("pos"), encPos(pos));
+		if (tp.tsub != null) fields.set(EvalHash.hash("sub"), mkString(tp.tsub));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4738,11 +4747,11 @@ class EvalMacro {
 
 	static function encodeComplexTypeInner(ec:EvalContext, ct:ComplexType):EvalValue {
 		return switch (ct) {
-			case CTPath(tp): mkEnumValue(ec, "ComplexType", "TPath", [encodeTypePath(ec, tp)]);
+			case CTPath(tp): mkEnumValue(ec, "ComplexType", "TPath", [encodeTypePath(ec, tp, Position.nullPos)]);
 			case CTFunction(args, ret): mkEnumValue(ec, "ComplexType", "TFunction", [encodeArray([for (a in args) encodeComplexType(ec, a)]), encodeComplexType(ec, ret)]);
 			case CTAnonymous(fl): mkEnumValue(ec, "ComplexType", "TAnonymous", [encodeArray([for (f in fl) encodeField(ec, f)])]);
 			case CTParent(t): mkEnumValue(ec, "ComplexType", "TParent", [encodeComplexType(ec, t)]);
-			case CTExtend(paths, fl): mkEnumValue(ec, "ComplexType", "TExtend", [encodeArray([for (pp in paths) encodeTypePath(ec, pp.path)]), encodeArray([for (f in fl) encodeField(ec, f)])]);
+			case CTExtend(paths, fl): mkEnumValue(ec, "ComplexType", "TExtend", [encodeArray([for (pp in paths) encodeTypePath(ec, pp.path, pp.pos)]), encodeArray([for (f in fl) encodeField(ec, f)])]);
 			case CTOptional(t): mkEnumValue(ec, "ComplexType", "TOptional", [encodeComplexType(ec, t)]);
 			case CTNamed(n, t): mkEnumValue(ec, "ComplexType", "TNamed", [mkString(n.name), encodeComplexType(ec, t)]);
 			case CTIntersection(tl): mkEnumValue(ec, "ComplexType", "TIntersection", [encodeArray([for (t in tl) encodeComplexType(ec, t)])]);
