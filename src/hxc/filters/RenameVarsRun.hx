@@ -104,17 +104,18 @@ class RenameVarsRun {
 		return switch (e.expr) { case TBlock(_) | TFunction(_): true; case _: false; };
 	}
 
-	// collect_vars . `in_block` only matters for BlockScope (deferred); kept for structural fidelity.
+	// `in_block` is whether the PARENT is a block or a function, and only the BlockScope TBlock arm reads
+	// it: a block under an if, a loop, a try or a catch opens its own scope.
 	function collectVars(scope:RenameScope, e:TExpr, in_block:Bool = false):Void {
 		switch (e.expr) {
 			// TVar with hoisting or a function initializer: declare before collecting the init. With
 			// VarHoisting on (the JS config) this is the path every TVar takes.
 			case TVarExpr(v, e_opt) if (hoisting || (e_opt != null && (switch (e_opt.expr) { case TFunction(_): true; case _: false; }))):
 				declareVar(scope, v);
-				if (e_opt != null) collectVars(scope, e_opt, isBlockLike(e_opt));
+				if (e_opt != null) collectVars(scope, e_opt, false);
 			// TVar: collect init first, then declare.
 			case TVarExpr(v, e_opt):
-				if (e_opt != null) collectVars(scope, e_opt, isBlockLike(e_opt));
+				if (e_opt != null) collectVars(scope, e_opt, false);
 				declareVar(scope, v);
 			case TLocal(v):
 				useVar(scope, v);
@@ -125,28 +126,28 @@ class RenameVarsRun {
 				for (a in fn.args) useVar(child, a.v);
 				switch (fn.expr.expr) {
 					case TBlock(exprs): for (x in exprs) collectVars(child, x, true);
-					case _: collectVars(child, fn.expr, isBlockLike(fn.expr));
+					case _: collectVars(child, fn.expr, true);
 				}
 			// TTry: the catch var is treated as a TVar declared at the head of the catch body. With
 			// NoCatchVarShadowing (the JS config) the catch var is ALSO `use`d so it is reserved against
 			// the surrounding scope.
 			case TTry(try_expr, catches):
-				collectVars(scope, try_expr, isBlockLike(try_expr));
+				collectVars(scope, try_expr, false);
 				for (c in catches) {
 					var v_expr = TypeFunctions.mk(TVarExpr(c.v, null), TypeFunctions.tDynamic, c.v.pos);
 					var wrapped = switch (c.expr.expr) {
 						case TBlock(exprs): TypeFunctions.mk(TBlock([v_expr].concat(exprs)), c.expr.type, c.expr.pos);
 						case _: TypeFunctions.mk(TBlock([v_expr, c.expr]), c.expr.type, c.expr.pos);
 					};
-					collectVars(scope, wrapped, true);
+					collectVars(scope, wrapped, false);
 					if (noCatchVarShadowing) useVar(scope, c.v);
 				}
 			// TSwitch with SwitchCasesNoBlocks: sibling case bodies share the switch scope so their lets
 			// get distinct names.
 			case TSwitch(target, cases, edef) if (switchCasesNoBlocks):
-				collectVars(scope, target, isBlockLike(target));
+				collectVars(scope, target, false);
 				for (c in cases) {
-					for (val in c.values) collectVars(scope, val, isBlockLike(val));
+					for (val in c.values) collectVars(scope, val, false);
 					collectIgnoreBlock(scope, c.expr);
 				}
 				if (edef != null) collectIgnoreBlock(scope, edef);
@@ -157,7 +158,7 @@ class RenameVarsRun {
 			case TWhile(condition, body, flag):
 				collectLoop(scope, function() {
 					if (flag == NormalWhile) collectVars(scope, condition, false);
-					collectVars(scope, body, isBlockLike(body));
+					collectVars(scope, body, false);
 					if (flag == DoWhile) collectVars(scope, condition, false);
 				});
 			// TFor. With hoisting, declare the loop var first.
@@ -166,11 +167,12 @@ class RenameVarsRun {
 					if (hoisting) declareVar(scope, v);
 					collectVars(scope, iterator, false);
 					if (!hoisting) declareVar(scope, v);
-					collectVars(scope, body, isBlockLike(body));
+					collectVars(scope, body, false);
 				});
 			// Default: iter over sub-exprs.
 			case _:
-				iterSub(e, function(sub) collectVars(scope, sub, isBlockLike(sub)));
+				var parentIsBlock = isBlockLike(e);
+				iterSub(e, function(sub) collectVars(scope, sub, parentIsBlock));
 		}
 	}
 
@@ -274,7 +276,8 @@ class RenameVarsRun {
 	public static function run(ri:RenameVars, e:TExpr):Void {
 		var self = new RenameVarsRun(ri);
 		var scope = new RenameScope(null);
-		self.collectVars(scope, e, isBlockLike(e));
+		// The default scope is outside a block.
+		self.collectVars(scope, e, false);
 		self.renameVars(scope);
 	}
 
