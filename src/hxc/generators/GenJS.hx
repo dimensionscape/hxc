@@ -1942,8 +1942,13 @@ class GenJS {
 					switch (initCf.expr.expr) {
 						// A trivially empty body is never recorded as the class init, so it contributes no block.
 						// Only es6 shows it (gen_block_element keeps blocks there), where each one printed an empty
-						// `{ }`.
-						case TFunction(fn): if (!isTrivialInit(fn.expr)) inits.unshift(fn.expr);
+						// `{ }`. The reference's init is the bare body, filtered on its own: reduce_expr turns a
+						// one-element block into that element and only a function body is wrapped back into a block
+						// (sanitize_expr). Es6 keeps init blocks, so difference printed as a `{ }` around Math's and
+						// HxOverrides' inits.
+						case TFunction(fn):
+							var body = switch (fn.expr.expr) { case TBlock([x]): x; case _: fn.expr; };
+							if (!hxc.typing.TypeFields.trivialInits.exists(initCf)) inits.unshift(body);
 						case _:
 					}
 					c.statics.remove("__init__");

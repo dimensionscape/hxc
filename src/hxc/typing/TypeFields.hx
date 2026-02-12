@@ -19,6 +19,9 @@ import hxc.typing.TyperContext.CurrentFun;
 // field forces its body to type, resolving an inferred (unannotated) type before any consumer in
 // another module can bind it. A final flush forces every remaining field.
 class TypeFields {
+	// __init__ fields whose typed body was trivially empty, per field object.
+	public static final trivialInits = new haxe.ds.ObjectMap<TClassField, Bool>();
+
 	static var lazyFieldTypes:haxe.ds.ObjectMap<TClassField, T> = new haxe.ds.ObjectMap();
 	// Field bodies whose typing has been attempted. A body that errors leaves expr null, so the
 	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
@@ -1007,6 +1010,13 @@ class TypeFields {
 					// The TFunction node itself also carries the body position; genxml's line attribute
 					// reads it.
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, funcPos);
+					// An __init__ whose typed body is trivially empty never becomes the class init. The generators
+					// ask this rather than the body the filters leave, which reduce_expr may have emptied (a macro
+					// that expanded to `{}`).
+					if (isStatic && cf.name == "__init__") switch (tf.expr.expr) {
+						case TBlock([]) | TBlock([{expr: TConst(_)}]) | TConst(_) | TObjectDecl([]): trivialInits.set(cf, true);
+						case _:
+					}
 				case FProp(_, _, _, eo):
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
