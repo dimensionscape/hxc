@@ -119,6 +119,12 @@ class Setup {
 			if (es == null) es = 0;
 			if (es < 3 || es == 4) throw "Invalid -D js-es value";
 			if (es >= 5) ctx.defines.rawDefine("js_es5");
+			// Reapplied once every define is in: ES6 needs no per-iteration capture wrapping (let is
+			// block-scoped), and a class cannot touch `this` before super().
+			if (es >= 6) {
+				cfg.capturePolicy = CPNone;
+				cfg.thisBeforeSuper = false;
+			}
 		}
 	}
 
