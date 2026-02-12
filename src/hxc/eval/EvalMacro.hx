@@ -1919,40 +1919,74 @@ class EvalMacro {
 			var vals:Array<EvalValue> = [for (s in a) str(s)];
 			return VArray(new VArray(vals, vals.length));
 		}
+		// The package rules, as a haxe.ds.StringMap.
 		function packageRules():EvalValue {
-			var entries:Array<EvalValue> = [];
-			var names = [for (k in com.forbiddenPackages.keys()) k].concat([for (k in com.packageRemaps.keys()) if (!com.forbiddenPackages.exists(k)) k]);
-			names.sort(function(a, b) return a < b ? 1 : (a > b ? -1 : 0));
-			for (name in names) {
-				var entry:Map<Int, EvalValue> = new Map();
-				entry.set(EvalHash.hash("key"), mkString(name));
-				entry.set(EvalHash.hash("value"), com.forbiddenPackages.exists(name) ? mkEnumValue(ec, "PackageRule", "Forbidden", []) : mkEnumValue(ec, "PackageRule", "Remap", [mkString(com.packageRemaps.get(name))]));
-				entries.push(VObject(new VObject([], ODictionary(entry))));
-			}
-			var fields:Map<Int, EvalValue> = new Map();
-			fields.set(EvalHash.hash("keyValueIterator"), VFunction(function(_) {
-				var i = 0;
-				var iteratorFields:Map<Int, EvalValue> = new Map();
-				iteratorFields.set(EvalHash.hash("hasNext"), VFunction(function(_) return i < entries.length ? VTrue : VFalse, true));
-				iteratorFields.set(EvalHash.hash("next"), VFunction(function(_) return entries[i++], true));
-				return VObject(new VObject([], ODictionary(iteratorFields)));
-			}, true));
-			return VObject(new VObject([], ODictionary(fields)));
+			var m:Map<String, EvalValue> = new Map();
+			for (name in com.forbiddenPackages.keys()) m.set(name, mkEnumValue(ec, "PackageRule", "Forbidden", []));
+			for (name in com.packageRemaps.keys()) if (!com.forbiddenPackages.exists(name))
+				m.set(name, mkEnumValue(ec, "PackageRule", "Remap", [mkString(com.packageRemaps.get(name))]));
+			return EvalStdLib.mkStringMapValues(ec, m);
+		}
+		// A path object. hxc keeps a type as a dotted path; Dynamic is the StdTypes module's.
+		function path(dotted:String):EvalValue {
+			var parts = dotted.split(".");
+			var name = parts.pop();
+			if (parts.length == 0 && name == "Dynamic") parts = ["StdTypes"];
+			return obj([{name: "pack", value: strArray(parts)}, {name: "name", value: str(name)}]);
+		}
+		function pathArray(l:Array<String>):EvalValue {
+			var vals = [for (s in l) path(s)];
+			return VArray(new VArray(vals, vals.length));
 		}
 		var pc = com.platformConfig;
+		// The per-platform values hxc's config does not model: only Js sets reserved type paths; scoping is
+		// Js, Cpp and Neko, the rest the default.
+		var es6 = com.platform.match(Js) && com.getEsVersion() >= 6;
+		var reserved = com.platform.match(Js) ? ["Object", "Error"] : [];
+		var scope = switch (com.platform) {
+			case Js: es6 ? "BlockScope" : "FunctionScope";
+			case Cpp: "FunctionScope";
+			case _: "BlockScope";
+		};
+		var flags:Array<EvalValue> = switch (com.platform) {
+			case Js:
+				[mkEnumValue(ec, "VarScopingFlags", com.defines.rawDefined("js_unflatten") ? "ReserveAllTopLevelSymbols" : "ReserveAllTypesFlat", [])]
+					.concat(es6 ? [mkEnumValue(ec, "VarScopingFlags", "NoShadowing", []), mkEnumValue(ec, "VarScopingFlags", "SwitchCasesNoBlocks", [])]
+						: [mkEnumValue(ec, "VarScopingFlags", "VarHoisting", []), mkEnumValue(ec, "VarScopingFlags", "NoCatchVarShadowing", [])]);
+			case Cpp: [mkEnumValue(ec, "VarScopingFlags", "NoShadowing", [])];
+			case Neko: [mkEnumValue(ec, "VarScopingFlags", "ReserveAllTopLevelSymbols", [])];
+			case _: [];
+		};
 		var platformConfig = obj([
 			{name: "staticTypeSystem", value: pc.isStatic ? VTrue : VFalse},
 			{name: "sys", value: pc.sys ? VTrue : VFalse},
+			{name: "capturePolicy", value: mkEnumValue(ec, "CapturePolicy", switch (pc.capturePolicy) {
+				case CPNone: "None";
+				case CPWrapRef: "WrapRef";
+				case CPLoopVars: "LoopVars";
+			}, [])},
 			{name: "padNulls", value: pc.padNulls ? VTrue : VFalse},
 			{name: "addFinalReturn", value: pc.addFinalReturn ? VTrue : VFalse},
 			{name: "overloadFunctions", value: pc.supportsOverload ? VTrue : VFalse},
 			{name: "canSkipNonNullableArgument", value: pc.canSkipNonNullableArgument ? VTrue : VFalse},
+			{name: "reservedTypePaths", value: pathArray(reserved)},
 			{name: "supportsFunctionEquality", value: VTrue},
 			{name: "usesUtf16", value: pc.usesUtf16 ? VTrue : VFalse},
-			{name: "thisBeforeSuper", value: VFalse},
+			{name: "thisBeforeSuper", value: pc.thisBeforeSuper ? VTrue : VFalse},
 			{name: "supportsThreads", value: pc.supportsThreads ? VTrue : VFalse},
 			{name: "supportsUnicode", value: pc.supportsUnicode ? VTrue : VFalse},
 			{name: "supportsRestArgs", value: pc.supportsRestArgs ? VTrue : VFalse},
+			{name: "exceptions", value: obj([
+				{name: "nativeThrows", value: pathArray(pc.nativeThrows)},
+				{name: "nativeCatches", value: pathArray(pc.nativeCatches)},
+				{name: "avoidWrapping", value: pc.avoidWrapping ? VTrue : VFalse},
+				{name: "wildcardCatch", value: path(pc.wildcardCatch)},
+				{name: "baseThrow", value: path(pc.baseThrow)},
+			])},
+			{name: "scoping", value: obj([
+				{name: "scope", value: mkEnumValue(ec, "VarScope", scope, [])},
+				{name: "flags", value: VArray(new VArray(flags, flags.length))},
+			])},
 			{name: "supportsAtomics", value: pc.supportsAtomics ? VTrue : VFalse},
 		]);
 		var mainClass = com.mainClass == null ? VNull : obj([
