@@ -230,14 +230,30 @@ class GenXml {
 		}
 	}
 
+	// Entity escaping: an `&` starting a `&#` character reference is kept as is.
 	static function escapeEntities(s:String):String {
-		s = StringTools.replace(s, "&", "&amp;");
-		s = StringTools.replace(s, "<", "&lt;");
-		s = StringTools.replace(s, ">", "&gt;");
-		// Escape double quotes in PCData as xml-light does, including string defaults in attribute
-		// values.
-		s = StringTools.replace(s, "\"", "&quot;");
-		return s;
+		var b:StringBuf = null;
+		var start = 0;
+		var l = s.length;
+		for (p in 0...l) {
+			var rep = switch (s.charCodeAt(p)) {
+				case ">".code: "&gt;";
+				case "<".code: "&lt;";
+				case "&".code: p < l - 1 && s.charCodeAt(p + 1) == "#".code ? null : "&amp;";
+				case "'".code: "&apos;";
+				case "\"".code: "&quot;";
+				case _: null;
+			}
+			if (rep != null) {
+				if (b == null) b = new StringBuf();
+				b.addSub(s, start, p - start);
+				b.add(rep);
+				start = p + 1;
+			}
+		}
+		if (b == null) return s;
+		b.addSub(s, start, l - start);
+		return b.toString();
 	}
 
 	static function attStr(att:Array<{a:String, v:String}>):String {
