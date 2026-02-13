@@ -1429,12 +1429,47 @@ class Typer {
 							}
 						}
 					}
+					// Field typing, over the constructor arguments as the field map.
 					var byName = new haxe.ds.StringMap<TExpr>();
+					var anonFields = new haxe.ds.StringMap<TClassField>();
+					var extraFields:Array<{name:String, pos:Position}> = [];
 					for (f in fields) {
 						var arg = argByName.get(f.name);
-						var te = typeExpr(ctx, f.expr, arg != null ? WithTypeTools.withStructureField(arg.t, f.name) : WithTypeTools.value);
-						if (arg != null) te = castOrUnify(ctx, arg.t, te, te.pos);
+						var te:TExpr;
+						if (arg != null) {
+							te = typeExpr(ctx, f.expr, WithTypeTools.withStructureField(arg.t, f.name));
+							te = castOrUnify(ctx, arg.t, te, te.pos);
+							// A non-null value for a nullable argument is cast to Null, and a value not
+							// strictly of the argument's type is cast to it.
+							if (TypeFunctions.isNull(arg.t) && !TypeFunctions.isNull(te.type))
+								te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
+							try TypeUnification.typeEqKind(EqStrict, te.type, arg.t)
+							catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), arg.t, te.pos);
+						} else {
+							// No argument takes it, so it is typed on its own and reported below, the last
+							// one first.
+							if (isValidIdentifier(f.name)) extraFields.unshift({name: f.name, pos: f.pos});
+							te = typeExpr(ctx, f.expr, WithTypeTools.value);
+						}
+						if (isValidIdentifier(f.name))
+							anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
 						byName.set(f.name, te);
+					}
+					if (!ctx.untypedMode) {
+						// Missing arguments, then each extra field at its own name.
+						inline function reportOrRaise(msg:String, pos:Position):Void {
+							if (ctx.inCallArgs) throw new TypingError(msg, pos);
+							ctx.com.addDiagnostic(msg, pos);
+						}
+						var missing:Array<String> = [for (arg in scSig.args) if (!arg.opt && !byName.exists(arg.name)) arg.name];
+						// Missing fields are listed in descending name order.
+						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
+						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
+						if (extraFields.length > 0) {
+							var tAnon = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
+							for (x in extraFields) reportOrRaise(hxc.core.TPrinting.sTypeStr(tAnon) + " has extra field " + x.name, x.pos);
+						}
 					}
 					var evars:Array<TExpr> = [];
 					var hadSideEffect = false;
@@ -1466,7 +1501,6 @@ class Typer {
 						}
 					}
 					var el:Array<TExpr> = [];
-					var missing:Array<String> = [];
 					for (arg in scSig.args) {
 						var te = byName.get(arg.name);
 						if (te != null) el.push(te);
@@ -1474,14 +1508,12 @@ class Typer {
 							var dflt:Null<TExpr> = null;
 							if (ctorTf != null) for (a in ctorTf.args) if (a.v.name == arg.name && a.c != null) { dflt = a.c; break; }
 							if (dflt != null) el.push(dflt);
-							else if (arg.opt) el.push(TexprTools.makeNull(arg.t, p));
-							else { missing.push(arg.name); el.push(TexprTools.makeNull(arg.t, p)); }
+							else {
+								// A @:notNull argument type is given a nullable null.
+								var nt = TypeFunctions.typeHasMeta(TypeFunctions.followWithAbstractsWithoutNull(arg.t), ":notNull") ? ctx.com.basic.tnull(arg.t) : arg.t;
+								el.push(TexprTools.makeNull(nt, p));
+							}
 						}
-					}
-					if (missing.length > 0) {
-						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
-						var msg = missing.length == 1 ? "Object requires field " + missing[0] : "Object requires fields: " + missing.join(", ");
-						if (ctx.inCallArgs) throw new TypingError(msg, p) else ctx.com.addDiagnostic(msg, p);
 					}
 					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
 					if (evars.length == 0) enew else TypeFunctions.mk(TBlock(evars.concat([enew])), scHit.t, p);
@@ -5652,6 +5684,8 @@ class Typer {
 	public static function ensureInheritedCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return;
+		// A @:structInit class never gets this constructor.
+		if (TypeFunctions.hasMeta(":structInit", c.meta)) return;
 		// Process the super first so its (possibly synthesized) constructor exists before this class
 		// looks it up, matching the reference's dependency-ordered add_constructor pass.
 		if (c.superClass != null) ensureInheritedCtor(ctx, c.superClass.c);
@@ -5729,12 +5763,45 @@ class Typer {
 		try ensureStructInitCtor(ctx, c) catch (_:Dynamic) {}
 	}
 
+	// The super constructor's typed arguments are read, so a body that has not been typed yet
+	// contributes none and the super call passes nothing. The super's own vars and default values are
+	// reused, and its types are not specialized to this class's heritage.
+	static function getStructInitSuperInfo(ctx:TyperContext, c:TClass, p:Position):{args:Array<TFuncArg>, expr:Null<TExpr>, tl:Array<TSignatureArg>} {
+		if (c.superClass == null || c.superClass.c.constructor == null) return {args: [], expr: null, tl: []};
+		var csup = c.superClass.c;
+		var ctor = csup.constructor;
+		var sargs:Array<TFuncArg> = ctor.expr == null ? [] : switch (ctor.expr.expr) {
+			case TFunction(tf): tf.args;
+			case _: [];
+		};
+		var tl:Array<TSignatureArg> = [];
+		var el:Array<TExpr> = [];
+		for (a in sargs) {
+			var opt = a.c != null || (a.v.meta != null && TypeFunctions.hasMeta(":optional", a.v.meta));
+			var t = opt ? ctx.com.basic.tnull(a.v.type) : a.v.type;
+			tl.push({name: a.v.name, opt: opt, t: t});
+			el.push(TypeFunctions.mk(TLocal(a.v), a.v.type, p));
+		}
+		var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(csup, c.superClass.params), p);
+		return {
+			args: [for (a in sargs) {v: a.v, c: a.c}],
+			expr: TypeFunctions.mk(TCall(superCallee, el), ctx.com.basic.tvoid, p),
+			tl: tl
+		};
+	}
+
+	// Called where class initialization ends (TypeFields.installClassFields): a field with an initializer
+	// is still a pending lazy, so its optional argument's Null<T> is deferred as well.
 	static function ensureStructInitCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (!TypeFunctions.hasMeta(":structInit", c.meta)) return;
 		// An interface never gets the synthesized constructor (it already reported); the struct literal
 		// then reports the missing constructor.
 		if (TypeFunctions.hasClassFlag(c, CInterface)) return;
+		// A superclass must be built before this class's initialization ends. hxc installs modules in load
+		// order, so a @:structInit super from a later module is built here first.
+		if (c.superClass != null) ensureStructInitCtor(ctx, c.superClass.c);
+		var superInfo = getStructInitSuperInfo(ctx, c, c.pos);
 		var params = TypeFunctions.extractParamTypes(c.params);
 		var tvoid = ctx.com.basic.tvoid;
 		var tthis = TypeFunctions.mk(TConst(TThis), TInst(c, params), c.pos);
@@ -5763,11 +5830,12 @@ class Typer {
 				case _: false;
 			};
 			if (!physical) continue;
-			switch (cf.type) { case TLazy(r): cf.type = TypeFunctions.lazyType(r); case _: }
 			var dflt = hasDefault.exists(cf.name);
 			var opt = dflt || TypeFunctions.hasMeta(":optional", cf.meta);
 			var at = opt ? ctx.com.basic.tnull(cf.type) : cf.type;
 			var v = TypeFunctions.allocVar(VGenerated, cf.name, at, cf.namePos);
+			// What a @:structInit subclass reads back as this constructor's arguments.
+			if (opt && !TypeFunctions.hasMeta(":optional", v.meta)) v.meta = [{name: ":optional", params: [], pos: Position.nullPos}].concat(v.meta);
 			args.push({v: v});
 			sigArgs.push({name: cf.name, opt: opt, t: at});
 			// The synthesized assignments all carry the class position, not each field's own position.
@@ -5786,31 +5854,10 @@ class Typer {
 				body.push(assign);
 			}
 		}
-		if (c.superClass != null) {
-			ensureStructInitCtor(ctx, c.superClass.c);
-			if (c.superClass.c.constructor != null) {
-				var st = TypeFunctions.applyParams(c.superClass.c.params, c.superClass.params, c.superClass.c.constructor.type);
-				switch (TypeFunctions.follow(st)) {
-					case TFun(ssig):
-						var superLocals:Array<TExpr> = [];
-						// The super's own argument VARS are reused, so a forwarded field keeps the position where it
-						// was declared.
-						var superArgs:Null<Array<TFuncArg>> = c.superClass.c.constructor.expr == null ? null
-							: switch (c.superClass.c.constructor.expr.expr) { case TFunction(sfn): sfn.args; case _: null; };
-						for (i in 0...ssig.args.length) {
-							var sa = ssig.args[i];
-							var spos = superArgs != null && i < superArgs.length ? superArgs[i].v.pos : c.pos;
-							var sv = TypeFunctions.allocVar(VGenerated, sa.name, sa.t, spos);
-							args.push({v: sv});
-							sigArgs.push({name: sa.name, opt: sa.opt, t: sa.t});
-							superLocals.push(TypeFunctions.mk(TLocal(sv), sa.t, c.pos));
-						}
-						var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
-						body.unshift(TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos));
-					case _:
-				}
-			}
-		}
+		// The super call leads the body, the super's arguments follow.
+		if (superInfo.expr != null) body.unshift(superInfo.expr);
+		for (a in superInfo.args) args.push(a);
+		for (t in superInfo.tl) sigArgs.push(t);
 		var tf = new TFunc(args, tvoid, TypeFunctions.mk(TBlock(body), tvoid, c.pos));
 		var ctorType = TFun({args: sigArgs, ret: tvoid});
 		var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
@@ -5824,6 +5871,8 @@ class Typer {
 		];
 		cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
 		c.constructor = cfCtor;
+		// This would naturally be delayed to PTypeField, but hxc queues every body after every install,
+		// so a delay here would run after a body whose completion reads the inherited @param docs.
 		hxc.typing.InheritDoc.buildClassFieldDoc(ctx.com, c, cfCtor);
 	}
 
@@ -5841,9 +5890,10 @@ class Typer {
 			ensureStructInitCtor(ctx, cur);
 			if (cur.constructor != null) {
 				var cf = cur.constructor;
-				var curTl2 = curTl;
-				var curCl = cur;
-				function apply(t:T):T return TypeFunctions.applyParams(curCl.params, curTl2, t);
+				// Mapped with the class map function of the class being constructed: a @:structInit
+				// constructor's forwarded arguments keep their superclass's parameters, which only the
+				// whole-chain map specializes.
+				var apply = TypeFunctions.classMapFunction(c, tl);
 				// The constructor's own type params instantiate as constrained monomorphs, the same way a field
 				// call treats method params; a constraint naming a still open class param defers through the
 				// mono up-constraints.
@@ -6005,12 +6055,13 @@ class Typer {
 				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
 				var ctorTypes = findConstructorTypes(ctx, c, tl);
 				if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
-				if (c.constructor != null) Fields.checkConstructorAccess(ctx, c, c.constructor, p);
 				// Try each constructor signature, first success wins (overload retry).
 				var r:Dynamic = null;
 				var firstError:Null<Dynamic> = null;
 				var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
+				var chosenIdx = -1;
 				for (ctorType in ctorTypes) {
+					chosenIdx++;
 					var sig = switch (TypeFunctions.follow(ctorType)) {
 						case TFun(s): s;
 						case _: {args: [], ret: ctx.com.basic.tvoid};
@@ -6030,6 +6081,9 @@ class Typer {
 					}
 				}
 				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
+				// Check the constructor the call resolved to, and only once the arguments have unified.
+				if (c.constructor != null)
+					Fields.checkConstructorAccess(ctx, c, chosenIdx <= 0 ? c.constructor : c.constructor.overloads[chosenIdx - 1], p);
 				// A construction reports the constructor the call resolved to, as the function that produces
 				// the instance - not the instance type, which is all the typed node itself carries.
 				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atExprHoverPos(p)
@@ -6138,11 +6192,13 @@ class Typer {
 				// parameters applied so a generic abstract threads them (a rigid type parameter would
 				// otherwise fail to unify against the arguments).
 				var newCf = a.impl.statics.get("_new");
-				Fields.checkConstructorAccess(ctx, a.impl, newCf, p);
 				TypeFields.forceFieldBody(ctx.com, a.impl, newCf);
 				var implExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
 				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(a, atl, a.impl), false, p);
-				Calls.buildCall(ctx, AKField(fa), el, withType, p, forceInline);
+				var call = Calls.buildCall(ctx, AKField(fa), el, withType, p, forceInline);
+				// The access is checked once the arguments unify.
+				Fields.checkConstructorAccess(ctx, a.impl, newCf, p);
+				call;
 			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
 				// @:forward.new forwards construction to the underlying type: build the underlying value
 				// and cast it to the abstract. . Apply the abstract's type arguments so `new

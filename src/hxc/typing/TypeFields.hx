@@ -560,6 +560,9 @@ class TypeFields {
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
+		// The class init ends by giving a @:structInit class its constructor.
+		if (TypeFunctions.hasMeta(":structInit", c.meta) && !TypeFunctions.hasClassFlag(c, CInterface))
+			Typer.ensureStructInitCtorFor(tctx, c);
 		// Each extern function's verify_extern into PTypeField, and drains a bucket last-in first-out:
 		// the field declared last reports its default-value verdict first.
 		externChecks.reverse();

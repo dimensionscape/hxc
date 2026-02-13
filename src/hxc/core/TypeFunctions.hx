@@ -862,6 +862,20 @@ class TypeFunctions {
 
 	public static function extractParamType(tp:TypedTypeParam):T return tp.type;
 	public static function extractParamTypes(l:TypeParams):TParams return [for (tp in l) tp.type];
+
+	// A type seen through `c` applied to `tl` has every ancestor's parameters substituted as well, the
+	// farthest ancestor's first.
+	public static function classMapFunction(c:TClass, tl:TParams):T->T {
+		var map:T->T = t -> applyParams(c.params, tl, t);
+		var cur = c;
+		while (cur.superClass != null) {
+			var sup = cur.superClass;
+			var outer = map;
+			map = t -> outer(applyParams(sup.c.params, sup.params, t));
+			cur = sup.c;
+		}
+		return map;
+	}
 	public static function extractParamName(tp:TypedTypeParam):String return tp.name;
 
 	// Null for "no such parameter". Every bare-name type hint probes the type parameters first and
@@ -1116,6 +1130,15 @@ class TypeFunctions {
 					case _: t;
 				}
 		}
+	}
+
+	// A Null<T> reached on the way answers with the type as it was given.
+	public static function followWithAbstractsWithoutNull(t:T):T {
+		return switch (followWithoutNull(t)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Null"): t;
+			case TAbstract(a, tl) if (!hasMeta(":coreType", a.meta)): followWithAbstractsWithoutNull(getUnderlyingType(a, tl));
+			case x: x;
+		};
 	}
 
 	public static function typeHasMeta(t:T, m:String):Bool {
