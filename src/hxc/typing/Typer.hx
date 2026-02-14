@@ -168,7 +168,7 @@ class Typer {
 		} catch (ue:UnifyError) { uerr = ue.errors; }
 		// The raising variant always raises, and call-argument typing needs that failure so
 		// optional-argument SKIPPING still happens inside untyped code.
-		if (raiseOnFail) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
+		if (raiseOnFail) throw new hxc.core.TypingError.CastUnifyError(hxc.core.TPrinting.betterErrorMessage(uerr), p);
 		// The verdict goes through raiseOrDisplay (dropped in untyped code, raised inside call arguments,
 		// recorded anywhere else) and the value is returned as it was. Throwing here would end the whole
 		// expression at its first verdict: `[x = "s", nope]` would lose its second error.

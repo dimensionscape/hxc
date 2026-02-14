@@ -23,6 +23,10 @@ class TypingError extends haxe.Exception {
 // message text.
 class MinUnifyError extends TypingError {}
 
+// A unification error, as a cast-or-unify raises it. Context.unify answers false on exactly this kind and
+// lets anything else out of the macro.
+class CastUnifyError extends TypingError {}
+
 /**
  * Module not found. Kept OUT of WithTypeError (as a call error is), so it never picks up the "For
  * function argument 'x'" annotation - a path that does not resolve is not an argument-unification

@@ -511,7 +511,11 @@ class EvalMacro {
 			var t1 = decodeType(ec, a[0]);
 			var t2 = decodeType(ec, a[1]);
 			var e1 = TypeFunctions.mk(TObjectDecl([]), t1, Position.nullPos);
-			return macroCastOrUnify(t2, e1) ? VTrue : VFalse;
+			var ok = typingTimer(curTctx.com, function() return try {
+				Typer.castOrUnifyRaise(curTctx, t2, e1, Position.nullPos);
+				true;
+			} catch (_:hxc.core.TypingError.CastUnifyError) false);
+			return ok ? VTrue : VFalse;
 		});
 		reg2("resolveType", "resolve_type", function(a) {
 			if (curTctx == null) throw new TypingError("resolveType outside a macro", curPos);
@@ -3505,72 +3509,6 @@ class EvalMacro {
 			case other:
 				other;
 		}
-	}
-
-	static function macroCastOrUnify(tleft:T, eright:TExpr):Bool {
-		var didCast = macroCheckCast(tleft, eright.type);
-		if (didCast) return true;
-		var didUnify = try {
-			TypeUnification.unifyDefault(eright.type, tleft);
-			true;
-		} catch (_:UnifyError) false;
-		return didUnify;
-	}
-
-	static function macroCheckCast(tleft:T, tright:T):Bool {
-		var stack:Array<{tleft:T, tright:T}> = [];
-		function loop(tleft:T, tright:T):Bool {
-			if (TypeUnification.typeIseqDefault(tleft, tright)) return true;
-			for (item in stack) if (TypeUnification.fastEq(tleft, item.tleft) && TypeUnification.fastEq(tright, item.tright)) return false;
-			stack.push({tleft: tleft, tright: tright});
-			var uctx = TypeUnification.defaultUnificationContext;
-			var ok = switch [TypeFunctions.follow(tleft), TypeFunctions.follow(tright)] {
-				case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
-					try {
-						TypeUnification.findToFrom(uctx, tright, tleft, a2, tl2, a1, tl1);
-						true;
-					} catch (_:hxc.core.NotFound) {
-						false;
-					}
-				case [TAbstract(a, tl), _]:
-					try {
-						TypeUnification.findFrom(uctx, tright, a, tl);
-						true;
-					} catch (_:hxc.core.NotFound) {
-						macroLoopAbstractFrom(a, tl, tleft, tright, loop);
-					}
-				case [_, TAbstract(a, tl)]:
-					try {
-						TypeUnification.findTo(uctx, tleft, a, tl);
-						true;
-					} catch (_:hxc.core.NotFound) {
-						macroLoopAbstractTo(a, tl, tleft, tright, loop);
-					}
-				case _:
-					false;
-			}
-			stack.pop();
-			return ok;
-		}
-		return loop(tleft, tright);
-	}
-
-	static function macroLoopAbstractFrom(a:TAbstract, tl:Array<T>, tleft:T, tright:T, loop:T->T->Bool):Bool {
-		for (tc in a.from) {
-			if (!TypeUnification.typeIseqDefault(tc, tleft)
-				&& loop(TypeFunctions.applyParams(a.params, tl, tc), tright))
-				return true;
-		}
-		return false;
-	}
-
-	static function macroLoopAbstractTo(a:TAbstract, tl:Array<T>, tleft:T, tright:T, loop:T->T->Bool):Bool {
-		for (tc in a.to) {
-			if (!TypeUnification.typeIseqDefault(tc, tright)
-				&& loop(tleft, TypeFunctions.applyParams(a.params, tl, tc)))
-				return true;
-		}
-		return false;
 	}
 
 	static function decodeType(ec:EvalContext, v:EvalValue):T {
