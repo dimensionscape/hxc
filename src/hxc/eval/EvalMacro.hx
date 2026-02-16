@@ -1168,6 +1168,9 @@ class EvalMacro {
 				Sys.println("[buildfail] " + Type.getClassName(Type.getClass(e)) + ": " + e.message);
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
+		// Class initialization goes on past its build; a build that re-resolved the class already went
+		// through it.
+		hxc.typing.TypeResolve.initClassTail(com, c);
 		// The reference applies all @:build field transformations before typing field bodies. Doing
 		// this once also keeps a later build macro from invalidating the field table while the previous
 		// macro's bodies are still being forced.

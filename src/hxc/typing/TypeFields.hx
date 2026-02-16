@@ -408,7 +408,7 @@ class TypeFields {
 		for (imp in c.interfaces) walk(imp.c, imp.params);
 	}
 
-	static function addDiagnosticOnce(ctx:Context, message:String, pos:Position, depth:Int = 0):Void {
+	public static function addDiagnosticOnce(ctx:Context, message:String, pos:Position, depth:Int = 0):Void {
 		for (d in ctx.diagnostics)
 			if (d.message == message && d.depth == depth && d.pos.file == pos.file && d.pos.min == pos.min && d.pos.max == pos.max) return;
 		ctx.addDiagnostic(message, pos, depth);
@@ -1173,7 +1173,7 @@ class TypeFields {
 		// A declared constructor whose immediate super constructor is final is rejected. (FKConstructor).
 		// Runs before the error gate below so it still reports alongside other modifier diagnostics.
 		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c) if (c.superClass != null && c.constructor != null):
+			case TClassDecl(c) if (c.superClass != null && c.constructor != null && findFieldDecl(ctx, c, c.constructor) != null):
 				var sup = c.superClass.c;
 				if (!TypeFunctions.hasClassFlag(sup, CExtern) && sup.constructor != null
 					&& sup.constructor != c.constructor
@@ -1190,10 +1190,10 @@ class TypeFields {
 					case TFunction(tf): tf.expr;
 					case _: null;
 				};
-				// Reached only which creates the check from the constructor body as it is typed. A constructor
-				// whose body was never typed therefore never reaches it; only 's no-constructor branch runs on
-				// its own.
-				if (c.constructor != null && body == null) continue;
+				// Reached only which creates the check from a declared constructor's body as it is typed: not a
+				// constructor add_constructor or a @:structInit wrote, nor one whose body never typed. The
+				// no-constructor verdict is init_class's .
+				if (c.constructor == null || body == null || findFieldDecl(ctx, c, c.constructor) == null) continue;
 				var finalVars:Map<String, Bool> = new Map();
 				var ordered:Array<TClassField> = [];
 				function collect(c2:TClass):Void {
@@ -1219,14 +1219,8 @@ class TypeFields {
 				if (body != null) findInits(body);
 				var remaining = [for (cf in ordered) if (finalVars.exists(cf.name)) cf];
 				if (remaining.length > 0) {
-					if (c.constructor == null) {
-						ctx.addDiagnostic("This class has uninitialized final vars, which requires a constructor", c.pos);
-						// Report a separate error rather than a sub-message.
-						ctx.addDiagnostic("Example of an uninitialized final var", remaining[0].namePos);
-					} else {
-						ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
-						for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
-					}
+					ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
+					for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
 				}
 			case _:
 		}

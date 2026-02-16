@@ -4967,6 +4967,8 @@ class Typer {
 				// The impl's `_new`, or "does not have a constructor" on the abstract.
 				if (!a.impl.statics.exists("_new"))
 					throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " does not have a constructor", p);
+				// Constructor access check, recorded.
+				Fields.checkConstructorAccess(ctx, a.impl, a.impl.statics.get("_new"), p);
 				// Building the closure over `_new` can fail for a complex (e.g. inline, generic) ctor; fall
 				// back to the normal access path rather than dropping the whole enclosing field.
 				return try {
@@ -5028,6 +5030,8 @@ class Typer {
 			throw new TypingError(hxc.core.Globals.sTypePath(target.noCtor) + " does not have a constructor", p);
 		if (TypeFunctions.hasClassFlag(target.c, CAbstract))
 			throw new TypingError(hxc.core.Globals.sTypePath(target.c.path) + " is abstract and cannot be constructed", p);
+		// Constructor access check, recorded: a constructor the compiler wrote is no constructor to bind.
+		Fields.checkConstructorAccess(ctx, target.c, ctor, p);
 		hxc.typing.TypeFields.forceFieldBody(ctx.com, ownerC, ctor);
 		var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(ownerC.params, ownerTl, TypeFunctions.follow(ctor.type)))) { case TFun(s): s; case _: return null; };
 		var vl = [for (arg in sig.args) TypeFunctions.allocVar(VGenerated, arg.name, arg.t, p)];
@@ -5665,14 +5669,6 @@ class Typer {
 		return new TFunc(args, ret, te);
 	}
 
-	// A class without its own constructor inherits the nearest superclass constructor, with the superclass
-	// type arguments substituted along the inheritance chain. Generate a constructor for a @:structInit
-	// class that lacks one, from its physical var fields (one argument per field, assigned to it),
-	// threading the superclass constructor for inheritance. / get_struct_init_super_info. a non-extern
-	// class with no constructor of its own but a superclass constructor inherits a forwarding one
-	// (`function(args) super(args)`), so the generator emits the super call instead of an empty body.
-	// Default values collapse to null on a non-static target (js), matching the reference. Runs for every
-	// class before generation.
 	static function hasInstanceFieldInit(c:TClass):Bool {
 		for (f in c.orderedFields) switch (f.kind) {
 			case Var(_) if (f.expr != null): return true;
@@ -5681,32 +5677,75 @@ class Typer {
 		return false;
 	}
 
+	// Runs where class initialization ends. A class with no constructor of its own forwards to the nearest
+	// ancestor's, built lazily and forced at PForce; one with an instance field initializer gets an empty
+	// one.
+	public static function addConstructor(ctx:TyperContext, c:TClass, forceConstructor:Bool):Void {
+		if (c.constructor != null) return;
+		var found = try TypeFunctions.getConstructorClass(c, TypeFunctions.extractParamTypes(c.params)) catch (_:hxc.core.NotFound) null;
+		if (found != null && !TypeFunctions.hasClassFlag(c, CExtern)) {
+			var cf = mkForwardingCtorField(c, found.cf);
+			var r:hxc.core.Ref<TLazy> = new hxc.core.Ref(TypeFunctions.lazyAvailable(TypeFunctions.tDynamic));
+			r.set(TypeFunctions.lazyWait(function():T {
+				var t = TypeFunctions.mkMono();
+				r.set(TypeFunctions.lazyProcessing(function():T return t));
+				var ct = buildForwardingCtor(ctx, c, cf, found);
+				cf.type = t;
+				TypeUnification.unifyDefault(t, ct);
+				r.set(TypeFunctions.lazyAvailable(t));
+				return t;
+			}));
+			cf.type = TLazy(r);
+			c.constructor = cf;
+			ctx.com.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(r));
+		} else if (forceConstructor) {
+			c.constructor = mkForcedCtor(ctx, c);
+		}
+	}
+
+	// The filters' fallback for a class that never went through init: the same constructor, built
+	// eagerly.
 	public static function ensureInheritedCtor(ctx:TyperContext, c:TClass):Void {
 		if (c.constructor != null) return;
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return;
 		// A @:structInit class never gets this constructor.
 		if (TypeFunctions.hasMeta(":structInit", c.meta)) return;
-		// Process the super first so its (possibly synthesized) constructor exists before this class
-		// looks it up, matching the reference's dependency-ordered add_constructor pass.
 		if (c.superClass != null) ensureInheritedCtor(ctx, c.superClass.c);
 		var found = if (c.superClass == null) null
 			else try TypeFunctions.getConstructorClass(c, TypeFunctions.extractParamTypes(c.params)) catch (_:hxc.core.NotFound) null;
 		if (found == null) {
-			// No ancestor constructor to forward to: a class with an instance field initializer still needs
-			// an (empty, compiler-generated) constructor so add_field_inits can fill it and a subclass can
-			// forward. .
-			if (hasInstanceFieldInit(c)) {
-				var tvoid0 = ctx.com.basic.tvoid;
-				var ct0 = TFun({args: [], ret: tvoid0});
-				var tf0 = new TFunc([], tvoid0, TypeFunctions.mk(TBlock([]), tvoid0, c.pos));
-				var cf0 = TypeFunctions.mkField("new", ct0, c.pos, c.pos);
-				cf0.kind = Method(MethNormal);
-				cf0.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
-				cf0.expr = TypeFunctions.mk(TFunction(tf0), ct0, c.pos);
-				c.constructor = cf0;
-			}
+			if (hasInstanceFieldInit(c)) c.constructor = mkForcedCtor(ctx, c);
 			return;
 		}
+		var cf = mkForwardingCtorField(c, found.cf);
+		cf.type = buildForwardingCtor(ctx, c, cf, found);
+		c.constructor = cf;
+	}
+
+	static function mkForcedCtor(ctx:TyperContext, c:TClass):TClassField {
+		var tvoid = ctx.com.basic.tvoid;
+		var ct = TFun({args: [], ret: tvoid});
+		var tf = new TFunc([], tvoid, TypeFunctions.mk(TBlock([]), tvoid, c.pos));
+		var cf = TypeFunctions.mkField("new", ct, c.pos, c.pos);
+		cf.kind = Method(MethNormal);
+		cf.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
+		cf.expr = TypeFunctions.mk(TFunction(tf), ct, c.pos);
+		return cf;
+	}
+
+	// The forwarder keeps the parent constructor's kind (an inherited inline constructor stays inlinable)
+	// and params, and :compilerGenerated only if it has it.
+	static function mkForwardingCtorField(c:TClass, cfsup:TClassField):TClassField {
+		var cf = TypeFunctions.mkField("new", cfsup.type, c.pos, c.pos);
+		cf.kind = cfsup.kind;
+		cf.params = cfsup.params;
+		cf.meta = [for (m in cfsup.meta) if (m.name == ":compilerGenerated") m];
+		return cf;
+	}
+
+	// The forwarder's body: the super constructor's arguments, a default kept only where the platform
+	// needs it (map_arg), passed on to super().
+	static function buildForwardingCtor(ctx:TyperContext, c:TClass, cf:TClassField, found:{cf:TClassField, c:TClass, tl:TParams}):T {
 		var tvoid = ctx.com.basic.tvoid;
 		TypeFields.forceFieldBody(ctx.com, found.c, found.cf);
 		var st = TypeFunctions.applyParams(found.c.params, found.tl, found.cf.type);
@@ -5714,17 +5753,16 @@ class Typer {
 			: switch (found.cf.expr.expr) { case TFunction(tf): tf.args; case _: null; };
 		var isStaticPf = ctx.com.platformConfig.isStatic;
 		var isCppPf = ctx.com.platform.match(Cpp);
-		switch (TypeFunctions.follow(st)) {
+		return switch (TypeFunctions.follow(st)) {
 			case TFun(sig):
 				var args:Array<TFuncArg> = [];
 				var sigArgs:Array<TSignatureArg> = [];
 				var superLocals:Array<TExpr> = [];
 				for (ai in 0...sig.args.length) {
 					var sa = sig.args[ai];
-					// Copy the super arg, carrying the default only when the platform needs it. A non-static
-					// target drops it to null (the super call fills it). On cpp a String default is kept; any
-					// other cpp default makes the arg Null<T> with a null default so the super's own v.Default(x)
-					// fills it when null is passed.
+					// map_arg: a non-static target drops a default to null (the super call fills it).
+					// On cpp a String default is kept; any other makes the arg Null<T> with a null
+					// default, so the super's own default fills it when null is passed.
 					var def = superTfArgs != null && ai < superTfArgs.length ? superTfArgs[ai].c : null;
 					var argType = sa.t;
 					var argDefault:Null<TExpr> = null;
@@ -5744,18 +5782,10 @@ class Typer {
 				var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
 				var body = TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos);
 				var ctorType = TFun({args: sigArgs, ret: tvoid});
-				var tf = new TFunc(args, tvoid, body);
-				var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
-				// The forwarder keeps the parent constructor's kind, so an inherited INLINE constructor stays
-				// inlinable (inline_constructors folds `new Child(...)` through the forwarded super call).
-				cfCtor.kind = found.cf.kind;
-				cfCtor.params = found.cf.params;
-				// The inherited forwarding constructor keeps :compilerGenerated only when the PARENT ctor
-				// carries it, so a class inheriting a user-written ctor exposes a meta-free `new` (rtti).
-				cfCtor.meta = [for (m in found.cf.meta) if (m.name == ":compilerGenerated") m];
-				cfCtor.expr = TypeFunctions.mk(TFunction(tf), ctorType, c.pos);
-				c.constructor = cfCtor;
+				cf.expr = TypeFunctions.mk(TFunction(new TFunc(args, tvoid, body)), ctorType, c.pos);
+				ctorType;
 			case _:
+				st;
 		}
 	}
 

@@ -874,6 +874,45 @@ class TypeResolve {
 		}
 		linkPropertyAccessors(ctx, c, isAbsImpl);
 		checkInheritedFieldCollisions(ctx, c, isAbsImpl);
+		// A class whose own build is still to run gets there after it (EvalMacro.ensureBuilt).
+		if (!hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) initClassTail(ctx, c);
+	}
+
+	// The end of field initialisation, which a subclass's build macro already sees. The tallies are
+	// the forced constructor (an instance var or property with a value) and the uninitialized finals,
+	// whose head, the last final declared, is the one reported. A @:structInit class already has its
+	// constructor by then; hxc builds that one at install.
+	public static function initClassTail(ctx:Context, c:TClass):Void {
+		if (TypeFunctions.hasMeta(":structInit", c.meta)) return;
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return;
+		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
+		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		var forceConstructor = false;
+		var lastUninitializedFinal:Null<TClassField> = null;
+		for (cff in d.dData) {
+			var isStatic = isAbsImpl && cff.cffName.name != "new";
+			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
+			if (isStatic || ctx.droppedFieldDecls.exists(cff)) continue;
+			var cf = c.fields.get(cff.cffName.name);
+			if (cf == null) continue;
+			switch (cff.cffKind) {
+				case FVar(_, e) | FProp(_, _, _, e) if (e != null): forceConstructor = true;
+				case _:
+			}
+			switch (cff.cffKind) {
+				case FVar(_, null) if (TypeFunctions.hasClassFieldFlag(cf, CfFinal) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)
+						&& !TypeFunctions.hasClassFlag(c, CExtern) && !TypeFunctions.hasClassFlag(c, CInterface)):
+					lastUninitializedFinal = cf;
+				case _:
+			}
+		}
+		if (lastUninitializedFinal != null && c.constructor == null && !TypeFunctions.hasClassFlag(c, CAbstract)) {
+			TypeFields.addDiagnosticOnce(ctx, "This class has uninitialized final vars, which requires a constructor", c.pos);
+			TypeFields.addDiagnosticOnce(ctx, "Example of an uninitialized final var", lastUninitializedFinal.namePos);
+		}
+		// addConstructor does not deal with overloads, so a platform with them goes without.
+		if (!ctx.platformConfig.supportsOverload) Typer.addConstructor(new hxc.typing.TyperContext(ctx), c, forceConstructor);
 	}
 
 	// The nearest class UP the CHAIN declaring an instance field of this name - the superclass, then
