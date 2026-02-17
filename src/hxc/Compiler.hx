@@ -1090,6 +1090,13 @@ class Compiler {
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
+			// A line comment holding the cursor ends the request as a comment completion, in every mode and
+			// in the json protocol alike: an empty keyword list (nothing) and the missing point. The lexer
+			// only flags it and typing goes on, but what it types answers nothing.
+			if (hxc.parser.Parser.commentAnswered) {
+				answerOut("Error: No completion point was found\n");
+				exitRequest(1);
+			}
 			// The typer raises when the unresolved name is the display subject, so the error answers the
 			// request. That raise is caught while recovering the field body, so the answer path has to defer
 			// to it explicitly - and only to it: an error anywhere else must still leave the answer alone.

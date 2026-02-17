@@ -1205,14 +1205,7 @@ class Typer {
 						if (isInline || localParams.length > 0) namedVar.extra = new TVarExtra(localParams, isInline ? fnExpr : null);
 						var tvoid = ctx.com.basic.tvoid;
 						var exprs:Array<TExpr> = [];
-						var declFileIsDisplay = {
-							var df = hxc.parser.Parser.displayFile;
-							if (df == null) false else {
-								var f = StringTools.replace(p.file, "\\", "/");
-								var d = StringTools.replace(df, "\\", "/");
-								f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
-							}
-						};
+						var declFileIsDisplay = hxc.parser.Parser.matchesDisplayFile(p.file);
 						if (isRec) {
 							// An inline local function cannot be recursive.
 							if (isInline) ctx.com.addDiagnostic("Inline function cannot be recursive", fnExpr.pos);
@@ -2069,9 +2062,7 @@ class Typer {
 		var off = hxc.parser.Parser.displayOffset;
 		if (df == null || off < 0) return false;
 		if (!(p.min <= off && off < p.max)) return false;
-		var f = StringTools.replace(p.file, "\\", "/");
-		var d = StringTools.replace(df, "\\", "/");
-		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+		return hxc.parser.Parser.matchesDisplayFile(p.file);
 	}
 
 	// The whole-literal record a desugared construct leaves no typed node for. Same
@@ -2895,9 +2886,7 @@ class Typer {
 		var off = hxc.parser.Parser.displayOffset;
 		if (df == null || off < 0) return false;
 		if (!(p.min <= off && off <= p.max)) return false;
-		var f = StringTools.replace(p.file, "\\", "/");
-		var d = StringTools.replace(df, "\\", "/");
-		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+		return hxc.parser.Parser.matchesDisplayFile(p.file);
 	}
 
 	// Legacy --display @usage: the symbol at the display offset is captured by identity during typing; the
@@ -5726,7 +5715,8 @@ class Typer {
 		var tvoid = ctx.com.basic.tvoid;
 		var ct = TFun({args: [], ret: tvoid});
 		var tf = new TFunc([], tvoid, TypeFunctions.mk(TBlock([]), tvoid, c.pos));
-		var cf = TypeFunctions.mkField("new", ct, c.pos, c.pos);
+		// A null name position, so no cursor ever lands on it.
+		var cf = TypeFunctions.mkField("new", ct, c.pos, Position.nullPos);
 		cf.kind = Method(MethNormal);
 		cf.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
 		cf.expr = TypeFunctions.mk(TFunction(tf), ct, c.pos);
@@ -5736,7 +5726,7 @@ class Typer {
 	// The forwarder keeps the parent constructor's kind (an inherited inline constructor stays inlinable)
 	// and params, and :compilerGenerated only if it has it.
 	static function mkForwardingCtorField(c:TClass, cfsup:TClassField):TClassField {
-		var cf = TypeFunctions.mkField("new", cfsup.type, c.pos, c.pos);
+		var cf = TypeFunctions.mkField("new", cfsup.type, c.pos, Position.nullPos);
 		cf.kind = cfsup.kind;
 		cf.params = cfsup.params;
 		cf.meta = [for (m in cfsup.meta) if (m.name == ":compilerGenerated") m];

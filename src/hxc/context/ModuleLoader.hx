@@ -123,19 +123,15 @@ class ModuleLoader {
 
 	public static function moduleFileContent(ctx:Context, file:String):String {
 		if (ctx.fileContents.length > 0) {
-			var f = StringTools.replace(file, "\\", "/").toLowerCase();
 			for (fc in ctx.fileContents) {
 				if (fc.contents == null) continue;
-				var k = StringTools.replace(fc.file, "\\", "/").toLowerCase();
-				if (k == f || StringTools.endsWith(k, "/" + f) || StringTools.endsWith(f, "/" + k))
+				if (hxc.core.PathKey.same(fc.file, file))
 					return Position.registerFileContent(file, fc.contents);
 			}
 		}
 		var df = hxc.parser.Parser.displayFile;
 		if (df != null && ctx.defines.rawDefined("display_stdin")) {
-			var f = StringTools.replace(file, "\\", "/");
-			var d = StringTools.replace(df, "\\", "/");
-			if (f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f)) {
+			if (hxc.core.PathKey.same(file, df)) {
 				if (!stdinConsumed) {
 					stdinConsumed = true;
 					stdinContent = currentStdin != null
@@ -1390,7 +1386,9 @@ class ModuleLoader {
 			var candidate = dir == "" ? "import.hx" : dir + "/import.hx";
 			if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate)) {
 				var absoluteCandidate = FileSystem.fullPath(candidate);
-				var pkg = hxc.parser.Parser.parseModuleString(Position.getFileContent(absoluteCandidate), absoluteCandidate, ctx.defines);
+				// Read like any module: a display request's unsaved import.hx is what applies, not the copy
+				// on disk.
+				var pkg = hxc.parser.Parser.parseModuleString(moduleFileContent(ctx, absoluteCandidate), absoluteCandidate, ctx.defines);
 				for (decl in pkg.decls) switch (decl.decl) {
 					case EImport(_) | EUsing(_):
 					case _: throw new TypingError("Only import and using is allowed in import.hx files", decl.pos);

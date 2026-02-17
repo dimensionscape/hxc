@@ -41,7 +41,7 @@ class TypeResolve {
 		// An unresolvable `using` aborts the module's initialisation before it reaches a single
 		// declaration, so the types exist but none of them is ever initialised. Resolving them anyway
 		// prints a cascade of follow-on errors.
-		if (ctx.moduleAborted.exists(Context.pathKey(m.path)) && abortsOnDeclError(ctx)) {
+		if (ctx.moduleAborted.exists(Context.pathKey(m.path))) {
 			markModuleErrored(ctx, m);
 			return;
 		}
@@ -94,20 +94,22 @@ class TypeResolve {
 				// rather than be recorded and swallowed here.
 				throw dc;
 			} catch (e:ContextError) {
-				// A declaration error (bad heritage, final extend, ...) is recorded, and in a BATCH compile the
-				// rest of the module is ABANDONED: the reference's typing_error raises out of init_module_type,
-				// so no later declaration of that module is reached and exactly one such error is ever printed.
+				// A declaration error (bad heritage, final extend, ...) is recorded, and the rest of the module
+				// is ABANDONED: the reference's typing_error raises out of init_module_type, so no later
+				// declaration of that module is reached and exactly one such error is ever printed.
 				markModuleErrored(ctx, m);
 				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
-				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
+				ctx.declAborted = true;
+				break;
 			} catch (e:hxc.core.TypingError) {
 				markModuleErrored(ctx, m);
 				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
-				if (abortsOnDeclError(ctx)) { ctx.declAborted = true; break; }
+				ctx.declAborted = true;
+				break;
 			} catch (e:Dynamic) {
 				if (hxc.parser.ParserError.isParseFailure(e)) throw e;
 				hxc.core.TypingError.FatalError.pass(e);
@@ -117,23 +119,14 @@ class TypeResolve {
 		ctx.currentModule = savedMod;
 	}
 
-	/**
-	 * A display request's job is to answer, so the errors that would cost the answer are skipped
-	 * rather than raised, and the module keeps resolving.
-	 */
-	// A diagnostics run does not ignore errors, so the raise leaves the typing stage and
-	// run_or_diagnose's handler records the message and emits the report on the spot. Nothing gathered
-	// after typing reaches that report - com.modules above all, which only in finalize_typing - so a
-	// module's unused imports cannot appear in it.
+	// A diagnostics run does not ignore errors, so the raise leaves the typing stage and the
+	// diagnostics handler records the message and emits the report on the spot. Nothing gathered after
+	// typing reaches that report - the module list above all, which is filled only when typing
+	// finishes - so a module's unused imports cannot appear in it. Every other request, a display one
+	// included, records the raise and abandons the module: ignoring errors applies only at its own
+	// call sites (an unqualified missing type in a type load or in a heritage), never here.
 	static inline function escapesDeclError(ctx:Context):Bool {
-		return abortsOnDeclError(ctx) && ctx.isDiagnosticsRun();
-	}
-
-	static inline function abortsOnDeclError(ctx:Context):Bool {
-		// 217: every mode that answers about one position carries dms_error_policy = EPIgnore, while the
-		// modes that report the compile itself keep EPShow. ctx.ignoreErrors is that flag, and asking it
-		// here rather than `is this a display request` lets a diagnostics run take the reference's abort.
-		return !ctx.ignoreErrors;
+		return ctx.isDiagnosticsRun();
 	}
 
 	// The error raises out of module initialisation, so the module's DELAYED field typing never runs -

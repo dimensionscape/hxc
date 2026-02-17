@@ -69,11 +69,7 @@ class ExprPreprocessing {
 	}
 
 	public static function inDisplayFile(p:Position):Bool {
-		var df = hxc.parser.Parser.displayFile;
-		if (df == null || p.file == null) return false;
-		var f = StringTools.replace(p.file, "\\", "/");
-		var d = StringTools.replace(df, "\\", "/");
-		return f == d || StringTools.endsWith(f, "/" + d) || StringTools.endsWith(d, "/" + f);
+		return hxc.parser.Parser.matchesDisplayFile(p.file);
 	}
 
 	static function isAnnotated(p:Position):Bool {

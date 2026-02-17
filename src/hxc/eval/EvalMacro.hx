@@ -2327,14 +2327,11 @@ class EvalMacro {
 	// it here instead.
 	public static function evictMacroModulesOfFile(file:String, ?taintReason:String):Void {
 		if (macroCom == null || file == null) return;
-		inline function key(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
-		var want = key(file);
 		var dropped = false;
 		for (m in macroCom.modules.copy()) {
 			var f = m.extra == null ? null : m.extra.file;
 			if (f == null) continue;
-			var k = key(f);
-			if (k != want && !StringTools.endsWith(k, "/" + want) && !StringTools.endsWith(want, "/" + k)) continue;
+			if (!hxc.core.PathKey.same(f, file)) continue;
 			dropMacroModule(m, taintReason);
 			dropped = true;
 		}
@@ -2600,12 +2597,7 @@ class EvalMacro {
 			// purpose.
 			var df = hxc.parser.Parser.displayFile;
 			var mf = m.extra == null ? null : m.extra.file;
-			inline function samePath(a:String, b:String):Bool {
-				var x = StringTools.replace(a, "\\", "/").toLowerCase();
-				var y = StringTools.replace(b, "\\", "/").toLowerCase();
-				return x == y || StringTools.endsWith(x, "/" + y) || StringTools.endsWith(y, "/" + x);
-			}
-			var isDisplayFile = df != null && mf != null && samePath(mf, df);
+			var isDisplayFile = df != null && mf != null && hxc.core.PathKey.same(mf, df);
 			var displayRoute = forceAll || fieldName == null;
 			var savedSuppressed = hxc.parser.Parser.displaySuppressed;
 			if (!displayRoute) hxc.parser.Parser.displaySuppressed = true;
@@ -2955,13 +2947,7 @@ class EvalMacro {
 
 	static function moduleMatchesPosition(m:Null<ModuleDef>, p:Position):Bool {
 		if (m == null || m.extra == null || p == null || p.file == null || p.file == "") return false;
-		var moduleFile = normalizeFile(m.extra.file);
-		var posFile = normalizeFile(p.file);
-		return moduleFile == posFile || StringTools.endsWith(moduleFile, "/" + posFile) || StringTools.endsWith(posFile, "/" + moduleFile);
-	}
-
-	static function normalizeFile(file:String):String {
-		return StringTools.replace(file, "\\", "/").toLowerCase();
+		return hxc.core.PathKey.same(m.extra.file, p.file);
 	}
 
 	// The macro call argument pipeline: the macro-world signature classifies each parameter against

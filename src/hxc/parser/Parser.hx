@@ -156,6 +156,7 @@ class Parser {
 
 	// Per-request reset for the wait server.
 	public static function resetPerRequest():Void {
+		hxc.core.PathKey.reset();
 		displayFile = null;
 		displayOffset = -1;
 		displaySignatureMode = false;
@@ -179,11 +180,9 @@ class Parser {
 		return matchesDisplayFile(file);
 	}
 
+	// The display file is the one whose unique path key is the request's.
 	public static function matchesDisplayFile(file:String):Bool {
-		if (displayFile == null) return false;
-		var f = StringTools.replace(file, "\\", "/");
-		var df = StringTools.replace(displayFile, "\\", "/");
-		return f == df || StringTools.endsWith(f, "/" + df) || StringTools.endsWith(df, "/" + f);
+		return displayFile != null && file != null && hxc.core.PathKey.same(file, displayFile);
 	}
 
 	function atDisplayDot(dotPos:Position):Bool {
@@ -193,9 +192,7 @@ class Parser {
 		// reached.
 		if (displaySuppressed) return false;
 		if (displayFile == null || displayOffset < 0) return false;
-		var f = StringTools.replace(file, "\\", "/");
-		var df = StringTools.replace(displayFile, "\\", "/");
-		if (!(f == df || StringTools.endsWith(f, "/" + df) || StringTools.endsWith(df, "/" + f))) return false;
+		if (!matchesDisplayFile(file)) return false;
 		// The skipped region: from the dot's end to the next token's end.
 		return displayOffset >= dotPos.max && displayOffset <= peekInfo().pos.max;
 	}
