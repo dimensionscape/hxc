@@ -382,6 +382,32 @@ class EvalStdLib {
 		};
 	}
 
+	// A runtime field set, as Reflect.setField does it: a field that is not there is ignored and a
+	// value that is not an object is unexpected. An array only takes `length`, and Bytes resize
+	// whatever the name.
+	static function reflectSetField(ctx:EvalContext, o:EvalValue, name:Int, v:EvalValue):Void {
+		switch (EvalValueTools.vresolve(o)) {
+			case VObject(_) | VPrototype(_):
+				setDynamicField(o, name, v);
+			case VInstance(vi):
+				switch (vi.ikind) {
+					case IBytes(b):
+						var len = switch (v) { case VInt(i): i; case _: EvalExceptions.unexpectedValue(ctx, v, "int"); };
+						var b2 = haxe.io.Bytes.alloc(len);
+						b2.blit(0, b, 0, len > b.length ? b.length : len);
+						vi.ikind = IBytes(b2);
+					case _:
+						setDynamicField(o, name, v);
+				}
+			case VArray(va) if (name == EvalHash.hash("length")):
+				var len = switch (v) { case VInt(i): i; case _: EvalExceptions.unexpectedValue(ctx, v, "int"); };
+				va.alength = len;
+				if (len > va.avalues.length) arrayEnsure(va, len * 2);
+			case _:
+				EvalExceptions.unexpectedValue(ctx, o, "object");
+		}
+	}
+
 	static function copyValue(v:EvalValue):EvalValue {
 		return switch (EvalValueTools.vresolve(v)) {
 			case VNull: VNull;
@@ -3121,6 +3147,22 @@ class EvalStdLib {
 		return code > 8 && code < 14;
 	}
 
+	// Std.int: a value that is not a number is null. A float goes through a 63-bit integer
+	// conversion - on amd64 NaN, the infinities and anything at or past 2^63 come out 0 - and the low
+	// 32 bits are kept.
+	static function stdInt(v:EvalValue):EvalValue {
+		var f = switch (v) {
+			case VInt(i): return VInt(i);
+			case VFloat(f): f;
+			case _: return VNull;
+		};
+		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return VInt(0);
+		var m = (f < 0 ? Math.ceil(f) : Math.floor(f)) % 4294967296.0;
+		if (m < 0) m += 4294967296.0;
+		if (m >= 2147483648.0) m -= 4294967296.0;
+		return VInt(Std.int(m));
+	}
+
 	static function stdParseInt(s:String):EvalValue {
 		var sp = 0;
 		while (sp < s.length) {
@@ -3829,10 +3871,18 @@ class EvalStdLib {
 		reg(s, "Std", "downcast", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
 		reg(s, "Std", "instance", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
 
-		reg(s, "Std", "int", vfn(a -> VInt(Std.int(toFloat(arg(a, 0))))));
+		reg(s, "Std", "int", vfn(a -> stdInt(arg(a, 0))));
 		reg(s, "Std", "string", vfn(a -> mkStr(stringOf(arg(a, 0)))));
-		reg(s, "Std", "parseInt", vfn(a -> stdParseInt(stringOf(arg(a, 0)))));
-		reg(s, "Std", "parseFloat", vfn(a -> VFloat(stdParseFloat(stringOf(arg(a, 0))))));
+		// The decode is inside the native's own handler, so a value that is not a string answers null
+		// and NaN.
+		reg(s, "Std", "parseInt", vfn(a -> switch (arg(a, 0)) {
+			case VString(_): stdParseInt(stringOf(arg(a, 0)));
+			case _: VNull;
+		}));
+		reg(s, "Std", "parseFloat", vfn(a -> switch (arg(a, 0)) {
+			case VString(_): VFloat(stdParseFloat(stringOf(arg(a, 0))));
+			case _: VFloat(Math.NaN);
+		}));
 		reg(s, "haxe.Log", "trace", vfn(a -> { writeStdoutString(traceString(ctx, arg(a, 0), arg(a, 1)), false); VNull; }));
 		reg(s, "Sys", "println", vfn(a -> { writeStdoutString(stringOf(arg(a, 0)), true); VNull; }));
 		reg(s, "Sys", "print", vfn(a -> { writeStdoutString(stringOf(arg(a, 0)), false); VNull; }));
@@ -4433,7 +4483,13 @@ class EvalStdLib {
 		}));
 
 		reg(s, "Reflect", "fields", vfn(a -> {
-			var names = fieldNames(arg(a, 0));
+			// Any other value is unexpected, a function included.
+			var o = EvalValueTools.vresolve(arg(a, 0));
+			switch (o) {
+				case VObject(_) | VInstance(_) | VPrototype(_) | VNull | VString(_) | VArray(_) | VVector(_):
+				case _: EvalExceptions.unexpectedValue(ctx, arg(a, 0), "object");
+			}
+			var names = fieldNames(o);
 			VArray(new VArray([for (n in names) mkStr(n)], names.length));
 		}));
 		reg(s, "Reflect", "field", vfn(a -> {
@@ -4447,7 +4503,7 @@ class EvalStdLib {
 			}
 		}));
 		reg(s, "Reflect", "setField", vfn(a -> {
-			setDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
+			reflectSetField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
 			VNull;
 		}));
 		reg(s, "Reflect", "hasField", vfn(a -> {
@@ -4464,7 +4520,11 @@ class EvalStdLib {
 			case CUndef: -1;
 		})));
 		reg(s, "Reflect", "compareMethods", vfn(a -> EvalValueTools.vbool(compareMethodsValue(arg(a, 0), arg(a, 1)))));
-		reg(s, "Reflect", "copy", vfn(a -> copyValue(arg(a, 0))));
+		reg(s, "Reflect", "copy", vfn(a -> switch (EvalValueTools.vresolve(arg(a, 0))) {
+			// Reflect.copy: only an object, an instance, a string, an array or a vector copies.
+			case VNull | VObject(_) | VInstance(_) | VString(_) | VArray(_) | VVector(_): copyValue(arg(a, 0));
+			case _: EvalExceptions.unexpectedValue(ctx, arg(a, 0), "object");
+		}));
 		reg(s, "Reflect", "deleteField", vfn(a -> EvalValueTools.vbool(deleteDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1)))))));
 		reg(s, "Reflect", "getProperty", vfn(a -> {
 			var o = arg(a, 0);
@@ -4492,7 +4552,7 @@ class EvalStdLib {
 			var setter = EvalField.field(ctx, o, EvalHash.hash("set_" + name));
 			if (setter != VNull) callValueOn(o, setter, [arg(a, 2)]);
 			else {
-				setDynamicField(o, EvalHash.hash(name), arg(a, 2));
+				reflectSetField(ctx, o, EvalHash.hash(name), arg(a, 2));
 				VNull;
 			}
 		}));
@@ -4589,17 +4649,21 @@ class EvalStdLib {
 			};
 			case _: VNull;
 		}));
+		// Anything but an enum value is unexpected (null too).
 		reg(s, "Type", "enumParameters", vfn(a -> switch (arg(a, 0)) {
 			case VEnumValue(ev): VArray(new VArray(ev.eargs.copy(), ev.eargs.length));
-			case _: VArray(new VArray([], 0));
+			case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
 		}));
 		reg(s, "Type", "enumEq", vfn(a -> EvalValueTools.vbool(enumEqValue(arg(a, 0), arg(a, 1)))));
-		reg(s, "Type", "enumIndex", vfn(a -> switch (arg(a, 0)) { case VEnumValue(ev): VInt(ev.eindex); case _: VInt(0); }));
+		reg(s, "Type", "enumIndex", vfn(a -> switch (arg(a, 0)) {
+			case VEnumValue(ev): VInt(ev.eindex);
+			case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
+		}));
 		reg(s, "Type", "enumConstructor", vfn(a -> switch (arg(a, 0)) {
 			case VEnumValue(ev):
 				var p = ctx.staticPrototypes.get(ev.epath);
 				if (p == null) VNull else switch (p.pkind) { case PEnum(cs): mkStr(cs[ev.eindex].name); case _: VNull; };
-			case _: VNull;
+			case v: EvalExceptions.unexpectedValue(ctx, v, "enum value");
 		}));
 		reg(s, "Type", "getEnum", vfn(a -> switch (arg(a, 0)) {
 			case VEnumValue(ev): classValue(ctx, ev.epath);

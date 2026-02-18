@@ -591,7 +591,10 @@ class EvalPrototype {
 		var pinstFields:Array<EvalValue> = pparent != null ? pparent.pinstanceFields.copy() : [];
 		var pinstNames:Map<Int, Int> = new Map();
 		if (pparent != null) for (k in pparent.pinstanceNames.keys()) pinstNames.set(k, pparent.pinstanceNames.get(k));
-		for (cf in c.orderedFields) {
+		// An extern class other than String adds nothing of its own; what its instances do comes from the
+		// builtins below.
+		var externClass = TypeFunctions.hasClassFlag(c, CExtern) && !(c.path.pack.length == 0 && c.path.name == "String");
+		if (!externClass) for (cf in c.orderedFields) {
 			if (isRemovable(cf)) continue;
 			switch (cf.kind) {
 				case Method(_):
