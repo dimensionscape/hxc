@@ -113,7 +113,10 @@ class EvalMisc {
 
 	public static function opMod(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
 		return switch [v1, v2] {
-			case [VInt(a), VInt(b)]: b == 0 ? VFloat(Math.NaN) : VInt(a % b);
+			// An Int remainder by zero is the interpreter's fixed NaN, and the minimum Int % -1 is 0 (a C++
+			// `%`
+			// there traps).
+			case [VInt(a), VInt(b)]: b == 0 ? VFloat(EvalStdLib.hostNan) : b == -1 ? VInt(0) : VInt(a % b);
 			case [VFloat(a), VFloat(b)]: VFloat(a % b);
 			case [VInt(a), VFloat(b)]: VFloat(a % b);
 			case [VFloat(a), VInt(b)]: VFloat(a % b);
