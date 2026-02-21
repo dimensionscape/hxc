@@ -2109,11 +2109,11 @@ class EvalMacro {
 				var ctorExpr = new Expr(EField(enumPathExpr(ec, ev.epath, p), name, EFNormal), p);
 				ev.eargs.length == 0 ? ctorExpr : mk(ECall(ctorExpr, [for (a in ev.eargs) valueToExpr(ec, a, p)]));
 			case VInstance(vi): switch (vi.ikind) {
+				// Each table folded, so in its keys' order.
 				case IMap(m) if (vi.iproto.ppath == EvalHash.key_haxe_ds_IntMap
 						|| vi.iproto.ppath == EvalHash.key_haxe_ds_StringMap
-						|| vi.iproto.ppath == EvalHash.key_haxe_ds_ObjectMap
-						|| vi.iproto.ppath == EvalHash.hash("haxe.ds.EnumValueMap")):
-					mk(EArrayDecl([for (entry in m) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
+						|| vi.iproto.ppath == EvalHash.key_haxe_ds_ObjectMap):
+					mk(EArrayDecl([for (entry in EvalStdLib.orderedMapEntries(VInstance(vi))) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
 				case _:
 					EvalExceptions.excString(ec, "Cannot convert " + EvalStdLib.stringOf(v) + " to expr");
 			}
@@ -2661,7 +2661,7 @@ class EvalMacro {
 			// world, and the compile ends on it. An exit is re-raised past the catchall, so a macro that
 			// exits ends the compile there rather than leaving typing to carry on without its result.
 			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)
-				|| Std.isOfType(e, hxc.eval.EvalExceptions.EvalSysExit)) throw e;
+				|| Std.isOfType(e, hxc.eval.EvalExceptions.EvalSysExit) || Std.isOfType(e, hxc.eval.EvalExceptions.HostException)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;

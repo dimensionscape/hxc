@@ -155,7 +155,8 @@ class EvalEmitter {
 					// internal exceptions no macro try sees.
 					// A typing error raised while a macro API call runs the typer is the same: it reaches
 					// the API boundary, where it becomes the macro's Error value.
-					if (Std.isOfType(ex, hxc.eval.EvalExceptions.MacroAbort) || Std.isOfType(ex, hxc.core.TypingError.FatalError) || Std.isOfType(ex, hxc.core.TypingError)) throw ex;
+					if (Std.isOfType(ex, hxc.eval.EvalExceptions.MacroAbort) || Std.isOfType(ex, hxc.core.TypingError.FatalError) || Std.isOfType(ex, hxc.core.TypingError)
+						|| Std.isOfType(ex, hxc.eval.EvalExceptions.HostException)) throw ex;
 					// Any other host exception is an hxc-internal failure escaping the interpreter (a dropped
 					// field, a native builtin error). Present it to the running program as a normal thrown
 					// value so its own try/catch (e.g. the utest runner) records an error and continues,
@@ -874,12 +875,8 @@ class EvalEmitter {
 			// environment's leave position stays where the last call left it. The string is decoded as a
 			// string, the index as an Int at its position.
 			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
-				var s = EvalStdLib.decodeString(ctx, eval(ctx, argExprs[0]));
-				var index = switch (eval(ctx, argExprs[1])) {
-					case VInt(i): i;
-					case VFloat(f): Std.int(f);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "int", p);
-				};
+				var s = EvalStdLib.decodeVString(ctx, eval(ctx, argExprs[0]));
+				var index = EvalStdLib.decodeIntP(ctx, eval(ctx, argExprs[1]), p);
 				return EvalStdLib.stringFastCodeAt(s, index);
 			case _:
 		}
@@ -1055,6 +1052,8 @@ class EvalEmitter {
 			for (i in 0...tf.args.length) {
 				env2.locals[slot(env2, tf.args[i].v.id)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
 			}
+			// More values than arguments, raised in the pushed environment.
+			if (args.length > tf.args.length) EvalExceptions.excString(ctx, "Something went wrong");
 			var r = try {
 				eval(ctx, tf.expr);
 				VNull;
@@ -1265,11 +1264,13 @@ class EvalEmitter {
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
 	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo):EvalValue {
+	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo, extraArgs:Bool = false):EvalValue {
 		if (info == null) info = EvalContext.createEnvInfo(vthis == null, body.pos, EKEntrypoint, 0, 0);
 		var env = EvalContext.pushEnvironment(ctx, info);
 		env.vthis = vthis;
 		for (a in args) env.locals[slot(env, a.vid)] = a.value;
+		// More values than arguments, raised in the pushed environment.
+		if (extraArgs) EvalExceptions.excString(ctx, "Something went wrong");
 		var ret = try {
 			eval(ctx, body);
 			VNull;

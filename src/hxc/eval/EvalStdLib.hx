@@ -25,7 +25,7 @@ typedef ThreadConditionState = {
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
-@:cppFileCode("#include <stdio.h>")
+@:cppFileCode("#include <stdio.h>\n#include <string.h>\n#include <time.h>")
 #end
 class EvalStdLib {
 	static function reg(map:Map<Int, Array<BuiltinField>>, typeName:String, fieldName:String, v:EvalValue):Void {
@@ -179,6 +179,160 @@ class EvalStdLib {
 		return switch (v) {
 			case VString(s): s.sstring;
 			case _: EvalExceptions.unexpectedValue(ctx, v, "string");
+		};
+	}
+
+	// Mktime over a struct tm with tm_isdst -1; -1 from mktime is the error "Result too large(mktime,
+	// )". Answers the clock in seconds.
+	static function unixMktime(ctx:EvalContext, y:Int, mo:Int, d:Int, h:Int, mi:Int, s:Int):Float {
+		#if cpp
+		var clock:Float = untyped __cpp__('([](int y, int mo, int d, int h, int mi, int s) { struct tm t; memset(&t, 0, sizeof(t)); t.tm_year = y - 1900; t.tm_mon = mo; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = s; t.tm_isdst = -1; return (double)mktime(&t); })({0}, {1}, {2}, {3}, {4}, {5})', y, mo, d, h, mi, s);
+		#else
+		var clock = new Date(y, mo, d, h, mi, s).getTime() / 1000;
+		#end
+		if (clock == -1) EvalExceptions.excString(ctx, "Result too large(mktime, )");
+		return clock;
+	}
+
+	// Localtime/gmtime on a clock in seconds, one field of the result: 0 sec, 1 min, 2 hour, 3 mday, 4
+	// mon, 5 year, 6 wday. The minimum Int when the C library answers no tm (Windows' does for a time
+	// before 1970), which is an EINVAL error.
+	static function unixTmField(seconds:Float, utc:Bool, field:Int):Int {
+		#if cpp
+		return untyped __cpp__('([](double s, bool utc, int f) { time_t c = (time_t)s; struct tm *t = utc ? gmtime(&c) : localtime(&c); if (!t) return (int)0x80000000; switch (f) { case 0: return t->tm_sec; case 1: return t->tm_min; case 2: return t->tm_hour; case 3: return t->tm_mday; case 4: return t->tm_mon; case 5: return t->tm_year; default: return t->tm_wday; } })({0}, {1}, {2})', seconds, utc, field);
+		#else
+		var dt = Date.fromTime(seconds * 1000);
+		return switch (field) {
+			case 0: utc ? dt.getUTCSeconds() : dt.getSeconds();
+			case 1: utc ? dt.getUTCMinutes() : dt.getMinutes();
+			case 2: utc ? dt.getUTCHours() : dt.getHours();
+			case 3: utc ? dt.getUTCDate() : dt.getDate();
+			case 4: utc ? dt.getUTCMonth() : dt.getMonth();
+			case 5: (utc ? dt.getUTCFullYear() : dt.getFullYear()) - 1900;
+			case _: utc ? dt.getUTCDay() : dt.getDay();
+		};
+		#end
+	}
+
+	// Date's getters: a localtime (or gmtime) failure is printed "Invalid argument(localtime, )".
+	static function dateField(ctx:EvalContext, ms:Float, utc:Bool, field:Int):Int {
+		var v = unixTmField(ms / 1000, utc, field);
+		if (v == 0x80000000) EvalExceptions.excString(ctx, "Invalid argument(" + (utc ? "gmtime" : "localtime") + ", )");
+		return v;
+	}
+
+	// getTimezoneOffset: the local and UTC broken-down times, each back through mktime, and their
+	// difference in minutes.
+	static function dateTimezoneOffset(ctx:EvalContext, ms:Float):Int {
+		#if cpp
+		var r:Float = untyped __cpp__('([](double s) { time_t c = (time_t)s; struct tm *l = localtime(&c); if (!l) return 1e300; struct tm lt = *l; struct tm *g = gmtime(&c); if (!g) return 2e300; struct tm gt = *g; lt.tm_isdst = -1; gt.tm_isdst = -1; time_t a = mktime(&lt); if (a == (time_t)-1) return 3e300; time_t b = mktime(&gt); if (b == (time_t)-1) return 3e300; return ((double)b - (double)a) / 60.0; })({0})', ms / 1000);
+		if (r == 1e300) EvalExceptions.excString(ctx, "Invalid argument(localtime, )");
+		if (r == 2e300) EvalExceptions.excString(ctx, "Invalid argument(gmtime, )");
+		if (r == 3e300) EvalExceptions.excString(ctx, "Result too large(mktime, )");
+		return decodeInt(ctx, VFloat(r));
+		#else
+		return Date.fromTime(ms).getTimezoneOffset();
+		#end
+	}
+
+	// A Date printed: localtime, uncaught when it fails (the exception ends the compilation), as
+	// "%.4d-%.2d-%.2d %.2d:%.2d:%.2d".
+	static function sDate(ms:Float):String {
+		var s = ms / 1000;
+		var year = unixTmField(s, false, 5);
+		if (year == 0x80000000) throw new hxc.eval.EvalExceptions.HostException('Unix.Unix_error(Unix.EINVAL, "localtime", "")');
+		function pad(v:Int, n:Int):String {
+			var neg = v < 0;
+			var t = Std.string(neg ? -v : v);
+			while (t.length < n) t = "0" + t;
+			return neg ? "-" + t : t;
+		}
+		return pad(year + 1900, 4) + "-" + pad(unixTmField(s, false, 4) + 1, 2) + "-" + pad(unixTmField(s, false, 3), 2) + " "
+			+ pad(unixTmField(s, false, 2), 2) + ":" + pad(unixTmField(s, false, 1), 2) + ":" + pad(unixTmField(s, false, 0), 2);
+	}
+
+	// A drive root keeps (or gains) its slash, "/" stays and anything else loses its trailing slashes.
+	static function fsPatchPath(s:String):String {
+		if (s.length > 1 && s.length <= 3 && s.charAt(1) == ":") return haxe.io.Path.addTrailingSlash(s);
+		if (s == "/") return "/";
+		var l = s.length;
+		while (l > 0 && (s.charAt(l - 1) == "/" || s.charAt(l - 1) == "\\")) l--;
+		return s.substr(0, l);
+	}
+
+	// The emitter's own decode, which prints the value without its kind and raises at the
+	// expression's position.
+	public static function unexpectedValueP(ctx:EvalContext, v:EvalValue, expected:String, p:hxc.ast.Position):Dynamic {
+		return EvalExceptions.excString(ctx, v == VNull ? "Null Access" : "Unexpected value " + stringOf(v) + ", expected " + expected, p);
+	}
+
+	public static function decodeIntP(ctx:EvalContext, v:EvalValue, p:hxc.ast.Position):Int {
+		return switch (v) {
+			case VInt(_) | VFloat(_): decodeInt(ctx, v);
+			case _: unexpectedValueP(ctx, v, "int", p);
+		};
+	}
+
+	// A code point from an Int: a value with bit 31 set is Invalid_argument.
+	static function ucharOfInt(i:Int):Int {
+		if (i < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("UChar.uint_chr")');
+		return i;
+	}
+
+	static function decodeBool(ctx:EvalContext, v:EvalValue):Bool {
+		return switch (v) {
+			case VTrue: true;
+			case VFalse: false;
+			case _: EvalExceptions.unexpectedValue(ctx, v, "bool");
+		};
+	}
+
+	// A function is called with the arguments, a field closure with its receiver first, and anything
+	// else is "Cannot call <value>".
+	static function callValue(ctx:EvalContext, f:EvalValue, args:Array<EvalValue>):EvalValue {
+		return switch (f) {
+			case VFunction(fn, _): fn(args);
+			case VFieldClosure(recv, fn): fn([recv].concat(args));
+			case _: EvalExceptions.excString(ctx, "Cannot call " + stringOf(f));
+		};
+	}
+
+	// Stdlib.compare of two byte strings: the common prefix, then the length; -1, 0 or 1.
+	static function bytesCompare(b:haxe.io.Bytes, other:haxe.io.Bytes):Int {
+		var len = b.length < other.length ? b.length : other.length;
+		for (i in 0...len) {
+			var x = b.get(i);
+			var y = other.get(i);
+			if (x != y) return x < y ? -1 : 1;
+		}
+		return b.length < other.length ? -1 : b.length > other.length ? 1 : 0;
+	}
+
+	// String.charCodeAt, which StringTools.fastCodeAt and haxe.Utf8.charCodeAt also are: the string
+	// is the receiver or the first argument.
+	static function stdStringCharCodeAt(ctx:EvalContext, a:Array<EvalValue>):EvalValue {
+		var str = thisString(ctx, a);
+		return stringFastCodeAt(str, decodeInt(ctx, arg(a, 1)));
+	}
+
+	// String.substr, which haxe.Utf8.sub also is: a position past the end is "" before the length is
+	// looked at, and the length is an Int or null (a float is unexpected).
+	static function stdStringSubstr(ctx:EvalContext, a:Array<EvalValue>):EvalValue {
+		var str = thisString(ctx, a);
+		var pos = decodeInt(ctx, arg(a, 1));
+		if (pos >= stringLength(str)) return mkStr("");
+		return mkStr(stringSubstr(str, pos, switch (arg(a, 2)) {
+			case VNull: null;
+			case VInt(i): i;
+			case v: EvalExceptions.unexpectedValue(ctx, v, "int");
+		}));
+	}
+
+	// A binary flag is true or null for binary.
+	static function fileBinaryFlag(v:EvalValue):Bool {
+		return switch (v) {
+			case VTrue | VNull: true;
+			case _: false;
 		};
 	}
 
@@ -796,7 +950,7 @@ class EvalStdLib {
 			switch (c) {
 				case "i".code | "s".code | "m".code | "u".code | "g".code:
 				case _:
-					throw "Unsupported regexp option '" + flags.charAt(i) + "'";
+					throw new hxc.eval.EvalExceptions.HostException("Unsupported regexp option '" + flags.charAt(i) + "'", true);
 			}
 		}
 	}
@@ -1162,12 +1316,12 @@ class EvalStdLib {
 	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
-	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool}>();
+	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool, ?source:String}>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 	static var macroMessages:Array<EvalValue> = [];
 
-	static function regexInfo(re:EReg):{captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool} {
+	static function regexInfo(re:EReg):{captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool, ?source:String} {
 		var info = nativeRegexInfo.get(re);
 		if (info == null) {
 			info = {captureCount: 9, global: false, lastSubject: null, matched: false};
@@ -1567,17 +1721,20 @@ class EvalStdLib {
 						case IBytes(b):
 							buf.add(haxe.Serializer.run(b));
 						case IMap(m):
+							// Each table iterates in the reverse of its keys' (folded) order.
+							var entries = orderedMapEntries(VInstance(vi));
+							entries.reverse();
 							switch (EvalHash.revHash(vi.iproto.ppath)) {
 								case "haxe.ds.StringMap":
 									buf.add("b");
-									for (entry in m) {
+									for (entry in entries) {
 										stringTag(stringOf(entry.key));
 										loop(entry.value);
 									}
 									buf.add("h");
 								case "haxe.ds.IntMap":
 									buf.add("q");
-									for (entry in m) {
+									for (entry in entries) {
 										buf.add(":");
 										buf.add(toInt(entry.key));
 										loop(entry.value);
@@ -1585,7 +1742,7 @@ class EvalStdLib {
 									buf.add("h");
 								case "haxe.ds.ObjectMap":
 									buf.add("M");
-									for (entry in m) {
+									for (entry in entries) {
 										loop(entry.key);
 										loop(entry.value);
 									}
@@ -1882,10 +2039,11 @@ class EvalStdLib {
 		}
 		function part(pos:Int, len:Int):Int return Std.parseInt(s.substr(pos, len));
 		return switch (s.length) {
+			// A mktime failure is a Unix error.
 			case 19 if (digits(0, 4) && s.charAt(4) == "-" && digits(5, 2) && s.charAt(7) == "-" && digits(8, 2) && s.charAt(10) == " " && digits(11, 2) && s.charAt(13) == ":" && digits(14, 2) && s.charAt(16) == ":" && digits(17, 2)):
-				mkDate(ctx, new Date(part(0, 4), part(5, 2) - 1, part(8, 2), part(11, 2), part(14, 2), part(17, 2)).getTime());
+				mkDate(ctx, unixMktime(ctx, part(0, 4), part(5, 2) - 1, part(8, 2), part(11, 2), part(14, 2), part(17, 2)) * 1000);
 			case 10 if (digits(0, 4) && s.charAt(4) == "-" && digits(5, 2) && s.charAt(7) == "-" && digits(8, 2)):
-				mkDate(ctx, new Date(part(0, 4), part(5, 2) - 1, part(8, 2), 0, 0, 0).getTime());
+				mkDate(ctx, unixMktime(ctx, part(0, 4), part(5, 2) - 1, part(8, 2), 0, 0, 0) * 1000);
 			case 8 if (digits(0, 2) && s.charAt(2) == ":" && digits(3, 2) && s.charAt(5) == ":" && digits(6, 2)):
 				mkDate(ctx, ((part(0, 2) * 60 * 60) + (part(3, 2) * 60) + part(6, 2)) * 1000.0);
 			case _:
@@ -1988,7 +2146,7 @@ class EvalStdLib {
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var hi = proto.pinstanceNames.get(EvalHash.keyHigh);
 		var lo = proto.pinstanceNames.get(EvalHash.keyLow);
-		if (hi == null || lo == null) throw new hxc.core.NotFound();
+		if (hi == null || lo == null) throw new hxc.eval.EvalExceptions.HostException("Not_found");
 		vi.ifields[hi] = VInt(high);
 		vi.ifields[lo] = VInt(low);
 		return VInstance(vi);
@@ -2001,7 +2159,7 @@ class EvalStdLib {
 			case _: EvalExceptions.unexpectedValue(ctx, v, "instance");
 		};
 		var idx = vi.iproto.pinstanceNames.get(name);
-		if (idx == null) throw new hxc.core.NotFound();
+		if (idx == null) throw new hxc.eval.EvalExceptions.HostException("Not_found");
 		return vi.ifields[idx];
 	}
 
@@ -2974,8 +3132,39 @@ class EvalStdLib {
 		]);
 	}
 
-	// A map's runtime key folds to a string for storage; StringMap keeps the string, IntMap the int,
-	// EnumValueMap a structural digest of the constructor index and (recursively) its arguments.
+	// ObjectMap key equality (every key hashes alike and compares by value equality): numbers by
+	// value, an Int equal to the float it is; strings by content; an enum constructor without
+	// arguments by its path and index; a prototype by its path; anything else by identity. A NaN
+	// equals nothing, itself included, so each is a key of its own.
+	static var nanKeys = 0;
+
+	static function objectMapKey(v:EvalValue):String {
+		return switch (v) {
+			case VNull: "n";
+			case VTrue: "t";
+			case VFalse: "f";
+			case VInt(i): "#" + i;
+			case VFloat(f):
+				if (Math.isNaN(f)) "nan:" + (nanKeys++);
+				else if (f == Math.ffloor(f) && Math.abs(f) < 2147483648.0) "#" + Std.int(f);
+				else "#f" + bytesOfDouble(f).toHex();
+			case VString(_): "s:" + mapKey(v);
+			case VNativeString(s): "ns:" + s;
+			case VEnumValue(ev) if (ev.eargs.length == 0): "e:" + ev.epath + ":" + ev.eindex;
+			case VEnumValue(ev): "@" + objId(ev);
+			case VPrototype(p): "p:" + p.ppath;
+			case VObject(o): "@" + objId(o);
+			case VInstance(vi): "@" + objId(vi);
+			case VArray(va): "@" + objId(va);
+			case VVector(vv): "@" + objId(vv);
+			case VFunction(fn, _): "@" + objId(cast fn);
+			case VLazy(f): objectMapKey(f());
+			case _: "@" + objId(cast v);
+		};
+	}
+
+	// A map's runtime key folds to a string for storage; StringMap keeps the string and IntMap the
+	// int. An ObjectMap's is objectMapKey.
 	static function mapKey(v:EvalValue):String {
 		return switch (v) {
 			case VString(s):
@@ -2994,7 +3183,7 @@ class EvalStdLib {
 		};
 	}
 
-	static function orderedMapEntries(v:EvalValue):Array<MapEntry> {
+	public static function orderedMapEntries(v:EvalValue):Array<MapEntry> {
 		return switch (v) {
 			case VInstance(vi):
 				var m = thisMap([v]);
@@ -3282,10 +3471,11 @@ class EvalStdLib {
 		by = normalizeString(by);
 		if (sub.length == 0) {
 			if (by.length == 0 || s.length == 0) return s;
+			var codes = utf8Codes(s);
 			var b = new StringBuf();
-			for (i in 0...s.length) {
-				b.add(s.charAt(i));
-				if (i != s.length - 1) b.add(by);
+			for (i in 0...codes.length) {
+				b.add(stringFromCodes(codes, i, 1));
+				if (i != codes.length - 1) b.add(by);
 			}
 			return b.toString();
 		}
@@ -3754,9 +3944,12 @@ class EvalStdLib {
 				s == null ? objectString(o, depth + 1) : s;
 			case VInstance(vi):
 				switch (vi.ikind) {
-					case IDate(ts): Date.fromTime(ts).toString();
+					case IDate(ts): sDate(ts);
 					case IPos(p): posString(p);
-					case IRegex(_): "#regexp";
+					// The regex's source.
+					case IRegex(re):
+						var info = nativeRegexInfo.get(re);
+						info == null || info.source == null ? "~//" : info.source;
 					case _:
 						var s = callToString(VInstance(vi), depth);
 						s == null ? EvalHash.revHash(vi.iproto.ppath) : s;
@@ -4086,16 +4279,22 @@ class EvalStdLib {
 			case _: EvalValueTools.vbool(true);
 		}));
 		reg(s, "Math", "random", vfn(a -> VFloat(Math.random())));
-		reg(s, "String", "fromCharCode", vfn(a -> mkStr(String.fromCharCode(decodeInt(ctx, arg(a, 0))))));
-		// The string is decode_vstring, a null a Null Access. The other StringTools functions are the
-		// std's Haxe code, as in the reference (StdStringTools has fastCodeAt, replace, urlEncode and
-		// urlDecode); a native stood in for each and its verdicts were not the code's.
-		reg(s, "StringTools", "fastCodeAt", vfn(a -> stringFastCodeAt(decodeString(ctx, arg(a, 0)), toInt(arg(a, 1)))));
-		reg(s, "StringTools", "unsafeCodeAt", vfn(a -> stringFastCodeAt(decodeString(ctx, arg(a, 0)), toInt(arg(a, 1)))));
-		reg(s, "StringTools", "replace", vfn(a -> mkStr(stringReplace(stringOf(arg(a, 0)), stringOf(arg(a, 1)), stringOf(arg(a, 2))))));
-		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(stringOf(arg(a, 0))))));
-		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(stringOf(arg(a, 0))))));
-		reg(s, "Std", "random", vfn(a -> VInt(Std.random(toInt(arg(a, 0))))));
+		reg(s, "String", "fromCharCode", vfn(a -> mkStr(String.fromCharCode(ucharOfInt(decodeInt(ctx, arg(a, 0)))))));
+		// StringTools has natives for fastCodeAt (String.charCodeAt), replace, urlEncode and urlDecode
+		// only; the other StringTools functions, unsafeCodeAt included, are the std's Haxe code, run with
+		// its own frames and verdicts.
+		reg(s, "StringTools", "fastCodeAt", vfn(a -> stdStringCharCodeAt(ctx, a)));
+		// By, sub and s are decoded (decodeVString), in that order.
+		reg(s, "StringTools", "replace", vfn(a -> {
+			var by = decodeVString(ctx, arg(a, 2));
+			var sub = decodeVString(ctx, arg(a, 1));
+			var str = decodeVString(ctx, arg(a, 0));
+			mkStr(stringReplace(str, sub, by));
+		}));
+		reg(s, "StringTools", "urlEncode", vfn(a -> mkStr(urlEncode(decodeString(ctx, arg(a, 0))))));
+		reg(s, "StringTools", "urlDecode", vfn(a -> mkStr(urlDecode(decodeString(ctx, arg(a, 0))))));
+		// The bound is decoded by decodeI32.
+		reg(s, "Std", "random", vfn(a -> VInt(Std.random(decodeI32(ctx, arg(a, 0))))));
 		reg(s, "Std", "isOfType", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "is", vfn(a -> EvalValueTools.vbool(stdIsOfTypeCtx(ctx, arg(a, 0), arg(a, 1)))));
 		reg(s, "Std", "downcast", vfn(a -> stdDowncast(ctx, arg(a, 0), arg(a, 1))));
@@ -4121,8 +4320,9 @@ class EvalStdLib {
 			VArray(new VArray(args, args.length));
 		}));
 		reg(s, "Sys", "_command", vfn(a -> {
+			var cmd = decodeString(ctx, arg(a, 0));
 			flushStdout();
-			VInt(Sys.command(stringOf(arg(a, 0))));
+			VInt(Sys.command(cmd));
 		}));
 		reg(s, "Sys", "command", vfn(a -> {
 			var cmd = stringOf(arg(a, 0));
@@ -4135,18 +4335,23 @@ class EvalStdLib {
 		// Sys.exit raises an exit exception; the compiler marks the compile failed for a non-zero code
 		// and flushes the message list before returning it. Exiting the host process here would throw away
 		// every warning a macro had queued, including the ones explaining why it was exiting.
-		reg(s, "Sys", "exit", vfn(a -> throw new hxc.eval.EvalExceptions.EvalSysExit(toInt(arg(a, 0)))));
+		reg(s, "Sys", "exit", vfn(a -> throw new hxc.eval.EvalExceptions.EvalSysExit(decodeInt(ctx, arg(a, 0)))));
 		reg(s, "Sys", "getCwd", vfn(a -> mkStr(Sys.getCwd())));
 		reg(s, "Sys", "getEnv", vfn(a -> {
-			var v = Sys.getEnv(stringOf(arg(a, 0)));
+			var v = Sys.getEnv(decodeString(ctx, arg(a, 0)));
 			v == null ? VNull : mkStr(v);
 		}));
-		reg(s, "Sys", "getChar", vfn(a -> VInt(Sys.getChar(arg(a, 0) == VTrue))));
+		reg(s, "Sys", "getChar", vfn(a -> VInt(Sys.getChar(decodeBool(ctx, arg(a, 0))))));
 		reg(s, "Sys", "programPath", vfn(a -> sysProgramPath(ctx)));
-		reg(s, "Sys", "putEnv", vfn(a -> { Sys.putEnv(stringOf(arg(a, 0)), arg(a, 1) == VNull ? null : stringOf(arg(a, 1))); VNull; }));
-		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(stringOf(arg(a, 0))); VNull; }));
+		// A null value unsets the variable.
+		reg(s, "Sys", "putEnv", vfn(a -> {
+			var name = decodeString(ctx, arg(a, 0));
+			Sys.putEnv(name, arg(a, 1) == VNull ? null : decodeString(ctx, arg(a, 1)));
+			VNull;
+		}));
+		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(decodeString(ctx, arg(a, 0))); VNull; }));
 		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
-		reg(s, "Sys", "sleep", vfn(a -> { var t = toFloat(arg(a, 0)); gilBlocking(function() { Sys.sleep(t); return VNull; }); }));
+		reg(s, "Sys", "sleep", vfn(a -> { var t = num(ctx, arg(a, 0)); gilBlocking(function() { Sys.sleep(t); return VNull; }); }));
 		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, Sys.stderr(), null)));
 		reg(s, "Sys", "stdin", vfn(a -> mkInput(ctx, Sys.stdin(), null)));
 		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
@@ -4491,16 +4696,8 @@ class EvalStdLib {
 			var str = thisString(ctx, a);
 			mkStr(stringCharAt(str, decodeInt(ctx, arg(a, 1))));
 		}));
-		reg(inst, "String", "charCodeAt", vmethod(a -> {
-			var str = thisString(ctx, a);
-			var i = decodeInt(ctx, arg(a, 1));
-			stringFastCodeAt(str, i);
-		}));
-		reg(inst, "String", "cca", vmethod(a -> {
-			var str = thisString(ctx, a);
-			var i = decodeInt(ctx, arg(a, 1));
-			stringFastCodeAt(str, i);
-		}));
+		reg(inst, "String", "charCodeAt", vmethod(a -> stdStringCharCodeAt(ctx, a)));
+		reg(inst, "String", "cca", vmethod(a -> stdStringCharCodeAt(ctx, a)));
 		reg(inst, "String", "indexOf", vmethod(a -> {
 			var sub = thisString(ctx, [arg(a, 1)]);
 			var str = thisString(ctx, a);
@@ -4513,18 +4710,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "String", "toUpperCase", vmethod(a -> mkStr(thisString(ctx, a).toUpperCase())));
 		reg(inst, "String", "toLowerCase", vmethod(a -> mkStr(thisString(ctx, a).toLowerCase())));
-		reg(inst, "String", "substr", vmethod(a -> {
-			var str = thisString(ctx, a);
-			var pos = decodeInt(ctx, arg(a, 1));
-			// A position past the end is "" before the length is looked at, and the length is an Int32 or
-			// null (a float is unexpected).
-			if (pos >= stringLength(str)) mkStr("");
-			else mkStr(stringSubstr(str, pos, switch (arg(a, 2)) {
-				case VNull: null;
-				case VInt(i): i;
-				case v: EvalExceptions.unexpectedValue(ctx, v, "int");
-			}));
-		}));
+		reg(inst, "String", "substr", vmethod(a -> stdStringSubstr(ctx, a)));
 		reg(inst, "String", "substring", vmethod(a -> {
 			var str = thisString(ctx, a);
 			var start = decodeInt(ctx, arg(a, 1));
@@ -4698,7 +4884,7 @@ class EvalStdLib {
 		}));
 		reg(inst, "Array", "resize", vmethod(a -> {
 			var va = thisArray(ctx, a); var len = decodeInt(ctx, arg(a, 1));
-			if (len < 0) throw 'Invalid_argument("Array.fill")';
+			if (len < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Array.fill")');
 			if (va.alength < len) arraySet(va, len - 1, VNull);
 			else if (va.alength > len) {
 				for (i in len...va.alength) va.avalues[i] = VNull;
@@ -4747,22 +4933,26 @@ class EvalStdLib {
 			var names = fieldNames(o);
 			VArray(new VArray([for (n in names) mkStr(n)], names.length));
 		}));
+		// Reflect: a field name is decodeVString; field and getProperty answer null for a null object
+		// before looking at it.
 		reg(s, "Reflect", "field", vfn(a -> {
 			var o = arg(a, 0);
-			var name = EvalHash.hash(stringOf(arg(a, 1)));
-			switch (EvalValueTools.vresolve(o)) {
-				case VPrototype(proto) if (isReflectHidden(proto.ppath, name, true)): VNull;
-				case VInstance(vi) if (isReflectHidden(vi.iproto.ppath, name, false)): VNull;
-				case _:
-					if (o == VNull) VNull else EvalField.dynamicField(ctx, o, name);
+			if (o == VNull) VNull else {
+				var name = EvalHash.hash(decodeVString(ctx, arg(a, 1)));
+				switch (EvalValueTools.vresolve(o)) {
+					case VPrototype(proto) if (isReflectHidden(proto.ppath, name, true)): VNull;
+					case VInstance(vi) if (isReflectHidden(vi.iproto.ppath, name, false)): VNull;
+					case _: EvalField.dynamicField(ctx, o, name);
+				}
 			}
 		}));
 		reg(s, "Reflect", "setField", vfn(a -> {
-			reflectSetField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1))), arg(a, 2));
+			reflectSetField(ctx, arg(a, 0), EvalHash.hash(decodeVString(ctx, arg(a, 1))), arg(a, 2));
 			VNull;
 		}));
 		reg(s, "Reflect", "hasField", vfn(a -> {
-			EvalValueTools.vbool(hasField(ctx, arg(a, 0), EvalHash.hash(stringOf(arg(a, 1)))));
+			var name = EvalHash.hash(decodeVString(ctx, arg(a, 1)));
+			EvalValueTools.vbool(hasField(ctx, arg(a, 0), name));
 		}));
 		reg(s, "Reflect", "isFunction", vfn(a -> EvalValueTools.vbool(switch (arg(a, 0)) {
 			case VFunction(_, _) | VFieldClosure(_, _): true;
@@ -4780,11 +4970,14 @@ class EvalStdLib {
 			case VNull | VObject(_) | VInstance(_) | VString(_) | VArray(_) | VVector(_): copyValue(arg(a, 0));
 			case _: EvalExceptions.unexpectedValue(ctx, arg(a, 0), "object");
 		}));
-		reg(s, "Reflect", "deleteField", vfn(a -> EvalValueTools.vbool(deleteDynamicField(arg(a, 0), EvalHash.hash(stringOf(arg(a, 1)))))));
+		reg(s, "Reflect", "deleteField", vfn(a -> {
+			var name = EvalHash.hash(decodeVString(ctx, arg(a, 1)));
+			EvalValueTools.vbool(deleteDynamicField(arg(a, 0), name));
+		}));
 		reg(s, "Reflect", "getProperty", vfn(a -> {
 			var o = arg(a, 0);
 			if (o == VNull) VNull else {
-				var name = stringOf(arg(a, 1));
+				var name = decodeVString(ctx, arg(a, 1));
 				var getter = EvalField.field(ctx, o, EvalHash.hash("get_" + name));
 				if (getter != VNull) callValueOn(o, getter, []) else EvalField.dynamicField(ctx, o, EvalHash.hash(name));
 			}
@@ -4797,13 +4990,14 @@ class EvalStdLib {
 			case VObject(_) | VString(_) | VArray(_) | VVector(_) | VInstance(_) | VPrototype(_): true;
 			case _: false;
 		})));
+		// The function is called (callValue) when the result is called.
 		reg(s, "Reflect", "makeVarArgs", vfn(a -> {
 			var fn = arg(a, 0);
-			VFunction(function(vl:Array<EvalValue>):EvalValue return applyFn(fn, [VArray(new VArray(vl, vl.length))]), true);
+			VFunction(function(vl:Array<EvalValue>):EvalValue return callValue(ctx, fn, [VArray(new VArray(vl, vl.length))]), true);
 		}));
 		reg(s, "Reflect", "setProperty", vfn(a -> {
 			var o = arg(a, 0);
-			var name = stringOf(arg(a, 1));
+			var name = decodeVString(ctx, arg(a, 1));
 			var setter = EvalField.field(ctx, o, EvalHash.hash("set_" + name));
 			if (setter != VNull) callValueOn(o, setter, [arg(a, 2)]);
 			else {
@@ -4885,7 +5079,10 @@ class EvalStdLib {
 			switch (arg(a, 0)) {
 				case VPrototype(proto): switch (proto.pkind) {
 					case PEnum(cs):
-						if (idx < 0 || idx >= cs.length) throw "nth";
+						// An enum constructor by index: Invalid_argument for a negative index, a failure
+						// past the end.
+						if (idx < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("List.nth")');
+						if (idx >= cs.length) throw new hxc.eval.EvalExceptions.HostException("nth", true);
 						createEnumByName(ctx, arg(a, 0), EvalHash.hash(cs[idx].name), arg(a, 2));
 					case _: VNull;
 				};
@@ -4943,9 +5140,10 @@ class EvalStdLib {
 			var p = ctx.staticPrototypes.get(EvalHash.hash(decodeVString(ctx, arg(a, 0))));
 			if (p == null) VNull else switch (p.pkind) { case PEnum(_): p.pvalue; case _: VNull; };
 		}));
+		// callMethod: the arguments decoded first, then the call.
 		reg(s, "Reflect", "callMethod", vfn(a -> {
-			var fn = arg(a, 1); var args = argList(arg(a, 2));
-			if (fn == VNull) EvalExceptions.excString(ctx, "Cannot call null") else callValueOn(arg(a, 0), fn, args);
+			var args = decodeArray(ctx, arg(a, 2));
+			callValueOn(arg(a, 0), arg(a, 1), args);
 		}));
 		// Lambda is the std's Haxe code, with no natives, so its frames and null handling are the code's
 		// own.
@@ -4959,22 +5157,25 @@ class EvalStdLib {
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
 		});
 		ctors.set(EvalHash.hash("haxe.Utf8"), function(a) {
+			// The size is defaultInt.
+			defaultInt(ctx, arg(a, 0), 0);
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Utf8"));
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new StringBuf())));
 		});
 		ctors.set(EvalHash.hash("EReg"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
-			var pattern = stringOf(arg(a, 0));
-			var flags = stringOf(arg(a, 1));
+			// The pattern and the options are decodeString, decoded right to left.
+			var flags = decodeString(ctx, arg(a, 1));
+			var pattern = decodeString(ctx, arg(a, 0));
 			validateRegexFlags(flags);
 			var re = new EReg(pattern, flags);
-			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0, lastSubject: null, matched: false});
+			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0, lastSubject: null, matched: false, source: "~/" + pattern + "/" + flags});
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
 		});
 		emptyCtors.set(EvalHash.hash("EReg"), function() {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
 			var re = new EReg("", "");
-			nativeRegexInfo.set(re, {captureCount: 0, global: false, lastSubject: null, matched: false});
+			nativeRegexInfo.set(re, {captureCount: 0, global: false, lastSubject: null, matched: false, source: "~//"});
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
 		});
 
@@ -4986,7 +5187,7 @@ class EvalStdLib {
 		// Int32 or null.
 		reg(inst, "StringBuf", "addChar", vmethod(a -> {
 			var buf = thisBuffer(a);
-			buf.add(stringFromCodes([decodeInt(ctx, arg(a, 1))], 0, 1));
+			buf.add(stringFromCodes([ucharOfInt(decodeInt(ctx, arg(a, 1)))], 0, 1));
 			VNull;
 		}));
 		reg(inst, "StringBuf", "addSub", vmethod(a -> {
@@ -5005,33 +5206,36 @@ class EvalStdLib {
 		// native instance keeps its own buffer, so the accessor resolves through the host length.
 		reg(inst, "StringBuf", "get_length", vmethod(a -> VInt(thisBuffer(a).length)));
 
-		reg(s, "haxe.Utf8", "charCodeAt", vfn(a -> {
-			var codes = utf8Codes(stringOf(arg(a, 0)));
-			var index = toInt(arg(a, 1));
-			index >= 0 && index < codes.length ? VInt(codes[index]) : VNull;
+		// charCodeAt and sub are String's, a string argument is decode_string (length's decode_vstring) and
+		// iter call_values its callback.
+		reg(s, "haxe.Utf8", "charCodeAt", vfn(a -> stdStringCharCodeAt(ctx, a)));
+		reg(s, "haxe.Utf8", "compare", vfn(a -> {
+			var x = bytesOfStringValue(arg(a, 0));
+			var y = bytesOfStringValue(arg(a, 1));
+			VInt(bytesCompare(x, y));
 		}));
-		reg(s, "haxe.Utf8", "compare", vfn(a -> VInt(Reflect.compare(stringOf(arg(a, 0)), stringOf(arg(a, 1))))));
-		reg(s, "haxe.Utf8", "decode", vfn(a -> mkStr(utf8Decode(stringOf(arg(a, 0))))));
+		reg(s, "haxe.Utf8", "decode", vfn(a -> mkStr(utf8Decode(decodeString(ctx, arg(a, 0))))));
 		reg(s, "haxe.Utf8", "encode", vfn(a -> {
-			var s = stringOf(arg(a, 0));
+			var s = decodeString(ctx, arg(a, 0));
 			VString(new VString(utf8Encode(s), utf8EncodedLength(s)));
 		}));
 		reg(s, "haxe.Utf8", "iter", vfn(a -> {
+			var str = decodeString(ctx, arg(a, 0));
 			var fn = arg(a, 1);
-			for (c in utf8Codes(stringOf(arg(a, 0)))) applyFn(fn, [VInt(c)]);
+			for (c in utf8Codes(str)) callValue(ctx, fn, [VInt(c)]);
 			VNull;
 		}));
-		reg(s, "haxe.Utf8", "length", vfn(a -> VInt(utf8Codes(stringOf(arg(a, 0))).length)));
-		reg(s, "haxe.Utf8", "sub", vfn(a -> {
-			var codes = utf8Codes(stringOf(arg(a, 0)));
-			var pos = toInt(arg(a, 1));
-			var len = toInt(arg(a, 2));
-			var buf = new StringBuf();
-			for (i in pos...Std.int(Math.min(pos + len, codes.length))) addUtf8Char(buf, codes[i]);
-			mkStrLen(buf.toString(), Std.int(Math.min(len, Math.max(0, codes.length - pos))));
+		reg(s, "haxe.Utf8", "length", vfn(a -> switch (arg(a, 0)) {
+			case VString(vs): VInt(runtimeStringLength(vs));
+			case v: EvalExceptions.unexpectedValue(ctx, v, "string");
 		}));
-		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(utf8Valid(stringOf(arg(a, 0))))));
-		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> { addUtf8Char(thisBuffer(a), toInt(arg(a, 1))); VNull; }));
+		reg(s, "haxe.Utf8", "sub", vfn(a -> stdStringSubstr(ctx, a)));
+		reg(s, "haxe.Utf8", "validate", vfn(a -> EvalValueTools.vbool(utf8Valid(decodeString(ctx, arg(a, 0))))));
+		reg(inst, "haxe.Utf8", "addChar", vmethod(a -> {
+			var buf = thisBuffer(a);
+			addUtf8Char(buf, ucharOfInt(decodeInt(ctx, arg(a, 1))));
+			VNull;
+		}));
 		reg(inst, "haxe.Utf8", "toString", vmethod(a -> {
 			var s = thisBuffer(a).toString();
 			mkStrLen(s, haxe.io.Bytes.ofString(s).length);
@@ -5083,6 +5287,14 @@ class EvalStdLib {
 			var s = decodeString(ctx, arg(a, 1));
 			var pos = decodeInt(ctx, arg(a, 2));
 			var len = defaultInt(ctx, arg(a, 3), -1);
+			// The subject is cut at pos + len and the regex stub refuses a position outside it, both
+			// Invalid_argument no macro catches.
+			var byteLen = haxe.io.Bytes.ofString(s).length;
+			var l = len < 0 ? byteLen - pos : len;
+			if (pos + l <= byteLen) {
+				if (pos + l < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
+				if (pos < 0 || pos > pos + l) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Pcre2.pcre2_match_stub: illegal position")');
+			}
 			EvalValueTools.vbool(regexMatchSub(re, s, pos, len));
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
@@ -5119,10 +5331,22 @@ class EvalStdLib {
 		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(decodeString(ctx, arg(a, 0))))));
 
 
-		// haxe.ds maps (StringMap/IntMap) backed by a native dictionary.
+		// haxe.ds maps (StringMap/IntMap/ObjectMap) backed by a native dictionary. EnumValueMap is the
+		// std's Haxe code (a BalancedTree), with no natives.
 		function iteratorOf(items:Array<EvalValue>):EvalValue
 			return listIteratorValue(items);
-		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.EnumValueMap", "haxe.ds.ObjectMap"]) {
+		for (mapPath in ["haxe.ds.StringMap", "haxe.ds.IntMap", "haxe.ds.ObjectMap"]) {
+			// An IntMap key is decodeInt, a StringMap key decodeVString and an ObjectMap key any value.
+			function argKey(v:EvalValue):EvalValue {
+				return switch (mapPath) {
+					case "haxe.ds.IntMap": VInt(decodeInt(ctx, v));
+					case "haxe.ds.StringMap":
+						decodeVString(ctx, v);
+						v;
+					case _: v;
+				};
+			}
+			function keyString(v:EvalValue):String return mapPath == "haxe.ds.ObjectMap" ? objectMapKey(v) : mapKey(v);
 			ctors.set(EvalHash.hash(mapPath), function(a) {
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(new Map()));
@@ -5136,9 +5360,10 @@ class EvalStdLib {
 				return VInstance(vi);
 			});
 			reg(inst, mapPath, "set", vmethod(a -> {
+				var key = argKey(arg(a, 1));
 				var vi = thisInstance(a, mapPath);
 				var m = thisMap(a);
-				var k = mapKey(arg(a, 1));
+				var k = keyString(key);
 				if (!m.exists(k)) {
 					var order = nativeMapOrders.get(vi);
 					if (order == null) {
@@ -5147,15 +5372,22 @@ class EvalStdLib {
 					}
 					order.push(k);
 				}
-				m.set(k, {key: arg(a, 1), value: arg(a, 2)});
+				m.set(k, {key: key, value: arg(a, 2)});
 				VNull;
 			}));
-			reg(inst, mapPath, "get", vmethod(a -> { var m = thisMap(a); var k = mapKey(arg(a, 1)); m.exists(k) ? m.get(k).value : VNull; }));
-			reg(inst, mapPath, "exists", vmethod(a -> EvalValueTools.vbool(thisMap(a).exists(mapKey(arg(a, 1))))));
+			reg(inst, mapPath, "get", vmethod(a -> {
+				var k = keyString(argKey(arg(a, 1)));
+				var m = thisMap(a);
+				m.exists(k) ? m.get(k).value : VNull;
+			}));
+			reg(inst, mapPath, "exists", vmethod(a -> {
+				var k = keyString(argKey(arg(a, 1)));
+				EvalValueTools.vbool(thisMap(a).exists(k));
+			}));
 			reg(inst, mapPath, "remove", vmethod(a -> {
 				var vi = thisInstance(a, mapPath);
 				var m = thisMap(a);
-				var k = mapKey(arg(a, 1));
+				var k = keyString(argKey(arg(a, 1)));
 				var had = m.exists(k);
 				m.remove(k);
 				var order = nativeMapOrders.get(vi);
@@ -5172,28 +5404,28 @@ class EvalStdLib {
 				if (order != null) order.resize(0);
 				VNull;
 			}));
+			// Copy: the same entries under the same keys, in the same table order.
 			reg(inst, mapPath, "copy", vmethod(a -> {
+				var vi0 = thisInstance(a, mapPath);
+				var m = thisMap(a);
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
 				var nm = new Map();
-				var order = [];
-				for (e in orderedMapEntries(arg(a, 0))) {
-					var k = mapKey(e.key);
-					nm.set(k, e);
-					order.push(k);
-				}
+				var order0 = nativeMapOrders.get(vi0);
+				var order = order0 == null ? [for (k in m.keys()) k] : [for (k in order0) if (m.exists(k)) k];
+				for (k in order) nm.set(k, {key: m.get(k).key, value: m.get(k).value});
 				var vi = new VInstance(proto.pinstanceFields.copy(), proto, IMap(nm));
 				nativeMapOrders.set(vi, order);
 				VInstance(vi);
 			}));
-			reg(inst, mapPath, "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
+			reg(inst, mapPath, "toString", vmethod(a -> mkStr(mapToString(arg(a, 0)))));
 		}
-		reg(inst, "haxe.ds.IntMap", "toString", vmethod(a -> mkStr(mapToString(thisMap(a)))));
 
 		// New Array() builds an empty dynamic array, matching the [] literal.
 		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
 		emptyCtors.set(EvalHash.hash("Array"), function() return VArray(new VArray([], 0)));
 		ctors.set(EvalHash.hash("eval.Vector"), function(a) {
-			var length = toInt(arg(a, 0));
+			// New Vector: the length is decodeIntP.
+			var length = decodeIntP(ctx, arg(a, 0), EvalContext.getEval(ctx).currentPos);
 			if (length < 0) EvalExceptions.excString(ctx, "Vector size must be >= 0", EvalContext.getEval(ctx).currentPos);
 			return VVector([for (_ in 0...length) VNull]);
 		});
@@ -5201,7 +5433,7 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
 		emptyCtors.set(EvalHash.hash("haxe.io.BytesBuffer"), function() return mkBytesBuffer(ctx));
 		ctors.set(EvalHash.hash("haxe.io.Bytes"), function(a) {
-			var length = toInt(arg(a, 0));
+			var length = decodeInt(ctx, arg(a, 0));
 			var source = decodeBytes(arg(a, 1));
 			var bytes = haxe.io.Bytes.alloc(length);
 			bytes.blit(0, source, 0, length > source.length ? source.length : length);
@@ -5210,8 +5442,9 @@ class EvalStdLib {
 
 		// Date: a native instance carrying its epoch timestamp.
 		ctors.set(EvalHash.hash("Date"), function(a) {
-			var d = new Date(toInt(arg(a, 0)), toInt(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)), toInt(arg(a, 4)), toInt(arg(a, 5)));
-			return mkDate(ctx, d.getTime());
+			// The six fields decoded with decodeInt, left to right, then mktime.
+			var f = [for (i in 0...6) decodeInt(ctx, arg(a, i))];
+			return mkDate(ctx, unixMktime(ctx, f[0], f[1], f[2], f[3], f[4], f[5]) * 1000);
 		});
 		emptyCtors.set(EvalHash.hash("Date"), function() return mkDate(ctx, 0));
 		ctors.set(EvalHash.hash("sys.io._Process.NativeProcess"), function(a) {
@@ -5230,20 +5463,22 @@ class EvalStdLib {
 			return mkNativeThread(ctx, arg(a, 0));
 		});
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
-		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, toFloat(arg(a, 0)))));
-		reg(s, "Date", "fromString", vfn(a -> dateFromString(ctx, stringOf(arg(a, 0)))));
+		// The time is num and the string decodeString.
+		reg(s, "Date", "fromTime", vfn(a -> mkDate(ctx, num(ctx, arg(a, 0)))));
+		reg(s, "Date", "fromString", vfn(a -> dateFromString(ctx, decodeString(ctx, arg(a, 0)))));
 
 		// sys.FileSystem / sys.io.File: macros read the source tree at compile time; the interpreter
 		// host has real filesystem access.
-		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(stringOf(arg(a, 0))) ? VTrue : VFalse));
-		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(stringOf(arg(a, 0))) ? VTrue : VFalse));
+		// A path is decoded as a string.
+		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(decodeString(ctx, arg(a, 0))) ? VTrue : VFalse));
+		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(decodeString(ctx, arg(a, 0))) ? VTrue : VFalse));
 		reg(s, "sys.FileSystem", "readDirectory", vfn(a -> {
-			var d = sys.FileSystem.readDirectory(stringOf(arg(a, 0)));
+			var d = sys.FileSystem.readDirectory(decodeString(ctx, arg(a, 0)));
 			VArray(new VArray([for (f in d) mkStr(f)], d.length));
 		}));
-		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> { sys.FileSystem.createDirectory(stringOf(arg(a, 0))); VNull; }));
-		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> { sys.FileSystem.deleteDirectory(stringOf(arg(a, 0))); VNull; }));
-		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> { sys.FileSystem.deleteFile(stringOf(arg(a, 0))); VNull; }));
+		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> { sys.FileSystem.createDirectory(decodeString(ctx, arg(a, 0))); VNull; }));
+		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> { sys.FileSystem.deleteDirectory(decodeString(ctx, arg(a, 0))); VNull; }));
+		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> { sys.FileSystem.deleteFile(decodeString(ctx, arg(a, 0))); VNull; }));
 		// fullPath: the decode sits inside the native's catch-all handler, so a null argument's Null
 		// Access prints as the runtime exception value, and a refused empty path prints as the
 		// get_full_path failure.
@@ -5252,27 +5487,50 @@ class EvalStdLib {
 			f == "" ? EvalExceptions.excString(ctx, "Failure(\"get_full_path\")") : mkStr(sys.FileSystem.fullPath(f));
 		}));
 		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
-		reg(s, "sys.FileSystem", "rename", vfn(a -> { sys.FileSystem.rename(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
-		reg(s, "sys.FileSystem", "stat", vfn(a -> mkFileStat(ctx, sys.FileSystem.stat(stringOf(arg(a, 0))))));
+		// Rename: both paths are decoded, the new one first.
+		reg(s, "sys.FileSystem", "rename", vfn(a -> {
+			var newPath = decodeString(ctx, arg(a, 1));
+			sys.FileSystem.rename(decodeString(ctx, arg(a, 0)), newPath);
+			VNull;
+		}));
+		// Stat: a failure on the patched path is a Unix error; the host's stat answers zeros for a path
+		// that is not there.
+		reg(s, "sys.FileSystem", "stat", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			if (!sys.FileSystem.exists(path)) EvalExceptions.excString(ctx, "No such file or directory(stat, " + fsPatchPath(path) + ")");
+			mkFileStat(ctx, sys.FileSystem.stat(path));
+		}));
 		reg(s, "sys.net.Host", "localhost", vfn(a -> mkStr(sys.net.Host.localhost())));
 		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(hostIpInt(stringOf(arg(a, 0))))));
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
-		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
+		// A path is decode_string, a binary flag true or null for binary.
+		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
 		// An unreadable file raises "Could not read file <path>".
 		reg(s, "sys.io.File", "getBytes", vfn(a -> {
-			var path = stringOf(arg(a, 0));
+			var path = decodeString(ctx, arg(a, 0));
 			try mkBytes(ctx, sys.io.File.getBytes(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));
 		reg(s, "sys.io.File", "getContent", vfn(a -> {
-			var path = stringOf(arg(a, 0));
+			var path = decodeString(ctx, arg(a, 0));
 			try mkStr(sys.io.File.getContent(path)) catch (_:Dynamic) EvalExceptions.excString(ctx, "Could not read file " + path);
 		}));
-		reg(s, "sys.io.File", "read", vfn(a -> mkFileInput(ctx, sys.io.File.read(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
-		reg(s, "sys.io.File", "saveBytes", vfn(a -> { sys.io.File.saveBytes(stringOf(arg(a, 0)), decodeBytes(arg(a, 1))); VNull; }));
-		reg(s, "sys.io.File", "saveContent", vfn(a -> { sys.io.File.saveContent(stringOf(arg(a, 0)), stringOf(arg(a, 1))); VNull; }));
-		reg(s, "sys.io.File", "update", vfn(a -> mkFileOutput(ctx, sys.io.File.update(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
-		reg(s, "sys.io.File", "write", vfn(a -> mkFileOutput(ctx, sys.io.File.write(stringOf(arg(a, 0)), arg(a, 1) != VFalse))));
+		reg(s, "sys.io.File", "read", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			mkFileInput(ctx, sys.io.File.read(path, fileBinaryFlag(arg(a, 1))));
+		}));
+		reg(s, "sys.io.File", "saveBytes", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			sys.io.File.saveBytes(path, decodeBytes(arg(a, 1)));
+			VNull;
+		}));
+		reg(s, "sys.io.File", "saveContent", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			sys.io.File.saveContent(path, decodeString(ctx, arg(a, 1)));
+			VNull;
+		}));
+		reg(s, "sys.io.File", "update", vfn(a -> mkFileOutput(ctx, sys.io.File.update(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
+		reg(s, "sys.io.File", "write", vfn(a -> mkFileOutput(ctx, sys.io.File.write(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
 		reg(inst, "sys.io.FileInput", "close", vmethod(a -> {
 			var vi = thisInstance(a, "FileInput");
 			fileInputs.get(vi).input.close();
@@ -5519,25 +5777,29 @@ class EvalStdLib {
 			VNativeString(str.substr(start, len));
 		}));
 		reg(inst, "Date", "getTime", vmethod(a -> VFloat(thisDate(a))));
-		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getFullYear())));
-		reg(inst, "Date", "getMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMonth())));
-		reg(inst, "Date", "getDate", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDate())));
-		reg(inst, "Date", "getHours", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getHours())));
-		reg(inst, "Date", "getMinutes", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getMinutes())));
-		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getSeconds())));
-		reg(inst, "Date", "getDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getDay())));
-		reg(inst, "Date", "getUTCFullYear", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCFullYear())));
-		reg(inst, "Date", "getUTCMonth", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCMonth())));
-		reg(inst, "Date", "getUTCDate", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCDate())));
-		reg(inst, "Date", "getUTCHours", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCHours())));
-		reg(inst, "Date", "getUTCMinutes", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCMinutes())));
-		reg(inst, "Date", "getUTCSeconds", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCSeconds())));
-		reg(inst, "Date", "getUTCDay", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getUTCDay())));
-		reg(inst, "Date", "getTimezoneOffset", vmethod(a -> VInt(Date.fromTime(thisDate(a)).getTimezoneOffset())));
-		reg(inst, "Date", "toString", vmethod(a -> mkStr(Date.fromTime(thisDate(a)).toString())));
+		reg(inst, "Date", "getFullYear", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 5) + 1900)));
+		reg(inst, "Date", "getMonth", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 4))));
+		reg(inst, "Date", "getDate", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 3))));
+		reg(inst, "Date", "getHours", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 2))));
+		reg(inst, "Date", "getMinutes", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 1))));
+		reg(inst, "Date", "getSeconds", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 0))));
+		reg(inst, "Date", "getDay", vmethod(a -> VInt(dateField(ctx, thisDate(a), false, 6))));
+		reg(inst, "Date", "getUTCFullYear", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 5) + 1900)));
+		reg(inst, "Date", "getUTCMonth", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 4))));
+		reg(inst, "Date", "getUTCDate", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 3))));
+		reg(inst, "Date", "getUTCHours", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 2))));
+		reg(inst, "Date", "getUTCMinutes", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 1))));
+		reg(inst, "Date", "getUTCSeconds", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 0))));
+		reg(inst, "Date", "getUTCDay", vmethod(a -> VInt(dateField(ctx, thisDate(a), true, 6))));
+		reg(inst, "Date", "getTimezoneOffset", vmethod(a -> VInt(dateTimezoneOffset(ctx, thisDate(a)))));
+		reg(inst, "Date", "toString", vmethod(a -> mkStr(sDate(thisDate(a)))));
 
 		// haxe.io.Bytes: a native instance wrapping a host byte buffer.
-		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> mkBytes(ctx, haxe.io.Bytes.alloc(decodeInt(ctx, arg(a, 0))))));
+		reg(s, "haxe.io.Bytes", "alloc", vfn(a -> {
+			var n = decodeInt(ctx, arg(a, 0));
+			if (n < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Bytes.create")');
+			mkBytes(ctx, haxe.io.Bytes.alloc(n));
+		}));
 		reg(s, "haxe.io.Bytes", "ofString", vfn(a -> mkBytes(ctx, bytesOfStringValue(arg(a, 0)))));
 		// The digits are the string's bytes, an odd count is an error and nothing else is checked.
 		reg(s, "haxe.io.Bytes", "ofHex", vfn(a -> {
@@ -5566,19 +5828,37 @@ class EvalStdLib {
 		reg(s, "haxe.crypto.Sha1", "encode", vfn(a -> mkStr(haxe.crypto.Sha1.encode(decodeString(ctx, arg(a, 0))))));
 		reg(s, "haxe.crypto.Sha1", "make", vfn(a -> mkBytes(ctx, haxe.crypto.Sha1.make(decodeBytes(arg(a, 0))))));
 		reg(s, "haxe.zip.Compress", "run",
-			vfn(a -> mkBytes(ctx, haxe.zip.Compress.run(decodeBytes(arg(a, 0)), toInt(arg(a, 1))))));
+			vfn(a -> {
+				var src = decodeBytes(arg(a, 0));
+				mkBytes(ctx, haxe.zip.Compress.run(src, decodeInt(ctx, arg(a, 1))));
+			}));
 		reg(s, "haxe.zip.Uncompress", "run",
-			vfn(a -> mkBytes(ctx, haxe.zip.Uncompress.run(decodeBytes(arg(a, 0)), arg(a, 1) == VNull ? null : toInt(arg(a, 1))))));
+			vfn(a -> {
+				// The buffer size is defaultInt 65536. The result is the whole stream whatever the chunk,
+				// and the host's
+				// execute grows its source when handed the position at its end (hxcpp Array::Item), which a
+				// small chunk
+				// reaches before the output ends, so the host inflates in chunks of at least 64K. A
+				// negative size is
+				// refused, zlib makes no progress into an empty chunk, and a stream it refuses is a
+				// zlib_inflate failure.
+				var src = decodeBytes(arg(a, 0));
+				var size = defaultInt(ctx, arg(a, 1), 1 << 16);
+				if (size < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Bytes.create")');
+				if (size == 0) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
+				var out = try haxe.zip.Uncompress.run(src, size < 1 << 16 ? 1 << 16 : size) catch (_:Dynamic) throw new hxc.eval.EvalExceptions.HostException("zlib_inflate", true);
+				mkBytes(ctx, out);
+			}));
 		reg(s, "haxe.Resource", "listNames", vfn(a -> {
 			var names = [for (name in ctx.resources.keys()) mkStr(name)];
 			VArray(new VArray(names, names.length));
 		}));
 		reg(s, "haxe.Resource", "getString", vfn(a -> {
-			var bytes = ctx.resources.get(stringOf(arg(a, 0)));
+			var bytes = ctx.resources.get(decodeString(ctx, arg(a, 0)));
 			bytes == null ? VNull : mkStr(bytes.toString());
 		}));
 		reg(s, "haxe.Resource", "getBytes", vfn(a -> {
-			var bytes = ctx.resources.get(stringOf(arg(a, 0)));
+			var bytes = ctx.resources.get(decodeString(ctx, arg(a, 0)));
 			bytes == null ? VNull : mkBytes(ctx, bytes);
 		}));
 		// FPHelper: a float is num, a word decodeI32.
@@ -5678,19 +5958,7 @@ class EvalStdLib {
 		// Two byte strings compare by the common prefix, then the length; -1, 0 or 1.
 		reg(inst, "haxe.io.Bytes", "compare", vmethod(a -> {
 			var b = thisBytes(a);
-			var other = decodeBytes(arg(a, 1));
-			var len = b.length < other.length ? b.length : other.length;
-			var r = 0;
-			for (i in 0...len) {
-				var x = b.get(i);
-				var y = other.get(i);
-				if (x != y) {
-					r = x < y ? -1 : 1;
-					break;
-				}
-			}
-			if (r == 0) r = b.length < other.length ? -1 : b.length > other.length ? 1 : 0;
-			VInt(r);
+			VInt(bytesCompare(b, decodeBytes(arg(a, 1))));
 		}));
 		// Each write is byte by byte, so one that runs off the end has written the bytes before it.
 		reg(inst, "haxe.io.Bytes", "setDouble", vmethod(a -> orOutsideBounds(ctx, () -> {
@@ -5704,7 +5972,7 @@ class EvalStdLib {
 			var b = thisBytes(a);
 			var pos = decodeInt(ctx, arg(a, 1));
 			var bits = bytesOfFloat(num(ctx, arg(a, 2)));
-			if (!writeBytesOrFail(b, pos, bits)) throw 'Invalid_argument("index out of bounds")';
+			if (!writeBytesOrFail(b, pos, bits)) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("index out of bounds")');
 			VNull;
 		}));
 		reg(inst, "haxe.io.Bytes", "setInt32", vmethod(a -> orOutsideBounds(ctx, () -> {
@@ -5734,23 +6002,43 @@ class EvalStdLib {
 			writeBytesOrFail(thisBytes(a), pos, bits) ? VNull : null;
 		})));
 		reg(inst, "haxe.io.BytesBuffer", "get_length", vmethod(a -> VInt(bytesBufferLength(thisMap(a)))));
-		reg(inst, "haxe.io.BytesBuffer", "addByte", vmethod(a -> { bytesBufferAddByte(thisMap(a), toInt(arg(a, 1))); VNull; }));
-		reg(inst, "haxe.io.BytesBuffer", "add", vmethod(a -> { var b = decodeBytes(arg(a, 1)); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
-		reg(inst, "haxe.io.BytesBuffer", "addString", vmethod(a -> { var b = haxe.io.Bytes.ofString(stringOf(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
-		reg(inst, "haxe.io.BytesBuffer", "addInt32", vmethod(a -> {
-			var v = toInt(arg(a, 1));
+		// BytesBuffer: a byte keeps the value's low bits, a word is decodeI32, a float num and a string
+		// decodeVString.
+		reg(inst, "haxe.io.BytesBuffer", "addByte", vmethod(a -> {
 			var buf = thisMap(a);
+			bytesBufferAddByte(buf, decodeIntLow(ctx, arg(a, 1)));
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesBuffer", "add", vmethod(a -> { var b = decodeBytes(arg(a, 1)); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addString", vmethod(a -> {
+			var buf = thisMap(a);
+			switch (arg(a, 1)) {
+				case VString(_):
+				case v: EvalExceptions.unexpectedValue(ctx, v, "string");
+			}
+			var b = bytesOfStringValue(arg(a, 1));
+			bytesBufferAddBytes(buf, b, 0, b.length);
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesBuffer", "addInt32", vmethod(a -> {
+			var buf = thisMap(a);
+			var v = decodeI32(ctx, arg(a, 1));
 			bytesBufferAddByte(buf, v);
 			bytesBufferAddByte(buf, v >> 8);
 			bytesBufferAddByte(buf, v >> 16);
 			bytesBufferAddByte(buf, v >>> 24);
 			VNull;
 		}));
+		// The value must be an instance, then high and low are decoded by decodeI32.
 		reg(inst, "haxe.io.BytesBuffer", "addInt64", vmethod(a -> {
-			var v = arg(a, 1);
-			var low = int64Part(ctx, v, EvalHash.keyLow);
-			var high = int64Part(ctx, v, EvalHash.keyHigh);
 			var buf = thisMap(a);
+			var v = arg(a, 1);
+			switch (v) {
+				case VInstance(_):
+				case _: EvalExceptions.unexpectedValue(ctx, v, "instance");
+			}
+			var high = decodeI32(ctx, instanceFieldRaise(ctx, v, EvalHash.keyHigh));
+			var low = decodeI32(ctx, instanceFieldRaise(ctx, v, EvalHash.keyLow));
 			bytesBufferAddByte(buf, low);
 			bytesBufferAddByte(buf, low >> 8);
 			bytesBufferAddByte(buf, low >> 16);
@@ -5761,20 +6049,40 @@ class EvalStdLib {
 			bytesBufferAddByte(buf, high >>> 24);
 			VNull;
 		}));
-		reg(inst, "haxe.io.BytesBuffer", "addFloat", vmethod(a -> { var b = bytesOfFloat(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
-		reg(inst, "haxe.io.BytesBuffer", "addDouble", vmethod(a -> { var b = bytesOfDouble(toFloat(arg(a, 1))); bytesBufferAddBytes(thisMap(a), b, 0, b.length); VNull; }));
-		reg(inst, "haxe.io.BytesBuffer", "addBytes", vmethod(a -> { bytesBufferAddBytes(thisMap(a), decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))); VNull; }));
+		reg(inst, "haxe.io.BytesBuffer", "addFloat", vmethod(a -> {
+			var buf = thisMap(a);
+			var b = bytesOfFloat(num(ctx, arg(a, 1)));
+			bytesBufferAddBytes(buf, b, 0, b.length);
+			VNull;
+		}));
+		reg(inst, "haxe.io.BytesBuffer", "addDouble", vmethod(a -> {
+			var buf = thisMap(a);
+			var b = bytesOfDouble(num(ctx, arg(a, 1)));
+			bytesBufferAddBytes(buf, b, 0, b.length);
+			VNull;
+		}));
+		// A range outside the source is OutsideBounds.
+		reg(inst, "haxe.io.BytesBuffer", "addBytes", vmethod(a -> {
+			var buf = thisMap(a);
+			var src = decodeBytes(arg(a, 1));
+			var pos = decodeInt(ctx, arg(a, 2));
+			var len = decodeInt(ctx, arg(a, 3));
+			if (pos < 0 || len < 0 || pos > src.length - len) ioError(ctx, "OutsideBounds");
+			bytesBufferAddBytes(buf, src, pos, len);
+			VNull;
+		}));
 		reg(inst, "haxe.io.BytesBuffer", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisMap(a)))));
 		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-			zipCompress.set(vi, new haxe.zip.Compress(toInt(arg(a, 0))));
+			zipCompress.set(vi, new haxe.zip.Compress(decodeInt(ctx, arg(a, 0))));
 			return VInstance(vi);
 		});
 		ctors.set(EvalHash.hash("haxe.zip.Uncompress"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Uncompress"));
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-			zipUncompress.set(vi, new haxe.zip.Uncompress(arg(a, 0) == VNull ? null : toInt(arg(a, 0))));
+			// The window bits are defaultInt 15.
+			zipUncompress.set(vi, new haxe.zip.Uncompress(defaultInt(ctx, arg(a, 0), 15)));
 			return VInstance(vi);
 		});
 		ctors.set(EvalHash.hash("eval.vm.NativeSocket"), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));
@@ -5870,9 +6178,10 @@ class EvalStdLib {
 		reg(inst, "eval.vm.NativeSocket", "shutdown", vmethod(a -> { thisSocket(a).shutdown(arg(a, 1) == VTrue, arg(a, 2) == VTrue); VNull; }));
 	}
 
-	static function mapToString(m:Map<String, MapEntry>):String {
-		var parts = [];
-		for (e in m) parts.push(stringOf(e.key) + " => " + stringOf(e.value));
-		return "[" + parts.join(", ") + "]";
+	// /:1604/:1663 toString: the table folded, so in its keys' order, each entry "key => value" (an IntMap
+	// key string_of_int, a StringMap key the string, an ObjectMap key its s_value) and the entries joined
+	// by "," .
+	static function mapToString(v:EvalValue):String {
+		return "[" + [for (e in orderedMapEntries(v)) stringOf(e.key) + " => " + stringOf(e.value)].join(",") + "]";
 	}
 }

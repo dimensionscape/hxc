@@ -138,3 +138,15 @@ class EvalExceptions {
 class MacroAbort extends haxe.Exception {
 	public function new() super("Macro abort");
 }
+
+// An internal exception escaping a native (an invalid argument, a missing key, a system error, a failure):
+// no program try/catch sees it (a try catches runtime exceptions alone), and the driver reports it: a
+// failure as "Error: <message>", any other as the runtime prints it.
+class HostException extends haxe.Exception {
+	public var failure:Bool;
+
+	public function new(text:String, failure:Bool = false) {
+		super(text);
+		this.failure = failure;
+	}
+}

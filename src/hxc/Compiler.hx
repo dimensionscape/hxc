@@ -856,6 +856,13 @@ class Compiler {
 				if (requestOutput != null) requestOutput.add(out.output)
 				else answerOut(out.output);
 				return;
+			} catch (e:hxc.eval.EvalExceptions.HostException) {
+				// A failure is "Error: <message>", any other native exception prints as itself, both at a
+				// null position.
+				var line = (e.failure ? "Error: " : "") + e.message + "\n";
+				if (requestOutput != null) { requestOutput.add(line); return; }
+				answerOut(line);
+				exitRequest(1);
 			} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 				// An uncaught Invalid_argument prints bare on stderr and exits 1.
 				if (requestOutput != null) { requestOutput.add("Invalid_argument(\"" + e.arg + "\")\n"); return; }
@@ -990,6 +997,11 @@ class Compiler {
 			for (cb in aim) cb();
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
+		} catch (e:hxc.eval.EvalExceptions.HostException) {
+			// A failure is "Error: <message>", any other native exception prints as itself, both at a null
+			// position.
+			answerOut((e.failure ? "Error: " : "") + e.message + "\n");
+			exitRequest(1);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
@@ -1494,6 +1506,11 @@ class Compiler {
 			if (!e.bypassesDiagnostics && isDisplay(ctx, "diagnostics"))
 				return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
+		} catch (e:hxc.eval.EvalExceptions.HostException) {
+			// A failure is "Error: <message>", any other native exception prints as itself, both at a null
+			// position.
+			answerOut((e.failure ? "Error: " : "") + e.message + "\n");
+			exitRequest(1);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
