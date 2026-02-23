@@ -116,6 +116,8 @@ class EvalContext {
 	// reused for a new compilation.
 	public var staticInits:Map<Int, {proto:VPrototype, delays:Array<hxc.eval.EvalPrototype.ProtoDelay>}>;
 	public var constructors:Map<Int, VFunc>;
+	// "<path hash>:<field>" for every class method a subclass overrides.
+	public var overrides:Map<String, Bool> = new Map();
 	public var arrayPrototype:Null<VPrototype>;
 	public var stringPrototype:Null<VPrototype>;
 	public var vectorPrototype:Null<VPrototype>;

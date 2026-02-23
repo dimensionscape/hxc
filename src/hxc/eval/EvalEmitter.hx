@@ -168,15 +168,17 @@ class EvalEmitter {
 					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
 				}
 				result;
+			// A value typed eval.Vector reads as a vector, anything else as an array: the receiver is
+			// decoded before the index is evaluated, and a negative index reads null.
 			case TArray(e1, e2):
-				switch (eval(ctx, e1)) {
-					case VArray(va):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e2.pos); };
-						(idx >= 0 && idx < va.alength) ? va.avalues[idx] : VNull;
-					case VVector(vv):
-						var idx = switch (eval(ctx, e2)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e2.pos); };
-						vecElemGet(vv, idx);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "Array", e1.pos);
+				if (isVectorTyped(e1.type)) {
+					var vv = asVector(ctx, eval(ctx, e1), e1.pos);
+					var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, e2), e2.pos);
+					vecElemGet(vv, idx);
+				} else {
+					var va = asArray(ctx, eval(ctx, e1), e1.pos);
+					var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, e2), e2.pos);
+					arrayElemGet(va, idx);
 				}
 			case TTypeExpr(mt):
 				// A type without an eval prototype (e.g. the core-type abstracts Int/Float/Bool) still
@@ -206,10 +208,11 @@ class EvalEmitter {
 					case VEnumValue(ev): ev.eargs[index];
 					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value", e1.pos);
 				}
+			// The enum index: the value is decoded as an enum value.
 			case TEnumIndex(e1):
 				switch (eval(ctx, e1)) {
 					case VEnumValue(ev): VInt(ev.eindex);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "enum value", e1.pos);
+					case v: EvalStdLib.unexpectedValueP(ctx, v, "enum value", e1.pos);
 				}
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0], e.pos);
 		} catch (ex:Dynamic) {
@@ -349,41 +352,7 @@ class EvalEmitter {
 			case OpBoolOr: EvalMisc.isTrue(eval(ctx, e1)) ? VTrue : eval(ctx, e2);
 			case OpAssign: assign(ctx, e1, e2);
 			case OpAssignOp(sub):
-				switch (e1.expr) {
-					case TLocal(v):
-						var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
-						var s = slot(fe, v.id);
-						var r = binopValue(ctx, sub, fe.locals[s], eval(ctx, e2), p);
-						fe.locals[s] = r;
-						r;
-					case TField(_, FStatic(c, cf)):
-						var proto = ensureStaticProto(ctx, c, p);
-						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
-						var r = binopValue(ctx, sub, proto.pfields[idx], eval(ctx, e2), p);
-						proto.pfields[idx] = r;
-						r;
-					case TField(fe, fa):
-						var obj = eval(ctx, fe);
-						var name = fieldKey(fa);
-						var r = binopValue(ctx, sub, EvalField.field(ctx, obj, name), eval(ctx, e2), p);
-						EvalField.setField(ctx, obj, name, r, p);
-						r;
-					case TArray(arrE, idxE):
-						switch (eval(ctx, arrE)) {
-							case VArray(va):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
-								var r = binopValue(ctx, sub, arrayElemGet(va, idx), eval(ctx, e2), p);
-								arrayElemSet(va, idx, r);
-								r;
-							case VVector(vv):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
-								var r = binopValue(ctx, sub, vecElemGet(vv, idx), eval(ctx, e2), p);
-								vecElemSet(vv, idx, r);
-								r;
-							case v: EvalExceptions.unexpectedValue(ctx, v, "Array", arrE.pos);
-						}
-					case _: EvalExceptions.excString(ctx, "Unsupported compound assignment target", p);
-				}
+				readWrite(ctx, sub, e1, e2, true, p);
 			case OpEq | OpNotEq | OpGt | OpGte | OpLt | OpLte:
 				var left = eval(ctx, e1);
 				var right = eval(ctx, e2);
@@ -398,6 +367,59 @@ class EvalEmitter {
 			case FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf): EvalHash.hash(cf.name);
 			case FEnum(_, ef): EvalHash.hash(ef.name);
 			case FDynamic(s): EvalHash.hash(s);
+		};
+	}
+
+	// The JIT's typed array, vector and bytes accesses decode with the unexpected-value error that does not
+	// name the value's kind, at the expression's position.
+	static function asArray(ctx:EvalContext, v:EvalValue, p:Position):VArray {
+		return switch (v) {
+			case VArray(va): va;
+			case _: EvalStdLib.unexpectedValueP(ctx, v, "Array", p);
+		};
+	}
+
+	static function asVector(ctx:EvalContext, v:EvalValue, p:Position):Array<EvalValue> {
+		return switch (v) {
+			case VVector(vv): vv;
+			case _: EvalStdLib.unexpectedValueP(ctx, v, "Vector", p);
+		};
+	}
+
+	static function asBytesLength(ctx:EvalContext, v:EvalValue, p:Position):Int {
+		return switch (v) {
+			case VInstance({ikind: IBytes(b)}): b.length;
+			case _: EvalStdLib.unexpectedValueP(ctx, v, "Bytes", p);
+		};
+	}
+
+	// An index into a value typed eval.Vector is a vector access, into anything else an array access.
+	static function isVectorTyped(t:T):Bool {
+		return switch (t) {
+			case TInst(c, _): isEvalVector(c);
+			case TMono(_) | TType(_, _) | TLazy(_):
+				switch (TypeFunctions.follow(t)) {
+					case TInst(c, _): isEvalVector(c);
+					case _: false;
+				}
+			case _: false;
+		};
+	}
+
+	static inline function isEvalVector(c:TClass):Bool
+		return c.path.name == "Vector" && c.path.pack.length == 1 && c.path.pack[0] == "eval";
+
+	static inline function isArrayClass(c:TClass):Bool
+		return c.path.name == "Array" && c.path.pack.length == 0;
+
+	static inline function isBytesClass(c:TClass):Bool
+		return c.path.name == "Bytes" && c.path.pack.length == 2 && c.path.pack[0] == "haxe" && c.path.pack[1] == "io";
+
+	// A field of a class that is not an interface is the class's instance field.
+	static inline function isClassInstanceField(fa:TFieldAccess):Bool {
+		return switch (fa) {
+			case FInstance(c, _, _): !TypeFunctions.hasClassFlag(c, CInterface);
+			case _: false;
 		};
 	}
 
@@ -436,27 +458,46 @@ class EvalEmitter {
 				var value = eval(ctx, ve);
 				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
 				return value;
+			// A class's instance field write takes an instance, decoded before the value is evaluated.
+			// Bytes' length has its own write.
+			case TField(e1, fa = FInstance(c, _, cf)) if (isClassInstanceField(fa) && !(isBytesClass(c) && cf.name == "length")):
+				var obj = eval(ctx, e1);
+				switch (obj) {
+					case VInstance(_):
+					case _: EvalStdLib.unexpectedValueP(ctx, obj, "instance", e1.pos);
+				}
+				var value = eval(ctx, ve);
+				EvalField.setField(ctx, obj, fieldKey(fa), value, lhs.pos);
+				return value;
+			// A structure's field write: the value evaluated first; null is "field access on null".
+			case TField(e1, fa = FAnon(_)) if (TypeFunctions.follow(e1.type).match(TAnon(_))):
+				var obj = eval(ctx, e1);
+				var value = eval(ctx, ve);
+				if (obj == VNull) EvalExceptions.excString(ctx, "field access on null", e1.pos);
+				EvalField.setField(ctx, obj, fieldKey(fa), value, lhs.pos);
+				return value;
 			case TField(e1, fa):
 				var obj = eval(ctx, e1);
 				var value = eval(ctx, ve);
 				EvalField.setField(ctx, obj, fieldKey(fa), value, lhs.pos);
 				return value;
+			// Vector and array writes: the receiver and index are decoded before the value is evaluated,
+			// and a negative index is an error at the index.
 			case TArray(e1, eidx):
-				switch (eval(ctx, e1)) {
-					case VArray(va):
-						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", eidx.pos); };
-						var value = eval(ctx, ve);
-						while (va.avalues.length <= idx) va.avalues.push(VNull);
-						va.avalues[idx] = value;
-						if (idx >= va.alength) va.alength = idx + 1;
-						return value;
-					case VVector(vv):
-						var idx = switch (eval(ctx, eidx)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", eidx.pos); };
-						var value = eval(ctx, ve);
-						vecElemSet(vv, idx, value);
-						return value;
-					case v: return EvalExceptions.unexpectedValue(ctx, v, "Array", e1.pos);
+				if (isVectorTyped(e1.type)) {
+					var vv = asVector(ctx, eval(ctx, e1), e1.pos);
+					var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, eidx), eidx.pos);
+					var value = eval(ctx, ve);
+					if (idx < 0) EvalExceptions.excString(ctx, "Negative vector index: " + idx, eidx.pos);
+					vecElemSet(vv, idx, value);
+					return value;
 				}
+				var va = asArray(ctx, eval(ctx, e1), e1.pos);
+				var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, eidx), eidx.pos);
+				var value = eval(ctx, ve);
+				if (idx < 0) EvalExceptions.excString(ctx, "Negative array index: " + idx, eidx.pos);
+				arrayElemSet(va, idx, value);
+				return value;
 			case _:
 				return EvalExceptions.excString(ctx, "Unsupported assignment target", lhs.pos);
 		}
@@ -465,85 +506,104 @@ class EvalEmitter {
 	static function evalUnop(ctx:EvalContext, op:Unop, flag:UnopFlag, e1:TExpr, p:Position):EvalValue {
 		return switch (op) {
 			case Not: switch (eval(ctx, e1)) { case VNull | VFalse: VTrue; case _: VFalse; };
+			// Negation: anything but a number is "Invalid operation".
 			case Neg:
 				switch (eval(ctx, e1)) {
 					case VInt(i): VInt(-i);
 					case VFloat(f): VFloat(-f);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "number", e1.pos);
+					case _: EvalExceptions.excString(ctx, "Invalid operation", p);
 				}
+			// ~x is -1 - x.
 			case NegBits:
-				switch (eval(ctx, e1)) {
-					case VInt(i): VInt(~i);
-					case v: EvalExceptions.unexpectedValue(ctx, v, "Int", e1.pos);
-				}
+				binopValue(ctx, OpSub, VInt(-1), eval(ctx, e1), p);
+			// ++ on a local no closure captures increments in place; every other increment and every
+			// decrement is a compound assignment with 1.
 			case Increment | Decrement:
 				switch (e1.expr) {
-					case TLocal(v):
+					case TLocal(v) if (op == Increment && !TypeFunctions.hasVarFlag(v, VCaptured)):
 						var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
 						var s = slot(fe, v.id);
 						var old = fe.locals[s];
-						var delta = op == Increment ? 1 : -1;
 						var next = switch (old) {
-							case VInt(i): VInt(i + delta);
-							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
+							case VInt(i): VInt(i + 1);
+							case VFloat(f): VFloat(f + 1);
+							case _: EvalStdLib.unexpectedValueP(ctx, old, "number", e1.pos);
 						};
 						fe.locals[s] = next;
 						flag == Prefix ? next : old;
-					case TField(_, FStatic(c, cf)):
-						var proto = ensureStaticProto(ctx, c, p);
-						var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
-						var old = proto.pfields[idx];
-						var delta = op == Increment ? 1 : -1;
-						var next = switch (old) {
-							case VInt(i): VInt(i + delta);
-							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
-						};
-						proto.pfields[idx] = next;
-						flag == Prefix ? next : old;
-					case TField(fe, fa):
-						var obj = eval(ctx, fe);
-						var name = fieldKey(fa);
-						var old = EvalField.field(ctx, obj, name);
-						var delta = op == Increment ? 1 : -1;
-						var next = switch (old) {
-							case VInt(i): VInt(i + delta);
-							case VFloat(f): VFloat(f + delta);
-							case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
-						};
-						EvalField.setField(ctx, obj, name, next, p);
-						flag == Prefix ? next : old;
-					case TArray(arrE, idxE):
-						switch (eval(ctx, arrE)) {
-							case VArray(va):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
-								var old = arrayElemGet(va, idx);
-								var delta = op == Increment ? 1 : -1;
-								var next = switch (old) {
-									case VInt(i): VInt(i + delta);
-									case VFloat(f): VFloat(f + delta);
-									case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
-								};
-								arrayElemSet(va, idx, next);
-								flag == Prefix ? next : old;
-							case VVector(vv):
-								var idx = switch (eval(ctx, idxE)) { case VInt(i): i; case v: EvalExceptions.unexpectedValue(ctx, v, "Int", idxE.pos); };
-								var old = vecElemGet(vv, idx);
-								var delta = op == Increment ? 1 : -1;
-								var next = switch (old) {
-									case VInt(i): VInt(i + delta);
-									case VFloat(f): VFloat(f + delta);
-									case _: EvalExceptions.unexpectedValue(ctx, old, "number", e1.pos);
-								};
-								vecElemSet(vv, idx, next);
-								flag == Prefix ? next : old;
-							case v: EvalExceptions.unexpectedValue(ctx, v, "Array", arrE.pos);
-						}
-					case _: EvalExceptions.excString(ctx, "Unsupported increment target", e1.pos);
+					case _:
+						readWrite(ctx, op == Increment ? OpAdd : OpSub, e1, null, flag == Prefix, p);
 				}
 			case _: EvalExceptions.excString(ctx, "Unsupported unop", p);
 		};
+	}
+
+	// Compound assignment: read the target, evaluate the operand (1 for an increment or decrement, a null
+	// `operand`), combine, write back; the prefix form answers the new value and the postfix one the old.
+	static function readWrite(ctx:EvalContext, op:Binop, target:TExpr, operand:Null<TExpr>, prefix:Bool, p:Position):EvalValue {
+		switch (target.expr) {
+			// A read-modify-write of a local or a captured variable.
+			case TLocal(v):
+				var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+				var s = slot(fe, v.id);
+				var v1 = fe.locals[s];
+				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var r = binopValue(ctx, op, v1, v2, p);
+				fe.locals[s] = r;
+				return prefix ? r : v1;
+			// A read-modify-write of a static field, through its prototype slot.
+			case TField(_, FStatic(c, cf)):
+				var proto = ensureStaticProto(ctx, c, p);
+				var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+				var vf = proto.pfields[idx];
+				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var r = binopValue(ctx, op, vf, v2, p);
+				proto.pfields[idx] = r;
+				return prefix ? r : vf;
+			// A read-write of an instance field takes an instance, or the value is unexpected.
+			case TField(fe, fa) if (isClassInstanceField(fa)):
+				var obj = eval(ctx, fe);
+				switch (obj) {
+					case VInstance(_):
+					case _: EvalStdLib.unexpectedValueP(ctx, obj, "instance", fe.pos);
+				}
+				var name = fieldKey(fa);
+				var vf = EvalField.field(ctx, obj, name);
+				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var r = binopValue(ctx, op, vf, v2, p);
+				EvalField.setField(ctx, obj, name, r, p);
+				return prefix ? r : vf;
+			case TField(fe, fa):
+				var obj = eval(ctx, fe);
+				var name = fieldKey(fa);
+				var vf = EvalField.field(ctx, obj, name);
+				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var r = binopValue(ctx, op, vf, v2, p);
+				EvalField.setField(ctx, obj, name, r, p);
+				return prefix ? r : vf;
+			// Vector and array read-writes: a negative index is an error at the index.
+			case TArray(arrE, idxE):
+				if (isVectorTyped(arrE.type)) {
+					var vv = asVector(ctx, eval(ctx, arrE), arrE.pos);
+					var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, idxE), idxE.pos);
+					if (idx < 0) EvalExceptions.excString(ctx, "Negative vector index: " + idx, idxE.pos);
+					var v = vecElemGet(vv, idx);
+					var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+					var r = binopValue(ctx, op, v, v2, p);
+					vecElemSet(vv, idx, r);
+					return prefix ? r : v;
+				}
+				var va = asArray(ctx, eval(ctx, arrE), arrE.pos);
+				var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, idxE), idxE.pos);
+				if (idx < 0) EvalExceptions.excString(ctx, "Negative array index: " + idx, idxE.pos);
+				var v = arrayElemGet(va, idx);
+				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var r = binopValue(ctx, op, v, v2, p);
+				arrayElemSet(va, idx, r);
+				return prefix ? r : v;
+			case _:
+				return EvalExceptions.excString(ctx, "Unsupported compound assignment target", p);
+		}
 	}
 
 	static function evalWhile(ctx:EvalContext, econd:TExpr, body:TExpr, flag:WhileFlag):EvalValue {
@@ -634,6 +694,12 @@ class EvalEmitter {
 						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 						if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
 				}
+			// Array, eval.Vector and haxe.io.Bytes lengths are their own reads.
+			case FInstance(c, _, cf) if (cf.name == "length" && (isArrayClass(c) || isEvalVector(c) || isBytesClass(c))):
+				var recv = pre != null ? pre : eval(ctx, e1);
+				if (isArrayClass(c)) VInt(asArray(ctx, recv, e1.pos).alength)
+				else if (isEvalVector(c)) VInt(asVector(ctx, recv, e1.pos).length)
+				else VInt(asBytesLength(ctx, recv, e1.pos));
 			case FInstance(c, _, cf):
 				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
@@ -658,6 +724,15 @@ class EvalEmitter {
 								if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 								var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 								if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
+							// A class's field reads as an instance field, which takes an instance, answers
+							// a string's length whatever the field, and finds anything else unexpected;
+							// `this` has its own read, whose decode is the plain unexpected-value error.
+							case Var(_) if (!TypeFunctions.hasClassFlag(c, CInterface) && !recv.match(VInstance(_))):
+								switch (recv) {
+									case _ if (e1.expr.match(TConst(TThis))): EvalExceptions.unexpectedValue(ctx, recv, "instance");
+									case VString(s): VInt(EvalStdLib.runtimeStringLength(s));
+									case _: EvalStdLib.unexpectedValueP(ctx, recv, "instance", e1.pos);
+								}
 							case Var(_):
 								var v = EvalField.field(ctx, recv, EvalHash.hash(cf.name));
 								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.key_haxe_Exception)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
@@ -894,7 +969,38 @@ class EvalEmitter {
 			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
 				var recv = eval(ctx, e1);
 				if (recv == VNull) EvalExceptions.excString(ctx, "Null Access", e1.pos);
-				EvalValueTools.vresolve(evalField(ctx, e1, fa, callee.pos, recv));
+				switch [fa, recv] {
+					// A proper method no subclass overrides is called from its class's prototype whatever
+					// the receiver; any other goes through the receiver's prototype, which a value that has
+					// none refuses.
+					case [FInstance(c, _, cf), VInt(_) | VFloat(_) | VTrue | VFalse | VObject(_) | VEnumValue(_) | VFunction(_, _) | VFieldClosure(_, _)
+						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_)] if (isProperMethod(cf)):
+						if (isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
+							var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
+							switch (try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound) VNull) {
+								case VFunction(f, _): VFieldClosure(recv, f);
+								case m: m;
+							}
+						} else {
+							// A method call: the receiver's prototype and the method on it, "Field <name>
+							// not found on prototype <path>" when it has none.
+							var proto = switch (recv) {
+								case VPrototype(pr): pr;
+								case VString(_): ctx.stringPrototype;
+								case VArray(_): ctx.arrayPrototype;
+								case VVector(_): ctx.vectorPrototype;
+								case _: EvalStdLib.unexpectedValueP(ctx, recv, "instance", p);
+							};
+							var m = try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound)
+								EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
+							switch (m) {
+								case VFunction(f, _): VFieldClosure(recv, f);
+								case _: m;
+							}
+						}
+					case _:
+						EvalValueTools.vresolve(evalField(ctx, e1, fa, callee.pos, recv));
+				}
 			case _: EvalValueTools.vresolve(eval(ctx, callee));
 		};
 		var caller = EvalContext.getEval(ctx);
@@ -972,12 +1078,37 @@ class EvalEmitter {
 
 	static function evalSwitch(ctx:EvalContext, subject:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):EvalValue {
 		var v = eval(ctx, subject);
+		// An Int subject whose cases are all integer constants takes an Int32 or null, anything else
+		// unexpected.
+		switch (v) {
+			case VInt(_) | VNull:
+			case _:
+				if (isIntSwitch(subject, cases)) EvalStdLib.unexpectedValueP(ctx, v, "int", subject.pos);
+		}
 		for (c in cases) {
 			for (cv in c.values) {
 				if (EvalValueTools.equals(v, eval(ctx, cv))) return eval(ctx, c.expr);
 			}
 		}
 		return edef != null ? eval(ctx, edef) : VNull;
+	}
+
+	// A final class or field, or in the interpreter (not a macro) a method no subclass overrides.
+	static function isFinalMethod(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
+		return TypeFunctions.hasClassFlag(c, CFinal) || TypeFunctions.hasClassFieldFlag(cf, CfFinal)
+			|| (!ctx.isMacro && !ctx.overrides.exists(EvalHash.pathHash(c.path) + ":" + cf.name));
+	}
+
+	static function isIntSwitch(subject:TExpr, cases:Array<TSwitchCase>):Bool {
+		switch (TypeFunctions.follow(subject.type)) {
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Int"):
+			case _: return false;
+		}
+		for (c in cases) for (cv in c.values) switch (cv.expr) {
+			case TConst(TInt(_)):
+			case _: return false;
+		}
+		return true;
 	}
 
 	// The value bound to a function parameter: the passed argument, or when it is missing or null, the

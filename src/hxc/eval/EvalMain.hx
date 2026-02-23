@@ -181,6 +181,9 @@ class EvalMain {
 		// Register type-cache entries and enum prototypes up front.
 		for (mt in types) switch (mt) {
 			case TClassDecl(c):
+				// An override marks each superclass from the parent up to the one declaring the field.
+				for (f in c.orderedFields) if (hxc.core.TypeFunctions.hasClassFieldFlag(f, CfOverride))
+					markOverride(ctx, c.superClass == null ? null : c.superClass.c, f.name);
 				applyNativePathsClass(c);
 				// A method only referenced as a closure never had its lazy body forced during typing;
 				// type any remaining bodies now so the prototype does not hold a bodyless method (every
@@ -228,6 +231,15 @@ class EvalMain {
 		}
 		// Static field initializers run after every prototype is registered.
 		for (d in delays) d.fn(d.proto);
+	}
+
+	static function markOverride(ctx:EvalContext, p:Null<TClass>, name:String):Bool {
+		if (p == null) return false;
+		if (p.fields.exists(name) || markOverride(ctx, p.superClass == null ? null : p.superClass.c, name)) {
+			ctx.overrides.set(EvalHash.pathHash(p.path) + ":" + name, true);
+			return true;
+		}
+		return false;
 	}
 
 	public static function addModules(ctx:EvalContext, modules:Array<ModuleDef>, runDce:Bool = false):Void {

@@ -35,7 +35,25 @@ class EvalStdLib {
 			list = [];
 			map.set(key, list);
 		}
-		list.push({name: EvalHash.hash(fieldName), v: v});
+		list.push({name: EvalHash.hash(fieldName), v: withArity(typeName, fieldName, v)});
+	}
+
+	// A native given more arguments than its wrapper takes (an instance native's receiver counted) is
+	// "Invalid number of call arguments: Expected <n>, got <m>", n being what the wrapper reports.
+	static function withArity(typeName:String, fieldName:String, v:EvalValue):EvalValue {
+		return switch (v) {
+			case VFunction(f, isStatic):
+				var a = EvalNativeArity.table.get(typeName + (isStatic ? "." : "#") + fieldName);
+				if (a == null) v else {
+					var most = a >> 4;
+					var reported = a & 15;
+					VFunction(function(args:Array<EvalValue>):EvalValue {
+						if (args.length > most) return EvalExceptions.invalidCallArgNumber(EvalContext.getCtx(), reported, args.length);
+						return f(args);
+					}, isStatic);
+				}
+			case _: v;
+		};
 	}
 
 	static inline function vfn(f:VFunc):EvalValue return VFunction(f, true);
