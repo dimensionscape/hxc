@@ -232,7 +232,8 @@ class Calls {
 							if (!TypeFunctions.hasMeta(":noExpr", cf.meta)) ctx.com.addDiagnostic("Recursive array get method", p);
 							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key, cf: cf};
 						}
-						var implExpr = TexprTools.makeStaticThis(c, p);
+						// The implementation class as a type expression printed Abstract<A>).
+						var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key, cf: cf};
 					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
@@ -279,7 +280,8 @@ class Calls {
 							var ea = TypeFunctions.mk(TArray(ebase, key), sig.ret, p);
 							return TypeFunctions.mk(TBinop(OpAssign, ea, val), sig.ret, p);
 						}
-						var implExpr = TexprTools.makeStaticThis(c, p);
+						// The same receiver.
+						var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
 						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
 						return makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key, val], p), sig.ret, p);
 					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}

@@ -25,7 +25,7 @@ typedef ThreadConditionState = {
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
-@:cppFileCode("#include <stdio.h>\n#include <string.h>\n#include <time.h>")
+@:cppFileCode('#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <io.h>\n#include <wchar.h>\n#include <windows.h>\n#else\n#include <unistd.h>\n#endif\n// Return null on success or strerror(errno) on failure. Operations: 0 unlink, 1 rmdir, 2 mkdir, 3\n// rename, 4 chdir, 5 stat, 6 open for reading, 7 open for writing. Windows rename uses MoveFileEx\n// and maps its error to errno.\nstatic ::String hxc_fs_call(int op, ::String a, ::String b) {\n	int r = 0;\n#ifdef _WIN32\n	const wchar_t *wa = a.wchar_str();\n	switch (op) {\n		case 0: r = _wunlink(wa); break;\n		case 1: r = _wrmdir(wa); break;\n		case 2: r = _wmkdir(wa); break;\n		case 3: {\n			if (MoveFileExW(wa, b.wchar_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) return ::String();\n			switch (GetLastError()) {\n				case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH: case ERROR_BAD_NET_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: errno = ENOENT; break;\n				case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: errno = EEXIST; break;\n				case ERROR_NOT_SAME_DEVICE: errno = EXDEV; break;\n				case ERROR_DIR_NOT_EMPTY: errno = ENOTEMPTY; break;\n				case ERROR_NOT_ENOUGH_MEMORY: errno = ENOMEM; break;\n				case ERROR_INVALID_HANDLE: errno = EBADF; break;\n				default: errno = EACCES; break;\n			}\n			r = -1;\n			break;\n		}\n		case 4: r = _wchdir(wa); break;\n		case 5: { struct _stat64 st; r = _wstat64(wa, &st); break; }\n		case 6: { int fd = _wopen(wa, _O_RDONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = _wopen(wa, _O_WRONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n	}\n#else\n	const char *ca = a.utf8_str();\n	switch (op) {\n		case 0: r = unlink(ca); break;\n		case 1: r = rmdir(ca); break;\n		case 2: r = mkdir(ca, 0755); break;\n		case 3: r = rename(ca, b.utf8_str()); break;\n		case 4: r = chdir(ca); break;\n		case 5: { struct stat st; r = stat(ca, &st); break; }\n		case 6: { int fd = open(ca, O_RDONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = open(ca, O_WRONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n	}\n#endif\n	if (r == 0) return ::String();\n	return ::String(strerror(errno));\n}')
 #end
 class EvalStdLib {
 	static function reg(map:Map<Int, Array<BuiltinField>>, typeName:String, fieldName:String, v:EvalValue):Void {
@@ -269,6 +269,27 @@ class EvalStdLib {
 			+ pad(unixTmField(s, false, 2), 2) + ":" + pad(unixTmField(s, false, 1), 2) + ":" + pad(unixTmField(s, false, 0), 2);
 	}
 
+	// hxc_fs_call (the class's C++): the C library's answer to a filesystem call, errno's strerror
+	// when it fails and null when it succeeds.
+	static function cFs(op:Int, a:String, ?b:String):Null<String> {
+		#if cpp
+		var r:String = untyped __cpp__('hxc_fs_call({0}, {1}, {2})', op, a, b == null ? "" : b);
+		return r;
+		#else
+		return null;
+		#end
+	}
+
+	// A system error: "<path>: <strerror>", which the natives turn into a string exception.
+	static function sysError(ctx:EvalContext, path:String, err:String):Dynamic {
+		return EvalExceptions.excString(ctx, path + ": " + err);
+	}
+
+	// A Unix error: "<strerror>(<call>, <arg>)".
+	static function unixError(ctx:EvalContext, err:String, call:String, arg:String):Dynamic {
+		return EvalExceptions.excString(ctx, err + "(" + call + ", " + arg + ")");
+	}
+
 	// A drive root keeps (or gains) its slash, "/" stays and anything else loses its trailing slashes.
 	static function fsPatchPath(s:String):String {
 		if (s.length > 1 && s.length <= 3 && s.charAt(1) == ":") return haxe.io.Path.addTrailingSlash(s);
@@ -295,6 +316,13 @@ class EvalStdLib {
 	static function ucharOfInt(i:Int):Int {
 		if (i < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("UChar.uint_chr")');
 		return i;
+	}
+
+	// A host open that failed, reported as a system error: the same open's errno (op 6 to read, 7 to
+	// write) behind the path; the host's own message if the C library now succeeds.
+	static function openError(ctx:EvalContext, path:String, op:Int, hostError:Dynamic):Dynamic {
+		var err = cFs(op, path);
+		return err != null ? sysError(ctx, path, err) : EvalExceptions.excString(ctx, Std.string(hostError));
 	}
 
 	static function decodeBool(ctx:EvalContext, v:EvalValue):Bool {
@@ -4367,7 +4395,13 @@ class EvalStdLib {
 			Sys.putEnv(name, arg(a, 1) == VNull ? null : decodeString(ctx, arg(a, 1)));
 			VNull;
 		}));
-		reg(s, "Sys", "setCwd", vfn(a -> { Sys.setCwd(decodeString(ctx, arg(a, 0))); VNull; }));
+		// A chdir failure is a Unix error.
+		reg(s, "Sys", "setCwd", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			var err = cFs(4, path);
+			if (err != null) unixError(ctx, err, "chdir", path);
+			VNull;
+		}));
 		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
 		reg(s, "Sys", "sleep", vfn(a -> { var t = num(ctx, arg(a, 0)); gilBlocking(function() { Sys.sleep(t); return VNull; }); }));
 		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, Sys.stderr(), null)));
@@ -5490,13 +5524,52 @@ class EvalStdLib {
 		// A path is decoded as a string.
 		reg(s, "sys.FileSystem", "exists", vfn(a -> sys.FileSystem.exists(decodeString(ctx, arg(a, 0))) ? VTrue : VFalse));
 		reg(s, "sys.FileSystem", "isDirectory", vfn(a -> sys.FileSystem.isDirectory(decodeString(ctx, arg(a, 0))) ? VTrue : VFalse));
+		// A directory check on the patched path (a stat failure is its Sys_error), "No such
+		// directory" for anything else, then the directory's entries.
 		reg(s, "sys.FileSystem", "readDirectory", vfn(a -> {
-			var d = sys.FileSystem.readDirectory(decodeString(ctx, arg(a, 0)));
+			var dir = decodeString(ctx, arg(a, 0));
+			var patched = fsPatchPath(dir);
+			var err = cFs(5, patched);
+			if (err != null) sysError(ctx, patched, err);
+			if (!sys.FileSystem.isDirectory(dir)) EvalExceptions.excString(ctx, "No such directory");
+			var d = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) {
+				var e2 = cFs(5, dir);
+				sysError(ctx, dir, e2 == null ? "No such file or directory" : e2);
+			};
 			VArray(new VArray([for (f in d) mkStr(f)], d.length));
 		}));
-		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> { sys.FileSystem.createDirectory(decodeString(ctx, arg(a, 0))); VNull; }));
-		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> { sys.FileSystem.deleteDirectory(decodeString(ctx, arg(a, 0))); VNull; }));
-		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> { sys.FileSystem.deleteFile(decodeString(ctx, arg(a, 0))); VNull; }));
+		// createDirectory: over the path with a trailing slash, each prefix that does not exist is
+		// created, a drive root skipped.
+		reg(s, "sys.FileSystem", "createDirectory", vfn(a -> {
+			var path = haxe.io.Path.addTrailingSlash(decodeString(ctx, arg(a, 0)));
+			var parts = ~/[\\\/]+/g.split(path);
+			parts.pop();
+			var base = "";
+			for (dir in parts) {
+				var p = base == "" ? dir : base == "/" ? "/" + dir : base + "/" + dir;
+				if (p.length > 0 && (p.charAt(p.length - 1) == "/" || p.charAt(p.length - 1) == "\\")) p = p.substr(0, p.length - 1);
+				if (!(p == "" || (p.length == 2 && p.charAt(1) == ":")) && !sys.FileSystem.exists(p)) {
+					var err = cFs(2, p);
+					if (err != null) unixError(ctx, err, "mkdir", p);
+				}
+				base = p == "" ? "/" : p;
+			}
+			VNull;
+		}));
+		// deleteDirectory: an rmdir failure is a Unix error.
+		reg(s, "sys.FileSystem", "deleteDirectory", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			var err = cFs(1, path);
+			if (err != null) unixError(ctx, err, "rmdir", path);
+			VNull;
+		}));
+		// deleteFile: a failed removal is its Sys_error.
+		reg(s, "sys.FileSystem", "deleteFile", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			var err = cFs(0, path);
+			if (err != null) sysError(ctx, path, err);
+			VNull;
+		}));
 		// fullPath: the decode sits inside the native's catch-all handler, so a null argument's Null
 		// Access prints as the runtime exception value, and a refused empty path prints as the
 		// get_full_path failure.
@@ -5508,7 +5581,9 @@ class EvalStdLib {
 		// Rename: both paths are decoded, the new one first.
 		reg(s, "sys.FileSystem", "rename", vfn(a -> {
 			var newPath = decodeString(ctx, arg(a, 1));
-			sys.FileSystem.rename(decodeString(ctx, arg(a, 0)), newPath);
+			// A rename's Sys_error carries no path.
+			var err = cFs(3, decodeString(ctx, arg(a, 0)), newPath);
+			if (err != null) EvalExceptions.excString(ctx, err);
 			VNull;
 		}));
 		// Stat: a failure on the patched path is a Unix error; the host's stat answers zeros for a path
@@ -5522,8 +5597,12 @@ class EvalStdLib {
 		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(hostIpInt(stringOf(arg(a, 0))))));
 		reg(s, "sys.net.Host", "hostToString", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).toString())));
 		reg(s, "sys.net.Host", "hostReverse", vfn(a -> mkStr(new sys.net.Host(hostIpString(toInt(arg(a, 0)))).reverse())));
-		// A path is decode_string, a binary flag true or null for binary.
-		reg(s, "sys.io.File", "append", vfn(a -> mkFileOutput(ctx, sys.io.File.append(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
+		// sys.io.File: a path is decodeString, a binary flag true or null for binary. An open that fails
+		// is a system error, "<path>: <strerror>".
+		reg(s, "sys.io.File", "append", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			mkFileOutput(ctx, try sys.io.File.append(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+		}));
 		// An unreadable file raises "Could not read file <path>".
 		reg(s, "sys.io.File", "getBytes", vfn(a -> {
 			var path = decodeString(ctx, arg(a, 0));
@@ -5535,20 +5614,29 @@ class EvalStdLib {
 		}));
 		reg(s, "sys.io.File", "read", vfn(a -> {
 			var path = decodeString(ctx, arg(a, 0));
-			mkFileInput(ctx, sys.io.File.read(path, fileBinaryFlag(arg(a, 1))));
+			mkFileInput(ctx, try sys.io.File.read(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 6, e));
 		}));
+		// saveBytes: a failure to open the file is its Sys_error.
 		reg(s, "sys.io.File", "saveBytes", vfn(a -> {
 			var path = decodeString(ctx, arg(a, 0));
-			sys.io.File.saveBytes(path, decodeBytes(arg(a, 1)));
+			var bytes = decodeBytes(arg(a, 1));
+			try sys.io.File.saveBytes(path, bytes) catch (e:Dynamic) openError(ctx, path, 7, e);
 			VNull;
 		}));
 		reg(s, "sys.io.File", "saveContent", vfn(a -> {
 			var path = decodeString(ctx, arg(a, 0));
-			sys.io.File.saveContent(path, decodeString(ctx, arg(a, 1)));
+			var content = decodeString(ctx, arg(a, 1));
+			try sys.io.File.saveContent(path, content) catch (e:Dynamic) openError(ctx, path, 7, e);
 			VNull;
 		}));
-		reg(s, "sys.io.File", "update", vfn(a -> mkFileOutput(ctx, sys.io.File.update(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
-		reg(s, "sys.io.File", "write", vfn(a -> mkFileOutput(ctx, sys.io.File.write(decodeString(ctx, arg(a, 0)), fileBinaryFlag(arg(a, 1))))));
+		reg(s, "sys.io.File", "update", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			mkFileOutput(ctx, try sys.io.File.update(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+		}));
+		reg(s, "sys.io.File", "write", vfn(a -> {
+			var path = decodeString(ctx, arg(a, 0));
+			mkFileOutput(ctx, try sys.io.File.write(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
+		}));
 		reg(inst, "sys.io.FileInput", "close", vmethod(a -> {
 			var vi = thisInstance(a, "FileInput");
 			fileInputs.get(vi).input.close();
