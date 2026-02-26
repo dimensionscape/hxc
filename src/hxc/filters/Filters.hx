@@ -708,7 +708,7 @@ class Filters {
 		}
 	}
 
-	static function handleAbstractCasts(ctx:TyperContext, e:TExpr):TExpr {
+	public static function handleAbstractCasts(ctx:TyperContext, e:TExpr):TExpr {
 		function underlying(a:TAbstract, pl:Array<T>, p:Position):T {
 			if (!TypeFunctions.hasMeta(":multiType", a.meta))
 				return TypeFunctions.applyParams(a.params, pl, a.thisType);
@@ -843,12 +843,18 @@ class Filters {
 										}
 									}
 									var field = TypeFunctions.mk(TField(TypeFunctions.mk(e2.expr, m, e2.pos), fa2), ft.t, e2.pos);
-									// The reference's make_call here always falls back to a plain call the concrete type m's
-									// module only loads at this FILTER (the multiType underlying resolves lazily, never during
-									// typing), so its method bodies are expr = None and the inline arm raises Exit. Verified
-									// by instrumentation: StringMap.get has no expression and a non-lazy type here in the
-									// reference.
-									maybeCast(TypeFunctions.mk(TCall(field, args), ft.ret, e.pos), e.type, e.pos);
+									// makeCall inlines what already has a body and calls the rest. In the main pipeline the
+									// concrete type's module usually loads at this FILTER, so its bodies are untyped and the
+									// call stays a call (StringMap.get has no expression here); the macro world types whole
+									// modules, so there an inline body such as eval's StringMap.keyValueIterator expands.
+									// Nothing is forced for it.
+									var calledCf = switch (fa2) {
+										case FInstance(_, _, cf) | FStatic(_, cf) | FAnon(cf): cf;
+										case _: null;
+									};
+									maybeCast(calledCf != null && calledCf.expr != null
+										? Calls.makeCall(ctx, field, args, ft.ret, e.pos)
+										: TypeFunctions.mk(TCall(field, args), ft.ret, e.pos), e.type, e.pos);
 								case _:
 									throw new hxc.core.NotFound();
 							}
@@ -873,7 +879,7 @@ class Filters {
 	// The typer emits TNew of the abstract impl for every @:multiType construction; here it rewrites to
 	// the selected @:to cast's static call with a null receiver prepended, and the result is typed as
 	// the UNDERLYING concrete type. Specialization failures are typing errors, never swallowed.
-	static function resolveDeferredMultiType(tctx:TyperContext, e:TExpr):TExpr {
+	public static function resolveDeferredMultiType(tctx:TyperContext, e:TExpr):TExpr {
 		return switch (e.expr) {
 			case TNew(c, tl, el):
 				switch (c.kind) {
