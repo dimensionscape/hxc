@@ -24,7 +24,12 @@ class Dump {
 		if (!FileSystem.exists(dir)) FileSystem.createDirectory(dir);
 		var file = dir + "/" + path.name + ".dump";
 		var buf = new StringBuf();
-		return { buf: buf, close: function() File.saveContent(file, buf.toString()) };
+		// The dump is opened in text mode (open_out), so a Windows host writes CRLF line ends.
+		return { buf: buf, close: function() {
+			var out = File.write(file, false);
+			out.writeString(buf.toString());
+			out.close();
+		} };
 	}
 
 	static function sAccess(isRead:Bool, a:VarAccess):String {

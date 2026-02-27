@@ -998,7 +998,7 @@ class Filters {
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		stageMark("pass1:done"); memProbe("pass1:done");
-		var exceptionsFilter = com.platform.match(Eval) ? function(e) return e : hxc.filters.Exceptions.filter(tctx);
+		var exceptionsFilter = hxc.filters.Exceptions.filter(tctx);
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "local_statics", f: function(e) return localStatics(tctx, e)},
 			{name: "fix_return_dynamic_from_void_function", f: function(e) return fixReturnDynamicFromVoidFunction(tctx, true, e)},
@@ -1029,7 +1029,8 @@ class Filters {
 			// its end, so a static backend (cpp) emits a value on every path. Gated on addFinalReturn
 			// (false for js/eval).
 			{name: "add_final_return", f: com.platformConfig.addFinalReturn ? addFinalReturn : function(e) return e},
-			{name: "RenameVars", f: function(e) {
+			// Eval keeps its names.
+			{name: "RenameVars", f: com.platform.match(Eval) ? function(e) return e : function(e) {
 				try hxc.filters.RenameVarsRun.run(renameLocals, e)
 				catch (err:Dynamic) throw new TypingError(Std.string(err) + " in " + tctx.curclass.path.name + "." + tctx.curfield.name, e.pos);
 				return e;

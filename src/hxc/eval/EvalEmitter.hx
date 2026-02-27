@@ -131,7 +131,7 @@ class EvalEmitter {
 			case TThrow(e1):
 				// A throw raises at its own position. A written throw carries the keyword's span; the throw
 				// the typer builds for a macro called inside the macro world carries the call's whole span.
-				EvalExceptions.throwValue(ctx, unwrapThrown(ctx, eval(ctx, e1)), e.pos);
+				EvalExceptions.throwValue(ctx, eval(ctx, e1), e.pos);
 			case TArrayDecl(el): VArray(new VArray([for (x in el) eval(ctx, x)], el.length));
 			case TObjectDecl(fields):
 				var m = new Map<Int, EvalValue>();
@@ -253,70 +253,14 @@ class EvalEmitter {
 		};
 	}
 
-	static function catchMatches(ctx:EvalContext, v:EvalValue, t:T):Bool {
+	// The path a catch clause's type names (a Dynamic one catches all).
+	static function catchPath(t:T):Null<Int> {
 		return switch (TypeFunctions.follow(t)) {
-			case TDynamic(_): true;
-			case TInst(c, _):
-				var path = EvalHash.pathHash(c.path);
-				// A non-haxe.Exception value thrown and caught as haxe.Exception (the wildcard type) or
-				// haxe.ValueException is wrapped in a haxe.ValueException by the reference before the catch
-				// runs (see /caught). The eval binds the raw value, so a plain value like an Int never
-				// satisfies isOfTypePath against those types; treat such a catch as a match here and let
-				// runCatch build the wrapper. Values already extending haxe.Exception pass through.
-				if ((path == EvalHash.key_haxe_Exception || path == EvalHash.key_haxe_ValueException)
-					&& !EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)) true
-				else EvalStdLib.isOfTypePath(ctx, v, path);
-			case TEnum(en, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(en.path));
-			case TAbstract(a, _):
-				// A non-core-type abstract has no runtime identity, so a value is caught by it when the
-				// value matches the abstract's underlying representation (e.g. AbstrString from String
-				// catches a String). Core-type abstracts (Int/Float/Bool) keep their own path match.
-				var ut = TypeFunctions.followWithAbstracts(t);
-				if (EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(a.path))) true
-				else switch (ut) { case TAbstract(a2, _) if (a2.path == a.path): false; case _: catchMatches(ctx, v, ut); };
-			case TType(td, _): EvalStdLib.isOfTypePath(ctx, v, EvalHash.pathHash(td.path));
-			case _: false;
+			case TInst(c, _): EvalHash.pathHash(c.path);
+			case TEnum(en, _): EvalHash.pathHash(en.path);
+			case TAbstract(a, _): EvalHash.pathHash(a.path);
+			case _: null;
 		};
-	}
-
-	// Throwing a haxe.ValueException throws its wrapped value instead (haxe.Exception.thrown/unwrap):
-	// Throwing a haxe.Exception surfaces its native exception, which for a directly constructed one
-	// is the exception itself (its stack survives the throw), and for a wrapper built around a caught
-	// value is that original value, so an outer catch of the native type matches. from
-	// haxe.Exception.thrown returning (value:Exception).native.
-	static function unwrapThrown(ctx:EvalContext, v:EvalValue):EvalValue {
-		return switch (v) {
-			case VInstance(vi) if (vi.iproto.ppath == EvalHash.hash("haxe.macro.Expr.Error") || vi.iproto.ppath == EvalHash.hash("haxe.macro.Error")): v;
-			case VInstance(_) if (EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)):
-				var native = EvalField.field(ctx, v, EvalHash.keyNativeException);
-				native == VNull ? v : native;
-			case _: v;
-		};
-	}
-
-	// A value caught by a haxe.Exception or haxe.ValueException clause that is not already a
-	// haxe.Exception instance is wrapped in a freshly built haxe.ValueException, exposing .value
-	// (the original) and .message (Std.string(value)); see haxe/ValueException.hx. If the wrapper type
-	// is not loaded the raw value is returned unchanged.
-	static function wrapCaught(ctx:EvalContext, v:EvalValue, t:T):EvalValue {
-		switch (TypeFunctions.follow(t)) {
-			case TInst(c, _):
-				var path = EvalHash.pathHash(c.path);
-				if ((path == EvalHash.key_haxe_Exception || path == EvalHash.key_haxe_ValueException)
-					&& !EvalStdLib.isOfTypePath(ctx, v, EvalHash.key_haxe_Exception)) {
-					var wrapped = constructPath(ctx, EvalHash.key_haxe_ValueException, [v]);
-					if (wrapped != VNull) {
-						var stack = EvalStdLib.exceptionStackValue(ctx);
-						EvalField.setField(ctx, wrapped, EvalHash.keyExceptionStack, stack, Position.nullPos);
-						EvalField.setField(ctx, wrapped, EvalHash.keyNativeStack, stack, Position.nullPos);
-						EvalField.setField(ctx, wrapped, EvalHash.keyNativeException, v, Position.nullPos);
-						EvalField.setField(ctx, wrapped, EvalHash.hash("__skipStack"), VInt(0), Position.nullPos);
-					}
-					return wrapped == VNull ? v : wrapped;
-				}
-			case _:
-		}
-		return v;
 	}
 
 	static function binopValue(ctx:EvalContext, op:Binop, a:EvalValue, b:EvalValue, p:Position):EvalValue {
@@ -649,9 +593,12 @@ class EvalEmitter {
 
 	// Match a thrown value against a try's catch clauses; run the first that matches, else onUnmatched.
 	static function runCatch(ctx:EvalContext, value:EvalValue, catches:Array<TCatch>, savedEnv:EvalEnv, onUnmatched:Void->EvalValue):EvalValue {
+		// The first clause whose type is Dynamic or that the value `is` binds the value as it was thrown;
+		// the exceptions filter has already rewritten the clauses.
 		for (c in catches) {
-			if (catchMatches(ctx, value, c.v.type)) {
-				savedEnv.locals[slot(savedEnv, c.v.id)] = wrapCaught(ctx, value, c.v.type);
+			var path = catchPath(c.v.type);
+			if (path == null || EvalStdLib.isOfTypePath(ctx, value, path)) {
+				savedEnv.locals[slot(savedEnv, c.v.id)] = value;
 				return eval(ctx, c.expr);
 			}
 		}

@@ -145,9 +145,8 @@ class EvalMacro {
 		for (m in mods) for (t in m.types) {
 			switch (t) { case TClassDecl(c) if (!macroFiltered.exists(c)): macroFiltered.set(c, true); case _: continue; }
 			// handle_abstract_casts (hxc splits its TNew arm out as resolve_deferred_multitype, as the main
-			// pipeline does), local_statics, VarLazifier, Exceptions and captured_vars. Exceptions is left
-			// out here as the main pipeline leaves it out for eval (Filters.hx), the interpreter wrapping
-			// values itself.
+			// pipeline does), local_statics, VarLazifier, Exceptions and captured_vars.
+			var exceptions = hxc.filters.Exceptions.filter(tctx);
 			hxc.filters.FiltersCommon.runExpressionFilters(tctx, [
 				{name: "resolve_deferred_multitype", f: function(e) return {
 					function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return hxc.filters.Filters.resolveDeferredMultiType(tctx, hxc.core.TexprTools.mapExpr(walk, e2));
@@ -156,6 +155,7 @@ class EvalMacro {
 				{name: "handle_abstract_casts", f: function(e) return hxc.filters.Filters.handleAbstractCasts(tctx, e)},
 				{name: "local_statics", f: function(e) return hxc.filters.Filters.localStatics(tctx, e)},
 				{name: "VarLazifier", f: function(e) return hxc.filters.Filters.varLazifier(mcom, e)},
+				{name: "Exceptions", f: exceptions},
 				{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(mcom, e)},
 			], t);
 		}
