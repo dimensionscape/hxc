@@ -639,11 +639,14 @@ class Calls {
 		switch (callee.expr) {
 			case EConst(CIdent("null")):
 				throw new TypingError("This expression cannot be called", callee.pos);
-			case EConst(CIdent("trace")) if (!ctx.locals.exists("trace")):
+			case EConst(CIdent("trace")):
 				// The cursor on the `trace` identifier answers a SYNTHETIC one-argument signature, not
 				// haxe.Log.trace's real one, and a definition question answers no position at all.
 				Typer.displayTraceIdent(ctx, callee.pos);
-				return AKExpr(typeTrace(ctx, el, withType, p));
+				// The trace builtin takes at least one argument and no local shadows it; it is typed at the
+				// identifier's position, which the call, the infos and the no-traces null all carry. Without an
+				// argument the call is an ordinary one of whatever `trace` names.
+				if (el.length >= 1) return AKExpr(typeTrace(ctx, el, withType, callee.pos));
 			case EConst(CIdent("$type")) if (el.length == 1):
 				// $type(e): type e, report its type, return e unchanged; $type(_) reports the expected
 				// with-type instead.
@@ -898,9 +901,10 @@ class Calls {
 		if (ctx.com.defines.rawDefined("no_traces"))
 			return TypeFunctions.mk(TConst(TNull), ctx.com.basic.tvoid, p);
 		function strE(s:String):Expr return new Expr(EConst(CString(s, SDoubleQuotes)), p);
-		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: p};
+		// Every key of the infos object sits at Position.nullPos.
+		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: Position.nullPos};
 		function mkToStringMeta(e:Expr):Expr return new Expr(EMeta({name: ":toString", params: [], pos: Position.nullPos}, e), e.pos);
-		var v = el.length > 0 ? el[0] : strE("");
+		var v = el[0];
 		// customParams only with extra args, methodName only inside a named field
 		var fields = [
 			fld("fileName", strE(posInfosFile(ctx, p.file))),
@@ -927,9 +931,9 @@ class Calls {
 		}
 		var haxePkg = new Expr(EConst(CIdent("haxe")), p);
 		var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
-		// The CALLEE is synthesized too, and it at the call position, so a definition request anywhere in
-		// the call answered with haxe.Log.trace's declaration. The `trace` identifier itself is answered
-		// by displayTraceIdent .
+		// The CALLEE is synthesized too: it is built at the identifier's position, and a definition
+		// request there must not answer with haxe.Log.trace's declaration. The `trace` identifier
+		// itself is answered by displayTraceIdent.
 		Typer.synthesized(logTrace);
 		// The infos argument is registered, not the whole call: the argument the user wrote is typed
 		// inside it and has to keep answering.

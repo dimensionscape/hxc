@@ -384,7 +384,7 @@ class TPrinting {
 			case TField(e1, f): loop(e1) + "." + sFieldAccess(st, f);
 			case TTypeExpr(m): "TypeExpr " + Globals.sTypePath(TypeFunctions.tPath(m));
 			case TParenthesis(e1): "Parenthesis " + loop(e1);
-			case TObjectDecl(fl): "ObjectDecl {" + fl.map(function(of) return of.key.name + " : " + loop(of.expr)).join(",") + "}";
+			case TObjectDecl(fl): "ObjectDecl {" + fl.map(function(of) return Ast.sObjectKeyName(of.key.name, of.key.quotes) + " : " + loop(of.expr)).join(",") + "}";
 			case TArrayDecl(el): "ArrayDecl [" + slist(loop, el) + "]";
 			case TCall(e1, el): "Call " + loop(e1) + "(" + slist(loop, el) + ")";
 			case TNew(c, pl, el): "New " + Globals.sTypePath(c.path) + (pl.length == 0 ? "" : "<" + pl.map(st).join(",") + ">") + "(" + slist(loop, el) + ")";
@@ -405,7 +405,7 @@ class TPrinting {
 			case TContinue: "Continue";
 			case TThrow(e1): "Throw " + loop(e1);
 			case TCast(e1, mt): "Cast " + (mt == null ? "" : Globals.sTypePath(TypeFunctions.tPath(mt)) + ": ") + loop(e1);
-			case TMeta(entry, e1): "@" + entry.name + " " + loop(e1); // Args omitted
+			case TMeta(entry, e1): "@" + entry.name + (entry.params.length == 0 ? "" : "(" + [for (x in entry.params) hxc.ast.Ast.Printer.sExpr(x)].join(", ") + ")") + " " + loop(e1);
 			case TIdent(s): "Ident " + s;
 		}
 		return "(" + str + " : " + st(e.type) + ")";

@@ -3944,11 +3944,6 @@ class Typer {
 			}
 			break;
 		}
-		if (i == "trace") {
-			var logMt = ctx.com.getType({pack: ["haxe"], name: "Log"}, p, null);
-			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(logMt).module) catch (_:Dynamic) {}
-			return Fields.typeField(ctx, TexprTools.makeTypeExpr(logMt, p), "trace", p, mode, withType);
-		}
 		// A static-field import (`import M.field`) or a static wildcard (`import M.*` on a type) makes a
 		// static field or enum constructor available unqualified.
 		var imp = resolveImportedStatic(ctx, i, p, mode);

@@ -238,7 +238,7 @@ class Finalization {
 
 	// Paths compare as (pack, name): the pack lists lexicographically (a prefix sorts first),
 	// then the name.
-	static function comparePath(a:Path, b:Path):Int {
+	public static function comparePath(a:Path, b:Path):Int {
 		var n = a.pack.length < b.pack.length ? a.pack.length : b.pack.length;
 		for (i in 0...n) {
 			var c = Reflect.compare(a.pack[i], b.pack[i]);

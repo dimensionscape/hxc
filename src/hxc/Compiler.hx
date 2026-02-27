@@ -1383,11 +1383,10 @@ class Compiler {
 					return;
 				}
 				auxiliaryOutput();
-				// At generation time, after every filter including the analyzer. Dumping before them showed a
-				// tree no later stage ever sees, which makes a dump-to-dump comparison against the reference
-				// meaningless.
-				hxc.debug.Dump.run(ctx);
+				// The dump happens at generation time, after every filter including the analyzer, so it shows
+				// the tree generation actually sees. It is part of Generate.generate, which --no-output skips.
 				if (!noOutput) {
+					hxc.debug.Dump.run(ctx);
 					if (platform == Js) {
 						var tGen = hxc.core.Timer.timer(["generate", "js"]);
 						hxc.generators.GenJS.generate(ctx);
