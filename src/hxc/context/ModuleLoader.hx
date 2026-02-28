@@ -992,12 +992,7 @@ class ModuleLoader {
 				var cDoc = c, cfDoc = cf;
 				ctx.delay(Context.PTypeField, function() hxc.typing.InheritDoc.buildClassFieldDoc(ctx, cDoc, cfDoc));
 			}
-			// Abstract members carry CfImpl for receiver injection; only variables also carry :impl
-			// metadata.
-			if (TypeFunctions.hasMeta(":hxcImpl", cff.cffMeta) || TypeFunctions.hasMeta(":impl", cff.cffMeta))
-				TypeFunctions.addClassFieldFlag(cf, CfImpl);
-			// Abstract members carry CfImpl, including enum-abstract variables, whose CfEnum flag enables
-			// inline folding.
+			// Every non-static abstract implementation member carries CfImpl, regardless of field kind.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);
 			// Set CfEnum on synthesized :enum fields so reads inline-fold and patterns participate in
 			// exhaustiveness checks.
@@ -2167,36 +2162,24 @@ class ModuleLoader {
 					}
 				};
 				var fu2:Func = {fParams: fu.fParams, fArgs: fu.fArgs, fType: aT, fExpr: newExpr};
-				// Local is the `this` resolved by get_this. AKUsingField member-call rewrite, so the CfImpl
-				// flag here only affects fmode. the injected entry null_pos, not the field's own.
-				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}, {name: ":hxcImpl", params: [], pos: p}].concat(f.cffMeta);
-				// Rename to `_new` and force static (the impl `_new` is a static factory).
+				// The injected entry gets the null position, not the field's own.
+				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(f.cffMeta);
+				// Renamed to `_new` and otherwise as declared: not being static is what makes it an
+				// abstract member.
 				return {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
-					cffMeta: meta, cffAccess: withStatic(access, p), cffKind: FFun(fu2)
+					cffMeta: meta, cffAccess: access, cffKind: FFun(fu2)
 				};
 			case FFun(fu) if (!stat):
 				// A cast function is called with no receiver, so it has to be static; the member form would
 				// never be reachable.
 				if (TypeFunctions.hasMeta(":from", f.cffMeta))
 					throw new ContextError("@:from cast functions must be static", f.cffPos);
-				// A member (non-static) method. For a member impl method only when `not fctx.is_macro`. A macro
-				// member abstract method does not get the underlying `this` prepended, instead its first
-				// DECLARED arg first argument which will contain the this expression"). So for a macro member
-				// we by macro_call (Typer.typeMacro), not prepended here.
-				var isMacroField = false;
-				for (acc in f.cffAccess) if (acc.access == AMacro) isMacroField = true;
-				var newArgs = isMacroField
-					? fu.fArgs
-					: [({name: {name: "this", pos: Position.nullPos}, opt: false, meta: [{name: ":implicitThis", params: [], pos: Position.nullPos}], type: thisT, value: null} : FunctionArg)].concat(fu.fArgs);
-				var fu2:Func = {fParams: fu.fParams, fArgs: newArgs, fType: fu.fType, fExpr: fu.fExpr};
-				// Is_abstract_member): tells registerFields to flag this static as an abstract member impl so
-				// the typer prepends the receiver as `this` (`v.m(a)` ->
-				// `Abstract_Impl_.m(v,a)`) via the AKUsingField static-extension rewrite.
-				var meta = [{name: ":hxcImpl", params: [], pos: p}].concat(f.cffMeta);
+				// Only the kind is replaced by the function: a member stays as declared. Its `this` argument is
+				// added to the typed arguments only.
 				return {
-					cffName: f.cffName, cffDoc: f.cffDoc, cffPos: f.cffPos, cffMeta: meta,
-					cffAccess: withStatic(f.cffAccess, p), cffKind: FFun(fu2)
+					cffName: f.cffName, cffDoc: f.cffDoc, cffPos: f.cffPos, cffMeta: f.cffMeta,
+					cffAccess: f.cffAccess, cffKind: FFun(fu)
 				};
 			case _:
 				return f;
@@ -2306,13 +2289,6 @@ class ModuleLoader {
 				case _:
 			}
 		}
-	}
-
-	// Return the access list with `static` added if not already present (used to mark the
-	// transformed member methods / `_new` as statics on the `_Impl_` class).
-	static function withStatic(access:Array<PlacedAccess>, p:Position):Array<PlacedAccess> {
-		for (acc in access) if (acc.access == AStatic) return access;
-		return [{access: AStatic, pos: p}].concat(access);
 	}
 
 	static function hasClassFlag(flags:Array<ClassFlag>, f:ClassFlag):Bool {

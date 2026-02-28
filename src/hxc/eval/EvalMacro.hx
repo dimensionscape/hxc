@@ -1177,6 +1177,12 @@ class EvalMacro {
 				Sys.println("[buildfail] " + Type.getClassName(Type.getClass(e)) + ": " + e.message);
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
+		// An enum abstract's rewrite runs after every @:build, over the fields they left.
+		// TypeResolve.resolveModule left it for here.
+		switch (c.kind) {
+			case KAbstractImpl(a) if (a.isEnum): hxc.typing.TypeResolve.buildEnumAbstractAfterBuild(com, a);
+			case _:
+		}
 		// Class initialization goes on past its build; a build that re-resolved the class already went
 		// through it.
 		hxc.typing.TypeResolve.initClassTail(com, c);

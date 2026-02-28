@@ -81,11 +81,16 @@ class TypeResolve {
 					}
 					case _:
 				}
-				// build_enum_abstract rewrites the member declarations (the access list, @:enum, the
-				// synthesised values) at the START of the implementation's field build, so create_field's
-				// own access check never sees `public private`; running it after the class build reported
-				// the conflict twice.
-				if (impl != null && impl.a.isEnum) buildEnumAbstractFields(ctx, impl.a, impl.d, impl.p);
+				// The enum-abstract rewrite of the member declarations (the access list, @:enum, the
+				// synthesised
+				// values) happens at the START of the implementation's field build, so the field's own
+				// access check
+				// never sees `public private`; running it after the class build reports the conflict twice.
+				// It follows the class's @:build macros, so an implementation with one pending is rewritten
+				// when its
+				// build runs (EvalMacro.ensureBuilt).
+				if (impl != null && impl.a.isEnum && !hxc.eval.EvalMacro.hasPendingBuild(ctx, impl.a.impl))
+					buildEnumAbstractFields(ctx, impl.a, impl.d.dParams, impl.d.dData, impl.p);
 				resolveType(ctx, mt, entry.decl, entry.pos);
 				if (impl != null) resolveAbstractImpl(ctx, impl.a, impl.d, impl.p);
 				resolveUsingMetadata(ctx, mt);
@@ -798,7 +803,7 @@ class TypeResolve {
 						throw new hxc.core.TypingError("Generic functions must have type parameters", cff.cffPos);
 					case _:
 				}
-				resolveFieldType(ctx, params, target, cff, c.module);
+				resolveFieldType(ctx, params, target, cff, c.module, c);
 				// A field-level @:require wins; a class-level one covers statics and the constructor.
 				var req = checkRequire(ctx, cff.cffMeta);
 				if (req == null && (isStatic || cff.cffName.name == "new")) req = checkRequire(ctx, c.meta);
@@ -1918,13 +1923,27 @@ class TypeResolve {
 		}
 	}
 
-	static function buildEnumAbstractFields(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position):Void {
+	// The rewrite of an implementation whose @:build macros just ran, over the fields they left.
+	public static function buildEnumAbstractAfterBuild(ctx:Context, a:TAbstract):Void {
+		var ad = ctx.declOfType.get(Context.pathKey(a.path));
+		var implEntry = ctx.declOfType.get(Context.pathKey(a.impl.path));
+		switch ([ad == null ? null : ad.decl, implEntry == null ? null : implEntry.decl]) {
+			case [EAbstract(dd), EClass(impl)]:
+				var saved = ctx.currentModule;
+				ctx.currentModule = a.impl.module;
+				buildEnumAbstractFields(ctx, a, dd.dParams, impl.dData, ad.pos);
+				ctx.currentModule = saved;
+			case _:
+		}
+	}
+
+	static function buildEnumAbstractFields(ctx:Context, a:TAbstract, dParams:Array<TypeParam>, fields:Array<ClassField>, p:Position):Void {
 		var c = a.impl;
 		// At: the abstract self-type hint, built the way TExprToExpr converts a type back to syntax: a
 		// PRIVATE type converts to its bare name, a secondary type to Module.Sub, so loadComplexType
 		// resolves it back to this abstract.
 		var aTParams:Array<TypeParamOrConst> = [
-			for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
+			for (tp in dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: p})
 		];
 		var aCt = if (a.isPrivate)
 			CTPath({tpackage: [], tname: a.path.name, tparams: aTParams, tsub: null});
@@ -1933,12 +1952,12 @@ class TypeResolve {
 		else
 			CTPath({tpackage: a.module.path.pack, tname: a.module.path.name, tparams: aTParams, tsub: a.path.name});
 		var aT:TypeHint = hxc.typing.Typeload.synthesizedHint({ct: aCt, pos: p});
-		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, d.dData, ctx);
+		hxc.context.ModuleLoader.buildEnumAbstract(ctx.basic, a, aT, fields, ctx);
 		// An EAOther member gets no synthesised value and no hint, so it is still a bare `var A;` when
 		// the field loop reaches it and reports the missing hint on top of "Value required".
 		// registerFields runs that check before this build and so cannot know the mode; it exempts every
 		// enum-abstract member there and asks again here.
-		for (cff in d.dData) switch (cff.cffKind) {
+		for (cff in fields) switch (cff.cffKind) {
 			case FVar(null, null) if (hxc.core.TypeFunctions.hasMeta(":enum", cff.cffMeta)):
 				ctx.addDiagnostic("Variable requires type-hint or initialization", cff.cffName.pos);
 			case _:
@@ -1968,7 +1987,7 @@ class TypeResolve {
 				// declared with none of its own, so a synthesized enum value hinted `Name<T>` has nothing to
 				// bind T to without them.
 				var params = TypeFunctions.hasClassFieldFlag(cf, CfImpl) ? a.params : c.params;
-				resolveFieldType(ctx, params, cf, cff, c.module);
+				resolveFieldType(ctx, params, cf, cff, c.module, c);
 				// An enum-abstract member keeps a hint it DECLARED, and only one that declared none is
 				// typed as the
 				// abstract, so `var A:Int = 1` in `enum abstract E(Int)` is rejected - by the binding's
@@ -2198,7 +2217,7 @@ class TypeResolve {
 
 	// Field-type resolution: the part of creating a variable, method or property field that
 	// resolves its type.
-	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef):Void {
+	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef, ?owner:TClass):Void {
 		var fieldModule = ownerModule == null ? ctx.currentModule : ownerModule;
 		switch (cff.cffKind) {
 			case FVar(th, eo):
@@ -2232,13 +2251,19 @@ class TypeResolve {
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
 				var args:Array<TSignatureArg> = [];
+				// An abstract member other than `_new` and a macro takes the underlying `this` first, typed
+				// thisType
+				// with no name lookup. An abstract member is a field declared without static in the impl
+				// class.
+				// CfImpl is not the test: a static @:to carries it too.
+				if (!isStaticField && cf.name != "_new" && !isMacroField) switch (owner == null ? null : owner.kind) {
+					case KAbstractImpl(a): args.push({name: "this", opt: false, t: a.thisType});
+					case _:
+				}
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-					var implicitThis = false;
-					for (m in fa.meta) if (m.name == ":implicitThis") implicitThis = true;
-					var argParams = implicitThis ? outerParams : localParams;
-					var at = isMacroField ? loadMacroHint(ctx, argParams, fa.type) : Typeload.loadTypeHint(ctx, argParams, fa.type, false);
+					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 					// A haxe.Rest argument must be last, non-optional and defaultless (checked at signature
 					// build, so
@@ -2283,10 +2308,7 @@ class TypeResolve {
 				// The argument metadata is generated at field CREATION, so a body-less function (an extern
 				// declaration) records its defaults too.
 				dropGeneratedMeta(cf);
-				// The reference passes the DECLARED arguments; the `this` an abstract member's lowering
-				// prepends (marked :implicitThis) is only added to its typed arguments .
-				var declaredArgs = fd.fArgs.length > 0 && TypeFunctions.hasMeta(":implicitThis", fd.fArgs[0].meta) ? fd.fArgs.slice(1) : fd.fArgs;
-				Typeload.generateArgsMeta(declaredArgs, m -> cf.meta = [m].concat(cf.meta));
+				Typeload.generateArgsMeta(fd.fArgs, m -> cf.meta = [m].concat(cf.meta));
 				// Build a TFun signature from each
 				// `@:overload(function(args):ret {})` meta and store it in overloads. This is
 				// `(fd,data:Dynamic,?position)` / `(fd,data,position,encoding)` alternates) be

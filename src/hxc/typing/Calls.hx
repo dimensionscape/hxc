@@ -967,7 +967,7 @@ class Calls {
 		if (f.name == "_new" || f.name == "new") return;
 		if (!ctx.curclass.kind.match(KAbstractImpl(_))) return;
 		var receiverIsThis = switch (receiver.expr) {
-			case TLocal(v): v.name == "this" || TypeFunctions.hasMeta(":this", v.meta) || TypeFunctions.hasMeta(":implicitThis", v.meta);
+			case TLocal(v): v.name == "this" || TypeFunctions.hasMeta(":this", v.meta);
 			case _: false;
 		};
 		if (!receiverIsThis) return;

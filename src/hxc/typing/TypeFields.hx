@@ -434,7 +434,7 @@ class TypeFields {
 		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
-		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool}> = [];
+		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
 			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
 			// build-macro fields are covered. The check is skipped entirely on an extern class or an
@@ -458,6 +458,8 @@ class TypeFields {
 				case AFinal: hasFinal = true;
 				case _:
 			}
+			// The static flag every modifier check reads counts an abstract member too.
+			if (isAbsImpl && cff.cffName.name != "new") hasStatic = true;
 			// At most one of these is reported per field: the first latches the field's error flag, which
 			// every FieldError function goes through. So the order decides which one survives, and it is the
 			// call order, not a reading order: abstract+static, abstract+final and abstract+inline run while
@@ -551,7 +553,8 @@ class TypeFields {
 			}
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
 				switch (cff.cffKind) {
-					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic});
+					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic,
+						abstractMember: isAbsImpl && cff.cffName.name != "new" && !Lambda.exists(cff.cffAccess, a -> a.access == AStatic)});
 					case _:
 				}
 				continue;
@@ -566,7 +569,7 @@ class TypeFields {
 		// Each extern function's verify_extern into PTypeField, and drains a bucket last-in first-out:
 		// the field declared last reports its default-value verdict first.
 		externChecks.reverse();
-		for (x in externChecks) checkExternDefaults(ctx, tctx, x.cf, x.fd, x.isStatic);
+		for (x in externChecks) checkExternDefaults(ctx, tctx, x.cf, x.fd, x.isStatic, x.abstractMember);
 	}
 
 	/**
@@ -901,7 +904,10 @@ class TypeFields {
 		// underlying `this` type), so put those in scope.
 		var abstractParams = switch (tctx.curclass.kind) { case KAbstractImpl(a): a.params; case _: null; };
 		var isAbsImpl = abstractParams != null;
-		var isAbstractMember = isAbsImpl && TypeFunctions.hasClassFieldFlag(cf, CfImpl);
+		// An abstract member is declared without static in the impl class. A static @:to is CfImpl as well
+		// but typed FunStatic.
+		var isAbstractMember = isAbsImpl && cff.cffName.name != "new"
+			&& !Lambda.exists(cff.cffAccess, a -> a.access == AStatic);
 		tctx.curfield = cf;
 		tctx.curfun = isAbstractMember ? FunMemberAbstract : (isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember));
 		if (isAbstractMember) tctx.typeParams = abstractParams;
@@ -1379,22 +1385,35 @@ class TypeFields {
 		};
 	}
 
+	// The typed arguments of an abstract member other than `_new` and a macro start with the underlying
+	// `this`, which no syntax declares.
+	static function abstractThisOffset(tctx:TyperContext):Int {
+		return tctx.curfun.match(FunMemberAbstract) && tctx.curfield.name != "_new"
+			&& !tctx.curfield.kind.match(Method(MethMacro)) ? 1 : 0;
+	}
+
 	static function buildArgs(tctx:TyperContext, sig:Null<TSignature>, fd:Func):Array<TFuncArg> {
 		var result:Array<TFuncArg> = [];
+		var off = abstractThisOffset(tctx);
+		if (off == 1) {
+			// VAbstractThis at Position.nullPos, tagged @:this and nothing else.
+			var at = (sig != null && sig.args.length > 0) ? sig.args[0].t : TypeFunctions.mkMono();
+			var v = TypeFunctions.allocVar(VAbstractThis, sig != null && sig.args.length > 0 ? sig.args[0].name : "this", at, hxc.ast.Position.nullPos);
+			// @:this is prepended to the abstract this argument. LocalDce's `keep` tests exactly that meta,
+			// so without it a store to the abstract this in an impl body reads as a dead store and is
+			// removed.
+			v.meta = [{name: ":this", params: [], pos: hxc.ast.Position.nullPos}].concat(v.meta);
+			result.push({v: v, c: null});
+		}
 		for (i in 0...fd.fArgs.length) {
 			var fa = fd.fArgs[i];
-			var at = (sig != null && i < sig.args.length) ? sig.args[i].t : TypeFunctions.mkMono();
-			var kind = if (tctx.curfun.match(FunMemberAbstract) && i == 0 && fa.name.name == "this") VAbstractThis else VUser(TVOArgument);
-			if (!kind.match(VAbstractThis)) Typer.checkLocalVariableName(tctx, fa.name.name, TVOArgument, fa.name.pos);
-			var v = TypeFunctions.allocVar(kind, fa.name.name, at, fa.name.pos);
+			var at = (sig != null && i + off < sig.args.length) ? sig.args[i + off].t : TypeFunctions.mkMono();
+			Typer.checkLocalVariableName(tctx, fa.name.name, TVOArgument, fa.name.pos);
+			var v = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
 			// The display is answered from the argument's own name range.
 			if (Typer.atDisplayPos(fa.name.pos)) Typer.displayVariable(tctx, v, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
-			// @:this is prepended to the abstract this argument. LocalDce's `keep` tests exactly that meta,
-			// so without it a store to the abstract this in an impl body reads as a dead store and is
-			// removed.
-			if (kind.match(VAbstractThis)) v.meta = [{name: ":this", params: [], pos: hxc.ast.Position.nullPos}].concat(v.meta);
 			// The default value unifies into the argument type so an inferred argument settles from its
 			// default (x = 1 gives x:Int).
 			var def:Null<TExpr> = if (fa.value != null) {
@@ -1462,7 +1481,7 @@ class TypeFields {
 		}
 	}
 
-	static function checkExternDefaults(ctx:Context, tctx:TyperContext, cf:TClassField, fd:Func, isStatic:Bool):Void {
+	static function checkExternDefaults(ctx:Context, tctx:TyperContext, cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool):Void {
 		// The extern default check runs once per field, when the field is created. The install loop
 		// re-visits a module whenever its declared shape changes, and re-checking the defaults on every
 		// visit would report one verdict several times.
@@ -1472,10 +1491,12 @@ class TypeFields {
 		if (sig == null) return;
 		var oldFun = tctx.curfun;
 		tctx.curfun = isStatic ? FunStatic : FunMember;
+		// The signature starts with the abstract member's `this`, which the declared arguments do not.
+		var off = abstractMember && cf.name != "_new" && !cf.kind.match(Method(MethMacro)) ? 1 : 0;
 		for (i in 0...fd.fArgs.length) {
 			var value = fd.fArgs[i].value;
-			if (value == null || i >= sig.args.length) continue;
-			try Typer.castOrUnify(tctx, sig.args[i].t, Typer.typeExpr(tctx, value, WithTypeTools.withType(sig.args[i].t)), value.pos)
+			if (value == null || i + off >= sig.args.length) continue;
+			try Typer.castOrUnify(tctx, sig.args[i + off].t, Typer.typeExpr(tctx, value, WithTypeTools.withType(sig.args[i + off].t)), value.pos)
 			catch (e:Dynamic) recordFieldError(ctx, e);
 		}
 		tctx.curfun = oldFun;
