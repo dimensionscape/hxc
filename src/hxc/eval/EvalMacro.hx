@@ -142,8 +142,16 @@ class EvalMacro {
 
 	public static function applyMacroWorldFilters(mcom:Context, mods:Array<ModuleDef>):Void {
 		var tctx = new TyperContext(mcom);
+		// Built once per flush: remove_generic_base, Exceptions.patch_constructors, add_field_inits (over
+		// RenameVars.init of the macro com), minimal_restore - the compilation server's snapshot of what
+		// the filters change, which hxc's reused macro world does not take - and apply_native_paths.
+		var renameLocals = hxc.filters.RenameVars.init(mcom.types, false, false);
+		var patchConstructors:Null<ModuleType->Void> = null;
 		for (m in mods) for (t in m.types) {
-			switch (t) { case TClassDecl(c) if (!macroFiltered.exists(c)): macroFiltered.set(c, true); case _: continue; }
+			var decl:Dynamic = switch (t) { case TClassDecl(c): c; case TEnumDecl(en): en; case TTypeDecl(td): td; case TAbstractDecl(a): a; };
+			if (macroFiltered.exists(decl)) continue;
+			macroFiltered.set(decl, true);
+			switch (t) { case TClassDecl(c): tctx.curclass = c; case _: }
 			// handle_abstract_casts (hxc splits its TNew arm out as resolve_deferred_multitype, as the main
 			// pipeline does), local_statics, VarLazifier, Exceptions and captured_vars.
 			var exceptions = hxc.filters.Exceptions.filter(tctx);
@@ -158,6 +166,13 @@ class EvalMacro {
 				{name: "Exceptions", f: exceptions},
 				{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(mcom, e)},
 			], t);
+			// `ready`: the type filters follow the expression filters, type by type. patch_constructors
+			// loads haxe.Exception when it is built which the Exceptions filter above has done by now.
+			if (patchConstructors == null) patchConstructors = hxc.typing.ExceptionFilters.patcher(tctx);
+			hxc.filters.Filters.removeGenericBase(t);
+			patchConstructors(t);
+			hxc.filters.Filters.addFieldInits(mcom, tctx, renameLocals, t);
+			hxc.filters.Filters.applyNativePaths(mcom, t);
 		}
 	}
 

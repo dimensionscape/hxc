@@ -9,6 +9,25 @@ import hxc.context.Context;
 // stack captured by the base constructor drops one frame per constructor level and starts at the
 // construction site.
 class ExceptionFilters {
+	// The constructor patch as a type filter, for the macro world's `ready`: nothing to patch unless
+	// haxe.Exception has a __shiftStack.
+	public static function patcher(tctx:TyperContext):ModuleType->Void {
+		var ctx = tctx.com;
+		var excCls:Null<TClass> = null;
+		for (m in ctx.modules) for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.path.name == "Exception" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"):
+				excCls = c;
+			case _:
+		}
+		var shiftCf = excCls == null ? null : excCls.fields.get("__shiftStack");
+		if (shiftCf == null) return function(_) {};
+		return function(mt:ModuleType) switch (mt) {
+			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern) && c != excCls && TypeFunctions.extendsClass(c, excCls)):
+				patchConstructor(tctx, c, excCls, shiftCf);
+			case _:
+		}
+	}
+
 	public static function run(ctx:Context):Void {
 		var excCls:Null<TClass> = null;
 		for (m in ctx.modules) for (mt in m.types) switch (mt) {
@@ -48,21 +67,14 @@ class ExceptionFilters {
 						// makeCall inlines __shiftStack in place, so the void body keeps its block.
 						return hxc.typing.Calls.makeCall(tctx, efield, [], rt, p);
 					}
-					// A shift runs before every return and once at the end; a nested function keeps
-					// its own returns untouched.
+					// A shift runs before every return (the map reaches them all) and once at the end; a
+					// nested
+					// function keeps its own returns untouched.
 					function add(e:TExpr):TExpr {
 						return switch (e.expr) {
 							case TFunction(_): e;
 							case TReturn(_): TypeFunctions.mk(TBlock([shiftStack(e.pos), e]), e.type, e.pos);
-							case TBlock(el): TypeFunctions.mk(TBlock([for (x in el) add(x)]), e.type, e.pos);
-							case TIf(cond, a, b): TypeFunctions.mk(TIf(cond, add(a), b == null ? null : add(b)), e.type, e.pos);
-							case TSwitch(s, cases, def): TypeFunctions.mk(TSwitch(s, [for (cc in cases) {values: cc.values, expr: add(cc.expr)}], def == null ? null : add(def)), e.type, e.pos);
-							case TTry(e1, catches): TypeFunctions.mk(TTry(add(e1), [for (cc in catches) {v: cc.v, expr: add(cc.expr)}]), e.type, e.pos);
-							case TWhile(cond, body, flag): TypeFunctions.mk(TWhile(cond, add(body), flag), e.type, e.pos);
-							case TFor(v, e1, body): TypeFunctions.mk(TFor(v, e1, add(body)), e.type, e.pos);
-							case TMeta(mm, e1): TypeFunctions.mk(TMeta(mm, add(e1)), e.type, e.pos);
-							case TParenthesis(e1): TypeFunctions.mk(TParenthesis(add(e1)), e.type, e.pos);
-							case _: e;
+							case _: hxc.core.TexprTools.mapExpr(add, e);
 						};
 					}
 					var body = TypeFunctions.mk(TBlock([add(fn.expr), shiftStack(fn.expr.pos)]), tvoid, fn.expr.pos);

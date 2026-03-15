@@ -689,7 +689,7 @@ class TypeFields {
 	// Force the field bodies of a single class whose fields were just rewritten by a @:build macro.
 	// A full installAndForce per build is O(builds x modules) and re-enters through lazy typing; this
 	// types only the rewritten class, so the cost stays proportional to the fields actually added.
-	public static function forceClassFields(ctx:Context, c:TClass, skipMemberVars:Bool = false):Void {
+	public static function forceClassFields(ctx:Context, c:TClass):Void {
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
@@ -710,10 +710,10 @@ class TypeFields {
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
 			if (ctx.droppedFieldDecls.exists(cff)) continue;
-			// A member var with a null expr after filters had its initializer moved into
-			// the constructor by patch_constructors; re-typing it would rebuild the raw init
-			// without the filter pipeline.
-			if (skipMemberVars && !isStatic && cf.kind.match(Var(_))) continue;
+			// A body that already ran is not typed again: a member var whose initializer the field-init
+			// filter moved into the constructor has a null expr, and re-typing it would put back the raw
+			// initializer the filters took away.
+			if (bodyTyped.exists(cf)) continue;
 			if (!hasFieldBody(cff)) continue;
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
