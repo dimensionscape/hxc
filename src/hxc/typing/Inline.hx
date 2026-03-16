@@ -586,6 +586,7 @@ class Inline {
 				// kind in the other case is what stops the analyzer (for which neither VUser nor VInlined
 				// counts as compiler generated) from fusing the local without -D analyzer-optimize.
 				var nv = TypeFunctions.allocVar(declareKind(av), declareName(av), av.type, p);
+				nv.meta = [for (mm in av.meta) if (mm.name != ":this") mm];
 				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, absThisCast(substLocal(nv, p)));
@@ -1070,7 +1071,7 @@ class Inline {
 				// shared type (return_type).
 				var body = terminal(e1);
 				var mappedCatches = [for (c in catches) {
-					var nv = TypeFunctions.allocVar(declareKind(c.v), declareName(c.v), c.v.type, c.v.pos);
+					var nv = declareVar(c.v);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: terminal(c.expr)};
 				}];
@@ -1100,6 +1101,15 @@ class Inline {
 	static inline function declareName(v:TVar):String {
 		var real = hxc.ast.Ast.getMetaString(v.meta, ":realPath");
 		return real == null ? v.name : real;
+	}
+
+	// A fresh local named and kinded by declareName, keeping the original's extra and its
+	// metadata less @:this.
+	static function declareVar(v:TVar):TVar {
+		var nv = TypeFunctions.allocVar(declareKind(v), declareName(v), v.type, v.pos);
+		nv.extra = v.extra;
+		nv.meta = [for (mm in v.meta) if (mm.name != ":this") mm];
+		return nv;
 	}
 
 	static inline function declareKind(v:TVar):TVarKind {
@@ -1151,7 +1161,9 @@ class Inline {
 					// value keeps its own position verbatim.
 					return switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
-							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+							var read = TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+							// A read of an i_abstract_this local is cast to its type.
+							TypeFunctions.hasMeta(":this", v.meta) ? TypeFunctions.mk(TCast(read, null), v.type, read.pos) : read;
 						case _: se;
 					};
 				}
@@ -1226,10 +1238,9 @@ class Inline {
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
-				var nv = TypeFunctions.allocVar(declareKind(v), declareName(v), v.type, v.pos);
 				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
 				// type behind an IMap-typed temp.
-				nv.extra = v.extra;
+				var nv = declareVar(v);
 				subst.set(v.id, substLocal(nv, v.pos));
 				TVarExpr(nv, eo == null ? null : m(eo));
 			case TBlock(el): TBlock([for (x in el) m(x)]);
@@ -1237,7 +1248,7 @@ class Inline {
 				var me1 = m(e1);
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
-				var nv = TypeFunctions.allocVar(declareKind(v), declareName(v), v.type, v.pos);
+				var nv = declareVar(v);
 				subst.set(v.id, substLocal(nv, v.pos));
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
@@ -1264,7 +1275,7 @@ class Inline {
 				// re-declares as a fresh local (state#declare).
 				var me1 = m(e1);
 				TTry(me1, [for (c in catches) {
-					var nv = TypeFunctions.allocVar(declareKind(c.v), declareName(c.v), c.v.type, c.v.pos);
+					var nv = declareVar(c.v);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: m(c.expr)};
 				}]);
@@ -1275,7 +1286,7 @@ class Inline {
 				// the
 				// inlined bindings rather than the callee's argument vars.
 				var nargs:Array<TFuncArg> = [for (a in f.args) {
-					var nv = TypeFunctions.allocVar(declareKind(a.v), declareName(a.v), a.v.type, a.v.pos);
+					var nv = declareVar(a.v);
 					subst.set(a.v.id, substLocal(nv, a.v.pos));
 					{v: nv, c: a.c == null ? null : m(a.c)};
 				}];
