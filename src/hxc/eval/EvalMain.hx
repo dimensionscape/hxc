@@ -259,22 +259,6 @@ class EvalMain {
 		};
 	}
 
-	// Run every class's static __init__ before main. A static __init__ becomes the class init expression
-	// which the evaluator runs at startup.
-	public static function runStaticInits(ctx:EvalContext):Void {
-		for (proto in ctx.staticPrototypes) {
-			switch (proto.pkind) {
-				case PClass(_):
-					var idx = proto.pnames.get(EvalHash.key___init__);
-					if (idx != null) switch (proto.pfields[idx]) {
-						case VFunction(f, _): f([]);
-						case _:
-					}
-				case _:
-			}
-		}
-	}
-
 	// Evaluate the finalized entry expression: the call to main() plus the entry-point or
 	// event-loop tail built by Finalization.getMain.
 	public static function runMain(ctx:EvalContext, mainPath:Path):EvalValue {
@@ -282,7 +266,6 @@ class EvalMain {
 		// threads serialize with it; blocking natives release it around waits.
 		EvalStdLib.gilEnter();
 		try {
-			runStaticInits(ctx);
 			if (ctx.com == null || ctx.com.main == null)
 				throw "No entry expression: Finalization.run must populate com.main before runMain";
 			// The entry expression runs inside an EKEntrypoint environment, the depth the recursion limit

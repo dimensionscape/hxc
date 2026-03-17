@@ -1528,9 +1528,6 @@ class Typeload {
 		// macro context, where it is never called.
 		if (c.init != null) throw new TypingError("This class can't be generic", p);
 		for (cf in c.orderedStatics) {
-			// The reference lifts __init__ out of the statics into init, so its list never
-			// contains one; hxc keeps it as a static, and it is covered by the check above.
-			if (cf.name == "__init__") continue;
 			if (cf.kind.match(Method(MethMacro)) && !ctx.isMacro) continue;
 			throw new TypingError("A generic class can't have static fields", cf.pos);
 		}

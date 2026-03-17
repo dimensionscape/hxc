@@ -564,6 +564,24 @@ class EvalPrototype {
 				}
 			}
 		}
+		// The class init is the last static delay, never persistent, and it is added whether or not the
+		// class is extern.
+		switch (c.init) {
+			case null:
+			case init:
+				var d:ProtoDelay = function(proto) {
+					var ctxEval = EvalContext.getEval(ctx);
+					var prev = ctxEval.env;
+					var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKMethod(key, EvalHash.key___init__), 0, 0));
+					try EvalEmitter.eval(ctx, init) catch (e:haxe.Exception) {
+						ctxEval.env = prev;
+						throw e;
+					}
+					EvalContext.popEnvironment(ctx, env);
+				};
+				delays.push(d);
+				nonPersistent.push(d);
+		}
 		// The macro API classes keep their typed std wrappers (init-macro asserts, doc text, deprecation
 		// checks) and reach the natives through load/callMacroApi: no builtin installs over a DECLARED
 		// static; an unforced body late-types on first access instead. Everywhere else a registered

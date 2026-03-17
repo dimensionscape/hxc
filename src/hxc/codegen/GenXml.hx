@@ -185,10 +185,8 @@ class GenXml {
 		var m = TypeFunctions.tInfos(t).module;
 		return switch (t) {
 			case TClassDecl(c):
-				// Exclude __init__: hxc retains it as a static field, but the RTTI model stores its body
-				// separately.
 				var stats = [for (cf in c.orderedStatics)
-					if (cf.name != "__meta__" && cf.name != "__init__" && !TypeFunctions.hasMeta(":genericInstance", cf.meta) && !TypeFunctions.hasMeta(":noDoc", cf.meta))
+					if (cf.name != "__meta__" && !TypeFunctions.hasMeta(":genericInstance", cf.meta) && !TypeFunctions.hasMeta(":noDoc", cf.meta))
 						genField([{a: "static", v: "1"}], cf)];
 				var fields = [for (cf in c.orderedFields)
 					if (!TypeFunctions.hasMeta(":genericInstance", cf.meta) && !TypeFunctions.hasMeta(":noDoc", cf.meta))

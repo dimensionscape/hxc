@@ -767,7 +767,7 @@ class TypeResolve {
 			if (isAbstractMember) isStatic = true;
 			// The constructor lives in constructor (not fields); resolve it there.
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
-				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
+				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null) continue;
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
@@ -954,7 +954,7 @@ class TypeResolve {
 			all.sort(function(a, b) return a.pos.min - b.pos.min);
 			var seenStatic = new haxe.ds.StringMap<Bool>(), seenInstance = new haxe.ds.StringMap<Bool>();
 			for (cf in all) {
-				if (cf.name == "new" || cf.name == "__init__") continue;
+				if (cf.name == "new") continue;
 				var isStatic = c.statics.get(cf.name) == cf;
 				var collides = isStatic
 					? (seenInstance.exists(cf.name) || getDeclaredIn(c.superClass, cf.name) != null)
@@ -1977,7 +1977,7 @@ class TypeResolve {
 			// Abstract-impl promotion (see resolveClass): a non-static impl field is a static.
 			if (!isStatic && cff.cffName.name != "new") isStatic = true;
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
-				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
+				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null) continue;
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.

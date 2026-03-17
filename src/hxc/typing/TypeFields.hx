@@ -20,7 +20,6 @@ import hxc.typing.TyperContext.CurrentFun;
 // another module can bind it. A final flush forces every remaining field.
 class TypeFields {
 	// __init__ fields whose typed body was trivially empty, per field object.
-	public static final trivialInits = new haxe.ds.ObjectMap<TClassField, Bool>();
 
 	static var lazyFieldTypes:haxe.ds.ObjectMap<TClassField, T> = new haxe.ds.ObjectMap();
 	// Field bodies whose typing has been attempted. A body that errors leaves expr null, so the
@@ -229,6 +228,9 @@ class TypeFields {
 						var full = ctx.displayFullTyping;
 						for (cf in c.orderedFields) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
 						for (cf in c.orderedStatics) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
+						// An __init__ binds like any field, though it is not one.
+						var initField = c.initField;
+						if (initField != null && initField.expr == null && (full || isDisplayField(initField))) forceFieldBody(ctx, c, initField);
 						if (c.constructor != null && c.constructor.expr == null
 							&& (full || isDisplayField(c.constructor))) forceFieldBody(ctx, c, c.constructor);
 					case _:
@@ -533,7 +535,7 @@ class TypeFields {
 				case _:
 			}
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
-				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
+				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null) continue;
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
@@ -705,7 +707,7 @@ class TypeFields {
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
-				else (isStatic ? c.statics : c.fields).get(cff.cffName.name);
+				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null || cf.expr != null) continue;
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
@@ -864,7 +866,7 @@ class TypeFields {
 			for (a in f.cffAccess) if (a.access == AStatic) fStatic = true;
 			if (isAbsImpl && !fStatic && f.cffName.name != "new") fStatic = true;
 			var base = if (!fStatic && f.cffName.name == "new") c.constructor
-				else (fStatic ? c.statics : c.fields).get(f.cffName.name);
+				else TypeFunctions.declaredField(c, f.cffName.name, fStatic);
 			if (base == null) continue;
 			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
 			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
@@ -1019,12 +1021,10 @@ class TypeFields {
 					// The TFunction node itself also carries the body position; genxml's line attribute
 					// reads it.
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, funcPos);
-					// An __init__ whose typed body is trivially empty never becomes the class init. The generators
-					// ask this rather than the body the filters leave, which reduce_expr may have emptied (a macro
-					// that expanded to `{}`).
+					// An __init__'s typed body is the class init, unless it is trivially empty.
 					if (isStatic && cf.name == "__init__") switch (tf.expr.expr) {
-						case TBlock([]) | TBlock([{expr: TConst(_)}]) | TConst(_) | TObjectDecl([]): trivialInits.set(cf, true);
-						case _:
+						case TBlock([]) | TBlock([{expr: TConst(_)}]) | TConst(_) | TObjectDecl([]):
+						case _: tctx.curclass.init = tf.expr;
 					}
 				case FProp(_, _, _, eo):
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr

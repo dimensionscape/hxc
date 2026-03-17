@@ -141,7 +141,6 @@ class CoreApi {
 			for (name in fl.keys()) {
 				var f = fl.get(name);
 				var p = f.expr == null ? c.pos : f.expr.pos;
-				if (name == "__init__") continue; // Moved to init at load in the reference
 				if (TypeFunctions.hasClassFieldFlag(f, CfPublic) && !TypeFunctions.hasMeta(":hack", f.meta)
 					&& !fcore.exists(f.name) && !TypeFunctions.hasClassFieldFlag(f, CfOverride))
 					throw new TypingError("Public field " + name + " is not part of core type", p);

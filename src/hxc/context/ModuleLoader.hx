@@ -818,6 +818,7 @@ class ModuleLoader {
 		c.orderedFields = [];
 		c.orderedStatics = [];
 		c.constructor = null;
+		c.initField = null;
 		// Drop diagnostics from the replaced field list; check the new fields during resolution.
 		if (ctx != null) ctx.dropFieldDiagnostics(c);
 		registerFields(c, fields, ctx);
@@ -837,8 +838,7 @@ class ModuleLoader {
 		var name = cff.cffName.name;
 		if (!classFieldIsStatic(c, cff) && name == "new")
 			return c.constructor != null;
-		var table = classFieldIsStatic(c, cff) ? c.statics : c.fields;
-		return table.exists(name);
+		return TypeFunctions.declaredField(c, name, classFieldIsStatic(c, cff)) != null;
 	}
 
 	static function sameClassPath(a:Path, b:Path):Bool {
@@ -1237,7 +1237,19 @@ class ModuleLoader {
 				ctx.droppedFieldDecls.set(cff, true);
 				continue;
 			}
-			if (isStatic) {
+			if (isStatic && cf.name == "__init__") {
+				// Duplicate __init__ declarations report during class build as class-field duplicates; neither
+				// enters the field table.
+				if (c.initField != null) {
+					if (ctx != null) {
+						ctx.deferFieldDiagnostic(c, "Duplicate class field declaration : "
+							+ hxc.core.Globals.sTypePath(c.path) + "." + cf.name, cf.namePos);
+						ctx.droppedFieldDecls.set(cff, true);
+					}
+					continue;
+				}
+				c.initField = cf;
+			} else if (isStatic) {
 				c.statics.set(cf.name, cf);
 				c.orderedStatics.push(cf);
 			} else if (cf.name == "new") {

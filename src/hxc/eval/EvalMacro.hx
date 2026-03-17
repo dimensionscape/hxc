@@ -140,14 +140,23 @@ class EvalMacro {
 	// a closure reads a LIVE parent frame and fatal the moment one snapshots its captures.
 	static var macroFiltered:haxe.ds.ObjectMap<Dynamic, Bool> = new haxe.ds.ObjectMap();
 
-	public static function applyMacroWorldFilters(mcom:Context, mods:Array<ModuleDef>):Void {
+	// Flushing the macro context: the macro world's types in sorted finalization order, each one the
+	// interpreter has not seen filtered (`ready`) and then added (the interpreter keeps what it has). The
+	// order is the order their static delays - class inits included - run in.
+	static function flushMacroWorld(ec:EvalContext):Void {
+		var types = hxc.typing.Finalization.sortTypes(macroCom).types;
+		applyMacroWorldFilters(macroCom, types);
+		EvalMain.addTypes(ec, types);
+	}
+
+	public static function applyMacroWorldFilters(mcom:Context, types:Array<ModuleType>):Void {
 		var tctx = new TyperContext(mcom);
 		// Built once per flush: remove_generic_base, Exceptions.patch_constructors, add_field_inits (over
 		// RenameVars.init of the macro com), minimal_restore - the compilation server's snapshot of what
 		// the filters change, which hxc's reused macro world does not take - and apply_native_paths.
 		var renameLocals = hxc.filters.RenameVars.init(mcom.types, false, false);
 		var patchConstructors:Null<ModuleType->Void> = null;
-		for (m in mods) for (t in m.types) {
+		for (t in types) {
 			var decl:Dynamic = switch (t) { case TClassDecl(c): c; case TEnumDecl(en): en; case TTypeDecl(td): td; case TAbstractDecl(a): a; };
 			if (macroFiltered.exists(decl)) continue;
 			macroFiltered.set(decl, true);
@@ -2186,8 +2195,7 @@ class EvalMacro {
 					// An error the macro com reports marks the interpreter .
 					hxc.context.Context.onMacroWorldError = function() ec.hadError = true;
 					registerContext(ec, com);
-					applyMacroWorldFilters(macroCom, macroCom.modules);
-					EvalMain.addModules(ec, macroCom.modules);
+					flushMacroWorld(ec);
 					// A rebuild must not reset macro-world static state; carry static var values over from
 					// the retired context.
 					if (staleMacroCtx != null) {
@@ -2200,8 +2208,7 @@ class EvalMacro {
 					// Extend the existing context with only the newly loaded modules. Rebuilding the whole
 					// macro context on every macro-load (a suite macro-loads O(N) classes) would be O(N^2)
 					// and exhaust the GC ("Too many heap sections").
-					applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
-					EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+					flushMacroWorld(macroCtx);
 				}
 				lastModuleCount = macroCom.modules.length;
 			} catch (e:Dynamic) { building = false; throw e; }
@@ -2396,8 +2403,7 @@ class EvalMacro {
 		if (macroCom.modules.length > lastModuleCount) {
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.installLazy(macroCom);
-			applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
-			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+			flushMacroWorld(macroCtx);
 			lastModuleCount = macroCom.modules.length;
 		}
 	}
@@ -2699,8 +2705,7 @@ class EvalMacro {
 		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
 		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
 		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
-			applyMacroWorldFilters(macroCom, macroCom.modules.slice(lastModuleCount));
-			EvalMain.addModules(macroCtx, macroCom.modules.slice(lastModuleCount));
+			flushMacroWorld(macroCtx);
 			lastModuleCount = macroCom.modules.length;
 			if (fieldName != null) {
 				var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
@@ -5459,22 +5464,9 @@ class EvalMacro {
 		f.set(EvalHash.hash("superClass"), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalHash.hash("interfaces"), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
 		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
-		// orderedStatics, and without __init__: hxc keeps that as a static where the reference
-		// makes it the class's init (see `init` below).
-		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) if (cf.name != "__init__") encodeClassField(ec, cf, c)])));
+		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
 		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
-		f.set(EvalHash.hash("init"), {
-			var init = c.init;
-			var initField = c.statics.get("__init__");
-			if (init == null && initField != null) {
-				if (initField.expr == null && currentCompiler() != null) hxc.typing.TypeFields.forceFieldBody(currentCompiler(), c, initField);
-				switch (initField.expr != null ? initField.expr.expr : null) {
-					case TFunction(tf): init = tf.expr;
-					case _:
-				}
-			}
-			init == null ? VNull : encodeTypedExpr(ec, init);
-		});
+		f.set(EvalHash.hash("init"), c.init == null ? VNull : encodeTypedExpr(ec, c.init));
 		f.set(EvalHash.hash("overrides"), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
 		// Exclude() makes the class extern and drops its init.
 		f.set(EvalHash.hash("exclude"), VFunction(function(_) {

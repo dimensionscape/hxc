@@ -105,6 +105,8 @@ class Retyper {
 			var fstack = stack.concat(["[Field " + name + "]"]);
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
+			// A static __init__ field cannot be paired.
+			if (isStatic && name == "__init__") fail(fstack, "TODO");
 			var cf = if (!isStatic && name == "new") c.constructor
 				else (isStatic ? c.statics : c.fields).get(name);
 			if (cf == null) fail(fstack, name == "new" ? "Constructor not found" : "Field not found");

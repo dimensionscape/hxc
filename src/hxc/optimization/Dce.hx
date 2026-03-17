@@ -280,8 +280,6 @@ class Dce {
 		for (cf in c.orderedFields) if (hasMeta(DceMeta.MaybeUsed, cf.meta)) markField(c, cf, false);
 		// We always have to keep super classes and implemented interfaces
 		switch (c.init) { case null: case init: expr(init); }
-		var initCf = c.statics.get("__init__");
-		if (initCf != null) markField(c, initCf, true);
 		for (i in c.interfaces) markClass(i.c);
 		switch (c.superClass) { case null: case s: markClass(s.c); }
 		pop();
@@ -970,11 +968,7 @@ class Dce {
 					function loop(stat:Bool, cf:TClassField):Void {
 						if (keepClass || keepField(cf, c, stat)) markField(c, cf, stat);
 					}
-					// Hxc keeps static __init__ as a field; the reference moves it to init, which is only an entry
-					// point for kept or @:keepInit classes
-					for (cf in c.orderedStatics)
-						if (cf.name != "__init__" || keepClass || hasMeta(DceMeta.KeepInit, c.meta))
-							loop(true, cf);
+					for (cf in c.orderedStatics) loop(true, cf);
 					for (cf in c.orderedFields) loop(false, cf);
 					switch (c.constructor) { case null: case cf: loop(false, cf); }
 					switch (c.init) {
@@ -1083,12 +1077,10 @@ class Dce {
 						case cf if (cf != null && !keepField(cf, c, false)): c.constructor = null;
 						case _:
 					}
-					// The __init__ static stands in for the reference's init: it does not count as a class-keeping
-					// field and only survives on a kept class
 					var hasNonExternFields = false;
 					for (cf in c.orderedFields) if (TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
-					if (!hasNonExternFields) for (cf in c.orderedStatics) if (cf.name != "__init__" && TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
-					var hasInit = c.init != null || c.statics.exists("__init__");
+					if (!hasNonExternFields) for (cf in c.orderedStatics) if (TypeFunctions.isPhysicalField(cf)) { hasNonExternFields = true; break; }
+					var hasInit = c.init != null;
 					// Keep a class if it was used or has a used field
 					if (hasMeta(DceMeta.Used, c.meta) || hasNonExternFields) {
 						acc.unshift(mt);

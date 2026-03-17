@@ -31,35 +31,11 @@ class CppGen {
 		ensureDir(base + "/src");
 		ensureDir(base + "/include");
 
-		// Class-id pre-pass: assign every eligible type its id (collision-avoided) before any class is
-		// emitted, so classId()/parent-id lookups are byte-exact synthesize the forwarding constructor
-		// for every subclass that inherits one but declares none, so __new/__alloc and __construct match
-		// the reference. rewrite each override method's signature to match its overridden base (return
-		// type + arg types) so C++ virtual overrides are covariant-clean; must run before add_constructor
-		// and generation. a static `__init__` is the class-init block, not a reflective static method.
-		// hxc's typer leaves it in orderedStatics; move its (non-trivial) body to init here (cpp-only) so
-		// it emits as `void C::__init__()` and is dropped from method/reflection emission, matching the
-		// reference.
-		for (mt in com.types) switch (mt) {
-			case TClassDecl(c):
-				var initCf = null;
-				for (cf in c.orderedStatics) if (cf.name == "__init__") { initCf = cf; break; }
-				if (initCf != null) {
-					switch (initCf.expr) {
-						case {expr: TFunction(tf)}:
-							var trivial = switch (tf.expr.expr) {
-								case TBlock([]) | TConst(_) | TObjectDecl([]): true;
-								case TBlock([{expr: TConst(_)}]): true;
-								case _: false;
-							};
-							if (!trivial && c.init == null) c.init = tf.expr;
-						case _:
-					}
-					c.orderedStatics = c.orderedStatics.filter(function(f) return f != initCf);
-					c.statics.remove("__init__");
-				}
-			case _:
-		}
+		// The class-id pre-pass (buildTypeIds) assigns every eligible type its id (collision-avoided)
+		// before any class is emitted, so classId()/parent-id lookups are stable.
+		// Fix overrides (Cpp only): rewrite each override method's signature to match its overridden base
+		// (return type + arg types) so C++ virtual overrides are covariant-clean; must run before
+		// generation.
 		for (mt in com.types) CppFixOverrides.fixOverrides(com, mt);
 		// Constructor synthesis (the forwarding/inherited/compiler-generated constructors) is done at typer
 		// time by Filters.run -> Typer.ensureInheritedCtor for every platform, so no cpp-gen pass is needed.

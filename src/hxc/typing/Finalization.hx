@@ -177,15 +177,9 @@ class Finalization {
 		function walkClass(p:Path, c:TClass):Void {
 			if (c.superClass != null) loopClass(p, c.superClass.c);
 			for (i in c.interfaces) loopClass(p, i.c);
+			// The init's dependencies (js Std.__init__ touching String.prototype pulls String ahead of
+			// Std).
 			if (c.init != null) walkExpr(p, c.init);
-			// Hxc keeps a static __init__ as a field where the reference moves its body to init at load
-			// time, so the init body walks here for its type dependencies (js Std.__init__ touching
-			// String.prototype pulls String ahead of Std). (walk_class on init).
-			var initCf = c.statics.get("__init__");
-			if (initCf != null && initCf.expr != null) switch (initCf.expr.expr) {
-				case TFunction(fn): walkExpr(p, fn.expr);
-				case _:
-			}
 			// Statics are visited in ascending name order.
 			var names = [for (k in c.statics.keys()) k];
 			names.sort(Reflect.compare);

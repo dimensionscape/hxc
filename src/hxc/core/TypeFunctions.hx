@@ -949,6 +949,13 @@ class TypeFunctions {
 		}
 	}
 
+	// The field a declaration names. A static __init__ is not among the statics, so it is found beside
+	// them.
+	public static function declaredField(c:TClass, name:String, isStatic:Bool):Null<TClassField> {
+		if (isStatic && name == "__init__") return c.initField;
+		return (isStatic ? c.statics : c.fields).get(name);
+	}
+
 	public static function fieldName(f:TFieldAccess):String {
 		return switch (f) {
 			case FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf): cf.name;

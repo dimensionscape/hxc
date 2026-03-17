@@ -1918,42 +1918,11 @@ class GenJS {
 		return hasResolveClass || hasInterfaceCheck || com.isDirectlyUsed(c.meta);
 	}
 
-	// The bodies the reference refuses to record as a class init.
-	static function isTrivialInit(e:TExpr):Bool {
-		return switch (e.expr) {
-			case TBlock([]) | TConst(_) | TObjectDecl([]): true;
-			case TBlock([{expr: TConst(_)}]): true;
-			case _: false;
-		};
-	}
-
 	function generateType(t:ModuleType):Void {
 		switch (t) {
 			case TClassDecl(c):
-				// A trivially empty static init is never recorded as the class init. Only es6 shows the
-				// difference (gen_block_element keeps blocks there), where each one printed a stray empty
-				// `{ }`.
-				if (c.init != null && !isTrivialInit(c.init)) inits.unshift(c.init);
-				// Hxc keeps a static __init__ as a field (the interpreter calls it); the reference moves its
-				// body to init at load time (typeloadFields FKInit), so route it to the init list here and keep
-				// it out of the statics
-				var initCf = c.statics.get("__init__");
-				if (initCf != null && initCf.expr != null) {
-					switch (initCf.expr.expr) {
-						// A trivially empty body is never recorded as the class init, so it contributes no block.
-						// Only es6 shows it (gen_block_element keeps blocks there), where each one printed an empty
-						// `{ }`. The reference's init is the bare body, filtered on its own: reduce_expr turns a
-						// one-element block into that element and only a function body is wrapped back into a block
-						// (sanitize_expr). Es6 keeps init blocks, so difference printed as a `{ }` around Math's and
-						// HxOverrides' inits.
-						case TFunction(fn):
-							var body = switch (fn.expr.expr) { case TBlock([x]): x; case _: fn.expr; };
-							if (!hxc.typing.TypeFields.trivialInits.exists(initCf)) inits.unshift(body);
-						case _:
-					}
-					c.statics.remove("__init__");
-					c.orderedStatics = [for (f in c.orderedStatics) if (f.name != "__init__") f];
-				}
+				// The class init joins the inits.
+				if (c.init != null) inits.unshift(c.init);
 				// Math.__name__ is added only when required (Math is extern); empty Std is skipped
 				var p = sPath(c.path);
 				if (p == "Math") generateClassName(c.path);
@@ -2240,6 +2209,11 @@ class GenJS {
 				ctx.newline();
 			}
 		}
+
+		// Create the output directory first, as haxe does: `--js bin/main.js` in a fresh project must
+		// not fail because bin/ does not exist yet. Both the map and the js land there.
+		var outDir = haxe.io.Path.directory(com.file);
+		if (outDir != "" && !sys.FileSystem.exists(outDir)) sys.FileSystem.createDirectory(outDir);
 
 		// Write the source map or remove a stale one, then flush
 		if (ctx.smap != null)

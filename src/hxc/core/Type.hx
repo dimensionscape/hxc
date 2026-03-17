@@ -416,6 +416,9 @@ class TClass {
 	public var init:Null<TExpr>;
 	public var build:Void->BuildState;
 	public var descendants:Array<TClass>;
+	// A static __init__ (FKInit) is typed but never added to the class. The typer still has to find it, and
+	// this is where; nothing downstream reads it.
+	public var initField:Null<TClassField> = null;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,
 			doc:Documentation, meta:Metadata, params:TypeParams, usings:Array<TClassUsing>, restore:Void->Void,
 			kind:TClassKind, flags:Int, superClass:Null<TClassWithParams>, interfaces:Array<TClassWithParams>,

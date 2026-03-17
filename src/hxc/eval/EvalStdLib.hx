@@ -615,13 +615,15 @@ class EvalStdLib {
 		return [for (n in proto.pnames.keys()) mkStr(EvalHash.revHash(n))];
 	}
 
+	// getClassFields folds the static prototype's name map, prepending: the same ptmap order every
+	// other fold over a name map gives, never the map's own iteration.
 	static function classFieldNames(ctx:EvalContext, proto:VPrototype):Array<EvalValue> {
 		var names = new Map<Int, Bool>();
-		var out:Array<EvalValue> = [];
+		var keys:Array<Int> = [];
 		function add(n:Int):Void {
 			if (!names.exists(n) && !isReflectHidden(proto.ppath, n, true)) {
 				names.set(n, true);
-				out.push(mkStr(EvalHash.revHash(n)));
+				keys.push(n);
 			}
 		}
 		for (n in proto.pnames.keys()) add(n);
@@ -638,7 +640,7 @@ class EvalStdLib {
 				}
 			case _:
 		}
-		return out;
+		return [for (n in ptmapOrderedKeys(keys)) mkStr(EvalHash.revHash(n))];
 	}
 
 	static function instanceFieldNames(proto:VPrototype):Array<EvalValue> {
