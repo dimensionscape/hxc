@@ -3330,7 +3330,11 @@ class Typer {
 		// into any PROPER enclosing sub-range first (an assignment target or call argument
 		// types inside a wrapper whose own node carries no declaration).
 		var childEnclosed = false;
+		// A mark on `super` in `super(...)` is handled as the whole call, so the super constructor answers,
+		// never the bare `super` beneath it.
+		var superCallee = switch (te.expr) { case TCall(c = {expr: TConst(TSuper)}, _): c; case _: null; };
 		TexprTools.iter(function(child) {
+			if (child == superCallee) return;
 			if (displayFound == null && atDisplayPos(child.pos)
 				&& (child.pos.min > te.pos.min || child.pos.max < te.pos.max)) {
 				childEnclosed = true;

@@ -1705,7 +1705,7 @@ class TypeResolve {
 		};
 	}
 
-	static function isPosInfos(t:T):Bool {
+	public static function isPosInfos(t:T):Bool {
 		return switch (t) {
 			case TMono(r): r.type == null ? false : isPosInfos(r.type);
 			case TLazy(f): isPosInfos(TypeFunctions.lazyType(f));

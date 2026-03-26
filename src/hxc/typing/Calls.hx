@@ -660,7 +660,7 @@ class Calls {
 						return AKExpr(te);
 				}
 			case EConst(CIdent("super")):
-				return AKExpr(typeSuperCall(ctx, el, p));
+				return AKExpr(typeSuperCall(ctx, el, p, callee.pos));
 			case EConst(CIdent("__unprotect__")) if (el.length == 1 && el[0].expr.match(EConst(CString(_, _)))):
 				// `__unprotect__("name")` is a Flash-only obfuscation guard; every other target types it
 				// away
@@ -762,7 +762,7 @@ class Calls {
 		};
 	}
 
-	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position):TExpr {
+	static function typeSuperCall(ctx:TyperContext, el:Array<Expr>, p:Position, sp:Position):TExpr {
 		// The current function is checked before the class: a super call from a closure inside the
 		// constructor is out of place even when the class does have a super, and this complaint takes
 		// precedence over the missing-super one.
@@ -807,7 +807,8 @@ class Calls {
 			}
 		}
 		if (r == null) throw (firstError != null ? firstError : new TypingError("No matching super constructor overload", p));
-		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), p);
+		// The TSuper node sits at the `super` identifier (sp), the call at p.
+		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), sp);
 		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
 	}
 
@@ -828,27 +829,25 @@ class Calls {
 		return pfile;
 	}
 
+	// The position infos, typed against a parameter that is a PosInfos (haxe.PosInfos through
+	// typedefs and Null, not any structure with those fields); null for any other parameter. Every
+	// key sits at Position.nullPos, methodName only inside a named field, and a failure to type it
+	// is the call's error.
 	static function makePosInfosArg(ctx:TyperContext, t:T, callp:Position):Null<TExpr> {
-		var isPI = switch (t) {
-			case TType(d, _): d.path.name == "PosInfos" && d.path.pack.length == 1 && d.path.pack[0] == "haxe";
-			case _: switch (TypeFunctions.follow(t)) {
-				case TAnon(an): an.fields.exists("fileName") && an.fields.exists("lineNumber") && an.fields.exists("className") && an.fields.exists("methodName");
-				case _: false;
-			};
-		};
-		if (!isPI) return null;
+		if (!TypeResolve.isPosInfos(t)) return null;
 		function strE(v:String):Expr return new Expr(EConst(CString(v, SDoubleQuotes)), callp);
-		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: callp};
-		var infos = new Expr(EObjectDecl([
+		function fld(name:String, e:Expr):ObjectField return {name: name, expr: e, quotes: NoQuotes, pos: Position.nullPos};
+		var fields = [
 			fld("fileName", strE(posInfosFile(ctx, callp.file))),
 			fld("lineNumber", new Expr(EConst(CInt(Std.string(Position.lineNumber(callp)), null)), callp)),
-			fld("className", strE(ctx.curclass == null ? "" : hxc.core.Globals.sTypePath(ctx.curclass.path))),
-			fld("methodName", strE(ctx.curfield == null ? "" : ctx.curfield.name))
-		]), callp);
+			fld("className", strE(ctx.curclass == null ? "" : hxc.core.Globals.sTypePath(ctx.curclass.path)))
+		];
+		if (ctx.curfield != null && ctx.curfield.name != "") fields.push(fld("methodName", strE(ctx.curfield.name)));
+		var infos = new Expr(EObjectDecl(fields), callp);
 		// Every part of the infos object is built at the call position, so without this the constants
 		// claim a cursor that belongs to the call itself.
 		Typer.synthesized(infos);
-		return try Typer.typeExpr(ctx, infos, WithTypeTools.withType(t)) catch (_:Dynamic) null;
+		return Typer.typeExpr(ctx, infos, WithTypeTools.withType(t));
 	}
 
 	// Pad an abstract-dispatch call (op, cast, array access, resolve) with the call-site PosInfos

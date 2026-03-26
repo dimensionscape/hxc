@@ -567,11 +567,6 @@ class Inline {
 					case TFunction(_): use.reads <= 1 && !use.writes;
 					case _: !use.writes && use.reads + use.called <= 1;
 				});
-			// Every READ of the abstract `this` substitutes wrapped in a TCast at the receiver type;
-			// assignment left-hand sides strip it again (inline_params, TCast when in_assignment). The cast
-			// keeps Texpr.equal from conflating the abstract this with its underlying value in later fusion.
-			inline function absThisCast(e:TExpr):TExpr
-				return isAbsThis ? TypeFunctions.mk(TCast(e, null), av.type, e.pos) : e;
 			if (ctx.com.defines.rawDefined("inline_debug")) Sys.println("[INL] " + av.name
 				+ " reads=" + use.reads + " writes=" + use.writes + " called=" + use.called
 				+ " captured=" + use.captured + " forceTemp=" + forceTemp + " subst=" + substitutable
@@ -579,7 +574,7 @@ class Inline {
 				+ " ptype=" + hxc.core.TPrinting.sTypeStr(param.type)
 				+ " atype=" + hxc.core.TPrinting.sTypeStr(av.type));
 			if (substitutable) {
-				subst.set(av.id, isAbsThis ? absThisCast(param) : param);
+				subst.set(av.id, param);
 			} else {
 				// The bound local takes the SOURCE kind mapped through VUser -> VInlined, and is downgraded
 				// to VGenerated only when it is read at most once and never written. Keeping the VInlined
@@ -589,7 +584,7 @@ class Inline {
 				nv.meta = [for (mm in av.meta) if (mm.name != ":this") mm];
 				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
-				subst.set(av.id, absThisCast(substLocal(nv, p)));
+				subst.set(av.id, substLocal(nv, p));
 				binds.push(TypeFunctions.mk(TVarExpr(nv, param), tvoid, p));
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
@@ -669,15 +664,13 @@ class Inline {
 		// inlined body typed as an open mono or a raw type parameter casts even when the substituted type
 		// equals tret (the cpp output keeps `cast unsafeGet(...)` for Vector.get<String>).
 		var preMapType = result.type;
-		// map_expr_type on every inlined body, not only a parameterized one: inline_default_config always
-		// hands back a map_type (apply_params over an empty list is the identity), and has_params only
-		// gates the unify_raise above it. The traversal is what re-resolves each TField against the
-		// substituted receiver so skipping it for an unparameterized callee left an FAnon field access on
-		// a concrete class behind: `inline function mk(l, t) return new T(t, l.curPos())` binds `l` to an
-		// open structure, and hxc only recovered the FInstance in the analyzer's Cleanup, which is long
-		// past reduce_expression, so hxparse's curPos was never inlined.
+		// Map every inlined body, using the identity map for an unparameterized callee. The traversal
+		// re-resolves TField against its substituted receiver; skipping it can leave FAnon access on a
+		// concrete class until analyzer cleanup, too late for expression reduction and inlining. Only the
+		// call arguments retain their types. Map the receiver with the body; applying parameters gives
+		// anonymous structures fresh identities, so unsafe-cast reduction preserves casts on an inlined
+		// method's receiver.
 		var skipExprs = params.copy();
-		if (ethis != null) skipExprs.push(ethis);
 		result = mapInlinedTypes(mapType != null ? mapType : function(t:T):T return t, skipExprs, result);
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that
 		// equals the expected return, and gets a cast otherwise.
@@ -1159,13 +1152,20 @@ class Inline {
 					// A local-shaped substitution (a body-local clone or an argument temp) reads like any mapped
 					// node: each READ takes the remapped position, not the declaration's. A non-local argument
 					// value keeps its own position verbatim.
-					return switch (se.expr) {
+					var read = switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
-							var read = TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
-							// A read of an i_abstract_this local is cast to its type.
-							TypeFunctions.hasMeta(":this", v.meta) ? TypeFunctions.mk(TCast(read, null), v.type, read.pos) : read;
+							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
 						case _: se;
 					};
+					// A read of an abstract-this local (an abstract member's `this` argument, an abstract
+					// constructor's `var this`) is cast to its declared type, the cast at the read's mapped
+					// position; a caller value then stands inside it verbatim. An assignment's left-hand
+					// side
+					// peels it again. The cast keeps expression equality from conflating the abstract this
+					// with
+					// its underlying value in later fusion.
+					return TypeFunctions.hasMeta(":this", v.meta)
+						? TypeFunctions.mk(TCast(read, null), v.type, keepPositions ? e.pos : inlinePos) : read;
 				}
 				e.expr;
 			case TArray(e1, e2): TArray(m(e1), m(e2));
