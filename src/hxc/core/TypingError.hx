@@ -43,6 +43,22 @@ class ModuleNotFoundError extends TypingError {}
 class CallError extends TypingError {}
 
 /**
+ * WithTypeError: what a raise-or-display inside call arguments raises. Its own class, not a
+ * TypingError, so the recovery arms an Error meets on the way up (the per-statement recovery among
+ * them) let it pass; only the argument loop catches it and annotates it with the parameter.
+ */
+class WithTypeError extends haxe.Exception {
+	public final pos:Position;
+	public final depth:Int;
+
+	public function new(message:String, pos:Position, depth:Int = 0) {
+		super(message);
+		this.pos = pos;
+		this.depth = depth;
+	}
+}
+
+/**
  * A fatal error. An Error that escapes the closure typing a field - the body of a method, the
  * initializer of a variable - is raised again as this, and nothing between that closure and the
  * driver handles it: the error is reported and the compile ends. Its own class rather than a

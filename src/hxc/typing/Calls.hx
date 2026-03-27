@@ -178,7 +178,7 @@ class Calls {
 			if (!ctx.untypedMode) {
 				baseOk = false;
 				var msg = "Array access is not allowed on " + hxc.core.TPrinting.sTypeStr(e1.type);
-				if (ctx.inCallArgs) throw new TypingError(msg, e1.pos) else ctx.com.addDiagnostic(msg, e1.pos);
+				TyperContext.raiseOrDisplayMessage(ctx, msg, e1.pos);
 			}
 		}
 		if (baseOk) try {
@@ -391,7 +391,8 @@ class Calls {
 					// the same way an ordinary argument's does.
 					function restAgainst(t2:T, e2:Expr):TExpr {
 						try return typeAgainst(name, t2, e2)
-						catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er);
+						catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er)
+						catch (er:hxc.core.TypingError.WithTypeError) throw argError(er.message, name, false, er.pos, er.depth);
 					}
 					// Platforms with native rest args pass each argument individually; a lone spread stays
 					// a
@@ -409,7 +410,8 @@ class Calls {
 								}
 							}
 							try TypeUnification.unifyDefault(Typer.unifyMinRaise(ctx, tel), argT)
-							catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er);
+							catch (er:TypingError) throw argError(er.message, name, false, er.pos, er.depth, er)
+							catch (er:hxc.core.TypingError.WithTypeError) throw argError(er.message, name, false, er.pos, er.depth);
 							for (te in tel) out.push(te);
 						} else {
 							for (e in remaining) {
@@ -490,7 +492,7 @@ class Calls {
 				// surplus. A diagnostics run is excluded there and reports the arity error itself.
 				if (hxc.parser.Parser.displayFile != null && ctx.com.displaySpec != null
 					&& ctx.com.displaySpec.indexOf("@diagnostics") < 0)
-					for (k in ei...el.length) try Typer.typeExpr(ctx, el[k], WithTypeTools.value) catch (_:TypingError) {};
+					for (k in ei...el.length) try Typer.typeExpr(ctx, el[k], WithTypeTools.value) catch (_:TypingError) {} catch (_:hxc.core.TypingError.WithTypeError) {};
 				throw new hxc.core.TypingError.CallError("Too many arguments", el[ei].pos);
 			} else {
 				var a = args[ai];
@@ -509,6 +511,16 @@ class Calls {
 						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
 					} else {
 						throw argError(err.message, a.name, a.opt, err.pos, err.depth, err);
+					}
+				} catch (err:hxc.core.TypingError.WithTypeError) {
+					// The same arm, for what raiseOrDisplay raised.
+					if (a.opt && mightSkip) {
+						skip = true;
+						skipped.push({name: a.name, msg: err.message, pos: err.pos, depth: err.depth});
+					} else if (skipped.length > 0) {
+						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
+					} else {
+						throw argError(err.message, a.name, a.opt, err.pos, err.depth);
 					}
 				} catch (ce:hxc.context.Context.ContextError) {
 					// A build the argument forced (Typeload.forceBuildInBody) failing is an Error like any

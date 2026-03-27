@@ -66,8 +66,14 @@ class TyperContext {
 	// same expression be reported.
 	public static function raiseOrDisplay(ctx:TyperContext, msg:String, p:hxc.ast.Position, depth:Int = 0):Void {
 		if (ctx.untypedMode) return;
-		if (ctx.inCallArgs) throw new hxc.core.TypingError(msg, p, depth);
+		if (ctx.inCallArgs) throw new hxc.core.TypingError.WithTypeError(msg, p, depth);
 		ctx.com.addDiagnostic(msg, p, depth);
+	}
+
+	// The same, for a message, and untyped code is no exception.
+	public static function raiseOrDisplayMessage(ctx:TyperContext, msg:String, p:hxc.ast.Position):Void {
+		if (ctx.inCallArgs) throw new hxc.core.TypingError.WithTypeError(msg, p);
+		ctx.com.addDiagnostic(msg, p);
 	}
 }
 

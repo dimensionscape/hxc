@@ -1450,10 +1450,8 @@ class Typer {
 					}
 					if (!ctx.untypedMode) {
 						// Missing arguments, then each extra field at its own name.
-						inline function reportOrRaise(msg:String, pos:Position):Void {
-							if (ctx.inCallArgs) throw new TypingError(msg, pos);
-							ctx.com.addDiagnostic(msg, pos);
-						}
+						inline function reportOrRaise(msg:String, pos:Position):Void
+							TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
 						var missing:Array<String> = [for (arg in scSig.args) if (!arg.opt && !byName.exists(arg.name)) arg.name];
 						// Missing fields are listed in descending name order.
 						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
@@ -1577,10 +1575,8 @@ class Typer {
 					if (expected != null && !ctx.untypedMode) {
 						// Inside call arguments the violation raises so the caller annotates it with the
 						// parameter name; outside it is recorded.
-						inline function reportOrRaise(msg:String, pos:Position):Void {
-							if (ctx.inCallArgs) throw new TypingError(msg, pos);
-							ctx.com.addDiagnostic(msg, pos);
-						}
+						inline function reportOrRaise(msg:String, pos:Position):Void
+							TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
 						var missing:Array<String> = [];
 						for (n in expected.fields.keys()) {
 							var ef = expected.fields.get(n);
@@ -3963,10 +3959,13 @@ class Typer {
 		}
 		if (mt == null) {
 			// In untyped mode an unresolved identifier becomes a TIdent, letting reification builtins such
-			// as $__mk_pos__ (recognized by the interpreter) pass typing. A name that is a package root on
-			// the class path stays unresolved instead, so the enclosing field chain resolves it as a type
-			// path .
-			if (ctx.untypedMode && !isPackageRoot(ctx, i)) {
+			// as $__mk_pos__ (recognized by the interpreter) pass typing.
+			// A dot path's HEAD would normally be resolved with the whole path (through a lookup with no
+			// TIdent arm) before falling back to an identifier. hxc speculates the head through this
+			// function instead, so there a package root on the class path stays unresolved and the path
+			// resolves as a type path; a bare identifier - a pattern variable named like a package, say -
+			// is a TIdent.
+			if (ctx.untypedMode && (identSpeculation == 0 || !isPackageRoot(ctx, i))) {
 			// The magic __this__ is the raw receiver in untyped code: a plain TConst(TThis), deliberately
 			// not the captured `this local, so the js std can name the enclosing object inside a nested
 			// function.
@@ -3991,9 +3990,13 @@ class Typer {
 							]};
 						case _: null;
 					};
-					if (cand != null)
-						throw new TypingError(hxc.core.StringError.stringError(i, cand.names,
+					// Raised inside call arguments, recorded elsewhere, and the expression is then a null of
+					// unknown type.
+					if (cand != null) {
+						TyperContext.raiseOrDisplayMessage(ctx, hxc.core.StringError.stringError(i, cand.names,
 							"Identifier '" + i + "' is not part of " + hxc.core.Globals.sTypePath(cand.path)), p);
+						return AKExpr(TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p));
+					}
 				case _:
 			}
 			// An existing module that defines no type of its own name reports the module error, not an
@@ -5478,16 +5481,14 @@ class Typer {
 				}
 				return TypeFunctions.mk(TReturn(te), monoOrDynamic(ctx, withType, p), p);
 				} catch (err:TypingError) {
-					// Inside call arguments the failure raises so the argument boundary annotates it with the
-					// parameter name .
-					if (ctx.com.isMacro || ctx.inCallArgs) throw err;
+					// check_error records it, inside call arguments too; what has to reach the argument is
+					// a WithTypeError, which this does not catch.
+					if (ctx.com.isMacro) throw err;
 					ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
-					if (StringTools.startsWith(err.message, "Int should be haxe.ds.Option"))
-						ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				} catch (ce:hxc.context.Context.ContextError) {
-					if (ctx.com.isMacro || ctx.inCallArgs) throw ce;
+					if (ctx.com.isMacro) throw ce;
 					ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
@@ -5579,7 +5580,10 @@ class Typer {
 			Sys.println("syntax:" + "
 " + hxc.ast.Ast.Expr.dumpWithPos(bodyExpr));
 		var errorsBefore = ctx.com.errorCount();
-		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:TypingError) {
+		// A local function is conceptually typed under a COPY of its context, so nothing needs restoring
+		// whatever escapes; hxc restores the one it changed, for every escape - a WithTypeError leaving a
+		// failed overload attempt included.
+		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:Dynamic) {
 			reset();
 			throw e;
 		}

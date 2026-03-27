@@ -122,6 +122,9 @@ class EvalMacro {
 			try return f(a)
 			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos)
 			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos)
+			// typingTimer turns a WithTypeError - an error raised while the macro was called from inside
+			// call arguments - into the macro's Error the same way.
+			catch (we:hxc.core.TypingError.WithTypeError) return throwMacroError(ec, we.message, we.pos)
 			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
 		// A new compilation swaps in its own API. Every closure here holds the com it was registered

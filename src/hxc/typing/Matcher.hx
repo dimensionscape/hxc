@@ -2361,8 +2361,10 @@ class Match {
 				case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
 				case _: false;
 			};
+			// A recording unify: outside call arguments the failure is recorded and typing goes on, so a
+			// return of the switch reports it again.
 			if (!skip) try hxc.core.TypeUnification.unifyDefault(tSwitch, tmono)
-				catch (err:hxc.core.TypeUnification.UnifyError) throw new TypingError(hxc.core.TPrinting.betterErrorMessage(err.errors), p);
+				catch (err:hxc.core.TypeUnification.UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(err.errors), p);
 		}
 		var dt = DtCompile.compileEntry(ctx, false, subjects, matchCases, p);
 		var te = TexprConverter.toTexpr(ctx, tSwitch, withType, dt);
