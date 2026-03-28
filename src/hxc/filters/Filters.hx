@@ -1042,15 +1042,18 @@ class Filters {
 		// so macro-side type mutation (e.g. cpp.cppia.HostClasses marking host classes extern) is invisible
 		// to the expression filters.
 		hxc.eval.EvalMacro.runGenerateCallbacks(com);
-		// State: the typed snapshot the compilation server restores on reuse, with the signature-level
-		// dependency registration that must precede it.
-		for (t in newTypes) updateCacheDependencies(com, t);
-		// saveClassState stays gated. It is the half of marks every field CfPostProcessed, and hxc's
-		// destruction still runs expression filters that honour that flag where the reference's pass the
-		// ignore_processed_status those fields need - running it on a one-shot compile makes 77 of the cpp
-		// matrix's sources diverge. The dependency registration above has no such coupling and is what
-		// carries the open-mono binding.
-		if (hxc.context.ServerCache.enabled) for (t in newTypes) saveClassState(com, t);
+		// Save state: the typed snapshot the compilation server restores on reuse, with the signature-level
+		// dependency registration that must precede it. Both run unconditionally, and the registration is
+		// not only about the server: updateCacheDependencies binds any monomorph still OPEN in a signature
+		// to Dynamic. Otherwise a function whose return type was inferred from a Dynamic would keep an open
+		// mono forever - linking deliberately does not bind against Dynamic - and --xml would print it as
+		// <unknown/> instead of <d/>.
+		// Each type registers its dependencies and then saves its state, which marks every field
+		// CfPostProcessed; the later passes that must still reach them pass ignoreProcessedStatus.
+		for (t in newTypes) {
+			updateCacheDependencies(com, t);
+			saveClassState(com, t);
+		}
 		// After the save: onGenerate(f, false).
 		hxc.eval.EvalMacro.runGenerateCallbacks(com, true);
 		destruction(tctx, renameLocals);
