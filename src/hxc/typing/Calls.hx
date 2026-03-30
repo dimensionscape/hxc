@@ -1781,12 +1781,13 @@ class Calls {
 					DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
 				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
 			case _:
-				// Untyped code may call any value; the result is dynamic under ctx.untyped)
+				// Untyped code may call any value, and the result is a fresh monomorph; anywhere else the
+				// callee's type cannot be called, reported at it.
 				if (ctx.untypedMode) {
 					var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
-					makeCall(ctx, ce, args, TDynamic(null), p);
+					makeCall(ctx, ce, args, TypeFunctions.mkMono(), p);
 				} else
-					throw new TypingError("Cannot call a non-function value", p);
+					throw new TypingError(hxc.core.TPrinting.sTypeStr(ce.type) + " cannot be called", ce.pos);
 		};
 	}
 }

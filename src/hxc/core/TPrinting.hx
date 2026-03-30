@@ -418,6 +418,10 @@ class TPrinting {
 
 	// Default tagged-tree format for TypedExprTools.toString.
 	public static function sExprAst(printVarIds:Bool, tabs:String, sType:T->String, e:TExpr):String {
+		// Every string below is computed in a fixed order, because sType numbers a monomorph at its first
+		// evaluation: right to left for arguments and list elements, a concatenation's right operand first,
+		// a list map left to right, and a node's own type after its children (they are an argument of
+		// `tag`).
 		function loop(x:TExpr, extraTabs:String = ""):String return sExprAst(printVarIds, tabs + "\t" + extraTabs, sType, x);
 		function tagArgs(tabs:String, sl:Array<String>):String {
 			return switch (sl) {
@@ -426,57 +430,106 @@ class TPrinting {
 				case _: var t = "\n" + tabs + "\t"; t + sl.join(t);
 			}
 		}
+		// `sl` has been evaluated by the caller; st comes after it.
 		function tag(s:String, sl:Array<String>, ?t:T, extraTabs:String = ""):String {
-			return "[" + s + ":" + sType(t == null ? e.type : t) + "]" + tagArgs(tabs + extraTabs, sl);
+			var st = sType(t == null ? e.type : t);
+			return "[" + s + ":" + st + "]" + tagArgs(tabs + extraTabs, sl);
+		}
+		// A list of printed parts is evaluated last to first.
+		function rev(fs:Array<Void->String>):Array<String> {
+			var out = [for (_ in fs) ""];
+			var i = fs.length - 1;
+			while (i >= 0) { out[i] = fs[i](); i--; }
+			return out;
 		}
 		function varId(v:TVar):Int return printVarIds ? v.id : 0;
-		function local(v:TVar, ?t:T):String return "[Local " + v.name + "(" + varId(v) + "):" + sType(v.type) + (t == null ? "" : ":" + sType(t)) + "]";
+		// Sprintf "[Local %s(%i):%s%s]" evaluates its last argument (the expression type) first.
+		function local(v:TVar, ?t:T):String {
+			var st = t == null ? "" : ":" + sType(t);
+			var vt = sType(v.type);
+			return "[Local " + v.name + "(" + varId(v) + "):" + vt + st + "]";
+		}
 		function moduleType(mt:ModuleType):String return "[TypeExpr " + Globals.sTypePath(TypeFunctions.tPath(mt)) + ":" + sType(e.type) + "]";
 		return switch (e.expr) {
 			case TConst(c): tag("Const", [sConst(c)], e.type);
 			case TLocal(v): local(v, e.type);
-			case TArray(e1, e2): tag("Array", [loop(e1), loop(e2)]);
-			case TBinop(op, e1, e2): tag("Binop", [loop(e1), Ast.sBinop(op), loop(e2)]);
+			case TArray(e1, e2): tag("Array", rev([() -> loop(e1), () -> loop(e2)]));
+			case TBinop(op, e1, e2): tag("Binop", rev([() -> loop(e1), () -> Ast.sBinop(op), () -> loop(e2)]));
 			case TUnop(op, flag, e1): tag("Unop", [Ast.sUnop(op), flag.match(Postfix) ? "Postfix" : "Prefix", loop(e1)]);
 			case TEnumParameter(e1, ef, i): tag("EnumParameter", [loop(e1), ef.name, Std.string(i)]);
 			case TEnumIndex(e1): tag("EnumIndex", [loop(e1)]);
 			case TField(e1, fa):
 				var sfa = switch (fa) {
-					case FInstance(c, tl, cf): tag("FInstance", [sType(TInst(c, tl)), cf.name + ":" + sType(cf.type)], null, "\t");
-					case FStatic(c, cf): tag("FStatic", [Globals.sTypePath(c.path), cf.name + ":" + sType(cf.type)], null, "\t");
-					case FClosure(co, cf): tag("FClosure", [co == null ? "None" : sType(TInst(co.c, co.params)), cf.name + ":" + sType(cf.type)], null, "\t");
-					case FAnon(cf): tag("FAnon", [cf.name + ":" + sType(cf.type)], null, "\t");
+					case FInstance(c, tl, cf):
+						tag("FInstance", rev([() -> sType(TInst(c, tl)), () -> { var ft = sType(cf.type); cf.name + ":" + ft; }]), null, "\t");
+					case FStatic(c, cf):
+						var ft = sType(cf.type);
+						tag("FStatic", [Globals.sTypePath(c.path), cf.name + ":" + ft], null, "\t");
+					case FClosure(co, cf):
+						tag("FClosure", rev([() -> co == null ? "None" : sType(TInst(co.c, co.params)), () -> { var ft = sType(cf.type); cf.name + ":" + ft; }]), null, "\t");
+					case FAnon(cf):
+						var ft = sType(cf.type);
+						tag("FAnon", [cf.name + ":" + ft], null, "\t");
 					case FDynamic(s): tag("FDynamic", [s], null, "\t");
 					case FEnum(en, ef): tag("FEnum", [Globals.sTypePath(en.path), ef.name], null, "\t");
 				};
 				tag("Field", [loop(e1), sfa]);
 			case TTypeExpr(mt): moduleType(mt);
 			case TParenthesis(e1): tag("Parenthesis", [loop(e1)]);
+			// The fields are mapped left to right.
 			case TObjectDecl(fl): tag("ObjectDecl", [for (f in fl) Ast.sObjectKeyName(f.key.name, f.key.quotes) + ": " + loop(f.expr)]);
 			case TArrayDecl(el): tag("ArrayDecl", [for (x in el) loop(x)]);
-			case TCall(e1, el): tag("Call", [loop(e1)].concat([for (x in el) loop(x)]));
-			case TNew(c, tl, el): tag("New", [sType(TInst(c, tl))].concat([for (x in el) loop(x)]));
+			// The arguments first, then the callee.
+			case TCall(e1, el):
+				var args = [for (x in el) loop(x)];
+				var callee = loop(e1);
+				tag("Call", [callee].concat(args));
+			case TNew(c, tl, el):
+				var args = [for (x in el) loop(x)];
+				var ct = sType(TInst(c, tl));
+				tag("New", [ct].concat(args));
+			// The body first, then the arguments.
 			case TFunction(f):
-				function arg(a:TFuncArg):String return tag("Arg", a.c == null ? [local(a.v)] : [local(a.v), loop(a.c)], a.v.type, "\t");
-				tag("Function", [for (a in f.args) arg(a)].concat([loop(f.expr)]));
-			case TVarExpr(v, eo): "[Var " + v.name + "(" + varId(v) + "):" + sType(v.type) + "]" + tagArgs(tabs, eo == null ? [] : [loop(eo)]);
+				function arg(a:TFuncArg):String {
+					var parts = a.c == null ? [local(a.v)] : rev([() -> local(a.v), () -> loop(a.c)]);
+					return tag("Arg", parts, a.v.type, "\t");
+				}
+				var body = loop(f.expr);
+				var args = [for (a in f.args) arg(a)];
+				tag("Function", args.concat([body]));
+			case TVarExpr(v, eo):
+				var sl = eo == null ? [] : [loop(eo)];
+				var vt = sType(v.type);
+				"[Var " + v.name + "(" + varId(v) + "):" + vt + "]" + tagArgs(tabs, sl);
 			case TBlock(el): tag("Block", [for (x in el) loop(x)]);
-			case TIf(econd, e1, e2): tag("If", [loop(econd), "[Then:" + sType(e1.type) + "] " + loop(e1)].concat(e2 == null ? [] : ["[Else:" + sType(e2.type) + "] " + loop(e2)]));
+			// The else branch is printed first, then the then branch, then the condition; each branch
+			// prints its body before its type.
+			case TIf(econd, e1, e2):
+				var se2 = e2 == null ? [] : [{ var b = loop(e2); "[Else:" + sType(e2.type) + "] " + b; }];
+				var se1 = { var b = loop(e1); "[Then:" + sType(e1.type) + "] " + b; };
+				var sc = loop(econd);
+				tag("If", [sc, se1].concat(se2));
 			case TCast(e1, null): tag("Cast", [loop(e1)]);
-			case TCast(e1, mt): tag("Cast", [loop(e1), moduleType(mt)]);
+			case TCast(e1, mt): tag("Cast", rev([() -> loop(e1), () -> moduleType(mt)]));
 			case TThrow(e1): tag("Throw", [loop(e1)]);
 			case TBreak: tag("Break", []);
 			case TContinue: tag("Continue", []);
 			case TReturn(null): tag("Return", []);
 			case TReturn(e1): tag("Return", [loop(e1)]);
-			case TWhile(e1, e2, NormalWhile): tag("While", [loop(e1), loop(e2)]);
-			case TWhile(e1, e2, DoWhile): tag("Do", [loop(e1), loop(e2)]);
-			case TFor(v, e1, e2): tag("For", [local(v), loop(e1), loop(e2)]);
+			case TWhile(e1, e2, NormalWhile): tag("While", rev([() -> loop(e1), () -> loop(e2)]));
+			case TWhile(e1, e2, DoWhile): tag("Do", rev([() -> loop(e1), () -> loop(e2)]));
+			case TFor(v, e1, e2): tag("For", rev([() -> local(v), () -> loop(e1), () -> loop(e2)]));
+			// The catches, then the tried expression; a catch evaluates its body first.
 			case TTry(e1, catches):
-				var sl = [for (c in catches) "Catch " + local(c.v) + tagArgs(tabs + "\t", [loop(c.expr, "\t")])];
+				var sl = [for (c in catches) { var b = tagArgs(tabs + "\t", [loop(c.expr, "\t")]); "Catch " + local(c.v) + b; }];
 				tag("Try", [loop(e1)].concat(sl));
+			// The cases (each case's body first, then its values), the default, then the subject.
 			case TSwitch(e1, cases, eo):
-				var sl = [for (c in cases) tag("Case", [for (x in c.values) loop(x)].concat([loop(c.expr, "\t")]), c.expr.type, "\t")];
+				var sl = [for (c in cases) {
+					var body = loop(c.expr, "\t");
+					var vals = [for (x in c.values) loop(x)];
+					tag("Case", vals.concat([body]), c.expr.type, "\t");
+				}];
 				if (eo != null) sl.push(tag("Default", [loop(eo, "\t")], eo.type, "\t"));
 				tag("Switch", [loop(e1)].concat(sl));
 			case TMeta(m, e1):

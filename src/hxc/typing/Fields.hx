@@ -504,7 +504,8 @@ class Fields {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("typeField");
 		if (ctx.untypedMode) {
 			return try typeFieldInner(ctx, e, i, p, mode, withType, allowResolve, resume)
-			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), TDynamic(null), p));
+			// The untyped fallback is a dynamic field of a fresh monomorph's type.
+			catch (_:FieldNotFoundError) AKExpr(TypeFunctions.mk(TField(e, FDynamic(i)), Typer.spawnMonomorph(ctx, p), p));
 		}
 		return typeFieldInner(ctx, e, i, p, mode, withType, allowResolve, resume);
 	}

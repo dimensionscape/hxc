@@ -148,6 +148,9 @@ class EvalMacro {
 	// order is the order their static delays - class inits included - run in.
 	static function flushMacroWorld(ec:EvalContext):Void {
 		var types = hxc.typing.Finalization.sortTypes(macroCom).types;
+		// The sorted list becomes the macro com's types (its dump walks them in this order). hxc's macro
+		// com keeps its own module list, which the extension slicing reads.
+		macroCom.types = types;
 		applyMacroWorldFilters(macroCom, types);
 		EvalMain.addTypes(ec, types);
 	}
