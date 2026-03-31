@@ -605,9 +605,6 @@ class Filters {
 					var ctor = TypeFunctions.mkField("new", ct, c.pos, Position.nullPos);
 					ctor.kind = Method(MethNormal);
 					ctor.expr = ce;
-					// A constructor synthesized purely to hold field initializers is compiler-generated,
-					// so a subclass with its own empty constructor gets an auto super() call.
-					ctor.meta = [{name: ":compilerGenerated", params: [], pos: Position.nullPos}];
 					ctor;
 				} else {
 					var cf = c.constructor;

@@ -445,13 +445,17 @@ class Inline {
 		// value. Without the scoping, a closure inlined into an already-inlined body (Array.filter's
 		// predicate reading the loop variable) would reposition a value it should keep.
 		var savedInlinerLocals = inlinerLocals;
+		var savedInlineIfCalled = inlineIfCalled;
 		inlinerLocals = new Map();
+		inlineIfCalled = new Map();
 		var r = try doInlineScoped(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure)
 			catch (e:Dynamic) {
 				inlinerLocals = savedInlinerLocals;
+				inlineIfCalled = savedInlineIfCalled;
 				throw e;
 			};
 		inlinerLocals = savedInlinerLocals;
+		inlineIfCalled = savedInlineIfCalled;
 		return r;
 	}
 
@@ -589,8 +593,7 @@ class Inline {
 				// A multiply-read function argument still inlines at its call sites (each a fresh tvar copy);
 				// non-call reads keep the bound local, which local-dce drops when every read was a call.
 				switch (param.expr) {
-					case TFunction(_) if (!use.writes):
-						nv.meta = [{name: ":inlineIfCalled", params: [], pos: p}].concat(nv.meta);
+					case TFunction(_) if (!use.writes): inlineIfCalled.set(nv.id, true);
 					case _:
 				}
 				// An optional argument with a non-null default falls back when the passed value is null
@@ -902,6 +905,11 @@ class Inline {
 	// the distinction.
 	static var inlinerLocals = new Map<Int, Bool>();
 
+	// Inline-if-called is a state of this inline's substitution, not a mark on the variable: a
+	// function argument read more than once stays bound, and only a call through it inlines the
+	// function. Scoped with inlinerLocals.
+	static var inlineIfCalled = new Map<Int, Bool>();
+
 	static function substLocal(nv:TVar, pos:Position):TExpr {
 		inlinerLocals.set(nv.id, true);
 		return TypeFunctions.mk(TLocal(nv), nv.type, pos);
@@ -1212,7 +1220,7 @@ class Inline {
 				// call then collapses in reduce.
 				switch (me1.expr) {
 					case TLocal(v2) if (v2.extra != null && v2.extra.expr != null
-							&& TypeFunctions.hasMeta(":inlineIfCalled", v2.meta)):
+							&& inlineIfCalled.exists(v2.id)):
 						me1 = TexprTools.duplicateTvars(function(x) return x, v2.extra.expr);
 					case _:
 				}
