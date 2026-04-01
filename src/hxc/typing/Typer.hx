@@ -5821,6 +5821,12 @@ class Typer {
 		// An interface never gets the synthesized constructor (it already reported); the struct literal
 		// then reports the missing constructor.
 		if (TypeFunctions.hasClassFlag(c, CInterface)) return;
+		// Reached from a use before the class has installed: install it, and its install builds the
+		// constructor where class initialization ends.
+		if (!TypeFields.hasInstallStarted(c)) {
+			TypeFields.installClassOnDemand(ctx.com, c);
+			if (c.constructor != null) return;
+		}
 		// A superclass must be built before this class's initialization ends. hxc installs modules in load
 		// order, so a @:structInit super from a later module is built here first.
 		if (c.superClass != null) ensureStructInitCtor(ctx, c.superClass.c);

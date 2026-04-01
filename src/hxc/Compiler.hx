@@ -477,7 +477,11 @@ class Compiler {
 				// when there are none - otherwise substitution would mix two sets of parameter nodes and every
 				// generic @:from stops unifying.
 				if (real == c.cf || !isTo || c.cf.params.length > 0) return;
-				if (!hxc.core.TypeFunctions.follow(c.t).match(TMono(_))) return;
+				// A @:to's stored type is the lazy of which reads the impl field itself when forced and is
+				// forced only at PForce or by unifiesToField. Following it here forced it early; only one
+				// already forced can hold a stale snapshot.
+				var unforced = switch (c.t) { case TLazy(r): !r.get().match(LAvailable(_)); case _: false; };
+				if (unforced || !hxc.core.TypeFunctions.follow(c.t).match(TMono(_))) return;
 				switch (hxc.core.TypeFunctions.follow(real.type)) {
 					case TFun(sig): c.t = sig.ret;
 					case _:

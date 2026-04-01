@@ -1331,66 +1331,67 @@ class Calls {
 		// open method params and simply inlines.
 		if (cf.name == "new" || cf.name == "_new") return fa;
 		var host = try FieldAccessTools.getHostClassRaise(fa.host) catch (_:hxc.core.NotFound) return fa;
-		TypeFields.forceFieldBody(ctx.com, host, cf);
-		if (cf.expr == null) return fa;
-		// A return-only parameter infers from the expected type before the monomorphs close unifies fc_ret
-		// with the with-type first).
+		// A return-only parameter infers from the expected type before the monomorphs close. The unify
+		// records a mismatch (raiseOrDisplay).
 		if (withType != null) switch (withType) {
 			case WithType(t, _): switch (TypeFunctions.follow(callType)) {
-				case TFun(sig): try TypeUnification.unifyDefault(sig.ret, t) catch (_:UnifyError) {}
+				case TFun(sig):
+					try TypeUnification.unifyDefault(sig.ret, t)
+					catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), callPos);
 				case _:
 			}
 			case _:
 		}
 		propagateGenericConstraints(ctx, cf.params, monos, hostParamMap(fa));
-		closeGenericMonos(monos);
-		// Maps each type parameter to the raw bound mono (generic_check_const_expr t2), not to its
-		// follow: a typedef argument stays the typedef and Null<X> stays nullable in the specialization.
-		// `follow` expanded `Rec = {field:Rec}` to its structure in the specialized signature, and it
-		// also named a @:genericClassPerMethod container from the followed list while the method name
-		// below already used the raw one.
+		// Record failed constraint closure.
+		for (m in monos) switch (TypeFunctions.follow(m)) {
+			case TMono(r):
+				try TypeUnification.close(r)
+				catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), callPos);
+			case _:
+		}
+		// Each type parameter maps to the raw bound mono, not to its follow: a typedef argument stays the
+		// typedef and Null<X> stays nullable in the specialization.
 		var params = [for (m in monos) resolveGenericMonos(m)];
 		// Names from the raw bound monos (its loop resolves one step per follow_or), so a typedef-typed
 		// parameter keeps its typedef path.
 		var name = cf.name + "_" + genericSuffix(monos);
 		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
-		// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
-		// synthesized class <Class>_<method>_<Params> in its own module, so the specialization is
-		// resolvable by that type path.
-		var target = host;
-		if (stat && TypeFunctions.hasMeta(":genericClassPerMethod", host.meta)) {
-			target = genericMethodContainer(ctx, host, cf, params);
-			name = cf.name;
+		// An existing specialization must take this call's type.
+		function unifyExistingField(cf2:TClassField):Void {
+			try TypeUnification.unifyDefault(cf2.type, callType) catch (e:UnifyError) {
+				ctx.com.addDiagnostic("Cannot create field " + name + " due to type mismatch", callPos);
+				ctx.com.addDiagnostic("... Conflicting field was defined here", cf2.pos, 1);
+				throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), callPos);
+			}
 		}
-		// The class the specialization is ADDED to depends on every module its type parameters come from,
-		// over the raw monos - the followed list has already lost the typedef that names the module. That
-		// dependency is what clears the class's post-processing mark, so a reused module re-snapshots
-		// WITH the new field.
-		setTypeParameterDependencies(target.module, monos);
-		var fields = stat ? target.statics : target.fields;
-		var ordered = stat ? target.orderedStatics : target.orderedFields;
-		var cf2 = fields.get(name);
-		if (cf2 == null) {
-			function subst(t:T):T return substituteGenericMethodType(cf.params, params, t);
-			// Cf2's type from fcc.fc_type, which keeps the host class type parameters symbolic in the
-			// argument types (only the method params and the return mono are resolved). The specialization
-			// is shared across every instantiation of the host, so an argument typed by a class param must
-			// stay generic (T, erased to Dynamic in codegen), never bound to one call site's argument type.
-			// Taking the whole call type would bind such a param (T -> Int), which then mismatches the
-			// cloned body's symbolic argument var and forces a _tmp_ rename in fix_override. So take the
-			// argument types from the raw field signature and only the return type from the inferred call.
-			var sigType = {
-				var callFun = TypeFunctions.follow(resolveGenericMonos(subst(callType)));
-				var rawFun = TypeFunctions.follow(cf.type);
-				switch [callFun, rawFun] {
-					case [TFun(cs), TFun(rs)] if (cs.args.length == rs.args.length):
-						TFun({args: [for (i in 0...rs.args.length) {name: cs.args[i].name, opt: cs.args[i].opt, t: subst(rs.args[i].t)}], ret: cs.ret});
-					case _:
-						resolveGenericMonos(subst(callType));
+		var existing = (stat ? host.statics : host.fields).get(name);
+		if (existing != null) {
+			unifyExistingField(existing);
+			return FieldAccessTools.create(fa.on, existing, fa.host, fa.isInline, fa.pos);
+		}
+		function subst(t:T):T return substituteGenericMethodType(cf.params, params, t);
+		function finalizeField(cf2:TClassField):Void {
+			TypeFields.forceFieldBody(ctx.com, host, cf);
+			if (cf.expr == null) {
+				ctx.com.addDiagnostic("Recursive @:generic function", callPos);
+				cf2.expr = null;
+			} else {
+				var e = Typeload.cloneExpr(cf.expr, subst, new Map());
+				function check(e:TExpr):Void {
+					switch (e.expr) {
+						case TNew(c, _, _) if (c.kind.match(KTypeParameter(_)) && !Typer.isGenericParameter(ctx, c)):
+							ctx.com.addDiagnostic("Only generic type parameters can be constructed", e.pos);
+							ctx.com.addDiagnostic("While specializing this call", callPos);
+						case _:
+							TexprTools.iter(check, e);
+					}
 				}
-			};
-			cf2 = TypeFunctions.mkField(name, sigType, cf.pos, cf.namePos, TypeFunctions.hasClassFieldFlag(cf, CfPublic), stat);
-			cf2.doc = cf.doc;
+				check(e);
+				cf2.expr = e;
+			}
+			cf2.kind = cf.kind;
+			if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic)) TypeFunctions.removeClassFieldFlag(cf2, CfPublic);
 			// These three are PREPENDED to the specialization's metadata: it is not a name the user can
 			// complete on or apply a static extension through, and it is marked as an instance of a
 			// generic. All three carry the call position, not the field's.
@@ -1399,21 +1400,41 @@ class Calls {
 				{name: ":noUsing", params: [], pos: callPos},
 				{name: ":genericInstance", params: [], pos: callPos}
 			].concat(cf.meta);
-			cf2.kind = cf.kind;
-			cf2.expr = Typeload.cloneExpr(cf.expr, subst, new Map());
-			cf2.exprUnoptimized = cf.exprUnoptimized == null ? null : Typeload.cloneExpr(cf.exprUnoptimized, subst, new Map());
-			cf2.flags = cf.flags;
-			// The specialization with a FRESH mk_field and then copies only kind and meta, so it never
-			// inherits `extern`.
-			TypeFunctions.removeClassFieldFlag(cf2, CfExtern);
-			TypeFunctions.removeClassFieldFlag(cf2, CfGeneric);
-			if (stat) TypeFunctions.addClassFieldFlag(cf2, CfStatic);
-			else TypeFunctions.removeClassFieldFlag(cf2, CfStatic);
-			fields.set(name, cf2);
-			ordered.unshift(cf2);
 		}
-		if (target != host)
-			return FieldAccessTools.create(TexprTools.makeStaticThis(target, fa.pos), cf2, FHStatic(target), fa.isInline, fa.pos);
+		// The call's own type, a fresh field.
+		function mkCf2(name:String):TClassField
+			return TypeFunctions.mkField(name, callType, cf.pos, cf.namePos, true, stat);
+		if (stat) {
+			// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
+			// synthesized class <Class>_<method>_<Params> in its own module.
+			if (TypeFunctions.hasMeta(":genericClassPerMethod", host.meta)) {
+				var c = genericMethodContainer(ctx, host, cf, params);
+				// The class the specialization is ADDED to depends on every module its type parameters come
+				// from, over the raw monos.
+				setTypeParameterDependencies(c.module, monos);
+				var cf2 = c.statics.get(cf.name);
+				if (cf2 != null) unifyExistingField(cf2);
+				else {
+					cf2 = mkCf2(cf.name);
+					c.statics.set(cf2.name, cf2);
+					c.orderedStatics.unshift(cf2);
+					finalizeField(cf2);
+				}
+				return FieldAccessTools.create(TexprTools.makeStaticThis(c, callPos), cf2, FHStatic(c), fa.isInline, fa.pos);
+			}
+			setTypeParameterDependencies(host.module, monos);
+			var cf2 = mkCf2(name);
+			host.statics.set(cf2.name, cf2);
+			host.orderedStatics.unshift(cf2);
+			finalizeField(cf2);
+			return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
+		}
+		setTypeParameterDependencies(host.module, monos);
+		var cf2 = mkCf2(name);
+		if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) TypeFunctions.addClassFieldFlag(cf2, CfOverride);
+		host.fields.set(cf2.name, cf2);
+		host.orderedFields.unshift(cf2);
+		finalizeField(cf2);
 		return FieldAccessTools.create(fa.on, cf2, fa.host, fa.isInline, fa.pos);
 	}
 
@@ -1611,6 +1632,10 @@ class Calls {
 				switch (r.type) { case null: t; case some: resolveGenericMonos(some); }
 			case TFun(sig):
 				TFun({args: [for (a in sig.args) {name: a.name, opt: a.opt, t: resolveGenericMonos(a.t)}], ret: resolveGenericMonos(sig.ret)});
+			// A parameterless node is kept itself: a class parameter must stay the type node, which the
+			// override fix's monomorphs find by identity.
+			case TInst(_, []) | TEnum(_, []) | TAbstract(_, []) | TType(_, []):
+				t;
 			case TInst(c, params):
 				TInst(c, [for (p in params) resolveGenericMonos(p)]);
 			case TEnum(e, params):

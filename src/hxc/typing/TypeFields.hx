@@ -109,13 +109,22 @@ class TypeFields {
 		// macro"). Skipping them accepted the class and let the host call a macro whose result then failed
 		// to decode.
 		hxc.eval.EvalMacro.runBuildMacros(ctx);
-		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat
-		// at the top level until the module set is closed (installAndForce stays re-entrancy-safe
-		// for the nested call build macros make).
+		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat at the
+		// top level until the module set is closed (installAndForce stays re-entrancy-safe for the nested
+		// call build macros make).
+		// Flushing a pass drains every pass up to the one asked for, and a module a body loads queues its
+		// class builds and bodies BELOW PForce, so the same flush reaches them: no PForce delay runs until
+		// every body of every module loaded on the way has typed. The rounds hold PForce back until the
+		// module set is closed, and a forced lazy that loads more modules starts another.
 		var n = -1;
-		while (ctx.modules.length != n) {
-			n = ctx.modules.length;
-			installAndForce(ctx);
+		while (true) {
+			while (ctx.modules.length != n) {
+				n = ctx.modules.length;
+				installAndForce(ctx, false);
+			}
+			if (ctx.declAborted) break;
+			tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
+			if (ctx.modules.length == n) break;
 		}
 		// PCheckConstraint delays run after fields are typed; a check can itself type a KExpr argument and
 		// queue more checks, so drain to a fixed point.
@@ -166,7 +175,7 @@ class TypeFields {
 		o.flush();
 	}
 
-	public static function installAndForce(ctx:Context):Void {
+	public static function installAndForce(ctx:Context, flushForce:Bool = true):Void {
 		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
@@ -249,7 +258,7 @@ class TypeFields {
 			}
 		// Cast-signature resolution is scheduled at PForce, so bucket must be drained here, or
 		// PForce/PCheckConstraint/PFinal delays never run at all.
-		tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
+		if (flushForce) tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
 	}
 
 	// An error that escapes the closure typing a field's body or initializer is raised again as a
@@ -416,7 +425,33 @@ class TypeFields {
 		ctx.addDiagnostic(message, pos, depth);
 	}
 
+	// Every class whose install has begun. installClassOnDemand reads it.
+	static var installStarted:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
+
+	public static function hasInstallStarted(c:TClass):Bool return installStarted.exists(c);
+
+	// A @:structInit class's constructor is built where the class init ENDS, and every class of a module is
+	// initialized (PBuildClass) before any body types. hxc installs a module class by class, so a body
+	// forced while an earlier class installs can reach a later class that has not: install that one first,
+	// which also builds its constructor.
+	public static function installClassOnDemand(ctx:Context, c:TClass):Void {
+		if (installStarted.exists(c) || c.module == null || c.module.extra.resolved < 1) return;
+		var entry = ctx.declOfType.get(Context.pathKey(c.path));
+		if (entry == null) return;
+		switch (entry.decl) {
+			case EClass(d):
+				var mw = enterMacroWorld(ctx);
+				try {
+					addImplicitInterfaceFields(c);
+					installClassFields(ctx, c, d, c.module, []);
+				} catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+				leaveMacroWorld(mw);
+			case _:
+		}
+	}
+
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
+		installStarted.set(c, true);
 		// The declaration itself did not resolve, so these fields are never bound (the class init raised
 		// inside the heritage). Typing them anyway would report every member inherited from the type that
 		// failed to load. See Context.declErrored.

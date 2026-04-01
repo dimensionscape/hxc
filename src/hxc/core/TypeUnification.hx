@@ -1406,12 +1406,13 @@ class TypeUnification {
 			switch (TypeFunctions.follow(cf.type)) {
 				case TFun(sig) if (sig.args.length >= 1):
 					var ta = sig.args[0].t;
-					// The reference follow on cf.type resolves the lazily built signature, so an
-					// unhinted cast target reads its inferred return; the recorded pair here can be a
-					// pre-build snapshot whose return is still an open monomorph, which would unify with
-					// anything. Read the built impl field instead, the same live read unifiesFromField
-					// does. (follow cf.type).
-					var snapshotOpen = TypeFunctions.follow(t).match(TMono(_)) && !cf.kind.match(Method(MethMacro));
+					// Following cf.type resolves the lazily built signature, so an unhinted cast target
+					// reads its inferred return; the recorded pair here can be a pre-build snapshot whose
+					// return is still an open monomorph, which would unify with anything. Read the built
+					// impl field instead, the same live read unifiesFromField does.
+					// The entry's own return is asked, not `t`: t is the field's lazy type, forced only at
+					// `map t` below, after the this-type check.
+					var snapshotOpen = TypeFunctions.follow(sig.ret).match(TMono(_)) && !cf.kind.match(Method(MethMacro));
 					var liveCf = snapshotOpen && ab.impl != null ? ab.impl.statics.get(cf.name) : null;
 					var liveSig = liveCf == null ? null : switch (TypeFunctions.follow(liveCf.type)) {
 						case TFun(s2) if (s2.args.length == sig.args.length && liveCf.params.length == cf.params.length): s2;

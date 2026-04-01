@@ -1385,8 +1385,13 @@ class Typeload {
 			for (tp in f.params) {
 				switch (TypeFunctions.follow(tp.type)) {
 					case TInst(pc, tl):
-						var pc2 = TypeFunctions.mkClass(pc.module, pc.path, pc.pos, pc.namePos);
-						pc2.kind = pc.kind;
+						// A copy of the parameter's class that belongs to the instance's module.
+						var pc2 = new TClass(pc.path, genericInstanceModule != null ? genericInstanceModule : pc.module,
+							pc.pos, pc.namePos, pc.isPrivate, pc.doc, pc.meta, pc.params, pc.usings,
+							pc.restore, pc.kind, pc.flags, pc.superClass, pc.interfaces, pc.fields, pc.statics,
+							pc.orderedStatics, pc.orderedFields, pc.dynamicType, pc.arrayAccess, pc.constructor,
+							pc.init, pc.build, pc.descendants);
+						pc2.initField = pc.initField;
 						var t2 = TInst(pc2, tl);
 						gsubst2.push({from: tp.type, to: t2, expr: null});
 						newParams.push(new TypedTypeParam(tp.name, t2, tp.defaultType));
