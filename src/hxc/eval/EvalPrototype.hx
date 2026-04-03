@@ -17,6 +17,7 @@ class EvalPrototype {
 	// An instance method or constructor receives the receiver as the first call argument and binds
 	// it as this; a static method binds its arguments directly.
 	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo, abstractThis:Bool = false):VFunc {
+		EvalEmitter.numberClosures(tf.expr);
 		return function(args:Array<EvalValue>):EvalValue {
 			var offset = isInstance ? 1 : 0;
 			var bound:Array<{vid:Int, value:EvalValue}> = [];
@@ -541,6 +542,7 @@ class EvalPrototype {
 							var prev = ctxEval.env;
 							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
 							try {
+								EvalEmitter.numberClosures(init);
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
 								ctxEval.env = prev;
@@ -573,6 +575,7 @@ class EvalPrototype {
 					var ctxEval = EvalContext.getEval(ctx);
 					var prev = ctxEval.env;
 					var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKMethod(key, EvalHash.key___init__), 0, 0));
+					EvalEmitter.numberClosures(init);
 					try EvalEmitter.eval(ctx, init) catch (e:haxe.Exception) {
 						ctxEval.env = prev;
 						throw e;

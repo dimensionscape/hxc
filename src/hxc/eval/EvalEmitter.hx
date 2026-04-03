@@ -146,7 +146,8 @@ class EvalEmitter {
 					result = eval(ctx, e1);
 				} catch (ex:EvalRunTimeException) {
 					ev.env = savedEnv;
-					ev.exceptionStack = EvalExceptions.exceptionStack(ex);
+					// The exception stack up to this try's environment.
+					ev.exceptionStack = EvalExceptions.buildExceptionStack(ex, savedEnv);
 					result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; });
 				} catch (ex:Dynamic) {
 					// Control-flow signals must reach their own handlers, never a program try/catch.
@@ -1120,11 +1121,36 @@ class EvalEmitter {
 		return snap;
 	}
 
+	// A closure is numbered in the JIT context of the function holding it, from 1, in the order the
+	// JIT compiles subexpressions (left to right, callee before arguments); the closure's own body
+	// starts a fresh count. A method body, a static initializer and an __init__ expression are each
+	// their own context.
+	static var closureOrdinals = new haxe.ds.ObjectMap<TFunc, Int>();
+	static var numberedRoots = new haxe.ds.ObjectMap<TExpr, Bool>();
+
+	public static function numberClosures(root:Null<TExpr>):Void {
+		if (root == null || numberedRoots.exists(root)) return;
+		numberedRoots.set(root, true);
+		var n = 0;
+		function visit(e:TExpr):Void {
+			switch (e.expr) {
+				case TFunction(tf):
+					n++;
+					closureOrdinals.set(tf, n);
+					numberClosures(tf.expr);
+				case _:
+					hxc.core.TexprTools.iter(visit, e);
+			}
+		}
+		visit(root);
+	}
+
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
 		var snap = snapshotCaptures(tf, captured);
+		var ordinal = closureOrdinals.exists(tf) ? closureOrdinals.get(tf) : 0;
 		return function(args:Array<EvalValue>):EvalValue {
-			var env2 = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(0), 0, 0));
+			var env2 = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0));
 			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {

@@ -1306,8 +1306,8 @@ class EvalStdLib {
 	static var cryptoBaseCodes = new haxe.ds.ObjectMap<VInstance, haxe.crypto.BaseCode>();
 	static var nativeTemplates = new haxe.ds.ObjectMap<VInstance, haxe.Template>();
 	static var nativeSockets = new haxe.ds.ObjectMap<VInstance, sys.net.Socket>();
-	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool}>();
-	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>}>();
+	static var fileInputs = new haxe.ds.ObjectMap<VInstance, {input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool, closed:Bool, base:Int, maxPos:Int, read:Bool, closedOffset:Int}>();
+	static var fileOutputs = new haxe.ds.ObjectMap<VInstance, {output:haxe.io.Output, file:Null<sys.io.FileOutput>, closed:Bool, closedPos:Int}>();
 	static var nativeBytesOutputs = new haxe.ds.ObjectMap<VInstance, Map<String, MapEntry>>();
 	// A subclass instance whose super constructor is a native builtin (new StringInput -> super ->
 	// BytesInput's builtin) delegates its native state to the instance the builtin constructed.
@@ -2299,7 +2299,7 @@ class EvalStdLib {
 	static function mkInput(ctx:EvalContext, input:haxe.io.Input, file:Null<sys.io.FileInput>):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileInput"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		fileInputs.set(vi, {input: input, file: file, eof: false});
+		fileInputs.set(vi, {input: input, file: file, eof: false, closed: false, base: 0, maxPos: 0, read: false, closedOffset: 0});
 		return VInstance(vi);
 	}
 
@@ -2326,15 +2326,31 @@ class EvalStdLib {
 			ctx.instancePrototypes.set(EvalHash.hash("sys.io.FileOutput"), proto);
 		}
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		fileOutputs.set(vi, {output: output, file: file});
+		fileOutputs.set(vi, {output: output, file: file, closed: false, closedPos: 0});
 		return VInstance(vi);
 	}
 
-	static function thisFileInput(a:Array<EvalValue>):{input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool} {
+	// The furthest position a read reached since the channel was opened or last seeked, which is
+	// what bounds the channel buffer's refills.
+	static function noteRead(ch:{input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool, closed:Bool, base:Int, maxPos:Int, read:Bool, closedOffset:Int}):Void {
+		if (ch.file == null) return;
+		var p = try ch.file.tell() catch (_:Dynamic) return;
+		ch.read = true;
+		if (p > ch.maxPos) ch.maxPos = p;
+	}
+
+	// A write or seek on a closed output channel flushes into fd -1.
+	static function openFileOutput(a:Array<EvalValue>):{output:haxe.io.Output, file:Null<sys.io.FileOutput>, closed:Bool, closedPos:Int} {
+		var out = thisFileOutput(a);
+		if (out.closed) throw new hxc.eval.EvalExceptions.HostException('Sys_error("Bad file descriptor")');
+		return out;
+	}
+
+	static function thisFileInput(a:Array<EvalValue>):{input:haxe.io.Input, file:Null<sys.io.FileInput>, eof:Bool, closed:Bool, base:Int, maxPos:Int, read:Bool, closedOffset:Int} {
 		return fileInputs.get(thisInstance(a, "FileInput"));
 	}
 
-	static function thisFileOutput(a:Array<EvalValue>):{output:haxe.io.Output, file:Null<sys.io.FileOutput>} {
+	static function thisFileOutput(a:Array<EvalValue>):{output:haxe.io.Output, file:Null<sys.io.FileOutput>, closed:Bool, closedPos:Int} {
 		return fileOutputs.get(thisInstance(a, "FileOutput"));
 	}
 
@@ -2698,8 +2714,10 @@ class EvalStdLib {
 		};
 	}
 
+	// Raising Eof fails with the instance prototype lookup's error when the program never compiled
+	// haxe.io.Eof.
 	static function eof(ctx:EvalContext):Dynamic {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Eof"));
+		var proto = EvalContext.getInstancePrototype(ctx, EvalHash.hash("haxe.io.Eof"), Position.nullPos);
 		return EvalExceptions.exc(ctx, VInstance(new VInstance(proto.pinstanceFields.copy(), proto)));
 	}
 
@@ -2980,9 +2998,12 @@ class EvalStdLib {
 		return stackItems(ctx, [for (env in envs) {pos: EvalExceptions.envPosition(env), kind: env.info.kind}]);
 	}
 
+	// getExceptionStack: the recorded frames reversed. They are recorded innermost first, so the
+	// value is outermost first.
 	public static function exceptionStackValue(ctx:EvalContext):EvalValue {
-		// The recorded frames are already innermost-first, the order a stack value carries.
-		return stackItems(ctx, EvalContext.getEval(ctx).exceptionStack);
+		var frames = EvalContext.getEval(ctx).exceptionStack.copy();
+		frames.reverse();
+		return stackItems(ctx, frames);
 	}
 
 	static function macroStackValue(ctx:EvalContext):EvalValue {
@@ -4372,12 +4393,6 @@ class EvalStdLib {
 			flushStdout();
 			VInt(Sys.command(cmd));
 		}));
-		reg(s, "Sys", "command", vfn(a -> {
-			var cmd = stringOf(arg(a, 0));
-			var args = processArgs(ctx, arg(a, 1));
-			flushStdout();
-			return VInt(args == null ? Sys.command(cmd) : Sys.command(cmd, args));
-		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
 		// Sys.exit raises an exit exception; the compiler marks the compile failed for a non-zero code
@@ -4724,26 +4739,6 @@ class EvalStdLib {
 
 		var inst = ctx.builtins.instanceBuiltins;
 
-		reg(inst, "haxe.Exception", "get_stack", vmethod(a -> {
-			// Cache-once, slicing the constructor-chain frames counted by __skipStack (the eval std
-			// Exception.get_stack, whose interpreted body this builtin shadows).
-			var cached = EvalField.field(ctx, arg(a, 0), EvalHash.keyExceptionStack);
-			if (cached != VNull) cached else {
-				var native = EvalField.field(ctx, arg(a, 0), EvalHash.keyNativeStack);
-				var skip = switch (EvalField.field(ctx, arg(a, 0), EvalHash.hash("__skipStack"))) {
-					case VInt(i): i;
-					case _: 0;
-				};
-				var result = if (skip > 0) switch (native) {
-					case VArray(va):
-						var out = arrayLive(va).slice(skip);
-						VArray(new VArray(out, out.length));
-					case _: native;
-				} else native;
-				EvalField.setField(ctx, arg(a, 0), EvalHash.keyExceptionStack, result, Position.nullPos);
-				result;
-			}
-		}));
 		// String: the receiver and a string argument are `this`, an index is decodeInt and an optional
 		// one defaultInt, each decoded in the native's order.
 		reg(inst, "String", "charAt", vmethod(a -> {
@@ -5579,7 +5574,6 @@ class EvalStdLib {
 			var f = try decodeString(ctx, arg(a, 0)) catch (_:EvalExceptions.EvalRunTimeException) EvalExceptions.excString(ctx, "EvalContext.RunTimeException(_, _, _)");
 			f == "" ? EvalExceptions.excString(ctx, "Failure(\"get_full_path\")") : mkStr(sys.FileSystem.fullPath(f));
 		}));
-		reg(s, "sys.FileSystem", "absolutePath", vfn(a -> mkStr(sys.FileSystem.absolutePath(stringOf(arg(a, 0))))));
 		// Rename: both paths are decoded, the new one first.
 		reg(s, "sys.FileSystem", "rename", vfn(a -> {
 			var newPath = decodeString(ctx, arg(a, 1));
@@ -5639,30 +5633,75 @@ class EvalStdLib {
 			var path = decodeString(ctx, arg(a, 0));
 			mkFileOutput(ctx, try sys.io.File.write(path, fileBinaryFlag(arg(a, 1))) catch (e:Dynamic) openError(ctx, path, 7, e));
 		}));
+		// Close: the channel stays, and closing it again does nothing. The position of a closed channel
+		// is the fd offset its buffer reached: refills of up to 64KB from where the last seek left it,
+		// capped at the file's length.
 		reg(inst, "sys.io.FileInput", "close", vmethod(a -> {
-			var vi = thisInstance(a, "FileInput");
-			fileInputs.get(vi).input.close();
-			fileInputs.remove(vi);
+			var ch = thisFileInput(a);
+			if (ch.closed) return VNull;
+			if (ch.file != null) {
+				var offset = ch.base;
+				if (ch.read) try {
+					ch.file.seek(0, SeekEnd);
+					var size = ch.file.tell();
+					var reached = ch.base + Std.int(Math.ceil((ch.maxPos - ch.base) / 65536)) * 65536;
+					offset = reached < size ? reached : size;
+				} catch (_:Dynamic) {}
+				ch.closedOffset = offset;
+			}
+			ch.input.close();
+			ch.closed = true;
 			VNull;
 		}));
 		reg(inst, "sys.io.FileInput", "eof", vmethod(a -> EvalValueTools.vbool(thisFileInput(a).eof)));
+		// Seek: a destination inside a closed channel's buffer window moves nothing; any other is lseek
+		// on fd -1.
 		reg(inst, "sys.io.FileInput", "seek", vmethod(a -> {
 			var ch = thisFileInput(a);
 			ch.eof = false;
-			ch.file.seek(toInt(arg(a, 1)), fileSeekMode(arg(a, 2)));
+			var pos = toInt(arg(a, 1));
+			if (ch.closed) {
+				var dest = switch (fileSeekMode(arg(a, 2))) {
+					case SeekBegin: pos;
+					case SeekCur: ch.closedOffset + pos;
+					case SeekEnd: throw new hxc.eval.EvalExceptions.HostException('Sys_error("Bad file descriptor")');
+				};
+				if (dest < ch.closedOffset - 65536 || dest > ch.closedOffset)
+					throw new hxc.eval.EvalExceptions.HostException('Sys_error("Bad file descriptor")');
+				return VNull;
+			}
+			ch.file.seek(pos, fileSeekMode(arg(a, 2)));
+			ch.base = ch.file.tell();
+			ch.maxPos = ch.base;
+			ch.read = false;
 			VNull;
 		}));
-		reg(inst, "sys.io.FileInput", "tell", vmethod(a -> VInt(thisFileInput(a).file.tell())));
+		reg(inst, "sys.io.FileInput", "tell", vmethod(a -> {
+			var ch = thisFileInput(a);
+			VInt(ch.closed ? ch.closedOffset : ch.file.tell());
+		}));
+		// readByte: a failed byte read, a closed channel's included, is Eof.
 		reg(inst, "sys.io.FileInput", "readByte", vmethod(a -> {
 			var ch = thisFileInput(a);
-			try VInt(ch.input.readByte()) catch (_:Dynamic) {
+			if (ch.closed) {
+				ch.eof = true;
+				return eof(ctx);
+			}
+			try {
+				var b = ch.input.readByte();
+				noteRead(ch);
+				VInt(b);
+			} catch (_:Dynamic) {
 				ch.eof = true;
 				eof(ctx);
 			}
 		}));
+		// readBytes: the read is not guarded, so a closed channel's Sys_error escapes.
 		reg(inst, "sys.io.FileInput", "readBytes", vmethod(a -> {
 			var ch = thisFileInput(a);
-			var n = try ch.input.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))) catch (_:Dynamic) {
+			if (ch.closed && toInt(arg(a, 3)) > 0)
+				throw new hxc.eval.EvalExceptions.HostException('Sys_error("Bad file descriptor")');
+			var n = if (ch.closed) 0 else try ch.input.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))) catch (_:Dynamic) {
 				ch.eof = true;
 				eof(ctx);
 			}
@@ -5670,24 +5709,36 @@ class EvalStdLib {
 				ch.eof = true;
 				eof(ctx);
 			}
+			noteRead(ch);
 			VInt(n);
 		}));
+		// Close: the channel stays; closing or flushing it again does nothing. Its write cursor is then
+		// its buffer's end, so its position reads the flushed offset plus the 64KB buffer, and every
+		// write or seek flushes into fd -1: Sys_error, which no native catches.
 		reg(inst, "sys.io.FileOutput", "close", vmethod(a -> {
-			var vi = thisInstance(a, "FileOutput");
-			fileOutputs.get(vi).output.close();
-			fileOutputs.remove(vi);
+			var out = thisFileOutput(a);
+			if (out.closed) return VNull;
+			out.closedPos = out.file != null ? (try out.file.tell() catch (_:Dynamic) 0) : 0;
+			out.output.close();
+			out.closed = true;
 			VNull;
 		}));
-		reg(inst, "sys.io.FileOutput", "flush", vmethod(a -> { thisFileOutput(a).output.flush(); VNull; }));
-		reg(inst, "sys.io.FileOutput", "seek", vmethod(a -> {
+		reg(inst, "sys.io.FileOutput", "flush", vmethod(a -> {
 			var out = thisFileOutput(a);
+			if (!out.closed) out.output.flush();
+			VNull;
+		}));
+		reg(inst, "sys.io.FileOutput", "seek", vmethod(a -> {
+			var out = openFileOutput(a);
 			out.file.seek(toInt(arg(a, 1)), fileSeekMode(arg(a, 2)));
 			VNull;
 		}));
-		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> VInt(thisFileOutput(a).file.tell())));
-		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { thisFileOutput(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
-		reg(inst, "sys.io.FileOutput", "writeString", vmethod(a -> { thisFileOutput(a).output.writeString(stringOf(arg(a, 1))); VNull; }));
-		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(thisFileOutput(a).output.writeBytes(
+		reg(inst, "sys.io.FileOutput", "tell", vmethod(a -> {
+			var out = thisFileOutput(a);
+			VInt(out.closed ? out.closedPos + 65536 : out.file.tell());
+		}));
+		reg(inst, "sys.io.FileOutput", "writeByte", vmethod(a -> { openFileOutput(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "sys.io.FileOutput", "writeBytes", vmethod(a -> VInt(openFileOutput(a).output.writeBytes(
 			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "sys.io._Process.NativeProcess", "close", vmethod(a -> {
 			var vi = thisInstance(a, "NativeProcess");

@@ -88,6 +88,17 @@ class EvalExceptions {
 		return out;
 	}
 
+	// The frames from the throwing environment up to the one whose try caught it, that one included, each
+	// at its leave position. No frame is dropped here; building the stack drops only an entry point.
+	public static function buildExceptionStack(ex:EvalRunTimeException, catchEnv:Null<EvalEnv>):Array<{pos:Position, kind:EvalEnvKind}> {
+		var out:Array<{pos:Position, kind:EvalEnvKind}> = [];
+		for (env in ex.envStack) {
+			out.push({pos: envPosition(env), kind: env.info.kind});
+			if (env == catchEnv) break;
+		}
+		return out;
+	}
+
 	public static function exc(ctx:EvalContext, v:EvalValue, ?p:Position):Dynamic {
 		// A builtin throw keeps the null position: the reporting then renders the exception at the catch
 		// position and keeps every stack frame.
