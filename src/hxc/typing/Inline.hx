@@ -40,6 +40,17 @@ class Inline {
 	// self-recursive inline function stays a call.
 	static var cfStack:Array<TClassField> = [];
 
+	// An abstract's implementation method, a member of an extern class and an extern field
+	// inline even where -D no-inline turns inlining off.
+	public static function isForcedInline(c:Null<TClass>, cf:TClassField):Bool {
+		if (c != null) switch (c.kind) {
+			case KAbstractImpl(_): return true;
+			case _:
+		}
+		if (c != null && TypeFunctions.hasClassFlag(c, CExtern)) return true;
+		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasMeta(":extern", cf.meta);
+	}
+
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
@@ -66,7 +77,7 @@ class Inline {
 				// f()`,
 				// the forced ones included.
 				if (!forceInline && !ctx.allowInline) return null;
-				var forced = (c != null && TypeFunctions.hasClassFlag(c, CExtern)) || TypeFunctions.hasMeta(":extern", cf.meta);
+				var forced = isForcedInline(c, cf);
 				if (!forceInline && ctx.com.defines.rawDefined("no_inline") && !forced)
 					return null;
 				// -D hxia narrows that to the callees that actually make an artifact
@@ -183,8 +194,11 @@ class Inline {
 		return TypeFunctions.hasMeta(":optional", v.meta) || TypeFunctions.isNullable(v.type);
 	}
 
+	// An inline method, where inlining is allowed, and either -D no-inline is off or the field is one
+	// is_forced_inline always expands.
 	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
-		return cf.kind.match(Method(MethInline)) && ctx.allowInline && ctx.com.foptimize;
+		return cf.kind.match(Method(MethInline)) && ctx.allowInline && ctx.com.foptimize
+			&& (!ctx.com.defines.rawDefined("no_inline") || isForcedInline(c, cf));
 	}
 
 	// The inliner entry with an explicit callee: class, field, function and receiver expression
