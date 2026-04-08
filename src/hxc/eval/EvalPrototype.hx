@@ -546,11 +546,7 @@ class EvalPrototype {
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
 								ctxEval.env = prev;
-								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
-									Sys.println("[staticinit] " + c.path.name + "." + cf.name + " threw: " + Std.string(e));
-								// A static initializer that fails while building the macro context (a separate,
-								// eagerly initialized interpreter) must not abort the macro; leave it null and go on.
-								if (!ctx.isMacro) throw e;
+								throw e;
 							}
 							EvalContext.popEnvironment(ctx, env);
 						};

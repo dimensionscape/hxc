@@ -152,7 +152,18 @@ class EvalMacro {
 		// com keeps its own module list, which the extension slicing reads.
 		macroCom.types = types;
 		applyMacroWorldFilters(macroCom, types);
-		EvalMain.addTypes(ec, types);
+		// What fails while adding (a static initializer's exception) is catch_exceptions' report, which
+		// as a Fatal_error: the compile ends there. (The had_error skip there is carried by the call's
+		// own skipCall: skipping the add here makes hxc's rebuild-on-missing-prototype start a clean
+		// world.)
+		try EvalMain.addTypes(ec, types) catch (rte:EvalExceptions.EvalRunTimeException) {
+			var info = runtimeMacroError(rte);
+			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos);
+			var stack = uncaughtExceptionStack(rte);
+			var fe = new hxc.core.TypingError.FatalError(stack[0].message, stack[0].pos);
+			fe.callChain = stack;
+			throw fe;
+		}
 	}
 
 	public static function applyMacroWorldFilters(mcom:Context, types:Array<ModuleType>):Void {
