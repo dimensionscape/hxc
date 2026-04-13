@@ -351,7 +351,9 @@ class Optimizer {
 						var ethis = TypeFunctions.mk(TConst(TThis), TypeFunctions.tDynamic, e.pos);
 						var inl = try hxc.typing.Inline.typeInline(ctx, null, cf, fn, ethis, el, rt, e.pos, true) catch (_:Dynamic) null;
 						if (inl == null) reduceExpr(ctx, e) else reduceLoop(ctx, inl);
-					case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (cf.kind.match(Method(MethInline)) && !stackHas(cf)):
+					// The arm is taken only when needsInline holds, so under -D no-inline a static call falls
+					// through to apiInline below (Std.int(1.5) still folds).
+					case TField(_, FStatic(cl, cf) | FInstance(cl, _, cf)) if (hxc.typing.Inline.needsInline(ctx, cl, cf) && !stackHas(cf)):
 						var inl = hxc.typing.Inline.tryInline(ctx, TexprTools.skip(e1), el, e.type, e.pos, false, false);
 						if (inl == null) reduceExpr(ctx, e)
 						else recStackDefault(cf, function() return reduceLoop(ctx, inl), inl);

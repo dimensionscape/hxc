@@ -211,6 +211,29 @@ class Calls {
 	}
 
 	public static function abstractArrayGet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, p:Position):{expr:TExpr, key:TExpr, cf:TClassField} {
+		var acc = findArrayReadAccess(ctx, a, tl, c, ekey, p);
+		return {expr: mkArrayGetCall(ctx, acc, c, ebase, p), key: acc.key, cf: acc.cf};
+	}
+
+	// The read built from an access findArrayReadAccess chose.
+	public static function mkArrayGetCall(ctx:TyperContext, acc:{cf:TClassField, sig:TSignature, key:TExpr}, c:TClass, ebase:TExpr, p:Position):TExpr {
+		var cf = acc.cf;
+		// A non-extern @:arrayAccess field with no expression cannot be called - the typing looped - so
+		// the access falls back to a raw TArray and the loop is REPORTED, unless @:noExpr says the field
+		// is meant to have no body.
+		if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
+			if (!TypeFunctions.hasMeta(":noExpr", cf.meta)) ctx.com.addDiagnostic("Recursive array get method", p);
+			return TypeFunctions.mk(TArray(ebase, acc.key), acc.sig.ret, p);
+		}
+		// The implementation class as a type expression (printed Abstract<A>).
+		var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
+		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+		return makeCall(ctx, fieldExpr, padPosInfos(ctx, acc.sig.args, [ebase, acc.key], p), acc.sig.ret, p);
+	}
+
+	// The first @:arrayAccess getter whose this-type and key fit, with the key cast to its parameter.
+	// It builds nothing.
+	public static function findArrayReadAccess(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ekey:TExpr, p:Position):{cf:TClassField, sig:TSignature, key:TExpr} {
 		for (cf in a.array) {
 			if (cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 			switch (TypeFunctions.follow(arrayAccessFieldType(tl, a, cf))) {
@@ -225,17 +248,7 @@ class Calls {
 						// castOrUnifyRaise, and the failure is what moves the search to the next @:arrayAccess
 						// function.
 						var key = Typer.castOrUnifyRaise(ctx, sig.args[1].t, ekey, p);
-						if (cf.expr == null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) {
-							// A non-extern @:arrayAccess field with no expression cannot be called - the typing looped -
-							// so the access falls back to a raw TArray and the loop is REPORTED, unless @:noExpr says
-							// the field is meant to have no body.
-							if (!TypeFunctions.hasMeta(":noExpr", cf.meta)) ctx.com.addDiagnostic("Recursive array get method", p);
-							return {expr: TypeFunctions.mk(TArray(ebase, key), sig.ret, p), key: key, cf: cf};
-						}
-						// The implementation class as a type expression printed Abstract<A>).
-						var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
-						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
-						return {expr: makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key], p), sig.ret, p), key: key, cf: cf};
+						return {cf: cf, sig: sig, key: key};
 					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
 				case _:
 			}

@@ -991,7 +991,7 @@ class Operators {
 						// keeping the element access foldable by inline_constructors); the key declaration emits
 						// before the base one. (find_array_read_access + maybe_bind_to_temp via
 						// Optimizer.make_constant_expression).
-						var probe = Calls.abstractArrayGet(ctx, a, tl, a.impl, tb, tk, p);
+						var probe = Calls.findArrayReadAccess(ctx, a, tl, a.impl, tk, p);
 						function maybeBind(e:TExpr):{e:TExpr, decl:Null<TExpr>} {
 							var c = hxc.optimization.Optimizer.makeConstantExpression(ctx, e);
 							return if (c != null) {e: c, decl: null} else {
@@ -1001,7 +1001,8 @@ class Operators {
 						}
 						var bk = maybeBind(probe.key);
 						var bb = maybeBind(tb);
-						var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, bb.e, bk.e, p);
+						// With the access found above and the bound key.
+						var get = {expr: Calls.mkArrayGetCall(ctx, {cf: probe.cf, sig: probe.sig, key: bk.e}, a.impl, bb.e, p), key: bk.e, cf: probe.cf};
 						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 						var eop = toTexpr(makeBinop(ctx, sub, get.expr, te2, true, withType, p));
 						var setter:Null<TClassField> = null;
