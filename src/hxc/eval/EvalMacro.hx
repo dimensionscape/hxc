@@ -1355,7 +1355,7 @@ class EvalMacro {
 					}
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-					var result = resolveMacroFn(ec, callee, entry.pos)(values);
+					var result = callMacroFn(com, ec, callee, entry.pos, values, entry.pos);
 					result;
 				case _: throw new TypingError("@:build requires a macro call", callExpr.pos);
 			};
@@ -1593,6 +1593,23 @@ class EvalMacro {
 		return p;
 	}
 
+	// The macro call: -v logs the call before it runs, and the exit once it returns - which it also does,
+	// answering nothing, for the abort a Context.error ends a macro with.
+	static function logMacroCall(com:Context, name:String, p:Position):Void {
+		com.log("Calling macro " + name + " (" + p.file + ":" + Position.lineNumber(p) + ")");
+	}
+
+	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position):EvalValue {
+		var fn = resolveMacroFn(ec, callee, errPos);
+		if (!com.verbose) return fn(values);
+		var t = macroTarget(callee);
+		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
+		logMacroCall(com, name, p);
+		var r = try fn(values) catch (a:hxc.eval.EvalExceptions.MacroAbort) { com.log("Exiting macro " + name); throw a; };
+		com.log("Exiting macro " + name);
+		return r;
+	}
+
 	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
 		var t = macroTarget(callee);
 		if (t == null) throw new TypingError("@:build target must be a static call", p);
@@ -1733,7 +1750,9 @@ class EvalMacro {
 						var field = values[2] == VNull ? null : strOf(values[2]);
 						if (!~/^[A-Za-z_][A-Za-z0-9_.]*$/.match(className)) throw new TypingError("Invalid " + className, e.pos);
 						if (field != null && !~/^[A-Za-z_][A-Za-z0-9_]*$/.match(field)) throw new TypingError("Invalid " + field, e.pos);
+						logMacroCall(com, "haxe.macro.Compiler.addMetadata", e.pos);
 						metaPatchValue(com, values);
+						com.log("Exiting macro haxe.macro.Compiler.addMetadata");
 						curPos = savedPos;
 						continue;
 					}
@@ -1751,7 +1770,9 @@ class EvalMacro {
 						if (values[2] == VNull) values[2] = VTrue;
 						if (values[3] == VNull) values[3] = VTrue;
 						if (values[4] == VNull) values[4] = VFalse;
+						logMacroCall(com, "haxe.macro.Compiler.addGlobalMetadata", e.pos);
 						addGlobalMetadataValue(com, values);
+						com.log("Exiting macro haxe.macro.Compiler.addGlobalMetadata");
 						curPos = savedPos;
 						continue;
 					}
@@ -1778,7 +1799,7 @@ class EvalMacro {
 					if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
 					// Runs through Interp.call_path, whose catch_exceptions answers None to Context.error's Abort
 					// the message is reported and the compilation goes on.
-					try resolveMacroFn(ec, callee, e.pos)(vargs) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
+					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
 					curPos = savedPos;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
@@ -2060,7 +2081,7 @@ class EvalMacro {
 			{name: "version", value: VInt(4307)},
 			{name: "args", value: strArray(com.args)},
 			{name: "debug", value: com.debug ? VTrue : VFalse},
-			{name: "verbose", value: VFalse},
+			{name: "verbose", value: com.verbose ? VTrue : VFalse},
 			{name: "foptimize", value: com.foptimize ? VTrue : VFalse},
 			{name: "platform", value: str(hxc.core.Globals.platformName(com.platform))},
 			{name: "platformConfig", value: platformConfig},
@@ -2907,7 +2928,14 @@ class EvalMacro {
 			var entryEval = EvalContext.getEval(ec);
 			var entryEnv = EvalContext.pushEnvironment(ec, EvalContext.createEnvInfo(true, p, EKEntrypoint, 0, 0));
 			hxc.eval.EvalExceptions.setLeavePosition(entryEnv, p);
-			var result = try fn(args) catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
+			var macroName = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
+			logMacroCall(tctx.com, macroName, p);
+			var result = try fn(args) catch (e:Dynamic) {
+				entryEval.env = entryEnv.parent;
+				if (Std.isOfType(e, hxc.eval.EvalExceptions.MacroAbort)) tctx.com.log("Exiting macro " + macroName);
+				throw e;
+			};
+			tctx.com.log("Exiting macro " + macroName);
 			EvalContext.popEnvironment(ec, entryEnv);
 			expectedTypeStack.pop();
 			// The expression the macro answers with is decoded under the same guard as a build's fields -
@@ -3254,7 +3282,8 @@ class EvalMacro {
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-					resolveMacroFn(ec, callee, callExpr.pos)(values);
+					// Instantiate the macro at the call position.
+					callMacroFn(com, ec, callee, callExpr.pos, values, p);
 				case _: throw new TypingError("genericBuild requires a single expression call parameter", callExpr.pos);
 			};
 			if (result == VNull) {
@@ -3350,7 +3379,7 @@ class EvalMacro {
 			var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 			var values = macroArgs(ec, args, sig == null ? null : sig.args);
 			if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-			var result = resolveMacroFn(ec, callee, p)(values);
+			var result = callMacroFn(com, ec, callee, p, values, p);
 			// A macro that returns nothing leaves a fresh monomorph behind.
 			var ret:T = if (result == VNull) TypeFunctions.mkMono() else {
 				// A MacroType macro may return the legacy Type result as well as a ComplexType one; only a

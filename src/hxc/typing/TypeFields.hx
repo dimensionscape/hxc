@@ -963,6 +963,10 @@ class TypeFields {
 			tctx.typeParams = oldParams;
 			restore();
 		}
+		// -v logs the body (a variable's initializer or a method) as it starts typing, "macro " marking the
+		// macro context's copy.
+		if (tctx.com.verbose && switch (cff.cffKind) { case FFun(_): true; case FVar(_, eo) | FProp(_, _, _, eo): eo != null; })
+			tctx.com.log("Typing " + (tctx.com.isMacro ? "macro " : "") + Context.sTypePath(tctx.curclass.path) + "." + cf.name);
 		try {
 			switch (cff.cffKind) {
 				case FVar(_, eo):

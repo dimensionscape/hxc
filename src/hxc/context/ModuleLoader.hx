@@ -121,6 +121,12 @@ class ModuleLoader {
 		stdinContent = null;
 	}
 
+	public static function parseModuleFile(ctx:Context, src:String, file:String):Package {
+		var pkg = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		ctx.log("Parsed " + file);
+		return pkg;
+	}
+
 	public static function moduleFileContent(ctx:Context, file:String):String {
 		if (ctx.fileContents.length > 0) {
 			for (fc in ctx.fileContents) {
@@ -1395,7 +1401,7 @@ class ModuleLoader {
 				var absoluteCandidate = FileSystem.fullPath(candidate);
 				// Read like any module: a display request's unsaved import.hx is what applies, not the copy
 				// on disk.
-				var pkg = hxc.parser.Parser.parseModuleString(moduleFileContent(ctx, absoluteCandidate), absoluteCandidate, ctx.defines);
+				var pkg = parseModuleFile(ctx, moduleFileContent(ctx, absoluteCandidate), absoluteCandidate);
 				for (decl in pkg.decls) switch (decl.decl) {
 					case EImport(_) | EUsing(_):
 					case _: throw new TypingError("Only import and using is allowed in import.hx files", decl.pos);
@@ -1653,7 +1659,7 @@ class ModuleLoader {
 		// The file resolved, but open_in_bin failed - a directory named like a module, an unreadable
 		// file. Not a missing type.
 		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
-		var pkg:Package = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		var pkg:Package = parseModuleFile(ctx, src, file);
 		reportDisplayParseError(ctx, file);
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
 		// A module whose first package segment another platform owns is refused once its file resolves,

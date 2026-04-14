@@ -619,7 +619,7 @@ class Compiler {
 				case "--macro":
 					ctx.initMacros.push(argValue(args, i++, a));
 				case "-v" | "--verbose":
-					ctx.defines.rawDefine("verbose");
+					ctx.verbose = true;
 				case "--debug" | "-debug":
 					// --debug also raises the debug define
 					ctx.debug = true;
@@ -825,6 +825,17 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		for (pk in ownPackages) ctx.forbiddenPackages.remove(pk);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
+		// The class path and the defines are logged right before the core types load. The defines are
+		// walked in key order, and a define whose value is "1" prints as its bare name.
+		if (ctx.verbose) {
+			ctx.log("Classpath: " + ctx.classPath.join(";"));
+			var keys = [for (k in ctx.defines.values.keys()) k];
+			keys.sort(function(a, b) return a < b ? -1 : (a > b ? 1 : 0));
+			ctx.log("Defines: " + [for (k in keys) {
+				var v = ctx.defines.values.get(k);
+				v == "1" ? k : k + "=" + v;
+			}].join(";"));
+		}
 		try ModuleLoader.initBasicTypes(ctx) catch (e:hxc.core.TypingError) {
 			// The standard library is missing; reported like any other error, and that is the end of the
 			// request.
@@ -1338,12 +1349,15 @@ class Compiler {
 			// The --xml / --json type descriptions are written after typing but before the target
 			// generation, and are not gated on --no-output.
 			function auxiliaryOutput():Void {
+				// The output file is logged first; `--xml hx` (the old hx generator) logs nothing.
 				if (xmlOut != null) {
+					if (xmlOut != "hx") ctx.log("Generating xml: " + xmlOut);
 					var tX = hxc.core.Timer.timer(["generate", "xml"]);
 					hxc.codegen.GenXml.generate(ctx, xmlOut);
 					tX();
 				}
 				if (jsonOut != null) {
+					ctx.log("Generating json : " + jsonOut);
 					var tJ = hxc.core.Timer.timer(["generate", "json"]);
 					var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 					var l = [for (mt in ctx.types) hxc.core.Json.Json.stringOfJson(gen.generateModuleType(mt))];
@@ -1391,11 +1405,15 @@ class Compiler {
 				// the tree generation actually sees. It is part of Generate.generate, which --no-output skips.
 				if (!noOutput) {
 					hxc.debug.Dump.run(ctx);
+					// After the dump and before the generator runs; cppia is the cpp generator and logs as
+					// "cpp".
 					if (platform == Js) {
+						ctx.log("Generating js: " + ctx.file);
 						var tGen = hxc.core.Timer.timer(["generate", "js"]);
 						hxc.generators.GenJS.generate(ctx);
 						tGen();
 					} else if (platform == Cpp) {
+						ctx.log("Generating cpp: " + ctx.file);
 						var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
 						hxc.generators.GenCpp.generate(ctx);
 						tGen();
@@ -1421,9 +1439,6 @@ class Compiler {
 					hxc.eval.EvalMain.runMain(ectx, path);
 				}
 				tInterp();
-			} else if (ctx.defines.rawDefined("verbose") && path != null) {
-				// Compile-status line is a verbose-only aid; haxe prints nothing here on a successful compile.
-				Sys.println("Loaded " + Context.sTypePath(path) + " (" + m.types.length + " types) for " + Globals.platformName(platform));
 			}
 			// --cmd commands run in order after a successful compile; a `cd ` command changes the working
 			// directory, any other spawns a shell command.

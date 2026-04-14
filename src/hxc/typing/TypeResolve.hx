@@ -438,9 +438,10 @@ class TypeResolve {
 		var mt:Null<ModuleType> = try hxc.context.ModuleLoader.loadTypeDef(ctx, {pack: t.tpackage, name: newName}, p) catch (_:ContextError) null;
 		if (mt == null) {
 			// Build it
+			ctx.log("Building proxy for " + Context.sTypePath(path));
 			var file = try hxc.context.ModuleLoader.resolveModuleFile(ctx, path, p) catch (_:ContextError)
 				throw new ContextError("Could not load proxy module " + Context.sTypePath(path) + (t.tpackage.length == 0 ? " (try using absolute path)" : ""), p);
-			var pkg = hxc.parser.Parser.parseModuleString(hxc.context.ModuleLoader.moduleFileContent(ctx, file), file, ctx.defines);
+			var pkg = hxc.context.ModuleLoader.parseModuleFile(ctx, hxc.context.ModuleLoader.moduleFileContent(ctx, file), file);
 			function ident(s:String):Expr return new Expr(EConst(CIdent(s)), p);
 			function connectionHint():TypeHint
 				return {ct: CTPath({tpackage: ["haxe", "remoting"], tname: async ? "AsyncConnection" : "Connection", tparams: [], tsub: null}), pos: np};

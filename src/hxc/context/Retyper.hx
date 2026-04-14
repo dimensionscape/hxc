@@ -156,7 +156,7 @@ class Retyper {
 		var savedState = m.extra.cacheState;
 		try {
 			var src = ModuleLoader.moduleFileContent(ctx, m.extra.file);
-			var pkg = hxc.parser.Parser.parseModuleString(src, m.extra.file, ctx.defines);
+			var pkg = ModuleLoader.parseModuleFile(ctx, src, m.extra.file);
 			m.extra.cacheState = MSUnknown;
 			ctx.currentModule = m;
 			// findType: every declaration must still name a type the module produced.

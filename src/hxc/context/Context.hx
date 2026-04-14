@@ -131,6 +131,17 @@ class Context {
 
 	public var debug:Bool = false;
 
+	public var verbose:Bool = false;
+
+	// Send verbose lines to the request's stdout channel when running under the compilation server.
+	public function log(s:String):Void {
+		if (!verbose) return;
+		if (hxc.Compiler.serverPrint(s + "\n")) return;
+		var out = Sys.stdout();
+		out.writeString(s + "\n");
+		out.flush();
+	}
+
 	/** False under --no-opt: expression reduction is skipped. */
 	public var foptimize:Bool = true;
 
@@ -412,6 +423,7 @@ class Context {
 		c.forwardWarningsTo = this;
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
+		c.verbose = this.verbose;
 		for (name in this.resourceOrder) c.addResource(name, this.resources.get(name));
 		c.initMacros = this.initMacros.copy();
 		// Copy unsaved display contents into the macro world.
