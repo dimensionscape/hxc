@@ -305,6 +305,8 @@ class Context {
 	// insertion.
 	public var delayed:Array<{pass:Int, fns:Array<Void->Void>}> = [];
 
+	public var currentPass:Int = PBuildModule;
+
 	public function delay(pass:Int, f:Void->Void):Void {
 		var idx = 0;
 		while (idx < delayed.length && delayed[idx].pass < pass) idx++;

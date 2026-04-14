@@ -54,7 +54,21 @@ class TypeFields {
 		};
 	}
 
+	// The classes whose build is queued (or has run), and the classes whose build has run through
+	// finalizeClass.
+	static var buildQueued:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
+	static var classBuilt:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
+	// The fields a build bound with a lazy signature, per world; unwrapped once that world's bodies
+	// have typed. The macro world finalizes in the middle of a host flush, and the host's lazies are
+	// not its to force.
+	static var boundSignatures:haxe.ds.ObjectMap<Context, Array<TClassField>> = new haxe.ds.ObjectMap();
+	// HXC_DBG_BUILDS: trace each class build and finalizeClass to stderr.
+	static var traceBuilds:Bool = Sys.getEnv("HXC_DBG_BUILDS") != null;
+
 	public static function resetPerRequest():Void {
+		buildQueued = new haxe.ds.ObjectMap();
+		classBuilt = new haxe.ds.ObjectMap();
+		boundSignatures = new haxe.ds.ObjectMap();
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
 		finalizedModules = new haxe.ds.ObjectMap();
@@ -105,10 +119,6 @@ class TypeFields {
 		// resolveAll has already recorded that raise, would make a macro path that did not resolve print a
 		// second error after the heritage one.
 		if (ctx.declAborted) return;
-		// The macro world runs them too: a @:build met there a hard error ("You cannot use @:build inside a
-		// macro"). Skipping them accepted the class and let the host call a macro whose result then failed
-		// to decode.
-		hxc.eval.EvalMacro.runBuildMacros(ctx);
 		// installAndForce is single-pass; a body it types can load more modules on demand. Repeat at the
 		// top level until the module set is closed (installAndForce stays re-entrancy-safe for the nested
 		// call build macros make).
@@ -126,6 +136,7 @@ class TypeFields {
 			tt("flush:PForce", function() { ctx.flushPass(hxc.context.Context.PForce); return 0; });
 			if (ctx.modules.length == n) break;
 		}
+		unwrapBoundSignatures(ctx);
 		// PCheckConstraint delays run after fields are typed; a check can itself type a KExpr argument and
 		// queue more checks, so drain to a fixed point.
 		var guard = 0;
@@ -176,7 +187,6 @@ class TypeFields {
 	}
 
 	public static function installAndForce(ctx:Context, flushForce:Bool = true):Void {
-		var pending:Array<TClassField> = [];
 		var i = 0;
 		while (i < ctx.modules.length) {
 			// A module loaded on demand after the initial resolveAll pass (e.g. through an import inside a
@@ -186,7 +196,6 @@ class TypeFields {
 			var mres = ctx.modules[i];
 			if (ctx.isMacro && finalizedModules.exists(mres)) { i++; continue; }
 			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
-			tt("installModuleFields", function() { installModuleFields(ctx, mres, pending); return 0; });
 			i++;
 		}
 		// A module's context init runs BEFORE its fields type, which is what puts a wildcard import's
@@ -198,56 +207,23 @@ class TypeFields {
 		// would print a second error after the heritage one.
 		if (ctx.declAborted) return;
 		tt("flush:PBuildModule", function() { ctx.flushPass(hxc.context.Context.PBuildModule); return 0; });
-		// Force any field not reached on demand, then unwrap the lazy back to its concrete
-		// signature so downstream consumers never see a TLazy.
-		tt("forcePendingSignatures", function() {
-		for (cf in pending) {
-			// Under a display request a field that is not the one the cursor is in keeps its lazy, so its
-			// body is typed only if something demands the type. Forcing every signature here types every
-			// body, which is what dms_full_typing switches off.
-			if (!ctx.displayFullTyping && !isDisplayField(cf)) continue;
-			switch (cf.type) {
-				case TLazy(r):
-					try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
+		// Every class is queued when its module is typed. One that reached the module list another way (a
+		// cached module re-added, a generic instance) is queued now, in load order, so it too builds
+		// last-loaded first.
+		for (m in ctx.modules) {
+			if (ctx.isMacro) {
+				if (finalizedModules.exists(m)) continue;
+				finalizedModules.set(m, true);
+			}
+			for (mt in m.types) switch (mt) {
+				case TClassDecl(c): queueClassBuild(ctx, c);
 				case _:
 			}
 		}
-		return 0; });
-		// Bodies route through the queue here (lazy-schedule step b): registration runs newest-module-first
-		// so the PREPENDING delay bucket flushes in the established module x declaration order; a body
-		// typed during the flush can load more modules, which typeAllModules' outer stability loop reaches
-		// on the next pass (bodyTyped/expr keep this idempotent).
-		var mi = ctx.modules.length - 1;
-		while (mi >= 0) {
-			var m = ctx.modules[mi];
-			if (ctx.isMacro) {
-				if (finalizedModules.exists(m)) { mi--; continue; }
-				finalizedModules.set(m, true);
-			}
-			ctx.delay(hxc.context.Context.PTypeField, function() {
-				// Heritage must resolve before bodies force, or a `super(...)` types
-				// against a null superClass. resolveModule is idempotent.
-				hxc.typing.TypeResolve.resolveModule(ctx, m);
-				for (mt in m.types) switch (mt) {
-					// Extern classes stay in the walk: forceFieldBody itself types an
-					// extern INLINE body (haxe.EnumTools) and skips true externs.
-					case TClassDecl(c):
-						// This bucket is the dms_full_typing branch. A display request takes instead, where only the
-						// display field gets a body.
-						var full = ctx.displayFullTyping;
-						for (cf in c.orderedFields) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
-						for (cf in c.orderedStatics) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
-						// An __init__ binds like any field, though it is not one.
-						var initField = c.initField;
-						if (initField != null && initField.expr == null && (full || isDisplayField(initField))) forceFieldBody(ctx, c, initField);
-						if (c.constructor != null && c.constructor.expr == null
-							&& (full || isDisplayField(c.constructor))) forceFieldBody(ctx, c, c.constructor);
-					case _:
-				}
-			});
-			mi--;
-		}
+		// The passes flush in finalization order: the class builds (PBuildClass, each pushing its
+		// bodies), PConnectField, then the bodies (PTypeField), last-built class first.
 		tt("flush:PTypeField(bodies)", function() { ctx.flushPass(hxc.context.Context.PTypeField); return 0; });
+		unwrapBoundSignatures(ctx);
 		// A field with no body never reaches typeFieldBody, so its modifier completion is checked here.
 		// It runs after every body so a body's own answer wins, and after every module so a supertype
 		// declared elsewhere already has its field list.
@@ -371,6 +347,146 @@ class TypeFields {
 		}
 	}
 
+	public static function queueClassBuild(ctx:Context, c:TClass):Void {
+		if (buildQueued.exists(c)) return;
+		buildQueued.set(c, true);
+		ctx.delay(Context.PBuildClass, function() {
+			// Flushing a pass has no handler: a build macro's failure raised out of a queued build goes to
+			// whoever flushed. The finalize's flush is the pass runner, so the compile ends; the macro
+			// world's finalize hands it to the caller of the macro load. A flush made by a load inside a
+			// field body raises it out of that load, an Error the expression's statement records - which
+			// hxc carries as a ContextError, as forceBuildInBody does.
+			var flushedFromBody = ctx.currentPass == Context.PTypeField;
+			try buildClass(ctx, c) catch (e:TypingError) {
+				if (ctx.isMacro || Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
+				if (flushedFromBody) {
+					// A macro module that did not load is a module-not-found of that module (printed "Type not
+					// found : <path>"), never of the class being built.
+					var kind = hxc.context.Context.ContextErrorKind.Other;
+					var tnf = "Type not found : ";
+					if (Std.isOfType(e, hxc.core.TypingError.ModuleNotFoundError) && StringTools.startsWith(e.message, tnf)) {
+						var parts = e.message.substr(tnf.length).split(".");
+						var name = parts.pop();
+						kind = hxc.context.Context.ContextErrorKind.ModuleNotFound({pack: parts, name: name});
+					}
+					throw new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+				}
+				throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+			}
+		});
+	}
+
+	// The build: heritage resolution forces the super's and each interface's build, then the class init
+	// runs the build macros, binds the fields and schedules their bodies (finalizeClass).
+	public static function buildClass(ctx:Context, c:TClass):Void {
+		if (classBuilt.exists(c)) return;
+		var m = c.module;
+		if (m == null) return;
+		classBuilt.set(c, true);
+		buildQueued.set(c, true);
+		if (traceBuilds) Sys.stderr().writeString("[build] " + Context.sTypePath(c.path) + "\n");
+		var mw = enterMacroWorld(ctx);
+		var savedPass = ctx.currentPass;
+		// The build runs in the class's own typer context, so nothing it does moves the requester's current
+		// module.
+		var savedModule = ctx.currentModule;
+		ctx.currentPass = Context.PBuildClass;
+		ctx.currentModule = m;
+		try {
+			TypeResolve.resolveModule(ctx, m);
+			if (c.superClass != null) buildClass(ctx, c.superClass.c);
+			for (i in c.interfaces) buildClass(ctx, i.c);
+			if (!ctx.declAborted) {
+				hxc.eval.EvalMacro.ensureBuilt(ctx, c);
+				var entry = ctx.declOfType.get(Context.pathKey(c.path));
+				if (entry != null) switch (entry.decl) {
+					case EClass(d):
+						addImplicitInterfaceFields(c);
+						var bound = boundSignatures.get(ctx);
+						if (bound == null) boundSignatures.set(ctx, bound = []);
+						installClassFields(ctx, c, d, m, bound);
+						finalizeClass(ctx, c, d);
+					case _:
+				}
+			}
+		} catch (e:Dynamic) {
+			ctx.currentPass = savedPass;
+			ctx.currentModule = savedModule;
+			leaveMacroWorld(mw);
+			throw e;
+		}
+		ctx.currentPass = savedPass;
+		ctx.currentModule = savedModule;
+		leaveMacroWorld(mw);
+	}
+
+	// finalizeClass: one PTypeField delay per bound field, pushed in reverse so the bucket runs them in
+	// declaration order. A macro field in the host was pushed earlier, by the binding itself (forcing the
+	// macro) while the fields bound. What the declarations do not name (a synthesized field) is forced
+	// last.
+	static function finalizeClass(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>):Void {
+		if (traceBuilds) Sys.stderr().writeString("[fin] " + Context.sTypePath(c.path) + "\n");
+		pushRemainingBodies(ctx, c);
+		var full = ctx.displayFullTyping;
+		var byDecl = new haxe.ds.ObjectMap<ClassField, TClassField>();
+		function note(cf:Null<TClassField>):Void {
+			if (cf == null) return;
+			var cff = findFieldDecl(ctx, c, cf);
+			if (cff != null && !byDecl.exists(cff)) byDecl.set(cff, cf);
+		}
+		for (cf in c.orderedFields) { note(cf); for (o in cf.overloads) note(o); }
+		for (cf in c.orderedStatics) { note(cf); for (o in cf.overloads) note(o); }
+		if (c.constructor != null) { note(c.constructor); for (o in c.constructor.overloads) note(o); }
+		note(c.initField);
+		var delayed:Array<TClassField> = [];
+		for (cff in d.dData) {
+			var cf = byDecl.get(cff);
+			if (cf == null || !(full || isDisplayField(cf))) continue;
+			switch (cff.cffKind) {
+				case FVar(_, null) | FProp(_, _, _, null): continue;
+				case _:
+			}
+			if (skipMacroBodyInHost(ctx, cf)) pushFieldBody(ctx, c, cf);
+			else delayed.push(cf);
+		}
+		var i = delayed.length - 1;
+		while (i >= 0) pushFieldBody(ctx, c, delayed[i--]);
+	}
+
+	static function pushFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
+		ctx.delay(Context.PTypeField, function() forceFieldBody(ctx, c, cf));
+	}
+
+	static function pushRemainingBodies(ctx:Context, c:TClass):Void {
+		ctx.delay(Context.PTypeField, function() {
+			var full = ctx.displayFullTyping;
+			for (cf in c.orderedFields) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
+			for (cf in c.orderedStatics) if (cf.expr == null && (full || isDisplayField(cf))) forceFieldBody(ctx, c, cf);
+			// An __init__ binds like any field, though it is not one.
+			var initField = c.initField;
+			if (initField != null && initField.expr == null && (full || isDisplayField(initField))) forceFieldBody(ctx, c, initField);
+			if (c.constructor != null && c.constructor.expr == null
+				&& (full || isDisplayField(c.constructor))) forceFieldBody(ctx, c, c.constructor);
+		});
+	}
+
+	// A lazy signature the bodies did not force is forced now and unwrapped to its concrete type, so
+	// downstream consumers never see a TLazy. Under a display request a field that is not the one the
+	// cursor is in keeps its lazy.
+	static function unwrapBoundSignatures(ctx:Context):Void {
+		var bound = boundSignatures.get(ctx);
+		if (bound == null) return;
+		boundSignatures.remove(ctx);
+		for (cf in bound) {
+			if (!ctx.displayFullTyping && !isDisplayField(cf)) continue;
+			switch (cf.type) {
+				case TLazy(r):
+					try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
+				case _:
+			}
+		}
+	}
+
 	static function installModuleFields(ctx:Context, m:ModuleDef, pending:Array<TClassField>):Void {
 		var mw = enterMacroWorld(ctx);
 		try installModuleFieldsInner(ctx, m, pending) catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
@@ -441,10 +557,13 @@ class TypeFields {
 		switch (entry.decl) {
 			case EClass(d):
 				var mw = enterMacroWorld(ctx);
+				var savedPass = ctx.currentPass;
+				ctx.currentPass = Context.PBuildClass;
 				try {
 					addImplicitInterfaceFields(c);
 					installClassFields(ctx, c, d, c.module, []);
-				} catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+				} catch (e:Dynamic) { ctx.currentPass = savedPass; leaveMacroWorld(mw); throw e; }
+				ctx.currentPass = savedPass;
 				leaveMacroWorld(mw);
 			case _:
 		}
@@ -922,7 +1041,11 @@ class TypeFields {
 
 	static function typeFieldBody(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
 		bodyDepth++;
-		try typeFieldBodyInner(tctx, cf, cff, isStatic, sigType) catch (e:Dynamic) { bodyDepth--; throw e; }
+		var com = tctx.com;
+		var savedPass = com.currentPass;
+		com.currentPass = Context.PTypeField;
+		try typeFieldBodyInner(tctx, cf, cff, isStatic, sigType) catch (e:Dynamic) { bodyDepth--; com.currentPass = savedPass; throw e; }
+		com.currentPass = savedPass;
 		bodyDepth--;
 	}
 

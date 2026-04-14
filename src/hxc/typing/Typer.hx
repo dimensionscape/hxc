@@ -5161,6 +5161,12 @@ class Typer {
 						var c0 = segs0[0].charCodeAt(0);
 						c0 >= "a".code && c0 <= "z".code;
 					};
+					// Back on NotFound alone: a head that did not resolve, or a field the resumed lookup did not
+					// find. An Error on the way - a private field - is the answer, and trying the next module
+					// turned it into that module's miss. A package-led path is resolved whole there
+					// (type_ident_raise raises NotFound for a package), so what hxc's field-by-field walk raised
+					// on it is no answer.
+					if (!baseUnresolved && !lowerLed && !Std.isOfType(err, Fields.FieldNotFoundError)) throw err;
 					// One `with NotFound` wraps the identifier attempt and its field chain, so a field miss on a
 					// capitalized head falls to resolve_dot_path whatever bound the head: tries the module
 					// context, then find_in_unqualified_modules walks the packages, and resolve_in_module puts a
@@ -6024,7 +6030,11 @@ class Typer {
 		try switch (ctx.com.getType({pack: tp.path.tpackage, name: tp.path.tname}, tp.pos, tp.path.tsub)) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx.com, td, tp.pos); hxc.filters.DeprecationCheck.markTypedefConstruction(p); hxc.filters.DeprecationCheck.markTypedefConstruction(tp.pos);
 			case _:
-		} catch (_:Dynamic) {}
+		} catch (e:Dynamic) {
+			// This probe is the type's first load, so an Error that load raised (a build failing at its
+			// flush, is load_instance's to report, not a miss to skip.
+			if (Std.isOfType(e, hxc.context.Context.ContextError) && (cast e : hxc.context.Context.ContextError).kind.match(Other)) throw e;
+		}
 		var t:T;
 		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
 		// request is answered, then re-raise.

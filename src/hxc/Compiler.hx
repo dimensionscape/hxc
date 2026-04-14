@@ -825,6 +825,16 @@ class Compiler {
 		Setup.initPlatform(ctx, platform);
 		for (pk in ownPackages) ctx.forbiddenPackages.remove(pk);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
+		// Run while the arguments are processed: a --display request whose mode does not type the whole
+		// compile (usage, diagnostics and statistics do) defines `display` as that mode, "1" for the empty
+		// one. A JSON payload defines it once its method is known, below.
+		if (ctx.displaySpec != null && !StringTools.startsWith(ctx.displaySpec, "{") && !StringTools.startsWith(ctx.displaySpec, "[")) {
+			var dp = ctx.displaySpec.split("@");
+			// The split cuts at the first @, so the mode keeps any later ones.
+			var smode = dp.length >= 3 ? dp.slice(2).join("@") : "";
+			if (dp.length >= 2 && smode != "usage" && smode != "diagnostics" && smode != "statistics")
+				ctx.defines.rawDefineValue("display", smode != "" ? smode : "1");
+		}
 		// The class path and the defines are logged right before the core types load. The defines are
 		// walked in key order, and a define whose value is "1" prints as its bare name.
 		if (ctx.verbose) {
@@ -897,6 +907,10 @@ class Compiler {
 		{
 			var dparts = displayParts(ctx);
 			var dmode = dparts.length >= 3 ? dparts[2] : "";
+			// `display` is defined as "1" for every JSON method but display/diagnostics;
+			// typer/compiledTypes is no display method.
+			if (ctx.jsonRpcId != null && dparts.length >= 2 && dmode != "diagnostics" && dmode != "compiledTypes")
+				ctx.defines.rawDefineValue("display", "1");
 			if (dmode == "package" && dparts.length >= 2) {
 				var pack = displayFilePackage(ctx, dparts[0]);
 				// A package answer: a string array over the protocol.

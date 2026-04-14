@@ -32,7 +32,12 @@ class TypeResolve {
 	static function resolveModuleEntry(ctx:Context, m:ModuleDef):Void {
 		if (m.extra.resolved >= 1) return;
 		resolving.set(m, true);
-		try resolveModuleInner(ctx, m) catch (e:Dynamic) { resolving.remove(m); throw e; }
+		// Module initialisation and the class build run under PBuildModule / PBuildClass, so a load
+		// made while resolving never flushes.
+		var savedPass = ctx.currentPass;
+		ctx.currentPass = Context.PBuildModule;
+		try resolveModuleInner(ctx, m) catch (e:Dynamic) { ctx.currentPass = savedPass; resolving.remove(m); throw e; }
+		ctx.currentPass = savedPass;
 		resolving.remove(m);
 	}
 

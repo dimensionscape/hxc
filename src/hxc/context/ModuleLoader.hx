@@ -760,6 +760,12 @@ class ModuleLoader {
 
 		if (keepTypes) m.types = m.types.concat(decls) else m.types = decls;
 		applyGlobalMetadata(ctx, m, decls);
+		// Every class's build is queued as its declaration is reached, an abstract's implementation
+		// included (it is declared right after the abstract).
+		for (mt in decls) switch (mt) {
+			case TClassDecl(c): hxc.typing.TypeFields.queueClassBuild(ctx, c);
+			case _:
+		}
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
 		// Build import alias typedefs before their first use so display requests on the alias name have
 		// an answer.
@@ -1607,7 +1613,20 @@ class ModuleLoader {
 		return r;
 	}
 
+	// A load made while a field body types flushes the passes up to PConnectField, so what it loaded builds
+	// right there and its bodies are the next to type.
 	public static function loadModuleOpt(ctx:Context, m:Path, p:Position):Null<ModuleDef> {
+		var r = loadModuleOptInner(ctx, m, p);
+		if (r != null && ctx.currentPass == Context.PTypeField) {
+			// The delays run with their own contexts; the loader's current module is its own.
+			var savedModule = ctx.currentModule;
+			ctx.flushPass(Context.PConnectField);
+			ctx.currentModule = savedModule;
+		}
+		return r;
+	}
+
+	static function loadModuleOptInner(ctx:Context, m:Path, p:Position):Null<ModuleDef> {
 		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
@@ -1998,7 +2017,8 @@ class ModuleLoader {
 				// shadowing the top-level std `Type` class (`Type.enumEq` -> crash). Matches the module name,
 				// so a module
 				// `pack/Name.hx` is only a hit when it actually declares the type `Name`.
-				var m = try loadModuleOpt(ctx, {pack: tryPack, name: name}, p) catch (_:ContextError) null;
+				var tp:Path = {pack: tryPack, name: name};
+				var m = try loadModuleOpt(ctx, tp, p) catch (e:ContextError) { if (missFor(e, tp)) null else throw e; };
 				if (m != null) {
 					var r = findTypeInModuleOpt(m, name);
 					if (r != null) return r;
@@ -2017,15 +2037,24 @@ class ModuleLoader {
 		return findTypeInModuleOpt(m, sub);
 	}
 
-	// Resolves through find_type_in_module, which at requires `snd infos.path = tname` - an EXACT
-	// type-name match. A module that declares no type of the requested name does not answer here at
-	// all; it fails and the unqualified walk carries on outward, which is how a name that also happens
-	// to be a module file name still reaches the standard library. There is no first-declared-type
-	// fallback anywhere in the reference. Having one meant `pack/Type.hx`, declaring only `Foo` and
-	// `Bar`, claimed the name `Type` for `Foo` and made the stdlib Type unreachable from anywhere
-	// inside `pack`.
+	// An unqualified type resolves only through an EXACT type-name match in the module. A module that
+	// declares no type of the requested name does not answer here at all; it fails and the unqualified walk
+	// carries on outward, which is how a name that also happens to be a module file name still reaches the
+	// standard library. There is no first-declared-type fallback: with one, `pack/Type.hx`, declaring only
+	// `Foo` and `Bar`, would claim the name `Type` for `Foo` and make the stdlib Type unreachable from
+	// anywhere inside `pack`.
+	// The walk over the packages catches the module-not-found error for the path it just tried and nothing
+	// else: an error the load raised - a build that failed at the load's flush, a file that does not parse
+	// - is the answer, not a miss.
+	static function missFor(e:ContextError, mp:Path):Bool {
+		return switch (e.kind) {
+			case ModuleNotFound(q): q.name == mp.name && samePack(q.pack, mp.pack);
+			case _: false;
+		};
+	}
+
 	static function tryLoadModuleMain(ctx:Context, mp:Path, p:Position):Null<ModuleType> {
-		var m = try loadModuleOpt(ctx, mp, p) catch (_:ContextError) return null;
+		var m = try loadModuleOpt(ctx, mp, p) catch (e:ContextError) { if (missFor(e, mp)) return null; throw e; };
 		if (m == null) return null;
 		return findTypeInModuleOpt(m, mp.name);
 	}

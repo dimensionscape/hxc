@@ -633,6 +633,10 @@ class Typeload {
 		try {
 			return ctx.getType(path, p, sub);
 		} catch (e:Dynamic) {
+			// Only a miss tries the other routes: an Error the load raised (a build that failed at the
+			// load's
+			// flush) is the answer.
+			if (Std.isOfType(e, ContextError) && (cast e : ContextError).kind.match(Other)) throw e;
 			if (path.pack.length == 0 && sub == null && ctx.currentModule != null) {
 				var r = hxc.context.ModuleLoader.resolveBareType(ctx, ctx.currentModule, path.name, p);
 				if (r != null) return r;
