@@ -419,6 +419,14 @@ class TClass {
 	// A static __init__ (FKInit) is typed but never added to the class. The typer still has to find it, and
 	// this is where; nothing downstream reads it.
 	public var initField:Null<TClassField> = null;
+	// Hxc's own build bookkeeping for this class (TypeResolve's build state and field checks,
+	// TypeFields' install). It lives on the class: in static maps keyed by the class, the compilation
+	// server kept every request's classes - and each request's whole typed world behind them - alive
+	// for the life of the process.
+	public var hxcBuildState:Int = 0;
+	public var hxcInstallStarted:Bool = false;
+	public var hxcPropAccessorsChecked:Bool = false;
+	public var hxcFieldChecksDone:Bool = false;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,
 			doc:Documentation, meta:Metadata, params:TypeParams, usings:Array<TClassUsing>, restore:Void->Void,
 			kind:TClassKind, flags:Int, superClass:Null<TClassWithParams>, interfaces:Array<TClassWithParams>,

@@ -529,9 +529,9 @@ class TypeResolve {
 		// and forceBuild - so the state belongs to the build, not to one of its callers: forcing a super
 		// the loop is already resolving must not run the heritage twice and trip `superClass != null` as
 		// "Cannot extend several classes".
-		var st0 = buildState.get(c);
+		var st0 = c.hxcBuildState;
 		if (st0 == BUILDING || st0 == BUILT) return;
-		buildState.set(c, BUILDING);
+		c.hxcBuildState = BUILDING;
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f in d.dFlags) switch (f) {
@@ -597,7 +597,7 @@ class TypeResolve {
 		// no-op. This is the same one-shot: an abstract's implementation is reached both from its
 		// abstract and from the ordinary class path, and without the check whichever ran second derived
 		// every signature a second time.
-		if (buildState.get(c) != BUILT) resolveClassFields(ctx, c, d, p);
+		if (c.hxcBuildState != BUILT) resolveClassFields(ctx, c, d, p);
 		// A build that got past its heritage and fields forces the class's own type parameters here, so a
 		// constraint naming an unknown type reports at the end of this build - before any later
 		// declaration is built - and never at all for a build that raised earlier.
@@ -643,21 +643,17 @@ class TypeResolve {
 		return null;
 	}
 
-	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro rewrites the
-	// field list but not the heritage, so it re-runs this without redoing extends. the build protocol:
-	// while a class is being built its build reports `Building [c]` so a re-entrant request is a NO-OP,
-	// and on completion it is replaced by `Built` so later requests do nothing at all. hxc resolves fields
-	// through a plain pass instead, with no such state, so anything that wanted to force a class early had
-	// to re-run the pass and disturb the schedule for every other class. Track the same two states here.
-	// Only buildClassFields consults them; the ordinary resolution path just records that it happened, and
-	// an explicit re-resolution after a @:build macro rewrites the definition deliberately bypasses this.
-	static var buildState = new haxe.ds.ObjectMap<TClass, Int>();
-	// Classes whose property accessors have already been checked. Same never-reset pattern as
-	// buildState: a TClass instance belongs to one compile, so a stale entry cannot collide.
-	static var propAccessorsChecked = new haxe.ds.ObjectMap<TClass, Bool>();
-	// The same, for the post-heritage field collision checks. resolveClassFields runs more than
-	// once for some classes and only its IDEMPOTENT work may repeat.
-	static var fieldChecksDone = new haxe.ds.ObjectMap<TClass, Bool>();
+	// Resolve only the field signatures of an already-heritage-resolved class. A @:build macro rewrites
+	// the field list but not the heritage, so it re-runs this without redoing extends.
+	// The build protocol: while a class is being built a re-entrant request is a NO-OP, and once it is
+	// built later requests do nothing at all. Without that state anything that wants to force a class
+	// early has to re-run the pass and disturb the schedule for every other class.
+	// Track the two states here. Only buildClassFields consults them; the ordinary resolution path just
+	// records that it happened, and an explicit re-resolution after a @:build macro rewrites the
+	// definition deliberately bypasses this.
+	// A class's build state, whether its property accessors and post-heritage field checks ran:
+	// TClass.hxcBuildState / hxcPropAccessorsChecked / hxcFieldChecksDone.
+	// resolveClassFields runs more than once for some classes and only its IDEMPOTENT work may repeat.
 	static inline var BUILDING = 1;
 	static inline var BUILT = 2;
 
@@ -670,7 +666,7 @@ class TypeResolve {
 	 * Iterator.next lookup, ...) is what lets declarations build in any order.
 	 */
 	public static function forceBuild(ctx:Context, c:TClass):BuildState {
-		var st = buildState.get(c);
+		var st = c.hxcBuildState;
 		if (st == BUILT) return Built;
 		if (st == BUILDING) return Building([c]);
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
@@ -682,11 +678,11 @@ class TypeResolve {
 				try resolveClass(ctx, c, d, entry.pos)
 				catch (e:Dynamic) {
 					ctx.currentModule = savedModule;
-					buildState.set(c, BUILT);
+					c.hxcBuildState = BUILT;
 					throw e;
 				}
 				ctx.currentModule = savedModule;
-				buildState.set(c, BUILT);
+				c.hxcBuildState = BUILT;
 				return Built;
 			case _:
 				return Built;
@@ -694,18 +690,18 @@ class TypeResolve {
 	}
 
 	public static function markClassBuilt(c:TClass):Void {
-		buildState.set(c, BUILT);
+		c.hxcBuildState = BUILT;
 	}
 
 	// Make sure the class is set up before its fields are read. Returns true when this call did the
 	// work.
 	public static function buildClassFields(ctx:Context, c:TClass, p:Position):Bool {
-		if (buildState.exists(c)) return false;
+		if ((c.hxcBuildState != 0)) return false;
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return false;
 		switch (entry.decl) {
 			case EClass(d):
-				buildState.set(c, BUILDING);
+				c.hxcBuildState = BUILDING;
 				var savedModule = ctx.currentModule;
 				if (c.module != null) ctx.currentModule = c.module;
 				// A typing error raised while binding the fields comes OUT of the build, and the
@@ -719,13 +715,13 @@ class TypeResolve {
 				// raised, so a second caller does not rebuild and re-raise.
 				try resolveClassFields(ctx, c, d, p) catch (e:Dynamic) {
 					ctx.currentModule = savedModule;
-					buildState.set(c, BUILT);
+					c.hxcBuildState = BUILT;
 					if (hxc.parser.ParserError.isParseFailure(e)) throw e;
 					hxc.core.TypingError.FatalError.pass(e);
 					if (Std.isOfType(e, ContextError) || Std.isOfType(e, hxc.core.TypingError)) throw e;
 				}
 				ctx.currentModule = savedModule;
-				buildState.set(c, BUILT);
+				c.hxcBuildState = BUILT;
 				return true;
 			case _:
 				return false;
@@ -945,8 +941,8 @@ class TypeResolve {
 		if (TypeFunctions.hasMeta(":libType", c.meta)) return;
 		// The same wait as the field verdicts: the checks are for the fields a build leaves.
 		if (hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) return;
-		if (fieldChecksDone.exists(c)) return;
-		fieldChecksDone.set(c, true);
+		if (c.hxcFieldChecksDone) return;
+		c.hxcFieldChecksDone = true;
 		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
 		// The half ModuleLoader cannot see: for a static field the superclass chain's instance fields
 		// collide too. Skipped when the same-class half has already reported, since one duplicate is
@@ -1058,8 +1054,8 @@ class TypeResolve {
 		// The signature LINKING below is idempotent, so it does not matter that an abstract impl resolves
 		// its fields more than once; the accessor COMPLAINTS are not, so each check runs exactly once per
 		// property declaration.
-		var reportAccessors = !propAccessorsChecked.exists(c);
-		propAccessorsChecked.set(c, true);
+		var reportAccessors = !c.hxcPropAccessorsChecked;
+		c.hxcPropAccessorsChecked = true;
 		var pendingAccessorErrors:Array<{at:Int, items:Array<{msg:String, pos:Position}>}> = [];
 		function checkAccessor(accName:String, propName:String, ownColl:StringMap<TClassField>, otherColl:StringMap<TClassField>, propIsStatic:Bool, propPos:Position, isRead:Bool):Null<{msg:String, pos:Position}> {
 			if (isExtern || isLib || TypeFunctions.hasClassFlag(c, CInterface)) return null;

@@ -542,16 +542,14 @@ class TypeFields {
 	}
 
 	// Every class whose install has begun. installClassOnDemand reads it.
-	static var installStarted:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
-
-	public static function hasInstallStarted(c:TClass):Bool return installStarted.exists(c);
+	public static function hasInstallStarted(c:TClass):Bool return c.hxcInstallStarted;
 
 	// A @:structInit class's constructor is built where the class init ENDS, and every class of a module is
 	// initialized (PBuildClass) before any body types. hxc installs a module class by class, so a body
 	// forced while an earlier class installs can reach a later class that has not: install that one first,
 	// which also builds its constructor.
 	public static function installClassOnDemand(ctx:Context, c:TClass):Void {
-		if (installStarted.exists(c) || c.module == null || c.module.extra.resolved < 1) return;
+		if (c.hxcInstallStarted || c.module == null || c.module.extra.resolved < 1) return;
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		switch (entry.decl) {
@@ -570,7 +568,7 @@ class TypeFields {
 	}
 
 	static function installClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, m:ModuleDef, pending:Array<TClassField>):Void {
-		installStarted.set(c, true);
+		c.hxcInstallStarted = true;
 		// The declaration itself did not resolve, so these fields are never bound (the class init raised
 		// inside the heritage). Typing them anyway would report every member inherited from the type that
 		// failed to load. See Context.declErrored.

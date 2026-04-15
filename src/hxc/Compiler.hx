@@ -200,6 +200,13 @@ class Compiler {
 	}
 
 
+	// HXC_DBG_STATICCENSUS=N: a static-root census every N requests (HeapCensus.staticCensus).
+	static var censusCount = 0;
+	static var censusEvery:Int = {
+		var v = Sys.getEnv("HXC_DBG_STATICCENSUS");
+		v == null ? 0 : Std.parseInt(v);
+	};
+
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
 		while (true) {
 			var len = try {
@@ -332,6 +339,8 @@ class Compiler {
 				stderr.write(head2);
 				stderr.write(body2);
 				stderr.flush();
+				censusCount++;
+				if (censusEvery > 0 && censusCount % censusEvery == 0) hxc.debug.HeapCensus.staticCensus("after request " + censusCount, 20000000);
 				continue;
 			}
 			try {

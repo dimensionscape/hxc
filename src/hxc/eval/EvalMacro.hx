@@ -2285,6 +2285,15 @@ class EvalMacro {
 		// The build macros a compilation ran are its own: a new request must run them again, since its
 		// classes are typed from source again.
 		builtClasses = new Map();
+		// Hxc encodes a type, a field, a var or an anon as a registry id, so the registries belong to the
+		// request: kept for the process, they would hold every request's typed world alive. The id
+		// counters keep counting, so a handle that did outlive its request decodes to nothing rather than
+		// to another request's type.
+		tvarRefs = new Map();
+		cfieldRefs = new Map();
+		moduleTypeRefs = new Map();
+		anonRefs = new Map();
+		macroMonos = new Map();
 		// The callback registry belongs to the compilation, and the server builds a fresh one per
 		// request. Carrying the previous request's callbacks over would run every one of them twice.
 		onAfterInitMacrosCallbacks = [];
