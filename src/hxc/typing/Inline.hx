@@ -689,6 +689,12 @@ class Inline {
 		// method's receiver.
 		var skipExprs = params.copy();
 		result = mapInlinedTypes(mapType != null ? mapType : function(t:T):T return t, skipExprs, result);
+		// The finalize below (the retyped block, the wrap's cast) belongs before the type map, so those
+		// nodes' `tret` maps with the rest of the body - and applying params follows a bound monomorph,
+		// so a cast typed Null<V> with V bound to Int comes out Null<Int>, which unsafe-cast reduction
+		// then sees is the type it holds. Built after the mapping, they have to take the mapped type
+		// themselves.
+		var mappedTret = mapType != null ? mapType(tret) : tret;
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that
 		// equals the expected return, and gets a cast otherwise.
 		if (binds.length == 0) {
@@ -696,8 +702,8 @@ class Inline {
 				// A body without a value return keeps its block, retyped to
 				// the return type; a bare statement gains one. No cast on this path.
 				result = switch (result.expr) {
-					case TBlock(_): TypeFunctions.mk(result.expr, tret, result.pos);
-					case _: TypeFunctions.mk(TBlock([result]), tret, result.pos);
+					case TBlock(_): TypeFunctions.mk(result.expr, mappedTret, result.pos);
+					case _: TypeFunctions.mk(TBlock([result]), mappedTret, result.pos);
 				};
 			} else {
 				// A mono/type-param body is accepted bare only for a
@@ -716,7 +722,7 @@ class Inline {
 				// The cast wraps at the position of the value being cast, not the call site: the cast
 				// prints
 				// nothing, so at p it would emit a stray source mapping.
-				if (needsCast) result = TypeFunctions.mk(TCast(result, null), tret, result.pos);
+				if (needsCast) result = TypeFunctions.mk(TCast(result, null), mappedTret, result.pos);
 			}
 		}
 		// A constant-initialized local this inline bound, with no remaining use, drops to an empty block
