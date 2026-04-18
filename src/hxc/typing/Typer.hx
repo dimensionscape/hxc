@@ -806,8 +806,15 @@ class Typer {
 
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
-			try return typeExprInner(ctx, e, withType, mode)
-			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
+			var te = try typeExprInner(ctx, e, withType, mode)
+				catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
+			// access with its receiver's fields (hxc's dot completion answers those), anything else with the
+			// toplevel collection. hxc answered only at the node kinds it checks by position, so a marked
+			// binop, call or literal answered nothing at all.
+			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked && !e.expr.match(EField(_, _, _)))
+				raiseToplevelMarked(ctx, e, withType);
+			return te;
 		}
 		return typeExprInner(ctx, e, withType, mode);
 	}
@@ -5035,12 +5042,27 @@ class Typer {
 		return AKExpr(TypeFunctions.mk(TFunction(tf), TFun({args: sig.args, ret: retT}), p));
 	}
 
-	// The answer from the marked expression's own typing, so if that typing raised instead there is no
-	// answer at all and with the recorded errors. typeExpr carries that verdict already, but a call
-	// TARGET never reaches typeExpr - typeCallTarget hands its callee straight to typeAccess - so an
-	// unknown identifier in callee position raised, went unrecorded, and the answer came out of the
-	// enclosing node instead. The identity test is on the marked node's own def and span, since there
-	// is no Expr here to compare.
+	// The answer is raised from the marked expression's own typing, so if that typing raised instead
+	// there is no answer at all and the request aborts with the recorded errors. typeExpr carries that
+	// verdict already, but a call TARGET never reaches typeExpr - typeCallTarget hands its callee
+	// straight to typeAccess - so without this an unknown identifier in callee position would raise,
+	// go unrecorded, and the answer would come out of the enclosing node instead. The identity test is
+	// on the marked node's own def and span, since there is no Expr here to compare. Whether the field
+	// chain under `e` reaches the display preprocessor's marked node before it leaves plain `.`
+	// accesses.
+	static function fieldChainReachesMarked(e:Expr):Bool {
+		var mn = hxc.typing.ExprPreprocessing.markedNode;
+		if (mn == null) return false;
+		var cur = e;
+		while (true) {
+			if (cur == mn) return true;
+			switch (cur.expr) {
+				case EField(inner, _, EFNormal): cur = inner;
+				case _: return false;
+			}
+		}
+	}
+
 	public static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (mn != null && mn.expr == edef && mn.pos.min == p.min && mn.pos.max == p.max
@@ -5117,8 +5139,11 @@ class Typer {
 				// path on a miss, so on such a path the lookup resumes whatever the receiver is:
 				// `hxc.core.WithType.WithType.WithType(t, null)` reaches the enum's constructor through the
 				// enum, not through the constructor of the same name that the module's main type answered
-				// first.
-				var segsAll = flattenIdentPath(EField(e1, field, EFNormal));
+				// first. walks the chain to its head, and a head the display preprocessor wrapped an EDisplay)
+				// is no identifier: the chain types as an ordinary expression, so head answers the request, and
+				// is never tried as a dot path.
+				var headMarked = fieldChainReachesMarked(e1);
+				var segsAll = headMarked ? null : flattenIdentPath(EField(e1, field, EFNormal));
 				var lowerLedPath = segsAll != null && segsAll.length > 0 && {
 					var c0 = segsAll[0].charCodeAt(0);
 					c0 >= "a".code && c0 <= "z".code;
@@ -5128,9 +5153,12 @@ class Typer {
 					// so a package prefix falls through to the type-path route below. hxc reaches that head
 					// through the REPORTING typeIdent, so the attempt runs with the recording off - a resolvable
 					// `haxe.Log.trace` must not leave `haxe` in the unresolved list.
-					var speculative = flattenIdentPath(e1.expr) != null;
+					var speculative = !headMarked && flattenIdentPath(e1.expr) != null;
 					if (speculative) identSpeculation++;
-					var acc = try typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value)
+					// The marked head as EDisplay: which answers the request from that node, not the identifier
+					// lookup a dot path's head takes.
+					var markedHead = headMarked && e1 == hxc.typing.ExprPreprocessing.markedNode;
+					var acc = try (markedHead ? AKExpr(typeExpr(ctx, e1, WithTypeTools.value)) : typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value))
 						catch (headErr:Dynamic) { if (speculative) identSpeculation--; throw headErr; };
 					if (speculative) identSpeculation--;
 					switch (acc) {
@@ -5150,6 +5178,7 @@ class Typer {
 							Fields.typeField(ctx, recv, field, p, mode, withType, true, recv.expr.match(TTypeExpr(_)) || lowerLedPath);
 					}
 				} catch (err:TypingError) {
+					if (headMarked) throw err;
 					// The dot-path route only applies when the path COULD be a package-led type path (leading
 					// lowercase segment) or when the base itself failed to resolve; a resolved base whose field is
 					// missing keeps its own error the route up front, no fallback).
