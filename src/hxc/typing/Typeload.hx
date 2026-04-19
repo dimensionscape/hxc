@@ -715,10 +715,7 @@ class Typeload {
 			// The cursor test covers the whole path, parameters included, and narrows to the dotted name
 			// only for the answer, so `new H<Int>()` asked on the `(` answers `H`, not the whole new
 			// expression.
-			if (hxc.typing.Typer.atDisplayPos(p)) {
-				var mt = try TypeFunctions.moduleTypeOfType(r) catch (_:hxc.core.ExitException) null;
-				if (mt != null) hxc.typing.Typer.displayModuleType(ctx, mt, pName, allowDisplay);
-			}
+			if (hxc.typing.Typer.atDisplayPos(p)) hxc.typing.Typer.displayType(ctx, r, pName, allowDisplay);
 		}
 		return r;
 	}

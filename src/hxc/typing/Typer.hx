@@ -1794,13 +1794,13 @@ class Typer {
 	 * position be on the type hint, it is picked up while loading the type, whatever the expression
 	 * walk decided.
 	 */
-	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}> = null;
+	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool}> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
 	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
 	// BoolLit(true))` hovers as E<Unknown<0>>. hxc records the answer and types on, so the record
 	// keeps a copy in which what is unbound now stays unbound.
-	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}>) {
+	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool}>) {
 		if (v != null && v.t != null) v.t = freezeMonos(v.t);
 		return hoverFound = v;
 	}
@@ -2787,10 +2787,36 @@ class Typer {
 					case TFun(sig): t = TFun({args: sig.args, ret: TInst(c, TypeFunctions.extractParamTypes(c.params))});
 					case _:
 				}
-				hoverFound = {t: t, p: p};
+				// raise_hover (make_ci_class_field (CompletionClassField.make cf scope origin true)): the item
+				// is the field, in its scope and qualified - where its documentation and the json item come
+				// from.
+				var item:Null<TExpr> = null;
+				if (c != null) {
+					var params = TypeFunctions.extractParamTypes(c.params);
+					item = if (isCtor) TypeFunctions.mk(TNew(c, params, []), t, p)
+						else if (c.statics.get(cf.name) == cf && !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
+							TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), p), FStatic(c, cf)), t, p)
+						else TypeFunctions.mk(TField(TypeFunctions.mk(TConst(TThis), TInst(c, params), p), FInstance(c, params, cf)), t, p);
+				}
+				hoverFound = {t: t, p: p, e: item, isQualified: true};
 			}
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null) usageTargetField = cf;
+		}
+	}
+
+	// A constructor's declaration answers by itself. The hover item is the enum field, which is where
+	// its documentation and the json item's kind come from.
+	public static function displayEnumField(en:TEnum, ef:TEnumField, p:Position):Void {
+		if (displayDefinition) {
+			if (displayFound == null) displayFound = [ef.namePos];
+		} else if (displayHover || displayTypeDefinition) {
+			if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
+				hoverFound = {t: ef.type, p: p,
+					e: TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TEnumDecl(en), p), FEnum(en, ef)), ef.type, p),
+					isQualified: true};
+		} else if (displayUsage || displayImplementation) {
+			if (usageTargetEnumField == null) usageTargetEnumField = ef;
 		}
 	}
 
@@ -2821,8 +2847,25 @@ class Typer {
 		var strings = path.tsub != null ? [path.tsub, path.tname].concat(path.tpackage) : [path.tname].concat(path.tpackage);
 		var pName = new Position(tp.pos.file, tp.pos.min, tp.pos.min + strings.join(".").length);
 		if (!atDisplayPos(pName)) return;
+		displayType(com, t, pName);
+	}
+
+	// A type with no module type of its own answers as StdTypes' Dynamic when it is Dynamic, and under
+	// DMHover as itself.
+	public static function displayType(com:hxc.context.Context, t:T, p:Position, allowCompletion:Bool = true):Void {
 		var mt = try TypeFunctions.moduleTypeOfType(t) catch (_:hxc.core.ExitException) null;
-		if (mt != null) displayModuleType(com, mt, pName, true);
+		if (mt != null) {
+			displayModuleType(com, mt, p, allowCompletion);
+			return;
+		}
+		switch [TypeFunctions.follow(t), TypeFunctions.follow(TypeFunctions.tDynamicDef.value)] {
+			case [_, TDynamic(_)]:
+			case [TDynamic(_), _]:
+				displayType(com, TypeFunctions.tDynamicDef.value, p, allowCompletion);
+			case _:
+				if (displayHover && hoverFound == null)
+					hoverFound = {t: t, p: p, e: TypeFunctions.mk(TConst(TNull), t, p)};
+		}
 	}
 
 	// A variable declaration answers the display by itself when the cursor sits on its name, without
@@ -6362,7 +6405,7 @@ class Typer {
 				// the instance - not the instance type, which is all the typed node itself carries.
 				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atExprHoverPos(p)
 						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
-					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p};
+					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p, e: TypeFunctions.mk(TNew(c, tl, []), t, p), isQualified: true};
 				switch (c.kind) {
 					case KGeneric if (tp.path.tparams.length == 0 && Typeload.canSpecializeGeneric(tl)):
 						// Only specialize when every parameter is concrete (no open monomorph and no type

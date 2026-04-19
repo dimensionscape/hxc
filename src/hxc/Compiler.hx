@@ -915,7 +915,7 @@ class Compiler {
 		var displayRoots:Array<Path> = [];
 		{
 			var dparts = displayParts(ctx);
-			var dmode = dparts.length >= 3 ? dparts[2] : "";
+			var dmode = displayMode(ctx, dparts);
 			// `display` is defined as "1" for every JSON method but display/diagnostics;
 			// typer/compiledTypes is no display method.
 			if (ctx.jsonRpcId != null && dparts.length >= 2 && dmode != "diagnostics" && dmode != "compiledTypes")
@@ -1184,6 +1184,16 @@ class Compiler {
 				}
 			}
 			if (hxc.typing.Typer.displayTypeDefinition) {
+				// A hook that raises its POSITIONS outright (a module file, a type parameter's name,
+				// the empty answer of `trace`) answers as the definition lane does.
+				var direct = hxc.typing.Typer.displayFound;
+				if (direct != null) {
+					if (ctx.jsonRpcId != null)
+						answerOut(jsonRpcAnswer(ctx, "[" + [for (p in direct) jsonLocation(p)].join(",") + "]"))
+					else
+						answerOut(hxc.compiler.DisplayXml.printPositions(direct));
+					return;
+				}
 				// The captured expression's type resolves to its declaration name position.
 				var h = hxc.typing.Typer.hoverFound;
 				var hf = h == null ? hoverOnFieldName(ctx) : null;
@@ -1318,7 +1328,7 @@ class Compiler {
 				// reported.
 					&& (!ctx.hasReportedError() || hxc.parser.Parser.commentAnswered)) {
 				var dm = displayParts(ctx);
-				var dmode = dm.length >= 3 ? dm[2] : "";
+				var dmode = displayMode(ctx, dm);
 				// No completion point was found, and the display file has a block only the MACRO context turns
 				// on - so load it there and let the hooks fire against the macro-world types. Besides a
 				// .macro.hx root and the parser's DisplayInMacroBlock raise, this is the third place a display
@@ -1791,6 +1801,18 @@ class Compiler {
 
 	static function displayParts(ctx:Context):Array<String> {
 		return ctx.displaySpec == null ? [] : ctx.displaySpec.split("@");
+	}
+
+	// A legacy `file@pos@mode` names one of these modes, and any other is the default mode, the same
+	// request as a bare `file@pos` (only the `display` define keeps the name written). The JSON path's own
+	// mode names are not legacy ones and pass through.
+	static final legacyModes = ["", "position", "usage", "package", "type", "toplevel", "module-symbols",
+		"diagnostics", "statistics", "signature"];
+
+	static function displayMode(ctx:Context, dparts:Array<String>):String {
+		var dmode = dparts.length >= 3 ? dparts[2] : "";
+		if (ctx.jsonRpcId != null || legacyModes.indexOf(dmode) >= 0 || dmode == "workspace-symbols") return dmode;
+		return "";
 	}
 
 	// A path part is a package name except for the last, which is the module name; a rejected part makes
@@ -2726,8 +2748,9 @@ class Compiler {
 			rangePos = h.p;
 			// isQualified re-types the bare name in the scope the hovered expression was typed in; it is
 			// not a constant.
+			// A declaration's own item is qualified outright.
 			inline function qualified(name:String):Bool
-				return hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
+				return h.isQualified != null ? h.isQualified : hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
 			// A type path under the cursor answers with a Type item carrying its own type, not with the
 			// expression that path sits in.
 			if (h.mt != null) {
@@ -2832,6 +2855,8 @@ class Compiler {
 			case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf)): cf.doc;
 			case TField(_, FEnum(_, ef)): ef.doc;
 			case TTypeExpr(mt): hxc.core.TypeFunctions.tInfos(mt).doc;
+			// A construction's item is its constructor field.
+			case TNew(c, _, _) if (c.constructor != null): c.constructor.doc;
 			case _: null;
 		};
 		return doc == null ? null : hxc.ast.Ast.genDocText(doc);

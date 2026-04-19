@@ -2255,6 +2255,8 @@ class TypeResolve {
 			};
 			ecf.doc = ef.doc;
 			ecf.params = ef.params;
+			// A cursor on the constructor's name answers with the constructor, over its whole declaration.
+			if (hxc.typing.Typer.atDisplayPos(ef.namePos)) hxc.typing.Typer.displayEnumField(e, ef, ef.pos);
 			staticsFields.set(ecf.name, ecf);
 			// A constructor carrying @:inheritDoc collects its inherited docs.
 			if (TypeFunctions.hasMeta(":inheritDoc", c.ecMeta)) {

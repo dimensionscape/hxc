@@ -269,9 +269,11 @@ class ModuleLoader {
 		// Answer the segment containing the cursor. Load its module at the whole declaration position so
 		// unresolved imports report the entire statement.
 		function checkPathDisplay(path:Array<PlacedName>, declPos:Position):Void {
-			// Hovering a module or subtype path segment returns its type, as an expression type path does.
+			// Hover resolves module and subtype segments as types; usage and implementation display fields
+			// or raise type paths.
+			var otherMode = hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation;
 			if (hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition
-					|| hxc.typing.Typer.displayDefinition) {
+					|| hxc.typing.Typer.displayDefinition || otherMode) {
 				var pack:Array<String> = [];
 				var mod:Null<String> = null;
 				var sub:Null<String> = null;
@@ -310,8 +312,15 @@ class ModuleLoader {
 							else {
 								var m2 = try loadModuleOpt(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
 								if (m2 != null) for (mt in m2.types)
-									if (TypeFunctions.tInfos(mt).path.name == part.name)
-										hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+									if (TypeFunctions.tInfos(mt).path.name == part.name) {
+										// Subtype definition answers span the whole declaration rather than only its name.
+										if (hxc.typing.Typer.displayDefinition || hxc.typing.Typer.displayTypeDefinition) {
+											if (hxc.typing.Typer.displayFound == null)
+												hxc.typing.Typer.displayFound = [TypeFunctions.tInfos(mt).pos];
+										} else if (otherMode) {
+											throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), mod, true, part.pos);
+										} else hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+									}
 							}
 							return;
 						}
@@ -324,9 +333,18 @@ class ModuleLoader {
 						// Let module-load failures propagate at the declaration position. On the module segment,
 						// unresolved imports report the complete statement.
 						var m2 = loadModule(ctx, {pack: pack, name: part.name}, declPos);
+						if (otherMode) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true, part.pos);
+						// A module definition goes to its file, even when no same-named type exists.
+						if (hxc.typing.Typer.displayDefinition || hxc.typing.Typer.displayTypeDefinition) {
+							if (m2 != null && hxc.typing.Typer.displayFound == null)
+								hxc.typing.Typer.displayFound = [new Position(m2.extra.file, 0, 0)];
+							return;
+						}
+						// Module hover uses its same-named type over the complete import declaration.
+						var pHover = hxc.typing.Typer.displayHover ? declPos : part.pos;
 						if (m2 != null) for (mt in m2.types)
 							if (TypeFunctions.tInfos(mt).path.name == part.name)
-								hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+								hxc.typing.Typer.displayModuleType(ctx, mt, pHover);
 						return;
 					}
 					mod = part.name;
@@ -2093,6 +2111,9 @@ class ModuleLoader {
 		var aFloat = abstractOf(stdTypes, "Float");
 		var aBool = abstractOf(stdTypes, "Bool");
 		var aNull = abstractOf(stdTypes, "Null");
+		// StdTypes' Dynamic abstract is what a bare Dynamic displays as.
+		var aDynamic = abstractOf(stdTypes, "Dynamic");
+		if (aDynamic != null) TypeFunctions.tDynamicDef.value = TAbstract(aDynamic, TypeFunctions.extractParamTypes(aDynamic.params));
 		var cString = classOf(stringMod, "String");
 		var cArray = classOf(arrayMod, "Array");
 
