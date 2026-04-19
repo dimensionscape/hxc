@@ -121,9 +121,10 @@ class ModuleLoader {
 		stdinContent = null;
 	}
 
-	public static function parseModuleFile(ctx:Context, src:String, file:String):Package {
+	public static function parseModuleFile(ctx:Context, src:String, file:String, runPdi:Bool = true):Package {
 		var pkg = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
 		ctx.log("Parsed " + file);
+		if (runPdi) hxc.parser.Parser.runPendingPdi();
 		return pkg;
 	}
 
@@ -495,31 +496,14 @@ class ModuleLoader {
 			return false;
 		}
 
-		function isOverloadExternFunction(d:Definition<PlacedAccess, ClassFieldKind>):Bool {
-			return hasAccess(d.dFlags, AOverload) && hasAccess(d.dFlags, AExtern) && (switch (d.dData) {
-				case FFun(_): true;
-				case _: false;
-			});
-		}
-
-		function hasOverloadExternStatic(name:String):Bool {
-			for (s in statics) if (s.d.dName.name == name && isOverloadExternFunction(s.d)) return true;
-			return false;
-		}
-
+		// Check module fields against types here. The module-fields class build handles field collisions
+		// after merging overloads.
 		function checkStaticName(d:Definition<PlacedAccess, ClassFieldKind>):Void {
-			if (isOverloadExternFunction(d) && hasOverloadExternStatic(d.dName.name)) {
-				for (t2 in decls) {
-					if (TypeFunctions.tPath(t2).name == d.dName.name)
-						throw new ContextError("Name " + d.dName.name + " is already defined in this module", d.dName.pos);
+			for (t2 in decls) {
+				if (TypeFunctions.tPath(t2).name == d.dName.name) {
+					ctx.addDiagnostic("Name " + d.dName.name + " is already defined in this module", d.dName.pos);
+					throw new ContextError("... Previous declaration here", TypeFunctions.tInfos(t2).namePos, 1);
 				}
-			} else {
-				// Duplicate module fields use the field-duplicate error; collisions with module types use the
-				// module-name error.
-				for (s in statics) if (s.d.dName.name == d.dName.name)
-					throw new ContextError("Duplicate module field declaration : "
-						+ Context.sTypePath(m.path) + "." + d.dName.name, d.dName.pos);
-				checkName(d.dName.name, d.dName.pos);
 			}
 		}
 
@@ -749,7 +733,7 @@ class ModuleLoader {
 			TypeFunctions.addClassFlag(c, CFinal);
 			// The eagerly built module-fields shell is loadable; its build hook returns Built.
 			c.build = function():BuildState return Built;
-			registerFields(c, fields);
+			registerFields(c, fields, ctx);
 			decls.push(TClassDecl(c));
 			ctx.declOfType.set(Context.pathKey(fieldsPath), {decl: EClass({
 				dName: {name: fieldsPath.name, pos: firstPos}, dDoc: null, dParams: [], dMeta: [],
@@ -1240,6 +1224,7 @@ class ModuleLoader {
 			if (ctx != null && !declOnly && cf.name != "new" && dupTable.exists(cf.name)) {
 				var kindPath = switch (c.kind) {
 					case KAbstractImpl(a): {kind: "abstract", path: a.path};
+					case KModuleFields(mm): {kind: "module", path: mm.path};
 					case _: {kind: "class", path: c.path};
 				};
 				// Drop duplicate declarations during registration but defer their diagnostics until class
@@ -1678,8 +1663,9 @@ class ModuleLoader {
 		// The file resolved, but open_in_bin failed - a directory named like a module, an unreadable
 		// file. Not a missing type.
 		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
-		var pkg:Package = parseModuleFile(ctx, src, file);
+		var pkg:Package = parseModuleFile(ctx, src, file, false);
 		reportDisplayParseError(ctx, file);
+		hxc.parser.Parser.runPendingPdi();
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
 		// A module whose first package segment another platform owns is refused once its file resolves,
 		// unless the first type declared carries @:noPackageRestrict; the platform named is the macro

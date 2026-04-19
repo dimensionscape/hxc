@@ -464,14 +464,36 @@ class Typer {
 		return loop(t);
 	}
 
-	static function checkCatchUnreachable(prev:Array<TCatch>, t:T, p:Position):Void {
-		for (c in prev) {
-			if (isDynamic(c.v.type)) throw new TypingError("This block is unreachable", p);
-			if (!isDynamic(t)) {
-				try {
-					TypeUnification.unifyDefault(t, c.v.type);
-					throw new TypingError("This block is unreachable", p);
-				} catch (_:UnifyError) {}
+	// Checks the earlier catches NEWEST first (they are accumulated in reverse). The first one that
+	// already handles t is reported and recorded - the unreachable block and the catch that takes its
+	// place, at that catch's body - and the walk stops there; a Dynamic catch type ends it without a
+	// report.
+	static function checkCatchUnreachable(ctx:TyperContext, prev:Array<TCatch>, t:T, p:Position):Void {
+		var i = prev.length - 1;
+		while (i >= 0) {
+			var c = prev[i--];
+			function unreachable():Void {
+				ctx.com.addDiagnostic("This block is unreachable", p);
+				ctx.com.addDiagnostic(hxc.core.TPrinting.sTypeStr(t) + " can be caught to " + hxc.core.TPrinting.sTypeStr(c.v.type)
+					+ ", which is handled here", c.expr.pos);
+			}
+			switch [TypeFunctions.follow(t), TypeFunctions.follow(c.v.type)] {
+				case [_, TDynamic(_)] | [_, TInst({path: {pack: ["haxe"], name: "Error"}}, _)]:
+					unreachable();
+					return;
+				case [_, TInst(wc, _)] if (hxc.core.Globals.sTypePath(wc.path) == ctx.com.platformConfig.wildcardCatch):
+					unreachable();
+					return;
+				case [TDynamic(_), _]:
+					return;
+				case _:
+					try {
+						TypeUnification.unifyDefault(t, c.v.type);
+					} catch (_:UnifyError) {
+						continue;
+					}
+					unreachable();
+					return;
 			}
 		}
 	}
@@ -806,8 +828,11 @@ class Typer {
 
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
+			var oldInDisplay = ctx.inDisplay;
+			ctx.inDisplay = true;
 			var te = try typeExprInner(ctx, e, withType, mode)
 				catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+			ctx.inDisplay = oldInDisplay;
 			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
 			// access with its receiver's fields (hxc's dot completion answers those), anything else with the
 			// toplevel collection. hxc answered only at the node kinds it checks by position, so a marked
@@ -1612,7 +1637,7 @@ class Typer {
 					var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
 					var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
 					var normalizedCatchType = normalizeCatchType(ctx, catchType, p, th.pos, c.expr.pos);
-					checkCatchUnreachable(tcatches, normalizedCatchType, c.expr.pos);
+					checkCatchUnreachable(ctx, tcatches, normalizedCatchType, c.expr.pos);
 					var restore = saveLocals(ctx);
 					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
 					// The catch var is declared at the var name's position, not the catch clause's.
@@ -2157,7 +2182,7 @@ class Typer {
 	static function collectToplevelJson(ctx:TyperContext, ?withType:WithType):Array<JsonToplevelEntry> {
 		var out:Array<JsonToplevelEntry> = [];
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
-		for (name in ctx.locals.keys()) {
+		for (name in localNamesInKeyOrder(ctx)) {
 			var v = ctx.locals.get(name);
 			if (name.length > 0 && name.charCodeAt(0) != "`".code) out.push(JTLocal(v));
 		}
@@ -2203,11 +2228,12 @@ class Typer {
 					var key = hxc.core.Globals.sTypePath(e.path);
 					if (seenEnum.exists(key)) return;
 					seenEnum.set(key, true);
-					for (n in e.constrs.keys()) out.push(JTEnumCtor(e, e.constrs.get(n)));
+					for (n in namesInKeyOrder(e.names)) out.push(JTEnumCtor(e, e.constrs.get(n)));
 				case _:
 			}
 		}
 		if (ctx.com.currentModule != null) for (mt in ctx.com.currentModule.types) enumCtors(mt);
+		for (mt in moduleImportTypes(ctx)) enumCtors(mt);
 		if (withType != null) switch (withType) {
 			case WithType(tt, _):
 				enumCtors(try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(tt)) catch (_:Dynamic) null);
@@ -2267,13 +2293,55 @@ class Typer {
 		ctx.com.unresolvedIdentifiers.unshift({name: i, pos: p, suggestions: out});
 	}
 
+	// Locals and enum constructors are listed in key order; a StringMap's order is its hash's.
+	static function namesInKeyOrder(names:Iterable<String>):Array<String> {
+		var out = [for (n in names) n];
+		out.sort((a, b) -> a < b ? -1 : (a > b ? 1 : 0));
+		return out;
+	}
+
+	static function localNamesInKeyOrder(ctx:TyperContext):Array<String> {
+		return namesInKeyOrder({iterator: () -> ctx.locals.keys()});
+	}
+
+	// The types every import and using exposed, each declaration's PREPENDED onto StdTypes'. A module
+	// import exposes the module's non-private types in module order, a sub-type import that type, and an
+	// alias the private typedef rebind builds for it.
+	static function moduleImportTypes(ctx:TyperContext):Array<ModuleType> {
+		var out:Array<ModuleType> = [];
+		var cur = ctx.com.currentModule;
+		var imports = cur == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(cur.path));
+		if (imports != null) {
+			var k = imports.order.length - 1;
+			while (k >= 0) {
+				var ni = imports.order[k--];
+				if (ni.aliased == true) {
+					if (ni.aliasTypedef == null && ni.aliasName != null)
+						try hxc.context.ModuleLoader.resolveNamedImportType(ctx.com, cur, ni.aliasName, Position.nullPos) catch (_:Dynamic) {}
+					if (ni.aliasTypedef != null) out.push(ni.aliasTypedef);
+					continue;
+				}
+				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, Position.nullPos) catch (_:Dynamic) null;
+				if (mod == null) continue;
+				for (mt in mod.types) {
+					var inf = TypeFunctions.tInfos(mt);
+					// A private sub-type from elsewhere is the import's error.
+					if (ni.sub != null ? (inf.path.name == ni.sub && !(inf.isPrivate && inf.module != cur)) : !inf.isPrivate) out.push(mt);
+				}
+			}
+		}
+		var std = ctx.com.moduleLut.get("StdTypes");
+		if (std != null) for (mt in std.types) out.push(mt);
+		return out;
+	}
+
 	static function collectToplevel(ctx:TyperContext, ?withType:WithType, sort:Bool = false):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		var displayOff = hxc.parser.Parser.displayOffset;
 		inline function sType(t:T):String return hxc.core.TPrinting.sTypeStr(t);
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
 		// Locals in scope
-		for (name in ctx.locals.keys()) {
+		for (name in localNamesInKeyOrder(ctx)) {
 			var v = ctx.locals.get(name);
 			if (name.length > 0 && name.charCodeAt(0) != "`".code) {
 				// A local sorts by how far the cursor is PAST its declaration, so the nearest one comes first,
@@ -2379,7 +2447,7 @@ class Typer {
 					var key = hxc.core.Globals.sTypePath(en.path);
 					if (seenEnumPaths.exists(key)) return;
 					seenEnumPaths.set(key, true);
-					for (name in en.constrs.keys()) {
+					for (name in namesInKeyOrder(en.names)) {
 						var ef = en.constrs.get(name);
 						// An enum field sorts before everything else in a pattern, and by its declaration INDEX
 						// rather than its name - which is the only thing that puts the constructors back in source
@@ -2406,6 +2474,8 @@ class Typer {
 		}
 		var m = c == null ? null : c.module;
 		if (m != null) for (mt in m.types) enumCtors(mt);
+		var imported = moduleImportTypes(ctx);
+		for (mt in imported) enumCtors(mt);
 		// The EXPECTED type's constructors, which makes an enum value complete inside a call argument or
 		// an assignment whose target is that enum.
 		if (withType != null) switch (withType) {
@@ -2438,8 +2508,8 @@ class Typer {
 				sortGroup: 30, sortKey: pc.path.name, tparam: pc});
 			case _:
 		}
-		// Module types, then the implicit StdTypes import (newest first, matching the reversed
-		// module_imports print). Abstract impl and module-fields carriers are excluded. (add_type).
+		// Module types, then the module imports reversed: StdTypes' types last to first, then each
+		// import's in declaration order. Abstract impl and module-fields carriers are excluded.
 		var seenPaths = new haxe.ds.StringMap<Bool>();
 		function addType(mt:ModuleType):Void {
 			switch (mt) {
@@ -2457,12 +2527,8 @@ class Typer {
 			items.push({kind: "type", name: inf.path.name, path: key, sortGroup: 31, sortKey: key});
 		}
 		if (m != null) for (mt in m.types) addType(mt);
-		var std = ctx.com.moduleLut.get("StdTypes");
-		if (std != null) {
-			var l = std.types.copy();
-			l.reverse();
-			for (mt in l) addType(mt);
-		}
+		imported.reverse();
+		for (mt in imported) addType(mt);
 		addCachedFileTypes(ctx.com, items, seenPaths);
 		return sort ? sortToplevel(items, withType) : items;
 	}
@@ -2726,6 +2792,52 @@ class Typer {
 		if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
 			hoverFound = {t: t, p: p, e: TypeFunctions.mk(TIdent("trace"), t, p), tctx: ctx,
 				wt: hxc.core.WithType.WithTypeTools.namedArgument("value")};
+	}
+
+	// Display handling for a subject a typer rule BUILDS instead of finding it under the cursor: the
+	// for-loop typer asks about a loop variable's name at the variable's own position, with the kind of the
+	// marker the loop head was read through. The marker made it the subject, so it answers wherever the
+	// cursor sits; hxc's hooks answer only a node the cursor is on, so otherwise a cursor on the `in` of
+	// `for (k in e)` would answer the whole loop. The signature pass marks only calls, and no loop
+	// identifier is one.
+	public static function handleDisplay(ctx:TyperContext, eAst:Expr, dk:DisplayKind, mode:AccessMode, withType:WithType):Void {
+		var p = eAst.pos;
+		var te = switch [eAst.expr, withType] {
+			// `$type` and the synthesized trace: a hover is a TIdent "trace" item, a definition
+			// question answers no position at all.
+			case [EConst(CIdent(n = "$type" | "trace")), _]:
+				var t = if (n == "trace") {
+					TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: ctx.com.basic.tvoid});
+				} else {
+					var mono = spawnMonomorph(ctx, p);
+					TFun({args: [{name: "expression", opt: false, t: mono}], ret: mono});
+				};
+				if (displayHover)
+					hoverFound = {t: t, p: p, e: TypeFunctions.mk(TIdent("trace"), t, p), tctx: ctx,
+						wt: hxc.core.WithType.WithTypeTools.namedArgument(n == "trace" ? "value" : "expression")};
+				else if (displayDefinition || displayTypeDefinition)
+					displayFound = [];
+				else
+					throw new TypingError("Unsupported method", p);
+				return;
+			// "probably" a bind skip, typed as the expected type.
+			case [EConst(CIdent("_")), WithType(t, _)]:
+				TypeFunctions.mk(TConst(TNull), t, p);
+			case _:
+				typeExpr(ctx, eAst, withType, mode);
+		};
+		// Displaying an expression answers per mode. It raises a hover and a definition, so those replace
+		// whatever an enclosing node recorded; a usage is only noted and the expression returned.
+		if (displayHover || displayTypeDefinition) {
+			hoverFound = {t: te.type, p: te.pos, e: te, wt: withType, tctx: ctx};
+		} else if (displayDefinition) {
+			checkDisplayDefinition(ctx, te);
+			if (displayFound == null) displayFound = [];
+		} else if (displayUsage || displayImplementation) {
+			captureUsageTarget(te, ctx);
+		} else if ((displayToplevel || displayToplevelJson) && dk != DKDot) {
+			raiseToplevelMarked(ctx, eAst, withType);
+		}
 	}
 
 	// A cursor on a type parameter's own name answers with the parameter's type, straight from where
@@ -4031,12 +4143,12 @@ class Typer {
 			// on - there the raise is how the request gets answered. adds a fake local, but only behind
 			// ServerConfig.legacy_completion, a JSON-RPC initialize option that hxc has no way to set.
 			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)
-					&& !inMarkedSubtree(p)) {
+					&& !inMarkedSubtree(p) && !ctx.inDisplay) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
 			if (identSpeculation == 0 && ctx.com.displaySpec != null
-					&& (atDisplayPos(p) || inMarkedSubtree(p)) && displaySubjectError == null)
+					&& (atDisplayPos(p) || inMarkedSubtree(p) || ctx.inDisplay) && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
@@ -4506,6 +4618,29 @@ class Typer {
 				}
 			}
 			if (r != null) return r;
+			// resolve_dot_path found nothing either, so the head is typed as the identifier it is -
+			// type_ident, which reports - and the chain walks on from what it gives. Outside DMNone an
+			// unknown head is recorded and recovers to a TIdent , so the path and the call around it type
+			// on; only an Unknown_ident raised at the head itself - a plain compile, or the display subject
+			// - reaches the last guess .
+			var headP = new Position(p.file, p.min, p.min + segs[0].length);
+			var headAcc:Null<AccessKind> = try typeIdent(ctx, segs[0], headP, MGet, WithTypeTools.value) catch (e:TypingError) {
+				if (!(StringTools.startsWith(e.message, "Unknown identifier :") && e.pos.min == headP.min && e.pos.max == headP.max))
+					throw e;
+				null;
+			};
+			if (headAcc != null) {
+				var endAt = p.max;
+				var segEnd:Array<Int> = [];
+				var si = segs.length - 1;
+				while (si >= 1) { segEnd[si] = endAt; endAt -= segs[si].length + 1; si--; }
+				for (i in 1...segs.length) {
+					var isLast = i == segs.length - 1;
+					headAcc = Fields.typeField(ctx, accGet(ctx, headAcc), segs[i], new Position(p.file, p.min, segEnd[i]),
+						isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+				}
+				return headAcc;
+			}
 			// The last guess: the report names the module - the leading lowercase package plus the first
 			// uppercase segment - and never the trailing field segments, which is why `Priv.four` complains
 			// about `Priv`. It points at the segment the scan stopped on: the first uppercase one, or the
@@ -5067,8 +5202,12 @@ class Typer {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (mn != null && mn.expr == edef && mn.pos.min == p.min && mn.pos.max == p.max
 			&& mn.pos.file == p.file) {
-			try return typeAccessInner(ctx, edef, p, mode, withType)
+			var oldInDisplay = ctx.inDisplay;
+			ctx.inDisplay = true;
+			var acc = try typeAccessInner(ctx, edef, p, mode, withType)
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
+			ctx.inDisplay = oldInDisplay;
+			return acc;
 		}
 		return typeAccessInner(ctx, edef, p, mode, withType);
 	}

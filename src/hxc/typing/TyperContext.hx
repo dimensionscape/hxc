@@ -17,6 +17,10 @@ class TyperContext {
 	// True while call arguments type; a structure mismatch then raises (annotated with the
 	// parameter name by the caller) instead of recording.
 	public var inCallArgs:Bool = false;
+	// Turned on to type the display-marked expression and turned back off only on a normal return. An
+	// exception out of the marked node leaves it on for the rest of the field, so every unknown
+	// identifier after it goes on raising.
+	public var inDisplay:Bool = false;
 	/** Newest first. */
 	public var monomorphs:Array<{m:TMono, p:Position}>;
 	/** Expected return type of the function being typed. */

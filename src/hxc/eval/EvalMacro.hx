@@ -2543,13 +2543,16 @@ class EvalMacro {
 			}
 			if (macroCtx != null) { staleMacroCtx = macroCtx; macroCtx = null; lastModuleCount = -1; }
 		}
-		loadMacroClass(host, path, null, true);
+		// The macro-module load with display on: the macro com takes the host's display record and the
+		// restore it hands back is dropped, so the finalize that follows runs under it too. Under a request
+		// that types selectively that finalize types the cursor's field and nothing else.
+		loadMacroClass(host, path, null, true, null, null, null, true);
 		// The MACRO context is finalized after the load, so every field body types there and a display
 		// position inside one answers. loadMacroClass forces only the class whose name matches the module
 		// path, so a display file whose main class is named differently would get its signatures typed
 		// and nothing else.
 		var loaded = macroCom.moduleLut.get(key);
-		if (loaded != null) forceModuleClassFields(macroCom, loaded);
+		if (loaded != null && host.displayFullTyping) forceModuleClassFields(macroCom, loaded);
 	}
 
 	// displayWindow: the load is the display macro mode, and the macro world keeps the display position
@@ -2605,9 +2608,12 @@ class EvalMacro {
 				// module class carrying it qualifies alongside the main one.
 				case TClassDecl(c):
 					if ((c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) || (fieldName != null && c.statics.exists(fieldName)))
-						if (forceAll || fieldName == null)
-							hxc.typing.TypeFields.forceClassFields(macroCom, c);
-						else {
+						if (forceAll || fieldName == null) {
+							// The display route (no field) has had its finalize in typeAllModules above,
+							// which under a selective request types the cursor's field alone.
+							if (fieldName != null || macroCom.displayFullTyping)
+								hxc.typing.TypeFields.forceClassFields(macroCom, c);
+						} else {
 							var cf = c.statics.get(fieldName);
 							var fieldIsStatic = cf != null;
 							if (cf == null) cf = c.fields.get(fieldName);

@@ -431,6 +431,7 @@ class Parser {
 
 	static function make(src:String, file:String, ?defines:Define, registerContent:Bool = true):Parser {
 		if (registerContent) Position.registerFileContent(file, src);
+		var pdi:Null<{d:Define, dead:Array<{p:Position, cond:Expr}>, conds:Array<Expr>}> = null;
 		var lexOut:{err:Null<LexerError>} = {err: null};
 		var toks = lexAll(src, file, lexOut);
 		// Conditional-compilation preprocessing (#if/#else/#elseif/#end/#error/
@@ -463,12 +464,26 @@ class Parser {
 			if (ppFail.err != null && (lexOut.err == null || ppEarlier))
 				lexOut.err = new LexerError(Preprocessed(ppFail.err), ppFail.err.pos);
 			ppUnclosed = ppFail.unclosedAtEnd;
-			if (dead != null) handlePdi(d, dead, conds);
+			if (dead != null) pdi = {d: d, dead: dead, conds: conds};
 		}
 		var pr = new Parser(toks, file, defines != null && defines.rawDefined("macro"), src);
 		pr.pendingLexError = lexOut.err;
 		pr.pendingUnclosedEnd = ppUnclosed;
+		pr.pdi = pdi;
 		return pr;
+	}
+
+	// handlePdi runs on a successful parse of the display file only, after its first recorded syntax error:
+	// a lexer fault or a parse that raised never gets there, so it is what answers. The display file's dead
+	// blocks wait here for that point.
+	var pdi:Null<{d:Define, dead:Array<{p:Position, cond:Expr}>, conds:Array<Expr>}> = null;
+	static var pendingPdi:Null<{d:Define, dead:Array<{p:Position, cond:Expr}>, conds:Array<Expr>}> = null;
+
+	public static function runPendingPdi():Void {
+		var x = pendingPdi;
+		if (x == null) return;
+		pendingPdi = null;
+		handlePdi(x.d, x.dead, x.conds);
 	}
 
 	// Every DEAD block of the display file is re-evaluated with the defines ADAPTED to the MACRO
@@ -2991,7 +3006,9 @@ class Parser {
 	public static function parseModuleString(src:String, file:String = "?", ?defines:Define):Package {
 		var p = make(src, file, defines);
 		try {
-			return p.parseFile();
+			var pkg = p.parseFile();
+			pendingPdi = p.pdi;
+			return pkg;
 		} catch (a:PreprocessorAbort) {
 			// The stream's own fault, back in the form every consumer handles.
 			throw a.err;
@@ -4064,10 +4081,16 @@ class Parser {
 		}
 		// The missing `{` after the relations is recorded inside the display file, so `abstract A(Int)
 		// from <cursor>` with no body still yields a declaration. What is expected there is a body or
-		// another relation.
-		if (tokEq(peek(), BrOpen)) junk();
-		else syntaxError(Expected(["{", "to", "from"]));
-		var cf = parseClassFields(false, p1);
+		// another relation. That declaration has no fields and ends at the last token consumed; what
+		// follows is not read as its body.
+		var cf:{fields:Array<ClassField>, pos:Position};
+		if (tokEq(peek(), BrOpen)) {
+			junk();
+			cf = parseClassFields(false, p1);
+		} else {
+			syntaxError(Expected(["{", "to", "from"]));
+			cf = {fields: [], pos: tokens[idx > 0 ? idx - 1 : 0].pos};
+		}
 		var allFlags = (st == null) ? flags : [AbOver(st)].concat(flags);
 		allFlags = allFlags.concat(sl);
 		var def:Definition<AbstractFlag, Array<ClassField>> = {

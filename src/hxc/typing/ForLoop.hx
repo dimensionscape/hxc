@@ -11,6 +11,15 @@ import hxc.context.CapturePolicy;
 import hxc.typing.AccessKind;
 import hxc.typing.FieldAccess;
 
+// The loop variable's name, its position and the kind of the display marker it was read
+// through, if any.
+typedef IterationIdent = {name:String, pos:Position, dko:Null<DisplayKind>};
+
+enum IterationHead {
+	IHNormal(i:IterationIdent);
+	IHKeyValue(k:IterationIdent, v:IterationIdent);
+}
+
 class ForLoop {
 	// The iterator contract unifies hasNext/next signatures with the loop's element type; an
 	// unannotated method whose return is still an open mono must type its body first so the contract
@@ -40,48 +49,77 @@ class ForLoop {
 	}
 
 	public static function typeForLoop(ctx:TyperContext, it:Expr, e2:Expr, p:Position):TExpr {
-		var vName:String;
-		var e1Expr:Expr;
-		// The loop variable at the identifier's position, not at the position of the whole `for`. The
-		// lowered `var i = _g++` and the `_g < _g1` condition both punion that position /396), so losing
-		// it collapsed them onto the `for` keyword and the js source map dropped the condition segment as
-		// a duplicate.
-		var pi:Position = p;
-		// /:493: the head and the loop identifier are both read through any EDisplay the preprocessing
-		// pass wrapped them in - the display kind is remembered and the shape underneath is what decides
-		// the loop.
-		inline function stripDisplay(e:Expr):Expr {
-			var r = e;
-			while (true) switch (r.expr) { case EDisplay(inner, _): r = inner; case _: break; }
-			return r;
+		// A display marker stands for an EDisplay node around the expression the preprocessor chose. hxc
+		// keeps that choice by identity (ExprPreprocessing.markedNode) and materializes the wrapper only
+		// in a tree a macro is handed, so a node that is the marked one stands for EDisplay(node) here,
+		// and a real EDisplay is read as well.
+		function markOf(e:Expr):Null<DisplayKind>
+			return e == ExprPreprocessing.markedNode ? ExprPreprocessing.markedKind : null;
+		// The head is only pattern-matched, never typed, so a marker inside it that is dropped or
+		// fails never reaches the display handler: nothing answers and the request reports the error
+		// or the missing point - the verdict a raise out of the marked node's own typing leaves,
+		// which is what markedNodeFailed records.
+		function dropMark():Void {
+			var mn = ExprPreprocessing.markedNode;
+			if (mn != null && mn.pos.file == it.pos.file && it.pos.min <= mn.pos.min && mn.pos.max <= it.pos.max)
+				Typer.markedNodeFailed = true;
 		}
-		it = stripDisplay(it);
-		switch (it.expr) {
-			// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than
-			// `=>`; a macro-built head may carry the OpIn(OpArrow(k, v), e) shape instead.
-			case EBinop(OpArrow, kexpr = {expr: EConst(CIdent(ki))}, {expr: EBinop(OpIn, vexpr = {expr: EConst(CIdent(vi))}, rhs)})
-				| EBinop(OpIn, {expr: EBinop(OpArrow, kexpr = {expr: EConst(CIdent(ki))}, vexpr = {expr: EConst(CIdent(vi))})}, rhs):
-				Typer.checkLocalVariableName(ctx, ki, TVOForVariable, kexpr.pos);
-				Typer.checkLocalVariableName(ctx, vi, TVOForVariable, vexpr.pos);
-				return ForLoopFaithful.typeKeyValueForLoop(ctx, ki, vi, rhs, e2, p, kexpr.pos, vexpr.pos);
-			case EBinop(OpIn, lhs, rhs):
-				var lhs = stripDisplay(lhs);
-				vName = switch (lhs.expr) {
-					case EConst(CIdent(i)): i;
-					case _: throw new TypingError("Identifier expected", lhs.pos);
-				};
-				Typer.checkLocalVariableName(ctx, vName, TVOForVariable, lhs.pos);
-				pi = lhs.pos;
-				e1Expr = rhs;
-			case _:
-				// A head that is not `v in expr` still ANSWERS a display request inside it (handle_display)
-				// before the error is raised. Erroring first left an unfinished `for ([].` with no completion
-				// point at all.
-				if (Typer.atDisplayPos(it.pos))
-					try Typer.typeExpr(ctx, it, WithTypeTools.value) catch (_:TypingError) {};
-				throw new TypingError("For expression should be 'v in expr'", it.pos);
+		// The loop variable is allocated at the identifier's position, not at the position of the whole
+		// `for`: the lowered `var i = _g++` and the `_g < _g1` condition both union it, and without it
+		// the js source map would drop the condition segment as a duplicate.
+		function loopIdent(dko:Null<DisplayKind>, e1:Expr, markRead:Bool):IterationIdent {
+			var dk = markRead ? null : markOf(e1);
+			if (dk != null) return loopIdent(dk, e1, true);
+			return switch (e1.expr) {
+				case EConst(CIdent(i)): {name: i, pos: e1.pos, dko: dko};
+				case EDisplay(inner, dk): loopIdent(dk, inner, false);
+				case _:
+					dropMark();
+					throw new TypingError("Identifier expected", e1.pos);
+			};
 		}
-		return ForLoopFaithful.typeNormalForLoop(ctx, vName, e1Expr, e2, p, pi);
+		// `for (k => v in e)` parses as OpArrow(k, OpIn(v, e)) since `in` binds tighter than `=>`;
+		// a macro-built head may carry OpIn(OpArrow(k, v), e) instead. A marked operand is an
+		// EDisplay, which neither shape matches.
+		function loop(dko:Null<DisplayKind>, e1:Expr, markRead:Bool):{ik:IterationHead, e1:Expr} {
+			var dk = markRead ? null : markOf(e1);
+			if (dk != null) return loop(dk, e1, true);
+			switch (e1.expr) {
+				case EBinop(OpIn, ea, eb):
+					return switch (ea.expr) {
+						case EBinop(OpArrow, ei1, ei2) if (markOf(ea) == null):
+							if (dko != null) dropMark();
+							{ik: IHKeyValue(loopIdent(null, ei1, false), loopIdent(null, ei2, false)), e1: eb};
+						case _:
+							{ik: IHNormal(loopIdent(dko, ea, false)), e1: eb};
+					};
+				case EDisplay(inner, dk):
+					return loop(dk, inner, false);
+				case EBinop(OpArrow, ei1, ein = {expr: EBinop(OpIn, ei2, eb)}) if (markOf(ein) == null):
+					if (dko != null) dropMark();
+					return {ik: IHKeyValue(loopIdent(null, ei1, false), loopIdent(null, ei2, false)), e1: eb};
+				case _:
+					// A head that is not `v in expr` still answers the display it was marked for before the
+					// error is raised. The parser's dangling dot is an EDisplay(e, DKDot), which hxc
+					// carries as
+					// an empty field name that types as that completion - an unfinished `for ([].`
+					// completes.
+					if (dko != null || e1.expr.match(EField(_, "", _))) Typer.typeExpr(ctx, e1, WithTypeTools.value) else dropMark();
+					throw new TypingError("For expression should be 'v in expr'", it.pos);
+			}
+		}
+		var r = loop(null, it, false);
+		return switch (r.ik) {
+			case IHNormal(i): ForLoopFaithful.typeNormalForLoop(ctx, i, r.e1, e2, p);
+			case IHKeyValue(k, v): ForLoopFaithful.typeKeyValueForLoop(ctx, k, v, r.e1, e2, p);
+		};
+	}
+
+	// A loop variable read through a display marker answers it once the body is typed, as the
+	// identifier naming it at its own position.
+	public static function checkDisplay(ctx:TyperContext, i:TVar, ident:IterationIdent):Void {
+		if (ident.dko != null)
+			Typer.handleDisplay(ctx, new Expr(EConst(CIdent(i.name)), i.pos), ident.dko, MGet, WithTypeTools.withType(i.type));
 	}
 }
 
@@ -598,29 +636,30 @@ class ForLoopFaithful {
 		};
 	}
 
-	public static function typeNormalForLoop(ctx:TyperContext, vName:String, e1Expr:Expr, e2:Expr, p:Position, pi:Position):TExpr {
+	public static function typeNormalForLoop(ctx:TyperContext, ident:IterationIdent, e1Expr:Expr, e2:Expr, p:Position):TExpr {
 		var e1 = Typer.typeExpr(ctx, e1Expr, WithTypeTools.value);
 		var oldLoop = ctx.inLoop;
 		var oldLocals = Typer.saveLocals(ctx);
 		ctx.inLoop = true;
 		var e2b = Expr.ensureBlock(e2);
 		var iterator = ofTexpr(ctx, e1, getUnrollWeight(ctx, e2b), p);
-		var i = Typer.addLocalWithOrigin(ctx, TVOForVariable, vName, iterator.pt, pi);
-		// The loop variable's declaration answers by itself, the same as a function argument and a catch
-		// variable.
-		if (Typer.atDisplayPos(pi)) Typer.displayVariable(ctx, i, pi);
+		// The name is checked as the local is added.
+		Typer.checkLocalVariableName(ctx, ident.name, TVOForVariable, ident.pos);
+		var i = Typer.addLocalWithOrigin(ctx, TVOForVariable, ident.name, iterator.pt, ident.pos);
 		var te2 = Typer.typeExpr(ctx, e2b, WithTypeTools.noValue);
+		ForLoop.checkDisplay(ctx, i, ident);
 		ctx.inLoop = oldLoop;
 		oldLocals();
 		return toTexpr(ctx, i, iterator, te2, p);
 	}
 
-	public static function typeKeyValueForLoop(ctx:TyperContext, ki:String, vi:String, rhs:Expr, body:Expr, p:Position, pkey:Position, pvalue:Position):TExpr {
+	public static function typeKeyValueForLoop(ctx:TyperContext, ikey:IterationIdent, ivalue:IterationIdent, rhs:Expr, body:Expr, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var e1 = Typer.typeExpr(ctx, rhs, WithTypeTools.value);
 		switch (TypeFunctions.follow(e1.type)) {
+			// Recorded, and the loop is typed all the same.
 			case TDynamic(_) | TMono(_):
-				throw new TypingError("You can" + "'" + "t iterate on a Dynamic value, please specify KeyValueIterator or KeyValueIterable", e1.pos);
+				ctx.com.addDiagnostic("You can" + "'" + "t iterate on a Dynamic value, please specify KeyValueIterator or KeyValueIterable", e1.pos);
 			case _:
 		}
 		var r = checkIterator(ctx, "keyValueIterator", e1, e1.pos);
@@ -637,9 +676,13 @@ class ForLoopFaithful {
 		var ev = TexprTools.makeLocal(v, v.pos);
 		var ekey = Typer.accGet(ctx, Fields.typeField(ctx, ev, "key", ev.pos, MGet, WithTypeTools.value));
 		var evalue = Typer.accGet(ctx, Fields.typeField(ctx, ev, "value", ev.pos, MGet, WithTypeTools.value));
-		var vkey = Typer.addLocalWithOrigin(ctx, TVOForVariable, ki, ekey.type, pkey);
-		var vvalue = Typer.addLocalWithOrigin(ctx, TVOForVariable, vi, evalue.type, pvalue);
+		Typer.checkLocalVariableName(ctx, ikey.name, TVOForVariable, ikey.pos);
+		var vkey = Typer.addLocalWithOrigin(ctx, TVOForVariable, ikey.name, ekey.type, ikey.pos);
+		Typer.checkLocalVariableName(ctx, ivalue.name, TVOForVariable, ivalue.pos);
+		var vvalue = Typer.addLocalWithOrigin(ctx, TVOForVariable, ivalue.name, evalue.type, ivalue.pos);
 		var e2 = Typer.typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
+		ForLoop.checkDisplay(ctx, vkey, ikey);
+		ForLoop.checkDisplay(ctx, vvalue, ivalue);
 		var ebody = TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, enext), basic.tvoid, enext.pos),
 			TypeFunctions.mk(TVarExpr(vkey, ekey), basic.tvoid, ekey.pos),

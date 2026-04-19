@@ -99,7 +99,10 @@ class ImportCheck {
 					continue;
 				}
 				var pack = [for (k in 0...mi) parts[k].name];
-				var key = pack.join(".") + "." + parts[mi].name;
+				// And reports each import declaration: a second `import` of a module that failed to load fails
+				// again and is reported again. The sweep's own revisits dedup on the declaration, as the
+				// lowercase and using arms do.
+				var key = "import!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max;
 				if (ctx.plainImportsTried.exists(key)) continue;
 				ctx.plainImportsTried.set(key, true);
 				// The module load reports at the type path - the first pack segment through the module name
