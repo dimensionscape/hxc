@@ -1088,15 +1088,12 @@ class Typer {
 				var args:Array<TFuncArg> = [];
 				for (fa in f.fArgs) {
 					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
-					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
 					// Every function argument, local functions included, is allocated as
 					// VUser(TVOArgument). Tail-recursion elimination keys all three of its checks off that
 					// kind (captured arguments, the tail-recursion assign arm, the argument-local test), so
 					// treating a local function's arguments as local VARIABLES would make it reuse the
 					// parameters instead of redeclaring loop-scoped copies.
 					var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
-					// The display is answered from the argument's own name range.
-					if (atDisplayPos(fa.name.pos)) displayVariable(ctx, av, fa.name.pos);
 					args.push({v: av, c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
@@ -1193,10 +1190,14 @@ class Typer {
 				// field call.
 				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
 				// Type each argument default value against its (possibly inferred) type, binding an unbound
-				// monomorph and recording it for runtime default insertion. .
+				// monomorph and recording it for runtime default insertion. . runs inside type_function, after
+				// the expected type has been unified in: per argument the name is checked, the default typed,
+				// and then a cursor on the name answers - with the type the expected
+				// function gave it.
 				for (i in 0...args.length) {
 					var fa = f.fArgs[i];
 					var at = args[i].v.type;
+					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
 					if (fa.value != null) {
 						args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
 						// The typed default with the argument type (Null-wrapped, since a default makes the argument
@@ -1207,6 +1208,7 @@ class Typer {
 						catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), fa.value.pos);
 					}
 					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
+					if (atDisplayPos(fa.name.pos)) displayVariable(ctx, args[i].v, fa.name.pos);
 				}
 				// A local function of a member types as FunMemberClassLocal (abstract members as
 				// FunMemberAbstractLocal) so `this` inside it resolves to the captured `this local.
@@ -1792,7 +1794,43 @@ class Typer {
 	 * position be on the type hint, it is picked up while loading the type, whatever the expression
 	 * walk decided.
 	 */
-	public static var hoverFound:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}> = null;
+	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}> = null;
+
+	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
+	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
+	// BoolLit(true))` hovers as E<Unknown<0>>. hxc records the answer and types on, so the record
+	// keeps a copy in which what is unbound now stays unbound.
+	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool}>) {
+		if (v != null && v.t != null) v.t = freezeMonos(v.t);
+		return hoverFound = v;
+	}
+
+	static function freezeMonos(t:T):T {
+		var fresh = new haxe.ds.ObjectMap<TMono, T>();
+		var onStack = new haxe.ds.ObjectMap<TAnon, Bool>();
+		function loop(t:T):T {
+			return switch (t) {
+				case TMono(r) if (r.type == null):
+					var m = fresh.get(r);
+					if (m == null) {
+						m = TMono(new TMono(null, r.downConstraints, r.upConstraints));
+						fresh.set(r, m);
+					}
+					m;
+				// Nothing is forced for the copy; a lazy field type is left as it is.
+				case TLazy(_): t;
+				case TAnon(a):
+					if (onStack.exists(a)) t else {
+						onStack.set(a, true);
+						var r = TypeFunctions.map(loop, t);
+						onStack.remove(a);
+						r;
+					}
+				case _: TypeFunctions.map(loop, t);
+			};
+		}
+		return loop(t);
+	}
 
 	// DMTypeDefinition shares the hover capture; the report resolves the captured type's declaration
 	// position.
@@ -2111,6 +2149,25 @@ class Typer {
 	// own, which is what it is here for.
 	static var hoverWalked:haxe.ds.ObjectMap<TExpr, Bool> = new haxe.ds.ObjectMap();
 
+	// The type the hover ITEM carries, which is what the display output prints. A local or a
+	// declaration reports the variable's type whatever the node's - except the `abstract` literal,
+	// typed ((this : Underlying) : Abstract) - a `super(...)` call the super's, a cast what it casts
+	// under the cast's own type, and a parenthesis or metadata what it wraps.
+	static function hoverItemType(e:TExpr):T {
+		return switch (e.expr) {
+			case TLocal(v) if (v.kind.match(VAbstractThis) && switch (TypeFunctions.follow(e.type)) {
+					case TAbstract(a, tl): TypeUnification.typeIseqDefault(TypeFunctions.getUnderlyingType(a, tl), v.type);
+					case _: false;
+				}):
+				e.type;
+			case TLocal(v) | TVarExpr(v, _): v.type;
+			case TCall(e1 = {expr: TConst(TSuper)}, _): e1.type;
+			case TCast(e1, _): hoverItemType(TypeFunctions.mk(e1.expr, e.type, e1.pos));
+			case TParenthesis(e1) | TMeta(_, e1): hoverItemType(e1);
+			case _: e.type;
+		};
+	}
+
 	static function checkDisplayHover(ctx:TyperContext, te:TExpr, ?withType:hxc.core.WithType.WithType):Void {
 		if (hoverWalked.exists(te)) return;
 		hoverWalked.set(te, true);
@@ -2130,11 +2187,7 @@ class Typer {
 		if (!atExprHoverPos(te.pos)) return;
 		// A declaration reports the variable's type, and a `super(...)` call the SUPER's; the nodes
 		// themselves are Void.
-		var ht = switch (te.expr) {
-			case TVarExpr(v, _): v.type;
-			case TCall(e1 = {expr: TConst(TSuper)}, _): e1.type;
-			case _: te.type;
-		};
+		var ht = hoverItemType(te);
 		if (hoverFound == null || (te.pos.max - te.pos.min) < (hoverFound.p.max - hoverFound.p.min))
 			hoverFound = {t: ht, p: te.pos, e: te, wt: withType, tctx: ctx, fromWalk: true};
 	}
@@ -2233,7 +2286,7 @@ class Typer {
 			}
 		}
 		if (ctx.com.currentModule != null) for (mt in ctx.com.currentModule.types) enumCtors(mt);
-		for (mt in moduleImportTypes(ctx)) enumCtors(mt);
+		for (mt in moduleImportTypes(ctx.com)) enumCtors(mt);
 		if (withType != null) switch (withType) {
 			case WithType(tt, _):
 				enumCtors(try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(tt)) catch (_:Dynamic) null);
@@ -2307,21 +2360,21 @@ class Typer {
 	// The types every import and using exposed, each declaration's PREPENDED onto StdTypes'. A module
 	// import exposes the module's non-private types in module order, a sub-type import that type, and an
 	// alias the private typedef rebind builds for it.
-	static function moduleImportTypes(ctx:TyperContext):Array<ModuleType> {
+	public static function moduleImportTypes(com:hxc.context.Context):Array<ModuleType> {
 		var out:Array<ModuleType> = [];
-		var cur = ctx.com.currentModule;
-		var imports = cur == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(cur.path));
+		var cur = com.currentModule;
+		var imports = cur == null ? null : com.moduleImports.get(hxc.context.Context.pathKey(cur.path));
 		if (imports != null) {
 			var k = imports.order.length - 1;
 			while (k >= 0) {
 				var ni = imports.order[k--];
 				if (ni.aliased == true) {
 					if (ni.aliasTypedef == null && ni.aliasName != null)
-						try hxc.context.ModuleLoader.resolveNamedImportType(ctx.com, cur, ni.aliasName, Position.nullPos) catch (_:Dynamic) {}
+						try hxc.context.ModuleLoader.resolveNamedImportType(com, cur, ni.aliasName, Position.nullPos) catch (_:Dynamic) {}
 					if (ni.aliasTypedef != null) out.push(ni.aliasTypedef);
 					continue;
 				}
-				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, Position.nullPos) catch (_:Dynamic) null;
+				var mod = try hxc.context.ModuleLoader.loadModule(com, ni.modulePath, Position.nullPos) catch (_:Dynamic) null;
 				if (mod == null) continue;
 				for (mt in mod.types) {
 					var inf = TypeFunctions.tInfos(mt);
@@ -2330,7 +2383,7 @@ class Typer {
 				}
 			}
 		}
-		var std = ctx.com.moduleLut.get("StdTypes");
+		var std = com.moduleLut.get("StdTypes");
 		if (std != null) for (mt in std.types) out.push(mt);
 		return out;
 	}
@@ -2474,7 +2527,7 @@ class Typer {
 		}
 		var m = c == null ? null : c.module;
 		if (m != null) for (mt in m.types) enumCtors(mt);
-		var imported = moduleImportTypes(ctx);
+		var imported = moduleImportTypes(ctx.com);
 		for (mt in imported) enumCtors(mt);
 		// The EXPECTED type's constructors, which makes an enum value complete inside a call argument or
 		// an assignment whose target is that enum.
@@ -3475,6 +3528,10 @@ class Typer {
 			// the `this` an abstract constructor is rewritten around carries the whole constructor's
 			// position.
 			case TVarExpr(v, _) if (v.kind.match(VUser(_)) && atDisplayPos(v.pos)): [v.pos];
+			// A declaration whose initializer RAISED is recovered as a VGenerated local with no initializer
+			// at all, and a marked TVar answers whatever its kind. No compiler temporary has that shape -
+			// every one carries the expression it holds.
+			case TVarExpr(v, null) if (v.kind.match(VGenerated) && atDisplayPos(v.pos)): [v.pos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
 			// `super(...)` reports the SUPER constructor, and a bare `super` the super class.
@@ -5207,6 +5264,16 @@ class Typer {
 			var acc = try typeAccessInner(ctx, edef, p, mode, withType)
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
 			ctx.inDisplay = oldInDisplay;
+			// The marked access answers the moment it is typed, so a CALLEE is reported before the call's
+			// arguments bind what its type still leaves open. The walk over the finished call reaches it
+			// only afterwards. An OVERLOADED field under MCall is first resolved against the call's
+			// arguments, unifying them, and the chosen overload is the answer - which is what the call's own
+			// resolution records, so one is left to answer.
+			var overloaded = mode.match(MCall(_)) && switch (acc) {
+				case AKField(fa): fa.field.overloads.length > 0;
+				case _: false;
+			};
+			if ((displayHover || displayTypeDefinition) && !overloaded) checkDisplayOnAccess(ctx, acc, p);
 			return acc;
 		}
 		return typeAccessInner(ctx, edef, p, mode, withType);

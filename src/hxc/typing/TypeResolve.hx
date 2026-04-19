@@ -391,18 +391,29 @@ class TypeResolve {
 		throw tc;
 	}
 
-	// The types a completion here can see: everything loaded so far, which is what the reference's
-	// collect reaches through the module lookup at the same moment.
+	// The types a type collection sees before the types from files: the current module's own, then the
+	// module's imports reversed. Everything else loaded is not in scope: the files offered beyond
+	// these come from the server's cache, which addCachedFileTypes adds on its own.
 	static function visibleTypesForCompletion(ctx:Context):Array<ModuleType> {
-		var out:Array<ModuleType> = [];
-		var seen = new Map<String, Bool>();
-		for (key in ctx.moduleLut.keys()) {
-			var m = ctx.moduleLut.get(key);
-			for (mt in m.types) {
-				var k = Context.pathKey(TypeFunctions.tInfos(mt).path);
-				if (seen.exists(k)) continue;
-				seen.set(k, true);
-				out.push(mt);
+		var out:Array<ModuleType> = ctx.currentModule == null ? [] : ctx.currentModule.types.copy();
+		var imported = hxc.typing.Typer.moduleImportTypes(ctx);
+		imported.reverse();
+		for (mt in imported) out.push(mt);
+		// The types from files exist only where the server keeps a cache of them. The XML lane lists
+		// those from the parse-only scan (Typer.addCachedFileTypes); an entry of the JSON lane needs a
+		// type, which only the modules already loaded have, so under the server those stand in for the
+		// files there.
+		if (hxc.context.ServerCache.enabled) {
+			var seen = new Map<String, Bool>();
+			for (mt in out) seen.set(Context.pathKey(TypeFunctions.tInfos(mt).path), true);
+			for (key in ctx.moduleLut.keys()) {
+				var m = ctx.moduleLut.get(key);
+				for (mt in m.types) {
+					var k = Context.pathKey(TypeFunctions.tInfos(mt).path);
+					if (seen.exists(k)) continue;
+					seen.set(k, true);
+					out.push(mt);
+				}
 			}
 		}
 		return out;
