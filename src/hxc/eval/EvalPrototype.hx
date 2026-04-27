@@ -481,7 +481,28 @@ class EvalPrototype {
 
 	// Each static initializer records whether the field is @:persistent. The non-persistent ones are
 	// re-run when the interpreter is reused for a new compilation which is what puts a macro-world
-	// static back at its declared value at the start of every request.
+	// static back at its declared value at the start of every request. the reference COMPILES what it
+	// runs - every method of a type as the type is added /:347 force the prototype fields), a static
+	// initializer and __init__ as they run - and its compiler has no code for a TIdent except the
+	// `$__mk_pos__` call reification builds . One anywhere in such a body fails with a typing error at
+	// it: an `untyped` name, or what a display request recovered an unknown identifier to. hxc
+	// interprets the typed tree and would run the rest; the compile step's verdict is taken here.
+	public static function jitCheck(e:TExpr):Void {
+		function loop(e:TExpr):Void {
+			switch (e.expr) {
+				case TCall({expr: TIdent("$__mk_pos__")}, [a, b, c]):
+					loop(a);
+					loop(b);
+					loop(c);
+				case TIdent(s):
+					throw new hxc.core.TypingError("Unknown identifier: " + s, e.pos);
+				case _:
+					hxc.core.TexprTools.iter(loop, e);
+			}
+		}
+		loop(e);
+	}
+
 	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>, nonPersistent:Array<ProtoDelay>} {
 		var key = EvalHash.pathHash(c.path);
 		var pparent = c.superClass == null ? null : ctx.staticPrototypes.get(EvalHash.pathHash(c.superClass.c.path));
@@ -501,6 +522,7 @@ class EvalPrototype {
 						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
+							jitCheck(cf.expr);
 							var idx = pfields.length;
 							pnames.set(EvalHash.hash(cf.name), idx);
 							addNameAlias(pnames, cf, idx);
@@ -542,6 +564,7 @@ class EvalPrototype {
 							var prev = ctxEval.env;
 							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
 							try {
+								jitCheck(init);
 								EvalEmitter.numberClosures(init);
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
@@ -571,6 +594,10 @@ class EvalPrototype {
 					var ctxEval = EvalContext.getEval(ctx);
 					var prev = ctxEval.env;
 					var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKMethod(key, EvalHash.key___init__), 0, 0));
+					try jitCheck(init) catch (e:haxe.Exception) {
+						ctxEval.env = prev;
+						throw e;
+					}
 					EvalEmitter.numberClosures(init);
 					try EvalEmitter.eval(ctx, init) catch (e:haxe.Exception) {
 						ctxEval.env = prev;
@@ -626,6 +653,7 @@ class EvalPrototype {
 					}
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
+						jitCheck(cf.expr);
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
 						addNameAlias(pnames, cf, idx, c);
