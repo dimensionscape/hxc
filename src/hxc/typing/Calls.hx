@@ -602,7 +602,10 @@ class Calls {
 			return (n == "" && hxc.parser.Parser.displayFile == null) ? "a" + (++acount) : n;
 		var pi = 0;
 		for (arg in sig.args) {
-			var isUnderscore = pi < params.length && (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
+			// Only a bare `_` matches; the marked one is a display node, so it is typed as an ordinary
+			// argument and the display handler answers it.
+			var isUnderscore = pi < params.length && params[pi] != hxc.typing.ExprPreprocessing.markedNode
+				&& (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
 			if (pi >= params.length && arg.opt) {
 				// An optional argument past the given parameters is consumed at bind time instead of
 				// staying on

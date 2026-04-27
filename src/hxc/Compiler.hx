@@ -1253,6 +1253,14 @@ class Compiler {
 					return;
 				}
 			}
+			// A declaration error raises out of module type initialization and nothing on the way out
+			// catches it, so a mode that answers only once typing is over - usage and implementation - never
+			// gets there: the error is the output. hxc records it and abandons the module (TypeResolve
+			// markModuleErrored), and the verdict is read back here.
+			if ((hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation) && ctx.declErrored.keys().hasNext()) {
+				flushPendingMessages(ctx);
+				exitRequest(1);
+			}
 			if (hxc.typing.Typer.displayImplementation) {
 				var impls = collectImplementations(ctx);
 				if (ctx.jsonRpcId != null)
@@ -2181,7 +2189,9 @@ class Compiler {
 	// the result.
 	static function hoverOnFieldName(ctx:Context):Null<{t:T, p:Position, cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass, scope:hxc.core.Type.ClassFieldScope}> {
 		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c):
+			// Answers a field's name while the field BINDS, and a module whose declarations raised
+			// (TypeResolve markModuleErrored) never binds any.
+			case TClassDecl(c) if (!ctx.declErrored.exists(Context.pathKey(c.path))):
 				function found(cf:hxc.core.Type.TClassField, scope:hxc.core.Type.ClassFieldScope) {
 					var t = switch (cf.type) {
 						case TLazy(r): TypeFunctions.lazyType(r);

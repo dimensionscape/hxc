@@ -830,8 +830,17 @@ class Typer {
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
 			var oldInDisplay = ctx.inDisplay;
 			ctx.inDisplay = true;
-			var te = try typeExprInner(ctx, e, withType, mode)
-				catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+			var te = switch [e.expr, withType] {
+				// A marked `_` against a known type is "probably" a bind skip and stands for a null of that
+				// type.
+				case [EConst(CIdent("_")), WithType(t, _)]:
+					var n = TypeFunctions.mk(TConst(TNull), t, e.pos);
+					if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, n, withType);
+					n;
+				case _:
+					try typeExprInner(ctx, e, withType, mode)
+						catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+			};
 			unifyForAnswer(ctx, te, withType);
 			ctx.inDisplay = oldInDisplay;
 			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
