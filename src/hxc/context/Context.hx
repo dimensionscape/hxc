@@ -171,6 +171,7 @@ class Context {
 	 * cascading inherited-member errors.
 	 */
 	public var declErrored:StringMap<Bool> = new StringMap();
+	public var declBuiltBeforeError:StringMap<Bool> = new StringMap();
 
 	/**
 	 * Modules with incomplete declaration initialization, keyed by path. An unresolved using prevents

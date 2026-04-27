@@ -68,6 +68,9 @@ class TypeResolve {
 			case TClassDecl(c): classes.unshift(mt);
 			case _: rest.push(mt);
 		}
+		// The types built before a declaration error: their builds ran - a class declared after the
+		// failing one is built first (the delays are LIFO) - and bound their variables.
+		var builtBefore:Array<String> = [];
 		for (mt in rest.concat(classes)) {
 			var info = TypeFunctions.tInfos(mt);
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
@@ -99,6 +102,7 @@ class TypeResolve {
 				resolveType(ctx, mt, entry.decl, entry.pos);
 				if (impl != null) resolveAbstractImpl(ctx, impl.a, impl.d, impl.p);
 				resolveUsingMetadata(ctx, mt);
+				builtBefore.push(Context.pathKey(info.path));
 			} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
 				// A display completion is an answer, not a declaration error: it has to reach the responder
 				// rather than be recorded and swallowed here.
@@ -108,6 +112,7 @@ class TypeResolve {
 				// is ABANDONED: the reference's typing_error raises out of init_module_type, so no later
 				// declaration of that module is reached and exactly one such error is ever printed.
 				markModuleErrored(ctx, m);
+				for (k in builtBefore) ctx.declBuiltBeforeError.set(k, true);
 				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;
@@ -115,6 +120,7 @@ class TypeResolve {
 				break;
 			} catch (e:hxc.core.TypingError) {
 				markModuleErrored(ctx, m);
+				for (k in builtBefore) ctx.declBuiltBeforeError.set(k, true);
 				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
 				ctx.addDiagnostic(e.message, e.pos, e.depth);
 				ctx.currentModule = m;

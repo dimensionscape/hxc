@@ -1163,6 +1163,12 @@ class Compiler {
 			}
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
+				// In a module whose declarations raised, a variable of a class built before the error
+				// answers as it binds; nothing else of that module runs.
+				if (found == null) {
+					var hf = hoverOnFieldName(ctx);
+					if (hf != null && ctx.declErrored.exists(Context.pathKey(hf.c.path))) found = [hf.cf.namePos];
+				}
 				if (found == null) {
 					// Under go-to-definition, a type declaration reports itself.
 					var mt = displayTypeAtName(ctx);
@@ -2190,9 +2196,13 @@ class Compiler {
 	// the result.
 	static function hoverOnFieldName(ctx:Context):Null<{t:T, p:Position, cf:hxc.core.Type.TClassField, c:hxc.core.Type.TClass, scope:hxc.core.Type.ClassFieldScope}> {
 		for (mt in ctx.types) switch (mt) {
-			// Answers a field's name while the field BINDS, and a module whose declarations raised
-			// (TypeResolve markModuleErrored) never binds any.
-			case TClassDecl(c) if (!ctx.declErrored.exists(Context.pathKey(c.path))):
+			// A field's name answers while the field BINDS. A module whose declarations raised (TypeResolve
+			// markModuleErrored) binds only in the classes built before the error, and there only their
+			// VARIABLES answer at once: a method answers from its body's typing, a PTypeField delay the
+			// raise never lets run.
+			case TClassDecl(c) if (!ctx.declErrored.exists(Context.pathKey(c.path))
+					|| ctx.declBuiltBeforeError.exists(Context.pathKey(c.path))):
+				var varsOnly = ctx.declErrored.exists(Context.pathKey(c.path));
 				function found(cf:hxc.core.Type.TClassField, scope:hxc.core.Type.ClassFieldScope) {
 					var t = switch (cf.type) {
 						case TLazy(r): TypeFunctions.lazyType(r);
@@ -2203,13 +2213,14 @@ class Compiler {
 				// Every overload but the first is kept on the first one's overloads, so a declaration name is
 				// only found by looking there too.
 				function pick(cf:hxc.core.Type.TClassField):Null<hxc.core.Type.TClassField> {
+					if (varsOnly && !cf.kind.match(Var(_))) return null;
 					if (hxc.typing.Typer.atHoverPos(cf.namePos)) return cf;
 					for (o in cf.overloads) if (hxc.typing.Typer.atHoverPos(o.namePos)) return o;
 					return null;
 				}
 				for (cf in c.orderedFields) switch (pick(cf)) { case null: case hit: return found(hit, CFSMember); }
 				for (cf in c.orderedStatics) switch (pick(cf)) { case null: case hit: return found(hit, CFSStatic); }
-				if (c.constructor != null && hxc.typing.Typer.atHoverPos(c.constructor.namePos)) return found(c.constructor, CFSConstructor);
+				if (!varsOnly && c.constructor != null && hxc.typing.Typer.atHoverPos(c.constructor.namePos)) return found(c.constructor, CFSConstructor);
 			case _:
 		}
 		return null;
