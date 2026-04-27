@@ -832,6 +832,7 @@ class Typer {
 			ctx.inDisplay = true;
 			var te = try typeExprInner(ctx, e, withType, mode)
 				catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+			unifyForAnswer(ctx, te, withType);
 			ctx.inDisplay = oldInDisplay;
 			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
 			// access with its receiver's fields (hxc's dot completion answers those), anything else with the
@@ -2148,6 +2149,21 @@ class Typer {
 	// The descent itself has to stay - a synthesized sub-node never runs the tail check on its
 	// own, which is what it is here for.
 	static var hoverWalked:haxe.ds.ObjectMap<TExpr, Bool> = new haxe.ds.ObjectMap();
+
+	// Before the answer, the marked expression is unified with the expected type through castOrUnifyRaise -
+	// whose transformed result is discarded, only the unification counts - so the answer carries whatever
+	// that binds. A record the node made while it typed is renewed from it.
+	public static function unifyForAnswer(ctx:TyperContext, te:TExpr, withType:WithType):Void {
+		switch (withType) {
+			case WithType(t, _):
+				try castOrUnifyRaise(ctx, t, te, te.pos) catch (_:hxc.core.TypingError.CastUnifyError) {}
+				var hf = hoverFound;
+				if (hf != null && hf.e == te)
+					hoverFound = {t: hoverItemType(te), p: hf.p, e: te, wt: hf.wt, tctx: hf.tctx, mt: hf.mt,
+						fromWalk: hf.fromWalk, isQualified: hf.isQualified};
+			case _:
+		}
+	}
 
 	// The type the hover ITEM carries, which is what the display output prints. A local or a
 	// declaration reports the variable's type whatever the node's - except the `abstract` literal,

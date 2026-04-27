@@ -539,12 +539,13 @@ class PatternMaker {
 		var atDisplay = !savedSuppressed && Typer.atDisplayPos(p);
 		function answerDisplay(pat:PatKind):PatKind {
 			hxc.parser.Parser.displaySuppressed = savedSuppressed;
-			// The re-type spawns the constructor's parameters FRESH, so it needs the same
-			// unification against the expected type that check_expr does, or the answer names an
-			// unbound monomorph where the pattern's own type is known.
+			// The re-type spawns the constructor's parameters FRESH, so it needs the same unification
+			// against the expected type that the pattern check does, or the answer names an unbound
+			// monomorph where the pattern's own type is known.
+			// That unification is the display handler's own, made before it answers.
 			if (atDisplay) try {
 				var e2 = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
-				unify(pctx.ctx, e2.type, t, p);
+				Typer.unifyForAnswer(pctx.ctx, e2, WithTypeTools.withType(t));
 			} catch (_:Dynamic) {}
 			return pat;
 		}
