@@ -1231,6 +1231,7 @@ class Compiler {
 				// expression walk decided about it.
 				var hf = hxc.typing.Typer.hoverFound;
 				if (hf != null && hf.fromWalk == true && hxc.typing.ExprPreprocessing.gaveUpAtDisplay) hf = null;
+				if (hf != null && hf.fromWalk == true && hxc.typing.Typer.markedStatementFailed) hf = null;
 				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.markedNodeFailed ? null : hf;
 				// The documentation comes from the hover's ITEM, and a type path answers with a type item,
 				// whose documentation is the type's own - there is no expression to read it off. Asking the

@@ -64,6 +64,8 @@ class Typer {
 		displayDefinition = false;
 		displayFound = null;
 		markedNodeFailed = false;
+		markedNodeTyped = false;
+		markedStatementFailed = false;
 		displaySubjectError = null;
 		hxc.typing.Typeload.resetSynthesizedHints();
 		displayHover = false;
@@ -826,6 +828,22 @@ class Typer {
 	 */
 	public static var markedNodeFailed:Bool = false;
 
+	/**
+	 * typeBlock records a statement's error and goes on, so a marker inside a statement that raised
+	 * before the marker was typed is never handled (a switch whose pattern failed never types the
+	 * marked default). No answer comes from it, and the enclosing-node walk has nothing to stand in
+	 * for. Hooks that raise on their own stay.
+	 */
+	public static var markedNodeTyped:Bool = false;
+	public static var markedStatementFailed:Bool = false;
+
+	static function noteStatementFailed(stmt:Expr):Void {
+		var mn = hxc.typing.ExprPreprocessing.markedNode;
+		if (markedNodeTyped || mn == null || mn.pos == null || stmt == null || stmt.pos == null) return;
+		if (mn.pos.file == stmt.pos.file && stmt.pos.min <= mn.pos.min && mn.pos.max <= stmt.pos.max)
+			markedStatementFailed = true;
+	}
+
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
 			var oldInDisplay = ctx.inDisplay;
@@ -842,6 +860,7 @@ class Typer {
 						catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
 			};
 			unifyForAnswer(ctx, te, withType);
+			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
 			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
 			// access with its receiver's fields (hxc's dot completion answers those), anything else with the
@@ -4267,13 +4286,16 @@ class Typer {
 			// elsewhere in it. the raise for the display SUBJECT, which here is the identifier the cursor is
 			// on - there the raise is how the request gets answered. adds a fake local, but only behind
 			// ServerConfig.legacy_completion, a JSON-RPC initialize option that hxc has no way to set.
+			// ctx.inDisplay, which on for the marked node's own typing. Its span is no stand-in: a case body
+			// starts at the `case` keyword so its span holds the case's pattern, which the matcher types
+			// before the body and outside it.
 			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)
-					&& !inMarkedSubtree(p) && !ctx.inDisplay) {
+					&& !ctx.inDisplay) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
 			if (identSpeculation == 0 && ctx.com.displaySpec != null
-					&& (atDisplayPos(p) || inMarkedSubtree(p) || ctx.inDisplay) && displaySubjectError == null)
+					&& (atDisplayPos(p) || ctx.inDisplay) && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new TypingError("Unknown identifier : " + i, p);
 		}
@@ -5331,6 +5353,7 @@ class Typer {
 			ctx.inDisplay = true;
 			var acc = try typeAccessInner(ctx, edef, p, mode, withType)
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
+			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
 			// The marked access answers the moment it is typed, so a CALLEE is reported before the call's
 			// arguments bind what its type still leaves open. The walk over the finished call reaches it
@@ -5580,8 +5603,10 @@ class Typer {
 			try {
 				merge(typeExpr(ctx, el[i], wt));
 			} catch (err:TypingError) {
+				noteStatementFailed(el[i]);
 				ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 			} catch (ce:hxc.context.Context.ContextError) {
+				noteStatementFailed(el[i]);
 				// A module that fails to load raises a typing error like anything else, so it is caught
 				// here too. hxc raises it as ContextError; letting it escape would drop every statement
 				// after a `new Unknown()`.
