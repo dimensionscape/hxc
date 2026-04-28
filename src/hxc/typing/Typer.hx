@@ -4645,7 +4645,31 @@ class Typer {
 			var c = segs[i].charCodeAt(0);
 			if (c >= "A".code && c <= "Z".code) { typeIdx = i; break; }
 		}
-		if (typeIdx < 0) return null;
+		// resolve_dot_path found nothing, so the head is typed as the identifier it is - type_ident,
+		// which reports - and the chain walks on from what it gives. Outside DMNone an unknown head is
+		// recorded and recovers to a TIdent , so the path and the call around it type on; only an
+		// Unknown_ident raised at the head itself - a plain compile, or the display subject - goes on to
+		// the last guess , and a path with no uppercase part has none raises the identifier's own error).
+		function headRetype():Null<AccessKind> {
+			var headP = new Position(p.file, p.min, p.min + segs[0].length);
+			var headAcc:Null<AccessKind> = try typeIdent(ctx, segs[0], headP, MGet, WithTypeTools.value) catch (e:TypingError) {
+				if (!(StringTools.startsWith(e.message, "Unknown identifier :") && e.pos.min == headP.min && e.pos.max == headP.max))
+					throw e;
+				null;
+			};
+			if (headAcc == null) return null;
+			var endAt = p.max;
+			var segEnd:Array<Int> = [];
+			var si = segs.length - 1;
+			while (si >= 1) { segEnd[si] = endAt; endAt -= segs[si].length + 1; si--; }
+			for (i in 1...segs.length) {
+				var isLast = i == segs.length - 1;
+				headAcc = Fields.typeField(ctx, accGet(ctx, headAcc), segs[i], new Position(p.file, p.min, segEnd[i]),
+					isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+			}
+			return headAcc;
+		}
+		if (typeIdx < 0) return headRetype();
 		var pack = segs.slice(0, typeIdx);
 		// A leading `std` package selects the standard library type, bypassing a shadowing local or import
 		// (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). (std pack).
@@ -4765,29 +4789,8 @@ class Typer {
 				}
 			}
 			if (r != null) return r;
-			// resolve_dot_path found nothing either, so the head is typed as the identifier it is -
-			// type_ident, which reports - and the chain walks on from what it gives. Outside DMNone an
-			// unknown head is recorded and recovers to a TIdent , so the path and the call around it type
-			// on; only an Unknown_ident raised at the head itself - a plain compile, or the display subject
-			// - reaches the last guess .
-			var headP = new Position(p.file, p.min, p.min + segs[0].length);
-			var headAcc:Null<AccessKind> = try typeIdent(ctx, segs[0], headP, MGet, WithTypeTools.value) catch (e:TypingError) {
-				if (!(StringTools.startsWith(e.message, "Unknown identifier :") && e.pos.min == headP.min && e.pos.max == headP.max))
-					throw e;
-				null;
-			};
-			if (headAcc != null) {
-				var endAt = p.max;
-				var segEnd:Array<Int> = [];
-				var si = segs.length - 1;
-				while (si >= 1) { segEnd[si] = endAt; endAt -= segs[si].length + 1; si--; }
-				for (i in 1...segs.length) {
-					var isLast = i == segs.length - 1;
-					headAcc = Fields.typeField(ctx, accGet(ctx, headAcc), segs[i], new Position(p.file, p.min, segEnd[i]),
-						isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
-				}
-				return headAcc;
-			}
+			var headAcc = headRetype();
+			if (headAcc != null) return headAcc;
 			// The last guess: the report names the module - the leading lowercase package plus the first
 			// uppercase segment - and never the trailing field segments, which is why `Priv.four` complains
 			// about `Priv`. It points at the segment the scan stopped on: the first uppercase one, or the
