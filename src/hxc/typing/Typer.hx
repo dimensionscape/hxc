@@ -4669,7 +4669,16 @@ class Typer {
 			}
 			return headAcc;
 		}
-		if (typeIdx < 0) return headRetype();
+		if (typeIdx < 0) {
+			var acc = headRetype();
+			// With no module name in the path the last guess is package completion - under the display flag
+			// a legacy request raises the type path for the whole dotted name. An inner link of the chain is
+			// only a speculative step of hxc's field-by-field walk; the reference resolves the whole dotted
+			// name at once, so only the outermost one raises.
+			if (acc == null && identSpeculation == 0 && ctx.inDisplay && ctx.com.jsonRpcId == null)
+				throw new hxc.parser.Parser.TypePathCompletion(segs, null, false, new Position(p.file, p.min, p.min + segs[0].length));
+			return acc;
+		}
 		var pack = segs.slice(0, typeIdx);
 		// A leading `std` package selects the standard library type, bypassing a shadowing local or import
 		// (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). (std pack).
