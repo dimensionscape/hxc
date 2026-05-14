@@ -172,6 +172,9 @@ class Context {
 	 */
 	public var declErrored:StringMap<Bool> = new StringMap();
 	public var declBuiltBeforeError:StringMap<Bool> = new StringMap();
+	// Pending PBuildClass slots and nested module-resolution depth.
+	public var classSlots:Array<Dynamic> = [];
+	public var resolveDepth:Int = 0;
 
 	/**
 	 * Modules with incomplete declaration initialization, keyed by path. An unresolved using prevents

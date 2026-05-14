@@ -292,6 +292,7 @@ class ModuleLoader {
 							case _: null;
 						};
 						if (c == null) continue;
+						hxc.typing.TypeResolve.forceQueuedBuild(c);
 						var cf = c.statics.get(field);
 						if (cf != null) {
 							try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
@@ -420,7 +421,10 @@ class ModuleLoader {
 								{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
 							switch (mt) {
 								case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
-									try hxc.typing.TypeResolve.resolveModule(ctx, cl.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+									try {
+										hxc.typing.TypeResolve.resolveModule(ctx, cl.module);
+										hxc.typing.TypeResolve.forceQueuedBuild(cl);
+									} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 									for (cf in cl.orderedStatics)
 										if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) put(cf.name);
 								case TEnumDecl(en):
@@ -1929,7 +1933,10 @@ class ModuleLoader {
 					// target module (idempotent, gated by resolved): an alias used before that module was
 					// resolved would otherwise capture the class with superClass still unset, and the alias
 					// then fails to unify with its own supertypes.
-					try hxc.typing.TypeResolve.resolveModule(ctx, mi.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+					try {
+						hxc.typing.TypeResolve.resolveModule(ctx, mi.module);
+						switch (r) { case TClassDecl(rc): hxc.typing.TypeResolve.forceQueuedBuild(rc); case _: }
+					} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 					var tPath:Path = {pack: mi.module.path.pack.concat(["_" + mi.module.path.name]), name: named.aliasName};
 					// The typedef sits at the ALIAS's own position, which is the declaration every request
 					// through the alias reports.

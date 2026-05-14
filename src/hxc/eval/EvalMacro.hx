@@ -1158,6 +1158,8 @@ class EvalMacro {
 		// world and its @:build would never run.
 		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
 		if (builtClasses.exists(key)) return;
+		// The build macros run inside the class's build, after set_heritance.
+		hxc.typing.TypeResolve.forceQueuedBuild(c);
 		// The super chain and interfaces build first so a child's build macro sees the parent's macro-added
 		// fields.
 		if (c.superClass != null) ensureBuilt(com, c.superClass.c);
@@ -5482,6 +5484,8 @@ class EvalMacro {
 	// haxe.macro.Type.ClassType. Refs (super/fields/statics) are lazy so a class can reference itself
 	// without infinite recursion.
 	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
+		// Encoding a class forces its build first.
+		hxc.typing.TypeResolve.forceQueuedBuild(c);
 		var f:Map<Int, EvalValue> = new Map();
 		// The hidden ref handle round-trips the decl through decode.
 		stashModuleTypeRef(f, TClassDecl(c));

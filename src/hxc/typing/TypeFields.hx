@@ -198,6 +198,7 @@ class TypeFields {
 			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
 			i++;
 		}
+		hxc.typing.TypeResolve.flushClassSlots(ctx);
 		// A module's context init runs BEFORE its fields type, which is what puts a wildcard import's
 		// statics into the module globals in time for anything that reads them. hxc queues that work as a
 		// PBuildModule delay, so the bucket is drained here, ahead of the bodies rather than with them.
@@ -394,6 +395,7 @@ class TypeFields {
 		ctx.currentModule = m;
 		try {
 			TypeResolve.resolveModule(ctx, m);
+			TypeResolve.forceQueuedBuild(c);
 			if (c.superClass != null) buildClass(ctx, c.superClass.c);
 			for (i in c.interfaces) buildClass(ctx, i.c);
 			if (!ctx.declAborted) {
@@ -498,6 +500,7 @@ class TypeFields {
 		for (mt in m.types) {
 			switch (mt) {
 				case TClassDecl(c):
+					TypeResolve.forceQueuedBuild(c);
 					addImplicitInterfaceFields(c);
 					var entry = ctx.declOfType.get(Context.pathKey(c.path));
 					if (entry == null) continue;
@@ -550,6 +553,7 @@ class TypeFields {
 	// which also builds its constructor.
 	public static function installClassOnDemand(ctx:Context, c:TClass):Void {
 		if (c.hxcInstallStarted || c.module == null || c.module.extra.resolved < 1) return;
+		TypeResolve.forceQueuedBuild(c);
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		switch (entry.decl) {
@@ -844,6 +848,7 @@ class TypeFields {
 	// A full installAndForce per build is O(builds x modules) and re-enters through lazy typing; this
 	// types only the rewritten class, so the cost stays proportional to the fields actually added.
 	public static function forceClassFields(ctx:Context, c:TClass):Void {
+		TypeResolve.forceQueuedBuild(c);
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return; };
@@ -909,6 +914,7 @@ class TypeFields {
 
 	static function forceFieldBodyInner(ctx:Context, c:TClass, cf:TClassField):Void {
 		if (cf.expr != null) return;
+		TypeResolve.forceQueuedBuild(c);
 		// Same reason as installClassFields: the declaration never resolved, so there is no body to type
 		// here. The filters reach this path directly, so guarding the install site alone is not enough.
 		if (ctx.declErrored.exists(Context.pathKey(c.path))) return;

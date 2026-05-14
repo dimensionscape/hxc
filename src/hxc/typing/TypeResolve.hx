@@ -36,95 +36,72 @@ class TypeResolve {
 		// made while resolving never flushes.
 		var savedPass = ctx.currentPass;
 		ctx.currentPass = Context.PBuildModule;
-		try resolveModuleInner(ctx, m) catch (e:Dynamic) { ctx.currentPass = savedPass; resolving.remove(m); throw e; }
+		ctx.resolveDepth++;
+		try {
+			resolveModuleInner(ctx, m);
+			// A class's build as a PBuildClass delay, and nothing flushes that bucket while a module is
+			// being typed (load_module flushes only from a field body, . So a module loaded while another
+			// one initialises has its classes QUEUED behind the rest of that initialisation, and only the
+			// outermost resolution drains them - newest first takes the head), the classes a build loads
+			// right after it. A caller outside any resolution gets that flush before it goes on.
+			if (ctx.resolveDepth == 1) drainClassSlots(ctx);
+		} catch (e:Dynamic) {
+			ctx.resolveDepth--;
+			ctx.currentPass = savedPass;
+			resolving.remove(m);
+			throw e;
+		}
+		ctx.resolveDepth--;
 		ctx.currentPass = savedPass;
-		resolving.remove(m);
 	}
 
 	static function resolveModuleInner(ctx:Context, m:ModuleDef):Void {
 		m.extra.resolved = 1;
+		var init = new ModuleInit(ctx, m);
 		// An unresolvable `using` aborts the module's initialisation before it reaches a single
 		// declaration, so the types exist but none of them is ever initialised. Resolving them anyway
 		// prints a cascade of follow-on errors.
 		if (ctx.moduleAborted.exists(Context.pathKey(m.path))) {
 			markModuleErrored(ctx, m);
+			init.close();
 			return;
 		}
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
-		// The reference splits this in two. init_module_type runs over the declarations IN order, and
-		// everything but a plain class does its work there and then (init_abstract at init_enum,
-		// init_typedef); a class only queues its build `delay ctx PBuildClass`). That bucket drains LIFO
-		// takes the head), so the classes build last declaration first, after the rest of the module is
-		// already initialised. hxc resolves eagerly, so it builds the same list by hand. Every EClass
-		// declaration takes that delay - a @:generic class, a @:genericBuild one, the module's statics
-		// carrier - and only an abstract's implementation is built eagerly by init_abstract. An
-		// abstract's implementation is one of them: module_pass_1 declares it as an EClass, so it takes
-		// the delay too, and everything that needs its fields - the enum-abstract members, the
-		// @:from/@:to methods, the operators - happens in that slot (see resolveAbstract), after a later
-		// class's heritage.
-		var rest = [], classes = [];
-		for (mt in m.types) switch (mt) {
-			case TClassDecl(c): classes.unshift(mt);
-			case _: rest.push(mt);
-		}
-		// The types built before a declaration error: their builds ran - a class declared after the
-		// failing one is built first (the delays are LIFO) - and bound their variables.
-		var builtBefore:Array<String> = [];
-		for (mt in rest.concat(classes)) {
+		// init_module_type runs over the declarations IN order, and everything but a class does its work
+		// there and then (init_abstract at init_enum, init_typedef); a class only queues its build `delay
+		// ctx PBuildClass`), so the classes build last declaration first, after the rest of the module is
+		// initialised. Every EClass declaration takes that delay - a @:generic class, a @:genericBuild
+		// one, the module's statics carrier - and only an abstract's implementation is built eagerly by
+		// init_abstract. An abstract's implementation is one of them: module_pass_1 declares it as an
+		// EClass, so it takes the delay too, and everything that needs its fields - the enum-abstract
+		// members, the @:from/@:to methods, the operators - happens in that slot (see resolveAbstract),
+		// after a later class's heritage.
+		for (mt in m.types) {
 			var info = TypeFunctions.tInfos(mt);
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
+			switch (mt) {
+				case TClassDecl(c):
+					var slot = new ClassSlot(init, mt, c, entry.decl, entry.pos);
+					c.hxcClassSlot = slot;
+					init.pending++;
+					ctx.classSlots.push(slot);
+					continue;
+				case _:
+			}
 			try {
-				var impl:Null<{a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position}> = null;
-				switch (mt) {
-					case TClassDecl(c): switch (c.kind) {
-						case KAbstractImpl(a):
-							var ad = ctx.declOfType.get(Context.pathKey(a.path));
-							if (ad != null) switch (ad.decl) {
-								case EAbstract(dd): impl = {a: a, d: dd, p: ad.pos};
-								case _:
-							}
-						case _:
-					}
-					case _:
-				}
-				// The enum-abstract rewrite of the member declarations (the access list, @:enum, the
-				// synthesised
-				// values) happens at the START of the implementation's field build, so the field's own
-				// access check
-				// never sees `public private`; running it after the class build reports the conflict twice.
-				// It follows the class's @:build macros, so an implementation with one pending is rewritten
-				// when its
-				// build runs (EvalMacro.ensureBuilt).
-				if (impl != null && impl.a.isEnum && !hxc.eval.EvalMacro.hasPendingBuild(ctx, impl.a.impl))
-					buildEnumAbstractFields(ctx, impl.a, impl.d.dParams, impl.d.dData, impl.p);
-				resolveType(ctx, mt, entry.decl, entry.pos);
-				if (impl != null) resolveAbstractImpl(ctx, impl.a, impl.d, impl.p);
-				resolveUsingMetadata(ctx, mt);
-				builtBefore.push(Context.pathKey(info.path));
+				initDecl(ctx, mt, entry.decl, entry.pos);
+				init.builtBefore.push(Context.pathKey(info.path));
 			} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
 				// A display completion is an answer, not a declaration error: it has to reach the responder
 				// rather than be recorded and swallowed here.
 				throw dc;
 			} catch (e:ContextError) {
-				// A declaration error (bad heritage, final extend, ...) is recorded, and the rest of the module
-				// is ABANDONED: the reference's typing_error raises out of init_module_type, so no later
-				// declaration of that module is reached and exactly one such error is ever printed.
-				markModuleErrored(ctx, m);
-				for (k in builtBefore) ctx.declBuiltBeforeError.set(k, true);
-				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
-				ctx.addDiagnostic(e.message, e.pos, e.depth);
-				ctx.currentModule = m;
-				ctx.declAborted = true;
+				declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);
 				break;
 			} catch (e:hxc.core.TypingError) {
-				markModuleErrored(ctx, m);
-				for (k in builtBefore) ctx.declBuiltBeforeError.set(k, true);
-				if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
-				ctx.addDiagnostic(e.message, e.pos, e.depth);
-				ctx.currentModule = m;
-				ctx.declAborted = true;
+				declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);
 				break;
 			} catch (e:Dynamic) {
 				if (hxc.parser.ParserError.isParseFailure(e)) throw e;
@@ -133,6 +110,138 @@ class TypeResolve {
 			}
 		}
 		ctx.currentModule = savedMod;
+		init.close();
+	}
+
+	// One declaration's initialisation: the class build for a class (its slot), the abstract,
+	// enum or typedef initialisation for the rest.
+	static function initDecl(ctx:Context, mt:ModuleType, decl:TypeDef, pos:Position):Void {
+		var impl:Null<{a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position}> = null;
+		switch (mt) {
+			case TClassDecl(c): switch (c.kind) {
+				case KAbstractImpl(a):
+					var ad = ctx.declOfType.get(Context.pathKey(a.path));
+					if (ad != null) switch (ad.decl) {
+						case EAbstract(dd): impl = {a: a, d: dd, p: ad.pos};
+						case _:
+					}
+				case _:
+			}
+			case _:
+		}
+		// The enum-abstract rewrite of the member declarations (the access list, @:enum, the synthesised
+		// values) happens at the START of the implementation's field build, so the field's own access check
+		// never sees `public private`; running it after the class build reports the conflict twice.
+		// It follows the class's @:build macros, so an implementation with one pending is rewritten when
+		// its
+		// build runs (EvalMacro.ensureBuilt).
+		if (impl != null && impl.a.isEnum && !hxc.eval.EvalMacro.hasPendingBuild(ctx, impl.a.impl))
+			buildEnumAbstractFields(ctx, impl.a, impl.d.dParams, impl.d.dData, impl.p);
+		resolveType(ctx, mt, decl, pos);
+		if (impl != null) resolveAbstractImpl(ctx, impl.a, impl.d, impl.p);
+		resolveUsingMetadata(ctx, mt);
+	}
+
+	// A declaration error (bad heritage, final extend, ...) is recorded, and the rest of the module is
+	// ABANDONED: the error raises out of module initialisation (or out of the class build), so no
+	// later declaration of that module is reached and exactly one such error is ever printed.
+	//
+	// The types are marked too, since their fields are never bound and their bodies never typed.
+	// Typing them anyway prints a cascade - an unresolved super leaves every inherited member unknown,
+	// so one bad `extends` becomes many errors.
+	static function declFailed(ctx:Context, init:ModuleInit, e:Dynamic, message:String, pos:Position, depth:Int, savedMod:ModuleDef):Void {
+		markModuleErrored(ctx, init.m);
+		// The types built before a declaration error: their builds ran - a class declared after the
+		// failing one is built first (the delays are LIFO) - and bound their variables.
+		for (k in init.builtBefore) ctx.declBuiltBeforeError.set(k, true);
+		if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
+		ctx.addDiagnostic(message, pos, depth);
+		ctx.currentModule = init.m;
+		ctx.declAborted = true;
+		init.aborted = true;
+	}
+
+	static function drainClassSlots(ctx:Context):Void {
+		while (ctx.classSlots.length > 0) {
+			var slot:ClassSlot = ctx.classSlots.pop();
+			runClassSlot(ctx, slot);
+		}
+	}
+
+	// Finalization's flush: builds a resolution that raised left queued run here, before the
+	// bodies. Nothing is queued once every resolution returned normally.
+	public static function flushClassSlots(ctx:Context):Void {
+		if (ctx.resolveDepth > 0 || ctx.classSlots.length == 0) return;
+		var mw = hxc.typing.TypeFields.enterMacroWorld(ctx);
+		var savedPass = ctx.currentPass;
+		ctx.currentPass = Context.PBuildModule;
+		ctx.resolveDepth++;
+		try drainClassSlots(ctx) catch (e:Dynamic) {
+			ctx.resolveDepth--;
+			ctx.currentPass = savedPass;
+			hxc.typing.TypeFields.leaveMacroWorld(mw);
+			throw e;
+		}
+		ctx.resolveDepth--;
+		ctx.currentPass = savedPass;
+		hxc.typing.TypeFields.leaveMacroWorld(mw);
+	}
+
+	// A queued build taking its turn: its failure is its module's declaration error.
+	static function runClassSlot(ctx:Context, slot:ClassSlot):Void {
+		if (slot.started) return;
+		var init = slot.init;
+		slot.started = true;
+		if (init.aborted) { slot.finish(); return; }
+		var savedMod = ctx.currentModule;
+		ctx.currentModule = init.m;
+		try {
+			initDecl(ctx, slot.mt, slot.decl, slot.pos);
+			init.builtBefore.push(Context.pathKey(slot.c.path));
+		} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+			slot.finish();
+			throw dc;
+		} catch (e:ContextError) {
+			slot.finish();
+			declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);
+		} catch (e:hxc.core.TypingError) {
+			slot.finish();
+			declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);
+		} catch (e:Dynamic) {
+			slot.finish();
+			if (hxc.parser.ParserError.isParseFailure(e)) throw e;
+			hxc.core.TypingError.FatalError.pass(e);
+		}
+		slot.finish();
+		ctx.currentModule = savedMod;
+	}
+
+	/**
+		Every build site forces a class's queued build out of turn (the heritage, the macro API,
+		imports, ...): the delay finds it Built when its turn comes. A failure goes to whoever forced it,
+		as a raise out of build does. A class of a module abandoned by a declaration error is left as
+		that error left it.
+	**/
+	public static function forceQueuedBuild(c:TClass):Void {
+		var slot:Null<ClassSlot> = c.hxcClassSlot;
+		if (slot == null || slot.started) return;
+		var init = slot.init;
+		slot.started = true;
+		if (init.aborted) { slot.finish(); return; }
+		var ctx = init.ctx;
+		var savedMod = ctx.currentModule;
+		ctx.currentModule = init.m;
+		try {
+			initDecl(ctx, slot.mt, slot.decl, slot.pos);
+			init.builtBefore.push(Context.pathKey(c.path));
+		} catch (e:Dynamic) {
+			ctx.currentModule = savedMod;
+			c.hxcBuildState = BUILT;
+			slot.finish();
+			throw e;
+		}
+		ctx.currentModule = savedMod;
+		slot.finish();
 	}
 
 	// A diagnostics run does not ignore errors, so the raise leaves the typing stage and the
@@ -686,6 +795,10 @@ class TypeResolve {
 		var st = c.hxcBuildState;
 		if (st == BUILT) return Built;
 		if (st == BUILDING) return Building([c]);
+		if (c.hxcClassSlot != null) {
+			forceQueuedBuild(c);
+			if (c.hxcBuildState == BUILT) return Built;
+		}
 		var entry = ctx.declOfType.get(Context.pathKey(c.path));
 		if (entry == null) return Built;
 		switch (entry.decl) {
@@ -2489,5 +2602,57 @@ class TypeResolve {
 		}
 		cf.meta = keptMeta;
 		if (overloads.length > 0) cf.overloads = overloads;
+	}
+}
+
+// The initialisation of one module, and the class builds it queued.
+private class ModuleInit {
+	public var ctx:Context;
+	public var m:ModuleDef;
+	public var builtBefore:Array<String> = [];
+	// A declaration error abandoned the module: its builds still queued never run.
+	public var aborted:Bool = false;
+	public var pending:Int = 0;
+	var open:Bool = true;
+
+	public function new(ctx:Context, m:ModuleDef) {
+		this.ctx = ctx;
+		this.m = m;
+	}
+
+	// The module's resolution stays open (TypeResolve.resolving) until its last class is built.
+	public function close():Void {
+		open = false;
+		if (pending == 0) TypeResolve.resolving.remove(m);
+	}
+
+	public function slotDone():Void {
+		pending--;
+		if (!open && pending == 0) TypeResolve.resolving.remove(m);
+	}
+}
+
+private class ClassSlot {
+	public var init:ModuleInit;
+	public var mt:ModuleType;
+	public var c:TClass;
+	public var decl:TypeDef;
+	public var pos:Position;
+	public var started:Bool = false;
+	var finished:Bool = false;
+
+	public function new(init:ModuleInit, mt:ModuleType, c:TClass, decl:TypeDef, pos:Position) {
+		this.init = init;
+		this.mt = mt;
+		this.c = c;
+		this.decl = decl;
+		this.pos = pos;
+	}
+
+	public function finish():Void {
+		if (finished) return;
+		finished = true;
+		c.hxcClassSlot = null;
+		init.slotDone();
 	}
 }
