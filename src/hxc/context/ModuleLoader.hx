@@ -225,7 +225,7 @@ class ModuleLoader {
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, imports), true);
 	}
 
-	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false):Void {
+	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false, queueBuilds:Bool = true):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
 		var hasDeclaration = false;
@@ -766,12 +766,7 @@ class ModuleLoader {
 
 		if (keepTypes) m.types = m.types.concat(decls) else m.types = decls;
 		applyGlobalMetadata(ctx, m, decls);
-		// Every class's build is queued as its declaration is reached, an abstract's implementation
-		// included (it is declared right after the abstract).
-		for (mt in decls) switch (mt) {
-			case TClassDecl(c): hxc.typing.TypeFields.queueClassBuild(ctx, c);
-			case _:
-		}
+		if (queueBuilds) queueClassBuilds(ctx, decls);
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
 		// Build import alias typedefs before their first use so display requests on the alias name have
 		// an answer.
@@ -1427,14 +1422,27 @@ class ModuleLoader {
 		return imports.concat(decls);
 	}
 
+	// Every class's build is queued as its declaration is reached, an abstract's implementation included
+	// (it is declared right after the abstract).
+	static function queueClassBuilds(ctx:Context, decls:Array<ModuleType>):Void {
+		for (mt in decls) switch (mt) {
+			case TClassDecl(c): hxc.typing.TypeFields.queueClassBuild(ctx, c);
+			case _:
+		}
+	}
+
 	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
 		// Register the module before creating its types; register those types after building.
-		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls));
+		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false);
 		addModule(ctx, m);
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
 		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
+		// An import can only precede the declarations (grammar), so init_module_type has loaded
+		// every imported module - queueing its classes - before it reaches this module's first
+		// class. The bucket drains LIFO, so the importer's classes build first and type last.
+		queueClassBuilds(ctx, m.types);
 		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
 		// dependency too. .
 		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
