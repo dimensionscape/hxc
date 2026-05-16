@@ -6367,14 +6367,6 @@ class Typer {
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
 		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
-		try switch (ctx.com.getType({pack: tp.path.tpackage, name: tp.path.tname}, tp.pos, tp.path.tsub)) {
-			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefConstruction(ctx.com, td, tp.pos); hxc.filters.DeprecationCheck.markTypedefConstruction(p); hxc.filters.DeprecationCheck.markTypedefConstruction(tp.pos);
-			case _:
-		} catch (e:Dynamic) {
-			// This probe is the type's first load, so an Error that load raised (a build failing at its
-			// flush, is load_instance's to report, not a miss to skip.
-			if (Std.isOfType(e, hxc.context.Context.ContextError) && (cast e : hxc.context.Context.ContextError).kind.match(Other)) throw e;
-		}
 		var t:T;
 		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
 		// request is answered, then re-raise.

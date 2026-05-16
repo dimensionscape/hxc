@@ -255,14 +255,14 @@ class ServerCache {
 	static function addModules(com:Context, mRoot:ModuleDef, p:Position):Void {
 		function add(tabs:String, m0:ModuleDef, m:ModuleDef):Void {
 			if (m.extra.added >= compilationStep) return;
-			// The kind of the WALK ROOT, not of the module's immediate parent, so a macro-created (MFake)
-			// root matches neither exclusion arm and its whole transitive subgraph is added, macro-world
-			// modules included. A fake root belongs to whichever world is compiling it, so it is filtered as
-			// that world's kind.
-			var rootKind = m0.extra.kind == MFake
-				? (com.isMacro ? MMacro : MCode)
-				: m0.extra.kind;
-			switch [rootKind, m.extra.kind] {
+			// The test is on the kind of the WALK ROOT, not of the module's immediate parent, so a
+			// macro-created (MFake) root matches neither exclusion arm and its whole transitive subgraph is
+			// walked, macro-world modules included. What stops it is adding the module itself: the
+			// module-type check raises at the first type this compilation already registered, and the raise
+			// ends the walk. A walk from one fake module stops before it reaches another fake module only
+			// because the modules the macro world re-added this compilation are stamped already and skipped
+			// (markMacroModuleReused).
+			switch [m0.extra.kind, m.extra.kind] {
 				case [MCode, MMacro] | [MMacro, MCode]:
 					// A cross-context dependency was only checked; do not add it, just its resources.
 					for (name in m.extra.bindedRes.keys())
@@ -276,7 +276,34 @@ class ServerCache {
 					hxc.context.ModuleLoader.registerReusedModule(com, m);
 					for (name in m.extra.bindedRes.keys())
 						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
-					for (m2 in m.extra.deps) add(tabs + "  ", m0, m2);
+					// Deps is an ordered map keyed by id: the walk visits the ids in ascending order.
+					for (id in sortedDepIds(m)) add(tabs + "  ", m0, m.extra.deps.get(id));
+			}
+		}
+		add("", mRoot, mRoot);
+	}
+
+	static function sortedDepIds(m:ModuleDef):Array<Int> {
+		var ids = [for (id in m.extra.deps.keys()) id];
+		ids.sort(function(a, b) return a < b ? -1 : a > b ? 1 : 0);
+		return ids;
+	}
+
+	// Every module the macro world uses in a compilation counts as loaded again and re-added: stamped
+	// added with this step, together with its macro-world dependencies. hxc keeps the macro com, so a
+	// module that survived the previous compilation (and passed this one's check,
+	// EvalMacro.evictStaleMacroModules) is still registered; it only takes the stamp, the first time the
+	// macro world reaches it. A host walk that runs into it later skips it.
+	public static function markMacroModuleReused(com:Context, mRoot:ModuleDef):Void {
+		function add(tabs:String, m0:ModuleDef, m:ModuleDef):Void {
+			if (m.extra.added >= compilationStep) return;
+			if (!hxc.eval.EvalMacro.survivedIntoRequest(m)) return;
+			switch [m0.extra.kind, m.extra.kind] {
+				case [MCode, MMacro] | [MMacro, MCode]:
+				case _:
+					m.extra.added = compilationStep;
+					hxc.compiler.ServerMessage.reusing(com, tabs, m);
+					for (id in sortedDepIds(m)) add(tabs + "  ", m0, m.extra.deps.get(id));
 			}
 		}
 		add("", mRoot, mRoot);

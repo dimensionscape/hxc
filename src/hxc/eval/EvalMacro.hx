@@ -2284,6 +2284,7 @@ class EvalMacro {
 		pendingDisplayEvict = true;
 		pendingStaleSweep = true;
 		pendingMacroReuse = true;
+		survivors = new haxe.ds.ObjectMap();
 		// The build macros a compilation ran are its own: a new request must run them again, since its
 		// classes are typed from source again.
 		builtClasses = new Map();
@@ -2370,10 +2371,12 @@ class EvalMacro {
 	static function evictStaleMacroModules():Void {
 		if (!pendingStaleSweep) return;
 		pendingStaleSweep = false;
+		survivors = new haxe.ds.ObjectMap();
 		if (macroCom == null || !hxc.context.ServerCache.enabled) return;
 		var stale:Array<ModuleDef> = [];
 		for (m in macroCom.modules)
 			if (hxc.context.ServerCache.checkModule(macroCom, m, Position.nullPos) != null) stale.push(m);
+			else survivors.set(m, true);
 		if (stale.length == 0) return;
 		for (m in stale) dropMacroModule(m);
 		// The interpreter's prototypes still point at the retired fields, so it is rebuilt.
@@ -2383,6 +2386,12 @@ class EvalMacro {
 			lastModuleCount = -1;
 		}
 	}
+
+	// The macro-world modules this compilation kept from the previous one: what a fresh macro com would
+	// have served back out of the cache (ServerCache.markMacroModuleReused).
+	static var survivors:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
+
+	public static function survivedIntoRequest(m:ModuleDef):Bool return survivors.exists(m);
 
 	// Tainting walks every signature context, so a file invalidated over the protocol taints its
 	// macro-context module too and the next compilation re-types it. hxc keeps the macro world in a

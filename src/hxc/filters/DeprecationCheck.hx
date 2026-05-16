@@ -11,7 +11,6 @@ import hxc.context.Context;
 class DeprecationCheck {
 	// One warning per usage position.
 	static var warnedPositions:Map<String, Bool> = new Map();
-	static var typedefConstructionPositions:Map<String, Bool> = new Map();
 	static var typedefTypePositions:Map<String, Bool> = new Map();
 	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
 	static var pendingPropertyWarnings:Array<{com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position}> = [];
@@ -62,10 +61,6 @@ class DeprecationCheck {
 			warnDeprecation(com, [], [], msg, p);
 			return;
 		}
-	}
-
-	public static function markTypedefConstruction(p:Position):Void {
-		typedefConstructionPositions.set(p.file + ":" + p.min, true);
 	}
 
 	static function isTypedefType(p:Position):Bool return typedefTypePositions.exists(p.file + ":" + p.min);

@@ -1646,7 +1646,11 @@ class ModuleLoader {
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
 		// Every module load records the loaded module as a dependency of the requesting module.
-		if (existing != null) { addDependency(ctx.currentModule, existing); return existing; }
+		if (existing != null) {
+			if (ctx.isMacro && hxc.context.ServerCache.enabled) hxc.context.ServerCache.markMacroModuleReused(ctx, existing);
+			addDependency(ctx.currentModule, existing);
+			return existing;
+		}
 		// While a compilation server request runs, a cache-valid module is reused instead of parsed.
 		if (hxc.context.ServerCache.enabled) {
 			var cached = hxc.context.ServerCache.typeModule(ctx, m, p);
