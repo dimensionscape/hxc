@@ -70,6 +70,7 @@ class Typer {
 		hxc.typing.Typeload.resetSynthesizedHints();
 		displayHover = false;
 		hoverFound = null;
+		hoverMacroField = null;
 		hoverWalked = new haxe.ds.ObjectMap();
 		definitionWalked = new haxe.ds.ObjectMap();
 		exprDisplayOff = false;
@@ -860,6 +861,20 @@ class Typer {
 						catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
 			};
 			unifyForAnswer(ctx, te, withType);
+			// Under DMHover (and DMTypeDefinition, from the type) the marked node answers with its own typed
+			// expression, raised right here - nothing the enclosing statement does afterwards can take it
+			// back. hxc's position-keyed hooks answer the nodes they see as they type; two answers only this
+			// point can give:
+			if (displayHover || displayTypeDefinition) {
+				if (hoverFound != null && hoverFound.e == te) {
+					// The walk recorded this node's own expression: it is the display handler's answer.
+					var h = hoverFound;
+					hoverFound = {t: h.t, p: h.p, e: h.e, wt: h.wt, tctx: h.tctx, mt: h.mt, isQualified: h.isQualified};
+				} else if (!atExprHoverPos(te.pos) && (hoverFound == null || hoverFound.fromWalk == true)) {
+					// The expression was put where no hook looks - a macro call's expansion.
+					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+				}
+			}
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
 			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
@@ -1823,6 +1838,20 @@ class Typer {
 	 * position be on the type hint, it is picked up while loading the type, whatever the expression
 	 * walk decided.
 	 */
+	// The macro field a hover answer is about, whose macro-world signature the answer reads.
+	public static var hoverMacroField:Null<{c:TClass, cf:TClassField, e:TExpr}> = null;
+
+	public static function resolveHoverMacroField(com:hxc.context.Context):Void {
+		var mf = hoverMacroField;
+		hoverMacroField = null;
+		if (mf == null || hoverFound == null || hoverFound.e != mf.e) return;
+		var mt2 = hxc.eval.EvalMacro.macroFieldDisplayType(com, mf.c, mf.cf);
+		if (mt2 == null) return;
+		var h = hoverFound;
+		var e2 = TypeFunctions.mk(h.e.expr, mt2, h.e.pos);
+		hoverFound = {t: hoverItemType(e2), p: h.p, e: e2, wt: h.wt, tctx: h.tctx, mt: h.mt, fromWalk: h.fromWalk, isQualified: h.isQualified};
+	}
+
 	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool}> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
@@ -3045,15 +3074,18 @@ class Typer {
 		};
 		var te = readExpr(acc);
 		if (te == null) return;
-		// A macro field reports its MACRO-WORLD signature.
-		switch (te.expr) {
-			case TField(_, FStatic(mc, mcf) | FInstance(mc, _, mcf) | FClosure({c: mc}, mcf)):
-				var mt2 = hxc.eval.EvalMacro.macroFieldDisplayType(ctx.com, mc, mcf);
-				if (mt2 != null) te = TypeFunctions.mk(te.expr, mt2, te.pos);
-			case _:
-		}
 		if (displayDefinition) checkDisplayDefinition(ctx, te);
-		if (displayHover || displayTypeDefinition) checkDisplayHover(ctx, te, null);
+		if (displayHover || displayTypeDefinition) {
+			checkDisplayHover(ctx, te, null);
+			// A macro field reports its MACRO-WORLD signature - resolved when the answer's item is built,
+			// after typing, which is the only point the macro world is loaded for it
+			// (resolveHoverMacroField).
+			if (hoverFound != null && hoverFound.e == te) switch (te.expr) {
+				case TField(_, FStatic(mc, mcf) | FInstance(mc, _, mcf) | FClosure({c: mc}, mcf)) if (hxc.eval.EvalMacro.isMacroField(mcf)):
+					hoverMacroField = {c: mc, cf: mcf, e: te};
+				case _:
+			}
+		}
 		if (displayUsage || displayImplementation) captureUsageTarget(te);
 	}
 
@@ -5827,14 +5859,12 @@ class Typer {
 				}
 				return TypeFunctions.mk(TReturn(te), monoOrDynamic(ctx, withType, p), p);
 				} catch (err:TypingError) {
-					// check_error records it, inside call arguments too; what has to reach the argument is
-					// a WithTypeError, which this does not catch.
-					if (ctx.com.isMacro) throw err;
+					// The error is recorded, inside call arguments and in the macro context alike; what has
+					// to reach the argument is a WithTypeError, which this does not catch.
 					ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				} catch (ce:hxc.context.Context.ContextError) {
-					if (ctx.com.isMacro) throw ce;
 					ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
@@ -5925,7 +5955,6 @@ class Typer {
 			|| (hxc.parser.Parser.displayFile != null && TypeFunctions.hasMeta(":debug.display", ctx.curfield.meta))))
 			Sys.println("syntax:" + "
 " + hxc.ast.Ast.Expr.dumpWithPos(bodyExpr));
-		var errorsBefore = ctx.com.errorCount();
 		// A local function is conceptually typed under a COPY of its context, so nothing needs restoring
 		// whatever escapes; hxc restores the one it changed, for every escape - a WithTypeError leaving a
 		// failed overload attempt included.
@@ -5933,7 +5962,6 @@ class Typer {
 			reset();
 			throw e;
 		}
-		var bodyHadError = ctx.com.errorCount() > errorsBefore;
 		// An inferred return type with no value-return settles to Void; a resolved non-Void return requires
 		// every path to return, throw, or dead-end.
 		switch (TypeFunctions.follow(ret)) {
@@ -5946,7 +5974,6 @@ class Typer {
 			// before any reassignment binds it; hxc's field order can bind it first, so a dynamic method is
 			// exempt from the flow check.
 			case _ if (!isLocalFn && ctx.curfield != null && ctx.curfield.kind.match(Method(MethDynamic))):
-			case _ if (bodyHadError):
 			case _:
 				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
 		}
@@ -6461,6 +6488,10 @@ class Typer {
 						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
 					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p, e: TypeFunctions.mk(TNew(c, tl, []), t, p), isQualified: true};
 				switch (c.kind) {
+					// Under a display request that types selectively the construction builds a normal instance of
+					// the generic class.
+					case KGeneric if (!ctx.com.displayFullTyping):
+						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 					case KGeneric if (tp.path.tparams.length == 0 && Typeload.canSpecializeGeneric(tl)):
 						// Only specialize when every parameter is concrete (no open monomorph and no type
 						// parameter): `new Stack<S>()` inside a generic method keeps S abstract and must

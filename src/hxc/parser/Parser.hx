@@ -576,6 +576,12 @@ class Parser {
 			ti.condBreak--;
 			throw new CondFailure(ti.tok, ti.pos);
 		}
+		if (ti.condError != null && o == 0) {
+			// The same fill raising a hard parse error: cleared first for the same reason.
+			var ce = ti.condError;
+			ti.condError = null;
+			throw ce;
+		}
 		return ti;
 	}
 
@@ -3215,9 +3221,22 @@ class Parser {
 			// escape. The recovery wraps all three arms, so the loop-head peek is covered too: a soft
 			// preprocessor fault that surfaces after a completed declaration arrives here, not only around
 			// parseTypeDecl.
+			var resumed = false;
 			var brk = try tokEq(peek(), Eof)
 				catch (c:CondFailure) { if (!tokEq(peek(), Eof)) throw c; true; }
-				catch (a:PreprocessorAbort) { recordSoftPreprocessorFault(a); true; };
+				catch (a:PreprocessorAbort) { recordSoftPreprocessorFault(a); true; }
+				catch (e:ParserError) {
+					// The hard error the pull itself raised - an #if condition that failed after its
+					// head (Preprocess.CondStreamError): recorded in the display file, and the scan
+					// resumes like the arms' own.
+					if (!isDisplayFile() || e.fromPreprocessor || e.hard) throw e;
+					syntaxErrors.push({msg: e.msg, pos: e.pos});
+					resumeScan(false, false);
+					pmax = tokens[idx > 0 ? idx - 1 : 0].pos.max;
+					resumed = true;
+					false;
+				};
+			if (resumed) continue;
 			if (brk) break;
 			var save = idx;
 			var td:TypeDecl;
@@ -3239,6 +3258,8 @@ class Parser {
 					else syntaxErrors.push({msg: e.msg, pos: e.pos});
 					if (idx == save) idx++;
 					resumeScan(false, false);
+					// The list goes on from the end of the last token consumed
+					pmax = tokens[idx > 0 ? idx - 1 : 0].pos.max;
 					continue;
 				}
 				if (e.soft) throw new ParserError(Unexpected(peek()), peekInfo().pos);

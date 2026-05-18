@@ -20,6 +20,26 @@ private class CondHeadFailure extends haxe.Exception {
 	}
 }
 
+/**
+ * parseMacroCond's hard error: the condition failed at a later element of its production. It is
+ * raised inside the main stream's fill as well, so it ends the #if without ending the stream: the
+ * pull that met the #if raises it, and the next one resumes on the lexer.
+ */
+private class CondStreamError extends haxe.Exception {
+	public final err:ParserError;
+	// Where the main stream resumes: the token after the one the failed match left in sraw.
+	public final resumeIdx:Int;
+	// That token, still in the condition stream's buffer (built once per file), so the next condition
+	// reads it first; null when it is a head no condition can start with.
+	public final lost:Null<TokenInfo>;
+	public function new(err:ParserError, resumeIdx:Int, lost:Null<TokenInfo>) {
+		super("CondStreamError");
+		this.err = err;
+		this.resumeIdx = resumeIdx;
+		this.lost = lost;
+	}
+}
+
 class Preprocess {
 	final toks:Array<TokenInfo>;
 	final defines:Define;
@@ -108,11 +128,15 @@ class Preprocess {
 
 	var pendingCondBreak:Int = 0;
 	var condPoisoned:Bool = false;
+	var pendingCondError:Null<ParserError> = null;
+	// A token a failed condition match left in sraw's buffer: the next condition reads it first.
+	var condBuffer:Null<TokenInfo> = null;
 
 	inline function keep(ti:TokenInfo):Void {
 		if (ti.doc != null) pendingDoc = null
 		else if (pendingDoc != null) { ti.doc = pendingDoc; pendingDoc = null; }
 		if (pendingCondBreak > 0) { ti.condBreak = pendingCondBreak; pendingCondBreak = 0; }
+		if (pendingCondError != null) { ti.condError = pendingCondError; pendingCondError = null; }
 		out.push(ti);
 	}
 
@@ -186,7 +210,7 @@ class Preprocess {
 			if (i >= toks.length) break;
 			var ti = toks[i];
 			dropDoc(ti);
-			switch (ti.tok) {
+			try switch (ti.tok) {
 				case Eof:
 					keep(ti);
 					i++;
@@ -259,6 +283,13 @@ class Preprocess {
 				case _:
 					keep(ti);
 					i++;
+			} catch (cse:CondStreamError) {
+				// What the pull had done before the raise stands (mstack, the condition stack, an open dead
+				// block): an exception rolls none of it back. The #if is gone, and the stream goes on as
+				// ordinary code from where the lexer stands.
+				i = cse.resumeIdx;
+				if (cse.lost != null) condBuffer = cse.lost else condPoisoned = true;
+				pendingCondError = cse.err;
 			}
 		}
 		if (mstack.length > 0) {
@@ -349,29 +380,37 @@ class Preprocess {
 	}
 
 	function parseMacroCond():Expr {
-		var ti = cur();
+		// A token an earlier failed match left in sraw's buffer comes first (see CondStreamError).
+		var buffered = condBuffer;
+		var ti = buffered != null ? buffered : cur();
+		function consume():Void if (buffered != null) condBuffer = null else i++;
 		switch (ti.tok) {
 			// No field chain. This array-based preprocessor lexes with the normal lexer (dots split into
 			// Dot tokens), so it reconstructs the dotted path here, required for `#if target.unicode`.
 			case Const(CIdent(t)):
-				i++;
+				consume();
 				return parseMacroCondFieldChain(new Expr(EConst(CIdent(t)), ti.pos));
 			case Kwd(k):
-				i++;
+				consume();
 				return parseMacroCondFieldChain(new Expr(EConst(CIdent(Ast.sKeyword(k))), ti.pos));
 			case Const(CString(s, kind)):
-				i++;
+				consume();
 				return new Expr(EConst(CString(s, kind)), ti.pos);
 			case Const(CInt(v, sfx)):
-				i++;
+				consume();
 				return new Expr(EConst(CInt(v, sfx)), ti.pos);
 			case Const(CFloat(v, sfx)):
-				i++;
+				consume();
 				return new Expr(EConst(CFloat(v, sfx)), ti.pos);
 			case TUnop(op):
-				i++;
+				consume();
+				// `#if !x`: the operand is a later element of the production, so its miss is a syntax
+				// error, not the no-match that evaporates the #if at the head - a hard error naming the token
+				// the failed peek left in its wake (the next one): `#if !@x` is "Unexpected x". The operand's
+				// head failure left its token in the condition stream's buffer, where no later condition can
+				// get past it either.
 				var e = try parseMacroCond() catch (f:CondHeadFailure) {
-					throw f.err != null ? f.err : new ParserError(Unexpected(Eof), f.endPos);
+					throw new CondStreamError(f.err != null ? f.err : new ParserError(Unexpected(Eof), f.endPos), i, null);
 				};
 				// The unary expression spans the operator and its operand, so an unsupported one (`#if ~macro`)
 				// is reported over the whole expression.
@@ -379,9 +418,15 @@ class Preprocess {
 			case POpen:
 				// Parenthesised full conditional expression: parse the sub-token
 				// span up to the matching close paren and run the real parser.
-				i++;
+				consume();
 				var e = parseParenCond(ti.pos);
 				return e;
+			case _ if (buffered != null):
+				// The buffered token is a head no condition starts with: it stays in the buffer, and
+				// this condition fails at its head like every later one will.
+				var after = cur();
+				throw new CondHeadFailure(after.tok.match(Eof) ? null
+					: new ParserError(Unexpected(after.tok), after.pos), after.pos);
 			case _:
 				// The condition production has no catch-all: the miss is a no-match raised inside the main
 				// stream's fill. The offending token was already pulled into the condition stream's buffer and
@@ -517,7 +562,10 @@ class Preprocess {
 			var failIdx = lastDottedSegment(spanStart + r.count);
 			var afterIdx = failIdx + 1 < toks.length ? failIdx + 1 : toks.length - 1;
 			var at = toks[afterIdx];
-			throw new ParserError(Unexpected(at.tok), at.pos);
+			// The token `'(PClose,p2)` was left holding stays in sraw's buffer; the main stream
+			// resumes after it.
+			var lost = toks[failIdx].tok.match(Eof) ? null : toks[failIdx];
+			throw new CondStreamError(new ParserError(Unexpected(at.tok), at.pos), afterIdx, lost);
 		}
 		validateMacroCond(r.e);
 		// The parenthesised condition spans from the OPEN paren to the CLOSE. A hover over the condition

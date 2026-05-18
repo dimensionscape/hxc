@@ -480,7 +480,10 @@ class Compiler {
 			inline function forceReal(c:hxc.core.Type.TAbstractCast, isTo:Bool):Void {
 				var real = a.impl.statics.get(c.cf.name);
 				if (real == null) return;
-				if (real.expr == null) hxc.typing.TypeFields.forceFieldBody(actx, a.impl, real);
+				// Forcing a cast's type types its body only through bind_type's lazy, which a declared
+				// signature does not get under a selective display request .
+				if (real.expr == null && hxc.typing.TypeFields.bodyBehindLazy(actx, real, hxc.typing.TypeFields.fieldCallType(real)))
+					hxc.typing.TypeFields.forceFieldBody(actx, a.impl, real);
 				// Only an UNHINTED @:to leaves an open monomorph on the snapshot; a declared cast type is
 				// already correct. The snapshot carries its own params, so the built signature may only be read
 				// when there are none - otherwise substitution would mix two sets of parameter nodes and every
@@ -1161,6 +1164,7 @@ class Compiler {
 				flushPendingMessages(ctx);
 				exitRequest(1);
 			}
+			hxc.typing.Typer.resolveHoverMacroField(ctx);
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
 				// In a module whose declarations raised, a variable of a class built before the error
@@ -2750,6 +2754,7 @@ class Compiler {
 
 	// Hover as JSON: {documentation, range, item, expected}.
 	static function jsonHover(ctx:Context):Null<String> {
+		hxc.typing.Typer.resolveHoverMacroField(ctx);
 		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus

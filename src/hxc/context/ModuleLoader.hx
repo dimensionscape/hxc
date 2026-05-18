@@ -1891,6 +1891,38 @@ class ModuleLoader {
 		return null;
 	}
 
+	// A qualified path is looked for in the module imports too (matching package and type name), newest
+	// import first, and the import it is found through is marked used. An alias contributes its temp
+	// typedef, at (pack + ["_" + module], alias).
+	public static function resolveImportTypeByPath(ctx:Context, cur:ModuleDef, path:Path, p:Position):Null<ModuleType> {
+		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
+		if (imports == null) return null;
+		var k = imports.order.length - 1;
+		while (k >= 0) {
+			var ni = imports.order[k--];
+			var mt:Null<ModuleType> = null;
+			if (ni.aliased == true && ni.aliasName != null) {
+				if (ni.aliasName != path.name) continue;
+				if (!samePack(path.pack, ni.modulePath.pack.concat(["_" + ni.modulePath.name]))) continue;
+				if (ni.aliasTypedef == null) try resolveNamedImportType(ctx, cur, ni.aliasName, p) catch (_:Dynamic) {}
+				mt = ni.aliasTypedef;
+			} else if (ni.sub != null) {
+				if (ni.sub != path.name) continue;
+				mt = tryLoadSub(ctx, ni.modulePath, ni.sub, p);
+			} else {
+				mt = tryLoadSub(ctx, ni.modulePath, path.name, p);
+			}
+			if (mt == null) continue;
+			var inf = TypeFunctions.tInfos(mt);
+			if (inf.isPrivate && inf.module != cur) continue;
+			if (inf.path.name == path.name && samePack(inf.path.pack, path.pack)) {
+				imports.markImport(ni.impIdx);
+				return mt;
+			}
+		}
+		return null;
+	}
+
 	// Named imports: `import M.Sub` / `import M as X` bind their short name; `import M` also exposes every
 	// sub-type of M by its own name. An aliased import binds only its alias, never the module's own type
 	// names.

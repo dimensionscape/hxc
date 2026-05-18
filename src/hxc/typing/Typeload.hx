@@ -584,6 +584,19 @@ class Typeload {
 				if (TypeFunctions.tInfos(mt).path.name == path.name) return mt;
 			}
 		}
+		// A path matches by its full path as well as by the bare name, so a path written in full - or
+		// qualified by the heritage's import resolution - is found among the module's own types and then
+		// its
+		// imports before any module is loaded. A sub-type of the current module has no module of its own
+		// path.
+		if (sub == null && path.pack.length > 0 && ctx.currentModule != null) {
+			for (mt in ctx.currentModule.types) {
+				var tp = TypeFunctions.tInfos(mt).path;
+				if (tp.name == path.name && tp.pack.join(".") == path.pack.join(".")) return mt;
+			}
+			var imp = hxc.context.ModuleLoader.resolveImportTypeByPath(ctx, ctx.currentModule, path, p);
+			if (imp != null) return imp;
+		}
 		// Unqualified resolution order: current module, then explicit imports (latest first), then the
 		// implicit StdTypes import at the tail of that list, then wildcard imports, then modules from the
 		// current package up to the root. A plain `import lime.app.Application` therefore shadows a
@@ -766,11 +779,16 @@ class Typeload {
 			return switch (tp) {
 				case TPType(th): loadComplexType(ctx, typeParams, th);
 				case TPExpr(e):
-					// The synthetic const-parameter class from the CONSTANT only: "S"^s, "I"^const, "F"^const, and
-					// the literal "Expr" for everything else, EDisplay included. Printing the expression instead
-					// named `Gen<true>`'s parameter `true` where the reference names it `Expr`, which --xml/--json
-					// print and a generic specialization's path is built from.
-					var name = switch (e.expr) {
+					// The synthetic const-parameter class is named from the CONSTANT only: "S" + s, "I" + const,
+					// "F" + const, and the literal "Expr" for everything else, the display marker included, so
+					// `Gen<true>`'s parameter is named `Expr`; --xml/--json print it and a generic
+					// specialization's path is built from it. The marked expression (a display marker, which
+					// matches none of the constant arms) is typed as a value, which is what answers the display
+					// request, and names its class "Expr".
+					var name = if (e == hxc.typing.ExprPreprocessing.markedNode) {
+						if (tctx != null) hxc.typing.Typer.typeExpr(tctx, e, hxc.core.WithType.WithTypeTools.value);
+						"Expr";
+					} else switch (e.expr) {
 						case EConst(CString(s, _)): "S" + s;
 						case EConst(CInt(v, _)): "I" + v;
 						case EConst(CFloat(f, _)): "F" + f;
@@ -963,7 +981,9 @@ class Typeload {
 				// load_instance carries and only the typer's own loads pass here.
 				if (tctx != null && c.kind.match(KGeneric)) for (t in params) checkCtorConstraintArg(tctx, t, p);
 				switch (c.kind) {
-					case KGeneric if (specializeGeneric && canSpecializeGeneric(params)):
+					// `if !recurse || not (ctx.com.display.dms_full_typing)`: a display request that types
+					// selectively builds a normal instance, never a specialization.
+					case KGeneric if (specializeGeneric && ctx.displayFullTyping && canSpecializeGeneric(params)):
 						var fallback = TInst(c, params);
 						var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(fallback));
 						r.set(TypeFunctions.lazyWait(function():T {

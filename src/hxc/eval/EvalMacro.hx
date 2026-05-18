@@ -158,11 +158,16 @@ class EvalMacro {
 		// world.)
 		try EvalMain.addTypes(ec, types) catch (rte:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(rte);
-			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos);
+			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos, 0, true);
 			var stack = uncaughtExceptionStack(rte);
-			var fe = new hxc.core.TypingError.FatalError(stack[0].message, stack[0].pos);
+			var fe = new hxc.core.TypingError.FatalError(stack[0].message, stack[0].pos, 0, true);
 			fe.callChain = stack;
 			throw fe;
+		} catch (e:TypingError) {
+			// An Error out of adding types - the JIT's own (Unknown identifier) included - ends the
+			// compile.
+			if (Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
+			throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth, true);
 		}
 	}
 
@@ -2204,6 +2209,13 @@ class EvalMacro {
 	// (defines, global metadata) while running inside the macro interpreter.
 	public static var hostCom:Null<Context>;
 
+	// Flushing the macro context, as a host's macro load runs it: the interpreter gets every macro-world
+	// type it has not seen yet.
+	public static function flushMacroContext(com:Context):Void {
+		if (com.isMacro) return;
+		getContext(com);
+	}
+
 	static function getContext(com:Context):EvalContext {
 		hostCom = com;
 		evictDisplayModule();
@@ -2228,10 +2240,12 @@ class EvalMacro {
 				if (macroCtx == null) {
 					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] FULL BUILD, modules=" + macroCom.modules.length);
 					var ec = EvalMain.create(true);
-					// An error the macro com reports marks the interpreter .
-					hxc.context.Context.onMacroWorldError = function() ec.hadError = true;
+					// The interpreter of this compilation: one the macro com's errors already marked
+					// (installed when the macro context is created) stays marked.
+					ec.hadError = interpHadError;
 					registerContext(ec, com);
 					flushMacroWorld(ec);
+					if (interpHadError) ec.hadError = true;
 					// A rebuild must not reset macro-world static state; carry static var values over from
 					// the retired context.
 					if (staleMacroCtx != null) {
@@ -2285,6 +2299,7 @@ class EvalMacro {
 		pendingStaleSweep = true;
 		pendingMacroReuse = true;
 		survivors = new haxe.ds.ObjectMap();
+		interpHadError = false;
 		// The build macros a compilation ran are its own: a new request must run them again, since its
 		// classes are typed from source again.
 		builtClasses = new Map();
@@ -2312,6 +2327,7 @@ class EvalMacro {
 		// An error dropped the cached interpreter, so the next compilation began on a fresh one with
 		// had_error clear; hxc keeps its one interpreter and clears it.
 		if (macroCtx != null) macroCtx.hadError = false;
+		interpHadError = false;
 		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
 		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
 		// is re-synced here.
@@ -2416,7 +2432,19 @@ class EvalMacro {
 		}
 	}
 
+	// From the moment the macro context exists, an error its com reports marks the compilation's one
+	// interpreter, whose macro calls answer nothing from then on. hxc builds its interpreter only when
+	// a macro first runs, after the macro world has already typed what it loaded, and may build it
+	// again; the mark belongs to the compilation, so it is kept here and handed to each one.
+	static var interpHadError = false;
+
+	static function markInterpError():Void {
+		interpHadError = true;
+		if (macroCtx != null) macroCtx.hadError = true;
+	}
+
 	static function initMacroContext(com:Context):Void {
+		hxc.context.Context.onMacroWorldError = markInterpError;
 		macroCom = com.cloneForMacro();
 		hxc.context.ModuleLoader.attach(macroCom);
 		hxc.context.ModuleLoader.initBasicTypes(macroCom);
@@ -2869,10 +2897,20 @@ class EvalMacro {
 		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (proto == null || idx == null) {
-			// The macro field is absent because the host parsed the class without macro defined; load
-			// the class from the macro world so its #if macro members are present.
-			loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
-				tctx.curclass != null ? tctx.curclass.module : null, p);
+			// The macro field is absent because the host parsed the class without macro defined; load the
+			// class from the macro world so its #if macro members are present.
+			// What the macro module's declarations raise comes out of the module load as an Error, not as a
+			// resolution miss, so the identifier and call fallbacks (which catch only a miss) let it pass
+			// and the statement records it. hxc signals a miss with a TypingError, so the load's failure
+			// travels as a ContextError, which those fallbacks do not catch - as Typeload.forceBuildInBody
+			// does for a class build.
+			try loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
+				tctx.curclass != null ? tctx.curclass.module : null, p)
+			catch (e:TypingError) {
+				if (Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
+				curPos = savedPos0;
+				throw new hxc.context.Context.ContextError(e.message, e.pos, Other, e.depth);
+			}
 			ec = getContext(tctx.com);
 			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
@@ -3041,6 +3079,21 @@ class EvalMacro {
 	static function typeMacroArgs(ec:EvalContext, tctx:hxc.typing.TyperContext, el:Array<Expr>, sigArgs:Null<Array<TSignatureArg>>, p:Position):Array<EvalValue> {
 		if (sigArgs == null) return [for (e in el) encodeExpr(ec, e)];
 		var mctx = macroCom != null ? new hxc.typing.TyperContext(macroCom) : tctx;
+		// The macro context types with no display kind and is not the display file, so nothing typed
+		// through mctx here - the haxe.macro.Expr load at the call's position included - answers the host's
+		// display request.
+		var mw = hxc.typing.TypeFields.enterMacroWorld(mctx.com);
+		try {
+			var r = typeMacroArgsIn(ec, tctx, mctx, el, sigArgs, p);
+			hxc.typing.TypeFields.leaveMacroWorld(mw);
+			return r;
+		} catch (e:Dynamic) {
+			hxc.typing.TypeFields.leaveMacroWorld(mw);
+			throw e;
+		}
+	}
+
+	static function typeMacroArgsIn(ec:EvalContext, tctx:hxc.typing.TyperContext, mctx:hxc.typing.TyperContext, el:Array<Expr>, sigArgs:Array<TSignatureArg>, p:Position):Array<EvalValue> {
 		var basic = mctx.com.basic;
 		// Rest<Expr> in a macro signature reads as Array<Expr>.
 		var margs = sigArgs.copy();

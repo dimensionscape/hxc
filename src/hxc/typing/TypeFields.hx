@@ -767,13 +767,23 @@ class TypeFields {
 	// Forcing a macro field. The error it raises is swallowed only in a DISPLAY run, where answering the
 	// request is the point.
 	static function forceMacroFieldInMacroWorld(ctx:Context, c:TClass, cf:TClassField):Void {
+		// A macro field is forced for every macro field under full typing, and otherwise only for the
+		// display field; forced macro typing is off for every display kind that types selectively.
+		// `display` is which of the two arms it came from.
+		if (!ctx.displayFullTyping && !isDisplayField(cf)) return;
 		if (macroForced.exists(cf)) return;
 		macroForced.set(cf, true);
 		if (c.module == null) return;
-		var isDisplay = hxc.parser.Parser.displayFile != null;
+		var isDisplay = !ctx.displayFullTyping;
 		// The declaring module's path, not the class's: a class whose name differs from its module file
 		// (common in display requests) is not loadable by its own path.
-		try hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos, true)
+		try {
+			hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos, true);
+			// ': a host load of a macro flushes the macro context once the display window is closed -
+			// add_types, and with it the JIT's check of every macro module before type_macro's MDisplay arm
+			// stops .
+			hxc.eval.EvalMacro.flushMacroContext(ctx);
+		}
 		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
 		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
 	}
@@ -799,6 +809,10 @@ class TypeFields {
 			}
 			return;
 		}
+		// A display request that types selectively puts the body behind a lazy only for the display field
+		// or a signature that is not a full type; any other field keeps its declared signature, and nothing
+		// that reads its type ever types its body.
+		if (!bodyBehindLazy(ctx, cf, cf.type)) return;
 		var sigType = cf.type;
 		lazyFieldTypes.set(cf, sigType);
 		var r = new Ref(LAvailable(sigType));
@@ -832,6 +846,26 @@ class TypeFields {
 		};
 		r.set(LWait(force));
 		cf.type = TLazy(r);
+	}
+
+	// isFullType: only a signature that is not full is left behind the lazy that types the body when
+	// it is forced. hxc puts every field behind one, so a site that forces a field for its type has to
+	// ask this first.
+	public static function isFullType(t:T):Bool {
+		return switch (t) {
+			case TFun(sig):
+				if (!isFullType(sig.ret)) return false;
+				for (a in sig.args) if (!isFullType(a.t)) return false;
+				true;
+			case TMono(r): r.type != null && isFullType(r.type);
+			case TAbstract(_, _) | TInst(_, _) | TEnum(_, _) | TLazy(_) | TDynamic(_) | TAnon(_) | TType(_, _): true;
+		}
+	}
+
+	// Whether this field's body goes behind the lazy its type forces: always under full typing, otherwise
+	// for the display field and for a signature that is not a full type.
+	public static function bodyBehindLazy(ctx:Context, cf:TClassField, sig:T):Bool {
+		return ctx.displayFullTyping || isDisplayField(cf) || !isFullType(sig);
 	}
 
 	public static function fieldCallType(cf:TClassField):T {

@@ -110,7 +110,14 @@ class ImportCheck {
 				var pType = new Position(imp.pos.file, parts[0].pos.min, parts[mi].pos.max);
 				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, pType)
 				catch (e:hxc.context.Context.ContextError) {
+					// An import's report is recorded, not raised; only the host context raises it, under a
+					// macro API call. In the macro context, raising (set while EvalMacro.loadMacroClass
+					// loads a module) stands for the typing errors of that module's declarations, which
+					// this handler is not.
+					var savedRaise = ctx.raiseTypingErrors;
+					if (ctx.isMacro) ctx.raiseTypingErrors = false;
 					ctx.addDiagnostic(e.message, e.pos, e.depth);
+					ctx.raiseTypingErrors = savedRaise;
 					imports.markImportFailed(imp.pos);
 				}
 				// init_module_type wraps init_import in `with Error(err,p,depth) -> display_error_ext`,

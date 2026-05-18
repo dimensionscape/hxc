@@ -18,7 +18,9 @@ class Reification {
 		var r = new Reification(inMacro);
 		var re = r.toExpr(e);
 		var ct:TypeHint = {ct: CTPath({tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: null}), pos: Position.nullPos};
-		return new Expr(ECheckType(re, ct), e.pos);
+		// The wrapper takes the REIFIED expression's position: a `$v{...}` reifies at the `$v` token, an
+		// `$e{x}` at x.
+		return new Expr(ECheckType(re, ct), re.pos);
 	}
 
 	public static function reifyComplexType(ct:ComplexType, p:Position, inMacro:Bool = false):Expr {

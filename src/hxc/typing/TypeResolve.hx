@@ -545,7 +545,15 @@ class TypeResolve {
 	// the missing completion point. So this reads the setting without arming the flag.
 	static function heritageDropped(ctx:Context, err:ContextError):Bool {
 		return switch (err.kind) {
-			case ModuleNotFound(m) if (m.pack.length == 0 && ctx.ignoreErrors):
+			// The display mode is active on the host for every display request but diagnostics and
+			// statistics,
+			// which is ignoreErrors; the macro context has no display mode except inside an MDisplay load,
+			// which
+			// hands it the host's display settings - ignoreErrors crosses into the macro com unchanged, so
+			// on
+			// its own it is not the macro world's answer.
+			case ModuleNotFound(m) if (m.pack.length == 0 && ctx.ignoreErrors
+					&& (!ctx.isMacro || hxc.typing.TypeFields.macroDisplayWindow)):
 				// Called directly rather than through a delay.
 				if (ctx.errorInDiagnosticsRun(err.pos))
 					hxc.typing.Typer.handleUnresolvedIdentifier(ctx, m.name, err.pos);
@@ -660,7 +668,13 @@ class TypeResolve {
 		c.hxcBuildState = BUILDING;
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
-		for (f in d.dFlags) switch (f) {
+		for (f0 in d.dFlags) {
+		var f = switch (f0) {
+			case HExtends(pt): HExtends(resolveHeritageImports(ctx, pt));
+			case HImplements(pt): HImplements(resolveHeritageImports(ctx, pt));
+			case _: f0;
+		}
+		switch (f) {
 			case HExtends(pt):
 				// `haxe.remoting.Proxy<T>` / `AsyncProxy<T>` in an extends clause is not a heritage but a
 				// request
@@ -703,6 +717,7 @@ class TypeResolve {
 				if (t != null) checkHerit(ctx, c, t, false, pt.pos);
 			case _:
 		}
+		}
 		// A non-static method whose inherited parent field is MethDynamic is dynamic itself even without
 		// the modifier. Applied here because the heritage above just resolved superClass (field shells were
 		// created earlier).
@@ -730,6 +745,25 @@ class TypeResolve {
 		for (tp in c.params) TypeFunctions.follow(tp.type);
 		markClassBuilt(c);
 		TypeFields.addImplicitInterfaceFields(c);
+	}
+
+	// Before the heritage loads them, a heritage path with no package takes the package of the type its
+	// name finds - among the module's own types, then in the module's imports (marking that import
+	// used). The type load then sees the qualified path, and a display answer on it is narrowed by the
+	// QUALIFIED name's length.
+	static function resolveHeritageImports(ctx:Context, pt:PlacedTypePath):PlacedTypePath {
+		var t = pt.path;
+		if (t.tpackage.length > 0) return pt;
+		var cur = ctx.currentModule;
+		if (cur == null) return pt;
+		var found:Null<ModuleType> = null;
+		for (mt in cur.types) if (TypeFunctions.tInfos(mt).path.name == t.tname) { found = mt; break; }
+		if (found == null)
+			found = try hxc.context.ModuleLoader.resolveNamedImportType(ctx, cur, t.tname, pt.pos) catch (_:Dynamic) null;
+		if (found == null) return pt;
+		var pack = TypeFunctions.tInfos(found).path.pack;
+		if (pack.length == 0) return pt;
+		return {path: {tpackage: pack, tname: t.tname, tsub: t.tsub, tparams: t.tparams}, pos: pt.pos};
 	}
 
 	// Inherited @:autoBuild entries become @:build entries on the derived type.
