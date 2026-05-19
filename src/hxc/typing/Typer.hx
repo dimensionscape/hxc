@@ -63,6 +63,7 @@ class Typer {
 		expectedArrayAllowDynamic = false;
 		displayDefinition = false;
 		displayFound = null;
+		displayFoundFromWalk = false;
 		markedNodeFailed = false;
 		markedNodeTyped = false;
 		markedStatementFailed = false;
@@ -874,6 +875,14 @@ class Typer {
 					// The expression was put where no hook looks - a macro call's expansion.
 					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
 				}
+			}
+			// Under DMDefinition the marked node's positions are raised - an empty list for a node with no
+			// declaration - so the answer is settled here and no enclosing access can claim the request
+			// afterwards. What the walk found inside this node is that answer, not the walk's.
+			if (displayDefinition) {
+				checkDisplayDefinition(ctx, te);
+				if (displayFound == null) displayFound = [];
+				displayFoundFromWalk = false;
 			}
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
@@ -1823,6 +1832,12 @@ class Typer {
 	public static var displaySubjectError:Null<{msg:String, pos:Position}> = null;
 
 	public static var displayFound:Null<Array<Position>> = null;
+	/**
+		The DMDefinition counterpart of hoverFound's `fromWalk`: displayFound was recorded by the
+		enclosing-node walk (checkDisplayDefinition), not by the marked node or a hook standing for a raise
+		site, so the preprocessor's Exit and a failed marked statement veto it.
+	*/
+	public static var displayFoundFromWalk:Bool = false;
 
 	// Legacy --display @type: the innermost typed expression enclosing the display offset reports its type;
 	// post-order typing makes the first enclosing hit the innermost.
@@ -3674,7 +3689,10 @@ class Typer {
 				[];
 			case _: [];
 		};
-		if (pl.length > 0) displayFound = pl;
+		if (pl.length > 0) {
+			displayFound = pl;
+			displayFoundFromWalk = true;
+		}
 	}
 
 	// A @:structInit class's completable fields are the ARGUMENTS its constructor accepts, with the

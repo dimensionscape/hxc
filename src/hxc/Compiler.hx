@@ -1167,6 +1167,12 @@ class Compiler {
 			hxc.typing.Typer.resolveHoverMacroField(ctx);
 			if (hxc.typing.Typer.displayDefinition) {
 				var found = hxc.typing.Typer.displayFound;
+				// The same vetoes as the hover lane's below: the preprocessor giving up at the display
+				// position and a marked statement that raised first leave nothing marked, so the walk's
+				// record goes too.
+				if (found != null && hxc.typing.Typer.displayFoundFromWalk
+					&& (hxc.typing.ExprPreprocessing.gaveUpAtDisplay || hxc.typing.Typer.markedStatementFailed))
+					found = null;
 				// In a module whose declarations raised, a variable of a class built before the error
 				// answers as it binds; nothing else of that module runs.
 				if (found == null) {
