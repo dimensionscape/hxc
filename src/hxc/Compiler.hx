@@ -1040,9 +1040,9 @@ class Compiler {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.eval.EvalExceptions.HostException) {
 			// A failure is "Error: <message>", any other native exception prints as itself, both at a null
-			// position.
-			answerOut((e.failure ? "Error: " : "") + e.message + "\n");
-			exitRequest(1);
+			// position - reported through the message list, behind the messages already recorded, so a
+			// warning the compile queued before it prints first.
+			abortWithMessage(ctx, (e.failure ? "Error: " : "") + e.message, Position.nullPos);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
@@ -1584,9 +1584,9 @@ class Compiler {
 			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
 		} catch (e:hxc.eval.EvalExceptions.HostException) {
 			// A failure is "Error: <message>", any other native exception prints as itself, both at a null
-			// position.
-			answerOut((e.failure ? "Error: " : "") + e.message + "\n");
-			exitRequest(1);
+			// position - reported through the message list, behind the messages already recorded, so a
+			// warning the compile queued before it prints first.
+			abortWithMessage(ctx, (e.failure ? "Error: " : "") + e.message, Position.nullPos);
 		} catch (e:hxc.core.JsonRpc.InvalidArgument) {
 			// An uncaught Invalid_argument prints bare on stderr and exits 1.
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");

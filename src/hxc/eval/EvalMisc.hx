@@ -8,10 +8,6 @@ import hxc.eval.EvalContext;
 import hxc.eval.EvalExceptions;
 
 class EvalMisc {
-	static inline function mkString(s:String):EvalValue {
-		return VString(hxc.eval.EvalValue.VString.createUnknown(s));
-	}
-
 	public static inline function fcmp(a:Float, b:Float):Cmp {
 		return a == b ? CEq : (a < b ? CInf : (a > b ? CSup : CUndef));
 	}
@@ -30,8 +26,9 @@ class EvalMisc {
 			case [VTrue, VTrue] | [VFalse, VFalse]: CEq;
 			case [VFalse, VTrue]: CInf;
 			case [VTrue, VFalse]: CSup;
+			// Strings compare by their bytes.
 			case [VString(s1), VString(s2)]:
-				switch (EvalStdLib.stringCompare(s1.sstring, s2.sstring)) {
+				switch (hxc.eval.EvalString.ByteString.compare(s1.sstring, s2.sstring)) {
 					case 0: CEq;
 					case n if (n < 0): CInf;
 					case _: CSup;
@@ -69,15 +66,14 @@ class EvalMisc {
 			case [VFloat(a), VFloat(b)]: VFloat(a + b);
 			case [VInt(a), VFloat(b)]: VFloat(a + b);
 			case [VFloat(a), VInt(b)]: VFloat(a + b);
+			// Two native strings concatenate as bytes; a string concatenates its bytes and lengths with the
+			// other side printed (sValue), a native string there included.
 			case [VNativeString(a), VNativeString(b)]: VNativeString(a + b);
-			case [VString(a), VString(b)]: mkString(a.sstring + b.sstring);
-			// Mixed string-with-value concatenation stringifies the non-string side.
-			case [VString(a), b]: mkString(a.sstring + EvalStdLib.stringOf(b));
-			case [a, VString(b)]: mkString(EvalStdLib.stringOf(a) + b.sstring);
-			case [VNativeString(a), b]: VNativeString(a + EvalStdLib.stringOf(b));
-			case [a, VNativeString(b)]: VNativeString(EvalStdLib.stringOf(a) + b);
+			case [VString(a), VString(b)]: VString(hxc.eval.EvalString.EvalString.concat(a, b));
+			case [VString(a), b]: VString(hxc.eval.EvalString.EvalString.concat(a, EvalStdLib.sValue(b, 0)));
+			case [a, VString(b)]: VString(hxc.eval.EvalString.EvalString.concat(EvalStdLib.sValue(a, 0), b));
 			// The operands print with the operator, at the operation.
-			case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " + " + EvalStdLib.stringOf(v2), p);
+			case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " + ", ""], [v1, v2], p);
 		};
 	}
 
@@ -87,7 +83,7 @@ class EvalMisc {
 			case [VFloat(a), VFloat(b)]: VFloat(a - b);
 			case [VInt(a), VFloat(b)]: VFloat(a - b);
 			case [VFloat(a), VInt(b)]: VFloat(a - b);
-			case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " - " + EvalStdLib.stringOf(v2), p);
+			case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " - ", ""], [v1, v2], p);
 		};
 	}
 
@@ -97,7 +93,7 @@ class EvalMisc {
 			case [VFloat(a), VFloat(b)]: VFloat(a * b);
 			case [VInt(a), VFloat(b)]: VFloat(a * b);
 			case [VFloat(a), VInt(b)]: VFloat(a * b);
-			case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " * " + EvalStdLib.stringOf(v2), p);
+			case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " * ", ""], [v1, v2], p);
 		};
 	}
 
@@ -107,7 +103,7 @@ class EvalMisc {
 			case [VFloat(a), VFloat(b)]: VFloat(a / b);
 			case [VInt(a), VFloat(b)]: VFloat(a / b);
 			case [VFloat(a), VInt(b)]: VFloat(a / b);
-			case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " / " + EvalStdLib.stringOf(v2), p);
+			case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " / ", ""], [v1, v2], p);
 		};
 	}
 
@@ -120,7 +116,7 @@ class EvalMisc {
 			case [VFloat(a), VFloat(b)]: VFloat(a % b);
 			case [VInt(a), VFloat(b)]: VFloat(a % b);
 			case [VFloat(a), VInt(b)]: VFloat(a % b);
-			case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " % " + EvalStdLib.stringOf(v2), p);
+			case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " % ", ""], [v1, v2], p);
 		};
 	}
 
@@ -138,26 +134,26 @@ class EvalMisc {
 	}
 
 	public static function opAnd(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a & b); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " & " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a & b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " & ", ""], [v1, v2], p); };
 	}
 
 	public static function opOr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a | b); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " | " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a | b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " | ", ""], [v1, v2], p); };
 	}
 
 	public static function opXor(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a ^ b); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " ^ " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a ^ b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " ^ ", ""], [v1, v2], p); };
 	}
 
 	public static function opShl(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a << (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " << " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a << (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " << ", ""], [v1, v2], p); };
 	}
 
 	public static function opShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >> (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " >> " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >> ", ""], [v1, v2], p); };
 	}
 
 	public static function opUShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >>> (b & 31)); case _: EvalExceptions.excString(ctx, "Invalid operation: " + EvalStdLib.stringOf(v1) + " >>> " + EvalStdLib.stringOf(v2), p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >>> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >>> ", ""], [v1, v2], p); };
 	}
 }

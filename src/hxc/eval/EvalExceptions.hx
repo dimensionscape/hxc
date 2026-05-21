@@ -106,7 +106,21 @@ class EvalExceptions {
 	}
 
 	public static function excString(ctx:EvalContext, str:String, ?p:Position):Dynamic {
-		return exc(ctx, VString(hxc.eval.EvalValue.VString.createUnknown(str)), p);
+		return exc(ctx, hxc.eval.EvalString.EvalString.vOfText(str), p);
+	}
+
+	/**
+		excString of a message that prints values: the text parts around each value's own bytes
+		(valueString), so a string that is not UTF-8 text reaches the message as it is. texts has one
+		more entry than values.
+	*/
+	public static function excValues(ctx:EvalContext, texts:Array<String>, values:Array<EvalValue>, ?p:Position):Dynamic {
+		var buf = new hxc.eval.EvalString.ByteBuffer();
+		for (i in 0...texts.length) {
+			buf.addString(hxc.eval.EvalString.ByteString.ofText(texts[i]));
+			if (i < values.length) buf.addString(EvalStdLib.valueString(values[i]));
+		}
+		return exc(ctx, hxc.eval.EvalString.EvalString.createUnknown(buf.contents()), p);
 	}
 
 	public static function sValueKind(v:EvalValue):String {
@@ -131,12 +145,11 @@ class EvalExceptions {
 	}
 
 	public static function unexpectedValue(ctx:EvalContext, v:EvalValue, expected:String, ?p:Position):Dynamic {
-		var str = switch (v) {
-			case VNull: "Null Access";
+		return switch (v) {
+			case VNull: excString(ctx, "Null Access", p);
 			// The kind and the value.
-			case _: "Unexpected value " + sValueKind(v) + "(" + EvalStdLib.stringOf(v) + "), expected " + expected;
+			case _: excValues(ctx, ["Unexpected value " + sValueKind(v) + "(", "), expected " + expected], [v], p);
 		};
-		return excString(ctx, str, p);
 	}
 
 	public static function invalidCallArgNumber(ctx:EvalContext, expected:Int, got:Int, ?p:Position):Dynamic {

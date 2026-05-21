@@ -165,7 +165,7 @@ class EvalEmitter {
 					ev.env = savedEnv;
 					ev.exceptionStack = hostExceptionStack(ev);
 					var s = Std.string(ex);
-					var v = VString(hxc.eval.EvalValue.VString.createUnknown(s));
+					var v = hxc.eval.EvalString.EvalString.vOfText(s);
 					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
 				}
 				result;
@@ -246,7 +246,8 @@ class EvalEmitter {
 		return switch (c) {
 			case TInt(i): VInt(i);
 			case TFloat(s): VFloat(hxc.core.Numeric.parseFloatLit(s));
-			case TString(s): VString(hxc.eval.EvalValue.VString.createUnknown(s));
+			// The compiler's string as the lexer left it, as UTF-8 bytes (EvalString.createUnknown).
+			case TString(s): hxc.eval.EvalString.EvalString.vOfText(s);
 			case TBool(b): b ? VTrue : VFalse;
 			case TNull: VNull;
 			case TThis: VNull;
@@ -588,7 +589,7 @@ class EvalEmitter {
 			case v:
 				var ev = EvalContext.getEval(ctx);
 				if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
-				EvalExceptions.excString(ctx, "Cannot call " + EvalStdLib.stringOf(v));
+				EvalExceptions.excValues(ctx, ["Cannot call ", ""], [v]);
 		}
 	}
 
@@ -678,7 +679,7 @@ class EvalEmitter {
 							case Var(_) if (!TypeFunctions.hasClassFlag(c, CInterface) && !recv.match(VInstance(_))):
 								switch (recv) {
 									case _ if (e1.expr.match(TConst(TThis))): EvalExceptions.unexpectedValue(ctx, recv, "instance");
-									case VString(s): VInt(EvalStdLib.runtimeStringLength(s));
+									case VString(s): VInt(s.slength);
 									case _: EvalStdLib.unexpectedValueP(ctx, recv, "instance", e1.pos);
 								}
 							case Var(_):
@@ -900,7 +901,9 @@ class EvalEmitter {
 			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
 				var s = EvalStdLib.decodeVString(ctx, eval(ctx, argExprs[0]));
 				var index = EvalStdLib.decodeIntP(ctx, eval(ctx, argExprs[1]), p);
-				return EvalStdLib.stringFastCodeAt(s, index);
+				// unsafeCodeAt reads with EvalString.charAt, unchecked.
+				if (cf.name == "unsafeCodeAt") return VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
+				return index < 0 || index >= s.slength ? VNull : VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
 			case _:
 		}
 		checkStackDepth(ctx);
@@ -970,7 +973,7 @@ class EvalEmitter {
 			case v:
 				var ev = EvalContext.getEval(ctx);
 				if (ev.env != null) EvalExceptions.setLeavePosition(ev.env, p);
-				EvalExceptions.excString(ctx, "Cannot call " + EvalStdLib.stringOf(v));
+				EvalExceptions.excValues(ctx, ["Cannot call ", ""], [v]);
 		};
 	}
 

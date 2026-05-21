@@ -49,14 +49,12 @@ class EvalField {
 			case VPrototype(proto): protoFieldRaise(proto, f);
 			case VArray(va): f == EvalHash.keyLength ? VInt(va.alength) : sharedField(ctx.arrayPrototype, f);
 			case VVector(vv): f == EvalHash.keyLength ? VInt(vv.length) : sharedField(ctx.vectorPrototype, f);
-			case VString(s): f == EvalHash.keyLength ? VInt(EvalStdLib.runtimeStringLength(s)) : sharedField(ctx.stringPrototype, f);
-				// eval.NativeString is the interpreter's raw-string optimization; for field access it is a
-				// String, so length and the String methods resolve through the shared string prototype.
-			case VNativeString(s): f == EvalHash.keyLength ? VInt(s.length) : sharedField(ctx.stringPrototype, f);
+			case VString(s): f == EvalHash.keyLength ? VInt(s.slength) : sharedField(ctx.stringPrototype, f);
+			// A native string has no fields at all (eval.NativeString is a @:coreType abstract, so its
+			// members are impl statics).
 			case VInstance(vi):
 				switch (vi.ikind) {
 					case IBytes(b) if (f == EvalHash.keyLength): VInt(b.length);
-					case IBuffer(buf) if (f == EvalHash.keyLength): VInt(buf.length);
 					case _: try instanceField(vi, f) catch (_:NotFound) protoFieldRaise(vi.iproto, f);
 				}
 			case _: throw new NotFound();
@@ -73,12 +71,7 @@ class EvalField {
 	}
 
 	public static function dynamicField(ctx:EvalContext, v:EvalValue, name:Int):EvalValue {
-		// A String method bound off eval.NativeString must receive a real VString as `this`, so the
-		// String builtins (which read VString) see the text rather than an empty default.
-		var recv = switch (vresolve(v)) {
-			case VNativeString(s): VString(new VString(s, EvalStdLib.stringLength(s)));
-			case r: r;
-		};
+		var recv = vresolve(v);
 		return switch (field(ctx, recv, name)) {
 			case VFunction(f, false): VFieldClosure(recv, f);
 			case VNull:

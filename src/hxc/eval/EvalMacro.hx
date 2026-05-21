@@ -2157,8 +2157,8 @@ class EvalMacro {
 					new Expr(EField(math, name, EFNormal), p);
 				} else
 					mk(EConst(CFloat(hxc.core.Numeric.floatRepres(f), null)));
-			case VString(s): mk(EConst(CString(s.sstring, SDoubleQuotes)));
-			case VNativeString(s): mk(EConst(CString(s, SDoubleQuotes)));
+			case VString(s): mk(EConst(CString(s.sstring.toText(), SDoubleQuotes)));
+			case VNativeString(s): mk(EConst(CString(s.toText(), SDoubleQuotes)));
 			case VArray(va): mk(EArrayDecl([for (i in 0...va.alength) valueToExpr(ec, va.avalues[i], p)]));
 			case VObject(o):
 				var fields:Array<ObjectField> = [];
@@ -2195,9 +2195,9 @@ class EvalMacro {
 						|| vi.iproto.ppath == EvalHash.key_haxe_ds_ObjectMap):
 					mk(EArrayDecl([for (entry in EvalStdLib.orderedMapEntries(VInstance(vi))) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
 				case _:
-					EvalExceptions.excString(ec, "Cannot convert " + EvalStdLib.stringOf(v) + " to expr");
+					EvalExceptions.excValues(ec, ["Cannot convert ", " to expr"], [v]);
 			}
-			case other: EvalExceptions.excString(ec, "Cannot convert " + EvalStdLib.stringOf(other) + " to expr");
+			case other: EvalExceptions.excValues(ec, ["Cannot convert ", " to expr"], [other]);
 		};
 	}
 
@@ -3525,7 +3525,7 @@ class EvalMacro {
 	}
 
 	static function strOf(v:EvalValue):String {
-		return switch (v) { case VString(s): s.sstring; case VNativeString(s): s; case _: throw unexpectedValue(v, "string"); };
+		return switch (v) { case VString(s): s.sstring.toText(); case VNativeString(s): s.toText(); case _: throw unexpectedValue(v, "string"); };
 	}
 
 	// The module check policies, in the order haxe.macro.CompilationServer declares them.
@@ -3572,7 +3572,7 @@ class EvalMacro {
 				switch [name, pack] {
 					case [VString(n), VArray(a)]:
 						var parts = [for (p in a.avalues.slice(0, a.alength)) strOf(p)];
-						parts.length == 0 ? n.sstring : parts.join(".") + "." + n.sstring;
+						parts.length == 0 ? n.sstring.toText() : parts.join(".") + "." + n.sstring.toText();
 					case _: "<unknown>";
 				}
 		}
@@ -4404,10 +4404,10 @@ class EvalMacro {
 		return s == null ? VNull : mkString(s);
 	}
 
+	// The compiler's string as UTF-8 bytes (EvalString.createUnknown).
 	static function mkString(s:String):EvalValue {
 		if (s == null) return VNull;
-		var ns = EvalStdLib.normalizeString(s);
-		return VString(new VString(ns, EvalStdLib.stringLength(ns)));
+		return hxc.eval.EvalString.EvalString.vOfText(s);
 	}
 
 	public static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {

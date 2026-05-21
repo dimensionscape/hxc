@@ -31,30 +31,22 @@ enum EvalValue {
 	VFunction(f:VFunc, isStatic:Bool);
 	VFieldClosure(v:EvalValue, f:VFunc);
 	VLazy(f:Void->EvalValue);
-	VNativeString(s:String);
+	VNativeString(s:hxc.eval.EvalString.ByteString);
 }
 
 // A callable: takes the argument list, returns a value.
 typedef VFunc = Array<EvalValue>->EvalValue;
 
-@:structInit
+// The string's UTF-8 bytes, its length in characters as the creating site computed it, and the (at
+// most two) cursors getOffset walks from.
 class VString {
-	public var sstring:String;
+	public var sstring:hxc.eval.EvalString.ByteString;
 	public var slength:Int;
-	public function new(sstring:String, slength:Int) {
+	public var soffsets:Null<Array<hxc.eval.EvalString.OffsetCursor>> = null;
+
+	public function new(sstring:hxc.eval.EvalString.ByteString, slength:Int) {
 		this.sstring = sstring;
 		this.slength = slength;
-	}
-
-	// Length equals the unit count, for known-ASCII data.
-	public static inline function createAscii(s:String):VString {
-		return new VString(s, s.length);
-	}
-
-	// The length is the CODE POINT count, so a macro-time astral literal has length 1 like the
-	// reference interpreter.
-	public static function createUnknown(s:String):VString {
-		return new VString(s, hxc.eval.EvalStdLib.stringLength(s));
 	}
 }
 
@@ -141,7 +133,9 @@ enum EvalInstanceKind {
 	IPos(p:Position);
 	ITypeDecl(mt:ModuleType);
 	IRef(v:EvalValue);
-	IBuffer(buf:StringBuf);
+	// IBuffer holds a StringBuf's buffer, IUtf8 a haxe.Utf8 buffer.
+	IBuffer(buf:hxc.eval.EvalString.VStringBuffer);
+	IUtf8(buf:hxc.eval.EvalString.ByteBuffer);
 	IRegex(re:EReg);
 	IMap(m:Map<String, MapEntry>);
 }
@@ -180,7 +174,7 @@ class EvalValueTools {
 	public static inline function vstaticFunction(f:VFunc):EvalValue return VFunction(f, true);
 	public static inline function vfieldClosure(v:EvalValue, f:VFunc):EvalValue return VFieldClosure(v, f);
 	public static inline function venumValue(e:VEnumValue):EvalValue return VEnumValue(e);
-	public static inline function vnativeString(s:String):EvalValue return VNativeString(s);
+	public static inline function vnativeString(s:hxc.eval.EvalString.ByteString):EvalValue return VNativeString(s);
 
 	// Force a lazy value to its underlying value.
 	public static function vresolve(v:EvalValue):EvalValue {
