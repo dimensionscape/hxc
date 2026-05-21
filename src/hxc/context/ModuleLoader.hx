@@ -225,7 +225,17 @@ class ModuleLoader {
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, imports), true);
 	}
 
+	// Hold type-parameter display answers until typeModule finishes creating the module's types.
+	public static var creatingModuleTypes:Int = 0;
+	public static var typeParamDisplay:Null<{t:T, p:Position, scope:TypeParams}> = null;
+
 	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false, queueBuilds:Bool = true):Void {
+		creatingModuleTypes++;
+		try createModuleTypes_(ctx, m, tdecls, keepTypes, queueBuilds) catch (e:Dynamic) { creatingModuleTypes--; throw e; }
+		creatingModuleTypes--;
+	}
+
+	static function createModuleTypes_(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool, queueBuilds:Bool):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
 		var hasDeclaration = false;
@@ -376,7 +386,7 @@ class ModuleLoader {
 					// A single package segment completes all in-scope types; longer paths complete their parent
 					// package.
 					if (here) {
-						if (pack.length == 0) hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, part.pos);
+						if (pack.length == 0) hxc.typing.TypeResolve.answerTypeHintCompletion(ctx, part.pos, part.name, 8);
 						throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true, part.pos);
 					}
 					pack.push(part.name);
@@ -387,15 +397,20 @@ class ModuleLoader {
 			}
 		}
 
+		function queuePathDisplay(run:Void->Void):Void {
+			if (hxc.parser.Parser.displayFile != null) imports.pathDisplay.push({seq: imports.importPositions.length, run: run});
+		}
+
 		function recordImport(imp:Import, declPos:Position):Void {
 			// An empty import path completes the same in-scope type set as a type hint.
 			if (imp.path.length == 0 && imp.mode.match(INormal)) {
 				// Use an empty subject at the declaration end so CRImport inserts without replacing text.
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
-					new Position(declPos.file, declPos.max, declPos.max), null, 8);
+				queuePathDisplay(function() hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
+					new Position(declPos.file, declPos.max, declPos.max), null, 8));
 				return;
 			}
-			checkPathDisplay(imp.path, declPos);
+			var ipath = imp.path;
+			queuePathDisplay(function() checkPathDisplay(ipath, declPos));
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
@@ -465,11 +480,11 @@ class ModuleLoader {
 		function recordUsing(path:Array<PlacedName>, declPos:Position):Void {
 			if (path.length == 0) {
 				// An empty using path inserts at the declaration end with CRUsing.
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
-					new Position(declPos.file, declPos.max, declPos.max), null, 9);
+				queuePathDisplay(function() hxc.typing.TypeResolve.answerTypeHintCompletion(ctx,
+					new Position(declPos.file, declPos.max, declPos.max), null, 9));
 				return;
 			}
-			checkPathDisplay(path, declPos);
+			queuePathDisplay(function() checkPathDisplay(path, declPos));
 			var impIdx = imports.addImportPosition(declPos);
 			// Load using modules in declaration order alongside imports so unresolved usings report at their
 			// declared position.
@@ -1436,6 +1451,27 @@ class ModuleLoader {
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false);
 		addModule(ctx, m);
+		// Every module depends on StdTypes, and loading the core type String loads String (and through it
+		// Array) and records the dependency, before the imports are reached. The std module is still the
+		// null module while StdTypes itself types, so it does neither.
+		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
+		if (std != null && std != m) {
+			addDependency(m, std);
+			var old = ctx.currentModule;
+			ctx.currentModule = m;
+			try hxc.typing.Typeload.loadCoreType(ctx, "String") catch (e:Dynamic) { ctx.currentModule = old; throw e; }
+			ctx.currentModule = old;
+		}
+		// The type parameters are typed here, after the module's types and before any import, so is where
+		// one under the cursor answers.
+		var tpd = typeParamDisplay;
+		if (tpd != null) {
+			typeParamDisplay = null;
+			var old = ctx.currentModule;
+			ctx.currentModule = m;
+			try hxc.typing.Typeload.displayTypeInScope(ctx, tpd.t, tpd.p, tpd.scope) catch (e:Dynamic) { ctx.currentModule = old; throw e; }
+			ctx.currentModule = old;
+		}
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
 		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
@@ -1443,14 +1479,6 @@ class ModuleLoader {
 		// every imported module - queueing its classes - before it reaches this module's first
 		// class. The bucket drains LIFO, so the importer's classes build first and type last.
 		queueClassBuilds(ctx, m.types);
-		// Every module depends on StdTypes, and the per-module load_core_type "String" records a String
-		// dependency too. .
-		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
-		if (std != null) {
-			addDependency(m, std);
-			var str = ctx.moduleLut.get(Context.pathKey({pack: [], name: "String"}));
-			if (str != null) addDependency(m, str);
-		}
 		return m;
 	}
 
@@ -2135,13 +2163,6 @@ class ModuleLoader {
 				? "Standard library not found. Please check your `HAXE_STD_PATH` environment variable (current value: \"" + env + "\")"
 				: "Standard library not found. You may need to set your `HAXE_STD_PATH` environment variable", Position.nullPos);
 		};
-		var stringMod = loadModule(ctx, {pack: [], name: "String"}, p);
-		var arrayMod = loadModule(ctx, {pack: [], name: "Array"}, p);
-		// haxe.EnumTools (the global `using`) loads at typer creation, before any init macro runs, so
-		// global metadata registered by one never reaches it: `addGlobalMetadata("", "@:build(...)")`
-		// does not build it.
-		loadModule(ctx, {pack: ["haxe"], name: "EnumTools"}, p);
-
 		function abstractOf(m:ModuleDef, name:String):TAbstract {
 			for (mt in m.types) switch (mt) {
 				case TAbstractDecl(a) if (a.path.name == name): return a;
@@ -2157,27 +2178,32 @@ class ModuleLoader {
 			throw new ContextError("core class " + name + " not found in " + Context.sTypePath(m.path), p);
 		}
 
-		var aVoid = abstractOf(stdTypes, "Void");
-		var aInt = abstractOf(stdTypes, "Int");
-		var aFloat = abstractOf(stdTypes, "Float");
-		var aBool = abstractOf(stdTypes, "Bool");
-		var aNull = abstractOf(stdTypes, "Null");
+		// Each basic type is bound as soon as the module declaring it has loaded: StdTypes' abstracts
+		// before String loads, String before Array. Binding them only after all three had loaded would
+		// leave String's and Array's signatures on the bootstrap stubs, and a stub's module would then
+		// enter their dependencies - which a server request re-adds over StdTypes. The record is this
+		// context's own (the macro context gets a copy), so it is bound field by field.
+		var b = ctx.basic;
+		var basic:BasicTypes = {tvoid: b.tvoid, tint: b.tint, tfloat: b.tfloat, tbool: b.tbool, tnull: b.tnull,
+			tstring: b.tstring, tarray: b.tarray};
+		ctx.basic = basic;
+		basic.tvoid = TAbstract(abstractOf(stdTypes, "Void"), []);
+		basic.tfloat = TAbstract(abstractOf(stdTypes, "Float"), []);
+		basic.tint = TAbstract(abstractOf(stdTypes, "Int"), []);
+		basic.tbool = TAbstract(abstractOf(stdTypes, "Bool"), []);
 		// StdTypes' Dynamic abstract is what a bare Dynamic displays as.
 		var aDynamic = abstractOf(stdTypes, "Dynamic");
 		if (aDynamic != null) TypeFunctions.tDynamicDef.value = TAbstract(aDynamic, TypeFunctions.extractParamTypes(aDynamic.params));
-		var cString = classOf(stringMod, "String");
+		basic.tnull = TypeFunctions.mkNull.bind(abstractOf(stdTypes, "Null"));
+		var stringMod = loadModule(ctx, {pack: [], name: "String"}, p);
+		basic.tstring = TInst(classOf(stringMod, "String"), []);
+		var arrayMod = loadModule(ctx, {pack: [], name: "Array"}, p);
 		var cArray = classOf(arrayMod, "Array");
-
-		var basic:BasicTypes = {
-			tvoid: TAbstract(aVoid, []),
-			tint: TAbstract(aInt, []),
-			tfloat: TAbstract(aFloat, []),
-			tbool: TAbstract(aBool, []),
-			tnull: TypeFunctions.mkNull.bind(aNull),
-			tstring: TInst(cString, []),
-			tarray: function(t:T) return TInst(cArray, [t])
-		};
-		ctx.basic = basic;
+		basic.tarray = function(t:T) return TInst(cArray, [t]);
+		// haxe.EnumTools (the global `using`) loads at typer creation, before any init macro runs, so
+		// global metadata registered by one never reaches it: `addGlobalMetadata("", "@:build(...)")`
+		// does not build it.
+		loadModule(ctx, {pack: ["haxe"], name: "EnumTools"}, p);
 		// haxe.Exception is always loaded at typer creation (its closure pulls CallStack/ReadOnlyArray,
 		// whose `to Iterable` unify marks Array.iterator)
 		loadModule(ctx, {pack: ["haxe"], name: "Exception"}, p);
@@ -2208,6 +2234,14 @@ class ModuleLoader {
 		for (fl in d.dFlags) switch (fl) { case AbOver(t): thisT = t; break; case _: }
 		return [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
 	}
+
+	/**
+		The rewritten constructor's `this` variable and function, by the field transformAbstractField made.
+		runs inside init_class, where the abstract's header is resolved, and types both from it with
+		convert_type' the impl's build sets them (TypeFields.installClassFields) before the constructor's
+		signature is read.
+	*/
+	public static var abstractCtorHints:haxe.ds.ObjectMap<ClassField, {thisVar:EVar, func:Func}> = new haxe.ds.ObjectMap();
 
 	static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField, ?com:Context):ClassField {
 		var stat = false;
@@ -2271,10 +2305,12 @@ class ModuleLoader {
 				var meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(f.cffMeta);
 				// Renamed to `_new` and otherwise as declared: not being static is what makes it an
 				// abstract member.
-				return {
+				var cff:ClassField = {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
 					cffMeta: meta, cffAccess: access, cffKind: FFun(fu2)
 				};
+				abstractCtorHints.set(cff, {thisVar: thisVar, func: fu2});
+				return cff;
 			case FFun(fu) if (!stat):
 				// A cast function is called with no receiver, so it has to be static; the member form would
 				// never be reachable.

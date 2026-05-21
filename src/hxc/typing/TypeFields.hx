@@ -591,6 +591,22 @@ class TypeFields {
 		tctx.typeParams = c.params;
 		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
+		// The constructor's return type is convert_type' (TAbstract(a, params)) and its `this`
+		// convert_type' a.thisType, the header init_abstract has resolved by now.
+		switch (c.kind) {
+			case KAbstractImpl(a):
+				for (cff in d.dData) {
+					var h = hxc.context.ModuleLoader.abstractCtorHints.get(cff);
+					if (h == null) continue;
+					try {
+						var aT = hxc.core.TexprToExpr.convertTypeHint(TAbstract(a, [for (tp in a.params) tp.type]));
+						var thisT = hxc.core.TexprToExpr.convertTypeHint(a.thisType);
+						h.func.fType = aT;
+						h.thisVar.evType = thisT;
+					} catch (_:hxc.core.ExitException) {}
+				}
+			case _:
+		}
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
@@ -942,7 +958,13 @@ class TypeFields {
 
 	public static function forceFieldBody(ctx:Context, c:TClass, cf:TClassField):Void {
 		var mw = enterMacroWorld(ctx);
-		try forceFieldBodyInner(ctx, c, cf) catch (e:Dynamic) { leaveMacroWorld(mw); throw e; }
+		// A field's lazies (its signature, its class's build, its body) carry the context of the
+		// module that declares it, so what they load is that module's dependency - never the
+		// dependency of whichever module happened to be current when something forced them.
+		var savedModule = ctx.currentModule;
+		ctx.currentModule = c.module;
+		try forceFieldBodyInner(ctx, c, cf) catch (e:Dynamic) { ctx.currentModule = savedModule; leaveMacroWorld(mw); throw e; }
+		ctx.currentModule = savedModule;
 		leaveMacroWorld(mw);
 	}
 
@@ -1144,6 +1166,7 @@ class TypeFields {
 							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
 							else null;
 						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
+						hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						// require_constant_expression, the extern inline variable's arm, at the field.
 						if (externVar && isStatic && isInlineVar && initComplaint == null
@@ -1186,7 +1209,7 @@ class TypeFields {
 					// non-Void), and the final-return insertion then appends a value return to a void C++
 					// constructor.
 					var ret = tctx.curfun.match(FunConstructor) ? tctx.t.tvoid : (sig != null ? sig.ret : tctx.t.tvoid);
-					var args = buildArgs(tctx, sig, fd);
+					var args = buildArgs(tctx, sig, fd, cff.cffPos);
 					// Binding a method takes the function body position, falling back to the field position
 					// (cffPos) only for an abstract/no-body method. Function typing uses it for the synthesized
 					// `var this = this` so a macro-built method's _gthis capture lands on the body line,
@@ -1240,6 +1263,7 @@ class TypeFields {
 							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
 							else null;
 						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
+						hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
 						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
 						// require_constant_expression, the extern inline variable's arm, at the field.
 						if (externVar && isStatic && isInlineVar && initComplaint == null
@@ -1592,7 +1616,7 @@ class TypeFields {
 			&& !tctx.curfield.kind.match(Method(MethMacro)) ? 1 : 0;
 	}
 
-	static function buildArgs(tctx:TyperContext, sig:Null<TSignature>, fd:Func):Array<TFuncArg> {
+	static function buildArgs(tctx:TyperContext, sig:Null<TSignature>, fd:Func, fieldPos:Position):Array<TFuncArg> {
 		var result:Array<TFuncArg> = [];
 		var off = abstractThisOffset(tctx);
 		if (off == 1) {
@@ -1617,6 +1641,7 @@ class TypeFields {
 			// The default value unifies into the argument type so an inferred argument settles from its
 			// default (x = 1 gives x:Int).
 			var def:Null<TExpr> = if (fa.value != null) {
+					hxc.typing.ExprPreprocessing.processDisplayFieldExpr(fieldPos, fa.value);
 					var te0 = Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at));
 					// The verdict and keeps the typed expression, so a bad default does not stop the rest of the
 					// function being checked.

@@ -671,6 +671,11 @@ class Calls {
 				// The cursor on the `trace` identifier answers a SYNTHETIC one-argument signature, not
 				// haxe.Log.trace's real one, and a definition question answers no position at all.
 				Typer.displayTraceIdent(ctx, callee.pos);
+				// The marked `trace` under DMDefault is "Unsupported method" at the identifier.
+				if (callee == hxc.typing.ExprPreprocessing.markedNode && hxc.parser.Parser.displayCompletionMode) {
+					Typer.markedNodeFailed = true;
+					throw new TypingError("Unsupported method", callee.pos);
+				}
 				// The trace builtin takes at least one argument and no local shadows it; it is typed at the
 				// identifier's position, which the call, the infos and the no-traces null all carry. Without an
 				// argument the call is an ordinary one of whatever `trace` names.

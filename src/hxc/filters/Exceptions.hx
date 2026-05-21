@@ -90,6 +90,9 @@ class Exceptions {
 			case TFun(sig): sig.ret;
 			case _: throw new TypingError("haxe.Exception." + methodName + " is not a function and cannot be called", p);
 		};
+		// The class being filtered depends on haxe.Exception's module.
+		if (ctx.typer.curclass != null)
+			hxc.context.ModuleLoader.addDependency(ctx.typer.curclass.module, ctx.haxeExceptionClass.module);
 		var fe = TexprTools.makeStaticField(ctx.haxeExceptionClass, cf, p);
 		return TypeFunctions.mk(TCall(fe, args), ret, p);
 	}
@@ -384,16 +387,32 @@ class Exceptions {
 			}
 			return mt;
 		}
-		function loadType(dotted:String):T {
-			if (dotted == "Dynamic" || dotted == "StdTypes.Dynamic") return TypeFunctions.tDynamic;
+		// A path whose last package part is not a lower ident names a module's sub-type. The types load
+		// from the typer's current module - the module of the last class the first filter pass visited -
+		// so a path with no package walks that module's package first.
+		function tp(dotted:String):hxc.ast.Ast.TypePath {
 			var parts = dotted.split(".");
 			var name = parts.pop();
-			var mt = resolved(com.getType({pack: parts, name: name}, Position.nullPos));
-			return switch (mt) {
-				case TClassDecl(cls): TInst(cls, []);
-				case TAbstractDecl(a): TAbstract(a, []);
-				case _: throw new TypingError(dotted + " is expected to be a class or an abstract", Position.nullPos);
-			};
+			if (parts.length > 0 && !hxc.ast.Ast.isLowerIdent(parts[parts.length - 1])) {
+				var moduleName = parts.pop();
+				return {tpackage: parts, tname: moduleName, tparams: [], tsub: name};
+			}
+			return {tpackage: parts, tname: name, tparams: [], tsub: null};
+		}
+		function load(dotted:String):T {
+			// The filters' context's module, nullModule included: addDependency ignores that one.
+			var saved = com.currentModule;
+			com.currentModule = tctx.filterModule;
+			var t = try hxc.typing.Typeload.loadInstance(com, [], tp(dotted), Position.nullPos, true)
+				catch (e:Dynamic) { com.currentModule = saved; throw e; };
+			com.currentModule = saved;
+			var mt = try TypeFunctions.moduleTypeOfType(t) catch (_:hxc.core.ExitException) null;
+			if (mt != null) resolved(mt);
+			return t;
+		}
+		function loadType(dotted:String):T {
+			var t = load(dotted);
+			return isDynamicT(t) ? TypeFunctions.tDynamic : t;
 		}
 		var ctx = new ExcContext();
 		ctx.typer = tctx;
@@ -405,17 +424,23 @@ class Exceptions {
 		var isDynPath = function(dotted:String) return dotted == "Dynamic" || dotted == "StdTypes.Dynamic";
 		ctx.throwsAnything = isDynPath(cfg.baseThrow) && cfg.avoidWrapping;
 		ctx.catchesAnything = isDynPath(cfg.wildcardCatch) && cfg.avoidWrapping;
-		switch (resolved(com.getType({pack: ["haxe"], name: "Exception"}, Position.nullPos))) {
-			case TClassDecl(cls):
+		switch (load("haxe.Exception")) {
+			case t = TInst(cls, _):
 				ctx.haxeExceptionClass = cls;
-				ctx.haxeExceptionType = TInst(cls, []);
+				ctx.haxeExceptionType = t;
 			case _: throw new TypingError("haxe.Exception is expected to be a class", Position.nullPos);
 		}
-		switch (resolved(com.getType({pack: ["haxe"], name: "ValueException"}, Position.nullPos))) {
-			case TClassDecl(cls):
+		switch (load("haxe.ValueException")) {
+			case t = TInst(cls, _):
 				ctx.valueExceptionClass = cls;
-				ctx.valueExceptionType = TInst(cls, []);
+				ctx.valueExceptionType = t;
 			case _: throw new TypingError("haxe.ValueException is expected to be a class", Position.nullPos);
+		}
+		// haxe.NativeStackTrace is loaded here too, a class or an abstract with an impl.
+		switch (load("haxe.NativeStackTrace")) {
+			case TInst(_, _):
+			case TAbstract(a, _) if (a.impl != null):
+			case _: throw new TypingError("haxe.NativeStackTrace is expected to be a class or an abstract", Position.nullPos);
 		}
 		var run:TExpr->TExpr = null;
 		run = function(e:TExpr):TExpr {
@@ -452,6 +477,8 @@ class Exceptions {
 			hxc.typing.TypeFields.forceFieldBody(com, nst, saveCf);
 			var ret = switch (TypeFunctions.follow(saveCf.type)) { case TFun(sig): sig.ret; case _: com.basic.tvoid; };
 			var catchLocal = TypeFunctions.mk(TLocal(v), v.type, v.pos);
+			// The class depends on haxe.NativeStackTrace's module.
+			if (tctx.curclass != null) hxc.context.ModuleLoader.addDependency(tctx.curclass.module, nst.module);
 			var fe = TexprTools.makeStaticField(nst, saveCf, v.pos);
 			// makeCall inlines saveStack (an inline function) in place, so it becomes the field write
 			return hxc.typing.Calls.makeCall(tctx, fe, [catchLocal], ret, v.pos);

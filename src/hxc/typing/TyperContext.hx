@@ -21,8 +21,11 @@ class TyperContext {
 	// exception out of the marked node leaves it on for the rest of the field, so every unknown
 	// identifier after it goes on raising.
 	public var inDisplay:Bool = false;
-	/** Newest first. */
+	/** Newest first. */
 	public var monomorphs:Array<{m:TMono, p:Position}>;
+	// Reset for each function: the index in monomorphs (newest first) where the innermost
+	// function's own registrations end.
+	public var monoFunctionStart:Int = 0;
 	/** Expected return type of the function being typed. */
 	public var ret:T;
 	public var curfun:CurrentFun;
@@ -31,6 +34,10 @@ class TyperContext {
 	// they stay Const for good, which --json prints.
 	public var opened:Array<hxc.core.Ref<hxc.core.Type.AnonStatus>> = [];
 	public var curclass:TClass;
+	// The module a filter pass made this context's own, which it keeps after the pass. hxc's current
+	// module is the compiler's, shared by every context, so the filters' one is held here (see
+	// FiltersCommon.runExpressionFilters).
+	public var filterModule:Null<hxc.core.Type.ModuleDef> = null;
 	public var tthis:T;
 	public var curfield:TClassField;
 	public var vthis:Null<TVar>;

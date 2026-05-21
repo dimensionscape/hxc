@@ -73,6 +73,12 @@ class FiltersCommon {
 			case TClassDecl(c) if (isRemovableClass(c)):
 			case TClassDecl(c):
 				ctx.curclass = c;
+				// The class's module is current while its fields filter, so what they load is its
+				// dependency. The filters' context keeps it afterwards (filterModule); nothing else may
+				// inherit it.
+				ctx.filterModule = c.module;
+				var savedModule = ctx.com.currentModule;
+				ctx.com.currentModule = c.module;
 				function processField(f:TClassField):Void {
 					if (ignoreProcessedStatus || !TypeFunctions.hasClassFieldFlag(f, CfPostProcessed)) {
 						ctx.curfield = f;
@@ -81,10 +87,16 @@ class FiltersCommon {
 					}
 					for (o in f.overloads) processField(o);
 				}
-				for (f in c.orderedFields) processField(f);
-				for (f in c.orderedStatics) processField(f);
-				if (c.constructor != null) processField(c.constructor);
-				if (c.init != null) c.init = run(c.init);
+				try {
+					for (f in c.orderedFields) processField(f);
+					for (f in c.orderedStatics) processField(f);
+					if (c.constructor != null) processField(c.constructor);
+					if (c.init != null) c.init = run(c.init);
+				} catch (e:Dynamic) {
+					ctx.com.currentModule = savedModule;
+					throw e;
+				}
+				ctx.com.currentModule = savedModule;
 			case TEnumDecl(_) | TTypeDecl(_) | TAbstractDecl(_):
 		}
 	}

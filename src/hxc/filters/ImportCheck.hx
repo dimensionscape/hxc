@@ -56,7 +56,31 @@ class ImportCheck {
 			}
 			for (u in imports.rawUsings) work.push({i: u.idx, imp: null, us: u});
 			work.sort(function(a, b) return a.i - b.i);
+			// The path-display checks of the declarations up to this one.
+			function runPathDisplay(upTo:Int):Void {
+				while (imports.pathDisplay.length > 0 && imports.pathDisplay[0].seq <= upTo) {
+					var d = imports.pathDisplay.shift();
+					imports.pathDisplayAt = d.seq;
+					try d.run() catch (e:Dynamic) { imports.pathDisplayAt = -1; throw e; }
+					imports.pathDisplayAt = -1;
+				}
+			}
+			var aborted = false;
 			for (w in work) {
+				// An import's check runs inside the handler that records its init's errors, and a failure
+				// skips
+				// that init; a using's has no handler, so its failure abandons the module as any failed
+				// using does.
+				try runPathDisplay(w.i) catch (e:hxc.context.Context.ContextError) {
+					ctx.addDiagnostic(e.message, e.pos, e.depth);
+					if (w.imp == null) {
+						ctx.moduleAborted.set(Context.pathKey(m.path), true);
+						aborted = true;
+						break;
+					}
+					imports.markImportFailed(w.imp.pos);
+					continue;
+				}
 				if (w.imp == null) {
 					// A using that cannot be resolved ABANDONS the module: an import's error is caught and
 					// recorded, a using's is not, so the error raises and no later declaration of the
@@ -64,6 +88,7 @@ class ImportCheck {
 					// import prints only the using.
 					if (loadUsing(ctx, m, imports, w.us)) {
 						ctx.moduleAborted.set(Context.pathKey(m.path), true);
+						aborted = true;
 						break;
 					}
 					continue;
@@ -128,6 +153,9 @@ class ImportCheck {
 				catch (fp:hxc.core.TypingError.ForbidPackage) { throw fp; }
 				catch (_:Dynamic) { imports.markImportFailed(imp.pos); }
 			}
+			// An `import |` or `using |` after the last recorded declaration; an abandoned module
+			// reaches none of them.
+			if (aborted) imports.pathDisplay = [] else runPathDisplay(0x7fffffff);
 		} catch (e:haxe.Exception) { ctx.currentModule = savedMod; throw e; }
 		ctx.currentModule = savedMod;
 	}

@@ -143,6 +143,11 @@ class EvalMacro {
 	// a closure reads a LIVE parent frame and fatal the moment one snapshots its captures.
 	static var macroFiltered:haxe.ds.ObjectMap<Dynamic, Bool> = new haxe.ds.ObjectMap();
 
+	// The macro context's current module: loading a macro module makes it current, the flush that follows
+	// builds its filters under it (so the exceptions filter's setup records that module's dependencies),
+	// and nullModule is put back afterwards.
+	static var macroCurModule:Null<ModuleDef> = null;
+
 	// Flushing the macro context: the macro world's types in sorted finalization order, each one the
 	// interpreter has not seen filtered (`ready`) and then added (the interpreter keeps what it has). The
 	// order is the order their static delays - class inits included - run in.
@@ -173,6 +178,11 @@ class EvalMacro {
 
 	public static function applyMacroWorldFilters(mcom:Context, types:Array<ModuleType>):Void {
 		var tctx = new TyperContext(mcom);
+		tctx.filterModule = macroCurModule;
+		// The expression filters are built once per flush, the exceptions filter's setup included, with the
+		// macro context's current module in effect.
+		var exceptions = hxc.filters.Exceptions.filter(tctx);
+		macroCurModule = null;
 		// Built once per flush: remove_generic_base, Exceptions.patch_constructors, add_field_inits (over
 		// RenameVars.init of the macro com), minimal_restore - the compilation server's snapshot of what
 		// the filters change, which hxc's reused macro world does not take - and apply_native_paths.
@@ -185,7 +195,6 @@ class EvalMacro {
 			switch (t) { case TClassDecl(c): tctx.curclass = c; case _: }
 			// handle_abstract_casts (hxc splits its TNew arm out as resolve_deferred_multitype, as the main
 			// pipeline does), local_statics, VarLazifier, Exceptions and captured_vars.
-			var exceptions = hxc.filters.Exceptions.filter(tctx);
 			hxc.filters.FiltersCommon.runExpressionFilters(tctx, [
 				{name: "resolve_deferred_multitype", f: function(e) return {
 					function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return hxc.filters.Filters.resolveDeferredMultiType(tctx, hxc.core.TexprTools.mapExpr(walk, e2));
@@ -2018,7 +2027,6 @@ class EvalMacro {
 		function path(dotted:String):EvalValue {
 			var parts = dotted.split(".");
 			var name = parts.pop();
-			if (parts.length == 0 && name == "Dynamic") parts = ["StdTypes"];
 			return obj([{name: "pack", value: strArray(parts)}, {name: "name", value: str(name)}]);
 		}
 		function pathArray(l:Array<String>):EvalValue {
@@ -2295,6 +2303,7 @@ class EvalMacro {
 		// apart by EPOCH rather than cleared, which the generic lookups still need. The module
 		// redefinition check is what needs it.
 		if (macroCom != null) macroCom.compilationEpoch++;
+		macroCurModule = null;
 		pendingDisplayEvict = true;
 		pendingStaleSweep = true;
 		pendingMacroReuse = true;
@@ -2614,6 +2623,7 @@ class EvalMacro {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
 			// module's path. .
 			var m = hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos);
+			macroCurModule = m;
 			// The module being typed DEPENDS on the macro module it called into, across the context
 			// boundary. Without it a macro's own file could be invalidated and every module built by it
 			// still read as clean.

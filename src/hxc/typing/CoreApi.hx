@@ -45,7 +45,34 @@ class CoreApi {
 	}
 
 	// The class path resolves in the core context (a @:native class keeps its source path).
-	static function loadCoreClass(ctx:Context, c:TClass):Null<TClass> {
+	/**
+		A @:coreApi class (or an abstract whose impl is one) takes the core class's documentation
+		wherever its own has none - the class, each field and static by name, and the constructor. It
+		writes into the platform class, so every later reader sees it.
+	**/
+	public static function mergeCoreDoc(ctx:Context, mt:hxc.core.Type.ModuleType):Void {
+		var c:Null<TClass> = switch (mt) {
+			case TClassDecl(c): c;
+			case TAbstractDecl(a): a.impl;
+			case _: null;
+		};
+		if (c == null || !TypeFunctions.hasMeta(":coreApi", c.meta)) return;
+		var core = loadCoreClass(ctx, c);
+		if (core == null) return;
+		if (c.doc == null) c.doc = core.doc;
+		for (cf in c.orderedFields) if (cf.doc == null) {
+			var f2 = core.fields.get(cf.name);
+			if (f2 != null) cf.doc = f2.doc;
+		}
+		for (cf in c.orderedStatics) if (cf.doc == null) {
+			var f2 = core.statics.get(cf.name);
+			if (f2 != null) cf.doc = f2.doc;
+		}
+		if (c.constructor != null && c.constructor.doc == null && core.constructor != null)
+			c.constructor.doc = core.constructor.doc;
+	}
+
+	public static function loadCoreClass(ctx:Context, c:TClass):Null<TClass> {
 		var ctx2 = coreContext(ctx);
 		// An abstract's IMPL class is looked up under the ABSTRACT's path - `haxe.Rest`, never
 		// `haxe._Rest.Rest_Impl_`, which exists in no std file. Using path for both would make every

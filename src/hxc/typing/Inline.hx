@@ -194,10 +194,11 @@ class Inline {
 		return TypeFunctions.hasMeta(":optional", v.meta) || TypeFunctions.isNullable(v.type);
 	}
 
-	// An inline method, where inlining is allowed, and either -D no-inline is off or the field is one
-	// is_forced_inline always expands.
+	// An inline method, where inlining is allowed, and either -D no-inline is off or the field is
+	// one isForcedInline always expands. --no-opt is not part of it: only expression reduction
+	// reads it.
 	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
-		return cf.kind.match(Method(MethInline)) && ctx.allowInline && ctx.com.foptimize
+		return cf.kind.match(Method(MethInline)) && ctx.allowInline
 			&& (!ctx.com.defines.rawDefined("no_inline") || isForcedInline(c, cf));
 	}
 
@@ -297,11 +298,17 @@ class Inline {
 				};
 				var array = TypeFunctions.mk(TArrayDecl(remaining), ctx.com.basic.tarray(tParams), restPos);
 				var ofCf = a.impl.statics.get("of");
-				var ofType = ofCf.params.length == 1
-					? TypeFunctions.applyParams(ofCf.params, [tParams], TypeFunctions.follow(ofCf.type))
-					: TypeFunctions.follow(ofCf.type);
-				var fieldE = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(a.impl), restPos), FStatic(a.impl, ofCf)), ofType, restPos);
-				out.push(TypeFunctions.mk(TCall(fieldE, [array]), TAbstract(a, [tParams]), restPos));
+				// A static call: fresh monomorphs for the field's own parameters, the abstract's mapped to
+				// the
+				// rest element type, and the call made through the regular call path - which is what
+				// inlines
+				// haxe.Rest.of right here, whatever --no-opt says.
+				var monos:Array<T> = [for (_ in ofCf.params) TypeFunctions.mkMono()];
+				function map(ty:T):T
+					return TypeFunctions.applyParams(a.params, [elem], TypeFunctions.applyParams(ofCf.params, monos, ty));
+				hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, ofCf);
+				var fieldE = TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(a.impl), restPos), FStatic(a.impl, ofCf)), map(ofCf.type), restPos);
+				out.push(Calls.makeCall(ctx, fieldE, [array], map(TAbstract(a, [tParams])), restPos));
 				return out;
 			case _:
 				return params;
@@ -1183,6 +1190,9 @@ class Inline {
 					var read = switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
 							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
+						// A function expression inlined at a read has its locals duplicated, so each read declares
+						// its own.
+						case TFunction(_): TexprTools.duplicateTvars(function(x) return x, se);
 						case _: se;
 					};
 					// A read of an abstract-this local (an abstract member's `this` argument, an abstract

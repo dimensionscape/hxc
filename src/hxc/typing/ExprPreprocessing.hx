@@ -48,6 +48,9 @@ class ExprPreprocessing {
 			&& !hxc.typing.Typer.displayUsage && !hxc.typing.Typer.displayImplementation) return e;
 		dpos = hxc.parser.Parser.displayOffset;
 		if (dpos < 0) return e;
+		// A cursor inside a comment stops the lexer before this pass; hxc parses on with the flag set
+		// instead, so nothing may be marked.
+		if (hxc.parser.Parser.displaySuppressed) return e;
 		// DMDefault encloses inclusively and is a completion; DMHover's upper bound is strict; every
 		// other mode encloses inclusively and is not a completion.
 		isHover = hxc.parser.Parser.displayHoverMode;
@@ -55,6 +58,7 @@ class ExprPreprocessing {
 		wasAnnotated = false;
 		inPattern = false;
 		gaveUp = false;
+		spliced = [];
 		var r = map(e);
 		// Giving up unwinds the whole walk, so nothing annotated on the way survives. hxc records the
 		// verdict in a flag and keeps walking, so an ENCLOSING node could still mark itself after an
@@ -63,13 +67,44 @@ class ExprPreprocessing {
 		// here". Dropping the mark with the verdict is that unwind.
 		if (gaveUp) {
 			markedNode = null;
+			var i = spliced.length;
+			while (i-- > 0) spliced[i]();
+			spliced = [];
 			return null;
 		}
+		spliced = [];
 		return r;
+	}
+
+	// The markers the element-list and case arms create are new nodes. hxc types the ORIGINAL tree
+	// (see process's caller), not one the pass returns, so a marker is spliced into it in place, and
+	// the splice is taken back when the pass gives up, as the unwind would discard it.
+	static var spliced:Array<Void->Void> = [];
+
+	static function splice(e:Expr, def:hxc.ast.Ast.ExprDef):Expr {
+		var old = e.expr;
+		e.expr = def;
+		spliced.push(function() e.expr = old);
+		return e;
 	}
 
 	public static function inDisplayFile(p:Position):Bool {
 		return hxc.parser.Parser.matchesDisplayFile(p.file);
+	}
+
+	// The field is in the display file and its declaration encloses the cursor. It decides whether a
+	// var field's initializer and a function argument's default value run the pass.
+	public static function isDisplayField(p:Position):Bool {
+		var off = hxc.parser.Parser.displayOffset;
+		if (hxc.parser.Parser.displayFile == null || off < 0 || !inDisplayFile(p)) return false;
+		return p.min <= off && off <= p.max;
+	}
+
+	// When the field is the display field the expression runs the pass, whose verdict is the same
+	// flag the body's pass sets.
+	public static function processDisplayFieldExpr(fieldPos:Position, e:Expr):Void {
+		if (e == null || !isDisplayField(fieldPos)) return;
+		if (process(e) == null) hxc.typing.Typer.exprDisplayOff = true;
 	}
 
 	static function isAnnotated(p:Position):Bool {
@@ -120,23 +155,31 @@ class ExprPreprocessing {
 		// A switch recurses by hand so its PATTERNS are mapped with inPattern set.
 		return switch (e.expr) {
 			case ESwitch(e1, cases, def) if (isAnnotated(e.pos)):
-				var me1 = map(e1);
+				// Rebuilt only when something under it changed, as below: loop marks a case of the
+				// ORIGINAL node in place.
+				var changed = false;
+				function m(x:Expr):Expr {
+					var r = map(x);
+					if (r != x) changed = true;
+					return r;
+				}
+				var me1 = m(e1);
 				var mcases:Array<SwitchCase> = [
 					for (c in cases) {
 						var old = inPattern;
 						inPattern = true;
-						var vals = [for (v in c.values) map(v)];
+						var vals = [for (v in c.values) m(v)];
 						inPattern = old;
 						{
 							values: vals,
-							guard: c.guard == null ? null : map(c.guard),
-							expr: c.expr == null ? null : map(c.expr),
+							guard: c.guard == null ? null : m(c.guard),
+							expr: c.expr == null ? null : m(c.expr),
 							pos: c.pos
 						};
 					}
 				];
-				var mdef = def == null ? null : {e: def.e == null ? null : map(def.e), pos: def.pos};
-				loop(new Expr(ESwitch(me1, mcases, mdef), e.pos));
+				var mdef = def == null ? null : {e: def.e == null ? null : m(def.e), pos: def.pos};
+				loop(changed ? new Expr(ESwitch(me1, mcases, mdef), e.pos) : e);
 			case _:
 				// Rebuild only along the path that actually changed. hxc keys several display
 				// mechanisms on node IDENTITY (Typer.markedDisplay, Typer.synthesizedNodes), so a
@@ -225,17 +268,17 @@ class ExprPreprocessing {
 				}
 
 			case EBlock(el) if (isAnnotated(e.pos) && isCompletion):
-				return new Expr(EBlock(loopEl(el, e.pos)), e.pos);
+				return splice(e, EBlock(loopEl(el, e.pos)));
 
 			case ECall(e1, el) if (isAnnotated(e.pos) && isCompletion):
-				return new Expr(ECall(e1, loopEl(el, e.pos)), e.pos);
+				return splice(e, ECall(e1, loopEl(el, e.pos)));
 
 			case ENew(tp, el) if (isAnnotated(e.pos) && isCompletion):
 				if (isAnnotated(tp.pos) || tp.pos.max >= dpos) return annotateMarked(e);
-				return new Expr(ENew(tp, loopEl(el, e.pos)), e.pos);
+				return splice(e, ENew(tp, loopEl(el, e.pos)));
 
 			case EArrayDecl(el) if (isAnnotated(e.pos) && isCompletion):
-				return new Expr(EArrayDecl(loopEl(el, e.pos)), e.pos);
+				return splice(e, EArrayDecl(loopEl(el, e.pos)));
 
 			case EObjectDecl(_) if (isAnnotated(e.pos) && isCompletion):
 				return annotate(e, DKStructure);
@@ -254,33 +297,39 @@ class ExprPreprocessing {
 						case _: new Expr(EBlock([ec, ep]), p);
 					}
 				}
-				var out = cases.copy();
+				// The marked body replaces the case's own, in place (see splice).
+				function markAt(c:SwitchCase):Void {
+					var old = c.expr;
+					c.expr = markCase(c.expr, c.pos);
+					spliced.push(function() c.expr = old);
+				}
 				var i = 0;
 				var done = false;
-				while (i < out.length && !done) {
-					var c = out[i];
-					if (i == out.length - 1) {
+				while (i < cases.length && !done) {
+					var c = cases[i];
+					if (i == cases.length - 1) {
 						if (def == null) {
-							if (e.pos.max > dpos)
-								out[i] = {values: c.values, guard: c.guard, expr: markCase(c.expr, c.pos), pos: c.pos};
+							if (e.pos.max > dpos) markAt(c);
 						} else if (c.pos.max <= dpos && def.pos.min >= dpos) {
-							out[i] = {values: c.values, guard: c.guard, expr: markCase(c.expr, c.pos), pos: c.pos};
+							markAt(c);
 						}
 						done = true;
 					} else {
-						var c2 = out[i + 1];
+						var c2 = cases[i + 1];
 						if (c.pos.max <= dpos && c2.pos.min >= dpos) {
-							out[i] = {values: c.values, guard: c.guard, expr: markCase(c.expr, c.pos), pos: c.pos};
+							markAt(c);
 							done = true;
 						} else {
 							i++;
 						}
 					}
 				}
-				var ndef = def;
-				if (!didMark && def != null && e.pos.max > dpos)
-					ndef = {e: markCase(def.e, def.pos), pos: def.pos};
-				return new Expr(ESwitch(e1, out, ndef), e.pos);
+				if (!didMark && def != null && e.pos.max > dpos) {
+					var old = def.e;
+					def.e = markCase(def.e, def.pos);
+					spliced.push(function() def.e = old);
+				}
+				return e;
 
 			// The parser already produced a display node, so there is nothing left to decide.
 			case EDisplay(_, _):

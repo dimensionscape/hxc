@@ -122,7 +122,7 @@ class TexprToExpr {
 		};
 	}
 
-	static function convertTypeHint(t:T):TypeHint {
+	public static function convertTypeHint(t:T):TypeHint {
 		return {ct: convertType(t), pos: Position.nullPos};
 	}
 

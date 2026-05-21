@@ -207,6 +207,25 @@ class Compiler {
 		v == null ? 0 : Std.parseInt(v);
 	};
 
+	// The wait loop's catch-all: a read that runs out of input fails with an end-of-input error, which is
+	// reported (ServerMessage.uncaughtError) and answered as "\x02\n" + estr in the connection's own frame
+	// before the loop waits again.
+	// At stdin EOF every read fails the same way, so the server answers forever and never exits.
+	static function answerNoMoreInput(stderr:haxe.io.Output):Void {
+		var estr = "IO.No_more_input";
+		hxc.compiler.ServerMessage.uncaughtError(estr);
+		var body = haxe.io.Bytes.ofString("\x02\n" + estr);
+		var head = haxe.io.Bytes.alloc(4);
+		head.set(0, body.length & 0xFF);
+		head.set(1, (body.length >> 8) & 0xFF);
+		head.set(2, (body.length >> 16) & 0xFF);
+		head.set(3, (body.length >> 24) & 0xFF);
+		Sys.stdout().flush();
+		stderr.write(head);
+		stderr.write(body);
+		stderr.flush();
+	}
+
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
 		while (true) {
 			var len = try {
@@ -215,8 +234,14 @@ class Compiler {
 				var b2 = stdin.readByte();
 				var b3 = stdin.readByte();
 				b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-			} catch (_:haxe.io.Eof) break;
-			var payload = try stdin.read(len).toString() catch (_:haxe.io.Eof) break;
+			} catch (_:haxe.io.Eof) {
+				answerNoMoreInput(stderr);
+				continue;
+			};
+			var payload = try stdin.read(len).toString() catch (_:haxe.io.Eof) {
+				answerNoMoreInput(stderr);
+				continue;
+			};
 			// A \x01 byte splits the request: arguments before it, the display file's source after it
 			// (cleared again after the request).
 			var sep = payload.indexOf("\x01");
@@ -1253,6 +1278,7 @@ class Compiler {
 				// whose documentation is the type's own - there is no expression to read it off. Asking the
 				// expression only would print a type HINT's hover with no d attribute. The json lane builds the
 				// item and so already asks the module type.
+				if (h != null) mergeHoverCoreDoc(ctx, hxc.typing.Typer.hoverFound);
 				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound);
 				if (h == null) h = hoverOnFieldName(ctx);
 				if (h == null) {
@@ -2068,6 +2094,25 @@ class Compiler {
 		var out:Array<Position> = [];
 		if (cf == null && v == null && ef == null && mtTarget == null) return [];
 		if (mtTarget != null) {
+			// References are folded over the DECLARED symbols, and exactly the types of com.types and of
+			// the macro com's are declared: a type that is in neither - a type parameter's class - has no
+			// symbol, so nothing is reported for it.
+			// The declaration itself decides, not the ModuleType wrapper around it.
+			function isTarget(mt:hxc.core.Type.ModuleType):Bool {
+				return switch [mt, mtTarget] {
+					case [TClassDecl(a), TClassDecl(b)]: a == b;
+					case [TEnumDecl(a), TEnumDecl(b)]: a == b;
+					case [TTypeDecl(a), TTypeDecl(b)]: a == b;
+					case [TAbstractDecl(a), TAbstractDecl(b)]: a == b;
+					case _: false;
+				};
+			}
+			var declared = Lambda.exists(ctx.types, isTarget);
+			if (!declared) {
+				var mw = hxc.eval.EvalMacro.macroWorld();
+				declared = mw != null && mw != ctx && Lambda.exists(mw.types, isTarget);
+			}
+			if (!declared) return [];
 			var want = TypeFunctions.tInfos(mtTarget).namePos;
 			// A relation is added on each promoted type hint. The position check compares both ends and the
 			// file, so an occurrence counts only when the hint resolved to this very declaration.
@@ -2777,6 +2822,7 @@ class Compiler {
 		var rangePos:Null<Position> = null;
 		var doc:hxc.ast.Ast.Documentation = null;
 		var h = hxc.typing.Typer.hoverFound;
+		mergeHoverCoreDoc(ctx, h);
 		if (h != null) {
 			rangePos = h.p;
 			// isQualified re-types the bare name in the scope the hovered expression was typed in; it is
@@ -2874,8 +2920,26 @@ class Compiler {
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
-	// Through hxc's serializer. a hover reports the documentation of the ITEM under the cursor, which
-	// is the field's, the enum constructor's or the type's own doc.
+	// A position as a JSON location, through hxc's serializer.
+	// A hover reports the documentation of the ITEM under the cursor, which is the field's, the enum
+	// constructor's or the type's own doc.
+	// A @:coreApi class's core documentation is merged for a static or member field, a type expression and
+	// a construction before the item is built.
+	static function mergeHoverCoreDoc(ctx:Context, h:Null<{?e:hxc.core.Type.TExpr}>):Void {
+		if (h == null || h.e == null) return;
+		switch (h.e.expr) {
+			case TField(_, FStatic(c, _) | FInstance(c, _, _) | FClosure({c: c}, _)):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
+			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, TAbstractDecl(a));
+			case TTypeExpr(mt):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, mt);
+			case TNew(c, _, _):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
+			case _:
+		}
+	}
+
 	static function hoverDocumentation(h:Null<{?e:hxc.core.Type.TExpr, ?mt:hxc.core.Type.ModuleType}>):Null<String> {
 		if (h == null) return null;
 		if (h.mt != null) {
@@ -3375,39 +3439,24 @@ class Compiler {
 				}
 			}
 		} else {
-			// A pure package prefix lists the package's modules and sub-packages across the classpaths. .
-			var seen = new haxe.ds.StringMap<Bool>();
-			var found = 0;
-			for (cp in ctx.classPath) {
-				var dir = cp + tc.pack.join("/");
-				if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir)) continue;
-				for (entry in try FileSystem.readDirectory(dir) catch (_:Dynamic) []) {
-					if (seen.exists(entry)) continue;
-					var full = dir + "/" + entry;
-					if (StringTools.endsWith(entry, ".hx")) {
-						var name = entry.substr(0, entry.length - 3);
-						if (name.length > 0 && name.charCodeAt(0) >= "A".code && name.charCodeAt(0) <= "Z".code) {
-							seen.set(entry, true);
-							found++;
-							fields.push({kind: "type", name: name, type: "", doc: null});
-							jitems.push(moduleRefToJson(tc.pack, name, jitems.length));
-						}
-					} else if (FileSystem.isDirectory(full) && entry.length > 0
-							&& entry.charCodeAt(0) >= "a".code && entry.charCodeAt(0) <= "z".code) {
-						seen.set(entry, true);
-						found++;
-						fields.push({kind: "package", name: entry, type: "", doc: null});
-						jitems.push(hxc.core.CompletionItem.CompletionItem.packageToJson(tc.pack.concat([entry]), jitems.length));
-					}
-				}
-			}
+			// The packages and then the modules read_type_path finds across the class paths, each sorted and
+			// deduplicated.
+			var r = readTypePath(ctx, tc.pack);
 			// A package with neither modules nor sub-packages is an abort at the null position, "No modules
 			// found in <pack>", not an empty list. Reported the way an abort is - the bare message - rather
 			// than thrown from inside this completion handler, where only the request path's generic catch
 			// would see it.
-			if (found == 0) {
+			if (r.packs.length == 0 && r.modules.length == 0) {
 				abortWithMessage(ctx, "No modules found in " + tc.pack.join("."), Position.nullPos);
 				return;
+			}
+			for (n in r.packs) {
+				fields.push({kind: "package", name: n, type: "", doc: null});
+				jitems.push(hxc.core.CompletionItem.CompletionItem.packageToJson(tc.pack.concat([n]), jitems.length));
+			}
+			for (n in r.modules) {
+				fields.push({kind: "type", name: n, type: "", doc: null});
+				jitems.push(moduleRefToJson(tc.pack, n, jitems.length));
 			}
 		}
 		if (ctx.jsonRpcId != null) {
@@ -3446,6 +3495,43 @@ class Compiler {
 			return;
 		}
 		answerOut(hxc.compiler.DisplayXml.printFields(fields));
+	}
+
+	// Every class path is read as `path + pack`, so the class path "" reads the bare pack; with no pack
+	// that is "" itself, which on Windows lists as the root of the current drive (FindFirstFile of the root
+	// pattern), and the stat of "" + "/" + f that follows is relative to that root as well.
+	static function readTypePath(ctx:Context, pack:Array<String>):{packs:Array<String>, modules:Array<String>} {
+		var p = pack.copy();
+		if (p.length > 0 && ctx.packageRemaps.exists(p[0])) p[0] = ctx.packageRemaps.get(p[0]);
+		var classes:Array<String> = [];
+		var packages:Array<String> = [];
+		var windows = Sys.systemName() == "Windows";
+		for (path in ctx.classPath) {
+			var dir = path + p.join("/");
+			var r:Array<String> = try FileSystem.readDirectory(dir == "" && windows ? "/" : dir) catch (_:Dynamic) [];
+			for (f in r) {
+				var isDir = try FileSystem.isDirectory(dir + "/" + f) catch (_:Dynamic) false;
+				if (isDir) {
+					if (f.length > 0 && f.charCodeAt(0) >= "a".code && f.charCodeAt(0) <= "z".code) packages.push(f);
+				} else {
+					// What follows the last dot, lowercased.
+					var dot = f.lastIndexOf(".");
+					var ext = dot < 0 ? f : f.substr(dot + 1);
+					if (ext.toLowerCase() == "hx" && f != "import.hx") {
+						var c = f.substr(0, f.length - 3);
+						if (c.indexOf(".") < 0 && (c.length < 2 || c.substr(c.length - 2) != "__")) classes.push(c);
+					}
+				}
+			}
+		}
+		// Sorted, adjacent duplicates dropped.
+		function unique(l:Array<String>):Array<String> {
+			l.sort(function(a, b) return a < b ? -1 : (a > b ? 1 : 0));
+			var out:Array<String> = [];
+			for (x in l) if (out.length == 0 || out[out.length - 1] != x) out.push(x);
+			return out;
+		}
+		return {packs: unique(packages), modules: unique(classes)};
 	}
 
 	// A module that has not been loaded is named by its path alone, which is all the class-path walk

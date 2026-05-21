@@ -741,6 +741,11 @@ class ModuleImports {
 	// Track usage per import declaration. Unset flags become unused-import diagnostics; wildcardImp
 	// and usingImp index these flags.
 	public var importPositions:Array<{p:Position, used:Bool, ?failed:Bool}> = [];
+	// Queue path-display checks until module-type initialization, immediately before their import or
+	// using is committed.
+	public var pathDisplay:Array<{seq:Int, run:Void->Void}> = [];
+	// Current path-display declaration index; only earlier imports are committed.
+	public var pathDisplayAt:Int = -1;
 	public var wildcardImp:Array<Int> = [];
 	public var usingImp:Array<Int> = [];
 

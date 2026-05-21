@@ -490,7 +490,16 @@ class Operators {
 				unify(ctx, e2.type, tbool, p);
 				mkOp(e1, e2, tbool);
 			case OpInterval:
-				throw new TypingError("The range operator (...) is not yet ported", p);
+				// IntIterator is loaded as a core type, each bound is cast to Int with castOrUnifyRaise,
+				// and the construction is built directly.
+				var t = Typeload.loadCoreType(ctx.com, "IntIterator");
+				var c = switch (t) {
+					case TInst(c, []): c;
+					case _: throw new TypingError("IntIterator is not a class", p);
+				};
+				var ce1 = Typer.castOrUnifyRaise(ctx, tint, e1, e1.pos);
+				var ce2 = Typer.castOrUnifyRaise(ctx, tint, e2, e2.pos);
+				BinopSpecial(TypeFunctions.mk(TNew(c, [], [ce1, ce2]), t, p), false);
 			case OpArrow:
 				throw new TypingError("Unexpected =>", p);
 			case OpIn:
@@ -752,9 +761,6 @@ class Operators {
 				throw new TypingError("The operators ||= and &&= are not supported", p);
 			case OpAssignOp(sub):
 				typeAssignOp(ctx, sub, e1, e2, withType, p);
-			case OpInterval:
-				var tp:PlacedTypePath = {path: {tpackage: [], tname: "IntIterator", tparams: [], tsub: null}, pos: p};
-				Typer.typeNew(ctx, tp, [e1, e2], withType, p, false);
 			case OpNullCoal:
 				// `a ?? b` desugars to `{ var tmp = a; if (tmp != null) tmp else b }`, evaluating the left
 				// once.

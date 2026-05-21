@@ -23,8 +23,9 @@ class PlatformConfig {
 	// defaults
 	public var nativeThrows:Array<String> = [];     // Dotted paths throwable without wrapping
 	public var nativeCatches:Array<String> = [];    // Dotted paths catchable without wrapping
-	public var wildcardCatch:String = "Dynamic";    // The native wildcard catch type
-	public var baseThrow:String = "Dynamic";        // Wrapped throws cast to this
+	// The default is StdTypes.Dynamic, a path the exceptions filter loads.
+	public var wildcardCatch:String = "StdTypes.Dynamic"; // The native wildcard catch type
+	public var baseThrow:String = "StdTypes.Dynamic";     // Wrapped throws cast to this
 	public var avoidWrapping:Bool = true;           // Pass allowed values through as-is
 
 	public function new(isStatic:Bool, sys:Bool, supportsOverload:Bool, capturePolicy:CapturePolicy,

@@ -303,6 +303,26 @@ class TypeResolve {
 
 	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
+		// /474/556/608: init_class/init_enum/init_typedef/init_abstract make a type whose name holds the
+		// cursor the display subject (display_module_type; an abstract's impl class stands for the
+		// abstract). Definition and hover answer from it once typing ends (Compiler.displayTypeAtName); a
+		// completion request raises the type-hint collection here.
+		if (hxc.parser.Parser.displayCompletionMode) {
+			var namePos:Null<Position> = switch (decl) {
+				case EClass(d): d.dName.pos;
+				case EAbstract(d): d.dName.pos;
+				case ETypedef(d): d.dName.pos;
+				case EEnum(d): d.dName.pos;
+				case _: null;
+			};
+			if (namePos != null && Typer.atDisplayPos(namePos)) {
+				var subject = switch (mt) {
+					case TClassDecl({kind: KAbstractImpl(a)}): TAbstractDecl(a);
+					case _: mt;
+				};
+				Typer.displayModuleType(ctx, subject, namePos, true);
+			}
+		}
 		switch ([mt, decl]) {
 			case [TClassDecl(c), EClass(d)]:
 				resolveClass(ctx, c, d, p);
@@ -465,38 +485,52 @@ class TypeResolve {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		var mts:Array<ModuleType> = [];
 		var seenPaths = new Map<String, Bool>();
-		// The current module's own types first. They exist from the moment the module is created, well
-		// before it finishes loading, which is when a type hint inside that same module asks.
+		// A type whose name was already offered is Shadowed, which is its own group when the collection
+		// is sorted.
+		var names = new Map<String, Bool>();
+		// The type PARAMETERS in scope come first, which makes a constructible one reachable from
+		// `new <cursor>`.
+		for (tp in hxc.typing.Typeload.currentTypeParams) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(pc, _):
+				items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path), tparam: pc,
+					sortGroup: 30, sortKey: pc.path.name});
+				names.set(pc.path.name, true);
+			case _:
+		}
+		// The current module's own types are listed next. They exist from the moment the module is
+		// created, well before it finishes loading, which is when a type hint inside that same module
+		// asks.
 		var all:Array<ModuleType> = ctx.currentModule == null ? [] : ctx.currentModule.types.copy();
 		for (mt in visibleTypesForCompletion(ctx)) all.push(mt);
 		for (mt in all) {
+			// An abstract's implementation class and a module's statics holder are never offered.
+			switch (mt) {
+				case TClassDecl(c) if (c.kind.match(KAbstractImpl(_) | KModuleFields(_))): continue;
+				case _:
+			}
 			var inf = TypeFunctions.tInfos(mt);
 			// A PRIVATE type is still offered inside the module that declares it.
 			if (inf.isPrivate && (ctx.currentModule == null || inf.module != ctx.currentModule)) continue;
 			var key = hxc.core.Globals.sTypePath(inf.path);
 			if (seenPaths.exists(key)) continue;
+			// A path is recorded as seen only for a type that is offered.
+			if (TypeFunctions.hasMeta(":noCompletion", inf.meta)) continue;
 			seenPaths.set(key, true);
-			items.push({kind: "type", name: inf.path.name, path: key});
+			// Sort groups: Imported 31, Shadowed 33, keyed by the dotted path.
+			items.push({kind: "type", name: inf.path.name, path: key,
+				sortGroup: names.exists(inf.path.name) ? 33 : 31, sortKey: key});
+			names.set(inf.path.name, true);
 			mts.push(mt);
 		}
 		// A type collection reaches the same cache-files source an expression collection does, which is
 		// where a bare PACKAGE name comes from. Without it a type hint offers types only, never `haxe`.
-		var nTyped = items.length;
 		hxc.typing.Typer.addCachedFileTypes(ctx, items, seenPaths);
-		// The module types only cover the entries collected above; the cache-file ones have no
-		// loaded type yet, so the JSON lane emits what it has and the XML lane the whole list.
-		var typedItems = items.slice(0, nTyped);
-		items.sort(function(a, b) return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0));
-		// The type PARAMETERS in scope are part of the collection too, which makes a constructible one
-		// reachable from `new <cursor>`.
-		for (tp in hxc.typing.Typeload.currentTypeParams) switch (TypeFunctions.follow(tp.type)) {
-			case TInst(pc, _):
-				var key = hxc.core.Globals.sTypePath(pc.path);
-				if (seenPaths.exists(key)) continue;
-				seenPaths.set(key, true);
-				items.unshift({kind: "type", name: pc.path.name, path: key, tparam: pc});
-			case _:
-		}
+		// Only a collection for an unnamed subject is sorted: a collection for a subject that already has a
+		// name (a declaration's own, or a path being written) keeps the order it was collected in. The
+		// legacy-completion name sort is the JSON-RPC option, off here.
+		// Sorted, it orders by group, then key.
+		if (subjectName == null || subjectName == "")
+			items = hxc.typing.Typer.sortToplevel(items, null);
 		// CRTypeHint is 4.
 		var tc = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
 		tc.kind = kind;
@@ -2225,7 +2259,8 @@ class TypeResolve {
 	}
 
 	static function resolveTypedef(ctx:Context, td:TDef, d:Definition<EnumFlag, TypeHint>, p:Position):Void {
-		var tt = Typeload.loadComplexType(ctx, td.params, d.dData);
+		// A display-allowed load.
+		var tt = Typeload.loadComplexType(ctx, td.params, d.dData, true);
 		// A structural EXTEND and haxe.macro.MacroType resolve straight away; @:eager follows immediately;
 		// EVERYTHING ELSE is left behind a TLazy whose forcing is what runs the recursion check. That
 		// laziness is observable: the nullability test for an optional argument does not force a lazy and
@@ -2359,7 +2394,8 @@ class TypeResolve {
 			// Constructor-local type params (e.g. `enum E { C<T>(x:T); }`) in scope.
 			var ctorParams:TypeParams = [];
 			if (c.ecParams.length > 0)
-				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams, null, TPHEnumConstructor);
+				// A constructor is typed with the enum's parameters in scope.
+				ctorParams = Typeload.typeTypeParams(ctx, {pack: [], name: c.ecName.name}, c.ecParams, null, TPHEnumConstructor, null, e.params);
 			var localParams = ctorParams.concat(e.params);
 			var rt = switch (c.ecType) {
 				case null:
@@ -2439,9 +2475,11 @@ class TypeResolve {
 		var fieldModule = ownerModule == null ? ctx.currentModule : ownerModule;
 		switch (cff.cffKind) {
 			case FVar(th, eo):
-				// Var/final field with an explicit hint -> resolve; else leave the mono
-				// the typer would infer from the initializer expr in Phase 3 pt c.
-				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
+				// Var/final field with an explicit hint -> resolve; else leave the mono the typer would
+				// infer from
+				// the initializer expr in Phase 3 pt c.
+				// The variable's hint loads as a type hint, a display-allowed load.
+				if (th != null) cf.type = Typeload.loadTypeHint(ctx, typeParams, th);
 				// The initializer is recorded at field CREATION, after the hint loads, so a @:generic
 				// specialization cloned from a HERITAGE clause - before the base's body is typed - still
 				// copies its
@@ -2449,7 +2487,8 @@ class TypeResolve {
 				dropGeneratedMeta(cf);
 				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
 			case FProp(_, _, th, eo):
-				if (th != null) cf.type = Typeload.loadComplexType(ctx, typeParams, th);
+				// A property's hint loads as a type hint as well.
+				if (th != null) cf.type = Typeload.loadTypeHint(ctx, typeParams, th);
 				dropGeneratedMeta(cf);
 				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
 			case FFun(fd):

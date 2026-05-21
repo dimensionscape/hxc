@@ -676,8 +676,10 @@ class Fields {
 							}
 							if (res != null) res else throw (err != null ? err : new NotFound());
 						case CUnknown:
+							// Only the current function's monomorph list is asked: a monomorph an enclosing function
+							// registered is registered again here, and closes when this function ends.
 							var seen = false;
-							for (mp in ctx.monomorphs) if (mp.m == r) { seen = true; break; }
+							for (i in 0...ctx.monomorphs.length - ctx.monoFunctionStart) if (ctx.monomorphs[i].m == r) { seen = true; break; }
 							if (!seen) ctx.monomorphs.unshift({m: r, p: p});
 							var nf = mkUnknownField();
 							TypeUnification.addDownConstraint(r, MField(nf));

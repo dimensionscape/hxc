@@ -740,14 +740,6 @@ class Parser {
 		return {tpackage: [], tname: "", tparams: [], tsub: null};
 	}
 
-	// An element list whose GAP holds the cursor gets a marked null in that gap, the element the user
-	// has not written yet. Returns it as a list so a caller can splice it in unconditionally.
-	function gapMark(pAfter:Position, pBefore:Position):Array<Expr> {
-		if (!displayCompletionMode || !isDisplayFile() || displayOffset < 0) return [];
-		if (pAfter.max > displayOffset || pBefore.min < displayOffset) return [];
-		return [new Expr(EConst(CIdent("null")), new Position(pAfter.file, displayOffset, displayOffset))];
-	}
-
 	function checkSignatureMark(e:Expr, p1:Position, p2:Position):Expr {
 		if (!displaySignatureMode || displayOffset < 0) return e;
 		// Union of p1 and p2, then the enclosing-position test with a strict upper bound
@@ -1635,18 +1627,20 @@ class Parser {
 				name = dollarIdent();
 			case _:
 		}
-		// The cursor on a local function's name raises Exit, which leaves the whole expression
-		// UNANNOTATED
-		// - the name a function is about to be given is not something to complete, so the request answers
-		// nothing at all.
-		if (displayCompletionMode && isDisplayFile() && displayOffset >= 0) {
-			var pn = name != null ? name.pos : new Position(p1.file, p1.max + 1, peekInfo().pos.min);
-			if (pn.min <= displayOffset && displayOffset <= pn.max) displaySuppressed = true;
-		}
 		var pl = parseConstraintParams();
+		if (!tokEq(peek(), POpen)) {
+			// With no parameter list, a cursor anywhere from the `function` keyword to the next token gets a
+			// pseudo function whose name spans exactly that, so the display preprocessor finds the cursor on
+			// a local function's name and gives up.
+			if (wouldSkipDisplayPosition(p1, false)) {
+				var p = Position.union(p1, peekInfo().pos);
+				var f:Func = {fParams: [], fArgs: [], fType: null, fExpr: null};
+				return new Expr(EFunction(FKNamed({name: "_hx_magic", pos: p}, inl), f), p);
+			}
+			serror();
+		}
 		// Both parens of the parameter list are pattern elements, so a mismatch is `Unexpected <actual>`.
 		// Same as the field function at parseFunctionField.
-		if (!tokEq(peek(), POpen)) serror();
 		expect(POpen);
 		var al = psepTrailing(parseFunParam);
 		if (!tokEq(peek(), PClose)) serror();
@@ -1703,10 +1697,7 @@ class Parser {
 		var el:Array<Expr> = [];
 		if (tokEq(peek(), BkClose)) {
 			var p2 = next().pos;
-			// Under a completion runs loop_el, and gives an empty list one marked null, so an empty literal
-			// holding the cursor has something to complete on (which is where the expected element type
-			// comes from).
-			return new Expr(EArrayDecl(gapMark(p1, p2)), Position.union(p1, p2));
+			return new Expr(EArrayDecl([]), Position.union(p1, p2));
 		}
 		el.push(secureExpr());
 		var p2 = p1;
@@ -1715,8 +1706,6 @@ class Parser {
 				var pc = next().pos;
 				if (tokEq(peek(), BkClose)) {
 					p2 = next().pos;
-					// The cursor past the trailing comma is the element the user has not written yet.
-					el = el.concat(gapMark(pc, p2));
 					break;
 				}
 				el.push(secureExpr());
@@ -1776,10 +1765,8 @@ class Parser {
 	// go through it.
 	function parseCallParamsResume(pOpen:Position):{el:Array<Expr>, p2:Position} {
 		if (tokEq(peek(), PClose)) {
-			// An empty argument list whose parentheses hold the cursor still gets one marked null, so the
-			// position has something to complete on.
 			var p2 = next().pos;
-			return {el: gapMark(pOpen, p2), p2: p2};
+			return {el: [], p2: p2};
 		}
 		var el:Array<Expr> = [];
 		var pprev = pOpen;
@@ -1802,9 +1789,7 @@ class Parser {
 				if (tokEq(peek(), PClose)) {
 					var p3 = next().pos;
 					el.push(checkSignatureMark(e, pprev, p3));
-					// The cursor after the trailing comma is a marked null of its own, the argument the user has
-					// not written yet.
-					return {el: el.concat(gapMark(pc, p3)), p2: p3};
+					return {el: el, p2: p3};
 				}
 				el.push(checkSignatureMark(e, pprev, pc));
 				pprev = pc;
@@ -1839,13 +1824,6 @@ class Parser {
 					var b = blockWithPos(p1);
 					defaultKeywords.push(p1);
 					def = (b.exprs.length == 0) ? {e: null, pos: pdot} : {e: new Expr(EBlock(b.exprs), Position.union(p1, b.pos)), pos: Position.union(p1, b.pos)};
-					// The default's own body gets the same mark when the cursor is in the gap after it, so
-					// `default:` with nothing written still answers.
-					{
-						var dm = gapMark(def.pos, peekInfo().pos);
-						if (dm.length > 0)
-							def = {e: (def.e == null) ? dm[0] : new Expr(EBlock(b.exprs.concat(dm)), Position.union(p1, dm[0].pos)), pos: def.pos};
-					}
 				case Kwd(KwdCase):
 					var p1 = next().pos;
 					var el = psep(Comma, exprOrVar);
@@ -1857,13 +1835,6 @@ class Parser {
 					var b = blockWithPos(p1);
 					var bexpr:Null<Expr> = (b.exprs.length == 0) ? null : new Expr(EBlock(b.exprs), Position.union(p1, b.pos));
 					var cpos = (b.exprs.length == 0) ? Position.union(p1, pdot) : Position.union(p1, b.pos);
-					// A cursor in the gap between the end of this case and the start of the next one (or the
-					// closing brace) belongs to this case body, where the pattern's captured variables are in
-					// scope. The reference appends a marked null there; here the stand-in carries the display
-					// position itself, which is what the toplevel collection keys off.
-					var cm = gapMark(cpos, peekInfo().pos);
-					if (cm.length > 0)
-						bexpr = (bexpr == null) ? cm[0] : new Expr(EBlock(b.exprs.concat(cm)), Position.union(p1, cm[0].pos));
 					cases.push({values: el, guard: eg, expr: bexpr, pos: cpos});
 				case _:
 					break;
@@ -2161,16 +2132,13 @@ class Parser {
 	}
 
 	function parseField(e1:Expr, efk:EFieldKind, p:Position):Expr {
-		// Opens with check_resume: a cursor sitting exactly at the dot's end completes on the receiver's
-		// fields, whether or not a name follows it. Only checking the DANGLING dot below missed `foo.bar`
-		// with the cursor right after the dot, which is the ordinary way an editor asks for completion.
-		// The empty field name is how the request is carried here, as the dangling-dot case already does.
-		// A cursor inside the field name completes on the same receiver: the reference gets there by
-		// annotating the enclosing field access DKMarked) rather than at the dot, but the request and the
-		// answer are the same, and the span from the dot to the end of the name is what encloses_position
-		// accepts for that access.
+		// The field parse opens with checkResume: a cursor sitting exactly at the dot's end completes on
+		// the receiver's fields, whether or not a name follows it. The empty field name is how the
+		// request is carried here. A cursor inside the name is no resume at all: the field access parses
+		// as usual (or fails, `.in` being no field name outside an #if condition), the preprocessor marks
+		// what encloses the cursor, and Typer's marked-node branch answers from that.
 		var resumed = checkResume(p);
-		if (resumed || (displayCompletionMode && atDisplayDot(p))) {
+		if (resumed) {
 			// The completion's SUBJECT is the field name already written, spanning back from the display
 			// expression's end by that name's length. The empty field name above is only how the request
 			// travels, so the name is kept here.
@@ -2183,11 +2151,11 @@ class Parser {
 			}
 			var eEnd = displayDotPos != null ? displayDotPos : p;
 			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, eEnd));
-			// 's resume arm returns the display node - it does not run expr_next, so whatever follows the
+			// The resume arm returns the display node - it does not run exprNext, so whatever follows the
 			// dot stays in the stream and is parsed on its own. That is what ends the enclosing block at
 			// `this.` + `.resume`, which in turn lets a declaration after it belong to the class rather
 			// than to the function body.
-			return resumed ? e : exprNext(e);
+			return e;
 		}
 		// Every name arm is guarded by `p.max = p2.min` - the field name must TOUCH the dot. `k.` with
 		// the name on the next line is not a field access at all, so the name stays a statement of its own.

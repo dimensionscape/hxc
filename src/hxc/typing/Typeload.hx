@@ -27,7 +27,7 @@ class Typeload {
 		genericInstances = new Map();
 	}
 
-	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType, ?declModule:ModuleDef):TypedTypeParam {
+	public static function typeTypeParam(ctx:Context, declPath:Path, getParams:Void->TypeParams, tp:TypeParam, host:TypeParamHost = TPHType, ?declModule:ModuleDef, ?scopeParams:TypeParams):TypedTypeParam {
 		var n = tp.tpName.name;
 		// A default type parameter is only allowed on a type declaration, not on a constructor, method, or
 		// enum constructor.
@@ -46,10 +46,15 @@ class Typeload {
 		if (host == TPHEnumConstructor) c.meta = [{name: ":enumConstructorParam", params: [], pos: pNull}].concat(c.meta);
 		var t = TInst(c, []);
 		var p = tp.tpName.pos;
-		// `if ctx.is_display_file && display_position#enclosed_in (pos tp.tp_name) then
-		// DisplayEmitter.display_type ctx t (pos tp.tp_name)`.
-		if (hxc.typing.ExprPreprocessing.inDisplayFile(p) && hxc.typing.Typer.atDisplayPos(p))
-			hxc.typing.Typer.displayTypeParam(t, p);
+		// A parameter whose name holds the cursor in the display file answers with its type. A type's
+		// parameters are typed once every type of the module exists; hxc creates them with the types, so
+		// that answer waits for typeModule to reach the same point. The collection it raises lists the
+		// parameters in scope where this one is declared, not the list being declared.
+		if (hxc.typing.ExprPreprocessing.inDisplayFile(p) && hxc.typing.Typer.atDisplayPos(p)) {
+			var scope = scopeParams == null ? [] : scopeParams;
+			if (hxc.context.ModuleLoader.creatingModuleTypes > 0) hxc.context.ModuleLoader.typeParamDisplay = {t: t, p: p, scope: scope};
+			else displayTypeInScope(ctx, t, p, scope);
+		}
 		var declModulePath:Path = {pack: declPath.pack, name: declPath.name};
 		// A method/constructor/enum-constructor type param has a synthetic declPath ({[], name}) that
 		// names no module, so moduleLut cannot recover its declaring module when the constraint is forced
@@ -78,7 +83,8 @@ class Typeload {
 				if (declMod == null) declMod = declaringModule != null ? declaringModule : pmod;
 				if (declMod != null) ctx.currentModule = declMod;
 				try {
-					var def = loadComplexType(ctx, getParams(), tp.tpDefault);
+					// A display-allowed load.
+					var def = loadComplexType(ctx, getParams(), tp.tpDefault, true);
 					ctx.currentModule = savedMod;
 					return def;
 				} catch (e:Dynamic) {
@@ -120,9 +126,10 @@ class Typeload {
 				var typeParams = getParams();
 				function loop(h:TypeHint):Array<T> {
 					return switch (h.ct) {
-						case CTIntersection(tl): [for (ct in tl) loadComplexType(ctx, typeParams, ct)];
+						// Each constraint is a display-allowed load.
+						case CTIntersection(tl): [for (ct in tl) loadComplexType(ctx, typeParams, ct, true)];
 						case CTParent(ct): loop(ct);
-						case _: [loadComplexType(ctx, typeParams, h)];
+						case _: [loadComplexType(ctx, typeParams, h, true)];
 					}
 				}
 				var constr = loop(th);
@@ -157,7 +164,18 @@ class Typeload {
 		return TypeFunctions.mkTypeParam(n, TLazy(r), def);
 	}
 
-	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType, ?declModule:ModuleDef):TypeParams {
+	// Typer.displayType with `scope` as the type parameters in scope: the collection a type
+	// parameter's own name raises.
+	public static function displayTypeInScope(ctx:Context, t:T, p:Position, scope:TypeParams):Void {
+		var saved = currentTypeParams;
+		currentTypeParams = scope;
+		try hxc.typing.Typer.displayType(ctx, t, p) catch (e:Dynamic) { currentTypeParams = saved; throw e; }
+		currentTypeParams = saved;
+	}
+
+	// scopeParams: ctx.typeParams where the list is declared - the enclosing type's for a method or
+	// a local function (baseParams, the default), the enum's for a constructor.
+	public static function typeTypeParams(ctx:Context, declPath:Path, tps:Array<TypeParam>, ?baseParams:TypeParams, host:TypeParamHost = TPHType, ?declModule:ModuleDef, ?scopeParams:TypeParams):TypeParams {
 		// Returns the sibling params so a
 		// first, then hand each param a thunk closing over it.
 		var params:TypeParams = [];
@@ -169,7 +187,7 @@ class Typeload {
 			if (names.indexOf(tp.tpName.name) >= 0)
 				ctx.addDiagnostic("Duplicate type parameter name: " + tp.tpName.name, tp.tpName.pos);
 			names.push(tp.tpName.name);
-			params.push(typeTypeParam(ctx, declPath, getParams, tp, host, declModule));
+			params.push(typeTypeParam(ctx, declPath, getParams, tp, host, declModule, scopeParams != null ? scopeParams : baseParams));
 		}
 		return params;
 	}
@@ -688,6 +706,31 @@ class Typeload {
 	// the parameters the load was given are recorded here.
 	public static var currentTypeParams:TypeParams = [];
 
+	/**
+		The type loaded the way StdTypes would load it - with the std module current, no imports and no
+		type parameters - so a core name never walks the requesting module's package (and never asks
+		onTypeNotFound about `<package>.<name>`). The requester then depends on the type's module.
+	**/
+	public static function loadCoreType(ctx:Context, name:String):T {
+		var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
+		var old = ctx.currentModule;
+		ctx.currentModule = std;
+		var t = try loadInstance(ctx, [], {tpackage: [], tname: name, tparams: [], tsub: null}, Position.nullPos, false) catch (e:Dynamic) {
+			ctx.currentModule = old;
+			throw e;
+		};
+		ctx.currentModule = old;
+		var m = switch (t) {
+			case TInst(c, _): c.module;
+			case TType(td, _): td.module;
+			case TAbstract(a, _): a.module;
+			case TEnum(e, _): e.module;
+			case _: throw "load_core_type";
+		};
+		if (old != null && m != null) hxc.context.ModuleLoader.addDependency(old, m);
+		return t;
+	}
+
 	public static function loadInstance(ctx:Context, typeParams:TypeParams, t:TypePath, p:Position, allowNoParams:Bool, ?specializeGeneric:Bool = true, allowDisplay:Bool = false, ?tctx:hxc.typing.TyperContext):T {
 		var savedTp = currentTypeParams;
 		currentTypeParams = typeParams;
@@ -716,8 +759,10 @@ class Typeload {
 				throw e;
 			}
 		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric, tctx);
-		// The hint list only feeds the reference searches, so it is collected only for them.
-		if (hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation)
+		// Records every hint, whatever the request. The list only feeds the reference searches, so hxc
+		// keeps it for display requests - decided from the argument, since the core types' own hints
+		// resolve before the display mode is installed.
+		if (ctx.displaySpec != null)
 			typeHints.push({m: ctx.currentModule, p: p, t: r});
 		if (hxc.parser.Parser.displayFile != null) {
 			// The path's range is narrowed to the dotted name itself, so `Array<Foo>` with the cursor on

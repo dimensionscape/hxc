@@ -857,6 +857,11 @@ class Typer {
 					var n = TypeFunctions.mk(TConst(TNull), t, e.pos);
 					if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, n, withType);
 					n;
+				// A marked `trace` answers from its builtin signature where a mode has an arm for it; under
+				// DMDefault it is "Unsupported method" at the identifier.
+				case [EConst(CIdent("trace")), _] if (hxc.parser.Parser.displayCompletionMode):
+					markedNodeFailed = true;
+					throw new TypingError("Unsupported method", e.pos);
 				case _:
 					try typeExprInner(ctx, e, withType, mode)
 						catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
@@ -886,12 +891,21 @@ class Typer {
 			}
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
-			// Types the marked expression, and display_expr then answers from it under DMDefault: a field
-			// access with its receiver's fields (hxc's dot completion answers those), anything else with the
-			// toplevel collection. hxc answered only at the node kinds it checks by position, so a marked
-			// binop, call or literal answered nothing at all.
-			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked && !e.expr.match(EField(_, _, _)))
-				raiseToplevelMarked(ctx, e, withType);
+			// Under DMDefault, when the parser did not resume, the marked expression answers: a marked
+			// field access that typed to a field lists the receiver's fields, its subject the written name
+			// spanning back from the node's end; anything else - a field access typed to something else (an
+			// inlined constant) included - answers the toplevel collection. Without this a marked binop,
+			// call or literal would answer nothing at all.
+			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked) {
+				switch [e.expr, te.expr] {
+					case [EField(e1, s, _), TField(_, _)] if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume):
+						hxc.parser.Parser.displayDotName = s;
+						hxc.parser.Parser.displayDotPos = new Position(te.pos.file, te.pos.max - s.length, te.pos.max);
+						displayFieldCompletion(ctx, e1, te.pos);
+					case _:
+						raiseToplevelMarked(ctx, e, withType);
+				}
+			}
 			return te;
 		}
 		return typeExprInner(ctx, e, withType, mode);
@@ -1890,8 +1904,9 @@ class Typer {
 						fresh.set(r, m);
 					}
 					m;
-				// Nothing is forced for the copy; a lazy field type is left as it is.
-				case TLazy(_): t;
+				// Nothing is forced for the copy; a lazy field type is left as it is - but one already
+				// resolved is copied through, or its monomorphs would go on binding after the answer.
+				case TLazy(f): switch (f.get()) { case LAvailable(t2): loop(t2); case _: t; };
 				case TAnon(a):
 					if (onStack.exists(a)) t else {
 						onStack.set(a, true);
@@ -1953,6 +1968,8 @@ class Typer {
 			case _: null;
 		};
 		if (c == null) { signatureFound = {sigs: [], activeArg: active}; return; }
+		// The class (or the abstract's impl) merges its core docs first.
+		CoreApi.mergeCoreDoc(ctx.com, TClassDecl(c));
 		var ctor = c.constructor;
 		var cur = c;
 		while (ctor == null && cur.superClass != null) { cur = cur.superClass.c; ctor = cur.constructor; }
@@ -2456,6 +2473,9 @@ class Typer {
 			var k = imports.order.length - 1;
 			while (k >= 0) {
 				var ni = imports.order[k--];
+				// A declaration the module's type initialisation has not reached is not in moduleImports
+				// yet.
+				if (imports.pathDisplayAt >= 0 && ni.impIdx != null && ni.impIdx >= imports.pathDisplayAt) continue;
 				if (ni.aliased == true) {
 					if (ni.aliasTypedef == null && ni.aliasName != null)
 						try hxc.context.ModuleLoader.resolveNamedImportType(com, cur, ni.aliasName, Position.nullPos) catch (_:Dynamic) {}
@@ -2645,8 +2665,9 @@ class Typer {
 		lit("trace", TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: ctx.com.basic.tvoid}));
 		// Type params
 		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
+			// A type parameter item carries its type.
 			case TInst(pc, _): items.push({kind: "type", name: pc.path.name, path: hxc.core.Globals.sTypePath(pc.path),
-				sortGroup: 30, sortKey: pc.path.name, tparam: pc});
+				sortGroup: 30, sortKey: pc.path.name, tparam: pc, sortType: tp.type});
 			case _:
 		}
 		// Module types, then the module imports reversed: StdTypes' types last to first, then each
@@ -2658,9 +2679,11 @@ class Typer {
 				case _:
 			}
 			var inf = TypeFunctions.tInfos(mt);
-			if (noCompletion(inf.meta)) return;
 			var key = hxc.core.Globals.sTypePath(inf.path);
 			if (seenPaths.exists(key)) return;
+			// A type not yet listed merges its core docs, before the @:noCompletion test.
+			CoreApi.mergeCoreDoc(ctx.com, mt);
+			if (noCompletion(inf.meta)) return;
 			seenPaths.set(key, true);
 			// A type sorts by IMPORT STATUS then dotted path. Everything reached here is in scope by
 			// definition (the module's own types and StdTypes), which is Imported; the cache-files source
@@ -2750,11 +2773,19 @@ class Typer {
 
 	// The reference sorts only when the completion subject is empty `sort = (name = "")`), so a
 	// partially typed identifier keeps the collection order and only a bare position gets ranked.
-	static function sortToplevel(items:Array<hxc.compiler.DisplayXml.ToplevelItem>, withType:Null<WithType>):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+	public static function sortToplevel(items:Array<hxc.compiler.DisplayXml.ToplevelItem>, withType:Null<WithType>):Array<hxc.compiler.DisplayXml.ToplevelItem> {
 		var expected:Null<T> = switch (withType) {
 			case WithType(t, _) if (!TypeFunctions.follow(t).match(TMono(_))): t;
 			case _: null;
 		};
+		// Every type parameter in the item's type becomes a fresh monomorph first. Not strictly accurate,
+		// but it does not matter for ranking.
+		function dynamify(t:T):T {
+			return switch (TypeFunctions.follow(t)) {
+				case TInst({kind: KTypeParameter(_)}, _): TypeFunctions.mkMono();
+				case _: TypeFunctions.map(dynamify, t);
+			};
+		}
 		// How well the item's own type fits the expected one. An enum constructor is judged on what it
 		// returns, so an argument-less one ranks with it .
 		function comp(it:hxc.compiler.DisplayXml.ToplevelItem):Int {
@@ -2765,6 +2796,7 @@ class Typer {
 				case TFun(sig): t = sig.ret;
 				case _:
 			}
+			t = dynamify(t);
 			if (TypeUnification.typeIseqDefault(t, expected)) return 0;
 			if (TypeFunctions.follow(t).match(TDynamic(_))) return 5;
 			try { TypeUnification.unifyDefault(t, expected); return 1; } catch (_:Dynamic) {}
@@ -2912,8 +2944,17 @@ class Typer {
 	// hover, itself as the usage subject.
 	public static function displayModuleType(com:hxc.context.Context, mt:hxc.core.Type.ModuleType, p:Position, allowCompletion:Bool = false):Void {
 		var inf = TypeFunctions.tInfos(mt);
+		// Under DMDefinition and DMTypeDefinition a @:coreApi class reports its core class's name as well.
+		var corePos:Null<Position> = switch (mt) {
+			case TClassDecl(c) if ((displayDefinition || displayTypeDefinition) && TypeFunctions.hasMeta(":coreApi", c.meta)):
+				var core = CoreApi.loadCoreClass(com, c);
+				core == null ? null : core.namePos;
+			case _: null;
+		};
 		if (displayDefinition) {
-			if (displayFound == null) displayFound = [inf.namePos];
+			if (displayFound == null) displayFound = corePos == null ? [inf.namePos] : [inf.namePos, corePos];
+		} else if (displayTypeDefinition && corePos != null) {
+			if (displayFound == null) displayFound = [inf.namePos, corePos];
 		} else if (displayHover || displayTypeDefinition) {
 			// A type path answers with a type item, not with an expression.
 			if (hoverFound == null)
@@ -3022,19 +3063,6 @@ class Typer {
 		} else if ((displayToplevel || displayToplevelJson) && dk != DKDot) {
 			raiseToplevelMarked(ctx, eAst, withType);
 		}
-	}
-
-	// A cursor on a type parameter's own name answers with the parameter's type, straight from where
-	// the parameter is created - there is no expression to find it through, exactly as for a variable
-	// declaration below. This is a HOOK standing for a reference raise site, not the enclosing-node
-	// walk, so it carries no fromWalk and stands even where the expression walk gave up.
-	public static function displayTypeParam(t:T, p:Position):Void {
-		if (displayDefinition || displayTypeDefinition) {
-			if (displayFound == null) displayFound = [p];
-			return;
-		}
-		if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
-			hoverFound = {t: t, p: p};
 	}
 
 	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position):Void {
@@ -3261,43 +3289,26 @@ class Typer {
 
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
-		// The receiver of a dot path is looked up SPECULATIVELY, and the raise is what sends a package
-		// prefix to the type-path route in the catch below. hxc reaches it through the REPORTING
-		// typeIdent, so the attempt runs with the recording off - the same counter the dot-path head
-		// uses. Without it the head to a monomorph and `@:access(pack.<cursor>)` answers an empty field
-		// list.
-		var speculativeHead = flattenIdentPath(e1.expr) != null;
-		if (speculativeHead) identSpeculation++;
+		// The subject types with inDisplay set, which is put back only on a normal return: a subject whose
+		// typing raised leaves it set for the rest of the block, which is how the statement after it
+		// reaches the package guess for an unknown identifier.
+		var oldInDisplay = ctx.inDisplay;
+		ctx.inDisplay = true;
+		var legacy = ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion;
 		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
-			if (speculativeHead) { identSpeculation--; speculativeHead = false; }
-			// An unresolvable receiver that spells an existing package directory is a dot-path prefix (a
-			// metadata argument like @:access(pack.); complete the package instead of reporting. .
-			var segments:Array<String> = [];
-			function collect(e:Expr):Bool {
-				return switch (e.expr) {
-					case EConst(CIdent(s)): segments.push(s); true;
-					case EField(e2, f, _): if (collect(e2)) { segments.push(f); true; } else false;
-					case _: false;
-				}
+			var unknownPrefix = "Unknown identifier : ";
+			// An unknown identifier under DMDefault is a package being written. A dot completion on it is
+			// the legacy protocol's TypePath; anything else is the toplevel.
+			if (StringTools.startsWith(err.message, unknownPrefix)) {
+				var n = err.message.substr(unknownPrefix.length).split(String.fromCharCode(10))[0];
+				if (legacy) throw new hxc.parser.Parser.TypePathCompletion([n], null, false, e1.pos);
+				if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), n, e1.pos);
 			}
-			var allLower = collect(e1);
-			if (allLower) for (s in segments) if (s.length == 0 || !(s.charCodeAt(0) >= "a".code && s.charCodeAt(0) <= "z".code)) { allLower = false; break; }
-			if (allLower) {
-				var rel = segments.join("/");
-				var hit = false;
-				for (cp in ctx.com.classPath) {
-					var dir = cp + rel;
-					if (sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir)) { hit = true; break; }
-				}
-				// The dot-path package raise is the LEGACY answer only; the JSON protocol answers the same
-				// position with the toplevel collection instead false whenever json_out is set).
-				if (hit && (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion))
-					throw new hxc.parser.Parser.TypePathCompletion(segments, null, false);
-				if (hit && displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx));
-			}
-			if (identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
+			// A type or module that is not there answers, in the legacy protocol, with the
+			// sub-types of a module already loaded under that path, and otherwise reports.
+			if (legacy && identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
-		if (speculativeHead) identSpeculation--;
+		ctx.inDisplay = oldInDisplay;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
 		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}> = [];
@@ -3360,6 +3371,8 @@ class Typer {
 				case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
 					switch (c.kind) { case KTypeParameter(tl): for (ct in tl) loopType(ct); case _: }
 				case TInst(c, tl):
+					// Merge the core docs of the class browsed.
+					CoreApi.mergeCoreDoc(ctx.com, TClassDecl(c));
 					var savedScope = pushScope;
 					pushScope = CFSMember;
 					// An interface walks its extends list, a class its super chain. Each level's arguments are
@@ -3389,6 +3402,7 @@ class Typer {
 				// An abstract shows every @:impl field except its constructor, each read without the receiver
 				// its impl carries.
 				case TAbstract(a, tl) if (a.impl != null):
+					CoreApi.mergeCoreDoc(ctx.com, TAbstractDecl(a));
 					var impl = a.impl;
 					var savedScope = pushScope;
 					pushScope = CFSMember;
@@ -3452,6 +3466,12 @@ class Typer {
 					}
 					foldConstraints(TypeFunctions.monomorphClassifyConstraintsRef(m));
 				case TAnon(an):
+					// The statics of a class or an abstract merge its core docs.
+					switch (an.status.get()) {
+						case Statics(sc): CoreApi.mergeCoreDoc(ctx.com, TClassDecl(sc));
+						case AbstractStatics(sa): CoreApi.mergeCoreDoc(ctx.com, TAbstractDecl(sa));
+						case _:
+					}
 					var savedAnon = pushOriginAnon;
 					pushOriginAnon = an;
 					// The statics of a @:forwardStatics abstract's UNDERLYING class come first, before the
@@ -3513,7 +3533,9 @@ class Typer {
 			// An abstract's implementation class the abstract's name as it) is listed through the anon arm
 			// below, under the abstract.
 			case TTypeExpr(TClassDecl(c)) if (!c.kind.match(KAbstractImpl(_))):
-				// Private statics complete inside their declaring class.
+				// A private static still completes from inside its own class. . the Statics arm merges the
+				// class's core docs.
+				CoreApi.mergeCoreDoc(ctx.com, TClassDecl(c));
 				pushScope = CFSStatic;
 				pushOriginClass = c;
 				for (cf in c.orderedStatics)
@@ -3652,6 +3674,15 @@ class Typer {
 		if (childEnclosed) return;
 		var pl:Array<Position> = switch (te.expr) {
 			case TField(_, FEnum(_, ef)): [ef.namePos];
+			// A field of a @:coreApi class answers with its core class's field as well.
+			case TField(_, FStatic(c, cf)) if (TypeFunctions.hasMeta(":coreApi", c.meta)):
+				var core = CoreApi.loadCoreClass(ctx.com, c);
+				var cf2 = core == null ? null : core.statics.get(cf.name);
+				cf2 == null ? [cf.namePos] : [cf.namePos, cf2.namePos];
+			case TField(_, FInstance(c, tl, cf) | FClosure({c: c, params: tl}, cf)) if (TypeFunctions.hasMeta(":coreApi", c.meta)):
+				var core = CoreApi.loadCoreClass(ctx.com, c);
+				var cf2 = core == null ? null : try TypeFunctions.classField(core, tl, cf.name).f catch (_:Dynamic) null;
+				cf2 == null ? [cf.namePos] : [cf.namePos, cf2.namePos];
 			case TField(_, FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf) | FClosure(_, cf)): [cf.namePos];
 			case TLocal(v): [v.pos];
 			// A TLocal or TVar answers its pos with no test on the name when it is the marked node. hxc's
@@ -3666,6 +3697,9 @@ class Typer {
 			// at all, and a marked TVar answers whatever its kind. No compiler temporary has that shape -
 			// every one carries the expression it holds.
 			case TVarExpr(v, null) if (v.kind.match(VGenerated) && atDisplayPos(v.pos)): [v.pos];
+			case TTypeExpr(TClassDecl(c)) if (TypeFunctions.hasMeta(":coreApi", c.meta)):
+				var core = CoreApi.loadCoreClass(ctx.com, c);
+				core == null ? [c.namePos] : [c.namePos, core.namePos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
 			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
 			// `super(...)` reports the SUPER constructor, and a bare `super` the super class.
@@ -3956,10 +3990,12 @@ class Typer {
 			case CIdent(s):
 				// Carries `not !was_annotated`: exactly one node in the expression is the display subject. A
 				// field access already answered here is that node, so a stand-in the recovery put at an
-				// enclosing position must not displace it.
-				if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
+				// enclosing position must not displace it. Both raises stand for the preprocessor's MARK, which
+				// places once the parser resumed: then only the parser's own node answers.
+				if (hxc.parser.Parser.hadResume) {}
+				else if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
 					throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), s == "null" ? null : s, p, withType);
-				if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
+				else if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
 					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
 					// real identifier under the cursor keeps the collection order.
 					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, s == "null"));
@@ -4011,10 +4047,15 @@ class Typer {
 				te;
 			case CString(_, _):
 				TexprTools.typeConstant(basic, c, p);
+			// EReg from the core type, constructed directly over the two strings.
 			case CRegexp(r, opt):
-				var tp:PlacedTypePath = {path: {tpackage: [], tname: "EReg", tparams: [], tsub: null}, pos: p};
-				var args = [new Expr(EConst(CString(r, SDoubleQuotes)), p), new Expr(EConst(CString(opt, SDoubleQuotes)), p)];
-				typeNew(ctx, tp, args, withType, p, false);
+				var str = TypeFunctions.mk(TConst(TString(r)), basic.tstring, p);
+				var eopt = TypeFunctions.mk(TConst(TString(opt)), basic.tstring, p);
+				var t = Typeload.loadCoreType(ctx.com, "EReg");
+				switch (t) {
+					case TInst(c, []): TypeFunctions.mk(TNew(c, [], [str, eopt]), t, p);
+					case _: throw new TypingError("EReg is not a class", p);
+				}
 		};
 	}
 
@@ -4038,7 +4079,8 @@ class Typer {
 		// With the identifier as the SUBJECT: a cursor inside a name is a completion request on it.
 		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
 		// check, so `f|oo("")` answered nothing.
-		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)) {
+		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)
+				&& !hxc.parser.Parser.hadResume) {
 			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), i, p, withType);
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
 		}
@@ -4725,8 +4767,12 @@ class Typer {
 			// a legacy request raises the type path for the whole dotted name. An inner link of the chain is
 			// only a speculative step of hxc's field-by-field walk; the reference resolves the whole dotted
 			// name at once, so only the outermost one raises.
-			if (acc == null && identSpeculation == 0 && ctx.inDisplay && ctx.com.jsonRpcId == null)
-				throw new hxc.parser.Parser.TypePathCompletion(segs, null, false, new Position(p.file, p.min, p.min + segs[0].length));
+			if (acc == null && identSpeculation == 0 && ctx.inDisplay) {
+				if (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion)
+					throw new hxc.parser.Parser.TypePathCompletion(segs, null, false, new Position(p.file, p.min, p.min + segs[0].length));
+				// collect_and_raise ctx TKType NoValue (CRToplevel None) (String.concat "." sl,p0) p0.
+				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx.com, p, segs.join("."), 2);
+			}
 			return acc;
 		}
 		var pack = segs.slice(0, typeIdx);
@@ -5933,6 +5979,8 @@ class Typer {
 		// Monomorphs spawned while typing this function close at its conclusion (the newest sit at the
 		// front of the registry).
 		var monoDepth = ctx.monomorphs.length;
+		var oldMonoStart = ctx.monoFunctionStart;
+		ctx.monoFunctionStart = monoDepth;
 		var oldInFunction = ctx.inFunction;
 		var oldCurfun = ctx.curfun;
 		var oldRet = ctx.ret;
@@ -5961,10 +6009,20 @@ class Typer {
 			// Opened structures close at the END of the function, before the enclosing list is put back.
 			for (r in ctx.opened) r.set(Closed);
 			ctx.opened = oldOpened;
+			ctx.monoFunctionStart = oldMonoStart;
 		}
+		// A function with no body types as an empty block wherever errors are ignored (a display run);
+		// anywhere else it is an error, the abstract-member wording first.
 		if (bodyExpr == null) {
-			reset();
-			throw new TypingError("Function body required", p);
+			// The block is the compiler's, carrying the function's position: no display question can
+			// be answered from it (see synthesized).
+			if (ctx.com.ignoreError()) bodyExpr = synthesized(new Expr(EBlock([]), p));
+			else {
+				reset();
+				if (fmode == FunMember && ctx.curclass != null && TypeFunctions.hasClassFlag(ctx.curclass, CAbstract))
+					throw new TypingError("Function body or abstract modifier required", p);
+				throw new TypingError("Function body required", p);
+			}
 		}
 		// Print the field's syntax tree when it carries @:debug.position, or @:debug.display in a display
 		// run. They are the only way to see what the parser built for a body the recovery had to
