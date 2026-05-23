@@ -136,7 +136,7 @@ enum EvalInstanceKind {
 	// IBuffer holds a StringBuf's buffer, IUtf8 a haxe.Utf8 buffer.
 	IBuffer(buf:hxc.eval.EvalString.VStringBuffer);
 	IUtf8(buf:hxc.eval.EvalString.ByteBuffer);
-	IRegex(re:EReg);
+	IRegex(re:EvalRegex);
 	IMap(m:Map<String, MapEntry>);
 }
 

@@ -13,6 +13,7 @@ import hxc.eval.EvalField;
 import hxc.eval.EvalMisc;
 import hxc.eval.EvalHash;
 import hxc.eval.EvalString;
+import hxc.eval.Pcre2.Pcre2Flag;
 #if cpp
 import cpp.NativeSocket;
 #end
@@ -958,7 +959,7 @@ class EvalStdLib {
 	}
 
 	// EReg's receiver: a value that is not a regex is unexpected.
-	static function thisRegex(a:Array<EvalValue>):EReg {
+	static function thisRegex(a:Array<EvalValue>):EvalRegex {
 		return switch (a[0]) {
 			case VInstance({ikind: IRegex(r)}): r;
 			case v: EvalExceptions.unexpectedValue(EvalContext.getCtx(), v, "EReg");
@@ -973,233 +974,79 @@ class EvalStdLib {
 		};
 	}
 
-	static function countRegexCaptures(pattern:String):Int {
-		var count = 0;
-		var escaped = false;
-		var inClass = false;
-		var i = 0;
-		while (i < pattern.length) {
-			var c = pattern.charCodeAt(i);
-			if (escaped) {
-				escaped = false;
-			} else if (c == "\\".code) {
-				escaped = true;
-			} else if (c == "[".code) {
-				inClass = true;
-			} else if (c == "]".code) {
-				inClass = false;
-			} else if (!inClass && c == "(".code) {
-				var next = pattern.charCodeAt(i + 1);
-				if (next == "?".code) {
-					var kind = pattern.charCodeAt(i + 2);
-					if (kind == "'".code) count++;
-					else if (kind == "<".code) {
-						var after = pattern.charCodeAt(i + 3);
-						if (after != "=".code && after != "!".code) count++;
-					}
-				} else {
-					count++;
-				}
-			}
-			i++;
-		}
-		return count;
-	}
-
-	static function validateRegexFlags(flags:String):Void {
-		for (i in 0...flags.length) {
-			var c = flags.charCodeAt(i);
-			switch (c) {
-				case "i".code | "s".code | "m".code | "u".code | "g".code:
-				case _:
-					throw new hxc.eval.EvalExceptions.HostException("Unsupported regexp option '" + flags.charAt(i) + "'", true);
+	// A new EReg: the options in order (an unknown one fails), the pattern compiled with UTF and UCP
+	// (a compile error fails with its own wording), and `~/pattern/options` kept for printing.
+	static function regexCreate(r:ByteString, opt:ByteString):EvalRegex {
+		var global = false;
+		var flags = 0;
+		for (i in 0...opt.length) {
+			switch (opt.get(i)) {
+				case "i".code: flags |= (Pcre2Flag.CASELESS : Int);
+				case "s".code: flags |= (Pcre2Flag.DOTALL : Int);
+				case "m".code: flags |= (Pcre2Flag.MULTILINE : Int);
+				case "u".code:
+				case "g".code: global = true;
+				case c: throw new hxc.eval.EvalExceptions.HostException("Unsupported regexp option '" + String.fromCharCode(c) + "'", true);
 			}
 		}
+		flags |= (Pcre2Flag.UTF : Int) | (Pcre2Flag.UCP : Int);
+		var rex = try Pcre2.compile(flags, r) catch (e:hxc.eval.Pcre2.Pcre2Exception) {
+			throw new hxc.eval.EvalExceptions.HostException(regexErrorString(e.error), true);
+		};
+		return new EvalRegex(rex, ByteString.ofRaw("~/" + r.raw() + "/" + opt.raw()), global);
 	}
 
-	static function regexEscape(s:String):String {
-		var buf = new StringBuf();
-		for (i in 0...s.length) {
-			var c = s.charCodeAt(i);
-			switch (c) {
-				case "\\".code | "^".code | "$".code | ".".code | "[".code | "]".code | "*".code | "+".code | "?".code:
-					buf.addChar("\\".code);
-				case _:
-			}
-			buf.addChar(c);
-		}
-		return buf.toString();
-	}
-
-	static function regexReplacement(re:EReg, by:String, opName:String):String {
-		var info = regexInfo(re);
-		var captureCount = info == null ? 9 : info.captureCount;
-		var buf = new StringBuf();
-		var pendingDollar = false;
-		for (i in 0...by.length) {
-			var c = by.charCodeAt(i);
-			if (pendingDollar) {
-				pendingDollar = false;
-				if (c == "$".code) {
-					buf.addChar(c);
-				} else if (c >= "0".code && c <= "9".code) {
-					var n = c - "0".code;
-					if (n > captureCount) throw opName + ": backreference denotes nonexistent subpattern";
-					var m = try re.matched(n) catch (_:Dynamic) null;
-					if (m != null) buf.add(m);
-				} else {
-					buf.addChar("$".code);
-					buf.addChar(c);
-				}
-			} else if (c == "$".code) {
-				pendingDollar = true;
-			} else {
-				buf.addChar(c);
-			}
-		}
-		if (pendingDollar) buf.addChar("$".code);
-		return buf.toString();
-	}
-
-	static function regexReplace(re:EReg, s:String, by:String):String {
-		var info = regexInfo(re);
-		var global = info != null && info.global;
-		var buf = new StringBuf();
-		var pos = 0;
-		while (true) {
-			if (!re.matchSub(s, pos)) {
-				buf.add(s.substr(pos));
-				break;
-			}
-			var p = re.matchedPos();
-			buf.add(s.substr(pos, p.pos - pos));
-			buf.add(regexReplacement(re, by, global ? "Pcre2.replace" : "Pcre2.replace_first"));
-			var next = p.pos + p.len;
-			if (!global) {
-				buf.add(s.substr(next));
-				break;
-			}
-			if (p.len == 0) {
-				if (next >= s.length) break;
-				buf.add(s.charAt(next));
-				pos = next + 1;
-			} else {
-				pos = next;
-				if (pos >= s.length) break;
-			}
-		}
-		return buf.toString();
-	}
-
-	static function regexSplit(re:EReg, s:String):Array<String> {
-		if (s.length == 0) return [""];
-		var info = regexInfo(re);
-		var global = info != null && info.global;
-		var copyOffset = 0;
-		var out:Array<String> = [];
-		var pos = 0;
-		while (true) {
-			if (!re.matchSub(s, pos)) {
-				out.push(s.substr(copyOffset));
-				break;
-			}
-			var p = re.matchedPos();
-			out.push(s.substr(copyOffset, p.pos - copyOffset));
-			copyOffset = p.pos + p.len;
-			var next = pos == copyOffset ? copyOffset + 1 : copyOffset;
-			if (next >= s.length) {
-				out.push("");
-				break;
-			}
-			if (global) {
-				pos = next;
-			} else {
-				out.push(s.substr(copyOffset));
-				break;
-			}
-		}
-		return out;
-	}
-
-	static function utf16IndexOfUtf8Byte(s:String, bytePos:Int):Null<Int> {
-		if (bytePos < 0) return null;
-		var i = 0;
-		var bytes = 0;
-		while (i < s.length) {
-			if (bytes == bytePos) return i;
-			var c = s.charCodeAt(i++);
-			if (c >= 0xD800 && c <= 0xDBFF && i < s.length) {
-				var c2 = s.charCodeAt(i);
-				if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
-					i++;
-					c = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-				}
-			}
-			bytes += c < 0x80 ? 1 : (c < 0x800 ? 2 : (c < 0x10000 ? 3 : 4));
-			if (bytes > bytePos) return null;
-		}
-		return bytes == bytePos ? i : null;
-	}
-
-	static function regexMatch(re:EReg, s:String):Bool {
-		var info = regexInfo(re);
-		if (info != null) info.lastSubject = s;
-		var ok = re.match(s);
-		if (info != null) info.matched = ok;
-		return ok;
-	}
-
-	static function regexMatchSub(re:EReg, s:String, pos:Int, len:Int):Bool {
-		var info = regexInfo(re);
-		if (info != null) info.lastSubject = s;
-		var start = utf16IndexOfUtf8Byte(s, pos);
-		if (start == null) {
-			if (info != null) info.matched = false;
-			return false;
-		}
-		var hostLen = -1;
-		if (len >= 0) {
-			var end = utf16IndexOfUtf8Byte(s, pos + len);
-			if (end == null) {
-				if (info != null) info.matched = false;
-				return false;
-			}
-			hostLen = end - start;
-		}
-		var ok = re.matchSub(s, start, hostLen);
-		if (info != null) info.matched = ok;
-		return ok;
-	}
-
-	static function regexEnsureMatched(re:EReg):Void {
-		var info = regexInfo(re);
-		if (info != null && !info.matched) throw "Invalid regex operation because no match was made";
-	}
-
-	static function regexMatchedPos(re:EReg):{pos:Int, len:Int} {
-		regexEnsureMatched(re);
-		var p = re.matchedPos();
-		var info = regexInfo(re);
-		var s = info == null ? null : info.lastSubject;
-		if (s == null) return p;
-		return {
-			pos: textCodePoints(s.substr(0, p.pos)),
-			len: textCodePoints(s.substr(p.pos, p.len))
+	// The message for a PCRE error.
+	static function regexErrorString(e:hxc.eval.Pcre2.Pcre2Error):String {
+		return switch (e) {
+			case BadPattern(s, i): "at " + i + ": " + s;
+			case Partial: "Partial";
+			case BadUTF: "BadUTF";
+			case BadUTFOffset: "BadUTFOffset";
+			case MatchLimit: "MatchLimit";
+			case DepthLimit: "DepthLimit";
+			case WorkspaceSize: "WorkspaceSize";
+			case InternalError(s): "InternalError: " + s;
 		};
 	}
 
-	// The code points in host text: a surrogate pair is one.
-	static function textCodePoints(s:String):Int {
-		var n = 0, i = 0;
-		while (i < s.length) {
-			var c = StringTools.fastCodeAt(s, i++);
-			if (c >= 0xD800 && c <= 0xDBFF && i < s.length) {
-				var c2 = StringTools.fastCodeAt(s, i);
-				if (c2 >= 0xDC00 && c2 <= 0xDFFF) i++;
+	// An EReg made without its constructor holds the empty pattern, no options.
+	static function regexEmpty():EvalRegex {
+		return new EvalRegex(Pcre2.compile(0, ByteString.empty), ByteString.ofRaw("~//"), false);
+	}
+
+	// Before a group is read: no match made, then a group the pattern does not have, then a group
+	// that did not take part (null).
+	static function regexMaybeRun(ctx:EvalContext, re:EvalRegex, n:Int, f:(Int, Int) -> EvalValue):EvalValue {
+		if (re.rGroups.length == 0) return EvalExceptions.excString(ctx, "Invalid regex operation because no match was made");
+		var ss = re.rGroups[0];
+		if (n < 0 || n >= ss.numOfSubs()) return EvalExceptions.excString(ctx, "Invalid group");
+		var o = try ss.getSubstringOfs(n) catch (_:hxc.eval.Pcre2.Pcre2NotFound) return VNull;
+		return f(o.first, o.last);
+	}
+
+	// Both ends clipped to the string, nothing where they cross.
+	static function regexSlice(s:ByteString, first:Null<Int>, last:Null<Int>):ByteString {
+		var len = s.length;
+		function clip(x:Int):Int return x < 0 ? 0 : (x > len ? len : x);
+		var i = clip(first == null ? 0 : (first < 0 ? len + first : first));
+		var j = clip(last == null ? len : (last < 0 ? len + last : last));
+		return (i >= j || i == len) ? ByteString.empty : s.sub(i, j - i);
+	}
+
+	// Quote a pattern: a backslash before each of `[ ] * . \ ? + ^ $`.
+	static function regexQuote(s:ByteString):ByteString {
+		var buf = new ByteBuffer();
+		for (i in 0...s.length) {
+			var c = s.get(i);
+			switch (c) {
+				case "[".code | "]".code | "*".code | ".".code | "\\".code | "?".code | "+".code | "^".code | "$".code:
+					buf.addByte("\\".code);
+				case _:
 			}
-			n++;
+			buf.addByte(c);
 		}
-		return n;
+		return buf.contents();
 	}
 
 	static function thisMap(a:Array<EvalValue>):Map<String, MapEntry> {
@@ -1360,19 +1207,9 @@ class EvalStdLib {
 	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
-	static var nativeRegexInfo = new haxe.ds.ObjectMap<EReg, {captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool, ?source:String}>();
 	static var objectFieldOrders = new haxe.ds.ObjectMap<VObject, Array<Int>>();
 	static var stringHashCache = new Map<String, Int>();
 	static var macroMessages:Array<EvalValue> = [];
-
-	static function regexInfo(re:EReg):{captureCount:Int, global:Bool, lastSubject:Null<String>, matched:Bool, ?source:String} {
-		var info = nativeRegexInfo.get(re);
-		if (info == null) {
-			info = {captureCount: 9, global: false, lastSubject: null, matched: false};
-			nativeRegexInfo.set(re, info);
-		}
-		return info;
-	}
 
 	static function objId(o:{}):Int {
 		if (objIds.exists(o)) return objIds.get(o);
@@ -2810,9 +2647,7 @@ class EvalStdLib {
 					case IDate(ts): ascii(sDate(ts));
 					case IPos(p): ascii(posString(p));
 					// A regex prints as its `~/pattern/options` text.
-					case IRegex(re):
-						var info = nativeRegexInfo.get(re);
-						ascii(info == null || info.source == null ? "~//" : info.source);
+					case IRegex(re): EvalString.createAscii(re.rexString);
 					case _:
 						var s = callToString(VInstance(vi), depth);
 						s == null ? ascii(EvalHash.revHash(vi.iproto.ppath)) : s;
@@ -3077,7 +2912,6 @@ class EvalStdLib {
 		nativeThreadNextId = 1;
 		threadEventHandlers = new Map();
 		threadEventHandlerNextId = 1;
-		nativeRegexInfo = new haxe.ds.ObjectMap();
 		macroMessages = [];
 		var s = ctx.builtins.staticBuiltins;
 
@@ -4130,18 +3964,13 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("EReg"), function(a) {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
 			// The pattern and the options are decodeString, decoded right to left.
-			var flags = decodeText(ctx, arg(a, 1));
-			var pattern = decodeText(ctx, arg(a, 0));
-			validateRegexFlags(flags);
-			var re = new EReg(pattern, flags);
-			nativeRegexInfo.set(re, {captureCount: countRegexCaptures(pattern), global: flags.indexOf("g") >= 0, lastSubject: null, matched: false, source: "~/" + pattern + "/" + flags});
-			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
+			var opt = decodeString(ctx, arg(a, 1));
+			var r = decodeString(ctx, arg(a, 0));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(regexCreate(r, opt))));
 		});
 		emptyCtors.set(EvalHash.hash("EReg"), function() {
 			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
-			var re = new EReg("", "");
-			nativeRegexInfo.set(re, {captureCount: 0, global: false, lastSubject: null, matched: false, source: "~//"});
-			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(re)));
+			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(regexEmpty())));
 		});
 
 		// StringBuf, over a byte buffer: the bytes and the length in characters each add says it added.
@@ -4223,95 +4052,171 @@ class EvalStdLib {
 		// The contents counted by their bytes (createAscii).
 		reg(inst, "haxe.Utf8", "toString", vmethod(a -> VString(EvalString.createAscii(thisUtf8(ctx, a).contents()))));
 
-		// Escape, map, match, matchSub, replace and split each decode_string their subject and
-		// replacement; a null subject is a Null Access. The host EReg runs on text, so the bytes cross as
-		// text both ways.
+		// EReg, over pcre2 on the string's bytes (hxc.eval.Pcre2).
 		reg(inst, "EReg", "match", vmethod(a -> {
-			var s = decodeText(ctx, arg(a, 1));
-			EvalValueTools.vbool(regexMatch(thisRegex(a), s));
+			// Match: every match from the start (execAll), NO_UTF_CHECK; no match forgets the groups, and a
+			// PCRE error is the one message a Haxe catch sees.
+			var re = thisRegex(a);
+			var s = decodeString(ctx, arg(a, 1));
+			re.rString = s;
+			try {
+				re.rGroups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, 0, s.toBytes());
+				VTrue;
+			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
+				re.rGroups = [];
+				VFalse;
+			} catch (_:hxc.eval.Pcre2.Pcre2Exception) {
+				EvalExceptions.excString(ctx, "PCRE Error (invalid unicode string?)");
+			}
 		}));
-		// And maybe_run: no match made, then a group that is not one of the pattern's (evalStdLib's
-		// num_of_subs, the capture count plus one), then an unmatched group is null.
+		// Matched: the group's bytes out of the subject the match was made on.
 		reg(inst, "EReg", "matched", vmethod(a -> {
 			var re = thisRegex(a);
 			var n = decodeInt(ctx, arg(a, 1));
-			var info = regexInfo(re);
-			if (!info.matched) EvalExceptions.excString(ctx, "Invalid regex operation because no match was made");
-			if (n < 0 || n > info.captureCount) EvalExceptions.excString(ctx, "Invalid group");
-			try mkNullStr(re.matched(n)) catch (e:Dynamic) EvalExceptions.excString(ctx, Std.string(e));
+			regexMaybeRun(ctx, re, n, (first, last) -> EvalString.createUnknown(regexSlice(re.rString, first, last)));
 		}));
-		reg(inst, "EReg", "matchedLeft", vmethod(a -> try {
+		reg(inst, "EReg", "matchedLeft", vmethod(a -> {
 			var re = thisRegex(a);
-			regexEnsureMatched(re);
-			mkStr(re.matchedLeft());
-		} catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
+			regexMaybeRun(ctx, re, 0, (first, _) -> EvalString.createUnknown(regexSlice(re.rString, null, first)));
 		}));
-		reg(inst, "EReg", "matchedRight", vmethod(a -> try {
+		reg(inst, "EReg", "matchedRight", vmethod(a -> {
 			var re = thisRegex(a);
-			regexEnsureMatched(re);
-			mkStr(re.matchedRight());
-		} catch (e:Dynamic) {
-			EvalExceptions.excString(ctx, Std.string(e));
+			regexMaybeRun(ctx, re, 0, (_, last) -> EvalString.createUnknown(regexSlice(re.rString, last, null)));
 		}));
+		// matchedPos: the byte offsets counted in characters by stepping Utf8.next.
 		reg(inst, "EReg", "matchedPos", vmethod(a -> {
-			var p = try regexMatchedPos(thisRegex(a)) catch (e:Dynamic) {
-				return EvalExceptions.excString(ctx, Std.string(e));
-			};
-			var m = new Map();
-			m.set(EvalHash.hash("pos"), VInt(p.pos));
-			m.set(EvalHash.hash("len"), VInt(p.len));
-			VObject(new VObject([], ODictionary(m)));
+			var re = thisRegex(a);
+			function charOffset(i:Int):Int {
+				var k = 0;
+				var o = 0;
+				while (i != 0) {
+					var n = Utf8.next(re.rString, o);
+					i -= n - o;
+					k++;
+					o = n;
+				}
+				return k;
+			}
+			regexMaybeRun(ctx, re, 0, (first, last) -> {
+				var f = charOffset(first);
+				var l = charOffset(last);
+				var m = new Map();
+				m.set(EvalHash.hash("pos"), VInt(f));
+				m.set(EvalHash.hash("len"), VInt(l - f));
+				VObject(new VObject([], ODictionary(m)));
+			});
 		}));
-		// The receiver, the subject, the position and the length, decoded in that order; a negative
-		// length is the default.
+		// matchSub: the subject cut at pos + len and matched from pos; a failure leaves the
+		// previous match standing.
 		reg(inst, "EReg", "matchSub", vmethod(a -> {
 			var re = thisRegex(a);
-			var s = decodeText(ctx, arg(a, 1));
+			var s = decodeString(ctx, arg(a, 1));
 			var pos = decodeInt(ctx, arg(a, 2));
-			var len = defaultInt(ctx, arg(a, 3), -1);
-			// The subject is cut at pos + len and the regex stub refuses a position outside it, both
-			// Invalid_argument no macro catches.
-			var byteLen = haxe.io.Bytes.ofString(s).length;
-			var l = len < 0 ? byteLen - pos : len;
-			if (pos + l <= byteLen) {
-				if (pos + l < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
-				if (pos < 0 || pos > pos + l) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("Pcre2.pcre2_match_stub: illegal position")');
-			}
-			EvalValueTools.vbool(regexMatchSub(re, s, pos, len));
+			var lenDefault = s.length - pos;
+			var len = defaultInt(ctx, arg(a, 3), lenDefault);
+			if (len < 0) len = lenDefault;
+			if (pos + len > s.length) return VFalse;
+			if (pos + len < 0) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
+			var str = s.sub(0, pos + len);
+			try {
+				var groups = re.r.execAll(Pcre2Flag.NO_UTF_CHECK, pos, str.toBytes());
+				re.rString = s;
+				re.rGroups = groups;
+				VTrue;
+			} catch (_:hxc.eval.Pcre2.Pcre2NotFound) VFalse;
 		}));
 		reg(inst, "EReg", "split", vmethod(a -> {
 			var re = thisRegex(a);
-			var s = decodeText(ctx, arg(a, 1));
-			var info = regexInfo(re);
-			if (info != null) info.lastSubject = s;
-			var parts = regexSplit(re, s);
-			VArray(new VArray([for (p in parts) mkStr(p)], parts.length));
+			var s = decodeString(ctx, arg(a, 1));
+			var slength = s.length;
+			if (slength == 0) return VArray(new VArray([EvalString.vEmptyString()], 1));
+			var subj = s.toBytes();
+			var copyOffset = 0;
+			var acc:Array<EvalValue> = [];
+			function add(first:Int, last:Int) {
+				if (last - first < 0 || first < 0 || last > slength) throw new hxc.eval.EvalExceptions.HostException('Invalid_argument("String.sub / Bytes.sub")');
+				acc.push(EvalString.createUnknown(s.sub(first, last - first)));
+			}
+			var pos = 0;
+			while (true) {
+				var next:Int;
+				try {
+					var ss = re.r.exec(Pcre2Flag.NO_UTF_CHECK, pos, subj);
+					var o = ss.getSubstringOfs(0);
+					add(copyOffset, o.first);
+					copyOffset = o.last;
+					next = pos == o.last ? o.last + 1 : o.last;
+					if (next >= slength) {
+						acc.push(EvalString.vEmptyString());
+						break;
+					}
+				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
+					add(copyOffset, slength);
+					break;
+				}
+				if (re.global) pos = next;
+				else {
+					add(copyOffset, slength);
+					break;
+				}
+			}
+			VArray(new VArray(acc, acc.length));
 		}));
+		// Replace: pcre2's replace, global or first-only, under NO_UTF_CHECK, with the replacement as its
+		// template (`$1`, `$$`, ...).
 		reg(inst, "EReg", "replace", vmethod(a -> {
 			var re = thisRegex(a);
-			var info = regexInfo(re);
-			var by = decodeText(ctx, arg(a, 2));
-			var s = decodeText(ctx, arg(a, 1));
-			if (info != null) info.lastSubject = s;
-			mkStr(regexReplace(re, s, by));
+			var s = decodeString(ctx, arg(a, 1));
+			var by = decodeString(ctx, arg(a, 2));
+			var out = re.global
+				? re.r.replace(Pcre2Flag.NO_UTF_CHECK, by.toBytes(), s.toBytes())
+				: re.r.replaceFirst(Pcre2Flag.NO_UTF_CHECK, by.toBytes(), s.toBytes());
+			EvalString.createUnknown(ByteString.ofBytes(out, 0, out.length));
 		}));
+		// Map: each match's replacement is the callback's string; an empty match copies one byte and
+		// moves on.
 		reg(inst, "EReg", "map", vmethod(a -> {
 			var recv = arg(a, 0);
 			var fn = arg(a, 2);
 			var re = thisRegex(a);
-			var s = decodeText(ctx, arg(a, 1));
-			var info = regexInfo(re);
-			if (info != null) info.lastSubject = s;
-			var out = re.map(s, function(_) {
-				if (info != null) info.matched = true;
-				return stringOf(callValueOn(recv, fn, [recv]));
-			});
-			// Map leaves no match behind.
-			if (info != null) info.matched = false;
-			mkStr(out);
+			var s = decodeString(ctx, arg(a, 1));
+			var subj = s.toBytes();
+			var l = s.length;
+			var buf = new ByteBuffer();
+			re.rString = s;
+			var pos = 0;
+			while (pos < l) {
+				try {
+					var ss = re.r.exec(0, pos, subj);
+					re.rGroups = [ss];
+					var o = ss.getSubstringOfs(0);
+					buf.addSub(s, pos, o.first - pos);
+					buf.addString(decodeString(ctx, callValueOn(recv, fn, [recv])));
+					if (o.last == o.first) {
+						if (o.last >= l) break;
+						if (re.global) {
+							buf.addSub(s, o.first, 1);
+							pos = o.first + 1;
+						} else {
+							buf.addSub(s, o.first, l - o.first);
+							break;
+						}
+					} else if (re.global) {
+						pos = o.last;
+					} else {
+						buf.addSub(s, o.last, l - o.last);
+						break;
+					}
+				} catch (_:hxc.eval.Pcre2.Pcre2NotFound) {
+					buf.addSub(s, pos, l - pos);
+					break;
+				}
+			}
+			re.rString = ByteString.empty;
+			re.rGroups = [];
+			EvalString.createUnknown(buf.contents());
 		}));
-		reg(s, "EReg", "escape", vfn(a -> mkStr(regexEscape(decodeText(ctx, arg(a, 0))))));
+		reg(s, "EReg", "escape", vfn(a -> EvalString.createUnknown(regexQuote(decodeString(ctx, arg(a, 0))))));
 
 
 		// haxe.ds maps (StringMap/IntMap/ObjectMap) backed by a native dictionary. EnumValueMap is the
