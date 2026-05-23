@@ -3224,8 +3224,10 @@ class EvalStdLib {
 		reg(s, "haxe.Log", "trace", vfn(a -> { writeStdoutString(traceString(ctx, arg(a, 0), arg(a, 1)), false); VNull; }));
 		reg(s, "Sys", "println", vfn(a -> { writeStdoutString(valueString(arg(a, 0)), true); VNull; }));
 		reg(s, "Sys", "print", vfn(a -> { writeStdoutString(valueString(arg(a, 0)), false); VNull; }));
+		// The compilation's sys args, not the host process's own argv.
 		reg(s, "Sys", "args", vfn(a -> {
-			var args = [for (s in Sys.args()) mkStr(s)];
+			var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+			var args = com == null ? [] : [for (s in com.sysArgs) mkStr(s)];
 			VArray(new VArray(args, args.length));
 		}));
 		reg(s, "Sys", "_command", vfn(a -> {

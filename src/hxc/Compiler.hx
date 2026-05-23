@@ -420,41 +420,33 @@ class Compiler {
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
 		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
 		hxc.core.TypeUnification.install();
-		args = expandArgs(args);
-		var nextAt = args.indexOf("--next");
-		if (nextAt >= 0) {
-			var sections:Array<Array<String>> = [];
-			var start = 0;
-			while (start <= args.length) {
-				var end = args.indexOf("--next", start);
-				if (end < 0) end = args.length;
-				sections.push(args.slice(start, end));
-				if (end == args.length) break;
-				start = end + 1;
-			}
-			// Everything before --each in the first section repeats for every section. (each_params).
-			var eachAt = sections[0].indexOf("--each");
-			if (eachAt >= 0) {
-				var common = sections[0].slice(0, eachAt);
-				sections[0] = sections[0].slice(eachAt + 1);
-				for (i in 0...sections.length) sections[i] = common.concat(sections[i]);
-			}
-			var exitCode = 0;
-			for (section in sections) {
-				var proc = new Process(Sys.programPath(), section);
-				var stdout = proc.stdout.readAll();
-				var stderr = proc.stderr.readAll();
-				var code = proc.exitCode();
-				proc.close();
-				if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
-				if (stderr.length > 0) answerOut(stderr.toString());
-				if (code != 0) {
-					exitCode = code;
-					break;
-				}
-			}
-			Sys.exit(exitCode);
+		// A --display given last moves to the front, and only that form marks the command line as a
+		// display one, which compiles its first section alone.
+		var hasDisplay = false;
+		if (args.length >= 2 && args[args.length - 2] == "--display" && args[args.length - 1] != "memory") {
+			hasDisplay = true;
+			args = ["--display", args[args.length - 1]].concat(args.slice(0, args.length - 2));
 		}
+		// One section per --next, each expanded only once the one before it has compiled (an earlier
+		// section can write the hxml a later one reads), stopping at the first failure. A section before
+		// the last compiles in a child process over its expanded arguments; the last compiles here.
+		var each = {v: ([] : Array<String>)};
+		var section = processParams(args, each);
+		while (section.rest.length > 0 && !hasDisplay) {
+			var proc = new Process(Sys.programPath(), section.params);
+			var stdout = proc.stdout.readAll();
+			var stderr = proc.stderr.readAll();
+			var code = proc.exitCode();
+			proc.close();
+			if (stdout.length > 0) Sys.stdout().writeString(stdout.toString());
+			if (stderr.length > 0) answerOut(stderr.toString());
+			if (code != 0) {
+				exitRequest(code);
+				return;
+			}
+			section = processParams(section.rest, each);
+		}
+		args = section.params;
 		// --wait stdio: the compilation-server loop. Requests arrive on stdin as 4-byte little-endian
 		// length-prefixed blocks of newline-separated argument lines; each response goes to stderr with the
 		// same framing. A line starting \x01 carries program stdout with embedded newlines encoded as \x01;
@@ -477,6 +469,8 @@ class Compiler {
 		// here so the top-level handler can reach it.
 		argFailureCtx = ctx;
 		ctx.args = args.copy();
+		// sysArgs starts as the parameters; --run replaces it with the arguments after the module name.
+		ctx.sysArgs = section.sysArgs != null ? section.sysArgs : args.copy();
 		Setup.setupCommonContext(ctx);
 		ModuleLoader.attach(ctx);
 		// A cast-field candidate check must see the INFERRED signature; force the abstract's cast fields on
@@ -582,7 +576,11 @@ class Compiler {
 			// pre-argument like --cwd) has no such framing.
 			try switch (a) {
 				case "-cp" | "-p" | "--class-path": userCp.push(argValue(args, i++, a));
-				case "-main" | "-m" | "--main": mainClass = argValue(args, i++, a);
+				case "-main" | "-m" | "--main":
+					// A second main class is refused, even the same one.
+					var cl = argValue(args, i++, a);
+					if (mainClass != null) throw "Multiple --main classes specified";
+					mainClass = cl;
 				case "--hxia":
 					// The hxia profile mask: `--hxia core` (or sys). Masks the std surface at
 					// typing per hxc.hxia.CapabilityMask; atoms are added by --require.
@@ -625,19 +623,24 @@ class Compiler {
 					targetDir = "eval";
 					ctx.defines.rawDefine("interp");                                   
 				case "-x":
-					// X <class>: interpret <class>, i.e. --interp plus a startup class. .
+					// -x <class>: interpret <class>, i.e. --interp plus a startup class. A main class
+					// already given must be the same one.
+					var cl = argValue(args, i++, a);
+					if (mainClass == null) mainClass = cl;
+					else if (sTypePath(parseTypePath(cl)) != sTypePath(parseTypePath(mainClass)))
+						throw "Multiple --main classes specified";
+					ctx.defines.rawDefine("interp");
 					setPlatform(Eval);
 					targetDir = "eval";
-					ctx.defines.rawDefine("interp");
-					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
 				case "--run":
-					// Run <module> [args...]: like -x but the trailing arguments are the program's own argv, not
-					// compiler flags. (rewrites to `-x cl` with sys_args = rest).
-					setPlatform(Eval);
-					targetDir = "eval";
-					ctx.defines.rawDefine("interp");
-					if (mainClass == null) mainClass = argValue(args, i++, a); else i++;
-					i = args.length; // Remaining args belong to the interpreted program
+					// `--run <module>` has already been turned into `-x <module>`, so one that reaches here
+					// named no module.
+					throw "--run requires an argument: a Haxe module name";
+				case "-L" | "--library" | "-lib":
+					// Every library that names one has already been expanded.
+					argValue(args, i++, a);
+				case "--haxelib-global":
+					// Read when the libraries are expanded; nothing to do here.
 				case "-js" | "--js":
 					setPlatform(Js);
 					targetDir = "js";
@@ -3748,65 +3751,110 @@ class Compiler {
 		return null;
 	}
 
-	static function expandArgs(args:Array<String>):Array<String> {
-		return expandArgsInner(args, []);
-	}
-
-	static function expandArgsInner(args:Array<String>, seen:Array<String>):Array<String> {
-		var out:Array<String> = [];
+	// Expand one section of the command line before any argument is parsed. An hxml file's lines and a
+	// library's haxelib lines are spliced in place of the argument that named them, --cwd takes effect at
+	// once (a later hxml is read from the new directory), and --run ends the command line: what follows it
+	// is the program's own argv.
+	static function processParams(pl:Array<String>, each:{v:Array<String>}):{params:Array<String>, rest:Array<String>, sysArgs:Null<Array<String>>} {
+		var curdir = Sys.getCwd();
+		var addedLibs = new Map<String, Bool>();
+		var acc:Array<String> = [];
+		// --cwd takes effect immediately, so the directory is reset once the section's parameters are
+		// known.
+		function create(rest:Array<String>, sysArgs:Null<Array<String>>) {
+			Sys.setCwd(curdir);
+			return {params: each.v.concat(acc), rest: rest, sysArgs: sysArgs};
+		}
+		inline function isLib(a:String):Bool return a == "-L" || a == "--library" || a == "-lib";
+		var l = pl;
 		var i = 0;
-		var libs:Array<String> = [];
-		while (i < args.length) {
-			var a = args[i++];
-			// An hxml argument is not expanded when it follows -cmd, and an unreadable one is pushed back as
-			// the literal `<arg> (file not found)`, which then fails as a class path and reports the
-			// argument. Letting the read throw instead surfaced the host's own error value.
-			if (!StringTools.startsWith(a, "-") && StringTools.endsWith(a, ".hxml")
-				&& !(out.length > 0 && (out[out.length - 1] == "-cmd" || out[out.length - 1] == "--cmd"))) {
-				var expanded = try expandHxml(a, seen) catch (_:Dynamic) null;
-				if (expanded == null) out.push(a + " (file not found)");
-				else out = out.concat(expanded);
+		while (i < l.length) {
+			var a = l[i];
+			var hasValue = i + 1 < l.length;
+			if (a == "--next") {
+				// An empty --next is skipped
+				if (acc.length == 0) {
+					i++;
+					continue;
+				}
+				return create(l.slice(i + 1), null);
+			}
+			if (a == "--each") {
+				each.v = acc;
+				acc = [];
+				i++;
 				continue;
 			}
-			if (a == "-lib" || a == "--library" || a == "-L") {
-				if (i >= args.length) throw "Missing library name";
-				libs.push(args[i++]);
+			if ((a == "--cwd" || a == "-C") && hasValue) {
+				// Changed now since it affects hxml loading, and pushed as --cwd so the argument parser
+				// changes it again.
+				var dir = l[i + 1];
+				var ok = FileSystem.exists(dir) && FileSystem.isDirectory(dir);
+				if (ok) try Sys.setCwd(dir) catch (_:Dynamic) ok = false;
+				if (!ok) throw new ArgFailure("Invalid directory: " + dir);
+				acc.push("--cwd");
+				acc.push(dir);
+				i += 2;
 				continue;
 			}
-			out.push(a);
+			if (a == "--run" && hasValue) {
+				acc.push("-x");
+				acc.push(l[i + 1]);
+				return create([], l.slice(i + 2));
+			}
+			if (isLib(a) && hasValue) {
+				// A run of libraries resolves in one call, and a library this section already added is not
+				// added again.
+				var libs:Array<String> = [];
+				var j = i;
+				while (j + 1 < l.length && isLib(l[j])) {
+					libs.push(l[j + 1]);
+					j += 2;
+				}
+				var rest = l.slice(j);
+				libs = [for (n in libs) if (!addedLibs.exists(n)) n];
+				for (n in libs) addedLibs.set(n, true);
+				l = addLibs(libs, rest).concat(rest);
+				i = 0;
+				continue;
+			}
+			// An hxml argument is not expanded when it follows -cmd, and one that cannot be read is pushed
+			// back as the literal `<arg> (file not found)`.
+			if (StringTools.endsWith(a, ".hxml") && !(acc.length > 0 && (acc[acc.length - 1] == "-cmd" || acc[acc.length - 1] == "--cmd"))) {
+				var lines = try parseHxml(a) catch (_:Dynamic) null;
+				if (lines == null) {
+					acc.push(a + " (file not found)");
+					i++;
+				} else {
+					l = lines.concat(l.slice(i + 1));
+					i = 0;
+				}
+				continue;
+			}
+			acc.push(a);
+			i++;
 		}
-		// All libraries resolve through one haxelib call whose output appends after the other arguments.
-		// .
-		if (libs.length > 0) out = out.concat(expandHaxelibs(libs, seen));
-		return out;
+		return create([], null);
 	}
 
-	static function expandHxml(path:String, seen:Array<String>):Array<String> {
-		var file = resolveHxml(path, seen.length == 0 ? null : seen[seen.length - 1]);
-		var norm = StringTools.replace(file, "\\", "/");
-		if (seen.indexOf(norm) >= 0) throw "Recursive hxml include: " + path;
-		var nextSeen = seen.concat([norm]);
+	// The file is opened as named, from the current directory, and split at every run of line breaks.
+	static function parseHxml(file:String):Array<String> {
+		if (!FileSystem.exists(file) || FileSystem.isDirectory(file)) throw "not found";
 		var args:Array<String> = [];
-		for (line in File.getContent(file).split("\n"))
+		for (line in StringTools.replace(File.getContent(file), "\r", "\n").split("\n"))
 			args = args.concat(parseHxmlLine(line));
-		return expandArgsInner(args, nextSeen);
+		return args;
 	}
 
-	static function resolveHxml(path:String, ?from:String):String {
-		if (FileSystem.exists(path)) return path;
-		if (from != null) {
-			var base = directoryOf(from);
-			var p = base == "" ? path : base + "/" + path;
-			if (FileSystem.exists(p)) return p;
-		}
-		return path;
-	}
-
-	static function expandHaxelibs(libs:Array<String>, seen:Array<String>):Array<String> {
+	// One `haxelib path` call for the run of libraries. --haxelib-global is looked for in the
+	// arguments after them.
+	static function addLibs(libs:Array<String>, args:Array<String>):Array<String> {
+		if (libs.length == 0) return [];
+		var cmd = (args.indexOf("--haxelib-global") >= 0 ? ["--global"] : []).concat(["path"]).concat(libs);
 		// The hxcpp host's spawn intermittently fails outright under load; one retry covers it.
-		var p = try new Process("haxelib", ["path"].concat(libs)) catch (_:Dynamic) {
+		var p = try new Process("haxelib", cmd) catch (_:Dynamic) {
 			Sys.sleep(0.1);
-			new Process("haxelib", ["path"].concat(libs));
+			new Process("haxelib", cmd);
 		};
 		var stdout = p.stdout.readAll().toString();
 		var stderr = p.stderr.readAll().toString();
@@ -3822,28 +3870,35 @@ class Compiler {
 			}
 			var outLines = inputList(stdout), errLines = inputList(stderr);
 			if (outLines.length == 0 && errLines.length == 0)
-				throw "Failed to call haxelib (command not found ?)";
+				throw new ArgFailure("Failed to call haxelib (command not found ?)");
 			if (outLines.length == 0 && errLines.length == 1
 				&& StringTools.endsWith(StringTools.trim(errLines[0]), "Module not found: path"))
-				throw "The haxelib command has been strip'ed, please install it again";
-			throw outLines.concat(errLines).join("\n");
+				throw new ArgFailure("The haxelib command has been strip'ed, please install it again");
+			throw new ArgFailure(outLines.concat(errLines).join("\n"));
 		}
-		var args:Array<String> = [];
+		// Each non-empty stripped line - a bare path is a class path, `-L <dir>` a neko link path, anything
+		// else a flag with the rest of the line after its first space.
+		var out:Array<String> = [];
 		for (line in stdout.split("\n")) {
-			// A `-L <dir>` line is a neko link path, not a library: it becomes --neko-lib-path carrying the
-			// rest of the line. .
-			var stripped = StringTools.trim(line);
-			if (StringTools.startsWith(stripped, "-L ")) {
-				args = args.concat(["--neko-lib-path", stripped.substr(3)]);
+			var l = StringTools.trim(line);
+			if (l == "") continue;
+			if (l.charCodeAt(0) != "-".code) {
+				out.push("-cp");
+				out.push(l);
 				continue;
 			}
-			var parsed = parseHxmlLine(line);
-			if (parsed.length == 1 && !StringTools.startsWith(parsed[0], "-") && !StringTools.endsWith(parsed[0], ".hxml"))
-				args = args.concat(["-cp", parsed[0]]);
-			else
-				args = args.concat(parsed);
+			var sp = l.indexOf(" ");
+			var param = sp < 0 ? l : l.substr(0, sp);
+			var value = sp < 0 ? "" : l.substr(sp + 1);
+			if (param == "-L") {
+				out.push("--neko-lib-path");
+				out.push(l.substr(3));
+				continue;
+			}
+			out.push(param);
+			if (value != "") out.push(value);
 		}
-		return expandArgsInner(args, seen);
+		return out;
 	}
 
 	// An hxml line is at most a flag and one argument, split at the first space; surrounding quotes are
@@ -3869,12 +3924,6 @@ class Compiler {
 				return s.substr(1, len - 2);
 		}
 		return s;
-	}
-
-	static function directoryOf(path:String):String {
-		var p = StringTools.replace(path, "\\", "/");
-		var i = p.lastIndexOf("/");
-		return i < 0 ? "" : p.substr(0, i);
 	}
 
 	// A fatal error joins the message store before printing, so -D message.reporting picks the configured

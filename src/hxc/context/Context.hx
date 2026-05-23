@@ -22,6 +22,11 @@ class Context {
 	public var args:Array<String> = [];
 
 	/**
+	 * Interpreter Sys.args(): compiler arguments, or arguments after the module name under --run.
+	 */
+	public var sysArgs:Array<String> = [];
+
+	/**
 	 * Display-request files and their unsaved contents; null reads from disk. Diagnostics requests
 	 * supply the complete file set.
 	 */
@@ -432,6 +437,8 @@ class Context {
 		c.verbose = this.verbose;
 		for (name in this.resourceOrder) c.addResource(name, this.resources.get(name));
 		c.initMacros = this.initMacros.copy();
+		c.args = this.args;
+		c.sysArgs = this.sysArgs;
 		// Copy unsaved display contents into the macro world.
 		c.fileContents = this.fileContents.copy();
 		// Preserve the host's display error policy and diagnostics file set in the clone.
