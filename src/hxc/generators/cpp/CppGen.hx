@@ -44,15 +44,21 @@ class CppGen {
 		CppGenClass.superDeps = CppReferenced.createSuperDependencies(com);
 		CppGenClass.constructorDeps = CppReferenced.createConstructorDependencies(com);
 		CppGenClass.fileInfo = new Map();
-		var generatedHeaders = new Map<String, Bool>();
+
+		// exeClasses: (path, deps) in reverse com.types order (prepended). The deps are the class/enum
+		// dependency walk (findReferencedTypesFlags with forDepends), taken during the com.types walk
+		// before any file is generated (the jobs run after).
+		var scriptable = com.defines.rawDefined("scriptable");
+		var typeDeps = new Map<String, Array<Path>>();
 		for (mt in com.types) switch (mt) {
-			case TClassDecl(c) if (shouldEmit(c)): generatedHeaders.set(Context.pathKey(c.path), true);
-			case TEnumDecl(e) if (shouldEmitEnum(e)): generatedHeaders.set(Context.pathKey(e.path), true);
+			case TClassDecl(c) if (shouldEmit(c)):
+				typeDeps.set(Context.pathKey(c.path), CppReferenced.findReferencedTypesFlags(com, mt, "*", CppGenClass.superDeps,
+					CppGenClass.constructorDeps, false, scriptable, true).deps);
+			case TEnumDecl(e) if (shouldEmitEnum(e)):
+				typeDeps.set(Context.pathKey(e.path), CppReferenced.findReferencedTypesFlags(com, mt, "*", CppGenClass.superDeps,
+					new Map(), false, false, true).deps);
 			case _:
 		}
-
-		// exe_classes: (path, deps) in reverse com.types order . deps = the Build.xml <depend> list = self
-		// header + referenced headers (same order as the .cpp includes).
 		var exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}> = [];
 		// -D cppgen-trace: log each type to stderr (flushed) right before it is emitted, so a hard crash
 		// during generation names the culprit as the last line printed instead of failing silently.
@@ -76,11 +82,8 @@ class CppGen {
 				writeSourceFile(com, base + "/include/" + p + ".h", nativeGen ? gc.genNativeGenHeader() : gc.genHeader());
 				if (!isNativeGenInterface)
 					writeSourceFile(com, base + "/src/" + p + sourceExtension, cppText);
-				// Deps = self + referenced types, SORTED together (matches the .cpp include order)
-				var refs = [c.path].concat(gc.referencedPaths()).filter(function(p) return generatedHeaders.exists(Context.pathKey(p)));
-				refs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
 				if (!(TypeFunctions.hasClassFlag(c, CInterface) && CppTypeOf.isNativeGenClass(c)))
-					exeClasses.unshift({path: c.path, deps: refs, mt: mt});
+					exeClasses.unshift({path: c.path, deps: typeDeps.get(Context.pathKey(c.path)), mt: mt});
 			case TEnumDecl(e) if (shouldEmitEnum(e)):
 				traceType("enum", e.path);
 				var ge = new CppGenEnum(com, e);
@@ -89,9 +92,7 @@ class CppGen {
 				ensureDir(base + "/src/" + dirOf(p));
 				writeSourceFile(com, base + "/include/" + p + ".h", ge.genHeader());
 				writeSourceFile(com, base + "/src/" + p + sourceExtension, ge.genCpp());
-				var erefs = CppReferenced.findReferencedTypesFlags(com, TEnumDecl(e), "*", CppGenClass.superDeps, CppGenClass.constructorDeps, false, false).deps;
-				erefs.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
-				exeClasses.unshift({path: e.path, deps: erefs, mt: mt});
+				exeClasses.unshift({path: e.path, deps: typeDeps.get(Context.pathKey(e.path)), mt: mt});
 			case _:
 		}
 
@@ -219,7 +220,7 @@ class CppGen {
 			// With a main class the referenced headers are included, then "\n\n"; without one (for example
 			// -D static_link) neither is emitted.
 			if (com.main != null) {
-				for (p in mainRefs(com)) w.writeH(guardedInclude(p));
+				for (p in mainDependencies(com, new Map())) addInclude(w, p);
 				w.write("\n\n");
 			}
 			if (isMain) w.write("\n#include <hx/HxcppMain.h>\n\n");
@@ -237,34 +238,23 @@ class CppGen {
 		}
 	}
 
-	// The classes referenced by the entry expression (for the __main__ includes). The main is a block
-	// (the entry call plus the event-loop pump), so walk the whole tree and collect each
-	// field/new/type target's class path; those are already the _Impl_/_Fields_ variants the include
-	// list needs.
-	static function mainRefs(com:Context):Array<Path> {
-		var paths:Array<Path> = [];
-		function add(p:Path):Void {
-			for (q in paths) if (q.name == p.name && q.pack.join(".") == p.pack.join(".")) return;
-			paths.push(p);
-			// Main deps come from find_referenced_types over the @Main class, which pulls each referenced
-			// type's super chain (add_type follows super_deps); so a main class extending utest.Test drags
-			// in utest.Test and utest.ITest.
-			var sd = CppGenClass.superDeps.get(CppTypeOf.joinClassPath(p, "."));
-			if (sd != null) for (sp in sd) add(sp);
-		}
-		function walk(e:TExpr):Void {
-			switch (e.expr) {
-				case TField(_, FStatic(c, _)) | TField(_, FInstance(c, _, _)): add(c.path);
-				case TField(_, FClosure(cwp, _)) if (cwp != null): add(cwp.c.path);
-				case TTypeExpr(TClassDecl(c)): add(c.path);
-				case TNew(c, _, _): add(c.path);
-				case _:
-			}
-			hxc.core.TexprTools.iter(walk, e);
-		}
-		if (com.main != null) walk(com.main);
-		paths.sort(function(a, b) return Reflect.compare(CppGenClass.joinPath(a, "/"), CppGenClass.joinPath(b, "/")));
-		return paths;
+	// The entry expression is the one static `__main__` of a class `@Main`, and its deps are the referenced
+	// types of that class with forDepends: without constructor deps for the __main__/__lib__ includes, with
+	// the constructor deps for the __lib__ entry of Build.xml.
+	static function mainDependencies(com:Context, constructorDeps:Map<String, TClassField>):Array<Path> {
+		var nullPos = hxc.ast.Position.nullPos;
+		var f = TypeFunctions.mkField("__main__", TypeFunctions.tDynamic, com.main.pos, nullPos);
+		f.expr = com.main;
+		var c = TypeFunctions.mkClass(TypeFunctions.nullModule, {pack: [], name: "@Main"}, nullPos, nullPos);
+		c.orderedStatics = [f];
+		return CppReferenced.findReferencedTypesFlags(com, TClassDecl(c), "*", CppGenClass.superDeps, constructorDeps, false, false,
+			true).deps;
+	}
+
+	// A @verbatim file is a hash-guarded include written once, a class its own guarded header include.
+	static function addInclude(w:CppWriter, path:Path):Void {
+		if (path.pack.length == 1 && path.pack[0] == "@verbatim") w.writeHUnique(CppGenClass.guardedInclude(path.name));
+		else w.writeH(guardedInclude(path));
 	}
 
 	// The debugger's file + class tables (empty unless HXCPP_DEBUGGER). __hxcpp_all_files is the sorted set
@@ -393,7 +383,7 @@ class CppGen {
 	static function genBuildXml(com:Context, base:String, exeClasses:Array<{path:Path, deps:Array<Path>, mt:ModuleType}>, sourceExtension:String, externSrc:Array<String>):Void {
 		var api = com.defines.rawDefinedValueSafe("hxcpp_api_level", "430");
 		var exe = com.main != null ? mainClassName(com) : "output";
-		var mainDeps = com.main != null ? mainRefs(com) : [];
+		var mainDeps = com.main != null ? mainDependencies(com, CppGenClass.constructorDeps) : [];
 		var b = new StringBuf();
 		// One <file> per class, with a <depend> per non-internal dep
 		function fileEntry(name:String, deps:Array<Path>, fileXml:String):Void {
@@ -402,12 +392,22 @@ class CppGen {
 			b.add(">\n");
 			for (p in deps)
 				if (!CppTypeOf.isInternalClass(p))
-					b.add("   <depend name=\"include/" + CppGenClass.joinPath(p, "/") + ".h\"/>\n");
+					b.add("   <depend name=\"" + (p.pack.length == 1 && p.pack[0] == "@verbatim" ? p.name
+						: "include/" + CppGenClass.joinPath(p, "/") + ".h") + "\"/>\n");
 			b.add("  </file>\n");
 		}
 		b.add("<xml>\n<set name=\"HXCPP_API_LEVEL\" value=\"" + api + "\" />\n");
 		b.add("<files id=\"haxe\">\n<compilerflag value=\"-Iinclude\"/>\n");
-		for (e in exeClasses) fileEntry(CppGenClass.joinPath(e.path, "/"), e.deps, "");
+		// A class or enum's @:fileXml attributes.
+		function fileXml(mt:ModuleType):String {
+			var s = switch (mt) {
+				case TClassDecl(c): hxc.ast.Ast.getMetaString(c.meta, ":fileXml");
+				case TEnumDecl(e): hxc.ast.Ast.getMetaString(e.meta, ":fileXml");
+				case _: null;
+			};
+			return s == null ? "" : s;
+		}
+		for (e in exeClasses) fileEntry(CppGenClass.joinPath(e.path, "/"), e.deps, fileXml(e.mt));
 		// __boot__ depends on the boot enums + boot classes.
 		fileEntry("__boot__", CppGenClass.bootEnums.concat(CppGenClass.bootClasses), "");
 		fileEntry("__files__", [], "if='HXCPP_DEBUGGER'");
@@ -422,7 +422,8 @@ class CppGen {
 		b.add("</files>\n");
 		b.add("<files id=\"__resources__\">\n");
 		var resCount = [for (k in com.resources.keys()) k].length;
-		for (idx in 0...resCount) b.add("  <file name=\"src/resources/__res_" + idx + sourceExtension + "\" />\n");
+		// Unindented, and built without optimisation.
+		for (idx in 0...resCount) b.add("<file name=\"src/resources/__res_" + idx + sourceExtension + "\" tags=\"optim-none\" />\n");
 		b.add("</files>\n");
 		b.add("<files id=\"__externs__\">\n");
 		for (src in externSrc) b.add("<file name=\"" + src + "\" />\n");

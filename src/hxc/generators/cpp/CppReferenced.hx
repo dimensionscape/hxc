@@ -24,9 +24,9 @@ class CppReferenced {
 		for (mt in com.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)):
 				var deps:Array<Path> = [];
-				if (c.superClass != null && !TypeFunctions.hasClassFlag(c.superClass.c, CExtern)) deps.push(c.superClass.c.path);
+				if (c.superClass != null && !TypeFunctions.hasClassFlag(c.superClass.c, CExtern)) deps.unshift(c.superClass.c.path);
 				for (imp in realNonNativeInterfaces(c.interfaces))
-					if (!TypeFunctions.hasClassFlag(imp.c, CExtern)) deps.push(imp.c.path);
+					if (!TypeFunctions.hasClassFlag(imp.c, CExtern)) deps.unshift(imp.c.path);
 				result.set(key(c.path), deps);
 			case TEnumDecl(e) if (!e.isExtern):
 				result.set(key(e.path), []);
@@ -46,10 +46,11 @@ class CppReferenced {
 		return result;
 	}
 
-	// (real_non_native_interfaces / real_interfaces): drop the cpp.rtti marker interfaces.
+	// A cpp.rtti interface named without type parameters is a marker, and a @:nativeGen class is not a real
+	// interface.
 	static function realNonNativeInterfaces(ifaces:Array<TClassWithParams>):Array<TClassWithParams> {
 		return [for (i in ifaces) if (!(i.c.path.pack.length == 2 && i.c.path.pack[0] == "cpp"
-			&& i.c.path.pack[1] == "rtti") && !TypeFunctions.hasMeta(":native", i.c.meta)) i];
+			&& i.c.path.pack[1] == "rtti" && i.params.length == 0) && !CppTypeOf.isNativeGenClass(i.c)) i];
 	}
 
 	// The class's virtual methods (Method, non-dynamic, TFun) resolved across the super chain, most-derived
@@ -106,12 +107,18 @@ class CppReferenced {
 	}
 
 	// Returns the sorted referenced paths and, per path, a flag that is true for a native forward
-	// declaration (HX_DECLARE_NATIVE). This covers the header call (field_name="*", constructor_deps
-	// unused, for_depends=false); header_only skips field bodies.
+	// declaration (HX_DECLARE_NATIVE); headerOnly skips field bodies. forDepends is the Build.xml <depend>
+	// walk (the class/enum deps and the @Main deps): a type's @:depend files stand where its @:include
+	// files would.
 	public static function findReferencedTypesFlags(com:Context, obj:ModuleType, fieldName:String,
 			superDeps:Map<String, Array<Path>>, constructorDeps:Map<String, TClassField>, headerOnly:Bool,
-			includeSuperArgs:Bool):{deps:Array<Path>, flags:Array<Bool>} {
+			includeSuperArgs:Bool, forDepends:Bool = false):{deps:Array<Path>, flags:Array<Bool>} {
 		var types = new Map<String, {path:Path, isNative:Bool}>();
+		if (forDepends)
+			for (inc in getAllMetaStringPath(TypeFunctions.tInfos(obj).meta, ":depend")) {
+				var p = pathOfString(inc);
+				types.set(key(p), {path: p, isNative: true});
+			}
 
 		function addTypeFlag(isNative:Bool, path:Path):Void {
 			var k = key(path);
@@ -125,13 +132,14 @@ class CppReferenced {
 
 		function addExternType(decl:ModuleType):Void {
 			var meta = TypeFunctions.tInfos(decl).meta;
-			var includeFiles = getAllMetaStringPath(meta, ":include");
+			var includeFiles = getAllMetaStringPath(meta, forDepends ? ":depend" : ":include");
 			if (includeFiles.length > 0) for (inc in includeFiles) addType(pathOfString(inc));
-			else if (TypeFunctions.hasMeta(":include", meta)) addType(TypeFunctions.tInfos(decl).path);
+			else if (!forDepends && TypeFunctions.hasMeta(":include", meta)) addType(TypeFunctions.tInfos(decl).path);
 		}
 		function addNativeGenClass(klass:TClass):Void {
-			var includeFiles = getAllMetaStringPath(klass.meta, ":include");
+			var includeFiles = getAllMetaStringPath(klass.meta, forDepends ? ":depend" : ":include");
 			if (includeFiles.length > 0) for (inc in includeFiles) addType(pathOfString(inc));
+			else if (forDepends) addType(klass.path);
 			else if (!TypeFunctions.hasClassFlag(klass, CInterface))
 				addType(pathOfString(CppTypeOf.joinClassPath(klass.path, "/") + ".h"));
 			else addTypeFlag(true, klass.path);
@@ -245,6 +253,11 @@ class CppReferenced {
 				for (cn in e.constrs) switch (cn.type) {
 					case TFun(sig): for (a in sig.args) visitType(a.t);
 					case _:
+				}
+				// The enum's runtime metadata expression too.
+				if (!headerOnly) {
+					var meta = hxc.core.TexprTools.buildMetadata(com.basic, TEnumDecl(e));
+					if (meta != null) visitParams(meta);
 				}
 			case _:
 		}
