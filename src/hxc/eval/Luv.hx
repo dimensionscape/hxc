@@ -329,6 +329,9 @@ class Luv {
 	public static function libraryShutdown():Void
 		untyped __cpp__("uv_library_shutdown()");
 
+	public static function loopNow(l:LuvObject):haxe.Int64
+		return untyped __cpp__("(::cpp::Int64)uv_now((uv_loop_t*){0})", l.ptr);
+
 	public static function loopUpdateTime(l:LuvObject):Void
 		untyped __cpp__("uv_update_time((uv_loop_t*){0})", l.ptr);
 

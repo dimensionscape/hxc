@@ -1300,6 +1300,12 @@ class EvalStdLib {
 				// A native string's bytes as they are, untagged.
 				case VNativeString(s):
 					buf.add(s.raw());
+				case VInt64(b):
+					buf.add("i64");
+					buf.add(EvalIntegers.int64ToString(b.v));
+				case VUInt64(b):
+					buf.add("u64");
+					buf.add(EvalIntegers.uint64ToString(b.v));
 				case VArray(va):
 					if (useCache && serializeRef(VArray(va))) return;
 					buf.add("a");
@@ -2243,6 +2249,7 @@ class EvalStdLib {
 			case VString(_): "s:" + mapKey(v);
 			case VNativeString(s): "ns:" + s.raw();
 			case VHandle(h): "h:" + h.kind.getIndex() + ":" + objId(h.native);
+			case VInt64(b) | VUInt64(b): "@" + objId(b);
 			case VEnumValue(ev) if (ev.eargs.length == 0): "e:" + ev.epath + ":" + ev.eindex;
 			case VEnumValue(ev): "@" + objId(ev);
 			case VPrototype(p): "p:" + p.ppath;
@@ -2641,6 +2648,9 @@ class EvalStdLib {
 			case VFunction(_, _): ascii("#fun");
 			case VFieldClosure(_, _): ascii("#closure");
 			case VHandle(_): ascii("#handle");
+			// Each as its decimal digits.
+			case VInt64(b): ascii(EvalIntegers.int64ToString(b.v));
+			case VUInt64(b): ascii(EvalIntegers.uint64ToString(b.v));
 			case VEnumValue(ev):
 				var name = ascii(enumConstructorName(ev));
 				ev.eargs.length == 0 ? name : EvalString.join(EvalString.emptyString(), [
@@ -2936,6 +2946,7 @@ class EvalStdLib {
 		threadEventHandlerNextId = 1;
 		macroMessages = [];
 		var s = ctx.builtins.staticBuiltins;
+		EvalIntegers.init(ctx, s);
 		#if (cpp && !emscripten)
 		// libuv is unavailable on Emscripten.
 		EvalLuv.init(ctx, s);

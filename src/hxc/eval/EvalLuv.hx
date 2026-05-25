@@ -11,8 +11,7 @@ import hxc.eval.Luv.LuvObject;
  * The eval.luv natives, over libuv bound as luv binds it (hxc.eval.Luv). This is the part the
  * standard library reaches - sys.thread.EventLoop runs on Loop, Async, Timer and Handle, Condition
  * and Semaphore on Mutex, Condition and Semaphore - with the rest of the synchronisation types, the
- * other loop watchers, UVError and Version. Loop.now answers an eval.integers.UInt64, which hxc
- * does not have yet.
+ * other loop watchers, UVError and Version.
  */
 @:access(hxc.eval.EvalStdLib)
 @:access(hxc.Compiler)
@@ -222,6 +221,7 @@ class EvalLuv {
 		reg(loop, "alive", vfn(a -> EvalValueTools.vbool(Luv.loopAlive(decodeKind(ctx, arg(a, 0), HLoop, "eval.luv.Loop")))));
 		reg(loop, "defaultLoop", vfn(a -> handle(HLoop, Luv.loopDefault())));
 		reg(loop, "libraryShutdown", vfn(a -> { Luv.libraryShutdown(); VNull; }));
+		reg(loop, "now", vfn(a -> VUInt64(new EvalInt64(Luv.loopNow(decodeKind(ctx, arg(a, 0), HLoop, "eval.luv.Loop"))))));
 		reg(loop, "updateTime", vfn(a -> { Luv.loopUpdateTime(decodeKind(ctx, arg(a, 0), HLoop, "eval.luv.Loop")); VNull; }));
 		reg("eval.luv._Loop.LoopOption_Impl_", "sigprof", VInt(Luv.sigprof()));
 

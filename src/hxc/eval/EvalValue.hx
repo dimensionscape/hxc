@@ -13,8 +13,7 @@ enum Cmp {
 }
 
 // The interpreter runtime value. Ints are 32-bit host ints. Booleans use two nullary
-// constructors rather than VBool(b) so dispatch matches the reference. Deferred for later
-// builtins: 64-bit ints.
+// constructors rather than VBool(b).
 enum EvalValue {
 	VNull;
 	VTrue;
@@ -33,6 +32,18 @@ enum EvalValue {
 	VLazy(f:Void->EvalValue);
 	VNativeString(s:hxc.eval.EvalString.ByteString);
 	VHandle(h:EvalHandle);
+	// VInt64 / VUInt64 (eval.integers): the 64 bits in a box, since these compare physically and every
+	// native answers a fresh one.
+	VInt64(b:EvalInt64);
+	VUInt64(b:EvalInt64);
+}
+
+class EvalInt64 {
+	public final v:haxe.Int64;
+
+	public function new(v:haxe.Int64) {
+		this.v = v;
+	}
 }
 
 // The libuv objects eval.luv hands out (hxc.eval.EvalLuv). `native` is the object the binding
@@ -236,6 +247,8 @@ class EvalValueTools {
 			case [VNativeString(x), VNativeString(y)]: x == y;
 			// Handles: the same kind over the same libuv object
 			case [VHandle(x), VHandle(y)]: x.kind == y.kind && x.native == y.native;
+			// `a == b`: the same value, not an equal one
+			case [VInt64(x), VInt64(y)] | [VUInt64(x), VUInt64(y)]: x == y;
 			case [VLazy(f), _]: equals(f(), b);
 			case [_, VLazy(f)]: equals(a, f());
 			case _: a == b;

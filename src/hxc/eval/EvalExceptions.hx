@@ -142,6 +142,8 @@ class EvalExceptions {
 			case VLazy(_): "VLazy";
 			case VNativeString(_): "VNativeString";
 			case VHandle(_): "VHandle";
+			case VInt64(_): "VInt64";
+			case VUInt64(_): "VUInt64";
 		};
 	}
 
