@@ -61,6 +61,8 @@ enum EvalHandleKind {
 	HBarrier;
 	HPrepare;
 	HCheck;
+	HBuffer;
+	HSockAddr;
 }
 
 class EvalHandle {
