@@ -141,6 +141,7 @@ class EvalExceptions {
 			case VFieldClosure(_, _): "VFieldClosure";
 			case VLazy(_): "VLazy";
 			case VNativeString(_): "VNativeString";
+			case VHandle(_): "VHandle";
 		};
 	}
 

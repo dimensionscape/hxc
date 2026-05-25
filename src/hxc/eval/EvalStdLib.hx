@@ -600,8 +600,10 @@ class EvalStdLib {
 			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.hash("serializeFields")
 				|| name == EvalHash.hash("serializeRef") || name == EvalHash.hash("serializeString") || name == EvalHash.key_toString;
 			if (path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("unserialize") || name == EvalHash.hash("getResolver") || name == EvalHash.hash("setResolver");
+			#if emscripten
 			if (path == EvalHash.hash("sys.thread.Semaphore")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release");
 			if (path == EvalHash.hash("sys.thread.Condition")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release") || name == EvalHash.hash("wait") || name == EvalHash.hash("signal") || name == EvalHash.hash("broadcast");
+			#end
 		}
 		return false;
 	}
@@ -650,22 +652,18 @@ class EvalStdLib {
 		return [for (n in ptmapOrderedKeys(keys)) mkStr(EvalHash.revHash(n))];
 	}
 
+	// getInstanceFields: every prototype's names up the chain, fields and methods alike, gathered into
+	// one map and listed by the fold that prepends, not each prototype in turn with fields before
+	// methods.
 	static function instanceFieldNames(proto:VPrototype):Array<EvalValue> {
 		var names = new Map<Int, Bool>();
-		var out:Array<EvalValue> = [];
-		function add(n:Int):Void {
-			if (!names.exists(n)) {
-				names.set(n, true);
-				out.push(mkStr(EvalHash.revHash(n)));
-			}
-		}
 		function loop(p:VPrototype):Void {
 			if (p.pparent != null) loop(p.pparent);
-			for (n in instanceFieldKeys(p)) add(n);
-			for (n in sortedFieldKeys(p.pnames)) if (!isReflectHidden(p.ppath, n, false)) add(n);
+			for (n in p.pinstanceNames.keys()) names.set(n, true);
+			for (n in p.pnames.keys()) if (!isReflectHidden(p.ppath, n, false)) names.set(n, true);
 		}
 		loop(proto);
-		return out;
+		return [for (n in ptmapOrderedKeys([for (k in names.keys()) k])) mkStr(EvalHash.revHash(n))];
 	}
 
 	static function objectFieldMap(o:VObject):Map<Int, EvalValue> {
@@ -1202,6 +1200,20 @@ class EvalStdLib {
 		return r;
 	}
 
+	// A blocking libuv call (hxc.eval.Luv) lets go of the lock, answering whether this thread held
+	// it; gilReacquire takes it back.
+	public static function gilRelease():Bool {
+		if (gilHeldTls.value != true) return false;
+		gilHeldTls.value = false;
+		gil.release();
+		return true;
+	}
+
+	public static function gilReacquire():Void {
+		gil.acquire();
+		gilHeldTls.value = true;
+	}
+
 	static var nativeThreadSelfTls:sys.thread.Tls<VInstance> = new sys.thread.Tls();
 	static var nativeThreadNextId = 1;
 	static var evalContext:Null<EvalContext> = null;
@@ -1384,12 +1396,16 @@ class EvalStdLib {
 							buf.add("A");
 					}
 					stringTag(ByteString.ofText(EvalHash.revHash(proto.ppath)));
-				case VFunction(_, _) | VFieldClosure(_, _):
-					// A function is a custom entity, 'F' and a running count. custom_name is defined ABOVE loop
-					// and closes over value_signature's own parameter, so the cache entry it takes is the
-					// TOP-LEVEL value, not the function: the first custom entity in a value registers that
-					// top-level value and every later one finds it and prints 'r<index>'. Caching the
-					// function itself gave a second F where the reference back-references.
+				case VFunction(_, _) | VFieldClosure(_, _) | VHandle(_):
+					// A function is a custom entity, 'F' and a running count, and so is a handle (also
+					// written 'F').
+					// The cache entry a custom entity takes is the TOP-LEVEL value being serialized, not
+					// the function:
+					// the first custom entity in a value registers that top-level value and every later one
+					// finds it
+					// and prints 'r<index>'. Caching the function itself would give a second F where a
+					// back-reference
+					// belongs.
 					if (!forSignature) EvalExceptions.excString(ctx, "Cannot serialize function")
 					else if (!serializeRef(value)) { buf.add("F"); buf.add(customCount++); }
 				case VLazy(_):
@@ -1649,6 +1665,9 @@ class EvalStdLib {
 		return threadDeques.get(thisInstance(a, "Deque"));
 	}
 
+	// Without libuv (emscripten) the eval overlay's Condition and Semaphore cannot run, so the generic
+	// std's stand in over these (ModuleLoader.skipEvalOverlayFile).
+	#if emscripten
 	static function mkThreadCondition(ctx:EvalContext):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Condition"));
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
@@ -1670,6 +1689,7 @@ class EvalStdLib {
 	static function thisThreadSemaphore(a:Array<EvalValue>):sys.thread.Semaphore {
 		return threadSemaphores.get(thisInstance(a, "Semaphore"));
 	}
+	#end
 
 	static function mkNativeThread(ctx:EvalContext, ?job:EvalValue):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
@@ -2222,6 +2242,7 @@ class EvalStdLib {
 				else "#f" + bytesOfDouble(f).toHex();
 			case VString(_): "s:" + mapKey(v);
 			case VNativeString(s): "ns:" + s.raw();
+			case VHandle(h): "h:" + h.kind.getIndex() + ":" + objId(h.native);
 			case VEnumValue(ev) if (ev.eargs.length == 0): "e:" + ev.epath + ":" + ev.eindex;
 			case VEnumValue(ev): "@" + objId(ev);
 			case VPrototype(p): "p:" + p.ppath;
@@ -2619,6 +2640,7 @@ class EvalStdLib {
 			case VNativeString(s): EvalString.createUnknownVString(s);
 			case VFunction(_, _): ascii("#fun");
 			case VFieldClosure(_, _): ascii("#closure");
+			case VHandle(_): ascii("#handle");
 			case VEnumValue(ev):
 				var name = ascii(enumConstructorName(ev));
 				ev.eargs.length == 0 ? name : EvalString.join(EvalString.emptyString(), [
@@ -2914,6 +2936,10 @@ class EvalStdLib {
 		threadEventHandlerNextId = 1;
 		macroMessages = [];
 		var s = ctx.builtins.staticBuiltins;
+		#if (cpp && !emscripten)
+		// libuv is unavailable on Emscripten.
+		EvalLuv.init(ctx, s);
+		#end
 
 		reg(s, "Math", "PI", VFloat(Math.PI));
 		reg(s, "Math", "NaN", VFloat(hostNan));
@@ -4344,8 +4370,10 @@ class EvalStdLib {
 		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) return mkThreadTls(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Deque"), function(a) return mkThreadDeque(ctx));
+		#if emscripten
 		ctors.set(EvalHash.hash("sys.thread.Condition"), function(a) return mkThreadCondition(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Semaphore"), function(a) return mkThreadSemaphore(ctx, toInt(arg(a, 0))));
+		#end
 		ctors.set(EvalHash.hash("eval.vm.NativeThread"), function(a) {
 			if (ctx.isMacro) return EvalExceptions.excString(ctx, "Creating threads in macros is not supported");
 			return mkNativeThread(ctx, arg(a, 0));
@@ -4669,6 +4697,7 @@ class EvalStdLib {
 			var v = arg(a, 1) == VTrue ? gilBlocking(function() { var r = dq.pop(true); return r == null ? VNull : r; }) : { var r = dq.pop(false); r == null ? VNull : r; };
 			v;
 		}));
+		#if emscripten
 		reg(inst, "sys.thread.Condition", "acquire", vmethod(a -> {
 			var cond = thisThreadCondition(a);
 			var thread = sys.thread.Thread.current();
@@ -4726,6 +4755,7 @@ class EvalStdLib {
 		reg(inst, "sys.thread.Semaphore", "tryAcquire", vmethod(a -> EvalValueTools.vbool(
 			arg(a, 1) == VNull ? thisThreadSemaphore(a).tryAcquire() : thisThreadSemaphore(a).tryAcquire(toFloat(arg(a, 1))))));
 		reg(inst, "sys.thread.Semaphore", "release", vmethod(a -> { thisThreadSemaphore(a).release(); VNull; }));
+		#end
 		reg(s, "eval.vm.NativeThread", "self", vfn(a -> nativeThreadSelfValue(ctx)));
 		reg(s, "eval.vm.NativeThread", "delay", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
 		reg(s, "eval.vm.NativeThread", "exit", vfn(a -> EvalExceptions.excString(ctx, "sys.thread.Thread.exit is not supported by eval")));

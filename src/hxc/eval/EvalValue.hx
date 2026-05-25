@@ -14,7 +14,7 @@ enum Cmp {
 
 // The interpreter runtime value. Ints are 32-bit host ints. Booleans use two nullary
 // constructors rather than VBool(b) so dispatch matches the reference. Deferred for later
-// builtins: native handles (libuv), 64-bit ints.
+// builtins: 64-bit ints.
 enum EvalValue {
 	VNull;
 	VTrue;
@@ -32,6 +32,34 @@ enum EvalValue {
 	VFieldClosure(v:EvalValue, f:VFunc);
 	VLazy(f:Void->EvalValue);
 	VNativeString(s:hxc.eval.EvalString.ByteString);
+	VHandle(h:EvalHandle);
+}
+
+// The libuv objects eval.luv hands out (hxc.eval.EvalLuv). `native` is the object the binding
+// (hxc.eval.Luv) allocated; two handles are the same when they wrap the same one.
+enum EvalHandleKind {
+	HLoop;
+	HIdle;
+	HTimer;
+	HAsync;
+	HOnce;
+	HMutex;
+	HRwLock;
+	HSemaphore;
+	HCondition;
+	HBarrier;
+	HPrepare;
+	HCheck;
+}
+
+class EvalHandle {
+	public final kind:EvalHandleKind;
+	public final native:Dynamic;
+
+	public function new(kind:EvalHandleKind, native:Dynamic) {
+		this.kind = kind;
+		this.native = native;
+	}
 }
 
 // A callable: takes the argument list, returns a value.
@@ -206,6 +234,8 @@ class EvalValueTools {
 			case [VFunction(x, _), VFunction(y, _)]: Reflect.compareMethods(x, y);
 			case [VPrototype(x), VPrototype(y)]: x.ppath == y.ppath;
 			case [VNativeString(x), VNativeString(y)]: x == y;
+			// Handles: the same kind over the same libuv object
+			case [VHandle(x), VHandle(y)]: x.kind == y.kind && x.native == y.native;
 			case [VLazy(f), _]: equals(f(), b);
 			case [_, VLazy(f)]: equals(a, f());
 			case _: a == b;

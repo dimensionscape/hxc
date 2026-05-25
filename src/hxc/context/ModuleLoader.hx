@@ -98,7 +98,12 @@ class ModuleLoader {
 		return file;
 	}
 
+	// On emscripten, use generic EventLoop, Condition and Semaphore because the eval overlay requires
+	// unavailable libuv.
 	static function skipEvalOverlayFile(ctx:Context, dir:String, relPath:String):Bool {
+		#if !emscripten
+		return false;
+		#end
 		if (ctx.platform != Platform.Eval) return false;
 		var d = StringTools.replace(dir, "\\", "/");
 		if (!StringTools.endsWith(d, "/")) d += "/";

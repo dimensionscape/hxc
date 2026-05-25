@@ -1076,10 +1076,11 @@ class Compiler {
 			answerOut("Invalid_argument(\"" + e.arg + "\")\n");
 			exitRequest(1);
 		} catch (e:hxc.core.TypingError) {
-			// Through the message store, so -D message.reporting picks the formatter and a
-			// compound message renders its sub-lines as depth children.
+			// Through the message store, so -D message.reporting picks the formatter and a compound message
+			// renders its sub-lines as depth children. An Error with a Stack prints every located message
+			// in it, as the FatalError below does.
 			ctx.raiseTypingErrors = false;
-			ctx.addDiagnostic(e.message, e.pos, e.depth);
+			ctx.addTypingError(e.message, e.pos, e.depth, e.callChain);
 			flushPendingMessages(ctx);
 			exitRequest(1);
 		} catch (e:hxc.core.TypingError.FatalError) {
@@ -1603,7 +1604,7 @@ class Compiler {
 			abortWithMessage(ctx, e.message, e.pos, e.depth);
 		} catch (e:hxc.core.TypingError) {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
-			abortWithMessage(ctx, e.message, e.pos, e.depth);
+			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
 		} catch (e:hxc.core.TypingError.FatalError) {
 			// On the request path. Only a true fatal error travels past the diagnostics machinery: typing,
 			// parser and lexer errors are caught there, so one of those still becomes a report even though
