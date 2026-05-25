@@ -1232,6 +1232,9 @@ class EvalMacro {
 		} catch (e:haxe.Exception) {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 				Sys.println("[buildfail] " + Type.getClassName(Type.getClass(e)) + ": " + e.message);
+			// Whatever applying the macro raises is re-raised; "Build failure" is only the macro that
+			// answered nothing. A Sys.exit and a host exception out of a native go on up.
+			if (Std.isOfType(e, EvalExceptions.EvalSysExit) || Std.isOfType(e, EvalExceptions.HostException)) throw e;
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 		// An enum abstract's rewrite runs after every @:build, over the fields they left.
