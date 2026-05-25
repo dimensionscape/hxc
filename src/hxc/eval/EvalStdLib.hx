@@ -27,7 +27,7 @@ typedef ThreadConditionState = {
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
-@:cppFileCode('#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <io.h>\n#include <wchar.h>\n#include <windows.h>\n#else\n#include <unistd.h>\n#endif\n// Return null on success or strerror(errno) on failure. Operations: 0 unlink, 1 rmdir, 2 mkdir, 3\n// rename, 4 chdir, 5 stat, 6 open for reading, 7 open for writing. Windows rename uses MoveFileEx\n// and maps its error to errno.\nstatic ::String hxc_fs_call(int op, ::String a, ::String b) {\n	int r = 0;\n#ifdef _WIN32\n	const wchar_t *wa = a.wchar_str();\n	switch (op) {\n		case 0: r = _wunlink(wa); break;\n		case 1: r = _wrmdir(wa); break;\n		case 2: r = _wmkdir(wa); break;\n		case 3: {\n			if (MoveFileExW(wa, b.wchar_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) return ::String();\n			switch (GetLastError()) {\n				case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH: case ERROR_BAD_NET_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: errno = ENOENT; break;\n				case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: errno = EEXIST; break;\n				case ERROR_NOT_SAME_DEVICE: errno = EXDEV; break;\n				case ERROR_DIR_NOT_EMPTY: errno = ENOTEMPTY; break;\n				case ERROR_NOT_ENOUGH_MEMORY: errno = ENOMEM; break;\n				case ERROR_INVALID_HANDLE: errno = EBADF; break;\n				default: errno = EACCES; break;\n			}\n			r = -1;\n			break;\n		}\n		case 4: r = _wchdir(wa); break;\n		case 5: { struct _stat64 st; r = _wstat64(wa, &st); break; }\n		case 6: { int fd = _wopen(wa, _O_RDONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = _wopen(wa, _O_WRONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n	}\n#else\n	const char *ca = a.utf8_str();\n	switch (op) {\n		case 0: r = unlink(ca); break;\n		case 1: r = rmdir(ca); break;\n		case 2: r = mkdir(ca, 0755); break;\n		case 3: r = rename(ca, b.utf8_str()); break;\n		case 4: r = chdir(ca); break;\n		case 5: { struct stat st; r = stat(ca, &st); break; }\n		case 6: { int fd = open(ca, O_RDONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = open(ca, O_WRONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n	}\n#endif\n	if (r == 0) return ::String();\n	return ::String(strerror(errno));\n}')
+@:cppFileCode('#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <io.h>\n#include <wchar.h>\n#include <windows.h>\n#else\n#include <unistd.h>\n#endif\n// Return null on success or strerror(errno) on failure. Operations: 0 unlink, 1 rmdir, 2 mkdir, 3\n// rename, 4 chdir, 5 stat, 6 open for reading, 7 open for writing. Windows rename uses MoveFileEx\n// and maps its error to errno.\nstatic ::String hxc_fs_call(int op, ::String a, ::String b) {\n	int r = 0;\n#ifdef _WIN32\n	const wchar_t *wa = a.wchar_str();\n	switch (op) {\n		case 0: r = _wunlink(wa); break;\n		case 1: r = _wrmdir(wa); break;\n		case 2: r = _wmkdir(wa); break;\n		case 3: {\n			if (MoveFileExW(wa, b.wchar_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) return ::String();\n			switch (GetLastError()) {\n				case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH: case ERROR_BAD_NET_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: errno = ENOENT; break;\n				case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: errno = EEXIST; break;\n				case ERROR_NOT_SAME_DEVICE: errno = EXDEV; break;\n				case ERROR_DIR_NOT_EMPTY: errno = ENOTEMPTY; break;\n				case ERROR_NOT_ENOUGH_MEMORY: errno = ENOMEM; break;\n				case ERROR_INVALID_HANDLE: errno = EBADF; break;\n				default: errno = EACCES; break;\n			}\n			r = -1;\n			break;\n		}\n		case 4: r = _wchdir(wa); break;\n		case 5: { struct _stat64 st; r = _wstat64(wa, &st); break; }\n		case 6: { int fd = _wopen(wa, _O_RDONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = _wopen(wa, _O_WRONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n	}\n#else\n	const char *ca = a.utf8_str();\n	switch (op) {\n		case 0: r = unlink(ca); break;\n		case 1: r = rmdir(ca); break;\n		case 2: r = mkdir(ca, 0755); break;\n		case 3: r = rename(ca, b.utf8_str()); break;\n		case 4: r = chdir(ca); break;\n		case 5: { struct stat st; r = stat(ca, &st); break; }\n		case 6: { int fd = open(ca, O_RDONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = open(ca, O_WRONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n	}\n#endif\n	if (r == 0) return ::String();\n	return ::String(strerror(errno));\n}\n// On Windows, read the process environment block used by libuv and chdir, including drive entries\n// such as "=C:". The C library copy used by hxcpp getenv can be stale. Elsewhere they are the same.\nstatic ::String hxc_env_get(::String name) {\n#ifdef _WIN32\n\tconst wchar_t *wn = name.wchar_str();\n\tDWORD n = GetEnvironmentVariableW(wn, NULL, 0);\n\tif (n == 0) return ::String();\n\twchar_t *buf = (wchar_t*)malloc(n * sizeof(wchar_t));\n\tDWORD m = GetEnvironmentVariableW(wn, buf, n);\n\t::String r = ::String::create(buf, (int)m);\n\tfree(buf);\n\treturn r;\n#else\n\tconst char *v = getenv(name.utf8_str());\n\treturn v ? ::String(v) : ::String();\n#endif\n}\n#ifndef _WIN32\nextern char **environ;\n#endif\nstatic Array< ::String> hxc_env_list() {\n\tArray< ::String> out = Array_obj< ::String>::__new(0, 0);\n#ifdef _WIN32\n\twchar_t *block = GetEnvironmentStringsW();\n\tif (!block) return out;\n\tfor (wchar_t *e = block; *e; e += wcslen(e) + 1) out->push(::String::create(e, (int)wcslen(e)));\n\tFreeEnvironmentStringsW(block);\n#else\n\tfor (char **e = environ; *e; e++) out->push(::String(*e));\n#endif\n\treturn out;\n}')
 #end
 class EvalStdLib {
 	static function reg(map:Map<Int, Array<BuiltinField>>, typeName:String, fieldName:String, v:EvalValue):Void {
@@ -333,6 +333,23 @@ class EvalStdLib {
 			case VFalse: false;
 			case _: EvalExceptions.unexpectedValue(ctx, v, "bool");
 		};
+	}
+
+	static function processGetEnv(name:String):Null<String> {
+		#if cpp
+		var v:String = untyped __cpp__("hxc_env_get({0})", name);
+		return v;
+		#else
+		return Sys.getEnv(name);
+		#end
+	}
+
+	static function processEnvironment():Array<String> {
+		#if cpp
+		return untyped __cpp__("hxc_env_list()");
+		#else
+		return [for (k => v in Sys.environment()) k + "=" + v];
+		#end
 	}
 
 	// A function is called with the arguments, a field closure with its receiver first, and anything
@@ -3107,14 +3124,25 @@ class EvalStdLib {
 			VInt(Sys.command(cmd));
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
-		reg(s, "Sys", "environment", vfn(a -> mkStringMap(ctx, Sys.environment())));
+		// The process environment, each entry split at its first '=' (so a drive entry
+		// "=C:=C:\\dir" is under the key "")
+		reg(s, "Sys", "environment", vfn(a -> {
+			var m = new Map<String, String>();
+			for (e in processEnvironment()) {
+				var i = e.indexOf("=");
+				if (i < 0) throw new hxc.eval.EvalExceptions.HostException("ExtString.Invalid_string");
+				m.set(e.substr(0, i), e.substr(i + 1));
+			}
+			mkStringMap(ctx, m);
+		}));
 		// Sys.exit raises an exit exception; the compiler marks the compile failed for a non-zero code
 		// and flushes the message list before returning it. Exiting the host process here would throw away
 		// every warning a macro had queued, including the ones explaining why it was exiting.
 		reg(s, "Sys", "exit", vfn(a -> throw new hxc.eval.EvalExceptions.EvalSysExit(decodeInt(ctx, arg(a, 0)))));
 		reg(s, "Sys", "getCwd", vfn(a -> mkStr(Sys.getCwd())));
+		// Getenv, over the process environment block
 		reg(s, "Sys", "getEnv", vfn(a -> {
-			var v = Sys.getEnv(decodeText(ctx, arg(a, 0)));
+			var v = processGetEnv(decodeText(ctx, arg(a, 0)));
 			v == null ? VNull : mkStr(v);
 		}));
 		reg(s, "Sys", "getChar", vfn(a -> VInt(Sys.getChar(decodeBool(ctx, arg(a, 0))))));

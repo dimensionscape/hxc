@@ -136,12 +136,12 @@ class CppGen {
 		for (path in com.classPath) args.push("-I" + path);
 		var oldDir = Sys.getCwd();
 		try {
-			Sys.setCwd(base);
+			hxc.core.Cwd.set(base);
 			var result = Sys.command("haxelib", args);
-			Sys.setCwd(oldDir);
+			hxc.core.Cwd.set(oldDir);
 			if (result != 0) throw "Build failed";
 		} catch (e:Dynamic) {
-			Sys.setCwd(oldDir);
+			hxc.core.Cwd.set(oldDir);
 			throw e;
 		}
 	}

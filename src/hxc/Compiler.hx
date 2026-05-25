@@ -167,7 +167,7 @@ class Compiler {
 			var a = args[i++];
 			if ((a == "--cwd" || a == "-C") && i < args.length) {
 				var dir = args[i++];
-				try Sys.setCwd(dir) catch (_:Dynamic) {}
+				hxc.core.Cwd.set(dir);
 			}
 			// A verbose startup turns on every server message.
 			if (a == "-v" || a == "--verbose") hxc.compiler.ServerMessage.enableAll();
@@ -740,7 +740,7 @@ class Compiler {
 						answerOut("Error: Invalid directory: " + dir + "\n");
 						exitRequest(1);
 					}
-					Sys.setCwd(dir);
+					hxc.core.Cwd.set(dir);
 					didSomething = true;
 				case "--cmd" | "-cmd":
 					cmds.push(unquote(argValue(args, i++, a)));
@@ -1751,7 +1751,7 @@ class Compiler {
 			cmd = expandEnv(cmd, h);
 		}
 		if (StringTools.startsWith(cmd, "cd ")) {
-			Sys.setCwd(cmd.substr(3));
+			hxc.core.Cwd.set(cmd.substr(3));
 			return 0;
 		}
 		// A one-shot compile lets the child inherit the terminal. A server request must not: stderr is
@@ -3763,7 +3763,7 @@ class Compiler {
 		// --cwd takes effect immediately, so the directory is reset once the section's parameters are
 		// known.
 		function create(rest:Array<String>, sysArgs:Null<Array<String>>) {
-			Sys.setCwd(curdir);
+			hxc.core.Cwd.set(curdir);
 			return {params: each.v.concat(acc), rest: rest, sysArgs: sysArgs};
 		}
 		inline function isLib(a:String):Bool return a == "-L" || a == "--library" || a == "-lib";
@@ -3791,7 +3791,7 @@ class Compiler {
 				// changes it again.
 				var dir = l[i + 1];
 				var ok = FileSystem.exists(dir) && FileSystem.isDirectory(dir);
-				if (ok) try Sys.setCwd(dir) catch (_:Dynamic) ok = false;
+				if (ok) ok = hxc.core.Cwd.set(dir);
 				if (!ok) throw new ArgFailure("Invalid directory: " + dir);
 				acc.push("--cwd");
 				acc.push(dir);
