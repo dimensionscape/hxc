@@ -53,7 +53,7 @@ class Codegen {
 
 	// Double braces escape a brace. An integer {N} inserts expression N; out-of-range indices fail and
 	// other braces remain literal.
-	public static function interpolateCode(ctx:Context, code:String, tl:Array<TExpr>, fString:String->Void, fExpr:TExpr->Void, p:Position):Void {
+	public static function interpolateCode<T>(ctx:Context, code:String, tl:Array<T>, fString:String->Void, fExpr:T->Void, p:Position):Void {
 		var i = 0;
 		function err(msg:String) {
 			ctx.addDiagnostic(msg, new Position(p.file, p.min + i, p.max));

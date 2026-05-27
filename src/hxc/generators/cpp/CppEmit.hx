@@ -245,8 +245,9 @@ class CppEmit {
 				if (CppTypeOf.cppIsDynamicType(obj.ctype)) out(".StaticCast< ::hx::EnumBase >()");
 				out("->_hx_getIndex()");
 			case CppCall(func, args): genCall(func, args, expr);
-			// Raw C++ from __cpp__, with {N} interpolated to argument N.
-			case CppCode(code, exprs): emitCppCode(code, exprs);
+			// CppCode: raw C++ from __cpp__, interpolated after its CRLF line ends become LF.
+			case CppCode(code, exprs):
+				hxc.codegen.Codegen.interpolateCode(com, code.split("\r\n").join("\n"), exprs, s -> out(s), e -> gen(e), expr.pos);
 			case CppFunction(func, _): genFunctionValue(func, expr);
 			case CppCastScalar(e, scalar): out("( (" + scalar + ")("); gen(e); out(") )");
 			case CppCastVariant(e): out(" ::Dynamic("); gen(e); out(")");
@@ -585,31 +586,6 @@ class CppEmit {
 
 	function cppArgList(args:Array<{v:TVar, dflt:Null<TExpr>}>, prefix:String):String {
 		return args.map(function(a) { var r = cppArgTypeName(a.v, a.dflt, prefix); return r.t + " " + r.n; }).join(",");
-	}
-
-	// Over format_code: emit the raw code, normalizing CRLF to LF, with {N} replaced by argument N and
-	// {{ /
-	// }} collapsing to a literal brace.
-	function emitCppCode(code:String, exprs:Array<CppExpr>):Void {
-		code = code.split("\r\n").join("\n");
-		var i = 0;
-		var n = code.length;
-		while (i < n) {
-			var c = code.charAt(i);
-			if (c == "{") {
-				if (i + 1 < n && code.charAt(i + 1) == "{") { out("{"); i += 2; continue; }
-				var j = code.indexOf("}", i + 1);
-				if (j > i + 1) {
-					var idx = Std.parseInt(code.substring(i + 1, j));
-					if (idx != null && idx >= 0 && idx < exprs.length) { gen(exprs[idx]); i = j + 1; continue; }
-				}
-				out("{"); i += 1;
-			} else if (c == "}" && i + 1 < n && code.charAt(i + 1) == "}") {
-				out("}"); i += 2;
-			} else {
-				out(c); i += 1;
-			}
-		}
 	}
 
 	function defaultValueString(value:TExpr):String {
