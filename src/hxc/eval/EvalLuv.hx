@@ -42,7 +42,7 @@ class EvalLuv {
 	static function decodeLuvHandle(ctx:EvalContext, v:EvalValue):LuvObject {
 		return switch (v) {
 			case VHandle(h): switch (h.kind) {
-				case HIdle | HTimer | HAsync | HPrepare | HCheck | HTcp | HUdp | HPipe | HTty | HSignal: h.native;
+				case HIdle | HTimer | HAsync | HPrepare | HCheck | HTcp | HUdp | HPipe | HTty | HSignal | HFsEvent: h.native;
 				case _: EvalExceptions.unexpectedValue(ctx, v, "eval.luv.Handle");
 			}
 			case _: EvalExceptions.unexpectedValue(ctx, v, "handle");
@@ -414,6 +414,236 @@ class EvalLuv {
 		}
 		reg(sig, "stop", vfn(a -> encodeUnitResult(Luv.signalStop(decodeSignal(arg(a, 0))))));
 		reg(sig, "signum", vfn(a -> VInt(Luv.signalSignum(decodeSignal(arg(a, 0))))));
+	}
+
+	static function encodeOption(v:Null<EvalValue>):EvalValue {
+		return v != null ? VEnumValue(new VEnumValue(0, [v], EvalHash.key_haxe_ds_Option, null))
+			: VEnumValue(new VEnumValue(1, [], EvalHash.key_haxe_ds_Option, null));
+	}
+
+	static function initSockets(ctx:EvalContext, s:Map<Int, Array<hxc.eval.EvalContext.BuiltinField>>):Void {
+		inline function reg(typeName:String, fieldName:String, v:EvalValue) EvalStdLib.reg(s, typeName, fieldName, v);
+		inline function bytesOf(v:EvalValue) return EvalStdLib.decodeString(ctx, v).toBytes();
+		inline function nativeBytesOf(v:EvalValue) return EvalStdLib.decodeNativeString(ctx, v).toBytes();
+		function decodeBuffers(v:EvalValue) return [for (x in EvalStdLib.decodeArray(ctx, v)) decodeBuffer(ctx, x)];
+		inline function decodeUdp(v:EvalValue) return decodeKind(ctx, v, HUdp, "eval.luv.Udp");
+		inline function decodePipe(v:EvalValue) return decodeKind(ctx, v, HPipe, "eval.luv.Pipe");
+		inline function decodeLoop(v:EvalValue) return decodeKind(ctx, v, HLoop, "eval.luv.Loop");
+		// 0 is LEAVE_GROUP, 1 JOIN_GROUP.
+		function decodeMembership(v:EvalValue):Bool {
+			return switch (EvalStdLib.decodeInt(ctx, v)) {
+				case 0: false;
+				case 1: true;
+				case _: EvalExceptions.unexpectedValue(ctx, v, "eval.luv.Udp.UdpMembership");
+			};
+		}
+
+		var udp = "eval.luv._Udp.Udp_Impl_";
+		reg(udp, "init", vfn(a -> {
+			var l = decodeLoop(arg(a, 0));
+			var domain = arg(a, 1) == VNull ? LuvSys.addressFamilyToC(0) : decodeAddressFamily(ctx, arg(a, 1));
+			var recvmmsg = decodeOptionalBool(ctx, arg(a, 2), false);
+			var u = Luv.newHandle(HUdp);
+			encodeResult(Luv.udpInit(l, u, domain, recvmmsg), () -> handle(HUdp, u));
+		}));
+		reg(udp, "bind", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var addr = decodeSockaddr(ctx, arg(a, 1));
+			var ipv6only = decodeOptionalBool(ctx, arg(a, 2), false);
+			var reuseaddr = decodeOptionalBool(ctx, arg(a, 3), false);
+			encodeUnitResult(Luv.udpBind(u, addr, ipv6only, reuseaddr));
+		}));
+		// The connected socket is the same handle
+		reg(udp, "connect", vfn(a -> {
+			var v = arg(a, 0);
+			var u = decodeUdp(v);
+			var addr = decodeSockaddr(ctx, arg(a, 1));
+			encodeResult(Luv.udpConnect(u, addr), () -> handle(HUdp, u));
+		}));
+		reg(udp, "getSockName", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var storage = LuvSys.newSockaddr();
+			encodeResult(Luv.udpName(u, false, storage), () -> encodeSockaddr(storage));
+		}));
+		reg(udp, "setMembership", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var group = bytesOf(arg(a, 1));
+			var iface = bytesOf(arg(a, 2));
+			var join = decodeMembership(arg(a, 3));
+			encodeUnitResult(Luv.udpSetMembership(u, group, iface, join));
+		}));
+		reg(udp, "setSourceMembership", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var group = bytesOf(arg(a, 1));
+			var iface = bytesOf(arg(a, 2));
+			var source = bytesOf(arg(a, 3));
+			var join = decodeMembership(arg(a, 4));
+			encodeUnitResult(Luv.udpSetSourceMembership(u, group, iface, source, join));
+		}));
+		reg(udp, "setMulticastLoop", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var value = EvalStdLib.decodeBool(ctx, arg(a, 1));
+			encodeUnitResult(Luv.udpSetMulticastLoop(u, value));
+		}));
+		reg(udp, "setMulticastTtl", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var value = EvalStdLib.decodeInt(ctx, arg(a, 1));
+			encodeUnitResult(Luv.udpSetMulticastTtl(u, value));
+		}));
+		reg(udp, "setMulticastInterface", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var value = bytesOf(arg(a, 1));
+			encodeUnitResult(Luv.udpSetMulticastInterface(u, value));
+		}));
+		reg(udp, "setBroadcast", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var value = EvalStdLib.decodeBool(ctx, arg(a, 1));
+			encodeUnitResult(Luv.udpSetBroadcast(u, value));
+		}));
+		reg(udp, "setTtl", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var value = EvalStdLib.decodeInt(ctx, arg(a, 1));
+			encodeUnitResult(Luv.udpSetTtl(u, value));
+		}));
+		reg(udp, "send", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var l = decodeBuffers(arg(a, 1));
+			var addr = decodeSockaddr(ctx, arg(a, 2));
+			Luv.udpSend(u, l, addr, unitCallback(ctx, arg(a, 3)));
+			VNull;
+		}));
+		// A count is success.
+		reg(udp, "trySend", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var l = decodeBuffers(arg(a, 1));
+			var addr = decodeSockaddr(ctx, arg(a, 2));
+			encodeUnitResult(Luv.udpTrySend(u, l, addr));
+		}));
+		reg(udp, "recvStart", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var v2 = arg(a, 1);
+			var callback = function(code:Int, b:Null<LuvSys.LuvBuffer>, addr:Null<haxe.io.Bytes>, flags:Array<Int>) {
+				var cb = prepareCallback(ctx, v2);
+				cb([encodeResult(code, () -> obj([
+					{name: "data", value: encodeBuffer(b)},
+					{name: "addr", value: encodeOption(addr == null ? null : encodeSockaddr(addr))},
+					{name: "flags", value: array([for (f in flags) VInt(f)])}
+				]))]);
+			};
+			var allocate:Int->LuvSys.LuvBuffer = if (arg(a, 2) == VNull) {
+				size -> new LuvSys.LuvBuffer(haxe.io.Bytes.alloc(size), 0, size);
+			} else {
+				var cb = prepareCallback(ctx, arg(a, 2));
+				size -> decodeBuffer(ctx, cb([VInt(size)]));
+			};
+			Luv.udpRecvStart(u, allocate, callback);
+			VNull;
+		}));
+		reg(udp, "recvStop", vfn(a -> encodeUnitResult(Luv.udpRecvStop(decodeUdp(arg(a, 0))))));
+		reg(udp, "getSendQueueSize", vfn(a -> VInt(Luv.udpSendQueueSize(decodeUdp(arg(a, 0))))));
+		reg(udp, "getSendQueueCount", vfn(a -> VInt(Luv.udpSendQueueCount(decodeUdp(arg(a, 0))))));
+
+		// "send" is registered twice and the prototype keeps the second, the try-send; there is no trySend.
+		var cudp = "eval.luv._ConnectedUdp.ConnectedUdp_Impl_";
+		reg(cudp, "disconnect", vfn(a -> encodeUnitResult(Luv.udpConnect(decodeUdp(arg(a, 0)), null))));
+		reg(cudp, "getPeerName", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var storage = LuvSys.newSockaddr();
+			encodeResult(Luv.udpName(u, true, storage), () -> encodeSockaddr(storage));
+		}));
+		reg(cudp, "send", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var l = decodeBuffers(arg(a, 1));
+			Luv.udpSend(u, l, null, unitCallback(ctx, arg(a, 2)));
+			VNull;
+		}));
+		reg(cudp, "send", vfn(a -> {
+			var u = decodeUdp(arg(a, 0));
+			var l = decodeBuffers(arg(a, 1));
+			encodeUnitResult(Luv.udpTrySend(u, l, null));
+		}));
+
+		var pipe = "eval.luv._Pipe.Pipe_Impl_";
+		reg(pipe, "init", vfn(a -> {
+			var l = decodeLoop(arg(a, 0));
+			var ipc = decodeOptionalBool(ctx, arg(a, 1), false);
+			var p = Luv.newHandle(HPipe);
+			encodeResult(Luv.pipeInit(l, p, ipc), () -> handle(HPipe, p));
+		}));
+		reg(pipe, "bind", vfn(a -> {
+			var p = decodePipe(arg(a, 0));
+			var name = nativeBytesOf(arg(a, 1));
+			encodeUnitResult(Luv.pipeBind(p, name));
+		}));
+		reg(pipe, "connect", vfn(a -> {
+			var p = decodePipe(arg(a, 0));
+			var target = nativeBytesOf(arg(a, 1));
+			Luv.pipeConnect(p, target, unitCallback(ctx, arg(a, 2)));
+			VNull;
+		}));
+		for (n in [{name: "getSockName", peer: false}, {name: "getPeerName", peer: true}]) {
+			var peer = n.peer;
+			reg(pipe, n.name, vfn(a -> {
+				var p = decodePipe(arg(a, 0));
+				var out = [null];
+				encodeResult(Luv.pipeName(p, peer, out), () -> nativeString(out[0]));
+			}));
+		}
+		reg(pipe, "pendingInstances", vfn(a -> {
+			var p = decodePipe(arg(a, 0));
+			var amount = EvalStdLib.decodeInt(ctx, arg(a, 1));
+			Luv.pipePendingInstances(p, amount);
+			VNull;
+		}));
+		// Receives a handle; the associate function accepts into the handle it is given.
+		var receiveHandlePath = EvalHash.hash("eval.luv.ReceiveHandle");
+		reg(pipe, "receiveHandle", vfn(a -> {
+			var p = decodePipe(arg(a, 0));
+			var kind = Luv.pipePendingCount(p) == 0 ? 0 : Luv.pipePendingKind(p);
+			switch (kind) {
+				case 1:
+					VEnumValue(new VEnumValue(1, [vfn(b -> encodeUnitResult(Luv.accept(p, decodeKind(ctx, arg(b, 0), HTcp, "eval.luv.Tcp"))))], receiveHandlePath, null));
+				case 2:
+					VEnumValue(new VEnumValue(2, [vfn(b -> encodeUnitResult(Luv.accept(p, decodePipe(arg(b, 0)))))], receiveHandlePath, null));
+				case _:
+					VEnumValue(new VEnumValue(0, [], receiveHandlePath, null));
+			}
+		}));
+		reg(pipe, "chmod", vfn(a -> {
+			var p = decodePipe(arg(a, 0));
+			var v2 = arg(a, 1);
+			var mode = switch (EvalStdLib.decodeInt(ctx, v2)) {
+				case 0: [true, false];
+				case 1: [false, true];
+				case 2: [true, true];
+				case _: EvalExceptions.unexpectedValue(ctx, v2, "eval.luv.Pipe.PipeMode");
+			};
+			encodeUnitResult(Luv.pipeChmod(p, mode[0], mode[1]));
+		}));
+
+		var fse = "eval.luv._FsEvent.FsEvent_Impl_";
+		inline function decodeFsEvent(v:EvalValue) return decodeKind(ctx, v, HFsEvent, "eval.luv.FsEvent");
+		reg(fse, "init", vfn(a -> {
+			var l = decodeLoop(arg(a, 0));
+			var e = Luv.newHandle(HFsEvent);
+			encodeResult(Luv.fsEventInit(l, e), () -> handle(HFsEvent, e));
+		}));
+		reg(fse, "start", vfn(a -> {
+			var e = decodeFsEvent(arg(a, 0));
+			var path = nativeBytesOf(arg(a, 1));
+			var v4 = arg(a, 3);
+			var callback = function(code:Int, file:Null<haxe.io.Bytes>, events:Array<Int>) {
+				var cb = prepareCallback(ctx, v4);
+				cb([encodeResult(code, () -> obj([
+					{name: "file", value: file == null ? VNull : nativeString(file)},
+					{name: "events", value: array([for (x in events) VInt(x)])}
+				]))]);
+			};
+			var flags = arg(a, 2) == VNull ? [] : [for (x in EvalStdLib.decodeArray(ctx, arg(a, 2))) EvalStdLib.decodeInt(ctx, x)];
+			Luv.fsEventStart(e, path, flags.contains(0), flags.contains(1), flags.contains(2), callback);
+			VNull;
+		}));
+		reg(fse, "stop", vfn(a -> encodeUnitResult(Luv.fsEventStop(decodeFsEvent(arg(a, 0))))));
 	}
 
 	static function initSystem(ctx:EvalContext, s:Map<Int, Array<hxc.eval.EvalContext.BuiltinField>>):Void {
@@ -936,6 +1166,7 @@ class EvalLuv {
 
 		initSystem(ctx, s);
 		initStreams(ctx, s);
+		initSockets(ctx, s);
 	}
 }
 #end

@@ -68,6 +68,7 @@ enum EvalHandleKind {
 	HPipe;
 	HTty;
 	HSignal;
+	HFsEvent;
 }
 
 class EvalHandle {
