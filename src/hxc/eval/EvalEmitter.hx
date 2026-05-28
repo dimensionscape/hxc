@@ -952,6 +952,13 @@ class EvalEmitter {
 					case _:
 						EvalValueTools.vresolve(evalField(ctx, e1, fa, callee.pos, recv));
 				}
+			// A proper static method's slot is read before the arguments, and a value that is no function
+			// is refused at the call.
+			case TField(_, FStatic(_, cf)) if (isProperMethod(cf)):
+				switch (EvalValueTools.vresolve(eval(ctx, callee))) {
+					case v = VFunction(_, _): v;
+					case v: EvalExceptions.excValues(ctx, ["Cannot call ", ""], [v], p);
+				}
 			case _: EvalValueTools.vresolve(eval(ctx, callee));
 		};
 		var caller = EvalContext.getEval(ctx);

@@ -503,6 +503,18 @@ class EvalPrototype {
 		loop(e);
 	}
 
+	// Whether a static method's expr is null for good. hxc types statics lazily (the macro
+	// interpreter forces nothing while it builds a prototype), so an unset expr is not yet that
+	// verdict; the declaration's is: a @:multiType abstract's _new is never bound, nor is an abstract
+	// field without a body, which is tagged @:noExpr.
+	static function neverBound(c:TClass, cf:TClassField):Bool {
+		if (TypeFunctions.hasMeta(":noExpr", cf.meta)) return true;
+		return switch (c.kind) {
+			case KAbstractImpl(a): cf.name == "_new" && TypeFunctions.hasMeta(":multiType", a.meta);
+			case _: false;
+		};
+	}
+
 	public static function buildStatic(ctx:EvalContext, c:TClass):{proto:VPrototype, delays:Array<ProtoDelay>, nonPersistent:Array<ProtoDelay>} {
 		var key = EvalHash.pathHash(c.path);
 		var pparent = c.superClass == null ? null : ctx.staticPrototypes.get(EvalHash.pathHash(c.superClass.c.path));
@@ -528,6 +540,14 @@ class EvalPrototype {
 							addNameAlias(pnames, cf, idx);
 							var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, EvalHash.hash(cf.name)), 0, 0);
 							pfields.push(VFunction(makeFunction(ctx, tf, false, info, TypeFunctions.hasClassFieldFlag(cf, CfImpl)), true));
+						} else if (neverBound(c, cf)) {
+							// A method without an expression still has its slot, null, so a call to it
+							// fails as
+							// "Cannot call null".
+							var idx = pfields.length;
+							pnames.set(EvalHash.hash(cf.name), idx);
+							addNameAlias(pnames, cf, idx);
+							pfields.push(VNull);
 						}
 					case Var(_) if (cf.expr != null || {
 						// Statics are typed lazily; an initializer never forced (reachable only
