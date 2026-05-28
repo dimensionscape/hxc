@@ -479,15 +479,13 @@ class EvalPrototype {
 		return com;
 	}
 
-	// Each static initializer records whether the field is @:persistent. The non-persistent ones are
-	// re-run when the interpreter is reused for a new compilation which is what puts a macro-world
-	// static back at its declared value at the start of every request. the reference COMPILES what it
-	// runs - every method of a type as the type is added /:347 force the prototype fields), a static
-	// initializer and __init__ as they run - and its compiler has no code for a TIdent except the
-	// `$__mk_pos__` call reification builds . One anywhere in such a body fails with a typing error at
-	// it: an `untyped` name, or what a display request recovered an unknown identifier to. hxc
-	// interprets the typed tree and would run the rest; the compile step's verdict is taken here.
-	public static function jitCheck(e:TExpr):Void {
+	// Record @:persistent on each static initializer; rerun non-persistent initializers when reusing
+	// the interpreter for a compilation. Match the reference's compilation checks before interpreting
+	// methods, static initializers, and __init__. TIdent is invalid except for the reified $__mk_pos__
+	// call, even in code that never executes. Static reads, writes, and proper-method calls require an
+	// indexed prototype slot at compilation. Other static calls and the StringTools intrinsics resolve
+	// names at the call.
+	public static function jitCheck(ctx:EvalContext, e:TExpr):Void {
 		function loop(e:TExpr):Void {
 			switch (e.expr) {
 				case TCall({expr: TIdent("$__mk_pos__")}, [a, b, c]):
@@ -496,11 +494,40 @@ class EvalPrototype {
 					loop(c);
 				case TIdent(s):
 					throw new hxc.core.TypingError("Unknown identifier: " + s, e.pos);
+				case TCall({expr: TField(e1, FStatic(c, cf))}, args) if (!isProperStaticMethod(cf)
+					|| (args.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools"
+						&& (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt"))):
+					loop(e1);
+					for (a in args) loop(a);
+				case TField(_, FStatic(c, cf)) if (!inStaticPrototype(ctx, c, cf)):
+					throw new hxc.core.TypingError("Field index for " + cf.name + " not found on prototype "
+						+ hxc.core.Globals.sTypePath(c.path), hxc.ast.Position.nullPos);
 				case _:
 					hxc.core.TexprTools.iter(loop, e);
 			}
 		}
 		loop(e);
+	}
+
+	static function isProperStaticMethod(cf:TClassField):Bool {
+		return switch (cf.kind) {
+			case Method(MethDynamic): false;
+			case Method(_): true;
+			case Var(_): false;
+		};
+	}
+
+	// What a class's static prototype names: (nothing of an extern class's own, no extern or generic field,
+	// every method, and a variable with an initializer or storage) and finalize's builtins.
+	static function inStaticPrototype(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
+		var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
+		var name = EvalHash.hash(cf.name);
+		if (builtins != null) for (b in builtins) if (b.name == name) return true;
+		if (TypeFunctions.hasClassFlag(c, CExtern) || isRemovable(cf)) return false;
+		return switch (cf.kind) {
+			case Method(_): true;
+			case Var(_): cf.expr != null || TypeFunctions.isPhysicalField(cf);
+		};
 	}
 
 	// Whether a static method's expr is null for good. hxc types statics lazily (the macro
@@ -534,7 +561,7 @@ class EvalPrototype {
 						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
-							jitCheck(cf.expr);
+							jitCheck(ctx, cf.expr);
 							var idx = pfields.length;
 							pnames.set(EvalHash.hash(cf.name), idx);
 							addNameAlias(pnames, cf, idx);
@@ -584,7 +611,7 @@ class EvalPrototype {
 							var prev = ctxEval.env;
 							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
 							try {
-								jitCheck(init);
+								jitCheck(ctx, init);
 								EvalEmitter.numberClosures(init);
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
@@ -614,7 +641,7 @@ class EvalPrototype {
 					var ctxEval = EvalContext.getEval(ctx);
 					var prev = ctxEval.env;
 					var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKMethod(key, EvalHash.key___init__), 0, 0));
-					try jitCheck(init) catch (e:haxe.Exception) {
+					try jitCheck(ctx, init) catch (e:haxe.Exception) {
 						ctxEval.env = prev;
 						throw e;
 					}
@@ -673,7 +700,7 @@ class EvalPrototype {
 					}
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
-						jitCheck(cf.expr);
+						jitCheck(ctx, cf.expr);
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
 						addNameAlias(pnames, cf, idx, c);
