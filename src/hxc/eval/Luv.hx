@@ -213,6 +213,26 @@ static void hxc_luv_prepare(uv_prepare_t *h) { hxc_luv_call(uv_handle_get_data((
 static void hxc_luv_check(uv_check_t *h) { hxc_luv_call(uv_handle_get_data((uv_handle_t*)h), 0); }
 // uv_once runs it synchronously on the calling thread, which holds the lock.
 static void hxc_luv_once(void) { ::hxc::eval::Luv_obj::dispatchOnce(); }
+// read, connect, connection, shutdown, write, signal: one int each
+static void hxc_luv_call_int(void *data, int index, int a) {
+	hx::ExitGCFreeZone();
+	::hxc::eval::Luv_obj::dispatchInt((int)(intptr_t)data, index, a);
+	hx::EnterGCFreeZone();
+}
+static void hxc_luv_read(uv_stream_t *h, ssize_t nread, const uv_buf_t *buf) { hxc_luv_call_int(uv_handle_get_data((uv_handle_t*)h), 0, (int)nread); }
+static void hxc_luv_connection(uv_stream_t *h, int status) { hxc_luv_call_int(uv_handle_get_data((uv_handle_t*)h), 3, status); }
+static void hxc_luv_connect(uv_connect_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_shutdown(uv_shutdown_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_write(uv_write_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_signal(uv_signal_t *h, int signum) { hxc_luv_call(uv_handle_get_data((uv_handle_t*)h), 0); }
+// The alloc trampoline: libuv reads into the buffer the allocate callback answers
+static void hxc_luv_alloc(uv_handle_t *h, size_t suggested, uv_buf_t *buf) {
+	hx::ExitGCFreeZone();
+	::hxc::eval::LuvBuffer b = ::hxc::eval::Luv_obj::dispatchAlloc((int)(intptr_t)uv_handle_get_data(h), (int)suggested);
+	buf->base = (char*)b->bytes->b->GetBase() + b->offset;
+	buf->len = b->length;
+	hx::EnterGCFreeZone();
+}
 ')
 class Luv {
 	// A handle's references stay rooted from its allocation until close releases them; the handle's
@@ -348,6 +368,11 @@ class Luv {
 			case HIdle: untyped __cpp__("malloc(sizeof(uv_idle_t))");
 			case HPrepare: untyped __cpp__("malloc(sizeof(uv_prepare_t))");
 			case HCheck: untyped __cpp__("malloc(sizeof(uv_check_t))");
+			case HTcp: untyped __cpp__("malloc(sizeof(uv_tcp_t))");
+			case HUdp: untyped __cpp__("malloc(sizeof(uv_udp_t))");
+			case HPipe: untyped __cpp__("malloc(sizeof(uv_pipe_t))");
+			case HTty: untyped __cpp__("malloc(sizeof(uv_tty_t))");
+			case HSignal: untyped __cpp__("malloc(sizeof(uv_signal_t))");
 			case _: throw "not a handle kind: " + kind;
 		};
 		var o = own(ptr);
@@ -596,6 +621,287 @@ class Luv {
 		untyped __cpp__("uv_once((uv_once_t*){0}, hxc_luv_once)", o.ptr);
 	}
 
+	// ---- requests: a request is retained like a handle until its callback runs ----
+
+	static function newRequest(size:Int):LuvObject {
+		var o = own(untyped __cpp__("calloc(1, (size_t){0})", size));
+		retainedLock.acquire();
+		o.id = nextId++;
+		retained.set(o.id, o);
+		retainedLock.release();
+		untyped __cpp__("uv_req_set_data((uv_req_t*){0}, (void*)(intptr_t){1})", o.ptr, o.id);
+		return o;
+	}
+
+	// The request is released before its callback runs.
+	static function setRequestCallback(r:LuvObject, callback:Int->Void):Void {
+		r.refs[0] = function(status:Int) {
+			release(r);
+			callback(status);
+		};
+	}
+
+	@:keep public static function dispatchInt(id:Int, index:Int, a:Int):Void {
+		var s = runStack();
+		var reacquire = s.length > 0 && s[s.length - 1];
+		if (reacquire) EvalStdLib.gilReacquire();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[index];
+		if (f != null) f(a);
+		if (reacquire) EvalStdLib.gilRelease();
+	}
+
+	// The alloc trampoline: the allocate callback's buffer is where libuv reads into
+	@:keep public static function dispatchAlloc(id:Int, suggested:Int):LuvSys.LuvBuffer {
+		var s = runStack();
+		var reacquire = s.length > 0 && s[s.length - 1];
+		if (reacquire) EvalStdLib.gilReacquire();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[2];
+		var b:LuvSys.LuvBuffer = f(suggested);
+		if (reacquire) EvalStdLib.gilRelease();
+		return b;
+	}
+
+	// The recv trampoline: nread, the sender's address (or none) and the flags
+	@:keep public static function dispatchRecv(id:Int, nread:Int, addr:cpp.RawPointer<cpp.Void>, flags:Int):Void {
+		var s = runStack();
+		var reacquire = s.length > 0 && s[s.length - 1];
+		if (reacquire) EvalStdLib.gilReacquire();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var storage:Null<haxe.io.Bytes> = null;
+		if (addr != null) {
+			storage = LuvSys.newSockaddr();
+			untyped __cpp__("memcpy({0}->b->GetBase(), {1}, sizeof(struct sockaddr_storage))", storage, addr);
+		}
+		var f:Dynamic = o == null ? null : o.refs[0];
+		if (f != null) f(nread, storage, flags);
+		if (reacquire) EvalStdLib.gilRelease();
+	}
+
+	static function bufs(buffers:Array<LuvSys.LuvBuffer>):cpp.RawPointer<cpp.Void> {
+		var n = buffers.length;
+		var arr:cpp.RawPointer<cpp.Void> = untyped __cpp__("calloc((size_t)({0} > 0 ? {0} : 1), sizeof(uv_buf_t))", n);
+		for (i in 0...n) {
+			var b = buffers[i];
+			var base = b.bytes;
+			var off = b.offset;
+			var len = b.length;
+			untyped __cpp__("((uv_buf_t*){0})[{1}] = uv_buf_init((char*){2}->b->GetBase() + {3}, (unsigned int){4})", arr, i, base, off, len);
+		}
+		return arr;
+	}
+
+
+	public static function newStream(kind:EvalHandleKind):LuvObject return newHandle(kind);
+
+	public static function shutdown(stream:LuvObject, callback:Int->Void):Void {
+		var r = newRequest(untyped __cpp__("(int)sizeof(uv_shutdown_t)"));
+		var wrapped = catchExceptions1(callback);
+		setRequestCallback(r, wrapped);
+		var immediate:Int = untyped __cpp__("uv_shutdown((uv_shutdown_t*){0}, (uv_stream_t*){1}, hxc_luv_shutdown)", r.ptr, stream.ptr);
+		if (immediate < 0) {
+			release(r);
+			callback(immediate);
+		}
+	}
+
+	public static function listen(server:LuvObject, backlog:Int, callback:Int->Void):Void {
+		server.refs[3] = catchExceptions1(callback);
+		var immediate:Int = untyped __cpp__("uv_listen((uv_stream_t*){0}, {1}, hxc_luv_connection)", server.ptr, backlog);
+		if (immediate < 0) callback(immediate);
+	}
+
+	// Somaxconn, clamped to an int
+	public static function somaxconn():Int
+		return untyped __cpp__("(int)(SOMAXCONN > 0x7fffffff ? 0x7fffffff : SOMAXCONN)");
+
+	public static function accept(server:LuvObject, client:LuvObject):Int
+		return untyped __cpp__("uv_accept((uv_stream_t*){0}, (uv_stream_t*){1})", server.ptr, client.ptr);
+
+	// The buffer last allocated is the one read into, cut to what was read when it is longer; a read
+	// of 0 or less is an error, 0 included (0 maps to UNKNOWN)
+	public static function readStart(stream:LuvObject, allocate:Int->LuvSys.LuvBuffer, callback:Int->Null<LuvSys.LuvBuffer>->Void):Void {
+		var last:Null<LuvSys.LuvBuffer> = null;
+		var wrapped = catchExceptions2(callback);
+		stream.refs[0] = function(nread:Int) {
+			if (nread > 0) {
+				var b = last;
+				last = null;
+				if (b.length > nread) b = new LuvSys.LuvBuffer(b.bytes, b.offset, nread);
+				wrapped(0, b);
+			} else {
+				last = null;
+				wrapped(nread, null);
+			}
+		};
+		stream.refs[2] = function(suggested:Int) {
+			var b = allocate(suggested);
+			last = b;
+			return b;
+		};
+		var immediate:Int = untyped __cpp__("uv_read_start((uv_stream_t*){0}, hxc_luv_alloc, hxc_luv_read)", stream.ptr);
+		if (immediate < 0) callback(immediate, null);
+	}
+
+	public static function readStop(stream:LuvObject):Int
+		return untyped __cpp__("uv_read_stop((uv_stream_t*){0})", stream.ptr);
+
+	// The callback is told how much of the data left the queue
+	public static function write(stream:LuvObject, buffers:Array<LuvSys.LuvBuffer>, sendHandle:Null<LuvObject>, callback:Int->Int->Void):Void {
+		var count = buffers.length;
+		var total = 0;
+		for (b in buffers) total += b.length;
+		var iov = bufs(buffers);
+		var r = newRequest(untyped __cpp__("(int)sizeof(uv_write_t)"));
+		// The buffers and their iovecs live until the callback; the retained request holds them
+		r.refs[1] = buffers;
+		var wrapped = catchExceptions2(function(status:Int, _:Null<Int>) {
+			untyped __cpp__("free({0})", iov);
+			var unwritten:Int = untyped __cpp__("(int)uv_stream_get_write_queue_size((uv_stream_t*){0})", stream.ptr);
+			callback(status, total - unwritten);
+		});
+		setRequestCallback(r, status -> wrapped(status, null));
+		var sh:cpp.RawPointer<cpp.Void> = sendHandle == null ? null : sendHandle.ptr;
+		var immediate:Int = untyped __cpp__("uv_write2((uv_write_t*){0}, (uv_stream_t*){1}, (const uv_buf_t*){2}, (unsigned int){3}, (uv_stream_t*){4}, hxc_luv_write)",
+			r.ptr, stream.ptr, iov, count, sh);
+		if (immediate < 0) {
+			release(r);
+			untyped __cpp__("free({0})", iov);
+			callback(immediate, 0);
+		}
+	}
+
+	public static function tryWrite(stream:LuvObject, buffers:Array<LuvSys.LuvBuffer>):Int {
+		var iov = bufs(buffers);
+		var r:Int = untyped __cpp__("uv_try_write((uv_stream_t*){0}, (const uv_buf_t*){1}, (unsigned int){2})", stream.ptr, iov, buffers.length);
+		untyped __cpp__("free({0})", iov);
+		return r;
+	}
+
+	public static function isReadable(stream:LuvObject):Bool
+		return (untyped __cpp__("uv_is_readable((const uv_stream_t*){0})", stream.ptr) : Int) != 0;
+
+	public static function isWritable(stream:LuvObject):Bool
+		return (untyped __cpp__("uv_is_writable((const uv_stream_t*){0})", stream.ptr) : Int) != 0;
+
+	public static function setBlocking(stream:LuvObject, blocking:Bool):Int
+		return untyped __cpp__("uv_stream_set_blocking((uv_stream_t*){0}, {1} ? 1 : 0)", stream.ptr, blocking);
+
+	// The send and receive buffer sizes: libuv reads the size, and for 0 writes it back
+	public static function bufferSize(h:LuvObject, send:Bool, value:Array<Int>):Int {
+		var r = 0;
+		var v = value[0];
+		untyped __cpp__("{ int hxc_v = {0}; {1} = {2} ? uv_send_buffer_size((uv_handle_t*){3}, &hxc_v) : uv_recv_buffer_size((uv_handle_t*){3}, &hxc_v); {0} = hxc_v; }",
+			v, r, send, h.ptr);
+		value[0] = v;
+		return r;
+	}
+
+
+	// Domain: -1 none, else the AF_ value
+	public static function tcpInit(l:LuvObject, t:LuvObject, domain:Int):Int {
+		return domain < 0 ? untyped __cpp__("uv_tcp_init((uv_loop_t*){0}, (uv_tcp_t*){1})", l.ptr, t.ptr)
+			: untyped __cpp__("uv_tcp_init_ex((uv_loop_t*){0}, (uv_tcp_t*){1}, (unsigned int){2})", l.ptr, t.ptr, domain);
+	}
+
+	public static function tcpNoDelay(t:LuvObject, enable:Bool):Int
+		return untyped __cpp__("uv_tcp_nodelay((uv_tcp_t*){0}, {1} ? 1 : 0)", t.ptr, enable);
+
+	// A null `seconds` turns keepalive off, with 0 seconds
+	public static function tcpKeepAlive(t:LuvObject, seconds:Null<Int>):Int {
+		var on = seconds != null;
+		var d = on ? seconds : 0;
+		return untyped __cpp__("uv_tcp_keepalive((uv_tcp_t*){0}, {1} ? 1 : 0, (unsigned int){2})", t.ptr, on, d);
+	}
+
+	public static function tcpSimultaneousAccepts(t:LuvObject, enable:Bool):Int
+		return untyped __cpp__("uv_tcp_simultaneous_accepts((uv_tcp_t*){0}, {1} ? 1 : 0)", t.ptr, enable);
+
+	public static function tcpBind(t:LuvObject, addr:haxe.io.Bytes, ipv6only:Bool):Int
+		return untyped __cpp__("uv_tcp_bind((uv_tcp_t*){0}, (const struct sockaddr*){1}->b->GetBase(), {2} ? UV_TCP_IPV6ONLY : 0)", t.ptr, addr, ipv6only);
+
+	// A fresh sockaddr storage and its size
+	public static function tcpName(t:LuvObject, peer:Bool, storage:haxe.io.Bytes):Int {
+		var r = 0;
+		untyped __cpp__("{ int hxc_len = (int)sizeof(struct sockaddr_storage); {0} = {1} ? uv_tcp_getpeername((const uv_tcp_t*){2}, (struct sockaddr*){3}->b->GetBase(), &hxc_len) : uv_tcp_getsockname((const uv_tcp_t*){2}, (struct sockaddr*){3}->b->GetBase(), &hxc_len); }",
+			r, peer, t.ptr, storage);
+		return r;
+	}
+
+	public static function tcpConnect(t:LuvObject, addr:haxe.io.Bytes, callback:Int->Void):Void {
+		var r = newRequest(untyped __cpp__("(int)sizeof(uv_connect_t)"));
+		setRequestCallback(r, catchExceptions1(callback));
+		var immediate:Int = untyped __cpp__("uv_tcp_connect((uv_connect_t*){0}, (uv_tcp_t*){1}, (const struct sockaddr*){2}->b->GetBase(), hxc_luv_connect)", r.ptr, t.ptr, addr);
+		if (immediate < 0) {
+			release(r);
+			callback(immediate);
+		}
+	}
+
+	public static function tcpCloseReset(t:LuvObject, callback:Int->Void):Void {
+		if (isClosing(t)) {
+			callback(0);
+			return;
+		}
+		var wrapped = catchExceptions1(callback);
+		t.refs[1] = function() {
+			release(t);
+			wrapped(0);
+		};
+		var immediate:Int = untyped __cpp__("uv_tcp_close_reset((uv_tcp_t*){0}, hxc_luv_close)", t.ptr);
+		if (immediate < 0) callback(immediate);
+	}
+
+
+	public static function signalInit(l:LuvObject, s:LuvObject):Int
+		return untyped __cpp__("uv_signal_init((uv_loop_t*){0}, (uv_signal_t*){1})", l.ptr, s.ptr);
+
+	public static function signalStart(s:LuvObject, signum:Int, oneshot:Bool, callback:Void->Void):Int {
+		s.refs[0] = catchExceptions(callback);
+		return oneshot ? untyped __cpp__("uv_signal_start_oneshot((uv_signal_t*){0}, hxc_luv_signal, {1})", s.ptr, signum)
+			: untyped __cpp__("uv_signal_start((uv_signal_t*){0}, hxc_luv_signal, {1})", s.ptr, signum);
+	}
+
+	public static function signalStop(s:LuvObject):Int
+		return untyped __cpp__("uv_signal_stop((uv_signal_t*){0})", s.ptr);
+
+	public static function signalSignum(s:LuvObject):Int
+		return untyped __cpp__("((uv_signal_t*){0})->signum", s.ptr);
+
+	public static function signum(name:String):Int {
+		return switch (name) {
+			case "SIGABRT": untyped __cpp__("SIGABRT");
+			case "SIGFPE": untyped __cpp__("SIGFPE");
+			case "SIGHUP": untyped __cpp__("SIGHUP");
+			case "SIGILL": untyped __cpp__("SIGILL");
+			case "SIGINT": untyped __cpp__("SIGINT");
+			case "SIGKILL": untyped __cpp__("SIGKILL");
+			case "SIGSEGV": untyped __cpp__("SIGSEGV");
+			case "SIGTERM": untyped __cpp__("SIGTERM");
+			case _: untyped __cpp__("SIGWINCH");
+		};
+	}
+
+	// catchExceptions for callbacks with arguments
+	public static function catchExceptions1<A>(f:A->Void):A->Void {
+		return function(a:A) {
+			try f(a) catch (e:Dynamic) exceptionHandler(e);
+		};
+	}
+
+	public static function catchExceptions2<A, B>(f:A->B->Void):A->B->Void {
+		return function(a:A, b:B) {
+			try f(a, b) catch (e:Dynamic) exceptionHandler(e);
+		};
+	}
+
 
 	public static function errorIndex(code:Int):Int
 		return untyped __cpp__("hxc_luv_error_index({0})", code);
@@ -649,14 +955,15 @@ class Luv {
 }
 
 /**
- * A libuv object: a timer, a loop, a mutex... `refs` holds a handle's callbacks, generic first and
- * close second (luv's reference array, .
- */
+	A libuv object: a timer, a loop, a mutex, a request... `refs` holds a handle's or request's
+	callbacks.
+**/
 class LuvObject {
 	public var ptr:cpp.RawPointer<cpp.Void>;
 	public final owned:Bool;
 	public var id:Int = 0;
-	public var refs:Array<Null<Void->Void>> = [null, null];
+	// Generic, close, allocate, connection (helpers.h LUV_*_CALLBACK)
+	public var refs:Array<Dynamic> = [null, null, null, null];
 
 	public function new(ptr:cpp.RawPointer<cpp.Void>, owned:Bool) {
 		this.ptr = ptr;

@@ -63,6 +63,11 @@ enum EvalHandleKind {
 	HCheck;
 	HBuffer;
 	HSockAddr;
+	HTcp;
+	HUdp;
+	HPipe;
+	HTty;
+	HSignal;
 }
 
 class EvalHandle {

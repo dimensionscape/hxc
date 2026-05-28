@@ -139,6 +139,15 @@ class LuvSys {
 		return untyped __cpp__("uv_ip6_addr((const char*){0}->b->GetBase(), {1}, (struct sockaddr_in6*){2}->b->GetBase())", c, port, storage);
 	}
 
+	// Address families, to C: 0 unspecified, 1 INET, 2 INET6
+	public static function addressFamilyToC(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("AF_UNSPEC");
+			case 1: untyped __cpp__("AF_INET");
+			case _: untyped __cpp__("AF_INET6");
+		};
+	}
+
 	// 0 unspecified, 1 INET, 2 INET6, 3 anything else
 	static function family(storage:Bytes):Int {
 		return untyped __cpp__("(((struct sockaddr_storage*){0}->b->GetBase())->ss_family == AF_INET ? 1 : ((struct sockaddr_storage*){0}->b->GetBase())->ss_family == AF_INET6 ? 2 : ((struct sockaddr_storage*){0}->b->GetBase())->ss_family == AF_UNSPEC ? 0 : 3)", storage);
