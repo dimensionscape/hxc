@@ -69,6 +69,18 @@ enum EvalHandleKind {
 	HTty;
 	HSignal;
 	HFsEvent;
+	HFsPoll;
+	HFile;
+	HFileRequest;
+	HFileModeNumeric;
+	HDir;
+	HRandomRequest;
+	HAddrRequest;
+	HNameRequest;
+	HThreadPoolRequest;
+	HProcess;
+	HRedirection;
+	HThread;
 }
 
 class EvalHandle {

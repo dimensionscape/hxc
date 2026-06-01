@@ -226,6 +226,86 @@ static void hxc_luv_shutdown(uv_shutdown_t *r, int status) { hxc_luv_call_int(uv
 static void hxc_luv_write(uv_write_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
 static void hxc_luv_signal(uv_signal_t *h, int signum) { hxc_luv_call(uv_handle_get_data((uv_handle_t*)h), 0); }
 static void hxc_luv_udp_send(uv_udp_send_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_fs(uv_fs_t *r) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, 0); }
+static void hxc_luv_random(uv_random_t *r, int status, void *buf, size_t len) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_getaddrinfo(uv_getaddrinfo_t *r, int status, struct addrinfo *res) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_getnameinfo(uv_getnameinfo_t *r, int status, const char *host, const char *service) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+static void hxc_luv_after_work(uv_work_t *r, int status) { hxc_luv_call_int(uv_req_get_data((uv_req_t*)r), 0, status); }
+// The exit trampoline: the exit status and the terminating signal
+static void hxc_luv_exit(uv_process_t *h, int64_t status, int signal) {
+	hx::ExitGCFreeZone();
+	::hxc::eval::Luv_obj::dispatchExit((int)(intptr_t)uv_handle_get_data((uv_handle_t*)h), (::cpp::Int64)status, signal);
+	hx::EnterGCFreeZone();
+}
+// Register libuv worker threads with the collector for each callback.
+static void hxc_luv_work(uv_work_t *r) {
+	int hxc_top = 0;
+	hx::SetTopOfStack(&hxc_top, true);
+	::hxc::eval::Luv_obj::dispatchWork((int)(intptr_t)uv_req_get_data((uv_req_t*)r));
+	hx::UnregisterCurrentThread();
+}
+static void hxc_luv_thread(void *arg) {
+	int hxc_top = 0;
+	hx::SetTopOfStack(&hxc_top, true);
+	::hxc::eval::Luv_obj::dispatchThread((int)(intptr_t)arg);
+	hx::UnregisterCurrentThread();
+}
+// The fs_poll trampoline: the status and both stats
+static void hxc_luv_fs_poll(uv_fs_poll_t *h, int status, const uv_stat_t *prev, const uv_stat_t *curr) {
+	hx::ExitGCFreeZone();
+	::hxc::eval::Luv_obj::dispatchFsPoll((int)(intptr_t)uv_handle_get_data((uv_handle_t*)h), status, (void*)prev, (void*)curr);
+	hx::EnterGCFreeZone();
+}
+// Use the mingw-w64 File.Mode values: POSIX sys/stat.h bits, S_IFLNK from uv/win.h, and zero
+// set-id/sticky bits.
+#ifdef _WIN32
+#define HXC_S_IRWXU 0700
+#define HXC_S_IRUSR 0400
+#define HXC_S_IWUSR 0200
+#define HXC_S_IXUSR 0100
+#define HXC_S_IRWXG 0070
+#define HXC_S_IRGRP 0040
+#define HXC_S_IWGRP 0020
+#define HXC_S_IXGRP 0010
+#define HXC_S_IRWXO 0007
+#define HXC_S_IROTH 0004
+#define HXC_S_IWOTH 0002
+#define HXC_S_IXOTH 0001
+#define HXC_S_ISUID 0
+#define HXC_S_ISGID 0
+#define HXC_S_ISVTX 0
+#define HXC_S_IFMT 0xF000
+#define HXC_S_IFREG 0x8000
+#define HXC_S_IFDIR 0x4000
+#define HXC_S_IFBLK 0x3000
+#define HXC_S_IFCHR 0x2000
+#define HXC_S_IFLNK 0xA000
+#define HXC_S_IFIFO 0x1000
+#else
+#include <sys/stat.h>
+#define HXC_S_IRWXU S_IRWXU
+#define HXC_S_IRUSR S_IRUSR
+#define HXC_S_IWUSR S_IWUSR
+#define HXC_S_IXUSR S_IXUSR
+#define HXC_S_IRWXG S_IRWXG
+#define HXC_S_IRGRP S_IRGRP
+#define HXC_S_IWGRP S_IWGRP
+#define HXC_S_IXGRP S_IXGRP
+#define HXC_S_IRWXO S_IRWXO
+#define HXC_S_IROTH S_IROTH
+#define HXC_S_IWOTH S_IWOTH
+#define HXC_S_IXOTH S_IXOTH
+#define HXC_S_ISUID S_ISUID
+#define HXC_S_ISGID S_ISGID
+#define HXC_S_ISVTX S_ISVTX
+#define HXC_S_IFMT S_IFMT
+#define HXC_S_IFREG S_IFREG
+#define HXC_S_IFDIR S_IFDIR
+#define HXC_S_IFBLK S_IFBLK
+#define HXC_S_IFCHR S_IFCHR
+#define HXC_S_IFLNK S_IFLNK
+#define HXC_S_IFIFO S_IFIFO
+#endif
 // The recv trampoline: the count, the sender (or none) and the flags
 static void hxc_luv_recv(uv_udp_t *h, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags) {
 	hx::ExitGCFreeZone();
@@ -388,6 +468,8 @@ class Luv {
 			case HTty: untyped __cpp__("malloc(sizeof(uv_tty_t))");
 			case HSignal: untyped __cpp__("malloc(sizeof(uv_signal_t))");
 			case HFsEvent: untyped __cpp__("malloc(sizeof(uv_fs_event_t))");
+			case HFsPoll: untyped __cpp__("malloc(sizeof(uv_fs_poll_t))");
+			case HProcess: untyped __cpp__("malloc(sizeof(uv_process_t))");
 			case _: throw "not a handle kind: " + kind;
 		};
 		var o = own(ptr);
@@ -1113,6 +1195,810 @@ class Luv {
 	}
 
 
+	// What a finished request answers, by kind. Only a directory scan keeps its request past success.
+	public static inline var FS_ERROR = 0;
+	public static inline var FS_FILE = 1;
+	public static inline var FS_BYTES = 2;
+	public static inline var FS_PATH = 3;
+	public static inline var FS_PATH_FILE = 4;
+	public static inline var FS_DIR = 5;
+	public static inline var FS_DIRENTS = 6;
+	public static inline var FS_SCAN = 7;
+	public static inline var FS_STAT = 8;
+	public static inline var FS_STATFS = 9;
+	public static inline var FS_STRING = 10;
+
+	public static function newFsRequest():LuvObject
+		return newRequest(untyped __cpp__("(int)sizeof(uv_fs_t)"));
+
+	static function fsIntResult(req:LuvObject):Int
+		return untyped __cpp__("(int)uv_fs_get_result((uv_fs_t*){0})", req.ptr);
+
+	static function fsCleanup(req:LuvObject):Void {
+		var released = blockingEnter();
+		untyped __cpp__("uv_fs_req_cleanup((uv_fs_t*){0})", req.ptr);
+		blockingLeave(released);
+	}
+
+	// Each kind's result from a finished request; the value is read only on success
+	static function fsFromRequest(kind:Int, req:LuvObject):FsResult {
+		var result = fsIntResult(req);
+		var code = result < 0 ? result : 0;
+		switch (kind) {
+			case FS_ERROR:
+				return new FsResult(code, null);
+			case FS_FILE:
+				return new FsResult(result, result);
+			case FS_BYTES:
+				var n:haxe.Int64 = untyped __cpp__("(::cpp::Int64)uv_fs_get_result((uv_fs_t*){0})", req.ptr);
+				return n >= 0 ? new FsResult(0, n) : new FsResult(haxe.Int64.toInt(n), null);
+			case _:
+		}
+		if (code < 0) return new FsResult(code, null);
+		var value:Dynamic = switch (kind) {
+			case FS_PATH: LuvSys.fromC(untyped __cpp__("(void*)uv_fs_get_path((uv_fs_t*){0})", req.ptr));
+			case FS_PATH_FILE: new FsPathFile(LuvSys.fromC(untyped __cpp__("(void*)uv_fs_get_path((uv_fs_t*){0})", req.ptr)), result);
+			case FS_DIR: new LuvObject(untyped __cpp__("uv_fs_get_ptr((uv_fs_t*){0})", req.ptr), false);
+			case FS_DIRENTS:
+				var dir:cpp.RawPointer<cpp.Void> = untyped __cpp__("uv_fs_get_ptr((uv_fs_t*){0})", req.ptr);
+				[for (i in 0...result) new FsDirent(untyped __cpp__("(int)((uv_dir_t*){0})->dirents[{1}].type", dir, i),
+					LuvSys.fromC(untyped __cpp__("(void*)((uv_dir_t*){0})->dirents[{1}].name", dir, i)))];
+			case FS_SCAN: req;
+			case FS_STAT: statCopy(untyped __cpp__("(void*)uv_fs_get_statbuf((uv_fs_t*){0})", req.ptr));
+			case FS_STATFS:
+				var b = haxe.io.Bytes.alloc(untyped __cpp__("(int)sizeof(uv_statfs_t)"));
+				untyped __cpp__("memcpy({0}->b->GetBase(), uv_fs_get_ptr((uv_fs_t*){1}), sizeof(uv_statfs_t))", b, req.ptr);
+				b;
+			case _: LuvSys.fromC(untyped __cpp__("uv_fs_get_ptr((uv_fs_t*){0})", req.ptr));
+		};
+		return new FsResult(0, value);
+	}
+
+	// The callback runs under catchExceptions, the immediate error included, after the request's
+	// clean-up and the call's own
+	public static function fsAsync(request:Null<LuvObject>, kind:Int, run:(req:LuvObject) -> Int, cleanup:Void->Void, callback:FsResult->Void):Void {
+		var req = request != null ? request : newFsRequest();
+		var wrapped = catchExceptions1(callback);
+		setRequestCallback(req, function(_:Int) {
+			var result = fsFromRequest(kind, req);
+			if (kind != FS_SCAN || fsIntResult(req) < 0) fsCleanup(req);
+			cleanup();
+			wrapped(result);
+		});
+		var immediate = run(req);
+		if (immediate < 0) {
+			release(req);
+			fsCleanup(req);
+			cleanup();
+			wrapped(new FsResult(immediate, null));
+		}
+	}
+
+	// A request of its own, released at once, on the default loop without a callback. The call's
+	// clean-up runs only after the result is read and the request cleaned up (uv_fs_req_cleanup reads a
+	// readdir's entries).
+	public static function fsSync(kind:Int, run:(req:LuvObject) -> Int, cleanup:Void->Void):FsResult {
+		var req = newFsRequest();
+		release(req);
+		var immediate = run(req);
+		var result = immediate < 0 ? new FsResult(immediate, null) : fsFromRequest(kind, req);
+		if (kind != FS_SCAN || immediate < 0) fsCleanup(req);
+		cleanup();
+		return result;
+	}
+
+	@:keep static function fsLoop(l:Null<LuvObject>):cpp.RawPointer<cpp.Void>
+		return l != null ? l.ptr : untyped __cpp__("(void*)uv_default_loop()");
+
+	// The operations, each C.Blocking: l is null for a synchronous call.
+	public static function fsOpen(l:Null<LuvObject>, req:LuvObject, path:haxe.io.Bytes, flags:Int, mode:Int):Int {
+		var c = LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_open((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, c, flags, mode, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	// Close, unlink, rmdir, fsync/fdatasync
+	public static function fsFileOp(l:Null<LuvObject>, req:LuvObject, op:Int, file:Int):Int {
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = switch (op) {
+			case 0: untyped __cpp__("uv_fs_close((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, file, async);
+			case 1: untyped __cpp__("uv_fs_fsync((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, file, async);
+			case 2: untyped __cpp__("uv_fs_fdatasync((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, file, async);
+			case _: untyped __cpp__("uv_fs_fstat((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, file, async);
+		};
+		blockingLeave(released);
+		return r;
+	}
+
+	// The operations on one path: unlink, rmdir, mkdtemp, mkstemp, opendir, stat, lstat, statfs,
+	// readlink, realpath, scandir (flags 0)
+	public static function fsPathOp(l:Null<LuvObject>, req:LuvObject, op:Int, path:haxe.io.Bytes):Int {
+		var c = LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = switch (op) {
+			case 0: untyped __cpp__("uv_fs_unlink((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 1: untyped __cpp__("uv_fs_rmdir((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 2: untyped __cpp__("uv_fs_mkdtemp((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 3: untyped __cpp__("uv_fs_mkstemp((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 4: untyped __cpp__("uv_fs_opendir((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 5: untyped __cpp__("uv_fs_stat((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 6: untyped __cpp__("uv_fs_lstat((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 7: untyped __cpp__("uv_fs_statfs((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 8: untyped __cpp__("uv_fs_readlink((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case 9: untyped __cpp__("uv_fs_realpath((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+			case _: untyped __cpp__("uv_fs_scandir((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), 0, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, c, async);
+		};
+		blockingLeave(released);
+		return r;
+	}
+
+	// Read or write: the iovecs live until the call's clean-up
+	public static function fsReadWrite(l:Null<LuvObject>, req:LuvObject, write:Bool, file:Int, iov:cpp.RawPointer<cpp.Void>, count:Int, offset:haxe.Int64):Int {
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = write
+			? untyped __cpp__("uv_fs_write((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, (const uv_buf_t*){3}, (unsigned int){4}, (int64_t){5}, {6} ? hxc_luv_fs : NULL)", lp, req.ptr, file, iov, count, offset, async)
+			: untyped __cpp__("uv_fs_read((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, (const uv_buf_t*){3}, (unsigned int){4}, (int64_t){5}, {6} ? hxc_luv_fs : NULL)", lp, req.ptr, file, iov, count, offset, async);
+		blockingLeave(released);
+		return r;
+	}
+
+	public static function fsBufs(buffers:Array<LuvSys.LuvBuffer>):cpp.RawPointer<cpp.Void>
+		return bufs(buffers);
+
+	public static function fsFree(p:cpp.RawPointer<cpp.Void>):Void
+		untyped __cpp__("free({0})", p);
+
+	// Mkdir, chmod (the path's; fchmod the file's)
+	public static function fsMkdir(l:Null<LuvObject>, req:LuvObject, path:haxe.io.Bytes, mode:Int):Int {
+		var c = LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_mkdir((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4} ? hxc_luv_fs : NULL)", lp, req.ptr, c, mode, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	public static function fsChmod(l:Null<LuvObject>, req:LuvObject, path:Null<haxe.io.Bytes>, file:Int, mode:Int):Int {
+		var c = path == null ? null : LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = c != null
+			? untyped __cpp__("uv_fs_chmod((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4} ? hxc_luv_fs : NULL)", lp, req.ptr, c, mode, async)
+			: untyped __cpp__("uv_fs_fchmod((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3}, {4} ? hxc_luv_fs : NULL)", lp, req.ptr, file, mode, async);
+		blockingLeave(released);
+		return r;
+	}
+
+	// Rename, link, symlink, copyfile: two paths and flags
+	public static function fsTwoPaths(l:Null<LuvObject>, req:LuvObject, op:Int, from:haxe.io.Bytes, to:haxe.io.Bytes, flags:Int):Int {
+		var a = LuvSys.cString(from);
+		var b = LuvSys.cString(to);
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = switch (op) {
+			case 0: untyped __cpp__("uv_fs_rename((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (const char*){3}->b->GetBase(), {4} ? hxc_luv_fs : NULL)", lp, req.ptr, a, b, async);
+			case 1: untyped __cpp__("uv_fs_link((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (const char*){3}->b->GetBase(), {4} ? hxc_luv_fs : NULL)", lp, req.ptr, a, b, async);
+			case 2: untyped __cpp__("uv_fs_symlink((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (const char*){3}->b->GetBase(), {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, a, b, flags, async);
+			case _: untyped __cpp__("uv_fs_copyfile((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (const char*){3}->b->GetBase(), {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, a, b, flags, async);
+		};
+		blockingLeave(released);
+		return r;
+	}
+
+	public static function fsFtruncate(l:Null<LuvObject>, req:LuvObject, file:Int, length:haxe.Int64):Int {
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_ftruncate((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, (int64_t){3}, {4} ? hxc_luv_fs : NULL)", lp, req.ptr, file, length, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	// sendfile: to, from, offset, length
+	public static function fsSendfile(l:Null<LuvObject>, req:LuvObject, to:Int, from:Int, offset:haxe.Int64, length:haxe.Int64):Int {
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_sendfile((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, (uv_file){3}, (int64_t){4}, (size_t)(uint64_t){5}, {6} ? hxc_luv_fs : NULL)", lp, req.ptr, to, from, offset, length, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	public static function fsAccess(l:Null<LuvObject>, req:LuvObject, path:haxe.io.Bytes, mode:Int):Int {
+		var c = LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_access((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4} ? hxc_luv_fs : NULL)", lp, req.ptr, c, mode, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	// Utime, futime, lutime: op 0 the path's, 1 the file's, 2 the link's
+	public static function fsUtime(l:Null<LuvObject>, req:LuvObject, op:Int, path:Null<haxe.io.Bytes>, file:Int, atime:Float, mtime:Float):Int {
+		var c = path == null ? null : LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = switch (op) {
+			case 0: untyped __cpp__("uv_fs_utime((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, c, atime, mtime, async);
+			case 1: untyped __cpp__("uv_fs_futime((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, {3}, {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, file, atime, mtime, async);
+			case _: untyped __cpp__("uv_fs_lutime((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), {3}, {4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, c, atime, mtime, async);
+		};
+		blockingLeave(released);
+		return r;
+	}
+
+	// Chown, fchown, lchown
+	public static function fsChown(l:Null<LuvObject>, req:LuvObject, op:Int, path:Null<haxe.io.Bytes>, file:Int, uid:Int, gid:Int):Int {
+		var c = path == null ? null : LuvSys.cString(path);
+		var lp = fsLoop(l);
+		var async = l != null;
+		var released = blockingEnter();
+		var r:Int = switch (op) {
+			case 0: untyped __cpp__("uv_fs_chown((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (uv_uid_t){3}, (uv_gid_t){4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, c, uid, gid, async);
+			case 1: untyped __cpp__("uv_fs_fchown((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_file){2}, (uv_uid_t){3}, (uv_gid_t){4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, file, uid, gid, async);
+			case _: untyped __cpp__("uv_fs_lchown((uv_loop_t*){0}, (uv_fs_t*){1}, (const char*){2}->b->GetBase(), (uv_uid_t){3}, (uv_gid_t){4}, {5} ? hxc_luv_fs : NULL)", lp, req.ptr, c, uid, gid, async);
+		};
+		blockingLeave(released);
+		return r;
+	}
+
+	public static function fsClosedir(l:Null<LuvObject>, req:LuvObject, dir:LuvObject):Int {
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_closedir((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_dir_t*){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, dir.ptr, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	// The entries array the call fills, which the caller frees
+	public static function fsDirents(dir:LuvObject, count:Int):cpp.RawPointer<cpp.Void> {
+		var a:cpp.RawPointer<cpp.Void> = untyped __cpp__("calloc((size_t)({0} > 0 ? {0} : 1), sizeof(uv_dirent_t))", count);
+		untyped __cpp__("((uv_dir_t*){0})->dirents = (uv_dirent_t*){1}; ((uv_dir_t*){0})->nentries = (size_t){2}", dir.ptr, a, count);
+		return a;
+	}
+
+	public static function fsReaddir(l:Null<LuvObject>, req:LuvObject, dir:LuvObject):Int {
+		var lp = fsLoop(l);
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_fs_readdir((uv_loop_t*){0}, (uv_fs_t*){1}, (uv_dir_t*){2}, {3} ? hxc_luv_fs : NULL)", lp, req.ptr, dir.ptr, l != null);
+		blockingLeave(released);
+		return r;
+	}
+
+	// The next directory entry: none at the end, which also stops the scan
+	public static function scandirNext(req:LuvObject):Null<FsDirent> {
+		var kind = 0;
+		var name:cpp.RawPointer<cpp.Void> = null;
+		var released = blockingEnter();
+		var r = 0;
+		untyped __cpp__("{ uv_dirent_t hxc_d; memset(&hxc_d, 0, sizeof(hxc_d)); {0} = uv_fs_scandir_next((uv_fs_t*){1}, &hxc_d); {2} = (int)hxc_d.type; {3} = (void*)hxc_d.name; }",
+			r, req.ptr, kind, name);
+		blockingLeave(released);
+		if (r < 0) {
+			fsCleanup(req);
+			return null;
+		}
+		return new FsDirent(kind, LuvSys.fromC(name));
+	}
+
+	public static function scandirEnd(req:LuvObject):Void
+		fsCleanup(req);
+
+	// A copy of the uv_stat_t
+	static function statCopy(p:cpp.RawPointer<cpp.Void>):haxe.io.Bytes {
+		var b = haxe.io.Bytes.alloc(untyped __cpp__("(int)sizeof(uv_stat_t)"));
+		untyped __cpp__("memcpy({0}->b->GetBase(), {1}, sizeof(uv_stat_t))", b, p);
+		return b;
+	}
+
+	// 0 dev, 1 mode, 2 nlink, 3 uid, 4 gid, 5 rdev, 6 ino, 7 size, 8 blksize, 9 blocks, 10 flags, 11 gen
+	public static function statField(s:haxe.io.Bytes, i:Int):haxe.Int64 {
+		return switch (i) {
+			case 0: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_dev", s);
+			case 1: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_mode", s);
+			case 2: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_nlink", s);
+			case 3: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_uid", s);
+			case 4: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_gid", s);
+			case 5: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_rdev", s);
+			case 6: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_ino", s);
+			case 7: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_size", s);
+			case 8: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_blksize", s);
+			case 9: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_blocks", s);
+			case 10: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_flags", s);
+			case _: untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_gen", s);
+		};
+	}
+
+	// The four timespecs, atim mtim ctim birthtim, each a C long pair
+	public static function statTime(s:haxe.io.Bytes, which:Int, nsec:Bool):haxe.Int64 {
+		return switch (which) {
+			case 0: nsec ? untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_atim.tv_nsec", s) : untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_atim.tv_sec", s);
+			case 1: nsec ? untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_mtim.tv_nsec", s) : untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_mtim.tv_sec", s);
+			case 2: nsec ? untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_ctim.tv_nsec", s) : untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_ctim.tv_sec", s);
+			case _: nsec ? untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_birthtim.tv_nsec", s) : untyped __cpp__("(::cpp::Int64)((uv_stat_t*){0}->b->GetBase())->st_birthtim.tv_sec", s);
+		};
+	}
+
+	// 0 type, 1 bsize, 2 blocks, 3 bfree, 4 bavail, 5 files, 6 ffree, 7-10 f_spare
+	public static function statfsField(s:haxe.io.Bytes, i:Int):haxe.Int64 {
+		return switch (i) {
+			case 0: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_type", s);
+			case 1: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_bsize", s);
+			case 2: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_blocks", s);
+			case 3: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_bfree", s);
+			case 4: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_bavail", s);
+			case 5: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_files", s);
+			case 6: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_ffree", s);
+			case _: untyped __cpp__("(::cpp::Int64)((uv_statfs_t*){0}->b->GetBase())->f_spare[{1} - 7]", s, i);
+		};
+	}
+
+	// File modes. On Windows they are the POSIX values a mingw-w64 sys/stat.h gives, S_IFLNK is
+	// libuv's uv/win.h value, and the set-id and sticky bits are 0
+	public static function fileMode(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("HXC_S_IRWXU");
+			case 1: untyped __cpp__("HXC_S_IRUSR");
+			case 2: untyped __cpp__("HXC_S_IWUSR");
+			case 3: untyped __cpp__("HXC_S_IXUSR");
+			case 4: untyped __cpp__("HXC_S_IRWXG");
+			case 5: untyped __cpp__("HXC_S_IRGRP");
+			case 6: untyped __cpp__("HXC_S_IWGRP");
+			case 7: untyped __cpp__("HXC_S_IXGRP");
+			case 8: untyped __cpp__("HXC_S_IRWXO");
+			case 9: untyped __cpp__("HXC_S_IROTH");
+			case 10: untyped __cpp__("HXC_S_IWOTH");
+			case 11: untyped __cpp__("HXC_S_IXOTH");
+			case 12: untyped __cpp__("HXC_S_ISUID");
+			case 13: untyped __cpp__("HXC_S_ISGID");
+			case 14: untyped __cpp__("HXC_S_ISVTX");
+			case 15: untyped __cpp__("HXC_S_IFMT");
+			case 16: untyped __cpp__("HXC_S_IFREG");
+			case 17: untyped __cpp__("HXC_S_IFDIR");
+			case 18: untyped __cpp__("HXC_S_IFBLK");
+			case 19: untyped __cpp__("HXC_S_IFCHR");
+			case 20: untyped __cpp__("HXC_S_IFLNK");
+			case _: untyped __cpp__("HXC_S_IFIFO");
+		};
+	}
+
+	// Open flags, in eval's index order
+	public static function openFlag(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("UV_FS_O_RDONLY");
+			case 1: untyped __cpp__("UV_FS_O_WRONLY");
+			case 2: untyped __cpp__("UV_FS_O_RDWR");
+			case 3: untyped __cpp__("UV_FS_O_CREAT");
+			case 4: untyped __cpp__("UV_FS_O_EXCL");
+			case 5: untyped __cpp__("UV_FS_O_EXLOCK");
+			case 6: untyped __cpp__("UV_FS_O_NOCTTY");
+			case 7: untyped __cpp__("UV_FS_O_NOFOLLOW");
+			case 8: untyped __cpp__("UV_FS_O_TEMPORARY");
+			case 9: untyped __cpp__("UV_FS_O_TRUNC");
+			case 10: untyped __cpp__("UV_FS_O_APPEND");
+			case 11: untyped __cpp__("UV_FS_O_DIRECT");
+			case 12: untyped __cpp__("UV_FS_O_DSYNC");
+			case 13: untyped __cpp__("UV_FS_O_FILEMAP");
+			case 14: untyped __cpp__("UV_FS_O_NOATIME");
+			case 15: untyped __cpp__("UV_FS_O_NONBLOCK");
+			case 16: untyped __cpp__("UV_FS_O_RANDOM");
+			case 17: untyped __cpp__("UV_FS_O_SEQUENTIAL");
+			case 18: untyped __cpp__("UV_FS_O_SHORT_LIVED");
+			case 19: untyped __cpp__("UV_FS_O_SYMLINK");
+			case _: untyped __cpp__("UV_FS_O_SYNC");
+		};
+	}
+
+	// Access flags: F_OK R_OK W_OK X_OK
+	public static function accessFlag(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("F_OK");
+			case 1: untyped __cpp__("R_OK");
+			case 2: untyped __cpp__("W_OK");
+			case _: untyped __cpp__("X_OK");
+		};
+	}
+
+	// Copy flags and symlink flags
+	public static function copyFlags(excl:Bool, ficlone:Bool, force:Bool):Int {
+		var f = 0;
+		if (excl) f |= (untyped __cpp__("UV_FS_COPYFILE_EXCL") : Int);
+		if (ficlone) f |= (untyped __cpp__("UV_FS_COPYFILE_FICLONE") : Int);
+		if (force) f |= (untyped __cpp__("UV_FS_COPYFILE_FICLONE_FORCE") : Int);
+		return f;
+	}
+
+	public static function symlinkFlags(dir:Bool, junction:Bool):Int {
+		var f = 0;
+		if (dir) f |= (untyped __cpp__("UV_FS_SYMLINK_DIR") : Int);
+		if (junction) f |= (untyped __cpp__("UV_FS_SYMLINK_JUNCTION") : Int);
+		return f;
+	}
+
+
+	public static function fsPollInit(l:LuvObject, p:LuvObject):Int
+		return untyped __cpp__("uv_fs_poll_init((uv_loop_t*){0}, (uv_fs_poll_t*){1})", l.ptr, p.ptr);
+
+	// Every call of the callback goes to the exception handler on failure, the immediate error's too
+	public static function fsPollStart(p:LuvObject, path:haxe.io.Bytes, interval:Int, callback:Int->Null<haxe.io.Bytes>->Null<haxe.io.Bytes>->Void):Void {
+		var wrapped = function(status:Int, prev:Null<haxe.io.Bytes>, curr:Null<haxe.io.Bytes>) {
+			try callback(status, prev, curr) catch (e:Dynamic) exceptionHandler(e);
+		};
+		p.refs[0] = wrapped;
+		var c = LuvSys.cString(path);
+		var immediate:Int = untyped __cpp__("uv_fs_poll_start((uv_fs_poll_t*){0}, hxc_luv_fs_poll, (const char*){1}->b->GetBase(), (unsigned int){2})", p.ptr, c, interval);
+		if (immediate < 0) wrapped(immediate, null, null);
+	}
+
+	public static function fsPollStop(p:LuvObject):Int
+		return untyped __cpp__("uv_fs_poll_stop((uv_fs_poll_t*){0})", p.ptr);
+
+	@:keep public static function dispatchFsPoll(id:Int, status:Int, prev:cpp.RawPointer<cpp.Void>, curr:cpp.RawPointer<cpp.Void>):Void {
+		var s = runStack();
+		var reacquire = s.length > 0 && s[s.length - 1];
+		if (reacquire) EvalStdLib.gilReacquire();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[0];
+		if (f != null) {
+			if (status >= 0) f(status, statCopy(prev), statCopy(curr)) else f(status, null, null);
+		}
+		if (reacquire) EvalStdLib.gilRelease();
+	}
+
+
+	public static function ttyInit(l:LuvObject, t:LuvObject, file:Int):Int
+		return untyped __cpp__("uv_tty_init((uv_loop_t*){0}, (uv_tty_t*){1}, (uv_file){2}, 0)", l.ptr, t.ptr, file);
+
+	// 0 UV_TTY_MODE_NORMAL, 1 raw, 2 IO
+	public static function ttySetMode(t:LuvObject, mode:Int):Int {
+		return untyped __cpp__("uv_tty_set_mode((uv_tty_t*){0}, {1} == 0 ? UV_TTY_MODE_NORMAL : {1} == 1 ? UV_TTY_MODE_RAW : UV_TTY_MODE_IO)", t.ptr, mode);
+	}
+
+	public static function ttyResetMode():Int
+		return untyped __cpp__("uv_tty_reset_mode()");
+
+	public static function ttyWinSize(t:LuvObject, out:Array<Int>):Int {
+		var r = 0;
+		var w = 0;
+		var h = 0;
+		untyped __cpp__("{ int hxc_w = 0, hxc_h = 0; {0} = uv_tty_get_winsize((uv_tty_t*){1}, &hxc_w, &hxc_h); {2} = hxc_w; {3} = hxc_h; }", r, t.ptr, w, h);
+		out[0] = w;
+		out[1] = h;
+		return r;
+	}
+
+	// 0 UV_TTY_SUPPORTED, 1 UV_TTY_UNSUPPORTED
+	public static function ttySetVtermState(supported:Bool):Void
+		untyped __cpp__("uv_tty_set_vterm_state({0} ? UV_TTY_SUPPORTED : UV_TTY_UNSUPPORTED)", supported);
+
+	public static function ttyGetVtermState(out:Array<Int>):Int {
+		var r = 0;
+		var s = 0;
+		untyped __cpp__("{ uv_tty_vtermstate_t hxc_s = UV_TTY_UNSUPPORTED; {0} = uv_tty_get_vterm_state(&hxc_s); {1} = hxc_s == UV_TTY_SUPPORTED ? 0 : 1; }", r, s);
+		out[0] = s;
+		return r;
+	}
+
+
+	public static function requestCancel(r:LuvObject):Int
+		return untyped __cpp__("uv_cancel((uv_req_t*){0})", r.ptr);
+
+
+	public static function newRandomRequest():LuvObject
+		return newRequest(untyped __cpp__("(int)sizeof(uv_random_t)"));
+
+	// The buffer lives until the callback; an immediate error goes to the callback as it is
+	public static function randomAsync(l:LuvObject, request:Null<LuvObject>, b:LuvSys.LuvBuffer, callback:Int->Void):Void {
+		var r = request != null ? request : newRandomRequest();
+		r.refs[1] = b;
+		setRequestCallback(r, catchExceptions1(callback));
+		var base = b.bytes;
+		var immediate:Int = untyped __cpp__("uv_random((uv_loop_t*){0}, (uv_random_t*){1}, (char*){2}->b->GetBase() + {3}, (size_t){4}, 0, hxc_luv_random)",
+			l.ptr, r.ptr, base, b.offset, b.length);
+		if (immediate < 0) {
+			release(r);
+			callback(immediate);
+		}
+	}
+
+
+	public static function newAddrRequest():LuvObject
+		return newRequest(untyped __cpp__("(int)sizeof(uv_getaddrinfo_t)"));
+
+	public static function newNameRequest():LuvObject
+		return newRequest(untyped __cpp__("(int)sizeof(uv_getnameinfo_t)"));
+
+	// Address-info flags, in eval's index order
+	public static function addrInfoFlag(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("AI_PASSIVE");
+			case 1: untyped __cpp__("AI_CANONNAME");
+			case 2: untyped __cpp__("AI_NUMERICHOST");
+			case 3: untyped __cpp__("AI_NUMERICSERV");
+			case 4: untyped __cpp__("AI_V4MAPPED");
+			case 5: untyped __cpp__("AI_ALL");
+			case _: untyped __cpp__("AI_ADDRCONFIG");
+		};
+	}
+
+	// Name-info flags
+	public static function nameInfoFlag(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("NI_NAMEREQD");
+			case 1: untyped __cpp__("NI_DGRAM");
+			case 2: untyped __cpp__("NI_NOFQDN");
+			case 3: untyped __cpp__("NI_NUMERICHOST");
+			case _: untyped __cpp__("NI_NUMERICSERV");
+		};
+	}
+
+	// Socket types, to C
+	public static function socketTypeToC(index:Int):Int {
+		return switch (index) {
+			case 0: untyped __cpp__("SOCK_STREAM");
+			case 1: untyped __cpp__("SOCK_DGRAM");
+			case _: untyped __cpp__("SOCK_RAW");
+		};
+	}
+
+	// Hints only when any of family, socktype, protocol or flags is given (family defaulting to
+	// UNSPEC); the list is read and freed on success, and the callback runs under catchExceptions, the
+	// immediate error's included
+	public static function getaddrinfo(l:LuvObject, request:Null<LuvObject>, hints:Null<Array<Int>>, node:Null<haxe.io.Bytes>,
+			service:Null<haxe.io.Bytes>, callback:Int->Null<Array<AddrInfo>>->Void):Void {
+		var r = request != null ? request : newAddrRequest();
+		var h:cpp.RawPointer<cpp.Void> = null;
+		if (hints != null) {
+			h = untyped __cpp__("calloc(1, sizeof(struct addrinfo))");
+			untyped __cpp__("((struct addrinfo*){0})->ai_family = {1}; ((struct addrinfo*){0})->ai_socktype = {2}; ((struct addrinfo*){0})->ai_protocol = {3}; ((struct addrinfo*){0})->ai_flags = {4}",
+				h, hints[0], hints[1], hints[2], hints[3]);
+		}
+		var wrapped = catchExceptions2(callback);
+		setRequestCallback(r, function(status:Int) {
+			if (status < 0) {
+				wrapped(status, null);
+				return;
+			}
+			var list = [];
+			var ai:cpp.RawPointer<cpp.Void> = untyped __cpp__("(void*)((uv_getaddrinfo_t*){0})->addrinfo", r.ptr);
+			while (ai != null) {
+				var storage = LuvSys.newSockaddr();
+				untyped __cpp__("memcpy({0}->b->GetBase(), ((struct addrinfo*){1})->ai_addr, ((struct addrinfo*){1})->ai_addrlen)", storage, ai);
+				var canon:cpp.RawPointer<cpp.Void> = untyped __cpp__("(void*)((struct addrinfo*){0})->ai_canonname", ai);
+				list.push(new AddrInfo(untyped __cpp__("((struct addrinfo*){0})->ai_family", ai), untyped __cpp__("((struct addrinfo*){0})->ai_socktype", ai),
+					untyped __cpp__("((struct addrinfo*){0})->ai_protocol", ai), storage, LuvSys.fromC(canon)));
+				ai = untyped __cpp__("(void*)((struct addrinfo*){0})->ai_next", ai);
+			}
+			untyped __cpp__("uv_freeaddrinfo(((uv_getaddrinfo_t*){0})->addrinfo)", r.ptr);
+			wrapped(0, list);
+		});
+		var n = node == null ? null : LuvSys.cString(node);
+		var s = service == null ? null : LuvSys.cString(service);
+		var np:cpp.RawPointer<cpp.Void> = n == null ? null : untyped __cpp__("(void*){0}->b->GetBase()", n);
+		var sp:cpp.RawPointer<cpp.Void> = s == null ? null : untyped __cpp__("(void*){0}->b->GetBase()", s);
+		var immediate:Int = untyped __cpp__("uv_getaddrinfo((uv_loop_t*){0}, (uv_getaddrinfo_t*){1}, hxc_luv_getaddrinfo, (const char*){2}, (const char*){3}, (const struct addrinfo*){4})",
+			l.ptr, r.ptr, np, sp, h);
+		if (h != null) untyped __cpp__("free({0})", h);
+		if (immediate < 0) {
+			release(r);
+			wrapped(immediate, null);
+		}
+	}
+
+	// Address families, from C: 0 UNSPEC, 1 INET, 2 INET6, 3 another (with its number)
+	public static function addressFamilyFromC(af:Int):Int {
+		return af == (untyped __cpp__("AF_UNSPEC") : Int) ? 0 : af == (untyped __cpp__("AF_INET") : Int) ? 1 : af == (untyped __cpp__("AF_INET6") : Int) ? 2 : 3;
+	}
+
+	// Socket types, from C: 0 STREAM, 1 DGRAM, 2 raw, 3 another
+	public static function socketTypeFromC(st:Int):Int {
+		return st == (untyped __cpp__("SOCK_STREAM") : Int) ? 0 : st == (untyped __cpp__("SOCK_DGRAM") : Int) ? 1 : st == (untyped __cpp__("SOCK_RAW") : Int) ? 2 : 3;
+	}
+
+	// The host and the service up to their NULs
+	public static function getnameinfo(l:LuvObject, request:Null<LuvObject>, addr:haxe.io.Bytes, flags:Int, callback:Int->Null<haxe.io.Bytes>->Null<haxe.io.Bytes>->Void):Void {
+		var r = request != null ? request : newNameRequest();
+		var wrapped = function(status:Int, host:Null<haxe.io.Bytes>, service:Null<haxe.io.Bytes>) {
+			try callback(status, host, service) catch (e:Dynamic) exceptionHandler(e);
+		};
+		setRequestCallback(r, function(status:Int) {
+			if (status < 0) wrapped(status, null, null);
+			else wrapped(0, LuvSys.fromC(untyped __cpp__("(void*)((uv_getnameinfo_t*){0})->host", r.ptr)),
+				LuvSys.fromC(untyped __cpp__("(void*)((uv_getnameinfo_t*){0})->service", r.ptr)));
+		});
+		var immediate:Int = untyped __cpp__("uv_getnameinfo((uv_loop_t*){0}, (uv_getnameinfo_t*){1}, hxc_luv_getnameinfo, (const struct sockaddr*){2}->b->GetBase(), {3})",
+			l.ptr, r.ptr, addr, flags);
+		if (immediate < 0) {
+			release(r);
+			wrapped(immediate, null, null);
+		}
+	}
+
+
+	// Redirections: a pipe to the parent, an inherited fd, an inherited stream
+	public static function redirectPipe(fd:Int, pipe:LuvObject, readable:Bool, writable:Bool, overlapped:Bool):Redirection {
+		var flags:Int = untyped __cpp__("UV_CREATE_PIPE");
+		if (readable) flags |= (untyped __cpp__("UV_READABLE_PIPE") : Int);
+		if (writable) flags |= (untyped __cpp__("UV_WRITABLE_PIPE") : Int);
+		if (overlapped) flags |= (untyped __cpp__("UV_OVERLAPPED_PIPE") : Int);
+		return new Redirection(fd, flags, pipe, 0);
+	}
+
+	public static function redirectFd(fd:Int, fromParent:Int):Redirection
+		return new Redirection(fd, untyped __cpp__("UV_INHERIT_FD"), null, fromParent);
+
+	public static function redirectStream(fd:Int, stream:LuvObject):Redirection
+		return new Redirection(fd, untyped __cpp__("UV_INHERIT_STREAM"), stream, 0);
+
+	// EINVAL before anything when a variable's name holds '='; the stdio array is as long as the
+	// largest redirected fd, at least 3, each slot the first redirection for it or UV_IGNORE; a failed
+	// spawn closes the handle
+	public static function spawn(l:LuvObject, p:LuvObject, onExit:Null<haxe.Int64->Int->Void>, path:haxe.io.Bytes, args:Array<haxe.io.Bytes>,
+			env:Null<Array<{name:haxe.io.Bytes, value:haxe.io.Bytes}>>, cwd:Null<haxe.io.Bytes>, uid:Null<Int>, gid:Null<Int>,
+			flagSet:Array<Bool>, redirect:Array<Redirection>):Int {
+		if (onExit != null) p.refs[0] = function(status:haxe.Int64, signal:Int) {
+			try onExit(status, signal) catch (e:Dynamic) exceptionHandler(e);
+		};
+		if (env != null) for (e in env) for (i in 0...e.name.length) if (e.name.get(i) == "=".code) return untyped __cpp__("UV_EINVAL");
+		var flags = 0;
+		if (uid != null) flags |= (untyped __cpp__("UV_PROCESS_SETUID") : Int);
+		if (gid != null) flags |= (untyped __cpp__("UV_PROCESS_SETGID") : Int);
+		var named:Array<Int> = [untyped __cpp__("UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS"), untyped __cpp__("UV_PROCESS_DETACHED"),
+			untyped __cpp__("UV_PROCESS_WINDOWS_HIDE"), untyped __cpp__("UV_PROCESS_WINDOWS_HIDE_CONSOLE"), untyped __cpp__("UV_PROCESS_WINDOWS_HIDE_GUI")];
+		for (i in 0...5) if (flagSet[i]) flags |= named[i];
+		var count = 3;
+		for (r in redirect) if (r.fd > count) count = r.fd;
+		var stdio:cpp.RawPointer<cpp.Void> = untyped __cpp__("calloc((size_t){0}, sizeof(uv_stdio_container_t))", count);
+		for (i in 0...count) {
+			var found:Null<Redirection> = null;
+			for (r in redirect) if (r.fd == i) { found = r; break; }
+			if (found == null) untyped __cpp__("((uv_stdio_container_t*){0})[{1}].flags = UV_IGNORE", stdio, i);
+			else if (found.stream != null)
+				untyped __cpp__("((uv_stdio_container_t*){0})[{1}].flags = (uv_stdio_flags){2}; ((uv_stdio_container_t*){0})[{1}].data.stream = (uv_stream_t*){3}", stdio, i, found.flags, found.stream.ptr);
+			else
+				untyped __cpp__("((uv_stdio_container_t*){0})[{1}].flags = (uv_stdio_flags){2}; ((uv_stdio_container_t*){0})[{1}].data.fd = {3}", stdio, i, found.flags, found.parentFd);
+		}
+		var cArgs = [for (a in args) LuvSys.cString(a)];
+		var argv:cpp.RawPointer<cpp.Void> = untyped __cpp__("calloc((size_t){0} + 1, sizeof(char*))", cArgs.length);
+		for (i in 0...cArgs.length) untyped __cpp__("((char**){0})[{1}] = (char*){2}->b->GetBase()", argv, i, cArgs[i]);
+		var cEnv = env == null ? null : [for (e in env) {
+			var b = haxe.io.Bytes.alloc(e.name.length + 1 + e.value.length);
+			b.blit(0, e.name, 0, e.name.length);
+			b.set(e.name.length, "=".code);
+			b.blit(e.name.length + 1, e.value, 0, e.value.length);
+			LuvSys.cString(b);
+		}];
+		var envp:cpp.RawPointer<cpp.Void> = null;
+		if (cEnv != null) {
+			envp = untyped __cpp__("calloc((size_t){0} + 1, sizeof(char*))", cEnv.length);
+			for (i in 0...cEnv.length) untyped __cpp__("((char**){0})[{1}] = (char*){2}->b->GetBase()", envp, i, cEnv[i]);
+		}
+		var cPath = LuvSys.cString(path);
+		var cCwd = cwd == null ? null : LuvSys.cString(cwd);
+		var cwdp:cpp.RawPointer<cpp.Void> = cCwd == null ? null : untyped __cpp__("(void*){0}->b->GetBase()", cCwd);
+		var u:Int = uid == null ? 0 : uid;
+		var g:Int = gid == null ? 0 : gid;
+		var hasExit = onExit != null;
+		var released = blockingEnter();
+		var result = 0;
+		untyped __cpp__("{ uv_process_options_t hxc_o; memset(&hxc_o, 0, sizeof(hxc_o)); hxc_o.exit_cb = {0} ? hxc_luv_exit : NULL; hxc_o.file = (const char*){1}->b->GetBase(); hxc_o.args = (char**){2}; hxc_o.env = (char**){3}; hxc_o.cwd = (const char*){4}; hxc_o.flags = (unsigned int){5}; hxc_o.stdio_count = {6}; hxc_o.stdio = (uv_stdio_container_t*){7}; hxc_o.uid = (uv_uid_t){8}; hxc_o.gid = (uv_gid_t){9}; {10} = uv_spawn((uv_loop_t*){11}, (uv_process_t*){12}, &hxc_o); }",
+			hasExit, cPath, argv, envp, cwdp, flags, count, stdio, u, g, result, l.ptr, p.ptr);
+		blockingLeave(released);
+		untyped __cpp__("free({0}); free({1}); free({2})", stdio, argv, envp);
+		if (result < 0) close(p, () -> {});
+		return result;
+	}
+
+	@:keep public static function dispatchExit(id:Int, status:haxe.Int64, signal:Int):Void {
+		var s = runStack();
+		var reacquire = s.length > 0 && s[s.length - 1];
+		if (reacquire) EvalStdLib.gilReacquire();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[0];
+		if (f != null) f(status, signal);
+		if (reacquire) EvalStdLib.gilRelease();
+	}
+
+	public static function disableStdioInheritance():Void
+		untyped __cpp__("uv_disable_stdio_inheritance()");
+
+	public static function killPid(pid:Int, signal:Int):Int
+		return untyped __cpp__("uv_kill({0}, {1})", pid, signal);
+
+	public static function processPid(p:LuvObject):Int
+		return untyped __cpp__("(int)uv_process_get_pid((const uv_process_t*){0})", p.ptr);
+
+
+	public static function newWorkRequest():LuvObject
+		return newRequest(untyped __cpp__("(int)sizeof(uv_work_t)"));
+
+	// The work runs under catchExceptions on a pool thread, the callback under it on the loop's; an
+	// immediate error goes to the callback as it is
+	public static function queueWork(l:LuvObject, request:Null<LuvObject>, work:Void->Void, callback:Int->Void):Void {
+		var r = request != null ? request : newWorkRequest();
+		r.refs[1] = catchExceptions(work);
+		setRequestCallback(r, catchExceptions1(callback));
+		var immediate:Int = untyped __cpp__("uv_queue_work((uv_loop_t*){0}, (uv_work_t*){1}, hxc_luv_work, hxc_luv_after_work)", l.ptr, r.ptr);
+		if (immediate < 0) {
+			release(r);
+			callback(immediate);
+		}
+	}
+
+	// The work trampoline, from a thread the runtime registers for the call
+	@:keep public static function dispatchWork(id:Int):Void {
+		EvalStdLib.gilEnter();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[1];
+		// The exception handler's exit ends the process from any thread
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) Sys.exit(e.code);
+		EvalStdLib.gilLeave();
+	}
+
+
+	// A copy of the running thread's uv_thread_t
+	public static function threadSelf():LuvObject {
+		var t = own(untyped __cpp__("malloc(sizeof(uv_thread_t))"));
+		untyped __cpp__("*(uv_thread_t*){0} = uv_thread_self()", t.ptr);
+		return t;
+	}
+
+	// The function under catchExceptions, rooted until the new thread takes it
+	public static function threadCreate(stackSize:Null<Int>, f:Void->Void, out:Array<LuvObject>):Int {
+		var t = own(untyped __cpp__("malloc(sizeof(uv_thread_t))"));
+		var root = new LuvObject(null, false);
+		root.refs[0] = catchExceptions(f);
+		retainedLock.acquire();
+		root.id = nextId++;
+		retained.set(root.id, root);
+		retainedLock.release();
+		var hasSize = stackSize != null;
+		var size:Int = hasSize ? stackSize : 0;
+		var r = 0;
+		untyped __cpp__("{ uv_thread_options_t hxc_o; hxc_o.flags = {0} ? UV_THREAD_HAS_STACK_SIZE : UV_THREAD_NO_FLAGS; hxc_o.stack_size = (size_t){1}; {2} = uv_thread_create_ex((uv_thread_t*){3}, &hxc_o, hxc_luv_thread, (void*)(intptr_t){4}); }",
+			hasSize, size, r, t.ptr, root.id);
+		if (r < 0) release(root);
+		out[0] = t;
+		return r;
+	}
+
+	// The thread trampoline: the root is released before the function runs
+	@:keep public static function dispatchThread(id:Int):Void {
+		EvalStdLib.gilEnter();
+		retainedLock.acquire();
+		var o = retained.get(id);
+		retained.remove(id);
+		retainedLock.release();
+		var f:Dynamic = o == null ? null : o.refs[0];
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) Sys.exit(e.code);
+		EvalStdLib.gilLeave();
+	}
+
+	// A blocking call
+	public static function threadJoin(t:LuvObject):Int {
+		var released = blockingEnter();
+		var r:Int = untyped __cpp__("uv_thread_join((uv_thread_t*){0})", t.ptr);
+		blockingLeave(released);
+		return r;
+	}
+
+
 	public static function signalInit(l:LuvObject, s:LuvObject):Int
 		return untyped __cpp__("uv_signal_init((uv_loop_t*){0}, (uv_signal_t*){1})", l.ptr, s.ptr);
 
@@ -1205,6 +2091,82 @@ class Luv {
 
 	public static function versionHex():Int
 		return untyped __cpp__("UV_VERSION_HEX");
+}
+
+/**
+	An addrinfo entry: the family, socket type and protocol as C gives them, a copy of the
+	address and the canonical name if any.
+**/
+class AddrInfo {
+	public final family:Int;
+	public final socktype:Int;
+	public final protocol:Int;
+	public final addr:haxe.io.Bytes;
+	public final canonname:Null<haxe.io.Bytes>;
+
+	public function new(family:Int, socktype:Int, protocol:Int, addr:haxe.io.Bytes, canonname:Null<haxe.io.Bytes>) {
+		this.family = family;
+		this.socktype = socktype;
+		this.protocol = protocol;
+		this.addr = addr;
+		this.canonname = canonname;
+	}
+}
+
+/**
+ * A redirection: the child's fd and a uv_stdio_container_t's flags and stream or fd.
+ */
+class Redirection {
+	public final fd:Int;
+	public final flags:Int;
+	public final stream:Null<LuvObject>;
+	public final parentFd:Int;
+
+	public function new(fd:Int, flags:Int, stream:Null<LuvObject>, parentFd:Int) {
+		this.fd = fd;
+		this.flags = flags;
+		this.stream = stream;
+		this.parentFd = parentFd;
+	}
+}
+
+/**
+ * A file operation's result: a result code and, on success, what the request answered.
+ */
+class FsResult {
+	public final code:Int;
+	public final value:Dynamic;
+
+	public function new(code:Int, value:Dynamic) {
+		this.code = code;
+		this.value = value;
+	}
+}
+
+/**
+ * Mkstemp's answer: the path and the file.
+ */
+class FsPathFile {
+	public final path:haxe.io.Bytes;
+	public final file:Int;
+
+	public function new(path:haxe.io.Bytes, file:Int) {
+		this.path = path;
+		this.file = file;
+	}
+}
+
+/**
+ * A directory entry: the uv_dirent_type_t and the name.
+ */
+class FsDirent {
+	public final kind:Int;
+	public final name:haxe.io.Bytes;
+
+	public function new(kind:Int, name:haxe.io.Bytes) {
+		this.kind = kind;
+		this.name = name;
+	}
 }
 
 /**
