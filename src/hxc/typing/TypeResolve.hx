@@ -39,12 +39,6 @@ class TypeResolve {
 		ctx.resolveDepth++;
 		try {
 			resolveModuleInner(ctx, m);
-			// A class's build as a PBuildClass delay, and nothing flushes that bucket while a module is
-			// being typed (load_module flushes only from a field body, . So a module loaded while another
-			// one initialises has its classes QUEUED behind the rest of that initialisation, and only the
-			// outermost resolution drains them - newest first takes the head), the classes a build loads
-			// right after it. A caller outside any resolution gets that flush before it goes on.
-			if (ctx.resolveDepth == 1) drainClassSlots(ctx);
 		} catch (e:Dynamic) {
 			ctx.resolveDepth--;
 			ctx.currentPass = savedPass;
@@ -86,6 +80,9 @@ class TypeResolve {
 					var slot = new ClassSlot(init, mt, c, entry.decl, entry.pos);
 					c.hxcClassSlot = slot;
 					init.pending++;
+					// The class's build as a PBuildClass delay, which the load already did
+					// (ModuleLoader.queueClassBuilds): the declaration resolves inside that build, or wherever a
+					// build site forces it first.
 					ctx.classSlots.push(slot);
 					continue;
 				case _:
@@ -225,6 +222,12 @@ class TypeResolve {
 	public static function forceQueuedBuild(c:TClass):Void {
 		var slot:Null<ClassSlot> = c.hxcClassSlot;
 		if (slot == null || slot.started) return;
+		// Forcing it is running build, which resolves the declaration first and comes back here for
+		// that.
+		if (!hxc.typing.TypeFields.buildStarted(c)) {
+			hxc.typing.TypeFields.buildClass(slot.init.ctx, c);
+			return;
+		}
 		var init = slot.init;
 		slot.started = true;
 		if (init.aborted) { slot.finish(); return; }
@@ -701,6 +704,8 @@ class TypeResolve {
 		if (st0 == BUILDING || st0 == BUILT) return;
 		c.hxcBuildState = BUILDING;
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveClass");
+		// One interface check per class
+		var hasInterf = [false];
 		// Pass 1: heritage. Filter HExtends/HImplements; load each type; set relations.
 		for (f0 in d.dFlags) {
 		var f = switch (f0) {
@@ -734,7 +739,7 @@ class TypeResolve {
 					answerHeritCompletion(ctx, c, true, pt.pos, tc.subjectName, tc.subjectPos);
 					throw tc;
 				};
-				if (t != null) checkHerit(ctx, c, t, true, pt.pos, p);
+				if (t != null) checkHerit(ctx, c, t, true, pt.pos, p, hasInterf);
 			case HImplements(pt):
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, false, pt.pos);
 				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
@@ -748,7 +753,7 @@ class TypeResolve {
 					answerHeritCompletion(ctx, c, false, pt.pos, tc.subjectName, tc.subjectPos);
 					throw tc;
 				};
-				if (t != null) checkHerit(ctx, c, t, false, pt.pos);
+				if (t != null) checkHerit(ctx, c, t, false, pt.pos, null, hasInterf);
 			case _:
 		}
 		}
@@ -1433,7 +1438,12 @@ class TypeResolve {
 		return false;
 	}
 
-	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position):Void {
+	// A @:libType class's interfaces are never checked
+	static function scheduleInterfaceCheck(ctx:Context, c:TClass):Void
+		ctx.delay(Context.PConnectField, () -> hxc.filters.InterfaceCheck.checkInterfacesOrDelay(ctx, c));
+
+	static function checkHerit(ctx:Context, c:TClass, t:T, isExtends:Bool, p:Position, ?declP:Position, ?hasInterf:Array<Bool>):Void {
+		var isLib = TypeFunctions.hasMeta(":libType", c.meta);
 		if (isExtends) {
 			if (c.superClass != null) throw new ContextError("Cannot extend several classes", p);
 			switch (TypeFunctions.follow(t)) {
@@ -1462,6 +1472,11 @@ class TypeResolve {
 							throw new ContextError("Cannot extend by using a class", p);
 						// Prepended, so interfaces holds reverse source order
 						c.interfaces.unshift({c: csup, params: params});
+						// An interface's super-interfaces are checked too, once, at PConnectField.
+						if (hasInterf != null && !hasInterf[0]) {
+							if (!isLib) scheduleInterfaceCheck(ctx, c);
+							hasInterf[0] = true;
+						}
 						// Record `c` as a descendant of its
 						// inheritance tree downward (keep overrides of reachable base methods).
 						TypeFunctions.addDescendant(csup, c);
@@ -1498,6 +1513,11 @@ class TypeResolve {
 						throw new ContextError("You can only implement an interface", p);
 					// Prepended, so interfaces holds reverse source order
 					c.interfaces.unshift({c: intf, params: params});
+					// The class's interfaces are checked once, at PConnectField.
+					if (hasInterf != null && !hasInterf[0] && !isLib && !TypeFunctions.hasMeta("$do_not_check_interf", c.meta)) {
+						scheduleInterfaceCheck(ctx, c);
+						hasInterf[0] = true;
+					}
 					TypeFunctions.addDescendant(intf, c);
 					// An implemented interface is forced the same way.
 					forceBuild(ctx, intf);

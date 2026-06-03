@@ -58,6 +58,11 @@ class TypeFields {
 	// finalizeClass.
 	static var buildQueued:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
 	static var classBuilt:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
+
+	/**
+	 * Whether the class's build has begun.
+	 */
+	public static function buildStarted(c:TClass):Bool return classBuilt.exists(c);
 	// The fields a build bound with a lazy signature, per world; unwrapped once that world's bodies
 	// have typed. The macro world finalizes in the middle of a host flush, and the host's lazies are
 	// not its to force.
@@ -198,7 +203,6 @@ class TypeFields {
 			tt("resolveModule", function() { hxc.typing.TypeResolve.resolveModule(ctx, mres); return 0; });
 			i++;
 		}
-		hxc.typing.TypeResolve.flushClassSlots(ctx);
 		// A module's context init runs BEFORE its fields type, which is what puts a wildcard import's
 		// statics into the module globals in time for anything that reads them. hxc queues that work as a
 		// PBuildModule delay, so the bucket is drained here, ahead of the bodies rather than with them.
@@ -402,7 +406,7 @@ class TypeFields {
 			if (c.superClass != null) buildClass(ctx, c.superClass.c);
 			for (i in c.interfaces) buildClass(ctx, i.c);
 			if (!ctx.declAborted) {
-				hxc.eval.EvalMacro.ensureBuilt(ctx, c);
+				hxc.eval.EvalMacro.runClassBuildMacros(ctx, c);
 				var entry = ctx.declOfType.get(Context.pathKey(c.path));
 				if (entry != null) switch (entry.decl) {
 					case EClass(d):
@@ -743,10 +747,13 @@ class TypeFields {
 		// The class init ends by giving a @:structInit class its constructor.
 		if (TypeFunctions.hasMeta(":structInit", c.meta) && !TypeFunctions.hasClassFlag(c, CInterface))
 			Typer.ensureStructInitCtorFor(tctx, c);
-		// Each extern function's verify_extern into PTypeField, and drains a bucket last-in first-out:
-		// the field declared last reports its default-value verdict first.
-		externChecks.reverse();
-		for (x in externChecks) checkExternDefaults(ctx, tctx, x.cf, x.fd, x.isStatic, x.abstractMember);
+		// Each extern function's default-value check is delayed into PTypeField, where the classes it
+		// names have built; the bucket drains last-in first-out, so the field declared last reports its
+		// default-value verdict first.
+		for (x in externChecks) {
+			var xx = x;
+			ctx.delay(Context.PTypeField, () -> checkExternDefaults(ctx, tctx, xx.cf, xx.fd, xx.isStatic, xx.abstractMember));
+		}
 	}
 
 	/**
@@ -930,6 +937,8 @@ class TypeFields {
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
+			// Forcing the lazy is typing the body; it runs once.
+			if (bodyTyped.exists(cf)) continue;
 			try {
 				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
 			} catch (e:Dynamic) fatalFieldError(ctx, e);
@@ -981,7 +990,7 @@ class TypeFields {
 		switch (cf.type) {
 			case TLazy(r):
 				try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
-				if (cf.expr != null) return;
+				if (cf.expr != null || bodyTyped.exists(cf)) return;
 			case _:
 		}
 		// Re-entry on the same field returns its current (still-open) signature, as a lazy type still in
@@ -993,7 +1002,10 @@ class TypeFields {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[fforce] no decl for " + c.path.name + "." + cf.name);
 			return;
 		}
-		var isInlineField = switch (cf.kind) { case Method(MethInline) | Var({read: AccInline}): true; case _: false; };
+		// Inline-ness comes from the declaration's access list: a @:require has already rewritten kind to
+		// AccRequire, and the initializer still binds.
+		var isInlineField = false;
+		for (a in cff.cffAccess) if (a.access == AInline) isInlineField = true;
 		// The bind rule - whether this field's body is typed at all:
 		// ((not (class extern || field extern) || inline) && not abstract-method && not interface)
 		// || it is __init__
@@ -1163,7 +1175,10 @@ class TypeFields {
 						// property that is no physical variable is reported at the field, once (maybe_display_error),
 						// before the initializer is typed.
 						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
-						var isInlineVar = cf.kind.match(Var({read: AccInline}));
+						// Inline-ness is the declaration's modifier, not kind, which a @:require has
+						// already turned into AccRequire.
+						var isInlineVar = false;
+						for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
 						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
 							else if (externVar && !isInlineVar) "on extern non-inline variable"
 							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
@@ -1260,7 +1275,10 @@ class TypeFields {
 						// property that is no physical variable is reported at the field, once (maybe_display_error),
 						// before the initializer is typed.
 						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
-						var isInlineVar = cf.kind.match(Var({read: AccInline}));
+						// Inline-ness is the declaration's modifier, not kind, which a @:require has
+						// already turned into AccRequire.
+						var isInlineVar = false;
+						for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
 						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
 							else if (externVar && !isInlineVar) "on extern non-inline variable"
 							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"

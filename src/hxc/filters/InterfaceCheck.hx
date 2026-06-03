@@ -14,25 +14,25 @@ import hxc.context.PurityState.Purity;
 // A class that implements an interface must provide each interface field with a compatible signature; a
 // missing field or an incompatible redefinition is an error.
 class InterfaceCheck {
-	public static function run(ctx:Context):Void {
-		// The found-field compatibility checks are DELAYED in the reference (delay PForce) and its delays
-		// run newest-first, so they execute here in reverse queue order after every missing-field error
-		// reported inline. (delay ctx PForce).
-		var deferred:Array<Void->Void> = [];
-		for (m in ctx.modules) for (mt in m.types) switch (mt) {
-			case TClassDecl(c):
-				// The Proxy magic type and extern C#-native classes are exempt. from check_interfaces.
-				if (c.path.name == "Proxy" && c.path.pack.length == 0) continue;
-				if (TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasMeta(":cs.native", c.meta)) continue;
-				for (imp in c.interfaces) checkInterface(ctx, c, imp.c, imp.params, deferred);
-			case _:
-		}
-		deferred.reverse();
-		for (d in deferred) d();
+	// Queued at PConnectField when the heritage is set (TypeResolve.checkHerit). A class whose build macros
+	// are still running cannot be checked yet, so the check is queued again once they finish (the
+	// BuildMacro pending list).
+	public static function checkInterfacesOrDelay(ctx:Context, c:TClass):Void {
+		var pending = hxc.eval.EvalMacro.buildMacroPending(c);
+		if (pending != null) pending.push(() -> ctx.delay(Context.PConnectField, () -> checkInterfacesOrDelay(ctx, c)));
+		else checkInterfaces(ctx, c);
+	}
+
+	public static function checkInterfaces(ctx:Context, c:TClass):Void {
+		// The Proxy package and extern C#-native classes are exempt.
+		if (c.path.pack.length > 0 && c.path.pack[0] == "Proxy") return;
+		if (TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasMeta(":cs.native", c.meta)) return;
+		for (imp in c.interfaces) checkInterface(ctx, c, imp.c, imp.params);
 	}
 
 	// Find a field on the class or a superclass, not on an interface, returning its param-mapping
-	// function, mapped type, and field.
+	// function, mapped type, and field. The super's field type goes through applyParams, which forces
+	// a lazy one - its body types there.
 	static function classFieldNoInterf(c:TClass, name:String):{map:T->T, t:T, f:TClassField} {
 		var own = c.fields.get(name);
 		if (own != null) return {map: function(t) return t, t: own.type, f: own};
@@ -43,19 +43,30 @@ class InterfaceCheck {
 		return {map: map, t: TypeFunctions.applyParams(sup.c.params, sup.params, r.t), f: r.f};
 	}
 
-	static function checkInterface(ctx:Context, c:TClass, intf:TClass, params:TParams, deferred:Array<Void->Void>):Void {
-		// A super-interface's fields are also required, with the interface's params applied.
+	// The super-interfaces first, then the interface's fields in ascending name order, each with its
+	// overloads in reverse
+	static function checkInterface(ctx:Context, c:TClass, intf:TClass, params:TParams):Void {
 		for (i2 in intf.interfaces)
-			checkInterface(ctx, c, i2.c, [for (p in i2.params) TypeFunctions.applyParams(intf.params, params, p)], deferred);
+			checkInterface(ctx, c, i2.c, [for (p in i2.params) TypeFunctions.applyParams(intf.params, params, p)]);
 		var p = c.namePos;
-		for (f in intf.orderedFields) checkField(ctx, c, intf, params, f, p, deferred);
+		var names = [for (k in intf.fields.keys()) k];
+		names.sort(Reflect.compare);
+		for (name in names) {
+			var cf = intf.fields.get(name);
+			checkField(ctx, c, intf, params, cf, p);
+			if (TypeFunctions.hasClassFieldFlag(cf, CfOverload)) {
+				var ol = cf.overloads.copy();
+				ol.reverse();
+				for (o in ol) checkField(ctx, c, intf, params, o, p);
+			}
+		}
 	}
 
 	static function isMethod(f:TClassField):Bool {
 		return switch (f.kind) { case Method(_): true; case _: false; };
 	}
 
-	static function checkField(ctx:Context, c:TClass, intf:TClass, params:TParams, f:TClassField, p:Position, deferred:Array<Void->Void>):Void {
+	static function checkField(ctx:Context, c:TClass, intf:TClass, params:TParams, f:TClassField, p:Position):Void {
 		var t = TypeFunctions.applyParams(intf.params, params, f.type);
 		var found:Null<{map:T->T, t:T, f:TClassField}> = null;
 		try found = classFieldNoInterf(c, f.name) catch (_:NotFound) found = null;
@@ -68,10 +79,15 @@ class InterfaceCheck {
 				ctx.addDiagnostic("Field " + f.name + " needed by " + Context.sTypePath(intf.path) + " is missing", p);
 			return;
 		}
-		deferred.push(function() checkFoundField(ctx, c, intf, params, f, found));
+		// Delayed to PForce: the found field's type is forced, then compared
+		var f2 = found.f;
+		ctx.delay(Context.PForce, function() {
+			TypeFunctions.follow(f2.type);
+			checkFoundField(ctx, c, intf, params, f, found);
+		});
 	}
 
-	// The compatibility half of check_field, run from the reversed deferred queue. (the delay PForce body).
+	// The compatibility half of the field check (the PForce body).
 	static function checkFoundField(ctx:Context, c:TClass, intf:TClass, params:TParams, f:TClassField, found:{map:T->T, t:T, f:TClassField}):Void {
 		var f2 = found.f;
 		var t2 = found.t;

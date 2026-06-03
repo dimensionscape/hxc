@@ -144,7 +144,6 @@ class Compiler {
 		hxc.parser.Parser.resetPerRequest();
 		hxc.context.ModuleLoader.resetPerRequest();
 		hxc.eval.EvalMacro.resetPerRequest();
-		hxc.typing.CoreApi.reset();
 		hxc.context.ServerCache.resetRequest();
 		// The usage flags belong to one request (each json call sets them); the legacy @usage lane never
 		// sets them, so they must not survive a json one.
@@ -1090,6 +1089,13 @@ class Compiler {
 			ctx.addTypingError(e.message, e.pos, e.depth, e.callChain);
 			flushPendingMessages(ctx);
 			exitRequest(1);
+		} catch (e:hxc.context.Context.ContextError) {
+			// An Error out of an init macro's load - the macro module not being found - is reported like
+			// any other.
+			ctx.raiseTypingErrors = false;
+			ctx.addTypingError(e.message, e.pos, e.depth, null);
+			flushPendingMessages(ctx);
+			exitRequest(1);
 		} catch (e:hxc.parser.LexerError) {
 			// The top-level handler wraps the whole compilation, init macros included, so a module an init
 			// macro pulls in reports its parse failure like any other one does. Without these two the
@@ -1409,8 +1415,6 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
-			// Interface conformance (missing/incompatible fields) is checked after all fields are typed. .
-			hxc.filters.InterfaceCheck.run(ctx);
 			// UnusedPure (hxc-only) moved into Filters.run after inline_constructors: an inlined value
 			// block ends with a read of its result local, and consumes exactly that read to splice the
 			// block flat (unwrap on Some io).

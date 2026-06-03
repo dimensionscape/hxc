@@ -1451,7 +1451,18 @@ class ModuleLoader {
 		}
 	}
 
+	// Make module, register, build types.
+	// The module types in a context of its own at PBuildModule, so a load its imports make does not flush;
+	// only the load that asked for the module, back in its own context, does.
 	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+		var savedPass = ctx.currentPass;
+		ctx.currentPass = Context.PBuildModule;
+		var m = try typeModuleInner(ctx, mpath, file, tdecls) catch (e:Dynamic) { ctx.currentPass = savedPass; throw e; };
+		ctx.currentPass = savedPass;
+		return m;
+	}
+
+	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
 		// Register the module before creating its types; register those types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false);

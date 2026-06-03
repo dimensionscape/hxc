@@ -113,6 +113,11 @@ class Context {
 
 	public var moduleNonexistentLut:StringMap<Bool>;
 
+	/**
+	 * Core API loader context, separate for host and macro worlds.
+	 */
+	public var coreApiCtx:Null<Context> = null;
+
 	/** Registration order. */
 	public var modules:Array<ModuleDef>;
 

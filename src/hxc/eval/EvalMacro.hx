@@ -578,7 +578,7 @@ class EvalMacro {
 			var ok = typingTimer(curTctx.com, function() return try {
 				Typer.castOrUnifyRaise(curTctx, t2, e1, Position.nullPos);
 				true;
-			} catch (_:hxc.core.TypingError.CastUnifyError) false);
+			} catch (_:hxc.core.TypingError.CastUnifyError) false, true);
 			return ok ? VTrue : VFalse;
 		});
 		reg2("resolveType", "resolve_type", function(a) {
@@ -672,6 +672,7 @@ class EvalMacro {
 			var usings = (a.length > 3 && a[3] != VNull) ? [for (uv in arrOf(a[3])) ({path: decodeTypePath(ec, uv), pos: dp} : PlacedTypePath)] : [];
 			var existing = com.moduleLut.get(Context.pathKey(path));
 			if (existing != null) {
+				// The added classes queue their builds and nothing is forced here.
 				var added = hxc.context.ModuleLoader.addTypeDeclsToModule(com, existing, types, imports, usings, dp);
 				for (mt in added) switch (mt) {
 					case TClassDecl(c):
@@ -680,7 +681,6 @@ class EvalMacro {
 							case EClass(d): hxc.typing.TypeResolve.resolveClass(com, c, d, def.pos);
 							case _:
 						}
-						hxc.typing.TypeFields.forceClassFields(com, c);
 					case _:
 				}
 			} else {
@@ -689,11 +689,8 @@ class EvalMacro {
 				var mdep = com.currentModule;
 				var m = hxc.context.ModuleLoader.defineModuleDecls(com, path, types, imports, usings, dp, mdep);
 				addMacroTypeDependency(com, m, mdep);
+				// As defineType: nothing is forced here.
 				hxc.typing.TypeResolve.resolveModule(com, m);
-				for (mt in m.types) switch (mt) {
-					case TClassDecl(c): hxc.typing.TypeFields.forceClassFields(com, c);
-					case _:
-				}
 			}
 			return VNull;
 		});
@@ -989,8 +986,8 @@ class EvalMacro {
 			catch (e:hxc.context.Context.ContextError) { throw new TypingError(e.message, curPos); };
 		hostModule.extra.kind = MFake;
 		addMacroTypeDependency(com, hostModule, hostDep);
+		// defineType types the module: its classes queue their builds and nothing is forced here.
 		hxc.typing.TypeResolve.resolveModule(com, hostModule);
-		forceModuleClassFields(com, hostModule);
 
 		if (!com.isMacro && hasMacroFields) {
 			if (macroCom == null) {
@@ -1004,7 +1001,6 @@ class EvalMacro {
 			macroModule.extra.kind = MMacro;
 			addMacroTypeDependency(macroCom, macroModule, macroDep);
 			hxc.typing.TypeResolve.resolveModule(macroCom, macroModule);
-			forceModuleClassFields(macroCom, macroModule);
 			staleMacroCtx = macroCtx;
 			macroCtx = null;
 			lastModuleCount = -1;
@@ -1166,13 +1162,19 @@ class EvalMacro {
 		return !builtClasses.exists(key) && collectBuildEntries(c).length > 0;
 	}
 
+	// Asking for a class's build macros is asking for its build, which is a no-op while that build runs and
+	// once it ran.
 	public static function ensureBuilt(com:Context, c:TClass):Void {
+		if (!hxc.typing.TypeFields.buildStarted(c)) hxc.typing.TypeFields.buildClass(com, c);
+	}
+
+	// The build macros, run by the class's own build (TypeFields.buildClass) after its heritage is set.
+	public static function runClassBuildMacros(com:Context, c:TClass):Void {
 		// Per world: the built mark is on the class object, and the macro context holds its own copy of
 		// every class. Keyed by path alone, a class the host had built would be skipped in the macro
 		// world and its @:build would never run.
 		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
 		if (builtClasses.exists(key)) return;
-		// The build macros run inside the class's build, after set_heritance.
 		hxc.typing.TypeResolve.forceQueuedBuild(c);
 		// The super chain and interfaces build first so a child's build macro sees the parent's macro-added
 		// fields.
@@ -1204,8 +1206,42 @@ class EvalMacro {
 				throw new hxc.core.TypingError.ModuleNotFoundError(message, pos);
 			throw new TypingError(message, pos);
 		}
+		// While the build macros run, the class's build state is BuildMacro pending; what a caller adds
+		// there runs once they finish, and not after a raise.
+		buildMacroPendings.set(c, []);
+		try runBuildEntries(com, c, entries, fail) catch (e:Dynamic) {
+			buildMacroPendings.remove(c);
+			throw e;
+		}
+		var pending = buildMacroPendings.get(c);
+		buildMacroPendings.remove(c);
+		for (f in pending) f();
+		// An enum abstract's rewrite runs after every @:build, over the fields they left.
+		// TypeResolve.resolveModule left it for here.
+		switch (c.kind) {
+			case KAbstractImpl(a) if (a.isEnum): hxc.typing.TypeResolve.buildEnumAbstractAfterBuild(com, a);
+			case _:
+		}
+		// Class initialization goes on past its build; a build that re-resolved the class already went
+		// through it.
+		hxc.typing.TypeResolve.initClassTail(com, c);
+	}
+
+	static var buildMacroPendings = new haxe.ds.ObjectMap<TClass, Array<Void->Void>>();
+
+	/**
+	 * The BuildMacro pending list of a class whose build macros are running, else null.
+	 */
+	public static function buildMacroPending(c:TClass):Null<Array<Void->Void>>
+		return buildMacroPendings.get(c);
+
+	static function runBuildEntries(com:Context, c:TClass, entries:Array<MetadataEntry>, fail:(String, Position, ?TypingError) -> Void):Void {
 		for (entry in entries) try runBuild(com, c, entry) catch (e:TypingError) {
 			fail(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos, e);
+		} catch (e:hxc.context.Context.ContextError) {
+			// What applying the macro raises - the macro module's missing-module error among it - is
+			// re-raised as it is; only a macro that answered nothing is Build failure.
+			fail(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(e);
 			if (info != null) {
@@ -1237,15 +1273,6 @@ class EvalMacro {
 			if (Std.isOfType(e, EvalExceptions.EvalSysExit) || Std.isOfType(e, EvalExceptions.HostException)) throw e;
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
-		// An enum abstract's rewrite runs after every @:build, over the fields they left.
-		// TypeResolve.resolveModule left it for here.
-		switch (c.kind) {
-			case KAbstractImpl(a) if (a.isEnum): hxc.typing.TypeResolve.buildEnumAbstractAfterBuild(com, a);
-			case _:
-		}
-		// Class initialization goes on past its build; a build that re-resolved the class already went
-		// through it.
-		hxc.typing.TypeResolve.initClassTail(com, c);
 	}
 
 	static function collectBuildEntries(c:TClass):Array<MetadataEntry> {
@@ -1791,7 +1818,8 @@ class EvalMacro {
 						curPos = savedPos;
 						continue;
 					}
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true);
+					// Loads at the --macro position.
+					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true, null, null, e.pos);
 					var ec = getContext(com);
 					var savedPos = curPos;
 					curPos = e.pos;
@@ -2575,7 +2603,12 @@ class EvalMacro {
 	public static function loadDisplayModuleInMacro(host:Context, path:hxc.core.Globals.Path):Void {
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
 		hxc.typing.TypeFields.macroDisplayWindow = true;
-		try loadDisplayModuleInMacroInner(host, path) catch (e:Dynamic) { hxc.typing.TypeFields.macroDisplayWindow = oldWindow; throw e; }
+		// A display answer or a type path completion leaves; any other failure of the load or its finalize
+		// is dropped.
+		try loadDisplayModuleInMacroInner(host, path)
+		catch (e:hxc.core.TypingError) {}
+		catch (e:hxc.context.Context.ContextError) {}
+		catch (e:Dynamic) { hxc.typing.TypeFields.macroDisplayWindow = oldWindow; throw e; }
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 	}
 
@@ -2624,8 +2657,9 @@ class EvalMacro {
 		if (displayWindow) macroCom.displayFullTyping = host.displayFullTyping;
 		try {
 			// A sub-type's module file has a different name than the class; the caller passes the declaring
-			// module's path. .
-			var m = hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), Position.nullPos);
+			// module's path.
+			// A macro module that does not exist is a missing-module error at the macro call.
+			var m = hxc.context.ModuleLoader.loadModule(macroCom, modulePath != null ? modulePath : macroLoadPath(path), p != null ? p : Position.nullPos);
 			macroCurModule = m;
 			// The module being typed DEPENDS on the macro module it called into, across the context
 			// boundary. Without it a macro's own file could be invalidated and every module built by it
@@ -2780,6 +2814,11 @@ class EvalMacro {
 			// exits ends the compile there rather than leaving typing to carry on without its result.
 			if (isDisplayResult(e) || Std.isOfType(e, hxc.core.TypingError.FatalError)
 				|| Std.isOfType(e, hxc.eval.EvalExceptions.EvalSysExit) || Std.isOfType(e, hxc.eval.EvalExceptions.HostException)) throw e;
+			// What the macro module's load or finalize raises - a class build's Type not found among it -
+			// goes to the macro call. The swallows are the callers': the macro force's own display flag
+			// (not the display load mode every force passes), and the catch-all of loading the display
+			// module in the macro context.
+			if (Std.isOfType(e, hxc.context.Context.ContextError)) throw e;
 		}
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
@@ -3314,7 +3353,7 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method);
+				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, null, null, p);
 			case _:
 				throw new TypingError("genericBuild requires a single expression call parameter", p);
 		}
@@ -3429,7 +3468,7 @@ class EvalMacro {
 			case _:
 		}
 		if (target == null) throw new TypingError("Invalid macro call", p);
-		loadMacroClass(com, {pack: target.pack, name: target.module}, target.method);
+		loadMacroClass(com, {pack: target.pack, name: target.module}, target.method, false, null, null, p);
 		var ec = getContext(com);
 		var savedTctx = curTctx;
 		var savedPos = curPos;
@@ -3928,6 +3967,8 @@ class EvalMacro {
 		var com = ctx.com;
 		var before = com.diagnostics.length;
 		var oldRaise = com.raiseTypingErrors;
+		// Typing an expression is typingTimer with the type needed.
+		var oldPass = needTypePass(com, true);
 		com.raiseTypingErrors = true;
 		// typingTimer turns the report off for the whole API call, so an expression the MACRO asked to type
 		// reports back to the macro (which usually means a `catch`) rather than becoming a finding about
@@ -3935,11 +3976,13 @@ class EvalMacro {
 		var restoreReport = com.disableReportMode();
 		var te = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (err:haxe.Exception) {
 			com.raiseTypingErrors = oldRaise;
+			com.currentPass = oldPass;
 			restoreReport();
 			if (com.diagnostics.length > before) com.diagnostics.resize(before);
 			throw err;
 		};
 		com.raiseTypingErrors = oldRaise;
+		com.currentPass = oldPass;
 		restoreReport();
 		// Fallback for a path that records into diagnostics directly (bypassing addDiagnostic): surface
 		// the first new error and roll the trial diagnostics back.
@@ -5197,14 +5240,27 @@ class EvalMacro {
 	// typingTimer: while an API types or loads, a reported error is RAISED and the report mode is off; both
 	// are restored on the way out. What the raise reaches is the API's wrapper, which makes it the macro's
 	// Error value.
-	static function typingTimer<T>(com:Context, f:Void->T):T {
+	static function typingTimer<T>(com:Context, f:Void->T, needType:Bool = false):T {
 		var oldRaise = com.raiseTypingErrors;
+		var oldPass = needTypePass(com, needType);
 		com.raiseTypingErrors = true;
 		var restoreReport = com.disableReportMode();
-		var r = try f() catch (e:Dynamic) { com.raiseTypingErrors = oldRaise; restoreReport(); throw e; };
+		var r = try f() catch (e:Dynamic) { com.raiseTypingErrors = oldRaise; com.currentPass = oldPass; restoreReport(); throw e; };
 		com.raiseTypingErrors = oldRaise;
+		com.currentPass = oldPass;
 		restoreReport();
 		return r;
+	}
+
+	// typingTimer: an API call that types moves a context still before PTypeField there and flushes the
+	// class builds first; the pass is restored on exit.
+	static function needTypePass(com:Context, needType:Bool):Int {
+		var oldPass = com.currentPass;
+		if (needType && com.currentPass < Context.PTypeField) {
+			com.currentPass = Context.PTypeField;
+			com.flushPass(Context.PBuildClass);
+		}
+		return oldPass;
 	}
 
 	static function applyFn(ec:EvalContext, fn:EvalValue, args:Array<EvalValue>):EvalValue {

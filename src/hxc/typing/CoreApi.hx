@@ -13,13 +13,9 @@ import hxc.context.Context;
 import hxc.context.ModuleLoader;
 
 class CoreApi {
-	// One core context per compilation process
-	static var coreCtx:Null<Context> = null;
-
-	public static function reset():Void coreCtx = null;
-
 	static function coreContext(ctx:Context):Context {
-		if (coreCtx != null) return coreCtx;
+		// One core context per typer globals, so the host and the macro world each build their own.
+		if (ctx.coreApiCtx != null) return ctx.coreApiCtx;
 		// Cloned com, empty defines then CoreApi/Sys/target.threaded (+Macro in the macro context), class
 		// path = std path, signature locked.
 		var defines = new hxc.core.Define();
@@ -32,6 +28,10 @@ class CoreApi {
 		c.platform = ctx.platform;
 		c.platformConfig = ctx.platformConfig;
 		c.isMacro = ctx.isMacro;
+		// The clone is a record copy: what it does not name crosses, so the core context logs its own
+		// typing under -v like every other world.
+		c.verbose = ctx.verbose;
+		c.debug = ctx.debug;
 		// The clone keeps the memo of paths already known to be missing: it is the one map every world
 		// shares. A core context with its own map would memoize the same-package misses it met
 		// (haxe.exceptions.Exception from PosException) where the host could not see them, and the host
@@ -40,7 +40,7 @@ class CoreApi {
 		ModuleLoader.attach(c);
 		ModuleLoader.initBasicTypes(c);
 		hxc.context.DisplayJson.cache.maybeAddContextSign(c, "load_core_class");
-		coreCtx = c;
+		ctx.coreApiCtx = c;
 		return c;
 	}
 
