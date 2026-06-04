@@ -217,10 +217,6 @@ class Context {
 	// fields without bodies.
 	public final abstractNoExprFields = new haxe.ds.ObjectMap<hxc.core.Type.TClassField, Bool>();
 
-	// Record @:to arity results against syntax before the implementation class exists, then transfer
-	// them to typed fields in the same pass.
-	public final abstractToArityFailed = new haxe.ds.ObjectMap<hxc.ast.Ast.ClassField, Bool>();
-
 	public function deferFieldWarning(c:hxc.core.Type.TClass, w:hxc.core.WarningList.Warning,
 			options:Array<Array<hxc.core.WarningList.WarningOption>>, msg:String, pos:hxc.ast.Position):Void {
 		var l = pendingFieldDiagnostics.get(c);

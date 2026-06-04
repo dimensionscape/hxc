@@ -1491,9 +1491,12 @@ class ModuleLoader {
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.
 		hxc.filters.ImportCheck.loadModuleImports(ctx, m);
-		// An import can only precede the declarations (grammar), so init_module_type has loaded
-		// every imported module - queueing its classes - before it reaches this module's first
-		// class. The bucket drains LIFO, so the importer's classes build first and type last.
+		// An import can only precede the declarations (grammar), so every imported module has loaded -
+		// queueing its classes - before this module's first class is reached. The bucket drains LIFO, so
+		// the importer's classes build first and type last. The declarations then initialize IN order,
+		// here at the load - a class queues its build, a typedef, enum or abstract initialises on the
+		// spot (a typedef loads its target).
+		hxc.typing.TypeResolve.resolveModule(ctx, m);
 		queueClassBuilds(ctx, m.types);
 		return m;
 	}

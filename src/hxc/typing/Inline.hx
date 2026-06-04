@@ -153,6 +153,13 @@ class Inline {
 				throw new TypingError("Function " + cf.name + " cannot be inlined because of a not final return", p);
 			}
 			null;
+		} catch (e:Dynamic) {
+			// An Error out of the inliner (a write check) leaves this call, not the guard: without the
+			// pop the callee would read as mid-inline for the rest of the compile and every later call to
+			// it would go uninlined and unchecked.
+			depth--;
+			cfStack.pop();
+			throw e;
 		};
 		depth--;
 		cfStack.pop();
@@ -238,7 +245,8 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure) catch (_:InlineBail) null;
+		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure) catch (_:InlineBail) null
+			catch (e:Dynamic) { depth--; cfStack.pop(); throw e; };
 		depth--;
 		cfStack.pop();
 		if (r != null) r = inlineMetadata(r, cf.meta);

@@ -27,6 +27,17 @@ class MinUnifyError extends TypingError {}
 // lets anything else out of the macro.
 class CastUnifyError extends TypingError {}
 
+// An unknown identifier, which typing an identifier against an expected enum catches (and no other failure
+// of identifier typing). The message is the printed form, so a reader of the text sees no difference.
+class UnknownIdentError extends TypingError {
+	public final ident:String;
+
+	public function new(ident:String, pos:Position) {
+		super("Unknown identifier : " + ident, pos);
+		this.ident = ident;
+	}
+}
+
 /**
  * Module not found. Kept OUT of WithTypeError (as a call error is), so it never picks up the "For
  * function argument 'x'" annotation - a path that does not resolve is not an argument-unification

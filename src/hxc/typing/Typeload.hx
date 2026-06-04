@@ -595,7 +595,12 @@ class Typeload {
 	// display or expression parameters).
 	public static function resolveTypePath(ctx:Context, path:Path, sub:Null<String>, p:Position):ModuleType {
 		if (path.pack.length > 0 && path.pack[0] == "std") {
-			path = {pack: path.pack.slice(1), name: path.name};
+			// `std.x.Y` loads the module std.x.Y, and only when that module does not exist the module x.Y -
+			// a QUALIFIED load, so std.Type from inside package `cases` is the top-level Type, never a
+			// cases.Type beside the caller.
+			var m = hxc.context.ModuleLoader.loadModuleOpt(ctx, path, p);
+			if (m == null) m = hxc.context.ModuleLoader.loadModule(ctx, {pack: path.pack.slice(1), name: path.name}, p);
+			return hxc.context.ModuleLoader.findTypeInModule(ctx, m, sub != null ? sub : path.name, p);
 		}
 		if (sub == null && path.pack.length == 0 && ctx.currentModule != null) {
 			for (mt in ctx.currentModule.types) {

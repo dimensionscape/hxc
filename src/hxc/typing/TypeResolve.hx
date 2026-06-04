@@ -80,10 +80,13 @@ class TypeResolve {
 					var slot = new ClassSlot(init, mt, c, entry.decl, entry.pos);
 					c.hxcClassSlot = slot;
 					init.pending++;
-					// The class's build as a PBuildClass delay, which the load already did
-					// (ModuleLoader.queueClassBuilds): the declaration resolves inside that build, or wherever a
-					// build site forces it first.
+					// The class's build is queued as a PBuildClass delay, in declaration order with the
+					// rest of the
+					// module's initialisation: the declaration resolves inside that build, or wherever a
+					// build site
+					// forces it first.
 					ctx.classSlots.push(slot);
+					hxc.typing.TypeFields.queueClassBuild(ctx, c);
 					continue;
 				case _:
 			}
@@ -1009,6 +1012,11 @@ class TypeResolve {
 					case _:
 				}
 				resolveFieldType(ctx, params, target, cff, c.module, c);
+				// Creating a method runs the abstract checks on the field it creates.
+				switch (c.kind) {
+					case KAbstractImpl(a) if (cff.cffKind.match(FFun(_))): checkAbstractCasts(ctx, a, c, target, cff, isAbstractMember);
+					case _:
+				}
 				// A field-level @:require wins; a class-level one covers statics and the constructor.
 				var req = checkRequire(ctx, cff.cffMeta);
 				if (req == null && (isStatic || cff.cffName.name == "new")) req = checkRequire(ctx, c.meta);
@@ -1654,7 +1662,6 @@ class TypeResolve {
 	// the operators. The enum-abstract members are rewritten by buildEnumAbstractFields before
 	// the implementation class resolves (resolveModule).
 	public static function resolveAbstractImpl(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>, p:Position):Void {
-		resolveAbstractCasts(ctx, a, d);
 		if (a.impl != null) {
 			// Reaching for a class's fields is one-shot: whoever gets there first does the work and
 			// everyone
@@ -1695,9 +1702,6 @@ class TypeResolve {
 			// registered, still falls back to the by-name lookup.
 			if (cf == null) cf = abstractImplField(c, fname);
 			if (cf == null) continue;
-			// The @:to verdict above raises in the reference, so field is never bound and never forced into
-			// the macro world; carry it over now that the cf is resolvable.
-			if (ctx.abstractToArityFailed.exists(cff)) ctx.abstractNoExprFields.set(cf, true);
 			// The operand type the @:op and @:resolve checks compare against. A field declared without
 			// `static`
 			// in an abstract is an abstract member and its operand is the UNDERLYING type, because `this`
@@ -1936,226 +1940,93 @@ class TypeResolve {
 		};
 	}
 
-	// Resolve the @:from / @:to cast methods of an abstract into fromField / toField.
-	// Check_abstract (the @:from / @:to arms): build a
-	static function resolveAbstractCasts(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>):Void {
-		for (cff in d.dData) {
-			var isFrom = TypeFunctions.hasMeta(":from", cff.cffMeta);
-			var isTo = TypeFunctions.hasMeta(":to", cff.cffMeta);
-			if (!isFrom && !isTo) continue;
-			// A @:from/@:to method declared without `static` is an abstract member. check_abstract turns it
-			// into an _Impl_ static with `this:thisType` prepended hxc defers full _Impl_ synthesis, so we
-			// model that `this`-prepend here so the type has the leading arg
-			// unifiesToField/unifiesFromField expect (TFun((_,_,ta)::_,_)).
-			var isStatic = false;
-			var isMacro = false;
-			for (acc in cff.cffAccess) switch (acc.access) { case AStatic: isStatic = true; case AMacro: isMacro = true; case _: }
-			var isAbstractMember = !isStatic;
-			switch (cff.cffKind) {
-				case FFun(fd):
-					// A @:to cast's arity is fixed: a static one takes the value, a member one takes only the
-					// implicit this; one trailing optional argument is allowed either way. (are_valid_args). the
-					// @:to arm, ahead of the arity check.
-					if (isTo && isMacro) ctx.addDiagnostic("Invalid modifier: macro on cast function", cff.cffPos);
-					// /1094 typing_error raises, so the cast is never registered.
-					var toArityFailed = false;
-					if (isTo && !TypeFunctions.hasMeta(":multiType", a.meta)) {
-						inline function optAt(k:Int):Bool return fd.fArgs[k].opt || fd.fArgs[k].value != null;
-						var declared = fd.fArgs.length;
-						var validStatic = declared == 1 || (declared == 2 && optAt(1));
-						// 1338 rebuilds a MACRO field in the host with no implicit `this`, so its effective arity is
-						// the declared one and are_valid_args wants exactly one argument. The message still follows
-						// is_abstract_member.
-						var validMember = isMacro ? validStatic : (declared == 0 || (declared == 1 && optAt(0)));
-						if (!isAbstractMember && !validStatic) {
-							ctx.addDiagnostic("static @:to method should have one argument", cff.cffPos);
-							toArityFailed = true;
-						} else if (isAbstractMember && !validMember) {
-							ctx.addDiagnostic("@:to method should have no arguments", cff.cffPos);
-							toArityFailed = true;
-							ctx.abstractToArityFailed.set(cff, true);
-						}
-					}
-					// Method-local type params + abstract params in scope for the signature.
-					var methodParams:TypeParams = [];
-					var localParams = a.params;
-					if (fd.fParams.length > 0) {
-						// The abstract's own params are in scope for a method param's constraint loads
-						// constraints with ctx.typeParams).
-						methodParams = Typeload.typeTypeParams(ctx, {pack: [], name: cff.cffName.name}, fd.fParams, a.params, cff.cffName.name == "new" ? TPHConstructor : TPHMethod);
-						localParams = methodParams.concat(a.params);
-					}
-					// In the host context a macro function's signature degrades every type to Dynamic, with
-					// ExprOf<T> keeping T, so a macro @:from accepts any value at unification and runs to
-					// decide. .
-					function macroHostType(th:Null<TypeHint>):T {
-						if (th != null) switch (th.ct) {
-							case CTPath(tp) if (tp.tparams.length == 1 && ((tp.tpackage.length == 0 && tp.tname == "ExprOf" && tp.tsub == null)
-									|| (tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro" && tp.tname == "Expr" && tp.tsub == "ExprOf"))):
-								switch (tp.tparams[0]) {
-									case TPType(inner): return Typeload.loadTypeHint(ctx, localParams, inner, false);
-									case _:
-								}
-							case _:
-						}
-						return TypeFunctions.tDynamic;
-					}
-					var hostMacro = isMacro && !ctx.isMacro;
-					var args:Array<TSignatureArg> = [];
-					// For an abstract member cast, the underlying `this:thisType` is the first arg of the
-					// synthesized static impl (the receiver the cast converts from/relates).
-					if (isAbstractMember) args.push({name: "this", opt: false, t: a.thisType});
-					for (fa in fd.fArgs) {
-						var at = hostMacro ? macroHostType(fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
-						if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
-						args.push({name: fa.name.name, opt: fa.opt || fa.value != null, t: at});
-					}
-					var ret = hostMacro ? macroHostType(fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false);
-					// An inferred @:from return is the abstract itself (the @:from contract);
-					// parameterize it by the method's own type parameters so unification
-					// freshens them per attempt (spawnConstrainedMonos) instead of binding a
-					// shared open monomorph that the first cast poisons for later attempts. The
-					// synthetic entry is never force-typed, and forcing it during unification
-					// recurses, so settle the shape here at resolve time. Only when the arities
-					// line up (the body would infer exactly Abstract<K...>); otherwise the plain
-					// monomorph is kept.
-					if (isFrom && !isAbstractMember && fd.fType == null
-							&& methodParams.length > 0 && methodParams.length == a.params.length) {
-						ret = TAbstract(a, [for (tp in methodParams) tp.type]);
-					}
-					var ft = TFun({args: args, ret: ret});
-					var cf = TypeFunctions.mkField(cff.cffName.name, ft, cff.cffPos, cff.cffName.pos, true, true);
-					cf.meta = cff.cffMeta;
-					// is_multitype_cast inside the @:to handling only, so the meta lands on @:to fields
-					// alone. Marking @:from as well made abstractCast's make() short-circuit to a bare
-					// mk_cast, skipping the static call whose inliner binds a side-effectful argument to a
-					// temp.
-					if (isTo && TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember && !TypeFunctions.hasMeta(":multiType", cf.meta))
-						cf.meta = [{name: ":multiType", params: [], pos: Position.nullPos}].concat(cf.meta);
-					cf.kind = Method(isMacro ? MethMacro : MethInline);
-					cf.params = methodParams;
-					// Abstract-impl field flag (check_abstract sets CfImpl on @:to fields).
-					TypeFunctions.addClassFieldFlag(cf, CfImpl);
-					if (TypeFunctions.hasMeta(":generic", cff.cffMeta)) TypeFunctions.addClassFieldFlag(cf, CfGeneric);
-					if (isFrom) {
-						// @:from: the stored type resolves LAZILY. Forcing it first checks the declared
-						// return is the abstract itself (against fresh param monos), then reads the built
-						// signature's single argument, so an unhinted or since-inferred signature is seen
-						// live. (the @:from exc_protect) and (ta).
-						var fromIdx = isAbstractMember ? 1 : 0;
-						if (args.length > fromIdx) {
-							var declaredRet = ret;
-							var fromMacro = isMacro;
-							var regPos = cff.cffPos;
-							var r:Ref<TLazy> = new Ref(null);
-							r.set(TypeFunctions.lazyWait(function():T {
-								// The return of the one field it has, which is the impl static the generator later reads.
-								// hxc's modelled cast entry is a separate object and its return can diverge from that
-								// static's: an inferred `return v` left the model at the abstract while the static
-								// correctly held the method's own type parameter, so the check compared the abstract with
-								// itself and passed. Read the static when it exists.
-								var checkRet = declaredRet;
-								if (a.impl != null) {
-									var impl = a.impl.statics.get(cf.name);
-									if (impl != null) switch (TypeFunctions.follow(impl.type)) {
-										case TFun(isig): checkRet = isig.ret;
-										case _:
-									}
-								}
-								// The return type of a from-function must be the abstract, not the underlying type
-								if (!fromMacro) {
-									// A plain TypingError is recorded and the lazy, which caches only on
-									// success, re-ran on the next force and reported twice.
-									try TypeUnification.typeEqKind(EqStrict, checkRet, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
-									catch (ue:hxc.core.TypeUnification.UnifyError)
-										throw new hxc.core.TypingError.FatalError(
-											hxc.core.TPrinting.betterErrorMessage(ue.errors), regPos, 0, true);
-								}
-								var t2:T = switch (TypeFunctions.follow(cf.type)) {
-									case TFun(sig) if (sig.args.length == fromIdx + 1):
-										sig.args[fromIdx].t;
-									case TFun(sig) if (sig.args.length == fromIdx + 2 && sig.args[fromIdx + 1].opt && isPosInfos(sig.args[fromIdx + 1].t)):
-										sig.args[fromIdx].t;
-									case _:
-										throw new hxc.core.TypingError("@:from cast functions must accept exactly one argument", regPos);
-								};
-								r.set(TypeFunctions.lazyAvailable(t2));
-								return t2;
-							}));
-							a.fromField.push({t: TLazy(r), cf: cf});
-							// That is the only write to the return type there, and it reports when it
-							// fails. Binding the impl static's return to the abstract here instead
-							// performed the same unification with the failure SWALLOWED, so a @:from whose
-							// return is not the abstract compiled clean.
-							ctx.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(r));
-						}
-					}
-					if (isTo && !toArityFailed) {
-						// The stored type is a lazy (exc_protect) that unifies the field's type with `tthis -> args
-						// -> m` and yields `follow m`. tthis and m are made here, as check_abstract makes them .
-						var toM = TypeFunctions.mkMono();
-						var toThis = TypeFunctions.monomorphs(a.params, a.thisType);
-						var toMultitype = TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember;
-						var toPos = cf.pos;
-						var toModelled = ft;
-						var toMacro = isMacro;
-						var r:Ref<TLazy> = new Ref(null);
-						r.set(TypeFunctions.lazyWait(function():T {
-							// The field whose type the reference unifies is the impl static itself. hxc's
-							// cast entry is a separate object, so read the static when it exists and the
-							// entry carries no parameters of its own (their nodes would differ from the
-							// static's, as the @:from lazy above and Compiler.hx's forceReal note).
-							var real = (!toMacro && cf.params.length == 0 && a.impl != null) ? a.impl.statics.get(cf.name) : null;
-							var fieldType = real != null ? real.type : toModelled;
-							r.set(TypeFunctions.lazyProcessing(function() return fieldType));
-							// An Error escaping the lazy is a Fatal_error.
-							try {
-								var args:Array<T> = if (toMultitype) {
-									var ctor = a.impl == null ? null : a.impl.statics.get("_new");
-									if (ctor == null)
-										throw new hxc.core.TypingError("Constructor of multi-type abstract must be defined before the individual @:to-functions are", toPos);
-									switch (TypeFunctions.follow(TypeFunctions.monomorphs(a.params, ctor.type))) {
-										case TFun(sig): [for (x in sig.args) x.t];
-										case _: throw "multi-type constructor is not a function";
-									}
-								} else switch (fieldType) {
-									case TFun(sig) if (sig.args.length == 2 && sig.args[1].opt && isPosInfos(sig.args[1].t)): [sig.args[1].t];
-									case _: [];
-								};
-								var expected:T = TFun({args: [for (x in [toThis].concat(args)) {name: "", opt: false, t: x}], ret: toM});
-								try TypeUnification.unifyDefault(fieldType, expected)
-								catch (ue:hxc.core.TypeUnification.UnifyError)
-									throw new hxc.core.TypingError(TPrinting.betterErrorMessage(ue.errors), toPos);
-								var res:T = switch (TypeFunctions.follow(toM)) {
-									case TMono(_) if (switch (fieldType) { case TFun(sig): sig.ret == TypeFunctions.tDynamic; case _: false; }):
-										TypeFunctions.tDynamic;
-									case m: m;
-								};
-								r.set(TypeFunctions.lazyAvailable(res));
-								return res;
-							} catch (e:hxc.core.TypingError) {
-								throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth, true);
+	// The abstract checks' @:from and @:to arms, run on the impl class's field as it is created: the
+	// cast entry is that field, and its stored type is the protected lazy that PForce forces. An Error
+	// escaping the lazy is fatal. The meta list is walked in order and every @:from and @:to on it
+	// registers; the prepended lists are reversed at the end of field initialisation, which appending
+	// in field order already is.
+	static function checkAbstractCasts(ctx:Context, a:TAbstract, c:TClass, cf:TClassField, cff:ClassField, isAbstractMember:Bool):Void {
+		var t = cf.type;
+		var ret = switch (t) { case TFun(sig): sig.ret; case _: return; };
+		for (x in a.fromField) if (x.cf == cf) return;
+		for (x in a.toField) if (x.cf == cf) return;
+		var p = cff.cffPos;
+		var isMacro = cf.kind.match(Method(MethMacro));
+		// Made once per field and shared by its arms.
+		var m = TypeFunctions.mkMono();
+		var ta:T = TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]);
+		var tthis = (isAbstractMember || TypeFunctions.hasMeta(":to", cf.meta)) ? TypeFunctions.monomorphs(a.params, a.thisType) : a.thisType;
+		function fatal(e:hxc.core.TypingError):Dynamic {
+			if (Std.isOfType(e, hxc.core.TypingError.FatalError)) throw e;
+			throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth, true);
+		}
+		for (meta in cf.meta) switch (meta.name) {
+			case ":from":
+				var r:Ref<TLazy> = new Ref(null);
+				r.set(TypeFunctions.lazyWait(function():T {
+					r.set(TypeFunctions.lazyProcessing(function() return t));
+					try {
+						// The return type of a from-function must be the abstract, not the
+						// underlying type.
+						if (!isMacro) try TypeUnification.typeEqKind(EqStrict, ret, ta)
+							catch (ue:hxc.core.TypeUnification.UnifyError) throw new hxc.core.TypingError(TPrinting.betterErrorMessage(ue.errors), p);
+						var arg:T = switch (t) {
+							case TFun(sig) if (sig.args.length == 1): sig.args[0].t;
+							case TFun(sig) if (sig.args.length == 2 && sig.args[1].opt && isPosInfos(sig.args[1].t)): sig.args[0].t;
+							case _: throw new hxc.core.TypingError("@:from cast functions must accept exactly one argument", p);
+						};
+						r.set(TypeFunctions.lazyAvailable(arg));
+						return arg;
+					} catch (e:hxc.core.TypingError) return fatal(e);
+				}));
+				a.fromField.push({t: TLazy(r), cf: cf});
+				ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
+			case ":to":
+				if (isMacro) ctx.addDiagnostic("Invalid modifier: macro on cast function", p);
+				// The argument check runs over the field's own signature, `this` included for a member.
+				var validArgs = switch (t) {
+					case TFun(sig): sig.args.length == 1 || (sig.args.length == 2 && sig.args[1].opt && isPosInfos(sig.args[1].t));
+					case _: true;
+				};
+				if (!validArgs && !TypeFunctions.hasMeta(":multiType", a.meta))
+					throw new hxc.core.TypingError(isAbstractMember ? "@:to method should have no arguments" : "static @:to method should have one argument", p);
+				if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) TypeFunctions.addClassFieldFlag(cf, CfImpl);
+				var isMultitypeCast = TypeFunctions.hasMeta(":multiType", a.meta) && !isAbstractMember;
+				if (isMultitypeCast && !TypeFunctions.hasMeta(":multiType", cf.meta))
+					cf.meta = ([{name: ":multiType", params: [], pos: Position.nullPos}] : Metadata).concat(cf.meta);
+				var r:Ref<TLazy> = new Ref(null);
+				r.set(TypeFunctions.lazyWait(function():T {
+					r.set(TypeFunctions.lazyProcessing(function() return t));
+					try {
+						var args:Array<T> = if (isMultitypeCast) {
+							var ctor = c.statics.get("_new");
+							if (ctor == null)
+								throw new hxc.core.TypingError("Constructor of multi-type abstract must be defined before the individual @:to-functions are", cf.pos);
+							switch (TypeFunctions.follow(TypeFunctions.monomorphs(a.params, ctor.type))) {
+								case TFun(sig): [for (x in sig.args) x.t];
+								case _: throw "multi-type constructor is not a function";
 							}
-						}));
-						a.toField.push({t: TLazy(r), cf: cf});
-						ctx.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(r));
-						// A @:to method gets CfImpl even when static so an instance-style call like
-						// `bytes.toArrayBuffer()` resolves it through the abstract. Flag the impl class's
-						// real field, not just the synthetic cast entry.
-						if (a.impl != null) {
-							var real = a.impl.statics.get(cff.cffName.name);
-							if (real != null) TypeFunctions.addClassFieldFlag(real, CfImpl);
-							// A static @:to of a @:multiType abstract carries @:multiType itself - it off the field to
-							// find the specializations. Like the CfImpl flag above it belongs on the impl class's real
-							// static, not on the modelled cast entry, which is what the generators and --xml/--json
-							// read.
-							if (real != null && !isAbstractMember && TypeFunctions.hasMeta(":multiType", a.meta)
-									&& !TypeFunctions.hasMeta(":multiType", real.meta))
-								real.meta = ([{name: ":multiType", params: [], pos: Position.nullPos}] : Metadata).concat(real.meta);
-						}
-					}
-				case _:
-			}
+						} else switch (cf.type) {
+							// This reads type unfollowed: the field's own lazy type by now, unless it
+							// binds no body.
+							case TFun(sig) if (sig.args.length == 2 && sig.args[1].opt && isPosInfos(sig.args[1].t)): [sig.args[1].t];
+							case _: [];
+						};
+						// Resolve the return monomorph `m` against the expected signature.
+						var expected:T = TFun({args: [for (x in [tthis].concat(args)) {name: "", opt: false, t: x}], ret: m});
+						try TypeUnification.unifyDefault(t, expected)
+						catch (ue:hxc.core.TypeUnification.UnifyError) throw new hxc.core.TypingError(TPrinting.betterErrorMessage(ue.errors), cf.pos);
+						var res:T = switch (TypeFunctions.follow(m)) {
+							case TMono(_) if (ret == TypeFunctions.tDynamic): TypeFunctions.tDynamic;
+							case mm: mm;
+						};
+						r.set(TypeFunctions.lazyAvailable(res));
+						return res;
+					} catch (e:hxc.core.TypingError) return fatal(e);
+				}));
+				a.toField.push({t: TLazy(r), cf: cf});
+				ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
+			case _:
 		}
 	}
 

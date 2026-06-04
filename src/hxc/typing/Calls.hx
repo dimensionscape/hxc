@@ -734,23 +734,14 @@ class Calls {
 				}
 			case _:
 		}
-		// An immediately invoked function is a value in callee position even when the call itself is a
-		// statement call targets with WithType.value).
-		var calleeWt = withType;
-		{
-			var inner = callee.expr;
-			while (true) switch (inner) {
-				case EParenthesis(e1): inner = e1.expr;
-				case EFunction(_, _): calleeWt = WithTypeTools.value; break;
-				case _: break;
-			}
-		}
 		// A CALLEE the compiler synthesized (typeTrace's haxe.Log.trace) reaches the typer here,
 		// not through typeExpr, so the synthesizedNodes window is applied at this entry too.
 		var calleeSynth = Typer.synthesizedNodes.length > 0 && Typer.synthesizedNodes.remove(callee);
 		var savedSuppressed = hxc.parser.Parser.displaySuppressed;
 		if (calleeSynth) hxc.parser.Parser.displaySuppressed = true;
-		var acc = try Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), calleeWt)
+		// The callee types WithType.value inside maybeTypeAgainstEnum, which alone sees the call's
+		// expected type.
+		var acc = try Typer.maybeTypeAgainstEnum(ctx, function() return Typer.typeAccess(ctx, callee.expr, callee.pos, MCall(el), WithTypeTools.value), withType, true, callee.pos)
 			catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = savedSuppressed; throw ex; };
 		// noteDisplayAccess is the recovery that answers from the ACCESS, keyed on the callee's position
 		// - which for a synthesized callee is the whole call's, so it claimed a cursor sitting on an

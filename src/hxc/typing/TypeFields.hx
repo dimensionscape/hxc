@@ -588,7 +588,7 @@ class TypeFields {
 		// definition (delayed to PForce; display requests skip it).
 		if (Sys.getEnv("HXC_DBG_CORE") != null && TypeFunctions.hasMeta(":coreApi", c.meta)) Sys.println("[core] hook-check " + c.path.name + " core_api=" + ctx.defines.rawDefined("core_api") + " disp=" + (ctx.displaySpec != null));
 		if (TypeFunctions.hasMeta(":coreApi", c.meta) && !ctx.defines.rawDefined("core_api") && ctx.displaySpec == null)
-			ctx.pendingConstraintChecks.push(function() try hxc.typing.CoreApi.initCoreApi(ctx, c) catch (e:Dynamic) recordFieldError(ctx, e));
+			ctx.delay(Context.PForce, function() try hxc.typing.CoreApi.initCoreApi(ctx, c) catch (e:Dynamic) recordFieldError(ctx, e));
 		if (TypeFunctions.hasClassFlag(c, CAbstract) && TypeFunctions.hasClassFlag(c, CFinal))
 			addDiagnosticOnce(ctx, "An abstract class may not be final", c.namePos);
 		if (TypeFunctions.hasClassFlag(c, CInterface) && TypeFunctions.hasClassFlag(c, CAbstract))
@@ -1737,6 +1737,10 @@ class TypeFields {
 		if (sig == null) return;
 		var oldFun = tctx.curfun;
 		tctx.curfun = isStatic ? FunStatic : FunMember;
+		// The delay runs in the field's own typer context, whose module is the class's - what an
+		// unqualified name in a default value resolves against.
+		var oldModule = ctx.currentModule;
+		if (tctx.curclass != null && tctx.curclass.module != null) ctx.currentModule = tctx.curclass.module;
 		// The signature starts with the abstract member's `this`, which the declared arguments do not.
 		var off = abstractMember && cf.name != "_new" && !cf.kind.match(Method(MethMacro)) ? 1 : 0;
 		for (i in 0...fd.fArgs.length) {
@@ -1745,6 +1749,7 @@ class TypeFields {
 			try Typer.castOrUnify(tctx, sig.args[i + off].t, Typer.typeExpr(tctx, value, WithTypeTools.withType(sig.args[i + off].t)), value.pos)
 			catch (e:Dynamic) recordFieldError(ctx, e);
 		}
+		ctx.currentModule = oldModule;
 		tctx.curfun = oldFun;
 	}
 }

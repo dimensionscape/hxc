@@ -303,18 +303,11 @@ class TypeFunctions {
 			if (Sys.getEnv("HXC_TRACE_DEPS") != null)
 				Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 			m.extra.deps.set(mdep.id, mdep);
-			// A new dependency invalidates the RESOLVE gate (a later resolveModule re-runs), not the
-			// save_class_state cache mark (processed). The reference's save_class_state comment is explicit
-			// that nothing may add a dependency after the save without making the module read as uncached;
-			// here the split keeps the cache mark intact so a reused module's dependencies (added while
-			// re-typing a dirty root above it) do not force it back through the filters.
-			if (!skip_postprocess) {
-				m.extra.resolved = 0;
-				// Also clears the POST-PROCESSING mark, so a module served back from the cache runs through the
-				// filters again now that its dependency set changed (issue #10635) - and its save_class_state
-				// snapshot is retaken, which keeps a @:generic specialization another module added to it.
-				m.extra.processed = 0;
-			}
+			// Adding a dependency clears the POST-PROCESSING mark and nothing else, so a module served back
+			// from the cache runs through the filters again now that its dependency set changed - and its
+			// class-state snapshot is retaken, which keeps a @:generic specialization another module added
+			// to it. The declarations were initialised at the load and are not initialised again.
+			if (!skip_postprocess) m.extra.processed = 0;
 		}
 	}
 

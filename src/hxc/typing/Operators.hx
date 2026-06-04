@@ -82,74 +82,6 @@ class Operators {
 		}
 	}
 
-	static function checkAbstractFinalTarget(e:TExpr, ?errorPos:Position):Void {
-		var ep = errorPos == null ? e.pos : errorPos;
-		switch (e.expr) {
-			case TLocal(v) if (TypeFunctions.hasVarFlag(v, VFinal)):
-				throw new TypingError("Cannot modify abstract value of final local", ep);
-			case TField(_, fa):
-				var cf = switch (fa) {
-					case FInstance(_, _, f) | FStatic(_, f) | FAnon(f) | FClosure(_, f): f;
-					case FEnum(_, _) | FDynamic(_): null;
-				};
-				if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfFinal))
-					throw new TypingError("Cannot modify abstract value of final field", ep);
-			case _:
-		}
-	}
-
-	static function abstractOpWrites(ctx:TyperContext, t:T, op:Binop):Bool {
-		return switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, _):
-				var writes = false;
-				for (aop in a.ops) {
-					if (!(Type.enumEq(aop.op, op) || Type.enumEq(aop.op, OpAssignOp(op)))) continue;
-					hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, aop.cf);
-					var body = aop.cf.expr;
-					if (body != null) {
-						var arg:TVar = switch (body.expr) { case TFunction(tf) if (tf.args.length > 0): tf.args[0].v; case _: null; };
-						function visit(e:TExpr):Void {
-							switch (e.expr) {
-								case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _) if (v == arg): writes = true;
-								case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (v == arg): writes = true;
-								case _: TexprTools.iter(visit, e);
-							}
-						}
-						visit(body);
-					}
-				}
-				writes;
-			case _: false;
-		};
-	}
-
-	static function abstractUnopWrites(ctx:TyperContext, t:T, op:Unop):Bool {
-		return switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, _) if (a.impl != null):
-				var writes = false;
-				for (au in a.unops) if (au.op == op) {
-					hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
-					var body = au.cf.expr;
-					if (body != null) {
-						var arg:TVar = switch (body.expr) { case TFunction(tf) if (tf.args.length > 0): tf.args[0].v; case _: null; };
-						function visit(e:TExpr):Void switch (e.expr) {
-							case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _) if (v == arg): writes = true;
-							case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (v == arg): writes = true;
-							case _: TexprTools.iter(visit, e);
-						};
-						visit(body);
-					}
-				}
-				writes;
-			case _: false;
-		};
-	}
-
-	static function abstractHasUnop(t:T, op:Unop):Bool return switch (TypeFunctions.follow(t)) {
-		case TAbstract(a, _): [for (au in a.unops) if (au.op == op) au].length > 0;
-		case _: false;
-	};
-
 	static function isSameAssignTarget(e1:TExpr, e2:TExpr):Bool {
 		return switch [e1.expr, e2.expr] {
 			case [TLocal(v1), TLocal(v2)] if (v1 == v2): true;
@@ -586,7 +518,9 @@ class Operators {
 				if (!TypeFunctions.hasMeta(":coreType", a.meta)) {
 					var u1 = TypeFunctions.mk(me1.expr, TypeFunctions.followWithAbstracts(me1.type), me1.pos);
 					var u2 = TypeFunctions.mk(me1.expr, TypeFunctions.followWithAbstracts(me2.type), me1.pos);
-					var tExpected = switch (makeBinop(ctx, opCf, u1, u2, isAssignOp, withType, p)) {
+					// makeBinop takes the operator being resolved, not the @:op's own (an OpAssignOp for a
+					// `+=` overload, which makeBinop does not handle).
+					var tExpected = switch (makeBinop(ctx, op, u1, u2, isAssignOp, withType, p)) {
 						case BinopNormal(_, _, _, t, _, _, _): t;
 						case BinopSpecial(e, _): e.type;
 					};
@@ -674,21 +608,22 @@ class Operators {
 								return make(aop.op, cf, re1, re2, tret, needsAssign, swapped);
 							});
 						}
-						// Try direct order, then the commutative-swapped order. A failed probe (Unify_error or a
-						// typing error from the cast) moves on; the mono rollback inside check has already
+						// Try direct order, then the commutative-swapped order. The search moves on only
+						// for a UNIFICATION failure (a unify error, or the one castOrUnifyRaise raises);
+						// any other error out of the attempt - such as the inliner's write check on the
+						// overload it picked - goes on up. The mono rollback inside check has already
 						// undone any speculative binding.
 						try {
 							return check(e1, e2, false);
 						} catch (_:UnifyError) {
-						} catch (te:TypingError) {
-							if (Std.isOfType(te, AbstractOpResultError)) throw te;
+						} catch (_:hxc.core.TypingError.CastUnifyError) {
 						}
 						if (TypeFunctions.hasMeta(":commutative", cf.meta)) {
 							try {
 								return check(e2, e1, true);
 							} catch (_:UnifyError) {
-							} catch (te:TypingError) {
-								if (Std.isOfType(te, AbstractOpResultError)) throw te;
+							} catch (_:hxc.core.TypingError.CastUnifyError) {
+							} catch (_:NotFound) {
 							}
 						}
 					case _:
@@ -1063,7 +998,6 @@ class Operators {
 			};
 		}
 		function compound(te1:TExpr):TExpr {
-			if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			// An abstract @:op compound assign is `a = a.op(b)` (the op dispatches to the impl method); a
 			// native op stays as a compound TBinop the evaluator applies in place. The target is only
@@ -1161,14 +1095,14 @@ class Operators {
 					case AKField(fa) | AKAccessor(fa): FieldAccessTools.getFieldExpr(fa, FWrite);
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
 				};
-				if (abstractOpWrites(ctx, te1.type, sub)) checkAbstractFinalTarget(te1, switch (te1.expr) { case TLocal(_): p; case _: null; });
 				// The retry runs at the access kind's own position, not the compound's: AKNo's position
 				// (the field's) replaces the outer p before the operator resolution is re-entered.
 				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-				// With `abstract_overload_only`, so the retry can only SUCCEED with an overload or raise
-				// NotFound - it never reports the binop's own type error. `false += 1` is a write error in the
-				// reference, not a `Cannot add Bool and Int`.
-				var retry = try makeBinop(ctx, sub, te1, te2, true, withType, np) catch (_:TypingError) null;
+				// The retry searches abstract overloads only, so it SUCCEEDS with an overload or raises
+				// NotFound - `false += 1` is a write error, not a `Cannot add Bool and Int`. An error out
+				// of the overload it did pick (the inliner's write check) is not NotFound and goes on up. A
+				// result that needs the write-back raises NotFound too.
+				var retry = tryAbstractBinop(ctx, sub, te1, te2, true, withType, np);
 				switch (retry) {
 					case BinopSpecial(opCall, false): opCall;
 					case _: throw new TypingError("This expression cannot be accessed for writing", np);
@@ -1256,7 +1190,6 @@ class Operators {
 				}
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MSet(null), withType)) {
 					case AKExpr(te):
-						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						// With no abstract overload, an increment/decrement checks the target is assignable
 						// and only then that it is Int: `--"s"` is an Invalid assign, not a `String should
@@ -1270,7 +1203,6 @@ class Operators {
 							var recvVars:Array<TExpr> = [];
 							var ef = vrGetExprAux(ctx, recvVars, 1, "fh", fa.on);
 							var te = FieldAccessTools.getFieldExpr({on: ef, field: fa.field, host: fa.host, isInline: fa.isInline, pos: fa.pos}, FWrite);
-							if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 							var abs = tryAbstractUnop(ctx, op, flag, te, p);
 							var out = if (abs != null) abs else makeUnop(ctx, op, flag, te, p);
 							vrToTexpr(recvVars, out);
@@ -1286,7 +1218,6 @@ class Operators {
 							case AKNo(_, _): Typer.typeExpr(ctx, e, WithTypeTools.value);
 							case _: throw new TypingError("This expression cannot be accessed for writing", np);
 						};
-						if (abstractUnopWrites(ctx, te.type, op)) checkAbstractFinalTarget(te, p);
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						// There is no checkAssign on this path: an unwritable access either resolves through an
 						// abstract overload or is a write error, whatever the operand looks like. Checking first

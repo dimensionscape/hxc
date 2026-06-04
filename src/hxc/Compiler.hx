@@ -489,36 +489,6 @@ class Compiler {
 			// sees its statics still private: every member of an enum abstract reads as "Cannot access
 			// private field" when the reading class is built first.
 			hxc.typing.TypeResolve.forceBuild(actx, a.impl);
-			// The recorded cast pair is a SNAPSHOT taken at load time, not the impl field itself, so
-			// an unhinted @:to's return stays an open monomorph on it while the real field's return
-			// settles during typing. The reference shares one node and never has to reconcile them.
-			// Sync the snapshot here, while the real field still exists: an inline @:to is removed
-			// from statics by the time the generator filters specialize, and from then on the
-			// stale open monomorph is the only type left, which cpp lowers to Dynamic.
-			inline function forceReal(c:hxc.core.Type.TAbstractCast, isTo:Bool):Void {
-				var real = a.impl.statics.get(c.cf.name);
-				if (real == null) return;
-				// Forcing a cast's type types its body only through bind_type's lazy, which a declared
-				// signature does not get under a selective display request .
-				if (real.expr == null && hxc.typing.TypeFields.bodyBehindLazy(actx, real, hxc.typing.TypeFields.fieldCallType(real)))
-					hxc.typing.TypeFields.forceFieldBody(actx, a.impl, real);
-				// Only an UNHINTED @:to leaves an open monomorph on the snapshot; a declared cast type is
-				// already correct. The snapshot carries its own params, so the built signature may only be read
-				// when there are none - otherwise substitution would mix two sets of parameter nodes and every
-				// generic @:from stops unifying.
-				if (real == c.cf || !isTo || c.cf.params.length > 0) return;
-				// A @:to's stored type is the lazy of which reads the impl field itself when forced and is
-				// forced only at PForce or by unifiesToField. Following it here forced it early; only one
-				// already forced can hold a stale snapshot.
-				var unforced = switch (c.t) { case TLazy(r): !r.get().match(LAvailable(_)); case _: false; };
-				if (unforced || !hxc.core.TypeFunctions.follow(c.t).match(TMono(_))) return;
-				switch (hxc.core.TypeFunctions.follow(real.type)) {
-					case TFun(sig): c.t = sig.ret;
-					case _:
-				}
-			}
-			for (c in a.fromField) forceReal(c, false);
-			for (c in a.toField) forceReal(c, true);
 		};
 		// Close a still-open inferred method return before structural unification reads it; the field
 		// types in whichever world (main or macro) owns its module.

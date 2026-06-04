@@ -1916,6 +1916,9 @@ class TexprConverter {
 
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
 		vLookup = new Map();
+		// Every conversion loads std.Type up front, whether or not a name call needs it, so the module (and
+		// its bodies' place in the queue) arrives here.
+		Typeload.loadInstance(ctx.com, ctx.typeParams, {tpackage: ["std"], tname: "Type", tparams: [], tsub: null}, dt.pos, true);
 		return toTexprRec(ctx, tSwitch, withType, dt, DRToplevel, false);
 	}
 

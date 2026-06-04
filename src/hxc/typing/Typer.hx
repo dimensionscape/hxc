@@ -4000,7 +4000,7 @@ class Typer {
 					// real identifier under the cursor keeps the collection order.
 					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, s == "null"));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
-				accGet(ctx, typeIdent(ctx, s, p, mode, withType));
+				accGet(ctx, maybeTypeAgainstEnum(ctx, function() return typeIdent(ctx, s, p, mode, withType), withType, false, p));
 			case CInt(s, suffix):
 				if (suffix == null) TexprTools.typeConstant(basic, c, p);
 				else switch (suffix) {
@@ -4233,42 +4233,6 @@ class Typer {
 				return Fields.fieldAccess(ctx, mode, smf, FieldAccessTools.getHost(ctx.curclass, smf), typeExpr, p);
 			}
 		}
-		switch (withType) {
-			case WithType(wt, _):
-				var expectedEnum = expectedEnumLike(wt, []);
-				if (expectedEnum != null && expectedEnum.constrs.exists(i)) {
-					var acc = Fields.enumConstructor(ctx, expectedEnum, TexprTools.makeTypeExpr(TEnumDecl(expectedEnum), p), i, p);
-					// A constructor function's return unifies with the expected type so the enum's type
-					// parameters bind from the expectation before the arguments; failure is ignored. .
-					switch (acc) {
-						case AKExpr(te):
-							switch (TypeFunctions.follow(te.type)) {
-								case TFun(sig): try TypeUnification.unifyDefault(sig.ret, wt) catch (_:UnifyError) {};
-								case _:
-							}
-						case _:
-					}
-					return acc;
-				}
-				switch (TypeFunctions.follow(wt)) {
-					case TAbstract(a, tl) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)):
-						// An enum-abstract value used unqualified resolves against the expected type, like an
-						// enum constructor: look it up as an @:enum static on the abstract's impl class.
-						var cf = a.impl.statics.get(i);
-						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) {
-							// The access over FHAbstract with the abstract's own params and leaves the field alone.
-							// Rebinding type to the EXPECTED type's params instead overwrote the member's declared type
-							// on the shared field, so `var fruit:TagE<Tag1>` came back as TagE<T> and a `case fruit:` no
-							// longer narrowed T. Typing the initializer put the declared type back, which is what hid
-							// it.
-							var typeExpr = TexprTools.makeTypeExpr(TClassDecl(a.impl), p);
-							return Fields.fieldAccess(ctx, mode, cf,
-								FHAbstract(a, TypeFunctions.extractParamTypes(a.params), a.impl), typeExpr, p);
-						}
-					case _:
-				}
-			case _:
-		}
 		var bareEnum = findBareEnumLike(ctx, i);
 		if (bareEnum != null) switch (bareEnum) {
 			case TEnumDecl(en):
@@ -4332,28 +4296,6 @@ class Typer {
 			// reports the access error, not an unknown identifier.
 			if (ctx.curfun.match(FunStatic) && ctx.curclass != TypeFunctions.nullClass && ctx.curclass.fields.exists(i))
 				throw new TypingError("Cannot access " + i + " in static function", p);
-			// An expected enum-like type turns an unknown ident into a suggestion over the type's
-			// constructors. (StringError.string_error).
-			switch (withType) {
-				case WithType(wt, _):
-					var cand:Null<{path:hxc.core.Globals.Path, names:Array<String>}> = switch (TypeFunctions.follow(wt)) {
-						case TEnum(en, _): {path: en.path, names: [for (k in en.constrs.keys()) k]};
-						case TAbstract(a, _) if (a.isEnum && a.impl != null):
-							{path: a.path, names: [
-								for (k in a.impl.statics.keys())
-									if (TypeFunctions.hasClassFieldFlag(a.impl.statics.get(k), CfEnum)) k
-							]};
-						case _: null;
-					};
-					// Raised inside call arguments, recorded elsewhere, and the expression is then a null of
-					// unknown type.
-					if (cand != null) {
-						TyperContext.raiseOrDisplayMessage(ctx, hxc.core.StringError.stringError(i, cand.names,
-							"Identifier '" + i + "' is not part of " + hxc.core.Globals.sTypePath(cand.path)), p);
-						return AKExpr(TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p));
-					}
-				case _:
-			}
 			// An existing module that defines no type of its own name reports the module error, not an
 			// unknown identifier.
 			if (i.charCodeAt(0) >= "A".code && i.charCodeAt(0) <= "Z".code) {
@@ -4389,7 +4331,7 @@ class Typer {
 			if (identSpeculation == 0 && ctx.com.displaySpec != null
 					&& (atDisplayPos(p) || ctx.inDisplay) && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
-			throw new TypingError("Unknown identifier : " + i, p);
+			throw new hxc.core.TypingError.UnknownIdentError(i, p);
 		}
 		switch (mt) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
@@ -4442,13 +4384,57 @@ class Typer {
 		return found;
 	}
 
-	static function expectedEnumLike(t:T, stack:Array<T>):Null<TEnum> {
-		for (s in stack) if (TypeUnification.shallowEq(t, s)) return null;
+	// The walk over the expected type runs first, for every identifier that has one, and
+	// getAbstractFroms forces each @:from field's type on the way. An enum, an enum abstract, or an
+	// abstract whose froms lead to exactly one of those is appended to the module's types while f
+	// runs, so its constructors resolve bare: the imported-enums lookup (findBareEnumLike) walks the
+	// module's types reversed and meets it first.
+	public static function maybeTypeAgainstEnum(ctx:TyperContext, f:Void->AccessKind, withType:WithType, isCall:Bool, p:Position):AccessKind {
+		var t = switch (withType) {
+			case WithType(t, _): t;
+			case _: return f();
+		};
+		var target = againstEnumTarget(ctx, t, []);
+		var m = ctx.com.currentModule;
+		if (target == null || m == null) return f();
+		var old = m.types;
+		m.types = old.concat([target.mt]);
+		var acc = try f() catch (e:hxc.core.TypingError.UnknownIdentError) {
+			m.types = old;
+			TyperContext.raiseOrDisplayMessage(ctx, hxc.core.StringError.stringError(e.ident, target.fields,
+				"Identifier '" + e.ident + "' is not part of " + hxc.core.Globals.sTypePath(target.path)), p);
+			return AKExpr(TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p));
+		} catch (e:Dynamic) {
+			m.types = old;
+			throw e;
+		};
+		m.types = old;
+		// A constructor function's return unifies with the expected type, failure ignored.
+		switch (acc) {
+			case AKExpr(e) if (target.isEnum):
+				switch (TypeFunctions.follow(e.type)) {
+					case TFun(sig): try TypeUnification.unifyDefault(sig.ret, t) catch (_:UnifyError) {};
+					case _:
+				}
+			case _:
+		}
+		return acc;
+	}
+
+	static function againstEnumTarget(ctx:TyperContext, t:T, stack:Array<T>):Null<{isEnum:Bool, path:hxc.core.Globals.Path, fields:Array<String>, mt:ModuleType}> {
 		return switch (TypeFunctions.follow(t)) {
 			case TEnum(en, _):
-				en;
-			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta) && a.from.length == 1):
-				expectedEnumLike(TypeFunctions.applyParams(a.params, tl, a.from[0]), [t].concat(stack));
+				{isEnum: true, path: en.path, fields: en.names.copy(), mt: TEnumDecl(en)};
+			case TAbstract(a, _) if (a.impl != null && a.isEnum):
+				{isEnum: false, path: a.path, mt: TAbstractDecl(a),
+					fields: [for (cf in a.impl.orderedStatics) if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) cf.name]};
+			case TAbstract(a, pl) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
+				var froms = getAbstractFroms(ctx, a, pl);
+				if (froms.length != 1) null;
+				else {
+					for (s in stack) if (TypeUnification.shallowEq(t, s)) return null;
+					againstEnumTarget(ctx, froms[0], [t].concat(stack));
+				}
 			case _:
 				null;
 		}

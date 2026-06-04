@@ -1834,7 +1834,14 @@ class EvalMacro {
 						[for (a in args) encodeExpr(ec, a)];
 					} else if (sig != null) {
 						var tctx = new hxc.typing.TyperContext(macroCom);
-						var r = hxc.typing.Calls.unifyCallArgs(tctx, args, sig.args, sig.ret, e.pos);
+						// The macro typer stays in nullModule until a load sets its module, and the init macro's
+						// arguments type there: a bare enum value resolves against the expected type by joining that
+						// module's types.
+						var savedMod = macroCom.currentModule;
+						if (savedMod == null) macroCom.currentModule = TypeFunctions.nullModule;
+						var r = try hxc.typing.Calls.unifyCallArgs(tctx, args, sig.args, sig.ret, e.pos)
+							catch (ex:Dynamic) { macroCom.currentModule = savedMod; throw ex; };
+						macroCom.currentModule = savedMod;
 						[for (te in r.el) makeConst(ec, te)];
 					} else {
 						[for (a in args) initMacroConstArg(ec, a)];
