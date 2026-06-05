@@ -358,6 +358,8 @@ class TypeFields {
 	public static function queueClassBuild(ctx:Context, c:TClass):Void {
 		if (buildQueued.exists(c)) return;
 		buildQueued.set(c, true);
+		if (traceBuilds) Sys.stderr().writeString("[qbuild] " + Context.sTypePath(c.path) + "
+");
 		ctx.delay(Context.PBuildClass, function() {
 			// Flushing a pass has no handler: a build macro's failure raised out of a queued build goes to
 			// whoever flushed. The finalize's flush is the pass runner, so the compile ends; the macro
@@ -388,6 +390,9 @@ class TypeFields {
 	// runs the build macros, binds the fields and schedules their bodies (finalizeClass).
 	public static function buildClass(ctx:Context, c:TClass):Void {
 		if (classBuilt.exists(c)) return;
+		// A class nothing declares keeps the default build state, which is built at once - a type
+		// parameter's class among them.
+		if (c.kind.match(KTypeParameter(_))) return;
 		var m = c.module;
 		if (m == null) return;
 		classBuilt.set(c, true);
@@ -474,7 +479,10 @@ class TypeFields {
 			// An __init__ binds like any field, though it is not one.
 			var initField = c.initField;
 			if (initField != null && initField.expr == null && (full || isDisplayField(initField))) forceFieldBody(ctx, c, initField);
+			// The inherited forwarding constructor is no declared field and is not in finalizeClass's list:
+			// its lazy is forced at PForce.
 			if (c.constructor != null && c.constructor.expr == null
+				&& findFieldDecl(ctx, c, c.constructor) != null
 				&& (full || isDisplayField(c.constructor))) forceFieldBody(ctx, c, c.constructor);
 		});
 	}
@@ -615,6 +623,7 @@ class TypeFields {
 			case _:
 		}
 		var overloadSeen = new haxe.ds.StringMap<ClassField>();
+		var nameSeen = new haxe.ds.StringMap<Int>();
 		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
 			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
@@ -716,6 +725,18 @@ class TypeFields {
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null) continue;
+			// Every declaration is a field of its own and binds its own body: the k-th of one name is its
+			// overload sibling, or the k-th registered field of that name, as
+			// TypeResolve.resolveClassFieldsInner pairs them. Pairing by name alone would leave every later
+			// overload unbound, so an overload candidate would never run its body as it was tried.
+			var nameKey = (isStatic ? "s:" : "i:") + cff.cffName.name;
+			var occ = nameSeen.exists(nameKey) ? nameSeen.get(nameKey) : 0;
+			nameSeen.set(nameKey, occ + 1);
+			if (occ > 0) {
+				if (cff.cffName.name == "new" && cf.overloads.length < occ) continue;
+				cf = cf.overloads.length >= occ ? cf.overloads[cf.overloads.length - occ]
+					: TypeResolve.nthFieldNamed(isStatic ? c.orderedStatics : c.orderedFields, cff.cffName.name, occ, cf);
+			}
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
 			if (ctx.droppedFieldDecls.exists(cff)) continue;
@@ -733,12 +754,17 @@ class TypeFields {
 				case _:
 			}
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") {
+				var externBinds = false;
 				switch (cff.cffKind) {
+					// The bind rule holds for an extern INLINE method, which binds like any other; only the
+					// rest take the extern-check delay.
+					case FFun(_) if (Lambda.exists(cff.cffAccess, a -> a.access == AInline)):
+						externBinds = true;
 					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic,
 						abstractMember: isAbsImpl && cff.cffName.name != "new" && !Lambda.exists(cff.cffAccess, a -> a.access == AStatic)});
 					case _:
 				}
-				continue;
+				if (!externBinds) continue;
 			}
 			if (!hasFieldBody(cff)) continue;
 			installField(ctx, tctx, m, cf, cff, isStatic);
@@ -1161,6 +1187,8 @@ class TypeFields {
 			tctx.typeParams = oldParams;
 			restore();
 		}
+		// The module's context init runs as a body starts typing.
+		if (tctx.curclass != null) tctx.com.contextInitRun(tctx.curclass.module);
 		// -v logs the body (a variable's initializer or a method) as it starts typing, "macro " marking the
 		// macro context's copy.
 		if (tctx.com.verbose && switch (cff.cffKind) { case FFun(_): true; case FVar(_, eo) | FProp(_, _, _, eo): eo != null; })

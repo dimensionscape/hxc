@@ -358,6 +358,8 @@ class EvalStdLib {
 		return switch (f) {
 			case VFunction(fn, _): fn(args);
 			case VFieldClosure(recv, fn): fn([recv].concat(args));
+			// A macro's TLazy(f) is called to force the type.
+			case VInstance({ikind: ILazyType(_, get)}): get();
 			case _: EvalExceptions.excValues(ctx, ["Cannot call ", ""], [f]);
 		};
 	}

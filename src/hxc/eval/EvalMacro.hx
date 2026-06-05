@@ -1334,6 +1334,8 @@ class EvalMacro {
 				throw new TypingError("Invalid macro path", entry.pos);
 			case _:
 		}
+		// The module's init runs before the build macro is applied.
+		com.contextInitRun(modul);
 		// Load the macro's own module into the macro world so the interpreter includes it.
 		switch (callExpr.expr) {
 			case ECall(callee, _):
@@ -2495,7 +2497,7 @@ class EvalMacro {
 		macroCom = com.cloneForMacro();
 		hxc.context.ModuleLoader.attach(macroCom);
 		hxc.context.ModuleLoader.initBasicTypes(macroCom);
-		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "ds"], name: "StringMap"}, Position.nullPos);
+		// Initializing the macro interpreter loads Expr and Type, nothing else.
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Expr"}, Position.nullPos);
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Type"}, Position.nullPos);
 	}
@@ -3732,7 +3734,10 @@ class EvalMacro {
 			case "TDynamic":
 				args[0] == VNull ? TDynamic(null) : TDynamic(decodeType(ec, args[0]));
 			case "TLazy":
-				decodeType(ec, refGet(ec, args[0]));
+				switch (args[0]) {
+					case VInstance({ikind: ILazyType(r, _)}): TLazy(r);
+					case _: decodeType(ec, refGet(ec, args[0]));
+				}
 			case "TAbstract":
 				switch (moduleTypeFromRef(ec, args[0])) {
 					case TAbstractDecl(a): TAbstract(a, [for (p in arrOf(args[1])) decodeType(ec, p)]);
@@ -5125,8 +5130,35 @@ class EvalMacro {
 		};
 	}
 
-	// A lazy Ref<T>: .get() computes the payload on demand. Refs must stay lazy so a class encoding
-	// can reference itself (field types, super chain) without infinite recursion.
+	// A lazy Ref<T>: .get() computes the payload on demand. Refs must stay lazy so a class encoding can
+	// reference itself (field types, super chain) without infinite recursion.
+	// A lazy that has not run yet reaches the macro as TLazy(f), and calling f forces it then - with the
+	// context flushed first when it is still waiting.
+	static function encodeLazyType(ec:EvalContext, t:T):EvalValue {
+		return switch (t) {
+			case TMono(m) if (m.type != null): encodeLazyType(ec, m.type);
+			case TLazy(r):
+				switch (r.get()) {
+					case LAvailable(t2): encodeType(ec, t2);
+					case _:
+						var get = function():EvalValue {
+							return switch (r.get()) {
+								case LAvailable(t2): encodeType(ec, t2);
+								case LWait(_):
+									var com = currentCompiler();
+									encodeType(ec, com == null ? TypeFunctions.lazyType(r) : typingTimer(com, function() return TypeFunctions.lazyType(r), true));
+								case LProcessing(_):
+									// Our type is on the processing stack, error instead of returning most likely an unbound
+									// mono
+									EvalExceptions.excString(ec, "Accessing a type while it's being typed");
+							};
+						};
+						mkEnumValue(ec, "Type", "TLazy", [VInstance(new VInstance([], fakeProto("haxe.macro.LazyType"), ILazyType(r, get)))]);
+				}
+			case _: encodeType(ec, t);
+		};
+	}
+
 	static function encodeLazyRef(ec:EvalContext, thunk:Void->EvalValue):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalHash.hash("get"), VFunction(function(_) return thunk(), true));
@@ -5444,7 +5476,8 @@ class EvalMacro {
 	static function encodeClassField(ec:EvalContext, cf:TClassField, ?owner:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		f.set(EvalHash.hash("name"), mkString(cf.name));
-		f.set(EvalHash.hash("type"), encodeType(ec, cf.type));
+		// A field's type is encoded LAZILY - a body not yet typed stays behind TLazy.
+		f.set(EvalHash.hash("type"), encodeLazyType(ec, cf.type));
 		f.set(EvalHash.hash("isPublic"), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
 		f.set(EvalHash.hash("params"), encodeArray([for (tp in cf.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
@@ -5517,6 +5550,17 @@ class EvalMacro {
 	static var unsafeProtoCache:Null<VPrototype> = null;
 
 	static var opaqueProtos:Map<String, VPrototype> = new Map();
+
+	// A standalone prototype that is not one of the context's types.
+	static function fakeProto(path:String):VPrototype {
+		var proto = opaqueProtos.get(path);
+		if (proto == null) {
+			proto = new VPrototype(EvalHash.hash(path), [], new Map(), [], new Map(), null, PInstance, VNull);
+			proto.pvalue = VPrototype(proto);
+			opaqueProtos.set(path, proto);
+		}
+		return proto;
+	}
 
 	static function opaqueValue(path:String, id:Int):EvalValue {
 		var proto = opaqueProtos.get(path);

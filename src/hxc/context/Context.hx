@@ -114,6 +114,26 @@ class Context {
 	public var moduleNonexistentLut:StringMap<Bool>;
 
 	/**
+	 * Per-module import initialization, run at its first build or field-typing pass. Drain callbacks
+	 * before invoking them, in registration order.
+	 */
+	public var contextInits:haxe.ds.ObjectMap<hxc.core.Type.ModuleDef, Array<Void->Void>> = new haxe.ds.ObjectMap();
+
+	public function contextInitAdd(m:hxc.core.Type.ModuleDef, f:Void->Void):Void {
+		var l = contextInits.get(m);
+		if (l == null) contextInits.set(m, l = []);
+		l.push(f);
+	}
+
+	public function contextInitRun(m:Null<hxc.core.Type.ModuleDef>):Void {
+		if (m == null) return;
+		var l = contextInits.get(m);
+		if (l == null || l.length == 0) return;
+		contextInits.remove(m);
+		for (f in l) f();
+	}
+
+	/**
 	 * Core API loader context, separate for host and macro worlds.
 	 */
 	public var coreApiCtx:Null<Context> = null;

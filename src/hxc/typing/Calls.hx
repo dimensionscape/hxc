@@ -1165,7 +1165,9 @@ class Calls {
 			case TInst(c, _): receiverExtern = TypeFunctions.hasClassFlag(c, CExtern);
 			case _:
 		}
-		var allExtern = multi && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
+		// A field declared `overload` is a proper overload, and every candidate is attempted before the
+		// compatible ones are reduced; @:overload metadata stops at the first that succeeds.
+		var allExtern = multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
 		var successes:Array<{cf:TClassField, expr:TExpr, hover:Null<Dynamic>}> = [];
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
@@ -1174,6 +1176,9 @@ class Calls {
 		var outerHover = hxc.typing.Typer.hoverFound;
 		var firstFailHover:Null<Dynamic> = null;
 		for (cf in candidates) {
+			// Follows the candidate's type: its lazy - and the body behind it - runs as the candidate is
+			// tried.
+			if (multi) switch (cf.type) { case TLazy(_): TypeFunctions.follow(cf.type); case _: }
 			var diagBefore = ctx.com.diagnostics.length;
 			if (multi) hxc.typing.Typer.hoverFound = outerHover;
 			var oldRaise = ctx.com.raiseTypingErrors;

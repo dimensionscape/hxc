@@ -62,16 +62,29 @@ class TypeResolve {
 		}
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = m; // Resolve in-module sibling types against m.types first
-		// init_module_type runs over the declarations IN order, and everything but a class does its work
-		// there and then (init_abstract at init_enum, init_typedef); a class only queues its build `delay
-		// ctx PBuildClass`), so the classes build last declaration first, after the rest of the module is
-		// initialised. Every EClass declaration takes that delay - a @:generic class, a @:genericBuild
-		// one, the module's statics carrier - and only an abstract's implementation is built eagerly by
-		// init_abstract. An abstract's implementation is one of them: module_pass_1 declares it as an
-		// EClass, so it takes the delay too, and everything that needs its fields - the enum-abstract
-		// members, the @:from/@:to methods, the operators - happens in that slot (see resolveAbstract),
-		// after a later class's heritage.
-		for (mt in m.types) {
+		// Initialize declarations in source order, deferring every class build to PBuildClass. Classes
+		// then build in reverse declaration order after abstracts, enums, and typedefs initialize.
+		// Reversing the entire list changes which mutually recursive abstract reports the cycle. Generic
+		// classes, generic-build classes, module statics carriers, and abstract implementation classes
+		// all take the delay. Their heritage must fail in the same order as ordinary classes. Abstract
+		// fields, conversions, operators, and enum-abstract members are resolved in the implementation's
+		// build slot. Place the implementation declaration before its abstract: queue the implementation,
+		// then initialize the abstract header and load its underlying type.
+		var implOf = new haxe.ds.ObjectMap<TClass, ModuleType>();
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.kind.match(KAbstractImpl(_))): implOf.set(c, mt);
+			case _:
+		}
+		var initOrder:Array<ModuleType> = [];
+		for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (implOf.exists(c)):
+			case TAbstractDecl(a) if (a.impl != null && implOf.exists(a.impl)):
+				initOrder.push(implOf.get(a.impl));
+				initOrder.push(mt);
+			case _:
+				initOrder.push(mt);
+		}
+		for (mt in initOrder) {
 			var info = TypeFunctions.tInfos(mt);
 			var entry = ctx.declOfType.get(Context.pathKey(info.path));
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
@@ -1239,7 +1252,7 @@ class TypeResolve {
 
 	// The n-th field of this name in declaration order, or `fallback` when there is no such field
 	// (a constructor, or a promoted member that is not in this list).
-	static function nthFieldNamed(ordered:Array<TClassField>, name:String, n:Int, fallback:TClassField):TClassField {
+	public static function nthFieldNamed(ordered:Array<TClassField>, name:String, n:Int, fallback:TClassField):TClassField {
 		var seen = 0;
 		for (x in ordered) if (x.name == name) {
 			if (seen == n) return x;
@@ -2079,6 +2092,8 @@ class TypeResolve {
 	}
 
 	static function buildEnumAbstractFields(ctx:Context, a:TAbstract, dParams:Array<TypeParam>, fields:Array<ClassField>, p:Position):Void {
+		// The module's context init runs before the enum-abstract rewrite.
+		ctx.contextInitRun(a.module);
 		var c = a.impl;
 		// At: the abstract self-type hint, built the way TExprToExpr converts a type back to syntax: a
 		// PRIVATE type converts to its bare name, a secondary type to Module.Sub, so loadComplexType
@@ -2398,6 +2413,20 @@ class TypeResolve {
 				}
 				var isMacroField = false;
 				for (acc in cff.cffAccess) if (acc.access == AMacro) isMacroField = true;
+				// The RETURN is typed before the arguments, so whatever the return type loads is loaded
+				// first.
+				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
+				// A constructor's return type is always Void regardless of any hint, so its signature reads
+				// TFun(args, Void). Visible in a cppia host's __script_construct signature.
+				// The hint is still loaded, for the display alone, so a cursor inside it has something to
+				// answer
+				// from; the resulting type is discarded either way.
+				if (cf.name == "new" && !isStaticField && fd.fType != null
+						&& hxc.typing.Typer.atDisplayPos(fd.fType.pos))
+					try Typeload.loadTypeHint(ctx, localParams, fd.fType, false) catch (_:Dynamic) {}
+				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid
+					: (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
+				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				var args:Array<TSignatureArg> = [];
 				// An abstract member other than `_new` and a macro takes the underlying `this` first, typed
 				// thisType
@@ -2439,18 +2468,6 @@ class TypeResolve {
 					}
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
 				}
-				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-				// A constructor's return type is always Void regardless of any hint, so its signature reads
-				// TFun(args, Void). Visible in a cppia host's __script_construct signature.
-				// The hint is still loaded, for the display alone, so a cursor inside it has something to
-				// answer
-				// from; the resulting type is discarded either way.
-				if (cf.name == "new" && !isStaticField && fd.fType != null
-						&& hxc.typing.Typer.atDisplayPos(fd.fType.pos))
-					try Typeload.loadTypeHint(ctx, localParams, fd.fType, false) catch (_:Dynamic) {}
-				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid
-					: (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
-				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;
 				// The argument metadata is generated at field CREATION, so a body-less function (an extern

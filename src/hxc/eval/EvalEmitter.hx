@@ -584,6 +584,8 @@ class EvalEmitter {
 		return switch (EvalValueTools.vresolve(EvalField.dynamicField(ctx, recv, EvalHash.hash(name)))) {
 			case VFunction(f, _): callAt(ctx, p, f, args);
 			case VFieldClosure(r, f): callAt(ctx, p, f, [r].concat(args));
+			// A macro's TLazy(f) is called to force the type.
+			case VInstance({ikind: ILazyType(_, get)}): get();
 			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
 			// emitter records before any call.
 			case v:
@@ -975,6 +977,8 @@ class EvalEmitter {
 		return switch (fn) {
 			case VFunction(f, _): leaveFirst ? f(args) : callAt(ctx, p, f, args);
 			case VFieldClosure(recv, f): leaveFirst ? f([recv].concat(args)) : callAt(ctx, p, f, [recv].concat(args));
+			// A macro's TLazy(f) is called to force the type.
+			case VInstance({ikind: ILazyType(_, get)}): get();
 			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
 			// emitter records before any call.
 			case v:

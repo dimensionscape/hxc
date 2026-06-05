@@ -429,7 +429,7 @@ class ModuleLoader {
 					// wildcards contribute no globals.
 					if (split != null && split.field == null) {
 						var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
-						ctx.delay(hxc.context.Context.PBuildModule, function() {
+						ctx.contextInitAdd(m, function() {
 							var mt = try ctx.getType(wpath, declPos, wsub) catch (_:Dynamic) return;
 							// Follow typedefs before static lookup; report types that still offer no statics.
 							switch (mt) {
@@ -1498,6 +1498,7 @@ class ModuleLoader {
 		// spot (a typedef loads its target).
 		hxc.typing.TypeResolve.resolveModule(ctx, m);
 		queueClassBuilds(ctx, m.types);
+		ctx.delay(Context.PConnectField, function() ctx.contextInitRun(m));
 		return m;
 	}
 

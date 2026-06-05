@@ -192,6 +192,8 @@ enum EvalInstanceKind {
 	IPos(p:Position);
 	ITypeDecl(mt:ModuleType);
 	IRef(v:EvalValue);
+	// ILazyType: the lazy a macro's TLazy(f) carries, and the function that forces it.
+	ILazyType(r:hxc.core.Ref<hxc.core.Type.TLazy>, get:Void->EvalValue);
 	// IBuffer holds a StringBuf's buffer, IUtf8 a haxe.Utf8 buffer.
 	IBuffer(buf:hxc.eval.EvalString.VStringBuffer);
 	IUtf8(buf:hxc.eval.EvalString.ByteBuffer);
