@@ -56,9 +56,13 @@ class Inline {
 		var cf:TClassField = null;
 		var c:Null<TClass> = null;
 		var ethis:Null<TExpr> = null;
+		// The receiver the inliner gets is the TField's object, a static's type expression included;
+		// only a call that is no field access passes `null`.
+		var recv:Null<TExpr> = null;
 		var isStatic = false;
 		switch (e.expr) {
 			case TField(et, fa):
+				recv = et;
 				switch (fa) {
 					case FStatic(cc, f): c = cc; cf = f; isStatic = true;
 					case FInstance(cc, _, f): c = cc; cf = f; ethis = et;
@@ -144,7 +148,7 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg) catch (b:InlineBail) {
+		var r = try doInline(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, false, recv) catch (b:InlineBail) {
 			// A forced inline of a normal method with an early return cannot fall back to a
 			// call; it is reported at the call.
 			if (forceInline && b.notFinalReturn && !cf.kind.match(Method(MethInline))) {
@@ -245,7 +249,7 @@ class Inline {
 		if (cfStack.indexOf(cf) >= 0) return null;
 		cfStack.push(cf);
 		depth++;
-		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure) catch (_:InlineBail) null
+		var r = try doInline(ctx, tf, ethis, ethis == null, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure, ethis) catch (_:InlineBail) null
 			catch (e:Dynamic) { depth--; cfStack.pop(); throw e; };
 		depth--;
 		cfStack.pop();
@@ -467,7 +471,7 @@ class Inline {
 		return f(root);
 	}
 
-	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false):TExpr {
+	static function doInline(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false, ?recv:TExpr):TExpr {
 		// `inlinerLocals` records the locals this inline declares, so a read of one takes the
 		// mapped position while a caller value stays verbatim. It has to be scoped to the current inline:
 		// a local an OUTER inline created is, from an inner one's point of view, an ordinary caller
@@ -477,7 +481,7 @@ class Inline {
 		var savedInlineIfCalled = inlineIfCalled;
 		inlinerLocals = new Map();
 		inlineIfCalled = new Map();
-		var r = try doInlineScoped(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure)
+		var r = try doInlineScoped(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure, recv)
 			catch (e:Dynamic) {
 				inlinerLocals = savedInlinerLocals;
 				inlineIfCalled = savedInlineIfCalled;
@@ -488,11 +492,24 @@ class Inline {
 		return r;
 	}
 
-	static function doInlineScoped(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false):TExpr {
+	static function doInlineScoped(ctx:TyperContext, tf:TFunc, ethis:Null<TExpr>, isStatic:Bool, params:Array<TExpr>, tret:T, absMember:Bool, mapType:Null<T->T>, p:Position, absThisArg:Bool, selfCallingClosure:Bool = false, ?recv:TExpr):TExpr {
 		var subst = new Map<Int, TExpr>();
 		var binds:Array<TExpr> = [];
 		var tvoid = ctx.com.basic.tvoid;
 		var vthis:Null<TVar> = null;
+		// A call on anything but `null` allocates the receiver's `_this`, and declaration copies it and
+		// then every formal argument, in order, before any other local of the inline. A bound argument or
+		// receiver is its copy.
+		var declThis:Null<TVar> = null;
+		if (recv != null && !recv.expr.match(TConst(TNull))) {
+			TypeFunctions.allocVar(VInlined, "_this", recv.type, recv.pos);
+			declThis = TypeFunctions.allocVar(VInlined, "_this", recv.type, p);
+		}
+		var declArgs = [for (a in tf.args) {
+			var nv = TypeFunctions.allocVar(declareKind(a.v), declareName(a.v), a.v.type, p);
+			nv.meta = [for (mm in a.v.meta) if (mm.name != ":this") mm];
+			nv;
+		}];
 		// A side-effecting argument always binds to a temp; once anything had a side effect (an argument
 		// or the mapped body: assignments, calls, news), any argument that might be affected and lacks
 		// @:semantics(value) binds too.
@@ -525,7 +542,9 @@ class Inline {
 			if (!directThis) {
 				// The bound receiver behaves as compiler-generated in fusion, so
 				// a single-use receiver temp fuses back regardless of extern purity.
-				vthis = TypeFunctions.allocVar(VGenerated, "_this", ethis.type, p);
+				vthis = declThis != null ? declThis : TypeFunctions.allocVar(VGenerated, "_this", ethis.type, p);
+				vthis.kind = VGenerated;
+				vthis.type = ethis.type;
 				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
 		}
@@ -613,8 +632,7 @@ class Inline {
 				// to VGenerated only when it is read at most once and never written. Keeping the VInlined
 				// kind in the other case is what stops the analyzer (for which neither VUser nor VInlined
 				// counts as compiler generated) from fusing the local without -D analyzer-optimize.
-				var nv = TypeFunctions.allocVar(declareKind(av), declareName(av), av.type, p);
-				nv.meta = [for (mm in av.meta) if (mm.name != ":this") mm];
+				var nv = declArgs[i];
 				if (use.reads + use.called <= 1 && !use.writes) nv.kind = VGenerated;
 				nv.extra = new TVarExtra([], param);
 				subst.set(av.id, substLocal(nv, p));

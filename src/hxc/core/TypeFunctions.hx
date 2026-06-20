@@ -89,8 +89,14 @@ class TypeFunctions {
 
 	static var _uid:Int = 0;
 
+	// HXC_DBG_VARS: log every allocation as "[var] <id> <name>" on stderr, to follow the sequence of
+	// variable ids.
+	static var traceVars:Bool = Sys.getEnv("HXC_DBG_VARS") != null;
+
 	public static function allocVar(kind:TVarKind, n:String, t:T, p:Position):TVar {
 		_uid++;
+		if (traceVars) Sys.stderr().writeString("[var] " + _uid + " " + n + "
+");
 		var flags = switch (kind) {
 			case VUser(TVOLocalFunction): intOfVarFlag(VFinal); // Stores the raw index here
 			case _: 0;
