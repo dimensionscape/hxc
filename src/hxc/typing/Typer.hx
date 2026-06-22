@@ -561,7 +561,7 @@ class Typer {
 		for (ty in commonTypes) {
 			switch (ty) {
 				case TInst(c, params) if (params.length > 0 && hasUnifyMinDynamic(c)):
-					dynTypes.push(TInst(c, [for (_ in params) TDynamic(null)]));
+					dynTypes.push(TInst(c, [for (_ in params) TypeFunctions.tDynamic]));
 				case _:
 			}
 		}
@@ -1160,7 +1160,7 @@ class Typer {
 					// kind (captured arguments, the tail-recursion assign arm, the argument-local test), so
 					// treating a local function's arguments as local VARIABLES would make it reuse the
 					// parameters instead of redeclaring loop-scoped copies.
-					var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
+					var av = TypeFunctions.allocVarNoId(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
 					args.push({v: av, c: null});
 				}
 				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
@@ -1256,6 +1256,8 @@ class Typer {
 				// after the body types, below), which the identifier resolver turns into a fake inline
 				// field call.
 				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
+				// The arguments when type_function brings them into context after the function's own variable.
+				for (a in args) TypeFunctions.giveVarId(a.v);
 				// Type each argument default value against its (possibly inferred) type, binding an unbound
 				// monomorph and recording it for runtime default insertion. . runs inside type_function, after
 				// the expected type has been unified in: per argument the name is checked, the default typed,

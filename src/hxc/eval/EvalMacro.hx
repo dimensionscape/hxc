@@ -2954,6 +2954,18 @@ class EvalMacro {
 		// A member receiver is pushed as `this` before the macro loads and types the macro world, so its
 		// stored id precedes the ids consumed by macro-context typing.
 		var receiverSyntax = isInstance ? Calls.typedExprToSyntax(tctx, fa.on) : null;
+		// A (class, method) the macro context has not loaded yet loads its module and finalizes the macro
+		// world before the interpreter is consulted; one in cachedMacros skips both.
+		var cacheKey = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
+		if (macroCom == null || !macroCom.cachedMacros.exists(cacheKey)) {
+			try loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
+				tctx.curclass != null ? tctx.curclass.module : null, p)
+			catch (e:TypingError) {
+				curPos = savedPos0;
+				throw new hxc.context.Context.ContextError(e.message, e.pos, Other, e.depth);
+			}
+			macroCom.cachedMacros.set(cacheKey, true);
+		}
 		var ec = getContext(tctx.com);
 		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
@@ -3732,7 +3744,7 @@ class EvalMacro {
 			case "TAnonymous":
 				decodeAnonRef(ec, args[0]);
 			case "TDynamic":
-				args[0] == VNull ? TDynamic(null) : TDynamic(decodeType(ec, args[0]));
+				args[0] == VNull ? TypeFunctions.tDynamic : TDynamic(decodeType(ec, args[0]));
 			case "TLazy":
 				switch (args[0]) {
 					case VInstance({ikind: ILazyType(r, _)}): TLazy(r);

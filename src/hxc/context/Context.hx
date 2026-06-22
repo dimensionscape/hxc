@@ -134,6 +134,11 @@ class Context {
 	}
 
 	/**
+	 * Loaded class-and-method pairs in this macro context; repeated loads skip finalization.
+	 */
+	public var cachedMacros:haxe.ds.StringMap<Bool> = new haxe.ds.StringMap();
+
+	/**
 	 * Core API loader context, separate for host and macro worlds.
 	 */
 	public var coreApiCtx:Null<Context> = null;

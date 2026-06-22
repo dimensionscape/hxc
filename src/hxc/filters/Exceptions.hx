@@ -338,9 +338,9 @@ class Exceptions {
 			if (cs.length == 0) {
 				if (handleAsValueException.length == 0 && valueExceptionCatch == null) return [];
 				if (handleAsValueException.length == 0) return catchesToIfs(ctx, [valueExceptionCatch], t, p);
-				var out = [catchesAsValueException(ctx, handleAsValueException, null, t, p)];
-				if (valueExceptionCatch != null) out = out.concat(catchesToIfs(ctx, [valueExceptionCatch], t, p));
-				return out;
+				// The tail is built first.
+				var tail = valueExceptionCatch != null ? catchesToIfs(ctx, [valueExceptionCatch], t, p) : [];
+				return [catchesAsValueException(ctx, handleAsValueException, null, t, p)].concat(tail);
 			}
 			var current = cs[0];
 			var v = current.v;
@@ -351,11 +351,15 @@ class Exceptions {
 					return catchesToIfs(ctx, cs, t, p);
 				if (handleAsValueException.length == 0)
 					return catchesToIfs(ctx, [valueExceptionCatch].concat(cs), t, p);
-				return [catchesAsValueException(ctx, handleAsValueException, null, t, p)].concat(catchesToIfs(ctx, cs, t, p));
+				// The tail is built first.
+				var tail = catchesToIfs(ctx, cs, t, p);
+				return [catchesAsValueException(ctx, handleAsValueException, null, t, p)].concat(tail);
 			}
-			if (ctx.catchesAnything && hxc.core.TypeUnification.fastEq(ctx.valueExceptionType, TypeFunctions.followWithAbstracts(v.type)))
-				return [catchesAsValueException(ctx, handleAsValueException, current, t, p)]
-					.concat(transform([], valueExceptionCatch != null ? valueExceptionCatch : current, rest));
+			if (ctx.catchesAnything && hxc.core.TypeUnification.fastEq(ctx.valueExceptionType, TypeFunctions.followWithAbstracts(v.type))) {
+				// The tail is built first.
+				var tail = transform([], valueExceptionCatch != null ? valueExceptionCatch : current, rest);
+				return [catchesAsValueException(ctx, handleAsValueException, current, t, p)].concat(tail);
+			}
 			// Native catches stay intact
 			if (isNativeCatch(ctx, v.type)) {
 				var nextHandle = (ctx.catchesAnything && !isHaxeException(v.type))

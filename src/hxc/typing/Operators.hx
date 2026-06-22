@@ -961,29 +961,6 @@ class Operators {
 				}
 			case _:
 		}
-		// Bind the side-effecting parts of an lvalue (an array base/key, a field receiver) to temps so the
-		// lvalue can be read and written without re-evaluating them.
-		function stabilizeLvalue(te1:TExpr):{init:Array<TExpr>, lv:TExpr} {
-			var tvoid = ctx.com.basic.tvoid;
-			var init:Array<TExpr> = [];
-			// A value_reference names the bound part after its position: a field host is fh, an array base
-			// and index are base and index.
-			function temp(e:TExpr, name:String):TExpr {
-				return switch (e.expr) {
-					case TLocal(_) | TConst(_) | TTypeExpr(_): e;
-					case _:
-						var v = TypeFunctions.allocVar(VGenerated, name, e.type, e.pos);
-						init.push(TypeFunctions.mk(TVarExpr(v, e), tvoid, e.pos));
-						TexprTools.makeLocal(v, e.pos);
-				};
-			}
-			var lv = switch (te1.expr) {
-				case TArray(base, key): TypeFunctions.mk(TArray(temp(base, "base"), temp(key, "index")), te1.type, te1.pos);
-				case TField(recv, fa): TypeFunctions.mk(TField(temp(recv, "fh"), fa), te1.type, te1.pos);
-				case _: te1;
-			};
-			return {init: init, lv: lv};
-		}
 		// mkAssign: every write this builds first casts the right side to the target type and then COMPACTS
 		// back to a compound operator when the result is exactly `target op rhs`. The same closure covers
 		// the assignment an abstract's @:op result needs as well as the plain one, so an abstract compound
@@ -1004,16 +981,12 @@ class Operators {
 			// checked writable when the result actually reassigns: a dedicated @:op(A += B) overload is its
 			// own assignment and is legal on a final.
 			return switch (makeBinop(ctx, sub, te1, te2, true, withType, p)) {
-				case BinopSpecial(_, true):
+				case BinopSpecial(opCall, true):
+					// The overload's result goes to the assignment: checkAssign when it needs assigning, then the
+					// target takes it. The callers stabilized the lvalue before the operator resolved, so the
+					// overload is resolved - and its inline expanded - once.
 					checkAssign(ctx, te1);
-					// A plain @:op(A + B) reused for `+=` reassigns `a = a.op(b)`, which names the target twice;
-					// bind its side-effecting parts to temps and re-dispatch so it is evaluated once.
-					var st = stabilizeLvalue(te1);
-					var opCall = switch (makeBinop(ctx, sub, st.lv, te2, true, withType, p)) {
-						case BinopSpecial(oc, _): oc;
-						case r: toTexpr(r);
-					};
-					vrToTexpr(st.init, mkAssign(st.lv, opCall));
+					mkAssign(te1, opCall);
 				case BinopSpecial(opCall, false):
 					// A dedicated @:op(A += B) overload is the assignment and returns its own result (often Void).
 					opCall;

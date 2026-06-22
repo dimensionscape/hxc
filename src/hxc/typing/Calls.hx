@@ -686,7 +686,7 @@ class Calls {
 				switch (el[0].expr) {
 					case EConst(CIdent("_")):
 						ctx.com.warning(WInfo, hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta)), WithTypeTools.toString(withType), p);
-						return AKExpr(TypeFunctions.mk(TConst(TNull), TDynamic(null), p));
+						return AKExpr(TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, p));
 					case _:
 						var te = Typer.typeExpr(ctx, el[0], WithTypeTools.value);
 						ctx.com.warning(WInfo, hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta)), hxc.core.TPrinting.sTypeStr(te.type), te.pos);
@@ -1797,7 +1797,7 @@ class Calls {
 			case TDynamic(_):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				DebugDump.selected("call", p, "dynamic function");
-				makeCall(ctx, ce, args, TDynamic(null), p, forceInline, forcePos);
+				makeCall(ctx, ce, args, TypeFunctions.tDynamic, p, forceInline, forcePos);
 			case TAbstract(a, tl) if (a.call != null && a.impl != null):
 				// @:op(a()) call operator: dispatch to the impl call field with the abstract value as its
 				// first

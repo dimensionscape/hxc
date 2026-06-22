@@ -102,7 +102,7 @@ class TexprTools {
 	}
 
 	public static inline function makeThrow(e:TExpr, p:Position):TExpr {
-		return TypeFunctions.mk(TThrow(e), TDynamic(null), p);
+		return TypeFunctions.mk(TThrow(e), TypeFunctions.tDynamic, p);
 	}
 
 	public static inline function mkParent(e:TExpr):TExpr {
@@ -117,7 +117,7 @@ class TexprTools {
 	}
 
 	public static inline function mkReturn(e:TExpr):TExpr {
-		return TypeFunctions.mk(TReturn(e), TDynamic(null), e.pos);
+		return TypeFunctions.mk(TReturn(e), TypeFunctions.tDynamic, e.pos);
 	}
 
 	public static inline function binop(op:Binop, a:TExpr, b:TExpr, t:T, p:Position):TExpr {
@@ -361,10 +361,13 @@ class TexprTools {
 					mk2(TVarExpr(v2, eo == null ? null : build(eo)));
 				case TFor(v, e1, e2):
 					var v2 = copyVar(v);
-					mk2(TFor(v2, build(e1), build(e2)));
+					// The body builds before the iterator.
+					var b2 = build(e2);
+					mk2(TFor(v2, build(e1), b2));
 				case TTry(e1, catches):
-					var e1b = build(e1);
-					mk2(TTry(e1b, [for (c in catches) { var v2 = copyVar(c.v); {v: v2, expr: build(c.expr)}; }]));
+					// The catches (each var copied, then its body) build before the body.
+					var cl = [for (c in catches) { var v2 = copyVar(c.v); {v: v2, expr: build(c.expr)}; }];
+					mk2(TTry(build(e1), cl));
 				case TFunction(f):
 					var args:Array<TFuncArg> = [for (a in f.args) {v: copyVar(a.v), c: a.c}];
 					mk2(TFunction(new TFunc(args, f.type, build(f.expr))));
@@ -388,7 +391,10 @@ class TexprTools {
 				case TIf(c, e1, e2): mk2(TIf(build(c), build(e1), e2 == null ? null : build(e2)));
 				case TWhile(c, e1, flag): mk2(TWhile(build(c), build(e1), flag));
 				case TSwitch(e1, cases, edef):
-					mk2(TSwitch(build(e1), [for (c in cases) {values: [for (x in c.values) build(x)], expr: build(c.expr)}], edef == null ? null : build(edef)));
+					// A case's body maps before its values.
+					var b1 = build(e1);
+					var cl = [for (c in cases) { var body = build(c.expr); {values: [for (x in c.values) build(x)], expr: body}; }];
+					mk2(TSwitch(b1, cl, edef == null ? null : build(edef)));
 				case TReturn(eo): mk2(TReturn(eo == null ? null : build(eo)));
 				case TThrow(e1): mk2(TThrow(build(e1)));
 				case TCast(e1, mt): mk2(TCast(build(e1), mt));
@@ -623,7 +629,8 @@ class TexprTools {
 				mk2(TIf(ec, e1, e2 == null ? null : f(e2)));
 			case TSwitch(e1, cases, def):
 				var e1 = f(e1);
-				var cases = [for (c in cases) {values: [for (v in c.values) f(v)], expr: f(c.expr)}];
+				// The body maps before the values.
+				var cases = [for (c in cases) { var body = f(c.expr); {values: [for (v in c.values) f(v)], expr: body}; }];
 				mk2(TSwitch(e1, cases, def == null ? null : f(def)));
 			case TTry(e1, catches):
 				var e1 = f(e1);

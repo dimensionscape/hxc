@@ -1111,9 +1111,11 @@ class Inline {
 				}
 				return TypeFunctions.mk(TBlock(out), out[out.length - 1].type, keepPositions ? e.pos : inlinePos);
 			case TIf(c, a, b) if (b != null):
+				// Condition, then, else.
+				var cond = m(c);
 				var thenExpr = terminal(a);
 				var elseExpr = terminal(b);
-				return TypeFunctions.mk(TIf(m(c), thenExpr, elseExpr), sharedType([thenExpr, elseExpr]), keepPositions ? e.pos : inlinePos);
+				return TypeFunctions.mk(TIf(cond, thenExpr, elseExpr), sharedType([thenExpr, elseExpr]), keepPositions ? e.pos : inlinePos);
 			case TSwitch(c, cases, def):
 				var mappedCases = [for (caseDef in cases) {values: [for (v in caseDef.values) m(v)], expr: terminal(caseDef.expr)}];
 				var mappedDefault = def == null ? null : terminal(def);
@@ -1122,13 +1124,14 @@ class Inline {
 				return TypeFunctions.mk(TSwitch(m(c), mappedCases, mappedDefault), sharedType(values), keepPositions ? e.pos : inlinePos);
 			case TTry(e1, catches):
 				// A terminal try maps its body and catch branches as terminal; the node takes the branches'
-				// shared type (return_type).
-				var body = terminal(e1);
+				// shared type.
+				// The catches (each declared, then mapped) map before the body.
 				var mappedCatches = [for (c in catches) {
 					var nv = declareVar(c.v);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: terminal(c.expr)};
 				}];
+				var body = terminal(e1);
 				var values = [body].concat([for (c in mappedCatches) c.expr]);
 				return TypeFunctions.mk(TTry(body, mappedCatches), sharedType(values), keepPositions ? e.pos : inlinePos);
 			case TParenthesis(e1):
@@ -1302,18 +1305,21 @@ class Inline {
 			case TUnop(op, fl, e1): TUnop(op, fl, m(e1));
 			case TVarExpr(v, eo):
 				if (TypeFunctions.hasVarFlag(v, VStatic)) throw new TypingError("Inline functions cannot have static locals", v.pos);
-				// The declared copy keeps extra; find_abstract chases its expr to recover the abstract receiver
-				// type behind an IMap-typed temp.
+				// The declared copy keeps extra; the abstract lookup chases its expr to recover the
+				// abstract receiver type behind an IMap-typed temp.
+				// The initializer maps before the var is declared.
+				var meo = eo == null ? null : m(eo);
 				var nv = declareVar(v);
 				subst.set(v.id, substLocal(nv, v.pos));
-				TVarExpr(nv, eo == null ? null : m(eo));
+				TVarExpr(nv, meo);
 			case TBlock(el): TBlock([for (x in el) m(x)]);
 			case TFor(v, e1, e2):
-				var me1 = m(e1);
+				// The loop var is declared before the iterator maps.
 				var hadOld = subst.exists(v.id);
 				var old = hadOld ? subst.get(v.id) : null;
 				var nv = declareVar(v);
 				subst.set(v.id, substLocal(nv, v.pos));
+				var me1 = m(e1);
 				var me2 = m(e2);
 				if (hadOld) subst.set(v.id, old) else subst.remove(v.id);
 				TFor(nv, me1, me2);
@@ -1331,18 +1337,22 @@ class Inline {
 				if (!inLocalFun) throw new InlineBail(true);
 				TReturn(eo == null ? null : m(eo));
 			case TSwitch(subject, cases, def):
-				// A non-terminal switch maps structurally; only a return inside one still aborts. (the
-				// Type.map_expr catch-all; TSwitch is special-cased only `when term`).
-				TSwitch(m(subject), [for (c in cases) {values: [for (v in c.values) m(v)], expr: m(c.expr)}], def == null ? null : m(def));
+				// A non-terminal switch maps structurally; only a return inside one still
+				// aborts.
+				// A case's body maps before its values.
+				var ms = m(subject);
+				var mc = [for (c in cases) { var body = m(c.expr); {values: [for (v in c.values) m(v)], expr: body}; }];
+				TSwitch(ms, mc, def == null ? null : m(def));
 			case TTry(e1, catches):
 				// Try branches map with the current term flag (non-terminal here); each catch variable
-				// re-declares as a fresh local (state#declare).
-				var me1 = m(e1);
-				TTry(me1, [for (c in catches) {
+				// re-declares as a fresh local.
+				// The catches map before the body.
+				var mc = [for (c in catches) {
 					var nv = declareVar(c.v);
 					subst.set(c.v.id, substLocal(nv, c.v.pos));
 					{v: nv, expr: m(c.expr)};
-				}]);
+				}];
+				TTry(m(e1), mc);
 			case TFunction(f):
 				// A closure inside the inlined body maps non-terminal with inLocalFun set, its own
 				// arguments
@@ -1352,7 +1362,8 @@ class Inline {
 				var nargs:Array<TFuncArg> = [for (a in f.args) {
 					var nv = declareVar(a.v);
 					subst.set(a.v.id, substLocal(nv, a.v.pos));
-					{v: nv, c: a.c == null ? null : m(a.c)};
+					// The default value stays unmapped.
+					{v: nv, c: a.c};
 				}];
 				var body = mapExpr(ctx, f.expr, subst, vthis, ethis, inlinePos, keepPositions, true);
 				TFunction(new TFunc(nargs, f.type, body));

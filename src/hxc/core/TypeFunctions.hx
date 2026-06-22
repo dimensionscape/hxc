@@ -104,6 +104,23 @@ class TypeFunctions {
 		return new TVar(_uid, n, t, kind, null, [], flags, p);
 	}
 
+	// A variable whose id is given later: a local function's arguments are typed before its own variable is
+	// added but allocated after it.
+	public static function allocVarNoId(kind:TVarKind, n:String, t:T, p:Position):TVar {
+		var flags = switch (kind) {
+			case VUser(TVOLocalFunction): intOfVarFlag(VFinal);
+			case _: 0;
+		};
+		return new TVar(0, n, t, kind, null, [], flags, p);
+	}
+
+	public static function giveVarId(v:TVar):Void {
+		_uid++;
+		v.id = _uid;
+		if (traceVars) Sys.stderr().writeString("[var] " + _uid + " " + v.name + "
+");
+	}
+
 	static var _mid:Int = 0;
 	public static function allocMid():Int {
 		_mid++;

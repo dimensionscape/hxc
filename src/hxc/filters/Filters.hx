@@ -588,6 +588,8 @@ class Filters {
 		switch (t) {
 			case TClassDecl(c):
 				var ethis = TypeFunctions.mk(TConst(TThis), TInst(c, TypeFunctions.extractParamTypes(c.params)), c.pos);
+				// The (never used) `_g` is allocated for every class, inits or not.
+				TypeFunctions.allocVar(VGenerated, "_g", ethis.type, ethis.pos);
 				var inits = [for (cf in c.orderedFields) if (cf.kind.match(Var(_)) && cf.expr != null) cf];
 				// The init list is built by PREPENDING over the ordered fields with no re-reversal, so the
 				// assignments emit in REVERSE declaration order.
