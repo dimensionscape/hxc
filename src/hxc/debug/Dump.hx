@@ -150,12 +150,19 @@ class Dump {
 						};
 						buf.add("\n\t" + sMetas(f.meta, "\t") + pub + (stat ? "static " : "") + kindPrefix + keyword + " " + nameAcc + params(f.params));
 						switch (f.kind) {
+							// The initializer before the field type.
 							case Var(_):
-								buf.add(":" + st(f.type) + (f.expr == null ? "" : " = " + sExpr(f.expr)) + ";");
+								var se = f.expr == null ? "" : " = " + sExpr(f.expr);
+								var sct = st(f.type);
+								buf.add(":" + sct + se + ";");
 							case Method(_):
 								if (isExtern || isInterface) {
 									switch (f.type) {
-										case TFun(sig): buf.add("(" + sig.args.map(function(a) return a.name + ":" + st(a.t)).join(", ") + "):" + st(sig.ret) + ";");
+										// The return type before the arguments.
+										case TFun(sig):
+											var sr = st(sig.ret);
+											var sa = sig.args.map(function(a) return a.name + ":" + st(a.t)).join(", ");
+											buf.add("(" + sa + "):" + sr + ";");
 										case _:
 									}
 								} else {
@@ -195,10 +202,12 @@ class Dump {
 				case TTypeDecl(t):
 					buf.add(sMetas(t.meta, "") + (t.isPrivate ? "private " : "") + "typedef " + Globals.sTypePath(path) + params(t.params) + " = " + st(t.type));
 				case TAbstractDecl(a):
-					// String.concat " " over pieces that each start with a space.
+					// Joined with " " over pieces that each start with a space; the `to` list is evaluated
+					// before the `from` list.
+					var sto = a.to.map(function(t) return " to " + st(t)).join(" ");
+					var sfrom = a.from.map(function(t) return " from " + st(t)).join(" ");
 					buf.add(sMetas(a.meta, "") + (a.isPrivate ? "private " : "") + "abstract " + Globals.sTypePath(path) + params(a.params)
-						+ a.from.map(function(t) return " from " + st(t)).join(" ")
-						+ a.to.map(function(t) return " to " + st(t)).join(" ") + " {}");
+						+ sfrom + sto + " {}");
 			}
 			df.close();
 		}

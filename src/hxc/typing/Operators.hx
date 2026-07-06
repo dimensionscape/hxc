@@ -234,68 +234,27 @@ class Operators {
 		var tint = basic.tint, tfloat = basic.tfloat, tstring = basic.tstring, tbool = basic.tbool;
 		var haxeNext = ctx.com.defines.rawDefined("haxe_next");
 
-		function callToString(e:TExpr):TExpr {
-			// `if (e == null) "null" else e.toString()`, using a temp for a non-trivial operand so it is
-			// evaluated once. .
-			function gen(x:TExpr):TExpr {
-				// Ignore the visibility of toString.
-				ctx.privateAccess++;
-				var accS = hxc.typing.Fields.typeField(ctx, x, "toString", x.pos, MCall([]), WithTypeTools.withType(tstring));
-				ctx.privateAccess--;
-				return hxc.typing.Calls.buildCall(ctx, accS, [], WithTypeTools.withType(tstring), x.pos);
-			}
-			// A static-platform non-nullable operand never takes the null branch, and the `e == null` check
-			// below would type a null at the operand's non-nullable basic type, which trips the static-null
-			// check. this path with the same isStatic test.
-			if (ctx.com.platformConfig.isStatic && !TypeFunctions.isNullable(e.type))
-				return gen(e);
-			var strNull = TypeFunctions.mk(TConst(TString("null")), tstring, e.pos);
-			if (!hxc.typing.Calls.needsTempVar(e)) {
-				var check = TypeFunctions.mk(TBinop(OpEq, e, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
-				return TypeFunctions.mk(TIf(check, strNull, gen(e)), tstring, e.pos);
-			}
-			var tmp = TypeFunctions.allocVar(VGenerated, "tmp", e.type, e.pos);
-			var tmpLocal = TexprTools.makeLocal(tmp, e.pos);
-			var check = TypeFunctions.mk(TBinop(OpEq, tmpLocal, TexprTools.makeNull(e.type, e.pos)), ctx.com.basic.tbool, e.pos);
-			var iff = TypeFunctions.mk(TIf(check, strNull, gen(tmpLocal)), tstring, e.pos);
-			var decl = TypeFunctions.mk(TVarExpr(tmp, e), ctx.com.basic.tvoid, e.pos);
-			return TypeFunctions.mk(TBlock([decl, iff]), tstring, e.pos);
-		}
-		// Wrap `e` in a Std.string(e) call: any non-primitive, non-abstract operand of a string
-		// concatenation is stringified through Std.string so it gets Haxe semantics (an Array prints as
-		// [a,b,c], not the native comma-join).
-		function stdString(e:TExpr):TExpr {
-			var std = try ctx.com.getType({pack: [], name: "Std"}, p, null) catch (_:Dynamic) null;
-			switch (std) {
-				case TClassDecl(c):
-					var cf = c.statics.get("string");
-					if (cf == null) return e;
-					hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
-					var stdExpr = TexprTools.makeTypeExpr(TClassDecl(c), e.pos);
-					var acc = hxc.typing.Fields.fieldAccess(ctx, MCall([]), cf, FHStatic(c), stdExpr, e.pos);
-					var callee = Typer.accGet(ctx, acc);
-					return hxc.typing.Calls.makeCall(ctx, callee, [e], tstring, e.pos);
-				case _: return e;
-			}
-		}
+		// String conversion. An abstract with a static toString goes through the one Calls.callToString; an
+		// operand that is not a basic type through Std.string, typed as a field access with the binop's own
+		// expected type.
 		function toString(e:TExpr):TExpr {
-			// An abstract operand in a string concatenation whose impl defines toString is converted by
-			// calling it (null-checked); other operands are stringified by the runtime. The inner loop
-			// walks over the type (not the expr) so an abstract with no @:to String recurses through its
-			// underlying type: a cpp.Callable over a function reaches KOther and stringifies.
 			function loop(t:T):TExpr {
 				return switch (classify(t)) {
 					case KAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
-						callToString(e);
+						hxc.typing.Calls.callToString(ctx, e);
 					case KInt | KFloat | KString: e;
 					case KUnk | KDyn | KNumParam(_) | KStrParam(_) | KOther:
-						// A non-primitive operand (Array, an enum, an anon, ...) stringifies through
-						// Std.string, not the target's native coercion.
-						stdString(e);
+						var std = TexprTools.makeTypeExpr(Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, e.pos), e.pos);
+						var acc = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, std, "string", e.pos, MCall([]), withType));
+						TypeFunctions.follow(acc.type);
+						acc = switch (acc.expr) {
+							case TField(e0, FClosure(cwp, f)) if (cwp != null): TypeFunctions.mk(TField(e0, FInstance(cwp.c, cwp.params, f)), acc.type, acc.pos);
+							case _: acc;
+						};
+						hxc.typing.Calls.makeCall(ctx, acc, [e], tstring, e.pos);
 					case KAbstract(a, tl):
-						// An abstract with no toString is converted to String by its @:to String cast when
-						// it has one; otherwise it stringifies as its underlying value.
-						try Typer.castOrUnifyRaise(ctx, tstring, e, p) catch (_:Dynamic) loop(TypeFunctions.getUnderlyingType(a, tl));
+						try Typer.castOrUnifyRaise(ctx, tstring, e, p)
+						catch (_:hxc.core.TypingError.CastUnifyError) loop(TypeFunctions.getUnderlyingType(a, tl));
 				};
 			}
 			return loop(e.type);

@@ -611,78 +611,6 @@ class PatternMaker {
 		return PatVariable(v);
 	}
 
-	// The object-pattern field types come from an anon directly, a or a @:forward abstract's
-	// underlying type (filtered by the forwarded field list). Returns null when t is none of these
-	// (fields then default to Dynamic).
-	static function forwardFilter(a:TAbstract):Null<Map<String, Bool>> {
-		for (m in a.meta) if (m.name == ":forward") {
-			if (m.params.length == 0) return null;
-			var set = new Map<String, Bool>();
-			for (pe in m.params) switch (pe.expr) { case EConst(CIdent(sn)): set.set(sn, true); case _: }
-			return set;
-		}
-		return null;
-	}
-	static function objectPatternFieldTypes(ctx:TyperContext, t:T, p:Position):Null<{types:Map<String, T>, order:Array<String>, methods:Map<String, Bool>}> {
-		var types = new Map<String, T>();
-		var methods = new Map<String, Bool>();
-		var order:Array<String> = [];
-		var found = false;
-		inline function add(name:String, ty:T):Void {
-			if (!types.exists(name)) { types.set(name, ty); order.push(name); found = true; }
-		}
-		function collect(t:T):Void {
-			switch (TypeFunctions.follow(t)) {
-				case TAnon(an):
-					var names = [for (cf in an.fields) cf.name];
-					names.sort(function(a2, b2) return a2 < b2 ? -1 : (a2 > b2 ? 1 : 0));
-					for (n in names) {
-						var cf = an.fields.get(n);
-						if (cf.kind.match(Method(_))) methods.set(n, true);
-						add(n, cf.type);
-					}
-				case TInst(c, tl):
-					// TInst: every accessible, matchable (non-method) field of the class and its supers, supers
-					// first and in declaration order. this makes two structure patterns for a class value (`{a:_}`
-					// and `{b:_}`) carry the same full field set, so the matcher treats them as one ConFields
-					// constructor instead of two and never builds a value-switch on a structure pattern (issue:
-					// self-host GenJS).
-					function loopClass(c:TClass, tl:Array<T>):Void {
-						switch (c.superClass) {
-							case null:
-							case sup: loopClass(sup.c, [for (t2 in sup.params) TypeFunctions.applyParams(c.params, tl, t2)]);
-						}
-						for (cf in c.orderedFields) {
-							if (cf.kind.match(Method(_)) || !hxc.typing.Fields.canAccess(ctx, c, cf, false)) continue;
-							add(cf.name, TypeFunctions.applyParams(c.params, tl, cf.type));
-						}
-					}
-					loopClass(c, tl);
-				case TAbstract(a, tl) if (a.impl != null):
-					// TAbstract: the abstract's @:impl instance fields (its properties/vars) expose their
-					// abstract type, and a @:forward abstract additionally exposes its underlying type's
-					// fields (filtered by the @:forward name list) for any name the impl does not already
-					// define. Methods are not matchable and are skipped.
-					for (cf in a.impl.orderedStatics) {
-						if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || cf.kind.match(Method(_))) continue;
-						add(cf.name, TypeFunctions.applyParams(a.params, tl, cf.type));
-					}
-					if (TypeFunctions.hasMeta(":forward", a.meta)) {
-						var fwd = forwardFilter(a);
-						var inner = objectPatternFieldTypes(ctx, TypeFunctions.getUnderlyingType(a, tl), p);
-						if (inner != null) for (name in inner.order) if (fwd == null || fwd.exists(name)) add(name, inner.types.get(name));
-					}
-				case _:
-					// A structure pattern needs a type whose fields can be enumerated. Answering "no fields"
-					// instead let the pattern go on to be matched field by field, so the first name written in it
-					// was reported as missing rather than the subject being reported as unmatchable.
-					throw new TypingError("Cannot field-match against " + hxc.core.TPrinting.sTypeStr(t), p);
-			}
-		}
-		collect(t);
-		return found ? {types: types, order: order, methods: methods} : null;
-	}
-
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
 		// The pattern is built from what is UNDER a display node and the request is answered separately.
 		// hxc answers by position, and the wrapper carries its inner node's position, so reading through it
@@ -840,47 +768,72 @@ class PatternMaker {
 					}
 				}
 				arrayPattern(t);
-			case EObjectDecl(fields):
-				// Structure pattern: match named fields against the expected anon type. Fields the pattern
-				// omits are filled with wildcards so every structure pattern for the type carries the same
-				// field set (and arity) -- the matcher then treats them as one constructor. (record fill).
-				var fieldTypes = objectPatternFieldTypes(ctx, t, p);
-				var mentioned = new Map<String, Expr>();
-				for (f in fields) mentioned.set(f.name, f.expr);
-				// The field order is the collect_fields visit order (already correct per type kind);
-				// a type with no known field set falls back to the names the pattern lists, sorted so
-				// two such patterns still share one constructor.
-				var allNames = if (fieldTypes != null) fieldTypes.order else {
-					var ns = [for (f in fields) f.name];
-					ns.sort(function(a2, b2) return a2 < b2 ? -1 : (a2 > b2 ? 1 : 0));
-					ns;
-				};
-				var pairs = [];
-				for (name in allNames) {
-					var cf = fieldTypes == null ? null : fieldTypes.types.get(name);
-					var fe = mentioned.get(name);
-					// An omitted field, or a reification position field (carries no matchable info), is a wildcard.
-					var omitted = fe == null || (pctx.inReification && (name == "pos" || name == "posPath" || name == "namePos"));
-					// Only a NON-method field is filled in with a wildcard. A method carries no matchable
-					// information, so it is dropped from the constructor entirely and never becomes a sub-subject
-					// to extract.
-					if (omitted && fieldTypes != null && fieldTypes.methods.exists(name)) continue;
-					var sub = if (omitted)
-						({pat: PatAny, pos: fe == null ? p : fe.pos} : Pattern)
-						else make(pctx, false, cf != null ? cf : TypeFunctions.tDynamic, fe);
-					pairs.push({name: name, sub: sub});
+			case EObjectDecl(fl):
+				// The known fields are collected by PREPENDING, a field of a name already collected
+				// replacing it and moving to the head; the patterns are then made walking the list from the
+				// head, so in the reverse of the order the fields were collected.
+				var known:Array<{cf:TClassField, t:T}> = [];
+				function collectField(cf:TClassField, ft:T, filter:Null<Array<String>>):Void {
+					if (filter != null && filter.indexOf(cf.name) < 0) return;
+					known = [{cf: cf, t: ft}].concat([for (k in known) if (k.cf.name != cf.name) k]);
 				}
-				// Once the constructor is built from the type's own fields, every name the pattern gave that
-				// the collected set does not carry is an error, reported at that field's value expression. hxc
-				// drove the pattern from the type's field list alone, so a name the type does not have was
-				// silently dropped and the pattern matched anyway.
-				if (fieldTypes != null) {
-					var collected = new Map<String, Bool>();
-					for (pr in pairs) collected.set(pr.name, true);
-					for (f in fields) if (!collected.exists(f.name))
-						throw new TypingError(hxc.core.TPrinting.sTypeStr(t) + " has no field " + f.name, f.expr.pos);
+				function collectFields(t:T, filter:Null<Array<String>>):Void {
+					switch (TypeFunctions.follow(t)) {
+						case TAnon(an):
+							// Ascending name order.
+							var names = [for (k in an.fields.keys()) k];
+							names.sort(function(x, y) return x < y ? -1 : x > y ? 1 : 0);
+							for (n in names) {
+								var cf = an.fields.get(n);
+								collectField(cf, cf.type, filter);
+							}
+						case TInst(c, tl):
+							function loop(c:TClass, tl:Array<T>):Void {
+								switch (c.superClass) {
+									case null:
+									case sup: loop(sup.c, [for (t2 in sup.params) TypeFunctions.applyParams(c.params, tl, t2)]);
+								}
+								for (cf in c.orderedFields)
+									if (hxc.typing.Fields.canAccess(ctx, c, cf, false))
+										collectField(cf, TypeFunctions.applyParams(c.params, tl, cf.type), filter);
+							}
+							loop(c, tl);
+						case TAbstract(a, tl) if (a.impl != null):
+							var fwd = TypeFunctions.getMetaOpt(":forward", a.meta);
+							if (fwd != null) {
+								var sl = [for (pe in fwd.params) switch (pe.expr) { case EConst(CIdent(n)): n; case _: null; }].filter(n -> n != null);
+								var filter2 = sl.length == 0 ? filter : filter == null ? sl : [for (n in sl) if (filter.indexOf(n) >= 0) n];
+								collectFields(TypeFunctions.getUnderlyingType(a, tl), filter2);
+							}
+							for (cf in a.impl.orderedStatics)
+								if (TypeFunctions.hasClassFieldFlag(cf, CfImpl))
+									collectField(cf, TypeFunctions.applyParams(a.params, tl, cf.type), filter);
+						case _:
+							throw new TypingError("Cannot field-match against " + hxc.core.TPrinting.sTypeStr(t), p);
+					}
 				}
-				PatConstructor(Constructor.make(ConFields([for (pr in pairs) pr.name]), p), [for (pr in pairs) pr.sub]);
+				collectFields(t, null);
+				var patterns:Array<Pattern> = [];
+				var names:Array<String> = [];
+				for (k in known) {
+					var cf = k.cf;
+					// A reification's position fields carry nothing to match.
+					var e1:Null<Expr> = null;
+					if (!(pctx.inReification && (cf.name == "pos" || cf.name == "posPath" || cf.name == "namePos")))
+						for (f in fl) if (f.name == cf.name) { e1 = f.expr; break; }
+					if (e1 != null) {
+						patterns.unshift(make(pctx, false, k.t, e1));
+						names.unshift(cf.name);
+					} else if (!cf.kind.match(Method(_))) {
+						// A field with no pattern matches anything, unless it is a method.
+						patterns.unshift(({pat: PatAny, pos: cf.pos} : Pattern));
+						names.unshift(cf.name);
+					}
+				}
+				// An unknown field is an error at the field's value
+				for (f in fl) if (names.indexOf(f.name) < 0)
+					throw new TypingError(hxc.core.TPrinting.sTypeStr(t) + " has no field " + f.name, f.expr.pos);
+				PatConstructor(Constructor.make(ConFields(names), p), patterns);
 			case ECall(ec, el):
 				var head = Typer.typeExpr(ctx, ec, WithTypeTools.withType(t));
 				switch (head.expr) {

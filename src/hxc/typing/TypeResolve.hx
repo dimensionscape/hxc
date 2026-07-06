@@ -303,23 +303,6 @@ class TypeResolve {
 		while (j < ctx.modules.length) { resolveModule(ctx, ctx.modules[j]); j++; }
 	}
 
-	// On-demand resolution of one type (a forward-referenced typedef used in an intersection
-	// while its module is still mid-resolution). Guarded against re-entry.
-	static var onDemand:StringMap<Bool> = new StringMap();
-
-	public static function resolveTypeOnDemand(ctx:Context, mt:ModuleType):Void {
-		var info = TypeFunctions.tInfos(mt);
-		var key = Context.pathKey(info.path);
-		if (onDemand.exists(key)) return;
-		var entry = ctx.declOfType.get(key);
-		if (entry == null) return;
-		onDemand.set(key, true);
-		try resolveType(ctx, mt, entry.decl, entry.pos)
-		catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) { onDemand.remove(key); throw dc; }
-		catch (_:Dynamic) {}
-		onDemand.remove(key);
-	}
-
 	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
 		// /474/556/608: init_class/init_enum/init_typedef/init_abstract make a type whose name holds the
@@ -972,6 +955,9 @@ class TypeResolve {
 		if (TypeFunctions.hasMeta(":macro", c.meta))
 			ctx.addDiagnostic("Macro classes are no longer allowed in haxe 3", c.pos);
 		var nameSeen = new haxe.ds.StringMap<Int>();
+		// Each field is added to the class at the END of its iteration, so a property lookup while setting
+		// up arguments and return types sees only the fields declared before it.
+		var created = new haxe.ds.StringMap<TClassField>();
 		// ABSTRACT-IMPL promotion: on a KAbstractImpl class a non-static field is registered as a static
 		// (abstract member). Mirror that when locating the registered cf so the enum-abstract `var X`
 		// members (syntactically non-static) are found in statics.
@@ -1024,7 +1010,8 @@ class TypeResolve {
 						throw new hxc.core.TypingError("Generic functions must have type parameters", cff.cffPos);
 					case _:
 				}
-				resolveFieldType(ctx, params, target, cff, c.module, c);
+				var prefix = isStatic ? "s:" : "i:";
+				resolveFieldType(ctx, params, target, cff, c.module, c, n -> created.get(prefix + n));
 				// Creating a method runs the abstract checks on the field it creates.
 				switch (c.kind) {
 					case KAbstractImpl(a) if (cff.cffKind.match(FFun(_))): checkAbstractCasts(ctx, a, c, target, cff, isAbstractMember);
@@ -1071,6 +1058,8 @@ class TypeResolve {
 						else TypeFunctions.removeClassFieldFlag(target, CfPublic);
 					}
 				}
+				// An overload sibling joins the first declaration's overloads; the map keeps the first.
+				if (!created.exists(key)) created.set(key, target);
 			} catch (e:ContextError) {
 				// A field's signature is typed under protection, so a hint that does not resolve is an error
 				// about the declaration, not a field quietly left untyped. The type load has already recovered
@@ -1266,9 +1255,8 @@ class TypeResolve {
 		return c.superClass != null && extendsPublic(c.superClass.c);
 	}
 
-	// Bind each property accessor signature to the property's declared type: an unannotated get_/set_
-	// return or value argument would otherwise be a free monomorph that can unify with an unrelated sibling
-	// type during inference. accessor checks.
+	// The method check for each property: the accessor checks, and an interface's generated accessors.
+	// (A hint-less accessor's type comes from resolveFieldType.)
 	static function linkPropertyAccessors(ctx:Context, c:TClass, isAbsImpl:Bool):Void {
 		// A property accessor placed with the wrong staticness (a member accessor for a static property, or
 		// vice versa) is reported.
@@ -1340,14 +1328,6 @@ class TypeResolve {
 					ctx.addDiagnostic("Mixing abstract implementation and static properties/accessors is not allowed", acc.pos);
 			});
 		}
-		function usePropertyType(slot:T, pt:T):Void {
-			switch (TypeFunctions.follow(slot)) {
-				case TMono(r) if (r.type == null):
-					TypeUnification.monoBind(r, pt);
-				case _:
-					try TypeUnification.unifyDefault(slot, pt) catch (_:Dynamic) {};
-			}
-		}
 		function loop(fields:StringMap<TClassField>, other:StringMap<TClassField>, propIsStatic:Bool):Void {
 			inline function genAccessor(accName:String, propType:T, isSetter:Bool, propPos:Position):TClassField {
 				// Generate the virtual accessor for an interface property.
@@ -1380,10 +1360,6 @@ class TypeResolve {
 						if (vk.read.match(AccCall)) {
 							var g = fields.get("get_" + name);
 							if (g != null) {
-								switch (TypeFunctions.follow(g.type)) {
-									case TFun(sig): usePropertyType(sig.ret, pt);
-									case _:
-								}
 								checkFoundAccessor(g, name, cf.pos, pt, false, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
@@ -1396,12 +1372,6 @@ class TypeResolve {
 						if (vk.write.match(AccCall)) {
 							var st = fields.get("set_" + name);
 							if (st != null) {
-								switch (TypeFunctions.follow(st.type)) {
-									case TFun(sig):
-										if (sig.args.length > 0) usePropertyType(sig.args[sig.args.length - 1].t, pt);
-										usePropertyType(sig.ret, pt);
-									case _:
-								}
 								checkFoundAccessor(st, name, cf.pos, pt, true, TypeFunctions.hasClassFieldFlag(cf, CfImpl));
 							}
 							else if (TypeFunctions.hasClassFlag(c, CInterface)) {
@@ -1610,15 +1580,6 @@ class TypeResolve {
 					throw new ContextError("Abstracts with underlying type must have an implementation", a.pos);
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
 				var at = Typeload.loadComplexType(ctx, a.params, th);
-				// The underlying type through load_instance, where a typedef is a TLazy the reference forces on
-				// demand. hxc resolves declarations eagerly in source order, so a typedef declared after this
-				// abstract is still a bare shell here. Force it; resolveTypeOnDemand's own re-entry guard is
-				// what makes a RECURSIVE typedef terminate.
-				switch (at) {
-					case TType(td, _): resolveTypeOnDemand(ctx, TTypeDecl(td));
-					// Not the same for an abstract OVER ANOTHER abstract.
-					case _:
-				}
 				a.thisType = at;
 				isType = true;
 				// A recursive underlying chain reports once the involved abstracts have resolved (a PForce
@@ -2127,6 +2088,8 @@ class TypeResolve {
 		};
 		if (implFields == null) return;
 		hxc.context.ModuleLoader.rebuildFields(c, implFields);
+		// Each field is added at the END of its iteration, as in resolveClass.
+		var created = new haxe.ds.StringMap<TClassField>();
 		for (cff in implFields) {
 			var isStatic = false;
 			for (acc in cff.cffAccess) if (acc.access == AStatic) isStatic = true;
@@ -2143,7 +2106,8 @@ class TypeResolve {
 				// declared with none of its own, so a synthesized enum value hinted `Name<T>` has nothing to
 				// bind T to without them.
 				var params = TypeFunctions.hasClassFieldFlag(cf, CfImpl) ? a.params : c.params;
-				resolveFieldType(ctx, params, cf, cff, c.module, c);
+				var prefix = isStatic ? "s:" : "i:";
+				resolveFieldType(ctx, params, cf, cff, c.module, c, n -> created.get(prefix + n));
 				// An enum-abstract member keeps a hint it DECLARED, and only one that declared none is
 				// typed as the
 				// abstract, so `var A:Int = 1` in `enum abstract E(Int)` is rejected - by the binding's
@@ -2154,6 +2118,8 @@ class TypeResolve {
 						cf.type = TAbstract(a, TypeFunctions.extractParamTypes(a.params));
 					case _:
 				}
+				var key = (isStatic ? "s:" : "i:") + cff.cffName.name;
+				if (!created.exists(key)) created.set(key, cf);
 			} catch (e:ContextError) {
 				// A field's signature is typed under protection, so a hint that does not resolve is an error
 				// about the declaration, not a field quietly left untyped. The type load has already recovered
@@ -2227,24 +2193,6 @@ class TypeResolve {
 				checkRecursiveTypedef(td, TypeFunctions.applyTypedef(td2, tl), p);
 			case _:
 		}
-	}
-
-	public static function forceResolveTypedef(ctx:Context, td:TDef):Bool {
-		switch (td.type) {
-			case TMono(r) if (r.type == null):
-			case _: return true; // Already resolved
-		}
-		var entry = ctx.declOfType.get(Context.pathKey(td.path));
-		if (entry == null) return false;
-		switch (entry.decl) {
-			case ETypedef(d):
-				var savedMod = ctx.currentModule;
-				ctx.currentModule = td.module;
-				try { resolveTypedef(ctx, td, d, entry.pos); } catch (_:Dynamic) {}
-				ctx.currentModule = savedMod;
-			case _:
-		}
-		return switch (td.type) { case TMono(r) if (r.type == null): false; case _: true; };
 	}
 
 	static function loadMacroHint(ctx:Context, typeParams:TypeParams, th:Null<TypeHint>):T {
@@ -2377,7 +2325,8 @@ class TypeResolve {
 
 	// Field-type resolution: the part of creating a variable, method or property field that
 	// resolves its type.
-	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef, ?owner:TClass):Void {
+	public static function resolveFieldType(ctx:Context, typeParams:TypeParams, cf:TClassField, cff:ClassField, ?ownerModule:ModuleDef, ?owner:TClass,
+			?createdField:String->Null<TClassField>):Void {
 		var fieldModule = ownerModule == null ? ctx.currentModule : ownerModule;
 		switch (cff.cffKind) {
 			case FVar(th, eo):
@@ -2424,8 +2373,28 @@ class TypeResolve {
 				if (cf.name == "new" && !isStaticField && fd.fType != null
 						&& hxc.typing.Typer.atDisplayPos(fd.fType.pos))
 					try Typeload.loadTypeHint(ctx, localParams, fd.fType, false) catch (_:Dynamic) {}
-				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid
-					: (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
+				// A `get_` method with no arguments is a getter and a `set_` method with one a setter; one
+				// without a hint takes the type of the property the rest of its name names, when that
+				// property reads (getter) or writes (setter) through a call.
+				var name = cff.cffName.name;
+				var accessorKind = name.length < 4 ? 0 : switch (name.substr(0, 4)) {
+					case "get_": fd.fArgs.length == 0 ? 1 : 0;
+					case "set_": fd.fArgs.length == 1 ? 2 : 0;
+					case _: 0;
+				};
+				function propertyType():Null<T> {
+					var pcf = createdField == null ? null : createdField(name.substr(4));
+					if (pcf == null) return null;
+					return switch (pcf.kind) {
+						case Var(vk) if (accessorKind == 1 && vk.read == AccCall): pcf.type;
+						case Var(vk) if (accessorKind == 2 && vk.write == AccCall): pcf.type;
+						case _: null;
+					};
+				}
+				var ret = (cf.name == "new" && !isStaticField) ? ctx.basic.tvoid : {
+					var pt = fd.fType == null && accessorKind != 0 ? propertyType() : null;
+					pt != null ? pt : (isMacroField ? loadMacroHint(ctx, localParams, fd.fType) : Typeload.loadTypeHint(ctx, localParams, fd.fType, false));
+				};
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 				var args:Array<TSignatureArg> = [];
 				// An abstract member other than `_new` and a macro takes the underlying `this` first, typed
@@ -2440,7 +2409,9 @@ class TypeResolve {
 				for (i in 0...fd.fArgs.length) {
 					var fa = fd.fArgs[i];
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-					var at = isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
+					// A setter's first argument takes the property type the same way.
+					var pt = i == 0 && fa.type == null && accessorKind == 2 ? propertyType() : null;
+					var at = pt != null ? pt : isMacroField ? loadMacroHint(ctx, localParams, fa.type) : Typeload.loadTypeHint(ctx, localParams, fa.type, false);
 					if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
 					// A haxe.Rest argument must be last, non-optional and defaultless (checked at signature
 					// build, so

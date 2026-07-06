@@ -306,14 +306,12 @@ class Typeload {
 				// reports "Can only extend structures" for a valid recursive structure.
 				var tr = TypeFunctions.monomorphCreateRef();
 				var t = TMono(tr);
-				var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(t));
-				r.set(TypeFunctions.lazyWait(function():T {
+				var r = excProtect(ctx, function(r) {
 					r.set(TypeFunctions.lazyProcessing(function():T return t));
-					var ta = makeExtensionType(ctx, resolved, p);
+					var ta = makeExtensionType(ctx, resolved);
 					TypeFunctions.monomorphBindRef(tr, ta);
-					r.set(TypeFunctions.lazyAvailable(ta));
 					return ta;
-				}));
+				});
 				TLazy(r);
 
 			case CTExtend(paths, fields):
@@ -327,13 +325,22 @@ class Typeload {
 							t: try loadInstance(ctx, typeParams, pt.path, pt.pos, false, true, allowDisplay)
 								catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) throw structExtensionCompletion(ctx, tc, false),
 							pos: pt.pos}];
-						if (il.length == 1) {
-							mkExtension(ctx, a, il[0].t, il[0].pos);
-						} else {
-							for (e in il) extendLoop(ctx, a, e.t, e.pos);
-							a.status.set(Extend([for (e in il) e.t]));
-							anonT;
-						}
+						// A monomorph bound inside a protected lazy, so the extended typedefs are followed
+						// when the lazy is
+						// forced (at PForce at the latest), by which time the module's own typedefs are
+						// initialised.
+						var tr = TypeFunctions.monomorphCreateRef();
+						var t = TMono(tr);
+						var r = excProtect(ctx, function(r) {
+							r.set(TypeFunctions.lazyProcessing(function():T return t));
+							TypeFunctions.monomorphBindRef(tr, if (il.length == 1) mkExtension(ctx, a, il[0].t, il[0].pos) else {
+								for (e in il) extendLoop(ctx, a, e.t, e.pos);
+								a.status.set(Extend([for (e in il) e.t]));
+								anonT;
+							});
+							return t;
+						});
+						TLazy(r);
 					case _:
 						throw new ContextError("Cannot structurally extend", p);
 				}
@@ -381,27 +388,52 @@ class Typeload {
 		return false;
 	}
 
-	// CTExtend helpers do not check is_redefined.
-
-	// A forward-referenced typedef in the same module resolves on demand before its follow.
-	static function followOnDemand(ctx:Context, it:T):T {
-		var ft = TypeFunctions.follow(it);
-		if (!ft.match(TAnon(_))) switch (it) {
-			case TType(td, _):
-				hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
-				ft = TypeFunctions.follow(it);
-			case _:
-		}
-		return ft;
+	// An Error escaping the lazy is fatal, and by default the lazy is forced at PForce.
+	static function excProtect(ctx:Context, f:Ref<TLazy>->T):Ref<TLazy> {
+		var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(TypeFunctions.tDynamic));
+		r.set(TypeFunctions.lazyWait(function():T {
+			var t = try f(r) catch (e:ContextError) {
+				throw new FatalError(e.message, e.pos, e.depth, true);
+			} catch (e:TypingError) {
+				throw new FatalError(e.message, e.pos, e.depth, true);
+			};
+			r.set(TypeFunctions.lazyAvailable(t));
+			return t;
+		}));
+		ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
+		return r;
 	}
 
+	// The keys in increasing order.
+	static function sortedKeys(m:StringMap<TClassField>):Array<String> {
+		var keys = [for (k in m.keys()) k];
+		keys.sort(function(x, y) return x < y ? -1 : x > y ? 1 : 0);
+		return keys;
+	}
+
+	// A field already in `fields` is a redefinition, fine when the types are the same and an error when
+	// they are not.
+	static function isRedefined(ctx:Context, cf1:TClassField, fields:StringMap<TClassField>, p:Position):Bool {
+		var cf2 = fields.get(cf1.name);
+		if (cf2 == null) return false;
+		if (!TypeUnification.typeIseqDefault(cf1.type, cf2.type)) {
+			var pctx = hxc.core.TPrinting.printContext();
+			ctx.addDiagnostic("Cannot redefine field " + cf1.name + " with different type", p);
+			ctx.addDiagnostic("First type was " + hxc.core.TPrinting.sType(pctx, cf1.type), cf1.pos);
+			throw new ContextError("Second type was " + hxc.core.TPrinting.sType(pctx, cf2.type), cf2.pos);
+		}
+		return true;
+	}
+
+	// One extended type.
 	static function mkExtension(ctx:Context, a:TAnon, it:T, p:Position):T {
-		return switch (followOnDemand(ctx, it)) {
+		return switch (TypeFunctions.follow(it)) {
 			case TInst(c, _) if (isTypeParameter(c)):
 				throw new ContextError("Cannot structurally extend type parameters", p);
 			case TMono(_):
 				throw new ContextError("Loop found in cascading signatures definitions. Please change order/import", p);
 			case TAnon(a2):
+				for (k in sortedKeys(a.fields)) isRedefined(ctx, a.fields.get(k), a2.fields, p);
 				var merged = new StringMap<TClassField>();
 				for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
 				for (k in a.fields.keys()) merged.set(k, a.fields.get(k));
@@ -411,36 +443,32 @@ class Typeload {
 		}
 	}
 
+	// Several extended types: a field the structure has already is kept.
 	static function extendLoop(ctx:Context, a:TAnon, it:T, p:Position):Void {
-		switch (followOnDemand(ctx, it)) {
+		switch (TypeFunctions.follow(it)) {
 			case TAnon(a2):
-				for (k in a2.fields.keys()) if (!a.fields.exists(k)) a.fields.set(k, a2.fields.get(k));
+				for (k in sortedKeys(a2.fields)) {
+					var cf = a2.fields.get(k);
+					if (!isRedefined(ctx, cf, a.fields, p)) a.fields.set(k, cf);
+				}
 			case _:
 				throw new ContextError("Can only extend structures", p);
 		}
 	}
 
-	static function makeExtensionType(ctx:Context, tl:Array<{t:T, pos:Position}>, p:Position):T {
-		// Minimal subset equivalent of make_extension_type: merge the resolved anons. A forward-referenced
-		// typedef in the same module resolves on demand first. A non-structure component errors at its own
-		// hint keeps per-component pos).
-		var merged = new StringMap<TClassField>();
-		for (e in tl) {
-			var ft = TypeFunctions.follow(e.t);
-			if (!ft.match(TAnon(_))) switch (e.t) {
-				case TType(td, _):
-					hxc.typing.TypeResolve.resolveTypeOnDemand(ctx, TTypeDecl(td));
-					ft = TypeFunctions.follow(e.t);
-				case _:
-			}
-			switch (ft) {
-				case TAnon(a2):
-					for (k in a2.fields.keys()) merged.set(k, a2.fields.get(k));
-				case _:
-					throw new ContextError("Can only extend structures", e.pos);
-			}
+	// The first declaration of a field is kept.
+	static function makeExtensionType(ctx:Context, tl:Array<{t:T, pos:Position}>):T {
+		var fields = new StringMap<TClassField>();
+		for (e in tl) switch (TypeFunctions.follow(e.t)) {
+			case TAnon(a):
+				for (k in sortedKeys(a.fields)) {
+					var cf = a.fields.get(k);
+					if (!isRedefined(ctx, cf, fields, e.pos)) fields.set(cf.name, cf);
+				}
+			case _:
+				throw new ContextError("Can only extend structures", e.pos);
 		}
-		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend([for (e in tl) e.t])), merged);
+		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Extend([for (e in tl) e.t])), fields);
 	}
 
 	static function isTypeParameter(c:TClass):Bool {
@@ -482,6 +510,7 @@ class Typeload {
 	// CTAnonymous l -> TAnon (subset of/`topt` machinery)
 	static function loadAnonymous(ctx:Context, typeParams:TypeParams, l:Array<ClassField>, p:Position, allowDisplay:Bool = false):T {
 		var fields = new StringMap<TClassField>();
+		var displayedField:Null<TClassField> = null;
 		for (f in l) {
 			var n = f.cffName.name;
 			var pf = f.cffName.pos;
@@ -582,13 +611,18 @@ class Typeload {
 			cf.meta = f.cffMeta;
 			cf.params = params;
 			if (isFinal) cf.flags = Flags.setFlag(cf.flags, TypeFunctions.intOfClassFieldFlag(CfFinal));
-			// The cursor on a structure field's name answers with that field. The reference delays it to
-			// PBuildClass so the whole anon exists first; here the field's own type is already built, which
-			// is all the answer needs.
-			if (hxc.typing.Typer.atDisplayPos(cf.namePos)) hxc.typing.Typer.displayAnonField(cf);
+			// The cursor on a structure field's name answers with that field.
+			if (hxc.typing.Typer.atDisplayPos(cf.namePos)) displayedField = cf;
 			fields.set(n, cf);
 		}
-		return TypeFunctions.mkAnon(new Ref<AnonStatus>(Closed), fields);
+		var anon = TypeFunctions.mkAnon(new Ref<AnonStatus>(Closed), fields);
+		// The answer is a PBuildClass delay, so a type the field names (an intersection over a
+		// typedef the module declares later) is forced once the module is initialised.
+		if (displayedField != null) {
+			var dcf = displayedField;
+			ctx.delay(Context.PBuildClass, function() hxc.typing.Typer.displayAnonField(dcf));
+		}
+		return anon;
 	}
 
 	// Resolve a type path to its module type (part of loading a type instance: no generics,

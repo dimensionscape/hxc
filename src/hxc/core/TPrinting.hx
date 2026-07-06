@@ -369,7 +369,9 @@ class TPrinting {
 		}
 	}
 
-	// Structural expression printer; st supplies type formatting.
+	// Structural typed-expr printer. `st` is the type printer, and it numbers a monomorph at its first
+	// evaluation, so every string is computed in a fixed order: a format's arguments right to left, a
+	// list's elements left to right, and the node's own type after its children.
 	public static function sExpr(st:T->String, e:TExpr):String {
 		function loop(e:TExpr):String return sExpr(st, e);
 		inline function slist(f:TExpr->String, l:Array<TExpr>):String return l.map(f).join(",");
@@ -377,28 +379,87 @@ class TPrinting {
 		var str = switch (e.expr) {
 			case TConst(c): "Const " + sConst(c);
 			case TLocal(v): "Local " + sVar(v);
-			case TArray(e1, e2): loop(e1) + "[" + loop(e2) + "]";
-			case TBinop(op, e1, e2): "(" + loop(e1) + " " + Ast.sBinop(op) + " " + loop(e2) + ")";
+			case TArray(e1, e2):
+				var s2 = loop(e2);
+				var s1 = loop(e1);
+				s1 + "[" + s2 + "]";
+			case TBinop(op, e1, e2):
+				var s2 = loop(e2);
+				var s1 = loop(e1);
+				"(" + s1 + " " + Ast.sBinop(op) + " " + s2 + ")";
 			case TEnumIndex(e1): "EnumIndex " + loop(e1);
 			case TEnumParameter(e1, _, i): loop(e1) + "[" + i + "]";
-			case TField(e1, f): loop(e1) + "." + sFieldAccess(st, f);
+			// The field access is printed first.
+			case TField(e1, f):
+				var fstr = sFieldAccess(st, f);
+				var s1 = loop(e1);
+				s1 + "." + fstr;
 			case TTypeExpr(m): "TypeExpr " + Globals.sTypePath(TypeFunctions.tPath(m));
 			case TParenthesis(e1): "Parenthesis " + loop(e1);
 			case TObjectDecl(fl): "ObjectDecl {" + fl.map(function(of) return Ast.sObjectKeyName(of.key.name, of.key.quotes) + " : " + loop(of.expr)).join(",") + "}";
 			case TArrayDecl(el): "ArrayDecl [" + slist(loop, el) + "]";
-			case TCall(e1, el): "Call " + loop(e1) + "(" + slist(loop, el) + ")";
-			case TNew(c, pl, el): "New " + Globals.sTypePath(c.path) + (pl.length == 0 ? "" : "<" + pl.map(st).join(",") + ">") + "(" + slist(loop, el) + ")";
+			case TCall(e1, el):
+				var sa = slist(loop, el);
+				var sc = loop(e1);
+				"Call " + sc + "(" + sa + ")";
+			case TNew(c, pl, el):
+				var sa = slist(loop, el);
+				var sp = pl.length == 0 ? "" : "<" + pl.map(st).join(",") + ">";
+				"New " + Globals.sTypePath(c.path) + sp + "(" + sa + ")";
 			case TUnop(op, f, e1): f.match(Prefix) ? "(" + Ast.sUnop(op) + " " + loop(e1) + ")" : "(" + loop(e1) + " " + Ast.sUnop(op) + ")";
+			// The arguments are printed first (each default before its type), then the body, then the
+			// return type.
 			case TFunction(f):
-				var args = f.args.map(function(a) return sVar(a.v) + " : " + st(a.v.type) + (a.c == null ? "" : " = " + loop(a.c))).join(",");
-				"Function(" + args + ") : " + st(f.type) + " = " + loop(f.expr);
-			case TVarExpr(v, eo): "Vars " + sVar(v) + " : " + st(v.type) + (eo == null ? "" : " = " + loop(eo));
+				var args = f.args.map(function(a) {
+					var sd = a.c == null ? "" : " = " + loop(a.c);
+					var svt = st(a.v.type);
+					return sVar(a.v) + " : " + svt + sd;
+				}).join(",");
+				var sb = loop(f.expr);
+				var sr = st(f.type);
+				"Function(" + args + ") : " + sr + " = " + sb;
+			case TVarExpr(v, eo):
+				var se = eo == null ? "" : " = " + loop(eo);
+				var svt = st(v.type);
+				"Vars " + sVar(v) + " : " + svt + se;
 			case TBlock(el): "Block {\n" + el.map(function(e) return loop(e) + ";\n").join("") + "}";
-			case TFor(v, econd, e1): "For (" + sVar(v) + " : " + st(v.type) + " in " + loop(econd) + "," + loop(e1) + ")";
-			case TIf(ec, e1, e2): "If (" + loop(ec) + "," + loop(e1) + (e2 == null ? "" : "," + loop(e2)) + ")";
-			case TWhile(ec, e1, flag): flag.match(NormalWhile) ? "While (" + loop(ec) + "," + loop(e1) + ")" : "DoWhile (" + loop(e1) + "," + loop(ec) + ")";
-			case TSwitch(e1, cases, def): "Switch (" + loop(e1) + ",(" + cases.map(function(c) return "case " + slist(loop, c.values) + ": " + loop(c.expr)).join(",") + ")" + (def == null ? "" : "," + loop(def)) + ")";
-			case TTry(e1, cl): "Try " + loop(e1) + "(" + cl.map(function(c) return "catch( " + sVar(c.v) + " : " + st(c.v.type) + " ) " + loop(c.expr)).join(",") + ") ";
+			case TFor(v, econd, e1):
+				var sb = loop(e1);
+				var sc = loop(econd);
+				var svt = st(v.type);
+				"For (" + sVar(v) + " : " + svt + " in " + sc + "," + sb + ")";
+			case TIf(ec, e1, e2):
+				var s2 = e2 == null ? "" : "," + loop(e2);
+				var s1 = loop(e1);
+				var sc = loop(ec);
+				"If (" + sc + "," + s1 + s2 + ")";
+			case TWhile(ec, e1, NormalWhile):
+				var sb = loop(e1);
+				var sc = loop(ec);
+				"While (" + sc + "," + sb + ")";
+			case TWhile(ec, e1, DoWhile):
+				var sc = loop(ec);
+				var sb = loop(e1);
+				"DoWhile (" + sb + "," + sc + ")";
+			// The default, then the cases (each body before its values), then the subject.
+			case TSwitch(e1, cases, def):
+				var sd = def == null ? "" : "," + loop(def);
+				var scs = cases.map(function(c) {
+					var sb = loop(c.expr);
+					var sv = slist(loop, c.values);
+					return "case " + sv + ": " + sb;
+				}).join(",");
+				var s1 = loop(e1);
+				"Switch (" + s1 + ",(" + scs + ")" + sd + ")";
+			// The catches (each body before its var's type), then the tried expression.
+			case TTry(e1, cl):
+				var scl = cl.map(function(c) {
+					var sb = loop(c.expr);
+					var svt = st(c.v.type);
+					return "catch( " + sVar(c.v) + " : " + svt + " ) " + sb;
+				}).join(",");
+				var s1 = loop(e1);
+				"Try " + s1 + "(" + scl + ") ";
 			case TReturn(null): "Return";
 			case TReturn(e1): "Return " + loop(e1);
 			case TBreak: "Break";
