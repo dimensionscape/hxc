@@ -92,11 +92,17 @@ class TypeFunctions {
 	// HXC_DBG_VARS: log every allocation as "[var] <id> <name>" on stderr, to follow the sequence of
 	// variable ids.
 	static var traceVars:Bool = Sys.getEnv("HXC_DBG_VARS") != null;
+	// HXC_DBG_VARBT=<id>: the call stack of that allocation.
+	static var traceVarAt:Null<Int> = Sys.getEnv("HXC_DBG_VARBT") == null ? null : Std.parseInt(Sys.getEnv("HXC_DBG_VARBT"));
+
+	static function traceVar(n:String):Void {
+		Sys.stderr().writeString("[var] " + _uid + " " + n + "\n");
+		if (traceVarAt == _uid) Sys.stderr().writeString("[varbt] " + haxe.CallStack.toString(haxe.CallStack.callStack()) + "\n");
+	}
 
 	public static function allocVar(kind:TVarKind, n:String, t:T, p:Position):TVar {
 		_uid++;
-		if (traceVars) Sys.stderr().writeString("[var] " + _uid + " " + n + "
-");
+		if (traceVars) traceVar(n);
 		var flags = switch (kind) {
 			case VUser(TVOLocalFunction): intOfVarFlag(VFinal); // Stores the raw index here
 			case _: 0;
@@ -117,8 +123,7 @@ class TypeFunctions {
 	public static function giveVarId(v:TVar):Void {
 		_uid++;
 		v.id = _uid;
-		if (traceVars) Sys.stderr().writeString("[var] " + _uid + " " + v.name + "
-");
+		if (traceVars) traceVar(v.name);
 	}
 
 	static var _mid:Int = 0;

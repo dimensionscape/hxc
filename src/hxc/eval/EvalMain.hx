@@ -229,6 +229,7 @@ class EvalMain {
 			case TClassDecl(c): buildClass(c, true);
 			case _:
 		}
+		EvalPrototype.jitTypes(ctx, types);
 		// Static field initializers run after every prototype is registered.
 		for (d in delays) d.fn(d.proto);
 	}
@@ -272,7 +273,8 @@ class EvalMain {
 			// counts from; its leave position, the main call's null position, never prints.
 			var entryEval = EvalContext.getEval(ctx);
 			var entryEnv = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, ctx.com.main.pos, EKEntrypoint, 0, 0));
-			var r = try EvalEmitter.eval(ctx, ctx.com.main) catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
+			// The expression is compiled before it runs.
+			var r = try { EvalPrototype.jitWalk(ctx, ctx.com.main); EvalEmitter.eval(ctx, ctx.com.main); } catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
 			EvalContext.popEnvironment(ctx, entryEnv);
 			EvalStdLib.gilLeave();
 			return r;

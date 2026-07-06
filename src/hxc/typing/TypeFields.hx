@@ -659,6 +659,7 @@ class TypeFields {
 			function modError(msg:String, mp:Position):Void {
 				if (slotTaken) return;
 				slotTaken = true;
+				ctx.fieldErrorReported.set(cff, true);
 				addDiagnosticOnce(ctx, msg, mp);
 			}
 			if (hasAbstract && hasStatic) modError("Invalid modifier combination: abstract + static", cff.cffName.pos);
@@ -759,6 +760,11 @@ class TypeFields {
 					// The bind rule holds for an extern INLINE method, which binds like any other; only the
 					// rest take the extern-check delay.
 					case FFun(_) if (Lambda.exists(cff.cffAccess, a -> a.access == AInline)):
+						externBinds = true;
+					// A variable or property always binds, and an extern one's initializer is typed before
+					// the
+					// checks on the variable's expression complain about it.
+					case FVar(_, _) | FProp(_, _, _, _):
 						externBinds = true;
 					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic,
 						abstractMember: isAbsImpl && cff.cffName.name != "new" && !Lambda.exists(cff.cffAccess, a -> a.access == AStatic)});
@@ -960,7 +966,8 @@ class TypeFields {
 			// initializer the filters took away.
 			if (bodyTyped.exists(cf)) continue;
 			if (!hasFieldBody(cff)) continue;
-			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__") continue;
+			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__"
+				&& (switch (cff.cffKind) { case FFun(_): !Lambda.exists(cff.cffAccess, a -> a.access == AInline); case _: false; })) continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			// Forcing the lazy is typing the body; it runs once.
@@ -1196,58 +1203,7 @@ class TypeFields {
 		try {
 			switch (cff.cffKind) {
 				case FVar(_, eo):
-					if (eo != null) {
-						// A field initializer is outside any function (a return in it reports).
-						tctx.inFunction = false;
-						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
-						// property that is no physical variable is reported at the field, once (maybe_display_error),
-						// before the initializer is typed.
-						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
-						// Inline-ness is the declaration's modifier, not kind, which a @:require has
-						// already turned into AccRequire.
-						var isInlineVar = false;
-						for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
-						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
-							else if (externVar && !isInlineVar) "on extern non-inline variable"
-							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
-							else null;
-						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
-						hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
-						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
-						// require_constant_expression, the extern inline variable's arm, at the field.
-						if (externVar && isStatic && isInlineVar && initComplaint == null
-								&& hxc.optimization.Optimizer.makeConstantExpression(tctx, te) == null)
-							tctx.com.addDiagnostic("Extern variable initialization must be a constant value", cff.cffPos);
-						tctx.inFunction = true;
-						if (!isStatic) checkThisInVarInit(tctx, te);
-						var checked = checkCast(te, sigType);
-						// An inline var stores its FOLDED constant (224 | (1<<30) becomes the int) so an
-						// inline read substitutes a matchable constant. (require_constant_expression on
-						// inline vars).
-						if (cf.kind.match(Var({read: AccInline}))) {
-							var folded = hxc.optimization.Optimizer.makeConstantExpression(tctx, checked);
-							if (folded != null) checked = folded;
-							// An enum abstract member's value must be of the underlying type: the
-							// synthesized cast unwraps and the value unifies against thisType, reported over
-							// the initializer's own extent (the synthesized cast carries the value's
-							// position). (KAbstractImpl, CfEnum).
-							switch (tctx.curclass != null ? tctx.curclass.kind : KNormal) {
-								case KAbstractImpl(a) if (a.isEnum && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
-									// Unifies the member's DECLARED type with the abstract itself, at the field: `var A:Int =
-									// 1` in `enum abstract E(Int)` is `Int should be E`. It was trivially true while every
-									// member's type was overwritten with the abstract; it speaks now that a hint is kept.
-									try hxc.core.TypeUnification.unifyDefault(sigType, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
-									catch (ue:hxc.core.TypeUnification.UnifyError)
-										tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
-									var e1 = switch (checked.expr) { case TCast(inner, null): inner; case _: checked; };
-									try hxc.core.TypeUnification.unifyDefault(e1.type, a.thisType)
-									catch (ue:hxc.core.TypeUnification.UnifyError)
-										tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), eo.pos);
-								case _:
-							}
-						}
-						cf.expr = checked;
-					}
+					if (eo != null) bindVarExpression(tctx, cf, cff, sigType, eo, isStatic);
 				case FFun(fd):
 					var sig = switch (TypeFunctions.follow(sigType)) { case TFun(s): s; case _: null; };
 					// A constructor never returns a value: its body types in void context (FunConstructor).
@@ -1298,29 +1254,7 @@ class TypeFields {
 				case FProp(_, _, _, eo):
 					// A physical property (e.g. (default,null)) can carry an initializer, bound to expr
 					// exactly like a variable; the accessors are typed as their own get_/set_ methods.
-					if (eo != null) {
-						// An initializer on an extern variable (non-static, non-inline, or not a constant) or on a
-						// property that is no physical variable is reported at the field, once (maybe_display_error),
-						// before the initializer is typed.
-						var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
-						// Inline-ness is the declaration's modifier, not kind, which a @:require has
-						// already turned into AccRequire.
-						var isInlineVar = false;
-						for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
-						var initComplaint:Null<String> = if (externVar && !isStatic) "on extern non-static variable"
-							else if (externVar && !isInlineVar) "on extern non-inline variable"
-							else if (!externVar && !TypeFunctions.isPhysicalField(cf)) "on field that is not a real variable"
-							else null;
-						if (initComplaint != null) tctx.com.addDiagnostic(initComplaint, cff.cffPos);
-						hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
-						var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
-						// require_constant_expression, the extern inline variable's arm, at the field.
-						if (externVar && isStatic && isInlineVar && initComplaint == null
-								&& hxc.optimization.Optimizer.makeConstantExpression(tctx, te) == null)
-							tctx.com.addDiagnostic("Extern variable initialization must be a constant value", cff.cffPos);
-						if (!isStatic) checkThisInVarInit(tctx, te);
-						cf.expr = checkCast(te, sigType);
-					}
+					if (eo != null) bindVarExpression(tctx, cf, cff, sigType, eo, isStatic);
 			}
 		} catch (e:haxe.Exception) {
 			cleanup();
@@ -1393,8 +1327,69 @@ class TypeFields {
 			kind: 12, subjectName: cff.cffName.name, subjectPos: cff.cffName.pos};
 	}
 
-	// A member variable initializer cannot reach this (issue #1958); the first occurrence reports and the
-	// walk stops. .
+	// A member variable initializer cannot reach this; the first occurrence reports and the walk stops.
+	// bindVarExpression, inside its lazy: the initializer types (typeVarInitializer), then the arm for what
+	// the field is, then checkCast keeps the field's type.
+	static function bindVarExpression(tctx:TyperContext, cf:TClassField, cff:ClassField, sigType:T, eo:Expr, isStatic:Bool):Void {
+		// A field initializer is outside any function (a return in it reports).
+		tctx.inFunction = false;
+		var externVar = TypeFunctions.hasClassFlag(tctx.curclass, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern);
+		// Inline-ness is the declaration's modifier, not kind, which a @:require has already turned into
+		// AccRequire.
+		var isInlineVar = false;
+		for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
+		hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
+		var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+		tctx.inFunction = true;
+		// Run the analyzer, then require a constant expression: the analyzer (always optimizing) runs
+		// over anything but a constant, a local or a function, and what constant folding makes of that is
+		// the value; otherwise the error, and the initializer as it was typed.
+		function requireConstantExpression(e:TExpr, msg:String):TExpr {
+			var ea = switch (e.expr) {
+				case TConst(_) | TLocal(_) | TFunction(_): e;
+				case _: hxc.optimization.Analyzer.Run.runOnExprStandalone(tctx.com, Context.sTypePath(tctx.curclass.path) + "." + cf.name, e);
+			};
+			var folded = hxc.optimization.Optimizer.makeConstantExpression(tctx, ea);
+			if (folded != null) return folded;
+			tctx.com.addDiagnostic(msg, cf.pos);
+			return e;
+		}
+		// An unexpected expression is reported once per field.
+		function unexpected(msg:String):Void {
+			if (tctx.com.fieldErrorReported.exists(cff)) return;
+			tctx.com.fieldErrorReported.set(cff, true);
+			tctx.com.addDiagnostic(msg, cff.cffPos);
+		}
+		// The checks, in order.
+		if (externVar) {
+			if (!isStatic) unexpected("on extern non-static variable");
+			else if (!isInlineVar) unexpected("on extern non-inline variable");
+			else te = requireConstantExpression(te, "Extern variable initialization must be a constant value");
+		} else if (!TypeFunctions.isPhysicalField(cf)) {
+			unexpected("on field that is not a real variable");
+		} else if (!isStatic) {
+			checkThisInVarInit(tctx, te);
+		} else if (cf.kind.match(Var({read: AccInline}))
+				&& (!tctx.com.defines.rawDefined("no_inline") || hxc.typing.Inline.isForcedInline(tctx.curclass, cf))) {
+			te = requireConstantExpression(te, "Inline variable initialization must be a constant value");
+			// An enum abstract member's value: the member's declared type unifies with the
+			// abstract, at the field, then the value (a typeless cast unwrapped) with the
+			// underlying type, at the value.
+			switch (tctx.curclass.kind) {
+				case KAbstractImpl(a) if (a.isEnum && TypeFunctions.hasClassFieldFlag(cf, CfEnum)):
+					try hxc.core.TypeUnification.unifyDefault(sigType, TAbstract(a, [for (_ in a.params) TypeFunctions.mkMono()]))
+					catch (ue:hxc.core.TypeUnification.UnifyError)
+						tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
+					var e1 = switch (te.expr) { case TCast(inner, null): inner; case _: te; };
+					try hxc.core.TypeUnification.unifyDefault(e1.type, a.thisType)
+					catch (ue:hxc.core.TypeUnification.UnifyError)
+						tctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), e1.pos);
+				case _:
+			}
+		}
+		cf.expr = checkCast(te, sigType);
+	}
+
 	static function checkThisInVarInit(tctx:TyperContext, e:TExpr):Void {
 		var found = false;
 		function check(e2:TExpr):Void {

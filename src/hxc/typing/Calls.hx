@@ -567,25 +567,6 @@ class Calls {
 	static function typeBind(ctx:TyperContext, fe:TExpr, sig:TSignature, params:Array<Expr>, p:Position):TExpr {
 		var tvoid = ctx.com.basic.tvoid;
 		var decls:Array<TExpr> = [];
-		// A function literal, local function or immutable method value is called directly; an instance
-		// closure binds only its RECEIVER to a temp and calls the method through FInstance; anything else
-		// binds the whole function value.
-		inline function immutableMethod(cf:TClassField):Bool
-			return switch (cf.kind) { case Method(k): k != MethDynamic; case _: false; };
-		var feLocal = switch (fe.expr) {
-			case TFunction(_) | TLocal({kind: VUser(TVOLocalFunction)}):
-				fe;
-			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (immutableMethod(cf)):
-				fe;
-			case TField(eobj, FClosure(cwp, cf)) if (cwp != null && immutableMethod(cf)):
-				var vobj = TypeFunctions.allocVar(VGenerated, "`", eobj.type, eobj.pos);
-				decls.push(TypeFunctions.mk(TVarExpr(vobj, eobj), tvoid, eobj.pos));
-				TypeFunctions.mk(TField(TexprTools.makeLocal(vobj, eobj.pos), FInstance(cwp.c, cwp.params, cf)), fe.type, fe.pos);
-			case _:
-				var fv = TypeFunctions.allocVar(VGenerated, "`", fe.type, fe.pos);
-				decls.push(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, fe.pos));
-				TexprTools.makeLocal(fv, fe.pos);
-		};
 		var callArgs:Array<TExpr> = [];
 		var missingVl:Array<TVar> = [];
 		var missingArgs:Array<TSignatureArg> = [];
@@ -601,6 +582,8 @@ class Calls {
 			// argument and the display handler answers it.
 			var isUnderscore = pi < params.length && params[pi] != hxc.typing.ExprPreprocessing.markedNode
 				&& (switch (params[pi].expr) { case EConst(CIdent("_")): true; case _: false; });
+			if (isUnderscore && !ctx.com.platformConfig.canSkipNonNullableArgument && arg.opt && !TypeFunctions.isNullable(arg.t))
+				throw new TypingError("Usage of _ is not supported for optional non-nullable arguments", params[pi].pos);
 			if (pi >= params.length && arg.opt) {
 				// An optional argument past the given parameters is consumed at bind time instead of
 				// staying on
@@ -636,6 +619,25 @@ class Calls {
 			}
 		}
 		if (pi < params.length) throw new TypingError("Too many callback arguments", p);
+		// After the arguments: a function literal, local function or immutable method value is called
+		// directly; an instance closure binds only its RECEIVER to a temp and calls the method through
+		// FInstance; anything else binds the whole function value. The temp's declaration goes first.
+		inline function immutableMethod(cf:TClassField):Bool
+			return switch (cf.kind) { case Method(k): k != MethDynamic; case _: false; };
+		var feLocal = switch (fe.expr) {
+			case TFunction(_) | TLocal({kind: VUser(TVOLocalFunction)}):
+				fe;
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (immutableMethod(cf)):
+				fe;
+			case TField(eobj, FClosure(cwp, cf)) if (cwp != null && immutableMethod(cf)):
+				var vobj = TypeFunctions.allocVar(VGenerated, "`", eobj.type, eobj.pos);
+				decls.unshift(TypeFunctions.mk(TVarExpr(vobj, eobj), tvoid, eobj.pos));
+				TypeFunctions.mk(TField(TexprTools.makeLocal(vobj, eobj.pos), FInstance(cwp.c, cwp.params, cf)), fe.type, fe.pos);
+			case _:
+				var fv = TypeFunctions.allocVar(VGenerated, "`", fe.type, fe.pos);
+				decls.unshift(TypeFunctions.mk(TVarExpr(fv, fe), tvoid, fe.pos));
+				TexprTools.makeLocal(fv, fe.pos);
+		};
 		var call = makeCall(ctx, feLocal, callArgs, sig.ret, p);
 		// A void-returning bound call stays a bare statement.
 		var isVoid = switch (TypeFunctions.follow(sig.ret)) {
@@ -1163,7 +1165,8 @@ class Calls {
 		// A field declared `overload` is a proper overload, and every candidate is attempted before the
 		// compatible ones are reduced; @:overload metadata stops at the first that succeeds.
 		var allExtern = multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
-		var successes:Array<{cf:TClassField, expr:TExpr, hover:Null<Dynamic>}> = [];
+		var successes:Array<{cf:TClassField, expr:Void->TExpr, hover:Null<Dynamic>}> = [];
+		var chosen:Null<Void->TExpr> = null;
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
 		// Otherwise a candidate that goes on to fail on its argument count still gets to name the
@@ -1192,7 +1195,10 @@ class Calls {
 				}
 			}
 			try {
-				var r = TypeUnification.withMonoRollback(function() {
+				// Unifies the arguments and returns the CANDIDATE; the call is made for the one the resolution
+				// keeps , once every candidate has been tried - so the bodies the attempts force type before
+				// the chosen one inlines.
+				var r = TypeUnification.withMonoRollback(function():Void->TExpr {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
 					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2), fa2);
 					var ce = mono.expr;
@@ -1214,21 +1220,28 @@ class Calls {
 									case WithType(t, _): try TypeUnification.unifyDefault(sig.ret, t) catch (_:hxc.core.TypeUnification.UnifyError) {}
 									case _:
 								}
-							var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, p, withType);
-							if (faCall != fa2) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
-							var ret = switch (TypeFunctions.follow(ce.type)) {
-								case TFun(sig2): sig2.ret;
-								case _: sig.ret;
+							function():TExpr {
+								var ce2 = ce;
+								var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, p, withType);
+								if (faCall != fa2) ce2 = FieldAccessTools.getFieldExpr(faCall, FCall);
+								var ret = switch (TypeFunctions.follow(ce2.type)) {
+									case TFun(sig2): sig2.ret;
+									case _: sig.ret;
+								};
+								if (DebugDump.enabled("select", p))
+									DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
+								return makeCall(ctx, ce2, r.el, ret, p, forceInline, forcePos);
 							};
-							if (DebugDump.enabled("select", p))
-								DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
-							makeCall(ctx, ce, r.el, ret, p, forceInline, forcePos);
 						case _:
-							callExpr(ctx, ce, el, p);
+							var e = callExpr(ctx, ce, el, p);
+							function():TExpr return e;
 					}
 				});
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
-				if (!allExtern) return r;
+				if (!allExtern) {
+					chosen = r;
+					break;
+				}
 				successes.push({cf: cf, expr: r, hover: hxc.typing.Typer.hoverFound});
 			} catch (e:UnifyError) {
 				restore();
@@ -1243,9 +1256,10 @@ class Calls {
 				throw e;
 			}
 		}
+		if (chosen != null) return chosen();
 		// The chosen candidate's stored answer is the one that is committed.
 		inline function commit(h:Null<Dynamic>):Void if (multi) hxc.typing.Typer.hoverFound = h;
-		if (successes.length == 1) { commit(successes[0].hover); return successes[0].expr; }
+		if (successes.length == 1) { commit(successes[0].hover); return successes[0].expr(); }
 		var externAmbiguous = successes.length > 1 && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
 		if (externAmbiguous) {
 			var minArgs = 0x7fffffff;
@@ -1257,14 +1271,14 @@ class Calls {
 				case TFun(sig) if (sig.args.length == minArgs): s;
 				case _: null;
 			}].filter(function(s) return s != null);
-			if (narrow.length == 1) { commit(narrow[0].hover); return narrow[0].expr; }
+			if (narrow.length == 1) { commit(narrow[0].hover); return narrow[0].expr(); }
 			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
 			for (s in successes)
 				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sTypeStr(s.cf.type), s.cf.namePos, 1);
 			commit(successes[0].hover);
-			return successes[0].expr;
+			return successes[0].expr();
 		}
-		if (successes.length > 1) { commit(successes[0].hover); return successes[0].expr; }
+		if (successes.length > 1) { commit(successes[0].hover); return successes[0].expr(); }
 		// Nothing resolved: the answer a candidate reached is still the only one there is.
 		commit(firstFailHover);
 		if (failures.length == 0) throw new TypingError("No matching overload", p);

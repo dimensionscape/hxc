@@ -1322,18 +1322,30 @@ class Typeload {
 					case _: TNew(c, [for (t in params) subst(t)], arr(args));
 				}
 			case TUnop(op, flag, e1): TUnop(op, flag, cloneExpr(e1, subst, vars, gsubst));
+			// The tfunc record is built right to left in its declared field order (args, type, expr): the
+			// body first, then the arguments, whose defaults stay as they were. one variable table is kept
+			// for the whole expression.
 			case TFunction(f):
-				var fvars = new Map<Int, TVar>();
-				for (id in vars.keys()) fvars.set(id, vars.get(id));
-				var args = [for (a in f.args) {v: cloneVar(a.v, subst, fvars), c: opt(a.c)}];
-				TFunction(new TFunc(args, subst(f.type), cloneExpr(f.expr, subst, fvars, gsubst)));
-			case TVarExpr(v, eo): TVarExpr(cloneVar(v, subst, vars), opt(eo));
+				var body = cloneExpr(f.expr, subst, vars, gsubst);
+				var ft = subst(f.type);
+				var args = [for (a in f.args) {v: cloneVar(a.v, subst, vars), c: a.c}];
+				TFunction(new TFunc(args, ft, body));
+			// The TVar: the initializer before the variable.
+			case TVarExpr(v, eo):
+				var ce = opt(eo);
+				TVarExpr(cloneVar(v, subst, vars), ce);
 			case TBlock(exprs): TBlock(arr(exprs));
 			case TFor(v, e1, e2): TFor(cloneVar(v, subst, vars), cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
 			case TIf(econd, eif, eelse): TIf(cloneExpr(econd, subst, vars, gsubst), cloneExpr(eif, subst, vars, gsubst), opt(eelse));
 			case TWhile(econd, e1, flag): TWhile(cloneExpr(econd, subst, vars, gsubst), cloneExpr(e1, subst, vars, gsubst), flag);
-			case TSwitch(e1, cases, edef): TSwitch(cloneExpr(e1, subst, vars, gsubst), [for (c in cases) {values: arr(c.values), expr: cloneExpr(c.expr, subst, vars, gsubst)}], opt(edef));
-			case TTry(e1, catches): TTry(cloneExpr(e1, subst, vars, gsubst), [for (c in catches) {v: cloneVar(c.v, subst, vars), expr: cloneExpr(c.expr, subst, vars, gsubst)}]);
+			// A case's body before its values, a catch's body before its variable.
+			case TSwitch(e1, cases, edef):
+				var c1 = cloneExpr(e1, subst, vars, gsubst);
+				var cc = [for (c in cases) { var body = cloneExpr(c.expr, subst, vars, gsubst); {values: arr(c.values), expr: body}; }];
+				TSwitch(c1, cc, opt(edef));
+			case TTry(e1, catches):
+				var c1 = cloneExpr(e1, subst, vars, gsubst);
+				TTry(c1, [for (c in catches) { var body = cloneExpr(c.expr, subst, vars, gsubst); {v: cloneVar(c.v, subst, vars), expr: body}; }]);
 			case TReturn(eo): TReturn(opt(eo));
 			case TBreak: TBreak;
 			case TContinue: TContinue;

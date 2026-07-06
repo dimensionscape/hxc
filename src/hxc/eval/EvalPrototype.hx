@@ -36,7 +36,16 @@ class EvalPrototype {
 		if (tf == null) return null;
 		var field = c.constructor;
 		var info = EvalContext.createEnvInfo(false, field.namePos, EKMethod(EvalHash.pathHash(c.path), EvalHash.hash(field.name)), 0, 0);
-		return makeFunction(ctx, tf, true, info);
+		var f = makeFunction(ctx, tf, true, info);
+		// The constructor is lazy: the first construction compiles it.
+		var compiled = false;
+		return function(args:Array<EvalValue>):EvalValue {
+			if (!compiled) {
+				compiled = true;
+				jitWalk(ctx, tf.expr);
+			}
+			return f(args);
+		};
 	}
 
 	// The static face of an enum: each constructor is a value (no-arg) or a builder (with args).
@@ -479,34 +488,197 @@ class EvalPrototype {
 		return com;
 	}
 
-	// Record @:persistent on each static initializer; rerun non-persistent initializers when reusing
-	// the interpreter for a compilation. Match the reference's compilation checks before interpreting
-	// methods, static initializers, and __init__. TIdent is invalid except for the reified $__mk_pos__
-	// call, even in code that never executes. Static reads, writes, and proper-method calls require an
-	// indexed prototype slot at compilation. Other static calls and the StringTools intrinsics resolve
-	// names at the call.
-	public static function jitCheck(ctx:EvalContext, e:TExpr):Void {
-		function loop(e:TExpr):Void {
+	// Record @:persistent on each static initializer; rerun only non-persistent initializers when
+	// reusing the interpreter for a compilation. Validate bodies in compilation order before
+	// interpreting them. Methods validate when their prototypes are added; static initializers and
+	// __init__ validate when run. TIdent is invalid except for the reified $__mk_pos__ call, including
+	// untyped or display-recovered names in code that will not execute. Static reads, writes, and
+	// proper-method calls require an indexed prototype slot at compilation. Other static calls and the
+	// StringTools intrinsics resolve names at the call. Follow the compiler's traversal order and
+	// remap TFor using a fresh iterator variable; interpret the remapped loop.
+	public static function jitWalk(ctx:EvalContext, e:TExpr):Void {
+		var com = ctx.com != null ? ctx.com : @:privateAccess hxc.eval.EvalMacro.macroCom;
+		function verdict(c:TClass, cf:TClassField):Void {
+			if (!inStaticPrototype(ctx, c, cf))
+				throw new hxc.core.TypingError("Field index for " + cf.name + " not found on prototype "
+					+ hxc.core.Globals.sTypePath(c.path), hxc.ast.Position.nullPos);
+		}
+		var loop:TExpr->Void = null;
+		// An assignment or a compound assignment: the receiver (or array and index), then the value.
+		function assign(e1:TExpr, e2:Null<TExpr>):Void {
+			switch (e1.expr) {
+				case TLocal(_):
+					if (e2 != null) loop(e2);
+				case TField(ef, fa):
+					loop(ef);
+					if (e2 != null) loop(e2);
+					switch (fa) {
+						case FStatic(c, cf): verdict(c, cf);
+						case _:
+					}
+				case TArray(ea1, ea2):
+					loop(ea1);
+					loop(ea2);
+					if (e2 != null) loop(e2);
+				case _:
+			}
+		}
+		loop = function(e:TExpr):Void {
 			switch (e.expr) {
+				case TVarExpr(_, eo):
+					if (eo != null) loop(eo);
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue:
+				case TObjectDecl(fl):
+					for (f in fl) loop(f.expr);
+				case TArrayDecl(el):
+					for (x in el) loop(x);
+				// A closure compiles with its function (argument defaults are
+				// constants).
+				case TFunction(tf):
+					loop(tf.expr);
+				case TIf(c, a, b):
+					loop(c);
+					loop(a);
+					if (b != null) loop(b);
+				case TSwitch(e1, cases, def):
+					loop(e1);
+					for (c in cases) {
+						for (v in c.values) loop(v);
+						loop(c.expr);
+					}
+					if (def != null) loop(def);
+				case TWhile(c, body, _):
+					loop(c);
+					loop(body);
+				case TTry(e1, catches):
+					loop(e1);
+					for (c in catches) loop(c.expr);
+				case TBlock(el):
+					for (x in el) loop(x);
+				case TReturn(eo):
+					if (eo != null) loop(eo);
+				case TThrow(e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TCast(e1, _) | TParenthesis(e1) | TMeta(_, e1):
+					loop(e1);
+				// Calls: a super method's arguments; on a field, the arguments and then the
+				// receiver, except where the call goes to a static or enum slot and the receiver is
+				// not compiled at all.
+				case TCall({expr: TField({expr: TConst(TSuper)}, FInstance(_, _, _))}, el):
+					for (x in el) loop(x);
+				case TCall({expr: TField(ef, fa)}, el):
+					for (x in el) loop(x);
+					switch (fa) {
+						case FStatic({path: {pack: [], name: "StringTools"}}, {name: "fastCodeAt" | "unsafeCodeAt"}) if (el.length == 2):
+						case FEnum(_, _):
+						case FStatic(c, cf) if (isProperStaticMethod(cf)):
+							verdict(c, cf);
+						case _:
+							loop(ef);
+					}
+				case TCall({expr: TConst(TSuper)}, el):
+					for (x in el) loop(x);
 				case TCall({expr: TIdent("$__mk_pos__")}, [a, b, c]):
 					loop(a);
 					loop(b);
 					loop(c);
+				case TCall(e1, el):
+					loop(e1);
+					for (x in el) loop(x);
+				// A new Array compiles nothing of its arguments.
+				case TNew({path: {pack: [], name: "Array"}}, _, _):
+				case TNew({path: {pack: ["eval"], name: "Vector"}}, _, [{expr: TConst(TInt(_))}]):
+				case TNew(_, _, el):
+					for (x in el) loop(x);
+				// A read of a static, an enum constructor or a plain method goes to the prototype;
+				// `this.x` reads the slot.
+				case TField(e1, fa):
+					switch (fa) {
+						case FStatic(c, cf): verdict(c, cf);
+						case FEnum(_, _):
+						case FInstance(_, _, {kind: Method(MethNormal | MethInline)}):
+						case FInstance(c, _, _) if (!TypeFunctions.hasClassFlag(c, CInterface) && e1.expr.match(TConst(TThis))):
+						case _: loop(e1);
+					}
+				case TArray(e1, e2):
+					loop(e1);
+					loop(e2);
+				// A comparison with null compiles the other side only.
+				case TBinop(OpEq | OpNotEq, e1, {expr: TConst(TNull)}) | TBinop(OpEq | OpNotEq, {expr: TConst(TNull)}, e1):
+					loop(e1);
+				case TBinop(OpAssign | OpAssignOp(_), e1, e2):
+					assign(e1, e2);
+				case TBinop(_, e1, e2):
+					loop(e1);
+					loop(e2);
+				// Unary operators: ++ on an uncaptured local is a slot increment; any other ++ or -- is a
+				// compound assignment with a constant one.
+				case TUnop(Increment, _, e1) if (switch (hxc.core.TexprTools.skip(e1).expr) {
+						case TLocal(v): !TypeFunctions.hasVarFlag(v, VCaptured);
+						case _: false;
+					}):
+				case TUnop(Increment | Decrement, _, e1):
+					assign(e1, null);
+				case TUnop(_, _, e1):
+					loop(e1);
+				// A typed body is compiled once: a type is added again only from a new module, whose tree
+				// is a
+				// new one. Rebuilding the interpreter over the same tree reuses the loop the first compile
+				// made.
+				case TFor(v, e1, e2):
+					var r = EvalEmitter.forRemapCache.get(e);
+					if (r == null) {
+						r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, e1, e2, e.pos);
+						EvalEmitter.forRemapCache.set(e, r);
+					}
+					loop(r);
 				case TIdent(s):
 					throw new hxc.core.TypingError("Unknown identifier: " + s, e.pos);
-				case TCall({expr: TField(e1, FStatic(c, cf))}, args) if (!isProperStaticMethod(cf)
-					|| (args.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools"
-						&& (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt"))):
-					loop(e1);
-					for (a in args) loop(a);
-				case TField(_, FStatic(c, cf)) if (!inStaticPrototype(ctx, c, cf)):
-					throw new hxc.core.TypingError("Field index for " + cf.name + " not found on prototype "
-						+ hxc.core.Globals.sTypePath(c.path), hxc.ast.Position.nullPos);
-				case _:
-					hxc.core.TexprTools.iter(loop, e);
 			}
 		}
 		loop(e);
+	}
+
+	// The methods compile in the order types are added: every instance prototype (a dynamic method's
+	// instance slot first, then the prototype fields), then every static one. A field a builtin
+	// replaces is never compiled.
+	public static function jitTypes(ctx:EvalContext, types:Array<ModuleType>):Void {
+		inline function fn(cf:TClassField):Null<TExpr>
+			return switch (cf.expr) { case null: null; case {expr: TFunction(tf)}: tf.expr; case _: null; };
+		inline function replaced(builtins:Null<Array<BuiltinField>>, cf:TClassField, skip:Null<Map<Int, Bool>>):Bool {
+			var h = EvalHash.hash(cf.name);
+			var hit = false;
+			if (builtins != null) for (b in builtins) if (b.name == h) hit = true;
+			return hit && (skip == null || !skip.exists(h));
+		}
+		for (mt in types) switch (mt) {
+			case TClassDecl(c):
+				if (TypeFunctions.hasClassFlag(c, CExtern) && !(c.path.pack.length == 0 && c.path.name == "String")) continue;
+				var fields = [for (cf in c.orderedFields) if (!isRemovable(cf) && cf.kind.match(Method(_))) cf];
+				for (cf in fields) if (cf.kind.match(Method(MethDynamic))) {
+					var e = fn(cf);
+					if (e != null) jitWalk(ctx, e);
+				}
+				var builtins:Null<Array<BuiltinField>> = ctx.builtins.instanceBuiltins.get(EvalHash.pathHash(c.path));
+				for (cf in fields) if (!cf.kind.match(Method(MethDynamic)) && !replaced(builtins, cf, null)) {
+					var e = fn(cf);
+					if (e != null) jitWalk(ctx, e);
+				}
+			case _:
+		}
+		for (mt in types) switch (mt) {
+			case TClassDecl(c):
+				if (TypeFunctions.hasClassFlag(c, CExtern)) continue;
+				var builtins:Null<Array<BuiltinField>> = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
+				var skip:Null<Map<Int, Bool>> = null;
+				if (isMacroApiClass(ctx, c)) {
+					skip = new Map();
+					for (cf in c.orderedStatics) if (cf.kind.match(Method(_))) skip.set(EvalHash.hash(cf.name), true);
+				}
+				for (cf in c.orderedStatics) if (!isRemovable(cf) && cf.kind.match(Method(_)) && !replaced(builtins, cf, skip)) {
+					var e = fn(cf);
+					if (e != null) jitWalk(ctx, e);
+				}
+			case _:
+		}
 	}
 
 	static function isProperStaticMethod(cf:TClassField):Bool {
@@ -561,7 +733,6 @@ class EvalPrototype {
 						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
-							jitCheck(ctx, cf.expr);
 							var idx = pfields.length;
 							pnames.set(EvalHash.hash(cf.name), idx);
 							addNameAlias(pnames, cf, idx);
@@ -611,7 +782,7 @@ class EvalPrototype {
 							var prev = ctxEval.env;
 							var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKEntrypoint, 0, 0));
 							try {
-								jitCheck(ctx, init);
+								jitWalk(ctx, init);
 								EvalEmitter.numberClosures(init);
 								proto.pfields[idx] = EvalEmitter.eval(ctx, init);
 							} catch (e:haxe.Exception) {
@@ -641,7 +812,7 @@ class EvalPrototype {
 					var ctxEval = EvalContext.getEval(ctx);
 					var prev = ctxEval.env;
 					var env = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, init.pos, EKMethod(key, EvalHash.key___init__), 0, 0));
-					try jitCheck(ctx, init) catch (e:haxe.Exception) {
+					try jitWalk(ctx, init) catch (e:haxe.Exception) {
 						ctxEval.env = prev;
 						throw e;
 					}
@@ -700,7 +871,6 @@ class EvalPrototype {
 					}
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
-						jitCheck(ctx, cf.expr);
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
 						addNameAlias(pnames, cf, idx, c);

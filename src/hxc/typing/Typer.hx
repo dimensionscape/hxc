@@ -6290,7 +6290,11 @@ class Typer {
 				}
 			case _:
 		}
-		for (cf in c.orderedFields) {
+		// The fold runs over the fields reversed and prepends, so the arguments are allocated (and the
+		// @param lines written) last field first, and come out in declaration order.
+		var rev = c.orderedFields.copy();
+		rev.reverse();
+		for (cf in rev) {
 			var physical = switch (cf.kind) {
 				case Var(k): switch (k.read) { case AccCall | AccInline | AccRequire(_, _): false; case _: switch (k.write) { case AccCall: false; case _: true; } };
 				case _: false;
@@ -6302,8 +6306,8 @@ class Typer {
 			var v = TypeFunctions.allocVar(VGenerated, cf.name, at, cf.namePos);
 			// What a @:structInit subclass reads back as this constructor's arguments.
 			if (opt && !TypeFunctions.hasMeta(":optional", v.meta)) v.meta = [{name: ":optional", params: [], pos: Position.nullPos}].concat(v.meta);
-			args.push({v: v});
-			sigArgs.push({name: cf.name, opt: opt, t: at});
+			args.unshift({v: v});
+			sigArgs.unshift({name: cf.name, opt: opt, t: at});
 			// The synthesized assignments all carry the class position, not each field's own position.
 			var ef = TypeFunctions.mk(TField(tthis, FInstance(c, params, cf)), cf.type, c.pos);
 			var ev = TypeFunctions.mk(TLocal(v), v.type, c.pos);
@@ -6315,9 +6319,9 @@ class Typer {
 			if (dflt) {
 				// If (arg != null) this.field = arg -- the field keeps its declared default otherwise
 				var cond = TypeFunctions.mk(TBinop(OpNotEq, ev, TypeFunctions.mk(TConst(TNull), at, c.pos)), ctx.com.basic.tbool, c.pos);
-				body.push(TypeFunctions.mk(TIf(cond, assign, null), tvoid, c.pos));
+				body.unshift(TypeFunctions.mk(TIf(cond, assign, null), tvoid, c.pos));
 			} else {
-				body.push(assign);
+				body.unshift(assign);
 			}
 		}
 		// The super call leads the body, the super's arguments follow.
@@ -6326,7 +6330,7 @@ class Typer {
 		for (t in superInfo.tl) sigArgs.push(t);
 		var tf = new TFunc(args, tvoid, TypeFunctions.mk(TBlock(body), tvoid, c.pos));
 		var ctorType = TFun({args: sigArgs, ret: tvoid});
-		var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, c.pos);
+		var cfCtor = TypeFunctions.mkField("new", ctorType, c.pos, Position.nullPos);
 		cfCtor.kind = Method(MethNormal);
 		// The synthesized constructor carries the collected @param doc and both metas, then collects what
 		// @:inheritDoc brings it.

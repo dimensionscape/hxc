@@ -1207,15 +1207,6 @@ class ModuleLoader {
 						fieldError("Variable requires type-hint or initialization", cff.cffName.pos);
 					case FProp(_, _, th, e) if (th == null && e == null):
 						throw new ContextError("Property requires type-hint or initialization", cff.cffPos);
-					// Extern variables cannot have initializers. Enum-abstract modifier checks take the
-					// one-error-per-field slot first.
-					case FVar(_, _) if (isEnumAbstractMember):
-					// Interface initializer errors take the one-error-per-field slot before extern-expression
-					// checks; the class build reports them after deferred checks flush.
-					case FVar(_, e) if (e != null && isInterface):
-					case FVar(_, e) if (e != null && (TypeFunctions.hasClassFlag(c, CExtern) || fieldIsExtern)):
-						if (!isStatic) fieldError("on extern non-static variable", cff.cffPos);
-						else if (inlineAcc == null) fieldError("on extern non-inline variable", cff.cffPos);
 					// Variable initializers infer their types; only functions and properties require explicit
 					// hints here.
 					case FVar(_, _):

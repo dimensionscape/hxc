@@ -17,7 +17,7 @@ import hxc.eval.EvalExceptions;
 // each expression to a closure; that and the bytecode tier are a performance concern left for
 // later.
 class EvalEmitter {
-	static var forRemapCache:haxe.ds.ObjectMap<TExpr, TExpr> = new haxe.ds.ObjectMap();
+	public static var forRemapCache:haxe.ds.ObjectMap<TExpr, TExpr> = new haxe.ds.ObjectMap();
 
 	static function slot(env:EvalEnv, vid:Int):Int {
 		var s = env.slots.get(vid);

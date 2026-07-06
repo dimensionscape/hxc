@@ -296,6 +296,9 @@ class Context {
 	// Exclude rejected same-name declarations from later syntax-to-field pairing so their hints cannot
 	// retype the accepted field.
 	public var droppedFieldDecls:haxe.ds.ObjectMap<hxc.ast.Ast.ClassField, Bool> = new haxe.ds.ObjectMap();
+	// Once a declaration reports FieldError, suppress its later display errors, including variable
+	// binding.
+	public var fieldErrorReported:haxe.ds.ObjectMap<hxc.ast.Ast.ClassField, Bool> = new haxe.ds.ObjectMap();
 
 	public var moduleImports:StringMap<ModuleImports>;
 
