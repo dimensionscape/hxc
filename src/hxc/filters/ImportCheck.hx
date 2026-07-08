@@ -42,20 +42,21 @@ class ImportCheck {
 			// abandoned has no further declarations to reach, so the second visit must not pick up where
 			// the abort left off and report the ones never reached.
 			if (ctx.moduleAborted.exists(Context.pathKey(m.path))) { ctx.currentModule = savedMod; return; }
-			// rawImports is built by unshifting, so it runs newest-first; init_module_type walks the
-			// declarations in the order they were written, and with an import.hx in play that is the
-			// difference between reporting its first entry and its last. The usings interleave by
-			// their importPositions index, because init_module_type makes no distinction between the
-			// two kinds - it walks one declaration list.
-			var work:Array<{i:Int, imp:Null<Import>, us:Null<{path:Array<PlacedName>, pos:Position, idx:Int}>}> = [];
+			// rawImports is built by unshifting, so it runs newest-first; declarations are walked in the
+			// order they were written, and with an import.hx in play that is the difference between
+			// reporting its first entry and its last. The usings interleave by their importPositions index,
+			// because imports and usings make one declaration list.
+			// The declarations a macro defines share one position (Context.defineModule's), so equal
+			// indices keep the order they were written in.
+			var work:Array<{i:Int, seq:Int, imp:Null<Import>, us:Null<{path:Array<PlacedName>, pos:Position, idx:Int}>}> = [];
 			var k = imports.rawImports.length;
 			while (k-- > 0) {
 				var imp0 = imports.rawImports[k];
 				if (imp0.pos == null) continue;
-				work.push({i: imports.importPositionIndex(imp0.pos), imp: imp0, us: null});
+				work.push({i: imports.importPositionIndex(imp0.pos), seq: work.length, imp: imp0, us: null});
 			}
-			for (u in imports.rawUsings) work.push({i: u.idx, imp: null, us: u});
-			work.sort(function(a, b) return a.i - b.i);
+			for (u in imports.rawUsings) work.push({i: u.idx, seq: work.length, imp: null, us: u});
+			work.sort(function(a, b) return a.i != b.i ? a.i - b.i : a.seq - b.seq);
 			// The path-display checks of the declarations up to this one.
 			function runPathDisplay(upTo:Int):Void {
 				while (imports.pathDisplay.length > 0 && imports.pathDisplay[0].seq <= upTo) {
@@ -127,7 +128,7 @@ class ImportCheck {
 				// And reports each import declaration: a second `import` of a module that failed to load fails
 				// again and is reported again. The sweep's own revisits dedup on the declaration, as the
 				// lowercase and using arms do.
-				var key = "import!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max;
+				var key = "import!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max + "!" + [for (pn in parts) pn.name].join(".");
 				if (ctx.plainImportsTried.exists(key)) continue;
 				ctx.plainImportsTried.set(key, true);
 				// The module load reports at the type path - the first pack segment through the module name

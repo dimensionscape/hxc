@@ -225,15 +225,9 @@ private class InlineConstructorsRun {
 		};
 	}
 
+	// A keyword is not a valid identifier
 	static function isValidStructureField(s:String):Bool {
-		if (s.length == 0) return false;
-		for (i in 0...s.length) {
-			var c = s.charCodeAt(i);
-			var alpha = (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
-			var digit = c >= "0".code && c <= "9".code;
-			if (!(alpha || (i > 0 && digit))) return false;
-		}
-		return true;
+		return hxc.core.StringHelper.isValidIdentifier(s);
 	}
 
 	function checkForCtors(forceInline:Bool, e:TExpr):Bool {

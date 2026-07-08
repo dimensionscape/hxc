@@ -1694,21 +1694,24 @@ class TypeResolve {
 			var tthis = (isAbstractMember || TypeFunctions.hasMeta(":to", cf.meta)) ? TypeFunctions.monomorphs(a.params, a.thisType) : a.thisType;
 			var targ = isAbstractMember ? tthis : ta;
 			// A single field may carry SEVERAL of these metas at once (e.g. `@:op(A + B) @:arrayAccess
-			// @:resolve`), so each is handled independently rather than mutually exclusively. every meta of
-			// the field (loop cf.meta). starts set for a @:coreType abstract, and allow_no_expr() is called
-			// by the @:arrayAccess / @:op([]) / @:op(binop) / @:op(unop) / @:op(call) / @:resolve arms (not
-			// by @:from / @:to). A bodiless function in such a field is a declaration only.
-			var allowsNoExpr = TypeFunctions.hasMeta(":coreType", a.meta);
+			// @:resolve`), so each is handled independently rather than mutually exclusively: every meta of
+			// the
+			// field is walked.
+			// Whether the field may have no expression: see abstractFieldAllowsNoExpr. An arm that raises
+			// ends
+			// the field before the flag is read, so it is computed up front.
+			var allowsNoExpr = abstractFieldAllowsNoExpr(a, cff);
+			// A macro field has no body in the host (hostBodiless), so there it takes every no-body arm
+			// below; the macro world keeps the body.
+			var hostBodiless = isMacroField && !ctx.isMacro;
 			if (TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)) {
 				// This arm covers @:arrayAccess and @:op([]).
 				if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on array-access function", cff.cffPos);
 				a.array.push(cf);
-				allowsNoExpr = true;
 			}
 			// @:resolve routes to the same read/write registration as @:op([EField]).
 			if (TypeFunctions.hasMeta(":resolve", cff.cffMeta)) {
 				registerResolveField(ctx, a, cf, cff, cf.pos, targ, isMacroField);
-				allowsNoExpr = true;
 			}
 			// The @:op meta survives transformAbstractField (it concats f.cffMeta), so read it off
 			// the SOURCE field and resolve the matching impl cf by name. A member @:op was promoted
@@ -1725,7 +1728,6 @@ class TypeResolve {
 						case EArrayDecl(_):
 							if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on array-access function", cff.cffPos);
 							a.array.push(cf);
-							allowsNoExpr = true;
 						// Assignment / null-coalescing / ternary overloads
 						// are explicitly rejected.
 						case EBinop(OpAssign, _, _):
@@ -1760,13 +1762,11 @@ class TypeResolve {
 								throw new ContextError("Invalid metadata: @:commutative is only allowed if the right argument is not " + TPrinting.sTypeStr(targ),
 									cf.pos);
 							a.ops.push({op: op, cf: cf});
-							allowsNoExpr = true;
 						// `@:op(unop A)` / `@:op(A unop)`: register
 						// (op, flag, cf) in unops.
 						case EUnop(op, flag, _):
 							if (isMacroField) ctx.addDiagnostic("Invalid modifier: macro on operator function", cff.cffPos);
 							a.unops.push({op: op, flag: flag, cf: cf});
-							allowsNoExpr = true;
 						// `@:op(a)` call overload. The first method
 						// becomes `call`; later ones are prepended as overloads of that field.
 						case ECall(_, _):
@@ -1774,12 +1774,10 @@ class TypeResolve {
 								a.call = cf;
 							else
 								a.call.overloads.unshift(cf);
-							allowsNoExpr = true;
 						case EField(_, _, _):
 							// Reported at pos - the whole field - not at the @:op argument, so a duplicate points at the
 							// declaration.
 							registerResolveField(ctx, a, cf, cff, cf.pos, targ, isMacroField);
-							allowsNoExpr = true;
 						case _:
 					}
 				}
@@ -1788,7 +1786,7 @@ class TypeResolve {
 			// first. It is recorded, not raised, so the return-type check still runs after it on the same
 			// field.
 			switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr == null && isInlineField):
+				case FFun(fd) if ((fd.fExpr == null || hostBodiless) && isInlineField):
 					ctx.addDiagnostic("Inline functions must have an expression", cf.pos);
 				case _:
 			}
@@ -1796,7 +1794,7 @@ class TypeResolve {
 			// must be written out. This precedes the @:noExpr tagging below and applies to every body-less
 			// function of the abstract, whether or not the metadata on it allows the missing body.
 			switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr == null && fd.fType == null):
+				case FFun(fd) if (fd.fExpr == null && fd.fType == null && !hostBodiless):
 					// Raised at pos, the field's own position, so it is recorded and the field is skipped: the
 					// module keeps going and a second body-less field reports as well. Raising it out of this pass
 					// instead ends the module on the first one, and leaves a later heritage error of the same
@@ -1811,17 +1809,17 @@ class TypeResolve {
 					continue;
 				case _:
 			}
-			// Reads `fd.f_expr = None`, and gives a macro field no body in the host, so a macro field on one
-			// of these arms clears doBind exactly like a body-less one.
+			// The test is for a missing body, so a macro field in the host on one of these arms does
+			// not bind, exactly like a body-less one.
 			if (allowsNoExpr) switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr == null || isMacroField): ctx.abstractNoExprFields.set(cf, true);
+				case FFun(fd) if (fd.fExpr == null || hostBodiless): ctx.abstractNoExprFields.set(cf, true);
 				case _:
 			}
 			// A body-less function on such a field is a declaration only (the operation is performed
 			// natively): tag it @:noExpr and, unless the abstract is @:coreType, never add it to the
 			// implementation class, so no storage or dispatch is generated for it.
 			switch (cff.cffKind) {
-				case FFun(fd) if (fd.fExpr == null && allowsNoExpr):
+				case FFun(fd) if ((fd.fExpr == null || hostBodiless) && allowsNoExpr):
 					cf.meta.unshift({name: ":noExpr", params: [], pos: hxc.ast.Position.nullPos});
 					if (!TypeFunctions.hasMeta(":coreType", a.meta)) {
 						c.orderedStatics.remove(cf);
@@ -1830,6 +1828,34 @@ class TypeResolve {
 				case _:
 			}
 		}
+	}
+
+	// Set from the start for a @:coreType abstract, and allowed by the @:arrayAccess / @:op([]) /
+	// @:op(binop) / @:op(unop) / @:op(call) arms - never by @:from, @:to, @:resolve or @:op(a.b).
+	// Allowing it does nothing for an extern field, which the `extern` access or the @:extern metadata
+	// decides.
+	public static function abstractFieldAllowsNoExpr(a:TAbstract, cff:ClassField):Bool {
+		if (TypeFunctions.hasMeta(":coreType", a.meta)) return true;
+		for (acc in cff.cffAccess) if (acc.access == AExtern) return false;
+		if (TypeFunctions.hasMeta(":extern", cff.cffMeta)) return false;
+		for (m in cff.cffMeta) switch (m.name) {
+			case ":arrayAccess":
+				return true;
+			case ":op" if (m.params.length == 1):
+				switch (m.params[0].expr) {
+					case EArrayDecl(_) | EUnop(_, _, _) | ECall(_, _):
+						return true;
+					case EBinop(OpAssign | OpNullCoal | OpAssignOp(OpNullCoal), _, _):
+						return false;
+					case EBinop(_, _, _):
+						return true;
+					case ETernary(_, _, _):
+						return false;
+					case _:
+				}
+			case _:
+		}
+		return false;
 	}
 
 	static function abstractImplField(c:TClass, name:String):Null<TClassField> {

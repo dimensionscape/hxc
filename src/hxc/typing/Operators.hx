@@ -762,34 +762,6 @@ class Operators {
 	}
 
 	static function typeAssign(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
-		// A concrete map write `m[k] = v` lowers to m.set(k, v), yielding v. Map operations stay on the
-		// concrete impl (which has get/set); the @:arrayAccess proper lives on the Map abstract.
-		switch (e1.expr) {
-			case EArray(baseE, keyE):
-				var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
-				var kv = switch (TypeFunctions.follow(tb.type)) { case TInst(c, tl): Calls.imapKV(c, tl); case _: null; };
-				if (kv != null) {
-					var tvoid = ctx.com.basic.tvoid;
-					var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
-					var tv = Typer.castOrUnify(ctx, kv.v, Typer.typeExpr(ctx, e2, WithTypeTools.withType(kv.v)), p);
-					var vb = TypeFunctions.allocVar(VGenerated, "`", tb.type, p);
-					var vk = TypeFunctions.allocVar(VGenerated, "`", tk.type, p);
-					var vv = TypeFunctions.allocVar(VGenerated, "`", tv.type, p);
-					var eb = TexprTools.makeLocal(vb, p);
-					var ek = TexprTools.makeLocal(vk, p);
-					var ev = TexprTools.makeLocal(vv, p);
-					var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, eb, "set", p, MGet, WithTypeTools.value));
-					var setCall = Calls.makeCall(ctx, setExpr, [ek, ev], tvoid, p);
-					return TypeFunctions.mk(TBlock([
-						TypeFunctions.mk(TVarExpr(vb, tb), tvoid, p),
-						TypeFunctions.mk(TVarExpr(vk, tk), tvoid, p),
-						TypeFunctions.mk(TVarExpr(vv, tv), tvoid, p),
-						setCall,
-						ev
-					]), tv.type, p);
-				}
-			case _:
-		}
 		var lhsAcc = Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType);
 		// The display answers on the ACCESS, whether or not the write that follows is allowed.
 		Typer.checkDisplayOnAccess(ctx, lhsAcc, e1.pos);
@@ -818,7 +790,7 @@ class Operators {
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MSet(e2))) {
 					case AccessorFound(setterFa):
-						hxc.typing.Calls.buildCall(ctx, AKField(setterFa), [e2], WithTypeTools.value, p);
+						hxc.typing.Calls.accessorCallResult(fa, hxc.typing.Calls.buildCall(ctx, AKField(setterFa), [e2], WithTypeTools.value, p));
 					case AccessorAnon:
 						// No accessor field is available (anon structure or extern class): synthesize a
 						// dynamic set_<name>(v) call.
@@ -877,49 +849,6 @@ class Operators {
 	}
 
 	static function typeAssignOp(ctx:TyperContext, sub:Binop, e1:Expr, e2:Expr, withType:WithType, p:Position):TExpr {
-		// `a[k] op= v` on an abstract @:arrayAccess: bind base and key to temps, read via the getter, apply
-		// the op, write via the setter. AKAccess.
-		switch (e1.expr) {
-			case EArray(baseE, keyE):
-				var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
-				switch (TypeFunctions.follow(tb.type)) {
-					case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
-						var tk = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
-						var tvoid = ctx.com.basic.tvoid;
-						// The read access resolves first so the key carries any getter coercion, then each operand
-						// binds to a gen temp only when it is not a constant expression (a const key stays inline,
-						// keeping the element access foldable by inline_constructors); the key declaration emits
-						// before the base one. (find_array_read_access + maybe_bind_to_temp via
-						// Optimizer.make_constant_expression).
-						var probe = Calls.findArrayReadAccess(ctx, a, tl, a.impl, tk, p);
-						function maybeBind(e:TExpr):{e:TExpr, decl:Null<TExpr>} {
-							var c = hxc.optimization.Optimizer.makeConstantExpression(ctx, e);
-							return if (c != null) {e: c, decl: null} else {
-								var v = TypeFunctions.allocVar(VGenerated, "`", e.type, p);
-								{e: TexprTools.makeLocal(v, p), decl: TypeFunctions.mk(TVarExpr(v, e), tvoid, p)};
-							};
-						}
-						var bk = maybeBind(probe.key);
-						var bb = maybeBind(tb);
-						// With the access found above and the bound key.
-						var get = {expr: Calls.mkArrayGetCall(ctx, {cf: probe.cf, sig: probe.sig, key: bk.e}, a.impl, bb.e, p), key: bk.e, cf: probe.cf};
-						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
-						var eop = toTexpr(makeBinop(ctx, sub, get.expr, te2, true, withType, p));
-						var setter:Null<TClassField> = null;
-						var eset = Calls.arraySetValue(ctx, a, tl, a.impl, bb.e, get.key, function(_) return eop, p, true, function(cf) setter = cf);
-						// Getter and setter must be both bodied (calls) or both bodiless (a plain TArray on the
-						// underlying value); one of each has no form to build.
-						if (setter != null && ((setter.expr == null) != (get.cf.expr == null)))
-							throw new TypingError("Invalid array access getter/setter combination", p);
-						var block:Array<TExpr> = [];
-						if (bk.decl != null) block.push(bk.decl);
-						if (bb.decl != null) block.push(bb.decl);
-						block.push(eset);
-						return block.length == 1 ? eset : TypeFunctions.mk(TBlock(block), eset.type, p);
-					case _:
-				}
-			case _:
-		}
 		// mkAssign: every write this builds first casts the right side to the target type and then COMPACTS
 		// back to a compound operator when the result is exactly `target op rhs`. The same closure covers
 		// the assignment an abstract's @:op result needs as well as the plain one, so an abstract compound
@@ -959,7 +888,7 @@ class Operators {
 		}
 		// A property/accessor target `a.p op= b` evaluates the receiver once, reads via the getter, applies
 		// the op, and writes via the setter.
-		function accessorCompound(recv:TExpr, host:hxc.typing.AccessKind.FieldHost, name:String, faPos:Position):TExpr {
+		function accessorCompound(prop:hxc.typing.AccessKind.FieldAccess, recv:TExpr, host:hxc.typing.AccessKind.FieldHost, name:String, faPos:Position):TExpr {
 			var implC = FieldAccessTools.getHostClassRaise(host);
 			var getterCf = implC.statics.get("get_" + name);
 			var setterCf = implC.statics.get("set_" + name);
@@ -974,14 +903,17 @@ class Operators {
 			// The accessor keeps the abstract host so its signature gets the instance's type parameters
 			// applied.
 			var getExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, getterCf, host, false, faPos), FCall);
-			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, host, false, faPos), FCall);
 			function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
-			function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
-			var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
+			// The read goes through the getter and types the right side; the setter is resolved only when
+			// the value is written.
+			Calls.forceFieldType(getterCf);
+			var readVal = Calls.accessorCallResult(prop, Calls.makeCall(ctx, getExpr, [er], retOfE(getExpr), p));
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var opResult = toTexpr(makeBinop(ctx, sub, readVal, te2, true, withType, p));
+			Calls.forceFieldType(setterCf);
+			var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, host, false, faPos), FCall);
 			Calls.checkModifiesThisDirect(ctx, implC, setterCf, recv, p);
-			var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), opResult, p)], retOf(setterCf), p);
+			var setCall = Calls.accessorCallResult(prop, Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOfE(getExpr), opResult, p)], retOfE(setExpr), p));
 			return vrToTexpr(recvVars, setCall);
 		}
 		// A class property `a.p op= b` evaluates the receiver once, reads via its read access (the getter
@@ -1010,6 +942,36 @@ class Operators {
 		// The target resolves with a write access so a (default, set) property dispatches through its
 		// setter for the write half.
 		return switch (Typer.typeAccess(ctx, e1.expr, e1.pos, MSet(e2), withType)) {
+			// `a[k] op= v` on an abstract @:arrayAccess: the read access resolves first so the key carries
+			// any getter coercion, then each operand binds to a gen temp only when it is not a constant
+			// expression (a const key stays inline, keeping the element access foldable by constructor
+			// inlining); the key declaration emits before the base one.
+			case AKAccess(a, tl, c, ebase, ekey0):
+				var tvoid = ctx.com.basic.tvoid;
+				var probe = Calls.findArrayReadAccess(ctx, a, tl, c, ekey0, p);
+				function maybeBind(e:TExpr):{e:TExpr, decl:Null<TExpr>} {
+					var cst = hxc.optimization.Optimizer.makeConstantExpression(ctx, e);
+					return if (cst != null) {e: cst, decl: null} else {
+						var v = TypeFunctions.allocVar(VGenerated, "`", e.type, p);
+						{e: TexprTools.makeLocal(v, p), decl: TypeFunctions.mk(TVarExpr(v, e), tvoid, p)};
+					};
+				}
+				var bk = maybeBind(probe.key);
+				var bb = maybeBind(ebase);
+				var get = {expr: Calls.mkArrayGetCall(ctx, {cf: probe.cf, sig: probe.sig, key: bk.e}, c, bb.e, p), key: bk.e, cf: probe.cf};
+				var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+				var eop = toTexpr(makeBinop(ctx, sub, get.expr, te2, true, withType, p));
+				var setter:Null<TClassField> = null;
+				var eset = Calls.arraySetValue(ctx, a, tl, c, bb.e, get.key, function(_) return eop, p, true, function(cf) setter = cf);
+				// Getter and setter must be both bodied (calls) or both bodiless (a plain TArray on the
+				// underlying value); one of each has no form to build.
+				if (setter != null && ((setter.expr == null) != (get.cf.expr == null)))
+					throw new TypingError("Invalid array access getter/setter combination", p);
+				var block:Array<TExpr> = [];
+				if (bk.decl != null) block.push(bk.decl);
+				if (bb.decl != null) block.push(bb.decl);
+				block.push(eset);
+				block.length == 1 ? eset : TypeFunctions.mk(TBlock(block), eset.type, p);
 			case AKExpr(te1):
 				// The lvalue stabilizes through a value reference first: a depth-0 array access keeps its
 				// shape binding "base"/"index", a field keeps "fh", anything else binds whole as "lhs"; the
@@ -1051,7 +1013,7 @@ class Operators {
 				}
 			case AKAccessor(fa): accessorInstanceCompound(fa);
 			case AKUsingAccessor(se):
-				accessorCompound(se.thisExpr, se.access.host, se.access.field.name, se.access.pos);
+				accessorCompound(se.access, se.thisExpr, se.access.host, se.access.field.name, se.access.pos);
 			case AKResolve(se, name):
 				// Compound assign on a resolve field: resolveWrite(this, name, resolveRead(this, name) OP
 				// value), evaluating the receiver once.
@@ -1104,23 +1066,8 @@ class Operators {
 			case Spread:
 				throw new TypingError("Spread unary operator is only allowed for unpacking the last argument in a call with rest arguments", p);
 			case Increment | Decrement:
-				var pre = try Typer.typeExpr(ctx, e, WithTypeTools.value) catch (_:Dynamic) null;
-				// `a[k]++` / `--a[k]` on an abstract @:arrayAccess: bind base+key to temps, then get, op
-				// with 1, and set, yielding the old value for postfix and the new value for prefix.
-				switch (e.expr) {
-					case EArray(baseE, keyE):
-						var tb = Typer.typeExpr(ctx, baseE, WithTypeTools.value);
-						switch (TypeFunctions.follow(tb.type)) {
-							case TAbstract(a, tl) if (a.impl != null && a.array.length > 0):
-								return arrayIncr(ctx, a, tl, op, flag, tb, keyE, withType, p);
-							case TInst(c, tl):
-								var kv = Calls.imapKV(c, tl);
-								if (kv != null) return imapIncr(ctx, kv, op, flag, tb, keyE, withType, p);
-							case _:
-						}
-					case _:
-				}
 				switch (Typer.typeAccess(ctx, e.expr, e.pos, MSet(null), withType)) {
+					case AKAccess(a, tl, c, ebase, ekey): arrayIncr(ctx, a, tl, c, op, flag, ebase, ekey, withType, p);
 					case AKExpr(te):
 						var abs = tryAbstractUnop(ctx, op, flag, te, p);
 						// With no abstract overload, an increment/decrement checks the target is assignable
@@ -1164,73 +1111,32 @@ class Operators {
 		};
 	}
 
-	// Increment/decrement of a concrete map element `m[k]++` via its IMap get(k)/set(k, v) methods,
-	// binding base and key to temps so each evaluates once. Postfix yields the old value, prefix the new.
-	static function imapIncr(ctx:TyperContext, kv:{k:T, v:T}, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
-		// The concrete-IMap variant of the increment (hxc types some map bases at the resolved instance):
-		// same temp naming and shape as the abstract path produces through Map_Impl_.arrayWrite (key/read
-		// temps "tmp", the written value binds as arrayWrite's "v" parameter for prefix; the base feeds
-		// both calls directly).
-		var tvoid = ctx.com.basic.tvoid;
-		var tint = ctx.com.basic.tint;
-		var tk = Typer.castOrUnify(ctx, kv.k, Typer.typeExpr(ctx, keyE, WithTypeTools.value), keyE.pos);
-		var vKey = TypeFunctions.allocVar(VGenerated, "tmp", tk.type, tk.pos);
-		var ek = TexprTools.makeLocal(vKey, p);
-		var getExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, tb, "get", p, MGet, WithTypeTools.value));
-		var setExpr = Typer.accGet(ctx, hxc.typing.Fields.typeField(ctx, tb, "set", p, MGet, WithTypeTools.value));
-		var eget = Calls.makeCall(ctx, getExpr, [ek], ctx.com.basic.tnull(kv.v), p);
-		var binop = op.match(Increment) ? OpAdd : OpSub;
-		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
-		var stmts = [TypeFunctions.mk(TVarExpr(vKey, tk), tvoid, p)];
-		if (flag.match(Postfix)) {
-			var vold = TypeFunctions.allocVar(VGenerated, "tmp", eget.type, p);
-			var eold = TexprTools.makeLocal(vold, p);
-			stmts.push(TypeFunctions.mk(TVarExpr(vold, eget), tvoid, p));
-			var newv = toTexpr(makeBinop(ctx, binop, eold, one, false, withType, p));
-			stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, newv, p)], tvoid, p));
-			stmts.push(eold);
-			// The increment expression yields the element type (what the abstract @:arrayAccess setter
-			// returns), not the nullable getter result: the block as e_set.type (V), so a Null<V>/Dynamic
-			// old value casts to V at the use site.
-			return TypeFunctions.mk(TBlock(stmts), kv.v, p);
-		}
-		var newv = toTexpr(makeBinop(ctx, binop, eget, one, false, withType, p));
-		var vnew = TypeFunctions.allocVar(VGenerated, "v", newv.type, p);
-		var enew = TexprTools.makeLocal(vnew, p);
-		stmts.push(TypeFunctions.mk(TVarExpr(vnew, newv), tvoid, p));
-		stmts.push(Calls.makeCall(ctx, setExpr, [ek, Typer.castOrUnify(ctx, kv.v, enew, p)], tvoid, p));
-		stmts.push(enew);
-		return TypeFunctions.mk(TBlock(stmts), enew.type, p);
-	}
-
 	// Increment/decrement of an abstract @:arrayAccess element via getter+setter.
-	static function arrayIncr(ctx:TyperContext, a:TAbstract, tl:TParams, op:Unop, flag:UnopFlag, tb:TExpr, keyE:Expr, withType:WithType, p:Position):TExpr {
+	static function arrayIncr(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, op:Unop, flag:UnopFlag, tb:TExpr, ekey:TExpr, withType:WithType, p:Position):TExpr {
 		// Increment/decrement through @:arrayAccess: bind key and read value to "tmp" temps, apply the op
 		// inline, write through @:arrayAccess; the block yields the set-call result for prefix and the read
 		// temp for postfix. The base expression feeds both calls directly (no base temp is bound).
 		var tvoid = ctx.com.basic.tvoid;
 		var tint = ctx.com.basic.tint;
-		var ekey = Typer.typeExpr(ctx, keyE, WithTypeTools.value);
 		var vKey = TypeFunctions.allocVar(VGenerated, "tmp", ekey.type, ekey.pos);
 		var evarKey = TypeFunctions.mk(TVarExpr(vKey, ekey), tvoid, ekey.pos);
 		var ekeyL = TexprTools.makeLocal(vKey, ekey.pos);
-		var get = Calls.abstractArrayGet(ctx, a, tl, a.impl, tb, ekeyL, p);
+		var get = Calls.abstractArrayGet(ctx, a, tl, c, tb, ekeyL, p);
 		var eGet = get.expr;
 		var vGet = TypeFunctions.allocVar(VGenerated, "tmp", eGet.type, eGet.pos);
 		var evGet = TexprTools.makeLocal(vGet, p);
 		var evarGet = TypeFunctions.mk(TVarExpr(vGet, eGet), tvoid, p);
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
 		var eOp = TypeFunctions.mk(TBinop(op.match(Increment) ? OpAdd : OpSub, evGet, one), evGet.type, p);
-		var eSet = Calls.arraySetValue(ctx, a, tl, a.impl, tb, ekeyL, function(_) return eOp, p, false);
+		var eSet = Calls.arraySetValue(ctx, a, tl, c, tb, ekeyL, function(_) return eOp, p, false);
 		if (eSet == null) {
-			// An @:op(A++)-style unop on the read value covers the increment, else the setter resolution
-			// raises its own diagnostic.
-			var abs = tryAbstractUnop(ctx, op, flag, eGet, p);
-			if (abs == null) {
-				Calls.arraySetValue(ctx, a, tl, a.impl, tb, ekeyL, function(_) return eOp, p);
-				throw new TypingError("No matching @:arrayAccess setter", p);
-			}
-			return TypeFunctions.mk(TBlock([evarKey, abs]), abs.type, p);
+			// NotFound: the read is made again with the ORIGINAL key, and the operator goes to the
+			// overload-or-make path - an @:op(A++) on the value, else the plain unop.
+			var e = Calls.abstractArrayGet(ctx, a, tl, c, tb, ekey, p).expr;
+			var abs = tryAbstractUnop(ctx, op, flag, e, p);
+			if (abs != null) return abs;
+			checkAssign(ctx, e);
+			return makeUnop(ctx, op, flag, e, p);
 		}
 		var el = [evarKey, evarGet, eSet].concat(flag.match(Postfix) ? [evGet] : []);
 		// The whole block is typed as the setter result (the @:arrayAccess element type) for both prefix
@@ -1269,10 +1175,10 @@ class Operators {
 			var gAcc = hxc.typing.Fields.typeField(ctx, er, "get_" + name, fa.pos, MCall([]), WithTypeTools.value, true, true);
 			ctx.privateAccess--;
 			var call = Calls.buildCall(ctx, gAcc, [], WithTypeTools.value, fa.pos);
-			return switch (call.expr) {
+			return Calls.accessorCallResult(fa, switch (call.expr) {
 				case TCall(callee, args): TypeFunctions.mk(TCall(atFieldPos(callee, fa.pos), args), call.type, call.pos);
 				case _: call;
-			};
+			});
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		return FieldAccessTools.getFieldExpr(faOn, FRead);
@@ -1303,11 +1209,13 @@ class Operators {
 			// accGet on a method access yields a CLOSURE over it, which GenJS prints as
 			// `$bind(c,c.set_x)`. Take the field expression with the call flavour instead.
 			var setterExpr = switch (sAcc) {
-				case AKField(sfa) | AKAccessor(sfa): FieldAccessTools.getFieldExpr(sfa, FCall);
+				case AKField(sfa) | AKAccessor(sfa):
+					Calls.forceFieldType(sfa.field);
+					FieldAccessTools.getFieldExpr(sfa, FCall);
 				case _: Typer.accGet(ctx, sAcc);
 			};
-			return Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos),
-				[Typer.castOrUnify(ctx, value.type, value, p)], value.type, p);
+			return Calls.accessorCallResult(fa, Calls.makeCall(ctx, atFieldPos(setterExpr, fa.pos),
+				[Typer.castOrUnify(ctx, value.type, value, p)], value.type, p));
 		}
 		var faOn = FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos);
 		var target = FieldAccessTools.getFieldExpr(faOn, FWrite);
@@ -1340,7 +1248,8 @@ class Operators {
 		var setExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, setterCf, fa.host, false, fa.pos), FCall);
 		function retOfE(e:TExpr):T return switch (TypeFunctions.follow(e.type)) { case TFun(s): s.ret; case _: tvoid; };
 		function retOf(cf:TClassField):T return retOfE(cf == getterCf ? getExpr : setExpr);
-		var readVal = Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p);
+		Calls.forceFieldType(getterCf);
+		var readVal = Calls.accessorCallResult(fa, Calls.makeCall(ctx, getExpr, [er], retOf(getterCf), p));
 		var binop = op.match(Increment) ? OpAdd : OpSub;
 		var one = TypeFunctions.mk(TConst(TInt(1)), tint, p);
 		// As with a class property, the setter call is the value; only a postfix used as a value needs the
@@ -1355,12 +1264,14 @@ class Operators {
 			var epost = TexprTools.makeLocal(vpost, p);
 			stmts.push(TypeFunctions.mk(TVarExpr(vpost, eLhs), tvoid, p));
 			var newv = toTexpr(makeBinop(ctx, binop, eLhs, one, false, withType, p));
-			stmts.push(Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p));
+			Calls.forceFieldType(setterCf);
+			stmts.push(Calls.accessorCallResult(fa, Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p)));
 			stmts.push(epost);
 			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
-		var setCall = Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p);
+		Calls.forceFieldType(setterCf);
+		var setCall = Calls.accessorCallResult(fa, Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p));
 		if (stmts.length == 0) return setCall;
 		stmts.push(setCall);
 		// The receiver-temp block is wrapped in a :mergeBlock meta so the analyzer merges it flat instead

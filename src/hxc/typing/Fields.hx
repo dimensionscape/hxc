@@ -785,11 +785,14 @@ class Fields {
 		};
 	}
 
-	// A @:multiType abstract on EITHER side goes through the abstract-cast machinery, whose first step is
-	// typeIseq - and that is what binds the extension's own type parameter from the receiver. Resolving a
-	// concrete specialization first instead cannot work: `Map<Unknown<0>, Float>` has nothing to specialize
-	// on, so a `Map<String, Float>` receiver matched no candidate at all.
-	static function usingDoesUnify(ctx:TyperContext, e:TExpr, t:T, p:Position):Bool {
+	// A @:multiType abstract on EITHER side goes through the abstract-cast machinery, whose first step
+	// is a type-equality check - and that is what binds the extension's own type parameter from the
+	// receiver. Resolving a concrete specialization first cannot work: `Map<Unknown<0>, Float>` has
+	// nothing to specialize on, so a `Map<String, Float>` receiver would match no candidate at all.
+	// Returns the receiver, cast to the extension's first argument when a @:multiType abstract is
+	// involved (and that expression is what the access carries), else unchanged once it unifies. Null
+	// when it does not.
+	static function usingDoesUnify(ctx:TyperContext, e:TExpr, t:T, p:Position):Null<TExpr> {
 		function isMulti(t:T):Bool return switch (TypeFunctions.follow(t)) {
 			case TAbstract(ab, _): TypeFunctions.hasMeta(":multiType", ab.meta);
 			case _: false;
@@ -798,10 +801,9 @@ class Fields {
 		var b = t;
 		if (isMulti(a) || isMulti(b)) {
 			return try TypeUnification.withMonoRollback(function() {
-				Typer.castOrUnifyRaise(ctx, b, e, p);
-				return true;
-			}) catch (_:hxc.core.TypeUnification.UnifyError) false
-			catch (_:TypingError) false;
+				return Typer.castOrUnifyRaise(ctx, b, e, p);
+			}) catch (_:hxc.core.TypeUnification.UnifyError) null
+			catch (_:TypingError) null;
 		}
 		// The receiver never coerces through Dynamic to claim an extension (allowDynamicToCast =
 		// false).
@@ -813,8 +815,8 @@ class Fields {
 				equalityKind: hxc.core.TypeUnification.EqKind.EqStrict,
 				equalityUnderlying: false
 			}, a, b);
-			return true;
-		}) catch (_:hxc.core.TypeUnification.UnifyError) false;
+			return e;
+		}) catch (_:hxc.core.TypeUnification.UnifyError) null;
 	}
 
 	static function exprOfParam(t:T):Null<T> {
@@ -842,7 +844,7 @@ class Fields {
 		}
 	}
 
-	static function usingAccepts(ctx:TyperContext, cf:TClassField, e:TExpr, first:T, p:Position):Bool {
+	static function usingAccepts(ctx:TyperContext, cf:TClassField, e:TExpr, first:T, p:Position):Null<TExpr> {
 		// A Dynamic receiver only takes extensions whose first argument is exactly Dynamic: Dynamic
 		// unifies with anything, so a String-first extension would otherwise claim any dynamic field
 		// access.
@@ -850,7 +852,7 @@ class Fields {
 			case TDynamic(null):
 				switch (TypeFunctions.follow(first)) {
 					case TDynamic(null):
-					case _: return false;
+					case _: return null;
 				}
 			case _:
 		}
@@ -860,7 +862,7 @@ class Fields {
 		if (exprOf != null)
 			return usingDoesUnify(ctx, e, exprOf, p);
 		if (isMacroExprParam(first))
-			return true;
+			return e;
 		return usingDoesUnify(ctx, e, first, p);
 	}
 
@@ -919,8 +921,9 @@ class Fields {
 				cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
 			}
 			switch (TypeFunctions.follow(cft)) {
-				case TFun(sig) if (sig.args.length > 0 && usingAccepts(ctx, cf, e, sig.args[0].t, p)):
-					return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, e, false, p));
+				case TFun(sig) if (sig.args.length > 0):
+					var er = usingAccepts(ctx, cf, e, sig.args[0].t, p);
+					if (er != null) return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, er, false, p));
 				case _:
 			}
 		}
@@ -960,7 +963,7 @@ class Fields {
 						case TFun(sig) if (sig.args.length > 0):
 							// The same acceptance test the call path uses: a plain unify is stricter and drops the
 							// Map-receiver-against-StringMap-parameter cases.
-							if (usingAccepts(ctx, o, e, sig.args[0].t, p)) {
+							if (usingAccepts(ctx, o, e, sig.args[0].t, p) != null) {
 								add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
 								matched = true;
 							}

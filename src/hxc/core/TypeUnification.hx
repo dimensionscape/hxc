@@ -573,7 +573,7 @@ class TypeUnification {
 		}
 	}
 
-	static function linkDynamic(a:T, b:T):Void {
+	public static function linkDynamic(a:T, b:T):Void {
 		switch [TypeFunctions.follow(a), TypeFunctions.follow(b)] {
 			case [TMono(r), TDynamic(_)]: monoBind(r, b);
 			case [TDynamic(_), TMono(r)]: monoBind(r, a);

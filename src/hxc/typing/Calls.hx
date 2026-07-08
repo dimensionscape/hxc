@@ -91,29 +91,6 @@ class Calls {
 		return null;
 	}
 
-	// If a class implements haxe.Constraints.IMap<K,V> (haxe.ds.IntMap/StringMap/ObjectMap/...), return
-	// its key/value types. Such a map supports `m[k]` as m.get(k) / m.set(k, v); the @:arrayAccess proper
-	// lives on the Map abstract, but hxc types map literals as the concrete impl.
-	public static function imapKV(c:TClass, tl:TParams):Null<{k:T, v:T}> {
-		var cur = c;
-		var curtl = tl;
-		var guard = 0;
-		while (cur != null && guard++ < 50) {
-			for (impl in cur.interfaces) {
-				var ic = impl.c;
-				if (ic.path.name == "IMap") {
-					var ps = [for (t in impl.params) TypeFunctions.applyParams(cur.params, curtl, t)];
-					if (ps.length >= 2) return {k: ps[0], v: ps[1]};
-				}
-			}
-			if (cur.superClass == null) break;
-			var sup = cur.superClass;
-			curtl = [for (t in sup.params) TypeFunctions.applyParams(cur.params, curtl, t)];
-			cur = sup.c;
-		}
-		return null;
-	}
-
 	public static function arrayAccess(ctx:TyperContext, e1:TExpr, e2:TExpr, mode:AccessMode, p:Position):AccessKind {
 		// Abstract @:arrayAccess. A write defers to the assignment/compound handlers (which call the
 		// (this, key, value) setter); a read dispatches here to the (this, key) getter.
@@ -156,13 +133,6 @@ class Calls {
 					try TypeUnification.unifyDefault(e2.type, ctx.com.basic.tint)
 					catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), e2.pos);
 					return AKExpr(TypeFunctions.mk(TArray(e1, e2), elem, p));
-				}
-				var kv = imapKV(c, tl);
-				if (kv != null && !mode.match(MSet(_))) {
-					// Read `m[k]` as m.get(k) (writes/increments are lowered by typeAssign/typeUnop).
-					var key = Typer.castOrUnify(ctx, kv.k, e2, e2.pos);
-					var getExpr = Typer.accGet(ctx, Fields.typeField(ctx, e1, "get", p, MGet, WithTypeTools.value));
-					return AKExpr(makeCall(ctx, getExpr, [key], ctx.com.basic.tnull(kv.v), p));
 				}
 			case _:
 		}
@@ -653,6 +623,24 @@ class Calls {
 		var ft = TFun({args: missingArgs, ret: sig.ret});
 		decls.push(TypeFunctions.mk(TFunction(tf), ft, p));
 		return TypeFunctions.mk(TBlock(decls), ft, p);
+	}
+
+	// What the accessor answers is cast to the property's type as its host sees it, unless the two are
+	// strictly the same - strict equality does not follow Null, so a getter returning T for a Null<T>
+	// property is cast.
+	public static function accessorCallResult(prop:FieldAccess, e:TExpr):TExpr {
+		var t = FieldAccessTools.getMapFunction(prop)(prop.field.type);
+		return TypeUnification.typeIseqStrict(t, e.type) ? e : TypeFunctions.mk(TCast(e, null), t, e.pos);
+	}
+
+	// A call attempt follows the called field's type, which under full typing is the lazy type the
+	// field was left with: calling a method types its body there. An accessor call hxc builds by
+	// hand takes the same step.
+	public static function forceFieldType(cf:TClassField):Void {
+		switch (cf.type) {
+			case TLazy(_): TypeFunctions.follow(cf.type);
+			case _:
+		}
 	}
 
 	// A call target goes through buildCall (core: plain function value and method call).
@@ -1174,9 +1162,9 @@ class Calls {
 		var outerHover = hxc.typing.Typer.hoverFound;
 		var firstFailHover:Null<Dynamic> = null;
 		for (cf in candidates) {
-			// Follows the candidate's type: its lazy - and the body behind it - runs as the candidate is
-			// tried.
-			if (multi) switch (cf.type) { case TLazy(_): TypeFunctions.follow(cf.type); case _: }
+			// A call attempt follows the candidate's type: its lazy - and the body behind it - runs as the
+			// candidate is tried.
+			switch (cf.type) { case TLazy(_): TypeFunctions.follow(cf.type); case _: }
 			var diagBefore = ctx.com.diagnostics.length;
 			if (multi) hxc.typing.Typer.hoverFound = outerHover;
 			var oldRaise = ctx.com.raiseTypingErrors;
@@ -1379,9 +1367,12 @@ class Calls {
 		// Each type parameter maps to the raw bound mono, not to its follow: a typedef argument stays the
 		// typedef and Null<X> stays nullable in the specialization.
 		var params = [for (m in monos) resolveGenericMonos(m)];
-		// Names from the raw bound monos (its loop resolves one step per follow_or), so a typedef-typed
-		// parameter keeps its typedef path.
-		var name = cf.name + "_" + genericSuffix(monos);
+		// The generic name comes from the raw bound monos (resolved one step per follow), so a
+		// typedef-typed parameter keeps its typedef path. A name that cannot be spelled turns into an
+		// ordinary error.
+		var gname = try Typeload.makeGenericName(cf.params, monos, callPos)
+			catch (e:hxc.core.TypingError.GenericException) throw new TypingError(e.message, e.pos);
+		var name = cf.name + "_" + gname;
 		var stat = switch (fa.host) { case FHStatic(_) | FHAbstract(_, _, _): true; case _: false; }
 		// An existing specialization must take this call's type.
 		function unifyExistingField(cf2:TClassField):Void {
@@ -1434,7 +1425,7 @@ class Calls {
 			// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
 			// synthesized class <Class>_<method>_<Params> in its own module.
 			if (TypeFunctions.hasMeta(":genericClassPerMethod", host.meta)) {
-				var c = genericMethodContainer(ctx, host, cf, params);
+				var c = genericMethodContainer(ctx, host, cf, gname);
 				// The class the specialization is ADDED to depends on every module its type parameters come
 				// from, over the raw monos.
 				setTypeParameterDependencies(c.module, monos);
@@ -1466,8 +1457,9 @@ class Calls {
 
 	// Find or create the module-level container class for one @:genericClassPerMethod method
 	// specialization.
-	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, params:TParams):TClass {
-		var path:hxc.core.Globals.Path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + genericSuffix(params)};
+	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, gname:String):TClass {
+		// The container is named with the specialization's generic name.
+		var path:hxc.core.Globals.Path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + gname};
 		var key = hxc.context.Context.pathKey(path);
 		var existing = ctx.com.moduleLut.get(key);
 		if (existing != null) {
@@ -1679,32 +1671,6 @@ class Calls {
 		}
 	}
 
-	// Name each top-level type parameter through loop(true).
-	static function genericSuffix(params:TParams):String {
-		return [for (p in params) genericLoop(true, p)].join("_");
-	}
-
-	// An unsafe character spells _<charcode>_
-	static function identSafe(s:String):String {
-		var b = new StringBuf();
-		for (i in 0...s.length) {
-			var c = s.charCodeAt(i);
-			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
-			if (ok) b.addChar(c) else b.add("_" + c + "_");
-		}
-		return b.toString();
-	}
-
-	// The type path with its package joined by underscores.
-	static function pathUnderscore(path:hxc.core.Globals.Path):String {
-		return path == null ? "T" : (path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name);
-	}
-
-	static var genericPartDepth = 0;
-
-	// The raw type names the part (no eager follow), so a typedef parameter keeps its typedef path
-	// (Issue7985 gen_..._Rec); only a non-top unknown degrades to "_" through follow_or, and Dynamic
-	// spells "Dynamic" only at top.
 	public static function setTypeParameterDependencies(mg:Null<ModuleDef>, tl:TParams):Void {
 		if (mg == null) return;
 		var depStack:Array<T> = [];
@@ -1732,49 +1698,6 @@ class Calls {
 		for (t in tl) loop(t);
 	}
 
-	static function genericLoop(top:Bool, t:T):String {
-		// Recursive structures would loop forever; past a sane depth the part degrades to "_"
-		// (hxc guard; the reference cannot recurse here because typedefs stop unfollowed).
-		if (genericPartDepth > 10) return "_";
-		genericPartDepth++;
-		var r = switch (t) {
-			case TInst(c, tl):
-				switch (c.kind) {
-					case KExpr(e): identSafe(hxc.ast.Ast.Printer.sExpr(e));
-					case _: identSafe(pathUnderscore(c.path)) + genericLoopTl(top, tl);
-				}
-			case TType(td, tl): pathUnderscore(td.path) + genericLoopTl(top, tl);
-			case TEnum(en, tl): pathUnderscore(en.path) + genericLoopTl(top, tl);
-			case TAnon(an):
-				var names = [for (n in an.fields.keys()) n];
-				names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
-				"anon_" + [for (n in names) n + "_" + genericLoop(false, TypeFunctions.follow(an.fields.get(n).type))].join("_");
-			case TFun(sig): "func_" + [for (a in sig.args) genericLoop(false, a.t)].join("_") + "_" + genericLoop(false, sig.ret);
-			case TAbstract(a, tl): pathUnderscore(a.path) + genericLoopTl(top, tl);
-			case _ if (!top): genericFollowOr(t, top, function() return "_");
-			case TMono(r) if (r.type == null):
-				genericPartDepth--;
-				throw new TypingError("Could not determine type for parameter", Position.nullPos);
-			case TDynamic(_): "Dynamic";
-			case _: genericFollowOr(t, top, function():String {
-				genericPartDepth--;
-				throw new TypingError("Unsupported type parameter", Position.nullPos);
-			});
-		};
-		genericPartDepth--;
-		return r;
-	}
-
-	static function genericLoopTl(top:Bool, tl:TParams):String {
-		return tl.length == 0 ? "" : "_" + [for (t in tl) genericLoop(top, t)].join("_");
-	}
-
-	// Resolve one step; an unresolvable type takes the fallback.
-	static function genericFollowOr(t:T, top:Bool, orFn:Void->String):String {
-		var ft = TypeFunctions.followOnce(t);
-		return ft == t ? orFn() : genericLoop(top, ft);
-	}
-
 	// A generic local function stores its type params on its TVar (extra); a call gives each a fresh
 	// monomorph so the arguments can bind them.
 	static function monomorphizeLocalParams(ctx:TyperContext, ce:TExpr):TExpr {
@@ -1786,9 +1709,11 @@ class Calls {
 		};
 	}
 
-	static function callExpr(ctx:TyperContext, ce0:TExpr, el:Array<Expr>, p:Position, forceInline = false, forcePos:Null<Position> = null):TExpr {
-		var ce = monomorphizeLocalParams(ctx, ce0);
-		return switch (TypeFunctions.follow(ce.type)) {
+	// `loop` recurses on the callee's type (a @:callable abstract goes on to its underlying type) and
+	// never touches the callee expression itself.
+	static function callExpr(ctx:TyperContext, ce0:TExpr, el:Array<Expr>, p:Position, forceInline = false, forcePos:Null<Position> = null, ?calleeType:T):TExpr {
+		var ce = calleeType != null ? ce0 : monomorphizeLocalParams(ctx, ce0);
+		return switch (TypeFunctions.follow(calleeType != null ? calleeType : ce.type)) {
 			case TFun(sig):
 				var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
 				if (DebugDump.enabled("select", p))
@@ -1803,7 +1728,8 @@ class Calls {
 				TypeUnification.unifyDefault(TFun({args: [for (a in args) {name: "", opt: false, t: a.type}], ret: ret}), ce.type);
 				DebugDump.selected("call", p, "mono function");
 				makeCall(ctx, ce, args, ret, p, forceInline, forcePos);
-			case TDynamic(_):
+			// Only Dynamic itself is callable; a Dynamic<T> is not.
+			case TDynamic(null):
 				var args = [for (e in el) Typer.typeExpr(ctx, e, WithTypeTools.value)];
 				DebugDump.selected("call", p, "dynamic function");
 				makeCall(ctx, ce, args, TypeFunctions.tDynamic, p, forceInline, forcePos);
@@ -1830,7 +1756,7 @@ class Calls {
 				var underlying = TypeFunctions.applyParams(a.params, tl, a.thisType);
 				if (DebugDump.enabled("select", p))
 					DebugDump.selected("call", p, "callable abstract -> " + DebugDump.typeString(underlying));
-				callExpr(ctx, TypeFunctions.mk(ce.expr, underlying, ce.pos), el, p);
+				callExpr(ctx, ce, el, p, forceInline, forcePos, underlying);
 			case _:
 				// Untyped code may call any value, and the result is a fresh monomorph; anywhere else the
 				// callee's type cannot be called, reported at it.

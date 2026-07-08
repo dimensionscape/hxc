@@ -193,13 +193,9 @@ class EvalMacro {
 			if (macroFiltered.exists(decl)) continue;
 			macroFiltered.set(decl, true);
 			switch (t) { case TClassDecl(c): tctx.curclass = c; case _: }
-			// handle_abstract_casts (hxc splits its TNew arm out as resolve_deferred_multitype, as the main
-			// pipeline does), local_statics, VarLazifier, Exceptions and captured_vars.
+			// The expression filters: handle_abstract_casts, local_statics, VarLazifier, Exceptions and
+			// captured_vars.
 			hxc.filters.FiltersCommon.runExpressionFilters(tctx, [
-				{name: "resolve_deferred_multitype", f: function(e) return {
-					function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return hxc.filters.Filters.resolveDeferredMultiType(tctx, hxc.core.TexprTools.mapExpr(walk, e2));
-					walk(e);
-				}},
 				{name: "handle_abstract_casts", f: function(e) return hxc.filters.Filters.handleAbstractCasts(tctx, e)},
 				{name: "local_statics", f: function(e) return hxc.filters.Filters.localStatics(tctx, e)},
 				{name: "VarLazifier", f: function(e) return hxc.filters.Filters.varLazifier(mcom, e)},
@@ -2933,8 +2929,20 @@ class EvalMacro {
 		// every macro a second time, out of order with the host's own calls (a macro keeping state in a
 		// static would then answer the host's first call with the value its own macro-world run had left
 		// behind).
-		if (tctx.com.isMacro)
+		if (tctx.com.isMacro) {
+			// The macro is still loaded first: a (class, method) not in cachedMacros finalizes the macro
+			// context, which types the bodies still pending there, and is cached. The macro context is its
+			// own macro context, and nothing is added to the interpreter from inside it.
+			var mkey = switch (fa.host) {
+				case FHStatic(c) | FHAbstract(_, _, c) | FHInstance(c, _): hxc.core.Globals.sTypePath(c.path) + "." + fa.field.name;
+				case _: null;
+			};
+			if (mkey != null && !tctx.com.cachedMacros.exists(mkey)) {
+				hxc.typing.TypeFields.typeAllModules(tctx.com);
+				tctx.com.cachedMacros.set(mkey, true);
+			}
 			return Typer.typeExpr(tctx, {expr: EThrow({expr: EConst(CString("macro-in-macro", SDoubleQuotes)), pos: p}), pos: p}, withType);
+		}
 		// Saved before the call position is installed: a nested run (an @:from cast macro reached while
 		// typing an outer macro's argument) must put back the OUTER call's position, as a per-call API
 		// record would.
@@ -2967,7 +2975,8 @@ class EvalMacro {
 			macroCom.cachedMacros.set(cacheKey, true);
 		}
 		var ec = getContext(tctx.com);
-		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
+		// A member macro is a static of the macro context, called with its receiver as the first argument.
+		var proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, false);
 		var idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		if (proto == null || idx == null) {
 			// The macro field is absent because the host parsed the class without macro defined; load the
@@ -2985,7 +2994,7 @@ class EvalMacro {
 				throw new hxc.context.Context.ContextError(e.message, e.pos, Other, e.depth);
 			}
 			ec = getContext(tctx.com);
-			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, isInstance);
+			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, false);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
 		}
 		// Once the macro world has reported an error (the macro com's error hook marks the interpreter, and
@@ -3023,7 +3032,6 @@ class EvalMacro {
 				case _: false;
 			};
 			var args = usePipeline ? typeMacroArgs(ec, tctx, callEl, sigArgs, p) : macroArgs(ec, callEl, sigArgs);
-			if (isInstance) args.unshift(VNull);
 			curTctx = tctx;
 			curPos = p;
 			curModule = callModule;
@@ -3366,6 +3374,22 @@ class EvalMacro {
 		}
 	}
 
+	// A MacroType macro has to return haxe.macro.Type, or else haxe.macro.ComplexType - unified against
+	// each, the second failure raised at the macro field's position.
+	static function checkMacroTypeReturn(cf:Null<TClassField>):Void {
+		if (cf == null || macroCom == null) return;
+		var mret = switch (TypeFunctions.follow(cf.type)) { case TFun(s): s.ret; case _: return; };
+		var ttype = hxc.typing.Typeload.loadInstance(macroCom, [], {tpackage: ["haxe", "macro"], tname: "Type", tparams: [], tsub: null}, cf.pos, false);
+		try {
+			TypeUnification.unifyDefault(mret, ttype);
+		} catch (_:hxc.core.TypeUnification.UnifyError) {
+			var tct = hxc.typing.Typeload.loadInstance(macroCom, [], {tpackage: ["haxe", "macro"], tname: "Expr", tparams: [], tsub: "ComplexType"}, cf.pos, false);
+			try TypeUnification.unifyDefault(mret, tct)
+			catch (ue:hxc.core.TypeUnification.UnifyError)
+				throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), cf.pos);
+		}
+	}
+
 	public static function runGenericBuild(com:Context, c:TClass, params:TParams, fields:Array<ClassField>, p:Position, ?callerTypeParams:TypeParams):T {
 		var entry = findMeta(c.meta, ":genericBuild");
 		if (entry == null) throw new TypingError(Context.sTypePath(c.path) + " is missing @:genericBuild meta. Was it removed by a macro?", p);
@@ -3407,6 +3431,7 @@ class EvalMacro {
 				case ECall(callee, args):
 					var target = macroTarget(callee);
 					var cf = target == null ? null : macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+					checkMacroTypeReturn(cf);
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
@@ -3451,7 +3476,7 @@ class EvalMacro {
 
 	// haxe.macro.MacroType<[Cls.method(args)]> runs the macro and becomes the type it returns. The call
 	// arrives as the KExpr class the instance load makes for a TPExpr parameter, bracketed or bare.
-	public static function runMacroType(com:Context, params:TParams, p:Position, ?callerTypeParams:TypeParams):T {
+	public static function runMacroType(com:Context, params:TParams, p:Position, ?callerTypeParams:TypeParams, ?resolvingClass:TClass):T {
 		// A macro is not called from within the macro context - the call is replaced by a `throw
 		// "macro-in-macro"` expression, and a MacroType then leaves a fresh monomorph behind. The macro
 		// world loads the module holding the macro, so without this the same MacroType would run a second
@@ -3476,7 +3501,7 @@ class EvalMacro {
 		// field signatures resolve.
 		if (target == null) switch (callee != null ? callee.expr : null) {
 			case EConst(CIdent(i)):
-				var cur = com.resolvingClass;
+				var cur = resolvingClass != null ? resolvingClass : com.resolvingClass;
 				if (cur != null && cur.statics.exists(i)) {
 					target = {pack: cur.path.pack, module: cur.module != null ? cur.module.path.name : cur.path.name, name: cur.path.name, method: i, moduleOnly: false};
 					// Everything downstream reads the path back off the callee, so write the
@@ -3504,6 +3529,7 @@ class EvalMacro {
 			curPos = p;
 			var args = switch (callExpr.expr) { case ECall(_, a): a; case _: []; };
 			var cf = macroWorldField({pack: target.pack, name: target.name}, target.method, {pack: target.pack, name: target.module});
+			checkMacroTypeReturn(cf);
 			var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 			var values = macroArgs(ec, args, sig == null ? null : sig.args);
 			if (sig != null) while (values.length < sig.args.length) values.push(VNull);
@@ -4285,15 +4311,20 @@ class EvalMacro {
 		};
 	}
 
+	// An import is a tuple, so the mode decodes first; each path part carries its own position (pos before
+	// name), and an alias's is lost (the null position). The declaration sits at defineModule's position.
 	static function decodeImport(ec:EvalContext, v:EvalValue, dp:Position):Import {
-		var path = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("path")))) ({name: strOf(EvalField.field(ec, pv, EvalHash.hash("name"))), pos: dp} : PlacedName)];
 		var modeV = EvalField.field(ec, v, EvalHash.hash("mode"));
 		var mode:ImportMode = switch (ctorName(ec, modeV)) {
 			case "IAll": ImportMode.IAll;
-			case "IAsName": ImportMode.IAsName({name: strOf(eargs(modeV)[0]), pos: dp});
+			case "IAsName": ImportMode.IAsName({name: strOf(eargs(modeV)[0]), pos: Position.nullPos});
 			case _: ImportMode.INormal;
 		};
-		return {path: path, mode: mode};
+		var path = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("path")))) {
+			var pp = posOf(ec, EvalField.field(ec, pv, EvalHash.hash("pos")), dp);
+			({name: strOf(EvalField.field(ec, pv, EvalHash.hash("name"))), pos: pp} : PlacedName);
+		}];
+		return {path: path, mode: mode, pos: dp};
 	}
 
 	static function encodeImportExpr(ec:EvalContext, imp:Import):EvalValue {

@@ -1385,12 +1385,9 @@ class Compiler {
 			// typed.
 			hxc.filters.DeprecationCheck.run(ctx);
 			hxc.filters.NullSafety.run(ctx, ctx.types);
-			// UnusedPure (hxc-only) moved into Filters.run after inline_constructors: an inlined value
-			// block ends with a read of its result local, and consumes exactly that read to splice the
-			// block flat (unwrap on Some io).
-			if (platform == Eval) hxc.filters.Filters.runEvalAbstractCasts(new hxc.typing.TyperContext(ctx));
-			// Fix com.main and the static-init type order before any target consumes them which runs for
-			// every target including none)
+			// UnusedPure runs in Filters.run after inline_constructors: an inlined value block ends with a
+			// read of its result local, and inline constructors consume exactly that read to splice the
+			// block flat. Dropping the read earlier would leave a nested value-typed block for DCE to mark.
 			hxc.typing.Finalization.run(ctx);
 			// A fully-typed compile that populates the cache caches its modules into the process cache,
 			// activating server/module and server/type lookups for later requests in the same process. Both

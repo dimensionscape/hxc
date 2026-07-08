@@ -1152,8 +1152,18 @@ class TypeFields {
 		var com = tctx.com;
 		var savedPass = com.currentPass;
 		com.currentPass = Context.PTypeField;
-		try typeFieldBodyInner(tctx, cf, cff, isStatic, sigType) catch (e:Dynamic) { bodyDepth--; com.currentPass = savedPass; throw e; }
+		// A field types in a context of its own, whose call-argument stack starts as its class's - empty,
+		// since only typing a `new` pushes and it pushes onto a field's context.
+		var savedArgs = com.callArgumentStack;
+		com.callArgumentStack = [];
+		try typeFieldBodyInner(tctx, cf, cff, isStatic, sigType) catch (e:Dynamic) {
+			bodyDepth--;
+			com.currentPass = savedPass;
+			com.callArgumentStack = savedArgs;
+			throw e;
+		}
 		com.currentPass = savedPass;
+		com.callArgumentStack = savedArgs;
 		bodyDepth--;
 	}
 
@@ -1242,7 +1252,6 @@ class TypeFields {
 						var staticPos = staticLocalPos(tf.expr);
 						if (staticPos != null) throw new TypingError("Inline functions cannot have static locals", staticPos);
 					}
-					tf.expr = localStatics(tctx, tf.expr);
 					// The TFunction node itself also carries the body position; genxml's line attribute
 					// reads it.
 					cf.expr = TypeFunctions.mk(TFunction(tf), sigType, funcPos);
@@ -1514,131 +1523,6 @@ class TypeFields {
 		return te;
 	}
 
-	static function promoteLocalStatic(tctx:TyperContext, lut:Map<Int, TClassField>, v:TVar, eo:Null<TExpr>):Void {
-		var name = tctx.curfield.name + "_" + v.name;
-		if (tctx.curclass.statics.exists(name)) {
-			var other = tctx.curclass.statics.get(name);
-			// A repeat typing pass of the same body finds its own promoted static (same declaration
-			// position): reuse it. A different local expanding to the same name is a real conflict.
-			if (TypeFunctions.hasClassFieldFlag(other, CfNoLookup)
-					&& other.namePos.file == v.pos.file && other.namePos.min == v.pos.min) {
-				lut.set(v.id, other);
-				return;
-			}
-			tctx.com.addDiagnostic("The expanded name of this local (" + name + ") conflicts with another static field", v.pos);
-			tctx.com.addDiagnostic("Conflicting field was found here", other.namePos, 1);
-			return;
-		}
-		if (eo != null) checkLocalStaticInit(eo);
-		// ~static:true passes no ~public, and it to true: the promoted static is public, so naming it
-		// reports only the no-lookup error.
-		var cf = TypeFunctions.mkField(name, v.type, v.pos, v.pos, true, true);
-		cf.meta = [{name: ":noCompletion", params: [], pos: Position.nullPos}].concat(v.meta);
-		TypeFunctions.addClassFieldFlag(cf, CfNoLookup);
-		cf.expr = eo;
-		tctx.curclass.statics.set(name, cf);
-		// The promoted local static is PREPENDED to the ordered statics.
-		tctx.curclass.orderedStatics.unshift(cf);
-		lut.set(v.id, cf);
-	}
-
-	static function checkLocalStaticInit(e:TExpr):Void {
-		function loop(e:TExpr):Void {
-			switch (e.expr) {
-				case TLocal(_) | TFunction(_):
-					throw new TypingError("Accessing local variables in static initialization is not allowed", e.pos);
-				case TConst(TThis) | TConst(TSuper):
-					throw new TypingError("Accessing `this` in static initialization is not allowed", e.pos);
-				case TReturn(_) | TBreak | TContinue:
-					throw new TypingError("This kind of control flow in static initialization is not allowed", e.pos);
-				case TArray(e1, e2) | TBinop(_, e1, e2):
-					loop(e1); loop(e2);
-				case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
-					loop(e1);
-				case TObjectDecl(fields):
-					for (f in fields) loop(f.expr);
-				case TArrayDecl(el) | TBlock(el):
-					for (x in el) loop(x);
-				case TCall(e1, el):
-					loop(e1);
-					for (x in el) loop(x);
-				case TNew(_, _, el):
-					for (x in el) loop(x);
-				case TVarExpr(_, eo):
-					if (eo != null) loop(eo);
-				case TFor(_, e1, e2):
-					loop(e1); loop(e2);
-				case TIf(e1, e2, e3):
-					loop(e1); loop(e2); if (e3 != null) loop(e3);
-				case TWhile(e1, e2, _):
-					loop(e1); loop(e2);
-				case TSwitch(e1, cases, edef):
-					loop(e1);
-					for (c in cases) {
-						for (v in c.values) loop(v);
-						loop(c.expr);
-					}
-					if (edef != null) loop(edef);
-				case TTry(e1, catches):
-					loop(e1);
-					for (c in catches) loop(c.expr);
-				case TConst(_) | TTypeExpr(_) | TIdent(_):
-			}
-		}
-		loop(e);
-	}
-
-	static function localStatics(tctx:TyperContext, e:TExpr):TExpr {
-		var lut:Map<Int, TClassField> = new Map();
-		var loop:TExpr->TExpr = null;
-		function opt(e:Null<TExpr>):Null<TExpr> return e == null ? null : loop(e);
-		function arr(el:Array<TExpr>):Array<TExpr> return [for (x in el) loop(x)];
-		loop = function(e:TExpr):TExpr {
-			return switch (e.expr) {
-				case TBlock(el):
-					var out:Array<TExpr> = [];
-					for (x in el) switch (x.expr) {
-						case TVarExpr(v, eo) if (TypeFunctions.hasVarFlag(v, VStatic)):
-							promoteLocalStatic(tctx, lut, v, eo);
-						case _:
-							out.push(loop(x));
-					}
-					e.expr = TBlock(out);
-					e;
-				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VStatic)):
-					var cf = lut.get(v.id);
-					if (cf == null) throw new TypingError("Could not find local static " + v.name + " (id " + v.id + ")", e.pos);
-					TexprTools.makeStaticField(tctx.curclass, cf, e.pos);
-				case TArray(e1, e2): e.expr = TArray(loop(e1), loop(e2)); e;
-				case TBinop(op, e1, e2): e.expr = TBinop(op, loop(e1), loop(e2)); e;
-				case TField(e1, fa): e.expr = TField(loop(e1), fa); e;
-				case TParenthesis(e1): e.expr = TParenthesis(loop(e1)); e;
-				case TObjectDecl(fields): e.expr = TObjectDecl([for (f in fields) {key: f.key, expr: loop(f.expr)}]); e;
-				case TArrayDecl(values): e.expr = TArrayDecl(arr(values)); e;
-				case TCall(e1, params): e.expr = TCall(loop(e1), arr(params)); e;
-				case TNew(c, params, args): e.expr = TNew(c, params, arr(args)); e;
-				case TUnop(op, flag, e1): e.expr = TUnop(op, flag, loop(e1)); e;
-				case TFunction(f): f.expr = loop(f.expr); e;
-				case TVarExpr(v, eo): e.expr = TVarExpr(v, opt(eo)); e;
-				case TFor(v, e1, e2): e.expr = TFor(v, loop(e1), loop(e2)); e;
-				case TIf(econd, eif, eelse): e.expr = TIf(loop(econd), loop(eif), opt(eelse)); e;
-				case TWhile(econd, body, flag): e.expr = TWhile(loop(econd), loop(body), flag); e;
-				case TSwitch(subject, cases, edef):
-					e.expr = TSwitch(loop(subject), [for (c in cases) {values: arr(c.values), expr: loop(c.expr)}], opt(edef));
-					e;
-				case TTry(e1, catches): e.expr = TTry(loop(e1), [for (c in catches) {v: c.v, expr: loop(c.expr)}]); e;
-				case TReturn(eo): e.expr = TReturn(opt(eo)); e;
-				case TThrow(e1): e.expr = TThrow(loop(e1)); e;
-				case TCast(e1, mt): e.expr = TCast(loop(e1), mt); e;
-				case TMeta(entry, e1): e.expr = TMeta(entry, loop(e1)); e;
-				case TEnumParameter(e1, ef, index): e.expr = TEnumParameter(loop(e1), ef, index); e;
-				case TEnumIndex(e1): e.expr = TEnumIndex(loop(e1)); e;
-				case TConst(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue | TLocal(_): e;
-			}
-		};
-		return loop(e);
-	}
-
 	// An Int literal bound to a Float field is rewritten to a Float literal; any other init whose type
 	// differs from the explicit field type wraps in a cast so the field keeps its declared type (a
 	// function literal behind a Dynamic field is then not a bare TFunction, which genjs uses to defer
@@ -1673,49 +1557,54 @@ class TypeFields {
 			v.meta = [{name: ":this", params: [], pos: hxc.ast.Position.nullPos}].concat(v.meta);
 			result.push({v: v, c: null});
 		}
+		// Per argument the name is checked, the default value types and then the variable is allocated.
 		for (i in 0...fd.fArgs.length) {
 			var fa = fd.fArgs[i];
 			var at = (sig != null && i + off < sig.args.length) ? sig.args[i + off].t : TypeFunctions.mkMono();
 			Typer.checkLocalVariableName(tctx, fa.name.name, TVOArgument, fa.name.pos);
+			var def = typeFunctionArgValue(tctx, at, functionArgDefault(fa), fieldPos);
 			var v = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
-			// The display is answered from the argument's own name range.
-			if (Typer.atDisplayPos(fa.name.pos)) Typer.displayVariable(tctx, v, fa.name.pos);
 			// An argument's metadata lives on its variable.
 			if (fa.meta.length > 0) v.meta = v.meta.concat(fa.meta);
-			// The default value unifies into the argument type so an inferred argument settles from its
-			// default (x = 1 gives x:Int).
-			var def:Null<TExpr> = if (fa.value != null) {
-					hxc.typing.ExprPreprocessing.processDisplayFieldExpr(fieldPos, fa.value);
-					var te0 = Typer.typeExpr(tctx, fa.value, WithTypeTools.withType(at));
-					// The verdict and keeps the typed expression, so a bad default does not stop the rest of the
-					// function being checked.
-					try Typer.castOrUnify(tctx, at, te0, fa.value.pos) catch (err:TypingError) {
-						TyperContext.raiseOrDisplay(tctx, err.message, err.pos, err.depth);
-						te0;
-					}
-				}
-				else if (fa.opt) TypeFunctions.mk(TConst(TNull), at, fa.name.pos)
-				else null;
-			// The STORED default is the reduced constant: a cast unwraps to its inner expr, so an
-			// enum-abstract default (m:M = AUTO) reaches the generators as TConst/TField rather than TCast
-			// loop).
-			if (def != null) {
-				function constDef(e:TExpr):Null<TExpr> return switch (e.expr) {
-					case TConst(_): e;
-					case TField(_, FEnum(_, _)): e;
-					case TField(_, FStatic(c2, cf2)) if (switch (c2.kind) {
-						case KAbstractImpl(ab): ab.isEnum && TypeFunctions.hasClassFieldFlag(cf2, CfEnum);
-						case _: false;
-					}): e;
-					case TCast(e1, null): constDef(e1);
-					case _: null;
-				}
-				var reduced = constDef(def);
-				if (reduced != null) def = reduced;
-			}
+			// The display is answered from the argument's own name range.
+			if (Typer.atDisplayPos(fa.name.pos)) Typer.displayVariable(tctx, v, fa.name.pos);
 			result.push({v: v, c: def});
 		}
 		return result;
+	}
+
+	// An optional argument without a default gets `null`, at Position.nullPos.
+	public static function functionArgDefault(fa:FunctionArg):Null<Expr> {
+		return fa.value != null ? fa.value : fa.opt ? new Expr(EConst(CIdent("null")), Position.nullPos) : null;
+	}
+
+	// typeFunctionArgValue: the default types against the argument's type and is reduced, the
+	// unification is recorded, and what is kept is the constant it comes to (a typeless cast
+	// unwrapped) - anything else is "Default argument value should be constant" outside a display
+	// request, and no default.
+	public static function typeFunctionArgValue(tctx:TyperContext, t:T, eo:Null<Expr>, ?displayFieldPos:Position):Null<TExpr> {
+		if (eo == null) return null;
+		var p = eo.pos;
+		if (displayFieldPos != null) hxc.typing.ExprPreprocessing.processDisplayFieldExpr(displayFieldPos, eo);
+		var e = hxc.optimization.Optimizer.reduceExpression(tctx, Typer.typeExpr(tctx, eo, WithTypeTools.withType(t)));
+		try TypeUnification.unifyDefault(e.type, t)
+		catch (ue:hxc.core.TypeUnification.UnifyError) TyperContext.raiseOrDisplay(tctx, hxc.core.TPrinting.betterErrorMessage(ue.errors), p);
+		function loop(e:TExpr):Null<TExpr> {
+			return switch (e.expr) {
+				case TConst(_): e;
+				case TField({expr: TTypeExpr(_)}, FEnum(_, _)): e;
+				case TField({expr: TTypeExpr(_)}, FStatic(c2, cf2)) if (switch (c2.kind) {
+						case KAbstractImpl(ab): ab.isEnum && TypeFunctions.hasClassFieldFlag(cf2, CfEnum);
+						case _: false;
+					}): e;
+				case TCast(e1, null): loop(e1);
+				case _:
+					if (!tctx.com.ignoreErrors || tctx.com.isDiagnosticsRun())
+						tctx.com.addDiagnostic("Default argument value should be constant", p);
+					null;
+			};
+		}
+		return loop(e);
 	}
 
 	// Check concrete subclasses for abstract methods inherited from an abstract superclass.

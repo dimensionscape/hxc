@@ -421,12 +421,15 @@ class ModuleLoader {
 			var parts = [for (pn in imp.path) pn.name];
 			switch (imp.mode) {
 				case IAll:
+					// Without the wildcard, an uppercase segment identifies a type rather than a package.
 					var split = splitImportPath(parts);
-					if (split != null) imports.wildcards.unshift(split.modulePath);
-					else if (parts.length > 0) imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
-					imports.wildcardImp.unshift(impIdx);
-					// Defer wildcard global imports until the type builds, skipping @:noImportGlobal. Package
-					// wildcards contribute no globals.
+					// Prepend package wildcards so later declarations win; type wildcards do not enter this list.
+					if (split == null && parts.length > 0) {
+						imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
+						imports.wildcardImp.unshift(impIdx);
+					}
+					// Type wildcards defer global registration until the type builds. Include statics or enum
+					// constructors except those tagged @:noImportGlobal.
 					if (split != null && split.field == null) {
 						var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
 						ctx.contextInitAdd(m, function() {
@@ -878,19 +881,20 @@ class ModuleLoader {
 		return a.name == b.name && sameArray(a.pack, b.pack);
 	}
 
-	// Bodyless native abstract operations are declarations only and do not register fields, allowing
-	// repeated names.
-	static function isAbsImplDeclOnly(c:TClass, cff:ClassField):Bool {
+	// Inside an abstract, a body-less function whose metadata makes the operation NATIVE (@:op,
+	// @:arrayAccess, @:resolve, or any field of a @:coreType abstract) is a DECLARATION only and is never
+	// added to the class, so it can repeat a name freely.
+	// A function with no body (in the host a macro field has none) on an abstract field that allows no
+	// expression is never added, unless the abstract is a @:coreType.
+	static function isAbsImplDeclOnly(ctx:Null<Context>, c:TClass, cff:ClassField):Bool {
 		var a = switch (c.kind) { case KAbstractImpl(ab): ab; case _: return false; };
-		if (!cff.cffKind.match(FFun(_))) return false;
+		var hostMacro = false;
+		if (ctx != null && !ctx.isMacro) for (acc in cff.cffAccess) if (acc.access == AMacro) hostMacro = true;
 		switch (cff.cffKind) {
-			case FFun(fd) if (fd.fExpr == null):
+			case FFun(fd) if (fd.fExpr == null || hostMacro):
 			case _: return false;
 		}
-		return TypeFunctions.hasMeta(":coreType", a.meta)
-			|| TypeFunctions.hasMeta(":op", cff.cffMeta)
-			|| TypeFunctions.hasMeta(":arrayAccess", cff.cffMeta)
-			|| TypeFunctions.hasMeta(":resolve", cff.cffMeta);
+		return !TypeFunctions.hasMeta(":coreType", a.meta) && hxc.typing.TypeResolve.abstractFieldAllowsNoExpr(a, cff);
 	}
 
 	// Unbuilt superclass instance fields are absent from lookup until their class builds.
@@ -971,8 +975,10 @@ class ModuleLoader {
 		// Detect duplicate constructors within this declaration list only; build macros and abstract
 		// implementations may register fresh lists on an existing class.
 		var ctorRegistered = false;
+		var declOnlyCfs = new haxe.ds.ObjectMap<TClassField, Bool>();
 		for (cff in fields) {
 			var isStatic = false;
+			var isMacroField = false;
 			var isExtern = false;
 			var isFinalField = false;
 			var explicitPublic = false, explicitPrivate = false;
@@ -980,6 +986,7 @@ class ModuleLoader {
 			var abstractPos:Null<Position> = null;
 			for (a in cff.cffAccess) switch (a.access) {
 				case AStatic: isStatic = true;
+				case AMacro: isMacroField = true;
 				case AExtern: isExtern = true;
 				case AFinal: isFinalField = true;
 				case APublic: explicitPublic = true;
@@ -1018,7 +1025,10 @@ class ModuleLoader {
 					|| TypeFunctions.hasClassFlag(c, CInterface)
 					|| TypeFunctions.hasMeta(":publicFields", c.meta)
 					|| (switch (c.kind) { case KModuleFields(_): true; case _: false; }));
-			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, isStatic);
+			// Store member macros among statics in the macro context, while isStatic remains false for
+			// member semantics and checks.
+			var addAsStatic = isStatic || (isMacroField && ctx != null && ctx.isMacro);
+			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, addAsStatic);
 			cf.doc = cff.cffDoc;
 			cf.meta = cff.cffMeta;
 			if (TypeFunctions.hasMeta(":inheritDoc", cff.cffMeta)) {
@@ -1245,11 +1255,12 @@ class ModuleLoader {
 				if (bad != null)
 					ctx.addDiagnostic("Invalid accessor '" + bad.name + "' for " + bad.kind + " " + cff.cffName.name, acc.pos);
 			}
-			// Check static/instance collisions after heritage resolves, in declaration order. Failed
-			// heritage suppresses field diagnostics. Reject duplicate declarations except valid overloads
-			// and declaration-only abstract operations.
-			var declOnly = isAbsImplDeclOnly(c, cff);
-			if (ctx != null && !declOnly && cf.name != "new" && dupTable.exists(cf.name)) {
+			// Check static/instance collisions during class build after heritage resolves; statics also
+			// check inherited instance fields. Constructors, __init__, externs and native classes are
+			// exempt. Duplicate checks exclude merged method overloads and declaration-only abstract
+			// entries, and run before registration.
+			var declOnly = isAbsImplDeclOnly(ctx, c, cff);
+			if (ctx != null && cf.name != "new" && dupTable.exists(cf.name) && !declOnlyCfs.exists(dupTable.get(cf.name))) {
 				var kindPath = switch (c.kind) {
 					case KAbstractImpl(a): {kind: "abstract", path: a.path};
 					case KModuleFields(mm): {kind: "module", path: mm.path};
@@ -1274,9 +1285,10 @@ class ModuleLoader {
 					continue;
 				}
 				c.initField = cf;
-			} else if (isStatic) {
+			} else if (addAsStatic) {
 				c.statics.set(cf.name, cf);
 				c.orderedStatics.push(cf);
+				if (declOnly) declOnlyCfs.set(cf, true);
 			} else if (cf.name == "new") {
 				// A second constructor merges onto the first only where the target does native overload
 				// resolution and both carry the flag; otherwise it is reported and the first one stands.
@@ -1667,6 +1679,24 @@ class ModuleLoader {
 		return r;
 	}
 
+	// An import's module loads when the importing module's context initializes, and what it brings is bound
+	// there. hxc reaches those through the module again when an identifier resolves, which is not a module
+	// load and must not flush.
+	public static function loadImportedModule(ctx:Context, m:Path, p:Position):ModuleDef {
+		var r = loadModuleOptInner(ctx, m, p);
+		if (r == null) {
+			m = ctx.remapPath(m);
+			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		}
+		return r;
+	}
+
+	// A type an import names, read back the same way: by its module's path, as the import loaded it.
+	public static function importedTypeDef(ctx:Context, path:Path, p:Position, ?sub:String):ModuleType {
+		var m = loadImportedModule(ctx, path, p);
+		return findTypeInModule(ctx, m, sub != null ? sub : path.name, p);
+	}
+
 	// A load made while a field body types flushes the passes up to PConnectField, so what it loaded builds
 	// right there and its bodies are the next to type.
 	public static function loadModuleOpt(ctx:Context, m:Path, p:Position):Null<ModuleDef> {
@@ -1827,7 +1857,7 @@ class ModuleLoader {
 					// The walk above found nothing (or there is no current module yet): the one
 					// implicit import left is StdTypes itself, read here while it is still being
 					// bootstrapped and resolveBareType cannot see it in the LUT.
-					var std = loadModule(ctx, {pack: [], name: "StdTypes"}, p);
+					var std = loadImportedModule(ctx, {pack: [], name: "StdTypes"}, p);
 					try {
 						return findTypeInModule(ctx, std, tname, p);
 					} catch (_:ContextError) {
@@ -1947,9 +1977,9 @@ class ModuleLoader {
 				mt = ni.aliasTypedef;
 			} else if (ni.sub != null) {
 				if (ni.sub != path.name) continue;
-				mt = tryLoadSub(ctx, ni.modulePath, ni.sub, p);
+				mt = tryImportedSub(ctx, ni.modulePath, ni.sub, p);
 			} else {
-				mt = tryLoadSub(ctx, ni.modulePath, path.name, p);
+				mt = tryImportedSub(ctx, ni.modulePath, path.name, p);
 			}
 			if (mt == null) continue;
 			var inf = TypeFunctions.tInfos(mt);
@@ -1997,7 +2027,7 @@ class ModuleLoader {
 			// FieldAccessTools and which has no type of that name at all, and the break then hid the earlier
 			// `import hxc.typing.AccessKind` that really does declare `typedef FieldAccess`. A module that
 			// does have a same-named type still resolves, through this same probe.
-			var rsub = visible(tryLoadSub(ctx, ni.modulePath, name, p));
+			var rsub = visible(tryImportedSub(ctx, ni.modulePath, name, p));
 			if (rsub != null) { imports.markImport(ni.impIdx); return rsub; }
 		}
 		if (named == null) named = imports.names.get(name);
@@ -2005,7 +2035,7 @@ class ModuleLoader {
 			// Alias/sub or module-name exact binding. An aliased module import binds the module's
 			// main type, not a type named after the alias.
 			var sub = named.sub != null ? named.sub : named.modulePath.name;
-			var r = visible(tryLoadSub(ctx, named.modulePath, sub, p));
+			var r = visible(tryImportedSub(ctx, named.modulePath, sub, p));
 			// `import X in Y` binds Y to a TEMP PRIVATE typedef at (pack + ["_" + module], Y) over the
 			// built instance, not to X directly, so signatures resolved through the alias print the typedef.
 			// It is never registered in the module.
@@ -2064,23 +2094,24 @@ class ModuleLoader {
 		{
 			var r = resolveNamedImportType(ctx, cur, name, p);
 			if (r != null) return r;
-			r = resolveWildcardImportType(ctx, cur, name, p);
-			if (r != null) return r;
 		}
 
-		// Seeds every module's module_imports with ctx.g.std.types - "We always want core types to be
-		// available so we add them as default imports". those imports before walks the package prefixes,
-		// so a core type never reaches the walk. hxc had the StdTypes lookup only as a fallback after the
-		// walk, which meant every use of one first probed - and missed - `<currentPackage>.<Name>` for
-		// each prefix, each miss consulting com.load_extern_type. The module is read from the LUT, never
-		// loaded from here: an unloaded StdTypes means we are bootstrapping it and there is nothing to
-		// seed with.
+		// Every module's imports are seeded with the std module's types, so the core types are always
+		// available as default imports. Imports are prepended to it, so a core type is found after the
+		// named imports and before the wildcard packages are tried and the package prefixes walked. The
+		// module is read from the LUT, never loaded from here: an unloaded StdTypes means we are
+		// bootstrapping it and there is nothing to seed with.
 		{
 			var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
 			if (std != null && std != cur) {
 				for (mt in std.types)
 					if (TypeFunctions.tInfos(mt).path.name == name) return mt;
 			}
+		}
+
+		{
+			var r = resolveWildcardImportType(ctx, cur, name, p);
+			if (r != null) return r;
 		}
 
 		var pack = cur.path.pack;
@@ -2121,6 +2152,13 @@ class ModuleLoader {
 			i--;
 		}
 		return null;
+	}
+
+	// tryLoadSub for an import's module, which the importing module's context loaded already
+	// (loadImportedModule): reading what the import binds does not flush.
+	static function tryImportedSub(ctx:Context, mp:Path, sub:String, p:Position):Null<ModuleType> {
+		var m = try loadImportedModule(ctx, mp, p) catch (_:ContextError) return null;
+		return findTypeInModuleOpt(m, sub);
 	}
 
 	// Load module `mp` and return its sub-type `sub` (or null on any failure). Idempotent /

@@ -479,16 +479,20 @@ class Inline {
 		// predicate reading the loop variable) would reposition a value it should keep.
 		var savedInlinerLocals = inlinerLocals;
 		var savedInlineIfCalled = inlineIfCalled;
+		var savedDeferred = deferredFunctionSubst;
 		inlinerLocals = new Map();
 		inlineIfCalled = new Map();
+		deferredFunctionSubst = new Map();
 		var r = try doInlineScoped(ctx, tf, ethis, isStatic, params, tret, absMember, mapType, p, absThisArg, selfCallingClosure, recv)
 			catch (e:Dynamic) {
 				inlinerLocals = savedInlinerLocals;
 				inlineIfCalled = savedInlineIfCalled;
+				deferredFunctionSubst = savedDeferred;
 				throw e;
 			};
 		inlinerLocals = savedInlinerLocals;
 		inlineIfCalled = savedInlineIfCalled;
+		deferredFunctionSubst = savedDeferred;
 		return r;
 	}
 
@@ -676,7 +680,7 @@ class Inline {
 		// this body map (save/restore so a nested inline restores the outer value).
 		var savedRetType = inlineFuncRetType;
 		inlineFuncRetType = tf.type;
-		var value = inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember);
+		var value = inlineParams(inlineBody(ctx, tf.expr, subst, vthis, ethis, p, keepPositions, absMember));
 		inlineFuncRetType = savedRetType;
 		if (absMember) checkAbstractWrite(value, p);
 		// A single-expression block unwraps to its expression only when the body returned a
@@ -963,6 +967,41 @@ class Inline {
 	// function. Scoped with inlinerLocals.
 	static var inlineIfCalled = new Map<Int, Bool>();
 
+	// The function expressions this inline substitutes for an argument read once (VIInline), by the
+	// argument's id. The map leaves the read in place; inlineParams duplicates them.
+	static var deferredFunctionSubst = new Map<Int, TExpr>();
+
+	// Once the body is mapped, a function expression standing for an argument is DUPLICATED
+	// where it is read, and a function argument bound to a local is duplicated into each call
+	// through it, in the walk's order - a call's callee before its arguments, the rest in the
+	// expression map's order.
+	static function inlineParams(e:TExpr):TExpr {
+		if (!deferredFunctionSubst.keys().hasNext() && !inlineIfCalled.keys().hasNext()) return e;
+		var walk:(TExpr, Bool) -> TExpr = null;
+		walk = function(e:TExpr, inCall:Bool):TExpr {
+			return switch (e.expr) {
+				case TLocal(v):
+					var se = deferredFunctionSubst.get(v.id);
+					if (se != null) TexprTools.duplicateTvars(function(x) return x, se)
+					else if (inCall && inlineIfCalled.exists(v.id) && v.extra != null && v.extra.expr != null)
+						TexprTools.duplicateTvars(function(x) return x, v.extra.expr)
+					else e;
+				// The Std.string hack walks its argument as a call's callee.
+				case TCall(e1 = {expr: TField(_, FStatic({path: {pack: [], name: "Std"}}, {name: "string"}))}, [e2]):
+					TypeFunctions.mk(TCall(e1, [walk(e2, true)]), e.type, e.pos);
+				case TCall(e1, el):
+					var w1 = walk(e1, true);
+					TypeFunctions.mk(TCall(w1, [for (x in el) walk(x, false)]), e.type, e.pos);
+				case TBinop(op = OpAssign | OpAssignOp(_), e1, e2):
+					var w1 = walk(e1, false);
+					TypeFunctions.mk(TBinop(op, w1, walk(e2, false)), e.type, e.pos);
+				case _:
+					TexprTools.mapExpr(function(x) return walk(x, false), e);
+			};
+		}
+		return walk(e, false);
+	}
+
 	static function substLocal(nv:TVar, pos:Position):TExpr {
 		inlinerLocals.set(nv.id, true);
 		return TypeFunctions.mk(TLocal(nv), nv.type, pos);
@@ -1219,9 +1258,12 @@ class Inline {
 					var read = switch (se.expr) {
 						case TLocal(sv) if (inlinerLocals.exists(sv.id)):
 							TypeFunctions.mk(se.expr, se.type, keepPositions ? e.pos : inlinePos);
-						// A function expression inlined at a read has its locals duplicated, so each read declares
-						// its own.
-						case TFunction(_): TexprTools.duplicateTvars(function(x) return x, se);
+						// A function expression inlined at a read has its locals duplicated, so each read
+						// declares
+						// its own - in inlineParams, after the map.
+						case TFunction(_):
+							deferredFunctionSubst.set(v.id, se);
+							TypeFunctions.mk(TLocal(v), se.type, e.pos);
 						case _: se;
 					};
 					// A read of an abstract-this local (an abstract member's `this` argument, an abstract
@@ -1271,18 +1313,10 @@ class Inline {
 				TCall(m(se), [msp]);
 			case TCall(e1, ps):
 				// A nested inline call in the body expands too, so a sibling call mutating the
-				// abstract this still writes back to the substituted receiver (the reference
-				// inliner expands inline calls inside inlined bodies).
+				// abstract this still writes back to the substituted receiver.
+				// A call through a bound function-arg local takes a copy of the function expression - in
+				// inlineParams, after the map; the immediate call then collapses in reduce.
 				var me1 = m(e1);
-				// finalize.inline_params VIInlineIfCalled: a call through a bound function-arg
-				// local inlines the function expression (fresh tvars per site); the immediate
-				// call then collapses in reduce.
-				switch (me1.expr) {
-					case TLocal(v2) if (v2.extra != null && v2.extra.expr != null
-							&& inlineIfCalled.exists(v2.id)):
-						me1 = TexprTools.duplicateTvars(function(x) return x, v2.extra.expr);
-					case _:
-				}
 				var mps = [for (x in ps) m(x)];
 				var nested = tryInline(ctx, me1, mps, e.type, e.pos);
 				if (nested != null) return nested;

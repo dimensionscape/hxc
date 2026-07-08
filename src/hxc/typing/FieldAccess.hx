@@ -44,6 +44,15 @@ class FieldAccessTools {
 		};
 	}
 
+	// How the type of the accessed field is seen from its host.
+	public static function getMapFunction(fa:FieldAccess):T->T {
+		return switch (fa.host) {
+			case FHInstance(c, tl): TypeFunctions.classMapFunction(c, tl);
+			case FHAbstract(a, tl, _): function(t:T) return TypeFunctions.applyParams(a.params, tl, t);
+			case _: function(t:T) return t;
+		};
+	}
+
 	public static function getHostClassRaise(fh:FieldHost):TClass {
 		return switch (fh) {
 			case FHStatic(c): c;

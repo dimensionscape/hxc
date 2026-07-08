@@ -106,6 +106,17 @@ class FatalError extends haxe.Exception {
 	}
 }
 
+/**
+    A generic-instantiation error: an exception of its own, so no Error recovery arm stops it and the
+    diagnostics driver does not either; the driver reports it and the compile ends. Only typing a `new` and
+    typing a generic function catch it.
+*/
+class GenericException extends FatalError {
+	public function new(message:String, pos:Position) {
+		super(message, pos, 0, true);
+	}
+}
+
 // A forbidden package access: the refused package, module and position, the positions the module was
 // referenced through (each module load adds its own) and the platform name. The driver prints "You cannot
 // access the %s package while %s (for %s)" and a "... referenced here" per referencing position at depth 1,

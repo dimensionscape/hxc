@@ -664,7 +664,8 @@ class Typeload {
 			if (imp != null) return imp;
 		}
 		if (sub == null && path.pack.length == 0) {
-			var std = try hxc.context.ModuleLoader.loadModule(ctx, {pack: [], name: "StdTypes"}, p) catch (_:Dynamic) null;
+			// Every module's imports are seeded with the StdTypes types: a lookup there, not a module load.
+			var std = try hxc.context.ModuleLoader.loadImportedModule(ctx, {pack: [], name: "StdTypes"}, p) catch (_:Dynamic) null;
 			if (std != null) {
 				var stdT = hxc.context.ModuleLoader.findTypeInModuleOpt(std, path.name);
 				if (stdT != null) return stdT;
@@ -1015,23 +1016,36 @@ class Typeload {
 		}
 	}
 
-	// Do_build_instance (subset): for the non-generic case it is just `apply_params decl_params
-	// actual_params (type_of_module_type mt)`-style construction. TInst/TEnum/TType/TAbstract with the
-	// given params. We build directly. a type argument that is a type parameter of something other
-	// than the caller's own generic class or field, and carries a constructor constraint, cannot be
-	// used at a @:generic build.
-	static function checkCtorConstraintArg(tctx:hxc.typing.TyperContext, t:T, p:Position):Void {
-		switch (TypeFunctions.follow(t)) {
-			case TInst(c2, tl):
-				switch (c2.kind) {
-					case KTypeParameter(_):
-						if (!hxc.typing.Typer.isGenericParameter(tctx, c2) && TypeFunctions.hasCtorConstraint(c2))
-							throw new TypingError("Type parameters with a constructor cannot be used non-generically", p);
-					case _:
-				}
-				for (t2 in tl) checkCtorConstraintArg(tctx, t2, p);
-			case _:
+	// Instance building (subset): for the non-generic case it is just the declared type with the
+	// actual params applied: TInst/TEnum/TType/TAbstract with the given params. We build directly. A
+	// type argument that is a type parameter of something other than the caller's own generic class or
+	// field, and carries a constructor constraint, cannot be used at a @:generic build. A type
+	// parameter among the arguments - which may carry a constructor constraint only when it is generic
+	// itself - or a display request that types selectively gives a normal instance. Otherwise the
+	// arguments are named, raising on one that cannot be named, and the class is specialized.
+	public static function buildGenericClass(ctx:Context, c:TClass, tl:TParams, p:Position, ?tctx:hxc.typing.TyperContext):T {
+		var recurse = false;
+		function checkRecursive(t:T):Void {
+			switch (TypeFunctions.follow(t)) {
+				case TInst(c2, tl2):
+					switch (c2.kind) {
+						case KTypeParameter(_):
+							// Typer.isGenericParameter needs the typer's current class and field, which
+							// only
+							// the typer's own loads carry.
+							if (tctx != null && !hxc.typing.Typer.isGenericParameter(tctx, c2) && TypeFunctions.hasCtorConstraint(c2))
+								throw new TypingError("Type parameters with a constructor cannot be used non-generically", p);
+							recurse = true;
+						case _:
+					}
+					for (t2 in tl2) checkRecursive(t2);
+				case _:
+			}
 		}
+		for (t in tl) checkRecursive(t);
+		if (recurse || !ctx.displayFullTyping) return TInst(c, tl);
+		makeGenericName(c.params, tl, p);
+		return TInst(specializeGenericClass(ctx, c, tl, p), []);
 	}
 
 	// An Error out of a class build is an Error, not the miss a resolution failure raises: the
@@ -1057,36 +1071,60 @@ class Typeload {
 		}
 	}
 
+	// A specialization, a MacroType or a @:genericBuild is a protected lazy (forced at PForce, an Error
+	// escaping it fatal) over a monomorph the built type unifies into and, when it is Dynamic, is bound
+	// to (unify leaves a monomorph unbound against Dynamic); the built class or abstract is then built
+	// itself.
+	static function instanceLazy(ctx:Context, p:Position, f:Void->T):T {
+		var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(TypeFunctions.tDynamic));
+		r.set(TypeFunctions.lazyWait(function():T {
+			var t = TypeFunctions.mkMono();
+			r.set(TypeFunctions.lazyProcessing(function():T return t));
+			try {
+				var tf = f();
+				TypeUnification.unifyDefault(tf, t);
+				TypeUnification.linkDynamic(t, tf);
+				switch (tf) {
+					case TInst(c2, _): hxc.typing.TypeResolve.forceBuild(ctx, c2);
+					case TAbstract(a2, _): if (a2.impl != null) hxc.typing.TypeResolve.forceBuild(ctx, a2.impl);
+					case _:
+				}
+			} catch (e:ContextError) {
+				throw new FatalError(e.message, e.pos, e.depth, true);
+			} catch (e:hxc.core.TypeUnification.UnifyError) {
+				throw new FatalError(hxc.core.TPrinting.betterErrorMessage(e.errors), p, 0, true);
+			} catch (e:TypingError) {
+				throw new FatalError(e.message, e.pos, e.depth, true);
+			}
+			r.set(TypeFunctions.lazyAvailable(t));
+			return t;
+		}));
+		ctx.delay(Context.PForce, function() TypeFunctions.lazyType(r));
+		return TLazy(r);
+	}
+
 	static function buildInstance(ctx:Context, mt:ModuleType, params:TParams, p:Position, specializeGeneric:Bool, ?callerTypeParams:TypeParams, ?tctx:hxc.typing.TyperContext):T {
 		return switch (mt) {
 			case TClassDecl(c):
-				// Over the arguments before deciding between a normal instance and a specialization;
-				// is_generic_parameter needs the typer's current class and field, which the reference's
-				// load_instance carries and only the typer's own loads pass here.
-				if (tctx != null && c.kind.match(KGeneric)) for (t in params) checkCtorConstraintArg(tctx, t, p);
+				// Past PBuildClass every class is built before its kind is looked at. A class named while a
+				// body is
+				// being typed builds right there, and its build's failure is that expression's error.
+				if (hxc.typing.TypeFields.bodyDepth > 0) forceBuildInBody(ctx, c);
 				switch (c.kind) {
-					// `if !recurse || not (ctx.com.display.dms_full_typing)`: a display request that types
-					// selectively builds a normal instance, never a specialization.
-					case KGeneric if (specializeGeneric && ctx.displayFullTyping && canSpecializeGeneric(params)):
-						var fallback = TInst(c, params);
-						var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(fallback));
-						r.set(TypeFunctions.lazyWait(function():T {
-							r.set(TypeFunctions.lazyProcessing(function():T return fallback));
-							var t = TInst(specializeGenericClass(ctx, c, params, p), []);
-							r.set(TypeFunctions.lazyAvailable(t));
-							return t;
-						}));
-						TLazy(r);
+					// The generic class build runs behind the instance's lazy and decides there between a
+					// normal
+					// instance and a specialization.
+					case KGeneric if (specializeGeneric):
+						instanceLazy(ctx, p, function() return buildGenericClass(ctx, c, params, p, tctx));
 					case KGenericBuild(fields):
-						hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p, callerTypeParams);
+						instanceLazy(ctx, p, function() return hxc.eval.EvalMacro.runGenericBuild(ctx, c, params, fields, p, callerTypeParams));
 					case KMacroType:
-						// The instance is the macro's result, and the single parameter carries the call. .
-						hxc.eval.EvalMacro.runMacroType(ctx, params, p, callerTypeParams);
+						// The instance is the macro's result, and the single parameter carries the call. The lazy
+						// keeps the typer it was made in (it reads its current class for a bare ident), so the class
+						// being resolved is captured now.
+						var resolving = ctx.resolvingClass;
+						instanceLazy(ctx, p, function() return hxc.eval.EvalMacro.runMacroType(ctx, params, p, callerTypeParams, resolving));
 					case _:
-						// `if ctx.pass > PBuildClass then ignore(c.build())`. A class named while a body
-						// is being typed builds right there, and its build's failure is that expression's
-						// error.
-						if (hxc.typing.TypeFields.bodyDepth > 0) forceBuildInBody(ctx, c);
 						TInst(c, params);
 				}
 			case TEnumDecl(e): TEnum(e, params);
@@ -1137,52 +1175,78 @@ class Typeload {
 		return !hasOpenMono(params) && !hasTypeParameterParams(params);
 	}
 
-	static function genericKey(c:TClass, params:TParams):String {
+	static function genericKey(c:TClass, params:TParams, ?p:Position):String {
 		// The module id separates the host and macro worlds: each types its own copy of the class,
 		// and a specialization from the other world has no prototypes in this one.
 		var world = c.module != null ? Std.string(c.module.id) : "";
-		return Context.pathKey(c.path) + "#" + world + "_" + genericSuffix(params);
+		return Context.pathKey(c.path) + "#" + world + "_" + makeGenericName(c.params, params, p == null ? Position.nullPos : p);
 	}
 
-	static function genericSuffix(params:TParams):String {
-		return [for (p in params) genericParamName(p)].join("_");
+	// The generic's name: each type parameter names its argument, and an argument it cannot name at the
+	// top raises, at the position given and naming the parameter.
+	public static function makeGenericName(ps:TypeParams, pt:TParams, p:Position):String {
+		return [for (i in 0...ps.length) genericNamePart(ps[i].name, true, pt[i], p)].join("_");
 	}
 
-	static function genericParamName(t:T):String {
-		return genericTypeName(t, true);
-	}
-
+	// The type path with its package joined by underscores.
 	static function genericTypePath(path:Path):String {
 		return path.pack.length == 0 ? path.name : path.pack.join("_") + "_" + path.name;
 	}
 
-	static function genericTypeTail(params:TParams, top:Bool):String {
-		return params.length == 0 ? "" : "_" + [for (p in params) genericTypeName(p, top)].join("_");
-	}
-
-	static function genericTypeName(t:T, top:Bool):String {
+	// The name parts are evaluated right to left, so a tail names before its head and a function's
+	// return type before its arguments.
+	static function genericNamePart(s:String, top:Bool, t:T, p:Position):String {
 		return switch (t) {
-			case TInst(c, params): switch (c.kind) {
-				case KExpr(e): genericIdentSafe(hxc.ast.Printer.sExpr(e));
-				case _: genericTypePath(c.path) + genericTypeTail(params, top);
-			}
-			case TEnum(e, params): genericTypePath(e.path) + genericTypeTail(params, top);
-			case TAbstract(a, params): genericTypePath(a.path) + genericTypeTail(params, top);
-			case TType(td, params): genericTypePath(td.path) + genericTypeTail(params, top);
+			case TInst(c, tl):
+				switch (c.kind) {
+					case KExpr(e): genericIdentSafe(hxc.ast.Printer.sExpr(e));
+					case _:
+						var tail = genericNameTail(s, top, tl, p);
+						genericIdentSafe(genericTypePath(c.path)) + tail;
+				}
+			case TType(td, tl): var tail = genericNameTail(s, top, tl, p); genericTypePath(td.path) + tail;
+			case TEnum(en, tl): var tail = genericNameTail(s, top, tl, p); genericTypePath(en.path) + tail;
 			case TAnon(a):
-				var fields = [for (name in a.fields.keys()) name + "_" + genericTypeName(a.fields.get(name).type, false)];
-				"anon_" + fields.join("_");
-			case TFun(sig): "func_" + [for (arg in sig.args) genericTypeName(arg.t, false)].concat([genericTypeName(sig.ret, false)]).join("_");
-			case TDynamic(_): "Dynamic";
-			case TLazy(f): genericTypeName(TypeFunctions.lazyType(f), top);
-			case TMono(r): r.type == null ? "Unknown" : genericTypeName(r.type, top);
+				// The names are visited in increasing order and prepended, so they spell decreasing.
+				var parts = [];
+				for (n in hxc.core.PMapOrder.sortedKeys(a.fields))
+					parts.unshift(n + "_" + genericNamePart(s, false, TypeFunctions.follow(a.fields.get(n).type), p));
+				"anon_" + parts.join("_");
+			case TFun(sig):
+				var ret = genericNamePart(s, false, sig.ret, p);
+				var args = [for (a in sig.args) genericNamePart(s, false, a.t, p)];
+				"func_" + args.join("_") + "_" + ret;
+			case TAbstract(a, tl): var tail = genericNameTail(s, top, tl, p); genericTypePath(a.path) + tail;
+			case _ if (!top):
+				// Allow unknown/incompatible types as type parameters to retain old behavior
+				genericFollowOr(s, t, top, p, function() return "_");
+			case TMono(r) if (r.type == null):
+				throw new GenericException("Could not determine type for parameter " + s, p);
+			case TDynamic(_):
+				"Dynamic";
+			case _:
+				genericFollowOr(s, t, top, p, function():String
+					throw new GenericException("Unsupported type parameter: " + hxc.core.TPrinting.sTypeStr(t) + ")", p));
 		};
 	}
 
+	static function genericNameTail(s:String, top:Bool, tl:TParams, p:Position):String {
+		return tl.length == 0 ? "" : "_" + [for (t in tl) genericNamePart(s, top, t, p)].join("_");
+	}
+
+	// One step of followOnce, or the fallback when that changes nothing.
+	static function genericFollowOr(s:String, t:T, top:Bool, p:Position, orFn:Void->String):String {
+		var ft = TypeFunctions.followOnce(t);
+		return ft == t ? orFn() : genericNamePart(s, top, ft, p);
+	}
+
+	// Matching is on bytes, so a character outside the safe set spells each of its UTF-8 bytes as
+	// _<code>_.
 	static function genericIdentSafe(s:String):String {
 		var out = new StringBuf();
-		for (i in 0...s.length) {
-			var c = s.charCodeAt(i);
+		var b = haxe.io.Bytes.ofString(s);
+		for (i in 0...b.length) {
+			var c = b.get(i);
 			var ok = (c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code) || (c >= "0".code && c <= "9".code) || c == "_".code;
 			if (ok) out.addChar(c) else out.add("_" + c + "_");
 		}
@@ -1566,6 +1630,11 @@ class Typeload {
 			return t;
 		}));
 		cf.type = TLazy(lr);
+		// Each field's lazy is forced at PForce, one delay per field as it is built - the constructor, then
+		// the fields in order - so the pass, LIFO, clones the last field first. A read before then clones
+		// it
+		// on demand.
+		ctx.delay(hxc.context.Context.PForce, function() TypeFunctions.lazyType(lr));
 		lazyFields.push(cf);
 		cf.overloads = [for (o in f.overloads) cloneField(ctx, c, gsubst, o, lazyFields)];
 		return cf;
@@ -1591,10 +1660,10 @@ class Typeload {
 		// copy then had no superClass: `super()` in the generic's constructor reported "Current class
 		// does not have a super" as soon as the base was not already resolved.
 		hxc.typing.TypeResolve.forceBuild(ctx, c);
-		var key = genericKey(c, params);
+		var key = genericKey(c, params, p);
 		var cached = genericInstances.get(key);
 		if (cached != null) { genericBuildCtx = savedGenericCtx; genericBuildModule = savedGenericMod; return cached; }
-		var suffix = "_" + genericSuffix(params);
+		var suffix = "_" + makeGenericName(c.params, params, p);
 		if (suffix == "_") suffix = "_Generic" + (++genericInstanceId);
 		var path:hxc.core.Globals.Path = {pack: c.path.pack, name: c.path.name + suffix};
 		// The generated path is looked up first and an instance of the same base class is handed back;
@@ -1662,41 +1731,25 @@ class Typeload {
 			case TInst(cs, pl): {c: cs, params: pl};
 			case _: null;
 		};
+		// The instance gets the forwarder over its super's constructor like any class without one, before
+		// its own is cloned below. When the base declares one the forwarder is replaced, but the PForce
+		// delay that builds it has already been queued.
+		hxc.typing.Typer.addConstructor(new hxc.typing.TyperContext(ctx), cg, false);
+		var lazyFields:Array<TClassField> = [];
+		// The base's constructor is cloned; otherwise the forwarder stands; a class with neither, over a
+		// base class, is an error.
+		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, lazyFields);
+		else if (cg.constructor == null && c.superClass != null)
+			throw new TypingError("Please define a constructor for this class in order to use it as generic", c.pos);
 		cg.interfaces = [for (i in c.interfaces) switch (genericSubstituteType(ctx, c, gsubst, p, TInst(i.c, i.params))) {
 			case TInst(ci, pl): {c: ci, params: pl};
 			case _: throw "generic interface substitution failed";
 		}];
-		cg.dynamicType = c.dynamicType == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.dynamicType);
-		cg.arrayAccess = c.arrayAccess == null ? null : genericSubstituteType(ctx, c, gsubst, p, c.arrayAccess);
-		var lazyFields:Array<TClassField> = [];
-		if (c.constructor != null) cg.constructor = cloneField(ctx, c, gsubst, c.constructor, lazyFields);
-		// A specialization with no constructor of its own and none declared, over a base class, is
-		// "Please define a constructor for this class to use it as generic".
-		else if (cg.constructor == null && c.superClass != null) {
-			// The reference's class already carries its inherited constructor in constructor when this match
-			// runs (init_class copies the super's); hxc leaves it on the super, so the verdict walks the
-			// chain: only a class with no constructor anywhere above it fails.
-			var sup = c.superClass;
-			var inherited = false;
-			while (sup != null) {
-				if (sup.c.constructor != null) { inherited = true; break; }
-				sup = sup.c.superClass;
-			}
-			if (!inherited) throw new TypingError("Please define a constructor for this class in order to use it as generic", c.pos);
-		}
 		for (f in c.orderedFields) {
 			var cf = cloneField(ctx, c, gsubst, f, lazyFields);
 			cg.fields.set(cf.name, cf);
 			cg.orderedFields.push(cf);
 		}
-		// The lazies fire on first read, which keeps the base's bodies out of declaration resolution;
-		// forcing them here would put the force back exactly where it was. They are also queued at
-		// PTypeField so an instance nobody reads by type still materializes - hxc's back end reads expr
-		// directly - and PTypeField is the pass inside typeAllModules' stability loop, which reaches the
-		// modules a flush creates.
-		ctx.delay(hxc.context.Context.PTypeField, function() {
-			for (cf in lazyFields) TypeFunctions.follow(cf.type);
-		});
 		// In rare cases the specialized name gets too long, so it is replaced by a generated @:native.
 		// Without this a target that derives file names from the type name can exceed the platform path
 		// limit.

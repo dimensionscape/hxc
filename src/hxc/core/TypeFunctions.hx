@@ -439,10 +439,13 @@ class TypeFunctions {
 			case TAbstract(a, tl):
 				TAbstract(a, [for (x in tl) loop(x)]);
 			case TFun(sig):
-				TFun({args: [for (arg in sig.args) {name: arg.name, opt: arg.opt, t: loop(arg.t)}], ret: loop(sig.ret)});
+				// The return type is mapped first, before the arguments.
+				var ret = loop(sig.ret);
+				TFun({args: [for (arg in sig.args) {name: arg.name, opt: arg.opt, t: loop(arg.t)}], ret: ret});
 			case TAnon(a):
+				// The fields are visited in the post-order of their ordered-map tree.
 				var fields = new StringMap<TClassField>();
-				for (k in a.fields.keys()) {
+				for (k in PMapOrder.anonMapOrder(a)) {
 					var f = a.fields.get(k);
 					fields.set(k, withCfType(f, loop(f.type)));
 				}
@@ -472,7 +475,8 @@ class TypeFunctions {
 				for (arg in sig.args) loop(arg.t);
 				loop(sig.ret);
 			case TAnon(a):
-				for (f in a.fields) loop(f.type);
+				// Increasing key order.
+				for (k in PMapOrder.sortedKeys(a.fields)) loop(a.fields.get(k).type);
 			case TLazy(f):
 				loop(lazyType(f));
 			case TDynamic(null):
@@ -594,10 +598,13 @@ class TypeFunctions {
 							TInst(c, [for (x in tl) loop(x)]);
 					}
 				case TFun(sig):
-					TFun({args: [for (arg in sig.args) {name: arg.name, opt: arg.opt, t: loop(arg.t)}], ret: loop(sig.ret)});
+					// The return type first.
+					var ret = loop(sig.ret);
+					TFun({args: [for (arg in sig.args) {name: arg.name, opt: arg.opt, t: loop(arg.t)}], ret: ret});
 				case TAnon(a):
+					// The fields are visited in the post-order of their ordered-map tree.
 					var fields = new StringMap<TClassField>();
-					for (k in a.fields.keys()) {
+					for (k in PMapOrder.anonMapOrder(a)) {
 						var f = a.fields.get(k);
 						fields.set(k, withCfType(f, loop(f.type)));
 					}
@@ -740,14 +747,13 @@ class TypeFunctions {
 			case TType(td, tl):
 				maybeRecurseUnderlying(applyTypedef(td, tl));
 			case TAbstract(a, tl) if (!hasMeta(":coreType", a.meta)):
-				for (s in underlyingTypeStack) switch (s) {
-					case TAbstract(a2, _) if (a2 == a):
-						// The chain prints oldest first, the repeat last.
-						var pctx = hxc.core.TPrinting.printContext();
-						var parts = [for (x in underlyingTypeStack) hxc.core.TPrinting.sType(pctx, x)];
-						parts.push(hxc.core.TPrinting.sType(pctx, t));
-						throw new hxc.core.TypingError("Abstract chain detected: " + parts.join(" -> "), a.pos);
-					case _:
+				// The whole type repeats (fastEq), parameters included - Foo<String> under Foo<Foo<String>> is
+				// no chain. The chain prints oldest first, the repeat last.
+				for (s in underlyingTypeStack) if (hxc.core.TypeUnification.fastEq(t, s)) {
+					var pctx = hxc.core.TPrinting.printContext();
+					var parts = [for (x in underlyingTypeStack) hxc.core.TPrinting.sType(pctx, x)];
+					parts.push(hxc.core.TPrinting.sType(pctx, t));
+					throw new hxc.core.TypingError("Abstract chain detected: " + parts.join(" -> "), a.pos);
 				}
 				getUnderlyingType(a, tl);
 			case _: t;
@@ -974,7 +980,13 @@ class TypeFunctions {
 	// them.
 	public static function declaredField(c:TClass, name:String, isStatic:Bool):Null<TClassField> {
 		if (isStatic && name == "__init__") return c.initField;
-		return (isStatic ? c.statics : c.fields).get(name);
+		var cf = (isStatic ? c.statics : c.fields).get(name);
+		// A member macro in the macro context is filed with the statics.
+		if (cf == null && !isStatic) {
+			var s = c.statics.get(name);
+			if (s != null && s.kind.match(Method(MethMacro))) return s;
+		}
+		return cf;
 	}
 
 	public static function fieldName(f:TFieldAccess):String {

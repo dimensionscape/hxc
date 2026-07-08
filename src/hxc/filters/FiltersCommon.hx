@@ -39,10 +39,10 @@ class FiltersCommon {
 		};
 	}
 
-	// Apply the named filters to every field body, static init and constructor of a class, skipping
-	// removable classes/fields and already post-processed fields. HXC_DBG_FILTERTIMES: accumulated
-	// wall seconds per filter name, dumped by Filters.run at destruction. Localizes a slow pipeline to
-	// the filter, which the coarse --times cannot.
+	// Expression filters apply to every field body, static init and constructor of a class, skipping
+	// removable classes/fields and already post-processed fields.
+	// Per-filter timing (HXC_DBG_FILTERTIMES) localizes a slow pipeline to the filter, which the coarse
+	// --times cannot.
 	public static var filterTimes:haxe.ds.StringMap<Float> = new haxe.ds.StringMap();
 	public static var timeFilters:Bool = Sys.getEnv("HXC_DBG_FILTERTIMES") != null;
 
@@ -88,8 +88,10 @@ class FiltersCommon {
 					for (o in f.overloads) processField(o);
 				}
 				try {
-					for (f in c.orderedFields) processField(f);
-					for (f in c.orderedStatics) processField(f);
+					// The lists are walked as they are when the walk starts: a static a filter adds
+					// meanwhile (LocalStatic prepends one) is not visited.
+					for (f in c.orderedFields.copy()) processField(f);
+					for (f in c.orderedStatics.copy()) processField(f);
 					if (c.constructor != null) processField(c.constructor);
 					if (c.init != null) c.init = run(c.init);
 				} catch (e:Dynamic) {

@@ -96,17 +96,11 @@ class Typer {
 		fieldCompletionFound = null;
 	}
 
-	// A fresh mono, recorded in the per-function list. A valid Haxe identifier: an initial letter or `_`,
-	// then letters, digits or `_`. A quoted object field like "x-bar" is not one.
+	// A fresh mono, recorded in the per-function list.
+	// An initial letter or `_`, then letters, digits or `_`, and not a keyword. A quoted object field like
+	// "x-bar" or "new" is not one.
 	static function isValidIdentifier(s:String):Bool {
-		if (s.length == 0) return false;
-		inline function isAlphaUnderscore(c:Int) return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
-		if (!isAlphaUnderscore(s.charCodeAt(0))) return false;
-		for (i in 1...s.length) {
-			var c = s.charCodeAt(i);
-			if (!isAlphaUnderscore(c) && !(c >= "0".code && c <= "9".code)) return false;
-		}
-		return true;
+		return hxc.core.StringHelper.isValidIdentifier(s);
 	}
 
 	public static function spawnMonomorph(ctx:TyperContext, p:Position):T {
@@ -1256,27 +1250,16 @@ class Typer {
 				// after the body types, below), which the identifier resolver turns into a fake inline
 				// field call.
 				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
-				// The arguments when type_function brings them into context after the function's own variable.
-				for (a in args) TypeFunctions.giveVarId(a.v);
-				// Type each argument default value against its (possibly inferred) type, binding an unbound
-				// monomorph and recording it for runtime default insertion. . runs inside type_function, after
-				// the expected type has been unified in: per argument the name is checked, the default typed,
-				// and then a cursor on the name answers - with the type the expected
-				// function gave it.
+				// Arguments are processed after the function's own variable and after the expected type has
+				// been unified in: per argument the name is checked, the default typed (against the argument
+				// type, Null-wrapped when optional), the variable allocated, and then a cursor on the name
+				// answers - with the type the expected function gave it.
 				for (i in 0...args.length) {
 					var fa = f.fArgs[i];
 					var at = args[i].v.type;
 					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
-					if (fa.value != null) {
-						args[i].c = typeExpr(ctx, fa.value, WithTypeTools.withType(at));
-						// The typed default with the argument type (Null-wrapped, since a default makes the argument
-						// optional). This records a constraint on the argument monomorph that survives to its close,
-						// so a later use that links it to another mono can resolve to the default's type.
-						var target = fa.opt ? ctx.com.basic.tnull(at) : at;
-						try TypeUnification.unifyDefault(args[i].c.type, target)
-						catch (e:UnifyError) TyperContext.raiseOrDisplay(ctx, hxc.core.TPrinting.betterErrorMessage(e.errors), fa.value.pos);
-					}
-					else if (fa.opt) args[i].c = TypeFunctions.mk(TConst(TNull), at, fa.name.pos);
+					args[i].c = TypeFields.typeFunctionArgValue(ctx, fa.opt ? ctx.com.basic.tnull(at) : at, TypeFields.functionArgDefault(fa));
+					TypeFunctions.giveVarId(args[i].v);
 					if (atDisplayPos(fa.name.pos)) displayVariable(ctx, args[i].v, fa.name.pos);
 				}
 				// A local function of a member types as FunMemberClassLocal (abstract members as
@@ -2592,7 +2575,7 @@ class Typer {
 				}
 				for (name in imports.globals.keys()) {
 					var g = imports.globals.get(name);
-					var mt = try ctx.com.getType(g.ownerPath, Position.nullPos, g.ownerSub) catch (_:Dynamic) null;
+					var mt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, g.ownerPath, Position.nullPos, g.ownerSub) catch (_:Dynamic) null;
 					var cl = mt == null ? null : staticsOf(mt);
 					if (cl == null) continue;
 					try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
@@ -4492,11 +4475,11 @@ class Typer {
 		}
 		var g = imports.globals.get(i);
 		if (g != null) {
-			var mt = try ctx.com.getType(g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
+			var mt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, g.ownerPath, p, g.ownerSub) catch (_:Dynamic) null;
 			if (mt != null) { var r = tryType(mt, g.field != null ? g.field : i); if (r != null) { imports.markImport(g.impIdx); return r; } }
 			// `import M.field` where field is a MODULE-LEVEL static: the module may have no main type at
 			// all; resolve against its statics holder.
-			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, g.ownerPath, p) catch (_:Dynamic) null;
+			var mod = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, g.ownerPath, p) catch (_:Dynamic) null;
 			if (mod != null && mod.statics != null) {
 				try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
 				var sc = mod.statics;
@@ -4508,13 +4491,13 @@ class Typer {
 		// sub-type X, it falls back to a static field X of M's main type (an uppercase static).
 		var n = imports.names.get(i);
 		if (n != null && n.sub != null) {
-			var subMt = try ctx.com.getType(n.modulePath, p, n.sub) catch (_:Dynamic) null;
+			var subMt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, n.modulePath, p, n.sub) catch (_:Dynamic) null;
 			if (subMt == null) {
-				var mainMt = try ctx.com.getType(n.modulePath, p, null) catch (_:Dynamic) null;
+				var mainMt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, n.modulePath, p, null) catch (_:Dynamic) null;
 				if (mainMt != null) { var r = tryType(mainMt, n.sub); if (r != null) { imports.markImport(n.impIdx); return r; } }
 				// An uppercase module-level static (`import M.UpperCase [as X]`) is recorded as a sub-type
 				// import; when no such type exists it is a field of statics.
-				var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, n.modulePath, p) catch (_:Dynamic) null;
+				var mod = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, n.modulePath, p) catch (_:Dynamic) null;
 				if (mod != null && mod.statics != null) {
 					try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
 					var sc = mod.statics;
@@ -4529,7 +4512,7 @@ class Typer {
 		while (oi >= 0) {
 			var ni = imports.order[oi--];
 			if (ni.sub != null || ni.aliased == true) continue;
-			var mod = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
+			var mod = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
 			if (mod.statics == null) continue;
 			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
 			var sc = mod.statics;
@@ -4538,7 +4521,7 @@ class Typer {
 				return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
 		}
 		for (w in imports.wildcards) {
-			var mt = try ctx.com.getType(w, p, null) catch (_:Dynamic) null;
+			var mt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, w, p, null) catch (_:Dynamic) null;
 			if (mt != null) { var r = tryType(mt, i, true); if (r != null) { imports.markWildcard(w); return r; } }
 		}
 		return null;
@@ -4593,7 +4576,7 @@ class Typer {
 				for (key in imports.names.keys()) {
 					var ni = imports.names.get(key);
 					if (ni.sub != null || ni.aliased == true) continue;
-					var im = try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
+					var im = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
 					for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
 				}
 			}
@@ -4673,7 +4656,7 @@ class Typer {
 		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) {
 			function scanPath(path:hxc.core.Globals.Path):Null<ModuleType> {
-				var md = try hxc.context.ModuleLoader.loadModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
+				var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, path, Position.nullPos) catch (_:Dynamic) null;
 				if (md != null) try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
 				return md == null ? null : scan(md.types);
 			}
@@ -4689,7 +4672,7 @@ class Typer {
 					// brings FilePos/Method/...); it must not expose a sibling enum in the same module, or a
 					// member like haxe.display.Display.DisplayItemKind.Type would shadow the std Type class when
 					// only the sibling `Package` typedef was imported. Scan just the imported sub-type.
-					var md = try hxc.context.ModuleLoader.loadModule(ctx.com, imp.modulePath, Position.nullPos) catch (_:Dynamic) null;
+					var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, imp.modulePath, Position.nullPos) catch (_:Dynamic) null;
 					if (md != null) {
 						try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
 						for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == imp.sub) {
@@ -4790,7 +4773,7 @@ class Typer {
 			if (mt == null && imports != null) {
 				for (imp in imports.names) {
 					if (imp.modulePath.pack.join(".") == pack.join(".") && imp.modulePath.name != name) {
-						var cand = try ctx.com.getType(imp.modulePath, p, name) catch (_:Dynamic) null;
+						var cand = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, imp.modulePath, p, name) catch (_:Dynamic) null;
 						if (cand != null) { mt = cand; break; }
 					}
 				}
@@ -4865,7 +4848,7 @@ class Typer {
 				if (mImports != null) {
 					var ni = mImports.names.get(name);
 					if (ni != null && ni.sub == null)
-						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
+						r = resolveInModule(try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
 					if (r == null) for (w in mImports.wildcards) {
 						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null);
 						if (r != null) break;
@@ -5213,7 +5196,7 @@ class Typer {
 			case AKAccessor(fa):
 				switch (FieldAccessTools.resolveAccessor(fa, MGet)) {
 					case AccessorFound(getterFa):
-						Calls.buildCall(ctx, AKField(getterFa), [], WithTypeTools.value, fa.pos);
+						Calls.accessorCallResult(fa, Calls.buildCall(ctx, AKField(getterFa), [], WithTypeTools.value, fa.pos));
 					case AccessorAnon:
 						// No accessor field is available (anon structure or extern class): synthesize a
 						// dynamic get_<name>() call.
@@ -5239,7 +5222,7 @@ class Typer {
 					// The accessor keeps the abstract host so its signature gets the instance's type
 					// parameters applied.
 					var getterFa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(implC), fa.pos), getterCf, fa.host, false, fa.pos);
-					Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos);
+					Calls.accessorCallResult(fa, Calls.buildCall(ctx, AKUsingField({thisExpr: se.thisExpr, access: getterFa}), [], WithTypeTools.value, fa.pos));
 				}
 			case AKUsingField(se):
 				// Reading an abstract/static-extension field: a property calls its impl getter with the
@@ -5749,8 +5732,6 @@ class Typer {
 				// everything after it - the initializer is not typed, the variable is not the one the user
 				// declared, and nothing answers a display request from it.
 				var t:T = ev.evType == null ? spawnMonomorph(ctx, pv) : Typeload.loadTypeHint(ctx.com, ctx.typeParams, ev.evType);
-				// A hinted class builds when the hint loads.
-				if (ev.evType != null) switch (TypeFunctions.follow(t)) { case TInst(hc, _): forceBuild(ctx, hc); case _: }
 				var e:Null<TExpr> = switch (ev.evExpr) {
 					case null: null;
 					case ex:
@@ -6173,50 +6154,59 @@ class Typer {
 		return cf;
 	}
 
-	// The forwarder's body: the super constructor's arguments, a default kept only where the platform
-	// needs it (map_arg), passed on to super().
+	// The forwarder's body. The arguments are the super constructor's own (its TVars, when it has a body)
+	// or, for one without (an extern's), fresh ones whose defaults come from its @:value metadata; a
+	// default is kept only where the platform needs it. Each then gets the TVar the forwarder declares,
+	// typed in this class's heritage, and they are passed on to super().
 	static function buildForwardingCtor(ctx:TyperContext, c:TClass, cf:TClassField, found:{cf:TClassField, c:TClass, tl:TParams}):T {
 		var tvoid = ctx.com.basic.tvoid;
-		TypeFields.forceFieldBody(ctx.com, found.c, found.cf);
-		var st = TypeFunctions.applyParams(found.c.params, found.tl, found.cf.type);
-		var superTfArgs:Null<Array<TFuncArg>> = found.cf.expr == null ? null
-			: switch (found.cf.expr.expr) { case TFunction(tf): tf.args; case _: null; };
-		var isStaticPf = ctx.com.platformConfig.isStatic;
-		var isCppPf = ctx.com.platform.match(Cpp);
-		return switch (TypeFunctions.follow(st)) {
-			case TFun(sig):
-				var args:Array<TFuncArg> = [];
-				var sigArgs:Array<TSignatureArg> = [];
-				var superLocals:Array<TExpr> = [];
-				for (ai in 0...sig.args.length) {
-					var sa = sig.args[ai];
-					// map_arg: a non-static target drops a default to null (the super call fills it).
-					// On cpp a String default is kept; any other makes the arg Null<T> with a null
-					// default, so the super's own default fills it when null is passed.
-					var def = superTfArgs != null && ai < superTfArgs.length ? superTfArgs[ai].c : null;
-					var argType = sa.t;
-					var argDefault:Null<TExpr> = null;
-					if (def != null) {
-						if (!isStaticPf) argDefault = TypeFunctions.mk(TConst(TNull), sa.t, c.pos);
-						else if (isCppPf && def.expr.match(TConst(TString(_)))) argDefault = def;
-						else if (isCppPf) { argType = ctx.com.basic.tnull(sa.t); argDefault = TypeFunctions.mk(TConst(TNull), argType, c.pos); }
-						else argDefault = def;
-					} else if (sa.opt) {
-						argDefault = TypeFunctions.mk(TConst(TNull), sa.t, c.pos);
-					}
-					var v = TypeFunctions.allocVar(VUser(TVOArgument), sa.name, argType, c.pos);
-					args.push({v: v, c: argDefault});
-					sigArgs.push({name: sa.name, opt: sa.opt, t: argType});
-					superLocals.push(TypeFunctions.mk(TLocal(v), argType, c.pos));
-				}
-				var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), c.pos);
-				var body = TypeFunctions.mk(TCall(superCallee, superLocals), tvoid, c.pos);
-				var ctorType = TFun({args: sigArgs, ret: tvoid});
-				cf.expr = TypeFunctions.mk(TFunction(new TFunc(args, tvoid, body)), ctorType, c.pos);
-				ctorType;
-			case _:
-				st;
+		var cfsup = found.cf, csup = found.c, cparams = found.tl;
+		TypeFields.forceFieldBody(ctx.com, csup, cfsup);
+		TypeFunctions.follow(cfsup.type);
+		for (o in cf.overloads) TypeFunctions.follow(o.type);
+		var p = c.pos;
+		// mapArg: a variable given a new type is a copy of the record, not a new variable.
+		function mapArg(v:TVar, def:Null<TExpr>):TFuncArg {
+			function makeNull():TExpr return TypeFunctions.mk(TConst(TNull), v.type, v.pos);
+			if (def == null) return {v: v, c: null};
+			if (!ctx.com.platformConfig.isStatic) return {v: v, c: makeNull()};
+			return switch [ctx.com.platform, def.expr] {
+				case [Flash, TConst(TString(_))] if (!TypeFunctions.hasClassFlag(csup, CExtern)): {v: v, c: makeNull()};
+				case [Cpp, TConst(TString(_))]: {v: v, c: def};
+				case [Cpp, _]:
+					var n = makeNull();
+					var v2 = new TVar(v.id, v.name, ctx.com.basic.tnull(v.type), v.kind, v.extra, v.meta, v.flags, v.pos);
+					{v: v2, c: n};
+				case _: {v: v, c: def};
+			}
 		}
+		var superTf:Null<TFunc> = cfsup.expr == null ? null
+			: switch (cfsup.expr.expr) { case TFunction(tf): tf; case _: null; };
+		var args:Array<TFuncArg> = if (superTf != null) {
+			[for (a in superTf.args) mapArg(a.v, a.c)];
+		} else {
+			var values = hxc.ast.Ast.getValueMeta(cfsup.meta);
+			switch (TypeFunctions.follow(cfsup.type)) {
+				case TFun(sig):
+					[for (a in sig.args) {
+						var def = values.exists(a.name)
+							? TypeFields.typeFunctionArgValue(ctx, a.t, values.get(a.name))
+							: (a.opt ? TypeFunctions.mk(TConst(TNull), a.t, Position.nullPos) : null);
+						mapArg(TypeFunctions.allocVar(VUser(TVOArgument), a.name, a.opt ? ctx.com.basic.tnull(a.t) : a.t, p), def);
+					}];
+				case _:
+					throw new TypingError("Constructor " + hxc.core.Globals.sTypePath(csup.path) + " has no function type", p);
+			}
+		};
+		var vars:Array<TFuncArg> = [for (a in args) {
+			v: TypeFunctions.allocVar(VUser(TVOArgument), a.v.name, TypeFunctions.applyParams(csup.params, cparams, a.v.type), a.v.pos),
+			c: a.c
+		}];
+		var superCallee = TypeFunctions.mk(TConst(TSuper), TInst(csup, cparams), p);
+		var body = TypeFunctions.mk(TCall(superCallee, [for (a in vars) TypeFunctions.mk(TLocal(a.v), a.v.type, p)]), tvoid, p);
+		var ctorType = TFun({args: [for (a in vars) {name: a.v.name, opt: a.c != null, t: a.v.type}], ret: tvoid});
+		cf.expr = TypeFunctions.mk(TFunction(new TFunc(vars, tvoid, body)), ctorType, p);
+		return ctorType;
 	}
 
 	public static function ensureStructInitCtorFor(ctx:TyperContext, c:TClass):Void {
@@ -6420,33 +6410,79 @@ class Typer {
 		return switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };
 	}
 
-	// Construct a value of the underlying type a @:forward.new abstract forwards to: a class via its
-	// constructor, an abstract via its _new impl, or a nested @:forward.new abstract by recursing on
-	// its underlying. .
-	static function constructForwarded(ctx:TyperContext, t:T, el:Array<Expr>, withType:WithType, p:Position):TExpr {
-		return switch (TypeFunctions.follow(t)) {
-			case TInst(uc, upl):
-				forceBuild(ctx, uc);
-				var ctorType = findConstructorType(ctx, uc, upl);
-				if (ctorType == null) throw new TypingError(hxc.core.Globals.sTypePath(uc.path) + " does not have a constructor", p);
-				var sig = switch (TypeFunctions.follow(ctorType)) { case TFun(s): s; case _: {args: [], ret: ctx.com.basic.tvoid}; };
-				var r = Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-				TypeFunctions.mk(TNew(uc, upl, r.el), TInst(uc, upl), p);
-			case TAbstract(ua, ual) if (ua.impl != null && ua.impl.statics.exists("_new")):
-				var newCf = ua.impl.statics.get("_new");
-				TypeFields.forceFieldBody(ctx.com, ua.impl, newCf);
-				var implExpr = TexprTools.makeTypeExpr(TClassDecl(ua.impl), p);
-				var fa = FieldAccessTools.create(implExpr, newCf, FHAbstract(ua, ual, ua.impl), false, p);
-				Calls.buildCall(ctx, AKField(fa), el, withType, p);
-			case TAbstract(ua, ual) if (ua.impl != null && TypeFunctions.hasMeta(":forward.new", ua.meta)):
-				var inner = constructForwarded(ctx, TypeFunctions.applyParams(ua.params, ual, ua.thisType), el, withType, p);
-				TypeFunctions.mk(TCast(inner, null), TAbstract(ua, ual), p);
-			case _:
-				throw new TypingError("This type cannot be constructed", p);
-		};
+	// userWritten: a construction the user actually spelled. A desugaring that BUILDS one (a regex literal,
+	// an int range, an empty map) hands a type path it synthesized at the literal's own position; those are
+	// not constructions the user wrote, so they must not report their type path the way a real one does.
+	// The arguments against the constructor the class has, and its access once they have unified.
+	static function unifyConstructorCall(ctx:TyperContext, c:TClass, tl:TParams, el:Array<Expr>, p:Position):{r:Dynamic, chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>>} {
+		forceBuild(ctx, c);
+		// Force the constructor body so its unannotated param types are inferred from the body (e.g.
+		// `new(x) this.x = x` gives x the field type) before call args are unified against them; else the
+		// first call site binds those still-open param monos to its arg types, corrupting later
+		// constructions.
+		if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
+		var ctorTypes = findConstructorTypes(ctx, c, tl);
+		if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
+		// Try each constructor signature, first success wins (overload retry).
+		var r:Dynamic = null;
+		var firstError:Null<Dynamic> = null;
+		var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
+		var chosenIdx = -1;
+		for (ctorType in ctorTypes) {
+			chosenIdx++;
+			var sig = switch (TypeFunctions.follow(ctorType)) {
+				case TFun(s): s;
+				case _: {args: [], ret: ctx.com.basic.tvoid};
+			};
+			try {
+				r = TypeUnification.withMonoRollback(function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+				chosenArgs = sig.args;
+				break;
+			} catch (e:hxc.core.TypeUnification.UnifyError) {
+				if (firstError == null) firstError = e;
+			} catch (e:TypingError) {
+				if (StringTools.startsWith(e.message, "Unknown identifier :") && e.message.indexOf("\n") >= 0)
+					e = new TypingError(e.message.split("\n")[0], e.pos, e.depth);
+				var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
+				var prevMsg = prevError == null ? "" : prevError.message;
+				if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
+			}
+		}
+		if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
+		// Check the constructor the call resolved to, and only once the arguments have unified.
+		if (c.constructor != null)
+			Fields.checkConstructorAccess(ctx, c, chosenIdx <= 0 ? c.constructor : c.constructor.overloads[chosenIdx - 1], p);
+		return {r: r, chosenArgs: chosenArgs};
 	}
 
-	// userWritten: a construction the user actually spelled.
+	// The generic-class fallback: the class's own constructor is called over fresh monomorphs, which the
+	// arguments bind, and the class is built again over them. If a parameter still cannot be named, a known
+	// expected type is what gets constructed.
+	static function typeNewGenericFallback(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position):T {
+		var mt = TypeFunctions.resolveTypedef(Typeload.resolveTypePath(ctx.com, {pack: tp.path.tpackage, name: tp.path.tname}, tp.path.tsub, p));
+		switch (mt) {
+			case TClassDecl(c) if (c.constructor != null):
+				var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, c.params);
+				if (TypeFunctions.hasClassFlag(c, CAbstract))
+					throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " is abstract and cannot be constructed", p);
+				unifyConstructorCall(ctx, c, monos, el, p);
+				try {
+					return Typeload.buildGenericClass(ctx.com, c, monos, p, ctx);
+				} catch (e:hxc.core.TypingError.GenericException) {
+					switch (withType) {
+						case WithType(wt, _):
+							var ft = TypeFunctions.follow(wt);
+							if (ft.match(TMono(_))) throw e;
+							return ft;
+						case _:
+							throw e;
+					}
+				}
+			case _:
+				throw new TypingError(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path) + " cannot be constructed", p);
+		}
+	}
+
 	public static function typeNew(ctx:TyperContext, tp:PlacedTypePath, el:Array<Expr>, withType:WithType, p:Position, userWritten:Bool = true, forceInline:Bool = false):TExpr {
 		// A path a macro built has a null position, so a better one is taken from the `new` expression -
 		// after `new `, up to the first argument's opening bracket.
@@ -6472,12 +6508,24 @@ class Typer {
 			}
 		}
 		if (tp.path.tparams.length == 0) {
+			// An exception out of the load or the follow skips the pop, and the arguments stay on the stack
+			// for the rest of the field (typeFieldBody scopes it).
 			ctx.com.callArgumentStack.unshift(el);
 			try {
 				t = Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx);
+				// The type is followed while the arguments are on the stack: a @:genericBuild's lazy runs
+				// there and reads them (Context.getCallArguments).
+				var tFollow = TypeFunctions.follow(t);
 				ctx.com.callArgumentStack.shift();
+				// A @:generic class is built here.
+				switch (tFollow) {
+					case TInst(gc, gtl) if (gc.kind.match(KGeneric)):
+						t = TypeFunctions.follow(Typeload.buildGenericClass(ctx.com, gc, gtl, p, ctx));
+					case _:
+				}
+			} catch (e:hxc.core.TypingError.GenericException) {
+				t = typeNewGenericFallback(ctx, tp, el, withType, p);
 			} catch (e:Dynamic) {
-				ctx.com.callArgumentStack.shift();
 				typeArgsForDisplay();
 				throw e;
 			}
@@ -6489,7 +6537,10 @@ class Typer {
 		// answers with the type set; the ENew wrapper around this call is what narrows that to the types
 		// something can actually be constructed from.
 		if (userWritten) checkDisplayType(ctx.com, t, tp);
-		return switch (TypeFunctions.follow(t)) {
+		// Follow the type, then follow @:forward.new: a @:forward.new abstract is constructed as its
+		// underlying type, and every construction is typed as `t` itself.
+		var tOrig = TypeFunctions.follow(t);
+		return switch (followWithForwardCtor(tOrig)) {
 				case TInst(c, params) if (c.kind.match(KTypeParameter(_))):
 					// New T() on a generic type parameter resolves the constructor from a constructible
 					// constraint.
@@ -6499,98 +6550,22 @@ class Typer {
 						case null: throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " does not have a constructor", p);
 						case cc:
 							var r = Calls.unifyCallArgs(ctx, el, cc.args, cc.ret, p);
-							TypeFunctions.mk(TNew(c, params, r.el), t, p);
+							TypeFunctions.mk(TNew(c, params, r.el), tOrig, p);
 					}
 			case TInst(c, tl):
-				var tl = switch (c.kind) {
-					case KGeneric if (tp.path.tparams.length == 0 && hasTypeParameterParams(tl)):
-						TypeUnification.spawnConstrainedMonos(function(t) return t, c.params);
-					case _:
-						tl;
-				}
-				var t = TInst(c, tl);
+				var t = tOrig;
 				// An abstract class has no direct construction.
 				if (TypeFunctions.hasClassFlag(c, CAbstract))
 					throw new TypingError(hxc.core.Globals.sTypePath(c.path) + " is abstract and cannot be constructed", p);
-				forceBuild(ctx, c);
-				// Force the constructor body so its unannotated param types are inferred from the body (e.g.
-				// `new(x) this.x = x` gives x the field type) before call args are unified against them; else
-				// the
-				// first call site binds those still-open param monos to its arg types, corrupting later
-				// constructions.
-				if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
-				var ctorTypes = findConstructorTypes(ctx, c, tl);
-				if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
-				// Try each constructor signature, first success wins (overload retry).
-				var r:Dynamic = null;
-				var firstError:Null<Dynamic> = null;
-				var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
-				var chosenIdx = -1;
-				for (ctorType in ctorTypes) {
-					chosenIdx++;
-					var sig = switch (TypeFunctions.follow(ctorType)) {
-						case TFun(s): s;
-						case _: {args: [], ret: ctx.com.basic.tvoid};
-					};
-					try {
-						r = TypeUnification.withMonoRollback(function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
-						chosenArgs = sig.args;
-						break;
-					} catch (e:hxc.core.TypeUnification.UnifyError) {
-						if (firstError == null) firstError = e;
-					} catch (e:TypingError) {
-						if (StringTools.startsWith(e.message, "Unknown identifier :") && e.message.indexOf("\n") >= 0)
-							e = new TypingError(e.message.split("\n")[0], e.pos, e.depth);
-						var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
-						var prevMsg = prevError == null ? "" : prevError.message;
-						if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
-					}
-				}
-				if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
-				// Check the constructor the call resolved to, and only once the arguments have unified.
-				if (c.constructor != null)
-					Fields.checkConstructorAccess(ctx, c, chosenIdx <= 0 ? c.constructor : c.constructor.overloads[chosenIdx - 1], p);
+				var call = unifyConstructorCall(ctx, c, tl, el, p);
+				var r:Dynamic = call.r;
+				var chosenArgs = call.chosenArgs;
 				// A construction reports the constructor the call resolved to, as the function that produces
 				// the instance - not the instance type, which is all the typed node itself carries.
 				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atExprHoverPos(p)
 						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
 					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p, e: TypeFunctions.mk(TNew(c, tl, []), t, p), isQualified: true};
-				switch (c.kind) {
-					// Under a display request that types selectively the construction builds a normal instance of
-					// the generic class.
-					case KGeneric if (!ctx.com.displayFullTyping):
-						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
-					case KGeneric if (tp.path.tparams.length == 0 && Typeload.canSpecializeGeneric(tl)):
-						// Only specialize when every parameter is concrete (no open monomorph and no type
-						// parameter): `new Stack<S>()` inside a generic method keeps S abstract and must
-						// build a normal instance, else it would specialize on the bare S and lose the
-						// field initializers. .
-						var gc = Typeload.specializeGenericClass(ctx.com, c, tl, p);
-						TypeFunctions.mk(TNew(gc, [], r.el), TInst(gc, []), p);
-					case KGeneric:
-						// Parameters not inferable from the arguments: an expected type that is already a
-						// specialization of this class is used directly. .
-						var fromExpected = switch (withType) {
-							case WithType(wt, _):
-								switch (TypeFunctions.follow(wt)) {
-									case TInst(gc2, tl2):
-										switch (gc2.kind) {
-											// The base compares by path: the macro context types its own copy of
-											// the class, so a specialization cached from the other world has a
-											// physically different base.
-											case KGenericInstance(base, _) if (base == c
-													|| (base.path.name == c.path.name && base.path.pack.join(".") == c.path.pack.join("."))):
-												TypeFunctions.mk(TNew(gc2, tl2, r.el), TInst(gc2, tl2), p);
-											case _: null;
-										}
-									case _: null;
-								}
-							case _: null;
-						};
-						fromExpected != null ? fromExpected : TypeFunctions.mk(TNew(c, tl, r.el), t, p);
-					case _:
-						TypeFunctions.mk(TNew(c, tl, r.el), t, p);
-				}
+				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
 				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key type
 				// against each @:to cast's key-parameter constraint, then constructs that type. The
@@ -6668,20 +6643,26 @@ class Typer {
 				var call = Calls.buildCall(ctx, AKField(fa), el, withType, p, forceInline);
 				// The access is checked once the arguments unify.
 				Fields.checkConstructorAccess(ctx, a.impl, newCf, p);
-				call;
-			case TAbstract(a, atl) if (a.impl != null && TypeFunctions.hasMeta(":forward.new", a.meta)):
-				// @:forward.new forwards construction to the underlying type: build the underlying value
-				// and cast it to the abstract. . Apply the abstract's type arguments so `new
-				// Foo<Array<Int>>()` forwards to Array's constructor (not the bare type parameter T) and a
-				// `new Foo<Bar>()` / `new Foo<Foo<_>>()` forwards into the underlying abstract's own
-				// constructor.
-				var enew = constructForwarded(ctx, TypeFunctions.applyParams(a.params, atl, a.thisType), el, withType, p);
-				TypeFunctions.mk(TCast(enew, null), TAbstract(a, atl), p);
+				// The call, retyped as `t`.
+				TypeFunctions.mk(call.expr, tOrig, call.pos);
 			case TAbstract(a, _) if (a.impl != null):
 				// An abstract with an implementation but no _new constructor cannot be built.
 				throw new TypingError(hxc.core.Globals.sTypePath(a.path) + " does not have a constructor", p);
 			case _:
-				throw new TypingError("This type cannot be constructed", p);
+				// The message names `t`, which following @:forward.new did not replace.
+				throw new TypingError(hxc.core.TPrinting.sTypeStr(tOrig) + " cannot be constructed", p);
+		};
+	}
+
+	// A @:forward.new abstract without a `_new` of its own is followed to its first underlying type, and
+	// again from there.
+	static function followWithForwardCtor(t:T):T {
+		return switch (TypeFunctions.follow(t)) {
+			case TAbstract(a, tl) if (TypeFunctions.hasMeta(":forward.new", a.meta)
+					&& !(a.impl != null && a.impl.statics.exists("_new"))):
+				followWithForwardCtor(TypeFunctions.getUnderlyingTypeFirst(a, tl));
+			case ft:
+				ft;
 		};
 	}
 

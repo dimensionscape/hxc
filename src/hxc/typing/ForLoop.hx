@@ -159,9 +159,12 @@ class ForLoopFaithful {
 		return TypeFunctions.mk(e, e2.type, Position.union(e1.pos, e2.pos));
 	}
 
-	// The Iterator<mono> typedef applied to a fresh monomorph
+	// The Iterator<mono> typedef applied to a fresh monomorph. It is looked up with the std
+	// module as the current one, so the name is found among StdTypes' own types - nothing is
+	// loaded.
 	public static function tIterator(ctx:TyperContext):{t:T, pt:T} {
-		var mt = ctx.com.getType({pack: [], name: "StdTypes"}, Position.nullPos, "Iterator");
+		var mt = hxc.context.ModuleLoader.findTypeInModule(ctx.com,
+			hxc.context.ModuleLoader.loadImportedModule(ctx.com, {pack: [], name: "StdTypes"}, Position.nullPos), "Iterator", Position.nullPos);
 		return switch (mt) {
 			case TTypeDecl(td):
 				// The applied typedef, the structure itself, which is what a failed unification against it

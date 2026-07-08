@@ -749,6 +749,11 @@ class Filters {
 		}
 		function loop(e:TExpr):TExpr {
 			return switch (e.expr) {
+				// A TNew of an abstract implementation, rewritten where the walk meets it; its arguments
+				// are
+				// passed on as they are.
+				case TNew(c, _, _) if (c.kind.match(KAbstractImpl(_))):
+					resolveDeferredMultiType(ctx, e);
 				// Std.string of an abstract whose impl has a toString static becomes
 				// `e1 == null ? "null" : Impl.toString(e1)`; the impl call routes through makeCall so an
 				// inline
@@ -869,12 +874,6 @@ class Filters {
 		return loop(e);
 	}
 
-	public static function runEvalAbstractCasts(tctx:TyperContext):Void {
-		for (t in tctx.com.types) FiltersCommon.runExpressionFilters(tctx, [
-			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)}
-		], t);
-	}
-
 	// The typer emits TNew of the abstract impl for every @:multiType construction; here it rewrites to
 	// the selected @:to cast's static call with a null receiver prepended, and the result is typed as
 	// the UNDERLYING concrete type. Specialization failures are typing errors, never swallowed.
@@ -993,7 +992,6 @@ class Filters {
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "ForRemap", f: function(e) return forRemap(tctx, e)},
 			{name: "VarLazifier", f: function(e) return varLazifier(com, e)},
-			{name: "resolve_deferred_multitype", f: function(e) return { function walk(e2:hxc.core.Type.TExpr):hxc.core.Type.TExpr return resolveDeferredMultiType(tctx, TexprTools.mapExpr(walk, e2)); walk(e); }},
 			{name: "AbstractCast.handle_abstract_casts", f: function(e) return handleAbstractCasts(tctx, e)},
 		], t);
 		stageMark("pass1:done"); memProbe("pass1:done");
@@ -1266,12 +1264,15 @@ class Filters {
 		// still carries CfPostProcessed from the compilation that produced it, so runExpressionFilters
 		// would skip it and the catch would never get its haxe.NativeStackTrace.saveStack call.
 		for (t in com.types) FiltersCommon.runExpressionFilters(tctx, [{name: "insert_save_stacks", f: saveStacks}], t, true);
-		hxc.typing.ExceptionFilters.run(com);
+		// The type filters: patchConstructors is the first of them, applied type by
+		// type like the rest.
+		var patchConstructors = hxc.typing.ExceptionFilters.patcher(tctx);
 		for (t in com.types) {
 			switch (t) {
 				case TClassDecl(c): tctx.curclass = c;
 				case _:
 			}
+			patchConstructors(t);
 			checkPrivatePath(tctx, t);
 			applyNativePaths(com, t);
 			addRtti(com, t);
