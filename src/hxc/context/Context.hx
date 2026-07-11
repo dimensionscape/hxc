@@ -230,7 +230,14 @@ class Context {
 	// Release field diagnostics only after heritage succeeds. Keep warnings and errors in the same
 	// insertion-ordered queue so neither overtakes the other.
 	final pendingFieldDiagnostics = new haxe.ds.ObjectMap<hxc.core.Type.TClass, Array<{msg:String, pos:hxc.ast.Position,
-		?warn:hxc.core.WarningList.Warning, ?warnOptions:Array<Array<hxc.core.WarningList.WarningOption>>}>>();
+		?warn:hxc.core.WarningList.Warning, ?warnOptions:Array<Array<hxc.core.WarningList.WarningOption>>, ?run:Void->Void}>>();
+
+	// Run heritage-dependent checks in queue order when the class builds.
+	public function deferFieldCheck(c:hxc.core.Type.TClass, run:Void->Void):Void {
+		var l = pendingFieldDiagnostics.get(c);
+		if (l == null) { l = []; pendingFieldDiagnostics.set(c, l); }
+		l.push({msg: null, pos: null, run: run});
+	}
 
 	public function deferFieldDiagnostic(c:hxc.core.Type.TClass, msg:String, pos:hxc.ast.Position):Void {
 		var l = pendingFieldDiagnostics.get(c);
@@ -258,7 +265,7 @@ class Context {
 		var l = pendingFieldDiagnostics.get(c);
 		if (l == null) return;
 		pendingFieldDiagnostics.remove(c);
-		for (d in l) if (d.warn != null) warning(d.warn, d.warnOptions, d.msg, d.pos) else addDiagnostic(d.msg, d.pos);
+		for (d in l) if (d.run != null) d.run() else if (d.warn != null) warning(d.warn, d.warnOptions, d.msg, d.pos) else addDiagnostic(d.msg, d.pos);
 	}
 
 	public var diagnostics:Array<CompilerDiagnostic>;
@@ -281,6 +288,9 @@ class Context {
 	// Cache directory listings per context and clone, preventing stale filesystem views across
 	// requests. Map lowercase names to actual entries; null means listing failed.
 	public var readdirCache:StringMap<Null<StringMap<String>>> = new StringMap();
+
+	// Per-context overload answers keyed by class path and field name.
+	public var overloadCache:StringMap<Array<{t:T, cf:TClassField}>> = new StringMap();
 
 	/**
 	 * Per-context declared-field fingerprints let installLazy skip unchanged modules. Host and macro

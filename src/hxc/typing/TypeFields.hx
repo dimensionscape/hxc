@@ -597,6 +597,16 @@ class TypeFields {
 		if (Sys.getEnv("HXC_DBG_CORE") != null && TypeFunctions.hasMeta(":coreApi", c.meta)) Sys.println("[core] hook-check " + c.path.name + " core_api=" + ctx.defines.rawDefined("core_api") + " disp=" + (ctx.displaySpec != null));
 		if (TypeFunctions.hasMeta(":coreApi", c.meta) && !ctx.defines.rawDefined("core_api") && ctx.displaySpec == null)
 			ctx.delay(Context.PForce, function() try hxc.typing.CoreApi.initCoreApi(ctx, c) catch (e:Dynamic) recordFieldError(ctx, e));
+		// Unless the class is a lib type, its overloads are checked for duplicate signatures once the pass
+		// reaches PForce, and a concrete class extending an abstract one for the methods it leaves
+		// unimplemented. Both are queued once per class; hxc may install a class's fields again.
+		if (!TypeFunctions.hasMeta(":libType", c.meta) && !c.hxcClassChecksQueued) {
+			c.hxcClassChecksQueued = true;
+			ctx.delay(Context.PForce, function() checkOverloads(ctx, c));
+			var sup = c.superClass;
+			if (sup != null && TypeFunctions.hasClassFlag(sup.c, CAbstract) && !TypeFunctions.hasClassFlag(c, CAbstract))
+				ctx.delay(Context.PForce, function() checkAbstractClass(ctx, c, sup.c, sup.params));
+		}
 		if (TypeFunctions.hasClassFlag(c, CAbstract) && TypeFunctions.hasClassFlag(c, CFinal))
 			addDiagnosticOnce(ctx, "An abstract class may not be final", c.namePos);
 		if (TypeFunctions.hasClassFlag(c, CInterface) && TypeFunctions.hasClassFlag(c, CAbstract))
@@ -622,7 +632,6 @@ class TypeFields {
 				}
 			case _:
 		}
-		var overloadSeen = new haxe.ds.StringMap<ClassField>();
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
@@ -711,18 +720,6 @@ class TypeFields {
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
-			var isOverload = false;
-			for (a in cff.cffAccess) if (a.access == AOverload) isOverload = true;
-			if (isOverload) switch (cff.cffKind) {
-				case FFun(fd):
-					var key = (isStatic ? "s:" : "i:") + cff.cffName.name + ":" + [for (a in fd.fArgs) a.type == null ? "" : hxc.ast.Ast.Printer.sComplexType("", a.type.ct)].join(",");
-					var previous = overloadSeen.get(key);
-					if (previous != null) {
-						addDiagnosticOnce(ctx, "Another overloaded field of same signature was already declared : " + cff.cffName.name, previous.cffPos);
-						addDiagnosticOnce(ctx, "... The second field is declared here", cff.cffPos, 1);
-					} else overloadSeen.set(key, cff);
-				case _:
-			}
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
 			if (cf == null) continue;
@@ -1450,65 +1447,6 @@ class TypeFields {
 		}
 	}
 
-	// Every final var (of the class and of constructor-less abstract supers) must be assigned in the
-	// constructor. Runs after all fields typed, so sibling initializers are visible. .
-	public static function checkFinalVars(ctx:Context):Void {
-		// A declared constructor whose immediate super constructor is final is rejected. (FKConstructor).
-		// Runs before the error gate below so it still reports alongside other modifier diagnostics.
-		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c) if (c.superClass != null && c.constructor != null && findFieldDecl(ctx, c, c.constructor) != null):
-				var sup = c.superClass.c;
-				if (!TypeFunctions.hasClassFlag(sup, CExtern) && sup.constructor != null
-					&& sup.constructor != c.constructor
-					&& TypeFunctions.hasClassFieldFlag(sup.constructor, CfFinal))
-					ctx.addPrintedError("Cannot override final constructor", c.constructor.pos);
-			case _:
-		}
-		if (ctx.hasError()) return;
-		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)
-				&& !TypeFunctions.hasClassFlag(c, CInterface)
-				&& !TypeFunctions.hasClassFlag(c, CAbstract)):
-				var body:Null<TExpr> = c.constructor == null || c.constructor.expr == null ? null : switch (c.constructor.expr.expr) {
-					case TFunction(tf): tf.expr;
-					case _: null;
-				};
-				// Reached only which creates the check from a declared constructor's body as it is typed: not a
-				// constructor add_constructor or a @:structInit wrote, nor one whose body never typed. The
-				// no-constructor verdict is init_class's .
-				if (c.constructor == null || body == null || findFieldDecl(ctx, c, c.constructor) == null) continue;
-				var finalVars:Map<String, Bool> = new Map();
-				var ordered:Array<TClassField> = [];
-				function collect(c2:TClass):Void {
-					for (cf in c2.orderedFields)
-						if (cf.kind.match(Var(_)) && TypeFunctions.hasClassFieldFlag(cf, CfFinal) && cf.expr == null && !finalVars.exists(cf.name)) {
-							finalVars.set(cf.name, false);
-							ordered.push(cf);
-						}
-					if (c2.superClass != null && TypeFunctions.hasClassFlag(c2.superClass.c, CAbstract) && c2.superClass.c.constructor == null)
-						collect(c2.superClass.c);
-				}
-				collect(c);
-				if (!finalVars.keys().hasNext()) continue;
-				function findInits(e:TExpr):Void {
-					switch (e.expr) {
-						case TBinop(OpAssign, {expr: TField({expr: TConst(TThis)}, fa)}, rhs):
-							finalVars.remove(TypeFunctions.fieldName(fa));
-							findInits(rhs);
-						case _:
-							hxc.core.TexprTools.iter(findInits, e);
-					}
-				}
-				if (body != null) findInits(body);
-				var remaining = [for (cf in ordered) if (finalVars.exists(cf.name)) cf];
-				if (remaining.length > 0) {
-					ctx.addDiagnostic("Some final fields are uninitialized in this class", c.namePos);
-					for (cf in remaining) ctx.addDiagnostic("Uninitialized field", cf.namePos, 1);
-				}
-			case _:
-		}
-	}
-
 	static function hasVarHint(k:ClassFieldKind):Bool {
 		return switch (k) {
 			case FVar(th, _) | FProp(_, _, th, _): th != null;
@@ -1607,35 +1545,82 @@ class TypeFields {
 		return loop(e);
 	}
 
-	// Check concrete subclasses for abstract methods inherited from an abstract superclass.
-	public static function checkAbstractInheritance(ctx:Context):Void {
-		function fieldSignature(cf:TClassField):String {
-			return switch (TypeFunctions.follow(cf.type)) {
-				case TFun(sig): cf.name + "(" + [for (a in sig.args) a.name + ":" + hxc.core.TPrinting.sTypeStr(a.t)].join(", ") + ")";
-				case _: cf.name;
+	// checkOverload: a field of an `overload` set whose signature another of the set already has (on the
+	// Java target also one the JVM cannot tell apart).
+	static function checkOverload(ctx:Context, f:TClassField, fs:Array<TClassField>, isExternClass:Bool):Bool {
+		for (f2 in fs) if (f != f2 && Overloads.sameOverloadArgs(f.type, f2.type, f, f2)) {
+			ctx.addDiagnostic("Another overloaded field of same signature was already declared : " + f.name, f.pos);
+			ctx.addDiagnostic("... The second field is declared here", f2.pos, 1);
+			return false;
+		}
+		if (ctx.platform != hxc.core.Globals.Platform.Java || isExternClass) return true;
+		for (f2 in fs) if (f != f2 && Overloads.sameOverloadArgs(f.type, f2.type, f, f2, Overloads.ambiguateFuns)) {
+			// Don't bother checking this on externs and assume the users know what they're doing (issue #11131)
+			if (TypeFunctions.hasClassFieldFlag(f, CfExtern) && TypeFunctions.hasClassFieldFlag(f2, CfExtern)) return true;
+			ctx.addDiagnostic("Another overloaded field of similar signature was already declared : " + f.name
+				+ "\nThe signatures are different in Haxe, but not in the target language", f.pos);
+			ctx.addDiagnostic("... The second field is declared here", f2.pos, 1);
+			return false;
+		}
+		return true;
+	}
+
+	// checkOverloads: each `overload` set is checked field by field until one fails.
+	static function checkOverloads(ctx:Context, c:TClass):Void {
+		var isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+		function checkField(f:TClassField):Void {
+			if (!TypeFunctions.hasClassFieldFlag(f, CfOverload)) return;
+			var all = [f].concat(f.overloads);
+			for (f in all) if (!checkOverload(ctx, f, all, isExtern)) break;
+		}
+		for (f in c.orderedFields) checkField(f);
+		for (f in c.orderedStatics) checkField(f);
+		if (c.constructor != null) checkField(c.constructor);
+	}
+
+	// checkAbstractClass: every abstract method the abstract superclass has (through its own ancestors too,
+	// overloads included) needs a field of the same signature in the class itself.
+	static function checkAbstractClass(ctx:Context, c:TClass, csup:TClass, params:TParams):Void {
+		var missing:Array<{cf:TClassField, t:T}> = [];
+		var map = function(t:T) return TypeFunctions.applyParams(csup.params, params, t);
+		function checkAbstractClassField(cf1:TClassField, t1:T):Void {
+			var cf2 = c.fields.get(cf1.name);
+			if (cf2 == null) {
+				missing.unshift({cf: cf1, t: t1});
+				return;
+			}
+			for (o in [cf2].concat(cf2.overloads)) if (Overloads.sameOverloadArgs(t1, o.type, cf1, o)) return;
+			missing.unshift({cf: cf1, t: t1});
+		}
+		// Every field of the superclass under its params: its fields and its ancestors', the nearest
+		// declaration of each name, walked in key order.
+		var cfl = new Map<String, TClassField>();
+		function loop(c2:TClass):Void {
+			for (cf in c2.orderedFields) if (!cfl.exists(cf.name)) cfl.set(cf.name, cf);
+			if (TypeFunctions.hasClassFlag(c2, CInterface)) {
+				for (i in c2.interfaces) loop(i.c);
+			} else if (c2.superClass != null) loop(c2.superClass.c);
+		}
+		loop(csup);
+		var keys = [for (k in cfl.keys()) k];
+		keys.sort(Reflect.compare);
+		for (k in keys) {
+			for (o in Overloads.collectOverloads(map, csup, cfl.get(k).name))
+				if (TypeFunctions.hasClassFieldFlag(o.cf, CfAbstract)) checkAbstractClassField(o.cf, o.t);
+		}
+		if (missing.length == 0) return;
+		var singular = missing.length == 1;
+		ctx.addDiagnostic("This class extends abstract class " + Context.sTypePath(csup.path) + " but doesn't implement the following method" + (singular ? "" : "s"), c.namePos);
+		ctx.addDiagnostic("Implement " + (singular ? "it" : "them") + " or make " + Context.sTypePath(c.path) + " abstract as well", c.namePos);
+		var pctx = hxc.core.TPrinting.printContext();
+		var l = missing.copy();
+		l.reverse();
+		for (m in l) {
+			var s = switch (TypeFunctions.follow(m.cf.type)) {
+				case TFun(sig): [for (a in sig.args) a.name + ":" + hxc.core.TPrinting.sType(pctx, a.t)].join(", ");
+				case t: hxc.core.TPrinting.sType(pctx, t);
 			};
-		}
-		function implemented(c:TClass, name:String):Bool {
-			return c.fields.exists(name);
-		}
-		for (mt in ctx.types) switch (mt) {
-			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CAbstract) && !TypeFunctions.hasClassFlag(c, CInterface)):
-				var missing:Array<TClassField> = [];
-				var sup = c.superClass;
-				while (sup != null) {
-					for (name in sup.c.fields.keys()) {
-						var cf = sup.c.fields.get(name);
-						if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfAbstract) && !implemented(c, name)) missing.push(cf);
-					}
-					sup = sup.c.superClass;
-				}
-				if (missing.length > 0) {
-					var parent = c.superClass == null ? "" : Context.sTypePath(c.superClass.c.path);
-					ctx.addDiagnostic("This class extends abstract class " + parent + " but doesn't implement the following method" + (missing.length == 1 ? "" : "s"), c.namePos);
-					ctx.addDiagnostic("Implement " + (missing.length == 1 ? "it" : "them") + " or make " + Context.sTypePath(c.path) + " abstract as well", c.namePos);
-					for (cf in missing) ctx.addDiagnostic("... " + fieldSignature(cf), cf.namePos, 1);
-				}
-			case _:
+			ctx.addDiagnostic("... " + m.cf.name + "(" + s + ")", m.cf.namePos, 1);
 		}
 	}
 

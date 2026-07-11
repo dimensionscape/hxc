@@ -109,7 +109,7 @@ class Fields {
 	}
 
 	// Recorded, not raised, so typing continues and a batch compile reports every access violation.
-	static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, stat:Bool, p:Position):Void {
+	public static function checkFieldAccess(ctx:TyperContext, c:TClass, f:TClassField, stat:Bool, p:Position):Void {
 		if (!ctx.untypedMode && !canAccess(ctx, c, f, stat)) {
 			var msg = "Cannot access private field " + f.name;
 			for (d in ctx.com.diagnostics) if (d.message == msg && d.pos.file == p.file && d.pos.min == p.min && d.pos.max == p.max) return;

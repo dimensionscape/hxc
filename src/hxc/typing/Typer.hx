@@ -2804,6 +2804,10 @@ class Typer {
 			// The sort is stable, so equal keys keep the collection order.
 			return a.i - b.i;
 		});
+		// The ranking unifies as it ranks (type equality and unification bind what they link), and the
+		// items are printed after sorting: a function whose return is still open beside an expected Int is
+		// listed as `() -> Int`. The text is taken again from the type.
+		for (e in keyed) if (e.it.type != null && e.it.sortType != null) e.it.type = hxc.core.TPrinting.sTypeStr(e.it.sortType);
 		return [for (e in keyed) e.it];
 	}
 
@@ -6021,6 +6025,11 @@ class Typer {
 			case _ if (!isLocalFn && ctx.curfield != null && ctx.curfield.kind.match(Method(MethDynamic))):
 			case _:
 				try returnFlow(ctx, ret, te) catch (_:ReturnFlowExit) {}
+		}
+		// A constructor's body checks its class's final fields once the pass reaches PForce.
+		if (fmode.match(FunConstructor) && !isLocalFn && ctx.curclass != null) {
+			var cls = ctx.curclass, body = te;
+			ctx.com.delay(hxc.context.Context.PForce, function() TypeloadCheck.checkFinalVars(ctx.com, cls, body));
 		}
 		// A constructor whose class inherits a constructor has to call super(). When the inherited one is
 		// @:compilerGenerated the call is SYNTHESIZED instead of complaining (Filters.insertMissingSuper

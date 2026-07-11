@@ -69,14 +69,39 @@ class InterfaceCheck {
 	static function checkField(ctx:Context, c:TClass, intf:TClass, params:TParams, f:TClassField, p:Position):Void {
 		var t = TypeFunctions.applyParams(intf.params, params, f.type);
 		var found:Null<{map:T->T, t:T, f:TClassField}> = null;
-		try found = classFieldNoInterf(c, f.name) catch (_:NotFound) found = null;
+		var isOverload = false;
+		try {
+			found = classFieldNoInterf(c, f.name);
+			// An overloaded implementation is the overload of the same signature among every one the class
+			// sees (Overloads.getOverloads).
+			if (found.f.overloads.length > 0 || TypeFunctions.hasClassFieldFlag(found.f, CfOverload)) {
+				var overloads = hxc.typing.Overloads.getOverloads(ctx, c, f.name);
+				isOverload = true;
+				var match:Null<{t:T, cf:TClassField}> = null;
+				for (o in overloads) if (hxc.typing.Overloads.sameOverloadArgs(t, o.t, f, o.cf)) { match = o; break; }
+				if (match == null) throw new NotFound("no matching overload");
+				found = {map: found.map, t: match.t, f: match.cf};
+			}
+		} catch (_:NotFound) found = null;
 		if (found == null) {
 			// A missing field: an abstract class may leave an interface method implicit; a field with
 			// @:?default becomes an implicit override; otherwise a non-interface class errors.
 			if (TypeFunctions.hasClassFlag(c, CAbstract) && isMethod(f)) return;
 			if (TypeFunctions.hasClassFieldFlag(f, CfDefault)) return;
-			if (!TypeFunctions.hasClassFlag(c, CInterface))
-				ctx.addDiagnostic("Field " + f.name + " needed by " + Context.sTypePath(intf.path) + " is missing", p);
+			if (!TypeFunctions.hasClassFlag(c, CInterface)) {
+				// A missing overload names the signature it needed.
+				var msg = if (isOverload) {
+					var pctx = hxc.core.TPrinting.printContext();
+					var args = switch (TypeFunctions.follow(f.type)) {
+						case TFun(sig): [for (a in sig.args) (a.opt ? "?" : "") + a.name + " : " + hxc.core.TPrinting.sType(pctx, a.t)].join(", ");
+						case _: throw "overload is not a function";
+					};
+					"No suitable overload for " + f.name + "( " + args + " ), as needed by " + Context.sTypePath(intf.path) + " was found";
+				} else {
+					"Field " + f.name + " needed by " + Context.sTypePath(intf.path) + " is missing";
+				};
+				ctx.addDiagnostic(msg, p);
+			}
 			return;
 		}
 		// Delayed to PForce: the found field's type is forced, then compared

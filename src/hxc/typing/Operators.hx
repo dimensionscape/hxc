@@ -698,8 +698,21 @@ class Operators {
 		};
 	}
 
+	// typeRhs: the value of an assignment that fails to type is recorded and stands as `null`, so the
+	// assignment itself is still made - a final field assigned that way in a constructor counts as
+	// initialized.
+	static function typeRhs(ctx:TyperContext, e2:Expr, withType:WithType):TExpr {
+		return try Typer.typeExpr(ctx, e2, withType) catch (err:TypingError) {
+			ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
+			TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, e2.pos);
+		} catch (ce:hxc.context.Context.ContextError) {
+			ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+			TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, e2.pos);
+		};
+	}
+
 	static function assignTo(ctx:TyperContext, te1:TExpr, e2:Expr, p:Position):TExpr {
-		var te2 = Typer.castOrUnify(ctx, te1.type, Typer.typeExpr(ctx, e2, WithTypeTools.withType(te1.type)), p);
+		var te2 = Typer.castOrUnify(ctx, te1.type, typeRhs(ctx, e2, WithTypeTools.withType(te1.type)), p);
 		// A named local function is not writable.
 		switch (te1.expr) {
 			case TLocal(v) if (v.kind.match(VUser(TVOLocalFunction)) && !ctx.untypedMode):
@@ -802,7 +815,10 @@ class Operators {
 						throw new TypingError("This expression cannot be accessed for writing", p);
 				}
 			case AKAccess(a, tl, c, ebase, ekey):
-				hxc.typing.Calls.arraySet(ctx, a, tl, c, ebase, ekey, e2, p);
+				// The value is typed once, as a value, before a setter is looked for (the array write access
+				// lookup casts it to each candidate's parameter).
+				var te2 = typeRhs(ctx, e2, WithTypeTools.value);
+				hxc.typing.Calls.arraySetValue(ctx, a, tl, c, ebase, ekey, function(_) return te2, p);
 			case AKNo(_, np): throw new TypingError("This expression cannot be accessed for writing", np);
 			case AKUsingAccessor(se):
 				// Writing an abstract property calls the impl's set_<name>(this, value).

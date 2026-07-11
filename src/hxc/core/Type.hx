@@ -427,6 +427,7 @@ class TClass {
 	public var hxcInstallStarted:Bool = false;
 	public var hxcPropAccessorsChecked:Bool = false;
 	public var hxcFieldChecksDone:Bool = false;
+	public var hxcClassChecksQueued:Bool = false;
 	// The class's build while it is still queued (TypeResolve.ClassSlot).
 	public var hxcClassSlot:Dynamic = null;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,

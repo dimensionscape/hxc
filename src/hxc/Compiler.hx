@@ -549,6 +549,7 @@ class Compiler {
 					// A second main class is refused, even the same one.
 					var cl = argValue(args, i++, a);
 					if (mainClass != null) throw "Multiple --main classes specified";
+					checkTypePath(cl);
 					mainClass = cl;
 				case "--hxia":
 					// The hxia profile mask: `--hxia core` (or sys). Masks the std surface at
@@ -595,6 +596,7 @@ class Compiler {
 					// -x <class>: interpret <class>, i.e. --interp plus a startup class. A main class
 					// already given must be the same one.
 					var cl = argValue(args, i++, a);
+					checkTypePath(cl);
 					if (mainClass == null) mainClass = cl;
 					else if (sTypePath(parseTypePath(cl)) != sTypePath(parseTypePath(mainClass)))
 						throw "Multiple --main classes specified";
@@ -1142,8 +1144,6 @@ class Compiler {
 			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
 			TypeFields.typeAllModules(ctx);
 			tType();
-			TypeFields.checkAbstractInheritance(ctx);
-			TypeFields.checkFinalVars(ctx);
 			TypeFields.checkRecursiveAbstracts(ctx);
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
@@ -3690,6 +3690,16 @@ class Compiler {
 	static function argValue(args:Array<String>, i:Int, flag:String):String {
 		if (i >= args.length) throw "option '" + flag + "' needs an argument";
 		return args[i];
+	}
+
+	// Type-path parsing, run on -x and --main as the argument is read: the path check's verdict on the
+	// parts, then the uppercase check on the name. Both raise a failure, which the option parser does not
+	// frame.
+	static function checkTypePath(s:String):Void {
+		var perr = parsePathError(s);
+		if (perr != null) throw new ArgFailure("Could not process argument " + s + "\n" + perr);
+		try hxc.core.StringHelper.checkUppercase(parseTypePath(s).name)
+		catch (e:haxe.Exception) throw new ArgFailure(e.message);
 	}
 
 	// Path parts plus the invalid-character and package-name checks. Returns the error message for the

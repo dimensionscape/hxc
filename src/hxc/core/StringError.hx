@@ -28,7 +28,8 @@ class StringError {
 	public static function getSimilar(s:String, sl:Array<String>):Array<String> {
 		if (sl.length == 0) return [];
 		var scored = [for (s2 in sl) {name: s2, d: levenshtein(s, s2)}];
-		scored.sort(function(a, b) return a.d - b.d);
+		// The sort is a stable merge sort: candidates at the same distance keep their order.
+		haxe.ds.ArraySort.sort(scored, function(a, b) return a.d - b.d);
 		var out:Array<String> = [];
 		for (e in scored) {
 			var limit = Std.int((s.length < e.name.length ? s.length : e.name.length) / 3);

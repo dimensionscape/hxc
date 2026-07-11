@@ -1290,6 +1290,17 @@ class ModuleLoader {
 				c.orderedStatics.push(cf);
 				if (declOnly) declOnlyCfs.set(cf, true);
 			} else if (cf.name == "new") {
+				// Every constructor declared over the final constructor of a non-extern superclass is
+				// reported (as a printed error), once heritage is known.
+				if (ctx != null) {
+					var ctorField = cf;
+					ctx.deferFieldCheck(c, function() {
+						var sup = c.superClass;
+						if (sup != null && sup.c.constructor != null && !TypeFunctions.hasClassFlag(sup.c, CExtern)
+								&& TypeFunctions.hasClassFieldFlag(sup.c.constructor, CfFinal))
+							ctx.addPrintedError("Cannot override final constructor", ctorField.pos);
+					});
+				}
 				// A second constructor merges onto the first only where the target does native overload
 				// resolution and both carry the flag; otherwise it is reported and the first one stands.
 				if (!ctorRegistered || c.constructor == null) {

@@ -230,13 +230,9 @@ class Calls {
 		throw new TypingError("No @:arrayAccess function for " + aS + " accepts argument of " + keyS, p);
 	}
 
-	// Abstract @:arrayAccess write: call the impl setter taking (this, key, value). .
-	public static function arraySet(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueExpr:Expr, p:Position):TExpr {
-		return arraySetValue(ctx, a, tl, c, ebase, ekey, function(vt:T) return Typer.typeExpr(ctx, valueExpr, WithTypeTools.withType(vt)), p);
-	}
-
-	// Setter call with an already-computed value; valueFn receives the setter's value-parameter type so a
-	// plain write can infer its literal, while a compound write supplies the precomputed op result.
+	// The first setter whose key and value parameters the (already typed) key and value cast to,
+	// and the call built from it. valueFn hands over the value; it is given the candidate's
+	// value-parameter type.
 	public static function arraySetValue(ctx:TyperContext, a:TAbstract, tl:TParams, c:TClass, ebase:TExpr, ekey:TExpr, valueFn:T->TExpr, p:Position, throwOnFail:Bool = true, ?onChosen:TClassField->Void):Null<TExpr> {
 		var lastVal:Null<TExpr> = null;
 		for (cf in a.array) {
@@ -1135,25 +1131,35 @@ class Calls {
 				}
 			case _:
 		}
-		var candidates = [fa.field].concat(fa.field.overloads);
+		// An instance's `overload` field stands for every overload of its name up the class hierarchy;
+		// any other field for itself and its own overloads.
+		var candidates = switch (fa.host) {
+			case FHInstance(c, _) if (fa.field.name != "new" && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload)):
+				[for (o in Overloads.getOverloads(ctx.com, c, fa.field.name)) o.cf];
+			case _:
+				[fa.field].concat(fa.field.overloads);
+		};
 		// Each failed candidate: the overload field, its rendered error, and the error position.
 		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int, ?chain:Array<{message:String, pos:Position, ?depth:Int}>}> = [];
 		// With several candidates an argument error must RAISE so the next overload is tried: a lambda
 		// body error inside a block would otherwise be recorded as a batch diagnostic and the first
 		// candidate would win with a poisoned result. Trial diagnostics roll back per attempt.
 		var multi = candidates.length > 1;
-		var receiverExtern = switch (fa.host) {
-			case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFunctions.hasClassFlag(c, CExtern);
-			case FHAnon: false;
-		};
-		if (!receiverExtern) switch (TypeFunctions.follow(fa.on.type)) {
-			case TInst(c, _): receiverExtern = TypeFunctions.hasClassFlag(c, CExtern);
-			case _:
-		}
 		// A field declared `overload` is a proper overload, and every candidate is attempted before the
 		// compatible ones are reduced; @:overload metadata stops at the first that succeeds.
 		var allExtern = multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
-		var successes:Array<{cf:TClassField, expr:Void->TExpr, hover:Null<Dynamic>}> = [];
+		// Field typing leaves an `overload` call's visibility to the resolution, which checks the
+		// candidate it settles on, at the call.
+		function maybeCheckAccess(cf:TClassField):Void {
+			switch (fa.host) {
+				case FHStatic(c) | FHAbstract(_, _, c): Fields.checkFieldAccess(ctx, c, cf, true, p);
+				case FHInstance(c, _): Fields.checkFieldAccess(ctx, c, cf, false, p);
+				case FHAnon:
+			}
+		}
+		// A single `overload` candidate is checked before it is tried.
+		if (!multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload)) maybeCheckAccess(candidates[0]);
+		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>}>> = [];
 		var chosen:Null<Void->TExpr> = null;
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
@@ -1183,10 +1189,14 @@ class Calls {
 				}
 			}
 			try {
-				// Unifies the arguments and returns the CANDIDATE; the call is made for the one the resolution
-				// keeps , once every candidate has been tried - so the bodies the attempts force type before
-				// the chosen one inlines.
-				var r = TypeUnification.withMonoRollback(function():Void->TExpr {
+				// A call attempt unifies the arguments and returns the CANDIDATE; the call is made for the
+				// one
+				// the resolution keeps, once every candidate has been tried - so the bodies the attempts
+				// force
+				// type before the chosen one inlines.
+				// The candidate: the call's type with the candidate's parameters instantiated, its typed
+				// arguments, and the call to make.
+				var r = TypeUnification.withMonoRollback(function():{call:Void->TExpr, tf:T, args:Array<TExpr>} {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
 					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2), fa2);
 					var ce = mono.expr;
@@ -1208,7 +1218,7 @@ class Calls {
 									case WithType(t, _): try TypeUnification.unifyDefault(sig.ret, t) catch (_:hxc.core.TypeUnification.UnifyError) {}
 									case _:
 								}
-							function():TExpr {
+							{tf: ce.type, args: r.el, call: function():TExpr {
 								var ce2 = ce;
 								var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, p, withType);
 								if (faCall != fa2) ce2 = FieldAccessTools.getFieldExpr(faCall, FCall);
@@ -1219,18 +1229,18 @@ class Calls {
 								if (DebugDump.enabled("select", p))
 									DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
 								return makeCall(ctx, ce2, r.el, ret, p, forceInline, forcePos);
-							};
+							}};
 						case _:
 							var e = callExpr(ctx, ce, el, p);
-							function():TExpr return e;
+							{tf: ce.type, args: [], call: function():TExpr return e};
 					}
 				});
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
 				if (!allExtern) {
-					chosen = r;
+					chosen = r.call;
 					break;
 				}
-				successes.push({cf: cf, expr: r, hover: hxc.typing.Typer.hoverFound});
+				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound}});
 			} catch (e:UnifyError) {
 				restore();
 				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
@@ -1247,29 +1257,25 @@ class Calls {
 		if (chosen != null) return chosen();
 		// The chosen candidate's stored answer is the one that is committed.
 		inline function commit(h:Null<Dynamic>):Void if (multi) hxc.typing.Typer.hoverFound = h;
-		if (successes.length == 1) { commit(successes[0].hover); return successes[0].expr(); }
-		var externAmbiguous = successes.length > 1 && receiverExtern && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
-		if (externAmbiguous) {
-			var minArgs = 0x7fffffff;
-			for (s in successes) switch (TypeFunctions.follow(s.cf.type)) {
-				case TFun(sig) if (sig.args.length < minArgs): minArgs = sig.args.length;
-				case _:
-			}
-			var narrow = [for (s in successes) switch (TypeFunctions.follow(s.cf.type)) {
-				case TFun(sig) if (sig.args.length == minArgs): s;
-				case _: null;
-			}].filter(function(s) return s != null);
-			if (narrow.length == 1) { commit(narrow[0].hover); return narrow[0].expr(); }
-			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
-			for (s in successes)
-				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sTypeStr(s.cf.type), s.cf.namePos, 1);
-			commit(successes[0].hover);
-			return successes[0].expr();
+		// For a proper overload the candidates that accepted the call reduce to the best rated
+		// (Overloads.reduceCompatible); with several equally good, each is reported and the first is
+		// kept.
+		var reduced = Overloads.reduceCompatible(successes);
+		if (reduced.length == 1) {
+			maybeCheckAccess(reduced[0].cf);
+			commit(reduced[0].payload.hover);
+			return reduced[0].payload.expr();
 		}
-		if (successes.length > 1) { commit(successes[0].hover); return successes[0].expr(); }
+		if (reduced.length > 1) {
+			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
+			var pctx = hxc.core.TPrinting.printContext();
+			for (s in reduced)
+				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sType(pctx, s.tf), s.cf.namePos, 1);
+			commit(reduced[0].payload.hover);
+			return reduced[0].payload.expr();
+		}
 		// Nothing resolved: the answer a candidate reached is still the only one there is.
 		commit(firstFailHover);
-		if (failures.length == 0) throw new TypingError("No matching overload", p);
 		// A single candidate (or several failing identically) raises the one error; distinct failures
 		// report each overload with its own reason (duplicates removed by message, then either the one
 		// located error or the "reasons follow" block).
