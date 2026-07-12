@@ -419,6 +419,41 @@ class ModuleLoader {
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
+			// Defer imported statics until context initialization and build their owner first; build order
+			// determines body-typing order.
+			function deferStaticImport(split:{modulePath:Path, sub:Null<String>, field:Null<String>}, p:Position):Void {
+				if (split.sub == null && split.field == null) return;
+				var mpath = split.modulePath, sub = split.sub, field = split.field;
+				ctx.contextInitAdd(m, function() {
+					var md = try loadImportedModule(ctx, mpath, p) catch (_:Dynamic) return;
+					function build(c:TClass):Void {
+						try {
+							hxc.typing.TypeResolve.resolveModule(ctx, c.module);
+							hxc.typing.TypeResolve.forceQueuedBuild(c);
+						} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+					}
+					function addStaticInit(mt:ModuleType):Void {
+						switch (TypeFunctions.resolveTypedef(mt)) {
+							case TClassDecl(c): build(c);
+							case TAbstractDecl(a) if (a.impl != null): build(a.impl);
+							case _:
+						}
+					}
+					if (sub != null && field != null) {
+						var owner = findTypeInModuleOpt(md, sub);
+						if (owner != null) addStaticInit(owner);
+						return;
+					}
+					var tsub = field != null ? field : sub;
+					if (findTypeInModuleOpt(md, tsub) != null) return;
+					if (md.statics != null) {
+						build(md.statics);
+						for (cf in md.statics.orderedStatics) if (cf.name == tsub) return;
+					}
+					var main = findTypeInModuleOpt(md, mpath.name);
+					if (main != null) addStaticInit(main);
+				});
+			}
 			switch (imp.mode) {
 				case IAll:
 					// Without the wildcard, an uppercase segment identifies a type rather than a package.
@@ -462,6 +497,7 @@ class ModuleLoader {
 				case INormal:
 					var split = splitImportPath(parts);
 					if (split == null) return;
+					deferStaticImport(split, declPos);
 					if (split.field != null) {
 						imports.globals.set(split.field, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
 						return;
@@ -473,6 +509,7 @@ class ModuleLoader {
 				case IAsName(alias):
 					var split = splitImportPath(parts);
 					if (split == null) return;
+					deferStaticImport(split, declPos);
 					if (split.field != null) {
 						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
 						return;

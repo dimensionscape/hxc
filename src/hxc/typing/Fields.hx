@@ -173,7 +173,6 @@ class Fields {
 		var pfull = Position.union(e.pos, pfield);
 		var isSet = mode.match(MSet(_));
 		checkNoClosureMeta(ctx, f, fh, mode, pfield);
-		forceFieldType(ctx, f, fh);
 		// A method read as a value whose inferred return is still an open monomorph has not had its
 		// body typed. Force it so the return (and the argument monos it settles) bind from the body,
 		// not from the first use site that would bind them to Dynamic.
@@ -322,19 +321,6 @@ class Fields {
 						throw new TypingError(msg != null ? msg : errorRequire(r), pfield);
 				}
 		};
-	}
-
-	static function forceFieldType(ctx:TyperContext, f:TClassField, fh:FieldHost):Void {
-		if (f.expr != null) return;
-		switch (f.kind) {
-			case Var(_):
-				switch (fh) {
-					case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c):
-						TypeFields.forceFieldBody(ctx.com, c, f);
-					case FHAnon:
-				}
-			case _:
-		}
 	}
 
 	static function fieldTypeC(c:TClass, tl:TParams, f:TClassField):T {

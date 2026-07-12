@@ -879,7 +879,7 @@ class Typer {
 			// declaration - so the answer is settled here and no enclosing access can claim the request
 			// afterwards. What the walk found inside this node is that answer, not the walk's.
 			if (displayDefinition) {
-				checkDisplayDefinition(ctx, te);
+				checkDisplayDefinition(ctx, te, true);
 				if (displayFound == null) displayFound = [];
 				displayFoundFromWalk = false;
 			}
@@ -1276,7 +1276,7 @@ class Typer {
 					Typeload.generateArgsMeta(f.fArgs, m -> namedVar.meta = [m].concat(namedVar.meta == null ? [] : namedVar.meta));
 				// The cursor on a named local function's name answers with the variable it binds, so the answer
 				// is the name's own range and not the whole function.
-				if (namedVar != null && atDisplayPos(namedVar.pos)) displayVariable(ctx, namedVar, namedVar.pos);
+				if (namedVar != null && ctx.inDisplay && atDisplayPos(namedVar.pos)) displayVariable(ctx, namedVar, namedVar.pos);
 				if (namedVar == null) fnExpr;
 					else {
 						// A recursive named local function is bound in two steps: `var f = null; f = <fn>`,
@@ -3635,9 +3635,11 @@ class Typer {
 	// quadratic case.
 	static var definitionWalked:haxe.ds.ObjectMap<TExpr, Bool> = new haxe.ds.ObjectMap();
 
-	static function checkDisplayDefinition(ctx:TyperContext, te:TExpr):Void {
+	static function checkDisplayDefinition(ctx:TyperContext, te:TExpr, marked:Bool = false):Void {
 		if (displayFound != null) return;
-		if (definitionWalked.exists(te)) return;
+		// The walk at typeExprInner's tail reaches the marked node first; the marked node's own answer
+		// (asked of it alone) is still to come.
+		if (definitionWalked.exists(te) && !marked) return;
 		definitionWalked.set(te, true);
 		// A sub-expression that still encloses the offset is the more precise match: recurse
 		// into any PROPER enclosing sub-range first (an assignment target or call argument
@@ -3682,6 +3684,9 @@ class Typer {
 			// the `this` an abstract constructor is rewritten around carries the whole constructor's
 			// position.
 			case TVarExpr(v, _) if (v.kind.match(VUser(_)) && atDisplayPos(v.pos)): [v.pos];
+			// The marked node itself is answered whatever the cursor's place in it: a named local function
+			// marked on its `function` keyword is the TVar binding it.
+			case TVarExpr(v, _) if (marked): [v.pos];
 			// A declaration whose initializer RAISED is recovered as a VGenerated local with no initializer
 			// at all, and a marked TVar answers whatever its kind. No compiler temporary has that shape -
 			// every one carries the expression it holds.
@@ -5987,10 +5992,15 @@ class Typer {
 		// A function with no body types as an empty block wherever errors are ignored (a display run);
 		// anywhere else it is an error, the abstract-member wording first.
 		if (bodyExpr == null) {
-			// The block is the compiler's, carrying the function's position: no display question can
-			// be answered from it (see synthesized).
-			if (ctx.com.ignoreError()) bodyExpr = synthesized(new Expr(EBlock([]), p));
-			else {
+			if (ctx.com.ignoreError()) {
+				bodyExpr = new Expr(EBlock([]), p);
+				// ExprPreprocessing runs over the body when displaying, which for a local function means
+				// ctx.inDisplay: true exactly while the function is the marked node. Anywhere else the
+				// block is the compiler's and answers nothing (see synthesized).
+				var enclosed = displayHover ? atExprHoverPos(p) : atDisplayPos(p);
+				if (ctx.inDisplay && enclosed) hxc.typing.ExprPreprocessing.markedNode = bodyExpr;
+				else synthesized(bodyExpr);
+			} else {
 				reset();
 				if (fmode == FunMember && ctx.curclass != null && TypeFunctions.hasClassFlag(ctx.curclass, CAbstract))
 					throw new TypingError("Function body or abstract modifier required", p);
