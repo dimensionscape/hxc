@@ -1652,14 +1652,6 @@ class Typeload {
 		var savedGenericCtx = genericBuildCtx; genericBuildCtx = ctx;
 		var savedGenericMod = genericBuildModule;
 		if (ctx.currentModule != null) genericBuildModule = ctx.currentModule;
-		// `ignore(c.build())` - 'make sure the super class is already setup' before build_field
-		// substitutes over its signatures. A @:generic reached from a HERITAGE clause specializes before
-		// the base class has had its field types resolved, and substituting an open monomorph only yields
-		// another one. build is the whole build - set_heritance then init_class - so this has to force
-		// both. It used to call buildClassFields, which does the field half only, and the specialised
-		// copy then had no superClass: `super()` in the generic's constructor reported "Current class
-		// does not have a super" as soon as the base was not already resolved.
-		hxc.typing.TypeResolve.forceBuild(ctx, c);
 		var key = genericKey(c, params, p);
 		var cached = genericInstances.get(key);
 		if (cached != null) { genericBuildCtx = savedGenericCtx; genericBuildModule = savedGenericMod; return cached; }
@@ -1693,6 +1685,49 @@ class Typeload {
 				}
 			}
 		}
+		// Before anything is built the instance's path is looked up - the qualified module, or for a
+		// top-level class the unqualified walk. A miss of that very path is what builds it, and the lookup
+		// is what reaches Context.onTypeNotFound the first time each specialization is asked for. A path
+		// the
+		// module table already holds is the epoch question below.
+		if (!ctx.moduleLut.exists(Context.pathKey(path))) {
+			var found:Null<ModuleType> = null;
+			if (path.pack.length > 0) {
+				var mfound = hxc.context.ModuleLoader.loadModuleOpt(ctx, path, p);
+				if (mfound != null) {
+					found = hxc.context.ModuleLoader.findTypeInModuleOpt(mfound, path.name);
+					if (found == null) {
+						genericBuildCtx = savedGenericCtx;
+						genericBuildModule = savedGenericMod;
+						throw new TypingError("Module " + Context.sTypePath(mfound.path) + " does not define type " + path.name, p);
+					}
+				}
+			} else if (ctx.currentModule != null) {
+				found = hxc.context.ModuleLoader.resolveBareType(ctx, ctx.currentModule, path.name, p);
+			}
+			if (found != null) {
+				genericBuildCtx = savedGenericCtx;
+				genericBuildModule = savedGenericMod;
+				switch (found) {
+					case TClassDecl(cgOld):
+						switch (cgOld.kind) {
+							case KGenericInstance(base, _) if (base == c):
+								genericInstances.set(key, cgOld);
+								return cgOld;
+							case _:
+						}
+					case _:
+				}
+				throw new TypingError("Cannot specialize @:generic because the generated type name is already used: " + path.name, p);
+			}
+		}
+		// Make sure the super class is already set up before its signatures are substituted, once the
+		// lookup has missed. A @:generic reached from a HERITAGE clause specializes before the base class
+		// has had its field types resolved, and substituting an open monomorph only yields another one.
+		// build is the whole build - heritage then fields - so this has to force both: with the field
+		// half only, the specialised copy has no superClass and `super()` in the generic's constructor
+		// reports "Current class does not have a super".
+		hxc.typing.TypeResolve.forceBuild(ctx, c);
 		// A user type already claiming the generated name blocks specialization; our own instances hit
 		// the cache above and never reach here. The name is looked up in the state of this compilation;
 		// the reused macro context still maps the instance it generated for the previous one, which

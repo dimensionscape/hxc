@@ -1431,7 +1431,7 @@ class Calls {
 			// A @:genericClassPerMethod host puts each specialization, under the method's own name, on a
 			// synthesized class <Class>_<method>_<Params> in its own module.
 			if (TypeFunctions.hasMeta(":genericClassPerMethod", host.meta)) {
-				var c = genericMethodContainer(ctx, host, cf, gname);
+				var c = genericMethodContainer(ctx, host, cf, gname, callPos);
 				// The class the specialization is ADDED to depends on every module its type parameters come
 				// from, over the raw monos.
 				setTypeParameterDependencies(c.module, monos);
@@ -1463,16 +1463,28 @@ class Calls {
 
 	// Find or create the module-level container class for one @:genericClassPerMethod method
 	// specialization.
-	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, gname:String):TClass {
+	static function genericMethodContainer(ctx:TyperContext, host:TClass, cf:TClassField, gname:String, p:Position):TClass {
 		// The container is named with the specialization's generic name.
 		var path:hxc.core.Globals.Path = {pack: host.path.pack.copy(), name: host.path.name + "_" + cf.name + "_" + gname};
 		var key = hxc.context.Context.pathKey(path);
+		// The container is looked up by its path first - a module the table holds, otherwise through the
+		// loader (the qualified module, or for a top-level class the unqualified walk), which is what
+		// consults Context.onTypeNotFound. Only a miss of that very path builds it; anything but a
+		// class under the name is an error.
+		var found:Null<ModuleType> = null;
 		var existing = ctx.com.moduleLut.get(key);
-		if (existing != null) {
-			for (mt in existing.types) switch (mt) {
-				case TClassDecl(cg): return cg;
-				case _:
+		if (existing != null) found = hxc.context.ModuleLoader.findTypeInModuleOpt(existing, path.name);
+		else if (path.pack.length > 0) {
+			var m = hxc.context.ModuleLoader.loadModuleOpt(ctx.com, path, p);
+			if (m != null) {
+				found = hxc.context.ModuleLoader.findTypeInModuleOpt(m, path.name);
+				if (found == null) throw new TypingError("Module " + hxc.context.Context.sTypePath(m.path) + " does not define type " + path.name, p);
 			}
+		} else if (ctx.com.currentModule != null)
+			found = hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, path.name, p);
+		if (found != null) switch (found) {
+			case TClassDecl(cg): return cg;
+			case _: throw new TypingError("Cannot specialize @:generic static method because the generated type name is already used: " + path.name, p);
 		}
 		var mg = new ModuleDef(TypeFunctions.allocMid(), path, [], null, TypeFunctions.moduleExtra("", "", 0.0, MFake, []));
 		mg.extra.resolved = 2;

@@ -37,6 +37,10 @@ class CoreApi {
 		// (haxe.exceptions.Exception from PosException) where the host could not see them, and the host
 		// would probe them again later - with a macro's Context.onTypeNotFound hook registered by then.
 		c.moduleNonexistentLut = ctx.moduleNonexistentLut;
+		// ... and loadExternType as it stands when the core context is first needed: a
+		// Context.onTypeNotFound registered by an init macro is consulted by the core context's
+		// misses too (a snapshot - the host's later registrations make a new list it never sees).
+		c.loadExternType = ctx.loadExternType.copy();
 		ModuleLoader.attach(c);
 		ModuleLoader.initBasicTypes(c);
 		hxc.context.DisplayJson.cache.maybeAddContextSign(c, "load_core_class");

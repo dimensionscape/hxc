@@ -616,22 +616,6 @@ class TypeFields {
 		tctx.typeParams = c.params;
 		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
-		// The constructor's return type is convert_type' (TAbstract(a, params)) and its `this`
-		// convert_type' a.thisType, the header init_abstract has resolved by now.
-		switch (c.kind) {
-			case KAbstractImpl(a):
-				for (cff in d.dData) {
-					var h = hxc.context.ModuleLoader.abstractCtorHints.get(cff);
-					if (h == null) continue;
-					try {
-						var aT = hxc.core.TexprToExpr.convertTypeHint(TAbstract(a, [for (tp in a.params) tp.type]));
-						var thisT = hxc.core.TexprToExpr.convertTypeHint(a.thisType);
-						h.func.fType = aT;
-						h.thisVar.evType = thisT;
-					} catch (_:hxc.core.ExitException) {}
-				}
-			case _:
-		}
 		var nameSeen = new haxe.ds.StringMap<Int>();
 		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
@@ -832,13 +816,7 @@ class TypeFields {
 		var isDisplay = !ctx.displayFullTyping;
 		// The declaring module's path, not the class's: a class whose name differs from its module file
 		// (common in display requests) is not loadable by its own path.
-		try {
-			hxc.eval.EvalMacro.loadMacroClass(ctx, c.path, cf.name, false, c.module.path, null, cf.pos, true);
-			// ': a host load of a macro flushes the macro context once the display window is closed -
-			// add_types, and with it the JIT's check of every macro module before type_macro's MDisplay arm
-			// stops .
-			hxc.eval.EvalMacro.flushMacroContext(ctx);
-		}
+		try hxc.eval.EvalMacro.loadMacro(ctx, c.path, cf.name, c.module.path, c.module, cf.pos, true)
 		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
 		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
 	}
@@ -858,7 +836,7 @@ class TypeFields {
 					&& tctx.curclass != null) {
 				// The declaring module's path, not the class's: a class whose name differs from its module file
 				// (common in display requests) is not loadable by its own path.
-				try hxc.eval.EvalMacro.loadMacroClass(ctx, tctx.curclass.path, cf.name, false, m.path, null, null, true)
+				try hxc.eval.EvalMacro.loadMacro(ctx, tctx.curclass.path, cf.name, m.path, null, null, true)
 				catch (_:hxc.core.TypingError) {}
 				catch (_:hxc.context.Context.ContextError) {}
 			}

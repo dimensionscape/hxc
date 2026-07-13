@@ -83,7 +83,6 @@ class Typer {
 		signatureCallPos = null;
 		displayToplevel = false;
 		displayToplevelJson = false;
-		markedDisplay = null;
 		displayUsage = false;
 		displayImplementation = false;
 		usageTargetField = null;
@@ -802,12 +801,12 @@ class Typer {
 		}
 	}
 
-	// Type_expr (core subset). A subtree the COMPILER built, registered by identity the way
-	// markedDisplay is. The reference can never answer a display question from one: ExprPreprocessing
-	// chose the subject before the rewrite existed, so the node was never a candidate. hxc decides by
-	// position, and these carry the position of the construct they were built for, so the check is off
-	// while the subtree types. The rest of the construct - the arguments the user wrote - types
-	// outside this window and still answers.
+	// Type_expr (core subset). A subtree the COMPILER built, registered by identity the way the marked
+	// node is. A display question is never answered from one: the display subject was chosen before
+	// the rewrite existed, so the node was never a candidate. hxc decides by position, and these carry
+	// the position of the construct they were built for, so the check is off while the subtree types.
+	// The rest of the construct - the arguments the user wrote - types outside this window and still
+	// answers.
 	public static var synthesizedNodes:Array<Expr> = [];
 
 	public static function synthesized(e:Expr):Expr {
@@ -858,7 +857,14 @@ class Typer {
 					throw new TypingError("Unsupported method", e.pos);
 				case _:
 					try typeExprInner(ctx, e, withType, mode)
-						catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+					catch (ex:hxc.core.TypingError.UnknownIdentError) {
+						// Under DMDefault the identifier that does not resolve is the toplevel collection's
+						// subject, raised at the marked expression's position.
+						if (hxc.parser.Parser.displayCompletionMode) raiseToplevelSubject(ctx, ex.ident, e.pos, withType);
+						markedNodeFailed = true;
+						throw ex;
+					}
+					catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
 			};
 			unifyForAnswer(ctx, te, withType);
 			// Under DMHover (and DMTypeDefinition, from the type) the marked node answers with its own typed
@@ -1084,16 +1090,6 @@ class Typer {
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
 				accGet(ctx, typeAccess(ctx, e.expr, p, mode, withType));
 			case EBinop(op, e1, e2):
-				// An assignment whose own span holds the cursor while neither operand does is "probably" a
-				// request on the RIGHT-hand side, so side becomes the display subject. Bottom-up in the
-				// reference; here an operand already covering the cursor is what stands in for was_annotated.
-				switch (op) {
-					case OpAssign | OpAssignOp(_)
-						if (hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null
-							&& atDisplayPos(p) && !atDisplayPos(e1.pos) && !atDisplayPos(e2.pos)):
-						markedDisplay = e2;
-					case _:
-				}
 				Operators.typeBinop(ctx, op, e1, e2, false, withType, p);
 			case EUnop(op, flag, e1):
 				Operators.typeUnop(ctx, op, flag, e1, withType, p);
@@ -1808,10 +1804,6 @@ class Typer {
 				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
 		};
 		DebugDump.typed("typeExpr", typed);
-		// Wraps the expression the preprocessor decided is the display subject; it and then answers with
-		// the toplevel collection. hxc has no EDisplay node in the typer, so the decision is recorded and
-		// read back here, at the same point and with the same expected type.
-		if (markedDisplay == e) { markedDisplay = null; raiseToplevelMarked(ctx, e, withType); }
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
 		if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed, ctx);
@@ -2701,28 +2693,19 @@ class Typer {
 				collectToplevel(ctx, WithTypeTools.withType(t), name == "null"));
 	}
 
-	// The expression the preprocessor marked as the display subject, recorded instead of wrapped since
-	// hxc's typer has no EDisplay node. Identity, not position, so an expression that merely shares a
-	// span is never mistaken for it.
-	public static var markedDisplay:Null<Expr> = null;
-
-	// /:105: the cursor in the whitespace where an expression is EXPECTED but has not been written - after
-	// a var's `=` or an assignment's - marks whatever the parser found there as the display subject, so the
-	// statement it swallowed is completed against instead of reported. The span runs from p0 (the var's
-	// type hint, or its name when it has none) to where that expression starts.
-	public static function markedGap(p0:Position, e:Expr):Bool {
-		if (!hxc.parser.Parser.displayCompletionMode || fieldCompletionFound != null) return false;
-		return atDisplayPos(new Position(p0.file, p0.min, e.pos.min));
-	}
-
 	// A marked expression that is not a field access answers with the toplevel collection keyed by its
 	// own dotted path; anything that is not a path (a call, a literal, `null`) has an empty subject,
 	// which is the sorted case.
 	public static function raiseToplevelMarked(ctx:TyperContext, e:Expr, withType:WithType):Void {
-		if (fieldCompletionFound != null) return;
 		var name = try Ast.stringListOfExprPathRaise(e).join(".") catch (_:Dynamic) "";
 		if (name == "null") name = "";
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, e.pos, withType);
+		raiseToplevelSubject(ctx, name, e.pos, withType);
+	}
+
+	// The collection, sorted exactly when the subject is empty.
+	static function raiseToplevelSubject(ctx:TyperContext, name:String, p:Position, withType:WithType):Void {
+		if (fieldCompletionFound != null) return;
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, p, withType);
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
@@ -3982,17 +3965,6 @@ class Typer {
 		var basic = ctx.com.basic;
 		return switch (c) {
 			case CIdent(s):
-				// Carries `not !was_annotated`: exactly one node in the expression is the display subject. A
-				// field access already answered here is that node, so a stand-in the recovery put at an
-				// enclosing position must not displace it. Both raises stand for the preprocessor's MARK, which
-				// places once the parser resumed: then only the parser's own node answers.
-				if (hxc.parser.Parser.hadResume) {}
-				else if (displayToplevelJson && atDisplayPos(p) && fieldCompletionFound == null)
-					throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), s == "null" ? null : s, p, withType);
-				else if (displayToplevel && atDisplayPos(p) && fieldCompletionFound == null)
-					// The recovery's `null` stand-in is an empty subject, and exactly when the subject is empty. A
-					// real identifier under the cursor keeps the collection order.
-					throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, s == "null"));
 				if (s == "super" && !withType.match(NoValue)) throw new TypingError("Cannot use super as value", p);
 				accGet(ctx, maybeTypeAgainstEnum(ctx, function() return typeIdent(ctx, s, p, mode, withType), withType, false, p));
 			case CInt(s, suffix):
@@ -4070,14 +4042,6 @@ class Typer {
 	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		// A reified $i{""} produces an empty ident.
 		if (i == "") throw new TypingError("Identifier name must not be empty", p);
-		// With the identifier as the SUBJECT: a cursor inside a name is a completion request on it.
-		// typeConst covers the value positions; a CALLEE is resolved here instead and never reached that
-		// check, so `f|oo("")` answered nothing.
-		if ((displayToplevel || displayToplevelJson) && fieldCompletionFound == null && mode.match(MCall(_)) && atDisplayPos(p)
-				&& !hxc.parser.Parser.hadResume) {
-			if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), i, p, withType);
-			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType));
-		}
 		if (i == "abstract") {
 			return switch [mode, ctx.curclass.kind] {
 				case [MSet(_), KAbstractImpl(_)]: throw new TypingError("Property 'abstract' is read-only", p);
@@ -4246,17 +4210,6 @@ class Typer {
 		// <Module>_Fields_ class) is visible unqualified within its own module.
 		var modStatic = resolveModuleStatic(ctx, i, p, mode);
 		if (modStatic != null) return modStatic;
-		var resolvedToTypeParameter = false;
-		for (tp in ctx.typeParams) if (tp.name == i) {
-			resolvedToTypeParameter = true;
-			switch (TypeFunctions.follow(TypeFunctions.extractParamType(tp))) {
-				case TInst(c, _) if (isGenericParameter(ctx, c) && TypeFunctions.hasMeta(":const", c.meta)):
-					var e = TexprTools.makeTypeExpr(TClassDecl(c), p);
-					return AKExpr(TypeFunctions.mk(e.expr, TypeFunctions.extractParamType(tp), e.pos));
-				case _:
-			}
-			break;
-		}
 		// A static-field import (`import M.field`) or a static wildcard (`import M.*` on a type) makes a
 		// static field or enum constructor available unqualified.
 		var imp = resolveImportedStatic(ctx, i, p, mode);
@@ -4269,6 +4222,19 @@ class Typer {
 			: hxc.context.ModuleLoader.resolveBareType(ctx.com, ctx.com.currentModule, i, p);
 		if (mt == null && !hxc.ast.Ast.isLowerIdent(i)) {
 			try mt = ctx.com.getType({pack: [], name: i}, p, null) catch (_:hxc.context.Context.ContextError) mt = null;
+		}
+		// Only an identifier that is no type is looked for among the type parameters, and only a @:const
+		// parameter of a @:generic class stands as a value.
+		var resolvedToTypeParameter = false;
+		if (mt == null) for (tp in ctx.typeParams) if (tp.name == i) {
+			resolvedToTypeParameter = true;
+			switch (TypeFunctions.follow(TypeFunctions.extractParamType(tp))) {
+				case TInst(c, _) if (isGenericParameter(ctx, c) && TypeFunctions.hasMeta(":const", c.meta)):
+					var e = TexprTools.makeTypeExpr(TClassDecl(c), p);
+					return AKExpr(TypeFunctions.mk(e.expr, TypeFunctions.extractParamType(tp), e.pos));
+				case _:
+			}
+			break;
 		}
 		if (mt == null) {
 			// In untyped mode an unresolved identifier becomes a TIdent, letting reification builtins such
@@ -4529,10 +4495,6 @@ class Typer {
 			if (cf != null && TypeFunctions.hasClassFieldFlag(cf, CfPublic))
 				return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
 		}
-		for (w in imports.wildcards) {
-			var mt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, w, p, null) catch (_:Dynamic) null;
-			if (mt != null) { var r = tryType(mt, i, true); if (r != null) { imports.markWildcard(w); return r; } }
-		}
 		return null;
 	}
 
@@ -4693,7 +4655,6 @@ class Typer {
 					var r = scanPath(imp.modulePath); if (r != null) return r;
 				}
 			}
-			for (w in imports.wildcards) { var r = scanPath(w); if (r != null) return r; }
 		}
 		return null;
 	}
@@ -4756,9 +4717,13 @@ class Typer {
 			return acc;
 		}
 		var pack = segs.slice(0, typeIdx);
-		// A leading `std` package selects the standard library type, bypassing a shadowing local or import
-		// (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). (std pack).
-		if (pack.length > 0 && pack[0] == "std") pack = pack.slice(1);
+		// A leading `std` package selects the standard library type, bypassing a shadowing local or
+		// import (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). loads the module
+		// std.x.Y first
+		// - a miss the extern-type loaders see - and only when that module does not exist the module x.Y.
+		if (pack.length > 0 && pack[0] == "std"
+				&& hxc.context.ModuleLoader.loadModuleOpt(ctx.com, {pack: pack, name: segs[typeIdx]}, p) == null)
+			pack = pack.slice(1);
 		var name = segs[typeIdx];
 		var rest = segs.slice(typeIdx + 1);
 		// A module with no same-named main type (e.g. unit.MyMacro holds only MyRestMacro /
@@ -5440,9 +5405,23 @@ class Typer {
 			var oldInDisplay = ctx.inDisplay;
 			ctx.inDisplay = true;
 			var acc = try typeAccessInner(ctx, edef, p, mode, withType)
+			catch (ex:hxc.core.TypingError.UnknownIdentError) {
+				if (hxc.parser.Parser.displayCompletionMode) raiseToplevelSubject(ctx, ex.ident, p, withType);
+				markedNodeFailed = true;
+				throw ex;
+			}
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
+			// Under DMDefault: a marked identifier - a callee, an assignment's target - answers the toplevel
+			// collection with its name as the subject, once it has been typed. (A marked field access
+			// reached here is typeExpr's.)
+			switch (edef) {
+				case EConst(CIdent(_)) if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume
+						&& hxc.typing.ExprPreprocessing.markedKind == DKMarked):
+					raiseToplevelMarked(ctx, mn, withType);
+				case _:
+			}
 			// The marked access answers the moment it is typed, so a CALLEE is reported before the call's
 			// arguments bind what its type still leaves open. The walk over the finished call reaches it
 			// only afterwards. An OVERLOADED field under MCall is first resolved against the call's
@@ -5719,19 +5698,6 @@ class Typer {
 	static function typeVars(ctx:TyperContext, vl:Array<EVar>, p:Position):TExpr {
 		var basic = ctx.com.basic;
 		var out:Array<{v:TVar, e:Null<TExpr>}> = [];
-		// The cursor on a var name marks nothing here (the declaration answers it, and every var after it
-		// is left alone); otherwise the first initializer whose leading gap holds the cursor becomes the
-		// display subject.
-		if (atDisplayPos(p)) for (ev in vl) {
-			if (atDisplayPos(ev.evName.pos)) break;
-			// A var with no expression has nothing to mark; a cursor on its type hint is picked up while
-			// that hint loads.
-			if (ev.evExpr == null) continue;
-			if (markedGap(ev.evType != null ? ev.evType.pos : ev.evName.pos, ev.evExpr)) {
-				markedDisplay = ev.evExpr;
-				break;
-			}
-		}
 		for (ev in vl) {
 			var n = ev.evName.name;
 			var pv = ev.evName.pos;

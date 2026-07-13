@@ -130,13 +130,28 @@ class Context {
 		var l = contextInits.get(m);
 		if (l == null || l.length == 0) return;
 		contextInits.remove(m);
-		for (f in l) f();
+		// Run import callbacks in their owning module's context so loaded modules become its
+		// dependencies.
+		var saved = currentModule;
+		currentModule = m;
+		try for (f in l) f() catch (e:Dynamic) { currentModule = saved; throw e; }
+		currentModule = saved;
 	}
 
 	/**
 	 * Loaded class-and-method pairs in this macro context; repeated loads skip finalization.
 	 */
 	public var cachedMacros:haxe.ds.StringMap<Bool> = new haxe.ds.StringMap();
+
+	/**
+	 * Per-world implicit using list: EnumTools followed by EnumValueTools.
+	 */
+	public var globalUsing:Array<hxc.core.Type.TClass> = [];
+
+	/**
+	 * Per-context import.hx declarations and their registered import modules, keyed by file path.
+	 */
+	public var parserCache:StringMap<Array<hxc.ast.Ast.TypeDecl>> = new StringMap();
 
 	/**
 	 * Core API loader context, separate for host and macro worlds.
@@ -482,6 +497,8 @@ class Context {
 		c.fileContents = this.fileContents.copy();
 		// Preserve the host's display error policy and diagnostics file set in the clone.
 		c.moduleNonexistentLut = this.moduleNonexistentLut;
+		// Snapshot extern loaders at clone time; later host registrations do not affect the clone.
+		c.loadExternType = this.loadExternType.copy();
 		c.ignoreErrors = this.ignoreErrors;
 		c.diagnosticsFileFilter = this.diagnosticsFileFilter;
 		return c;
@@ -784,6 +801,9 @@ class ModuleImports {
 	// Load using modules eagerly in declaration order, with importPositions indices, so resolution
 	// errors retain their place among imports.
 	public var rawUsings:Array<{path:Array<PlacedName>, pos:Position, idx:Int}> = [];
+	// Using classes in prepended lookup order with their import position; -1 means no declaration
+	// position.
+	public var usingClasses:Array<{c:hxc.core.Type.TClass, idx:Int}> = [];
 	// Track usage per import declaration. Unset flags become unused-import diagnostics; wildcardImp
 	// and usingImp index these flags.
 	public var importPositions:Array<{p:Position, used:Bool, ?failed:Bool}> = [];

@@ -13,14 +13,19 @@ class ExceptionFilters {
 	// haxe.Exception has a __shiftStack.
 	public static function patcher(tctx:TyperContext):ModuleType->Void {
 		var ctx = tctx.com;
-		var excCls:Null<TClass> = null;
-		for (m in ctx.modules) for (mt in m.types) switch (mt) {
-			case TClassDecl(c) if (c.path.name == "Exception" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"):
-				excCls = c;
-			case _:
-		}
-		var shiftCf = excCls == null ? null : excCls.fields.get("__shiftStack");
-		if (shiftCf == null) return function(_) {};
+		// haxe.Exception is loaded in the filters' context, so the module current there - the filters'
+		// own, the null module included - depends on it.
+		var saved = ctx.currentModule;
+		ctx.currentModule = tctx.filterModule;
+		var t = try Typeload.loadInstance(ctx, [], {tpackage: ["haxe"], tname: "Exception", tparams: [], tsub: null}, Position.nullPos, true)
+			catch (e:Dynamic) { ctx.currentModule = saved; throw e; };
+		ctx.currentModule = saved;
+		var excCls:Null<TClass> = switch (t) {
+			case TInst(c, _) if (c.fields.exists("__shiftStack")): c;
+			case _: null;
+		};
+		if (excCls == null) return function(_) {};
+		var shiftCf = excCls.fields.get("__shiftStack");
 		return function(mt:ModuleType) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern) && c != excCls && TypeFunctions.extendsClass(c, excCls)):
 				patchConstructor(tctx, c, excCls, shiftCf);

@@ -973,29 +973,8 @@ class Fields {
 		for (u in typeUsings(e.type, "")) tryClass(u.c);
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-		if (imports != null) {
-			var ups = imports.usings.copy();
-			ups.reverse();
-			for (up in ups) {
-				var um = try hxc.context.ModuleLoader.loadModule(ctx.com, up, p) catch (_:Dynamic) null;
-				if (um != null) {
-					var uts = um.types.copy();
-					uts.reverse();
-					for (mt in uts) if (!TypeFunctions.tInfos(mt).isPrivate) tryModuleType(mt);
-					continue;
-				}
-				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
-				if (mt != null) tryModuleType(mt);
-				else if (isMacroToolsUsing(up)) for (toolPath in macroToolsUsingModules) {
-					var tool = try ctx.com.getType(toolPath, p, null) catch (_:Dynamic) null;
-					if (tool != null) tryModuleType(tool);
-				}
-			}
-		}
-		for (gp in globalUsingModules) {
-			var gm = try hxc.context.ModuleLoader.loadModule(ctx.com, gp, p) catch (_:Dynamic) null;
-			if (gm != null) for (mt in gm.types) tryModuleType(mt);
-		}
+		if (imports != null) for (u in imports.usingClasses) tryClass(u.c);
+		for (c in ctx.com.globalUsing) tryClass(c);
 	}
 
 	static function tryUsingModuleType(ctx:TyperContext, mt:ModuleType, e:TExpr, i:String, p:Position):Null<AccessKind> {
@@ -1013,43 +992,6 @@ class Fields {
 			case _:
 				null;
 		};
-	}
-
-	// Compiler-wide static extensions applied to every module: haxe.EnumTools.{EnumTools, EnumValueTools}
-	// (so EnumValue.getIndex / Enum.createByName resolve without an explicit `using`). .
-	static var globalUsingModules:Array<hxc.core.Globals.Path> = [{pack: ["haxe"], name: "EnumTools"}];
-	static var macroToolsUsingModules:Array<hxc.core.Globals.Path> = [
-		{pack: ["haxe", "macro"], name: "ExprTools"},
-		{pack: ["haxe", "macro"], name: "ComplexTypeTools"},
-		{pack: ["haxe", "macro"], name: "TypeTools"},
-		{pack: ["haxe", "macro"], name: "MacroStringTools"},
-		{pack: ["haxe", "macro"], name: "TypedExprTools"},
-		{pack: ["haxe", "macro"], name: "PositionTools"}
-	];
-
-	static function isMacroToolsUsing(path:hxc.core.Globals.Path):Bool {
-		return path.pack.length == 2 && path.pack[0] == "haxe" && path.pack[1] == "macro" && path.name == "Tools";
-	}
-
-	// The classes one `using` contributes, as module_using holds them - a module's statics class and
-	// non-private types (a typedef resolved, an abstract its impl) last-declared first
-	// (filter_classes), or the single named type.
-	public static function usingClasses(com:hxc.context.Context, up:hxc.core.Globals.Path, p:Position):Array<TClass> {
-		var out:Array<TClass> = [];
-		function add(mt:ModuleType):Void switch (TypeFunctions.resolveTypedef(mt)) {
-			case TClassDecl(c): out.unshift(c);
-			case TAbstractDecl(a) if (a.impl != null): out.unshift(a.impl);
-			case _:
-		}
-		var um = try hxc.context.ModuleLoader.loadModule(com, up, p) catch (_:Dynamic) null;
-		if (um != null) {
-			if (um.statics != null) add(TClassDecl(um.statics));
-			for (mt in um.types) if (!TypeFunctions.tInfos(mt).isPrivate) add(mt);
-			return out;
-		}
-		var mt = try com.getType(up, p, null) catch (_:Dynamic) null;
-		if (mt != null) add(mt);
-		return out;
 	}
 
 	static function tryUsingList(ctx:TyperContext, usings:Array<TClassUsing>, e:TExpr, i:String, p:Position):Null<AccessKind> {
@@ -1076,56 +1018,20 @@ class Fields {
 		if (own != null) return own;
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-		if (imports != null) {
-			// A later using declaration takes priority: the reference prepends each using onto
-			// module_using, so lookup runs in reverse declaration order .
-			var ups = imports.usings.copy();
-			ups.reverse();
-			for (up in ups) {
-				// `using pack.Module` (no subtype) brings in every non-private type of the module as a
-				// static extension, not just the main type. filters isPrivate from md.types; getType returns
-				// only the main type, missing sibling extension classes (Issue5231/Issue7142). A subtype using
-				// (pack.Module.Sub) fails to load as a module and falls back to the single-type getType path
-				// below.
-				var um = try hxc.context.ModuleLoader.loadModule(ctx.com, up, p) catch (_:Dynamic) null;
-				if (um != null) {
-					// filter_classes reverses the module type list (last-declared type wins), so scan
-					// types back-to-front.
-					var uts = um.types.copy();
-					uts.reverse();
-					for (mt in uts) {
-						if (TypeFunctions.tInfos(mt).isPrivate) continue;
-						var r = tryUsingModuleType(ctx, mt, e, i, p);
-						if (r != null) { imports.markUsing(up); return r; }
-					}
-					continue;
-				}
-				var mt = try ctx.com.getType(up, p, null) catch (_:Dynamic) null;
-				if (mt != null) {
-					var r = tryUsingModuleType(ctx, mt, e, i, p);
-					if (r != null) { imports.markUsing(up); return r; }
-				} else if (isMacroToolsUsing(up)) {
-					for (toolPath in macroToolsUsingModules) {
-						var tool = try ctx.com.getType(toolPath, p, null) catch (_:Dynamic) null;
-						if (tool == null) continue;
-						var r = tryUsingModuleType(ctx, tool, e, i, p);
-						if (r != null) { imports.markUsing(up); return r; }
-					}
-				}
+		// The classes the module's usings contributed, the last declared first (each using's own
+		// classes are prepended).
+		if (imports != null) for (u in imports.usingClasses) {
+			var r = tryUsingClass(ctx, u.c, e, i, p);
+			if (r != null) {
+				if (u.idx >= 0) imports.markImport(u.idx);
+				return r;
 			}
 		}
-		// Global usings applied to every module. (ctx.g.global_using after module_using).
-		for (gp in globalUsingModules) {
-			var gm = try hxc.context.ModuleLoader.loadModule(ctx.com, gp, p) catch (_:Dynamic) null;
-			if (gm == null) continue;
-			for (mt in gm.types) switch (mt) {
-				case TClassDecl(uc):
-					var r = tryUsingClass(ctx, uc, e, i, p);
-					if (r != null) return r;
-				case TAbstractDecl(a) if (a.impl != null):
-					var r = tryUsingClass(ctx, a.impl, e, i, p);
-					if (r != null) return r;
-				case _:
+		for (c in ctx.com.globalUsing) {
+			var r = tryUsingClass(ctx, c, e, i, p);
+			if (r != null) {
+				hxc.context.ModuleLoader.addDependency(ctx.com.currentModule, c.module);
+				return r;
 			}
 		}
 		return null;

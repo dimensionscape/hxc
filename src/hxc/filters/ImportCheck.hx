@@ -115,7 +115,7 @@ class ImportCheck {
 					// a load does (plainImportsTried).
 					if (parts.length > 0) {
 						var lp = parts[parts.length - 1].pos;
-						var dkey = "lower!" + lp.file + "!" + lp.min + "!" + lp.max;
+						var dkey = "lower!" + m.id + "!" + lp.file + "!" + lp.min + "!" + lp.max;
 						if (!ctx.plainImportsTried.exists(dkey)) {
 							ctx.plainImportsTried.set(dkey, true);
 							ctx.addDiagnostic("Module name must start with an uppercase letter", lp);
@@ -128,7 +128,7 @@ class ImportCheck {
 				// And reports each import declaration: a second `import` of a module that failed to load fails
 				// again and is reported again. The sweep's own revisits dedup on the declaration, as the
 				// lowercase and using arms do.
-				var key = "import!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max + "!" + [for (pn in parts) pn.name].join(".");
+				var key = "import!" + m.id + "!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max + "!" + [for (pn in parts) pn.name].join(".");
 				if (ctx.plainImportsTried.exists(key)) continue;
 				ctx.plainImportsTried.set(key, true);
 				// The module load reports at the type path - the first pack segment through the module name
@@ -191,9 +191,11 @@ class ImportCheck {
 			tpack = [];
 			tname = parts[0];
 		}
-		// The sweep visits a module more than once (typeModule, then loadPlainImports), so the
-		// report dedups on the declaration exactly as the plain imports do.
-		var dkey = "using!" + us.pos.file + "!" + us.pos.min + "!" + us.pos.max;
+		// The sweep visits a module more than once (typeModule, then loadPlainImports), so the report
+		// dedups on the declaration exactly as the plain imports do. A declaration runs once per typing
+		// of the module, so the key is the module instance's: the macro context outlives a request, and a
+		// module it types again (the display file's) is a new one.
+		var dkey = "using!" + m.id + "!" + us.pos.file + "!" + us.pos.min + "!" + us.pos.max;
 		if (ctx.plainImportsTried.exists(dkey)) return false;
 		ctx.plainImportsTried.set(dkey, true);
 		// The two forms take DIFFERENT loaders, and the difference is not cosmetic: the bare form loads a
@@ -203,15 +205,21 @@ class ImportCheck {
 		// MyClass.UsingBase` inside `package unit` resolve unit.MyClass. The report covers the whole
 		// using declaration, where an import narrows to the type path.
 		var failed:Null<{msg:String, pos:Position, depth:Int}> = null;
+		var types:Null<Array<hxc.core.Type.ModuleType>> = null;
 		try {
 			if (tsub == null) {
-				ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, us.pos);
+				types = usingModuleTypes(ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, us.pos));
 			} else if (tpack.length > 0) {
 				// A qualified sub-type: one module, and a missing sub-type raises.
 				var md = ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, us.pos);
-				if (md != null) failed = subTypeError(ctx, md, tsub, us.pos);
+				if (md != null) {
+					failed = subTypeError(ctx, md, tsub, us.pos);
+					if (failed == null) types = [namedType(md, tsub)];
+				}
 			} else {
-				failed = loadUnqualifiedSub(ctx, tname, tsub, us.pos);
+				var found:Array<hxc.core.Type.ModuleType> = [];
+				failed = loadUnqualifiedSub(ctx, tname, tsub, us.pos, found);
+				if (failed == null && found.length > 0) types = [found[0]];
 			}
 		} catch (e:hxc.context.Context.ContextError) {
 			failed = {msg: e.message, pos: e.pos, depth: e.depth};
@@ -219,7 +227,15 @@ class ImportCheck {
 		// A parse failure is not a load error: it passes straight through and aborts the compile.
 		catch (pe:hxc.parser.ParserError) { throw pe; }
 		catch (_:Dynamic) { imports.markImportFailed(us.pos); return false; }
-		if (failed == null) return false;
+		if (failed == null) {
+			if (types != null) {
+				var usingTypes = types, idx = us.idx;
+				// The classes join the module's usings once the module's context initializes (delayed
+				// because typedefs must resolve first).
+				ctx.contextInitAdd(m, function() imports.usingClasses = usingClassesOf(usingTypes, idx).concat(imports.usingClasses));
+			}
+			return false;
+		}
 		ctx.addDiagnostic(failed.msg, failed.pos, failed.depth);
 		imports.markImportFailed(us.pos);
 		return true;
@@ -230,10 +246,12 @@ class ImportCheck {
 	 * package outward to the root. Every candidate but the last looks the sub-type up without raising
 	 * and moves on; only the root-package attempt reports. Returns null on success.
 	 */
-	static function loadUnqualifiedSub(ctx:Context, tname:String, tsub:String, p:Position):Null<{msg:String, pos:Position, depth:Int}> {
+	static function loadUnqualifiedSub(ctx:Context, tname:String, tsub:String, p:Position, ?found:Array<hxc.core.Type.ModuleType>):Null<{msg:String, pos:Position, depth:Int}> {
 		function tryPack(pack:Array<String>):Bool {
 			var md = try ModuleLoader.loadModule(ctx, {pack: pack, name: tname}, p) catch (_:Dynamic) null;
-			return md != null && ModuleLoader.findTypeInModuleOpt(md, tsub) != null;
+			var t = md == null ? null : ModuleLoader.findTypeInModuleOpt(md, tsub);
+			if (t != null && found != null) found.push(t);
+			return t != null;
 		}
 		var m = ctx.currentModule;
 		var imports = m == null ? null : ctx.moduleImports.get(Context.pathKey(m.path));
@@ -255,7 +273,56 @@ class ImportCheck {
 		catch (e:hxc.context.Context.ContextError) return {msg: e.message, pos: e.pos, depth: e.depth};
 		if (md == null)
 			return {msg: "Module " + tname + " does not define type " + tsub, pos: p, depth: 0};
-		return subTypeError(ctx, md, tsub, p);
+		var err = subTypeError(ctx, md, tsub, p);
+		if (err == null && found != null) found.push(namedType(md, tsub));
+		return err;
+	}
+
+	// The type of that name, once subTypeError has let it through, private or not (a module reaches its own
+	// private types).
+	static function namedType(md:hxc.core.Type.ModuleDef, tname:String):Null<hxc.core.Type.ModuleType> {
+		for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == tname) return mt;
+		return null;
+	}
+
+	// `using pack.Module` brings the module's statics class first, then every non-private type of the
+	// module.
+	static function usingModuleTypes(md:hxc.core.Type.ModuleDef):Array<hxc.core.Type.ModuleType> {
+		var types = [for (t in md.types) if (!TypeFunctions.tInfos(t).isPrivate) t];
+		if (md.statics != null) types.unshift(TClassDecl(md.statics));
+		return types;
+	}
+
+	// Each type resolved past its typedefs, a class itself and an abstract its implementation, prepended -
+	// so the last type comes first.
+	public static function usingClassesOf(types:Array<hxc.core.Type.ModuleType>, idx:Int):Array<{c:hxc.core.Type.TClass, idx:Int}> {
+		var acc:Array<{c:hxc.core.Type.TClass, idx:Int}> = [];
+		for (t in types) if (t != null) switch (TypeFunctions.resolveTypedef(t)) {
+			case TClassDecl(c): acc.unshift({c: c, idx: idx});
+			case TAbstractDecl(a) if (a.impl != null): acc.unshift({c: a.impl, idx: idx});
+			case _:
+		}
+		return acc;
+	}
+
+	// The using lookup for Context.withImports: the same two loaders, raising as they do.
+	public static function usingTypes(ctx:Context, parts:Array<String>, p:Position):Array<hxc.core.Type.ModuleType> {
+		if (parts.length == 0) return [];
+		var s1 = parts[parts.length - 1];
+		if (parts.length >= 2 && !hxc.ast.Ast.isLowerIdent(parts[parts.length - 2])) {
+			var tname = parts[parts.length - 2], tpack = parts.slice(0, parts.length - 2);
+			if (tpack.length > 0) {
+				var md = ModuleLoader.loadModule(ctx, {pack: tpack, name: tname}, p);
+				var err = subTypeError(ctx, md, s1, p);
+				if (err != null) throw new hxc.context.Context.ContextError(err.msg, err.pos);
+				return [namedType(md, s1)];
+			}
+			var found:Array<hxc.core.Type.ModuleType> = [];
+			var err = loadUnqualifiedSub(ctx, tname, s1, p, found);
+			if (err != null) throw new hxc.context.Context.ContextError(err.msg, err.pos);
+			return found.length > 0 ? [found[0]] : [];
+		}
+		return usingModuleTypes(ModuleLoader.loadModule(ctx, {pack: parts.slice(0, parts.length - 1), name: s1}, p));
 	}
 
 	/**

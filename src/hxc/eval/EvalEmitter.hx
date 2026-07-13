@@ -614,23 +614,13 @@ class EvalEmitter {
 	static function evalField(ctx:EvalContext, e1:TExpr, fa:TFieldAccess, p:Position, ?pre:EvalValue):EvalValue {
 		return switch (fa) {
 			case FStatic(c, cf):
-				// A static field missing from the prototype means its owning body was not typed and
-				// installed (a module pulled into the macro world after the interpreter was built only
-				// force-types its reachable statics). Type it on demand and install it, then retry; a
-				// genuine gap surfaces as a catchable interpreted exception so the running program keeps
-				// going rather than a host NotFound aborting the whole run.
+				// A static field missing from the prototype is a builtin's, or a gap that surfaces as a
+				// catchable interpreted exception rather than a host NotFound aborting the whole run.
 				try EvalField.protoFieldRaise(ensureStaticProto(ctx, c, p), EvalHash.hash(cf.name))
 				catch (_:hxc.core.NotFound) {
-					// A macro API class's DECLARED static late-types (its typed wrapper must run); the
-					// builtin backs only genuine gaps. (natives through load).
-					if (hxc.eval.EvalPrototype.isMacroApiClass(ctx, c)) {
-						var late0 = lateStaticMethod(ctx, c, cf);
-						if (late0 != null) return late0;
-					}
 					var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
 					if (builtins != null) for (b in builtins) if (b.name == EvalHash.hash(cf.name)) return b.v;
-					var late = lateStaticMethod(ctx, c, cf);
-					late != null ? late : EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
+					EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
 				}
 			case FEnum(en, ef):
 				try EvalField.protoFieldRaise(EvalContext.getStaticPrototype(ctx, EvalHash.pathHash(en.path), p), EvalHash.hash(ef.name))
@@ -641,9 +631,7 @@ class EvalEmitter {
 				switch (recv) {
 					case VNull: VNull;
 					case _:
-						if (cf.expr == null && ctx.com != null && cwp != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, cwp.c, cf);
-						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
-						if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
+						EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 				}
 			// Array, eval.Vector and haxe.io.Bytes lengths are their own reads.
 			case FInstance(c, _, cf) if (cf.name == "length" && (isArrayClass(c) || isEvalVector(c) || isBytesClass(c))):
@@ -672,9 +660,7 @@ class EvalEmitter {
 					case _:
 						switch (cf.kind) {
 							case Method(_):
-								if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
-								var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
-								if (v == VNull) lateInstanceMethod(ctx, recv, cf) else v;
+								EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 							// A class's field reads as an instance field, which takes an instance, answers
 							// a string's length whatever the field, and finds anything else unexpected;
 							// `this` has its own read, whose decode is the plain unexpected-value error.
@@ -698,131 +684,11 @@ class EvalEmitter {
 					// A structure's field read raises on a null receiver.
 					case VNull: EvalExceptions.excString(ctx, "field access on null", e1.pos);
 					case _:
-						var v = EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
-						if (v == VNull) lateInstanceMethodByName(ctx, recv, cf.name, p) else v;
+						EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
 				}
 			case FDynamic(s):
 				EvalField.dynamicField(ctx, pre != null ? pre : eval(ctx, e1), EvalHash.hash(s));
 		};
-	}
-
-	// Types a static method's body on demand and installs it into the class's static prototype,
-	// returning the callable value; null when the field has no method body to install. Mirrors
-	// lateInstanceMethod for statics (a lazily added macro module force-types only reachable statics).
-	static function lateStaticMethod(ctx:EvalContext, c:TClass, cf:TClassField):Null<EvalValue> {
-		// The field access may carry a clone (a multiType cast field is rebuilt with the
-		// abstract's parameters applied); forcing needs the canonical field, whose identity
-		// matches the parsed decl.
-		switch (ctx.typeCache.get(EvalHash.pathHash(c.path))) {
-			case TClassDecl(realC):
-				var real = realC.statics.get(cf.name);
-				if (real != null && real != cf) { c = realC; cf = real; }
-			case _:
-		}
-		if (cf.expr == null) {
-			var com = ctx.com;
-			var mc = hxc.eval.EvalMacro.getMacroCom();
-			if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
-			if (com == null) com = hxc.eval.EvalMacro.hostCom;
-			if (com != null) {
-				var savedMod = com.currentModule;
-				com.currentModule = c.module;
-				try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (e:Dynamic) {
-					if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
-						Sys.println("[latestatic] force " + c.path.name + "." + cf.name + " threw: " + Std.string(e));
-				}
-				com.currentModule = savedMod;
-				if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
-			}
-		}
-		return switch (cf.expr) {
-			case {expr: TFunction(tf)}:
-				var key = EvalHash.pathHash(c.path);
-				var proto = ctx.staticPrototypes.get(key);
-				if (proto == null) return null;
-				var name = EvalHash.hash(cf.name);
-				var info = EvalContext.createEnvInfo(true, cf.namePos, EKMethod(key, name), 0, 0);
-				var vf = VFunction(EvalPrototype.makeFunction(ctx, tf, false, info), true);
-				var idx = proto.pnames.get(name);
-				if (idx == null) {
-					proto.pnames.set(name, proto.pfields.length);
-					proto.pfields.push(vf);
-				} else {
-					proto.pfields[idx] = vf;
-				}
-				vf;
-			case _: null;
-		}
-	}
-
-	static function lateInstanceMethod(ctx:EvalContext, recv:EvalValue, cf:TClassField):EvalValue {
-		return switch (recv) {
-			case VInstance(vi):
-				// A method of a lazily loaded module may not have its body typed yet (a macro-world
-				// module pulled in during body typing only forces reachable statics); type it now.
-				if (cf.expr == null) switch (ctx.typeCache.get(vi.iproto.ppath)) {
-					case TClassDecl(c):
-						var com = ctx.com;
-						var mc = hxc.eval.EvalMacro.getMacroCom();
-						if (mc != null && c.module != null && mc.moduleLut.get(hxc.context.Context.pathKey(c.module.path)) == c.module) com = mc;
-						if (com == null) com = hxc.eval.EvalMacro.hostCom;
-						if (com != null) {
-							var savedMod = com.currentModule;
-							com.currentModule = c.module;
-							try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
-							com.currentModule = savedMod;
-							// Typing the body may have pulled new modules into the macro world.
-							if (com == hxc.eval.EvalMacro.getMacroCom()) hxc.eval.EvalMacro.syncMacroModules();
-						}
-					case _:
-				}
-				switch (cf.expr) {
-					case {expr: TFunction(tf)}:
-						var name = EvalHash.hash(cf.name);
-						var info = EvalContext.createEnvInfo(false, cf.namePos, EKMethod(vi.iproto.ppath, name), 0, 0);
-						var vf = VFunction(EvalPrototype.makeFunction(ctx, tf, true, info), false);
-						var idx = vi.iproto.pnames.get(name);
-						if (idx == null) {
-							vi.iproto.pnames.set(name, vi.iproto.pfields.length);
-							vi.iproto.pfields.push(vf);
-						} else {
-							vi.iproto.pfields[idx] = vf;
-						}
-						switch (vf) {
-							case VFunction(f, _): VFieldClosure(recv, f);
-							case _: VNull;
-						}
-					case _:
-						var typeName = EvalHash.revHash(vi.iproto.ppath);
-						EvalExceptions.excString(ctx, "hxc: method body is not available: " + (typeName == null ? "?" : typeName) + "." + cf.name, cf.namePos);
-				}
-			case _:
-				VNull;
-		}
-	}
-
-	static function lateInstanceMethodByName(ctx:EvalContext, recv:EvalValue, name:String, p:Position):EvalValue {
-		return switch (recv) {
-			case VInstance(vi):
-				switch (ctx.typeCache.get(vi.iproto.ppath)) {
-					case TClassDecl(c):
-						try {
-							var r = TypeFunctions.rawClassField(function(f) return f.type, c, TypeFunctions.extractParamTypes(c.params), name);
-							switch (r.c2) {
-								case null:
-								case cwp:
-									if (r.f.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, cwp.c, r.f);
-							}
-							lateInstanceMethod(ctx, recv, r.f);
-						} catch (_:hxc.core.NotFound) {
-							VNull;
-						}
-					case _:
-						VNull;
-				}
-			case _:
-				VNull;
-		}
 	}
 
 	// Every call begins by checking the CALLER's depth, before its receiver and arguments, so the deepest

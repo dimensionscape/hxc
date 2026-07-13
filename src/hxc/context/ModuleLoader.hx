@@ -1466,31 +1466,52 @@ class ModuleLoader {
 		addModule(ctx, m);
 	}
 
-	static function handleImportHx(ctx:Context, m:ModuleDef, decls:Array<TypeDecl>):Array<TypeDecl> {
+	static function handleImportHx(ctx:Context, m:ModuleDef, decls:Array<TypeDecl>, ?p:Position):Array<TypeDecl> {
 		var file = m.extra.file;
 		if (file == null || file == "" || !FileSystem.exists(file)) return decls;
 		var dir = StringTools.replace(file, "\\", "/");
 		var slash = dir.lastIndexOf("/");
 		dir = slash < 0 ? "" : dir.substr(0, slash);
-		var imports:Array<TypeDecl> = [];
+		if (p == null) p = Position.nullPos;
+		// makeImportModule: the parsed declarations go to the parser cache and a module named by the file
+		// path itself registers for the file.
+		function makeImportModule(path:String, r:Array<TypeDecl>):ModuleDef {
+			ctx.parserCache.set(path, r);
+			var mi = makeModule(ctx, {pack: [], name: path}, path);
+			mi.extra.kind = MImport;
+			addModule(ctx, mi, p);
+			return mi;
+		}
+		var acc = decls;
 		var count = m.path.pack.length + 1;
 		for (_ in 0...count) {
 			var candidate = dir == "" ? "import.hx" : dir + "/import.hx";
-			if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate)) {
-				var absoluteCandidate = FileSystem.fullPath(candidate);
+			var path = try FileSystem.fullPath(candidate) catch (_:Dynamic) candidate;
+			var r = ctx.parserCache.get(path);
+			var mimport = r == null ? null : ctx.moduleLut.get(Context.pathKey({pack: [], name: path}));
+			if (r != null && mimport != null) {
+				// A file met before is not read again; one that exists makes the module depend on it.
+				if (mimport.extra.kind != MFake) addDependency(m, mimport);
+			} else if (FileSystem.exists(candidate) && !FileSystem.isDirectory(candidate)) {
 				// Read like any module: a display request's unsaved import.hx is what applies, not the copy
 				// on disk.
-				var pkg = parseModuleFile(ctx, moduleFileContent(ctx, absoluteCandidate), absoluteCandidate);
+				var pkg = parseModuleFile(ctx, moduleFileContent(ctx, path), path);
 				for (decl in pkg.decls) switch (decl.decl) {
 					case EImport(_) | EUsing(_):
 					case _: throw new TypingError("Only import and using is allowed in import.hx files", decl.pos);
 				}
-				imports = pkg.decls.concat(imports);
+				r = pkg.decls;
+				addDependency(m, makeImportModule(path, r));
+			} else {
+				// An empty entry, so the file system is not asked again.
+				r = [];
+				makeImportModule(path, r).extra.kind = MFake;
 			}
+			acc = r.concat(acc);
 			var parent = dir.lastIndexOf("/");
 			dir = parent < 0 ? "" : dir.substr(0, parent);
 		}
-		return imports.concat(decls);
+		return acc;
 	}
 
 	// Every class's build is queued as its declaration is reached, an abstract's implementation included
@@ -1988,10 +2009,6 @@ class ModuleLoader {
 				var m = { var _m = try loadModuleOpt(ctx, ni.modulePath, p) catch (_:ContextError) null; if (_m == null) continue; _m; };
 				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markImport(ni.impIdx); return mt; }
 			}
-			for (wp in imports.wildcards) {
-				var m = { var _m = try loadModuleOpt(ctx, wp, p) catch (_:ContextError) null; if (_m == null) continue; _m; };
-				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markWildcard(wp); return mt; }
-			}
 		}
 		return null;
 	}
@@ -2124,9 +2141,7 @@ class ModuleLoader {
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
 		if (imports == null) return null;
 		for (wp in imports.wildcards) {
-			var r = tryLoadSub(ctx, wp, name, p);
-			if (r != null) { imports.markWildcard(wp); return r; }
-			r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
+			var r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
 			if (r != null) { imports.markWildcard(wp); return r; }
 		}
 		return null;
@@ -2300,7 +2315,8 @@ class ModuleLoader {
 		// haxe.EnumTools (the global `using`) loads at typer creation, before any init macro runs, so
 		// global metadata registered by one never reaches it: `addGlobalMetadata("", "@:build(...)")`
 		// does not build it.
-		loadModule(ctx, {pack: ["haxe"], name: "EnumTools"}, p);
+		var enumTools = loadModule(ctx, {pack: ["haxe"], name: "EnumTools"}, p);
+		ctx.globalUsing = [for (mt in enumTools.types) switch (mt) { case TClassDecl(c): c; case _: null; }].filter(c -> c != null);
 		// haxe.Exception is always loaded at typer creation (its closure pulls CallStack/ReadOnlyArray,
 		// whose `to Iterable` unify marks Array.iterator)
 		loadModule(ctx, {pack: ["haxe"], name: "Exception"}, p);
@@ -2332,15 +2348,7 @@ class ModuleLoader {
 		return [for (f in d.dData) transformAbstractField(thisT, aT, a, f, ctx)];
 	}
 
-	/**
-		The rewritten constructor's `this` variable and function, by the field transformAbstractField made.
-		runs inside init_class, where the abstract's header is resolved, and types both from it with
-		convert_type' the impl's build sets them (TypeFields.installClassFields) before the constructor's
-		signature is read.
-	*/
-	public static var abstractCtorHints:haxe.ds.ObjectMap<ClassField, {thisVar:EVar, func:Func}> = new haxe.ds.ObjectMap();
-
-	static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField, ?com:Context):ClassField {
+	public static function transformAbstractField(thisT:TypeHint, aT:TypeHint, a:TAbstract, f:ClassField, ?com:Context):ClassField {
 		var stat = false;
 		for (acc in f.cffAccess) if (acc.access == AStatic) stat = true;
 		var p = f.cffPos;
@@ -2406,7 +2414,6 @@ class ModuleLoader {
 					cffName: {name: "_new", pos: f.cffName.pos}, cffDoc: f.cffDoc, cffPos: f.cffPos,
 					cffMeta: meta, cffAccess: access, cffKind: FFun(fu2)
 				};
-				abstractCtorHints.set(cff, {thisVar: thisVar, func: fu2});
 				return cff;
 			case FFun(fu) if (!stat):
 				// A cast function is called with no receiver, so it has to be static; the member form would

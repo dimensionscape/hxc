@@ -112,8 +112,11 @@ class ExprPreprocessing {
 		return isHover ? (p.min <= dpos && dpos < p.max) : (p.min <= dpos && dpos <= p.max);
 	}
 
-	// Cleared per request, not per field: only one field can hold the cursor, and the macro world
-	// types its own fields through the same entry point while a macro call is running.
+	// The node the pass decided is the display SUBJECT, kept by IDENTITY. hxc does not carry the
+	// annotated tree, so the wrapper is materialized only where the marked node is observable to user
+	// code: the arguments a MACRO is handed. Cleared per request, not per field: only one field can
+	// hold the cursor, and the macro world types its own fields through the same entry point while a
+	// macro call is running.
 	public static var markedNode:Null<Expr> = null;
 	public static var markedKind:hxc.ast.Ast.DisplayKind = DKMarked;
 
@@ -182,7 +185,7 @@ class ExprPreprocessing {
 				loop(changed ? new Expr(ESwitch(me1, mcases, mdef), e.pos) : e);
 			case _:
 				// Rebuild only along the path that actually changed. hxc keys several display
-				// mechanisms on node IDENTITY (Typer.markedDisplay, Typer.synthesizedNodes), so a
+				// mechanisms on node IDENTITY (markedNode, Typer.synthesizedNodes), so a
 				// wholesale copy of the body silently defeats all of them.
 				var changed = false;
 				var mapped = Ast.mapExpr(function(c) {

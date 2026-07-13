@@ -412,6 +412,7 @@ class Optimizer {
 		function mkTypeexpr(path:Path):TExpr {
 			var m = com.moduleLut.get(Context.pathKey(path));
 			if (m == null) throw new TypingError("Type not loaded: " + Context.sTypePath(path), p);
+			hxc.context.ModuleLoader.addDependency(com.currentModule, m);
 			for (mt in m.types) switch (mt) {
 				case TClassDecl(cl) if (cl.path.name == path.name && cl.path.pack.join(".") == path.pack.join(".")):
 					return TexprTools.makeStaticThis(cl, p);

@@ -730,7 +730,6 @@ class EvalPrototype {
 				if (isRemovable(cf)) continue;
 				switch (cf.kind) {
 					case Method(_):
-						if (cf.expr == null && ctx.com != null) hxc.typing.TypeFields.forceFieldBody(ctx.com, c, cf);
 						var tf = asFunction(cf.expr);
 						if (tf != null) {
 							var idx = pfields.length;
@@ -747,31 +746,7 @@ class EvalPrototype {
 							addNameAlias(pnames, cf, idx);
 							pfields.push(VNull);
 						}
-					case Var(_) if (cf.expr != null || {
-						// Statics are typed lazily; an initializer never forced (reachable only
-						// through a stored closure, say) would otherwise become a silent null slot.
-						// Enum-abstract members and inline vars are exempt (reads are inlined, the
-						// slot is never consulted), as are std classes (their inits were never
-						// evaluated here, and some cannot run while the context is mid-build).
-						var plainVar = !TypeFunctions.hasClassFieldFlag(cf, CfEnum) && switch (cf.kind) {
-							case Var({read: AccNormal | AccNo, write: AccNormal | AccNo | AccNever | AccCtor}): true;
-							case _: false;
-						};
-						if (plainVar) {
-							var com = worldCom(ctx, c);
-							var isStd = com != null && c.module != null && {
-								var f = StringTools.replace(c.module.extra.file, "\\", "/");
-								var std = false;
-								for (p in com.stdPath) if (StringTools.startsWith(f, StringTools.replace(p, "\\", "/"))) { std = true; break; }
-								std;
-							};
-							if (com != null && !isStd) {
-								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[varforce] " + c.path.name + "." + cf.name);
-								hxc.typing.TypeFields.forceFieldBody(com, c, cf);
-							}
-						}
-						cf.expr != null;
-					}):
+					case Var(_) if (cf.expr != null):
 						var idx = pfields.length;
 						pnames.set(EvalHash.hash(cf.name), idx);
 						addNameAlias(pnames, cf, idx);
@@ -860,15 +835,6 @@ class EvalPrototype {
 			if (isRemovable(cf)) continue;
 			switch (cf.kind) {
 				case Method(_):
-					// An override with an untyped body must still claim its slot: the lookup
-					// would otherwise find the inherited method and never reach the late
-					// forcing path, so dispatch through a base-typed ref runs the base body.
-					// Macro world only: interp classes are fully typed before emission, and
-					// forcing across worlds here re-enters typing with mismatched contexts.
-					if (cf.expr == null && ctx.isMacro && TypeFunctions.hasClassFieldFlag(cf, CfOverride)) {
-						var com = worldCom(ctx, c);
-						if (com != null) try hxc.typing.TypeFields.forceFieldBody(com, c, cf) catch (_:Dynamic) {}
-					}
 					var tf = asFunction(cf.expr);
 					if (tf != null) {
 						var idx = pfields.length;

@@ -24,6 +24,9 @@ import hxc.eval.EvalHash;
 class EvalMacro {
 	static var macroCtx:Null<EvalContext> = null;
 	static var lastModuleCount:Int = -1;
+	// A macro-world module was dropped (server eviction, the display file's re-load): the next flush
+	// has types to replace even when the module count came back to what it was.
+	static var macroWorldDirty:Bool = false;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
 	static var macroCallDepth = 0;
@@ -182,12 +185,13 @@ class EvalMacro {
 		// The expression filters are built once per flush, the exceptions filter's setup included, with the
 		// macro context's current module in effect.
 		var exceptions = hxc.filters.Exceptions.filter(tctx);
+		// The type filters, built once per flush: removeGenericBase, the exceptions constructor patcher
+		// (whose instance load runs here, still under the macro context's current module), addFieldInits
+		// (over RenameVars.init of the macro com) and applyNativePaths. The compilation server's snapshot
+		// of what the filters change is not taken, since hxc's macro world is reused.
+		var patchConstructors = hxc.typing.ExceptionFilters.patcher(tctx);
 		macroCurModule = null;
-		// Built once per flush: remove_generic_base, Exceptions.patch_constructors, add_field_inits (over
-		// RenameVars.init of the macro com), minimal_restore - the compilation server's snapshot of what
-		// the filters change, which hxc's reused macro world does not take - and apply_native_paths.
 		var renameLocals = hxc.filters.RenameVars.init(mcom.types, false, false);
-		var patchConstructors:Null<ModuleType->Void> = null;
 		for (t in types) {
 			var decl:Dynamic = switch (t) { case TClassDecl(c): c; case TEnumDecl(en): en; case TTypeDecl(td): td; case TAbstractDecl(a): a; };
 			if (macroFiltered.exists(decl)) continue;
@@ -202,9 +206,7 @@ class EvalMacro {
 				{name: "Exceptions", f: exceptions},
 				{name: "captured_vars", f: function(e) return hxc.filters.CapturedVars.capturedVars(mcom, e)},
 			], t);
-			// `ready`: the type filters follow the expression filters, type by type. patch_constructors
-			// loads haxe.Exception when it is built which the Exceptions filter above has done by now.
-			if (patchConstructors == null) patchConstructors = hxc.typing.ExceptionFilters.patcher(tctx);
+			// `ready`: the type filters follow the expression filters, type by type.
 			hxc.filters.Filters.removeGenericBase(t);
 			patchConstructors(t);
 			hxc.filters.Filters.addFieldInits(mcom, tctx, renameLocals, t);
@@ -604,7 +606,12 @@ class EvalMacro {
 			// init_import / init_using LOAD each module now, so a missing one is "Type not found" here, not
 			// at some later lookup that may never come.
 			for (iv in arrOf(a[0])) { var spec = strOf(iv); addImportSpec(next, spec); loadImportModule(com, spec); }
-			for (uv in arrOf(a[1])) { var spec = strOf(uv); next.usings.push(pathFromDotted(spec)); loadImportModule(com, spec); }
+			// init_using for each, and the context_init it fills runs at once.
+			for (uv in arrOf(a[1])) {
+				var spec = strOf(uv);
+				next.usings.push(pathFromDotted(spec));
+				next.usingClasses = hxc.filters.ImportCheck.usingClassesOf(hxc.filters.ImportCheck.usingTypes(com, spec.split("."), Position.nullPos), -1).concat(next.usingClasses);
+			}
 			com.moduleImports.set(key, next);
 			try {
 				var ret = applyFn(ec, a[2], []);
@@ -958,7 +965,9 @@ class EvalMacro {
 			for (key in old.names.keys()) names.set(key, old.names.get(key));
 			for (key in old.globals.keys()) globals.set(key, old.globals.get(key));
 		}
-		return new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals, old == null ? [] : old.rawImports.copy());
+		var next = new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals, old == null ? [] : old.rawImports.copy());
+		if (old != null) next.usingClasses = old.usingClasses.copy();
+		return next;
 	}
 
 	static function restoreImports(com:Context, key:String, old:Null<hxc.context.Context.ModuleImports>):Void {
@@ -975,7 +984,7 @@ class EvalMacro {
 		var path = macroTypeDefinitionPath(ec, v);
 		var td = decodeTypeDefinition(ec, v, dp);
 		var hasMacroFields = isMacroClassDecl(td.decl);
-		var hostDep = macroTypeDep(com, moduleDependency, dp);
+		var hostDep = macroTypeDep(com, moduleDependency, dp, com.currentModule);
 		// The module-types check reports at the position the definition carries (defineType passes the API
 		// call's); the loader raises it without one.
 		var hostModule = try hxc.context.ModuleLoader.defineTypeDecl(com, path, td.decl, td.pos, hostDep)
@@ -992,23 +1001,20 @@ class EvalMacro {
 				hxc.context.ModuleLoader.initBasicTypes(macroCom);
 			}
 			var macroTd = decodeTypeDefinition(ec, v, dp);
-			var macroDep = macroTypeDep(macroCom, moduleDependency, dp);
+			var macroDep = macroTypeDep(macroCom, moduleDependency, dp, macroCurModule);
 			var macroModule = hxc.context.ModuleLoader.defineTypeDecl(macroCom, path, macroTd.decl, macroTd.pos, macroDep);
 			macroModule.extra.kind = MMacro;
 			addMacroTypeDependency(macroCom, macroModule, macroDep);
 			hxc.typing.TypeResolve.resolveModule(macroCom, macroModule);
-			staleMacroCtx = macroCtx;
-			macroCtx = null;
-			lastModuleCount = -1;
 		}
 	}
 
 	// The module a macro-created one is attributed to and depends on: the named one, else the current
 	// module. Resolved before the definition, because the definition types against this module's file.
-	static function macroTypeDep(com:Context, moduleDependency:EvalValue, p:Position):Null<ModuleDef> {
+	static function macroTypeDep(com:Context, moduleDependency:EvalValue, p:Position, curmod:Null<ModuleDef>):ModuleDef {
 		if (moduleDependency != VNull)
 			return hxc.context.ModuleLoader.loadModule(com, pathFromDotted(strOf(moduleDependency)), p);
-		return com.currentModule;
+		return curmod != null ? curmod : TypeFunctions.nullModule;
 	}
 
 	static function addMacroTypeDependency(com:Context, m:ModuleDef, mdep:Null<ModuleDef>):Void {
@@ -1106,7 +1112,25 @@ class EvalMacro {
 			spec = StringTools.trim(spec.substr(0, asIndex));
 		}
 		if (StringTools.endsWith(spec, ".*")) {
-			imports.wildcards.push(pathFromDotted(spec.substr(0, spec.length - 2)));
+			var wparts = spec.substr(0, spec.length - 2).split(".");
+			var wsplit = splitImportPath(wparts);
+			if (wsplit == null) {
+				imports.wildcards.push(pathFromDotted(spec.substr(0, spec.length - 2)));
+				return;
+			}
+			var com = currentCompiler();
+			var mt = try com.getType(wsplit.modulePath, hxc.ast.Position.nullPos, wsplit.sub) catch (_:Dynamic) null;
+			if (mt != null) switch (TypeFunctions.resolveTypedef(mt)) {
+				case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
+					for (cf in cl.orderedStatics)
+						if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta))
+							imports.globals.set(cf.name, {ownerPath: wsplit.modulePath, ownerSub: wsplit.sub, field: cf.name});
+				case TEnumDecl(en):
+					for (name in en.names)
+						if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta))
+							imports.globals.set(name, {ownerPath: wsplit.modulePath, ownerSub: wsplit.sub, field: name});
+				case _:
+			}
 			return;
 		}
 		var split = splitImportPath(spec.split("."));
@@ -1339,7 +1363,7 @@ class EvalMacro {
 				if (t != null) {
 					var targetPath:hxc.core.Globals.Path = {pack: t.pack, name: t.name};
 					var targetModule = com.typeToModule.get(Context.pathKey(targetPath));
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, targetModule, modul, entry.pos);
+					loadMacro(com, {pack: t.pack, name: t.module}, t.method, targetModule, modul, entry.pos, false, t.name != t.module ? t.name : null);
 				}
 			case _:
 		}
@@ -1469,6 +1493,18 @@ class EvalMacro {
 		var newFields = callBuildMacro(com, entry, c.module, c, TInst(c, TypeFunctions.extractParamTypes(c.params)),
 			TypeFunctions.extractParamTypes(c.params), c.params, d.dData, d.dName.pos);
 		if (newFields == null) return;
+		// Every field a class build returns is transformed again; for an abstract's implementation the
+		// header is resolved by now, so a constructor's `this` and return are written from it.
+		switch (c.kind) {
+			case KAbstractImpl(a):
+				var hints = try {
+					aT: hxc.core.TexprToExpr.convertTypeHint(TAbstract(a, [for (tp in a.params) tp.type])),
+					thisT: hxc.core.TexprToExpr.convertTypeHint(a.thisType)
+				} catch (_:hxc.core.ExitException) null;
+				if (hints != null)
+					newFields = [for (f in newFields) hxc.context.ModuleLoader.transformAbstractField(hints.thisT, hints.aT, a, f, com)];
+			case _:
+		}
 		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
 		// The FINAL field list is checked, the build's included (a duplicate name, a variable without hint
@@ -1816,8 +1852,8 @@ class EvalMacro {
 						curPos = savedPos;
 						continue;
 					}
-					// Loads at the --macro position.
-					loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, true, null, null, e.pos);
+					// The init macro loads at the --macro position, through the ordinary macro load.
+					loadMacro(com, {pack: t.pack, name: t.module}, t.method, null, null, e.pos, false, t.name != t.module ? t.name : null);
 					var ec = getContext(com);
 					var savedPos = curPos;
 					curPos = e.pos;
@@ -2268,7 +2304,7 @@ class EvalMacro {
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
 		doReuse(com);
-		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length)) {
+		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length || macroWorldDirty)) {
 			building = true;
 			try {
 				// The interpreter runs macro-world code, so build it from the macro context's modules
@@ -2290,21 +2326,15 @@ class EvalMacro {
 					registerContext(ec, com);
 					flushMacroWorld(ec);
 					if (interpHadError) ec.hadError = true;
-					// A rebuild must not reset macro-world static state; carry static var values over from
-					// the retired context.
-					if (staleMacroCtx != null) {
-						migrateMacroStatics(staleMacroCtx, ec);
-						staleMacroCtx = null;
-					}
 					macroCtx = ec;
-				} else if (macroCom.modules.length > lastModuleCount) {
+				} else {
 					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] EXTEND from " + lastModuleCount + " to " + macroCom.modules.length);
-					// Extend the existing context with only the newly loaded modules. Rebuilding the whole
-					// macro context on every macro-load (a suite macro-loads O(N) classes) would be O(N^2)
-					// and exhaust the GC ("Too many heap sections").
+					// The interpreter takes only the types it has not seen (or whose module was typed
+					// again) and keeps everything else, for the compilation.
 					flushMacroWorld(macroCtx);
 				}
 				lastModuleCount = macroCom.modules.length;
+				macroWorldDirty = false;
 			} catch (e:Dynamic) { building = false; throw e; }
 			building = false;
 		}
@@ -2339,6 +2369,9 @@ class EvalMacro {
 		// apart by EPOCH rather than cleared, which the generic lookups still need. The module
 		// redefinition check is what needs it.
 		if (macroCom != null) macroCom.compilationEpoch++;
+		// The cached macros belong to the compilation: every request loads its macros again - a module
+		// evicted since is re-typed and adding types replaces its prototypes.
+		if (macroCom != null) macroCom.cachedMacros = new haxe.ds.StringMap();
 		macroCurModule = null;
 		pendingDisplayEvict = true;
 		pendingStaleSweep = true;
@@ -2415,6 +2448,7 @@ class EvalMacro {
 	// The module OBJECT survives as a dependency of whatever it built, and that is the copy the
 	// dirty-subgraph walk consults, so it is tainted as well as dropped.
 	static function dropMacroModule(m:ModuleDef, ?taintReason:String):Void {
+		macroWorldDirty = true;
 		if (taintReason != null) m.extra.cacheState = MSBad(Tainted(taintReason));
 		macroCom.modules.remove(m);
 		macroCom.moduleLut.remove(hxc.context.Context.pathKey(m.path));
@@ -2440,12 +2474,6 @@ class EvalMacro {
 			else survivors.set(m, true);
 		if (stale.length == 0) return;
 		for (m in stale) dropMacroModule(m);
-		// The interpreter's prototypes still point at the retired fields, so it is rebuilt.
-		if (macroCtx != null) {
-			staleMacroCtx = macroCtx;
-			macroCtx = null;
-			lastModuleCount = -1;
-		}
 	}
 
 	// The macro-world modules this compilation kept from the previous one: what a fresh macro com would
@@ -2460,20 +2488,11 @@ class EvalMacro {
 	// it here instead.
 	public static function evictMacroModulesOfFile(file:String, ?taintReason:String):Void {
 		if (macroCom == null || file == null) return;
-		var dropped = false;
 		for (m in macroCom.modules.copy()) {
 			var f = m.extra == null ? null : m.extra.file;
 			if (f == null) continue;
 			if (!hxc.core.PathKey.same(f, file)) continue;
 			dropMacroModule(m, taintReason);
-			dropped = true;
-		}
-		// The interpreter's prototypes still point at the retired fields, so it is rebuilt (macro
-		// static state migrates) exactly as it is when a field types after its prototype was built.
-		if (dropped && macroCtx != null) {
-			staleMacroCtx = macroCtx;
-			macroCtx = null;
-			lastModuleCount = -1;
 		}
 	}
 
@@ -2502,38 +2521,6 @@ class EvalMacro {
 	// macro-world field body in its own context.
 	public static function getMacroCom():Null<Context> return macroCom;
 
-	// Adds modules loaded into the macro world after the interpreter was built (e.g. a module
-	// pulled in by typing a method body on demand mid-eval) to the running interpreter.
-	public static function syncMacroModules():Void {
-		if (macroCtx == null || macroCom == null || building) return;
-		// Nothing is added once the world has an error.
-		if (macroCtx.hadError) return;
-		if (macroCom.modules.length > lastModuleCount) {
-			hxc.typing.TypeResolve.resolveAll(macroCom);
-			hxc.typing.TypeFields.installLazy(macroCom);
-			flushMacroWorld(macroCtx);
-			lastModuleCount = macroCom.modules.length;
-		}
-	}
-	static var staleMacroCtx:Null<EvalContext> = null;
-
-	// Copy every static var value from a retired macro context into its replacement so mutable
-	// macro-world state (e.g. an Expr cached in a macro class static) survives a rebuild.
-	static function migrateMacroStatics(oldCtx:EvalContext, newCtx:EvalContext):Void {
-		for (key in oldCtx.staticPrototypes.keys()) {
-			var op = oldCtx.staticPrototypes.get(key);
-			var np = newCtx.staticPrototypes.get(key);
-			if (np == null) continue;
-			var c = switch (newCtx.typeCache.get(key)) { case TClassDecl(c): c; case _: null; };
-			if (c == null) continue;
-			for (name in op.pnames.keys()) {
-				var cf = c.statics.get(EvalHash.revHash(name));
-				if (cf == null || !cf.kind.match(Var(_))) continue;
-				var ni = np.pnames.get(name);
-				if (ni != null) np.pfields[ni] = op.pfields[op.pnames.get(name)];
-			}
-		}
-	}
 
 	static function macroLoadPath(path:hxc.core.Globals.Path):hxc.core.Globals.Path {
 		var suffix = "_Fields_";
@@ -2557,7 +2544,7 @@ class EvalMacro {
 	public static function macroFieldDisplayType(host:Context, c:TClass, cf:TClassField):Null<T> {
 		if (!isMacroField(cf) || host.isMacro) return null;
 		var mpath = c.module == null ? c.path : c.module.path;
-		try loadMacroClass(host, c.path, cf.name, false, mpath)
+		try loadMacro(host, c.path, cf.name, mpath, null, null, false)
 			catch (e:hxc.core.TypingError.FatalError) throw e
 			catch (_:Dynamic) {}
 		if (macroCom == null) return null;
@@ -2630,7 +2617,7 @@ class EvalMacro {
 				macroCom.moduleLut.remove(tk);
 				macroCom.typeToModule.remove(tk);
 			}
-			if (macroCtx != null) { staleMacroCtx = macroCtx; macroCtx = null; lastModuleCount = -1; }
+			macroWorldDirty = true;
 		}
 		// The macro-module load with display on: the macro com takes the host's display record and the
 		// restore it hands back is dropped, so the finalize that follows runs under it too. Under a request
@@ -2646,7 +2633,7 @@ class EvalMacro {
 
 	// displayWindow: the load is the display macro mode, and the macro world keeps the display position
 	// through the load and the finalize.
-	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position, displayWindow:Bool = false):Void {
+	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position, displayWindow:Bool = false, ?sub:String):Void {
 		evictDisplayModule();
 		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
@@ -2706,31 +2693,8 @@ class EvalMacro {
 								hxc.typing.TypeFields.forceClassFields(macroCom, c);
 						} else {
 							var cf = c.statics.get(fieldName);
-							var fieldIsStatic = cf != null;
 							if (cf == null) cf = c.fields.get(fieldName);
-							if (cf != null) {
-								hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-								var needsRebuild = forceReachableStatics(macroCom, c, cf);
-								if (macroCtx != null) {
-									var key = EvalHash.pathHash(c.path);
-									var fieldHash = EvalHash.hash(fieldName);
-									// Consult only the prototype that COULD carry this field. Testing both made a static
-									// method permanently "missing" from the instance prototype, where it can never appear, so
-									// every macro call rebuilt the entire macro context: 1234 full rebuilds on the unit suite,
-									// each re-adding all 162 macro modules. That is exactly the O(N^2) the extend path further
-									// down exists to avoid.
-									var proto = fieldIsStatic ? macroCtx.staticPrototypes.get(key) : macroCtx.instancePrototypes.get(key);
-									if (proto != null && !proto.pnames.exists(fieldHash))
-										needsRebuild = true;
-								}
-								// A dependency or requested field typed only now, after its class's prototype
-								// was built, leaves that prototype without a live slot; rebuild (state migrates).
-								if (needsRebuild && macroCtx != null) {
-									staleMacroCtx = macroCtx;
-									macroCtx = null;
-									lastModuleCount = -1;
-								}
-							}
+							if (cf != null) hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
 						}
 				case _:
 			}
@@ -2758,17 +2722,9 @@ class EvalMacro {
 			var displayRoute = forceAll || fieldName == null;
 			var savedSuppressed = hxc.parser.Parser.displaySuppressed;
 			if (!displayRoute) hxc.parser.Parser.displaySuppressed = true;
-			// A body typed only now, after its class's prototype was built, leaves that prototype without a
-			// live slot. forceReachableStatics below decides that from the fields it types, so typing them
-			// without this would consume the signal and the interpreter would keep a prototype that is
-			// missing the field: a macro-defined class then reported "Type not found" at its own call site.
-			// Account for it the same way it does.
-			var preStale = false;
 			function force(c:TClass, cf:TClassField):Void {
 				if (cf.expr != null) return;
 				hxc.typing.TypeFields.forceFieldBody(macroCom, c, cf);
-				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
-					preStale = true;
 			}
 			if (!isDisplayFile) for (mt in m.types) switch (mt) {
 				case TClassDecl(c):
@@ -2779,11 +2735,6 @@ class EvalMacro {
 			}
 			macroCom.raiseTypingErrors = savedRaise;
 			if (!displayRoute) hxc.parser.Parser.displaySuppressed = savedSuppressed;
-			if (preStale && macroCtx != null) {
-				staleMacroCtx = macroCtx;
-				macroCtx = null;
-				lastModuleCount = -1;
-			}
 			// The class the path names has to carry the method among its statics, else "Method f not found
 			// on class P" at the caller's position. A `macro` function a build macro ADDED in the host is
 			// exactly that: the macro world built its copy of the class without the host's metadata, so the
@@ -2792,16 +2743,31 @@ class EvalMacro {
 			// the method up, so what the macro world's copy of the class records (an Unknown identifier for
 			// the very method the host is asking about) precedes the miss.
 			if (p != null && fieldName != null && !forceAll) {
-				var named:Null<TClass> = null;
-				var carried = false;
-				for (mt in m.types) switch (mt) {
-					case TClassDecl(c):
-						if (c.path.name == path.name && c.path.pack.join(".") == path.pack.join(".")) named = c;
-						if (c.statics.exists(fieldName) || c.fields.exists(fieldName)) carried = true;
-					case _:
+				// A path naming the module itself finds the method among the module's own statics;
+				// otherwise - a sub-type, or a class named apart from its module - the module has to hold a
+				// type of that path ("Module X does not define type Y"), a class carrying the method as a
+				// static (naming the path as written).
+				var viaStatics = sub == null && m.statics != null
+					&& hxc.core.Globals.sTypePath(m.path) == hxc.core.Globals.sTypePath(path)
+					&& m.statics.statics.exists(fieldName);
+				if (!viaStatics) {
+					var tname = sub != null ? sub : path.name;
+					var named:Null<ModuleType> = null;
+					for (mt in m.types) {
+						var tp = TypeFunctions.tInfos(mt).path;
+						if (tp.name == tname && tp.pack.join(".") == path.pack.join(".")) named = mt;
+					}
+					if (named == null)
+						throw new TypingError("Module " + hxc.core.Globals.sTypePath(m.path) + " does not define type " + tname, p);
+					switch (named) {
+						case TClassDecl(c):
+							if (!c.statics.exists(fieldName))
+								throw new TypingError("Method " + fieldName + " not found on class "
+									+ hxc.core.Globals.sTypePath(path) + (sub != null ? "." + sub : ""), p);
+						case _:
+							throw new TypingError("Macro should be called on a class", p);
+					}
 				}
-				if (named != null && !carried)
-					throw new TypingError("Method " + fieldName + " not found on class " + hxc.core.Globals.sTypePath(path), p);
 			}
 		} catch (e:TypingError) {
 			macroCom.raiseTypingErrors = oldRaise;
@@ -2828,95 +2794,36 @@ class EvalMacro {
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 		macroCom.displayFullTyping = oldFullTyping;
-		// Extend the live macro context in place with only the newly loaded modules (never re-add all,
-		// which would be O(N^2) across a suite's many macro-loads). Keeps the caller's `ec` valid.
-		if (macroCtx != null && macroCom.modules.length > lastModuleCount) {
+		// ': a host load flushes the macro context - finalize, generate, the filters built anew (the
+		// exception filter's loads count against the loaded macro module, curmod) and add_types for what
+		// the interpreter has not seen - whether or not anything is new. The first one creates the
+		// interpreter (getContext). The load_display_module_in_macro route (no method) finalizes only .
+		if (macroCtx != null && fieldName != null && !forceAll && !host.isMacro) {
+			hxc.typing.TypeResolve.resolveAll(macroCom);
+			hxc.typing.TypeFields.typeAllModules(macroCom);
 			flushMacroWorld(macroCtx);
 			lastModuleCount = macroCom.modules.length;
-			if (fieldName != null) {
-				var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
-				if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
-					staleMacroCtx = macroCtx;
-					macroCtx = null;
-					lastModuleCount = -1;
-				}
-			}
-		} else if (macroCtx != null && fieldName != null) {
-			var proto = macroCtx.staticPrototypes.get(EvalHash.pathHash(path));
-			if (proto == null || !proto.pnames.exists(EvalHash.hash(fieldName))) {
-				staleMacroCtx = macroCtx;
-				macroCtx = null;
-				lastModuleCount = -1;
-			}
+			macroWorldDirty = false;
 		}
 	}
 
-	// Returns true when a body was typed for a field whose class already has a live prototype in the
-	// macro context (that prototype's slot for it is a dead thrower and needs a rebuild).
-	static function forceReachableStatics(com:Context, owner:TClass, root:TClassField):Bool {
-		var staleProto = false;
-		var seen = new Map<TClassField, Bool>();
-		var scan:Null<TExpr>->Void = null;
-		function forceAndScan(c:TClass, cf:TClassField):Void {
-			if (seen.exists(cf)) return;
-			seen.set(cf, true);
-			if (cf.expr == null) {
-				hxc.typing.TypeFields.forceFieldBody(com, c, cf);
-				if (cf.expr != null && macroCtx != null && macroCtx.staticPrototypes.exists(EvalHash.pathHash(c.path)))
-					staleProto = true;
-			}
-			scan(cf.expr);
+	// A host macro load: a (class, method) not yet in cachedMacros loads its module, finalizes and flushes
+	// the macro context (the first flush creates the interpreter), is cached, and puts nullModule back as
+	// the macro context's module; one in cachedMacros skips all of that. Either way the module being typed
+	// depends on the macro's module.
+	public static function loadMacro(host:Context, path:hxc.core.Globals.Path, fieldName:String, modulePath:Null<hxc.core.Globals.Path>,
+			dependent:Null<ModuleDef>, p:Null<Position>, display:Bool, ?sub:String):Void {
+		var cacheKey = hxc.core.Globals.sTypePath(path) + (sub != null ? "." + sub : "") + "." + fieldName;
+		if (macroCom == null || !macroCom.cachedMacros.exists(cacheKey)) {
+			loadMacroClass(host, path, fieldName, false, modulePath, dependent, p, display, sub);
+			getContext(host);
+			macroCom.cachedMacros.set(cacheKey, true);
+			macroCurModule = null;
+		} else {
+			var mloaded = macroCom.moduleLut.get(hxc.context.Context.pathKey(modulePath != null ? modulePath : macroLoadPath(path)));
+			var dep = dependent != null ? dependent : host.currentModule;
+			if (mloaded != null && dep != null) hxc.context.ModuleLoader.addDependency(dep, mloaded);
 		}
-		scan = function(e:Null<TExpr>):Void {
-			if (e == null) return;
-			switch (e.expr) {
-				case TField(e1, fa):
-					scan(e1);
-					switch (fa) {
-						case FStatic(c, cf) | FInstance(c, _, cf):
-							forceAndScan(c, cf);
-						case FClosure(c, cf) if (c != null):
-							forceAndScan(c.c, cf);
-						case _:
-					}
-				case TParenthesis(e1) | TUnop(_, _, e1) | TThrow(e1) | TCast(e1, _) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1):
-					scan(e1);
-				case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2):
-					scan(e1); scan(e2);
-				case TObjectDecl(fields):
-					for (f in fields) scan(f.expr);
-				case TArrayDecl(el) | TBlock(el):
-					for (x in el) scan(x);
-				case TCall(e1, el):
-					scan(e1); for (x in el) scan(x);
-				case TNew(_, _, el):
-					for (x in el) scan(x);
-				case TIf(e1, e2, e3):
-					scan(e1); scan(e2); scan(e3);
-				case TWhile(e1, e2, _):
-					scan(e1); scan(e2);
-				case TSwitch(e1, cases, edef):
-					scan(e1);
-					for (c in cases) {
-						for (v in c.values) scan(v);
-						scan(c.expr);
-					}
-					scan(edef);
-				case TTry(e1, catches):
-					scan(e1);
-					for (c in catches) scan(c.expr);
-				case TFunction(tf):
-					scan(tf.expr);
-				case TVarExpr(_, eo):
-					scan(eo);
-				case TReturn(eo):
-					scan(eo);
-				case TConst(_) | TLocal(_) | TTypeExpr(_) | TBreak | TContinue | TIdent(_):
-			}
-		};
-		seen.set(root, true);
-		scan(root.expr);
-		return staleProto;
 	}
 
 	// The outermost expansion of the most recent macro run, for the assign lvalue check.
@@ -2937,10 +2844,18 @@ class EvalMacro {
 				case FHStatic(c) | FHAbstract(_, _, c) | FHInstance(c, _): hxc.core.Globals.sTypePath(c.path) + "." + fa.field.name;
 				case _: null;
 			};
+			var mloaded = switch (fa.host) {
+				case FHStatic(c) | FHAbstract(_, _, c) | FHInstance(c, _): c.module;
+				case _: null;
+			};
 			if (mkey != null && !tctx.com.cachedMacros.exists(mkey)) {
+				macroCurModule = mloaded;
 				hxc.typing.TypeFields.typeAllModules(tctx.com);
 				tctx.com.cachedMacros.set(mkey, true);
+				macroCurModule = null;
 			}
+			// The current module depends on the loaded one, cached or not.
+			if (mloaded != null) hxc.context.ModuleLoader.addDependency(tctx.com.currentModule, mloaded);
 			return Typer.typeExpr(tctx, {expr: EThrow({expr: EConst(CString("macro-in-macro", SDoubleQuotes)), pos: p}), pos: p}, withType);
 		}
 		// Saved before the call position is installed: a nested run (an @:from cast macro reached while
@@ -2964,15 +2879,11 @@ class EvalMacro {
 		var receiverSyntax = isInstance ? Calls.typedExprToSyntax(tctx, fa.on) : null;
 		// A (class, method) the macro context has not loaded yet loads its module and finalizes the macro
 		// world before the interpreter is consulted; one in cachedMacros skips both.
-		var cacheKey = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
-		if (macroCom == null || !macroCom.cachedMacros.exists(cacheKey)) {
-			try loadMacroClass(tctx.com, path, fa.field.name, false, hostClass.module != null ? hostClass.module.path : null,
-				tctx.curclass != null ? tctx.curclass.module : null, p)
-			catch (e:TypingError) {
-				curPos = savedPos0;
-				throw new hxc.context.Context.ContextError(e.message, e.pos, Other, e.depth);
-			}
-			macroCom.cachedMacros.set(cacheKey, true);
+		try loadMacro(tctx.com, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null,
+			tctx.curclass != null ? tctx.curclass.module : null, p, false)
+		catch (e:TypingError) {
+			curPos = savedPos0;
+			throw new hxc.context.Context.ContextError(e.message, e.pos, Other, e.depth);
 		}
 		var ec = getContext(tctx.com);
 		// A member macro is a static of the macro context, called with its receiver as the first argument.
@@ -3398,7 +3309,7 @@ class EvalMacro {
 		switch (callExpr.expr) {
 			case ECall(callee, _):
 				var t = macroTarget(callee);
-				if (t != null) loadMacroClass(com, {pack: t.pack, name: t.module}, t.method, false, null, null, p);
+				if (t != null) loadMacro(com, {pack: t.pack, name: t.module}, t.method, null, null, p, false, t.name != t.module ? t.name : null);
 			case _:
 				throw new TypingError("genericBuild requires a single expression call parameter", p);
 		}
@@ -3514,7 +3425,7 @@ class EvalMacro {
 			case _:
 		}
 		if (target == null) throw new TypingError("Invalid macro call", p);
-		loadMacroClass(com, {pack: target.pack, name: target.module}, target.method, false, null, null, p);
+		loadMacro(com, {pack: target.pack, name: target.module}, target.method, null, null, p, false, target.name != target.module ? target.name : null);
 		var ec = getContext(com);
 		var savedTctx = curTctx;
 		var savedPos = curPos;
@@ -5307,7 +5218,7 @@ class EvalMacro {
 		var classes:Array<TClass> = [];
 		if (com != null && m != null) {
 			var imports = com.moduleImports.get(Context.pathKey(m.path));
-			if (imports != null) for (up in imports.usings) classes = hxc.typing.Fields.usingClasses(com, up, curPos).concat(classes);
+			if (imports != null) for (u in imports.usingClasses) classes.push(u.c);
 		}
 		return encodeArray([for (c in classes) encodeClassRef(ec, c)]);
 	}
