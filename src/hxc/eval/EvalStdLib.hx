@@ -2969,6 +2969,9 @@ class EvalStdLib {
 		#if (cpp && !emscripten)
 		// libuv is unavailable on Emscripten.
 		EvalLuv.init(ctx, s);
+		// mbedtls is unavailable on Emscripten.
+		EvalSsl.initConstructors(ctx);
+		EvalSsl.initFields(ctx);
 		#end
 
 		reg(s, "Math", "PI", VFloat(Math.PI));

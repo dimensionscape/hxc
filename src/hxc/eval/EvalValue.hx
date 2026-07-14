@@ -199,6 +199,14 @@ enum EvalInstanceKind {
 	IUtf8(buf:hxc.eval.EvalString.ByteBuffer);
 	IRegex(re:EvalRegex);
 	IMap(m:Map<String, MapEntry>);
+	// The mbedtls contexts (hxc.eval.Mbedtls.MbedtlsObject, Dynamic here as EvalHandle's native is:
+	// the object exists only where mbedtls is built).
+	IMbedtlsConfig(o:Dynamic);
+	IMbedtlsCtrDrbg(o:Dynamic);
+	IMbedtlsEntropy(o:Dynamic);
+	IMbedtlsPkContext(o:Dynamic);
+	IMbedtlsSsl(o:Dynamic);
+	IMbedtlsX509Crt(o:Dynamic);
 }
 
 // A native map entry keeps the original key alongside its value, so iteration over keys (and
