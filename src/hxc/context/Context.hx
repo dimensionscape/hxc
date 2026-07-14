@@ -846,6 +846,12 @@ class ModuleImports {
 			if (e.p.min == p.min && e.p.max == p.max && e.p.file == p.file) { e.failed = true; return; }
 	}
 
+	public function importFailed(p:Position):Bool {
+		for (e in importPositions)
+			if (e.p.min == p.min && e.p.max == p.max && e.p.file == p.file) return e.failed == true;
+		return false;
+	}
+
 	static function samePath(a:Path, b:Path):Bool {
 		if (a.name != b.name || a.pack.length != b.pack.length) return false;
 		for (i in 0...a.pack.length) if (a.pack[i] != b.pack[i]) return false;

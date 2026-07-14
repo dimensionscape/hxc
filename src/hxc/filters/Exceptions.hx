@@ -119,7 +119,9 @@ class Exceptions {
 	// Std.isOfType(e, t)
 	static function stdIs(ctx:ExcContext, e:TExpr, t:T, p:Position):TExpr {
 		var t = TypeFunctions.follow(t);
-		var stdCls = switch (ctx.typer.com.getType({pack: [], name: "Std"}, p)) {
+		// Std is the root module, loaded by its path; the current module's package is never walked for it.
+		var stdModule = hxc.context.ModuleLoader.loadModule(ctx.typer.com, {pack: [], name: "Std"}, p);
+		var stdCls = switch (hxc.context.ModuleLoader.findTypeInModule(ctx.typer.com, stdModule, "Std", p)) {
 			case TClassDecl(cls): cls;
 			case _: throw new TypingError("Std is expected to be a class", p);
 		};

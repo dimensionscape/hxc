@@ -9,19 +9,9 @@ import hxc.core.Globals.Path;
 import hxc.context.Context;
 import hxc.context.ModuleLoader;
 
-// An `import M.X` that names neither a subtype, a module-level static, nor a static of the module's main
-// type is an error, suggesting the closest existing name.
+// What an import declaration does when its module's types initialize.
+// The statics it names are looked up later, in the module's context init (ModuleLoader.recordImport).
 class ImportCheck {
-	public static function run(ctx:Context):Bool {
-		var fatal = false;
-		for (m in ctx.modules) {
-			var imports = ctx.moduleImports.get(Context.pathKey(m.path));
-			if (imports == null) continue;
-			for (imp in imports.rawImports) if (checkImport(ctx, m, imp)) fatal = true;
-		}
-		return fatal;
-	}
-
 	public static function loadPlainImports(ctx:Context):Void {
 		var i = 0;
 		while (i < ctx.modules.length) loadModuleImports(ctx, ctx.modules[i++]);
@@ -134,17 +124,21 @@ class ImportCheck {
 				// The module load reports at the type path - the first pack segment through the module name
 				// - not over the whole import declaration.
 				var pType = new Position(imp.pos.file, parts[0].pos.min, parts[mi].pos.max);
-				try ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, pType)
-				catch (e:hxc.context.Context.ContextError) {
-					// An import's report is recorded, not raised; only the host context raises it, under a
-					// macro API call. In the macro context, raising (set while EvalMacro.loadMacroClass
-					// loads a module) stands for the typing errors of that module's declarations, which
-					// this handler is not.
+				// An import's report is recorded, not raised; only the host context raises it, under a
+				// macro API call. In the macro context, raising (set while EvalMacro.loadMacroClass loads a
+				// module) stands for the typing errors of that module's declarations, which this handler is
+				// not.
+				function record(msg:String, p:Position, depth:Int = 0):Void {
 					var savedRaise = ctx.raiseTypingErrors;
 					if (ctx.isMacro) ctx.raiseTypingErrors = false;
-					ctx.addDiagnostic(e.message, e.pos, e.depth);
+					ctx.addDiagnostic(msg, p, depth);
 					ctx.raiseTypingErrors = savedRaise;
 					imports.markImportFailed(imp.pos);
+				}
+				var md:Null<ModuleDef> = null;
+				try md = ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, pType)
+				catch (e:hxc.context.Context.ContextError) {
+					record(e.message, e.pos, e.depth);
 				}
 				// init_module_type wraps init_import in `with Error(err,p,depth) -> display_error_ext`,
 				// which catches a LOAD error and records it.
@@ -153,6 +147,43 @@ class ImportCheck {
 				// the compile.
 				catch (fp:hxc.core.TypingError.ForbidPackage) { throw fp; }
 				catch (_:Dynamic) { imports.markImportFailed(imp.pos); }
+				if (md == null) continue;
+				// /:227: the mode switch, after the load. Two segments past the module name make the first
+				// a type and the second its static, and a third is the error; a wildcard allows one segment
+				// less. :211/:230 raise "Unexpected" first.
+				var after = parts.slice(mi + 1);
+				var unexpected:Null<PlacedName> = null;
+				var typeName:Null<String> = null;
+				switch (imp.mode) {
+					case IAll:
+						if (after.length >= 2) unexpected = after[1];
+						else typeName = after.length == 1 ? after[0].name : parts[mi].name;
+					case IAsName(_) if (after.length == 0):
+						// Rebind (get_type tname).
+						typeName = parts[mi].name;
+					case _:
+						if (after.length > 2) unexpected = after[2];
+						else if (after.length == 2) typeName = after[0].name;
+						else if (after.length == 1) {
+							// A type of that name is imported as it stands, so long as it is not another module's
+							// private type (chk_private over the path up to it).
+							var t = namedType(md, after[0].name);
+							if (t != null && isPrivateElsewhere(ctx, t))
+								record("Importing private declarations from a module is not allowed",
+									new Position(imp.pos.file, parts[0].pos.min, after[0].pos.max));
+						}
+				}
+				if (unexpected != null) {
+					record("Unexpected " + unexpected.name, unexpected.pos);
+					continue;
+				}
+				if (typeName != null) {
+					// get_type: a type the module does not have is fail_usefully's, and one that is private
+					// to another module is error_private's, both over the type path.
+					var t = namedType(md, typeName);
+					if (t == null) record(failUsefully(md, typeName), pType);
+					else if (isPrivateElsewhere(ctx, t)) record("Importing private declarations from a module is not allowed", pType);
+				}
 			}
 			// An `import |` or `using |` after the last recorded declaration; an abandoned module
 			// reaches none of them.
@@ -280,7 +311,7 @@ class ImportCheck {
 
 	// The type of that name, once subTypeError has let it through, private or not (a module reaches its own
 	// private types).
-	static function namedType(md:hxc.core.Type.ModuleDef, tname:String):Null<hxc.core.Type.ModuleType> {
+	public static function namedType(md:hxc.core.Type.ModuleDef, tname:String):Null<hxc.core.Type.ModuleType> {
 		for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == tname) return mt;
 		return null;
 	}
@@ -348,88 +379,26 @@ class ImportCheck {
 		return c >= "A".code && c <= "Z".code;
 	}
 
-	static function checkImport(ctx:Context, importer:ModuleDef, imp:Import):Bool {
-		// Only a normal / aliased import addresses a specific member (a wildcard cannot be wrong).
-		switch (imp.mode) { case IAll: return false; case _: }
-		if (imp.pos == null) return false;
-		var parts = imp.path;
-		// Pack = leading lowercase segments; the first uppercase segment is the module name.
-		var mi = -1;
-		for (i in 0...parts.length) if (isUpper(parts[i].name)) { mi = i; break; }
-		if (mi < 0) return false;
-		var pack = [for (i in 0...mi) parts[i].name];
-		var moduleName = parts[mi].name;
-		// Exactly one trailing segment after the module name is validated here (`import M.X`); a
-		// deeper path is left alone (plain module imports load via loadPlainImports).
-		if (parts.length - mi != 2) return false;
-		var x = parts[mi + 1].name;
-
-		var md = try ModuleLoader.loadModule(ctx, {pack: pack, name: moduleName}, imp.pos) catch (_:Dynamic) return false;
-		if (md == null) return false;
-		// The module may have been loaded but not resolved (an enum's constructors, for one, are
-		// filled at resolution); resolving is idempotent.
-		try hxc.typing.TypeResolve.resolveModule(ctx, md) catch (_:Dynamic) {}
-		// A subtype of the module. Importing a PRIVATE one from another module reports at the path span
-		// /error_private at punion p1 p2).
-		for (mt in md.types) {
-			var ti = TypeFunctions.tInfos(mt);
-			if (ti.path.name != x) continue;
-			if (ti.isPrivate && md != importer) {
-				var pathPos = new Position(imp.pos.file, parts[mi].pos.min, parts[mi + 1].pos.max);
-				ctx.addDiagnostic("Importing private declarations from a module is not allowed", pathPos);
-			}
-			return false;
-		}
-		// A module-level static; a private one reports at the whole import error_private p).
-		if (md.statics != null && md.statics.statics.exists(x)) {
-			var cf = md.statics.statics.get(x);
-			if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic) && md != importer) {
-				ctx.addDiagnostic("Importing private declarations from a module is not allowed", imp.pos);
-				return true;
-			}
-			return false;
-		}
-
-		var main = ModuleLoader.findTypeInModuleOpt(md, moduleName);
-		if (main != null) {
-			switch (main) {
-				case TClassDecl(c):
-					if (c.statics.exists(x)) return false;
-					fail(ctx, imp.pos, x, statNames(c), "Class<" + Context.sTypePath(c.path) + "> has no field " + x);
-					return false;
-				case TAbstractDecl(a) if (a.impl != null):
-					if (a.impl.statics.exists(x)) return false;
-					fail(ctx, imp.pos, x, statNames(a.impl), "Abstract<" + Context.sTypePath(md.path) + "> has no field " + x);
-					return false;
-				case TEnumDecl(e):
-					if (e.constrs.exists(x)) return false;
-					fail(ctx, imp.pos, x, [for (k in e.constrs.keys()) k], "Enum<" + Context.sTypePath(md.path) + "> has no field " + x);
-					return false;
-				case _:
-			}
-		}
-		// No main type addresses this name: the module simply does not define it. A lowercase name is
-		// a field (candidates are the module-level statics), an uppercase one a type.
-		if (isUpper(x)) {
-			fail(ctx, imp.pos, x, [for (mt in md.types) TypeFunctions.tInfos(mt).path.name], "Module " + Context.sTypePath(md.path) + " does not define type " + x);
-		} else {
-			var cands = md.statics != null ? statNames(md.statics) : [];
-			fail(ctx, imp.pos, x, cands, "Module " + Context.sTypePath(md.path) + " does not define field " + x);
-		}
-		return false;
+	// Another module's private type.
+	static function isPrivateElsewhere(ctx:Context, t:hxc.core.Type.ModuleType):Bool {
+		var ti = TypeFunctions.tInfos(t);
+		return ti.isPrivate && ctx.currentModule != ti.module;
 	}
 
-	// Whether the module declares this type, including private declarations.
-	static function hasTypeNamed(md:ModuleDef, name:String):Bool {
-		for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == name) return true;
-		return false;
+	// The message for a missing name: a name starting lowercase was meant as a field of the module, any
+	// other as one of its types, and the suggestions come from that list.
+	public static function failUsefully(md:ModuleDef, name:String):String {
+		var c = name.charCodeAt(0);
+		var field = c >= "a".code && c <= "z".code;
+		var candidates = if (!field) [for (mt in md.types) TypeFunctions.tInfos(mt).path.name]
+			else md.statics == null ? [] : foldiNames([for (k in md.statics.statics.keys()) k]);
+		return StringError.stringError(name, candidates,
+			"Module " + Context.sTypePath(md.path) + " does not define " + (field ? "field " : "type ") + name);
 	}
 
-	static function statNames(c:TClass):Array<String> {
-		return [for (k in c.statics.keys()) k];
-	}
-
-	static function fail(ctx:Context, p:Position, name:String, candidates:Array<String>, msg:String):Void {
-		ctx.addDiagnostic(StringError.stringError(name, candidates, msg), p);
+	// The keys, in decreasing order.
+	public static function foldiNames(keys:Array<String>):Array<String> {
+		keys.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+		return keys;
 	}
 }

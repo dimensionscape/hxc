@@ -822,9 +822,11 @@ class TypeFields {
 	}
 
 	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
-		// Idempotent: a field already lazy or already typed is left alone so typeAllModules can
-		// be re-run to pick up modules loaded on demand.
-		switch (cf.type) { case TLazy(_): return; case _: }
+		// Idempotent: a field already bound or already typed is left alone so typeAllModules can be re-run
+		// to pick up modules loaded on demand. A signature that is a lazy of its own - a @:generic hint's
+		// instance - is not a bound body: the body still goes behind a lazy over it, so `localVars.name`
+		// types localVars first.
+		if (lazyFieldTypes.exists(cf)) return;
 		if (cf.expr != null) return;
 		// A body that already ran (successfully or with an error) is not re-typed on later passes.
 		if (bodyTyped.exists(cf)) return;

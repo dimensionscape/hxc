@@ -247,9 +247,9 @@ class ModuleLoader {
 
 		var imports = new hxc.context.Context.ModuleImports(new StringMap(), [], []);
 
-		// The first uppercase segment is the module, the second a subtype. Return null for empty or
-		// package-wildcard paths.
-		function splitImportPath(parts:Array<String>):{modulePath:Path, sub:Null<String>, field:Null<String>} {
+		// The first uppercase segment is the module, the second a subtype. Empty and package-wildcard
+		// paths return null; fieldAt records the static segment index.
+		function splitImportPath(parts:Array<String>):{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int} {
 			var pack:Array<String> = [];
 			var i = 0;
 			while (i < parts.length) {
@@ -264,21 +264,18 @@ class ModuleLoader {
 			var sub:Null<String> = null;
 			var field:Null<String> = null;
 			if (i < parts.length) {
-				// After the module, an uppercase segment names a subtype and a lowercase one a static; a
-				// subtype may be followed by a static.
+				// After a subtype, the next segment is its static or enum constructor regardless of case, as in
+				// Expr.ExprDef.EConst.
 				var c2 = parts[i].charCodeAt(0);
 				if (c2 >= "A".code && c2 <= "Z".code) {
 					sub = parts[i];
 					i++;
-					if (i < parts.length) {
-						var c3 = parts[i].charCodeAt(0);
-						if (c3 >= "a".code && c3 <= "z".code) field = parts[i];
-					}
+					if (i < parts.length) field = parts[i];
 				} else {
 					field = parts[i];
 				}
 			}
-			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
+			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field, fieldAt: i};
 		}
 
 		// Answer the segment containing the cursor. Load its module at the whole declaration position so
@@ -311,7 +308,12 @@ class ModuleLoader {
 						var cf = c.statics.get(field);
 						if (cf != null) {
 							try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
-							hxc.typing.Typer.displayClassField(c, false, cf, fp);
+							// Use the captured declaration position for field display, not the matched path segment's
+							// position.
+							hxc.typing.Typer.displayClassField(c, false, cf, declPos);
+							// Usage and implementation only set the search subject; other field-display modes unwind
+							// with their answer.
+							if (!otherMode) throw new hxc.compiler.DisplayXml.DisplayRaised();
 						}
 					}
 				}
@@ -331,11 +333,13 @@ class ModuleLoader {
 									if (TypeFunctions.tInfos(mt).path.name == part.name) {
 										// Subtype definition answers span the whole declaration rather than only its name.
 										if (hxc.typing.Typer.displayDefinition || hxc.typing.Typer.displayTypeDefinition) {
-											if (hxc.typing.Typer.displayFound == null)
-												hxc.typing.Typer.displayFound = [TypeFunctions.tInfos(mt).pos];
+											hxc.typing.Typer.displayFound = [TypeFunctions.tInfos(mt).pos];
+											throw new hxc.compiler.DisplayXml.DisplayRaised();
 										} else if (otherMode) {
 											throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), mod, true, part.pos);
-										} else hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+										}
+										hxc.typing.Typer.displayModuleType(ctx, mt, part.pos);
+										throw new hxc.compiler.DisplayXml.DisplayRaised();
 									}
 							}
 							return;
@@ -352,15 +356,16 @@ class ModuleLoader {
 						if (otherMode) throw new hxc.parser.Parser.TypePathCompletion(pack.copy(), null, true, part.pos);
 						// A module definition goes to its file, even when no same-named type exists.
 						if (hxc.typing.Typer.displayDefinition || hxc.typing.Typer.displayTypeDefinition) {
-							if (m2 != null && hxc.typing.Typer.displayFound == null)
-								hxc.typing.Typer.displayFound = [new Position(m2.extra.file, 0, 0)];
-							return;
+							hxc.typing.Typer.displayFound = [new Position(m2.extra.file, 0, 0)];
+							throw new hxc.compiler.DisplayXml.DisplayRaised();
 						}
-						// Module hover uses its same-named type over the complete import declaration.
-						var pHover = hxc.typing.Typer.displayHover ? declPos : part.pos;
-						if (m2 != null) for (mt in m2.types)
-							if (TypeFunctions.tInfos(mt).path.name == part.name)
-								hxc.typing.Typer.displayModuleType(ctx, mt, pHover);
+						// Module hover returns the first same-named type over the import declaration; continue when
+						// no such type exists.
+						for (mt in m2.types)
+							if (TypeFunctions.tInfos(mt).path.name == part.name) {
+								hxc.typing.Typer.displayModuleType(ctx, mt, declPos);
+								throw new hxc.compiler.DisplayXml.DisplayRaised();
+							}
 						return;
 					}
 					mod = part.name;
@@ -419,12 +424,14 @@ class ModuleLoader {
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
 			var parts = [for (pn in imp.path) pn.name];
-			// Defer imported statics until context initialization and build their owner first; build order
-			// determines body-typing order.
-			function deferStaticImport(split:{modulePath:Path, sub:Null<String>, field:Null<String>}, p:Position):Void {
+			// Defer static imports until the owning class builds, preserving declaration-order diagnostics.
+			// Failed import initialization never queues this lookup.
+			function deferStaticImport(split:{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int}, p:Position):Void {
 				if (split.sub == null && split.field == null) return;
 				var mpath = split.modulePath, sub = split.sub, field = split.field;
+				var pField = field != null && split.fieldAt < imp.path.length ? imp.path[split.fieldAt].pos : p;
 				ctx.contextInitAdd(m, function() {
+					if (imports.importFailed(p)) return;
 					var md = try loadImportedModule(ctx, mpath, p) catch (_:Dynamic) return;
 					function build(c:TClass):Void {
 						try {
@@ -432,26 +439,57 @@ class ModuleLoader {
 							hxc.typing.TypeResolve.forceQueuedBuild(c);
 						} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
 					}
-					function addStaticInit(mt:ModuleType):Void {
-						switch (TypeFunctions.resolveTypedef(mt)) {
-							case TClassDecl(c): build(c);
-							case TAbstractDecl(a) if (a.impl != null): build(a.impl);
-							case _:
-						}
+					// Build class or abstract implementations before looking up statics; enums offer constructors.
+					function addStaticInit(mt:ModuleType, s:String):Bool {
+						return switch (TypeFunctions.resolveTypedef(mt)) {
+							case TClassDecl(c): build(c); c.statics.exists(s);
+							case TAbstractDecl(a) if (a.impl != null): build(a.impl); a.impl.statics.exists(s);
+							case TEnumDecl(e):
+								try hxc.typing.TypeResolve.resolveModule(ctx, e.module) catch (ex:Dynamic) hxc.core.TypingError.FatalError.pass(ex);
+								e.constrs.exists(s);
+							case _: false;
+						};
 					}
 					if (sub != null && field != null) {
-						var owner = findTypeInModuleOpt(md, sub);
-						if (owner != null) addStaticInit(owner);
+						var tsub = hxc.filters.ImportCheck.namedType(md, sub);
+						if (tsub != null && !addStaticInit(tsub, field))
+							ctx.addDiagnostic(Context.sTypePath(TypeFunctions.tInfos(tsub).path) + " has no field " + field,
+								Position.union(p, pField));
 						return;
 					}
 					var tsub = field != null ? field : sub;
-					if (findTypeInModuleOpt(md, tsub) != null) return;
+					if (hxc.filters.ImportCheck.namedType(md, tsub) != null) return;
 					if (md.statics != null) {
 						build(md.statics);
-						for (cf in md.statics.orderedStatics) if (cf.name == tsub) return;
+						for (cf in md.statics.orderedStatics) if (cf.name == tsub) {
+							if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic))
+								throw new ContextError("Importing private declarations from a module is not allowed", p);
+							return;
+						}
 					}
-					var main = findTypeInModuleOpt(md, mpath.name);
-					if (main != null) addStaticInit(main);
+					// Try the main type's static, then report available fields. Modules without a main type use
+					// ImportCheck.failUsefully.
+					var tmain = hxc.filters.ImportCheck.namedType(md, mpath.name);
+					if (tmain == null) throw new ContextError(hxc.filters.ImportCheck.failUsefully(md, tsub), p);
+					if (addStaticInit(tmain, tsub)) return;
+					var names = hxc.filters.ImportCheck.foldiNames;
+					var parent:String, kind = "field", candidates:Array<String>;
+					switch (TypeFunctions.resolveTypedef(tmain)) {
+						case TClassDecl(c):
+							parent = "Class<" + Context.sTypePath(c.path) + ">";
+							candidates = names([for (k in c.statics.keys()) k]);
+						case TAbstractDecl(a) if (a.impl != null):
+							parent = "Abstract<" + Context.sTypePath(md.path) + ">";
+							candidates = names([for (k in a.impl.statics.keys()) k]);
+						case TEnumDecl(e):
+							parent = "Enum<" + Context.sTypePath(md.path) + ">";
+							candidates = names([for (k in e.constrs.keys()) k]);
+						case _:
+							parent = "Module " + Context.sTypePath(md.path);
+							kind = "field or subtype";
+							candidates = md.statics == null ? [] : names([for (k in md.statics.statics.keys()) k]);
+					}
+					ctx.addDiagnostic(hxc.core.StringError.stringError(tsub, candidates, parent + " has no " + kind + " " + tsub), p);
 				});
 			}
 			switch (imp.mode) {
@@ -1714,11 +1752,24 @@ class ModuleLoader {
 	// While a module is retyped, only modules already cached may load.
 	public static var loadOnlyCachedModules:Bool = false;
 
-	// Null for "no such module". The three not-found exits below each built a "Type not found : <path>"
-	// ContextError (a string concatenation per probe) and threw it ~39.5k times per unit-suite compile,
-	// almost all consumed by the unqualified-resolution walk probing package prefixes that do not exist.
-	// Genuine errors (parse failures, duplicate declarations) still raise from inside typeModule and
-	// propagate unchanged. the first type declared (imports and usings skipped) and its metadata.
+	// Null for "no such module": the not-found exits return null rather than raising, since almost every
+	// miss comes from the unqualified-resolution walk probing package prefixes that do not exist. Genuine
+	// errors (parse failures, duplicate declarations) still raise from inside typeModule and propagate
+	// unchanged.
+	// Parse a file through the parse hook, which a compilation server answers from its parser cache. A file
+	// that does not parse is ParseError, no declarations.
+	static function parseHook(ctx:Context, file:String, p:Position):Array<hxc.ast.Ast.TypeDecl> {
+		var cached = hxc.context.ServerCache.cachedParse(ctx, file);
+		if (cached != null) return cached;
+		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
+		var pkg = try parseModuleFile(ctx, src, file, false)
+			catch (_:hxc.parser.ParserError) return []
+			catch (_:hxc.parser.LexerError) return [];
+		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
+		return pkg.decls;
+	}
+
+	// The first type declared (imports and usings skipped) and its metadata.
 	static function hasNoPackageRestrict(decls:Array<hxc.ast.Ast.TypeDecl>):Bool {
 		for (d in decls) {
 			var meta:Array<hxc.ast.Ast.MetadataEntry> = switch (d.decl) {
@@ -1832,6 +1883,12 @@ class ModuleLoader {
 			return loaded0;
 		}
 
+		// A module whose first package segment another platform owns (the package rules) is parsed through
+		// the parse hook just to read its first type's metadata - before, and apart from, the parse that
+		// loads it - and refused unless that carries @:noPackageRestrict; in the macro world the platform
+		// named is "macro".
+		if (m.pack.length > 0 && ctx.forbiddenPackages.exists(m.pack[0]) && !hasNoPackageRestrict(parseHook(ctx, file, p)))
+			throw new hxc.core.TypingError.ForbidPackage(m.pack[0], m, p, ctx.isMacro ? "macro" : hxc.core.Globals.platformName(ctx.platform));
 		// The file resolved, but open_in_bin failed - a directory named like a module, an unreadable
 		// file. Not a missing type.
 		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
@@ -1839,11 +1896,6 @@ class ModuleLoader {
 		reportDisplayParseError(ctx, file);
 		hxc.parser.Parser.runPendingPdi();
 		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
-		// A module whose first package segment another platform owns is refused once its file resolves,
-		// unless the first type declared carries @:noPackageRestrict; the platform named is the macro
-		// world's "macro" .
-		if (m.pack.length > 0 && ctx.forbiddenPackages.exists(m.pack[0]) && !hasNoPackageRestrict(pkg.decls))
-			throw new hxc.core.TypingError.ForbidPackage(m.pack[0], m, p, ctx.isMacro ? "macro" : hxc.core.Globals.platformName(ctx.platform));
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
 			// Two messages, chosen by whether the module was asked for by position or from the command line

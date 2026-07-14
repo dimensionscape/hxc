@@ -3753,7 +3753,10 @@ class Parser {
 						retriedAt = idx;
 						continue;
 					}
-					return {fields: acc, pos: tokens[save > 0 ? save - 1 : 0].pos};
+					// `acc,last_pos s`: the body ends at the last token CONSUMED, after resume's
+					// junk_tokens - for a class (tdecl false) a stray `}` does not stop the scan, which
+					// runs on to the next declaration or Eof and takes the braces with it.
+					return {fields: acc, pos: tokens[idx > 0 ? idx - 1 : 0].pos};
 				};
 				acc.push(cff);
 				continue;

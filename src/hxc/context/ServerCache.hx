@@ -322,6 +322,16 @@ class ServerCache {
 		cc.files.set(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
 	}
 
+	// The server's parse hook: a file the cache holds at the stamp it has on disk is not read again.
+	public static function cachedParse(com:Context, file:String):Null<Array<hxc.ast.Ast.TypeDecl>> {
+		if (!enabled) return null;
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
+		if (cf == null || cf.decls == null) return null;
+		var time = statMtime(full);
+		return time != null && time == cf.time ? cf.decls : null;
+	}
+
 	// The module-load hook. Looks the module up in the cache; if it is still valid, re-adds it (with its
 	// subgraph) and returns it, else null and the caller re-types.
 	public static function typeModule(com:Context, mpath:hxc.core.Globals.Path, p:Position):Null<ModuleDef> {

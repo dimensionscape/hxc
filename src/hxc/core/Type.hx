@@ -428,6 +428,10 @@ class TClass {
 	public var hxcPropAccessorsChecked:Bool = false;
 	public var hxcFieldChecksDone:Bool = false;
 	public var hxcClassChecksQueued:Bool = false;
+	// Its field signatures wait for its build macros (TypeResolve.initDecl, EvalMacro.runClassBuildMacros),
+	// and an abstract implementation's operators and casts with them (TypeResolve.resolveAbstractImpl).
+	public var hxcFieldsDeferred:Bool = false;
+	public var hxcAbstractOpsDeferred:Bool = false;
 	// The class's build while it is still queued (TypeResolve.ClassSlot).
 	public var hxcClassSlot:Dynamic = null;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,

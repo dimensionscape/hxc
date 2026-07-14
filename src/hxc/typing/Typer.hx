@@ -52,6 +52,9 @@ class JsonToplevelCompletion extends haxe.Exception {
 	}
 }
 
+// One part of a dotted path, with the span of the access it ends.
+typedef DotPathPart = {name:String, lower:Bool, pos:Position};
+
 class Typer {
 	// The stack of cast fields being applied, for macro @:from recursion.
 	static var abstractCastStack:Array<TClassField> = [];
@@ -1858,13 +1861,13 @@ class Typer {
 		hoverFound = {t: hoverItemType(e2), p: h.p, e: e2, wt: h.wt, tctx: h.tctx, mt: h.mt, fromWalk: h.fromWalk, isQualified: h.isQualified};
 	}
 
-	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool}> = null;
+	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool}> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
 	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
 	// BoolLit(true))` hovers as E<Unknown<0>>. hxc records the answer and types on, so the record
 	// keeps a copy in which what is unbound now stays unbound.
-	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool}>) {
+	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool}>) {
 		if (v != null && v.t != null) v.t = freezeMonos(v.t);
 		return hoverFound = v;
 	}
@@ -2384,14 +2387,11 @@ class Typer {
 		recordUnresolvedIdentifier(new TyperContext(com), i, p);
 	}
 
-	// Nesting depth of a type_ident_raise-style SPECULATIVE lookup: inside one, an unresolved name
-	// raises without being recorded, because the caller has another route. when find_before_pos gives
-	// up, the reference hands typing the expression unmarked, so no EDisplay is reached and nothing in
-	// it answers - the request ends with "No completion point was found", or with whatever error the
-	// body recorded. hxc answers from positions, so the verdict is carried here instead.
+	// When the display subject cannot be found, the expression is typed unmarked, so no EDisplay is
+	// reached and nothing in it answers - the request ends with "No completion point was found", or
+	// with whatever error the body recorded. hxc answers from positions, so the verdict is carried
+	// here instead.
 	public static var exprDisplayOff:Bool = false;
-
-	public static var identSpeculation:Int = 0;
 
 	// A candidate whose name matches exactly is an IMPORT suggestion carrying its full type path (kind 0);
 	// anything else is a typo suggestion naming it (kind 1).
@@ -2890,7 +2890,8 @@ class Typer {
 							TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), p), FStatic(c, cf)), t, p)
 						else TypeFunctions.mk(TField(TypeFunctions.mk(TConst(TThis), TInst(c, params), p), FInstance(c, params, cf)), t, p);
 				}
-				hoverFound = {t: t, p: p, e: item, isQualified: true};
+				// 's item, with no merge_core_doc: only display_expr's field accesses merge /:80).
+				hoverFound = {t: t, p: p, e: item, isQualified: true, displayField: true};
 			}
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null) usageTargetField = cf;
@@ -4039,9 +4040,24 @@ class Typer {
 		};
 	}
 
-	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+	// What an identifier names short of a type - a literal, `this`, `super`, a local, a field of the
+	// current class, a module-level static, an enum constructor in scope or an imported global. null means
+	// not found.
+	static function typeIdentRaise(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):Null<AccessKind> {
 		// A reified $i{""} produces an empty ident.
 		if (i == "") throw new TypingError("Identifier name must not be empty", p);
+		// `super` stands for the superclass instance, checked in this order.
+		if (i == "super") {
+			var sup = ctx.curclass.superClass;
+			if (sup == null) throw new TypingError("Current class does not have a superclass", p);
+			switch (ctx.curfun) {
+				case FunMember | FunConstructor:
+				case FunMemberAbstract: throw new TypingError("Cannot access super inside an abstract function", p);
+				case FunStatic: throw new TypingError("Cannot access super inside a static function", p);
+				case FunMemberClassLocal | FunMemberAbstractLocal: throw new TypingError("Cannot access super inside a local function", p);
+			}
+			return AKExpr(TypeFunctions.mk(TConst(TSuper), TInst(sup.c, sup.params), p));
+		}
 		if (i == "abstract") {
 			return switch [mode, ctx.curclass.kind] {
 				case [MSet(_), KAbstractImpl(_)]: throw new TypingError("Property 'abstract' is read-only", p);
@@ -4191,6 +4207,11 @@ class Typer {
 				return Fields.fieldAccess(ctx, mode, smf, FieldAccessTools.getHost(ctx.curclass, smf), typeExpr, p);
 			}
 		}
+		// The module-level statics come before the enums in scope.
+		// A module-level field (Haxe 4.2 module-level `var`/`function`, stored in the synthetic
+		// <Module>_Fields_ class) is visible unqualified within its own module.
+		var modStatic = resolveModuleStatic(ctx, i, p, mode);
+		if (modStatic != null) return modStatic;
 		var bareEnum = findBareEnumLike(ctx, i);
 		if (bareEnum != null) switch (bareEnum) {
 			case TEnumDecl(en):
@@ -4206,14 +4227,16 @@ class Typer {
 				return Fields.fieldAccess(ctx, mode, cf, FHAbstract(a, TypeFunctions.extractParamTypes(a.params), a.impl), TexprTools.makeTypeExpr(TClassDecl(a.impl), p), p);
 			case _:
 		}
-		// A module-level field (Haxe 4.2 module-level `var`/`function`, stored in the synthetic
-		// <Module>_Fields_ class) is visible unqualified within its own module.
-		var modStatic = resolveModuleStatic(ctx, i, p, mode);
-		if (modStatic != null) return modStatic;
 		// A static-field import (`import M.field`) or a static wildcard (`import M.*` on a type) makes a
 		// static field or enum constructor available unqualified.
-		var imp = resolveImportedStatic(ctx, i, p, mode);
-		if (imp != null) return imp;
+		return resolveImportedStatic(ctx, i, p, mode);
+	}
+
+	// typeIdentRaise, then a type of that name, then a type parameter; what remains is an unknown
+	// identifier.
+	static function typeIdent(ctx:TyperContext, i:String, p:Position, mode:AccessMode, withType:WithType):AccessKind {
+		var raised = typeIdentRaise(ctx, i, p, mode, withType);
+		if (raised != null) return raised;
 		// A lowercase identifier is never looked up as a type. Without the guard every unresolved
 		// lowercase name (a pattern capture, an argument) would run the whole unqualified type walk, and
 		// each step of that walk is a real module load whose miss consults the extern-type loaders -
@@ -4244,7 +4267,7 @@ class Typer {
 			// function instead, so there a package root on the class path stays unresolved and the path
 			// resolves as a type path; a bare identifier - a pattern variable named like a package, say -
 			// is a TIdent.
-			if (ctx.untypedMode && (identSpeculation == 0 || !isPackageRoot(ctx, i))) {
+			if (ctx.untypedMode) {
 			// The magic __this__ is the raw receiver in untyped code: a plain TConst(TThis), deliberately
 			// not the captured `this local, so the js std can name the enclosing object inside a nested
 			// function.
@@ -4268,7 +4291,7 @@ class Typer {
 			// In a DIAGNOSTICS run the name is only recorded, never reported - the access recovers to a
 			// monomorph so the rest of the field still types, and the report describes it as an unresolved
 			// identifier rather than as a compiler error.
-			if (identSpeculation == 0 && ctx.com.errorInDiagnosticsRun(p)) {
+			if (ctx.com.errorInDiagnosticsRun(p)) {
 				recordUnresolvedIdentifier(ctx, i, p);
 				// The MISSING field the name implies is recorded alongside the unresolved identifier, so the
 				// report can offer to create it.
@@ -4283,16 +4306,19 @@ class Typer {
 			// ctx.inDisplay, which on for the marked node's own typing. Its span is no stand-in: a case body
 			// starts at the `case` keyword so its span holds the case's pattern, which the matcher types
 			// before the body and outside it.
-			if (identSpeculation == 0 && ctx.com.displaySpec != null && !atDisplayPos(p)
-					&& !ctx.inDisplay) {
+			if (ctx.com.displaySpec != null && !atDisplayPos(p) && !ctx.inDisplay) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
-			if (identSpeculation == 0 && ctx.com.displaySpec != null
-					&& (atDisplayPos(p) || ctx.inDisplay) && displaySubjectError == null)
+			if (ctx.com.displaySpec != null && (atDisplayPos(p) || ctx.inDisplay) && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new hxc.core.TypingError.UnknownIdentError(i, p);
 		}
+		return AKExpr(typeModuleTypeExpr(ctx, mt, p));
+	}
+
+	// A module type as the value its name stands for.
+	static function typeModuleTypeExpr(ctx:TyperContext, mt:ModuleType, p:Position):TExpr {
 		switch (mt) {
 			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
 			case _:
@@ -4301,7 +4327,7 @@ class Typer {
 		// statics have real types (idempotent via processed).
 		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): forceBuild(ctx, c); case _: }
-		return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p));
+		return TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p);
 	}
 
 	// A @:genericBuild class referenced as a value builds first and the reference becomes the built module
@@ -4324,24 +4350,6 @@ class Typer {
 				}
 			case _: mt;
 		}
-	}
-
-	static var packageRootCache:Null<haxe.ds.StringMap<Bool>> = null;
-
-	// True when `name` is a package directory on the class path.
-	static function isPackageRoot(ctx:TyperContext, name:String):Bool {
-		if (packageRootCache == null) packageRootCache = new haxe.ds.StringMap();
-		var hit = packageRootCache.get(name);
-		if (hit != null) return hit;
-		var found = false;
-		for (cp in ctx.com.classPath) {
-			if (sys.FileSystem.exists(cp + name) && sys.FileSystem.isDirectory(cp + name)) {
-				found = true;
-				break;
-			}
-		}
-		packageRootCache.set(name, found);
-		return found;
 	}
 
 	// The walk over the expected type runs first, for every identifier that has one, and
@@ -4533,75 +4541,6 @@ class Typer {
 	// `Module.field` where Module is not a type bound in the current module context: the unqualified
 	// module
 	// walk resolves the module's statics field before its types.
-	static function unqualifiedModuleStaticField(ctx:TyperContext, modName:String, field:String, p:Position, mode:AccessMode, withType:WithType, headPos:Position, checkContext:Bool = true):Null<AccessKind> {
-		if (ctx.locals.exists(modName)) return null;
-		var m = ctx.com.currentModule;
-		if (m == null) return null;
-		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-		// Ahead of the identifier attempt this must not claim a name the module context binds; after a
-		// field miss on such a head 's NotFound) the walk runs regardless.
-		if (checkContext) {
-			for (mt in m.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
-			if (imports != null) {
-				if (imports.names.exists(modName)) return null;
-				for (key in imports.names.keys()) {
-					var ni = imports.names.get(key);
-					if (ni.sub != null || ni.aliased == true) continue;
-					var im = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
-					for (mt in im.types) if (TypeFunctions.tInfos(mt).path.name == modName) return null;
-				}
-			}
-		}
-		function resolveMod(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
-			if (mod == null) return null;
-			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
-			if (mod.statics != null) {
-				var sc = mod.statics;
-				var cf = sc.statics.get(field);
-				if (cf != null) return Fields.fieldAccess(ctx, mode, cf, FHStatic(sc), TexprTools.makeTypeExpr(TClassDecl(sc), p), p);
-			}
-			// An uppercase part after the module name resolves as one of its types
-			// (resolve_in_module -> resolve_module_type), beating the main class's static.
-			var c0 = field.charCodeAt(0);
-			if (c0 >= "A".code && c0 <= "Z".code) {
-				for (mt2 in mod.types) {
-					var ti = TypeFunctions.tInfos(mt2);
-					if (ti.path.name == field && !(ti.isPrivate && mod != ctx.com.currentModule)) {
-						switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
-						return AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p));
-					}
-				}
-			}
-			// Otherwise the module's own main type (find_type_in_module skips a private one), at the head's
-			// position, and field_chain types the field on it - a miss there is an error, not a reason to
-			// try the next module.
-			for (mt2 in mod.types) {
-				var ti = TypeFunctions.tInfos(mt2);
-				if (ti.path.name == mod.path.name && !ti.isPrivate) {
-					switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
-					return Fields.typeField(ctx, TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, headPos), headPos), field, p, mode, withType);
-				}
-			}
-			return null;
-		}
-		if (imports != null) for (w in imports.wildcards) {
-			var r = resolveMod(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: modName}, p) catch (_:Dynamic) null);
-			if (r != null) return r;
-		}
-		var mpack = m.path.pack;
-		var pi = mpack.length;
-		while (pi >= 0) {
-			if (!(pi == mpack.length && modName == m.path.name)) {
-				var r = resolveMod(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: modName}, p) catch (_:Dynamic) null);
-				if (r != null) return r;
-			}
-			pi--;
-		}
-		return null;
-	}
-
-	// A bare identifier that names a constructor of an enum, or a member of an enum abstract, declared
-	// in the current module or brought in by a module import. Returns the owning enum/abstract decl.
 	static function findBareEnumLike(ctx:TyperContext, i:String):Null<ModuleType> {
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
@@ -4659,237 +4598,239 @@ class Typer {
 		return null;
 	}
 
-	static function flattenIdentPath(e:ExprDef):Null<Array<String>> {
-		return switch (e) {
-			case EConst(CIdent(s)): [s];
-			case EField(e1, f, _):
-				var pre = flattenIdentPath(e1.expr);
-				pre == null ? null : pre.concat([f]);
-			case _: null;
-		};
+	// The chain is walked to its head. An identifier there makes it a dot path; anything else - the marked
+	// node too - is typed and the remaining parts are its field chain.
+	static function handleEfield(ctx:TyperContext, e:Expr, mode:AccessMode, withType:WithType):AccessKind {
+		var parts:Array<DotPathPart> = [];
+		var mn = hxc.typing.ExprPreprocessing.markedNode;
+		var cur = e;
+		while (true) {
+			if (cur == mn && cur != e)
+				return fieldChain(ctx, parts, AKExpr(typeExpr(ctx, cur, WithTypeTools.value)), mode, withType);
+			switch (cur.expr) {
+				case EField(inner, s, EFNormal):
+					parts.unshift(mkDotPathPart(s, cur.pos));
+					cur = inner;
+				case EConst(CIdent(i)):
+					return dotPath(ctx, mkDotPathPart(i, cur.pos), parts, mode, withType, e.pos);
+				case EField(eobj, s, EFSafe) if (cur != e):
+					// A safe navigation inside the chain starts a safe chain from its object.
+					var base = accGet(ctx, typeAccess(ctx, eobj.expr, eobj.pos, MGet, WithTypeTools.value));
+					var temp:Null<TExpr> = null;
+					switch (TexprTools.skip(base).expr) {
+						case TLocal(_) | TTypeExpr(_) | TConst(_):
+						case _:
+							var v = TypeFunctions.allocVar(VGenerated, "tmp", base.type, base.pos);
+							temp = TypeFunctions.mk(TVarExpr(v, base), ctx.com.basic.tvoid, v.pos);
+							base = TypeFunctions.mk(TLocal(v), v.type, v.pos);
+					}
+					parts.unshift(mkDotPathPart(s, cur.pos));
+					return AKSafeNav({pos: cur.pos, base: base, tempVar: temp, access: fieldChain(ctx, parts, AKExpr(base), mode, withType)});
+				case _:
+					var a = typeAccess(ctx, cur.expr, cur.pos, MGet, WithTypeTools.value);
+					return switch (a) {
+						case AKSafeNav(sn):
+							AKSafeNav({pos: sn.pos, base: sn.base, tempVar: sn.tempVar,
+								access: fieldChain(ctx, parts, sn.access, mode, withType)});
+						case _:
+							fieldChain(ctx, parts, a, mode, withType);
+					};
+			}
+		}
 	}
 
-	// Resolves a dotted ident chain (pack.Type.field...) as a package-qualified type path.
-	static function tryTypePath(ctx:TyperContext, e:ExprDef, p:Position, mode:AccessMode, withType:WithType):Null<AccessKind> {
-		var segs = flattenIdentPath(e);
-		if (segs == null || segs.length < 2) return null;
-		var typeIdx = -1;
-		for (i in 0...segs.length) {
-			var c = segs[i].charCodeAt(0);
-			if (c >= "A".code && c <= "Z".code) { typeIdx = i; break; }
-		}
-		// resolve_dot_path found nothing, so the head is typed as the identifier it is - type_ident,
-		// which reports - and the chain walks on from what it gives. Outside DMNone an unknown head is
-		// recorded and recovers to a TIdent , so the path and the call around it type on; only an
-		// Unknown_ident raised at the head itself - a plain compile, or the display subject - goes on to
-		// the last guess , and a path with no uppercase part has none raises the identifier's own error).
-		function headRetype():Null<AccessKind> {
-			var headP = new Position(p.file, p.min, p.min + segs[0].length);
-			var headAcc:Null<AccessKind> = try typeIdent(ctx, segs[0], headP, MGet, WithTypeTools.value) catch (e:TypingError) {
-				if (!(StringTools.startsWith(e.message, "Unknown identifier :") && e.pos.min == headP.min && e.pos.max == headP.max))
-					throw e;
-				null;
-			};
-			if (headAcc == null) return null;
-			var endAt = p.max;
-			var segEnd:Array<Int> = [];
-			var si = segs.length - 1;
-			while (si >= 1) { segEnd[si] = endAt; endAt -= segs[si].length + 1; si--; }
-			for (i in 1...segs.length) {
-				var isLast = i == segs.length - 1;
-				headAcc = Fields.typeField(ctx, accGet(ctx, headAcc), segs[i], new Position(p.file, p.min, segEnd[i]),
-					isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
-			}
-			return headAcc;
-		}
-		if (typeIdx < 0) {
-			var acc = headRetype();
-			// With no module name in the path the last guess is package completion - under the display flag
-			// a legacy request raises the type path for the whole dotted name. An inner link of the chain is
-			// only a speculative step of hxc's field-by-field walk; the reference resolves the whole dotted
-			// name at once, so only the outermost one raises.
-			if (acc == null && identSpeculation == 0 && ctx.inDisplay) {
-				if (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion)
-					throw new hxc.parser.Parser.TypePathCompletion(segs, null, false, new Position(p.file, p.min, p.min + segs[0].length));
-				// collect_and_raise ctx TKType NoValue (CRToplevel None) (String.concat "." sl,p0) p0.
-				hxc.typing.TypeResolve.answerTypeHintCompletion(ctx.com, p, segs.join("."), 2);
-			}
-			return acc;
-		}
-		var pack = segs.slice(0, typeIdx);
-		// A leading `std` package selects the standard library type, bypassing a shadowing local or
-		// import (e.g. `std.haxe.crypto.Md5` while a local `var haxe` is in scope). loads the module
-		// std.x.Y first
-		// - a miss the extern-type loaders see - and only when that module does not exist the module x.Y.
-		if (pack.length > 0 && pack[0] == "std"
-				&& hxc.context.ModuleLoader.loadModuleOpt(ctx.com, {pack: pack, name: segs[typeIdx]}, p) == null)
-			pack = pack.slice(1);
-		var name = segs[typeIdx];
-		var rest = segs.slice(typeIdx + 1);
-		// A module with no same-named main type (e.g. unit.MyMacro holds only MyRestMacro /
-		// MyMacroHelper) leaves the main-type lookup empty; keep going so the sub-type lookup below
-		// can still resolve the path rather than bailing to a field access.
-		var mt = try ctx.com.getType({pack: pack, name: name}, p, null) catch (_:Dynamic) null;
-		// pack.SubType where SubType is a module-level type brought in by `import pack.Module` (so it
-		// has no module file of its own, e.g. scripthost.Issue5351_2 from `import scripthost.Issue5351`):
-		// find an imported module in the same package that declares it as a sub-type.
-		if (mt == null) {
-			var m = ctx.com.currentModule;
-			// A fully-qualified reference to a module-level SIBLING type in the current module
-			// (unit.UsedReferenced2 written inside module unit.TestDCE): it has no file of its own, but is
-			// already loaded as a sibling of the enclosing module.
-			if (m != null && m.path.pack.join(".") == pack.join(".")) {
-				for (mtp in m.types) {
-					if (TypeFunctions.tInfos(mtp).path.name == name) { mt = mtp; break; }
-				}
-			}
-			var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
-			if (mt == null && imports != null) {
-				for (imp in imports.names) {
-					if (imp.modulePath.pack.join(".") == pack.join(".") && imp.modulePath.name != name) {
-						var cand = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, imp.modulePath, p, name) catch (_:Dynamic) null;
-						if (cand != null) { mt = cand; break; }
-					}
-				}
-			}
-		}
-		// pack.Module.SubType.field: when the next segment names a sub-type of the module, resolve it as
-		// the type (module + sub) rather than a field access on the module's main type.
-		if (rest.length > 0) {
-			var c0 = rest[0].charCodeAt(0);
-			if (c0 >= "A".code && c0 <= "Z".code) {
-				var subMt = try ctx.com.getType({pack: pack, name: name}, p, rest[0]) catch (_:Dynamic) null;
-				if (subMt != null) { mt = subMt; rest = rest.slice(1); }
-			}
-		}
-		// Resolution against a module the module-level static field first, then (for an uppercase part) a
-		// sub-type, then the main type (the main type falls to the normal path). The remaining segments
-		// chain as field accesses with per-segment positions.
-		function chainFrom(base:AccessKind, fromIdx:Int, ends:Array<Int>):AccessKind {
-			var acc = base;
-			for (i in fromIdx...rest.length) {
-				var isLast = i == rest.length - 1;
-				var segP = new Position(p.file, p.min, ends[i]);
-				// Walks the segments after a resolved module type with the default config, so a miss here is
-				// the recorded verdict of the access recovers; 's resume covers only the statics-before-types
-				// decision, which the sub-type lookup above has already made. Raising here abandoned the
-				// statement, arguments and all, on `Q.a(Q.b())`.
-				acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
-			}
-			return acc;
-		}
-		function segEnds():Array<Int> {
-			var ends:Array<Int> = [];
-			var endAcc = p.max;
-			var ei = rest.length - 1;
-			while (ei >= 0) { ends[ei] = endAcc; endAcc -= rest[ei].length + 1; ei--; }
-			return ends;
-		}
-		function resolveInModule(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
-			if (mod == null || rest.length == 0) return null;
-			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
-			var ends = segEnds();
-			var basePos = new Position(p.file, p.min, ends.length > 0 ? ends[0] - rest[0].length - 1 : p.max);
-			if (mod.statics != null && mod.statics.statics.exists(rest[0]))
-				return chainFrom(AKExpr(TexprTools.makeTypeExpr(TClassDecl(mod.statics), basePos)), 0, ends);
-			var c0 = rest[0].charCodeAt(0);
-			if (c0 >= "A".code && c0 <= "Z".code) {
-				for (mt2 in mod.types) {
-					var ti = TypeFunctions.tInfos(mt2);
-					if (ti.path.name == rest[0] && !(ti.isPrivate && mod != ctx.com.currentModule)) {
-						switch (mt2) { case TClassDecl(c2): forceBuild(ctx, c2); case _: }
-						return rest.length == 1
-							? AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), p))
-							: chainFrom(AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt2, p), new Position(p.file, p.min, ends[0]))), 1, ends);
-					}
-				}
-			}
-			return null;
-		}
-		function staticsChain(mod:Null<hxc.core.Type.ModuleDef>):Null<AccessKind> {
-			if (mod == null || mod.statics == null || rest.length == 0) return null;
-			if (!mod.statics.statics.exists(rest[0])) return null;
-			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
-			return chainFrom(AKExpr(TexprTools.makeTypeExpr(TClassDecl(mod.statics), p)), 0, segEnds());
-		}
-		if (mt == null) {
-			var r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: pack, name: name}, p) catch (_:Dynamic) null);
-			// The module may be visible through a named or wildcard import
-			// (`import pack.inner.*;` then `InnerMod.lowerCase` / `InnerMod.SubType`).
-			if (r == null && pack.length == 0) {
-				var curM = ctx.com.currentModule;
-				var mImports = curM == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curM.path));
-				if (mImports != null) {
-					var ni = mImports.names.get(name);
-					if (ni != null && ni.sub == null)
-						r = resolveInModule(try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null);
-					if (r == null) for (w in mImports.wildcards) {
-						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: w.pack.concat([w.name]), name: name}, p) catch (_:Dynamic) null);
-						if (r != null) break;
-					}
-				}
-				// Search from the current package up to the root.
-				if (r == null && curM != null) {
-					var mpack = curM.path.pack;
-					var pi = mpack.length;
-					while (r == null && pi >= 1) {
-						r = resolveInModule(try hxc.context.ModuleLoader.loadModule(ctx.com, {pack: mpack.slice(0, pi), name: name}, p) catch (_:Dynamic) null);
-						pi--;
-					}
-				}
-			}
-			if (r != null) return r;
-			var headAcc = headRetype();
-			if (headAcc != null) return headAcc;
-			// The last guess: the report names the module - the leading lowercase package plus the first
-			// uppercase segment - and never the trailing field segments, which is why `Priv.four` complains
-			// about `Priv`. It points at the segment the scan stopped on: the first uppercase one, or the
-			// SECOND when the path has two in a row (a module and its sub-type), so `Nope.Sub.f` spans
-			// `Nope.Sub` while still naming only `Nope`. The `std` prefix is already stripped out of `pack`
-			// above, and stays in the span but not the message.
-			var stopIdx = typeIdx;
-			var sub:Null<String> = null;
-			if (typeIdx + 1 < segs.length) {
-				var c1 = segs[typeIdx + 1].charCodeAt(0);
-				if (c1 >= "A".code && c1 <= "Z".code) { sub = segs[typeIdx + 1]; stopIdx = typeIdx + 1; }
-			}
-			var pStop = p.max;
-			for (j in (stopIdx + 1)...segs.length) pStop -= segs[j].length + 1;
-			var pName = new Position(p.file, p.min, pStop);
-			// The module has to be loaded already for the "does not define" wording; anything else is
-			// Module_not_found /:286).
-			if (ctx.com.moduleLut.exists(hxc.context.Context.pathKey({pack: pack, name: name})))
-				throw new TypingError("Module " + hxc.core.Globals.sTypePath({pack: pack, name: name})
-					+ " does not define type " + (sub != null ? sub : name), pName);
-			throw new hxc.core.TypingError.ModuleNotFoundError("Type not found : " + hxc.core.Globals.sTypePath({pack: pack, name: name}), pName);
-		}
-		if (rest.length > 0) {
-			// A module-level static wins over a same-named static of the module's main
-			// class for `Module.field` access (resolution suite
-			// testUnimportedModuleStaticBeforeMainClassStatic).
-			var r = staticsChain(TypeFunctions.tInfos(mt).module);
-			if (r != null) return r;
-		}
-		switch (mt) {
-			case TTypeDecl(td): hxc.filters.DeprecationCheck.checkTypedefUse(ctx.com, td, p);
-			case _:
-		}
-		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
-		switch (mt) { case TClassDecl(c): forceBuild(ctx, c); case _: }
-		// Each chain link's source span ends at its own segment (reconstructed from the right edge), so
-		// field errors narrow to the field name like the reference's per-EField positions do pfield).
-		var ends:Array<Int> = [];
-		var endAcc = p.max;
-		var ei = rest.length - 1;
-		while (ei >= 0) { ends[ei] = endAcc; endAcc -= rest[ei].length + 1; ei--; }
-		var basePos = rest.length == 0 ? p : new Position(p.file, p.min, endAcc);
-		var acc:AccessKind = AKExpr(TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), basePos));
-		for (i in 0...rest.length) {
-			var isLast = i == rest.length - 1;
-			var segP = new Position(p.file, p.min, ends[i]);
-			acc = Fields.typeField(ctx, accGet(ctx, acc), rest[i], segP, isLast ? mode : MGet, isLast ? withType : WithTypeTools.value);
+	// The name and the span of the access it ends.
+	static function mkDotPathPart(s:String, p:Position):DotPathPart {
+		var lower = try hxc.ast.Ast.isLowerIdent(s) catch (_:haxe.Exception) throw new TypingError("Identifier name must not be empty", p);
+		return {name: s, lower: lower, pos: p};
+	}
+
+	// Every part read as a value but the last, which takes the access's own mode and expected type.
+	static function fieldChain(ctx:TyperContext, parts:Array<DotPathPart>, acc:AccessKind, mode:AccessMode, withType:WithType):AccessKind {
+		for (k in 0...parts.length) {
+			var last = k == parts.length - 1;
+			acc = Fields.typeField(ctx, accGet(ctx, acc), parts[k].name, parts[k].pos, last ? mode : MGet, last ? withType : WithTypeTools.value);
 		}
 		return acc;
+	}
+
+	// The handlers cover the identifier and the dot-path lookups only: the field chains are applied after
+	// the `try` has returned.
+	static function dotPath(ctx:TyperContext, first:DotPathPart, pnext:Array<DotPathPart>, mode:AccessMode, withType:WithType, p0:Position):AccessKind {
+		var head = typeIdentRaise(ctx, first.name, first.pos, MGet, WithTypeTools.value);
+		if (head != null) return fieldChain(ctx, pnext, head, mode, withType);
+		var path = [first].concat(pnext);
+		var resolved = resolveDotPath(ctx, path, mode, withType);
+		if (resolved != null) return fieldChain(ctx, resolved.rest, resolved.acc, mode, withType);
+		var identAcc = try typeIdent(ctx, first.name, first.pos, MGet, WithTypeTools.value)
+		catch (err:hxc.core.TypingError.UnknownIdentError) {
+			if (!(err.pos.min == first.pos.min && err.pos.max == first.pos.max && err.pos.file == first.pos.file)) throw err;
+			unresolvedDotPath(ctx, path, first, p0);
+			throw err;
+		};
+		return fieldChain(ctx, pnext, identAcc, mode, withType);
+	}
+
+	// The head was no identifier either. A path with a module name reports the module (or its missing
+	// type); one without is, under display, a package being completed.
+	static function unresolvedDotPath(ctx:TyperContext, path:Array<DotPathPart>, first:DotPathPart, p0:Position):Void {
+		var pack:Array<String> = [];
+		var upper:Null<DotPathPart> = null;
+		var sub:Null<String> = null;
+		var pAt:Null<Position> = null;
+		for (part in path) {
+			if (part.lower) {
+				if (upper == null) { pack.push(part.name); continue; }
+				break;
+			}
+			if (upper == null) { upper = part; pAt = part.pos; continue; }
+			sub = part.name;
+			pAt = part.pos;
+			break;
+		}
+		if (upper != null) {
+			var mpath:hxc.core.Globals.Path = {pack: pack, name: upper.name};
+			if (ctx.com.moduleLut.exists(hxc.context.Context.pathKey(mpath)))
+				throw new TypingError("Module " + hxc.core.Globals.sTypePath(mpath) + " does not define type " + (sub != null ? sub : upper.name), pAt);
+			throw new hxc.core.TypingError.ModuleNotFoundError("Type not found : " + hxc.core.Globals.sTypePath(mpath), pAt);
+		}
+		if (ctx.inDisplay) {
+			var sl = [for (part in path) part.name];
+			if (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion)
+				throw new hxc.parser.Parser.TypePathCompletion(sl, null, false, first.pos);
+			hxc.typing.TypeResolve.answerTypeHintCompletion(ctx.com, p0, sl.join("."), 2);
+		}
+	}
+
+	// Package parts gather until the first module name, which resolves qualified or not; null means not
+	// found. The parts after one or two more take the access's own mode, handed down to the module-level
+	// static it may name.
+	static function resolveDotPath(ctx:TyperContext, parts:Array<DotPathPart>, mode:AccessMode, withType:WithType):Null<{acc:AccessKind, rest:Array<DotPathPart>}> {
+		var pack:Array<String> = [];
+		for (i in 0...parts.length) {
+			var part = parts[i];
+			if (part.lower) { pack.push(part.name); continue; }
+			var path = parts.slice(i + 1);
+			var m2 = path.length <= 1 ? mode : MGet;
+			var wt2 = path.length <= 1 ? withType : WithTypeTools.value;
+			return pack.length > 0 ? resolveQualified(ctx, pack, part.name, path, part.pos, m2, wt2)
+				: resolveUnqualified(ctx, part.name, path, part.pos, m2, wt2);
+		}
+		return null;
+	}
+
+	// Resolve through the module loader, with its std. retry.
+	static function resolveQualified(ctx:TyperContext, pack:Array<String>, name:String, nextPath:Array<DotPathPart>, p:Position,
+			mode:AccessMode, withType:WithType):Null<{acc:AccessKind, rest:Array<DotPathPart>}> {
+		var m = hxc.context.ModuleLoader.loadModuleOpt(ctx.com, {pack: pack, name: name}, p);
+		if (m == null && pack.length > 0 && pack[0] == "std") {
+			// The retry's own miss is not the path asked for, so it is reported as an error rather
+			// than as not found.
+			var stdless:hxc.core.Globals.Path = {pack: pack.slice(1), name: name};
+			m = hxc.context.ModuleLoader.loadModuleOpt(ctx.com, stdless, p);
+			if (m == null) throw new hxc.core.TypingError.ModuleNotFoundError("Type not found : " + hxc.core.Globals.sTypePath(stdless), p);
+		}
+		if (m == null) {
+			// A type of that path in the current module context.
+			var t = findTypeInCurrentModuleContext(ctx, pack, name, p);
+			return t == null ? null : {acc: AKExpr(typeModuleTypeExpr(ctx, t, p)), rest: nextPath};
+		}
+		return resolveInModule(ctx, m, nextPath, p, mode);
+	}
+
+	// A type the module context binds first - a field asked of it resumes, so a module of that name can
+	// still answer - then the modules found through the wildcard packages and from the current package to
+	// the root.
+	static function resolveUnqualified(ctx:TyperContext, name:String, nextPath:Array<DotPathPart>, p:Position,
+			mode:AccessMode, withType:WithType):Null<{acc:AccessKind, rest:Array<DotPathPart>}> {
+		var t = findTypeInCurrentModuleContext(ctx, [], name, p);
+		if (t != null) {
+			if (nextPath.length == 0) return {acc: AKExpr(typeModuleTypeExpr(ctx, t, p)), rest: nextPath};
+			var e = typeModuleTypeExpr(ctx, t, p);
+			try {
+				var access = Fields.typeField(ctx, e, nextPath[0].name, nextPath[0].pos, mode, withType, true, true);
+				return {acc: access, rest: nextPath.slice(1)};
+			} catch (_:Fields.FieldNotFoundError) {}
+		}
+		return findInUnqualifiedModules(ctx, name, p, function(m) return resolveInModule(ctx, m, nextPath, p, mode));
+	}
+
+	// A module-level static first, then a type the next part names, then the module's own main type.
+	static function resolveInModule(ctx:TyperContext, m:hxc.core.Type.ModuleDef, path:Array<DotPathPart>, p:Position, mode:AccessMode):Null<{acc:AccessKind, rest:Array<DotPathPart>}> {
+		if (path.length > 0 && m.statics != null) {
+			var c = m.statics;
+			var f = c.statics.get(path[0].name);
+			if (f != null) {
+				var fp = path[0].pos;
+				var e = typeModuleTypeExpr(ctx, TClassDecl(c), fp);
+				return {acc: Fields.fieldAccess(ctx, mode, f, FHStatic(c), e, fp), rest: path.slice(1)};
+			}
+		}
+		var mname = m.path.name;
+		if (path.length > 0 && !path[0].lower) {
+			var t = hxc.context.ModuleLoader.findTypeInModuleOpt(m, path[0].name);
+			if (t != null) return {acc: AKExpr(typeModuleTypeExpr(ctx, t, path[0].pos)), rest: path.slice(1)};
+		}
+		var t = hxc.context.ModuleLoader.findTypeInModuleOpt(m, mname);
+		return t == null ? null : {acc: AKExpr(typeModuleTypeExpr(ctx, t, p)), rest: path};
+	}
+
+	// The wildcard packages, then the current package's prefixes, the root last.
+	static function findInUnqualifiedModules(ctx:TyperContext, name:String, p:Position,
+			f:hxc.core.Type.ModuleDef->Null<{acc:AccessKind, rest:Array<DotPathPart>}>):Null<{acc:AccessKind, rest:Array<DotPathPart>}> {
+		var cur = ctx.com.currentModule;
+		var imports = cur == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(cur.path));
+		if (imports != null) for (wp in imports.wildcards) {
+			var m = hxc.context.ModuleLoader.loadModuleOpt(ctx.com, {pack: wp.pack.concat([wp.name]), name: name}, p);
+			if (m == null) continue;
+			var r = f(m);
+			if (r != null) { imports.markWildcard(wp); return r; }
+		}
+		var pack = cur == null ? [] : cur.path.pack;
+		var i = pack.length;
+		while (i >= 0) {
+			var m = hxc.context.ModuleLoader.loadModuleOpt(ctx.com, {pack: pack.slice(0, i), name: name}, p);
+			if (m != null) {
+				var r = f(m);
+				if (r != null) return r;
+			}
+			i--;
+		}
+		return null;
+	}
+
+	// A type of the current module (with no package asked, any of that name), then the module's imports -
+	// the std types they are seeded with included.
+	static function findTypeInCurrentModuleContext(ctx:TyperContext, pack:Array<String>, name:String, p:Position):Null<ModuleType> {
+		var cur = ctx.com.currentModule;
+		if (cur == null) return null;
+		inline function matches(mt:ModuleType):Bool {
+			var tp = TypeFunctions.tInfos(mt).path;
+			return tp.name == name && (pack.length == 0 || tp.pack.join(".") == pack.join("."));
+		}
+		for (mt in cur.types) if (matches(mt)) return mt;
+		if (pack.length == 0) {
+			var r = hxc.context.ModuleLoader.resolveNamedImportType(ctx.com, cur, name, p);
+			if (r != null) return r;
+			var std = ctx.com.moduleLut.get(hxc.context.Context.pathKey({pack: [], name: "StdTypes"}));
+			if (std != null && std != cur) for (mt in std.types) if (matches(mt)) return mt;
+			return null;
+		}
+		var imports = ctx.com.moduleImports.get(hxc.context.Context.pathKey(cur.path));
+		if (imports == null) return null;
+		var k = imports.order.length - 1;
+		while (k >= 0) {
+			var ni = imports.order[k--];
+			if (ni.aliased == true) continue;
+			var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) null;
+			if (md == null) continue;
+			for (mt in md.types) {
+				var inf = TypeFunctions.tInfos(mt);
+				if (inf.isPrivate || (ni.sub != null && inf.path.name != ni.sub)) continue;
+				if (matches(mt)) { imports.markImport(ni.impIdx); return mt; }
+			}
+		}
+		return null;
 	}
 
 	static function typeArrayComprehension(ctx:TyperContext, e:Expr, withType:WithType, p:Position):TExpr {
@@ -5072,6 +5013,8 @@ class Typer {
 	static function inlineRead(ctx:TyperContext, fa:FieldAccess):TExpr {
 		var cf = fa.field;
 		var p = fa.pos;
+		// Reading an inline field forces its lazy type, which types its body there and then.
+		TypeFunctions.follow(cf.type);
 		return switch (cf.kind) {
 			case Method(_):
 				var wrapClass = switch (TypeFunctions.follow(fa.on.type)) {
@@ -5385,19 +5328,6 @@ class Typer {
 	// on the marked node's own def and span, since there is no Expr here to compare. Whether the field
 	// chain under `e` reaches the display preprocessor's marked node before it leaves plain `.`
 	// accesses.
-	static function fieldChainReachesMarked(e:Expr):Bool {
-		var mn = hxc.typing.ExprPreprocessing.markedNode;
-		if (mn == null) return false;
-		var cur = e;
-		while (true) {
-			if (cur == mn) return true;
-			switch (cur.expr) {
-				case EField(inner, _, EFNormal): cur = inner;
-				case _: return false;
-			}
-		}
-	}
-
 	public static function typeAccess(ctx:TyperContext, edef:ExprDef, p:Position, mode:AccessMode, withType:WithType):AccessKind {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (mn != null && mn.expr == edef && mn.pos.min == p.min && mn.pos.max == p.max
@@ -5495,92 +5425,7 @@ class Typer {
 						return Fields.typeField(ctx, superExpr, field, p, mode, withType);
 					case _:
 				}
-				// The head is tried as an identifier first (type_ident_raise: locals, this-fields, the current
-				// class's statics) and only on NotFound as a dot path.
-				var lastRecv:TExpr = null;
-				// A chain whose HEAD is not an identifier - a lowercase package segment - is a dot path
-				// resolved as a whole never field by field. hxc walks it field by field and retries the whole
-				// path on a miss, so on such a path the lookup resumes whatever the receiver is:
-				// `hxc.core.WithType.WithType.WithType(t, null)` reaches the enum's constructor through the
-				// enum, not through the constructor of the same name that the module's main type answered
-				// first. walks the chain to its head, and a head the display preprocessor wrapped an EDisplay)
-				// is no identifier: the chain types as an ordinary expression, so head answers the request, and
-				// is never tried as a dot path.
-				var headMarked = fieldChainReachesMarked(e1);
-				var segsAll = headMarked ? null : flattenIdentPath(EField(e1, field, EFNormal));
-				var lowerLedPath = segsAll != null && segsAll.length > 0 && {
-					var c0 = segsAll[0].charCodeAt(0);
-					c0 >= "a".code && c0 <= "z".code;
-				};
-				try {
-					// Is the SPECULATIVE lookup: it raises and reports nothing, and uses it for a dot path's head
-					// so a package prefix falls through to the type-path route below. hxc reaches that head
-					// through the REPORTING typeIdent, so the attempt runs with the recording off - a resolvable
-					// `haxe.Log.trace` must not leave `haxe` in the unresolved list.
-					var speculative = !headMarked && flattenIdentPath(e1.expr) != null;
-					if (speculative) identSpeculation++;
-					// The marked head as EDisplay: which answers the request from that node, not the identifier
-					// lookup a dot path's head takes.
-					var markedHead = headMarked && e1 == hxc.typing.ExprPreprocessing.markedNode;
-					var acc = try (markedHead ? AKExpr(typeExpr(ctx, e1, WithTypeTools.value)) : typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value))
-						catch (headErr:Dynamic) { if (speculative) identSpeculation--; throw headErr; };
-					if (speculative) identSpeculation--;
-					switch (acc) {
-						case AKSafeNav(sn):
-							AKSafeNav({
-								pos: sn.pos,
-								base: sn.base,
-								tempVar: sn.tempVar,
-								access: Fields.typeField(ctx, accGet(ctx, sn.access), field, p, mode, withType)
-							});
-						case _:
-							var recv = accGet(ctx, acc);
-							lastRecv = recv;
-							// A field asked of a type while a dotted path is walked resumes (TypeFieldConfig.create
-							// true), so the module's own sub-type or a same-package module can still answer below; a
-							// plain receiver takes the recorded verdict of .
-							Fields.typeField(ctx, recv, field, p, mode, withType, true, recv.expr.match(TTypeExpr(_)) || lowerLedPath);
-					}
-				} catch (err:TypingError) {
-					if (headMarked) throw err;
-					// The dot-path route only applies when the path COULD be a package-led type path (leading
-					// lowercase segment) or when the base itself failed to resolve; a resolved base whose field is
-					// missing keeps its own error the route up front, no fallback).
-					var segs0 = flattenIdentPath(EField(e1, field, EFNormal));
-					var baseUnresolved = StringTools.startsWith(err.message, "Unknown identifier :")
-						|| StringTools.startsWith(err.message, "Type not found :")
-						|| (StringTools.startsWith(err.message, "Module ") && err.message.indexOf(" does not define type ") >= 0);
-					var lowerLed = segs0 != null && segs0.length > 0 && {
-						var c0 = segs0[0].charCodeAt(0);
-						c0 >= "a".code && c0 <= "z".code;
-					};
-					// Back on NotFound alone: a head that did not resolve, or a field the resumed lookup did not
-					// find. An Error on the way - a private field - is the answer, and trying the next module
-					// turned it into that module's miss. A package-led path is resolved whole there
-					// (type_ident_raise raises NotFound for a package), so what hxc's field-by-field walk raised
-					// on it is no answer.
-					if (!baseUnresolved && !lowerLed && !Std.isOfType(err, Fields.FieldNotFoundError)) throw err;
-					// One `with NotFound` wraps the identifier attempt and its field chain, so a field miss on a
-					// capitalized head falls to resolve_dot_path whatever bound the head: tries the module
-					// context, then find_in_unqualified_modules walks the packages, and resolve_in_module puts a
-					// module's statics before its types.
-					// `AnalyzerTexpr.TexprFilter` - a same-package module's sub-type through its main
-					// class's name - is that walk.
-					var acc = switch (e1.expr) {
-						case EConst(CIdent(modName)) if (modName.charCodeAt(0) >= "A".code && modName.charCodeAt(0) <= "Z".code):
-							unqualifiedModuleStaticField(ctx, modName, field, p, mode, withType, e1.pos, false);
-						case _: null;
-					};
-					if (acc == null) acc = tryTypePath(ctx, EField(e1, field, EFNormal), p, mode, withType);
-					if (acc == null) {
-						// Nothing answered, so the verdict is recorded and the access recovers - the recovery the
-						// resumed lookup above skipped on purpose.
-						if (Std.isOfType(err, Fields.FieldNotFoundError) && lastRecv != null && (lastRecv.expr.match(TTypeExpr(_)) || lowerLedPath))
-							return Fields.notFound(ctx, lastRecv, field, p, err.pos, mode, withType, false);
-						throw err;
-					}
-					acc;
-				}
+				handleEfield(ctx, new Expr(edef, p), mode, withType);
 			case EArray(e1, e2):
 				if (displaySignature) checkArraySignatureDisplay(ctx, e1, e2, withType, p);
 				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);

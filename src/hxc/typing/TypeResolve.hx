@@ -772,11 +772,15 @@ class TypeResolve {
 				}
 			case _:
 		}
-		// Build with `fun() -> Built` once a class is built, so every later reach for its fields is a
-		// no-op. This is the same one-shot: an abstract's implementation is reached both from its
-		// abstract and from the ordinary class path, and without the check whichever ran second derived
-		// every signature a second time.
-		if (c.hxcBuildState != BUILT) resolveClassFields(ctx, c, d, p);
+		// Once a class is built every later reach for its fields is a no-op. This is that one-shot: an
+		// abstract's implementation is reached both from its abstract and from the ordinary class path,
+		// and without the check whichever ran second derives every signature a second time. The build
+		// macros run before a single signature is typed, so the fields of a class with a build to run are
+		// the build's to resolve (EvalMacro.runClassBuildMacros) - the list it leaves, and only that.
+		if (c.hxcBuildState != BUILT) {
+			if (hxc.eval.EvalMacro.hasPendingBuild(ctx, c)) c.hxcFieldsDeferred = true;
+			else resolveClassFields(ctx, c, d, p);
+		}
 		// A build that got past its heritage and fields forces the class's own type parameters here, so a
 		// constraint naming an unknown type reports at the end of this build - before any later
 		// declaration is built - and never at all for a build that raised earlier.
@@ -932,6 +936,7 @@ class TypeResolve {
 
 
 	public static function resolveClassFields(ctx:Context, c:TClass, d:Definition<ClassFlag, Array<ClassField>>, p:Position):Void {
+		c.hxcFieldsDeferred = false;
 		// Heritage is already set by the time this runs, from either build path, so the field-level
 		// reports held since module load are released here.
 		// The build macros run before any field check: with a build still to run, the verdicts wait for the
@@ -1641,8 +1646,23 @@ class TypeResolve {
 			// everyone
 			// after is a no-op.
 			buildClassFields(ctx, a.impl, p);
+			// The abstract checks run as each field binds, after the build macros: an implementation whose
+			// fields wait for its build registers its operators once they are resolved
+			// (resolveDeferredAbstractOps).
+			if (a.impl.hxcFieldsDeferred) {
+				a.impl.hxcAbstractOpsDeferred = true;
+				return;
+			}
 		}
 		resolveAbstractOps(ctx, a, d);
+	}
+
+	public static function resolveDeferredAbstractOps(ctx:Context, a:TAbstract):Void {
+		var ad = ctx.declOfType.get(Context.pathKey(a.path));
+		switch (ad == null ? null : ad.decl) {
+			case EAbstract(d): resolveAbstractOps(ctx, a, d);
+			case _:
+		}
 	}
 
 	static function resolveAbstractOps(ctx:Context, a:TAbstract, d:Definition<AbstractFlag, Array<ClassField>>):Void {

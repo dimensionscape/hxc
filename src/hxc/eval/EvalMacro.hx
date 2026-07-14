@@ -1115,11 +1115,16 @@ class EvalMacro {
 			var wparts = spec.substr(0, spec.length - 2).split(".");
 			var wsplit = splitImportPath(wparts);
 			if (wsplit == null) {
-				imports.wildcards.push(pathFromDotted(spec.substr(0, spec.length - 2)));
+				imports.wildcards.unshift(pathFromDotted(spec.substr(0, spec.length - 2)));
 				return;
 			}
 			var com = currentCompiler();
-			var mt = try com.getType(wsplit.modulePath, hxc.ast.Position.nullPos, wsplit.sub) catch (_:Dynamic) null;
+			// The module is loaded QUALIFIED - the lowercase pack and the first uppercase segment - and
+			// takes the type of that name from it; nothing walks the current package for it.
+			var md = try hxc.context.ModuleLoader.loadModule(com, wsplit.modulePath, hxc.ast.Position.nullPos) catch (_:Dynamic) null;
+			var tname = wsplit.sub != null ? wsplit.sub : wsplit.modulePath.name;
+			var mt:Null<ModuleType> = null;
+			if (md != null) for (t in md.types) if (TypeFunctions.tInfos(t).path.name == tname) { mt = t; break; }
 			if (mt != null) switch (TypeFunctions.resolveTypedef(mt)) {
 				case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
 					for (cf in cl.orderedStatics)
@@ -1236,11 +1241,37 @@ class EvalMacro {
 		var pending = buildMacroPendings.get(c);
 		buildMacroPendings.remove(c);
 		for (f in pending) f();
+		// The class initializes from the field list the build returns, once the builds and their pendings
+		// are done. A build that returned null leaves the fields it was given, which nothing has resolved
+		// yet.
+		if (c.hxcFieldsDeferred) {
+			var declEntry = com.declOfType.get(Context.pathKey(c.path));
+			switch (declEntry == null ? null : declEntry.decl) {
+				case EClass(d):
+					var savedMod = com.currentModule;
+					com.currentModule = c.module;
+					try hxc.typing.TypeResolve.resolveClassFields(com, c, d, declEntry.pos) catch (e:Dynamic) {
+						com.currentModule = savedMod;
+						throw e;
+					}
+					com.currentModule = savedMod;
+				case _:
+					c.hxcFieldsDeferred = false;
+			}
+		}
 		// An enum abstract's rewrite runs after every @:build, over the fields they left.
 		// TypeResolve.resolveModule left it for here.
 		switch (c.kind) {
 			case KAbstractImpl(a) if (a.isEnum): hxc.typing.TypeResolve.buildEnumAbstractAfterBuild(com, a);
 			case _:
+		}
+		// The abstract check, as the final fields bind.
+		if (c.hxcAbstractOpsDeferred) {
+			c.hxcAbstractOpsDeferred = false;
+			switch (c.kind) {
+				case KAbstractImpl(a): hxc.typing.TypeResolve.resolveDeferredAbstractOps(com, a);
+				case _:
+			}
 		}
 		// Class initialization goes on past its build; a build that re-resolved the class already went
 		// through it.

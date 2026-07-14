@@ -1097,54 +1097,59 @@ class Compiler {
 		var path = mainClass == null ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
 		try {
-			var tLoad = hxc.core.Timer.timer(["parsing"]);
-			// Std is always in the compile roots and loads before the main class. Every display mode that is
-			// not a report mode checks the display file against the cache before the compile roots load. The
-			// DisplayInMacroBlock handler wraps the whole typing stage, and checking the display file is the
-			// first thing that stage runs - so a display file whose cursor sits in a macro-only block raises
-			// from there too. Guarding only the display root's own load would print the exception as `Error:
-			// display in macro block` instead of recovering and reporting the missing completion point.
+			// A display answer raises: typing ends where one is raised, and nothing typed after it can
+			// answer instead. The answer is the one recorded.
 			try {
-				checkDisplayFile(ctx);
-				ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
-			} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
-				if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
-			}
-			// The parse of the display file raises DisplayInMacroBlock when the cursor is in a block only
-			// the macro context turns on. The normal typing is abandoned and the module is loaded in that
-			// context instead, where the display hook fires against the macro-world types. The handler wraps
-			// the whole typing stage, which is the display-file check plus every root module load. The
-			// display file can be reached through any of them, not only through its own root, so guarding
-			// only that one would let the exception print itself as `Error: display in macro block`.
-			var m:Null<ModuleDef> = null;
-			try {
-				if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
-				for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
-				m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
-				for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
-			} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
-				if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
-			}
-			// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots are
-			// typed in reverse insertion order).
-			if (platform == Cpp && ctx.defines.rawDefined("cppia"))
-				ModuleLoader.loadModule(ctx, {pack: ["cpp", "cppia"], name: "HostClasses"}, Position.nullPos);
-			tLoad();
-			var tType = hxc.core.Timer.timer(["typing"]);
-			var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
-			TypeResolve.resolveAll(ctx);
-			tResolve();
-			if (hxc.filters.ImportCheck.run(ctx)) abortOnDiagnostics(ctx, platform);
-			var tFields = hxc.core.Timer.timer(["typing", "fields"]);
-			TypeFields.typeAllModules(ctx);
-			tFields();
-			// Unused plain imports load once the build pipeline has run, so their declaration errors
-			// surface; the second typing pass covers them (an import always loads its module).
-			hxc.filters.ImportCheck.loadPlainImports(ctx);
-			hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
-			TypeFields.typeAllModules(ctx);
-			tType();
-			TypeFields.checkRecursiveAbstracts(ctx);
+				var tLoad = hxc.core.Timer.timer(["parsing"]);
+				// Std is always in the compile roots and loads before the main class. Every display mode that
+				// is not a report mode checks the display file against the cache before the compile roots load.
+				// The DisplayInMacroBlock handler wraps the whole typing stage, and checking the display file
+				// is the first thing that stage runs - so a display file whose cursor sits in a macro-only
+				// block raises from there too. Guarding only the display root's own load would print the
+				// exception as `Error: display in macro block` instead of recovering and reporting the missing
+				// completion point.
+				try {
+					checkDisplayFile(ctx);
+					ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
+				} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
+					if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
+				}
+				// The parse of the display file raises DisplayInMacroBlock when the cursor is in a block only
+				// the macro context turns on. The normal typing is abandoned and the module is loaded in that
+				// context instead, where the display hook fires against the macro-world types. The handler
+				// wraps the whole typing stage, which is the display-file check plus every root module load.
+				// The display file can be reached through any of them, not only through its own root, so
+				// guarding only that one would let the exception print itself as `Error: display in macro
+				// block`.
+				var m:Null<ModuleDef> = null;
+				try {
+					if (displayRoot != null) ModuleLoader.loadModule(ctx, displayRoot, Position.nullPos);
+					for (r in displayRoots) try ModuleLoader.loadModule(ctx, r, Position.nullPos) catch (_:Dynamic) {}
+					m = path == null ? null : ModuleLoader.loadModule(ctx, path, Position.nullPos);
+					for (ec in extraClasses) ModuleLoader.loadModule(ctx, parseTypePath(ec), Position.nullPos);
+				} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
+					if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
+				}
+				// The cppia define adds cpp.cppia.HostClasses to the compile roots; it loads last (roots
+				// are typed in reverse insertion order).
+				if (platform == Cpp && ctx.defines.rawDefined("cppia"))
+					ModuleLoader.loadModule(ctx, {pack: ["cpp", "cppia"], name: "HostClasses"}, Position.nullPos);
+				tLoad();
+				var tType = hxc.core.Timer.timer(["typing"]);
+				var tResolve = hxc.core.Timer.timer(["typing", "resolve"]);
+				TypeResolve.resolveAll(ctx);
+				tResolve();
+				var tFields = hxc.core.Timer.timer(["typing", "fields"]);
+				TypeFields.typeAllModules(ctx);
+				tFields();
+				// Unused plain imports load once the build pipeline has run, so their declaration errors
+				// surface; the second typing pass covers them (an import always loads its module).
+				hxc.filters.ImportCheck.loadPlainImports(ctx);
+				hxc.eval.EvalMacro.runAfterTypingCallbacks(ctx, () -> TypeFields.typeAllModules(ctx));
+				TypeFields.typeAllModules(ctx);
+				tType();
+				TypeFields.checkRecursiveAbstracts(ctx);
+			} catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
 			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
@@ -2900,8 +2905,9 @@ class Compiler {
 	// constructor's or the type's own doc.
 	// A @:coreApi class's core documentation is merged for a static or member field, a type expression and
 	// a construction before the item is built.
-	static function mergeHoverCoreDoc(ctx:Context, h:Null<{?e:hxc.core.Type.TExpr}>):Void {
-		if (h == null || h.e == null) return;
+	static function mergeHoverCoreDoc(ctx:Context, h:Null<{?e:hxc.core.Type.TExpr, ?displayField:Bool}>):Void {
+		// Only an expression's display merges; a field's display answer does not.
+		if (h == null || h.e == null || h.displayField == true) return;
 		switch (h.e.expr) {
 			case TField(_, FStatic(c, _) | FInstance(c, _, _) | FClosure({c: c}, _)):
 				hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));

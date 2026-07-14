@@ -19,6 +19,12 @@ class DisplayPositions {
 	}
 }
 
+// A position or hover answer ends the request. Throw DisplayRaised when recording it cannot stop
+// further typing, such as during import resolution.
+class DisplayRaised {
+	public function new() {}
+}
+
 // Completion kind values include local, member, static, enum, enumabstract, type, package and
 // literal. type, path and doc fill the t, p and d attributes.
 typedef ToplevelItem = {
