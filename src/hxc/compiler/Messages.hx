@@ -218,14 +218,10 @@ class Messages {
 			};
 			if (s != null) lines.push({info: cm.severity == Information, s: s});
 		}
-		// Buffer all request messages, including stdout information, for the response frame.
+		// Request messages retain order and a trailing newline regardless of severity.
 		var req = hxc.Compiler.requestOutput;
 		if (req != null) {
-			var outBuf = new StringBuf();
-			var errBuf = new StringBuf();
-			for (l in lines) (l.info ? outBuf : errBuf).add(l.s + "\n");
-			if (outBuf.length > 0) req.add(outBuf.toString());
-			if (errBuf.length > 0) req.add(errBuf.toString());
+			for (l in lines) req.add(l.s + "\n");
 			return;
 		}
 		// Flush each message in order; flushing stderr also emits output left by commands or the

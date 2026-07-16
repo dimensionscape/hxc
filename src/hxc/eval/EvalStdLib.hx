@@ -1183,7 +1183,6 @@ class EvalStdLib {
 	static var nativeMapOrders = new haxe.ds.ObjectMap<VInstance, Array<String>>();
 	static var threadMutexes = new haxe.ds.ObjectMap<VInstance, {mutex:sys.thread.Mutex, owner:Null<sys.thread.Thread>, count:Int}>();
 	static var threadLocks = new haxe.ds.ObjectMap<VInstance, sys.thread.Lock>();
-	static var threadTls = new haxe.ds.ObjectMap<VInstance, sys.thread.Tls<EvalValue>>();
 	static var threadDeques = new haxe.ds.ObjectMap<VInstance, sys.thread.Deque<EvalValue>>();
 	static var threadConditions = new haxe.ds.ObjectMap<VInstance, ThreadConditionState>();
 	static var threadSemaphores = new haxe.ds.ObjectMap<VInstance, sys.thread.Semaphore>();
@@ -1693,15 +1692,17 @@ class EvalStdLib {
 		return threadLocks.get(thisInstance(a, "Lock"));
 	}
 
-	static function mkThreadTls(ctx:EvalContext):EvalValue {
+	static function mkThreadTls(ctx:EvalContext, id:Int):EvalValue {
 		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Tls"));
-		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		threadTls.set(vi, new sys.thread.Tls<EvalValue>());
-		return VInstance(vi);
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, ITls(id)));
 	}
 
-	static function thisThreadTls(a:Array<EvalValue>):sys.thread.Tls<EvalValue> {
-		return threadTls.get(thisInstance(a, "Tls"));
+	// Tls's receiver (its message names a Thread).
+	static function thisTls(ctx:EvalContext, v:EvalValue):Int {
+		return switch (v) {
+			case VInstance({ikind: ITls(i)}): i;
+			case _: EvalExceptions.unexpectedValue(ctx, v, "Thread");
+		};
 	}
 
 	static function mkThreadDeque(ctx:EvalContext):EvalValue {
@@ -2206,8 +2207,13 @@ class EvalStdLib {
 	static function writeStdoutString(s:ByteString, newline:Bool):Void {
 		// During a wait-server request, macro-time stdout joins the framed response; the whole logical
 		// write (content plus line end) is one encoded chunk.
-		if (hxc.Compiler.requestOutput != null) {
-			hxc.Compiler.serverPrint(s.toText() + (newline ? lineEnd() : ""));
+		var req = hxc.Compiler.requestOutput;
+		if (req != null) {
+			var bb = new haxe.io.BytesBuffer();
+			bb.add(s.toBytes());
+			if (newline) bb.addString(lineEnd());
+			var b = bb.getBytes();
+			req.writeOut(b, 0, b.length);
 			return;
 		}
 		var out = Sys.stdout();
@@ -2868,7 +2874,10 @@ class EvalStdLib {
 			case VString(_): idx = 6; args = [classVal(EvalHash.hash("String"))];
 			case VArray(_): idx = 6; args = [classVal(EvalHash.hash("Array"))];
 			case VInstance(vi): idx = 6; args = [classVal(vi.iproto.ppath)];
+			case VVector(_): idx = 6; args = [classVal(EvalHash.hash("eval.Vector"))];
 			case VEnumValue(ev): idx = 7; args = [classVal(ev.epath)];
+			// A lazy value is forced, and its value answers.
+			case VLazy(f): return typeofValue(ctx, f());
 			case _: idx = 8;
 		}
 		return VEnumValue(new VEnumValue(idx, args, EvalHash.hash("ValueType"), null));
@@ -3151,7 +3160,7 @@ class EvalStdLib {
 			// The command runs as the compiler runs one: its output relayed as it comes, and its two thread
 			// joins let the interpreter's other threads run meanwhile.
 			var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
-			gilBlocking(() -> VInt(hxc.Compiler.runCommand(com, cmd)));
+			VInt(hxc.Compiler.runCommand(com, cmd));
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		// The process environment, each entry split at its first '=' (so a drive entry
@@ -4443,7 +4452,12 @@ class EvalStdLib {
 		});
 		ctors.set(EvalHash.hash("sys.thread.Mutex"), function(a) return mkThreadMutex(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
-		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) return mkThreadTls(ctx));
+		// Each Tls takes the next number from the context's counter.
+		var tlsCounter = -1;
+		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) {
+			tlsCounter++;
+			return mkThreadTls(ctx, tlsCounter);
+		});
 		ctors.set(EvalHash.hash("sys.thread.Deque"), function(a) return mkThreadDeque(ctx));
 		#if emscripten
 		ctors.set(EvalHash.hash("sys.thread.Condition"), function(a) return mkThreadCondition(ctx));
@@ -4763,12 +4777,19 @@ class EvalStdLib {
 			var to = arg(a, 1);
 			gilBlocking(function() return EvalValueTools.vbool(to == VNull ? lk.wait() : lk.wait(toFloat(to))));
 		}));
+		// get_value: the value the running thread's eval keeps under this Tls in its record, null when the
+		// thread has no eval or the record no value. A callback libuv runs on a thread of its own has a
+		// fresh record each time.
 		reg(inst, "sys.thread.Tls", "get_value", vmethod(a -> {
-			var v = thisThreadTls(a).value;
+			var id = thisTls(ctx, arg(a, 0));
+			var e = ctx.evalTls.value;
+			var v = e == null ? null : e.thread.storage.get(id);
 			v == null ? VNull : v;
 		}));
+		// set_value: into the running eval's record.
 		reg(inst, "sys.thread.Tls", "set_value", vmethod(a -> {
-			thisThreadTls(a).value = arg(a, 1);
+			var id = thisTls(ctx, arg(a, 0));
+			EvalContext.getEval(ctx).thread.storage.set(id, arg(a, 1));
 			arg(a, 1);
 		}));
 		reg(inst, "sys.thread.Deque", "add", vmethod(a -> { thisThreadDeque(a).add(arg(a, 1)); VNull; }));

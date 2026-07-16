@@ -263,24 +263,16 @@ class EvalMain {
 	// Evaluate the finalized entry expression: the call to main() plus the entry-point or
 	// event-loop tail built by Finalization.getMain.
 	public static function runMain(ctx:EvalContext, mainPath:Path):EvalValue {
-		// The main thread interprets under the global interpreter lock so spawned
-		// threads serialize with it; blocking natives release it around waits.
-		EvalStdLib.gilEnter();
-		try {
-			if (ctx.com == null || ctx.com.main == null)
-				throw "No entry expression: Finalization.run must populate com.main before runMain";
-			// The entry expression runs inside an EKEntrypoint environment, the depth the recursion limit
-			// counts from; its leave position, the main call's null position, never prints.
-			var entryEval = EvalContext.getEval(ctx);
-			var entryEnv = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, ctx.com.main.pos, EKEntrypoint, 0, 0));
-			// The expression is compiled before it runs.
-			var r = try { EvalPrototype.jitWalk(ctx, ctx.com.main); EvalEmitter.eval(ctx, ctx.com.main); } catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
-			EvalContext.popEnvironment(ctx, entryEnv);
-			EvalStdLib.gilLeave();
-			return r;
-		} catch (e:haxe.Exception) {
-			EvalStdLib.gilLeave();
-			throw e;
-		}
+		// It runs under the runtime lock the main thread has held since it started (Compiler.main).
+		if (ctx.com == null || ctx.com.main == null)
+			throw "No entry expression: Finalization.run must populate com.main before runMain";
+		// The entry expression runs inside an EKEntrypoint environment, the depth the recursion limit
+		// counts from; its leave position, the main call's null position, never prints.
+		var entryEval = EvalContext.getEval(ctx);
+		var entryEnv = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, ctx.com.main.pos, EKEntrypoint, 0, 0));
+		// The expression is compiled before it runs.
+		var r = try { EvalPrototype.jitWalk(ctx, ctx.com.main); EvalEmitter.eval(ctx, ctx.com.main); } catch (e:Dynamic) { entryEval.env = entryEnv.parent; throw e; };
+		EvalContext.popEnvironment(ctx, entryEnv);
+		return r;
 	}
 }

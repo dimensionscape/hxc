@@ -1949,10 +1949,14 @@ class Luv {
 		var o = retained.get(id);
 		retainedLock.release();
 		var f:Dynamic = o == null ? null : o.refs[1];
-		// The exception handler's exit ends the process from any thread Thread.exit ends the call.
-		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) {}
+		// The exception handler's exit ends the process from any thread
+		var exited = false;
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) exited = true;
 		EvalStdLib.gilLeave();
 		hxc.compiler.HostRuntime.threadEnded();
+		// Thread.exit ends the pool's thread itself, and libuv never hears back: the work's after-work
+		// callback does not run.
+		if (exited) hxc.compiler.HostRuntime.cThreadExit();
 	}
 
 
@@ -1992,9 +1996,11 @@ class Luv {
 		retained.remove(id);
 		retainedLock.release();
 		var f:Dynamic = o == null ? null : o.refs[0];
-		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) {}
+		var exited = false;
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) exited = true;
 		EvalStdLib.gilLeave();
 		hxc.compiler.HostRuntime.threadEnded();
+		if (exited) hxc.compiler.HostRuntime.cThreadExit();
 	}
 
 	// A blocking call

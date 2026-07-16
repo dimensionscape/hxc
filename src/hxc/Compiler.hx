@@ -68,7 +68,12 @@ private class RequestAbort extends haxe.Exception {
 }
 
 class Compiler {
-	public function new() run(Sys.args());
+	// The aedifex program's entry constructs the class (ProgramMain), a plain build calls main(): both
+	// start where the runtime's thread setup leaves the main thread, holding the runtime lock.
+	public function new() {
+		hxc.eval.EvalStdLib.gilEnter();
+		run(Sys.args());
+	}
 	public static function main() {
 		#if cpp
 		// HXC_DBG_GC: measure how much of the wall clock is collection. "off" disables the collector for
@@ -88,6 +93,9 @@ class Compiler {
 			}
 		}
 		#end
+		// The main thread holds the runtime lock from the start, and lets it go only in a blocking section
+		// or at the tick's yield.
+		hxc.eval.EvalStdLib.gilEnter();
 		// A completion answer raised anywhere in a one-shot compilation is written to stderr and the
 		// process exits 0.
 		try run(Sys.args())
@@ -126,14 +134,15 @@ class Compiler {
 	// Context.nextStoredTypedExprId (module-global). When set, request-scoped answers (display JSON,
 	// protocol errors) collect here instead of the process stderr, so the wait server can frame them.
 	// Null outside in-process request execution.
-	public static var requestOutput:Null<StringBuf> = null;
+	public static var requestOutput:Null<hxc.compiler.RequestOutput> = null;
 
 	// STDOUT content produced during a server request (macro trace/print) joins the response channel, each
 	// write encoded as "\x01" + s with every "\n" turned into an "\x01" continuation + a trailing "\n".
 	// Returns false outside a request so the caller falls back to the real stdout.
 	public static function serverPrint(s:String):Bool {
 		if (requestOutput == null) return false;
-		requestOutput.add("\x01" + s.split("\n").join("\x01") + "\n");
+		var b = haxe.io.Bytes.ofString(s);
+		requestOutput.writeOut(b, 0, b.length);
 		return true;
 	}
 
@@ -227,20 +236,22 @@ class Compiler {
 
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
 		while (true) {
-			var len = try {
+			// The connection is read with the interpreter lock released, so the interpreter's threads run
+			// while the server waits for a request.
+			var released = hxc.eval.EvalStdLib.gilRelease();
+			var frame:Null<haxe.io.Bytes> = try {
 				var b0 = stdin.readByte();
 				var b1 = stdin.readByte();
 				var b2 = stdin.readByte();
 				var b3 = stdin.readByte();
-				b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-			} catch (_:haxe.io.Eof) {
+				stdin.read(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24));
+			} catch (_:haxe.io.Eof) null;
+			if (released) hxc.eval.EvalStdLib.gilReacquire();
+			if (frame == null) {
 				answerNoMoreInput(stderr);
 				continue;
-			};
-			var payload = try stdin.read(len).toString() catch (_:haxe.io.Eof) {
-				answerNoMoreInput(stderr);
-				continue;
-			};
+			}
+			var payload = frame.toString();
 			// A \x01 byte splits the request: arguments before it, the display file's source after it
 			// (cleared again after the request).
 			var sep = payload.indexOf("\x01");
@@ -329,7 +340,7 @@ class Compiler {
 				// HXC_SERVER_NOREUSE=1 falls back to full recompilation.
 				// Only ever set here (the in-process wait server), so a one-shot compile is untouched.
 				hxc.context.ServerCache.enabled = Sys.getEnv("HXC_SERVER_NOREUSE") == null;
-				requestOutput = new StringBuf();
+				requestOutput = new hxc.compiler.RequestOutput();
 				var failed = false;
 				try {
 					run(lines);
@@ -347,14 +358,16 @@ class Compiler {
 				hxc.context.ServerCache.enabled = false;
 				// A fresh signature's directory scan runs after the request.
 				hxc.context.ServerCache.runDelays();
-				var payloadOut = requestOutput.toString();
+				var payloadOut = requestOutput.getBytes();
 				requestOutput = null;
-				// Writes the string as GIVEN. Every message already carries its own newline output ^ "\n"), and
-				// a completion answer carries none str), so the frame must not pad one on: a legacy diagnostics
-				// answer is exactly "[]".
-				if (payloadOut.length > 0) out.add(payloadOut);
-				if (failed) out.add("\x02\n");
-				var body2 = haxe.io.Bytes.ofString(out.toString());
+				// The answer is written as GIVEN. Every message already carries its own newline, and a
+				// completion answer carries none, so the frame must not pad one on: a legacy diagnostics answer
+				// is exactly "[]". The frame is the buffer's bytes as written.
+				var frame2 = new haxe.io.BytesBuffer();
+				frame2.addString(out.toString());
+				frame2.addBytes(payloadOut, 0, payloadOut.length);
+				if (failed) frame2.addString("\x02\n");
+				var body2 = frame2.getBytes();
 				var head2 = haxe.io.Bytes.alloc(4);
 				head2.set(0, body2.length & 0xFF);
 				head2.set(1, (body2.length >> 8) & 0xFF);
@@ -1731,59 +1744,66 @@ class Compiler {
 			hxc.core.Cwd.set(cmd.substr(3));
 			return 0;
 		}
-		// Its stdin is a pipe nothing writes to. A request's write_out and write_err are the request's own
-		// below.
-		if (requestOutput == null) {
-			var proc = new sys.io.Process(cmd);
-			function relay(input:haxe.io.Input, write:(haxe.io.Bytes, Int) -> Void):sys.thread.Lock {
-				// Thread.create: the relay thread takes the next thread ident.
-				hxc.compiler.HostRuntime.threadCreated();
-				var done = new sys.thread.Lock();
-				sys.thread.Thread.create(function() {
-					// Read 1024 bytes at a time until a read answers nothing.
-					var buf = haxe.io.Bytes.alloc(1024);
-					try while (true) {
-						var n = input.readBytes(buf, 0, 1024);
-						if (n <= 0) break;
-						write(buf, n);
-					} catch (_:Dynamic) {}
-					done.release();
-				});
-				return done;
-			}
-			var tout = relay(proc.stdout, function(b, n) {
-				var out = Sys.stdout();
-				out.writeBytes(b, 0, n);
-				out.flush();
+		// The command's streams are PIPED, and two threads relay what it writes as it writes it: stdout
+		// through the compilation's output writer, stderr through its error writer (commWriteOut,
+		// commWriteErr). Its stdin is a pipe nothing writes to.
+		var proc = new sys.io.Process(cmd);
+		function relay(input:haxe.io.Input, write:(haxe.io.Bytes, Int) -> Void):sys.thread.Lock {
+			// Thread.create: the relay thread takes the next thread ident.
+			hxc.compiler.HostRuntime.threadCreated();
+			var done = new sys.thread.Lock();
+			sys.thread.Thread.create(function() {
+				// Read 1024 bytes at a time until a read answers nothing.
+				var buf = haxe.io.Bytes.alloc(1024);
+				try while (true) {
+					var n = input.readBytes(buf, 0, 1024);
+					if (n <= 0) break;
+					write(buf, n);
+				} catch (_:Dynamic) {}
+				done.release();
 			});
-			var terr = relay(proc.stderr, function(b, n) hxc.compiler.HostRuntime.stderrWrite(b, 0, n));
+			return done;
+		}
+		var tout = relay(proc.stdout, commWriteOut);
+		var terr = relay(proc.stderr, commWriteErr);
+		// The two thread joins and closing the process are blocking sections.
+		var released = hxc.eval.EvalStdLib.gilRelease();
+		var code = try {
 			tout.wait();
 			terr.wait();
 			// The exit status, whatever ended the process.
-			var code = proc.exitCode();
+			var c = proc.exitCode();
 			proc.close();
-			return code;
+			c;
+		} catch (e:Dynamic) {
+			if (released) hxc.eval.EvalStdLib.gilReacquire();
+			throw e;
 		}
-		var proc = try new sys.io.Process(cmd) catch (e:Dynamic) return 127;
-		// The two relay threads take the next two idents.
-		hxc.compiler.HostRuntime.threadCreated();
-		hxc.compiler.HostRuntime.threadCreated();
-		var errBuf = new StringBuf();
-		var done = new sys.thread.Deque<Bool>();
-		sys.thread.Thread.create(function() {
-			try while (true) errBuf.add(String.fromCharCode(proc.stderr.readByte())) catch (_:Dynamic) {}
-			done.add(true);
-		});
-		var outBuf = new StringBuf();
-		try while (true) outBuf.add(String.fromCharCode(proc.stdout.readByte())) catch (_:Dynamic) {}
-		done.pop(true);
-		var code = proc.exitCode();
-		proc.close();
-		var so = outBuf.toString();
-		if (so != "") serverPrint(so);
-		var se = errBuf.toString();
-		if (se != "") requestOutput.add(se);
+		if (released) hxc.eval.EvalStdLib.gilReacquire();
 		return code;
+	}
+
+	// Print to stdout, then flush. In a request, the chunk goes into the request's buffer as an "\x01"
+	// line.
+	static function commWriteOut(b:haxe.io.Bytes, n:Int):Void {
+		var req = requestOutput;
+		if (req != null) {
+			req.writeOut(b, 0, n);
+			return;
+		}
+		var out = Sys.stdout();
+		out.writeFullBytes(b, 0, n);
+		out.flush();
+	}
+
+	// Write to the stderr channel. In a request, the chunk goes into the request's buffer as it is.
+	static function commWriteErr(b:haxe.io.Bytes, n:Int):Void {
+		var req = requestOutput;
+		if (req != null) {
+			req.addBytes(b, 0, n);
+			return;
+		}
+		hxc.compiler.HostRuntime.stderrWrite(b, 0, n);
 	}
 
 	static function parseTypePath(s:String):Path {

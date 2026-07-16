@@ -25,6 +25,7 @@ package hxc.compiler;
 #else
 #include <unistd.h>
 #include <sched.h>
+#include <pthread.h>
 #endif
 static std::mutex hxc_err_mutex;
 static std::vector<char> hxc_err_buf;
@@ -116,6 +117,15 @@ static void hxc_main_thread_exit() {
 #endif
 	while (hxc_threads_alive.load() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	_exit(0);
+}
+// End a C-registered thread without returning to its native caller.
+static void hxc_c_thread_exit() {
+	hx::UnregisterCurrentThread();
+#ifdef _WIN32
+	ExitThread(0);
+#else
+	pthread_exit(NULL);
+#endif
 }
 // Flush stdout and buffered stderr before reporting the uncaught thread exception directly to C
 // stderr.
@@ -211,6 +221,13 @@ class HostRuntime {
 		untyped __cpp__("hxc_main_thread_exit()");
 		#else
 		Sys.exit(0);
+		#end
+	}
+
+	// Call only after releasing the runtime lock.
+	public static function cThreadExit():Void {
+		#if cpp
+		untyped __cpp__("hxc_c_thread_exit()");
 		#end
 	}
 

@@ -208,20 +208,25 @@ enum EvalInstanceKind {
 	IMbedtlsSsl(o:Dynamic);
 	IMbedtlsX509Crt(o:Dynamic);
 	IThread(t:EvalThreadRecord);
+	// ITls: a sys.thread.Tls, the key its values go under in each thread's record.
+	ITls(id:Int);
 }
 
-// The thread an eval.vm.NativeThread instance names. (tstorage is sys.thread.Tls's, kept per OS
-// thread.)
+// The thread an eval.vm.NativeThread instance names. `ident` is what Thread.id answers and
+// `terminated` what Thread.join waits for; `deque` holds its messages, `events` its event loop and
+// `storage` the values of its sys.thread.Tls instances.
 class EvalThreadRecord {
 	public var ident:Int;
 	public var deque:sys.thread.Deque<EvalValue>;
 	public var events:EvalValue;
+	public var storage:haxe.ds.IntMap<EvalValue>;
 	var terminated:sys.thread.Lock;
 
 	public function new(ident:Int) {
 		this.ident = ident;
 		this.deque = new sys.thread.Deque();
 		this.events = VNull;
+		this.storage = new haxe.ds.IntMap();
 		this.terminated = new sys.thread.Lock();
 	}
 
