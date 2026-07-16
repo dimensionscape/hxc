@@ -1189,7 +1189,6 @@ class EvalStdLib {
 	static var threadSemaphores = new haxe.ds.ObjectMap<VInstance, sys.thread.Semaphore>();
 	static var threadEventHandlers = new Map<Int, Dynamic>();
 	static var threadEventHandlerNextId = 1;
-	static var nativeThreads = new haxe.ds.ObjectMap<VInstance, {id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue}>();
 	// The global interpreter lock: interpreted code runs one thread at a time; blocking natives
 	// release it around the OS wait so other interpreter threads can run.
 	public static var gil:sys.thread.Mutex = new sys.thread.Mutex();
@@ -1233,8 +1232,34 @@ class EvalStdLib {
 		gilHeldTls.value = true;
 	}
 
-	static var nativeThreadSelfTls:sys.thread.Tls<VInstance> = new sys.thread.Tls();
-	static var nativeThreadNextId = 1;
+	// A wait outside the interpreter lock, for a native that answers a host value.
+	static function released<T>(f:Void->T):T {
+		if (gilHeldTls.value != true) return f();
+		gilHeldTls.value = false;
+		gil.release();
+		var r = try f() catch (e:Dynamic) { gil.acquire(); gilHeldTls.value = true; throw e; };
+		gil.acquire();
+		gilHeldTls.value = true;
+		return r;
+	}
+
+	// A yield on Windows always lets the lock go, since the lock keeps no count of its waiters:
+	// LeaveCriticalSection, Sleep(0), EnterCriticalSection.
+	public static function gilYield():Void {
+		if (gilHeldTls.value != true) return;
+		gilLeave();
+		hxc.compiler.HostRuntime.sleepZero();
+		gilEnter();
+	}
+
+	// Preemption: the tick's signal, taken at a poll by the thread holding the lock, is a
+	// Thread.yield.
+	public static function preemptPoll():Void {
+		if (gilHeldTls.value != true) return;
+		hxc.compiler.HostRuntime.preemptClear();
+		gilYield();
+	}
+
 	static var evalContext:Null<EvalContext> = null;
 	static var nativeXml = new haxe.ds.ObjectMap<VInstance, Xml>();
 	static var nativeXmlValues = new haxe.ds.ObjectMap<Xml, VInstance>();
@@ -1716,43 +1741,46 @@ class EvalStdLib {
 	}
 	#end
 
-	static function mkNativeThread(ctx:EvalContext, ?job:EvalValue):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
-		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
-		// Tevents starts vnull; the typed std sets it.
-		nativeThreads.set(vi, {id: nativeThreadNextId++, messages: new sys.thread.Deque(), events: VNull});
-		if (job != null && job != VNull) {
-			// A real OS thread runs the job under the interpreter lock; its per-thread self and environment
-			// stack come from thread-locals. An uncaught interpreted exception reports on stderr like the
-			// reference thread wrapper.
-			var j = job;
-			sys.thread.Thread.create(function() {
-				gilEnter();
-				nativeThreadSelfTls.value = vi;
-				try {
-					applyFn(j, []);
-				} catch (e:Dynamic) {
-					try Sys.stderr().writeString(Std.string(e) + "
-") catch (_:Dynamic) {}
-				}
-				gilLeave();
-			});
-		}
-		return VInstance(vi);
-	}
-
-	static function nativeThreadSelfValue(ctx:EvalContext):EvalValue {
-		if (nativeThreadSelfTls.value == null) {
-			switch (mkNativeThread(ctx)) {
-				case VInstance(vi): nativeThreadSelfTls.value = vi;
-				case v: return v;
+	// Spawn: the thread record, then the thread - the descriptor takes the next ident before the new
+	// thread runs.
+	static function spawnThread(ctx:EvalContext, job:EvalValue):EvalValue {
+		var thread = new EvalThreadRecord(hxc.compiler.HostRuntime.threadCreated());
+		sys.thread.Thread.create(function() {
+			hxc.compiler.HostRuntime.threadStarted(thread.ident);
+			// The thread takes the lock as it starts.
+			gilEnter();
+			// The thread runs on an eval of its own.
+			ctx.evalTls.value = new Eval(thread);
+			try {
+				applyFn(job, []);
+			} catch (e:EvalExceptions.EvalRunTimeException) {
+				hxc.compiler.HostRuntime.stderrLine(EvalExceptions.getExcErrorMessage(ctx, e));
+			} catch (e:EvalExceptions.EvalSysExit) {
+				hxc.compiler.HostRuntime.exit(e.code);
+			} catch (e:EvalExceptions.EvalThreadExit) {
+			} catch (e:Dynamic) {
+				// An exception escaping the thread is reported as an uncaught thread exception.
+				hxc.compiler.HostRuntime.threadUncaughtException(EvalExceptions.formatException(e));
 			}
-		}
-		return VInstance(nativeThreadSelfTls.value);
+			ctx.evalTls.value = null;
+			thread.terminate();
+			gilLeave();
+			hxc.compiler.HostRuntime.threadEnded();
+		});
+		return threadInstance(ctx, thread);
 	}
 
-	static function nativeThreadData(a:Array<EvalValue>):{id:Int, messages:sys.thread.Deque<EvalValue>, events:EvalValue} {
-		return nativeThreads.get(thisInstance(a, "NativeThread"));
+	// A NativeThread instance for the thread: a new instance every time.
+	static function threadInstance(ctx:EvalContext, thread:EvalThreadRecord):EvalValue {
+		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
+		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IThread(thread)));
+	}
+
+	static function thisThread(ctx:EvalContext, v:EvalValue):EvalThreadRecord {
+		return switch (v) {
+			case VInstance({ikind: IThread(t)}): t;
+			case _: EvalExceptions.unexpectedValue(ctx, v, "Thread");
+		};
 	}
 
 	static function xmlTypeValue(x:Xml):EvalValue {
@@ -2186,12 +2214,10 @@ class EvalStdLib {
 		if (s.length > 0) out.write(s.toBytes());
 		// Eval's println appends the PLATFORM line end explicitly (stdout itself is binary), so
 		// interpreted output keeps \r\n on Windows.
-		if (newline) {
-			out.writeString(lineEnd());
-			// print_endline flushes; a macro's println must reach the terminal before a
-			// diagnostic the compiler then writes to stderr, as it does in the reference.
-			out.flush();
-		}
+		if (newline) out.writeString(lineEnd());
+		// Every write to stdout is flushed, for print as for println: what the program printed reaches the
+		// terminal before any message the compiler then writes to stderr.
+		out.flush();
 	}
 
 	static function flushStdout():Void {
@@ -2958,9 +2984,6 @@ class EvalStdLib {
 
 	public static function init(ctx:EvalContext):Void {
 		evalContext = ctx;
-		nativeThreads = new haxe.ds.ObjectMap();
-		nativeThreadSelfTls.value = null;
-		nativeThreadNextId = 1;
 		threadEventHandlers = new Map();
 		threadEventHandlerNextId = 1;
 		macroMessages = [];
@@ -3125,8 +3148,10 @@ class EvalStdLib {
 		}));
 		reg(s, "Sys", "_command", vfn(a -> {
 			var cmd = decodeText(ctx, arg(a, 0));
-			flushStdout();
-			VInt(Sys.command(cmd));
+			// The command runs as the compiler runs one: its output relayed as it comes, and its two thread
+			// joins let the interpreter's other threads run meanwhile.
+			var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+			gilBlocking(() -> VInt(hxc.Compiler.runCommand(com, cmd)));
 		}));
 		reg(s, "Sys", "cpuTime", vfn(a -> VFloat(Sys.cpuTime())));
 		// The process environment, each entry split at its first '=' (so a drive entry
@@ -3167,7 +3192,9 @@ class EvalStdLib {
 		}));
 		reg(s, "Sys", "setTimeLocale", vfn(a -> VFalse));
 		reg(s, "Sys", "sleep", vfn(a -> { var t = num(ctx, arg(a, 0)); gilBlocking(function() { Sys.sleep(t); return VNull; }); }));
-		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, Sys.stderr(), null)));
+		// Stderr: a FileOutput over the runtime's stderr channel, whose writes wait in its buffer until a
+		// flush.
+		reg(s, "Sys", "stderr", vfn(a -> mkOutput(ctx, new hxc.compiler.HostRuntime.HostStderrOutput(), null)));
 		reg(s, "Sys", "stdin", vfn(a -> mkInput(ctx, Sys.stdin(), null)));
 		reg(s, "Sys", "stdout", vfn(a -> mkOutput(ctx, Sys.stdout(), null)));
 		reg(s, "Sys", "systemName", vfn(a -> mkStr(Sys.systemName())));
@@ -4406,9 +4433,13 @@ class EvalStdLib {
 		});
 		emptyCtors.set(EvalHash.hash("Date"), function() return mkDate(ctx, 0));
 		ctors.set(EvalHash.hash("sys.io._Process.NativeProcess"), function(a) {
-			return try mkNativeProcess(ctx, new sys.io.Process(stringOf(arg(a, 0)), processArgs(ctx, arg(a, 1)))) catch (e:Dynamic) {
-				EvalExceptions.excString(ctx, Std.string(e));
-			}
+			var cmd = stringOf(arg(a, 0));
+			var args = processArgs(ctx, arg(a, 1));
+			// A process that fails to start is reported by the native's own name, "process_run", whatever
+			// the system said.
+			var proc = try new sys.io.Process(cmd, args) catch (_:Dynamic) null;
+			if (proc == null) EvalExceptions.excString(ctx, "process_run");
+			return mkNativeProcess(ctx, proc);
 		});
 		ctors.set(EvalHash.hash("sys.thread.Mutex"), function(a) return mkThreadMutex(ctx));
 		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
@@ -4420,7 +4451,7 @@ class EvalStdLib {
 		#end
 		ctors.set(EvalHash.hash("eval.vm.NativeThread"), function(a) {
 			if (ctx.isMacro) return EvalExceptions.excString(ctx, "Creating threads in macros is not supported");
-			return mkNativeThread(ctx, arg(a, 0));
+			return spawnThread(ctx, arg(a, 0));
 		});
 		reg(s, "Date", "now", vfn(a -> mkDate(ctx, Date.now().getTime())));
 		// The time is num and the string decodeString.
@@ -4604,7 +4635,8 @@ class EvalStdLib {
 				return eof(ctx);
 			}
 			try {
-				var b = ch.input.readByte();
+				// The read that refills the channel runs in a blocking section.
+				var b = released(() -> ch.input.readByte());
 				noteRead(ch);
 				VInt(b);
 			} catch (_:Dynamic) {
@@ -4617,9 +4649,14 @@ class EvalStdLib {
 			var ch = thisFileInput(a);
 			if (ch.closed && toInt(arg(a, 3)) > 0)
 				throw new hxc.eval.EvalExceptions.HostException('Sys_error("Bad file descriptor")');
-			var n = if (ch.closed) 0 else try ch.input.readBytes(decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))) catch (_:Dynamic) {
-				ch.eof = true;
-				eof(ctx);
+			var n = if (ch.closed) 0 else {
+				var buf = decodeBytes(arg(a, 1));
+				var pos = toInt(arg(a, 2));
+				var len = toInt(arg(a, 3));
+				try released(() -> ch.input.readBytes(buf, pos, len)) catch (_:Dynamic) {
+					ch.eof = true;
+					eof(ctx);
+				}
 			}
 			if (n == 0) {
 				ch.eof = true;
@@ -4800,31 +4837,43 @@ class EvalStdLib {
 			arg(a, 1) == VNull ? thisThreadSemaphore(a).tryAcquire() : thisThreadSemaphore(a).tryAcquire(toFloat(arg(a, 1))))));
 		reg(inst, "sys.thread.Semaphore", "release", vmethod(a -> { thisThreadSemaphore(a).release(); VNull; }));
 		#end
-		reg(s, "eval.vm.NativeThread", "self", vfn(a -> nativeThreadSelfValue(ctx)));
-		reg(s, "eval.vm.NativeThread", "delay", vfn(a -> { Sys.sleep(toFloat(arg(a, 0))); VNull; }));
-		reg(s, "eval.vm.NativeThread", "exit", vfn(a -> EvalExceptions.excString(ctx, "sys.thread.Thread.exit is not supported by eval")));
-		reg(s, "eval.vm.NativeThread", "join", vfn(a -> VNull));
-		reg(s, "eval.vm.NativeThread", "yield", vfn(a -> { Sys.sleep(0); VNull; }));
-		reg(s, "eval.vm.NativeThread", "readMessage", vfn(a -> {
-			switch (nativeThreadSelfValue(ctx)) {
-				case VInstance(vi):
-					var deque = nativeThreads.get(vi).messages;
-					var blocking = arg(a, 0) == VTrue;
-					var v = blocking
-						? gilBlocking(function() return deque.pop(true))
-						: deque.pop(false);
-					v == null ? VNull : v;
-				case _: VNull;
-			}
+		// Self: the running eval's record, in a new instance.
+		reg(s, "eval.vm.NativeThread", "self", vfn(a -> threadInstance(ctx, EvalContext.getEval(ctx).thread)));
+		// Delay: a sleep, in a blocking section.
+		reg(s, "eval.vm.NativeThread", "delay", vfn(a -> {
+			var t = num(ctx, arg(a, 0));
+			gilBlocking(function() { Sys.sleep(t); return VNull; });
 		}));
-		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(nativeThreadData(a).id)));
-		reg(inst, "eval.vm.NativeThread", "kill", vmethod(a -> throw "Field index for kill not found on prototype eval.vm.NativeThread"));
-		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { nativeThreadData(a).messages.add(arg(a, 1)); VNull; }));
+		// Exit: stops the thread where it is. One the runtime started returns from its start; the main
+		// thread lets the lock go and ends through HostRuntime.mainThreadExit.
+		reg(s, "eval.vm.NativeThread", "exit", vfn(a -> {
+			if (hxc.compiler.HostRuntime.currentIdent() != 0) throw new EvalExceptions.EvalThreadExit();
+			if (gilHeldTls.value == true) gilLeave();
+			hxc.compiler.HostRuntime.mainThreadExit();
+			VNull;
+		}));
+		// Join: waits for the thread's end, in a blocking section.
+		reg(s, "eval.vm.NativeThread", "join", vfn(a -> {
+			var t = thisThread(ctx, arg(a, 0));
+			gilBlocking(function() { t.join(); return VNull; });
+		}));
+		reg(s, "eval.vm.NativeThread", "yield", vfn(a -> { gilYield(); VNull; }));
+		// readMessage: a non-blocking pop of an empty deque has no value, an uncaught exception no macro
+		// catches.
+		reg(s, "eval.vm.NativeThread", "readMessage", vfn(a -> {
+			var deque = EvalContext.getEval(ctx).thread.deque;
+			var v = decodeBool(ctx, arg(a, 0)) ? gilBlocking(function() return deque.pop(true)) : deque.pop(false);
+			if (v == null) throw new EvalExceptions.HostException("Option.No_value");
+			v;
+		}));
+		reg(inst, "eval.vm.NativeThread", "id", vmethod(a -> VInt(thisThread(ctx, arg(a, 0)).ident)));
+		// sendMessage puts the message in FRONT of the deque, so the next readMessage takes the newest.
+		reg(inst, "eval.vm.NativeThread", "sendMessage", vmethod(a -> { thisThread(ctx, arg(a, 0)).deque.push(arg(a, 1)); VNull; }));
 		// get_events/set_events: events is a plain value slot on the thread record, null until the typed
 		// std installs an EventLoop.
-		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> nativeThreadData(a).events));
+		reg(inst, "eval.vm.NativeThread", "get_events", vmethod(a -> thisThread(ctx, arg(a, 0)).events));
 		reg(inst, "eval.vm.NativeThread", "set_events", vmethod(a -> {
-			nativeThreadData(a).events = arg(a, 1);
+			thisThread(ctx, arg(a, 0)).events = arg(a, 1);
 			arg(a, 1);
 		}));
 		// NativeString: a byte string, read and cut by the byte; an index out of range is the error
@@ -5211,12 +5260,12 @@ class EvalStdLib {
 			var write = list(arg(a, 1));
 			var others = list(arg(a, 2));
 			var timeout = arg(a, 3) == VNull ? 0.0 : toFloat(arg(a, 3));
-			var selected = sys.net.Socket.select(
-				[for (v in read) socketValue(v)],
-				[for (v in write) socketValue(v)],
-				[for (v in others) socketValue(v)],
-				timeout
-			);
+			var rs = [for (v in read) socketValue(v)];
+			var ws = [for (v in write) socketValue(v)];
+			var os = [for (v in others) socketValue(v)];
+			// Unix.select waits outside the runtime lock, as the socket calls below do.
+			var selected = null;
+			gilBlocking(() -> { selected = sys.net.Socket.select(rs, ws, os, timeout); VNull; });
 			function keep(src:Array<EvalValue>, selected:Array<sys.net.Socket>):EvalValue {
 				var out:Array<EvalValue> = [];
 				for (v in src) {
@@ -5234,7 +5283,14 @@ class EvalStdLib {
 				{name: "others", value: keep(others, selected.others)}
 			]);
 		}));
-		reg(inst, "eval.vm.NativeSocket", "accept", vmethod(a -> mkNativeSocket(ctx, thisSocket(a).accept())));
+		// Accept, connect, recv and send let go of the lock while they wait, so the interpreter's other
+		// threads run meanwhile.
+		reg(inst, "eval.vm.NativeSocket", "accept", vmethod(a -> {
+			var socket = thisSocket(a);
+			var c:sys.net.Socket = null;
+			gilBlocking(() -> { c = socket.accept(); VNull; });
+			mkNativeSocket(ctx, c);
+		}));
 		reg(inst, "eval.vm.NativeSocket", "bind", vmethod(a -> {
 			thisSocket(a).bind(new sys.net.Host(hostIpString(toInt(arg(a, 1)))), toInt(arg(a, 2)));
 			VNull;
@@ -5246,18 +5302,38 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "eval.vm.NativeSocket", "connect", vmethod(a -> {
-			thisSocket(a).connect(new sys.net.Host(hostIpString(toInt(arg(a, 1)))), toInt(arg(a, 2)));
+			var socket = thisSocket(a);
+			var host = new sys.net.Host(hostIpString(toInt(arg(a, 1))));
+			var port = toInt(arg(a, 2));
+			gilBlocking(() -> { socket.connect(host, port); VNull; });
 			VNull;
 		}));
 		reg(inst, "eval.vm.NativeSocket", "host", vmethod(a -> hostInfo(thisSocket(a).host())));
 		reg(inst, "eval.vm.NativeSocket", "listen", vmethod(a -> { thisSocket(a).listen(toInt(arg(a, 1))); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "peer", vmethod(a -> hostInfo(thisSocket(a).peer())));
-		reg(inst, "eval.vm.NativeSocket", "receive", vmethod(a -> try VInt(thisSocket(a).input.readBytes(
-			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3)))) catch (_:haxe.io.Eof) VInt(0)));
-		reg(inst, "eval.vm.NativeSocket", "receiveChar", vmethod(a -> VInt(thisSocket(a).input.readByte())));
-		reg(inst, "eval.vm.NativeSocket", "send", vmethod(a -> VInt(thisSocket(a).output.writeBytes(
-			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))))));
-		reg(inst, "eval.vm.NativeSocket", "sendChar", vmethod(a -> { thisSocket(a).output.writeByte(toInt(arg(a, 1))); VNull; }));
+		reg(inst, "eval.vm.NativeSocket", "receive", vmethod(a -> {
+			var socket = thisSocket(a);
+			var buf = decodeBytes(arg(a, 1));
+			var pos = toInt(arg(a, 2));
+			var len = toInt(arg(a, 3));
+			gilBlocking(() -> try VInt(socket.input.readBytes(buf, pos, len)) catch (_:haxe.io.Eof) VInt(0));
+		}));
+		reg(inst, "eval.vm.NativeSocket", "receiveChar", vmethod(a -> {
+			var socket = thisSocket(a);
+			gilBlocking(() -> VInt(socket.input.readByte()));
+		}));
+		reg(inst, "eval.vm.NativeSocket", "send", vmethod(a -> {
+			var socket = thisSocket(a);
+			var buf = decodeBytes(arg(a, 1));
+			var pos = toInt(arg(a, 2));
+			var len = toInt(arg(a, 3));
+			gilBlocking(() -> VInt(socket.output.writeBytes(buf, pos, len)));
+		}));
+		reg(inst, "eval.vm.NativeSocket", "sendChar", vmethod(a -> {
+			var socket = thisSocket(a);
+			var c = toInt(arg(a, 1));
+			gilBlocking(() -> { socket.output.writeByte(c); VNull; });
+		}));
 		reg(inst, "eval.vm.NativeSocket", "setFastSend", vmethod(a -> { thisSocket(a).setFastSend(arg(a, 1) == VTrue); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "setBroadcast", vmethod(a -> { setSocketBroadcast(thisSocket(a), arg(a, 1) == VTrue); VNull; }));
 		reg(inst, "eval.vm.NativeSocket", "setTimeout", vmethod(a -> { thisSocket(a).setTimeout(toFloat(arg(a, 1))); VNull; }));

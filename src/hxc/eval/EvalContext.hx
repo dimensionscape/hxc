@@ -78,13 +78,17 @@ class Eval {
 	public var exceptionStack:Array<{pos:Position, kind:EvalEnvKind}>;
 	public var currentPos:Position;
 	public var lastExceptionPos:Position;
-	public function new() {
+	// The record of the thread this eval runs on.
+	public var thread:EvalThreadRecord;
+	public function new(?thread:EvalThreadRecord) {
 		this.env = null;
 		this.lastReturn = null;
 		this.caughtTypes = new Map();
 		this.exceptionStack = [];
 		this.currentPos = Position.nullPos;
 		this.lastExceptionPos = Position.nullPos;
+		// A thread the interpreter did not start gets a record for Thread.self().
+		this.thread = thread != null ? thread : new EvalThreadRecord(hxc.compiler.HostRuntime.currentIdent());
 	}
 }
 
@@ -201,6 +205,8 @@ class EvalContext {
 	}
 
 	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo):EvalEnv {
+		// A function's entry is one of the polls where the tick's preemption is taken.
+		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
 		var eval = getEval(ctx);
 		var locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
 		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];

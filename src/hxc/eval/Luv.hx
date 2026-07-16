@@ -341,12 +341,13 @@ class Luv {
 	// The handler for an exception escaping a callback; each eval context replaces it.
 	public static var exceptionHandler:Dynamic->Void = function(e:Dynamic) {
 		Sys.stderr().writeString(Std.string(e) + "\n");
-		Sys.exit(2);
+		hxc.compiler.HostRuntime.exit(2);
 	};
 
+	// Sends a callback's exception to exceptionHandler. A thread exit passes through it.
 	public static function catchExceptions(f:Void->Void):Void->Void {
 		return function() {
-			try f() catch (e:Dynamic) exceptionHandler(e);
+			try f() catch (e:EvalExceptions.EvalThreadExit) throw e catch (e:Dynamic) exceptionHandler(e);
 		};
 	}
 
@@ -1941,14 +1942,17 @@ class Luv {
 
 	// The work trampoline, from a thread the runtime registers for the call
 	@:keep public static function dispatchWork(id:Int):Void {
+		// The thread registers itself: it takes the next ident (and starts the tick if nothing has).
+		hxc.compiler.HostRuntime.threadStarted(hxc.compiler.HostRuntime.threadCreated());
 		EvalStdLib.gilEnter();
 		retainedLock.acquire();
 		var o = retained.get(id);
 		retainedLock.release();
 		var f:Dynamic = o == null ? null : o.refs[1];
-		// The exception handler's exit ends the process from any thread
-		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) Sys.exit(e.code);
+		// The exception handler's exit ends the process from any thread Thread.exit ends the call.
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) {}
 		EvalStdLib.gilLeave();
+		hxc.compiler.HostRuntime.threadEnded();
 	}
 
 
@@ -1980,14 +1984,17 @@ class Luv {
 
 	// The thread trampoline: the root is released before the function runs
 	@:keep public static function dispatchThread(id:Int):Void {
+		// The thread registers itself: it takes the next ident (and starts the tick if nothing has).
+		hxc.compiler.HostRuntime.threadStarted(hxc.compiler.HostRuntime.threadCreated());
 		EvalStdLib.gilEnter();
 		retainedLock.acquire();
 		var o = retained.get(id);
 		retained.remove(id);
 		retainedLock.release();
 		var f:Dynamic = o == null ? null : o.refs[0];
-		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) Sys.exit(e.code);
+		try if (f != null) f() catch (e:EvalExceptions.EvalSysExit) hxc.compiler.HostRuntime.exit(e.code) catch (e:EvalExceptions.EvalThreadExit) {}
 		EvalStdLib.gilLeave();
+		hxc.compiler.HostRuntime.threadEnded();
 	}
 
 	// A blocking call

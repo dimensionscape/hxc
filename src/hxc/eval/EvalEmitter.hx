@@ -151,7 +151,8 @@ class EvalEmitter {
 					result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; });
 				} catch (ex:Dynamic) {
 					// Control-flow signals must reach their own handlers, never a program try/catch.
-					if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)) throw ex;
+					if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)
+						|| Std.isOfType(ex, EvalThreadExit)) throw ex;
 					// A try catches runtime exceptions alone: Context.error's abort and a fatal error are
 					// internal exceptions no macro try sees.
 					// A typing error raised while a macro API call runs the typer is the same: it reaches
@@ -221,6 +222,7 @@ class EvalEmitter {
 				&& !Std.isOfType(ex, EvalContinue)
 				&& !Std.isOfType(ex, EvalReturn)
 				&& !Std.isOfType(ex, EvalSysExit)
+				&& !Std.isOfType(ex, EvalThreadExit)
 				&& !Std.isOfType(ex, EvalRunTimeException)
 				&& (ev.lastExceptionPos == null || ev.lastExceptionPos.min < 0)) {
 				ev.lastExceptionPos = ev.currentPos;
@@ -557,11 +559,13 @@ class EvalEmitter {
 			case NormalWhile:
 				while (EvalMisc.isTrue(eval(ctx, econd))) {
 					try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+					poll();
 				}
 			case DoWhile:
 				var go = true;
 				while (go) {
 					try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+					poll();
 					go = EvalMisc.isTrue(eval(ctx, econd));
 				}
 		}
@@ -574,8 +578,14 @@ class EvalEmitter {
 		while (EvalMisc.isTrue(callField(ctx, it, "hasNext", [], p))) {
 			env.locals[slot(env, v.id)] = callField(ctx, it, "next", [], p);
 			try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+			poll();
 		}
 		return VNull;
+	}
+
+	// A loop's turn is one of the polls where the tick's preemption is taken.
+	static inline function poll():Void {
+		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
 	}
 
 	static function callField(ctx:EvalContext, recv:EvalValue, name:String, args:Array<EvalValue>, p:Position):EvalValue {

@@ -29,6 +29,13 @@ class EvalSysExit extends haxe.Exception {
 	}
 }
 
+// Only the thread's start catches this.
+class EvalThreadExit extends haxe.Exception {
+	public function new() {
+		super("threadexit");
+	}
+}
+
 // A thrown Haxe value, carrying the call stack and the throw position.
 class EvalRunTimeException extends haxe.Exception {
 	public var value:EvalValue;
@@ -97,6 +104,36 @@ class EvalExceptions {
 			if (env == catchEnv) break;
 		}
 		return out;
+	}
+
+	// An error position, printed as "%s:%d:".
+	public static function formatPos(p:Position):String {
+		return hxc.core.Globals.getErrorPosRef(function(file, line) return file + ":" + line + ":", p);
+	}
+
+	public static function uncaughtExceptionString(v:EvalValue, p:Position, extra:String):String {
+		return formatPos(p) + " : Uncaught exception " + EvalStdLib.stringOf(v) + extra;
+	}
+
+	// The uncaught-exception message, over the stack's frames (exceptionStack). A std file is named by its
+	// path on the class path, as the typer read it.
+	public static function getExcErrorMessage(ctx:EvalContext, ex:EvalRunTimeException):String {
+		var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+		function qualify(p:Position):Position return com == null ? p : @:privateAccess hxc.Compiler.qualifyStdPosition(com, p);
+		var p = ex.pos == null ? Position.nullPos : ex.pos;
+		var pl = [for (f in exceptionStack(ex)) qualify(f.pos)];
+		if (pl.length == 0) return uncaughtExceptionString(ex.value, qualify(p), "");
+		var sstack = [for (q in pl) formatPos(q) + " : Called from here"].join("\n");
+		return (isNullPos(p) ? "" : formatPos(qualify(p)) + " : ") + "Uncaught exception " + EvalStdLib.stringOf(ex.value) + "\n" + sstack;
+	}
+
+	// An internal exception as a thread's uncaught report prints it.
+	public static function formatException(e:Dynamic):String {
+		if (Std.isOfType(e, HostException)) {
+			var oe:HostException = e;
+			return oe.failure ? "Failure(\"" + oe.message + "\")" : oe.message;
+		}
+		return Std.string(e);
 	}
 
 	public static function exc(ctx:EvalContext, v:EvalValue, ?p:Position):Dynamic {

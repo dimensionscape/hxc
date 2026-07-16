@@ -503,6 +503,13 @@ class EvalPrototype {
 				throw new hxc.core.TypingError("Field index for " + cf.name + " not found on prototype "
 					+ hxc.core.Globals.sTypePath(c.path), hxc.ast.Position.nullPos);
 		}
+		// An instance call: the class's instance prototype and the method's slot in it.
+		function instanceVerdict(c:TClass, cf:TClassField):Void {
+			if (!inInstancePrototype(ctx, c, cf))
+				throw new hxc.core.TypingError("Field index for " + cf.name + " not found on prototype "
+					+ hxc.core.Globals.sTypePath(c.path), hxc.ast.Position.nullPos);
+		}
+		function isFinal(c:TClass, cf:TClassField):Bool return @:privateAccess EvalEmitter.isFinalMethod(ctx, c, cf);
 		var loop:TExpr->Void = null;
 		// An assignment or a compound assignment: the receiver (or array and index), then the value.
 		function assign(e1:TExpr, e2:Null<TExpr>):Void {
@@ -571,6 +578,16 @@ class EvalPrototype {
 						case FEnum(_, _):
 						case FStatic(c, cf) if (isProperStaticMethod(cf)):
 							verdict(c, cf);
+						// A proper method no subclass overrides is a call to its class's slot, the
+						// receiver compiled first; an interface's, to its one implementer's.
+						case FInstance(c, _, cf) if (isProperStaticMethod(cf) && isFinal(c, cf)):
+							loop(ef);
+							if (!TypeFunctions.hasClassFlag(c, CInterface))
+								instanceVerdict(c, cf);
+							else if (!ctx.isMacro && c.interfaces.length == 0 && c.superClass == null) switch (c.descendants) {
+								case [c2] if (!TypeFunctions.hasClassFlag(c2, CInterface) && isFinal(c2, cf)): instanceVerdict(c2, cf);
+								case _:
+							}
 						case _:
 							loop(ef);
 					}
@@ -689,17 +706,40 @@ class EvalPrototype {
 		};
 	}
 
-	// What a class's static prototype names: (nothing of an extern class's own, no extern or generic field,
-	// every method, and a variable with an initializer or storage) and finalize's builtins.
+	// What a class's static prototype names: nothing of an extern class's own, no extern or generic
+	// field, every method, and a variable with an initializer or storage, plus the builtins. The
+	// compile step looks the name up in the class's prototype, whichever field holds it there
+	// (buildStatic's slots). An extern is not in it, but its name can be: applying @:native paths
+	// renames the field that implements it, as `@:native('add') function doAdd` does for an
+	// `@:op extern function add`.
 	static function inStaticPrototype(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
 		var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
 		var name = EvalHash.hash(cf.name);
 		if (builtins != null) for (b in builtins) if (b.name == name) return true;
-		if (TypeFunctions.hasClassFlag(c, CExtern) || isRemovable(cf)) return false;
-		return switch (cf.kind) {
-			case Method(_): true;
-			case Var(_): cf.expr != null || TypeFunctions.isPhysicalField(cf);
-		};
+		if (TypeFunctions.hasClassFlag(c, CExtern)) return false;
+		function holds(f:TClassField):Bool {
+			if (isRemovable(f) || (f.name != cf.name && nativeFieldName(f) != cf.name)) return false;
+			return switch (f.kind) {
+				case Method(_): true;
+				case Var(_): f.expr != null || TypeFunctions.isPhysicalField(f);
+			};
+		}
+		for (f in c.orderedStatics) if (holds(f)) return true;
+		for (f in c.statics) if (holds(f)) return true;
+		return false;
+	}
+
+	// What a class's instance prototype names (looked up in its own pnames): nothing of an extern
+	// class's own but String's, no extern or generic field, every method, plus the builtins.
+	static function inInstancePrototype(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
+		var builtins = ctx.builtins.instanceBuiltins.get(EvalHash.pathHash(c.path));
+		var name = EvalHash.hash(cf.name);
+		if (builtins != null) for (b in builtins) if (b.name == name) return true;
+		if (TypeFunctions.hasClassFlag(c, CExtern) && !(c.path.pack.length == 0 && c.path.name == "String")) return false;
+		for (f in c.orderedFields)
+			if (!isRemovable(f) && (f.name == cf.name || nativeFieldName(f) == cf.name) && f.kind.match(Method(_)))
+				return true;
+		return false;
 	}
 
 	// Whether a static method's expr is null for good. hxc types statics lazily (the macro

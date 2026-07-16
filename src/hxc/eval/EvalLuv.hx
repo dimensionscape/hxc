@@ -1542,7 +1542,7 @@ class EvalLuv {
 			f();
 		} catch (e:EvalExceptions.EvalSysExit) {
 			ctx.evalTls.value = null;
-			Sys.exit(e.code);
+			hxc.compiler.HostRuntime.exit(e.code);
 		} catch (e:Dynamic) {
 			ctx.evalTls.value = null;
 			throw e;

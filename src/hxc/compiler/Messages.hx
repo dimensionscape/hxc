@@ -209,25 +209,33 @@ class Messages {
 		var msgs = ctx.diagnostics;
 		var ectx:PrettyCtx = {lastPositions: new Map(), previous: null, gutter: new Map(), maxLines: maxLines(msgs)};
 		// Information routes to stdout, warnings/errors/hints to stderr.
-		var outBuf = new StringBuf();
-		var errBuf = new StringBuf();
+		var lines:Array<{info:Bool, s:String}> = [];
 		for (cm in msgs) {
 			var s = switch (mode) {
 				case "pretty": prettyString(ctx, ectx, cm);
 				case "indent": indentedString(cm);
 				case _: classicString(cm);
 			};
-			if (s != null) (cm.severity == Information ? outBuf : errBuf).add(s + "\n");
+			if (s != null) lines.push({info: cm.severity == Information, s: s});
 		}
 		// Buffer all request messages, including stdout information, for the response frame.
 		var req = hxc.Compiler.requestOutput;
 		if (req != null) {
+			var outBuf = new StringBuf();
+			var errBuf = new StringBuf();
+			for (l in lines) (l.info ? outBuf : errBuf).add(l.s + "\n");
 			if (outBuf.length > 0) req.add(outBuf.toString());
 			if (errBuf.length > 0) req.add(errBuf.toString());
 			return;
 		}
-		if (outBuf.length > 0) Sys.stdout().writeString(outBuf.toString());
-		if (errBuf.length > 0) Sys.stderr().writeString(errBuf.toString());
+		// Flush each message in order; flushing stderr also emits output left by commands or the
+		// interpreted program.
+		for (l in lines) {
+			if (l.info) {
+				Sys.stdout().writeString(l.s + "\n");
+				Sys.stdout().flush();
+			} else HostRuntime.stderrLine(l.s);
+		}
 	}
 
 	// Report an unknown mode using its canonical define key, then use the default.

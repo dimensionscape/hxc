@@ -207,6 +207,34 @@ enum EvalInstanceKind {
 	IMbedtlsPkContext(o:Dynamic);
 	IMbedtlsSsl(o:Dynamic);
 	IMbedtlsX509Crt(o:Dynamic);
+	IThread(t:EvalThreadRecord);
+}
+
+// The thread an eval.vm.NativeThread instance names. (tstorage is sys.thread.Tls's, kept per OS
+// thread.)
+class EvalThreadRecord {
+	public var ident:Int;
+	public var deque:sys.thread.Deque<EvalValue>;
+	public var events:EvalValue;
+	var terminated:sys.thread.Lock;
+
+	public function new(ident:Int) {
+		this.ident = ident;
+		this.deque = new sys.thread.Deque();
+		this.events = VNull;
+		this.terminated = new sys.thread.Lock();
+	}
+
+	// The event every join waits for, signaled for good.
+	public function terminate():Void {
+		terminated.release();
+	}
+
+	// Join: a wait on that event.
+	public function join():Void {
+		terminated.wait();
+		terminated.release();
+	}
 }
 
 // A native map entry keeps the original key alongside its value, so iteration over keys (and

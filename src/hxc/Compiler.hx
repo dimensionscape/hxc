@@ -116,7 +116,7 @@ class Compiler {
 		} else {
 			Sys.stderr().writeString("Error: " + msg + "\n");
 		}
-		Sys.exit(1);
+		hxc.compiler.HostRuntime.exit(1);
 	}
 
 	// The wait loop: length-prefixed request/response over stdin/stderr; each request is one
@@ -187,12 +187,12 @@ class Compiler {
 		var port = Std.parseInt(portStr);
 		if (port == null) {
 			Sys.stderr().writeString("Invalid port\n");
-			Sys.exit(1);
+			hxc.compiler.HostRuntime.exit(1);
 		}
 		var sock = new sys.net.Socket();
 		try sock.connect(new sys.net.Host(host), port) catch (e:Dynamic) {
 			Sys.stderr().writeString("Couldn't connect on " + host + ":" + port + "\n");
-			Sys.exit(1);
+			hxc.compiler.HostRuntime.exit(1);
 		}
 		runWaitLoop(sock.input, sock.output);
 		try sock.close() catch (_:Dynamic) {}
@@ -408,7 +408,7 @@ class Compiler {
 			// before the code is returned. The macro that exits has usually queued the warnings saying why.
 			var c = argFailureCtx;
 			if (c != null) flushPendingMessages(c);
-			Sys.exit(se.code);
+			hxc.compiler.HostRuntime.exit(se.code);
 		}
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
@@ -1718,7 +1718,7 @@ class Compiler {
 		return out.toString();
 	}
 
-	static function runCommand(ctx:Context, cmd:String):Int {
+	public static function runCommand(ctx:Context, cmd:String):Int {
 		// A server request expands __file__ and __platform__ before running the command.
 		if (requestOutput != null) {
 			var h = new Map<String, String>();
@@ -1726,15 +1726,48 @@ class Compiler {
 			h.set("__platform__", Globals.platformName(ctx.platform));
 			cmd = expandEnv(cmd, h);
 		}
-		if (StringTools.startsWith(cmd, "cd ")) {
+		// A "cd " with something after it changes the directory.
+		if (cmd.length > 3 && StringTools.startsWith(cmd, "cd ")) {
 			hxc.core.Cwd.set(cmd.substr(3));
 			return 0;
 		}
-		// A one-shot compile lets the child inherit the terminal. A server request must not: stderr is
-		// the protocol channel, so opens the process with both streams PIPED and forwards them through
-		// the request's own write_out/write_err .
-		if (requestOutput == null) return Sys.command(cmd);
+		// Its stdin is a pipe nothing writes to. A request's write_out and write_err are the request's own
+		// below.
+		if (requestOutput == null) {
+			var proc = new sys.io.Process(cmd);
+			function relay(input:haxe.io.Input, write:(haxe.io.Bytes, Int) -> Void):sys.thread.Lock {
+				// Thread.create: the relay thread takes the next thread ident.
+				hxc.compiler.HostRuntime.threadCreated();
+				var done = new sys.thread.Lock();
+				sys.thread.Thread.create(function() {
+					// Read 1024 bytes at a time until a read answers nothing.
+					var buf = haxe.io.Bytes.alloc(1024);
+					try while (true) {
+						var n = input.readBytes(buf, 0, 1024);
+						if (n <= 0) break;
+						write(buf, n);
+					} catch (_:Dynamic) {}
+					done.release();
+				});
+				return done;
+			}
+			var tout = relay(proc.stdout, function(b, n) {
+				var out = Sys.stdout();
+				out.writeBytes(b, 0, n);
+				out.flush();
+			});
+			var terr = relay(proc.stderr, function(b, n) hxc.compiler.HostRuntime.stderrWrite(b, 0, n));
+			tout.wait();
+			terr.wait();
+			// The exit status, whatever ended the process.
+			var code = proc.exitCode();
+			proc.close();
+			return code;
+		}
 		var proc = try new sys.io.Process(cmd) catch (e:Dynamic) return 127;
+		// The two relay threads take the next two idents.
+		hxc.compiler.HostRuntime.threadCreated();
+		hxc.compiler.HostRuntime.threadCreated();
 		var errBuf = new StringBuf();
 		var done = new sys.thread.Deque<Bool>();
 		sys.thread.Thread.create(function() {
@@ -2947,7 +2980,7 @@ class Compiler {
 	// A failing one-shot compile exits the process; an in-process wait-server request
 	// aborts only the request.
 	static function exitRequest(code:Int):Void {
-		if (requestOutput != null) throw new RequestAbort(code) else Sys.exit(code);
+		if (requestOutput != null) throw new RequestAbort(code) else hxc.compiler.HostRuntime.exit(code);
 	}
 
 	// A macro can push a raw json value out as the request result, through the same envelope every other
