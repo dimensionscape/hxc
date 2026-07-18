@@ -1560,7 +1560,7 @@ class Typer {
 									var v = TypeFunctions.allocVar(VGenerated, "`", te.type, te.pos);
 									evars.unshift(TypeFunctions.mk(TVarExpr(v, te), te.type, te.pos));
 									byName.set(fname, TexprTools.makeLocal(v, te.pos));
-								} else if (hasSideEffect(te)) {
+								} else if (hxc.optimization.OptimizerTexpr.hasSideEffect(te)) {
 									hadSideEffect = true;
 								}
 						}
@@ -6842,28 +6842,6 @@ class Typer {
 			case TWhile(e1, e2, _): hasReturn(e1) || hasReturn(e2);
 			case TSwitch(e1, cases, edef): hasReturn(e1) || Lambda.exists(cases, c -> Lambda.exists(c.values, hasReturn) || hasReturn(c.expr)) || (edef != null && hasReturn(edef));
 			case TTry(e1, catches): hasReturn(e1) || Lambda.exists(catches, c -> hasReturn(c.expr));
-		};
-	}
-
-	// Whether evaluating the expression can cause a side effect (assignment, increment, call, allocation,
-	// control flow). Object-literal @:structInit field initializers that follow a side-effecting field are
-	// hoisted into temp vars so they still evaluate in source order. Conservative (does not model @:pure).
-	public static function hasSideEffect(e:TExpr):Bool {
-		return switch (e.expr) {
-			case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_): false;
-			case TNew(_, _, _) | TCall(_, _) | TReturn(_) | TBreak | TContinue | TThrow(_): true;
-			case TBinop(OpAssign | OpAssignOp(_), _, _): true;
-			case TUnop(Increment | Decrement, _, _): true;
-			case TCast(e1, mt): mt != null || hasSideEffect(e1);
-			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2): hasSideEffect(e1) || hasSideEffect(e2);
-			case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1): hasSideEffect(e1);
-			case TVarExpr(_, eo): eo != null && hasSideEffect(eo);
-			case TObjectDecl(fields): Lambda.exists(fields, f -> hasSideEffect(f.expr));
-			case TArrayDecl(el) | TBlock(el): Lambda.exists(el, hasSideEffect);
-			case TIf(e1, e2, e3): hasSideEffect(e1) || hasSideEffect(e2) || (e3 != null && hasSideEffect(e3));
-			case TWhile(e1, e2, _): hasSideEffect(e1) || hasSideEffect(e2);
-			case TSwitch(e1, cases, edef): hasSideEffect(e1) || Lambda.exists(cases, c -> Lambda.exists(c.values, hasSideEffect) || hasSideEffect(c.expr)) || (edef != null && hasSideEffect(edef));
-			case TTry(e1, catches): hasSideEffect(e1) || Lambda.exists(catches, c -> hasSideEffect(c.expr));
 		};
 	}
 }

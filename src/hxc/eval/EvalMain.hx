@@ -113,50 +113,6 @@ class EvalMain {
 		if (np != null) c.path = hxc.ast.Ast.parsePath(np);
 	}
 
-	// The reference always runs the analyzer for eval forces optimize=true), so LocalDce removes
-	// statement-position expressions with no side effects before execution. hxc has no analyzer; this
-	// walker reproduces the observable part: drop non-final block statements that cannot cause a side
-	// effect. Var declarations stay (later statements may use them).
-	static function dropPureStatements(e:TExpr):Void {
-		switch (e.expr) {
-			case TBlock(el):
-				var out:Array<TExpr> = [];
-				for (i in 0...el.length) {
-					var x = el[i];
-					dropPureStatements(x);
-					var keep = i == el.length - 1 || x.expr.match(TVarExpr(_, _)) || hxc.typing.Typer.hasSideEffect(x);
-					if (keep) out.push(x);
-				}
-				if (out.length != el.length) e.expr = TBlock(out);
-			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2) | TWhile(e1, e2, _):
-				dropPureStatements(e1); dropPureStatements(e2);
-			case TField(e1, _) | TParenthesis(e1) | TUnop(_, _, e1) | TMeta(_, e1) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TCast(e1, _) | TThrow(e1):
-				dropPureStatements(e1);
-			case TVarExpr(_, eo): if (eo != null) dropPureStatements(eo);
-			case TReturn(eo): if (eo != null) dropPureStatements(eo);
-			case TObjectDecl(fields): for (f in fields) dropPureStatements(f.expr);
-			case TArrayDecl(el): for (x in el) dropPureStatements(x);
-			case TCall(e1, el): dropPureStatements(e1); for (x in el) dropPureStatements(x);
-			case TNew(_, _, el): for (x in el) dropPureStatements(x);
-			case TFunction(f): dropPureStatements(f.expr);
-			case TIf(e1, e2, e3): dropPureStatements(e1); dropPureStatements(e2); if (e3 != null) dropPureStatements(e3);
-			case TSwitch(e1, cases, edef):
-				dropPureStatements(e1);
-				for (c in cases) { for (v in c.values) dropPureStatements(v); dropPureStatements(c.expr); }
-				if (edef != null) dropPureStatements(edef);
-			case TTry(e1, catches): dropPureStatements(e1); for (c in catches) dropPureStatements(c.expr);
-			case TConst(_) | TLocal(_) | TTypeExpr(_) | TIdent(_) | TBreak | TContinue:
-		}
-	}
-
-	static function dropPureStatementsClass(c:TClass):Void {
-		inline function field(cf:TClassField) if (cf.expr != null) dropPureStatements(cf.expr);
-		for (cf in c.orderedFields) field(cf);
-		for (cf in c.orderedStatics) field(cf);
-		if (c.constructor != null) field(c.constructor);
-		if (c.init != null) dropPureStatements(c.init);
-	}
-
 	public static function addTypes(ctx:EvalContext, types:Array<ModuleType>, runDce:Bool = false):Void {
 		// A type already cached under this path hash is skipped only when it comes from the same module.
 		// One from a DIFFERENT module replaces it, and its prototypes are dropped first so they are
@@ -190,7 +146,6 @@ class EvalMain {
 				// field body
 				// is typed before generation).
 				if (runDce && ctx.com != null) hxc.typing.TypeFields.forceClassFields(ctx.com, c);
-				if (runDce) dropPureStatementsClass(c);
 				var key = EvalHash.pathHash(c.path);
 				if (!ctx.typeCache.exists(key)) ctx.typeCache.set(key, mt);
 			case TEnumDecl(en):
