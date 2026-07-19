@@ -37,7 +37,7 @@ class EvalMacro {
 		var ec = EvalContext.getCtx();
 		var env = ec == null ? null : EvalContext.getEval(ec).env;
 		if (env == null) return curPos;
-		return env.parent != null ? env.parent.leavePos : env.leavePos;
+		return EvalExceptions.envPosition(env.parent != null ? env.parent : env);
 	}
 	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;

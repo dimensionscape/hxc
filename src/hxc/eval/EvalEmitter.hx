@@ -78,7 +78,7 @@ class EvalEmitter {
 		var oldPos = ev.currentPos;
 		if (e.pos != null && e.pos.min >= 0) ev.currentPos = e.pos;
 		var env = ev.env;
-		var result = try switch (e.expr) {
+		var result = switch (e.expr) {
 			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
 			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
@@ -112,19 +112,12 @@ class EvalEmitter {
 				if (EvalMisc.isTrue(eval(ctx, econd))) eval(ctx, eif);
 				else if (eelse != null) eval(ctx, eelse);
 				else VNull;
-			case TWhile(econd, body, flag): evalWhile(ctx, econd, body, flag);
+			case TWhile(econd, body, flag): evalWhile(ctx, econd, body, flag, false);
 			case TFor(v, eiter, body):
 				// A TFor runs as its hasNext/next while loop, lowered once per node and kept.
 				// The basic types are the current API's com, the macro com in a macro.
 				var com = ctx.com != null ? ctx.com : @:privateAccess hxc.eval.EvalMacro.macroCom;
-				if (com == null) evalFor(ctx, v, eiter, body, e.pos) else {
-					var r = forRemapCache.get(e);
-					if (r == null) {
-						r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, eiter, body, e.pos);
-						forRemapCache.set(e, r);
-					}
-					eval(ctx, r);
-				}
+				if (com == null) evalFor(ctx, v, eiter, body, e.pos, false) else eval(ctx, forRemapped(com, e, v, eiter, body));
 			case TReturn(eo): throw new EvalReturn(eo == null ? VNull : eval(ctx, eo));
 			case TBreak: throw new EvalBreak();
 			case TContinue: throw new EvalContinue();
@@ -137,39 +130,7 @@ class EvalEmitter {
 				var m = new Map<Int, EvalValue>();
 				for (f in fields) m.set(EvalHash.hash(f.key.name), eval(ctx, f.expr));
 				VObject(new VObject([], ODictionary(m)));
-			case TTry(e1, catches):
-				var ev = EvalContext.getEval(ctx);
-				var savedEnv = ev.env;
-				var result:EvalValue = VNull;
-				ev.lastExceptionPos = Position.nullPos;
-				try {
-					result = eval(ctx, e1);
-				} catch (ex:EvalRunTimeException) {
-					ev.env = savedEnv;
-					// The exception stack up to this try's environment.
-					ev.exceptionStack = EvalExceptions.buildExceptionStack(ex, savedEnv);
-					result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; });
-				} catch (ex:Dynamic) {
-					// Control-flow signals must reach their own handlers, never a program try/catch.
-					if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)
-						|| Std.isOfType(ex, EvalThreadExit)) throw ex;
-					// A try catches runtime exceptions alone: Context.error's abort and a fatal error are
-					// internal exceptions no macro try sees.
-					// A typing error raised while a macro API call runs the typer is the same: it reaches
-					// the API boundary, where it becomes the macro's Error value.
-					if (Std.isOfType(ex, hxc.eval.EvalExceptions.MacroAbort) || Std.isOfType(ex, hxc.core.TypingError.FatalError) || Std.isOfType(ex, hxc.core.TypingError)
-						|| Std.isOfType(ex, hxc.eval.EvalExceptions.HostException)) throw ex;
-					// Any other host exception is an hxc-internal failure escaping the interpreter (a dropped
-					// field, a native builtin error). Present it to the running program as a normal thrown
-					// value so its own try/catch (e.g. the utest runner) records an error and continues,
-					// instead of aborting the whole run. The value is re-raised if no local catch matches.
-					ev.env = savedEnv;
-					ev.exceptionStack = hostExceptionStack(ev);
-					var s = Std.string(ex);
-					var v = hxc.eval.EvalString.EvalString.vOfText(s);
-					result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos));
-				}
-				result;
+			case TTry(e1, catches): evalTry(ctx, e, e1, catches, false);
 			// A value typed eval.Vector reads as a vector, anything else as an array: the receiver is
 			// decoded before the index is evaluated, and a negative index reads null.
 			case TArray(e1, e2):
@@ -204,7 +165,7 @@ class EvalEmitter {
 				// other through a constructor call, whose depth check precedes the arguments.
 				if (!ctx.builtins.constructorBuiltins.exists(EvalHash.pathHash(c.path))) checkStackDepth(ctx);
 				evalNew(ctx, c, params, [for (a in newArgs) eval(ctx, a)], e.pos, newArgs.length == 0 ? null : newArgs[0].pos);
-			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef);
+			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef, false);
 			case TEnumParameter(e1, _, index):
 				switch (eval(ctx, e1)) {
 					case VEnumValue(ev): ev.eargs[index];
@@ -217,20 +178,134 @@ class EvalEmitter {
 					case v: EvalStdLib.unexpectedValueP(ctx, v, "enum value", e1.pos);
 				}
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0], e.pos);
-		} catch (ex:Dynamic) {
-			if (!Std.isOfType(ex, EvalBreak)
-				&& !Std.isOfType(ex, EvalContinue)
-				&& !Std.isOfType(ex, EvalReturn)
-				&& !Std.isOfType(ex, EvalSysExit)
-				&& !Std.isOfType(ex, EvalThreadExit)
-				&& !Std.isOfType(ex, EvalRunTimeException)
-				&& (ev.lastExceptionPos == null || ev.lastExceptionPos.min < 0)) {
-				ev.lastExceptionPos = ev.currentPos;
-			}
-			ev.currentPos = oldPos;
-			throw ex;
 		};
 		ev.currentPos = oldPos;
+		return result;
+	}
+
+	static inline var CTRL_NONE = 0;
+	static inline var CTRL_RETURN = 1;
+	static inline var CTRL_BREAK = 2;
+	static inline var CTRL_CONTINUE = 3;
+
+	// A statement whose value nothing uses: a block element, branch, case, loop body, try body or catch,
+	// function body. A return, break or continue there sets Eval.ctrl, which each such parent checks,
+	// instead of raising (an hxcpp raise costs microseconds). Anywhere else it still raises.
+	public static function evalStmt(ctx:EvalContext, e:TExpr):Void {
+		switch (e.expr) {
+			case TBlock(_) | TIf(_, _, _) | TSwitch(_, _, _) | TWhile(_, _, _) | TFor(_, _, _) | TTry(_, _) | TReturn(_) | TBreak | TContinue
+				| TParenthesis(_) | TMeta(_, _):
+			case _:
+				eval(ctx, e);
+				return;
+		}
+		var ev = EvalContext.getEval(ctx);
+		var oldPos = ev.currentPos;
+		if (e.pos != null && e.pos.min >= 0) ev.currentPos = e.pos;
+		switch (e.expr) {
+			case TBlock(el):
+				for (x in el) {
+					evalStmt(ctx, x);
+					if (ev.ctrl != CTRL_NONE) break;
+				}
+			case TIf(econd, eif, eelse):
+				if (EvalMisc.isTrue(eval(ctx, econd))) evalStmt(ctx, eif);
+				else if (eelse != null) evalStmt(ctx, eelse);
+			case TSwitch(subject, cases, edef): evalSwitch(ctx, subject, cases, edef, true);
+			case TWhile(econd, body, flag): evalWhile(ctx, econd, body, flag, true);
+			case TFor(v, eiter, body):
+				var com = ctx.com != null ? ctx.com : @:privateAccess hxc.eval.EvalMacro.macroCom;
+				if (com == null) evalFor(ctx, v, eiter, body, e.pos, true) else evalStmt(ctx, forRemapped(com, e, v, eiter, body));
+			case TTry(e1, catches): evalTry(ctx, e, e1, catches, true);
+			case TParenthesis(e1) | TMeta(_, e1): evalStmt(ctx, e1);
+			case TReturn(eo):
+				var v = eo == null ? VNull : eval(ctx, eo);
+				ev.ctrlValue = v;
+				ev.ctrl = CTRL_RETURN;
+			case TBreak: ev.ctrl = CTRL_BREAK;
+			case TContinue: ev.ctrl = CTRL_CONTINUE;
+			case _:
+		}
+		ev.currentPos = oldPos;
+	}
+
+	// A function body, run in statement position: a return's value, or null when it runs off its end.
+	static function evalBody(ctx:EvalContext, body:TExpr):EvalValue {
+		var ev = EvalContext.getEval(ctx);
+		var callPos = ev.currentPos;
+		var r = try {
+			evalStmt(ctx, body);
+			if (ev.ctrl == CTRL_RETURN) {
+				var v = ev.ctrlValue;
+				ev.ctrl = CTRL_NONE;
+				ev.ctrlValue = VNull;
+				v;
+			} else VNull;
+		} catch (ret:EvalReturn) {
+			ret.value;
+		}
+		ev.currentPos = callPos;
+		return r;
+	}
+
+	// The return a loop's body signalled leaves the loop; a loop that is itself a value (an element of a
+	// block someone uses) raises it, so nothing after the loop in that block runs.
+	static function loopReturn(ev:Eval, stmt:Bool):EvalValue {
+		if (!stmt) {
+			var v = ev.ctrlValue;
+			ev.ctrl = CTRL_NONE;
+			ev.ctrlValue = VNull;
+			throw new EvalReturn(v);
+		}
+		return VNull;
+	}
+
+	static function forRemapped(com:hxc.context.Context, e:TExpr, v:TVar, eiter:TExpr, body:TExpr):TExpr {
+		var r = forRemapCache.get(e);
+		if (r == null) {
+			r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, eiter, body, e.pos);
+			forRemapCache.set(e, r);
+		}
+		return r;
+	}
+
+	static function evalTry(ctx:EvalContext, e:TExpr, e1:TExpr, catches:Array<TCatch>, stmt:Bool):EvalValue {
+		var ev = EvalContext.getEval(ctx);
+		var savedEnv = ev.env;
+		var tryPos = ev.currentPos;
+		var result:EvalValue = VNull;
+		ev.lastExceptionPos = Position.nullPos;
+		try {
+			if (stmt) evalStmt(ctx, e1) else result = eval(ctx, e1);
+		} catch (ex:EvalRunTimeException) {
+			ev.env = savedEnv;
+			ev.currentPos = tryPos;
+			// The exception stack up to this try's environment.
+			ev.exceptionStack = EvalExceptions.buildExceptionStack(ex, savedEnv);
+			result = runCatch(ctx, ex.value, catches, savedEnv, function() { throw ex; }, stmt);
+		} catch (ex:Dynamic) {
+			// Control-flow signals must reach their own handlers, never a program try/catch.
+			if (Std.isOfType(ex, EvalBreak) || Std.isOfType(ex, EvalContinue) || Std.isOfType(ex, EvalReturn) || Std.isOfType(ex, EvalSysExit)
+				|| Std.isOfType(ex, EvalThreadExit)) throw ex;
+			// A try catches runtime exceptions alone: Context.error's abort and a fatal error are internal
+			// exceptions no macro try sees.
+			// A typing error raised while a macro API call runs the typer is the same: it reaches the API
+			// boundary, where it becomes the macro's Error value.
+			if (Std.isOfType(ex, hxc.eval.EvalExceptions.MacroAbort) || Std.isOfType(ex, hxc.core.TypingError.FatalError) || Std.isOfType(ex, hxc.core.TypingError)
+				|| Std.isOfType(ex, hxc.eval.EvalExceptions.HostException)) throw ex;
+			// Any other host exception is an hxc-internal failure escaping the interpreter (a dropped
+			// field, a native builtin error). Present it to the running program as a normal thrown
+			// value so its own try/catch (e.g. the utest runner) records an error and continues,
+			// instead of aborting the whole run. The value is re-raised if no local catch matches.
+			// Its position is the innermost expression running when it was raised.
+			if (ev.lastExceptionPos == null || ev.lastExceptionPos.min < 0) ev.lastExceptionPos = ev.currentPos;
+			ev.env = savedEnv;
+			ev.currentPos = tryPos;
+			ev.exceptionStack = hostExceptionStack(ev);
+			var s = Std.string(ex);
+			var v = hxc.eval.EvalString.EvalString.vOfText(s);
+			result = runCatch(ctx, v, catches, savedEnv, function() return EvalExceptions.throwValue(ctx, v, e.pos), stmt);
+		}
 		return result;
 	}
 
@@ -554,17 +629,35 @@ class EvalEmitter {
 		}
 	}
 
-	static function evalWhile(ctx:EvalContext, econd:TExpr, body:TExpr, flag:WhileFlag):EvalValue {
+	static function evalWhile(ctx:EvalContext, econd:TExpr, body:TExpr, flag:WhileFlag, stmt:Bool):EvalValue {
+		var ev = EvalContext.getEval(ctx);
+		var loopPos = ev.currentPos;
 		switch (flag) {
 			case NormalWhile:
 				while (EvalMisc.isTrue(eval(ctx, econd))) {
-					try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+					try evalStmt(ctx, body) catch (_:EvalBreak) { ev.currentPos = loopPos; break; } catch (_:EvalContinue) ev.currentPos = loopPos;
+					if (ev.ctrl != CTRL_NONE) {
+						if (ev.ctrl == CTRL_BREAK) {
+							ev.ctrl = CTRL_NONE;
+							break;
+						}
+						if (ev.ctrl != CTRL_CONTINUE) return loopReturn(ev, stmt);
+						ev.ctrl = CTRL_NONE;
+					}
 					poll();
 				}
 			case DoWhile:
 				var go = true;
 				while (go) {
-					try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+					try evalStmt(ctx, body) catch (_:EvalBreak) { ev.currentPos = loopPos; break; } catch (_:EvalContinue) ev.currentPos = loopPos;
+					if (ev.ctrl != CTRL_NONE) {
+						if (ev.ctrl == CTRL_BREAK) {
+							ev.ctrl = CTRL_NONE;
+							break;
+						}
+						if (ev.ctrl != CTRL_CONTINUE) return loopReturn(ev, stmt);
+						ev.ctrl = CTRL_NONE;
+					}
 					poll();
 					go = EvalMisc.isTrue(eval(ctx, econd));
 				}
@@ -572,12 +665,22 @@ class EvalEmitter {
 		return VNull;
 	}
 
-	static function evalFor(ctx:EvalContext, v:TVar, eiter:TExpr, body:TExpr, p:Position):EvalValue {
+	static function evalFor(ctx:EvalContext, v:TVar, eiter:TExpr, body:TExpr, p:Position, stmt:Bool):EvalValue {
 		var it = eval(ctx, eiter);
-		var env = EvalContext.getEval(ctx).env;
+		var ev = EvalContext.getEval(ctx);
+		var env = ev.env;
+		var loopPos = ev.currentPos;
 		while (EvalMisc.isTrue(callField(ctx, it, "hasNext", [], p))) {
 			env.locals[slot(env, v.id)] = callField(ctx, it, "next", [], p);
-			try eval(ctx, body) catch (_:EvalBreak) break catch (_:EvalContinue) {}
+			try evalStmt(ctx, body) catch (_:EvalBreak) { ev.currentPos = loopPos; break; } catch (_:EvalContinue) ev.currentPos = loopPos;
+			if (ev.ctrl != CTRL_NONE) {
+				if (ev.ctrl == CTRL_BREAK) {
+					ev.ctrl = CTRL_NONE;
+					break;
+				}
+				if (ev.ctrl != CTRL_CONTINUE) return loopReturn(ev, stmt);
+				ev.ctrl = CTRL_NONE;
+			}
 			poll();
 		}
 		return VNull;
@@ -606,14 +709,16 @@ class EvalEmitter {
 	}
 
 	// Match a thrown value against a try's catch clauses; run the first that matches, else onUnmatched.
-	static function runCatch(ctx:EvalContext, value:EvalValue, catches:Array<TCatch>, savedEnv:EvalEnv, onUnmatched:Void->EvalValue):EvalValue {
+	static function runCatch(ctx:EvalContext, value:EvalValue, catches:Array<TCatch>, savedEnv:EvalEnv, onUnmatched:Void->EvalValue, stmt:Bool):EvalValue {
 		// The first clause whose type is Dynamic or that the value `is` binds the value as it was thrown;
 		// the exceptions filter has already rewritten the clauses.
 		for (c in catches) {
 			var path = catchPath(c.v.type);
 			if (path == null || EvalStdLib.isOfTypePath(ctx, value, path)) {
 				savedEnv.locals[slot(savedEnv, c.v.id)] = value;
-				return eval(ctx, c.expr);
+				if (!stmt) return eval(ctx, c.expr);
+				evalStmt(ctx, c.expr);
+				return VNull;
 			}
 		}
 		return onUnmatched();
@@ -843,7 +948,7 @@ class EvalEmitter {
 		if (leaveFirst && caller.env != null) EvalExceptions.setLeavePosition(caller.env, p);
 		var args = [for (a in argExprs) eval(ctx, a)];
 		var isTrace = switch (callee.expr) {
-			case TField(_, FStatic(c, cf)) if (c.path.pack.join(".") == "haxe" && c.path.name == "Log" && cf.name == "trace"): true;
+			case TField(_, FStatic(c, cf)) if (cf.name == "trace" && c.path.name == "Log" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"): true;
 			case _: false;
 		};
 		if (isEvalTarget(ctx) && isTrace && argExprs.length > 0 && isUIntExpr(argExprs[0]))
@@ -852,7 +957,9 @@ class EvalEmitter {
 			args[1] = normalizeTraceValue(argExprs[1], args[1]);
 		return switch (fn) {
 			case VFunction(f, _): leaveFirst ? f(args) : callAt(ctx, p, f, args);
-			case VFieldClosure(recv, f): leaveFirst ? f([recv].concat(args)) : callAt(ctx, p, f, [recv].concat(args));
+			case VFieldClosure(recv, f):
+				args.insert(0, recv);
+				leaveFirst ? f(args) : callAt(ctx, p, f, args);
 			// A macro's TLazy(f) is called to force the type.
 			case VInstance({ikind: ILazyType(_, get)}): get();
 			// "Cannot call <value>", with no position of its own; the frame shows the call, which the
@@ -914,7 +1021,7 @@ class EvalEmitter {
 		return VNull;
 	}
 
-	static function evalSwitch(ctx:EvalContext, subject:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>):EvalValue {
+	static function evalSwitch(ctx:EvalContext, subject:TExpr, cases:Array<TSwitchCase>, edef:Null<TExpr>, stmt:Bool):EvalValue {
 		var v = eval(ctx, subject);
 		// An Int subject whose cases are all integer constants takes an Int32 or null, anything else
 		// unexpected.
@@ -925,16 +1032,28 @@ class EvalEmitter {
 		}
 		for (c in cases) {
 			for (cv in c.values) {
-				if (EvalValueTools.equals(v, eval(ctx, cv))) return eval(ctx, c.expr);
+				if (EvalValueTools.equals(v, eval(ctx, cv))) {
+					if (!stmt) return eval(ctx, c.expr);
+					evalStmt(ctx, c.expr);
+					return VNull;
+				}
 			}
 		}
-		return edef != null ? eval(ctx, edef) : VNull;
+		if (edef == null) return VNull;
+		if (!stmt) return eval(ctx, edef);
+		evalStmt(ctx, edef);
+		return VNull;
 	}
 
 	// A final class or field, or in the interpreter (not a macro) a method no subclass overrides.
 	static function isFinalMethod(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
 		return TypeFunctions.hasClassFlag(c, CFinal) || TypeFunctions.hasClassFieldFlag(cf, CfFinal)
-			|| (!ctx.isMacro && !ctx.overrides.exists(EvalHash.pathHash(c.path) + ":" + cf.name));
+			|| (!ctx.isMacro && !isOverridden(ctx, c, cf));
+	}
+
+	static function isOverridden(ctx:EvalContext, c:TClass, cf:TClassField):Bool {
+		var names = ctx.overrides.get(EvalHash.pathHash(c.path));
+		return names != null && names.exists(cf.name);
 	}
 
 	static function isIntSwitch(subject:TExpr, cases:Array<TSwitchCase>):Bool {
@@ -1039,8 +1158,10 @@ class EvalEmitter {
 	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
 		var snap = snapshotCaptures(tf, captured);
 		var ordinal = closureOrdinals.exists(tf) ? closureOrdinals.get(tf) : 0;
+		// The closure's info is made with it, not per call.
+		var info = EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0);
 		return function(args:Array<EvalValue>):EvalValue {
-			var env2 = EvalContext.pushEnvironment(ctx, EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0));
+			var env2 = EvalContext.pushEnvironment(ctx, info);
 			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {
@@ -1048,12 +1169,7 @@ class EvalEmitter {
 			}
 			// More values than arguments, raised in the pushed environment.
 			if (args.length > tf.args.length) EvalExceptions.excString(ctx, "Something went wrong");
-			var r = try {
-				eval(ctx, tf.expr);
-				VNull;
-			} catch (ret:EvalReturn) {
-				ret.value;
-			}
+			var r = evalBody(ctx, tf.expr);
 			EvalContext.popEnvironment(ctx, env2);
 			return r;
 		};
@@ -1258,19 +1374,14 @@ class EvalEmitter {
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
 	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, args:Array<{vid:Int, value:EvalValue}>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo, extraArgs:Bool = false):EvalValue {
+	public static function runBody(ctx:EvalContext, params:Array<TFuncArg>, values:Array<EvalValue>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo, extraArgs:Bool = false):EvalValue {
 		if (info == null) info = EvalContext.createEnvInfo(vthis == null, body.pos, EKEntrypoint, 0, 0);
 		var env = EvalContext.pushEnvironment(ctx, info);
 		env.vthis = vthis;
-		for (a in args) env.locals[slot(env, a.vid)] = a.value;
+		for (i in 0...values.length) env.locals[slot(env, params[i].v.id)] = values[i];
 		// More values than arguments, raised in the pushed environment.
 		if (extraArgs) EvalExceptions.excString(ctx, "Something went wrong");
-		var ret = try {
-			eval(ctx, body);
-			VNull;
-		} catch (r:EvalReturn) {
-			r.value;
-		}
+		var ret = evalBody(ctx, body);
 		EvalContext.popEnvironment(ctx, env);
 		return ret;
 	}

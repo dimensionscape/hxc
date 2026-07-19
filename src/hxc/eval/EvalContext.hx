@@ -61,9 +61,9 @@ class EvalEnv {
 		this.stackDepth = stackDepth;
 		this.eval = eval;
 		// A fresh environment's leave position is the file start, (0,0); a call site moves it before the
-		// call and a positioned throw to the throw . An environment that raises before its first call
-		// reports at line 1.
-		this.leavePos = new Position(info.file == 0 ? "?" : EvalHash.revHash(info.file), 0, 0);
+		// call and a positioned throw to the throw. An environment that raises before its first call
+		// reports at line 1. Null stands for that start until EvalExceptions.envPosition reads it.
+		this.leavePos = null;
 		this.slots = new Map();
 		this.vthis = null;
 	}
@@ -80,9 +80,15 @@ class Eval {
 	public var lastExceptionPos:Position;
 	// The record of the thread this eval runs on.
 	public var thread:EvalThreadRecord;
+	// A return, break or continue run in statement position (EvalEmitter.evalStmt): which one, and a
+	// return's value, until the call or loop it ends takes it.
+	public var ctrl:Int;
+	public var ctrlValue:EvalValue;
 	public function new(?thread:EvalThreadRecord) {
 		this.env = null;
 		this.lastReturn = null;
+		this.ctrl = 0;
+		this.ctrlValue = VNull;
 		this.caughtTypes = new Map();
 		this.exceptionStack = [];
 		this.currentPos = Position.nullPos;
@@ -120,14 +126,17 @@ class EvalContext {
 	// reused for a new compilation.
 	public var staticInits:Map<Int, {proto:VPrototype, delays:Array<hxc.eval.EvalPrototype.ProtoDelay>}>;
 	public var constructors:Map<Int, VFunc>;
-	// "<path hash>:<field>" for every class method a subclass overrides.
-	public var overrides:Map<String, Bool> = new Map();
+	// (class path, field) for every class method a subclass overrides, keyed by the path's hash and then
+	// the field's name.
+	public var overrides:Map<Int, Map<String, Bool>> = new Map();
 	public var arrayPrototype:Null<VPrototype>;
 	public var stringPrototype:Null<VPrototype>;
 	public var vectorPrototype:Null<VPrototype>;
 	public var toplevel:EvalValue;
 	public var eval:Eval;
 	public var evalTls:sys.thread.Tls<Eval>;
+	// The OS thread that made this context (its thread serial), whose thread-local holds `eval` for good.
+	public var creatorThread:Int;
 	public var maxStackDepth:Int;
 	public var maxPrintDepth:Int;
 	public var resources:StringMap<haxe.io.Bytes>;
@@ -154,6 +163,7 @@ class EvalContext {
 		// eval.
 		this.evalTls = new sys.thread.Tls();
 		this.evalTls.value = this.eval;
+		this.creatorThread = hxc.compiler.HostRuntime.threadSerial();
 		this.defines = defines == null ? new Define() : defines;
 		// The interpreter's call depth limit, `-D eval-call-stack-depth` with a default of 1000; past it
 		// a call raises "Stack overflow", a catchable exception, in every world, so a runaway macro
@@ -182,6 +192,9 @@ class EvalContext {
 	}
 
 	public static function getEval(ctx:EvalContext):Eval {
+		// The thread that made the context: the constructor put `eval` in its thread-local, and only a
+		// thread holding null there is ever given another.
+		if (hxc.compiler.HostRuntime.threadSerial() == ctx.creatorThread) return ctx.eval;
 		// Each new thread gets a fresh eval; a thread touching the interpreter for the first time gets its
 		// own environment stack.
 		var e = ctx.evalTls.value;

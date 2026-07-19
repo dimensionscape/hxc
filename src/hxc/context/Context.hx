@@ -570,7 +570,7 @@ class Context {
 	}
 
 	public static function pathKey(path:Path):String {
-		return path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name;
+		return path.dottedKey();
 	}
 
 	public static function sTypePath(path:Path):String return pathKey(path);

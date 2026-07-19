@@ -36,6 +36,13 @@ static std::once_flag hxc_threads_atexit_once;
 // Thread identifiers start at 1; the main thread uses 0.
 static std::atomic<int> hxc_next_ident(1);
 static thread_local int hxc_thread_ident = 0;
+// Process-unique OS thread identity used by EvalContext.getEval.
+static std::atomic<int> hxc_next_serial(1);
+static thread_local int hxc_thread_serial = 0;
+static int hxc_thread_serial_get() {
+	if (hxc_thread_serial == 0) hxc_thread_serial = hxc_next_serial++;
+	return hxc_thread_serial;
+}
 static std::atomic<bool> hxc_tick_running(false);
 static std::atomic<int> hxc_preempt_pending(0);
 static void hxc_err_flush_locked() {
@@ -170,6 +177,15 @@ class HostRuntime {
 	public static function threadCreated():Int {
 		#if cpp
 		return untyped __cpp__("hxc_thread_created()");
+		#else
+		return 0;
+		#end
+	}
+
+	// Unique OS-thread serial, including foreign threads.
+	public static function threadSerial():Int {
+		#if cpp
+		return untyped __cpp__("hxc_thread_serial_get()");
 		#else
 		return 0;
 		#end

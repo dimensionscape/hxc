@@ -192,7 +192,13 @@ class EvalMain {
 	static function markOverride(ctx:EvalContext, p:Null<TClass>, name:String):Bool {
 		if (p == null) return false;
 		if (p.fields.exists(name) || markOverride(ctx, p.superClass == null ? null : p.superClass.c, name)) {
-			ctx.overrides.set(EvalHash.pathHash(p.path) + ":" + name, true);
+			var key = EvalHash.pathHash(p.path);
+			var names = ctx.overrides.get(key);
+			if (names == null) {
+				names = new Map();
+				ctx.overrides.set(key, names);
+			}
+			names.set(name, true);
 			return true;
 		}
 		return false;

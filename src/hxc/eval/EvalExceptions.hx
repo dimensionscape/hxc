@@ -79,9 +79,15 @@ class EvalExceptions {
 		if (p != null) env.leavePos = p;
 	}
 
-	// A frame is its environment's leave position.
+	// A frame is its environment's leave position; one nothing has moved is still the file start.
 	public static function envPosition(env:EvalEnv):Position {
-		return env.leavePos;
+		var p = env.leavePos;
+		if (p == null) {
+			var info = env.info;
+			p = new Position(info.file == 0 ? "?" : EvalHash.revHash(info.file), 0, 0);
+			env.leavePos = p;
+		}
+		return p;
 	}
 
 	// Only a frame at the null position is dropped; one at the file start (a fresh environment) prints

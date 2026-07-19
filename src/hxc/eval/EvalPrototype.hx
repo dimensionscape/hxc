@@ -20,13 +20,14 @@ class EvalPrototype {
 		EvalEmitter.numberClosures(tf.expr);
 		return function(args:Array<EvalValue>):EvalValue {
 			var offset = isInstance ? 1 : 0;
-			var bound:Array<{vid:Int, value:EvalValue}> = [];
-			for (i in 0...tf.args.length) {
+			var tfArgs = tf.args;
+			var values:Array<EvalValue> = [];
+			for (i in 0...tfArgs.length) {
 				var j = i + offset;
-				bound.push({vid: tf.args[i].v.id, value: EvalEmitter.argValue(ctx, tf.args[i], j < args.length ? args[j] : VNull)});
+				values.push(EvalEmitter.argValue(ctx, tfArgs[i], j < args.length ? args[j] : VNull));
 			}
 			var vthis = (isInstance || abstractThis) ? (args.length > 0 ? args[0] : VNull) : null;
-			return EvalEmitter.runBody(ctx, bound, tf.expr, vthis, info, args.length > tf.args.length + offset);
+			return EvalEmitter.runBody(ctx, tfArgs, values, tf.expr, vthis, info, args.length > tfArgs.length + offset);
 		};
 	}
 

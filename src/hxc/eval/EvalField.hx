@@ -55,7 +55,11 @@ class EvalField {
 			case VInstance(vi):
 				switch (vi.ikind) {
 					case IBytes(b) if (f == EvalHash.keyLength): VInt(b.length);
-					case _: try instanceField(vi, f) catch (_:NotFound) protoFieldRaise(vi.iproto, f);
+					// The instance's own slot, else the prototype's. The slot test stands in for catching a
+					// missing field; every method read off an instance comes here.
+					case _:
+						var i = vi.iproto.pinstanceNames.get(f);
+						if (i != null) vi.ifields[i] else protoFieldRaise(vi.iproto, f);
 				}
 			case _: throw new NotFound();
 		};

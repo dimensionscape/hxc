@@ -24,7 +24,9 @@ class EvalHash {
 	}
 
 	public static function pathHash(path:Path):Int {
-		return hash(path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name);
+		var key = path.dottedKey();
+		if (path.evalHashId < 0) path.evalHashId = hash(key);
+		return path.evalHashId;
 	}
 
 	public static final keyLength = hash("length");

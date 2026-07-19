@@ -9,7 +9,25 @@ import hxc.ast.Position;
 class Path {
 	public var pack:Array<String>;
 	public var name:String;
+	// Context.pathKey's dotted key and EvalHash.pathHash's id, cached with the pack and name they were
+	// made from so a path changed in place is keyed again.
+	@:noCompletion public var keyPack:Null<Array<String>> = null;
+	@:noCompletion public var keyPackLength:Int = -1;
+	@:noCompletion public var keyName:Null<String> = null;
+	@:noCompletion public var key:Null<String> = null;
+	@:noCompletion public var evalHashId:Int = -1;
 	public function new(pack:Array<String>, name:String) { this.pack = pack; this.name = name; }
+
+	public function dottedKey():String {
+		if (keyPack != pack || keyPackLength != pack.length || keyName != name) {
+			keyPack = pack;
+			keyPackLength = pack.length;
+			keyName = name;
+			key = pack.length == 0 ? name : pack.join(".") + "." + name;
+			evalHashId = -1;
+		}
+		return key;
+	}
 }
 
 enum Located {
