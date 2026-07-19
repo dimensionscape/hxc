@@ -3385,10 +3385,11 @@ class EvalStdLib {
 						com.classPath.unshift(cp);
 						var mcom = EvalMacro.getMacroCom();
 						if (mcom != null) mcom.classPath.unshift(cp);
-						// The memo the two worlds share is cleared in place
-						if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR add_class_path");
-						com.moduleNonexistentLut.clear();
-						if (mcom != null && mcom.moduleNonexistentLut != com.moduleNonexistentLut) mcom.moduleNonexistentLut.clear();
+						// Only the API com's file lookup and readdir caches are cleared, nothing else: not
+						// the macro
+						// com's, and not the memo of missing modules.
+						com.fileLookupCache.clear();
+						com.readdirCache.clear();
 						return VNull;
 					}, true);
 				case "get_output":
@@ -3488,6 +3489,7 @@ class EvalStdLib {
 					// fresh ones.
 					VFunction(function(args) {
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						com.fileLookupCache.clear();
 						com.readdirCache.clear();
 						return VNull;
 					}, true);

@@ -40,62 +40,108 @@ class ModuleLoader {
 		return false;
 	}
 
+	// Cache hits and misses, listing each class-path directory once with the empty class path last.
+	// Return absolute names unchecked so opening them reports failures.
 	public static function findFile(ctx:Context, relPath:String, m:Path, p:Position):String {
-		// Return absolute paths unchecked; opening an absent file must report Could not open rather than
-		// Type not found.
-		if (isAbsolutePath(relPath)) return relPath;
-		for (dir in ctx.classPath) {
-			var full = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + relPath;
-			if (skipEvalOverlayFile(ctx, dir, relPath)) continue;
-			// Allow directory entries to resolve as modules; opening them produces Could not open rather
-			// than Type not found.
-			if (FileSystem.exists(full)) {
-				// Require exact spelling from the directory listing even on case-insensitive filesystems.
-				var canon = canonicalFileName(ctx, full);
-				var reqBase = { var i = relPath.lastIndexOf("/"); relPath.substr(i + 1); };
-				var gotBase = {
-					var i = canon.lastIndexOf("/");
-					var j = canon.lastIndexOf("\\");
-					canon.substr((j > i ? j : i) + 1);
-				};
-				if (gotBase == reqBase) {
-					// Cache files from the current directory by bare name so -cp . reports Main.hx, not ./Main.hx.
-					var k = { var i = canon.lastIndexOf("/"); var j = canon.lastIndexOf("\\"); j > i ? j : i; };
-					var dirPart = k < 0 ? "." : canon.substr(0, k);
-					return dirPart == "." ? gotBase : canon;
+		var file = findFileOpt(ctx, relPath);
+		if (file == null) throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		return file;
+	}
+
+	public static function findFileOpt(ctx:Context, f:String):Null<String> {
+		if (ctx.fileLookupCache.exists(f)) return ctx.fileLookupCache.get(f);
+		if (isAbsolutePath(f)) {
+			ctx.fileLookupCache.set(f, f);
+			return f;
+		}
+		var fDir = filenameDirname(f);
+		var found:Null<String> = null;
+		var paths = ctx.classPath;
+		var i = 0;
+		var hadEmpty = false;
+		while (true) {
+			if (i >= paths.length) {
+				if (hadEmpty) break;
+				paths = [""];
+				i = 0;
+				hadEmpty = true;
+				continue;
+			}
+			var cp = paths[i++];
+			var dir = filenameDirname(cp + f);
+			// A previously cached directory would already have recorded this file.
+			if (!ctx.readdirCache.exists(cp + "\n" + dir)) {
+				cacheDirectory(ctx, cp, dir, fDir);
+				var hit = ctx.fileLookupCache.get(f);
+				if (hit != null) {
+					found = hit;
+					break;
 				}
 			}
+			if (cp == "") hadEmpty = true;
 		}
-		throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
+		ctx.fileLookupCache.set(f, found);
+		return found;
 	}
 
-	// Cache each directory listing once, including lowercase-to-actual-name mappings, for later module
-	// lookups.
-	static function dirListing(ctx:Context, dir:String):Null<StringMap<String>> {
-		if (ctx.readdirCache.exists(dir)) return ctx.readdirCache.get(dir);
-		var m:Null<StringMap<String>> = null;
-		try {
-			m = new StringMap<String>();
-			for (entry in FileSystem.readDirectory(dir)) m.set(entry.toLowerCase(), entry);
-		} catch (_:Dynamic) m = null;
-		ctx.readdirCache.set(dir, m);
-		return m;
+	// Platform-suffixed files override plain names, using .macro in the macro world. Ignore suffixes
+	// while loading core API types.
+	static function cacheDirectory(ctx:Context, cp:String, dir:String, fDir:String):Void {
+		var platformExt = "." + (ctx.defines.rawDefined("macro") ? "macro" : hxc.core.Globals.platformName(ctx.platform));
+		var isLoadingCoreApi = ctx.defines.rawDefined("core_api");
+		var listing:Null<Array<String>> = try FileSystem.readDirectory(dir) catch (_:Dynamic) null;
+		ctx.readdirCache.set(cp + "\n" + dir, listing);
+		if (listing == null) return;
+		for (fileOwnName in listing) {
+			var relativeToClasspath = fDir == "." ? fileOwnName : fDir + "/" + fileOwnName;
+			if (skipEvalOverlayFile(ctx, cp, relativeToClasspath)) continue;
+			var isPlatformSpecific = false;
+			var representation = relativeToClasspath;
+			if (!isLoadingCoreApi) {
+				var ext = filenameExtension(relativeToClasspath);
+				if (platformExt == filenameExtension(removeExtension(relativeToClasspath))) {
+					isPlatformSpecific = true;
+					representation = removeExtension(removeExtension(relativeToClasspath)) + ext;
+				}
+			}
+			if (isLoadingCoreApi || isPlatformSpecific || !ctx.fileLookupCache.exists(representation))
+				ctx.fileLookupCache.set(representation, dir == "." ? fileOwnName : dir + "/" + fileOwnName);
+		}
 	}
 
-	static function canonicalFileName(ctx:Context, file:String):String {
-		var slash = file.lastIndexOf("/");
-		var backslash = file.lastIndexOf("\\");
-		if (backslash > slash) slash = backslash;
-		if (slash < 0) {
-			var cwd = dirListing(ctx, ".");
-			if (cwd != null) { var e = cwd.get(file.toLowerCase()); if (e != null) return e; }
-			return file;
+	static function filenameExtension(file:String):String {
+		var dot = file.lastIndexOf(".");
+		return dot < 0 ? file : file.substr(dot);
+	}
+
+	static function removeExtension(file:String):String {
+		var dot = file.lastIndexOf(".");
+		return dot < 0 ? file : file.substr(0, dot);
+	}
+
+	// Win32 dirname accepts slash, backslash and colon separators while preserving a drive prefix.
+	static function filenameDirname(name:String):String {
+		var drive = "";
+		var path = name;
+		if (hxc.core.Globals.isWindows && name.length >= 2 && name.charCodeAt(1) == ":".code) {
+			var c = name.charCodeAt(0);
+			if ((c >= "A".code && c <= "Z".code) || (c >= "a".code && c <= "z".code)) {
+				drive = name.substr(0, 2);
+				path = name.substr(2);
+			}
 		}
-		var dir = file.substr(0, slash + 1);
-		var name = file.substr(slash + 1);
-		var listing = dirListing(ctx, dir);
-		if (listing != null) { var e = listing.get(name.toLowerCase()); if (e != null) return dir + e; }
-		return file;
+		if (path == "") return drive + ".";
+		var n = path.length - 1;
+		while (n >= 0 && isDirSep(path.charCodeAt(n))) n--;
+		if (n < 0) return drive + path.substr(0, 1);
+		while (n >= 0 && !isDirSep(path.charCodeAt(n))) n--;
+		if (n < 0) return drive + ".";
+		while (n >= 0 && isDirSep(path.charCodeAt(n))) n--;
+		return drive + (n < 0 ? path.substr(0, 1) : path.substr(0, n + 1));
+	}
+
+	static inline function isDirSep(c:Int):Bool {
+		return c == "/".code || (hxc.core.Globals.isWindows && (c == 92 || c == ":".code));
 	}
 
 	// On emscripten, use generic EventLoop, Condition and Semaphore because the eval overlay requires
@@ -156,16 +202,15 @@ class ModuleLoader {
 		return Position.getFileContent(file);
 	}
 
+	// Cache each module path's resolved file; directory caching selects platform overrides.
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
+		var key = m.pack.length == 0 ? m.name : m.pack.join(".") + "." + m.name;
+		var cached = ctx.moduleToFile.get(key);
+		if (cached != null) return cached;
 		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
-		if (ctx.isMacro) {
-			try return findFile(ctx, prefix + ".macro.hx", m, p) catch (_:ContextError) {}
-		}
-		// A target suffixed file (Name.<target>.hx) shadows the plain one for its platform.
-		if (ctx.platform != Cross) {
-			try return findFile(ctx, prefix + "." + hxc.core.Globals.platformName(ctx.platform) + ".hx", m, p) catch (_:ContextError) {}
-		}
-		return findFile(ctx, prefix + ".hx", m, p);
+		var file = findFile(ctx, prefix + ".hx", m, p);
+		ctx.moduleToFile.set(key, file);
+		return file;
 	}
 
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
@@ -1632,7 +1677,7 @@ class ModuleLoader {
 		// The path check applies to Context.defineType too.
 		checkModulePath(ctx, mpath, pos);
 		m.extra.kind = MFake;
-		if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
+		if (debugTnf) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
 		ctx.moduleNonexistentLut.clear(); // Clear the host and macro worlds' shared memo in place.
 		return m;
 	}
@@ -1676,7 +1721,7 @@ class ModuleLoader {
 		// The path check reports at the first decoded type's position.
 		checkModulePath(ctx, mpath, types.length > 0 ? types[0].pos : pos);
 		m.extra.kind = MFake;
-		if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
+		if (debugTnf) Sys.println("[tnf] CLEAR " + (ctx.isMacro ? "macro" : "host") + " define");
 		ctx.moduleNonexistentLut.clear(); // Clear the host and macro worlds' shared memo in place.
 		return m;
 	}
@@ -1731,6 +1776,10 @@ class ModuleLoader {
 		return true;
 	}
 
+	// Read these environment switches once; module and dependency checks use them repeatedly.
+	static var traceDeps:Bool = Sys.getEnv("HXC_TRACE_DEPS") != null;
+	static var debugTnf:Bool = Sys.getEnv("HXC_DEBUG_TNF") != null;
+
 	/**
 	 * Return the already-loaded module, else find its source on the class path, parse it, and register
 	 * all its declarations. Raises
@@ -1739,7 +1788,7 @@ class ModuleLoader {
 	// Record mdep in m's deps (self and null-module loads record nothing).
 	public static function addDependency(m:Null<ModuleDef>, mdep:ModuleDef):Void {
 		if (m == null || m == mdep) return;
-		if (Sys.getEnv("HXC_TRACE_DEPS") != null)
+		if (traceDeps)
 			Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 		m.extra.deps.set(mdep.id, mdep);
 		// Adding a dependency also clears the POST-PROCESSING mark: a module whose dependency set changed
@@ -1851,7 +1900,7 @@ class ModuleLoader {
 		if (loadOnlyCachedModules)
 			return null;
 		if (ctx.moduleNonexistentLut.exists(key)) {
-			if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] memo-hit " + (ctx.isMacro ? "macro" : "host") + " " + key + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
+			if (debugTnf) Sys.println("[tnf] memo-hit " + (ctx.isMacro ? "macro" : "host") + " " + key + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
 			return null;
 		}
 
@@ -1863,7 +1912,7 @@ class ModuleLoader {
 			// Nothing to parse, so the extern-type loaders get a turn. The first one that answers names the
 			// module's file; only an exhausted list is not-found.
 			file = null;
-			if (Sys.getEnv("HXC_DEBUG_TNF") != null) Sys.println("[tnf] miss " + (ctx.isMacro ? "macro" : "host") + " " + key + " hooks=" + ctx.loadExternType.length + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
+			if (debugTnf) Sys.println("[tnf] miss " + (ctx.isMacro ? "macro" : "host") + " " + key + " hooks=" + ctx.loadExternType.length + " n=" + Lambda.count(ctx.moduleNonexistentLut) + " from=" + (ctx.currentModule == null ? "null" : hxc.core.Globals.sTypePath(ctx.currentModule.path)));
 			for (h in ctx.loadExternType) {
 				var r = h.load(m, p);
 				if (r != null) { file = h.name; externDecls = r; break; }

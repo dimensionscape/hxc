@@ -300,9 +300,12 @@ class Context {
 	// Track imported modules per context; macro-world loads must not suppress host-world loads.
 	public var plainImportsTried:StringMap<Bool> = new StringMap();
 
-	// Cache directory listings per context and clone, preventing stale filesystem views across
-	// requests. Map lowercase names to actual entries; null means listing failed.
-	public var readdirCache:StringMap<Null<StringMap<String>>> = new StringMap();
+	// Directory listings are per context; reused macro contexts clear them in EvalMacro.doReuse. Key
+	// by class path plus newline plus directory; null means unreadable.
+	public var readdirCache:StringMap<Null<Array<String>>> = new StringMap();
+	// Relative class-path file name to resolved file; null means no match.
+	public var fileLookupCache:StringMap<Null<String>> = new StringMap();
+	public var moduleToFile:StringMap<String> = new StringMap();
 
 	// Per-context overload answers keyed by class path and field name.
 	public var overloadCache:StringMap<Array<{t:T, cf:TClassField}>> = new StringMap();

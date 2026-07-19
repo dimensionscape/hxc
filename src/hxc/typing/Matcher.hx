@@ -1866,6 +1866,8 @@ class TexprConverter {
 	// Subject-local bindings recorded during conversion so a nested counter-example can resolve a bound
 	// temp back to the enum parameter it reads.
 	static var vLookup:Map<Int, TExpr> = new Map();
+	// Read once: tested per Bind node.
+	static var dbgMatch:Bool = Sys.getEnv("HXC_DBG_MATCH") != null;
 
 	public static function toTexpr(ctx:TyperContext, tSwitch:T, withType:WithType, dt:Dt):Null<TExpr> {
 		vLookup = new Map();
@@ -2188,7 +2190,7 @@ class TexprConverter {
 					TypeFunctions.mk(TIf(mkCond(), eThen, eElse), tSwitch, Position.union(eThen.pos, eElse.pos));
 				}
 			case Bind(bl, dt2):
-				if (Sys.getEnv("HXC_DBG_MATCH") != null)
+				if (dbgMatch)
 					for (b in bl) Sys.println("[match-bind] " + b.v.name + " kind=" + Std.string(b.v.kind) + " at " + b.p.file + ":" + hxc.ast.Position.lineNumber(b.p));
 				for (b in bl) vLookup.set(b.v.id, b.e);
 				var inner = toTexprRec(ctx, tSwitch, withType, dt2, rec, hasDefault);
