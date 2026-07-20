@@ -563,7 +563,7 @@ class Context {
 	}
 
 	public function commitFeatures(t:ModuleType):Void {
-		var m = TypeFunctions.tInfos(t).module;
+		var m = TypeFunctions.tModule(t);
 		for (k in m.extra.features.keys()) addFeature(k);
 	}
 

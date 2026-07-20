@@ -370,7 +370,23 @@ class TypeFunctions {
 		}
 	}
 
-	public static function tPath(t:ModuleType):Path return tInfos(t).path;
+	public static function tPath(t:ModuleType):Path {
+		return switch (t) {
+			case TClassDecl(c): c.path;
+			case TEnumDecl(e): e.path;
+			case TTypeDecl(td): td.path;
+			case TAbstractDecl(a): a.path;
+		};
+	}
+
+	public static function tModule(t:ModuleType):ModuleDef {
+		return switch (t) {
+			case TClassDecl(c): c.module;
+			case TEnumDecl(e): e.module;
+			case TTypeDecl(td): td.module;
+			case TAbstractDecl(a): a.module;
+		};
+	}
 
 	public static function extendsClass(c:TClass, csup:TClass):Bool {
 		if (c == csup) return true;

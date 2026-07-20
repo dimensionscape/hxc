@@ -747,6 +747,23 @@ class Filters {
 					throw new hxc.core.NotFound();
 			}
 		}
+		// Whether findField reaches a receiver findAbstract accepts: a call that does not would fail
+		// there before doing anything, so it goes straight to the mapExpr fallback.
+		function hasAbstract(e:TExpr):Bool {
+			return switch [TypeFunctions.follow(e.type), e.expr] {
+				case [TAbstract(a, _), _] if (TypeFunctions.hasMeta(":multiType", a.meta)): true;
+				case [_, TCast(e1, null)]: hasAbstract(e1);
+				case [_, TLocal(v)] if (v.extra != null && v.extra.expr != null): hasAbstract(v.extra.expr);
+				case _: false;
+			}
+		}
+		function calleeHasAbstract(ef:TExpr):Bool {
+			return switch (ef.expr) {
+				case TCast(e2, null): calleeHasAbstract(e2);
+				case TField(e2, _): hasAbstract(e2);
+				case _: false;
+			}
+		}
 		function loop(e:TExpr):TExpr {
 			return switch (e.expr) {
 				// A TNew of an abstract implementation, rewritten where the walk meets it; its arguments
@@ -779,6 +796,8 @@ class Filters {
 						case _:
 							TexprTools.mapExpr(loop, e);
 					}
+				case TCall(e1, el) if (!calleeHasAbstract(e1)):
+					TexprTools.mapExpr(loop, e);
 				case TCall(e1, el):
 					try {
 						function findField(ef:TExpr):TExpr {
@@ -1066,7 +1085,7 @@ class Filters {
 	// stages re-run. One-shot compiles never increment the step, so processed < 0-step is false and
 	// nothing is ever cached.
 	static function isCached(com:Context, t:ModuleType):Bool {
-		var m = TypeFunctions.tInfos(t).module.extra;
+		var m = TypeFunctions.tModule(t).extra;
 		return m.processed != 0 && m.processed < hxc.context.ServerCache.compilationStep;
 	}
 
@@ -1128,7 +1147,7 @@ class Filters {
 	static function saveClassState(com:Context, t:ModuleType):Void {
 		// Nothing may add a dependency after this point, or the module immediately reads as
 		// uncached again.
-		TypeFunctions.tInfos(t).module.extra.processed = hxc.context.ServerCache.compilationStep;
+		TypeFunctions.tModule(t).extra.processed = hxc.context.ServerCache.compilationStep;
 		switch (t) {
 			case TClassDecl(c):
 				var vars:Array<{v:TVar, t:T}> = [];

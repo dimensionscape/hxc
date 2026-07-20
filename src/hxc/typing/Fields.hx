@@ -380,7 +380,7 @@ class Fields {
 		var mt = try hxc.context.ModuleLoader.loadTypeDef(ctx.com, {pack: [], name: path.name}, Position.nullPos)
 			catch (_:Dynamic) null;
 		if (mt == null) return Unimported;
-		var got = TypeFunctions.tInfos(mt).path;
+		var got = TypeFunctions.tPath(mt);
 		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
 	}
 

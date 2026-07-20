@@ -1114,7 +1114,7 @@ class Typer {
 					var keep = new haxe.ds.StringMap<Bool>();
 					for (it in items) if (it.path != null) keep.set(it.path, true);
 					var mts = tc.moduleTypes == null ? null
-						: [for (mt in tc.moduleTypes) if (keep.exists(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path))) mt];
+						: [for (mt in tc.moduleTypes) if (keep.exists(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)))) mt];
 					var out = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
 					// The filtered collection answers as CRNew (10), carrying the subject the raise built -
 					// the JSON lane has nothing else to report with.
@@ -3155,7 +3155,7 @@ class Typer {
 				};
 			case _: false;
 		};
-		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path);
+		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt));
 		if (ctx.com.currentModule != null)
 			for (mt in ctx.com.currentModule.types) if (pathOf(mt) == it.path) return check(mt);
 		for (key in ctx.com.moduleLut.keys())
@@ -4325,7 +4325,7 @@ class Typer {
 		}
 		// Hxc resolves field types in a separate pass; resolve the referenced module so its
 		// statics have real types (idempotent via processed).
-		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+		try TypeResolve.resolveModule(ctx.com, TypeFunctions.tModule(mt)) catch (_:Dynamic) {}
 		switch (mt) { case TClassDecl(c): forceBuild(ctx, c); case _: }
 		return TexprTools.makeTypeExpr(buildGenericValueType(ctx, mt, p), p);
 	}
@@ -4437,7 +4437,7 @@ class Typer {
 		// A wildcard `import Class.*` skips @:noImportGlobal fields and constructors; an explicit field
 		// import is not filtered.
 		function tryType(mt:ModuleType, lookupName:String, wildcard:Bool = false):Null<AccessKind> {
-			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module) catch (_:Dynamic) {}
+			try TypeResolve.resolveModule(ctx.com, TypeFunctions.tModule(mt)) catch (_:Dynamic) {}
 			switch (mt) {
 				case TClassDecl(c):
 					forceBuild(ctx, c);
@@ -4585,7 +4585,7 @@ class Typer {
 					var md = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, imp.modulePath, Position.nullPos) catch (_:Dynamic) null;
 					if (md != null) {
 						try hxc.typing.TypeResolve.resolveModule(ctx.com, md) catch (_:Dynamic) {}
-						for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == imp.sub) {
+						for (mt in md.types) if (TypeFunctions.tPath(mt).name == imp.sub) {
 							var r = scan([mt]); if (r != null) return r;
 						}
 					}
@@ -4805,7 +4805,7 @@ class Typer {
 		var cur = ctx.com.currentModule;
 		if (cur == null) return null;
 		inline function matches(mt:ModuleType):Bool {
-			var tp = TypeFunctions.tInfos(mt).path;
+			var tp = TypeFunctions.tPath(mt);
 			return tp.name == name && (pack.length == 0 || tp.pack.join(".") == pack.join("."));
 		}
 		for (mt in cur.types) if (matches(mt)) return mt;
@@ -6309,7 +6309,7 @@ class Typer {
 					}
 				}
 			case _:
-				throw new TypingError(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path) + " cannot be constructed", p);
+				throw new TypingError(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)) + " cannot be constructed", p);
 		}
 	}
 
@@ -6548,7 +6548,7 @@ class Typer {
 			tval = unifyMinRaise(ctx, values);
 		}
 		var mt = Typeload.resolveTypePath(ctx.com, {pack: ["haxe", "ds"], name: "Map"}, null, p);
-		TypeResolve.resolveModule(ctx.com, TypeFunctions.tInfos(mt).module);
+		TypeResolve.resolveModule(ctx.com, TypeFunctions.tModule(mt));
 		var a = switch (mt) {
 			case TAbstractDecl(ab): ab;
 			case _: throw new TypingError("Map is not an abstract", p);

@@ -278,7 +278,7 @@ class TypeResolve {
 	// member it expected from the broken one.
 	static function markModuleErrored(ctx:Context, m:ModuleDef):Void {
 		for (mt in m.types)
-			ctx.declErrored.set(Context.pathKey(TypeFunctions.tInfos(mt).path), true);
+			ctx.declErrored.set(Context.pathKey(TypeFunctions.tPath(mt)), true);
 	}
 
 
@@ -556,11 +556,11 @@ class TypeResolve {
 		// files there.
 		if (hxc.context.ServerCache.enabled) {
 			var seen = new Map<String, Bool>();
-			for (mt in out) seen.set(Context.pathKey(TypeFunctions.tInfos(mt).path), true);
+			for (mt in out) seen.set(Context.pathKey(TypeFunctions.tPath(mt)), true);
 			for (key in ctx.moduleLut.keys()) {
 				var m = ctx.moduleLut.get(key);
 				for (mt in m.types) {
-					var k = Context.pathKey(TypeFunctions.tInfos(mt).path);
+					var k = Context.pathKey(TypeFunctions.tPath(mt));
 					if (seen.exists(k)) continue;
 					seen.set(k, true);
 					out.push(mt);
@@ -677,7 +677,7 @@ class TypeResolve {
 			}
 			var m = hxc.context.ModuleLoader.defineModuleDecls(ctx, {pack: t.tpackage, name: newName}, types, imports, usings, p);
 			TypeFunctions.addDependency(c.module, m);
-			for (x in m.types) if (TypeFunctions.tInfos(x).path.name == newName) mt = x;
+			for (x in m.types) if (TypeFunctions.tPath(x).name == newName) mt = x;
 			if (mt == null) throw new ContextError("Module " + Context.sTypePath(path) + " does not define type " + t.tname, p);
 		}
 		switch (mt) {
@@ -799,11 +799,11 @@ class TypeResolve {
 		var cur = ctx.currentModule;
 		if (cur == null) return pt;
 		var found:Null<ModuleType> = null;
-		for (mt in cur.types) if (TypeFunctions.tInfos(mt).path.name == t.tname) { found = mt; break; }
+		for (mt in cur.types) if (TypeFunctions.tPath(mt).name == t.tname) { found = mt; break; }
 		if (found == null)
 			found = try hxc.context.ModuleLoader.resolveNamedImportType(ctx, cur, t.tname, pt.pos) catch (_:Dynamic) null;
 		if (found == null) return pt;
-		var pack = TypeFunctions.tInfos(found).path.pack;
+		var pack = TypeFunctions.tPath(found).pack;
 		if (pack.length == 0) return pt;
 		return {path: {tpackage: pack, tname: t.tname, tsub: t.tsub, tparams: t.tparams}, pos: pt.pos};
 	}

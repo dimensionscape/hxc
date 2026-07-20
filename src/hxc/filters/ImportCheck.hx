@@ -312,7 +312,7 @@ class ImportCheck {
 	// The type of that name, once subTypeError has let it through, private or not (a module reaches its own
 	// private types).
 	public static function namedType(md:hxc.core.Type.ModuleDef, tname:String):Null<hxc.core.Type.ModuleType> {
-		for (mt in md.types) if (TypeFunctions.tInfos(mt).path.name == tname) return mt;
+		for (mt in md.types) if (TypeFunctions.tPath(mt).name == tname) return mt;
 		return null;
 	}
 
@@ -390,7 +390,7 @@ class ImportCheck {
 	public static function failUsefully(md:ModuleDef, name:String):String {
 		var c = name.charCodeAt(0);
 		var field = c >= "a".code && c <= "z".code;
-		var candidates = if (!field) [for (mt in md.types) TypeFunctions.tInfos(mt).path.name]
+		var candidates = if (!field) [for (mt in md.types) TypeFunctions.tPath(mt).name]
 			else md.statics == null ? [] : foldiNames([for (k in md.statics.statics.keys()) k]);
 		return StringError.stringError(name, candidates,
 			"Module " + Context.sTypePath(md.path) + " does not define " + (field ? "field " : "type ") + name);

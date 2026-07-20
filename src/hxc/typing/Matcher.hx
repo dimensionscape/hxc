@@ -70,7 +70,7 @@ class Constructor {
 			case ConStatic(c, cf):
 				var path = switch (c.kind) { case KAbstractImpl(a): a.path; case _: c.path; };
 				Globals.sTypePath(path) + "." + cf.name;
-			case ConTypeExpr(mt): Globals.sTypePath(TypeFunctions.tInfos(mt).path);
+			case ConTypeExpr(mt): Globals.sTypePath(TypeFunctions.tPath(mt));
 			case ConFields(fields): "{ " + fields.join(", ") + " }";
 			case ConArray(i): "<array " + i + ">";
 		};
@@ -129,7 +129,7 @@ class Constructor {
 			case [ConConst(ct1), ConConst(ct2)]: constCompare(ct1, ct2);
 			case [ConEnum(_, ef1), ConEnum(_, ef2)]: ef1.index - ef2.index;
 			case [ConStatic(_, cf1), ConStatic(_, cf2)]: cmpStr(cf1.name, cf2.name);
-			case [ConTypeExpr(mt1), ConTypeExpr(mt2)]: cmpStr(Globals.sTypePath(TypeFunctions.tInfos(mt1).path), Globals.sTypePath(TypeFunctions.tInfos(mt2).path));
+			case [ConTypeExpr(mt1), ConTypeExpr(mt2)]: cmpStr(Globals.sTypePath(TypeFunctions.tPath(mt1)), Globals.sTypePath(TypeFunctions.tPath(mt2)));
 			case [ConFields(_), ConFields(_)]: 0;
 			case [ConArray(i1), ConArray(i2)]: i1 - i2;
 			case _: -1;

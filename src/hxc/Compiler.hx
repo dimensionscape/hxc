@@ -2150,7 +2150,7 @@ class Compiler {
 			// A relation is added on each promoted type hint. The position check compares both ends and the
 			// file, so an occurrence counts only when the hint resolved to this very declaration.
 			var mods = new Map<String, Bool>();
-			for (t in ctx.types) mods.set(modKey(TypeFunctions.tInfos(t).module), true);
+			for (t in ctx.types) mods.set(modKey(TypeFunctions.tModule(t)), true);
 			for (h in hxc.typing.Typeload.typeHints) {
 				// Only modules that survived into com.types are checked, so a hint recorded from a
 				// discarded module contributes nothing.
@@ -2169,7 +2169,7 @@ class Compiler {
 				switch (e.expr) {
 					// Reports the type name's width back from the end of the expression.
 					case TTypeExpr(mt2) if (TypeFunctions.tInfos(mt2).namePos == want):
-						out.push(patchStringPos(e.pos, TypeFunctions.tInfos(mt2).path.name));
+						out.push(patchStringPos(e.pos, TypeFunctions.tPath(mt2).name));
 					case _:
 				}
 				hxc.core.TexprTools.iter(walkT, e);
@@ -2340,7 +2340,7 @@ class Compiler {
 		if (mt == null)
 			mt = try hxc.context.ModuleLoader.loadTypeDef(ctx, {pack: [], name: path.name}, Position.nullPos) catch (_:Dynamic) null;
 		if (mt == null) return Unimported;
-		var got = TypeFunctions.tInfos(mt).path;
+		var got = TypeFunctions.tPath(mt);
 		return got.name == path.name && got.pack.join(".") == path.pack.join(".") ? Imported : Shadowed;
 	}
 
@@ -3090,7 +3090,7 @@ class Compiler {
 		// it. The heritage filter that produced this collection travels on it.
 		{
 			var seen = new haxe.ds.StringMap<Bool>();
-			for (mt in mts) seen.set(hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path), true);
+			for (mt in mts) seen.set(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)), true);
 			heritageScan(ctx, tl, seen, function(sf, td) {
 				items.push(hxc.core.Json.stringOfJson(hxc.core.CompletionItem.CompletionItem.declTypeToJson(
 					gen, sf.pack, sf.moduleName, td.decl, td.pos, 1, items.length)));

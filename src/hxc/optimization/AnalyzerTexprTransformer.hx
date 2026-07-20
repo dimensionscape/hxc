@@ -345,13 +345,14 @@ class AnalyzerTexprTransformer {
 					return TypeFunctions.mk(TBinop(OpAssign, ev, e), ev.type, ev.pos);
 				}
 				var close = pushName(v.name);
-				var bbOut = try {
-					blockElementPlus(bb, AnalyzerTexpr.mapValues(assign, e), function(e) return TypeFunctions.mk(TVarExpr(v, e), ctx.com.basic.tvoid, ev.pos));
-				} catch (_:Exit) {
+				function declareValue():BasicBlock {
 					var r = value(bb, e);
 					r.bb.addTexpr(TypeFunctions.mk(TVarExpr(v, r.e), ctx.com.basic.tvoid, ev.pos));
-					r.bb;
+					return r.bb;
 				}
+				var bbOut = if (AnalyzerTexpr.mapValuesExitsAtRoot(e)) declareValue() else try {
+					blockElementPlus(bb, AnalyzerTexpr.mapValues(assign, e), function(e) return TypeFunctions.mk(TVarExpr(v, e), ctx.com.basic.tvoid, ev.pos));
+				} catch (_:Exit) declareValue();
 				close();
 				return bbOut;
 			}
@@ -426,13 +427,14 @@ class AnalyzerTexprTransformer {
 						return TypeFunctions.mk(TBinop(OpAssign, e1, e3), e3.type, e3.pos);
 					}
 					var close = pushName(v.name);
-					var bbOut = try {
-						blockElementValue(bb, e2, assign);
-					} catch (_:Exit) {
+					function assignValue():BasicBlock {
 						var r = value(bb, e2);
 						r.bb.addTexpr(TypeFunctions.mk(TBinop(OpAssign, e1, r.e), e.type, e.pos));
-						r.bb;
+						return r.bb;
 					}
+					var bbOut = if (AnalyzerTexpr.mapValuesExitsAtRoot(e2)) assignValue() else try {
+						blockElementValue(bb, e2, assign);
+					} catch (_:Exit) assignValue();
 					close();
 					bbOut;
 				// Branching
@@ -594,14 +596,15 @@ class AnalyzerTexprTransformer {
 					var bb = blockElement(bb, e1);
 					blockElement(bb, TypeFunctions.mk(TReturn(null), TypeFunctions.tDynamic, e.pos));
 				case TReturn(e1):
-					try {
-						function mkReturn(e2:TExpr):TExpr return TypeFunctions.mk(TReturn(e2), TypeFunctions.tDynamic, e2.pos);
-						blockElementValue(bb, e1, mkReturn);
-					} catch (_:Exit) {
+					function returnValue():BasicBlock {
 						var r = value(bb, e1);
 						BasicBlock.addCfgEdge(r.bb, bbExit, CFGGoto);
-						addTerminator(r.bb, TermReturnValue(r.e, e.pos));
+						return addTerminator(r.bb, TermReturnValue(r.e, e.pos));
 					}
+					if (AnalyzerTexpr.mapValuesExitsAtRoot(e1)) returnValue() else try {
+						function mkReturn(e2:TExpr):TExpr return TypeFunctions.mk(TReturn(e2), TypeFunctions.tDynamic, e2.pos);
+						blockElementValue(bb, e1, mkReturn);
+					} catch (_:Exit) returnValue();
 				case TBreak:
 					bbBreaks.unshift(bb);
 					addTerminator(bb, TermBreak(e.pos));
@@ -610,15 +613,16 @@ class AnalyzerTexprTransformer {
 					BasicBlock.addCfgEdge(bb, bbContinue, CFGGoto);
 					addTerminator(bb, TermContinue(e.pos));
 				case TThrow(e1):
-					try {
-						function mkThrow(e2:TExpr):TExpr return TypeFunctions.mk(TThrow(e2), TypeFunctions.tDynamic, e.pos);
-						blockElementValue(bb, e1, mkThrow);
-					} catch (_:Exit) {
+					function throwValue():BasicBlock {
 						var r = value(bb, e1);
 						if (bTryStack.length == 0) BasicBlock.addCfgEdge(r.bb, bbExit, CFGGoto)
 						else for (bbExc2 in bTryStack) BasicBlock.addCfgEdge(r.bb, bbExc2, CFGGoto);
-						addTerminator(r.bb, TermThrow(r.e, e.pos));
+						return addTerminator(r.bb, TermThrow(r.e, e.pos));
 					}
+					if (AnalyzerTexpr.mapValuesExitsAtRoot(e1)) throwValue() else try {
+						function mkThrow(e2:TExpr):TExpr return TypeFunctions.mk(TThrow(e2), TypeFunctions.tDynamic, e.pos);
+						blockElementValue(bb, e1, mkThrow);
+					} catch (_:Exit) throwValue();
 				// Side effects
 				case TCall({expr: TIdent(s)}, el) if (AnalyzerTexpr.isReallyUnbound(s)):
 					checkUnboundCall(s, el);

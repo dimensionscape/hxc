@@ -385,7 +385,7 @@ class Exceptions {
 		function resolved(mt:ModuleType):ModuleType {
 			// A type loaded on demand at filter time needs its signatures resolved and its field bodies
 			// typed; the load-time typing passes have already run
-			var m = TypeFunctions.tInfos(mt).module;
+			var m = TypeFunctions.tModule(mt);
 			try hxc.typing.TypeResolve.resolveModule(com, m) catch (_:Dynamic) {}
 			for (t in m.types) switch (t) {
 				case TClassDecl(c): try hxc.typing.TypeFields.forceClassFields(com, c) catch (_:Dynamic) {}

@@ -355,100 +355,130 @@ class ConstPropagation {
 	}
 
 	static function transfer(ctx:AnalyzerContext, bb:BasicBlock, e:TExpr):ConstLattice {
-		function wrap(lat:ConstLattice, e:TExpr):TExpr {
+		// Transfer answers Bottom for a value that is no known constant. Null stands for that
+		// early exit here, checked after each step in the order the steps run.
+		function wrap(lat:ConstLattice, e:TExpr):Null<TExpr> {
 			return switch (lat) {
 				case LConst(ct): TypeFunctions.mk(TConst(ct), TypeFunctions.tDynamic, Position.nullPos);
 				case LNull(t): TypeFunctions.mk(TConst(TNull), t, e.pos);
-				case _: throw new Exit();
+				case _: null;
 			};
 		}
-		function unwrap(e:TExpr):ConstLattice {
+		function unwrap(e:TExpr):Null<ConstLattice> {
 			return switch (e.expr) {
 				case TConst(ct): LConst(ct);
-				case _: throw new Exit();
+				case _: null;
 			};
 		}
-		var eval:(BasicBlock, TExpr)->ConstLattice = null;
-		eval = function(bb:BasicBlock, e:TExpr):ConstLattice {
-			return switch (e.expr) {
+		var eval:(BasicBlock, TExpr)->Null<ConstLattice> = null;
+		eval = function(bb:BasicBlock, e:TExpr):Null<ConstLattice> {
+			switch (e.expr) {
 				case TConst(TSuper | TThis):
-					Bottom;
+					return Bottom;
 				case TConst(TNull):
-					LNull(e.type);
+					return LNull(e.type);
 				case TConst(ct):
-					LConst(ct);
+					return LConst(ct);
 				case TTypeExpr(mt):
-					LModuleType(mt, e.type);
+					return LModuleType(mt, e.type);
 				case TLocal(v):
 					if (TypeFunctions.follow(v.type).match(TDynamic(_)) || TypeFunctions.hasVarFlag(v, VCaptured))
-						Bottom;
+						return Bottom;
 					else
-						getCell(v.id);
+						return getCell(v.id);
 				case TBinop(OpAssign, _, e2):
-					eval(bb, e2);
+					return eval(bb, e2);
 				case TBinop(op, e1, e2):
 					var cl1 = eval(bb, e1);
+					if (cl1 == null) return null;
 					var cl2 = eval(bb, e2);
+					if (cl2 == null) return null;
 					var e1 = wrap(cl1, e);
+					if (e1 == null) return null;
 					var e2 = wrap(cl2, e);
+					if (e2 == null) return null;
 					var e3 = TypeFunctions.mk(TBinop(op, e1, e2), e.type, e.pos);
 					var e4 = OptimizerTexpr.optimizeBinop(e3, op, e1, e2);
-					if (e3 != e4) eval(bb, e4) else unwrap(e4);
+					return if (e3 != e4) eval(bb, e4) else unwrap(e4);
 				case TUnop(op, flag, e1):
 					var cl1 = eval(bb, e1);
+					if (cl1 == null) return null;
 					var e1 = wrap(cl1, e);
+					if (e1 == null) return null;
 					var e2 = TypeFunctions.mk(TUnop(op, flag, e1), e.type, e.pos);
 					var e3 = OptimizerTexpr.optimizeUnop(e2, op, flag, e1);
-					if (e2 != e3) eval(bb, e3) else unwrap(e3);
+					return if (e2 != e3) eval(bb, e3) else unwrap(e3);
 				case TField(_, FEnum(_, ef)):
-					LEnumValue(ef.index, []);
+					return LEnumValue(ef.index, []);
 				case TCall({expr: TField(_, FEnum(_, ef))}, el):
-					var cll = [for (e2 in el) try eval(bb, e2) catch (_:Exit) Bottom];
-					LEnumValue(ef.index, cll);
+					var cll:Array<ConstLattice> = [];
+					for (e2 in el) {
+						var lat = eval(bb, e2);
+						cll.push(lat == null ? Bottom : lat);
+					}
+					return LEnumValue(ef.index, cll);
 				case TEnumParameter(e1, _, i):
-					switch (eval(bb, e1)) {
-						case LEnumValue(_, el):
-							if (i >= el.length) throw new Exit();
-							el[i];
-						case _:
-							throw new Exit();
+					var lat = eval(bb, e1);
+					if (lat == null) return null;
+					return switch (lat) {
+						case LEnumValue(_, el): i >= el.length ? null : el[i];
+						case _: null;
 					}
 				case TEnumIndex(e1):
-					switch (eval(bb, e1)) {
+					var lat = eval(bb, e1);
+					if (lat == null) return null;
+					return switch (lat) {
 						case LEnumValue(i, _): LConst(TInt(i));
-						case _: throw new Exit();
+						case _: null;
 					}
 				case TCall({expr: TField(_, FStatic(c = {path: {pack: [], name: "Type"}}, cf = {name: "enumIndex"}))}, [e1]) if (ctx.com.platform.match(Eval)):
-					switch [TypeFunctions.follow(e1.type), eval(bb, e1)] {
+					var t1 = TypeFunctions.follow(e1.type);
+					var lat = eval(bb, e1);
+					if (lat == null) return null;
+					switch [t1, lat] {
 						case [TEnum(_, _), LEnumValue(i, _)]:
-							LConst(TInt(i));
+							return LConst(TInt(i));
 						case [_, lat1]:
-							var e2 = Optimizer.apiInline2(ctx.com, c, cf.name, [wrap(lat1, e)], e.pos);
-							if (e2 == null) throw new Exit();
-							eval(bb, e2);
+							var w = wrap(lat1, e);
+							if (w == null) return null;
+							var e2 = Optimizer.apiInline2(ctx.com, c, cf.name, [w], e.pos);
+							if (e2 == null) return null;
+							return eval(bb, e2);
 					}
 				case TCall({expr: TField(_, FStatic(c, cf))}, el):
-					var el2 = [for (e2 in el) wrap(eval(bb, e2), e)];
+					var el2:Array<TExpr> = [];
+					for (e2 in el) {
+						var lat = eval(bb, e2);
+						if (lat == null) return null;
+						var w = wrap(lat, e);
+						if (w == null) return null;
+						el2.push(w);
+					}
 					var e2 = Optimizer.apiInline2(ctx.com, c, cf.name, el2, e.pos);
-					if (e2 == null) throw new Exit();
-					eval(bb, e2);
+					if (e2 == null) return null;
+					return eval(bb, e2);
 				case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, null):
-					eval(bb, e1);
+					return eval(bb, e1);
 				case _:
 					var e1 = switch [ctx.com.platform, e.expr] {
 						case [Js, TArray(e1, {expr: TConst(TInt(i))})] if (i == 1 && ctx.com.defines.rawDefined("js_enums_as_arrays")): e1;
 						case [Js, TField(e1, FDynamic("_hx_index"))] if (!ctx.com.defines.rawDefined("js_enums_as_arrays")): e1;
 						case [Cpp, TCall({expr: TField(e1, FDynamic("__Index"))}, [])]: e1;
 						case [Neko, TField(e1, FDynamic("index"))]: e1;
-						case _: throw new Exit();
+						case _: null;
 					};
-					switch [TypeFunctions.follow(e1.type), eval(bb, e1)] {
+					if (e1 == null) return null;
+					var t1 = TypeFunctions.follow(e1.type);
+					var lat = eval(bb, e1);
+					if (lat == null) return null;
+					return switch [t1, lat] {
 						case [TEnum(_, _), LEnumValue(i, _)]: LConst(TInt(i));
-						case _: throw new Exit();
+						case _: null;
 					}
-			};
+			}
 		}
-		return try eval(bb, e) catch (_:Exit) Bottom;
+		var r = eval(bb, e);
+		return r == null ? Bottom : r;
 	}
 
 	static function init(ctx:AnalyzerContext):Void {
@@ -653,32 +683,26 @@ class CopyPropagation {
 class LocalDce {
 	// Like the optimizer's side-effect check but phi/fun markers are pure
 	static function hasSideEffect(e:TExpr):Bool {
-		function loop(e:TExpr):Void {
-			switch (e.expr) {
-				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_):
+		// Finding a side effect answers true at once.
+		function loop(e:TExpr):Bool {
+			return switch (e.expr) {
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_): false;
 				case TCall({expr: TField(_, FStatic({path: {pack: [], name: "Std"}}, {name: "string"}))}, _):
-					TexprTools.iter(loop, e);
+					TexprTools.checkExpr(loop, e);
 				case TCall({expr: TField(_, FEnum(_, _))}, _):
-					TexprTools.iter(loop, e);
-				case TCall({expr: TConst(TString("phi" | "fun"))}, _):
+					TexprTools.checkExpr(loop, e);
+				case TCall({expr: TConst(TString("phi" | "fun"))}, _): false;
 				case TCall({expr: TField(e1, fa)}, el) if (PurityState.isPureFieldAccess(fa)):
-					loop(e1);
-					for (e2 in el) loop(e2);
-				case TField(_, fa) if (PurityState.isExplicitlyImpure(fa)):
-					throw new Exit();
-				case TNew(_, _, _) | TCall(_, _) | TBinop(OpAssignOp(_) | OpAssign, _, _) | TUnop(Increment | Decrement, _, _):
-					throw new Exit();
-				case TReturn(_) | TBreak | TContinue | TThrow(_):
-					throw new Exit();
-				case TCast(_, mt) if (mt != null):
-					throw new Exit();
-				case TFor(_, _, _):
-					throw new Exit();
-				case _:
-					TexprTools.iter(loop, e);
-			}
+					loop(e1) || TexprTools.existsIn(loop, el);
+				case TField(_, fa) if (PurityState.isExplicitlyImpure(fa)): true;
+				case TNew(_, _, _) | TCall(_, _) | TBinop(OpAssignOp(_) | OpAssign, _, _) | TUnop(Increment | Decrement, _, _): true;
+				case TReturn(_) | TBreak | TContinue | TThrow(_): true;
+				case TCast(_, mt) if (mt != null): true;
+				case TFor(_, _, _): true;
+				case _: TexprTools.checkExpr(loop, e);
+			};
 		}
-		return try { loop(e); false; } catch (_:Exit) true;
+		return loop(e);
 	}
 
 	public static function apply(ctx:AnalyzerContext):Void {

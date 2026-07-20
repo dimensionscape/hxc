@@ -155,7 +155,7 @@ class EvalEmitter {
 						switch (EvalValueTools.vresolve(v1)) {
 							case VNull: v1;
 							case _:
-								var path = EvalHash.pathHash(TypeFunctions.tInfos(mt).path);
+								var path = EvalHash.pathHash(TypeFunctions.tPath(mt));
 								if (!EvalStdLib.isOfTypePath(ctx, v1, path)) EvalExceptions.excString(ctx, "Class cast error", e.pos);
 								else v1;
 						}
@@ -208,7 +208,7 @@ class EvalEmitter {
 			case TTypeExpr(mt):
 				// A type without an eval prototype (e.g. the core-type abstracts Int/Float/Bool) still
 				// needs a value marker carrying its path, for Std.isOfType and reflection.
-				var tpath = EvalHash.pathHash(TypeFunctions.tInfos(mt).path);
+				var tpath = EvalHash.pathHash(TypeFunctions.tPath(mt));
 				var tproto = ctx.staticPrototypes.get(tpath);
 				if (tproto == null) {
 					tproto = new VPrototype(tpath, [], new Map(), [], new Map(), null, PClass([]), VNull);

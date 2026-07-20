@@ -15,25 +15,22 @@ private typedef Exit = hxc.core.ExitException;
 class OptimizerTexpr {
 	// Does not account for potential null accesses
 	public static function hasSideEffect(e:TExpr):Bool {
-		function loop(e:TExpr):Void {
-			switch (e.expr) {
-				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_):
+		// Finding a side effect answers true at once.
+		function loop(e:TExpr):Bool {
+			return switch (e.expr) {
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TIdent(_): false;
 				case TCall({expr: TField(e1, fa)}, el) if (PurityState.isPureFieldAccess(fa)):
-					loop(e1);
-					for (x in el) loop(x);
+					loop(e1) || TexprTools.existsIn(loop, el);
 				case TNew(c, _, el) if (c.constructor != null && PurityState.isPure(c, c.constructor)):
-					for (x in el) loop(x);
-				case TField(_, fa) if (PurityState.isExplicitlyImpure(fa)): throw new Exit();
-				case TNew(_, _, _) | TCall(_, _) | TBinop(OpAssignOp(_) | OpAssign, _, _) | TUnop(Increment | Decrement, _, _): throw new Exit();
-				case TReturn(_) | TBreak | TContinue | TThrow(_): throw new Exit();
-				case TCast(_, mt) if (mt != null): throw new Exit();
-				case _: TexprTools.iter(loop, e);
-			}
+					TexprTools.existsIn(loop, el);
+				case TField(_, fa) if (PurityState.isExplicitlyImpure(fa)): true;
+				case TNew(_, _, _) | TCall(_, _) | TBinop(OpAssignOp(_) | OpAssign, _, _) | TUnop(Increment | Decrement, _, _): true;
+				case TReturn(_) | TBreak | TContinue | TThrow(_): true;
+				case TCast(_, mt) if (mt != null): true;
+				case _: TexprTools.checkExpr(loop, e);
+			};
 		}
-		return try {
-			loop(e);
-			false;
-		} catch (_:Exit) true;
+		return loop(e);
 	}
 
 	public static function isReadOnlyFieldAccess(e:TExpr, fa:TFieldAccess):Bool {
@@ -73,20 +70,17 @@ class OptimizerTexpr {
 	public static function createAffectionChecker():{mightBeAffected:TExpr->Bool, collectModifiedLocals:TExpr->Void} {
 		var modifiedLocals = new Map<Int, Bool>();
 		function mightBeAffected(e:TExpr):Bool {
-			function loop(e:TExpr):Void {
-				switch (e.expr) {
-					case TConst(_) | TFunction(_) | TTypeExpr(_):
-					case TLocal(v) if (TypeFunctions.hasVarFlag(v, VCaptured)): throw new Exit();
-					case TLocal(v) if (modifiedLocals.exists(v.id)): throw new Exit();
-					case TField(e1, fa) if (!isReadOnlyFieldAccess(e1, fa)): throw new Exit();
-					case TCall(_, _) | TNew(_, _, _): throw new Exit();
-					case _: TexprTools.iter(loop, e);
-				}
+			function loop(e:TExpr):Bool {
+				return switch (e.expr) {
+					case TConst(_) | TFunction(_) | TTypeExpr(_): false;
+					case TLocal(v) if (TypeFunctions.hasVarFlag(v, VCaptured)): true;
+					case TLocal(v) if (modifiedLocals.exists(v.id)): true;
+					case TField(e1, fa) if (!isReadOnlyFieldAccess(e1, fa)): true;
+					case TCall(_, _) | TNew(_, _, _): true;
+					case _: TexprTools.checkExpr(loop, e);
+				};
 			}
-			return try {
-				loop(e);
-				false;
-			} catch (_:Exit) true;
+			return loop(e);
 		}
 		function collectModifiedLocals(e:TExpr):Void {
 			switch (e.expr) {

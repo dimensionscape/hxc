@@ -134,7 +134,7 @@ class CppReferenced {
 			var meta = TypeFunctions.tInfos(decl).meta;
 			var includeFiles = getAllMetaStringPath(meta, forDepends ? ":depend" : ":include");
 			if (includeFiles.length > 0) for (inc in includeFiles) addType(pathOfString(inc));
-			else if (!forDepends && TypeFunctions.hasMeta(":include", meta)) addType(TypeFunctions.tInfos(decl).path);
+			else if (!forDepends && TypeFunctions.hasMeta(":include", meta)) addType(TypeFunctions.tPath(decl));
 		}
 		function addNativeGenClass(klass:TClass):Void {
 			var includeFiles = getAllMetaStringPath(klass.meta, forDepends ? ":depend" : ":include");

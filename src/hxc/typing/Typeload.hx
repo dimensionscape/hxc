@@ -380,7 +380,7 @@ class Typeload {
 			case TTypeDecl(td): TypeFunctions.follow(td.type).match(TAnon(_));
 			case _: false;
 		};
-		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tInfos(mt).path);
+		inline function pathOf(mt:ModuleType):String return hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt));
 		if (ctx.currentModule != null)
 			for (mt in ctx.currentModule.types) if (pathOf(mt) == it.path) return isStruct(mt);
 		for (key in ctx.moduleLut.keys())
@@ -638,7 +638,7 @@ class Typeload {
 		}
 		if (sub == null && path.pack.length == 0 && ctx.currentModule != null) {
 			for (mt in ctx.currentModule.types) {
-				if (TypeFunctions.tInfos(mt).path.name == path.name) return mt;
+				if (TypeFunctions.tPath(mt).name == path.name) return mt;
 			}
 		}
 		// A path matches by its full path as well as by the bare name, so a path written in full - or
@@ -648,7 +648,7 @@ class Typeload {
 		// path.
 		if (sub == null && path.pack.length > 0 && ctx.currentModule != null) {
 			for (mt in ctx.currentModule.types) {
-				var tp = TypeFunctions.tInfos(mt).path;
+				var tp = TypeFunctions.tPath(mt);
 				if (tp.name == path.name && tp.pack.join(".") == path.pack.join(".")) return mt;
 			}
 			var imp = hxc.context.ModuleLoader.resolveImportTypeByPath(ctx, ctx.currentModule, path, p);
@@ -832,7 +832,7 @@ class Typeload {
 		// Resolve the type definition through the context.
 		var path:Path = {pack: t.tpackage, name: t.tname};
 		var mt = resolveTypePath(ctx, path, t.tsub, p);
-		ensureResolved(ctx, TypeFunctions.tInfos(mt).module);
+		ensureResolved(ctx, TypeFunctions.tModule(mt));
 		var types = TypeFunctions.tInfos(mt).params;
 		var declPath = TypeFunctions.tPath(mt);
 		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams, tctx);

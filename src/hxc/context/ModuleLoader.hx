@@ -25,7 +25,7 @@ class ModuleLoader {
 			return loadTypeDef(ctx, path, p, sub);
 		};
 		ctx.defineType = function(mt:ModuleType):Void {
-			var m = TypeFunctions.tInfos(mt).module;
+			var m = TypeFunctions.tModule(mt);
 			addModule(ctx, m);
 		};
 	}
@@ -375,7 +375,7 @@ class ModuleLoader {
 							else {
 								var m2 = try loadModuleOpt(ctx, {pack: pack, name: mod}, part.pos) catch (_:Dynamic) null;
 								if (m2 != null) for (mt in m2.types)
-									if (TypeFunctions.tInfos(mt).path.name == part.name) {
+									if (TypeFunctions.tPath(mt).name == part.name) {
 										// Subtype definition answers span the whole declaration rather than only its name.
 										if (hxc.typing.Typer.displayDefinition || hxc.typing.Typer.displayTypeDefinition) {
 											hxc.typing.Typer.displayFound = [TypeFunctions.tInfos(mt).pos];
@@ -407,7 +407,7 @@ class ModuleLoader {
 						// Module hover returns the first same-named type over the import declaration; continue when
 						// no such type exists.
 						for (mt in m2.types)
-							if (TypeFunctions.tInfos(mt).path.name == part.name) {
+							if (TypeFunctions.tPath(mt).name == part.name) {
 								hxc.typing.Typer.displayModuleType(ctx, mt, declPos);
 								throw new hxc.compiler.DisplayXml.DisplayRaised();
 							}
@@ -498,7 +498,7 @@ class ModuleLoader {
 					if (sub != null && field != null) {
 						var tsub = hxc.filters.ImportCheck.namedType(md, sub);
 						if (tsub != null && !addStaticInit(tsub, field))
-							ctx.addDiagnostic(Context.sTypePath(TypeFunctions.tInfos(tsub).path) + " has no field " + field,
+							ctx.addDiagnostic(Context.sTypePath(TypeFunctions.tPath(tsub)) + " has no field " + field,
 								Position.union(p, pField));
 						return;
 					}
@@ -1988,7 +1988,7 @@ class ModuleLoader {
 		// Declared alongside the main class resolvable without a same-named `.hx` file.
 		if (sub == null && path.pack.length == 0 && ctx.currentModule != null) {
 			for (mt in ctx.currentModule.types) {
-				if (TypeFunctions.tInfos(mt).path.name == tname) return mt;
+				if (TypeFunctions.tPath(mt).name == tname) return mt;
 			}
 			// The module's own types and then its local IMPORTS are checked, both before any filesystem
 			// lookup. Going to disk first would make an imported name that also names a root module load
@@ -2087,7 +2087,7 @@ class ModuleLoader {
 		if (cur == null) return null;
 
 		function fullMatch(mt:ModuleType):Bool {
-			var tp = TypeFunctions.tInfos(mt).path;
+			var tp = TypeFunctions.tPath(mt);
 			return tp.name == path.name && samePack(tp.pack, path.pack);
 		}
 
@@ -2120,7 +2120,7 @@ class ModuleLoader {
 		var m = try loadModuleOpt(ctx, mp, p) catch (_:ContextError) return null;
 		if (m == null) return null;
 		for (mt in m.types) {
-			var tp = TypeFunctions.tInfos(mt).path;
+			var tp = TypeFunctions.tPath(mt);
 			if (tp.name == want.name && samePack(tp.pack, want.pack)) return mt;
 		}
 		return null;
@@ -2167,7 +2167,7 @@ class ModuleLoader {
 		// A PRIVATE type never binds through an import from another module: the import itself is the error,
 		// and the name stays unbound.
 		inline function visible(r:Null<ModuleType>):Null<ModuleType>
-			return r == null ? null : (TypeFunctions.tInfos(r).isPrivate && TypeFunctions.tInfos(r).module != cur ? null : r);
+			return r == null ? null : (TypeFunctions.tInfos(r).isPrivate && TypeFunctions.tModule(r) != cur ? null : r);
 		// A module import with no sub exposes every non-private type of that module by its own name,
 		// prepended at that import's position. So which import wins is decided by declaration order alone
 		// - it makes no difference whether the name is the module's own or one of its sub-types. Looking
@@ -2252,7 +2252,7 @@ class ModuleLoader {
 		if (cur == null) return null;
 
 		for (mt in cur.types) {
-			if (TypeFunctions.tInfos(mt).path.name == name) return mt;
+			if (TypeFunctions.tPath(mt).name == name) return mt;
 		}
 
 		{
@@ -2269,7 +2269,7 @@ class ModuleLoader {
 			var std = ctx.moduleLut.get(Context.pathKey({pack: [], name: "StdTypes"}));
 			if (std != null && std != cur) {
 				for (mt in std.types)
-					if (TypeFunctions.tInfos(mt).path.name == name) return mt;
+					if (TypeFunctions.tPath(mt).name == name) return mt;
 			}
 		}
 

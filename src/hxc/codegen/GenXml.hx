@@ -182,7 +182,7 @@ class GenXml {
 	}
 
 	public static function genTypeDecl(com:Context, ipos:Bool, t:ModuleType):Xml {
-		var m = TypeFunctions.tInfos(t).module;
+		var m = TypeFunctions.tModule(t);
 		return switch (t) {
 			case TClassDecl(c):
 				var stats = [for (cf in c.orderedStatics)

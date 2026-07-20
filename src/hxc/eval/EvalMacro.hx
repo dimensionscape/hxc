@@ -1124,7 +1124,7 @@ class EvalMacro {
 			var md = try hxc.context.ModuleLoader.loadModule(com, wsplit.modulePath, hxc.ast.Position.nullPos) catch (_:Dynamic) null;
 			var tname = wsplit.sub != null ? wsplit.sub : wsplit.modulePath.name;
 			var mt:Null<ModuleType> = null;
-			if (md != null) for (t in md.types) if (TypeFunctions.tInfos(t).path.name == tname) { mt = t; break; }
+			if (md != null) for (t in md.types) if (TypeFunctions.tPath(t).name == tname) { mt = t; break; }
 			if (mt != null) switch (TypeFunctions.resolveTypedef(mt)) {
 				case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
 					for (cf in cl.orderedStatics)
@@ -1724,7 +1724,7 @@ class EvalMacro {
 		// or abstract is "Macro should be called on a class".
 		var tm = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
 		if (tm != null) for (mt in tm.types) {
-			if (TypeFunctions.tInfos(mt).path.name == t.name) switch (mt) {
+			if (TypeFunctions.tPath(mt).name == t.name) switch (mt) {
 				case TClassDecl(_):
 				case _: throw new TypingError("Macro should be called on a class", p);
 			}
@@ -1755,7 +1755,7 @@ class EvalMacro {
 			var mm = try hxc.context.ModuleLoader.loadModuleOpt(macroCom, {pack: t.pack, name: t.module}, p) catch (_:Dynamic) null;
 			if (mm != null && t.name != t.module) {
 				var defined = false;
-				for (mt in mm.types) if (TypeFunctions.tInfos(mt).path.name == t.name) defined = true;
+				for (mt in mm.types) if (TypeFunctions.tPath(mt).name == t.name) defined = true;
 				if (!defined) throw new TypingError("Module " + hxc.core.Globals.sTypePath(mm.path) + " does not define type " + t.name, p);
 			}
 			// A missing module prints as "Type not found : <module>"; the KIND is what exempts it from the
@@ -2651,7 +2651,7 @@ class EvalMacro {
 			macroCom.typeToModule.remove(key);
 			macroCom.modules.remove(m);
 			for (mt in m.types) {
-				var tk = hxc.context.Context.pathKey(TypeFunctions.tInfos(mt).path);
+				var tk = hxc.context.Context.pathKey(TypeFunctions.tPath(mt));
 				macroCom.moduleLut.remove(tk);
 				macroCom.typeToModule.remove(tk);
 			}
@@ -2792,7 +2792,7 @@ class EvalMacro {
 					var tname = sub != null ? sub : path.name;
 					var named:Null<ModuleType> = null;
 					for (mt in m.types) {
-						var tp = TypeFunctions.tInfos(mt).path;
+						var tp = TypeFunctions.tPath(mt);
 						if (tp.name == tname && tp.pack.join(".") == path.pack.join(".")) named = mt;
 					}
 					if (named == null)

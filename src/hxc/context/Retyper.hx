@@ -161,7 +161,7 @@ class Retyper {
 			ctx.currentModule = m;
 			// findType: every declaration must still name a type the module produced.
 			function findType(name:String):ModuleType {
-				for (mt in m.types) if (TypeFunctions.tInfos(mt).path.name == name) return mt;
+				for (mt in m.types) if (TypeFunctions.tPath(mt).name == name) return mt;
 				return fail(stack, "Type " + name + " not found");
 			}
 			for (decl in pkg.decls) switch (decl.decl) {

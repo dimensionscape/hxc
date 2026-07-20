@@ -71,20 +71,33 @@ class AnalyzerTexpr {
 		return {e: e, efinal: efinal};
 	}
 
+	// Whether mapValues raises Exit at its root, before calling f or building anything: the root,
+	// under single-element blocks, metadata and parentheses, is a plain value or control flow it does
+	// not allow.
+	public static function mapValuesExitsAtRoot(e:TExpr, allowControlFlow:Bool = true):Bool {
+		return switch (e.expr) {
+			case TIf(_, _, e3) if (e3 != null): false;
+			case TSwitch(_, _, _) | TTry(_, _): false;
+			case TBlock([e1]): mapValuesExitsAtRoot(e1, allowControlFlow);
+			case TBlock(_): false;
+			case TMeta(_, e1) | TParenthesis(e1): mapValuesExitsAtRoot(e1, allowControlFlow);
+			case TBreak | TContinue | TThrow(_) | TReturn(_): !allowControlFlow;
+			case _: true;
+		};
+	}
+
 	public static function canThrow(e:TExpr):Bool {
-		function loop(e:TExpr):Void {
-			switch (e.expr) {
-				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TBlock(_):
-				case TCall(_, _) | TNew(_, _, _) | TThrow(_): throw new Exit();
-				case TCast(_, mt) if (mt != null): throw new Exit();
-				case TField(_, _) | TArray(_, _): throw new Exit(); // Sigh
-				case _: TexprTools.iter(loop, e);
-			}
+		// Finding a side effect answers true at once.
+		function loop(e:TExpr):Bool {
+			return switch (e.expr) {
+				case TConst(_) | TLocal(_) | TTypeExpr(_) | TFunction(_) | TBlock(_): false;
+				case TCall(_, _) | TNew(_, _, _) | TThrow(_): true;
+				case TCast(_, mt) if (mt != null): true;
+				case TField(_, _) | TArray(_, _): true; // Sigh
+				case _: TexprTools.checkExpr(loop, e);
+			};
 		}
-		return try {
-			loop(e);
-			false;
-		} catch (_:Exit) true;
+		return loop(e);
 	}
 
 	public static function canBeInlined(e:TExpr):Bool {
@@ -121,25 +134,23 @@ class AnalyzerTexpr {
 	}
 
 	public static function canBeUsedAsValue(com:Context, e:TExpr):Bool {
-		function loop(e:TExpr):Void {
-			switch (e.expr) {
+		// The walk answers true to stop early, which makes the result false
+		function loop(e:TExpr):Bool {
+			return switch (e.expr) {
 				case TBlock([e1]): loop(e1);
-				case TBlock(_) | TSwitch(_, _, _) | TTry(_, _): throw new Exit();
-				case TCall({expr: TConst(TString("phi"))}, _): throw new Exit();
-				case TReturn(_) | TThrow(_) | TBreak | TContinue: throw new Exit();
-				case TUnop(Increment | Decrement, _, _) if (!targetHandlesUnops(com)): throw new Exit();
-				case TFunction(_):
-				case _: TexprTools.iter(loop, e);
-			}
+				case TBlock(_) | TSwitch(_, _, _) | TTry(_, _): true;
+				case TCall({expr: TConst(TString("phi"))}, _): true;
+				case TReturn(_) | TThrow(_) | TBreak | TContinue: true;
+				case TUnop(Increment | Decrement, _, _) if (!targetHandlesUnops(com)): true;
+				case TFunction(_): false;
+				case _: TexprTools.checkExpr(loop, e);
+			};
 		}
-		return try {
-			switch [com.platform, e.expr] {
-				case [Cs | Cpp | Java | Flash | Lua, TConst(TNull)]: throw new Exit();
-				case _:
-			}
-			loop(e);
-			true;
-		} catch (_:Exit) false;
+		switch [com.platform, e.expr] {
+			case [Cs | Cpp | Java | Flash | Lua, TConst(TNull)]: return false;
+			case _:
+		}
+		return !loop(e);
 	}
 
 	public static function wrapMeta(s:String, e:TExpr):TExpr {

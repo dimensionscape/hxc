@@ -525,6 +525,12 @@ class TexprTools {
 		return found;
 	}
 
+	// The predicate on each element in order, up to the first that holds.
+	public static function existsIn(predicate:TExpr->Bool, el:Array<TExpr>):Bool {
+		for (x in el) if (predicate(x)) return true;
+		return false;
+	}
+
 	// True when `e` reads or assigns the local variable `v` anywhere in its tree (used to detect a
 	// self-recursive named local function).
 	public static function referencesLocal(e:TExpr, v:TVar):Bool {
