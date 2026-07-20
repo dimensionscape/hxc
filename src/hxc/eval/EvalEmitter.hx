@@ -21,11 +21,67 @@ class EvalEmitter {
 
 	static function slot(env:EvalEnv, vid:Int):Int {
 		var s = env.slots.get(vid);
-		if (s != null) return s;
-		s = env.locals.length;
-		env.slots.set(vid, s);
-		env.locals.push(VNull);
+		if (s == null) {
+			var layout = env.layout;
+			if (layout == null) {
+				s = env.locals.length;
+				env.slots.set(vid, s);
+				env.locals.push(VNull);
+				return s;
+			}
+			// A local the layout's walk did not see (a for loop's iterator, made when the loop first
+			// runs) joins the layout, for every frame made from it.
+			s = layout.size++;
+			layout.slots.set(vid, s);
+		}
+		// A frame made before its layout grew is shorter than the layout.
+		while (env.locals.length <= s) env.locals.push(VNull);
 		return s;
+	}
+
+	// The frame holding a local: this one when the variable is in its layout, else the one found by id
+	// along the lexical chain.
+	static inline function inLayout(env:EvalEnv, v:TVar):Bool {
+		var id = v.evalLayoutId;
+		return id != 0 && id == env.layoutId;
+	}
+
+	static inline function localFrame(env:EvalEnv, v:TVar):EvalEnv {
+		return inLayout(env, v) ? env : findEnv(env, v.id);
+	}
+
+	static inline function localSlot(fe:EvalEnv, v:TVar):Int {
+		return inLayout(fe, v) ? v.evalSlot : slot(fe, v.id);
+	}
+
+	static var layoutIds = 0;
+
+	// A function's frame layout: its arguments, then the locals its body declares outside nested
+	// functions, in walk order. Kept on the function and made again if its body was replaced.
+	public static function frameLayout(tf:TFunc):hxc.core.FrameLayout {
+		var l = tf.evalLayout;
+		if (l != null && l.body == tf.expr) return l;
+		var layout = new hxc.core.FrameLayout(++layoutIds, tf.expr);
+		function declare(v:TVar):Void {
+			if (layout.slots.exists(v.id)) return;
+			layout.slots.set(v.id, layout.size);
+			v.evalLayoutId = layout.id;
+			v.evalSlot = layout.size;
+			layout.size++;
+		}
+		for (a in tf.args) declare(a.v);
+		function walk(e:TExpr):Void {
+			switch (e.expr) {
+				case TFunction(_): return;
+				case TVarExpr(v, _) | TFor(v, _, _): declare(v);
+				case TTry(_, catches): for (c in catches) declare(c.v);
+				case _:
+			}
+			hxc.core.TexprTools.iter(walk, e);
+		}
+		walk(tf.expr);
+		tf.evalLayout = layout;
+		return layout;
 	}
 
 	// Find the frame that declares a variable, walking the lexical chain for captured locals.
@@ -40,9 +96,15 @@ class EvalEmitter {
 
 	static inline function isAbstractPath(t:T, pack:Array<String>, name:String):Bool {
 		return switch (TypeFunctions.follow(t)) {
-			case TAbstract(a, _): a.path.name == name && a.path.pack.join(".") == pack.join(".");
+			case TAbstract(a, _): a.path.name == name && samePack(a.path.pack, pack);
 			case _: false;
 		};
+	}
+
+	static function samePack(a:Array<String>, b:Array<String>):Bool {
+		if (a.length != b.length) return false;
+		for (i in 0...a.length) if (a[i] != b[i]) return false;
+		return true;
 	}
 
 	static function isUIntType(t:T):Bool return isAbstractPath(t, [], "UInt");
@@ -81,7 +143,7 @@ class EvalEmitter {
 		var result = switch (e.expr) {
 			case TConst(TThis): env.vthis == null ? VNull : env.vthis;
 			case TConst(c): evalConst(c);
-			case TLocal(v): var fe = findEnv(env, v.id); fe.locals[slot(fe, v.id)];
+			case TLocal(v): var fe = localFrame(env, v); fe.locals[localSlot(fe, v)];
 			case TParenthesis(e1) | TMeta(_, e1): eval(ctx, e1);
 			case TCast(e1, mt):
 				switch (mt) {
@@ -104,7 +166,7 @@ class EvalEmitter {
 				for (x in el) r = eval(ctx, x);
 				r;
 			case TVarExpr(v, eo):
-				env.locals[slot(env, v.id)] = eo == null ? VNull : eval(ctx, eo);
+				env.locals[localSlot(env, v)] = eo == null ? VNull : eval(ctx, eo);
 				VNull;
 			case TBinop(op, e1, e2): evalBinop(ctx, op, e1, e2, e.pos);
 			case TUnop(op, flag, e1): evalUnop(ctx, op, flag, e1, e.pos);
@@ -472,9 +534,9 @@ class EvalEmitter {
 	static function assign(ctx:EvalContext, lhs:TExpr, ve:TExpr):EvalValue {
 		switch (lhs.expr) {
 			case TLocal(v):
-				var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
+				var fe = localFrame(EvalContext.getEval(ctx).env, v);
 				var value = eval(ctx, ve);
-				fe.locals[slot(fe, v.id)] = value;
+				fe.locals[localSlot(fe, v)] = value;
 				return value;
 			case TField(_, FStatic(c, cf)):
 				var proto = ensureStaticProto(ctx, c, lhs.pos);
@@ -544,8 +606,8 @@ class EvalEmitter {
 			case Increment | Decrement:
 				switch (e1.expr) {
 					case TLocal(v) if (op == Increment && !TypeFunctions.hasVarFlag(v, VCaptured)):
-						var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
-						var s = slot(fe, v.id);
+						var fe = localFrame(EvalContext.getEval(ctx).env, v);
+						var s = localSlot(fe, v);
 						var old = fe.locals[s];
 						var next = switch (old) {
 							case VInt(i): VInt(i + 1);
@@ -567,8 +629,8 @@ class EvalEmitter {
 		switch (target.expr) {
 			// A read-modify-write of a local or a captured variable.
 			case TLocal(v):
-				var fe = findEnv(EvalContext.getEval(ctx).env, v.id);
-				var s = slot(fe, v.id);
+				var fe = localFrame(EvalContext.getEval(ctx).env, v);
+				var s = localSlot(fe, v);
 				var v1 = fe.locals[s];
 				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, v1, v2, p);
@@ -671,7 +733,7 @@ class EvalEmitter {
 		var env = ev.env;
 		var loopPos = ev.currentPos;
 		while (EvalMisc.isTrue(callField(ctx, it, "hasNext", [], p))) {
-			env.locals[slot(env, v.id)] = callField(ctx, it, "next", [], p);
+			env.locals[localSlot(env, v)] = callField(ctx, it, "next", [], p);
 			try evalStmt(ctx, body) catch (_:EvalBreak) { ev.currentPos = loopPos; break; } catch (_:EvalContinue) ev.currentPos = loopPos;
 			if (ev.ctrl != CTRL_NONE) {
 				if (ev.ctrl == CTRL_BREAK) {
@@ -715,7 +777,7 @@ class EvalEmitter {
 		for (c in catches) {
 			var path = catchPath(c.v.type);
 			if (path == null || EvalStdLib.isOfTypePath(ctx, value, path)) {
-				savedEnv.locals[slot(savedEnv, c.v.id)] = value;
+				savedEnv.locals[localSlot(savedEnv, c.v)] = value;
 				if (!stmt) return eval(ctx, c.expr);
 				evalStmt(ctx, c.expr);
 				return VNull;
@@ -1125,7 +1187,8 @@ class EvalEmitter {
 			var os = owner.slots.get(vid);
 			if (os == null) continue;
 			snap.slots.set(vid, snap.locals.length);
-			snap.locals.push(owner.locals[os]);
+			// A frame made before its layout grew has no slot there yet: the local is still null.
+			snap.locals.push(os < owner.locals.length ? owner.locals[os] : VNull);
 		}
 		return snap;
 	}
@@ -1161,11 +1224,11 @@ class EvalEmitter {
 		// The closure's info is made with it, not per call.
 		var info = EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0);
 		return function(args:Array<EvalValue>):EvalValue {
-			var env2 = EvalContext.pushEnvironment(ctx, info);
+			var env2 = EvalContext.pushEnvironment(ctx, info, frameLayout(tf));
 			env2.lexicalParent = snap;
 			env2.vthis = captured == null ? null : captured.vthis;
 			for (i in 0...tf.args.length) {
-				env2.locals[slot(env2, tf.args[i].v.id)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
+				env2.locals[localSlot(env2, tf.args[i].v)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
 			}
 			// More values than arguments, raised in the pushed environment.
 			if (args.length > tf.args.length) EvalExceptions.excString(ctx, "Something went wrong");
@@ -1374,11 +1437,12 @@ class EvalEmitter {
 
 	// Run a function body in a fresh frame with the given arguments bound, returning the value
 	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, params:Array<TFuncArg>, values:Array<EvalValue>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo, extraArgs:Bool = false):EvalValue {
+	public static function runBody(ctx:EvalContext, params:Array<TFuncArg>, values:Array<EvalValue>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo,
+			extraArgs:Bool = false, ?layout:hxc.core.FrameLayout):EvalValue {
 		if (info == null) info = EvalContext.createEnvInfo(vthis == null, body.pos, EKEntrypoint, 0, 0);
-		var env = EvalContext.pushEnvironment(ctx, info);
+		var env = EvalContext.pushEnvironment(ctx, info, layout);
 		env.vthis = vthis;
-		for (i in 0...values.length) env.locals[slot(env, params[i].v.id)] = values[i];
+		for (i in 0...values.length) env.locals[localSlot(env, params[i].v)] = values[i];
 		// More values than arguments, raised in the pushed environment.
 		if (extraArgs) EvalExceptions.excString(ctx, "Something went wrong");
 		var ret = evalBody(ctx, body);

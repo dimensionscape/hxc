@@ -47,13 +47,19 @@ class EvalEnv {
 	public var stackDepth:Int;
 	public var eval:Eval;
 	public var leavePos:Position;
-	// Maps a variable id to its local slot, filled as variables are first seen.
+	// Maps a variable id to its local slot, filled as variables are first seen. A frame made from a
+	// layout shares the layout's map.
 	public var slots:Map<Int, Int>;
 	// The receiver for an instance method or constructor body.
 	public var vthis:Null<EvalValue>;
 	// The defining scope for a closure; locals not in this frame are looked up along this chain.
 	public var lexicalParent:Null<EvalEnv>;
-	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval) {
+	// The layout the frame was made from (null and 0 for none): a TVar whose evalLayoutId is this id
+	// sits at its evalSlot.
+	public var layout:Null<hxc.core.FrameLayout>;
+	public var layoutId:Int;
+	public function new(info:EvalEnvInfo, locals:Array<EvalValue>, captures:Array<EvalValue>, parent:Null<EvalEnv>, stackDepth:Int, eval:Eval,
+			?layout:hxc.core.FrameLayout) {
 		this.info = info;
 		this.locals = locals;
 		this.captures = captures;
@@ -64,8 +70,15 @@ class EvalEnv {
 		// call and a positioned throw to the throw. An environment that raises before its first call
 		// reports at line 1. Null stands for that start until EvalExceptions.envPosition reads it.
 		this.leavePos = null;
-		this.slots = new Map();
 		this.vthis = null;
+		this.layout = layout;
+		if (layout != null) {
+			this.slots = layout.slots;
+			this.layoutId = layout.id;
+		} else {
+			this.slots = new Map();
+			this.layoutId = 0;
+		}
 	}
 }
 
@@ -217,14 +230,18 @@ class EvalContext {
 		};
 	}
 
-	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo):EvalEnv {
+	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo, ?layout:hxc.core.FrameLayout):EvalEnv {
 		// A function's entry is one of the polls where the tick's preemption is taken.
 		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
 		var eval = getEval(ctx);
-		var locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
+		var locals:Array<EvalValue>;
+		if (layout != null) {
+			locals = [];
+			for (_ in 0...layout.size) locals.push(VNull);
+		} else locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
 		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];
 		var stackDepth = eval.env == null ? 1 : eval.env.stackDepth + 1;
-		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval);
+		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval, layout);
 		eval.env = env;
 		return env;
 	}

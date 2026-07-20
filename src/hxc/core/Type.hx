@@ -209,6 +209,9 @@ class TVar {
 	public var meta:Metadata;
 	public var flags:Int;
 	public var pos:Position;
+	// The interpreter's frame layout (FrameLayout.id, 0 for none) and the slot it gave this variable.
+	@:noCompletion public var evalLayoutId:Int = 0;
+	@:noCompletion public var evalSlot:Int = -1;
 	public function new(id:Int, name:String, type:T, kind:TVarKind, extra:Null<TVarExtra>, meta:Metadata, flags:Int, pos:Position) {
 		this.id = id;
 		this.name = name;
@@ -228,6 +231,7 @@ class TFunc {
 	public var args:Array<TFuncArg>;
 	public var type:T;
 	public var expr:TExpr;
+	@:noCompletion public var evalLayout:Null<FrameLayout> = null;
 	public function new(args:Array<TFuncArg>, type:T, expr:TExpr) {
 		this.args = args;
 		this.type = type;

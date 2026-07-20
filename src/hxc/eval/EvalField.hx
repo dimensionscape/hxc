@@ -39,8 +39,16 @@ class EvalField {
 		};
 	}
 
+	// The object field lookups, null where they would raise.
 	public static function objectField(o:VObject, name:Int):EvalValue {
-		return try objectFieldRaise(o, name) catch (_:NotFound) VNull;
+		return switch (o.oproto) {
+			case OProto(proto):
+				var i = proto.pinstanceNames.get(name);
+				i == null ? VNull : o.ofields[i];
+			case ODictionary(l):
+				var v = l.get(name);
+				v == null ? VNull : v;
+		};
 	}
 
 	public static function fieldRaise(ctx:EvalContext, v:EvalValue, f:Int):EvalValue {
@@ -70,8 +78,13 @@ class EvalField {
 		return protoFieldDirect(proto, f);
 	}
 
+	// The field lookup, null where it would raise. An object answers without raising.
 	public static function field(ctx:EvalContext, v:EvalValue, f:Int):EvalValue {
-		return try fieldRaise(ctx, v, f) catch (_:NotFound) VNull;
+		var r = vresolve(v);
+		return switch (r) {
+			case VObject(o): objectField(o, f);
+			case _: try fieldRaise(ctx, r, f) catch (_:NotFound) VNull;
+		};
 	}
 
 	public static function dynamicField(ctx:EvalContext, v:EvalValue, name:Int):EvalValue {

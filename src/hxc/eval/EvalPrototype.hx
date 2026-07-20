@@ -27,7 +27,7 @@ class EvalPrototype {
 				values.push(EvalEmitter.argValue(ctx, tfArgs[i], j < args.length ? args[j] : VNull));
 			}
 			var vthis = (isInstance || abstractThis) ? (args.length > 0 ? args[0] : VNull) : null;
-			return EvalEmitter.runBody(ctx, tfArgs, values, tf.expr, vthis, info, args.length > tfArgs.length + offset);
+			return EvalEmitter.runBody(ctx, tfArgs, values, tf.expr, vthis, info, args.length > tfArgs.length + offset, EvalEmitter.frameLayout(tf));
 		};
 	}
 
