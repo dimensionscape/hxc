@@ -12,10 +12,9 @@ import hxc.eval.EvalField;
 import hxc.eval.EvalHash;
 import hxc.eval.EvalExceptions;
 
-// Direct tree-walk over typed expressions. Locals live in the current frame's slot array,
-// addressed through a variable-id to slot map filled on first use. The reference precompiles
-// each expression to a closure; that and the bytecode tier are a performance concern left for
-// later.
+// Direct tree walk over typed expressions, for what runs outside a function (the main expression,
+// initializers, default arguments). A function's body runs compiled (EvalJit), node for node what
+// eval and evalStmt do here.
 class EvalEmitter {
 	public static var forRemapCache:haxe.ds.ObjectMap<TExpr, TExpr> = new haxe.ds.ObjectMap();
 
@@ -219,7 +218,7 @@ class EvalEmitter {
 			// A closure's arguments are exactly its declared ones (this lives in the captured
 			// environment), so it is self-contained: a read through a field must not rebind a receiver
 			// onto it, unlike a prototype method (e.g. a reassigned dynamic method's replacement).
-			case TFunction(tf): VFunction(makeClosure(ctx, tf, EvalContext.getEval(ctx).env), true);
+			case TFunction(tf): VFunction(EvalJit.makeClosure(ctx, tf, EvalContext.getEval(ctx).env), true);
 			case TField(e1, fa): evalField(ctx, e1, fa, e.pos);
 			case TCall(callee, callArgs): evalCall(ctx, callee, callArgs, e.pos);
 			case TNew(c, params, newArgs):
@@ -289,25 +288,6 @@ class EvalEmitter {
 			case _:
 		}
 		ev.currentPos = oldPos;
-	}
-
-	// A function body, run in statement position: a return's value, or null when it runs off its end.
-	static function evalBody(ctx:EvalContext, body:TExpr):EvalValue {
-		var ev = EvalContext.getEval(ctx);
-		var callPos = ev.currentPos;
-		var r = try {
-			evalStmt(ctx, body);
-			if (ev.ctrl == CTRL_RETURN) {
-				var v = ev.ctrlValue;
-				ev.ctrl = CTRL_NONE;
-				ev.ctrlValue = VNull;
-				v;
-			} else VNull;
-		} catch (ret:EvalReturn) {
-			ret.value;
-		}
-		ev.currentPos = callPos;
-		return r;
 	}
 
 	// The return a loop's body signalled leaves the loop; a loop that is itself a value (an element of a
@@ -1217,27 +1197,6 @@ class EvalEmitter {
 		visit(root);
 	}
 
-	// A closure captures its defining frame and runs its body in a child frame linked to it.
-	static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
-		var snap = snapshotCaptures(tf, captured);
-		var ordinal = closureOrdinals.exists(tf) ? closureOrdinals.get(tf) : 0;
-		// The closure's info is made with it, not per call.
-		var info = EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0);
-		return function(args:Array<EvalValue>):EvalValue {
-			var env2 = EvalContext.pushEnvironment(ctx, info, frameLayout(tf));
-			env2.lexicalParent = snap;
-			env2.vthis = captured == null ? null : captured.vthis;
-			for (i in 0...tf.args.length) {
-				env2.locals[localSlot(env2, tf.args[i].v)] = argValue(ctx, tf.args[i], i < args.length ? args[i] : VNull);
-			}
-			// More values than arguments, raised in the pushed environment.
-			if (args.length > tf.args.length) EvalExceptions.excString(ctx, "Something went wrong");
-			var r = evalBody(ctx, tf.expr);
-			EvalContext.popEnvironment(ctx, env2);
-			return r;
-		};
-	}
-
 	static function evalNew(ctx:EvalContext, c:TClass, params:TParams, args:Array<EvalValue>, p:Position, ?argPos:Position):EvalValue {
 		switch (c.kind) {
 			case KAbstractImpl(a) if (TypeFunctions.hasMeta(":multiType", a.meta)):
@@ -1433,20 +1392,5 @@ class EvalEmitter {
 			}
 			i--;
 		}
-	}
-
-	// Run a function body in a fresh frame with the given arguments bound, returning the value
-	// produced by a return statement (or null).
-	public static function runBody(ctx:EvalContext, params:Array<TFuncArg>, values:Array<EvalValue>, body:TExpr, ?vthis:EvalValue, ?info:EvalEnvInfo,
-			extraArgs:Bool = false, ?layout:hxc.core.FrameLayout):EvalValue {
-		if (info == null) info = EvalContext.createEnvInfo(vthis == null, body.pos, EKEntrypoint, 0, 0);
-		var env = EvalContext.pushEnvironment(ctx, info, layout);
-		env.vthis = vthis;
-		for (i in 0...values.length) env.locals[localSlot(env, params[i].v)] = values[i];
-		// More values than arguments, raised in the pushed environment.
-		if (extraArgs) EvalExceptions.excString(ctx, "Something went wrong");
-		var ret = evalBody(ctx, body);
-		EvalContext.popEnvironment(ctx, env);
-		return ret;
 	}
 }

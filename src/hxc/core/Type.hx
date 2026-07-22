@@ -232,6 +232,8 @@ class TFunc {
 	public var type:T;
 	public var expr:TExpr;
 	@:noCompletion public var evalLayout:Null<FrameLayout> = null;
+	// The interpreter's compiled body (hxc.eval.EvalJit), made on the first call.
+	@:noCompletion public var evalJit:Dynamic = null;
 	public function new(args:Array<TFuncArg>, type:T, expr:TExpr) {
 		this.args = args;
 		this.type = type;

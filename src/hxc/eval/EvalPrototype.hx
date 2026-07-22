@@ -18,16 +18,15 @@ class EvalPrototype {
 	// it as this; a static method binds its arguments directly.
 	public static function makeFunction(ctx:EvalContext, tf:TFunc, isInstance:Bool, info:EvalEnvInfo, abstractThis:Bool = false):VFunc {
 		EvalEmitter.numberClosures(tf.expr);
+		var cache:Null<hxc.eval.EvalJit.JCompiled> = null;
 		return function(args:Array<EvalValue>):EvalValue {
-			var offset = isInstance ? 1 : 0;
-			var tfArgs = tf.args;
-			var values:Array<EvalValue> = [];
-			for (i in 0...tfArgs.length) {
-				var j = i + offset;
-				values.push(EvalEmitter.argValue(ctx, tfArgs[i], j < args.length ? args[j] : VNull));
+			var c = cache;
+			if (c == null || !c.valid(ctx, tf)) {
+				c = EvalJit.compiled(ctx, tf);
+				cache = c;
 			}
 			var vthis = (isInstance || abstractThis) ? (args.length > 0 ? args[0] : VNull) : null;
-			return EvalEmitter.runBody(ctx, tfArgs, values, tf.expr, vthis, info, args.length > tfArgs.length + offset, EvalEmitter.frameLayout(tf));
+			return EvalJit.invoke(ctx, c, args, isInstance ? 1 : 0, vthis, info);
 		};
 	}
 

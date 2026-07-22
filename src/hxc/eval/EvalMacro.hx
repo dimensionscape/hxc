@@ -2403,6 +2403,7 @@ class EvalMacro {
 		// The cached macros belong to the compilation: every request loads its macros again - a module
 		// evicted since is re-typed and adding types replaces its prototypes.
 		if (macroCom != null) macroCom.cachedMacros = new haxe.ds.StringMap();
+		hxc.eval.EvalJit.epoch++;
 		// A compilation has fresh file lookup, readdir and module-to-file caches too, so the reused macro
 		// com forgets what the previous request saw of the filesystem.
 		if (macroCom != null) {
