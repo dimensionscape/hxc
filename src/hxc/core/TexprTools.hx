@@ -517,12 +517,44 @@ class TexprTools {
 		return TypeFunctions.mk(TCall(fieldOn(e, name, ft, p), el), ret, p);
 	}
 
-	// True when the predicate holds for at least one direct sub-expression (the root itself is not
-	// tested)
+	// True when the predicate holds for at least one direct sub-expression (the root itself is not tested);
+	// it stops at the first that holds.
 	public static function checkExpr(predicate:TExpr->Bool, e:TExpr):Bool {
-		var found = false;
-		iter(function(x) if (!found && predicate(x)) found = true, e);
-		return found;
+		switch (e.expr) {
+			case TConst(_) | TLocal(_) | TBreak | TContinue | TTypeExpr(_) | TIdent(_):
+				return false;
+			case TArray(e1, e2) | TBinop(_, e1, e2) | TFor(_, e1, e2) | TWhile(e1, e2, _):
+				return predicate(e1) || predicate(e2);
+			case TThrow(e1) | TField(e1, _) | TEnumParameter(e1, _, _) | TEnumIndex(e1) | TParenthesis(e1) | TCast(e1, _) | TUnop(_, _, e1) | TMeta(_, e1):
+				return predicate(e1);
+			case TArrayDecl(el) | TNew(_, _, el) | TBlock(el):
+				for (x in el) if (predicate(x)) return true;
+				return false;
+			case TObjectDecl(fl):
+				for (fd in fl) if (predicate(fd.expr)) return true;
+				return false;
+			case TCall(e1, el):
+				if (predicate(e1)) return true;
+				for (x in el) if (predicate(x)) return true;
+				return false;
+			case TVarExpr(_, eo) | TReturn(eo):
+				return eo != null && predicate(eo);
+			case TFunction(fu):
+				return predicate(fu.expr);
+			case TIf(ec, e1, e2):
+				return predicate(ec) || predicate(e1) || (e2 != null && predicate(e2));
+			case TSwitch(e1, cases, def):
+				if (predicate(e1)) return true;
+				for (c in cases) {
+					for (v in c.values) if (predicate(v)) return true;
+					if (predicate(c.expr)) return true;
+				}
+				return def != null && predicate(def);
+			case TTry(e1, catches):
+				if (predicate(e1)) return true;
+				for (c in catches) if (predicate(c.expr)) return true;
+				return false;
+		}
 	}
 
 	// The predicate on each element in order, up to the first that holds.
@@ -836,7 +868,7 @@ class TexprTools {
 					case TAnon(a):
 						// Prepending each name of the sorted list makes it name-descending.
 						var names = [for (k in a.fields.keys()) k];
-						names.sort(Reflect.compare);
+						StringSort.sort(names);
 						var out = [];
 						for (n in names) out.unshift({name: n, ml: a.fields.get(n).meta});
 						out;

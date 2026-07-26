@@ -120,6 +120,7 @@ class LuvSys {
 
 	public static function chdir(dir:Bytes):Int {
 		var c = cString(dir);
+		hxc.core.Cwd.generation++;
 		return untyped __cpp__("uv_chdir((const char*){0}->b->GetBase())", c);
 	}
 

@@ -398,7 +398,7 @@ class ImportCheck {
 
 	// The keys, in decreasing order.
 	public static function foldiNames(keys:Array<String>):Array<String> {
-		keys.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+		hxc.core.StringSort.sortDescending(keys);
 		return keys;
 	}
 }

@@ -126,7 +126,7 @@ class CompilationCache {
 	public function addInfo(sign:String, desc:String, platform:hxc.core.Globals.Platform, classPath:Array<String>, defines:hxc.core.Define):Int {
 		var cc = getContext(sign);
 		var keys = [for (k in defines.values.keys()) k];
-		keys.sort(Reflect.compare);
+		hxc.core.StringSort.sort(keys);
 		keys.reverse();
 		cc.json = JObject([
 			{name: "index", value: JInt(cc.index)},

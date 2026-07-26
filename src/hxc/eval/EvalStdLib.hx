@@ -611,17 +611,17 @@ class EvalStdLib {
 
 	static function isReflectHidden(path:Int, name:Int, isStatic:Bool):Bool {
 		if (isStatic) {
-			if (path == EvalHash.hash("haxe.Json")) return name == EvalHash.hash("parse") || name == EvalHash.hash("stringify");
-			if (path == EvalHash.hash("haxe.format.JsonParser")) return name == EvalHash.hash("parse");
-			if (path == EvalHash.hash("haxe.format.JsonPrinter")) return name == EvalHash.hash("print");
-			if (path == EvalHash.hash("haxe.Serializer") || path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("run");
+			if (path == EvalNames.hHaxeJson()) return name == EvalNames.hParse() || name == EvalNames.hStringify();
+			if (path == EvalNames.hHaxeFormatJsonParser()) return name == EvalNames.hParse();
+			if (path == EvalNames.hHaxeFormatJsonPrinter()) return name == EvalNames.hPrint();
+			if (path == EvalNames.hHaxeSerializer() || path == EvalNames.hHaxeUnserializer()) return name == EvalNames.hRun();
 		} else {
-			if (path == EvalHash.hash("haxe.Serializer")) return name == EvalHash.hash("serialize") || name == EvalHash.hash("serializeException") || name == EvalHash.hash("serializeFields")
-				|| name == EvalHash.hash("serializeRef") || name == EvalHash.hash("serializeString") || name == EvalHash.key_toString;
-			if (path == EvalHash.hash("haxe.Unserializer")) return name == EvalHash.hash("unserialize") || name == EvalHash.hash("getResolver") || name == EvalHash.hash("setResolver");
+			if (path == EvalNames.hHaxeSerializer()) return name == EvalNames.hSerialize() || name == EvalNames.hSerializeException() || name == EvalNames.hSerializeFields()
+				|| name == EvalNames.hSerializeRef() || name == EvalNames.hSerializeString() || name == EvalHash.key_toString;
+			if (path == EvalNames.hHaxeUnserializer()) return name == EvalNames.hUnserialize() || name == EvalNames.hGetResolver() || name == EvalNames.hSetResolver();
 			#if emscripten
-			if (path == EvalHash.hash("sys.thread.Semaphore")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release");
-			if (path == EvalHash.hash("sys.thread.Condition")) return name == EvalHash.hash("acquire") || name == EvalHash.hash("tryAcquire") || name == EvalHash.hash("release") || name == EvalHash.hash("wait") || name == EvalHash.hash("signal") || name == EvalHash.hash("broadcast");
+			if (path == EvalNames.hSysThreadSemaphore()) return name == EvalNames.hAcquire() || name == EvalNames.hTryAcquire() || name == EvalNames.hRelease();
+			if (path == EvalNames.hSysThreadCondition()) return name == EvalNames.hAcquire() || name == EvalNames.hTryAcquire() || name == EvalNames.hRelease() || name == EvalNames.hWait() || name == EvalNames.hSignal() || name == EvalNames.hBroadcast();
 			#end
 		}
 		return false;
@@ -766,7 +766,7 @@ class EvalStdLib {
 					case _:
 						setDynamicField(o, name, v);
 				}
-			case VArray(va) if (name == EvalHash.hash("length")):
+			case VArray(va) if (name == EvalNames.hLength()):
 				var len = switch (v) { case VInt(i): i; case _: EvalExceptions.unexpectedValue(ctx, v, "int"); };
 				va.alength = len;
 				if (len > va.avalues.length) arrayEnsure(va, len * 2);
@@ -920,7 +920,7 @@ class EvalStdLib {
 	}
 
 	static function ioError(ctx:EvalContext, name:String):Dynamic {
-		EvalExceptions.throwValue(ctx, createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.io.Error")), EvalHash.hash(name), VNull), Position.nullPos);
+		EvalExceptions.throwValue(ctx, createEnumByName(ctx, classValue(ctx, EvalNames.hHaxeIoError()), EvalHash.hash(name), VNull), Position.nullPos);
 		return VNull;
 	}
 
@@ -939,10 +939,10 @@ class EvalStdLib {
 				return vv.copy();
 			case _:
 		}
-		var it = applyFn(EvalField.dynamicField(ctx, v, EvalHash.hash("iterator")), []);
+		var it = applyFn(EvalField.dynamicField(ctx, v, EvalNames.hIterator()), []);
 		var values:Array<EvalValue> = [];
-		while (EvalMisc.isTrue(callValueOn(it, EvalField.dynamicField(ctx, it, EvalHash.hash("hasNext")), []))) {
-			values.push(callValueOn(it, EvalField.dynamicField(ctx, it, EvalHash.hash("next")), []));
+		while (EvalMisc.isTrue(callValueOn(it, EvalField.dynamicField(ctx, it, EvalNames.hHasNext()), []))) {
+			values.push(callValueOn(it, EvalField.dynamicField(ctx, it, EvalNames.hNext()), []));
 		}
 		return values;
 	}
@@ -1410,7 +1410,7 @@ class EvalStdLib {
 									buf.add("g");
 							}
 						case _:
-							if (vi.iproto.ppath == EvalHash.hash("haxe.ds.List")) {
+							if (vi.iproto.ppath == EvalNames.hHaxeDsList()) {
 								buf.add("l");
 								for (item in iterableValues(ctx, VInstance(vi))) loop(item);
 								buf.add("h");
@@ -1473,7 +1473,7 @@ class EvalStdLib {
 	}
 
 	static function mkDate(ctx:EvalContext, ts:Float):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("Date"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hDate());
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IDate(ts)));
 	}
 
@@ -1542,7 +1542,7 @@ class EvalStdLib {
 	// A haxe Int64: an instance of haxe._Int64.___Int64 made without running its constructor, with
 	// high and low set (NotFound if the class has no such field).
 	static function encodeHaxeI64(ctx:EvalContext, low:Int, high:Int):EvalValue {
-		var proto = EvalContext.getInstancePrototype(ctx, EvalHash.hash("haxe._Int64.___Int64"), Position.nullPos);
+		var proto = EvalContext.getInstancePrototype(ctx, EvalNames.h_haxe__Int64____Int64(), Position.nullPos);
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var hi = proto.pinstanceNames.get(EvalHash.keyHigh);
 		var lo = proto.pinstanceNames.get(EvalHash.keyLow);
@@ -1564,7 +1564,7 @@ class EvalStdLib {
 	}
 
 	static function mkBytes(ctx:EvalContext, b:haxe.io.Bytes):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Bytes"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeIoBytes());
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBytes(b)));
 	}
 
@@ -1573,7 +1573,7 @@ class EvalStdLib {
 	}
 
 	static function mkInput(ctx:EvalContext, input:haxe.io.Input, file:Null<sys.io.FileInput>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileInput"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysIoFileInput());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		fileInputs.set(vi, {input: input, file: file, eof: false, closed: false, base: 0, maxPos: 0, read: false, closedOffset: 0});
 		return VInstance(vi);
@@ -1584,7 +1584,7 @@ class EvalStdLib {
 	}
 
 	static function mkOutput(ctx:EvalContext, output:haxe.io.Output, file:Null<sys.io.FileOutput>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileOutput"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysIoFileOutput());
 		var com = ctx.com != null ? ctx.com : hxc.eval.EvalMacro.getMacroCom();
 		if (com == null) com = hxc.eval.EvalMacro.hostCom;
 		if ((proto == null || proto.pparent == null) && com != null) try {
@@ -1593,13 +1593,13 @@ class EvalStdLib {
 			hxc.typing.TypeResolve.resolveAll(com);
 			hxc.typing.TypeFields.installLazy(com);
 			EvalMain.addModules(ctx, [out, m]);
-			proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io.FileOutput"));
-			var outputProto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.Output"));
+			proto = ctx.instancePrototypes.get(EvalNames.hSysIoFileOutput());
+			var outputProto = ctx.instancePrototypes.get(EvalNames.hHaxeIoOutput());
 			if (proto != null && proto.pparent == null) proto.pparent = outputProto;
 		} catch (_:Dynamic) {}
 		if (proto == null) {
-			proto = new VPrototype(EvalHash.hash("sys.io.FileOutput"), [], new Map(), [], new Map(), null, PClass([]), VNull);
-			ctx.instancePrototypes.set(EvalHash.hash("sys.io.FileOutput"), proto);
+			proto = new VPrototype(EvalNames.hSysIoFileOutput(), [], new Map(), [], new Map(), null, PClass([]), VNull);
+			ctx.instancePrototypes.set(EvalNames.hSysIoFileOutput(), proto);
 		}
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		fileOutputs.set(vi, {output: output, file: file, closed: false, closedPos: 0});
@@ -1631,7 +1631,7 @@ class EvalStdLib {
 	}
 
 	static function mkNativeProcess(ctx:EvalContext, proc:sys.io.Process):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.io._Process.NativeProcess"));
+		var proto = ctx.instancePrototypes.get(EvalNames.h_sys_io__Process_NativeProcess());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		nativeProcesses.set(vi, proc);
 		return VInstance(vi);
@@ -1642,7 +1642,7 @@ class EvalStdLib {
 	}
 
 	static function mkList(ctx:EvalContext, ?items:Array<EvalValue>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.List"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeDsList());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var list = items == null ? [] : items.copy();
 		nativeLists.set(vi, list);
@@ -1651,7 +1651,7 @@ class EvalStdLib {
 	}
 
 	static function listNodeValue(ctx:EvalContext, item:EvalValue, next:EvalValue):EvalValue {
-		var node = EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.ds._List.ListNode"), [item, next]);
+		var node = EvalEmitter.constructPath(ctx, EvalNames.h_haxe_ds__List_ListNode(), [item, next]);
 		return node == VNull ? mkObject([{name: "item", value: item}, {name: "next", value: next}]) : node;
 	}
 
@@ -1671,7 +1671,7 @@ class EvalStdLib {
 	}
 
 	static function mkThreadMutex(ctx:EvalContext):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Mutex"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadMutex());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		threadMutexes.set(vi, {mutex: new sys.thread.Mutex(), owner: null, count: 0});
 		return VInstance(vi);
@@ -1682,7 +1682,7 @@ class EvalStdLib {
 	}
 
 	static function mkThreadLock(ctx:EvalContext):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Lock"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadLock());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		threadLocks.set(vi, new sys.thread.Lock());
 		return VInstance(vi);
@@ -1693,7 +1693,7 @@ class EvalStdLib {
 	}
 
 	static function mkThreadTls(ctx:EvalContext, id:Int):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Tls"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadTls());
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, ITls(id)));
 	}
 
@@ -1706,7 +1706,7 @@ class EvalStdLib {
 	}
 
 	static function mkThreadDeque(ctx:EvalContext):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Deque"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadDeque());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		threadDeques.set(vi, new sys.thread.Deque<EvalValue>());
 		return VInstance(vi);
@@ -1720,7 +1720,7 @@ class EvalStdLib {
 	// std's stand in over these (ModuleLoader.skipEvalOverlayFile).
 	#if emscripten
 	static function mkThreadCondition(ctx:EvalContext):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Condition"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadCondition());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		threadConditions.set(vi, {cond: new sys.thread.Condition(), owner: null, count: 0});
 		return VInstance(vi);
@@ -1731,7 +1731,7 @@ class EvalStdLib {
 	}
 
 	static function mkThreadSemaphore(ctx:EvalContext, value:Int):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("sys.thread.Semaphore"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hSysThreadSemaphore());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		threadSemaphores.set(vi, new sys.thread.Semaphore(value));
 		return VInstance(vi);
@@ -1773,7 +1773,7 @@ class EvalStdLib {
 
 	// A NativeThread instance for the thread: a new instance every time.
 	static function threadInstance(ctx:EvalContext, thread:EvalThreadRecord):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeThread"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hEvalVmNativeThread());
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IThread(thread)));
 	}
 
@@ -1796,7 +1796,7 @@ class EvalStdLib {
 	static function xmlInstance(ctx:EvalContext, x:Xml):VInstance {
 		var vi = nativeXmlValues.get(x);
 		if (vi == null) {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("Xml"));
+			var proto = ctx.instancePrototypes.get(EvalNames.hXml());
 			vi = new VInstance(proto.pinstanceFields.copy(), proto);
 			nativeXmlValues.set(x, vi);
 			nativeXml.set(vi, x);
@@ -1848,7 +1848,7 @@ class EvalStdLib {
 	// Raising Eof fails with the instance prototype lookup's error when the program never compiled
 	// haxe.io.Eof.
 	static function eof(ctx:EvalContext):Dynamic {
-		var proto = EvalContext.getInstancePrototype(ctx, EvalHash.hash("haxe.io.Eof"), Position.nullPos);
+		var proto = EvalContext.getInstancePrototype(ctx, EvalNames.hHaxeIoEof(), Position.nullPos);
 		return EvalExceptions.exc(ctx, VInstance(new VInstance(proto.pinstanceFields.copy(), proto)));
 	}
 
@@ -1859,7 +1859,7 @@ class EvalStdLib {
 	}
 
 	static function bytesBufferValue(ctx:EvalContext, buf:Map<String, MapEntry>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.io.BytesBuffer"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeIoBytesBuffer());
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(buf)));
 	}
 
@@ -1891,7 +1891,7 @@ class EvalStdLib {
 	// The std's MapKeyValueIterator, constructed and run through its own interpreted constructor over
 	// the map.
 	static function mapKeyValueIteratorValue(ctx:EvalContext, mapValue:EvalValue):EvalValue {
-		return hxc.eval.EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.MapKeyValueIterator"), [mapValue]);
+		return hxc.eval.EvalEmitter.constructPath(ctx, EvalNames.hHaxeIteratorsMapKeyValueIterator(), [mapValue]);
 	}
 
 	// A native string and nothing else.
@@ -1903,21 +1903,21 @@ class EvalStdLib {
 	}
 
 	static function mkStringMap(ctx:EvalContext, values:Map<String, String>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeDsStringMap());
 		var m:Map<String, MapEntry> = new Map();
 		for (k in values.keys()) m.set(k, {key: mkStr(k), value: mkStr(values.get(k))});
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
 	public static function mkStringMapValues(ctx:EvalContext, values:Map<String, EvalValue>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeDsStringMap());
 		var m:Map<String, MapEntry> = new Map();
 		for (k => v in values) m.set(k, {key: mkStr(k), value: v});
 		return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IMap(m)));
 	}
 
 	static function mkStringBytesMap(ctx:EvalContext, values:haxe.ds.StringMap<haxe.io.Bytes>):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.ds.StringMap"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeDsStringMap());
 		var m:Map<String, MapEntry> = new Map();
 		for (k in values.keys()) {
 			var bytes = values.get(k);
@@ -1927,7 +1927,7 @@ class EvalStdLib {
 	}
 
 	static function mkPos(ctx:EvalContext, p:Position):EvalValue {
-		var path = EvalHash.hash("haxe.macro.Position");
+		var path = EvalNames.hHaxeMacroPosition();
 		var proto = ctx.instancePrototypes.get(path);
 		if (proto == null) {
 			proto = new VPrototype(path, [], new Map(), [], new Map(), null, PClass([]), VNull);
@@ -1946,14 +1946,14 @@ class EvalStdLib {
 	}
 
 	static function importMode(ctx:EvalContext, mode:ImportMode):EvalValue {
-		var e = classValue(ctx, EvalHash.hash("haxe.macro.ImportMode"));
+		var e = classValue(ctx, EvalNames.hHaxeMacroImportMode());
 		return switch (mode) {
 			case INormal:
-				createEnumByName(ctx, e, EvalHash.hash("INormal"), VNull);
+				createEnumByName(ctx, e, EvalNames.hINormal(), VNull);
 			case IAsName(alias):
-				createEnumByName(ctx, e, EvalHash.hash("IAsName"), valueArray([mkStr(alias.name)]));
+				createEnumByName(ctx, e, EvalNames.hIAsName(), valueArray([mkStr(alias.name)]));
 			case IAll:
-				createEnumByName(ctx, e, EvalHash.hash("IAll"), VNull);
+				createEnumByName(ctx, e, EvalNames.hIAll(), VNull);
 		}
 	}
 
@@ -2026,7 +2026,7 @@ class EvalStdLib {
 	}
 
 	static function stackEnum(ctx:EvalContext, name:String, args:Array<EvalValue>):EvalValue {
-		var path = EvalHash.hash("haxe.StackItem");
+		var path = EvalNames.hHaxeStackItem();
 		var e = classValue(ctx, path);
 		if (e != VNull) return createEnumByName(ctx, e, EvalHash.hash(name), VArray(new VArray(args, args.length)));
 		var index = switch (name) {
@@ -2097,7 +2097,7 @@ class EvalStdLib {
 
 	static function macroMessage(ctx:EvalContext, name:String, msg:EvalValue, pos:EvalValue):EvalValue {
 		var params = VArray(new VArray([msg, pos], 2));
-		return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.Message")), EvalHash.hash(name), params);
+		return createEnumByName(ctx, classValue(ctx, EvalNames.hHaxeMacroMessage()), EvalHash.hash(name), params);
 	}
 
 	static function macroPosOf(v:EvalValue, fallback:Position):Position {
@@ -2108,19 +2108,19 @@ class EvalStdLib {
 	}
 
 	static function macroErrorValue(ctx:EvalContext, msg:String, posValue:EvalValue):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"));
-		if (proto == null) proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeMacroError());
+		if (proto == null) proto = ctx.instancePrototypes.get(EvalNames.hHaxeMacroExprError());
 		if (proto == null) return mkStr(msg);
-		ensureInstanceSlot(proto, EvalHash.hash("message"));
-		ensureInstanceSlot(proto, EvalHash.hash("get_message"));
-		ensureInstanceSlot(proto, EvalHash.hash("pos"));
-		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
+		ensureInstanceSlot(proto, EvalNames.hMessage());
+		ensureInstanceSlot(proto, EvalNames.hGetMessage());
+		ensureInstanceSlot(proto, EvalNames.hPos());
+		ensureInstanceSlot(proto, EvalNames.hChildErrors());
 		var pos = macroPosOf(posValue, EvalMacro.currentPosition());
 		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
-		EvalField.setField(ctx, v, EvalHash.hash("message"), mkStr(msg), pos);
-		EvalField.setField(ctx, v, EvalHash.hash("get_message"), VFunction(function(_) return mkStr(msg), false), pos);
-		EvalField.setField(ctx, v, EvalHash.hash("pos"), posValue, pos);
-		EvalField.setField(ctx, v, EvalHash.hash("childErrors"), VNull, pos);
+		EvalField.setField(ctx, v, EvalNames.hMessage(), mkStr(msg), pos);
+		EvalField.setField(ctx, v, EvalNames.hGetMessage(), VFunction(function(_) return mkStr(msg), false), pos);
+		EvalField.setField(ctx, v, EvalNames.hPos(), posValue, pos);
+		EvalField.setField(ctx, v, EvalNames.hChildErrors(), VNull, pos);
 		return v;
 	}
 
@@ -2182,10 +2182,10 @@ class EvalStdLib {
 		var s = valueString(value);
 		var le = ByteString.ofRaw(lineEnd());
 		if (infos == VNull) return s + le;
-		var fileName = decodeString(ctx, EvalField.field(ctx, infos, EvalHash.hash("fileName")));
-		var lineNumber = decodeInt(ctx, EvalField.field(ctx, infos, EvalHash.hash("lineNumber")));
+		var fileName = decodeString(ctx, EvalField.field(ctx, infos, EvalNames.hFileName()));
+		var lineNumber = decodeInt(ctx, EvalField.field(ctx, infos, EvalNames.hLineNumber()));
 		var l = [s];
-		switch (EvalField.field(ctx, infos, EvalHash.hash("customParams"))) {
+		switch (EvalField.field(ctx, infos, EvalNames.hCustomParams())) {
 			case VArray(va):
 				for (i in 0...va.alength) l.push(valueString(va.avalues[i]));
 			case _:
@@ -2256,7 +2256,7 @@ class EvalStdLib {
 	}
 
 	static function mkNativeSocket(ctx:EvalContext, socket:sys.net.Socket):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("eval.vm.NativeSocket"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hEvalVmNativeSocket());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		nativeSockets.set(vi, socket);
 		return VInstance(vi);
@@ -2334,11 +2334,11 @@ class EvalStdLib {
 				var m = thisMap([v]);
 				var order = nativeMapOrders.get(vi);
 				var entries = order == null ? [for (e in m) e] : [for (k in order) if (m.exists(k)) m.get(k)];
-				if (vi.iproto.ppath == EvalHash.hash("haxe.ds.StringMap")) {
+				if (vi.iproto.ppath == EvalNames.hHaxeDsStringMap()) {
 					// A StringMap is ordered by key, and its keys/values fold ascending while PREPENDING, so the
 					// exposed iteration order is descending byte-wise key order.
 					entries.sort(function(a, b) return -byteStringCompare(stringOf(a.key), stringOf(b.key)));
-				} else if (vi.iproto.ppath == EvalHash.hash("haxe.ds.IntMap")) {
+				} else if (vi.iproto.ppath == EvalNames.hHaxeDsIntMap()) {
 					var buckets = hashTableBucketCount(entries.length);
 					var positions = order == null ? [for (e in entries) mapKey(e.key)] : order;
 					entries.sort(function(a, b) {
@@ -2871,16 +2871,16 @@ class EvalStdLib {
 			case VTrue | VFalse: idx = 3;
 			case VObject(_) | VPrototype(_): idx = 4;
 			case VFunction(_, _) | VFieldClosure(_, _): idx = 5;
-			case VString(_): idx = 6; args = [classVal(EvalHash.hash("String"))];
-			case VArray(_): idx = 6; args = [classVal(EvalHash.hash("Array"))];
+			case VString(_): idx = 6; args = [classVal(EvalNames.hString())];
+			case VArray(_): idx = 6; args = [classVal(EvalNames.hArrayType())];
 			case VInstance(vi): idx = 6; args = [classVal(vi.iproto.ppath)];
-			case VVector(_): idx = 6; args = [classVal(EvalHash.hash("eval.Vector"))];
+			case VVector(_): idx = 6; args = [classVal(EvalNames.hEvalVector())];
 			case VEnumValue(ev): idx = 7; args = [classVal(ev.epath)];
 			// A lazy value is forced, and its value answers.
 			case VLazy(f): return typeofValue(ctx, f());
 			case _: idx = 8;
 		}
-		return VEnumValue(new VEnumValue(idx, args, EvalHash.hash("ValueType"), null));
+		return VEnumValue(new VEnumValue(idx, args, EvalNames.hValueType(), null));
 	}
 
 	static var gcMinorHeapSize = 262144;
@@ -3196,6 +3196,7 @@ class EvalStdLib {
 		reg(s, "Sys", "setCwd", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
 			var err = cFs(4, path);
+			hxc.core.Cwd.generation++;
 			if (err != null) unixError(ctx, err, "chdir", path);
 			VNull;
 		}));
@@ -3222,8 +3223,8 @@ class EvalStdLib {
 		reg(s, "eval.vm.Gc", "minor", vfn(a -> { gcMinor(); VNull; }));
 		reg(s, "eval.vm.Gc", "print_stat", vfn(a -> {
 			var out = thisFileOutput([arg(a, 0)]).output;
-			out.writeString("minor_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalHash.hash("minor_words"))) + "\n");
-			out.writeString("major_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalHash.hash("major_words"))) + "\n");
+			out.writeString("minor_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalNames.hMinorWords())) + "\n");
+			out.writeString("major_words: " + stringOf(EvalField.dynamicField(ctx, gcStats(), EvalNames.hMajorWords())) + "\n");
 			out.flush();
 			VNull;
 		}));
@@ -3334,7 +3335,7 @@ class EvalStdLib {
 				case "contains_display_position":
 					VFunction(function(args) return VFalse, true);
 				case "get_display_mode":
-					VFunction(function(args) return createEnumByName(ctx, classValue(ctx, EvalHash.hash("haxe.macro.DisplayMode")), EvalHash.hash("None"), VNull), true);
+					VFunction(function(args) return createEnumByName(ctx, classValue(ctx, EvalNames.hHaxeMacroDisplayMode()), EvalNames.hNone(), VNull), true);
 				case "get_expected_type" | "get_call_arguments":
 					VFunction(function(args) return VNull, true);
 				case "get_local_using":
@@ -3670,7 +3671,7 @@ class EvalStdLib {
 			]));
 		}));
 		reg(inst, "Array", "iterator", vmethod(a -> arrayIteratorValue(ctx, a[0])));
-		reg(inst, "Array", "keyValueIterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalHash.hash("haxe.iterators.ArrayKeyValueIterator"), [a[0]])));
+		reg(inst, "Array", "keyValueIterator", vmethod(a -> EvalEmitter.constructPath(ctx, EvalNames.hHaxeIteratorsArrayKeyValueIterator(), [a[0]])));
 		reg(inst, "Array", "slice", vmethod(a -> {
 			var va = thisArray(ctx, a);
 			var length = va.alength;
@@ -4057,27 +4058,27 @@ class EvalStdLib {
 
 		var ctors = ctx.builtins.constructorBuiltins;
 		var emptyCtors = ctx.builtins.emptyConstructorBuiltins;
-		ctors.set(EvalHash.hash("String"), function(a) return arg(a, 0));
-		emptyCtors.set(EvalHash.hash("String"), function() return mkStr(""));
-		ctors.set(EvalHash.hash("StringBuf"), function(a) {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("StringBuf"));
+		ctors.set(EvalNames.hString(), function(a) return arg(a, 0));
+		emptyCtors.set(EvalNames.hString(), function() return mkStr(""));
+		ctors.set(EvalNames.hStringBuf(), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalNames.hStringBuf());
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IBuffer(new VStringBuffer())));
 		});
-		ctors.set(EvalHash.hash("haxe.Utf8"), function(a) {
+		ctors.set(EvalNames.hHaxeUtf8(), function(a) {
 			// The size is defaultInt.
 			defaultInt(ctx, arg(a, 0), 0);
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Utf8"));
+			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeUtf8());
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IUtf8(new ByteBuffer())));
 		});
-		ctors.set(EvalHash.hash("EReg"), function(a) {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
+		ctors.set(EvalNames.hEReg(), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalNames.hEReg());
 			// The pattern and the options are decodeString, decoded right to left.
 			var opt = decodeString(ctx, arg(a, 1));
 			var r = decodeString(ctx, arg(a, 0));
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(regexCreate(r, opt))));
 		});
-		emptyCtors.set(EvalHash.hash("EReg"), function() {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("EReg"));
+		emptyCtors.set(EvalNames.hEReg(), function() {
+			var proto = ctx.instancePrototypes.get(EvalNames.hEReg());
 			return VInstance(new VInstance(proto.pinstanceFields.copy(), proto, IRegex(regexEmpty())));
 		});
 
@@ -4209,8 +4210,8 @@ class EvalStdLib {
 				var f = charOffset(first);
 				var l = charOffset(last);
 				var m = new Map();
-				m.set(EvalHash.hash("pos"), VInt(f));
-				m.set(EvalHash.hash("len"), VInt(l - f));
+				m.set(EvalNames.hPos(), VInt(f));
+				m.set(EvalNames.hLen(), VInt(l - f));
 				VObject(new VObject([], ODictionary(m)));
 			});
 		}));
@@ -4417,18 +4418,18 @@ class EvalStdLib {
 		}
 
 		// New Array() builds an empty dynamic array, matching the [] literal.
-		ctors.set(EvalHash.hash("Array"), function(a) return VArray(new VArray([], 0)));
-		emptyCtors.set(EvalHash.hash("Array"), function() return VArray(new VArray([], 0)));
-		ctors.set(EvalHash.hash("eval.Vector"), function(a) {
+		ctors.set(EvalNames.hArrayType(), function(a) return VArray(new VArray([], 0)));
+		emptyCtors.set(EvalNames.hArrayType(), function() return VArray(new VArray([], 0)));
+		ctors.set(EvalNames.hEvalVector(), function(a) {
 			// New Vector: the length is decodeIntP.
 			var length = decodeIntP(ctx, arg(a, 0), EvalContext.getEval(ctx).currentPos);
 			if (length < 0) EvalExceptions.excString(ctx, "Vector size must be >= 0", EvalContext.getEval(ctx).currentPos);
 			return VVector([for (_ in 0...length) VNull]);
 		});
-		emptyCtors.set(EvalHash.hash("eval.Vector"), function() return VVector([]));
-		ctors.set(EvalHash.hash("haxe.io.BytesBuffer"), function(a) return mkBytesBuffer(ctx));
-		emptyCtors.set(EvalHash.hash("haxe.io.BytesBuffer"), function() return mkBytesBuffer(ctx));
-		ctors.set(EvalHash.hash("haxe.io.Bytes"), function(a) {
+		emptyCtors.set(EvalNames.hEvalVector(), function() return VVector([]));
+		ctors.set(EvalNames.hHaxeIoBytesBuffer(), function(a) return mkBytesBuffer(ctx));
+		emptyCtors.set(EvalNames.hHaxeIoBytesBuffer(), function() return mkBytesBuffer(ctx));
+		ctors.set(EvalNames.hHaxeIoBytes(), function(a) {
 			var length = decodeInt(ctx, arg(a, 0));
 			var source = decodeBytes(arg(a, 1));
 			var bytes = haxe.io.Bytes.alloc(length);
@@ -4437,13 +4438,13 @@ class EvalStdLib {
 		});
 
 		// Date: a native instance carrying its epoch timestamp.
-		ctors.set(EvalHash.hash("Date"), function(a) {
+		ctors.set(EvalNames.hDate(), function(a) {
 			// The six fields decoded with decodeInt, left to right, then mktime.
 			var f = [for (i in 0...6) decodeInt(ctx, arg(a, i))];
 			return mkDate(ctx, unixMktime(ctx, f[0], f[1], f[2], f[3], f[4], f[5]) * 1000);
 		});
-		emptyCtors.set(EvalHash.hash("Date"), function() return mkDate(ctx, 0));
-		ctors.set(EvalHash.hash("sys.io._Process.NativeProcess"), function(a) {
+		emptyCtors.set(EvalNames.hDate(), function() return mkDate(ctx, 0));
+		ctors.set(EvalNames.h_sys_io__Process_NativeProcess(), function(a) {
 			var cmd = stringOf(arg(a, 0));
 			var args = processArgs(ctx, arg(a, 1));
 			// A process that fails to start is reported by the native's own name, "process_run", whatever
@@ -4452,20 +4453,20 @@ class EvalStdLib {
 			if (proc == null) EvalExceptions.excString(ctx, "process_run");
 			return mkNativeProcess(ctx, proc);
 		});
-		ctors.set(EvalHash.hash("sys.thread.Mutex"), function(a) return mkThreadMutex(ctx));
-		ctors.set(EvalHash.hash("sys.thread.Lock"), function(a) return mkThreadLock(ctx));
+		ctors.set(EvalNames.hSysThreadMutex(), function(a) return mkThreadMutex(ctx));
+		ctors.set(EvalNames.hSysThreadLock(), function(a) return mkThreadLock(ctx));
 		// Each Tls takes the next number from the context's counter.
 		var tlsCounter = -1;
-		ctors.set(EvalHash.hash("sys.thread.Tls"), function(a) {
+		ctors.set(EvalNames.hSysThreadTls(), function(a) {
 			tlsCounter++;
 			return mkThreadTls(ctx, tlsCounter);
 		});
-		ctors.set(EvalHash.hash("sys.thread.Deque"), function(a) return mkThreadDeque(ctx));
+		ctors.set(EvalNames.hSysThreadDeque(), function(a) return mkThreadDeque(ctx));
 		#if emscripten
-		ctors.set(EvalHash.hash("sys.thread.Condition"), function(a) return mkThreadCondition(ctx));
-		ctors.set(EvalHash.hash("sys.thread.Semaphore"), function(a) return mkThreadSemaphore(ctx, toInt(arg(a, 0))));
+		ctors.set(EvalNames.hSysThreadCondition(), function(a) return mkThreadCondition(ctx));
+		ctors.set(EvalNames.hSysThreadSemaphore(), function(a) return mkThreadSemaphore(ctx, toInt(arg(a, 0))));
 		#end
-		ctors.set(EvalHash.hash("eval.vm.NativeThread"), function(a) {
+		ctors.set(EvalNames.hEvalVmNativeThread(), function(a) {
 			if (ctx.isMacro) return EvalExceptions.excString(ctx, "Creating threads in macros is not supported");
 			return spawnThread(ctx, arg(a, 0));
 		});
@@ -4732,7 +4733,7 @@ class EvalStdLib {
 		reg(inst, "sys.io._Process.NativeProcess", "writeStdin", vmethod(a -> VInt(thisProcess(a).stdin.writeBytes(
 			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), toInt(arg(a, 3))))));
 		reg(inst, "sys.io._Process.Stdin", "close", vmethod(a -> {
-			var proc = EvalField.field(ctx, arg(a, 0), EvalHash.hash("proc"));
+			var proc = EvalField.field(ctx, arg(a, 0), EvalNames.hProc());
 			thisProcess([proc]).stdin.close();
 			VNull;
 		}));
@@ -5230,20 +5231,20 @@ class EvalStdLib {
 			VNull;
 		}));
 		reg(inst, "haxe.io.BytesBuffer", "getBytes", vmethod(a -> mkBytes(ctx, bytesBufferToBytes(thisMap(a)))));
-		ctors.set(EvalHash.hash("haxe.zip.Compress"), function(a) {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Compress"));
+		ctors.set(EvalNames.hHaxeZipCompress(), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipCompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 			zipCompress.set(vi, new haxe.zip.Compress(decodeInt(ctx, arg(a, 0))));
 			return VInstance(vi);
 		});
-		ctors.set(EvalHash.hash("haxe.zip.Uncompress"), function(a) {
-			var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.zip.Uncompress"));
+		ctors.set(EvalNames.hHaxeZipUncompress(), function(a) {
+			var proto = ctx.instancePrototypes.get(EvalNames.hHaxeZipUncompress());
 			var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 			// The window bits are defaultInt 15.
 			zipUncompress.set(vi, new haxe.zip.Uncompress(defaultInt(ctx, arg(a, 0), 15)));
 			return VInstance(vi);
 		});
-		ctors.set(EvalHash.hash("eval.vm.NativeSocket"), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));
+		ctors.set(EvalNames.hEvalVmNativeSocket(), function(a) return mkNativeSocket(ctx, new sys.net.Socket()));
 		reg(inst, "haxe.zip.Compress", "execute", vmethod(a -> zipResult(zipCompress.get(thisInstance(a, "Compress")).execute(
 			decodeBytes(arg(a, 1)), toInt(arg(a, 2)), decodeBytes(arg(a, 3)), toInt(arg(a, 4))))));
 		reg(inst, "haxe.zip.Compress", "setFlushMode", vmethod(a -> {
@@ -5270,7 +5271,7 @@ class EvalStdLib {
 		}));
 		reg(s, "eval.vm.NativeSocket", "select", vfn(a -> {
 			function socketValue(v:EvalValue):sys.net.Socket {
-				var field = EvalField.field(ctx, v, EvalHash.hash("socket"));
+				var field = EvalField.field(ctx, v, EvalNames.hSocket());
 				return nativeSockets.get(thisInstance([field], "NativeSocket"));
 			}
 			function list(v:EvalValue):Array<EvalValue> {

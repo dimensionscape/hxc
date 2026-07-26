@@ -86,12 +86,12 @@ class EvalSsl {
 	public static function initConstructors(ctx:EvalContext):Void {
 		Mbedtls.init();
 		var ctors = ctx.builtins.constructorBuiltins;
-		ctors.set(EvalHash.hash("mbedtls.Config"), a -> encodeInstance(ctx, "mbedtls.Config", IMbedtlsConfig(Mbedtls.sslConfigInit())));
-		ctors.set(EvalHash.hash("mbedtls.CtrDrbg"), a -> encodeInstance(ctx, "mbedtls.CtrDrbg", IMbedtlsCtrDrbg(Mbedtls.ctrDrbgInit())));
-		ctors.set(EvalHash.hash("mbedtls.Entropy"), a -> encodeInstance(ctx, "mbedtls.Entropy", IMbedtlsEntropy(Mbedtls.entropyInit())));
-		ctors.set(EvalHash.hash("mbedtls.PkContext"), a -> encodeInstance(ctx, "mbedtls.PkContext", IMbedtlsPkContext(Mbedtls.pkInit())));
-		ctors.set(EvalHash.hash("mbedtls.Ssl"), a -> encodeInstance(ctx, "mbedtls.Ssl", IMbedtlsSsl(Mbedtls.sslInit())));
-		ctors.set(EvalHash.hash("mbedtls.X509Crt"), a -> encodeInstance(ctx, "mbedtls.X509Crt", IMbedtlsX509Crt(Mbedtls.x509CrtInit())));
+		ctors.set(EvalNames.hMbedtlsConfig(), a -> encodeInstance(ctx, "mbedtls.Config", IMbedtlsConfig(Mbedtls.sslConfigInit())));
+		ctors.set(EvalNames.hMbedtlsCtrDrbg(), a -> encodeInstance(ctx, "mbedtls.CtrDrbg", IMbedtlsCtrDrbg(Mbedtls.ctrDrbgInit())));
+		ctors.set(EvalNames.hMbedtlsEntropy(), a -> encodeInstance(ctx, "mbedtls.Entropy", IMbedtlsEntropy(Mbedtls.entropyInit())));
+		ctors.set(EvalNames.hMbedtlsPkContext(), a -> encodeInstance(ctx, "mbedtls.PkContext", IMbedtlsPkContext(Mbedtls.pkInit())));
+		ctors.set(EvalNames.hMbedtlsSsl(), a -> encodeInstance(ctx, "mbedtls.Ssl", IMbedtlsSsl(Mbedtls.sslInit())));
+		ctors.set(EvalNames.hMbedtlsX509Crt(), a -> encodeInstance(ctx, "mbedtls.X509Crt", IMbedtlsX509Crt(Mbedtls.x509CrtInit())));
 	}
 
 	public static function initFields(ctx:EvalContext):Void {
@@ -99,7 +99,7 @@ class EvalSsl {
 		var inst = ctx.builtins.instanceBuiltins;
 		inline function stat(typeName:String, fieldName:String, v:EvalValue) EvalStdLib.reg(s, typeName, fieldName, v);
 		inline function meth(typeName:String, fieldName:String, v:EvalValue) EvalStdLib.reg(inst, typeName, fieldName, v);
-		var keyNative = EvalHash.hash("native");
+		var keyNative = EvalNames.hNative();
 		// The X509Crt behind a certificate's native field.
 		function nativeCert(thisv:EvalValue):MbedtlsObject return asX509Crt(ctx, EvalField.field(ctx, thisv, keyNative));
 

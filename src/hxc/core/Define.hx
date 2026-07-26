@@ -39,7 +39,7 @@ class Define {
 					defines.push(k + "=" + v);
 			}
 		}
-		defines.sort(Reflect.compare);
+		StringSort.sort(defines);
 		definesSignature = haxe.crypto.Md5.encode(defines.join("@"));
 		return definesSignature;
 	}

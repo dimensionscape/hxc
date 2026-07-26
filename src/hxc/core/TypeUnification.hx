@@ -654,8 +654,8 @@ class TypeUnification {
 				function fieldsEq():Bool {
 					var fields1:Array<TClassField> = [for (f in a1.fields) f];
 					var fields2:Array<TClassField> = [for (f in a2.fields) f];
-					fields1.sort(function(x, y) return Reflect.compare(x.name, y.name));
-					fields2.sort(function(x, y) return Reflect.compare(x.name, y.name));
+					fields1.sort(function(x, y) return StringSort.compare(x.name, y.name));
+					fields2.sort(function(x, y) return StringSort.compare(x.name, y.name));
 					if (fields1.length != fields2.length) return false;
 					for (i in 0...fields1.length) {
 						var f1 = fields1[i], f2 = fields2[i];
@@ -788,62 +788,76 @@ class TypeUnification {
 	}
 
 	public static function typeEq(uctx:UnificationContext, a:T, b:T):Void {
+		if (!typeEqTry(uctx, a, b)) error(eqFailErrors);
+	}
+
+	// What typeEq raises where typeEqTry returned false.
+	static var eqFailErrors:Array<UnifyErrorKind>;
+
+	static function eqFail(l:Array<UnifyErrorKind>):Bool {
+		eqFailErrors = l;
+		return false;
+	}
+
+	static function canFollow(param:EqKind, t:T):Bool {
+		return switch (param) {
+			case EqCoreType: false;
+			case EqDoNotFollowNull: !TypeFunctions.isExplicitNull(t);
+			case _: true;
+		}
+	}
+
+	static function canFollowAbstract(uctx:UnificationContext, ab:TAbstract):Bool {
+		return uctx.equalityUnderlying && switch (ab.thisType) {
+			case TAbstract(ab2, _): ab2 != ab;
+			case _: true;
+		}
+	}
+
+	// typeEq, returning false where it raises a [cannotUnify a b] of its own: as its last step, through
+	// the typeEq it ends with, or (recStack's ferror) in front of what the type it follows a typedef to
+	// failed with. What it would raise is left in eqFailErrors. Its other failures raise as typeEq's do.
+	// typeIseq so answers false without an exception.
+	static function typeEqTry(uctx:UnificationContext, a:T, b:T):Bool {
 		var param = uctx.equalityKind;
-		function canFollow(t:T):Bool {
-			return switch (param) {
-				case EqCoreType: false;
-				case EqDoNotFollowNull: !TypeFunctions.isExplicitNull(t);
-				case _: true;
-			}
-		}
-		function canFollowAbstract(ab:TAbstract):Bool {
-			return uctx.equalityUnderlying && switch (ab.thisType) {
-				case TAbstract(ab2, _): ab2 != ab;
-				case _: true;
-			}
-		}
-		if (a == b) return;
+		if (a == b) return true;
 		switch [a, b] {
-			case [TLazy(f), _]: typeEq(uctx, TypeFunctions.lazyType(f), b);
-			case [_, TLazy(f)]: typeEq(uctx, a, TypeFunctions.lazyType(f));
+			case [TLazy(f), _]: return typeEqTry(uctx, TypeFunctions.lazyType(f), b);
+			case [_, TLazy(f)]: return typeEqTry(uctx, a, TypeFunctions.lazyType(f));
 			case [TMono(t), _]:
 				switch (t.type) {
-					case null: if (param == EqCoreType || !link(t, a, b)) error([cannotUnify(a, b)]);
-					case some: typeEq(uctx, some, b);
+					case null: if (param == EqCoreType || !link(t, a, b)) return eqFail([cannotUnify(a, b)]);
+					case some: return typeEqTry(uctx, some, b);
 				}
 			case [_, TMono(t)]:
 				switch (t.type) {
-					case null: if (param == EqCoreType || !link(t, b, a)) error([cannotUnify(a, b)]);
-					case some: typeEq(uctx, a, some);
+					case null: if (param == EqCoreType || !link(t, b, a)) return eqFail([cannotUnify(a, b)]);
+					case some: return typeEqTry(uctx, a, some);
 				}
 			case [TDynamic(null), TDynamic(null)]:
 			case [TDynamic(a2), TDynamic(b2)] if (a2 != null && b2 != null):
-				typeEq(uctx, a2, b2);
+				return typeEqTry(uctx, a2, b2);
 			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
 			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
 			case [TAbstract(a1, [t1]), TAbstract(a2, [t2])] if (isNullPath(a1.path) && isNullPath(a2.path)):
-				typeEq(uctx, t1, t2);
+				return typeEqTry(uctx, t1, t2);
 			case [TAbstract(a1, [t1]), _] if (isNullPath(a1.path) && param != EqDoNotFollowNull):
-				typeEq(uctx, t1, b);
+				return typeEqTry(uctx, t1, b);
 			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
-				typeEq(uctx, a, t2);
+				return typeEqTry(uctx, a, t2);
 			case [TType(t1, tl1), TType(t2, tl2)] if ((t1 == t2 || (param == EqCoreType && pathEq(t1.path, t2.path))) && tl1.length == tl2.length):
 				typeEqParams(uctx, a, b, tl1, tl2);
-			case [TType(t1, tl1), _] if (canFollow(a)):
-				recStack(eqStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
-					function() { TypeFunctions.tryApplyParamsRec(t1.params, tl1, t1.type, function(ax) typeEq(uctx, ax, b)); return null; },
-					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
-			case [_, TType(t2, tl2)] if (canFollow(b)):
-				recStack(eqStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
-					function() { TypeFunctions.tryApplyParamsRec(t2.params, tl2, t2.type, function(bx) typeEq(uctx, a, bx)); return null; },
-					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
+			case [TType(t1, tl1), _] if (canFollow(param, a)):
+				return typeEqTypedef(uctx, a, b, t1, tl1, true);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
 			case [TEnum(e1, tl1), TEnum(e2, tl2)]:
-				if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) error([cannotUnify(a, b)]);
+				if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) return eqFail([cannotUnify(a, b)]);
 				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
 				if (c1 != c2 && !(param == EqCoreType && pathEq(c1.path, c2.path))
 					&& (switch [c1.kind, c2.kind] { case [KExpr(_), KExpr(_)]: false; case _: true; }))
-					error([cannotUnify(a, b)]);
+					return eqFail([cannotUnify(a, b)]);
 				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
 				var i = 0;
@@ -861,10 +875,10 @@ class TypeUnification {
 				}
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2 || (param == EqCoreType && pathEq(a1.path, a2.path))):
 				typeEqParams(uctx, a, b, tl1, tl2);
-			case [TAbstract(ab, tl), _] if (canFollowAbstract(ab)):
-				typeEq(uctx, TypeFunctions.applyParams(ab.params, tl, ab.thisType), b);
-			case [_, TAbstract(ab, tl)] if (canFollowAbstract(ab)):
-				typeEq(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case [TAbstract(ab, tl), _] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, TypeFunctions.applyParams(ab.params, tl, ab.thisType), b);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
 			case [TAnon(a1), TAnon(a2)]:
 				try {
 					switch (a2.status.get()) {
@@ -896,31 +910,61 @@ class TypeUnification {
 					error([cannotUnify(a, b)].concat(e.errors));
 				}
 			case _:
-				error([cannotUnify(a, b)]);
+				return eqFail([cannotUnify(a, b)]);
 		}
+		return true;
+	}
+
+	// typeEq's TType arms: recStack over eqStack (a,b), comparing the typedef's type with its parameters
+	// applied in its place, a failure in there coming out as [cannotUnify a b] in front of that
+	// comparison's own.
+	static function typeEqTypedef(uctx:UnificationContext, a:T, b:T, td:TDef, tl:TParams, left:Bool):Bool {
+		for (p in eqStack.recStack) if (fastEqPair(a, b, p.a, p.b)) return true;
+		eqStack.recStack = [{a: a, b: b}].concat(eqStack.recStack);
+		var ok = true;
+		try {
+			var old = TypeFunctions.applyParamsStack.get();
+			try {
+				var t = TypeFunctions.applyParams(td.params, tl, td.type, TypeFunctions.applyParamsStack);
+				ok = left ? typeEqTry(uctx, t, b) : typeEqTry(uctx, a, t);
+				TypeFunctions.applyParamsStack.set(old);
+			} catch (e:ApplyParamsRecursion) {
+				TypeFunctions.applyParamsStack.set(old);
+			} catch (e:haxe.Exception) {
+				TypeFunctions.applyParamsStack.set(old);
+				throw e;
+			}
+		} catch (e:UnifyError) {
+			eqStack.recStack = eqStack.recStack.slice(1);
+			return error([cannotUnify(a, b)].concat(e.errors));
+		} catch (e:haxe.Exception) {
+			eqStack.recStack = eqStack.recStack.slice(1);
+			throw e;
+		}
+		eqStack.recStack = eqStack.recStack.slice(1);
+		return ok || eqFail([cannotUnify(a, b)].concat(eqFailErrors));
 	}
 
 	static function typeEqParams(uctx:UnificationContext, a:T, b:T, tl1:Array<T>, tl2:Array<T>):Void {
 		var i = 0;
 		for (k in 0...tl1.length) {
 			i++;
+			var ok = false;
 			try {
-				typeEq(uctx, tl1[k], tl2[k]);
+				ok = typeEqTry(uctx, tl1[k], tl2[k]);
 			} catch (e:UnifyError) {
 				error([cannotUnify(a, b), Invariant_parameter(i)].concat(e.errors));
 			}
+			if (!ok) error([cannotUnify(a, b), Invariant_parameter(i)].concat(eqFailErrors));
 		}
 	}
 
 	public static function typeIseq(uctx:UnificationContext, a:T, b:T):Bool {
-		return try { typeEq(uctx, a, b); true; } catch (e:UnifyError) false;
+		return try typeEqTry(uctx, a, b) catch (e:UnifyError) false;
 	}
 
 	public static function typeIseqStrict(a:T, b:T):Bool {
-		return try {
-			typeEq(defaultUnificationContext.withEqualityKind(EqDoNotFollowNull), a, b);
-			true;
-		} catch (e:UnifyError) false;
+		return try typeEqTry(defaultUnificationContext.withEqualityKind(EqDoNotFollowNull), a, b) catch (e:UnifyError) false;
 	}
 
 	public static function unify(uctx:UnificationContext, a:T, b:T):Void {
@@ -1238,7 +1282,7 @@ class TypeUnification {
 	// iterates in hash order; sort.
 	static function sortedFieldNames(fields:haxe.ds.StringMap<TClassField>):Array<String> {
 		var names = [for (n in fields.keys()) n];
-		names.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
+		StringSort.sort(names);
 		return names;
 	}
 

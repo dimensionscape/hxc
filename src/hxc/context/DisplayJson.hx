@@ -347,7 +347,7 @@ class DisplayJson {
 				var sign = hxc.context.CompilationCache.CompilationCache.digestFromHex(hctx.jsonrpc.getStringParam("signature"));
 				var cc = cache.getContext(sign);
 				var keys = [for (k in cc.files.keys()) k];
-				keys.sort(Reflect.compare);
+				hxc.core.StringSort.sort(keys);
 				var out = [for (k in keys) {
 					var cf = cc.files.get(k);
 					JObject([

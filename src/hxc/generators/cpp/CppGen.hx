@@ -265,7 +265,7 @@ class CppGen {
 		b.add("#include <hxcpp.h>\n\n");
 		b.add("namespace hx {\n");
 		var keys = [for (k in CppGenClass.fileInfo.keys()) k];
-		keys.sort(Reflect.compare);
+		hxc.core.StringSort.sort(keys);
 		b.add("const char *__hxcpp_all_files[] = {\n");
 		b.add("#ifdef HXCPP_DEBUGGER\n");
 		for (k in keys) b.add(CppGenClass.constCharStar(k) + ",\n");
@@ -375,7 +375,7 @@ class CppGen {
 			case _:
 		}
 		var files = [for (file in CppGenClass.fileInfo.keys()) file];
-		files.sort(Reflect.compare);
+		hxc.core.StringSort.sort(files);
 		for (file in files) if (file != "?") b.add("file " + escape(file) + " " + escape(fullPath(file)) + "\n");
 		writeFile(filename, b.toString());
 	}

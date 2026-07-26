@@ -2063,9 +2063,8 @@ class ModuleLoader {
 	// finding none at all are two different errors, with two different wordings.
 	public static function findTypeInModule(ctx:Context, m:ModuleDef, tname:String, p:Position):ModuleType {
 		for (mt in m.types) {
-			var info = TypeFunctions.tInfos(mt);
-			if (info.path.name != tname) continue;
-			if (ctx.currentModule != info.module && info.isPrivate)
+			if (TypeFunctions.tPath(mt).name != tname) continue;
+			if (ctx.currentModule != TypeFunctions.tModule(mt) && TypeFunctions.tPrivate(mt))
 				throw new ContextError("Cannot access private type " + tname + " in module " + Context.sTypePath(m.path),
 					p, TypeNotFound({pack: m.path.pack, name: tname}));
 			return mt;
@@ -2077,8 +2076,7 @@ class ModuleLoader {
 	/** (non-raising): the public sub-type named `tname` in `m`, or null. */
 	public static function findTypeInModuleOpt(m:ModuleDef, tname:String):Null<ModuleType> {
 		for (mt in m.types) {
-			var info = TypeFunctions.tInfos(mt);
-			if (!info.isPrivate && info.path.name == tname) return mt;
+			if (!TypeFunctions.tPrivate(mt) && TypeFunctions.tPath(mt).name == tname) return mt;
 		}
 		return null;
 	}
@@ -2092,7 +2090,7 @@ class ModuleLoader {
 		}
 
 		for (mt in cur.types) {
-			if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) return mt;
+			if (!TypeFunctions.tPrivate(mt) && fullMatch(mt)) return mt;
 		}
 
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
@@ -2108,7 +2106,7 @@ class ModuleLoader {
 					continue;
 				}
 				var m = { var _m = try loadModuleOpt(ctx, ni.modulePath, p) catch (_:ContextError) null; if (_m == null) continue; _m; };
-				for (mt in m.types) if (!TypeFunctions.tInfos(mt).isPrivate && fullMatch(mt)) { imports.markImport(ni.impIdx); return mt; }
+				for (mt in m.types) if (!TypeFunctions.tPrivate(mt) && fullMatch(mt)) { imports.markImport(ni.impIdx); return mt; }
 			}
 		}
 		return null;
@@ -2148,9 +2146,9 @@ class ModuleLoader {
 				mt = tryImportedSub(ctx, ni.modulePath, path.name, p);
 			}
 			if (mt == null) continue;
-			var inf = TypeFunctions.tInfos(mt);
-			if (inf.isPrivate && inf.module != cur) continue;
-			if (inf.path.name == path.name && samePack(inf.path.pack, path.pack)) {
+			if (TypeFunctions.tPrivate(mt) && TypeFunctions.tModule(mt) != cur) continue;
+			var mtPath = TypeFunctions.tPath(mt);
+			if (mtPath.name == path.name && samePack(mtPath.pack, path.pack)) {
 				imports.markImport(ni.impIdx);
 				return mt;
 			}
@@ -2167,7 +2165,7 @@ class ModuleLoader {
 		// A PRIVATE type never binds through an import from another module: the import itself is the error,
 		// and the name stays unbound.
 		inline function visible(r:Null<ModuleType>):Null<ModuleType>
-			return r == null ? null : (TypeFunctions.tInfos(r).isPrivate && TypeFunctions.tModule(r) != cur ? null : r);
+			return r == null ? null : (TypeFunctions.tPrivate(r) && TypeFunctions.tModule(r) != cur ? null : r);
 		// A module import with no sub exposes every non-private type of that module by its own name,
 		// prepended at that import's position. So which import wins is decided by declaration order alone
 		// - it makes no difference whether the name is the module's own or one of its sub-types. Looking

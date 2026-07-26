@@ -157,7 +157,7 @@ class TypeloadCheck {
 						// The names are visited in key order and each is prepended to the list.
 						var fields = allSuperFields(c);
 						var keys = [for (k in fields.keys()) k];
-						keys.sort(Reflect.compare);
+						hxc.core.StringSort.sort(keys);
 						var names:Array<String> = [];
 						for (k in keys) {
 							var cf = fields.get(k);

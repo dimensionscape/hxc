@@ -173,7 +173,7 @@ class EvalLuv {
 	}
 
 	static function createHaxeException(ctx:EvalContext, msg:String):EvalValue {
-		var proto = ctx.instancePrototypes.get(EvalHash.hash("haxe.Exception"));
+		var proto = ctx.instancePrototypes.get(EvalNames.hHaxeException());
 		var vi = new VInstance(proto.pinstanceFields.copy(), proto);
 		var vmsg = EvalString.createUnknown(ByteString.ofText(msg));
 		setField(vi, EvalHash.keyExceptionMessage, vmsg);
@@ -601,7 +601,7 @@ class EvalLuv {
 			VNull;
 		}));
 		// Receives a handle; the associate function accepts into the handle it is given.
-		var receiveHandlePath = EvalHash.hash("eval.luv.ReceiveHandle");
+		var receiveHandlePath = EvalNames.hEvalLuvReceiveHandle();
 		reg(pipe, "receiveHandle", vfn(a -> {
 			var p = decodePipe(arg(a, 0));
 			var kind = Luv.pipePendingCount(p) == 0 ? 0 : Luv.pipePendingKind(p);
@@ -1309,12 +1309,12 @@ class EvalLuv {
 
 	static function encodeAddressFamily(af:Int):EvalValue {
 		var i = Luv.addressFamilyFromC(af);
-		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(af)] : [], EvalHash.hash("eval.luv.AddressFamily"), null));
+		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(af)] : [], EvalNames.hEvalLuvAddressFamily(), null));
 	}
 
 	static function encodeSocketType(st:Int):EvalValue {
 		var i = Luv.socketTypeFromC(st);
-		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(st)] : [], EvalHash.hash("eval.luv.SocketType"), null));
+		return VEnumValue(new VEnumValue(i, i == 3 ? [VInt(st)] : [], EvalNames.hEvalLuvSocketType(), null));
 	}
 
 	// A missing field reads as null.

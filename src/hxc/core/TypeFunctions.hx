@@ -388,6 +388,15 @@ class TypeFunctions {
 		};
 	}
 
+	public static function tPrivate(t:ModuleType):Bool {
+		return switch (t) {
+			case TClassDecl(c): c.isPrivate;
+			case TEnumDecl(e): e.isPrivate;
+			case TTypeDecl(td): td.isPrivate;
+			case TAbstractDecl(a): a.isPrivate;
+		};
+	}
+
 	public static function extendsClass(c:TClass, csup:TClass):Bool {
 		if (c == csup) return true;
 		for (i in c.interfaces) if (extendsClass(i.c, csup)) return true;

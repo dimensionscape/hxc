@@ -782,7 +782,7 @@ class PatternMaker {
 						case TAnon(an):
 							// Ascending name order.
 							var names = [for (k in an.fields.keys()) k];
-							names.sort(function(x, y) return x < y ? -1 : x > y ? 1 : 0);
+							hxc.core.StringSort.sort(names);
 							for (n in names) {
 								var cf = an.fields.get(n);
 								collectField(cf, cf.type, filter);
@@ -1972,7 +1972,7 @@ class TexprConverter {
 				};
 				function reportUnmatched():Void {
 					var s = if (unmatched == null || unmatched.length == 0) "_" else {
-						unmatched.sort(Reflect.compare);
+						hxc.core.StringSort.sort(unmatched);
 						unmatched.join(" | ");
 					};
 					var errorPos = switch (subject.expr) {

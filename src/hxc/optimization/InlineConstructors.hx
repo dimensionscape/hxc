@@ -597,7 +597,7 @@ private class InlineConstructorsRun {
 		io.declared = true;
 		// Ascending key order
 		var names = [for (k in io.fields.keys()) k];
-		names.sort(Reflect.compare);
+		hxc.core.StringSort.sort(names);
 		var acc:Array<TExpr> = [];
 		for (n in names) acc = acc.concat(getIvVarDecls(io.fields.get(n)));
 		return acc;

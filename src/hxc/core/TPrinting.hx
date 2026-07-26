@@ -112,7 +112,7 @@ class TPrinting {
 					case _:
 						// The fields render in descending name order.
 						var names = [for (k in a.fields.keys()) k];
-						names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						StringSort.sortDescending(names);
 						var fl = names.map(function(n) {
 							var f = a.fields.get(n);
 							return (TypeFunctions.hasMeta(Meta.Optional, f.meta) ? " ?" : " ") + f.name + " : " + sType(ctx, f.type);
@@ -250,7 +250,7 @@ class TPrinting {
 				case _:
 					// Prepending in ascending key order prints fields in descending order.
 					var names = [for (n in a.fields.keys()) n];
-					names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+					StringSort.sortDescending(names);
 					var fl = [for (n in names) (TypeFunctions.hasMeta(":optional", a.fields.get(n).meta) ? " ?" : " ") + n];
 					"{" + fl.join(",") + " }";
 			};

@@ -321,6 +321,10 @@ class Context {
 	 * invalidates old entries.
 	 */
 	public var fieldDeclCache:haxe.ds.ObjectMap<TClassField, {d:Null<hxc.ast.Ast.ClassField>}> = new haxe.ds.ObjectMap();
+	public var posInfosFiles:StringMap<String> = new StringMap();
+	public var posInfosCwd:Int = -1;
+	public var posInfosClassPath:Null<Array<String>> = null;
+	public var posInfosClassPathLength:Int = -1;
 	// Exclude rejected same-name declarations from later syntax-to-field pairing so their hints cannot
 	// retype the accepted field.
 	public var droppedFieldDecls:haxe.ds.ObjectMap<hxc.ast.Ast.ClassField, Bool> = new haxe.ds.ObjectMap();

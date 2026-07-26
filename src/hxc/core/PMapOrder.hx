@@ -23,7 +23,7 @@ class PMapOrder {
 	// keeps no insertion order for any other anon, and those visit their keys in increasing order.
 	public static function anonMapOrder(a:TAnon):Array<String> {
 		var keys = [for (k in a.fields.keys()) k];
-		keys.sort(compare);
+		StringSort.sort(keys);
 		switch (a.status.get()) {
 			case Statics(c):
 				var seen = new StringMap<Bool>();
@@ -43,12 +43,8 @@ class PMapOrder {
 	// Iterating or folding over an anon's fields: increasing key order.
 	public static function sortedKeys(m:StringMap<TClassField>):Array<String> {
 		var keys = [for (k in m.keys()) k];
-		keys.sort(compare);
+		StringSort.sort(keys);
 		return keys;
-	}
-
-	static function compare(x:String, y:String):Int {
-		return x < y ? -1 : (x > y ? 1 : 0);
 	}
 
 	static inline function height(n:Null<PNode>):Int {
@@ -77,7 +73,7 @@ class PMapOrder {
 
 	static function add(x:String, n:Null<PNode>):PNode {
 		if (n == null) return new PNode(null, x, null, 1);
-		var c = compare(x, n.k);
+		var c = StringSort.compare(x, n.k);
 		if (c == 0) return new PNode(n.l, x, n.r, n.h);
 		if (c < 0) return bal(add(x, n.l), n.k, n.r);
 		return bal(n.l, n.k, add(x, n.r));

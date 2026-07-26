@@ -1539,7 +1539,7 @@ class Typer {
 							TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
 						var missing:Array<String> = [for (arg in scSig.args) if (!arg.opt && !byName.exists(arg.name)) arg.name];
 						// Missing fields are listed in descending name order.
-						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						hxc.core.StringSort.sortDescending(missing);
 						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
 						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
 						if (extraFields.length > 0) {
@@ -1668,7 +1668,7 @@ class Typer {
 							if (!TypeFunctions.hasMeta(":optional", ef.meta) && !anonFields.exists(n)) missing.push(n);
 						}
 						// Missing fields are listed in descending name order.
-						missing.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						hxc.core.StringSort.sortDescending(missing);
 						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
 						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
 						// Extra fields accumulate by prepending, so they report in reverse source order.

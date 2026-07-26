@@ -95,7 +95,7 @@ class EvalMacro {
 		var refId = nextModuleTypeRefId++;
 		moduleTypeRefs.set(refId, mt);
 		// A module type's decl rides in `__t`, an opaque TypeDecl instance, which decode reads back.
-		f.set(EvalHash.hash("__t"), opaqueValue("haxe.macro.TypeDecl", refId));
+		f.set(EvalNames.h___t(), opaqueValue("haxe.macro.TypeDecl", refId));
 	}
 
 	// The API wrapper turns a decode failure into the macro's uncaught "Invalid expression"; a typing
@@ -406,8 +406,8 @@ class EvalMacro {
 			if (curTctx == null) throw new TypingError("typeAndStoreExpr outside a macro", curPos);
 			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
 			var fields:Map<Int, EvalValue> = new Map();
-			fields.set(EvalHash.hash("expr"), encodeExpr(ec, Calls.texprToSyntax(curTctx, te)));
-			fields.set(EvalHash.hash("type"), encodeType(ec, te.type));
+			fields.set(EvalNames.hExpr(), encodeExpr(ec, Calls.texprToSyntax(curTctx, te)));
+			fields.set(EvalNames.hType(), encodeType(ec, te.type));
 			return VObject(new VObject([], ODictionary(fields)));
 		});
 		// get_typed_expr(te): convert a typed expression back to a syntax expression. A value that is not a
@@ -457,7 +457,7 @@ class EvalMacro {
 		reg2("applyTypeParameters", "apply_params", function(a) {
 			var tl = [for (x in arrOf(a[1])) decodeType(ec, x)];
 			var tpl:TypeParams = [for (v in arrOf(a[0]))
-				new TypedTypeParam(strOf(EvalField.field(ec, v, EvalHash.hash("name"))), decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t"))), null)];
+				new TypedTypeParam(strOf(EvalField.field(ec, v, EvalNames.hName())), decodeType(ec, EvalField.field(ec, v, EvalNames.hT())), null)];
 			function mapT(t:T):T {
 				return switch (t) {
 					case TInst(c, _) if (c.kind.match(KTypeParameter(_))):
@@ -534,7 +534,7 @@ class EvalMacro {
 				// prepareCallback: an abort answers nothing, null here.
 				var v = try applyFn(ec2, fn, [mkString(hxc.core.Globals.sTypePath(path))]) catch (_:hxc.eval.EvalExceptions.MacroAbort) VNull;
 				if (v == VNull) return null;
-				var dp = posOf(ec2, EvalField.field(ec2, v, EvalHash.hash("pos")), p);
+				var dp = posOf(ec2, EvalField.field(ec2, v, EvalNames.hPos()), p);
 				return [decodeTypeDefinition(ec2, v, dp)];
 			}});
 			return VNull;
@@ -720,7 +720,7 @@ class EvalMacro {
 		});
 		regBuiltin(ec, "haxe.macro.Context", "makePosition", function(a) {
 			var info = a.length > 0 ? a[0] : VNull;
-			return encPos(new Position(strOf(EvalField.field(ec, info, EvalHash.hash("file"))), intOf(EvalField.field(ec, info, EvalHash.hash("min"))), intOf(EvalField.field(ec, info, EvalHash.hash("max")))));
+			return encPos(new Position(strOf(EvalField.field(ec, info, EvalNames.hFile())), intOf(EvalField.field(ec, info, EvalNames.hMin())), intOf(EvalField.field(ec, info, EvalNames.hMax()))));
 		});
 		regBuiltin(ec, "haxe.macro.Context", "make_position", function(a) {
 			return encPos(new Position(a.length > 2 ? strOf(a[2]) : "?", a.length > 0 ? intOf(a[0]) : 0, a.length > 1 ? intOf(a[1]) : 0));
@@ -778,18 +778,18 @@ class EvalMacro {
 			for (t in targets) if (metadataTargetNames.indexOf(t) < 0) EvalExceptions.excString(ec, "invalid metadata target " + t);
 			var params = arrField("params");
 			var links = arrField("links");
-			var doc = strOf(EvalField.field(ec, o, EvalHash.hash("doc")));
+			var doc = strOf(EvalField.field(ec, o, EvalNames.hDoc()));
 			return {doc: doc, params: params, platforms: platforms, targets: targets, links: links, source: src == VNull ? null : strOf(src)};
 		}
 		reg2("registerDefineImpl", "register_define_impl", function(a) {
 			var entry = decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull, false);
-			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("define")));
+			var name = strOf(EvalField.field(ec, a[0], EvalNames.hDefine()));
 			com.userDefines.set(name, entry);
 			return VNull;
 		});
 		reg2("registerMetadataImpl", "register_metadata_impl", function(a) {
 			var entry = decodeUserDoc(a[0], a.length > 1 ? a[1] : VNull, true);
-			var name = strOf(EvalField.field(ec, a[0], EvalHash.hash("metadata")));
+			var name = strOf(EvalField.field(ec, a[0], EvalNames.hMetadata()));
 			com.userMetas.set(name, entry);
 			return VNull;
 		});
@@ -802,7 +802,7 @@ class EvalMacro {
 		// names only the eval.vm surface serves fall through to callMacroApi.
 		regBuiltin(ec, "haxe.macro.Context", "load", function(a) {
 			var name = strOf(a[0]);
-			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
+			var list = ec.builtins.staticBuiltins.get(EvalNames.hHaxeMacroContext());
 			if (list != null) {
 				var h = EvalHash.hash(name);
 				for (b in list) if (b.name == h && name != "load") return b.v;
@@ -845,40 +845,40 @@ class EvalMacro {
 				hxc.generators.GenJS.setupKwds(com);
 				inline function fnv(f:Array<EvalValue>->EvalValue):EvalValue return VFunction(f, true);
 				var fields:Map<Int, EvalValue> = new Map();
-				fields.set(EvalHash.hash("outputFile"), mkString(com.file));
-				fields.set(EvalHash.hash("types"), encodeArray([for (t in com.types) encodeType(ec, TypeFunctions.typeOfModuleType(t))]));
-				fields.set(EvalHash.hash("main"), com.main == null ? VNull : encodeTypedExpr(ec, com.main));
-				fields.set(EvalHash.hash("generateValue"), fnv(function(a2) {
+				fields.set(EvalNames.hOutputFile(), mkString(com.file));
+				fields.set(EvalNames.hTypes(), encodeArray([for (t in com.types) encodeType(ec, TypeFunctions.typeOfModuleType(t))]));
+				fields.set(EvalNames.hMain(), com.main == null ? VNull : encodeTypedExpr(ec, com.main));
+				fields.set(EvalNames.hGenerateValue(), fnv(function(a2) {
 					return mkString(hxc.generators.GenJS.genSingleExpr(jsCtx, decodeStoredTypedExpr(ec, a2[0]), false));
 				}));
-				fields.set(EvalHash.hash("generateStatement"), fnv(function(a2) {
+				fields.set(EvalNames.hGenerateStatement(), fnv(function(a2) {
 					return mkString(hxc.generators.GenJS.genSingleExpr(jsCtx, decodeStoredTypedExpr(ec, a2[0]), true));
 				}));
-				fields.set(EvalHash.hash("isKeyword"), fnv(function(a2) {
+				fields.set(EvalNames.hIsKeyword(), fnv(function(a2) {
 					return hxc.generators.GenJS.isKeyword(strOf(a2[0])) ? VTrue : VFalse;
 				}));
-				fields.set(EvalHash.hash("hasFeature"), fnv(function(a2) {
+				fields.set(EvalNames.hHasFeature(), fnv(function(a2) {
 					return com.hasFeature(strOf(a2[0])) ? VTrue : VFalse;
 				}));
-				fields.set(EvalHash.hash("addFeature"), fnv(function(a2) {
+				fields.set(EvalNames.hAddFeature(), fnv(function(a2) {
 					com.addFeature(strOf(a2[0]));
 					return VNull;
 				}));
-				fields.set(EvalHash.hash("quoteString"), fnv(function(a2) {
+				fields.set(EvalNames.hQuoteString(), fnv(function(a2) {
 					return mkString('"' + hxc.core.StringHelper.sEscape(strOf(a2[0])) + '"');
 				}));
-				fields.set(EvalHash.hash("buildMetaData"), fnv(function(a2) {
+				fields.set(EvalNames.hBuildMetaData(), fnv(function(a2) {
 					var meta = hxc.core.TexprTools.buildMetadata(com.basic, moduleTypeFromRef(ec, a2[0]));
 					return meta == null ? VNull : encodeTypedExpr(ec, meta);
 				}));
-				fields.set(EvalHash.hash("setTypeAccessor"), fnv(function(a2) {
+				fields.set(EvalNames.hSetTypeAccessor(), fnv(function(a2) {
 					var cb = a2[0];
 					jsCtx.typeAccessor = function(t:ModuleType):String {
 						return strOf(applyFn(ec, cb, [encodeType(ec, TypeFunctions.typeOfModuleType(t))]));
 					};
 					return VNull;
 				}));
-				fields.set(EvalHash.hash("setCurrentClass"), fnv(function(a2) {
+				fields.set(EvalNames.hSetCurrentClass(), fnv(function(a2) {
 					switch (moduleTypeFromRef(ec, a2[0])) {
 						case TClassDecl(c): jsCtx.current = c;
 						case _:
@@ -931,7 +931,7 @@ class EvalMacro {
 		regBuiltin(ec, "eval.vm.Context", "callMacroApi", function(a) {
 			var name = strOf(a[0]);
 			var key = EvalHash.hash(name);
-			var list = ec.builtins.staticBuiltins.get(EvalHash.hash("haxe.macro.Context"));
+			var list = ec.builtins.staticBuiltins.get(EvalNames.hHaxeMacroContext());
 			if (list != null) for (e in list) if (e.name == key) return e.v;
 			return hxc.eval.EvalStdLib.callMacroApiValue(ec, name);
 		});
@@ -980,7 +980,7 @@ class EvalMacro {
 	}
 
 	static function defineMacroType(ec:EvalContext, com:Context, v:EvalValue, moduleDependency:EvalValue):Void {
-		var dp = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
+		var dp = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), curPos);
 		var path = macroTypeDefinitionPath(ec, v);
 		var td = decodeTypeDefinition(ec, v, dp);
 		var hasMacroFields = isMacroClassDecl(td.decl);
@@ -1022,8 +1022,8 @@ class EvalMacro {
 	}
 
 	static function macroTypeDefinitionPath(ec:EvalContext, v:EvalValue):hxc.core.Globals.Path {
-		var pack = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("pack")))) strOf(pv)];
-		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var pack = [for (pv in arrOf(EvalField.field(ec, v, EvalNames.hPack()))) strOf(pv)];
+		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
 		if (pack.length > 0) {
 			var last = pack[pack.length - 1];
 			if (startsUppercaseIdentifier(last)) {
@@ -3605,19 +3605,19 @@ class EvalMacro {
 	}
 
 	static function refGet(ec:EvalContext, v:EvalValue):EvalValue {
-		return switch (EvalField.field(ec, v, EvalHash.hash("get"))) {
+		return switch (EvalField.field(ec, v, EvalNames.hGet())) {
 			case VFunction(f, _): f([]);
 			case _: VNull;
 		}
 	}
 
 	static function refString(ec:EvalContext, v:EvalValue):String {
-		return switch (EvalField.field(ec, v, EvalHash.hash("toString"))) {
+		return switch (EvalField.field(ec, v, EvalNames.hToString())) {
 			case VFunction(f, _): strOf(f([]));
 			case _:
 				var payload = refGet(ec, v);
-				var name = EvalField.field(ec, payload, EvalHash.hash("name"));
-				var pack = EvalField.field(ec, payload, EvalHash.hash("pack"));
+				var name = EvalField.field(ec, payload, EvalNames.hName());
+				var pack = EvalField.field(ec, payload, EvalNames.hPack());
 				switch [name, pack] {
 					case [VString(n), VArray(a)]:
 						var parts = [for (p in a.avalues.slice(0, a.alength)) strOf(p)];
@@ -3662,22 +3662,22 @@ class EvalMacro {
 			case "TFun":
 				var funArgs = arrOf(args[0]);
 				var lhs = if (funArgs.length == 0) "()"
-					else if (funArgs.length == 1 && strOf(EvalField.field(ec, funArgs[0], EvalHash.hash("name"))) == "")
-						(boolOf(EvalField.field(ec, funArgs[0], EvalHash.hash("opt"))) ? "?" : "") + funArg(EvalField.field(ec, funArgs[0], EvalHash.hash("t")), true)
+					else if (funArgs.length == 1 && strOf(EvalField.field(ec, funArgs[0], EvalNames.hName())) == "")
+						(boolOf(EvalField.field(ec, funArgs[0], EvalNames.hOpt())) ? "?" : "") + funArg(EvalField.field(ec, funArgs[0], EvalNames.hT()), true)
 					else {
 						var parts = [for (a in funArgs) {
-							var name = strOf(EvalField.field(ec, a, EvalHash.hash("name")));
-							(boolOf(EvalField.field(ec, a, EvalHash.hash("opt"))) ? "?" : "")
+							var name = strOf(EvalField.field(ec, a, EvalNames.hName()));
+							(boolOf(EvalField.field(ec, a, EvalNames.hOpt())) ? "?" : "")
 								+ (name == "" ? "" : name + " : ")
-								+ funArg(EvalField.field(ec, a, EvalHash.hash("t")), true);
+								+ funArg(EvalField.field(ec, a, EvalNames.hT()), true);
 						}];
 						"(" + parts.join(", ") + ")";
 					}
 				lhs + " -> " + funArg(args[1], false);
 			case "TAnonymous":
 				var an = refGet(ec, args[0]);
-				var fields = arrOf(EvalField.field(ec, an, EvalHash.hash("fields")));
-				if (fields.length == 0) "{}" else "{ " + [for (f in fields) strOf(EvalField.field(ec, f, EvalHash.hash("name"))) + " : " + macroTypeString(ec, EvalField.field(ec, f, EvalHash.hash("type")))].join(", ") + " }";
+				var fields = arrOf(EvalField.field(ec, an, EvalNames.hFields()));
+				if (fields.length == 0) "{}" else "{ " + [for (f in fields) strOf(EvalField.field(ec, f, EvalNames.hName())) + " : " + macroTypeString(ec, EvalField.field(ec, f, EvalNames.hType()))].join(", ") + " }";
 			case "TDynamic":
 				args[0] == VNull ? "Dynamic" : "Dynamic<" + macroTypeString(ec, args[0]) + ">";
 			case other:
@@ -3711,9 +3711,9 @@ class EvalMacro {
 			case "TFun":
 				TFun({
 					args: [for (a in arrOf(args[0])) {
-						name: strOf(EvalField.field(ec, a, EvalHash.hash("name"))),
-						opt: boolOf(EvalField.field(ec, a, EvalHash.hash("opt"))),
-						t: decodeType(ec, EvalField.field(ec, a, EvalHash.hash("t")))
+						name: strOf(EvalField.field(ec, a, EvalNames.hName())),
+						opt: boolOf(EvalField.field(ec, a, EvalNames.hOpt())),
+						t: decodeType(ec, EvalField.field(ec, a, EvalNames.hT()))
 					}],
 					ret: decodeType(ec, args[1])
 				});
@@ -3742,7 +3742,7 @@ class EvalMacro {
 		if (handle != null && anonRefs.exists(handle)) return TAnon(anonRefs.get(handle));
 		var payload = refGet(ec, v);
 		var fields = new haxe.ds.StringMap<TClassField>();
-		for (fv in arrOf(EvalField.field(ec, payload, EvalHash.hash("fields")))) {
+		for (fv in arrOf(EvalField.field(ec, payload, EvalNames.hFields()))) {
 			var cf = decodeTypedClassField(ec, fv);
 			fields.set(cf.name, cf);
 		}
@@ -3750,16 +3750,16 @@ class EvalMacro {
 	}
 
 	static function decodeTypedClassField(ec:EvalContext, v:EvalValue):TClassField {
-		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
-		var namePos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), pos);
+		var pos = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), curPos);
+		var namePos = posOf(ec, EvalField.field(ec, v, EvalNames.hNamePos()), pos);
 		var cf = TypeFunctions.mkField(
-			strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-			decodeType(ec, EvalField.field(ec, v, EvalHash.hash("type"))),
+			strOf(EvalField.field(ec, v, EvalNames.hName())),
+			decodeType(ec, EvalField.field(ec, v, EvalNames.hType())),
 			pos,
 			namePos,
-			boolOf(EvalField.field(ec, v, EvalHash.hash("isPublic")))
+			boolOf(EvalField.field(ec, v, EvalNames.hIsPublic()))
 		);
-		cf.doc = decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc")));
+		cf.doc = decodeDoc(EvalField.field(ec, v, EvalNames.hDoc()));
 		cf.meta = [];
 		return cf;
 	}
@@ -3804,8 +3804,8 @@ class EvalMacro {
 		// Decoding an expression reads the value's pos first, and a null pos is an invalid expression:
 		// `Context.typeof(null)` is "Invalid expression", not the constant null.
 		if (v == VNull) throw new DecodeFailure("Invalid expression");
-		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
-		var ed = decodeExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
+		var p = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), dp);
+		var ed = decodeExprDef(ec, EvalField.field(ec, v, EvalNames.hExpr()), p);
 		return new Expr(ed, p);
 	}
 
@@ -3851,7 +3851,7 @@ class EvalMacro {
 
 	// Resolve the constructor by name on the enum of the field's type.
 	static function decodeEnumFieldValue(ec:EvalContext, v:EvalValue):TEnumField {
-		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
 		function getEnum(t:T):Null<TEnum> {
 			return switch (TypeFunctions.follow(t)) {
 				case TEnum(en, _): en;
@@ -3859,7 +3859,7 @@ class EvalMacro {
 				case _: null;
 			};
 		}
-		var en = getEnum(decodeType(ec, EvalField.field(ec, v, EvalHash.hash("type"))));
+		var en = getEnum(decodeType(ec, EvalField.field(ec, v, EvalNames.hType())));
 		var ef = en == null ? null : en.constrs.get(name);
 		if (ef == null) throw new TypingError("macro decode: unknown enum field " + name, curPos);
 		return ef;
@@ -3879,8 +3879,8 @@ class EvalMacro {
 			case "FAnon": FAnon(classFieldFromRef(ec, args[0]));
 			case "FDynamic": FDynamic(strOf(args[0]));
 			case "FClosure":
-				var co:Null<TClassWithParams> = if (args[0] == VNull) null else switch (moduleTypeFromRef(ec, EvalField.field(ec, args[0], EvalHash.hash("c")))) {
-					case TClassDecl(c): {c: c, params: [for (p in arrOf(EvalField.field(ec, args[0], EvalHash.hash("params")))) decodeType(ec, p)]};
+				var co:Null<TClassWithParams> = if (args[0] == VNull) null else switch (moduleTypeFromRef(ec, EvalField.field(ec, args[0], EvalNames.hC()))) {
+					case TClassDecl(c): {c: c, params: [for (p in arrOf(EvalField.field(ec, args[0], EvalNames.hParams()))) decodeType(ec, p)]};
 					case _: throw new TypingError("macro decode: expected class ref", curPos);
 				};
 				FClosure(co, classFieldFromRef(ec, args[1]));
@@ -3901,17 +3901,17 @@ class EvalMacro {
 	}
 
 	static function decodeTFuncValue(ec:EvalContext, v:EvalValue):TFunc {
-		var fnArgs:Array<TFuncArg> = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("args")))) {
-			var value = EvalField.field(ec, av, EvalHash.hash("value"));
-			{v: decodeTVar(ec, EvalField.field(ec, av, EvalHash.hash("v"))), c: value == VNull ? null : decodeTypedExpr(ec, value)};
+		var fnArgs:Array<TFuncArg> = [for (av in arrOf(EvalField.field(ec, v, EvalNames.hArgs()))) {
+			var value = EvalField.field(ec, av, EvalNames.hValue());
+			{v: decodeTVar(ec, EvalField.field(ec, av, EvalNames.hV())), c: value == VNull ? null : decodeTypedExpr(ec, value)};
 		}];
-		return new TFunc(fnArgs, decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t"))), decodeTypedExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr"))));
+		return new TFunc(fnArgs, decodeType(ec, EvalField.field(ec, v, EvalNames.hT())), decodeTypedExpr(ec, EvalField.field(ec, v, EvalNames.hExpr())));
 	}
 
 	public static function decodeTypedExpr(ec:EvalContext, v:EvalValue):TExpr {
-		var p = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), curPos);
-		var t = decodeType(ec, EvalField.field(ec, v, EvalHash.hash("t")));
-		var ed = decodeTypedExprDef(ec, EvalField.field(ec, v, EvalHash.hash("expr")), p);
+		var p = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), curPos);
+		var t = decodeType(ec, EvalField.field(ec, v, EvalNames.hT()));
+		var ed = decodeTypedExprDef(ec, EvalField.field(ec, v, EvalNames.hExpr()), p);
 		return TypeFunctions.mk(ed, t, p);
 	}
 
@@ -3927,7 +3927,7 @@ class EvalMacro {
 			case "TTypeExpr": TTypeExpr(decodeModuleTypeValue(ec, args[0]));
 			case "TParenthesis": TParenthesis(loop(args[0]));
 			case "TObjectDecl": TObjectDecl([for (fv in arrOf(args[0]))
-				{key: {name: strOf(EvalField.field(ec, fv, EvalHash.hash("name"))), pos: p, quotes: NoQuotes}, expr: loop(EvalField.field(ec, fv, EvalHash.hash("expr")))}]);
+				{key: {name: strOf(EvalField.field(ec, fv, EvalNames.hName())), pos: p, quotes: NoQuotes}, expr: loop(EvalField.field(ec, fv, EvalNames.hExpr()))}]);
 			case "TArrayDecl": TArrayDecl([for (x in arrOf(args[0])) loop(x)]);
 			case "TCall": TCall(loop(args[0]), [for (x in arrOf(args[1])) loop(x)]);
 			case "TNew": switch (moduleTypeFromRef(ec, args[0])) {
@@ -3942,9 +3942,9 @@ class EvalMacro {
 			case "TIf": TIf(loop(args[0]), loop(args[1]), args[2] == VNull ? null : loop(args[2]));
 			case "TWhile": TWhile(loop(args[0]), loop(args[1]), boolOf(args[2]) ? NormalWhile : DoWhile);
 			case "TSwitch": TSwitch(loop(args[0]), [for (cv in arrOf(args[1]))
-				{values: [for (x in arrOf(EvalField.field(ec, cv, EvalHash.hash("values")))) loop(x)], expr: loop(EvalField.field(ec, cv, EvalHash.hash("expr")))}], args[2] == VNull ? null : loop(args[2]));
+				{values: [for (x in arrOf(EvalField.field(ec, cv, EvalNames.hValues()))) loop(x)], expr: loop(EvalField.field(ec, cv, EvalNames.hExpr()))}], args[2] == VNull ? null : loop(args[2]));
 			case "TTry": TTry(loop(args[0]), [for (cv in arrOf(args[1]))
-				{v: decodeTVar(ec, EvalField.field(ec, cv, EvalHash.hash("v"))), expr: loop(EvalField.field(ec, cv, EvalHash.hash("expr")))}]);
+				{v: decodeTVar(ec, EvalField.field(ec, cv, EvalNames.hV())), expr: loop(EvalField.field(ec, cv, EvalNames.hExpr()))}]);
 			case "TReturn": TReturn(args[0] == VNull ? null : loop(args[0]));
 			case "TBreak": TBreak;
 			case "TContinue": TContinue;
@@ -4053,17 +4053,17 @@ class EvalMacro {
 
 	static function decodeCase(ec:EvalContext, v:EvalValue, dp:Position):SwitchCase {
 		return {
-			values: [for (x in arrOf(EvalField.field(ec, v, EvalHash.hash("values")))) decodeExpr(ec, x, dp)],
-			guard: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("guard")), dp),
-			expr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
+			values: [for (x in arrOf(EvalField.field(ec, v, EvalNames.hValues()))) decodeExpr(ec, x, dp)],
+			guard: decodeExprOpt(ec, EvalField.field(ec, v, EvalNames.hGuard()), dp),
+			expr: decodeExprOpt(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp),
 			// Read the hidden pos field, the null position when a macro built the case object without it
 			// (the match then falls back to the body position).
-			pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("pos")))
+			pos: posMaybe(ec, EvalField.field(ec, v, EvalNames.hPos()))
 		};
 	}
 
 	static function decodeCatch(ec:EvalContext, v:EvalValue, dp:Position):Catch {
-		var tv = EvalField.field(ec, v, EvalHash.hash("type"));
+		var tv = EvalField.field(ec, v, EvalNames.hType());
 		// name_pos and pos both fall back to the null position - not to the enclosing expression, which is
 		// the separate default a field's pos uses. haxe.macro.Expr.Catch has neither field, so a reified
 		// catch always takes the fallback: hxparse builds every `switch stream` arm as `macro
@@ -4072,10 +4072,10 @@ class EvalMacro {
 		// catch variable prints at line 1. Falling back to the enclosing position would put it on the
 		// switch line and shift the line markers after it.
 		return {
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")))},
+			name: {name: strOf(EvalField.field(ec, v, EvalNames.hName())), pos: posMaybe(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()))},
 			type: tv == VNull ? null : decodeTypeHint(ec, tv, dp),
-			expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			pos: posMaybe(ec, EvalField.field(ec, v, EvalHash.hash("pos")))
+			expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp),
+			pos: posMaybe(ec, EvalField.field(ec, v, EvalNames.hPos()))
 		};
 	}
 
@@ -4107,47 +4107,46 @@ class EvalMacro {
 		// Quotes is an optional QuoteStatus (Unquoted = 0, Quoted = 1); a quoted key must survive the
 		// macro round-trip or the generator emits its raw name (issue seen via the utest TestBuilder
 		// build macro re-encoding every test body).
-		var quotes:QuoteStatus = switch (EvalField.field(ec, v, EvalHash.hash("quotes"))) {
+		var quotes:QuoteStatus = switch (EvalField.field(ec, v, EvalNames.hQuotes())) {
 			case VEnumValue(ev) if (ev.eindex == 1): DoubleQuotes;
 			case _: NoQuotes;
 		};
-		// Takes the field's own name_pos; a macro that builds an object field by hand may omit it, and
-		// decode_placed_name then falls back to the enclosing position, which is what dp is here. uses
-		// maybe_decode_pos, which swallows Invalid_expr and yields null_pos: a macro that builds an
-		// object field by hand has no name_pos, and the STRICT decode_pos would fail the whole
-		// Array<Field>.
-		var np = try posOf(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)
-			catch (_:Dynamic) Position.nullPos;
-		return {name: strOf(EvalField.field(ec, v, EvalHash.hash("field"))), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		// The field's own name_pos; a macro that builds an object field by hand may omit it.
+		// A missing or undecodable name_pos yields the null position: a macro that builds an object field
+		// by hand has no name_pos, and the STRICT position decode would fail the whole Array<Field>.
+		// A null is what posOf rejects as an invalid expression.
+		var npv = EvalField.field(ec, v, EvalNames.hNameUnderscorePos());
+		var np = npv == VNull ? Position.nullPos : try posOf(ec, npv, dp) catch (_:Dynamic) Position.nullPos;
+		return {name: strOf(EvalField.field(ec, v, EvalNames.hField())), pos: np, quotes: quotes, expr: decodeExpr(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp)};
 	}
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
 		return {
 			// A missing name_pos defaults to p.
-			evName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: posDefault(ec, EvalField.field(ec, v, EvalHash.hash("namePos")), dp)},
-			evFinal: boolOf(EvalField.field(ec, v, EvalHash.hash("isFinal"))),
-			evStatic: boolOf(EvalField.field(ec, v, EvalHash.hash("isStatic"))),
-			evType: { var tv = EvalField.field(ec, v, EvalHash.hash("type")); tv == VNull ? null : decodeTypeHint(ec, tv, dp); },
-			evExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp),
-			evMeta: { var mv = EvalField.field(ec, v, EvalHash.hash("meta")); mv == VNull ? [] : [for (m in arrOf(mv)) decodeMetadataEntry(ec, m, dp)]; }
+			evName: {name: strOf(EvalField.field(ec, v, EvalNames.hName())), pos: posDefault(ec, EvalField.field(ec, v, EvalNames.hNamePos()), dp)},
+			evFinal: boolOf(EvalField.field(ec, v, EvalNames.hIsFinal())),
+			evStatic: boolOf(EvalField.field(ec, v, EvalNames.hIsStatic())),
+			evType: { var tv = EvalField.field(ec, v, EvalNames.hType()); tv == VNull ? null : decodeTypeHint(ec, tv, dp); },
+			evExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp),
+			evMeta: { var mv = EvalField.field(ec, v, EvalNames.hMeta()); mv == VNull ? [] : [for (m in arrOf(mv)) decodeMetadataEntry(ec, m, dp)]; }
 		};
 	}
 
 	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
-		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
 		// The field's own pos (used for the field position and, unless the field gives its own name_pos,
 		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
 		// when the field omits pos.
-		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
+		var pos = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), dp);
 		// The modifier's position is the enum VALUE's own (the null position without one), so a modifier
 		// the macro wrote reports inside haxe/macro/Expr.hx, where its constructor is declared.
-		var access = [for (av in arrOf(EvalField.field(ec, v, EvalHash.hash("access")))) ({access: decodeAccess(ec, av),
+		var access = [for (av in arrOf(EvalField.field(ec, v, EvalNames.hAccess()))) ({access: decodeAccess(ec, av),
 			pos: switch (av) { case VEnumValue(ev) if (ev.enpos != null): ev.enpos; case _: Position.nullPos; }} : PlacedAccess)];
-		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalHash.hash("kind")), pos);
-		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
+		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalNames.hKind()), pos);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), pos);
 		// `name_pos`, defaulting to the field's pos.
-		var namePos = posDefault(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), pos);
-		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc"))), pos, meta, access, kind);
+		var namePos = posDefault(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()), pos);
+		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
 	}
 
 	// The string becomes the doc's own text, with nothing inherited.
@@ -4160,10 +4159,10 @@ class EvalMacro {
 	}
 
 	static function decodeMetadataEntry(ec:EvalContext, v:EvalValue, dp:Position):MetadataEntry {
-		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
-		var pv = EvalField.field(ec, v, EvalHash.hash("params"));
+		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
+		var pv = EvalField.field(ec, v, EvalNames.hParams());
 		var params = pv == VNull ? [] : [for (pe in arrOf(pv)) decodeExpr(ec, pe, dp)];
-		return {name: name, params: params, pos: posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp)};
+		return {name: name, params: params, pos: posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), dp)};
 	}
 
 	static function decodeAccess(ec:EvalContext, v:EvalValue):Access {
@@ -4188,11 +4187,11 @@ class EvalMacro {
 
 	static function decodeFunc(ec:EvalContext, v:EvalValue, dp:Position):Func {
 		// `args` decodes as an array: a null is an invalid expression.
-		var argsV = EvalField.field(ec, v, EvalHash.hash("args"));
+		var argsV = EvalField.field(ec, v, EvalNames.hArgs());
 		if (argsV == VNull) throw new DecodeFailure("Invalid expression");
 		var args = [for (av in arrOf(argsV)) decodeFunctionArg(ec, av, dp)];
-		var retV = EvalField.field(ec, v, EvalHash.hash("ret"));
-		return {fParams: decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp), fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("expr")), dp)};
+		var retV = EvalField.field(ec, v, EvalNames.hRet());
+		return {fParams: decodeTparams(ec, EvalField.field(ec, v, EvalNames.hParams()), dp), fArgs: args, fType: retV == VNull ? null : decodeTypeHint(ec, retV, dp), fExpr: decodeExprOpt(ec, EvalField.field(ec, v, EvalNames.hExpr()), dp)};
 	}
 
 	// Type parameters decode as an optional array (null array -> empty).
@@ -4202,8 +4201,8 @@ class EvalMacro {
 
 	// A type parameter declaration. constraints: [] -> none, [t] -> single, many -> CTIntersection.
 	static function decodeTparamDecl(ec:EvalContext, v:EvalValue, dp:Position):TypeParam {
-		var vconstraints = EvalField.field(ec, v, EvalHash.hash("constraints"));
-		var vdefault = EvalField.field(ec, v, EvalHash.hash("defaultType"));
+		var vconstraints = EvalField.field(ec, v, EvalNames.hConstraints());
+		var vdefault = EvalField.field(ec, v, EvalNames.hDefaultType());
 		var constraints:Null<TypeHint> = if (vconstraints == VNull) null else {
 			var arr = arrOf(vconstraints);
 			switch (arr.length) {
@@ -4213,8 +4212,8 @@ class EvalMacro {
 			}
 		};
 		return {
-			tpName: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))), pos: dp},
-			tpParams: decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), dp),
+			tpName: {name: strOf(EvalField.field(ec, v, EvalNames.hName())), pos: dp},
+			tpParams: decodeTparams(ec, EvalField.field(ec, v, EvalNames.hParams()), dp),
 			tpConstraints: constraints,
 			tpDefault: vdefault == VNull ? null : decodeTypeHint(ec, vdefault, dp),
 			tpMeta: []
@@ -4222,33 +4221,33 @@ class EvalMacro {
 	}
 
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
-		var typeV = EvalField.field(ec, v, EvalHash.hash("type"));
+		var typeV = EvalField.field(ec, v, EvalNames.hType());
 		return {
 			// haxe.macro.Expr.FunctionArg has no name_pos field, so the fallback is always taken: the
 			// enclosing expression's position, the same rule the EVars arm spells out. A macro returning
 			// EFunction with an invalid argument name then reports at the macro call position, where a null
 			// fallback would print the error with no position at all.
-			name: {name: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-				pos: posDefault(ec, EvalField.field(ec, v, EvalHash.hash("name_pos")), dp)},
-			opt: boolOf(EvalField.field(ec, v, EvalHash.hash("opt"))),
-			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), dp),
+			name: {name: strOf(EvalField.field(ec, v, EvalNames.hName())),
+				pos: posDefault(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()), dp)},
+			opt: boolOf(EvalField.field(ec, v, EvalNames.hOpt())),
+			meta: decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), dp),
 			type: typeV == VNull ? null : decodeTypeHint(ec, typeV, dp),
-			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalHash.hash("value")), dp)
+			value: decodeExprOpt(ec, EvalField.field(ec, v, EvalNames.hValue()), dp)
 		};
 	}
 
 	// The path's own pos, the null position when the object has none.
 	static function decodePlacedTypePath(ec:EvalContext, v:EvalValue):PlacedTypePath {
-		var pv = EvalField.field(ec, v, EvalHash.hash("pos"));
+		var pv = EvalField.field(ec, v, EvalNames.hPos());
 		return {path: decodeTypePath(ec, v), pos: pv == VNull ? Position.nullPos : posOf(ec, pv, Position.nullPos)};
 	}
 
 	static function decodeTypePath(ec:EvalContext, v:EvalValue):TypePath {
-		var sub = EvalField.field(ec, v, EvalHash.hash("sub"));
+		var sub = EvalField.field(ec, v, EvalNames.hSub());
 		return {
-			tpackage: [for (s in arrOf(EvalField.field(ec, v, EvalHash.hash("pack")))) strOf(s)],
-			tname: strOf(EvalField.field(ec, v, EvalHash.hash("name"))),
-			tparams: [for (x in arrOf(EvalField.field(ec, v, EvalHash.hash("params")))) decodeTypeParam(ec, x, Position.nullPos)],
+			tpackage: [for (s in arrOf(EvalField.field(ec, v, EvalNames.hPack()))) strOf(s)],
+			tname: strOf(EvalField.field(ec, v, EvalNames.hName())),
+			tparams: [for (x in arrOf(EvalField.field(ec, v, EvalNames.hParams()))) decodeTypeParam(ec, x, Position.nullPos)],
 			tsub: sub == VNull ? null : strOf(sub)
 		};
 	}
@@ -4264,30 +4263,30 @@ class EvalMacro {
 	// An import is a tuple, so the mode decodes first; each path part carries its own position (pos before
 	// name), and an alias's is lost (the null position). The declaration sits at defineModule's position.
 	static function decodeImport(ec:EvalContext, v:EvalValue, dp:Position):Import {
-		var modeV = EvalField.field(ec, v, EvalHash.hash("mode"));
+		var modeV = EvalField.field(ec, v, EvalNames.hMode());
 		var mode:ImportMode = switch (ctorName(ec, modeV)) {
 			case "IAll": ImportMode.IAll;
 			case "IAsName": ImportMode.IAsName({name: strOf(eargs(modeV)[0]), pos: Position.nullPos});
 			case _: ImportMode.INormal;
 		};
-		var path = [for (pv in arrOf(EvalField.field(ec, v, EvalHash.hash("path")))) {
-			var pp = posOf(ec, EvalField.field(ec, pv, EvalHash.hash("pos")), dp);
-			({name: strOf(EvalField.field(ec, pv, EvalHash.hash("name"))), pos: pp} : PlacedName);
+		var path = [for (pv in arrOf(EvalField.field(ec, v, EvalNames.hPath()))) {
+			var pp = posOf(ec, EvalField.field(ec, pv, EvalNames.hPos()), dp);
+			({name: strOf(EvalField.field(ec, pv, EvalNames.hName())), pos: pp} : PlacedName);
 		}];
 		return {path: path, mode: mode, pos: dp};
 	}
 
 	static function encodeImportExpr(ec:EvalContext, imp:Import):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("path"), encodeArray([for (pn in imp.path) encodeImportPathPart(ec, pn)]));
-		fields.set(EvalHash.hash("mode"), encodeImportMode(ec, imp.mode));
+		fields.set(EvalNames.hPath(), encodeArray([for (pn in imp.path) encodeImportPathPart(ec, pn)]));
+		fields.set(EvalNames.hMode(), encodeImportMode(ec, imp.mode));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeImportPathPart(ec:EvalContext, pn:PlacedName):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(pn.name));
-		fields.set(EvalHash.hash("pos"), encPos(pn.pos));
+		fields.set(EvalNames.hName(), mkString(pn.name));
+		fields.set(EvalNames.hPos(), encPos(pn.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4342,16 +4341,16 @@ class EvalMacro {
 	}
 
 	static function decodeTypeDefinition(ec:EvalContext, v:EvalValue, dp:Position):TypeDecl {
-		var name = strOf(EvalField.field(ec, v, EvalHash.hash("name")));
+		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
 		// The definition's own pos becomes the type's pos (so a synthesized constructor lands on the
 		// defining macro's position, not a null "?" frame).
-		var pos = posOf(ec, EvalField.field(ec, v, EvalHash.hash("pos")), dp);
-		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalHash.hash("fields")))) decodeField(ec, fv, pos)];
-		var kind = EvalField.field(ec, v, EvalHash.hash("kind"));
-		var isExtern = boolOf(EvalField.field(ec, v, EvalHash.hash("isExtern")));
-		var params = decodeTparams(ec, EvalField.field(ec, v, EvalHash.hash("params")), pos);
-		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalHash.hash("meta")), pos);
-		var doc = decodeDoc(EvalField.field(ec, v, EvalHash.hash("doc")));
+		var pos = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), dp);
+		var fields = [for (fv in arrOf(EvalField.field(ec, v, EvalNames.hFields()))) decodeField(ec, fv, pos)];
+		var kind = EvalField.field(ec, v, EvalNames.hKind());
+		var isExtern = boolOf(EvalField.field(ec, v, EvalNames.hIsExtern()));
+		var params = decodeTparams(ec, EvalField.field(ec, v, EvalNames.hParams()), pos);
+		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), pos);
+		var doc = decodeDoc(EvalField.field(ec, v, EvalNames.hDoc()));
 		return switch (ctorName(ec, kind)) {
 			case "TDClass":
 				var flags = decodeClassFlags(ec, kind, isExtern, pos);
@@ -4474,8 +4473,8 @@ class EvalMacro {
 	public static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {
 		var ed = encodeExprDef(ec, e.expr);
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("expr"), ed);
-		fields.set(EvalHash.hash("pos"), encPos(e.pos));
+		fields.set(EvalNames.hExpr(), ed);
+		fields.set(EvalNames.hPos(), encPos(e.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4537,28 +4536,28 @@ class EvalMacro {
 
 	static function encodeVar(ec:EvalContext, ev:EVar):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(ev.evName.name));
-		fields.set(EvalHash.hash("namePos"), encPos(ev.evName.pos));
-		fields.set(EvalHash.hash("isFinal"), ev.evFinal ? VTrue : VFalse);
-		fields.set(EvalHash.hash("isStatic"), ev.evStatic ? VTrue : VFalse);
-		fields.set(EvalHash.hash("type"), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType));
-		fields.set(EvalHash.hash("expr"), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
-		fields.set(EvalHash.hash("meta"), encodeArray([for (m in ev.evMeta) encodeMetadataEntry(ec, m)]));
+		fields.set(EvalNames.hName(), mkString(ev.evName.name));
+		fields.set(EvalNames.hNamePos(), encPos(ev.evName.pos));
+		fields.set(EvalNames.hIsFinal(), ev.evFinal ? VTrue : VFalse);
+		fields.set(EvalNames.hIsStatic(), ev.evStatic ? VTrue : VFalse);
+		fields.set(EvalNames.hType(), ev.evType == null ? VNull : encodeComplexType(ec, ev.evType));
+		fields.set(EvalNames.hExpr(), ev.evExpr == null ? VNull : encodeExpr(ec, ev.evExpr));
+		fields.set(EvalNames.hMeta(), encodeArray([for (m in ev.evMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(f.cffName.name));
+		fields.set(EvalNames.hName(), mkString(f.cffName.name));
 		// `name_pos` carries the placed name's position, and decoding the field restores it, so a field a
 		// build macro hands back unchanged keeps its name where the parser put it - which the build's
 		// placed-name equality check relies on.
-		fields.set(EvalHash.hash("name_pos"), encPos(f.cffName.pos));
-		fields.set(EvalHash.hash("doc"), encodeDoc(Ast.genDocTextOpt(f.cffDoc)));
-		fields.set(EvalHash.hash("access"), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access, pa.pos)]));
-		fields.set(EvalHash.hash("kind"), encodeFieldKind(ec, f.cffKind));
-		fields.set(EvalHash.hash("pos"), encPos(f.cffPos));
-		fields.set(EvalHash.hash("meta"), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
+		fields.set(EvalNames.hNameUnderscorePos(), encPos(f.cffName.pos));
+		fields.set(EvalNames.hDoc(), encodeDoc(Ast.genDocTextOpt(f.cffDoc)));
+		fields.set(EvalNames.hAccess(), encodeArray([for (pa in f.cffAccess) encodeAccess(ec, pa.access, pa.pos)]));
+		fields.set(EvalNames.hKind(), encodeFieldKind(ec, f.cffKind));
+		fields.set(EvalNames.hPos(), encPos(f.cffPos));
+		fields.set(EvalNames.hMeta(), encodeArray([for (m in f.cffMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4585,10 +4584,10 @@ class EvalMacro {
 
 	static function encodeFunc(ec:EvalContext, f:Func):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("args"), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
-		fields.set(EvalHash.hash("ret"), f.fType == null ? VNull : encodeComplexType(ec, f.fType));
-		fields.set(EvalHash.hash("expr"), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
-		fields.set(EvalHash.hash("params"), encodeArray([for (tp in f.fParams) encodeTparamDecl(ec, tp)]));
+		fields.set(EvalNames.hArgs(), encodeArray([for (a in f.fArgs) encodeFunctionArg(ec, a)]));
+		fields.set(EvalNames.hRet(), f.fType == null ? VNull : encodeComplexType(ec, f.fType));
+		fields.set(EvalNames.hExpr(), f.fExpr == null ? VNull : encodeExpr(ec, f.fExpr));
+		fields.set(EvalNames.hParams(), encodeArray([for (tp in f.fParams) encodeTparamDecl(ec, tp)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4597,27 +4596,27 @@ class EvalMacro {
 	static function encodeTparamDecl(ec:EvalContext, tp:TypeParam):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		// No defaultType is encoded.
-		fields.set(EvalHash.hash("name"), mkString(tp.tpName.name));
-		fields.set(EvalHash.hash("name_pos"), encPos(tp.tpName.pos));
-		fields.set(EvalHash.hash("params"), encodeArray([for (p in tp.tpParams) encodeTparamDecl(ec, p)]));
-		fields.set(EvalHash.hash("constraints"), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints)]));
-		fields.set(EvalHash.hash("meta"), encodeArray([for (m in tp.tpMeta) encodeMetadataEntry(ec, m)]));
+		fields.set(EvalNames.hName(), mkString(tp.tpName.name));
+		fields.set(EvalNames.hNameUnderscorePos(), encPos(tp.tpName.pos));
+		fields.set(EvalNames.hParams(), encodeArray([for (p in tp.tpParams) encodeTparamDecl(ec, p)]));
+		fields.set(EvalNames.hConstraints(), tp.tpConstraints == null ? encodeArray([]) : encodeArray([encodeComplexType(ec, tp.tpConstraints)]));
+		fields.set(EvalNames.hMeta(), encodeArray([for (m in tp.tpMeta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeFunctionArg(ec:EvalContext, a:FunctionArg):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(a.name.name));
+		fields.set(EvalNames.hName(), mkString(a.name.name));
 		// The argument name's position travels alongside the name, even though
 		// haxe.macro.Expr.FunctionArg does not document the field, and decoding reads it back. Without it
 		// a build macro that returns getBuildFields() unchanged would still lose every argument position,
 		// which the js rest-arguments prologue then reports at the enclosing function instead of at the
 		// argument.
-		fields.set(EvalHash.hash("name_pos"), encPos(a.name.pos));
-		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
-		fields.set(EvalHash.hash("type"), a.type == null ? VNull : encodeComplexType(ec, a.type));
-		fields.set(EvalHash.hash("value"), a.value == null ? VNull : encodeExpr(ec, a.value));
-		fields.set(EvalHash.hash("meta"), encodeArray([for (m in a.meta) encodeMetadataEntry(ec, m)]));
+		fields.set(EvalNames.hNameUnderscorePos(), encPos(a.name.pos));
+		fields.set(EvalNames.hOpt(), a.opt ? VTrue : VFalse);
+		fields.set(EvalNames.hType(), a.type == null ? VNull : encodeComplexType(ec, a.type));
+		fields.set(EvalNames.hValue(), a.value == null ? VNull : encodeExpr(ec, a.value));
+		fields.set(EvalNames.hMeta(), encodeArray([for (m in a.meta) encodeMetadataEntry(ec, m)]));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4657,14 +4656,14 @@ class EvalMacro {
 
 	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("field"), mkString(f.name));
+		fields.set(EvalNames.hField(), mkString(f.name));
 		// The field name's own position is encoded as `name_pos` and decoded back. Without it every field
 		// of a structure that went through a build macro would come back carrying the enclosing literal's
 		// position, which the typer then unions into pos - so --json would print `{x: x, y: y}` as the
 		// span of both x and y.
-		fields.set(EvalHash.hash("name_pos"), encPos(f.pos));
-		fields.set(EvalHash.hash("expr"), encodeExpr(ec, f.expr));
-		fields.set(EvalHash.hash("quotes"), mkEnumValue(ec, "QuoteStatus", (switch (f.quotes) { case NoQuotes: "Unquoted"; case DoubleQuotes: "Quoted"; }), []));
+		fields.set(EvalNames.hNameUnderscorePos(), encPos(f.pos));
+		fields.set(EvalNames.hExpr(), encodeExpr(ec, f.expr));
+		fields.set(EvalNames.hQuotes(), mkEnumValue(ec, "QuoteStatus", (switch (f.quotes) { case NoQuotes: "Unquoted"; case DoubleQuotes: "Quoted"; }), []));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4672,11 +4671,11 @@ class EvalMacro {
 	// is none.
 	static function encodeTypePath(ec:EvalContext, tp:TypePath, pos:Position):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("pack"), encodeArray([for (s in tp.tpackage) mkString(s)]));
-		fields.set(EvalHash.hash("name"), mkString(tp.tname));
-		fields.set(EvalHash.hash("params"), encodeArray([for (tpc in tp.tparams) encodeTypeParam(ec, tpc)]));
-		fields.set(EvalHash.hash("pos"), encPos(pos));
-		if (tp.tsub != null) fields.set(EvalHash.hash("sub"), mkString(tp.tsub));
+		fields.set(EvalNames.hPack(), encodeArray([for (s in tp.tpackage) mkString(s)]));
+		fields.set(EvalNames.hName(), mkString(tp.tname));
+		fields.set(EvalNames.hParams(), encodeArray([for (tpc in tp.tparams) encodeTypeParam(ec, tpc)]));
+		fields.set(EvalNames.hPos(), encPos(pos));
+		if (tp.tsub != null) fields.set(EvalNames.hSub(), mkString(tp.tsub));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4697,37 +4696,37 @@ class EvalMacro {
 
 	static function encodeCase(ec:EvalContext, c:SwitchCase):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("values"), encodeArray([for (v in c.values) encodeExpr(ec, v)]));
-		fields.set(EvalHash.hash("guard"), c.guard == null ? VNull : encodeExpr(ec, c.guard));
-		fields.set(EvalHash.hash("expr"), c.expr == null ? VNull : encodeExpr(ec, c.expr));
+		fields.set(EvalNames.hValues(), encodeArray([for (v in c.values) encodeExpr(ec, v)]));
+		fields.set(EvalNames.hGuard(), c.guard == null ? VNull : encodeExpr(ec, c.guard));
+		fields.set(EvalNames.hExpr(), c.expr == null ? VNull : encodeExpr(ec, c.expr));
 		// The case position travels as a hidden pos field even though haxe.macro.Expr.Case does not declare
 		// one.
-		fields.set(EvalHash.hash("pos"), encPos(c.pos));
+		fields.set(EvalNames.hPos(), encPos(c.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeCatch(ec:EvalContext, c:Catch):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(c.name.name));
+		fields.set(EvalNames.hName(), mkString(c.name.name));
 		// name_pos and pos travel with the catch, so a build-macro round trip keeps the var-name and clause
 		// positions instead of the decoder fallback.
-		fields.set(EvalHash.hash("name_pos"), encPos(c.name.pos));
+		fields.set(EvalNames.hNameUnderscorePos(), encPos(c.name.pos));
 		// Preserve the catch type hint so a build macro that reads and re-emits a try/catch keeps the
 		// declared catch type. Dropping it here made every round-tripped catch decode back to Dynamic,
 		// which then bound the raw thrown value instead of a haxe.ValueException wrapper.
-		fields.set(EvalHash.hash("type"), c.type == null ? VNull : encodeComplexType(ec, c.type));
-		fields.set(EvalHash.hash("expr"), encodeExpr(ec, c.expr));
-		fields.set(EvalHash.hash("pos"), encPos(c.pos));
+		fields.set(EvalNames.hType(), c.type == null ? VNull : encodeComplexType(ec, c.type));
+		fields.set(EvalNames.hExpr(), encodeExpr(ec, c.expr));
+		fields.set(EvalNames.hPos(), encPos(c.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeMetadataEntry(ec:EvalContext, m:MetadataEntry):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(m.name));
-		fields.set(EvalHash.hash("params"), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
+		fields.set(EvalNames.hName(), mkString(m.name));
+		fields.set(EvalNames.hParams(), encodeArray([for (pe in m.params) encodeExpr(ec, pe)]));
 		// The entry position is encoded; without it every metadata entry that survives a build macro round
 		// trip would fall back to the field position.
-		fields.set(EvalHash.hash("pos"), encPos(m.pos));
+		fields.set(EvalNames.hPos(), encPos(m.pos));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4856,7 +4855,7 @@ class EvalMacro {
 						// The field list is in descending name order: an ascending visit that prepends
 						// each.
 						var names = [for (k in an.fields.keys()) k];
-						names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+						hxc.core.StringSort.sortDescending(names);
 						var fields:Array<hxc.ast.Ast.ClassField> = [];
 						for (n in names) {
 							var f = an.fields.get(n);
@@ -4934,9 +4933,9 @@ class EvalMacro {
 
 	public static function encodeTypedExpr(ec:EvalContext, e:TExpr):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("expr"), encodeTypedExprDef(ec, e.expr));
-		fields.set(EvalHash.hash("pos"), encPos(e.pos));
-		fields.set(EvalHash.hash("t"), encodeType(ec, e.type));
+		fields.set(EvalNames.hExpr(), encodeTypedExprDef(ec, e.expr));
+		fields.set(EvalNames.hPos(), encPos(e.pos));
+		fields.set(EvalNames.hT(), encodeType(ec, e.type));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -4993,20 +4992,20 @@ class EvalMacro {
 		var refId = nextTvarRefId++;
 		tvarRefs.set(refId, v);
 		// The tvar object's handle is an Unsafe instance, not a number.
-		fields.set(EvalHash.hash("$"), unsafeValue(ec, refId));
-		fields.set(EvalHash.hash("id"), VInt(v.id));
-		fields.set(EvalHash.hash("name"), mkString(v.name));
-		fields.set(EvalHash.hash("t"), encodeType(ec, v.type));
+		fields.set(EvalNames.hDollar(), unsafeValue(ec, refId));
+		fields.set(EvalNames.hId(), VInt(v.id));
+		fields.set(EvalNames.hName(), mkString(v.name));
+		fields.set(EvalNames.hT(), encodeType(ec, v.type));
 		// A local function's var reads as captured: the VFinal INDEX is stored as its flags.
-		fields.set(EvalHash.hash("capture"), TypeFunctions.hasVarFlag(v, VCaptured) ? VTrue : VFalse);
-		fields.set(EvalHash.hash("extra"), v.extra == null ? VNull : {
+		fields.set(EvalNames.hCapture(), TypeFunctions.hasVarFlag(v, VCaptured) ? VTrue : VFalse);
+		fields.set(EvalNames.hExtra(), v.extra == null ? VNull : {
 			var x:Map<Int, EvalValue> = new Map();
-			x.set(EvalHash.hash("params"), encodeArray([for (tp in v.extra.params) encodeTypeParameterValue(ec, tp)]));
-			x.set(EvalHash.hash("expr"), v.extra.expr == null ? VNull : encodeTypedExpr(ec, v.extra.expr));
+			x.set(EvalNames.hParams(), encodeArray([for (tp in v.extra.params) encodeTypeParameterValue(ec, tp)]));
+			x.set(EvalNames.hExpr(), v.extra.expr == null ? VNull : encodeTypedExpr(ec, v.extra.expr));
 			VObject(new VObject([], ODictionary(x)));
 		});
-		fields.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return v.meta, function(m) v.meta = m));
-		fields.set(EvalHash.hash("isStatic"), TypeFunctions.hasVarFlag(v, VStatic) ? VTrue : VFalse);
+		fields.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return v.meta, function(m) v.meta = m));
+		fields.set(EvalNames.hIsStatic(), TypeFunctions.hasVarFlag(v, VStatic) ? VTrue : VFalse);
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5034,45 +5033,45 @@ class EvalMacro {
 
 	static function encodeTFunc(ec:EvalContext, fn:TFunc):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("args"), encodeArray([for (a in fn.args) typedFuncArg(ec, a)]));
-		fields.set(EvalHash.hash("t"), encodeType(ec, fn.type));
-		fields.set(EvalHash.hash("expr"), encodeTypedExpr(ec, fn.expr));
+		fields.set(EvalNames.hArgs(), encodeArray([for (a in fn.args) typedFuncArg(ec, a)]));
+		fields.set(EvalNames.hT(), encodeType(ec, fn.type));
+		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, fn.expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function typedFuncArg(ec:EvalContext, a:TFuncArg):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("v"), encodeTVar(ec, a.v));
-		fields.set(EvalHash.hash("value"), a.c == null ? VNull : encodeTypedExpr(ec, a.c));
+		fields.set(EvalNames.hV(), encodeTVar(ec, a.v));
+		fields.set(EvalNames.hValue(), a.c == null ? VNull : encodeTypedExpr(ec, a.c));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function typedObjectField(ec:EvalContext, name:String, expr:TExpr):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(name));
-		fields.set(EvalHash.hash("expr"), encodeTypedExpr(ec, expr));
+		fields.set(EvalNames.hName(), mkString(name));
+		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function typedSwitchCase(ec:EvalContext, c:TSwitchCase):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("values"), encodeArray([for (e in c.values) encodeTypedExpr(ec, e)]));
-		fields.set(EvalHash.hash("expr"), encodeTypedExpr(ec, c.expr));
+		fields.set(EvalNames.hValues(), encodeArray([for (e in c.values) encodeTypedExpr(ec, e)]));
+		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, c.expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function typedCatch(ec:EvalContext, c:TCatch):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("v"), encodeTVar(ec, c.v));
-		fields.set(EvalHash.hash("expr"), encodeTypedExpr(ec, c.expr));
+		fields.set(EvalNames.hV(), encodeTVar(ec, c.v));
+		fields.set(EvalNames.hExpr(), encodeTypedExpr(ec, c.expr));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
 	static function encodeBaseType(ec:EvalContext, path:hxc.core.Globals.Path):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(path.name));
-		fields.set(EvalHash.hash("pack"), encodeArray([for (s in path.pack) mkString(s)]));
-		fields.set(EvalHash.hash("module"), mkString(path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name));
+		fields.set(EvalNames.hName(), mkString(path.name));
+		fields.set(EvalNames.hPack(), encodeArray([for (s in path.pack) mkString(s)]));
+		fields.set(EvalNames.hModule(), mkString(path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5096,9 +5095,9 @@ class EvalMacro {
 			var fields:Map<Int, EvalValue> = new Map();
 			// Fields encode in ascending name order.
 			var names = [for (k in an.fields.keys()) k];
-			names.sort(function(x, y) return x < y ? -1 : (x > y ? 1 : 0));
-			fields.set(EvalHash.hash("fields"), encodeArray([for (n in names) encodeClassField(ec, an.fields.get(n))]));
-			fields.set(EvalHash.hash("status"), encodeAnonStatus(ec, an.status.get()));
+			hxc.core.StringSort.sort(names);
+			fields.set(EvalNames.hFields(), encodeArray([for (n in names) encodeClassField(ec, an.fields.get(n))]));
+			fields.set(EvalNames.hStatus(), encodeAnonStatus(ec, an.status.get()));
 			return VObject(new VObject([], ODictionary(fields)));
 		}
 		var refId = nextAnonRefId++;
@@ -5154,7 +5153,7 @@ class EvalMacro {
 
 	static function encodeLazyRef(ec:EvalContext, thunk:Void->EvalValue):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("get"), VFunction(function(_) return thunk(), true));
+		fields.set(EvalNames.hGet(), VFunction(function(_) return thunk(), true));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5164,7 +5163,7 @@ class EvalMacro {
 	}
 
 	static function encPos(p:Position):EvalValue {
-		var path = EvalHash.hash("haxe.macro.Position");
+		var path = EvalNames.hHaxeMacroPosition();
 		var proto = ecProto(path);
 		return VInstance(new VInstance([], proto, IPos(p)));
 	}
@@ -5192,7 +5191,7 @@ class EvalMacro {
 				case _: fallback;
 			}
 			case _:
-				try new Position(strOf(EvalField.field(ec, v, EvalHash.hash("file"))), intOf(EvalField.field(ec, v, EvalHash.hash("min"))), intOf(EvalField.field(ec, v, EvalHash.hash("max"))))
+				try new Position(strOf(EvalField.field(ec, v, EvalNames.hFile())), intOf(EvalField.field(ec, v, EvalNames.hMin())), intOf(EvalField.field(ec, v, EvalNames.hMax())))
 				catch (_:Dynamic) fallback;
 		};
 	}
@@ -5309,9 +5308,9 @@ class EvalMacro {
 
 	static function posInfosValue(ec:EvalContext, p:Position):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("file"), mkString(p.file));
-		fields.set(EvalHash.hash("min"), VInt(p.min));
-		fields.set(EvalHash.hash("max"), VInt(p.max));
+		fields.set(EvalNames.hFile(), mkString(p.file));
+		fields.set(EvalNames.hMin(), VInt(p.min));
+		fields.set(EvalNames.hMax(), VInt(p.max));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5322,26 +5321,26 @@ class EvalMacro {
 	}
 
 	static function macroErrorValue(ec:EvalContext, msg:String, posValue:EvalValue, pos:Position):EvalValue {
-		var proto = ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"));
-		if (proto == null) proto = ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error"));
+		var proto = ec.instancePrototypes.get(EvalNames.hHaxeMacroError());
+		if (proto == null) proto = ec.instancePrototypes.get(EvalNames.hHaxeMacroExprError());
 		if (proto == null) return mkString(msg);
-		ensureInstanceSlot(proto, EvalHash.hash("message"));
-		ensureInstanceSlot(proto, EvalHash.hash("get_message"));
-		ensureInstanceSlot(proto, EvalHash.hash("pos"));
-		ensureInstanceSlot(proto, EvalHash.hash("childErrors"));
-		ensureInstanceSlot(proto, EvalHash.hash("toString"));
-		ensureInstanceSlot(proto, EvalHash.hash("__hxcAbort"));
+		ensureInstanceSlot(proto, EvalNames.hMessage());
+		ensureInstanceSlot(proto, EvalNames.hGetMessage());
+		ensureInstanceSlot(proto, EvalNames.hPos());
+		ensureInstanceSlot(proto, EvalNames.hChildErrors());
+		ensureInstanceSlot(proto, EvalNames.hToString());
+		ensureInstanceSlot(proto, EvalNames.h___hxcAbort());
 		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
-		EvalField.setField(ec, v, EvalHash.hash("message"), mkString(msg), pos);
-		EvalField.setField(ec, v, EvalHash.hash("get_message"), VFunction(function(_) return mkString(msg), false), pos);
-		EvalField.setField(ec, v, EvalHash.hash("pos"), posValue, pos);
-		EvalField.setField(ec, v, EvalHash.hash("childErrors"), VNull, pos);
+		EvalField.setField(ec, v, EvalNames.hMessage(), mkString(msg), pos);
+		EvalField.setField(ec, v, EvalNames.hGetMessage(), VFunction(function(_) return mkString(msg), false), pos);
+		EvalField.setField(ec, v, EvalNames.hPos(), posValue, pos);
+		EvalField.setField(ec, v, EvalNames.hChildErrors(), VNull, pos);
 		// The value Context.error raises through the native boundary; a haxe.macro.Error a macro throws
 		// itself is an uncaught exception like any other value Abort for the former and nothing
 		// distinguishes the latter from a string).
-		EvalField.setField(ec, v, EvalHash.hash("__hxcAbort"), VTrue, pos);
+		EvalField.setField(ec, v, EvalNames.h___hxcAbort(), VTrue, pos);
 		// haxe.Exception.toString() yields the message, so Std.string(err) is the message text.
-		EvalField.setField(ec, v, EvalHash.hash("toString"), VFunction(function(_) return mkString(msg), false), pos);
+		EvalField.setField(ec, v, EvalNames.hToString(), VFunction(function(_) return mkString(msg), false), pos);
 		return v;
 	}
 
@@ -5378,7 +5377,7 @@ class EvalMacro {
 	// itself.
 	static function isAbortValue(ec:EvalContext, v:EvalValue):Bool {
 		return switch (EvalValueTools.vresolve(v)) {
-			case VInstance(_): EvalField.field(ec, v, EvalHash.hash("__hxcAbort")) == VTrue;
+			case VInstance(_): EvalField.field(ec, v, EvalNames.h___hxcAbort()) == VTrue;
 			case _: false;
 		};
 	}
@@ -5389,25 +5388,25 @@ class EvalMacro {
 		return switch (EvalValueTools.vresolve(ex.value)) {
 			// Only a haxe.macro.Error instance reads as an error of its own (its message at its position);
 			// any other thrown value is uncaught.
-			case VInstance(vi) if (vi.iproto != null && (vi.iproto == ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Error"))
-					|| vi.iproto == ec.instancePrototypes.get(EvalHash.hash("haxe.macro.Expr.Error")))):
+			case VInstance(vi) if (vi.iproto != null && (vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroError())
+					|| vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroExprError()))):
 				// A user built haxe.macro.Error keeps message behind the Exception property
 				// whose backing slot is __exceptionMessage; the raw message slot is null.
-				var msgRaw = EvalField.field(ec, ex.value, EvalHash.hash("message"));
+				var msgRaw = EvalField.field(ec, ex.value, EvalNames.hMessage());
 				if (EvalValueTools.vresolve(msgRaw).match(VNull))
 					msgRaw = EvalField.field(ec, ex.value, EvalHash.keyExceptionMessage);
 				var msg = switch (EvalValueTools.vresolve(msgRaw)) {
 					case VNull: EvalStdLib.stringOf(ex.value);
 					case _: EvalStdLib.stringOf(msgRaw);
 				};
-					var pv = EvalField.field(ec, ex.value, EvalHash.hash("pos"));
+					var pv = EvalField.field(ec, ex.value, EvalNames.hPos());
 				var pos = switch (EvalValueTools.vresolve(pv)) {
 					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
 					case VObject(o): switch (o.oproto) {
 						case ODictionary(fields):
-							var file = EvalStdLib.stringOf(fields.get(EvalHash.hash("file")));
-							var min = switch (fields.get(EvalHash.hash("min"))) { case VInt(i): i; case _: -1; };
-							var max = switch (fields.get(EvalHash.hash("max"))) { case VInt(i): i; case _: -1; };
+							var file = EvalStdLib.stringOf(fields.get(EvalNames.hFile()));
+							var min = switch (fields.get(EvalNames.hMin())) { case VInt(i): i; case _: -1; };
+							var max = switch (fields.get(EvalNames.hMax())) { case VInt(i): i; case _: -1; };
 							new Position(file, min, max);
 						case _: Position.nullPos;
 					};
@@ -5421,9 +5420,9 @@ class EvalMacro {
 	// haxe.macro.Type.MetaAccess: get/has/add/extract/remove over a mutable list.
 	static function encodeMetaAccess(ec:EvalContext, getMeta:Void->Metadata, setMeta:Metadata->Void):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("get"), VFunction(function(_) return encodeArray([for (m in getMeta()) encodeMetadataEntry(ec, m)]), true));
-		fields.set(EvalHash.hash("has"), VFunction(function(a) { var k = strOf(a[0]); for (m in getMeta()) if (m.name == k) return VTrue; return VFalse; }, true));
-		fields.set(EvalHash.hash("add"), VFunction(function(a) {
+		fields.set(EvalNames.hGet(), VFunction(function(_) return encodeArray([for (m in getMeta()) encodeMetadataEntry(ec, m)]), true));
+		fields.set(EvalNames.hHas(), VFunction(function(a) { var k = strOf(a[0]); for (m in getMeta()) if (m.name == k) return VTrue; return VFalse; }, true));
+		fields.set(EvalNames.hAdd(), VFunction(function(a) {
 			var k = strOf(a[0]);
 			var params = (a.length > 1 && a[1] != VNull) ? [for (pv in arrOf(a[1])) decodeExpr(ec, pv, Position.nullPos)] : [];
 			var meta = getMeta();
@@ -5433,8 +5432,8 @@ class EvalMacro {
 			setMeta(meta);
 			return VNull;
 		}, true));
-		fields.set(EvalHash.hash("extract"), VFunction(function(a) { var k = strOf(a[0]); return encodeArray([for (m in getMeta()) if (m.name == k) encodeMetadataEntry(ec, m)]); }, true));
-		fields.set(EvalHash.hash("remove"), VFunction(function(a) { var k = strOf(a[0]); setMeta([for (m in getMeta()) if (m.name != k) m]); return VNull; }, true));
+		fields.set(EvalNames.hExtract(), VFunction(function(a) { var k = strOf(a[0]); return encodeArray([for (m in getMeta()) if (m.name == k) encodeMetadataEntry(ec, m)]); }, true));
+		fields.set(EvalNames.hRemove(), VFunction(function(a) { var k = strOf(a[0]); setMeta([for (m in getMeta()) if (m.name != k) m]); return VNull; }, true));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5468,56 +5467,56 @@ class EvalMacro {
 
 	static function encodeClassField(ec:EvalContext, cf:TClassField, ?owner:TClass):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("name"), mkString(cf.name));
+		f.set(EvalNames.hName(), mkString(cf.name));
 		// A field's type is encoded LAZILY - a body not yet typed stays behind TLazy.
-		f.set(EvalHash.hash("type"), encodeLazyType(ec, cf.type));
-		f.set(EvalHash.hash("isPublic"), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in cf.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
+		f.set(EvalNames.hType(), encodeLazyType(ec, cf.type));
+		f.set(EvalNames.hIsPublic(), TypeFunctions.hasClassFieldFlag(cf, CfPublic) ? VTrue : VFalse);
+		f.set(EvalNames.hParams(), encodeArray([for (tp in cf.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return cf.meta, function(m) cf.meta = m));
 		// ClassField.expr(): the field's typed expression, typing the body on demand when the owner is
 		// known.
-		f.set(EvalHash.hash("expr"), VFunction(function(_) {
+		f.set(EvalNames.hExpr(), VFunction(function(_) {
 			if (cf.expr == null && owner != null && currentCompiler() != null)
 				hxc.typing.TypeFields.forceFieldBody(currentCompiler(), owner, cf);
 			return cf.expr == null ? VNull : encodeTypedExpr(ec, cf.expr);
 		}, true));
-		f.set(EvalHash.hash("kind"), encodeTFieldKind(ec, cf.kind));
-		f.set(EvalHash.hash("pos"), encPos(cf.pos));
-		f.set(EvalHash.hash("namePos"), encPos(cf.namePos));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(cf.doc)));
-		f.set(EvalHash.hash("overloads"), encodeLazyRef(ec, function() return encodeArray([for (ocf in cf.overloads) encodeClassField(ec, ocf)])));
-		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFieldFlag(cf, CfExtern) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isFinal"), TypeFunctions.hasClassFieldFlag(cf, CfFinal) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isAbstract"), TypeFunctions.hasClassFieldFlag(cf, CfAbstract) ? VTrue : VFalse);
+		f.set(EvalNames.hKind(), encodeTFieldKind(ec, cf.kind));
+		f.set(EvalNames.hPos(), encPos(cf.pos));
+		f.set(EvalNames.hNamePos(), encPos(cf.namePos));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(cf.doc)));
+		f.set(EvalNames.hOverloads(), encodeLazyRef(ec, function() return encodeArray([for (ocf in cf.overloads) encodeClassField(ec, ocf)])));
+		f.set(EvalNames.hIsExtern(), TypeFunctions.hasClassFieldFlag(cf, CfExtern) ? VTrue : VFalse);
+		f.set(EvalNames.hIsFinal(), TypeFunctions.hasClassFieldFlag(cf, CfFinal) ? VTrue : VFalse);
+		f.set(EvalNames.hIsAbstract(), TypeFunctions.hasClassFieldFlag(cf, CfAbstract) ? VTrue : VFalse);
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeClassRelation(ec:EvalContext, rel:TClassWithParams):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("t"), encodeClassRef(ec, rel.c));
-		f.set(EvalHash.hash("params"), encodeArray([for (p in rel.params) encodeType(ec, p)]));
+		f.set(EvalNames.hT(), encodeClassRef(ec, rel.c));
+		f.set(EvalNames.hParams(), encodeArray([for (p in rel.params) encodeType(ec, p)]));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeAbstractBinop(ec:EvalContext, op:TAbstractOp):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("op"), encodeBinop(ec, op.op));
-		f.set(EvalHash.hash("field"), encodeClassField(ec, op.cf));
+		f.set(EvalNames.hOp(), encodeBinop(ec, op.op));
+		f.set(EvalNames.hField(), encodeClassField(ec, op.cf));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeAbstractUnop(ec:EvalContext, op:TAbstractUnop):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("op"), encodeUnop(ec, op.op));
-		f.set(EvalHash.hash("postFix"), op.flag == Postfix ? VTrue : VFalse);
-		f.set(EvalHash.hash("field"), encodeClassField(ec, op.cf));
+		f.set(EvalNames.hOp(), encodeUnop(ec, op.op));
+		f.set(EvalNames.hPostFix(), op.flag == Postfix ? VTrue : VFalse);
+		f.set(EvalNames.hField(), encodeClassField(ec, op.cf));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeAbstractCast(ec:EvalContext, t:T, cf:Null<TClassField>):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("t"), encodeType(ec, t));
-		f.set(EvalHash.hash("field"), cf == null ? VNull : encodeClassField(ec, cf));
+		f.set(EvalNames.hT(), encodeType(ec, t));
+		f.set(EvalNames.hField(), cf == null ? VNull : encodeClassField(ec, cf));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -5532,7 +5531,7 @@ class EvalMacro {
 		var names:Map<Int, Int> = new Map();
 		names.set(EvalHash.keyGet, 0);
 		names.set(EvalHash.key_toString, 1);
-		var proto = new VPrototype(EvalHash.hash("haxe.macro.Ref"), [], new Map(), [VNull, VNull], names, null, PInstance, VNull);
+		var proto = new VPrototype(EvalNames.hHaxeMacroRef(), [], new Map(), [VNull, VNull], names, null, PInstance, VNull);
 		proto.pvalue = VPrototype(proto);
 		refProtoCache = proto;
 		return proto;
@@ -5567,7 +5566,7 @@ class EvalMacro {
 
 	static function unsafeValue(ec:EvalContext, id:Int):EvalValue {
 		if (unsafeProtoCache == null) {
-			var proto = new VPrototype(EvalHash.hash("haxe.macro.Unsafe"), [], new Map(), [], new Map(), null, PInstance, VNull);
+			var proto = new VPrototype(EvalNames.hHaxeMacroUnsafe(), [], new Map(), [], new Map(), null, PInstance, VNull);
 			proto.pvalue = VPrototype(proto);
 			unsafeProtoCache = proto;
 		}
@@ -5585,8 +5584,8 @@ class EvalMacro {
 			case VInstance({ikind: IRef(VInt(id))}): id;
 			case VObject(_):
 				// A module type's `__t`, or a tvar object's `$`
-				var t = EvalField.field(ec, v, EvalHash.hash("__t"));
-				refHandle(ec, t != VNull ? t : EvalField.field(ec, v, EvalHash.hash("$")));
+				var t = EvalField.field(ec, v, EvalNames.h___t());
+				refHandle(ec, t != VNull ? t : EvalField.field(ec, v, EvalNames.hDollar()));
 			case _: null;
 		};
 	}
@@ -5638,21 +5637,21 @@ class EvalMacro {
 
 	static function classWithParamsValue(ec:EvalContext, c:TClassWithParams):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("c"), encodeClassRef(ec, c.c));
-		f.set(EvalHash.hash("params"), encodeArray([for (p in c.params) encodeType(ec, p)]));
+		f.set(EvalNames.hC(), encodeClassRef(ec, c.c));
+		f.set(EvalNames.hParams(), encodeArray([for (p in c.params) encodeType(ec, p)]));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeEnumField(ec:EvalContext, ef:TEnumField):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("name"), mkString(ef.name));
-		f.set(EvalHash.hash("type"), encodeType(ec, ef.type));
-		f.set(EvalHash.hash("pos"), encPos(ef.pos));
-		f.set(EvalHash.hash("namePos"), encPos(ef.namePos));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(ef.doc)));
-		f.set(EvalHash.hash("index"), VInt(ef.index));
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
+		f.set(EvalNames.hName(), mkString(ef.name));
+		f.set(EvalNames.hType(), encodeType(ec, ef.type));
+		f.set(EvalNames.hPos(), encPos(ef.pos));
+		f.set(EvalNames.hNamePos(), encPos(ef.namePos));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(ef.doc)));
+		f.set(EvalNames.hIndex(), VInt(ef.index));
+		f.set(EvalNames.hParams(), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
@@ -5664,28 +5663,28 @@ class EvalMacro {
 		var f:Map<Int, EvalValue> = new Map();
 		// The hidden ref handle round-trips the decl through decode.
 		stashModuleTypeRef(f, TClassDecl(c));
-		f.set(EvalHash.hash("pack"), encodeArray([for (s in c.path.pack) mkString(s)]));
-		f.set(EvalHash.hash("name"), mkString(c.path.name));
-		f.set(EvalHash.hash("module"), mkString(c.module == null ? c.path.name : Context.pathKey(c.module.path)));
-		f.set(EvalHash.hash("pos"), encPos(c.pos));
-		f.set(EvalHash.hash("isPrivate"), c.isPrivate ? VTrue : VFalse);
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(c.doc)));
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in c.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("kind"), encodeClassKind(ec, c.kind));
-		f.set(EvalHash.hash("isExtern"), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isInterface"), TypeFunctions.hasClassFlag(c, CInterface) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isFinal"), TypeFunctions.hasClassFlag(c, CFinal) ? VTrue : VFalse);
-		f.set(EvalHash.hash("isAbstract"), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
-		f.set(EvalHash.hash("superClass"), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
-		f.set(EvalHash.hash("interfaces"), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
-		f.set(EvalHash.hash("fields"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
-		f.set(EvalHash.hash("statics"), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
-		f.set(EvalHash.hash("constructor"), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
-		f.set(EvalHash.hash("init"), c.init == null ? VNull : encodeTypedExpr(ec, c.init));
-		f.set(EvalHash.hash("overrides"), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
+		f.set(EvalNames.hPack(), encodeArray([for (s in c.path.pack) mkString(s)]));
+		f.set(EvalNames.hName(), mkString(c.path.name));
+		f.set(EvalNames.hModule(), mkString(c.module == null ? c.path.name : Context.pathKey(c.module.path)));
+		f.set(EvalNames.hPos(), encPos(c.pos));
+		f.set(EvalNames.hIsPrivate(), c.isPrivate ? VTrue : VFalse);
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return c.meta, function(m) c.meta = m));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(c.doc)));
+		f.set(EvalNames.hParams(), encodeArray([for (tp in c.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hKind(), encodeClassKind(ec, c.kind));
+		f.set(EvalNames.hIsExtern(), TypeFunctions.hasClassFlag(c, CExtern) ? VTrue : VFalse);
+		f.set(EvalNames.hIsInterface(), TypeFunctions.hasClassFlag(c, CInterface) ? VTrue : VFalse);
+		f.set(EvalNames.hIsFinal(), TypeFunctions.hasClassFlag(c, CFinal) ? VTrue : VFalse);
+		f.set(EvalNames.hIsAbstract(), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
+		f.set(EvalNames.hSuperClass(), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
+		f.set(EvalNames.hInterfaces(), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
+		f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
+		f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
+		f.set(EvalNames.hConstructor(), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+		f.set(EvalNames.hInit(), c.init == null ? VNull : encodeTypedExpr(ec, c.init));
+		f.set(EvalNames.hOverrides(), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
 		// Exclude() makes the class extern and drops its init.
-		f.set(EvalHash.hash("exclude"), VFunction(function(_) {
+		f.set(EvalNames.hExclude(), VFunction(function(_) {
 			TypeFunctions.addClassFlag(c, CExtern);
 			c.init = null;
 			return VNull;
@@ -5696,82 +5695,82 @@ class EvalMacro {
 	static function encodeEnumType(ec:EvalContext, e:TEnum):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		stashModuleTypeRef(f, TEnumDecl(e));
-		f.set(EvalHash.hash("pack"), encodeArray([for (s in e.path.pack) mkString(s)]));
-		f.set(EvalHash.hash("name"), mkString(e.path.name));
-		f.set(EvalHash.hash("module"), mkString(e.module == null ? e.path.name : Context.pathKey(e.module.path)));
-		f.set(EvalHash.hash("pos"), encPos(e.pos));
-		f.set(EvalHash.hash("isPrivate"), e.isPrivate ? VTrue : VFalse);
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return e.meta, function(m) e.meta = m));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(e.doc)));
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in e.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("isExtern"), e.isExtern ? VTrue : VFalse);
+		f.set(EvalNames.hPack(), encodeArray([for (s in e.path.pack) mkString(s)]));
+		f.set(EvalNames.hName(), mkString(e.path.name));
+		f.set(EvalNames.hModule(), mkString(e.module == null ? e.path.name : Context.pathKey(e.module.path)));
+		f.set(EvalNames.hPos(), encPos(e.pos));
+		f.set(EvalNames.hIsPrivate(), e.isPrivate ? VTrue : VFalse);
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return e.meta, function(m) e.meta = m));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(e.doc)));
+		f.set(EvalNames.hParams(), encodeArray([for (tp in e.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hIsExtern(), e.isExtern ? VTrue : VFalse);
 		// Exclude() makes the enum extern.
-		f.set(EvalHash.hash("exclude"), VFunction(function(_) { e.isExtern = true; return VNull; }, true));
+		f.set(EvalNames.hExclude(), VFunction(function(_) { e.isExtern = true; return VNull; }, true));
 		// A haxe.ds.StringMap, so get/exists/keys work on it.
 		var constrs:Map<String, EvalValue> = new Map();
 		for (name in e.names) {
 			var ef = e.constrs.get(name);
 			if (ef != null) constrs.set(name, encodeEnumField(ec, ef));
 		}
-		f.set(EvalHash.hash("constructs"), EvalStdLib.mkStringMapValues(ec, constrs));
-		f.set(EvalHash.hash("names"), encodeArray([for (name in e.names) mkString(name)]));
+		f.set(EvalNames.hConstructs(), EvalStdLib.mkStringMapValues(ec, constrs));
+		f.set(EvalNames.hNames(), encodeArray([for (name in e.names) mkString(name)]));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeTypeParameterValue(ec:EvalContext, tp:TypedTypeParam):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
-		f.set(EvalHash.hash("name"), mkString(tp.name));
-		f.set(EvalHash.hash("t"), encodeType(ec, tp.type));
-		f.set(EvalHash.hash("defaultType"), tp.defaultType == null ? VNull : encodeType(ec, tp.defaultType));
+		f.set(EvalNames.hName(), mkString(tp.name));
+		f.set(EvalNames.hT(), encodeType(ec, tp.type));
+		f.set(EvalNames.hDefaultType(), tp.defaultType == null ? VNull : encodeType(ec, tp.defaultType));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeDefType(ec:EvalContext, d:TDef):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		stashModuleTypeRef(f, TTypeDecl(d));
-		f.set(EvalHash.hash("pack"), encodeArray([for (s in d.path.pack) mkString(s)]));
-		f.set(EvalHash.hash("name"), mkString(d.path.name));
-		f.set(EvalHash.hash("module"), mkString(d.module == null ? d.path.name : Context.pathKey(d.module.path)));
-		f.set(EvalHash.hash("pos"), encPos(d.pos));
-		f.set(EvalHash.hash("isPrivate"), d.isPrivate ? VTrue : VFalse);
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return d.meta, function(m) d.meta = m));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(d.doc)));
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in d.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("type"), encodeType(ec, d.type));
+		f.set(EvalNames.hPack(), encodeArray([for (s in d.path.pack) mkString(s)]));
+		f.set(EvalNames.hName(), mkString(d.path.name));
+		f.set(EvalNames.hModule(), mkString(d.module == null ? d.path.name : Context.pathKey(d.module.path)));
+		f.set(EvalNames.hPos(), encPos(d.pos));
+		f.set(EvalNames.hIsPrivate(), d.isPrivate ? VTrue : VFalse);
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return d.meta, function(m) d.meta = m));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(d.doc)));
+		f.set(EvalNames.hParams(), encodeArray([for (tp in d.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hType(), encodeType(ec, d.type));
 		// A typedef is never extern and exclude() does nothing.
-		f.set(EvalHash.hash("isExtern"), VFalse);
-		f.set(EvalHash.hash("exclude"), VFunction(function(_) return VNull, true));
+		f.set(EvalNames.hIsExtern(), VFalse);
+		f.set(EvalNames.hExclude(), VFunction(function(_) return VNull, true));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeAbstractType(ec:EvalContext, a:TAbstract):EvalValue {
 		var f:Map<Int, EvalValue> = new Map();
 		stashModuleTypeRef(f, TAbstractDecl(a));
-		f.set(EvalHash.hash("pack"), encodeArray([for (s in a.path.pack) mkString(s)]));
-		f.set(EvalHash.hash("name"), mkString(a.path.name));
-		f.set(EvalHash.hash("module"), mkString(a.module == null ? a.path.name : Context.pathKey(a.module.path)));
-		f.set(EvalHash.hash("pos"), encPos(a.pos));
-		f.set(EvalHash.hash("isPrivate"), a.isPrivate ? VTrue : VFalse);
-		f.set(EvalHash.hash("meta"), encodeMetaAccess(ec, function() return a.meta, function(m) a.meta = m));
-		f.set(EvalHash.hash("doc"), encodeDoc(Ast.getOwnDocOpt(a.doc)));
-		f.set(EvalHash.hash("params"), encodeArray([for (tp in a.params) encodeTypeParameterValue(ec, tp)]));
-		f.set(EvalHash.hash("type"), encodeType(ec, a.thisType));
-		f.set(EvalHash.hash("binops"), encodeArray([for (op in a.ops) encodeAbstractBinop(ec, op)]));
-		f.set(EvalHash.hash("unops"), encodeArray([for (op in a.unops) encodeAbstractUnop(ec, op)]));
-		f.set(EvalHash.hash("array"), encodeArray([for (cf in a.array) encodeClassField(ec, cf)]));
-		f.set(EvalHash.hash("from"), encodeArray([for (t in a.from) encodeAbstractCast(ec, t, null)].concat([for (c in a.fromField) encodeAbstractCast(ec, c.t, c.cf)])));
-		f.set(EvalHash.hash("to"), encodeArray([for (t in a.to) encodeAbstractCast(ec, t, null)].concat([for (c in a.toField) encodeAbstractCast(ec, c.t, c.cf)])));
-		f.set(EvalHash.hash("impl"), a.impl == null ? VNull : encodeClassRef(ec, a.impl));
-		f.set(EvalHash.hash("resolve"), a.read == null ? VNull : encodeClassFieldRef(ec, a.read));
-		f.set(EvalHash.hash("resolveWrite"), a.write == null ? VNull : encodeClassFieldRef(ec, a.write));
+		f.set(EvalNames.hPack(), encodeArray([for (s in a.path.pack) mkString(s)]));
+		f.set(EvalNames.hName(), mkString(a.path.name));
+		f.set(EvalNames.hModule(), mkString(a.module == null ? a.path.name : Context.pathKey(a.module.path)));
+		f.set(EvalNames.hPos(), encPos(a.pos));
+		f.set(EvalNames.hIsPrivate(), a.isPrivate ? VTrue : VFalse);
+		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return a.meta, function(m) a.meta = m));
+		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(a.doc)));
+		f.set(EvalNames.hParams(), encodeArray([for (tp in a.params) encodeTypeParameterValue(ec, tp)]));
+		f.set(EvalNames.hType(), encodeType(ec, a.thisType));
+		f.set(EvalNames.hBinops(), encodeArray([for (op in a.ops) encodeAbstractBinop(ec, op)]));
+		f.set(EvalNames.hUnops(), encodeArray([for (op in a.unops) encodeAbstractUnop(ec, op)]));
+		f.set(EvalNames.hArray(), encodeArray([for (cf in a.array) encodeClassField(ec, cf)]));
+		f.set(EvalNames.hFrom(), encodeArray([for (t in a.from) encodeAbstractCast(ec, t, null)].concat([for (c in a.fromField) encodeAbstractCast(ec, c.t, c.cf)])));
+		f.set(EvalNames.hTo(), encodeArray([for (t in a.to) encodeAbstractCast(ec, t, null)].concat([for (c in a.toField) encodeAbstractCast(ec, c.t, c.cf)])));
+		f.set(EvalNames.hImpl(), a.impl == null ? VNull : encodeClassRef(ec, a.impl));
+		f.set(EvalNames.hResolve(), a.read == null ? VNull : encodeClassFieldRef(ec, a.read));
+		f.set(EvalNames.hResolveWrite(), a.write == null ? VNull : encodeClassFieldRef(ec, a.write));
 		return VObject(new VObject([], ODictionary(f)));
 	}
 
 	static function encodeTypeFunArg(ec:EvalContext, a:TSignatureArg):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
-		fields.set(EvalHash.hash("name"), mkString(a.name));
-		fields.set(EvalHash.hash("opt"), a.opt ? VTrue : VFalse);
-		fields.set(EvalHash.hash("t"), encodeType(ec, a.t));
+		fields.set(EvalNames.hName(), mkString(a.name));
+		fields.set(EvalNames.hOpt(), a.opt ? VTrue : VFalse);
+		fields.set(EvalNames.hT(), encodeType(ec, a.t));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 }

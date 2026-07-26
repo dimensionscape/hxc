@@ -182,7 +182,7 @@ class Finalization {
 			if (c.init != null) walkExpr(p, c.init);
 			// Statics are visited in ascending name order.
 			var names = [for (k in c.statics.keys()) k];
-			names.sort(Reflect.compare);
+			hxc.core.StringSort.sort(names);
 			for (n in names) {
 				var f = c.statics.get(n);
 				if (f.expr == null) continue;
@@ -235,11 +235,11 @@ class Finalization {
 	public static function comparePath(a:Path, b:Path):Int {
 		var n = a.pack.length < b.pack.length ? a.pack.length : b.pack.length;
 		for (i in 0...n) {
-			var c = Reflect.compare(a.pack[i], b.pack[i]);
+			var c = hxc.core.StringSort.compare(a.pack[i], b.pack[i]);
 			if (c != 0) return c;
 		}
 		if (a.pack.length != b.pack.length) return a.pack.length - b.pack.length;
-		return Reflect.compare(a.name, b.name);
+		return hxc.core.StringSort.compare(a.name, b.name);
 	}
 
 	// Fix com.main, com.types and com.modules for the filters and the generator.

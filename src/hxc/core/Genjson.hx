@@ -186,7 +186,7 @@ class Genjson {
 	function generateAnon(an:TAnon):JsonValue {
 		// The fields list in descending name order.
 		var names = [for (name in an.fields.keys()) name];
-		names.sort(function(x, y) return x < y ? 1 : (x > y ? -1 : 0));
+		StringSort.sortDescending(names);
 		var fields:Array<JsonValue> = [for (name in names) generateClassField(CFSMember, an.fields.get(name))];
 		return jobject([
 			field("fields", jarray(fields)),

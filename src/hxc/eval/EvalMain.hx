@@ -27,10 +27,10 @@ class EvalMain {
 	// layer an interface-aware check over the base native: match walks superClass + interfaces via the
 	// type cache, and any other case falls through to the original isOfType.
 	static function installInterfaceIsOfType(ctx:EvalContext):Void {
-		var stdKey = EvalHash.hash("Std");
+		var stdKey = EvalNames.hStd();
 		var list = ctx.builtins.staticBuiltins.get(stdKey);
 		if (list == null) return;
-		var iofHash = EvalHash.hash("isOfType");
+		var iofHash = EvalNames.hIsOfType();
 		var orig:Null<EvalValue->Array<EvalValue>->EvalValue> = null;
 		var base:Null<Array<EvalValue>->EvalValue> = null;
 		for (b in list) if (b.name == iofHash) switch (b.v) { case VFunction(f, _): base = f; case _: };
@@ -119,12 +119,12 @@ class EvalMain {
 		// rebuilt rather than kept. Otherwise two display requests over files that both declare the same
 		// type path would leave the second one running the first one's macros ("Macro not found").
 		types = types.filter(function(mt) {
-			var inf = hxc.core.TypeFunctions.tInfos(mt);
-			var key = EvalHash.pathHash(inf.path);
+			var key = EvalHash.pathHash(hxc.core.TypeFunctions.tPath(mt));
 			var cached = ctx.typeCache.get(key);
 			if (cached != null) {
-				var inf2 = hxc.core.TypeFunctions.tInfos(cached);
-				if (inf2.module != null && inf.module != null && inf2.module.id == inf.module.id)
+				var m1 = hxc.core.TypeFunctions.tModule(mt);
+				var m2 = hxc.core.TypeFunctions.tModule(cached);
+				if (m2 != null && m1 != null && m2.id == m1.id)
 					return false;
 			}
 			ctx.instancePrototypes.remove(key);

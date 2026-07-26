@@ -150,7 +150,7 @@ class EvalIntegers {
 
 	// An instance of haxe._Int64.___Int64 (or a subclass), its high and low halves joined.
 	static function decodeHaxeI64(ctx:EvalContext, v:EvalValue):haxe.Int64 {
-		var path = EvalHash.hash("haxe._Int64.___Int64");
+		var path = EvalNames.h_haxe__Int64____Int64();
 		switch (v) {
 			case VInstance(vi):
 				var p = vi.iproto;

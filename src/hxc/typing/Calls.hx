@@ -824,6 +824,22 @@ class Calls {
 	public static function posInfosFile(ctx:TyperContext, pfile:String):String {
 		if (ctx.com.isMacro) return pfile;
 		if (ctx.com.defines.rawDefined("absolute_path")) return StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
+		// The answer depends on the directory and the class path: kept per file while both stay.
+		var com = ctx.com;
+		if (com.posInfosCwd != hxc.core.Cwd.generation || com.posInfosClassPath != com.classPath || com.posInfosClassPathLength != com.classPath.length) {
+			com.posInfosFiles = new haxe.ds.StringMap();
+			com.posInfosCwd = hxc.core.Cwd.generation;
+			com.posInfosClassPath = com.classPath;
+			com.posInfosClassPathLength = com.classPath.length;
+		}
+		var known = com.posInfosFiles.get(pfile);
+		if (known != null) return known;
+		var r = relativePosInfosFile(ctx, pfile);
+		com.posInfosFiles.set(pfile, r);
+		return r;
+	}
+
+	static function relativePosInfosFile(ctx:TyperContext, pfile:String):String {
 		var fpath = StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
 		var fpathLower = fpath.toLowerCase();
 		for (cp in ctx.com.classPath) {

@@ -1099,7 +1099,7 @@ class TypeFields {
 		if (entry == null) return null;
 		var d = switch (entry.decl) { case EClass(dd): dd; case _: return null; };
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
-		var nameSeen = new haxe.ds.StringMap<Int>();
+		var nameSeen:Null<haxe.ds.StringMap<Int>> = null;
 		for (f in d.dData) {
 			var fStatic = false;
 			for (a in f.cffAccess) if (a.access == AStatic) fStatic = true;
@@ -1107,6 +1107,13 @@ class TypeFields {
 			var base = if (!fStatic && f.cffName.name == "new") c.constructor
 				else TypeFunctions.declaredField(c, f.cffName.name, fStatic);
 			if (base == null) continue;
+			// Occurrences only pick an overload or drop a second constructor: a name whose field has no
+			// overloads is that field at every occurrence.
+			if (base.overloads.length == 0 && f.cffName.name != "new") {
+				if (base == cf) return f;
+				continue;
+			}
+			if (nameSeen == null) nameSeen = new haxe.ds.StringMap<Int>();
 			var key = (fStatic ? "s:" : "i:") + f.cffName.name;
 			var occ = nameSeen.exists(key) ? nameSeen.get(key) : 0;
 			nameSeen.set(key, occ + 1);
@@ -1408,7 +1415,7 @@ class TypeFields {
 						case TAbstract(a2, _) if (!TypeFunctions.hasMeta(":coreType", a2.meta)):
 							if (stack.indexOf(a2) >= 0) {
 								var names = [for (x in stack) x.path.pack.concat([x.path.name]).join(".")];
-								names.sort(Reflect.compare);
+								hxc.core.StringSort.sort(names);
 								var key = names.join("|");
 								if (!reported.exists(key)) {
 									reported.set(key, true);
@@ -1583,7 +1590,7 @@ class TypeFields {
 		}
 		loop(csup);
 		var keys = [for (k in cfl.keys()) k];
-		keys.sort(Reflect.compare);
+		hxc.core.StringSort.sort(keys);
 		for (k in keys) {
 			for (o in Overloads.collectOverloads(map, csup, cfl.get(k).name))
 				if (TypeFunctions.hasClassFieldFlag(o.cf, CfAbstract)) checkAbstractClassField(o.cf, o.t);

@@ -226,9 +226,9 @@ class EvalPrototype {
 			var vStatics = metaField(statics);
 			if (vObj == null && vFields == null && vStatics == null) return null;
 			var m = new Map<Int, EvalValue>();
-			if (vObj != null) m.set(EvalHash.hash("obj"), vObj);
-			if (vFields != null) m.set(EvalHash.hash("fields"), vFields);
-			if (vStatics != null) m.set(EvalHash.hash("statics"), vStatics);
+			if (vObj != null) m.set(EvalNames.hObj(), vObj);
+			if (vFields != null) m.set(EvalNames.hFields(), vFields);
+			if (vStatics != null) m.set(EvalNames.hStatics(), vStatics);
 			return VObject(new VObject([], ODictionary(m)));
 		} catch (_:EvalMetaError) {
 			return null;
@@ -313,7 +313,7 @@ class EvalPrototype {
 				b.toString();
 			case TAnon(a):
 				var fields = [for (name in a.fields.keys()) name];
-				fields.sort(Reflect.compare);
+				hxc.core.StringSort.sort(fields);
 				var b = new StringBuf();
 				b.add("<a>");
 				for (name in fields) b.add(rttiClassField(a.fields.get(name), false));
@@ -447,7 +447,7 @@ class EvalPrototype {
 	}
 
 	static function addRtti(c:TClass, pfields:Array<EvalValue>, pnames:Map<Int, Int>):Void {
-		if (!hasRtti(c) || pnames.exists(EvalHash.hash("__rtti"))) return;
+		if (!hasRtti(c) || pnames.exists(EvalNames.h___rtti())) return;
 		addStaticString("__rtti", rttiClass(c), pfields, pnames);
 	}
 

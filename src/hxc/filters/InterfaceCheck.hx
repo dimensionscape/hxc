@@ -50,7 +50,7 @@ class InterfaceCheck {
 			checkInterface(ctx, c, i2.c, [for (p in i2.params) TypeFunctions.applyParams(intf.params, params, p)]);
 		var p = c.namePos;
 		var names = [for (k in intf.fields.keys()) k];
-		names.sort(Reflect.compare);
+		hxc.core.StringSort.sort(names);
 		for (name in names) {
 			var cf = intf.fields.get(name);
 			checkField(ctx, c, intf, params, cf, p);

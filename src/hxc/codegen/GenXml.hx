@@ -93,7 +93,7 @@ class GenXml {
 			case TAnon(an):
 				// Prepending in ascending key order produces descending field names.
 				var names = [for (k in an.fields.keys()) k];
-				names.sort(Reflect.compare);
+				hxc.core.StringSort.sort(names);
 				names.reverse();
 				node("a", [], [for (n in names) {
 					var f = TypeFunctions.copyField(an.fields.get(n));
