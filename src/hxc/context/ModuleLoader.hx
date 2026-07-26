@@ -1550,12 +1550,30 @@ class ModuleLoader {
 	}
 
 	static function handleImportHx(ctx:Context, m:ModuleDef, decls:Array<TypeDecl>, ?p:Position):Array<TypeDecl> {
-		var file = m.extra.file;
-		if (file == null || file == "" || !FileSystem.exists(file)) return decls;
-		var dir = StringTools.replace(file, "\\", "/");
-		var slash = dir.lastIndexOf("/");
-		dir = slash < 0 ? "" : dir.substr(0, slash);
 		if (p == null) p = Position.nullPos;
+		// The file's path parts, module name dropped, innermost first: one import.hx per package level and
+		// one more, while there are directories left.
+		var file = m.extra.file == null ? "" : m.extra.file;
+		var parts = file.length > 3 && file.substr(file.length - 3) == ".hx"
+			? StringTools.replace(file.substr(0, file.length - 3), "\\", "/").split("/")
+			: (file == "" ? [] : file.split("."));
+		parts.reverse();
+		var pathSplit = parts.length == 0 ? [] : parts.slice(1);
+		var sep = Sys.systemName() == "Windows" ? "\\" : "/";
+		function join(l:Array<String>):String {
+			var r = l.copy();
+			r.reverse();
+			r.push("import.hx");
+			return r.join(sep);
+		}
+		var candidates:Array<String> = [];
+		var pi = 0;
+		for (_ in 0...m.path.pack.length) {
+			if (pi >= pathSplit.length) break;
+			candidates.push(join(pathSplit.slice(pi)));
+			pi++;
+		}
+		if (pi >= m.path.pack.length) candidates.push(join(pathSplit.slice(pi)));
 		// makeImportModule: the parsed declarations go to the parser cache and a module named by the file
 		// path itself registers for the file.
 		function makeImportModule(path:String, r:Array<TypeDecl>):ModuleDef {
@@ -1566,9 +1584,7 @@ class ModuleLoader {
 			return mi;
 		}
 		var acc = decls;
-		var count = m.path.pack.length + 1;
-		for (_ in 0...count) {
-			var candidate = dir == "" ? "import.hx" : dir + "/import.hx";
+		for (candidate in candidates) {
 			var path = try FileSystem.fullPath(candidate) catch (_:Dynamic) candidate;
 			var r = ctx.parserCache.get(path);
 			var mimport = r == null ? null : ctx.moduleLut.get(Context.pathKey({pack: [], name: path}));
@@ -1591,8 +1607,6 @@ class ModuleLoader {
 				makeImportModule(path, r).extra.kind = MFake;
 			}
 			acc = r.concat(acc);
-			var parent = dir.lastIndexOf("/");
-			dir = parent < 0 ? "" : dir.substr(0, parent);
 		}
 		return acc;
 	}
