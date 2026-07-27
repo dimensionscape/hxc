@@ -1807,15 +1807,8 @@ class Compiler {
 	}
 
 	static function parseTypePath(s:String):Path {
-		// A .hx file path is accepted where a class is expected (haxe -x Main.hx): strip the suffix and
-		// split on slashes instead of dots.
-		var parts:Array<String>;
-		if (s.length > 3 && StringTools.endsWith(s, ".hx")) {
-			var f = StringTools.replace(s.substr(0, s.length - 3), "\\", "/");
-			parts = [for (p in f.split("/")) if (p != "") p];
-		} else {
-			parts = s.split(".");
-		}
+		// A .hx file path is accepted where a class is expected (haxe -x Main.hx).
+		var parts = getPathParts(s);
 		var name = parts.pop();
 		return {pack: parts, name: name};
 	}
@@ -1903,11 +1896,7 @@ class Compiler {
 	// the whole candidate unusable. A package name wants a lowercase or _ first character, and every part
 	// is checked for invalid characters.
 	static function parsePathParts(rest:String):Null<Path> {
-		// A .hx path splits on slashes with the extension stripped, anything else splits on dots.
-		var parts = if (rest.length > 3 && rest.substr(rest.length - 3) == ".hx")
-			StringTools.replace(rest.substr(0, rest.length - 3), "\\", "/").split("/")
-		else
-			rest.split(".");
+		var parts = getPathParts(rest);
 		if (parts.length == 0) return null;
 		function invalidChar(x:String):Bool {
 			for (i in 1...x.length) {
@@ -3761,14 +3750,18 @@ class Compiler {
 		catch (e:haxe.Exception) throw new ArgFailure(e.message);
 	}
 
+	// Path parts: a .hx path loses the suffix and splits on either slash, anything else on dots. An empty
+	// string gives no parts at all.
+	static function getPathParts(f:String):Array<String> {
+		if (f.length > 3 && f.substr(f.length - 3) == ".hx")
+			return StringTools.replace(f.substr(0, f.length - 3), "\\", "/").split("/");
+		return f == "" ? [] : f.split(".");
+	}
+
 	// Path parts plus the invalid-character and package-name checks. Returns the error message for the
 	// first offending part, or null when the path is fine.
 	static function parsePathError(f:String):Null<String> {
-		var parts:Array<String>;
-		if (f.length > 3 && f.substr(f.length - 3) == ".hx")
-			parts = StringTools.replace(f.substr(0, f.length - 3), "\\\\", "/").split("/");
-		else
-			parts = f.split(".");
+		var parts = getPathParts(f);
 		function invalidChar(x:String):Null<String> {
 			for (i in 1...x.length) {
 				var c = x.charCodeAt(i);
@@ -3778,7 +3771,8 @@ class Compiler {
 			}
 			return null;
 		}
-		if (parts.length == 0) return "Package name must not be empty";
+		// parse_path raises this one inside its own handler, which wraps it a second time.
+		if (parts.length == 0) return "Could not process argument " + f + "\nPackage name must not be empty";
 		for (k in 0...parts.length) {
 			var x = parts[k];
 			if (k == parts.length - 1) return invalidChar(x);
