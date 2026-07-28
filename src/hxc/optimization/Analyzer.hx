@@ -720,7 +720,9 @@ class LocalDce {
 		function use(v:TVar):Void {
 			if (!isUsed(v)) {
 				TypeFunctions.addVarFlag(v, VAnalyzed);
-				try expr(ctx.graph.getVarValue(v)) catch (_:NotFound) {};
+				// Visit the variable's recorded value, if any.
+				var value = ctx.graph.getVarValueOpt(v);
+				if (value != null) try expr(value) catch (_:NotFound) {};
 				var rd = Ssa.getReachingDef(ctx.graph, v);
 				if (rd == null) {
 					// Don't fully recurse into the origin variable; marking it used suffices (issue #10972)

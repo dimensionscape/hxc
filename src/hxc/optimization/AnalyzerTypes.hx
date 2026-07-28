@@ -319,8 +319,15 @@ class Graph {
 
 	// Throws when no value is recorded
 	public function getVarValue(v:TVar):TExpr {
+		var e = getVarValueOpt(v);
+		if (e == null) throw new hxc.core.NotFound();
+		return e;
+	}
+
+	// getVarValue, but null when no value is recorded.
+	public function getVarValueOpt(v:TVar):Null<TExpr> {
 		var value = getVarInfo(v).value;
-		if (value == null) throw new hxc.core.NotFound();
+		if (value == null) return null;
 		return switch (value.bb.getTexpr(value.luk).expr) {
 			case TVarExpr(_, e) if (e != null): e;
 			case TBinop(OpAssign, _, e): e;
