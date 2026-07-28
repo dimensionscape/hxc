@@ -149,6 +149,24 @@ class UnificationMatrix {
 	}
 }
 
+// A monomorph's state as the mono journal recorded it.
+private class MonoState {
+	public final m:TMono;
+	public final ty:Null<T>;
+	public final down:Array<TMonoConstraint>;
+	public final up:Array<TUpConstraint>;
+	// The mono's journal before this entry's frame took it.
+	public final prevJournal:Int;
+
+	public function new(m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>, prevJournal:Int) {
+		this.m = m;
+		this.ty = ty;
+		this.down = down;
+		this.up = up;
+		this.prevJournal = prevJournal;
+	}
+}
+
 class TypeUnification {
 	// Types a method body before its signature is read in structural unification, so a still-open inferred
 	// return cannot bind to the anon's field type.
@@ -164,14 +182,19 @@ class TypeUnification {
 	// bind/constraint operation so a speculative unification (an operator-overload probe) can be rolled
 	// back on failure without leaving unrelated monos corrupted. Abstract binop overload resolution relies
 	// on failed typeEq/cast attempts not persisting.
-	static var monoJournal:Null<Array<{m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>}>> = null;
+	static var monoJournal:Null<Array<MonoState>> = null;
+	// The open frame's nesting depth. A mono's journal is the depth of the innermost open frame
+	// holding an entry for it: frames nest, and each one leaving puts back the journal of every
+	// mono it holds, so no closed frame's depth is left behind.
+	static var monoJournalDepth:Int = 0;
 
 	static function journalMono(m:TMono):Void {
 		var j = monoJournal;
 		if (j != null) {
 			// Record only the first time a mono is seen in this probe (its earliest state).
-			for (e in j) if (e.m == m) return;
-			j.push({m: m, ty: m.type, down: m.downConstraints, up: m.upConstraints});
+			if (m.journal == monoJournalDepth) return;
+			j.push(new MonoState(m, m.type, m.downConstraints, m.upConstraints, m.journal));
+			m.journal = monoJournalDepth;
 		}
 	}
 
@@ -181,22 +204,26 @@ class TypeUnification {
 	// rollback still undoes them.
 	public static function withMonoRollback<R>(f:Void->R):R {
 		var outer = monoJournal;
-		var frame:Array<{m:TMono, ty:Null<T>, down:Array<TMonoConstraint>, up:Array<TUpConstraint>}> = [];
+		var frame:Array<MonoState> = [];
 		monoJournal = frame;
+		var depth = ++monoJournalDepth;
 		try {
 			var r = f();
 			monoJournal = outer;
-			if (outer != null) {
-				// Preserve earliest-state entries for the enclosing frame.
-				for (e in frame) {
-					var seen = false;
-					for (o in outer) if (o.m == e.m) { seen = true; break; }
-					if (!seen) outer.push(e);
+			monoJournalDepth = depth - 1;
+			// Preserve earliest-state entries for the enclosing frame: a mono it holds already was
+			// stamped with its depth when this frame took it.
+			for (e in frame) {
+				e.m.journal = e.prevJournal;
+				if (outer != null && e.prevJournal != depth - 1) {
+					outer.push(e);
+					e.m.journal = depth - 1;
 				}
 			}
 			return r;
 		} catch (ex:haxe.Exception) {
 			monoJournal = outer;
+			monoJournalDepth = depth - 1;
 			// Restore in reverse touch order so the earliest recorded state wins per mono.
 			var i = frame.length - 1;
 			while (i >= 0) {
@@ -204,6 +231,7 @@ class TypeUnification {
 				e.m.type = e.ty;
 				e.m.downConstraints = e.down;
 				e.m.upConstraints = e.up;
+				e.m.journal = e.prevJournal;
 				i--;
 			}
 			throw ex;

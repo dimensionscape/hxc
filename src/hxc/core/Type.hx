@@ -80,6 +80,9 @@ class TMono {
 	public var type:Null<T>;
 	public var downConstraints:Array<TMonoConstraint>;
 	public var upConstraints:Array<TUpConstraint>;
+	// TypeUnification's mono journal: the depth of the innermost open frame holding an entry for
+	// this mono, 0 for none.
+	public var journal:Int = 0;
 
 	// These two start as one shared empty constant rather than a fresh Array per monomorph: an hxcpp
 	// Array is an object plus its own backing store. Every write to these fields is a REASSIGNMENT
