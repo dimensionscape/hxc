@@ -239,6 +239,18 @@ class Parser {
 		}
 	}
 
+	// The string is the whole type, and a token after it is Unexpected.
+	public static function parseComplexTypeString(src:String, file:String, ?defines:Define):TypeHint {
+		try {
+			var p = make(src, file, defines, false);
+			var t = p.parseComplexType();
+			if (!p.tokEq(p.peek(), Eof)) p.serror();
+			return t;
+		} catch (a:PreprocessorAbort) {
+			throw a.err;
+		}
+	}
+
 	/**
 	 * Parse a single expression directly from a pre-lexed token list (used by the
 	 * conditional-compilation preprocessor for parenthesised conditions). The token list must end in

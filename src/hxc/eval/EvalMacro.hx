@@ -1826,6 +1826,10 @@ class EvalMacro {
 			} catch (pe:hxc.parser.ParserError) {
 				com.addDiagnostic("Could not parse `" + s + "`", macroPos);
 				throw new TypingError(hxc.parser.ParserError.errorMsg(pe.msg), macroPos);
+			} catch (le:hxc.parser.LexerError) {
+				// A lexer error is reported at p exactly like a parser error.
+				com.addDiagnostic("Could not parse `" + s + "`", macroPos);
+				throw new TypingError(hxc.parser.LexerError.errorMsg(le.msg), macroPos);
 			}
 			function flatten(e2:Expr):Expr {
 				var m = Ast.mapExpr(flatten, e2);
@@ -2094,14 +2098,11 @@ class EvalMacro {
 		var path:hxc.core.Globals.Path = {pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]};
 		var typeHint:Null<TypeHint> = null;
 		if (typeSrc != null) {
-			var pkg = hxc.parser.Parser.parseModuleString("class __HxcTypePatch { var value:" + typeSrc + "; }", "--macro", com.defines);
-			switch (pkg.decls[0].decl) {
-				case EClass(d): switch (d.dData[0].cffKind) {
-					case FVar(t, _): typeHint = t;
-					case _: throw new TypingError("Invalid field type patch", curPos);
-				}
-				case _: throw new TypingError("Invalid field type patch", curPos);
-			}
+			// The string parses as a complex type at the null position, not inlined, so a parser's or the
+			// lexer's error is a typing error at the null position.
+			typeHint = try hxc.parser.Parser.parseComplexTypeString(typeSrc, Position.nullPos.file, com.defines)
+				catch (e:hxc.parser.ParserError) throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), Position.nullPos)
+				catch (e:hxc.parser.LexerError) throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), Position.nullPos);
 		}
 		com.typePatches.push({path: path, field: field, isStatic: isStatic, meta: [], remove: typeSrc == null, typeHint: typeHint});
 		return VNull;
@@ -5210,13 +5211,15 @@ class EvalMacro {
 		// An empty string is an invalid expression before any parsing.
 		if (src == "") throw new DecodeFailure("Invalid expression");
 		// A parser's or the lexer's error is a typing error at its own place in the caller-offset string
-		// when inlined, at the caller otherwise.
+		// when inlined, at the caller otherwise. The string is padded only when p.min > 0 , so an init
+		// macro's min -1 shifts nothing.
+		var pad = p.min > 0 ? p.min : 0;
 		return try hxc.parser.Parser.parseExprString(src, p.file, defines, inlined)
 		catch (e:hxc.parser.ParserError) {
-			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
+			var at = inlined ? new Position(p.file, e.pos.min + pad, e.pos.max + pad) : p;
 			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), at);
 		} catch (e:hxc.parser.LexerError) {
-			var at = inlined ? new Position(p.file, e.pos.min + p.min, e.pos.max + p.min) : p;
+			var at = inlined ? new Position(p.file, e.pos.min + pad, e.pos.max + pad) : p;
 			throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), at);
 		}
 	}
