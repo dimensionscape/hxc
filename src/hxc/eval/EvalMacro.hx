@@ -5210,17 +5210,21 @@ class EvalMacro {
 	static function parseApiString(src:String, p:Position, inlined:Bool, defines:hxc.core.Define):Expr {
 		// An empty string is an invalid expression before any parsing.
 		if (src == "") throw new DecodeFailure("Invalid expression");
-		// A parser's or the lexer's error is a typing error at its own place in the caller-offset string
-		// when inlined, at the caller otherwise. The string is padded only when p.min > 0 , so an init
-		// macro's min -1 shifts nothing.
-		var pad = p.min > 0 ? p.min : 0;
-		return try hxc.parser.Parser.parseExprString(src, p.file, defines, inlined)
+		// The string is padded with p.min spaces when p.min > 0, so every position of an inlined parse is
+		// the caller's file offset. A parser's or the lexer's error reports there when inlined, at p
+		// otherwise.
+		var padded = src;
+		if (p.min > 0) {
+			var b = new StringBuf();
+			for (_ in 0...p.min) b.addChar(" ".code);
+			b.add(src);
+			padded = b.toString();
+		}
+		return try hxc.parser.Parser.parseExprString(padded, p.file, defines, inlined)
 		catch (e:hxc.parser.ParserError) {
-			var at = inlined ? new Position(p.file, e.pos.min + pad, e.pos.max + pad) : p;
-			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), at);
+			throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), inlined ? e.pos : p);
 		} catch (e:hxc.parser.LexerError) {
-			var at = inlined ? new Position(p.file, e.pos.min + pad, e.pos.max + pad) : p;
-			throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), at);
+			throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), inlined ? e.pos : p);
 		}
 	}
 
