@@ -1823,30 +1823,13 @@ class Compiler {
 	// outermost-first as Called from here.
 	static function printUncaughtException(ctx:Context, ex:hxc.eval.EvalExceptions.EvalRunTimeException, catchPos:Position):Void {
 		if (catchPos == null) catchPos = Position.nullPos;
-		var evalCtx = try EvalContext.getCtx() catch (_:Dynamic) null;
-		if (evalCtx != null) switch (EvalValueTools.vresolve(ex.value)) {
-			case VInstance(vi):
-				var msg = hxc.eval.EvalStdLib.stringOf(EvalField.field(evalCtx, ex.value, EvalHash.hash("message")));
-				if (msg == "null") msg = hxc.eval.EvalStdLib.stringOf(ex.value);
-				var posValue = EvalField.field(evalCtx, ex.value, EvalHash.hash("pos"));
-				var errorPos = switch (EvalValueTools.vresolve(posValue)) {
-					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
-					case VObject(obj): switch (obj.oproto) {
-						case ODictionary(fields):
-							var file = hxc.eval.EvalStdLib.stringOf(fields.get(EvalHash.hash("file")));
-							var min = switch (fields.get(EvalHash.hash("min"))) { case VInt(i): i; case _: -1; };
-							var max = switch (fields.get(EvalHash.hash("max"))) { case VInt(i): i; case _: -1; };
-							new hxc.ast.Position(file, min, max);
-						case _: Position.nullPos;
-					};
-					case _: Position.nullPos;
-				};
-				if (errorPos.min >= 0) {
-					ctx.addDiagnostic(msg, qualifyStdPosition(ctx, errorPos));
-					flushPendingMessages(ctx);
-					exitRequest(1);
-				}
-			case _:
+		// A haxe.macro.Error is an error of its own, its message at its position wherever that is (an init
+		// macro's has min -1); any other value is uncaught.
+		var info = hxc.eval.EvalMacro.runtimeMacroError(ex);
+		if (info != null) {
+			ctx.addDiagnostic(info.message, qualifyStdPosition(ctx, info.pos));
+			flushPendingMessages(ctx);
+			exitRequest(1);
 		}
 		// Frames run innermost first; an explicit throw position drops the innermost frame it
 		// duplicates, and the catch position closes the stack (the reference's api-call env).
