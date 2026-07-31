@@ -24,9 +24,10 @@ class StringHelper {
 		return b.toString();
 	}
 
+	// An empty name is an InvalidArgument, not a plain failure.
 	public static function startsUppercaseIdentifier(x:String):Bool {
 		if (x.length == 0)
-			throw new haxe.Exception("Identifier name must not be empty");
+			throw new JsonRpc.InvalidArgument("Identifier name must not be empty");
 		function loop(p:Int):Bool {
 			var c = x.charCodeAt(p);
 			if (c >= "A".code && c <= "Z".code)

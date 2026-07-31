@@ -113,16 +113,18 @@ class Compiler {
 
 	static var argFailureCtx:Null<Context> = null;
 
-	static function fatalArgError(msg:String):Void {
-		// Goes through `error ctx`, which appends to the message list and leaves the flush to the end, so
+	static function fatalArgError(msg:String, failure:Bool = true):Void {
+		// A bad argument goes into the message list, which appends and leaves the flush to the end, so
 		// anything an earlier argument queued (the --version line, a --help-defines dump) still prints,
-		// and prints first. Writing straight to stderr threw all of that away.
+		// and prints first. Writing straight to stderr would lose all of that. Any exception but a
+		// failure or a bad argument prints unprefixed.
+		var text = (failure ? "Error: " : "") + msg;
 		var ctx = argFailureCtx;
 		if (ctx != null) {
-			ctx.addDiagnostic("Error: " + msg, Position.nullPos);
+			ctx.addDiagnostic(text, Position.nullPos);
 			flushPendingMessages(ctx);
 		} else {
-			Sys.stderr().writeString("Error: " + msg + "\n");
+			Sys.stderr().writeString(text + "\n");
 		}
 		hxc.compiler.HostRuntime.exit(1);
 	}
@@ -424,6 +426,7 @@ class Compiler {
 			hxc.compiler.HostRuntime.exit(se.code);
 		}
 		catch (af:ArgFailure) fatalArgError(af.message)
+		catch (e:hxc.core.JsonRpc.InvalidArgument) fatalArgError(e.message, false)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
@@ -784,25 +787,27 @@ class Compiler {
 							+ (hint.length > 0 ? hint.substr(0, hint.length - 1) : ""));
 						throw "unknown option '" + a + "'";
 					}
-					// A bare uppercase argument is a compilation root (never the startup class: only -main
-					// sets that); a bare lowercase argument includes the package.
+					// A bare argument whose name starts uppercase is a compilation root (never the startup
+					// class: only -main sets that), any other includes the package.
 					if (!StringTools.startsWith(a, "-")) {
 						// Every part of a bare argument is validated: the last one only for invalid characters, the
 						// ones before it as package names. A failure names the whole argument, and is swallowed under
 						// a display run.
 						var perr = parsePathError(a);
-						if (perr != null && !ctx.ignoreError())
-							throw new ArgFailure("Could not process argument " + a + "\n" + perr);
-						if (StringTools.endsWith(a, ".hx")) {
-							// A bare .hx file path is a compilation class, not a package strips the suffix).
-							extraClasses.push(a);
+						if (perr != null) {
+							if (!ctx.ignoreError())
+								throw new ArgFailure("Could not process argument " + a + "\n" + perr);
 						} else {
-						var nm = a.split(".").pop();
-						if (nm != null && nm.length > 0) {
-							var c0 = nm.charCodeAt(0);
-							if (c0 >= "A".code && c0 <= "Z".code) extraClasses.push(a);
-							else ctx.initMacros.push("include('" + a + "', true, null, null, true)");
-						}
+							// An empty name (pack. or pack/.hx) makes startsUppercaseIdentifier throw
+							// InvalidArgument, which the swallow above does not cover.
+							var parts = getPathParts(a);
+							if (hxc.core.StringHelper.startsUppercaseIdentifier(parts[parts.length - 1])) {
+								extraClasses.push(a);
+							} else {
+								// Forcing the typing needs no flag: the nothing-to-compile check below
+								// counts init macros.
+								ctx.initMacros.push("include('" + a + "', true, null, null, true)");
+							}
 						}
 					}
 			} catch (af:ArgFailure) throw af
