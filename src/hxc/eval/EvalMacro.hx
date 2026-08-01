@@ -1021,23 +1021,19 @@ class EvalMacro {
 		if (mdep != null) TypeFunctions.addDependency(m, mdep);
 	}
 
+	// A pack ending in an uppercase identifier names the module. The uppercase test skips leading
+	// underscores, so `_Foo` is a module and `_1` is not.
 	static function macroTypeDefinitionPath(ec:EvalContext, v:EvalValue):hxc.core.Globals.Path {
 		var pack = [for (pv in arrOf(EvalField.field(ec, v, EvalNames.hPack()))) strOf(pv)];
 		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
 		if (pack.length > 0) {
 			var last = pack[pack.length - 1];
-			if (startsUppercaseIdentifier(last)) {
+			if (last.length > 0 && hxc.core.StringHelper.startsUppercaseIdentifier(last)) {
 				pack = pack.slice(0, pack.length - 1);
 				name = last;
 			}
 		}
 		return {pack: pack, name: name};
-	}
-
-	static function startsUppercaseIdentifier(s:String):Bool {
-		if (s.length == 0) return false;
-		var c = s.charCodeAt(0);
-		return c >= "A".code && c <= "Z".code;
 	}
 
 	static function isMacroClassDecl(td:TypeDef):Bool {
