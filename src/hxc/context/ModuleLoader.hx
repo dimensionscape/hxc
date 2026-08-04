@@ -461,7 +461,7 @@ class ModuleLoader {
 		var namedModulePath = split.modulePath;
 		if (split.sub != null && split.modulePath.pack.length == 0 && m.path.pack.length > 0)
 			namedModulePath = {pack: m.path.pack, name: split.modulePath.name};
-		var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub, impIdx: impIdx};
+		var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub, impIdx: impIdx, fromUsing: true};
 		imports.names.set(short, ni);
 		imports.order.push(ni);
 		function usingPath(modulePath:Path):Path {

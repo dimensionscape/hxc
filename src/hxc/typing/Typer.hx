@@ -4490,11 +4490,12 @@ class Typer {
 			}
 		}
 		// A plain module import (`import M;`) exposes every PUBLIC module-level static of M as a bare
-		// identifier INormal: md.statics' public fields enter module_globals).
+		// identifier. An aliased or sub-type import does not, and neither does a using. A later import
+		// OVERWRITES an earlier binding, so scan last import first.
 		var oi = imports.order.length - 1;
 		while (oi >= 0) {
 			var ni = imports.order[oi--];
-			if (ni.sub != null || ni.aliased == true) continue;
+			if (ni.sub != null || ni.aliased == true || ni.fromUsing == true) continue;
 			var mod = try hxc.context.ModuleLoader.loadImportedModule(ctx.com, ni.modulePath, p) catch (_:Dynamic) continue;
 			if (mod.statics == null) continue;
 			try TypeResolve.resolveModule(ctx.com, mod) catch (_:Dynamic) {}
