@@ -13,9 +13,9 @@ class Messages {
 	}
 
 	static function isNullPos(p:Position):Bool {
-		// Only nullPos omits the location prefix; another min -1 position prints (unknown), even with a
-		// file name.
-		return p.min < 0 && isUnknownFile(p.file);
+		// Only nullPos omits the location prefix; other min -1 positions print (unknown), including named
+		// files and unions with nullPos.
+		return p.file == "?" && p.min == -1 && p.max == -1;
 	}
 
 	static function isUnknownFile(f:String):Bool {
