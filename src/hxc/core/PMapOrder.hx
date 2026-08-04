@@ -22,7 +22,7 @@ class PMapOrder {
 	// anon is statics, whose keys were added in declaration order, the order orderedStatics keeps. hxc
 	// keeps no insertion order for any other anon, and those visit their keys in increasing order.
 	public static function anonMapOrder(a:TAnon):Array<String> {
-		var keys = [for (k in a.fields.keys()) k];
+		var keys = MapKeys.ofString(a.fields);
 		StringSort.sort(keys);
 		switch (a.status.get()) {
 			case Statics(c):
@@ -42,7 +42,7 @@ class PMapOrder {
 
 	// Iterating or folding over an anon's fields: increasing key order.
 	public static function sortedKeys(m:StringMap<TClassField>):Array<String> {
-		var keys = [for (k in m.keys()) k];
+		var keys = MapKeys.ofString(m);
 		StringSort.sort(keys);
 		return keys;
 	}

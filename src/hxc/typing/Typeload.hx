@@ -406,7 +406,7 @@ class Typeload {
 
 	// The keys in increasing order.
 	static function sortedKeys(m:StringMap<TClassField>):Array<String> {
-		var keys = [for (k in m.keys()) k];
+		var keys = hxc.core.MapKeys.ofString(m);
 		hxc.core.StringSort.sort(keys);
 		return keys;
 	}

@@ -181,7 +181,7 @@ class Finalization {
 			// Std).
 			if (c.init != null) walkExpr(p, c.init);
 			// Statics are visited in ascending name order.
-			var names = [for (k in c.statics.keys()) k];
+			var names = hxc.core.MapKeys.ofString(c.statics);
 			hxc.core.StringSort.sort(names);
 			for (n in names) {
 				var f = c.statics.get(n);

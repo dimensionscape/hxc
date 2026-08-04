@@ -1309,7 +1309,7 @@ class TypeUnification {
 	// which fields get marked (and which missing field an error names) depends on it. StringMap
 	// iterates in hash order; sort.
 	static function sortedFieldNames(fields:haxe.ds.StringMap<TClassField>):Array<String> {
-		var names = [for (n in fields.keys()) n];
+		var names = MapKeys.ofString(fields);
 		StringSort.sort(names);
 		return names;
 	}

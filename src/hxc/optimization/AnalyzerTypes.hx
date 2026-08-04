@@ -391,64 +391,20 @@ class Graph {
 		iterDomTree(function(bb) for (e in bb.outgoing) f(e));
 	}
 
+	// Immediate dominators (Lengauer-Tarjan).
+	// The tree's walk, compress and eval are static functions rather than local closures: a closure call on
+	// hxcpp boxes its Int arguments.
 	public function inferImmediateDominators():Void {
 		var info = new IntMap<DomBBInfo>();
 		var nodes:Array<DomBBInfo> = [];
-		inline function getInfo(i:Int):DomBBInfo return info.get(i);
-		function addInfo(bb:BasicBlock, bbParent:BasicBlock):Void {
-			var bbi = new DomBBInfo(bb, nodes.length);
-			if (bb != bbParent) bbi = bbi.copyWithParent(getInfo(bbParent.id));
-			info.set(bb.id, bbi);
-			nodes.push(bbi);
-		}
-		function walk(bbParent:BasicBlock, bb:BasicBlock):Void {
-			bb.dominated = [];
-			addInfo(bb, bbParent);
-			for (edge in bb.outgoing) {
-				var bbTo = edge.to;
-				if (!info.exists(bbTo.id)) walk(bb, bbTo);
-			}
-		}
-		walk(root, root);
-		function compress(bbi:DomBBInfo):Void {
-			// Collect the ancestor chain up to the tree root
-			var worklist = [bbi];
-			var a = bbi.ancestor;
-			while (a.ancestor != a) {
-				worklist.unshift(a);
-				a = a.ancestor;
-			}
-			if (worklist.length > 0) {
-				var head = worklist[0];
-				var minSemi = head.label.semi;
-				var cur = head;
-				for (i in 1...worklist.length) {
-					var bbiDesc = worklist[i];
-					var lbl = bbiDesc.label;
-					if (lbl.semi > minSemi) {
-						bbiDesc.label = cur.label;
-					} else {
-						minSemi = lbl.semi;
-					}
-					cur = bbiDesc;
-				}
-			}
-		}
-		function eval(v:Int):DomBBInfo {
-			var bbi = getInfo(v);
-			if (bbi.ancestor != bbi) {
-				compress(bbi);
-				return bbi.label;
-			}
-			return bbi;
-		}
+		domWalk(info, nodes, root, root);
 		// Process in reverse discovery order, skipping the root
 		var i = nodes.length - 1;
 		while (i > 0) {
 			var w = nodes[i];
 			var semi = w.semi;
 			for (v in w.bb.incoming) {
-				var s = eval(v.from.id).semi;
+				var s = domEval(info, v.from.id).semi;
 				if (s < semi) semi = s;
 			}
 			w.semi = semi;
@@ -457,7 +413,7 @@ class Graph {
 			var bbiP = w.parent;
 			w.ancestor = bbiP;
 			for (v in bbiP.bucket) {
-				var u = eval(v.bb.id);
+				var u = domEval(info, v.bb.id);
 				v.idom = u.semi < v.semi ? u : bbiP;
 			}
 			bbiP.bucket = [];
@@ -477,6 +433,56 @@ class Graph {
 				}
 			}
 		}
+	}
+
+	static function domAddInfo(info:IntMap<DomBBInfo>, nodes:Array<DomBBInfo>, bb:BasicBlock, bbParent:BasicBlock):Void {
+		var bbi = new DomBBInfo(bb, nodes.length);
+		if (bb != bbParent) bbi = bbi.copyWithParent(info.get(bbParent.id));
+		info.set(bb.id, bbi);
+		nodes.push(bbi);
+	}
+
+	static function domWalk(info:IntMap<DomBBInfo>, nodes:Array<DomBBInfo>, bbParent:BasicBlock, bb:BasicBlock):Void {
+		bb.dominated = [];
+		domAddInfo(info, nodes, bb, bbParent);
+		for (edge in bb.outgoing) {
+			var bbTo = edge.to;
+			if (!info.exists(bbTo.id)) domWalk(info, nodes, bb, bbTo);
+		}
+	}
+
+	static function domCompress(bbi:DomBBInfo):Void {
+		// Collect the ancestor chain up to the tree root
+		var worklist = [bbi];
+		var a = bbi.ancestor;
+		while (a.ancestor != a) {
+			worklist.unshift(a);
+			a = a.ancestor;
+		}
+		if (worklist.length > 0) {
+			var head = worklist[0];
+			var minSemi = head.label.semi;
+			var cur = head;
+			for (i in 1...worklist.length) {
+				var bbiDesc = worklist[i];
+				var lbl = bbiDesc.label;
+				if (lbl.semi > minSemi) {
+					bbiDesc.label = cur.label;
+				} else {
+					minSemi = lbl.semi;
+				}
+				cur = bbiDesc;
+			}
+		}
+	}
+
+	static function domEval(info:IntMap<DomBBInfo>, v:Int):DomBBInfo {
+		var bbi = info.get(v);
+		if (bbi.ancestor != bbi) {
+			domCompress(bbi);
+			return bbi.label;
+		}
+		return bbi;
 	}
 
 	public function inferDominanceFrontier():Void {

@@ -112,7 +112,9 @@ class Typer {
 	}
 
 	public static function saveLocals(ctx:TyperContext):Void->Void {
-		var saved = ctx.locals.copy();
+		// StringMap.copy walks keys() through an Iterator structure; the key array is the same order.
+		var saved = new haxe.ds.StringMap<TVar>();
+		for (k in hxc.core.MapKeys.ofString(ctx.locals)) saved.set(k, ctx.locals.get(k));
 		return function() ctx.locals = saved;
 	}
 

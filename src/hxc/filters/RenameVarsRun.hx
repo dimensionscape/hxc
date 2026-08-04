@@ -57,7 +57,7 @@ class RenameVarsRun {
 				overlaps = copyIntMap(scope.foreignVars);
 			} else {
 				overlaps = copyIntMap(scope.loopVars.get());
-				for (i in scope.foreignVars.keys()) {
+				for (i in hxc.core.MapKeys.ofInt(scope.foreignVars)) {
 					if (!overlaps.exists(i)) overlaps.set(i, scope.foreignVars.get(i));
 				}
 			}
@@ -232,7 +232,7 @@ class RenameVarsRun {
 		while (true) {
 			var collides = reserved.exists(name) || this.reserved.exists(name);
 			if (!collides) {
-				for (id in overlaps.keys()) {
+				for (id in hxc.core.MapKeys.ofInt(overlaps)) {
 					if (overlaps.get(id).name == name) { collides = true; break; }
 				}
 			}
@@ -253,7 +253,7 @@ class RenameVarsRun {
 		// and cost nothing to set up. maybeRenameVar consults the shared base alongside it.
 		var reserved = new StringMap<Bool>();
 		if ((hoisting || noShadowing) && !intMapIsEmpty(scope.foreignVars)) {
-			for (id in scope.foreignVars.keys()) reserve(reserved, scope.foreignVars.get(id).name);
+			for (id in hxc.core.MapKeys.ofInt(scope.foreignVars)) reserve(reserved, scope.foreignVars.get(id).name);
 		}
 		// ownVars were prepended (unshift), so reverse to declaration order.
 		var ordered = scope.ownVars.copy();
@@ -284,12 +284,12 @@ class RenameVarsRun {
 	// ---- small map helpers (scope maps are copied, not shared) ----
 	static function copyIntMap(m:IntMap<TVar>):IntMap<TVar> {
 		var r = new IntMap<TVar>();
-		for (k in m.keys()) r.set(k, m.get(k));
+		for (k in hxc.core.MapKeys.ofInt(m)) r.set(k, m.get(k));
 		return r;
 	}
 	static function copyStringMap(m:StringMap<Bool>):StringMap<Bool> {
 		var r = new StringMap<Bool>();
-		for (k in m.keys()) r.set(k, m.get(k));
+		for (k in hxc.core.MapKeys.ofString(m)) r.set(k, m.get(k));
 		return r;
 	}
 
