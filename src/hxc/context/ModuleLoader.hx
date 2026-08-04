@@ -285,43 +285,203 @@ class ModuleLoader {
 		creatingModuleTypes--;
 	}
 
+	// The first uppercase segment is the module, the second a subtype. Empty and package-wildcard
+	// paths return null; fieldAt records the static segment index.
+	static function splitImportPath(parts:Array<String>):{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int} {
+		var pack:Array<String> = [];
+		var i = 0;
+		while (i < parts.length) {
+			var c = parts[i].charCodeAt(0);
+			if (c >= "A".code && c <= "Z".code) break;
+			pack.push(parts[i]);
+			i++;
+		}
+		if (i >= parts.length) return null;                                                    
+		var moduleName = parts[i];
+		i++;
+		var sub:Null<String> = null;
+		var field:Null<String> = null;
+		if (i < parts.length) {
+			// After a subtype, the next segment is its static or enum constructor regardless of case, as in
+			// Expr.ExprDef.EConst.
+			var c2 = parts[i].charCodeAt(0);
+			if (c2 >= "A".code && c2 <= "Z".code) {
+				sub = parts[i];
+				i++;
+				if (i < parts.length) field = parts[i];
+			} else {
+				field = parts[i];
+			}
+		}
+		return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field, fieldAt: i};
+	}
+
+	public static function bindImport(ctx:Context, m:ModuleDef, imports:hxc.context.Context.ModuleImports, imp:Import,
+			declPos:Position, impIdx:Int, contextInitAdd:(Void->Void)->Void):Void {
+		var parts = [for (pn in imp.path) pn.name];
+		// Defer static imports until the owning class builds, preserving declaration-order diagnostics.
+		// Failed import initialization never queues this lookup.
+		function deferStaticImport(split:{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int}, p:Position):Void {
+			if (split.sub == null && split.field == null) return;
+			var mpath = split.modulePath, sub = split.sub, field = split.field;
+			var pField = field != null && split.fieldAt < imp.path.length ? imp.path[split.fieldAt].pos : p;
+			contextInitAdd(function() {
+				if (impIdx >= 0 && imports.importFailed(p)) return;
+				var md = try loadImportedModule(ctx, mpath, p) catch (_:Dynamic) return;
+				function build(c:TClass):Void {
+					try {
+						hxc.typing.TypeResolve.resolveModule(ctx, c.module);
+						hxc.typing.TypeResolve.forceQueuedBuild(c);
+					} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+				}
+				// Build class or abstract implementations before looking up statics; enums offer constructors.
+				function addStaticInit(mt:ModuleType, s:String):Bool {
+					return switch (TypeFunctions.resolveTypedef(mt)) {
+						case TClassDecl(c): build(c); c.statics.exists(s);
+						case TAbstractDecl(a) if (a.impl != null): build(a.impl); a.impl.statics.exists(s);
+						case TEnumDecl(e):
+							try hxc.typing.TypeResolve.resolveModule(ctx, e.module) catch (ex:Dynamic) hxc.core.TypingError.FatalError.pass(ex);
+							e.constrs.exists(s);
+						case _: false;
+					};
+				}
+				if (sub != null && field != null) {
+					var tsub = hxc.filters.ImportCheck.namedType(md, sub);
+					if (tsub != null && !addStaticInit(tsub, field))
+						ctx.addDiagnostic(Context.sTypePath(TypeFunctions.tPath(tsub)) + " has no field " + field,
+							Position.union(p, pField));
+					return;
+				}
+				var tsub = field != null ? field : sub;
+				if (hxc.filters.ImportCheck.namedType(md, tsub) != null) return;
+				if (md.statics != null) {
+					build(md.statics);
+					for (cf in md.statics.orderedStatics) if (cf.name == tsub) {
+						if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic))
+							throw new ContextError("Importing private declarations from a module is not allowed", p);
+						return;
+					}
+				}
+				// Try the main type's static, then report available fields. Modules without a main type use
+				// ImportCheck.failUsefully.
+				var tmain = hxc.filters.ImportCheck.namedType(md, mpath.name);
+				if (tmain == null) throw new ContextError(hxc.filters.ImportCheck.failUsefully(md, tsub), p);
+				if (addStaticInit(tmain, tsub)) return;
+				var names = hxc.filters.ImportCheck.foldiNames;
+				var parent:String, kind = "field", candidates:Array<String>;
+				switch (TypeFunctions.resolveTypedef(tmain)) {
+					case TClassDecl(c):
+						parent = "Class<" + Context.sTypePath(c.path) + ">";
+						candidates = names([for (k in c.statics.keys()) k]);
+					case TAbstractDecl(a) if (a.impl != null):
+						parent = "Abstract<" + Context.sTypePath(md.path) + ">";
+						candidates = names([for (k in a.impl.statics.keys()) k]);
+					case TEnumDecl(e):
+						parent = "Enum<" + Context.sTypePath(md.path) + ">";
+						candidates = names([for (k in e.constrs.keys()) k]);
+					case _:
+						parent = "Module " + Context.sTypePath(md.path);
+						kind = "field or subtype";
+						candidates = md.statics == null ? [] : names([for (k in md.statics.statics.keys()) k]);
+				}
+				ctx.addDiagnostic(hxc.core.StringError.stringError(tsub, candidates, parent + " has no " + kind + " " + tsub), p);
+			});
+		}
+		switch (imp.mode) {
+			case IAll:
+				// Without the wildcard, an uppercase segment identifies a type rather than a package.
+				var split = splitImportPath(parts);
+				// Prepend package wildcards so later declarations win; type wildcards do not enter this list.
+				if (split == null && parts.length > 0) {
+					imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
+					imports.wildcardImp.unshift(impIdx);
+				}
+				// Type wildcards defer global registration until the type builds. Include statics or enum
+				// constructors except those tagged @:noImportGlobal.
+				if (split != null && split.field == null) {
+					var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
+					contextInitAdd(function() {
+						var mt = try ctx.getType(wpath, declPos, wsub) catch (_:Dynamic) return;
+						// Follow typedefs before static lookup; report types that still offer no statics.
+						switch (mt) {
+							case TTypeDecl(td):
+								try mt = TypeFunctions.moduleTypeOfType(TypeFunctions.follow(td.type)) catch (_:Dynamic) {}
+							case _:
+						}
+						inline function put(name:String) imports.globals.set(name,
+							{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
+						switch (mt) {
+							case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
+								try {
+									hxc.typing.TypeResolve.resolveModule(ctx, cl.module);
+									hxc.typing.TypeResolve.forceQueuedBuild(cl);
+								} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+								for (cf in cl.orderedStatics)
+									if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) put(cf.name);
+							case TEnumDecl(en):
+								try hxc.typing.TypeResolve.resolveModule(ctx, en.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
+								for (name in en.names)
+									if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta)) put(name);
+							case _:
+								throw new ContextError("No statics to import from this type", declPos);
+						}
+					});
+				}
+			case INormal:
+				var split = splitImportPath(parts);
+				if (split == null) return;
+				deferStaticImport(split, declPos);
+				if (split.field != null) {
+					imports.globals.set(split.field, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
+					return;
+				}
+				var short = split.sub != null ? split.sub : split.modulePath.name;
+				var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, impIdx: impIdx};
+				imports.names.set(short, ni);
+				imports.order.push(ni);
+			case IAsName(alias):
+				var split = splitImportPath(parts);
+				if (split == null) return;
+				deferStaticImport(split, declPos);
+				if (split.field != null) {
+					imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
+					return;
+				}
+				var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name, aliasPos: alias.pos, impIdx: impIdx};
+				imports.names.set(alias.name, ni);
+				imports.order.push(ni);
+		}
+	}
+
+	public static function bindUsing(m:ModuleDef, imports:hxc.context.Context.ModuleImports, path:Array<PlacedName>, impIdx:Int):Void {
+		var parts = [for (pn in path) pn.name];
+		var split = splitImportPath(parts);
+		if (split == null) return;
+		var short = split.sub != null ? split.sub : split.modulePath.name;
+		var namedModulePath = split.modulePath;
+		if (split.sub != null && split.modulePath.pack.length == 0 && m.path.pack.length > 0)
+			namedModulePath = {pack: m.path.pack, name: split.modulePath.name};
+		var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub, impIdx: impIdx};
+		imports.names.set(short, ni);
+		imports.order.push(ni);
+		function usingPath(modulePath:Path):Path {
+			return split.sub != null ? {pack: modulePath.pack.concat([modulePath.name]), name: split.sub} : modulePath;
+		}
+		if (split.modulePath.pack.length == 0 && m.path.pack.length > 0) {
+			var localModulePath:hxc.core.Globals.Path = {pack: m.path.pack, name: split.modulePath.name};
+			imports.usings.push(usingPath(localModulePath));
+			imports.usingImp.push(impIdx);
+		}
+		imports.usings.push(usingPath(split.modulePath));
+		imports.usingImp.push(impIdx);
+	}
+
 	static function createModuleTypes_(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool, queueBuilds:Bool):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
 		var hasDeclaration = false;
 
 		var imports = new hxc.context.Context.ModuleImports(new StringMap(), [], []);
-
-		// The first uppercase segment is the module, the second a subtype. Empty and package-wildcard
-		// paths return null; fieldAt records the static segment index.
-		function splitImportPath(parts:Array<String>):{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int} {
-			var pack:Array<String> = [];
-			var i = 0;
-			while (i < parts.length) {
-				var c = parts[i].charCodeAt(0);
-				if (c >= "A".code && c <= "Z".code) break;
-				pack.push(parts[i]);
-				i++;
-			}
-			if (i >= parts.length) return null;                                                    
-			var moduleName = parts[i];
-			i++;
-			var sub:Null<String> = null;
-			var field:Null<String> = null;
-			if (i < parts.length) {
-				// After a subtype, the next segment is its static or enum constructor regardless of case, as in
-				// Expr.ExprDef.EConst.
-				var c2 = parts[i].charCodeAt(0);
-				if (c2 >= "A".code && c2 <= "Z".code) {
-					sub = parts[i];
-					i++;
-					if (i < parts.length) field = parts[i];
-				} else {
-					field = parts[i];
-				}
-			}
-			return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field, fieldAt: i};
-		}
 
 		// Answer the segment containing the cursor. Load its module at the whole declaration position so
 		// unresolved imports report the entire statement.
@@ -468,141 +628,7 @@ class ModuleLoader {
 			queuePathDisplay(function() checkPathDisplay(ipath, declPos));
 			imports.rawImports.unshift(imp);
 			var impIdx = imports.addImportPosition(declPos);
-			var parts = [for (pn in imp.path) pn.name];
-			// Defer static imports until the owning class builds, preserving declaration-order diagnostics.
-			// Failed import initialization never queues this lookup.
-			function deferStaticImport(split:{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int}, p:Position):Void {
-				if (split.sub == null && split.field == null) return;
-				var mpath = split.modulePath, sub = split.sub, field = split.field;
-				var pField = field != null && split.fieldAt < imp.path.length ? imp.path[split.fieldAt].pos : p;
-				ctx.contextInitAdd(m, function() {
-					if (imports.importFailed(p)) return;
-					var md = try loadImportedModule(ctx, mpath, p) catch (_:Dynamic) return;
-					function build(c:TClass):Void {
-						try {
-							hxc.typing.TypeResolve.resolveModule(ctx, c.module);
-							hxc.typing.TypeResolve.forceQueuedBuild(c);
-						} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
-					}
-					// Build class or abstract implementations before looking up statics; enums offer constructors.
-					function addStaticInit(mt:ModuleType, s:String):Bool {
-						return switch (TypeFunctions.resolveTypedef(mt)) {
-							case TClassDecl(c): build(c); c.statics.exists(s);
-							case TAbstractDecl(a) if (a.impl != null): build(a.impl); a.impl.statics.exists(s);
-							case TEnumDecl(e):
-								try hxc.typing.TypeResolve.resolveModule(ctx, e.module) catch (ex:Dynamic) hxc.core.TypingError.FatalError.pass(ex);
-								e.constrs.exists(s);
-							case _: false;
-						};
-					}
-					if (sub != null && field != null) {
-						var tsub = hxc.filters.ImportCheck.namedType(md, sub);
-						if (tsub != null && !addStaticInit(tsub, field))
-							ctx.addDiagnostic(Context.sTypePath(TypeFunctions.tPath(tsub)) + " has no field " + field,
-								Position.union(p, pField));
-						return;
-					}
-					var tsub = field != null ? field : sub;
-					if (hxc.filters.ImportCheck.namedType(md, tsub) != null) return;
-					if (md.statics != null) {
-						build(md.statics);
-						for (cf in md.statics.orderedStatics) if (cf.name == tsub) {
-							if (!TypeFunctions.hasClassFieldFlag(cf, CfPublic))
-								throw new ContextError("Importing private declarations from a module is not allowed", p);
-							return;
-						}
-					}
-					// Try the main type's static, then report available fields. Modules without a main type use
-					// ImportCheck.failUsefully.
-					var tmain = hxc.filters.ImportCheck.namedType(md, mpath.name);
-					if (tmain == null) throw new ContextError(hxc.filters.ImportCheck.failUsefully(md, tsub), p);
-					if (addStaticInit(tmain, tsub)) return;
-					var names = hxc.filters.ImportCheck.foldiNames;
-					var parent:String, kind = "field", candidates:Array<String>;
-					switch (TypeFunctions.resolveTypedef(tmain)) {
-						case TClassDecl(c):
-							parent = "Class<" + Context.sTypePath(c.path) + ">";
-							candidates = names([for (k in c.statics.keys()) k]);
-						case TAbstractDecl(a) if (a.impl != null):
-							parent = "Abstract<" + Context.sTypePath(md.path) + ">";
-							candidates = names([for (k in a.impl.statics.keys()) k]);
-						case TEnumDecl(e):
-							parent = "Enum<" + Context.sTypePath(md.path) + ">";
-							candidates = names([for (k in e.constrs.keys()) k]);
-						case _:
-							parent = "Module " + Context.sTypePath(md.path);
-							kind = "field or subtype";
-							candidates = md.statics == null ? [] : names([for (k in md.statics.statics.keys()) k]);
-					}
-					ctx.addDiagnostic(hxc.core.StringError.stringError(tsub, candidates, parent + " has no " + kind + " " + tsub), p);
-				});
-			}
-			switch (imp.mode) {
-				case IAll:
-					// Without the wildcard, an uppercase segment identifies a type rather than a package.
-					var split = splitImportPath(parts);
-					// Prepend package wildcards so later declarations win; type wildcards do not enter this list.
-					if (split == null && parts.length > 0) {
-						imports.wildcards.unshift({pack: parts.slice(0, parts.length - 1), name: parts[parts.length - 1]});
-						imports.wildcardImp.unshift(impIdx);
-					}
-					// Type wildcards defer global registration until the type builds. Include statics or enum
-					// constructors except those tagged @:noImportGlobal.
-					if (split != null && split.field == null) {
-						var wpath = split.modulePath, wsub = split.sub, wIdx = impIdx;
-						ctx.contextInitAdd(m, function() {
-							var mt = try ctx.getType(wpath, declPos, wsub) catch (_:Dynamic) return;
-							// Follow typedefs before static lookup; report types that still offer no statics.
-							switch (mt) {
-								case TTypeDecl(td):
-									try mt = TypeFunctions.moduleTypeOfType(TypeFunctions.follow(td.type)) catch (_:Dynamic) {}
-								case _:
-							}
-							inline function put(name:String) imports.globals.set(name,
-								{ownerPath: wpath, ownerSub: wsub, field: name, impIdx: wIdx});
-							switch (mt) {
-								case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
-									try {
-										hxc.typing.TypeResolve.resolveModule(ctx, cl.module);
-										hxc.typing.TypeResolve.forceQueuedBuild(cl);
-									} catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
-									for (cf in cl.orderedStatics)
-										if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta)) put(cf.name);
-								case TEnumDecl(en):
-									try hxc.typing.TypeResolve.resolveModule(ctx, en.module) catch (e:Dynamic) hxc.core.TypingError.FatalError.pass(e);
-									for (name in en.names)
-										if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta)) put(name);
-								case _:
-									ctx.addDiagnostic("No statics to import from this type", declPos);
-							}
-						});
-					}
-				case INormal:
-					var split = splitImportPath(parts);
-					if (split == null) return;
-					deferStaticImport(split, declPos);
-					if (split.field != null) {
-						imports.globals.set(split.field, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
-						return;
-					}
-					var short = split.sub != null ? split.sub : split.modulePath.name;
-					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, impIdx: impIdx};
-					imports.names.set(short, ni);
-					imports.order.push(ni);
-				case IAsName(alias):
-					var split = splitImportPath(parts);
-					if (split == null) return;
-					deferStaticImport(split, declPos);
-					if (split.field != null) {
-						imports.globals.set(alias.name, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field, impIdx: impIdx});
-						return;
-					}
-					if (!(alias.name.charCodeAt(0) >= "A".code && alias.name.charCodeAt(0) <= "Z".code))
-						ctx.addDiagnostic("Type aliases must start with an uppercase letter", alias.pos);
-					var ni:hxc.context.Context.ImportedName = {modulePath: split.modulePath, sub: split.sub, aliased: true, aliasName: alias.name, aliasPos: alias.pos, impIdx: impIdx};
-					imports.names.set(alias.name, ni);
-					imports.order.push(ni);
-			}
+			bindImport(ctx, m, imports, imp, declPos, impIdx, function(f) ctx.contextInitAdd(m, f));
 		}
 
 		function recordUsing(path:Array<PlacedName>, declPos:Position):Void {
@@ -617,26 +643,7 @@ class ModuleLoader {
 			// Load using modules in declaration order alongside imports so unresolved usings report at their
 			// declared position.
 			imports.rawUsings.push({path: path, pos: declPos, idx: impIdx});
-			var parts = [for (pn in path) pn.name];
-			var split = splitImportPath(parts);
-			if (split == null) return;
-			var short = split.sub != null ? split.sub : split.modulePath.name;
-			var namedModulePath = split.modulePath;
-			if (split.sub != null && split.modulePath.pack.length == 0 && m.path.pack.length > 0)
-				namedModulePath = {pack: m.path.pack, name: split.modulePath.name};
-			var ni:hxc.context.Context.ImportedName = {modulePath: namedModulePath, sub: split.sub, impIdx: impIdx};
-			imports.names.set(short, ni);
-			imports.order.push(ni);
-			function usingPath(modulePath:Path):Path {
-				return split.sub != null ? {pack: modulePath.pack.concat([modulePath.name]), name: split.sub} : modulePath;
-			}
-			if (split.modulePath.pack.length == 0 && m.path.pack.length > 0) {
-				var localModulePath:hxc.core.Globals.Path = {pack: m.path.pack, name: split.modulePath.name};
-				imports.usings.push(usingPath(localModulePath));
-				imports.usingImp.push(impIdx);
-			}
-			imports.usings.push(usingPath(split.modulePath));
-			imports.usingImp.push(impIdx);
+			bindUsing(m, imports, path, impIdx);
 		}
 
 		// Record the duplicate-name error, then raise Previous declaration here one level deeper at the

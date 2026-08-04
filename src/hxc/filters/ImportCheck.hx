@@ -90,40 +90,16 @@ class ImportCheck {
 				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
 				// Only a PACKAGE wildcard (no uppercase segment) skips the load; `import a.Module.*` reaches
 				// do_load_module like a plain import and reports the same way when the module does not exist.
-				if (mi < 0 && imp.mode.match(IAll)) continue;
-				// The module named by the first uppercase segment and leaves everything after it to the mode
-				// switch, so a sub-type or a static-field import loads its module exactly like a plain one
-				// does. Requiring the module name to be the last segment meant an import of a sub-type nobody
-				// used never pulled its module in: haxe.macro.PositionTools imports
-				// haxe.display.Position.Location for a `#if macro` signature, and the reference still loads
-				// that module and, through the typedef, haxe.display.FsPath - so under -dce no the FsPath
-				// abstract is generated.
-				if (mi < 0) {
-					// A path with no uppercase segment reaches the mode switch with rest = [], and anything but a
-					// wildcard is an error at the last element; init_module_type catches and records it, so the
-					// sweep continues. The sweep visits a module more than once, so the report dedups the same way
-					// a load does (plainImportsTried).
-					if (parts.length > 0) {
-						var lp = parts[parts.length - 1].pos;
-						var dkey = "lower!" + m.id + "!" + lp.file + "!" + lp.min + "!" + lp.max;
-						if (!ctx.plainImportsTried.exists(dkey)) {
-							ctx.plainImportsTried.set(dkey, true);
-							ctx.addDiagnostic("Module name must start with an uppercase letter", lp);
-							imports.markImportFailed(imp.pos);
-						}
-					}
-					continue;
-				}
-				var pack = [for (k in 0...mi) parts[k].name];
-				// And reports each import declaration: a second `import` of a module that failed to load fails
-				// again and is reported again. The sweep's own revisits dedup on the declaration, as the
-				// lowercase and using arms do.
-				var key = "import!" + m.id + "!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max + "!" + [for (pn in parts) pn.name].join(".");
+				if (mi < 0 && (imp.mode.match(IAll) || parts.length == 0)) continue;
+				// Each import declaration runs and reports: a second `import` of a module that failed to load
+				// fails again and is reported again. The sweep visits a module more than once, so its own
+				// revisits dedup on the declaration.
+				var key = if (mi < 0) {
+					var lp = parts[parts.length - 1].pos;
+					"lower!" + m.id + "!" + lp.file + "!" + lp.min + "!" + lp.max;
+				} else "import!" + m.id + "!" + imp.pos.file + "!" + imp.pos.min + "!" + imp.pos.max + "!" + [for (pn in parts) pn.name].join(".");
 				if (ctx.plainImportsTried.exists(key)) continue;
 				ctx.plainImportsTried.set(key, true);
-				// The module load reports at the type path - the first pack segment through the module name
-				// - not over the whole import declaration.
-				var pType = new Position(imp.pos.file, parts[0].pos.min, parts[mi].pos.max);
 				// An import's report is recorded, not raised; only the host context raises it, under a
 				// macro API call. In the macro context, raising (set while EvalMacro.loadMacroClass loads a
 				// module) stands for the typing errors of that module's declarations, which this handler is
@@ -135,61 +111,87 @@ class ImportCheck {
 					ctx.raiseTypingErrors = savedRaise;
 					imports.markImportFailed(imp.pos);
 				}
-				var md:Null<ModuleDef> = null;
-				try md = ModuleLoader.loadModule(ctx, {pack: pack, name: parts[mi].name}, pType)
+				// An import's typing error is caught and recorded. A PARSE failure is a different exception
+				// and passes straight through, aborting the compile on the spot.
+				// sys/thread/Thread.hx is nothing but
+				// `#if (!target.threaded) #error "This class is not available on this target"`,
+				// and that one message, with nothing after it, is all that is printed - even when import.hx
+				// names five such modules.
+				try checkImport(ctx, parts, imp.mode)
 				catch (e:hxc.context.Context.ContextError) {
 					record(e.message, e.pos, e.depth);
 				}
-				// init_module_type wraps init_import in `with Error(err,p,depth) -> display_error_ext`,
-				// which catches a LOAD error and records it.
 				catch (pe:hxc.parser.ParserError) { throw pe; }
 				// ForbidPackage is not a typing error either: it passes the declaration handler and ends
 				// the compile.
 				catch (fp:hxc.core.TypingError.ForbidPackage) { throw fp; }
 				catch (_:Dynamic) { imports.markImportFailed(imp.pos); }
-				if (md == null) continue;
-				// /:227: the mode switch, after the load. Two segments past the module name make the first
-				// a type and the second its static, and a third is the error; a wildcard allows one segment
-				// less. :211/:230 raise "Unexpected" first.
-				var after = parts.slice(mi + 1);
-				var unexpected:Null<PlacedName> = null;
-				var typeName:Null<String> = null;
-				switch (imp.mode) {
-					case IAll:
-						if (after.length >= 2) unexpected = after[1];
-						else typeName = after.length == 1 ? after[0].name : parts[mi].name;
-					case IAsName(_) if (after.length == 0):
-						// Rebind (get_type tname).
-						typeName = parts[mi].name;
-					case _:
-						if (after.length > 2) unexpected = after[2];
-						else if (after.length == 2) typeName = after[0].name;
-						else if (after.length == 1) {
-							// A type of that name is imported as it stands, so long as it is not another module's
-							// private type (chk_private over the path up to it).
-							var t = namedType(md, after[0].name);
-							if (t != null && isPrivateElsewhere(ctx, t))
-								record("Importing private declarations from a module is not allowed",
-									new Position(imp.pos.file, parts[0].pos.min, after[0].pos.max));
-						}
-				}
-				if (unexpected != null) {
-					record("Unexpected " + unexpected.name, unexpected.pos);
-					continue;
-				}
-				if (typeName != null) {
-					// get_type: a type the module does not have is fail_usefully's, and one that is private
-					// to another module is error_private's, both over the type path.
-					var t = namedType(md, typeName);
-					if (t == null) record(failUsefully(md, typeName), pType);
-					else if (isPrivateElsewhere(ctx, t)) record("Importing private declarations from a module is not allowed", pType);
-				}
 			}
 			// An `import |` or `using |` after the last recorded declaration; an abandoned module
 			// reaches none of them.
 			if (aborted) imports.pathDisplay = [] else runPathDisplay(0x7fffffff);
 		} catch (e:haxe.Exception) { ctx.currentModule = savedMod; throw e; }
 		ctx.currentModule = savedMod;
+	}
+
+	/**
+	    The module load and what the declaration raises, in that order.
+	    What it binds is ModuleLoader.bindImport's.
+	**/
+	public static function checkImport(ctx:Context, parts:Array<PlacedName>, mode:ImportMode):Void {
+		var mi = -1;
+		for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
+		if (mi < 0) {
+			// A package wildcard; anything else is an error at the last element.
+			if (mode.match(IAll) || parts.length == 0) return;
+			throw new hxc.context.Context.ContextError("Module name must start with an uppercase letter", parts[parts.length - 1].pos);
+		}
+		// The module named by the first uppercase segment loads at the type path, the first pack segment
+		// through the module name. A sub-type or a static-field import loads its module exactly like a
+		// plain one: haxe.macro.PositionTools imports haxe.display.Position.Location for a `#if macro`
+		// signature, and the reference still loads that module and, through the typedef,
+		// haxe.display.FsPath - so under -dce no the FsPath abstract is generated.
+		var pType = Position.union(parts[0].pos, parts[mi].pos);
+		var md = ModuleLoader.loadModule(ctx, {pack: [for (k in 0...mi) parts[k].name], name: parts[mi].name}, pType);
+		// getType: failUsefully's message for a type the module does not have, the private-import error for
+		// another module's private one, both over the type path.
+		function getType(name:String):Void {
+			var t = namedType(md, name);
+			if (t == null) throw new hxc.context.Context.ContextError(failUsefully(md, name), pType);
+			if (isPrivateElsewhere(ctx, t)) throw new hxc.context.Context.ContextError("Importing private declarations from a module is not allowed", pType);
+		}
+		// Rebind: a type alias starts uppercase.
+		function rebind(alias:PlacedName):Void {
+			var c = alias.name.charCodeAt(0);
+			if (!(c >= "A".code && c <= "Z".code))
+				throw new hxc.context.Context.ContextError("Type aliases must start with an uppercase letter", alias.pos);
+		}
+		var after = parts.slice(mi + 1);
+		switch (mode) {
+			case IAll:
+				if (after.length >= 2) throw new hxc.context.Context.ContextError("Unexpected " + after[1].name, after[1].pos);
+				getType(after.length == 1 ? after[0].name : parts[mi].name);
+			case INormal | IAsName(_):
+				var alias = switch (mode) { case IAsName(n): n; case _: null; };
+				switch (after.length) {
+					case 0:
+						if (alias != null) { getType(parts[mi].name); rebind(alias); }
+					case 1:
+						// A type of that name, unless it is another module's private one; any other name is
+						// a static,
+						// looked up in the module's context init.
+						var t = namedType(md, after[0].name);
+						if (t != null) {
+							if (isPrivateElsewhere(ctx, t))
+								throw new hxc.context.Context.ContextError("Importing private declarations from a module is not allowed",
+									Position.union(parts[0].pos, after[0].pos));
+							if (alias != null) rebind(alias);
+						}
+					case _:
+						if (after.length > 2) throw new hxc.context.Context.ContextError("Unexpected " + after[2].name, after[2].pos);
+						getType(after[0].name);
+				}
+		}
 	}
 
 	/**
