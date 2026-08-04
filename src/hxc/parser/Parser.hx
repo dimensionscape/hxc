@@ -251,6 +251,37 @@ class Parser {
 		}
 	}
 
+	// Not inlined; parsed as an import at the null position.
+	public static function parseImportString(src:String, file:String, ?defines:Define):{path:Array<PlacedName>, mode:ImportMode} {
+		return parseStringEntry(src, file, defines, function(p) return p.parseImportPath(Position.nullPos));
+	}
+
+	// Not inlined; parsed as a using at the null position.
+	public static function parseUsingString(src:String, file:String, ?defines:Define):Array<PlacedName> {
+		return parseStringEntry(src, file, defines, function(p) return p.parseUsingPath(Position.nullPos));
+	}
+
+	// A parse that is not inlined resets the display position, so every syntax error is raised, and the end
+	// checks close the parse: an unclosed #if, then a token left over.
+	static function parseStringEntry<T>(src:String, file:String, defines:Null<Define>, entry:Parser->T):T {
+		var savedDisplayFile = displayFile;
+		displayFile = null;
+		try {
+			var p = make(src, file, defines, false);
+			var r = entry(p);
+			p.checkUnclosedAtEnd();
+			if (!p.tokEq(p.peek(), Eof)) p.serror();
+			displayFile = savedDisplayFile;
+			return r;
+		} catch (a:PreprocessorAbort) {
+			displayFile = savedDisplayFile;
+			throw a.err;
+		} catch (e:Dynamic) {
+			displayFile = savedDisplayFile;
+			throw e;
+		}
+	}
+
 	/**
 	 * Parse a single expression directly from a pre-lexed token list (used by the
 	 * conditional-compilation preprocessor for parenthesised conditions). The token list must end in
@@ -4103,7 +4134,7 @@ class Parser {
 		return {decl: EAbstract(def), pos: Position.union(p1, cf.pos)};
 	}
 
-	function parseImport(p1:Position):TypeDecl {
+	function parseImportPath(p1:Position):{path:Array<PlacedName>, mode:ImportMode} {
 		var path:Array<PlacedName> = [];
 		var mode:ImportMode = INormal;
 		switch (peek()) {
@@ -4150,6 +4181,11 @@ class Parser {
 				// still forms.
 				if (!wouldSkipDisplayPosition(p1, true)) syntaxError(Expected(["identifier"]));
 		}
+		return {path: path, mode: mode};
+	}
+
+	function parseImport(p1:Position):TypeDecl {
+		var r = parseImportPath(p1);
 		// The cursor standing where the semicolon would be is not an error at all, and a semicolon
 		// missing for any other reason is recorded, so the import the user has half-typed still reaches
 		// import handling and answers the display.
@@ -4157,10 +4193,10 @@ class Parser {
 			else if (wouldSkipDisplayPosition(p1, true)) new Position(p1.file, displayOffset, displayOffset)
 			else { syntaxError(Expected([".", ";", "as"])); tokens[idx > 0 ? idx - 1 : 0].pos; };
 		var ipos = Position.union(p1, p2);
-		return {decl: EImport({path: path, mode: mode, pos: ipos}), pos: ipos};
+		return {decl: EImport({path: r.path, mode: r.mode, pos: ipos}), pos: ipos};
 	}
 
-	function parseUsing(p1:Position):TypeDecl {
+	function parseUsingPath(p1:Position):Array<PlacedName> {
 		var path:Array<PlacedName> = [];
 		switch (peek()) {
 			case Const(CIdent(name)):
@@ -4194,6 +4230,11 @@ class Parser {
 				// using still forms.
 				if (!wouldSkipDisplayPosition(p1, true)) syntaxError(Expected(["identifier"]));
 		}
+		return path;
+	}
+
+	function parseUsing(p1:Position):TypeDecl {
+		var path = parseUsingPath(p1);
 		// The same rule the import above carries
 		var p2 = if (tokEq(peek(), Semicolon)) next().pos
 			else if (wouldSkipDisplayPosition(p1, true)) new Position(p1.file, displayOffset, displayOffset)

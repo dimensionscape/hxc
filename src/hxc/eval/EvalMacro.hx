@@ -306,23 +306,19 @@ class EvalMacro {
 				if (tr != null) tctx.allowTransform = tr;
 			}
 			function restore() if (tctx != null) { tctx.allowInline = oldInline; tctx.allowTransform = oldTransform; }
-			// Runs the callback under catch_exceptions: an Abort answers null, a thrown haxe.macro.Error is
-			// the typing error it names, anything else left uncaught is the compile's error with its chain
-			// none of them a macro try's.
-			var result = try applyFn(ec, f, [])
-				catch (_:hxc.eval.EvalExceptions.MacroAbort) { restore(); return VNull; }
-				catch (rte:EvalExceptions.EvalRunTimeException) {
-					restore();
-					var info = runtimeMacroError(rte);
-					if (info != null) throw new TypingError(info.message, info.pos);
-					var stack = uncaughtExceptionStack(rte);
-					var te = new TypingError(stack[0].message, stack[0].pos);
-					te.callChain = stack;
-					throw te;
-				}
-				catch (e:Dynamic) { restore(); throw e; };
+			var result = try callPrepared(ec, f) catch (e:Dynamic) { restore(); throw e; };
 			restore();
 			return result;
+		});
+		// Context.withImports: the import strings, then the using strings, each parsed, before the callback
+		// is prepared.
+		reg2Raw("withImports", "with_imports", function(a) {
+			var imports = [for (s in [for (v in decodeArray(a[0])) strOf(v)])
+				apiParse(com, s, function(src, file, d) return hxc.parser.Parser.parseImportString(src, file, d))];
+			var usings = [for (s in [for (v in decodeArray(a[1])) strOf(v)])
+				apiParse(com, s, function(src, file, d) return hxc.parser.Parser.parseUsingString(src, file, d))];
+			var f = prepareCallback(ec, a[2]);
+			return withImports(ec, com, imports, usings, f);
 		});
 		// Warning/info report through the compiler's message list; get_messages/filter_messages read and
 		// filter that same list.
@@ -596,31 +592,6 @@ class EvalMacro {
 		});
 		reg2("moduleTypeToType", "module_type_to_type", function(a) {
 			return encodeType(ec, TypeFunctions.typeOfModuleType(decodeModuleTypeValue(ec, a[0])));
-		});
-		reg2("withImports", "with_imports", function(a) {
-			var m = com.currentModule;
-			if (m == null) throw new TypingError("withImports outside a module", curPos);
-			var key = Context.pathKey(m.path);
-			var old = com.moduleImports.get(key);
-			var next = cloneImports(old);
-			// init_import / init_using LOAD each module now, so a missing one is "Type not found" here, not
-			// at some later lookup that may never come.
-			for (iv in arrOf(a[0])) { var spec = strOf(iv); addImportSpec(next, spec); loadImportModule(com, spec); }
-			// init_using for each, and the context_init it fills runs at once.
-			for (uv in arrOf(a[1])) {
-				var spec = strOf(uv);
-				next.usings.push(pathFromDotted(spec));
-				next.usingClasses = hxc.filters.ImportCheck.usingClassesOf(hxc.filters.ImportCheck.usingTypes(com, spec.split("."), Position.nullPos), -1).concat(next.usingClasses);
-			}
-			com.moduleImports.set(key, next);
-			try {
-				var ret = applyFn(ec, a[2], []);
-				restoreImports(com, key, old);
-				return ret;
-			} catch (e:Dynamic) {
-				restoreImports(com, key, old);
-				throw e;
-			}
 		});
 		reg2("follow", "follow", function(a) {
 			var t = decodeType(ec, a[0]);
@@ -958,20 +929,90 @@ class EvalMacro {
 		return mdep;
 	}
 
-	static function cloneImports(old:Null<hxc.context.Context.ModuleImports>):hxc.context.Context.ModuleImports {
-		var names = new haxe.ds.StringMap<hxc.context.Context.ImportedName>();
-		var globals = new haxe.ds.StringMap<hxc.context.Context.ImportedGlobal>();
-		if (old != null) {
-			for (key in old.names.keys()) names.set(key, old.names.get(key));
-			for (key in old.globals.keys()) globals.set(key, old.globals.get(key));
+	// Context.withImports: the imports and usings go into the caller's imports at the null position, the
+	// fresh module init they fill runs at once, then the callback. Std.finally puts back the module's
+	// imports, globals and usings; wildcard packages are not restored.
+	static function withImports(ec:EvalContext, com:Context, imports:Array<{path:Array<PlacedName>, mode:ImportMode}>,
+			usings:Array<Array<PlacedName>>, f:EvalValue):EvalValue {
+		// An init macro runs in the host typer, whose module is nullModule.
+		var savedModule = com.currentModule;
+		var m = savedModule != null ? savedModule : TypeFunctions.nullModule;
+		var key = Context.pathKey(m.path);
+		var scope = com.moduleImports.get(key);
+		if (scope == null) com.moduleImports.set(key, scope = new hxc.context.Context.ModuleImports(new haxe.ds.StringMap(), [], []));
+		var oldNames = scope.names, oldOrder = scope.order, oldGlobals = scope.globals;
+		var oldUsingClasses = scope.usingClasses, oldUsings = scope.usings, oldUsingImp = scope.usingImp;
+		scope.names = oldNames.copy();
+		scope.order = oldOrder.copy();
+		scope.globals = oldGlobals.copy();
+		scope.usingClasses = oldUsingClasses.copy();
+		scope.usings = oldUsings.copy();
+		scope.usingImp = oldUsingImp.copy();
+		com.currentModule = m;
+		function restore():Void {
+			scope.names = oldNames;
+			scope.order = oldOrder;
+			scope.globals = oldGlobals;
+			scope.usingClasses = oldUsingClasses;
+			scope.usings = oldUsings;
+			scope.usingImp = oldUsingImp;
+			com.currentModule = savedModule;
 		}
-		var next = new hxc.context.Context.ModuleImports(names, old == null ? [] : old.wildcards.copy(), old == null ? [] : old.usings.copy(), globals, old == null ? [] : old.rawImports.copy());
-		if (old != null) next.usingClasses = old.usingClasses.copy();
-		return next;
+		var result = try {
+			var contextInit:Array<Void->Void> = [];
+			for (i in imports) {
+				hxc.filters.ImportCheck.checkImport(com, i.path, i.mode);
+				hxc.context.ModuleLoader.bindImport(com, m, scope, {path: i.path, mode: i.mode, pos: Position.nullPos},
+					Position.nullPos, -1, function(fi) contextInit.push(fi));
+			}
+			for (u in usings) {
+				var types = hxc.filters.ImportCheck.usingTypes(com, [for (pn in u) pn.name], Position.nullPos);
+				hxc.context.ModuleLoader.bindUsing(m, scope, u, -1);
+				contextInit.push(function() scope.usingClasses = hxc.filters.ImportCheck.usingClassesOf(types, -1).concat(scope.usingClasses));
+			}
+			for (fi in contextInit) fi();
+			callPrepared(ec, f);
+		} catch (e:hxc.context.Context.ContextError) {
+			restore();
+			// The load's error is an Error.Error here too, which no macro try catches.
+			throw new TypingError(e.message, e.pos, e.depth);
+		} catch (e:Dynamic) {
+			restore();
+			throw e;
+		}
+		restore();
+		return result;
 	}
 
-	static function restoreImports(com:Context, key:String, old:Null<hxc.context.Context.ModuleImports>):Void {
-		if (old == null) com.moduleImports.remove(key) else com.moduleImports.set(key, old);
+	// Runs the callback under catch_exceptions: an Abort answers null, a thrown haxe.macro.Error is
+	// the typing error it names, anything else left uncaught is the compile's error with its chain
+	// none of them a macro try's.
+	static function callPrepared(ec:EvalContext, f:EvalValue):EvalValue {
+		return try applyFn(ec, f, [])
+			catch (_:hxc.eval.EvalExceptions.MacroAbort) VNull
+			catch (rte:EvalExceptions.EvalRunTimeException) {
+				var info = runtimeMacroError(rte);
+				if (info != null) throw new TypingError(info.message, info.pos);
+				var stack = uncaughtExceptionStack(rte);
+				var te = new TypingError(stack[0].message, stack[0].pos);
+				te.callChain = stack;
+				throw te;
+			};
+	}
+
+	// The string parses at the null position and not inlined, so a parser's or the lexer's error is a
+	// typing error at the null position.
+	static function apiParse<T>(com:Context, s:String, entry:(String, String, hxc.core.Define)->T):T {
+		return try entry(s, Position.nullPos.file, com.defines)
+			catch (e:hxc.parser.ParserError) throw new TypingError(hxc.parser.ParserError.errorMsg(e.msg), Position.nullPos)
+			catch (e:hxc.parser.LexerError) throw new TypingError(hxc.parser.LexerError.errorMsg(e.msg), Position.nullPos);
+	}
+
+	static function decodeArray(v:EvalValue):Array<EvalValue> {
+		return switch (v) {
+			case VArray(va): va.avalues.slice(0, va.alength);
+			case _: throw unexpectedValue(v, "array");
+		};
 	}
 
 	static function pathFromDotted(s:String):hxc.core.Globals.Path {
@@ -1054,92 +1095,6 @@ class EvalMacro {
 			case TClassDecl(c):
 				hxc.typing.TypeFields.forceClassFields(com, c);
 			case _:
-		}
-	}
-
-	static function splitImportPath(parts:Array<String>):Null<{modulePath:hxc.core.Globals.Path, sub:Null<String>, field:Null<String>}> {
-		var pack:Array<String> = [];
-		var i = 0;
-		while (i < parts.length) {
-			var c = parts[i].charCodeAt(0);
-			if (c >= "A".code && c <= "Z".code) break;
-			pack.push(parts[i]);
-			i++;
-		}
-		if (i >= parts.length) return null;
-		var moduleName = parts[i++];
-		var sub:Null<String> = null;
-		var field:Null<String> = null;
-		if (i < parts.length) {
-			var c2 = parts[i].charCodeAt(0);
-			if (c2 >= "A".code && c2 <= "Z".code) {
-				sub = parts[i++];
-				if (i < parts.length) field = parts[i];
-			} else {
-				field = parts[i];
-			}
-		}
-		return {modulePath: {pack: pack, name: moduleName}, sub: sub, field: field};
-	}
-
-	// The module an import or using names: the dotted path up to its first capitalised segment
-	// (`a.b.C.d` and `a.b.C as X` both load a.b.C); a package wildcard loads nothing.
-	static function loadImportModule(com:Context, raw:String):Void {
-		var head = raw.split(" ")[0];
-		var parts = head.split(".");
-		var pack = [];
-		for (seg in parts) {
-			if (seg == "*" || seg == "") return;
-			var c = seg.charCodeAt(0);
-			if (c >= "A".code && c <= "Z".code) {
-				hxc.context.ModuleLoader.loadModule(com, {pack: pack, name: seg}, Position.nullPos);
-				return;
-			}
-			pack.push(seg);
-		}
-	}
-
-	static function addImportSpec(imports:hxc.context.Context.ModuleImports, raw:String):Void {
-		var spec = StringTools.trim(raw);
-		var alias:Null<String> = null;
-		var asIndex = spec.indexOf(" as ");
-		if (asIndex >= 0) {
-			alias = StringTools.trim(spec.substr(asIndex + 4));
-			spec = StringTools.trim(spec.substr(0, asIndex));
-		}
-		if (StringTools.endsWith(spec, ".*")) {
-			var wparts = spec.substr(0, spec.length - 2).split(".");
-			var wsplit = splitImportPath(wparts);
-			if (wsplit == null) {
-				imports.wildcards.unshift(pathFromDotted(spec.substr(0, spec.length - 2)));
-				return;
-			}
-			var com = currentCompiler();
-			// The module is loaded QUALIFIED - the lowercase pack and the first uppercase segment - and
-			// takes the type of that name from it; nothing walks the current package for it.
-			var md = try hxc.context.ModuleLoader.loadModule(com, wsplit.modulePath, hxc.ast.Position.nullPos) catch (_:Dynamic) null;
-			var tname = wsplit.sub != null ? wsplit.sub : wsplit.modulePath.name;
-			var mt:Null<ModuleType> = null;
-			if (md != null) for (t in md.types) if (TypeFunctions.tPath(t).name == tname) { mt = t; break; }
-			if (mt != null) switch (TypeFunctions.resolveTypedef(mt)) {
-				case TClassDecl(cl) | TAbstractDecl({impl: cl}) if (cl != null):
-					for (cf in cl.orderedStatics)
-						if (!TypeFunctions.hasMeta(":noImportGlobal", cf.meta))
-							imports.globals.set(cf.name, {ownerPath: wsplit.modulePath, ownerSub: wsplit.sub, field: cf.name});
-				case TEnumDecl(en):
-					for (name in en.names)
-						if (!TypeFunctions.hasMeta(":noImportGlobal", en.constrs.get(name).meta))
-							imports.globals.set(name, {ownerPath: wsplit.modulePath, ownerSub: wsplit.sub, field: name});
-				case _:
-			}
-			return;
-		}
-		var split = splitImportPath(spec.split("."));
-		if (split == null) return;
-		if (split.field != null) {
-			imports.globals.set(alias == null ? split.field : alias, {ownerPath: split.modulePath, ownerSub: split.sub, field: split.field});
-		} else {
-			imports.names.set(alias == null ? (split.sub == null ? split.modulePath.name : split.sub) : alias, {modulePath: split.modulePath, sub: split.sub});
 		}
 	}
 
