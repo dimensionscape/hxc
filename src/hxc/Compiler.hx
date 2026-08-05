@@ -1831,14 +1831,14 @@ class Compiler {
 			flushPendingMessages(ctx);
 			exitRequest(1);
 		}
-		// Frames run innermost first; an explicit throw position drops the innermost frame it
-		// duplicates, and the catch position closes the stack (the reference's api-call env).
+		// Frames run innermost first; an explicit throw position drops the innermost frame it duplicates.
+		// The stack closes at the call's own entry environment, so the catch position only heads a raise
+		// without a position of its own.
 		var frames = [for (env in ex.envStack) qualifyStdPosition(ctx, hxc.eval.EvalExceptions.envPosition(env))];
 		// Only a frame at the null position is dropped.
 		frames = [for (p in frames) if (p != null && !hxc.eval.EvalExceptions.isNullPos(p)) p];
 		var explicit = ex.pos != null && !(ex.pos.file == "?" && ex.pos.min < 0);
 		if (explicit && frames.length > 0) frames.shift();
-		if (!(catchPos.file == "?" && catchPos.min < 0)) frames.push(catchPos);
 		var p1 = explicit ? ex.pos : catchPos;
 		// Reported through the message list so every -D message.reporting formatter renders it.
 		var stack = [{message: "Uncaught exception " + hxc.eval.EvalStdLib.stringOf(ex.value), pos: p1}];

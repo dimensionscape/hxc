@@ -1657,8 +1657,12 @@ class EvalMacro {
 		com.log("Calling macro " + name + " (" + p.file + ":" + Position.lineNumber(p) + ")");
 	}
 
-	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position):EvalValue {
+	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position, entry:Bool = false):EvalValue {
 		var fn = resolveMacroFn(ec, callee, errPos);
+		if (entry) {
+			var f = fn;
+			fn = function(vl) return callPath(ec, f, vl, p);
+		}
 		if (!com.verbose) return fn(values);
 		var t = macroTarget(callee);
 		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
@@ -1666,6 +1670,22 @@ class EvalMacro {
 		var r = try fn(values) catch (a:hxc.eval.EvalExceptions.MacroAbort) { com.log("Exiting macro " + name); throw a; };
 		com.log("Exiting macro " + name);
 		return r;
+	}
+
+	// The macro runs inside an entry environment whose leave position is the call, the last "Called from
+	// here" of an uncaught exception's chain and the first level the depth limit counts. The catcher puts
+	// the environment back for a runtime exception alone; an abort or an Error leaves the stack as it
+	// stood.
+	static function callPath(ec:EvalContext, fn:VFunc, values:Array<EvalValue>, p:Position):EvalValue {
+		var eval = EvalContext.getEval(ec);
+		var env = EvalContext.pushEnvironment(ec, EvalContext.createEnvInfo(true, p, EKEntrypoint, 0, 0));
+		EvalExceptions.setLeavePosition(env, p);
+		var v = try fn(values) catch (rte:EvalExceptions.EvalRunTimeException) {
+			eval.env = env.parent;
+			throw rte;
+		};
+		EvalContext.popEnvironment(ec, env);
+		return v;
 	}
 
 	static function resolveMacroFn(ec:EvalContext, callee:Expr, p:Position):VFunc {
@@ -1867,9 +1887,10 @@ class EvalMacro {
 						[for (a in args) initMacroConstArg(ec, a)];
 					}
 					if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
-					// Runs through Interp.call_path, whose catch_exceptions answers None to Context.error's Abort
-					// the message is reported and the compilation goes on.
-					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
+					// An init macro runs through the interpreter's call path: its entry environment at the
+					// --macro position closes an uncaught exception's chain, and an abort from
+					// Context.error answers nothing: the message is reported and the compilation goes on.
+					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos, true) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
 					curPos = savedPos;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
