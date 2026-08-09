@@ -168,7 +168,9 @@ class TypeResolve {
 		// failing one is built first (the delays are LIFO) - and bound their variables.
 		for (k in init.builtBefore) ctx.declBuiltBeforeError.set(k, true);
 		if (escapesDeclError(ctx)) { ctx.currentModule = savedMod; throw e; }
-		ctx.addDiagnostic(message, pos, depth);
+		var chain = Std.isOfType(e, hxc.core.TypingError) ? (e : hxc.core.TypingError).callChain
+			: Std.isOfType(e, ContextError) ? (e : ContextError).callChain : null;
+		ctx.addTypingError(message, pos, depth, chain);
 		ctx.currentModule = init.m;
 		ctx.declAborted = true;
 		init.aborted = true;

@@ -393,9 +393,13 @@ class Typeload {
 		var r:Ref<TLazy> = new Ref(TypeFunctions.lazyAvailable(TypeFunctions.tDynamic));
 		r.set(TypeFunctions.lazyWait(function():T {
 			var t = try f(r) catch (e:ContextError) {
-				throw new FatalError(e.message, e.pos, e.depth, true);
+				var fe = new FatalError(e.message, e.pos, e.depth, true);
+				fe.callChain = e.callChain;
+				throw fe;
 			} catch (e:TypingError) {
-				throw new FatalError(e.message, e.pos, e.depth, true);
+				var fe = new FatalError(e.message, e.pos, e.depth, true);
+				fe.callChain = e.callChain;
+				throw fe;
 			};
 			r.set(TypeFunctions.lazyAvailable(t));
 			return t;
@@ -1067,7 +1071,9 @@ class Typeload {
 			// The kind survives the change of class: a macro module that did not load is
 			// Module_not_found, which the argument annotation leaves alone.
 			var kind = Std.isOfType(e, hxc.core.TypingError.ModuleNotFoundError) ? ModuleNotFound(c.path) : Other;
-			throw new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+			var ce = new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+			ce.callChain = e.callChain;
+			throw ce;
 		}
 	}
 
@@ -1090,11 +1096,15 @@ class Typeload {
 					case _:
 				}
 			} catch (e:ContextError) {
-				throw new FatalError(e.message, e.pos, e.depth, true);
+				var fe = new FatalError(e.message, e.pos, e.depth, true);
+				fe.callChain = e.callChain;
+				throw fe;
 			} catch (e:hxc.core.TypeUnification.UnifyError) {
 				throw new FatalError(hxc.core.TPrinting.betterErrorMessage(e.errors), p, 0, true);
 			} catch (e:TypingError) {
-				throw new FatalError(e.message, e.pos, e.depth, true);
+				var fe = new FatalError(e.message, e.pos, e.depth, true);
+				fe.callChain = e.callChain;
+				throw fe;
 			}
 			r.set(TypeFunctions.lazyAvailable(t));
 			return t;

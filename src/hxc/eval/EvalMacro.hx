@@ -986,18 +986,28 @@ class EvalMacro {
 
 	// Runs the callback under catch_exceptions: an Abort answers null, a thrown haxe.macro.Error is
 	// the typing error it names, anything else left uncaught is the compile's error with its chain
-	// none of them a macro try's.
+	// none of them a macro try's. Only the RunTimeException puts back the environment the callback
+	// started from .
 	static function callPrepared(ec:EvalContext, f:EvalValue):EvalValue {
+		var eval = EvalContext.getEval(ec);
+		var env = eval.env;
 		return try applyFn(ec, f, [])
 			catch (_:hxc.eval.EvalExceptions.MacroAbort) VNull
 			catch (rte:EvalExceptions.EvalRunTimeException) {
-				var info = runtimeMacroError(rte);
-				if (info != null) throw new TypingError(info.message, info.pos);
-				var stack = uncaughtExceptionStack(rte);
-				var te = new TypingError(stack[0].message, stack[0].pos);
-				te.callChain = stack;
-				throw te;
+				eval.env = env;
+				throw catchExceptionsError(rte);
 			};
+	}
+
+	// The RunTimeException arm: a haxe.macro.Error is the error it names, at its own position; any
+	// other value is "Uncaught exception" with its "Called from here" chain, one error.
+	static function catchExceptionsError(rte:EvalExceptions.EvalRunTimeException):TypingError {
+		var info = runtimeMacroError(rte);
+		if (info != null) return new TypingError(info.message, info.pos);
+		var stack = uncaughtExceptionStack(rte);
+		var te = new TypingError(stack[0].message, stack[0].pos);
+		te.callChain = stack;
+		return te;
 	}
 
 	// The string parses at the null position and not inlined, so a parser's or the lexer's error is a
@@ -1118,7 +1128,9 @@ class EvalMacro {
 								// macro world's finalize hands it to the macro load's caller instead.
 								if (com.isMacro) throw e;
 								if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null) Sys.println("[buildfatal] " + Context.sTypePath(c.path));
-								throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+								var fe = new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+								fe.callChain = e.callChain;
+								throw fe;
 							}
 						case _:
 					}
@@ -1176,11 +1188,13 @@ class EvalMacro {
 			c.orderedFields = [];
 			c.orderedStatics = [];
 			c.constructor = null;
-			// The KIND leaves with it: a macro module that did not load is Module_not_found, which from the
-			// argument annotation.
+			// The KIND leaves with it: a macro module that did not load is a missing module, which is
+			// exempt from the argument annotation. So does a chain.
 			if (src != null && Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError))
 				throw new hxc.core.TypingError.ModuleNotFoundError(message, pos);
-			throw new TypingError(message, pos);
+			var te = new TypingError(message, pos);
+			if (src != null) te.callChain = src.callChain;
+			throw te;
 		}
 		// While the build macros run, the class's build state is BuildMacro pending; what a caller adds
 		// there runs once they finish, and not after a raise.
@@ -1245,26 +1259,11 @@ class EvalMacro {
 			// re-raised as it is; only a macro that answered nothing is Build failure.
 			fail(e.message, e.pos != null && e.pos != Position.nullPos ? e.pos : entry.pos);
 		} catch (e:EvalExceptions.EvalRunTimeException) {
-			var info = runtimeMacroError(e);
-			if (info != null) {
-				// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build
-				// failure" case a raw throw never gets there.
-				com.addDiagnostic(info.message, info.pos);
-				fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
-			}
-			else {
-				// An UNCAUGHT exception reports at the throwing expression with the call chain under it. The
-				// @:build metadata is the call site here, and the build path invokes the macro directly, so it
-				// is not among the positions the unwind recorded. The chain is one error in the reference, and
-				// its last line is the one that ends the compile.
-				var stack = uncaughtExceptionStack(e);
-				var last = stack[stack.length - 1];
-				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
-					stack.push({message: "Called from here", pos: entry.pos});
-				var tail = stack.pop();
-				if (stack.length > 0) com.addDiagnosticStack(stack);
-				fail(tail.message, tail.pos);
-			}
+			// What the macro leaves uncaught leaves callPath as an Error (catchExceptionsError), raised
+			// out of the build like any other; its chain ends at the build's entry environment, the
+			// @:build metadata. Only a macro that answered nothing (an Abort) is "Build failure".
+			var te = catchExceptionsError(e);
+			fail(te.message, te.pos, te);
 		} catch (e:hxc.core.TypingError.FatalError) {
 			throw e;
 		} catch (e:haxe.Exception) {
@@ -1566,10 +1565,12 @@ class EvalMacro {
 		var params = TypeFunctions.extractParamTypes(e.params);
 		// The enum's build runs at module init and its failure is RAISED out of it, so the module's load
 		// ends there for whoever loaded it.
-		function fail(message:String, pos:Position):Void {
+		function fail(message:String, pos:Position, ?src:TypingError):Void {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 				Sys.println("[buildraise:enum] " + Context.sTypePath(e.path) + ": " + message);
-			throw new TypingError(message, pos);
+			var te = new TypingError(message, pos);
+			if (src != null) te.callChain = src.callChain;
+			throw te;
 		}
 		for (entry in entries) try {
 			var newFields = callBuildMacro(com, entry, e.module, null, TEnum(e, params), params, e.params,
@@ -1577,27 +1578,11 @@ class EvalMacro {
 			if (newFields == null) continue;
 			d.dData = fieldsAsEnumConstructs(newFields, entry.pos);
 		} catch (ex:TypingError) {
-			fail(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos);
+			fail(ex.message, ex.pos != null && ex.pos != Position.nullPos ? ex.pos : entry.pos, ex);
 		} catch (ex:EvalExceptions.EvalRunTimeException) {
-			var info = runtimeMacroError(ex);
-			if (info != null) {
-				// Context.error makes the macro RETURN NOTHING, which is the reference's own "Build
-				// failure" case a raw throw never gets there.
-				com.addDiagnostic(info.message, info.pos);
-				fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
-			}
-			else {
-				// The @:build metadata is the call site here, and the build path invokes the macro directly, so
-				// it is not among the positions the unwind recorded. The chain is one error in the reference,
-				// and its last line is what leaves the build.
-				var stack = uncaughtExceptionStack(ex);
-				var last = stack[stack.length - 1];
-				if (last.pos == null || last.pos.file != entry.pos.file || last.pos.min != entry.pos.min)
-					stack.push({message: "Called from here", pos: entry.pos});
-				var tail = stack.pop();
-				if (stack.length > 0) com.addDiagnosticStack(stack);
-				fail(tail.message, tail.pos);
-			}
+			// catchExceptionsError makes it an Error, its chain ending at the @:build metadata.
+			var te = catchExceptionsError(ex);
+			fail(te.message, te.pos, te);
 		} catch (ex:hxc.core.TypingError.FatalError) {
 			throw ex;
 		} catch (ex:haxe.Exception) {
@@ -1657,17 +1642,13 @@ class EvalMacro {
 		com.log("Calling macro " + name + " (" + p.file + ":" + Position.lineNumber(p) + ")");
 	}
 
-	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position, entry:Bool = false):EvalValue {
+	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position):EvalValue {
 		var fn = resolveMacroFn(ec, callee, errPos);
-		if (entry) {
-			var f = fn;
-			fn = function(vl) return callPath(ec, f, vl, p);
-		}
-		if (!com.verbose) return fn(values);
+		if (!com.verbose) return callPath(ec, fn, values, p);
 		var t = macroTarget(callee);
 		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
 		logMacroCall(com, name, p);
-		var r = try fn(values) catch (a:hxc.eval.EvalExceptions.MacroAbort) { com.log("Exiting macro " + name); throw a; };
+		var r = try callPath(ec, fn, values, p) catch (a:hxc.eval.EvalExceptions.MacroAbort) { com.log("Exiting macro " + name); throw a; };
 		com.log("Exiting macro " + name);
 		return r;
 	}
@@ -1890,7 +1871,7 @@ class EvalMacro {
 					// An init macro runs through the interpreter's call path: its entry environment at the
 					// --macro position closes an uncaught exception's chain, and an abort from
 					// Context.error answers nothing: the message is reported and the compilation goes on.
-					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos, true) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
+					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
 					curPos = savedPos;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
@@ -2966,21 +2947,13 @@ class EvalMacro {
 				return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
 			}
 			expectedTypeStack.push(withType);
-			// The macro runs inside an entry environment at the call, whose leave position is the call
-			// itself: the chain's last "Called from here" and the depth the recursion limit counts from. An
-			// exception leaves it popped (catch_exceptions restores the environment it started with).
-			var entryEval = EvalContext.getEval(ec);
-			var entryEnv = EvalContext.pushEnvironment(ec, EvalContext.createEnvInfo(true, p, EKEntrypoint, 0, 0));
-			hxc.eval.EvalExceptions.setLeavePosition(entryEnv, p);
 			var macroName = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
 			logMacroCall(tctx.com, macroName, p);
-			var result = try fn(args) catch (e:Dynamic) {
-				entryEval.env = entryEnv.parent;
-				if (Std.isOfType(e, hxc.eval.EvalExceptions.MacroAbort)) tctx.com.log("Exiting macro " + macroName);
-				throw e;
+			var result = try callPath(ec, fn, args, p) catch (a:hxc.eval.EvalExceptions.MacroAbort) {
+				tctx.com.log("Exiting macro " + macroName);
+				throw a;
 			};
 			tctx.com.log("Exiting macro " + macroName);
-			EvalContext.popEnvironment(ec, entryEnv);
 			expectedTypeStack.pop();
 			// The expression the macro answers with is decoded under the same guard as a build's fields -
 			// null is "Expected Expr but got null".
@@ -3032,11 +3005,7 @@ class EvalMacro {
 				}
 				// A thrown haxe.macro.Error is the typing error it names, raised at its own position with no
 				// "Uncaught exception" head and no chain.
-				if (info != null) throw new TypingError(info.message, info.pos);
-				var stack = uncaughtExceptionStack(rte);
-				var te = new TypingError(stack[0].message, stack[0].pos);
-				te.callChain = stack;
-				throw te;
+				throw catchExceptionsError(rte);
 			}
 			throw e;
 		}
@@ -3358,8 +3327,12 @@ class EvalMacro {
 					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 					var values = macroArgs(ec, args, sig == null ? null : sig.args);
 					if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-					// Instantiate the macro at the call position.
-					callMacroFn(com, ec, callee, callExpr.pos, values, p);
+					// The macro is handed the INSTANTIATION position. An abort answers nothing (a fresh
+					// monomorph), and what the macro left uncaught is raised as an Error, which the
+					// instance's lazy makes fatal.
+					try callMacroFn(com, ec, callee, callExpr.pos, values, p)
+						catch (_:EvalExceptions.MacroAbort) VNull
+						catch (rte:EvalExceptions.EvalRunTimeException) throw catchExceptionsError(rte);
 				case _: throw new TypingError("genericBuild requires a single expression call parameter", callExpr.pos);
 			};
 			if (result == VNull) {
@@ -3456,7 +3429,10 @@ class EvalMacro {
 			var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s): s; case _: null; };
 			var values = macroArgs(ec, args, sig == null ? null : sig.args);
 			if (sig != null) while (values.length < sig.args.length) values.push(VNull);
-			var result = callMacroFn(com, ec, callee, p, values, p);
+			// An Abort answers null, an uncaught exception is an Error (catchExceptionsError).
+			var result = try callMacroFn(com, ec, callee, p, values, p)
+				catch (_:EvalExceptions.MacroAbort) VNull
+				catch (rte:EvalExceptions.EvalRunTimeException) throw catchExceptionsError(rte);
 			// A macro that returns nothing leaves a fresh monomorph behind.
 			var ret:T = if (result == VNull) TypeFunctions.mkMono() else {
 				// A MacroType macro may return the legacy Type result as well as a ComplexType one; only a

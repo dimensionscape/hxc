@@ -706,7 +706,7 @@ class Operators {
 			ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 			TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, e2.pos);
 		} catch (ce:hxc.context.Context.ContextError) {
-			ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+			ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
 			TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, e2.pos);
 		};
 	}

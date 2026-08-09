@@ -262,7 +262,9 @@ class TypeFields {
 		}
 		if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
-			throw new hxc.core.TypingError.FatalError(ce.message, ce.pos, ce.depth, true);
+			var fe = new hxc.core.TypingError.FatalError(ce.message, ce.pos, ce.depth, true);
+			fe.callChain = ce.callChain;
+			throw fe;
 		}
 		recordFieldError(ctx, e);
 	}
@@ -291,7 +293,8 @@ class TypeFields {
 			else addDiagnosticOnce(ctx, te.message, te.pos, te.depth);
 		} else if (Std.isOfType(e, ContextError)) {
 			var ce:ContextError = cast e;
-			addDiagnosticOnce(ctx, ce.message, ce.pos, ce.depth);
+			if (ce.callChain != null) ctx.addDiagnosticStack(ce.callChain, ce.depth)
+			else addDiagnosticOnce(ctx, ce.message, ce.pos, ce.depth);
 		} else if (Std.isOfType(e, EvalRunTimeException)) {
 			// A macro-time uncaught exception reports with its eval call stack, the same shape the
 			// interpreter prints. A Context.error abort carries its own message and position and prints
@@ -379,9 +382,13 @@ class TypeFields {
 						var name = parts.pop();
 						kind = hxc.context.Context.ContextErrorKind.ModuleNotFound({pack: parts, name: name});
 					}
-					throw new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+					var ce = new hxc.context.Context.ContextError(e.message, e.pos, kind, e.depth);
+					ce.callChain = e.callChain;
+					throw ce;
 				}
-				throw new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+				var fe = new hxc.core.TypingError.FatalError(e.message, e.pos, e.depth);
+				fe.callChain = e.callChain;
+				throw fe;
 			}
 		});
 	}

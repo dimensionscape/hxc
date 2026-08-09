@@ -987,7 +987,7 @@ class Typer {
 						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
 					}
 					catch (ce:hxc.context.Context.ContextError) {
-						ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+						ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
 						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
 					};
 				TypeFunctions.mk(TThrow(te), monoOrDynamic(ctx, withType, p), p);
@@ -5525,7 +5525,7 @@ class Typer {
 				// A module that fails to load raises a typing error like anything else, so it is caught
 				// here too. hxc raises it as ContextError; letting it escape would drop every statement
 				// after a `new Unknown()`.
-				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+				ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
 			}
 			i++;
 		}
@@ -5588,7 +5588,7 @@ class Typer {
 				ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
 				out.push({v: addLocal(ctx, VGenerated, n, TypeFunctions.tDynamic, pv), e: null});
 			} catch (ce:hxc.context.Context.ContextError) {
-				ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+				ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
 				out.push({v: addLocal(ctx, VGenerated, n, TypeFunctions.tDynamic, pv), e: null});
 			}
 		}
@@ -5721,7 +5721,7 @@ class Typer {
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				} catch (ce:hxc.context.Context.ContextError) {
-					ctx.com.addDiagnostic(ce.message, ce.pos, ce.depth);
+					ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
 					var nullExpr = TypeFunctions.mk(TConst(TNull), TypeFunctions.mkMono(), p);
 					return TypeFunctions.mk(TReturn(nullExpr), monoOrDynamic(ctx, withType, p), p);
 				}

@@ -329,11 +329,11 @@ class Calls {
 				|| Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError)))
 				return new TypingError(msg, pos, depth);
 			// A Stack error (a macro's uncaught exception with its chain) keeps every line and takes the
-			// annotation as one more Stack element, at the error's own position and without compl_msg's
-			// "...".
+			// annotation as one more Stack element, at the error's own position and without the "..."
+			// prefix, printed under the head like the rest.
 			if (src != null && src.callChain != null) {
 				var te = new TypingError(src.message, src.pos, src.depth);
-				te.callChain = src.callChain.concat([{message: "For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: src.pos, depth: 0}]);
+				te.callChain = src.callChain.concat([{message: "For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: src.pos}]);
 				return te;
 			}
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);
@@ -511,7 +511,12 @@ class Calls {
 					} else if (skipped.length > 0) {
 						throw argError(skipped[0].msg, skipped[0].name, true, skipped[0].pos, skipped[0].depth);
 					} else {
-						throw argError(ce.message, a.name, a.opt, ce.pos, ce.depth);
+						var src:Null<TypingError> = null;
+						if (ce.callChain != null) {
+							src = new TypingError(ce.message, ce.pos, ce.depth);
+							src.callChain = ce.callChain;
+						}
+						throw argError(ce.message, a.name, a.opt, ce.pos, ce.depth, src);
 					}
 				}
 				if (skip) {

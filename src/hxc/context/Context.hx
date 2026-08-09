@@ -654,7 +654,7 @@ class Context {
 		if (stack.length == 0) return;
 		var sev = severity == null ? Error : severity;
 		addDiagnostic(stack[0].message, stack[0].pos, depth, sev);
-		// Entries with explicit depths keep them; remaining entries are nested under the stack head.
+		// Nest entries after the head one level deeper unless they carry an explicit depth.
 		for (i in 1...stack.length) addDiagnostic(stack[i].message, stack[i].pos, stack[i].depth != null ? stack[i].depth : depth + 1, sev);
 	}
 
@@ -768,6 +768,8 @@ class ContextError {
 	public var pos:Position;
 	public var kind:ContextErrorKind;
 	public var depth:Int;
+	// Build failures forced from a body carry their macro call chain in TypingError.callChain.
+	public var callChain:Null<Array<{message:String, pos:Position, ?depth:Int}>> = null;
 
 	public static var msgCounts:haxe.ds.StringMap<Int> = new haxe.ds.StringMap();
 	public function new(message:String, pos:Position, ?kind:ContextErrorKind, depth:Int = 0) {

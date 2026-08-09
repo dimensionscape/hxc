@@ -1083,7 +1083,7 @@ class Compiler {
 			// An Error out of an init macro's load - the macro module not being found - is reported like
 			// any other.
 			ctx.raiseTypingErrors = false;
-			ctx.addTypingError(e.message, e.pos, e.depth, null);
+			ctx.addTypingError(e.message, e.pos, e.depth, e.callChain);
 			flushPendingMessages(ctx);
 			exitRequest(1);
 		} catch (e:hxc.parser.LexerError) {
@@ -1595,7 +1595,7 @@ class Compiler {
 			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
 		} catch (e:hxc.context.Context.ContextError) {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
-			abortWithMessage(ctx, e.message, e.pos, e.depth);
+			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
 		} catch (e:hxc.core.TypingError) {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, e.message, e.pos, 2, e.depth);
 			abortWithMessage(ctx, e.message, e.pos, e.depth, e.callChain);
