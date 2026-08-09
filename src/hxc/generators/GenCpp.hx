@@ -6,9 +6,11 @@ import hxc.context.Context;
 
 class GenCpp {
 	public static function generate(com:Context):Void {
+		hxc.generators.cpp.CppTypeOf.resetMultiTypeAnswers();
 		if (com.defines.rawDefined("cppia"))
 			hxc.generators.cpp.CppiaGen.generate(com);
 		else
 			hxc.generators.cpp.CppGen.generate(com);
+		hxc.generators.cpp.CppTypeOf.resetMultiTypeAnswers();
 	}
 }

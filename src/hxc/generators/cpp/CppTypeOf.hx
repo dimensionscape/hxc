@@ -239,12 +239,40 @@ class CppTypeOf {
 		}
 	}
 
+	// Generation asks for the same @:multiType instance many times, and each answer runs findTo's
+	// unifications again, where on hxcpp a failed @:to candidate is a thrown and rethrown Unify_error.
+	// An answer for parameters free of monomorphs is kept for the rest of the generation
+	// (resetMultiTypeAnswers): findTo unifies structurally, so parameters fastEq to kept ones
+	// resolve the same way.
+	static var multiTypeAnswers:Array<MultiTypeAnswer> = [];
+
+	public static function resetMultiTypeAnswers():Void {
+		multiTypeAnswers = [];
+	}
+
+	static function multiTypeAnswer(abs:TAbstract, pl:Array<T>):Null<T> {
+		for (a in multiTypeAnswers) {
+			if (a.abs != abs || a.pl.length != pl.length) continue;
+			var same = true;
+			for (i in 0...pl.length) if (!TypeUnification.fastEq(pl[i], a.pl[i])) { same = false; break; }
+			if (same) return a.t;
+		}
+		return null;
+	}
+
 	// A @:multiType abstract resolves to its concrete specialization
 	// when the definitive key type is known; otherwise (mono key, or
 	// no @:multiType) it falls back to the plain underlying type.
 	public static function cppGetUnderlyingType(abs:TAbstract, pl:Array<T>):T {
 		if (TypeFunctions.hasMeta(":multiType", abs.meta)) {
-			try return hxc.typing.Typer.resolveMultiTypeConcrete(abs, pl, hxc.ast.Position.nullPos) catch (_:Dynamic) {}
+			var known = multiTypeAnswer(abs, pl);
+			if (known != null) return known;
+			var closed = true;
+			for (t in pl) if (TypeFunctions.hasMono(t)) { closed = false; break; }
+			var t:T = try hxc.typing.Typer.resolveMultiTypeConcrete(abs, pl, hxc.ast.Position.nullPos) catch (_:Dynamic) null;
+			if (t == null) t = TypeFunctions.applyParams(abs.params, pl, abs.thisType);
+			if (closed) multiTypeAnswers.push(new MultiTypeAnswer(abs, pl, t));
+			return t;
 		}
 		// Return the IMMEDIATE underlying (thisType with params
 		// applied), not the fully-recursed one. So a @:forward abstract over Map resolves to Map, and
@@ -377,5 +405,17 @@ class CppTypeOf {
 			else if (TypeFunctions.hasClassFlag(klass, CInterface)) TCppInterface(klass);
 			else TCppInst(klass, params.map(function(p) return cppTypeOfStack(stack, p)));
 		});
+	}
+}
+
+private class MultiTypeAnswer {
+	public var abs:TAbstract;
+	public var pl:Array<T>;
+	public var t:T;
+
+	public function new(abs:TAbstract, pl:Array<T>, t:T) {
+		this.abs = abs;
+		this.pl = pl;
+		this.t = t;
 	}
 }

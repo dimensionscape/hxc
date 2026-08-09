@@ -163,11 +163,10 @@ class CppReferenced {
 							else switch (klass.kind) { case KTypeParameter(_): case _: addType(klass.path); }
 					}
 				case TAbstract(a, _) if (CppTypeOf.isScalarAbstract(a)): addExternType(TAbstractDecl(a));
-				// cpp_type_of lowers a non-coreType abstract to its underlying type, so an abstract
-				// member/argument is emitted as that underlying class (Map -> StringMap/IntMap, or a chain
-				// like A(T) to T where T(X) to X, emitted as X). The referenced-type walk must resolve it
-				// the same way, else the emitted class name has no forward-declaration. The reference
-				// relies on the field's type already being the concrete type; hxc resolves here.
+				// The C++ generator follows through abstracts, so visitType sees a non-coreType abstract as
+				// its underlying type (Map as StringMap/IntMap, a chain A(T) to T where T(X) to X as X).
+				// TypeFunctions.follow stops at the abstract; it is resolved here the way
+				// CppTypeOf.cppTypeOf resolves it.
 				case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta)):
 					visitType(CppTypeOf.cppGetUnderlyingType(a, params));
 				case TFun(sig): visitType(sig.ret); for (a in sig.args) visitType(a.t);
