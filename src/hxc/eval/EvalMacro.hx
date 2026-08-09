@@ -2996,15 +2996,8 @@ class EvalMacro {
 			// interpreter prints it (the head and its "Called from here" chain). The conversion waits for
 			// the OUTERMOST macro frame so nested expansions keep adding their invocation to the chain.
 			if (rte != null && macroCallDepth == 0) {
-				var info = runtimeMacroError(rte);
-				if (info != null && isAbortValue(EvalContext.getCtx(), rte.value)) {
-					// "error": display_error, then Abort; the interpreter answers None and the call types
-					// `null` instead .
-					tctx.com.addDiagnostic(info.message, info.pos);
-					return Typer.typeExpr(tctx, new Expr(EConst(CIdent("null")), p), withType);
-				}
-				// A thrown haxe.macro.Error is the typing error it names, raised at its own position with no
-				// "Uncaught exception" head and no chain.
+				// A thrown haxe.macro.Error, a typing API's included (typingTimer), is the typing error it
+				// names, raised at its own position with no "Uncaught exception" head and no chain.
 				throw catchExceptionsError(rte);
 			}
 			throw e;
@@ -5284,16 +5277,11 @@ class EvalMacro {
 		ensureInstanceSlot(proto, EvalNames.hPos());
 		ensureInstanceSlot(proto, EvalNames.hChildErrors());
 		ensureInstanceSlot(proto, EvalNames.hToString());
-		ensureInstanceSlot(proto, EvalNames.h___hxcAbort());
 		var v:EvalValue = VInstance(new VInstance(proto.pinstanceFields.copy(), proto, INormal));
 		EvalField.setField(ec, v, EvalNames.hMessage(), mkString(msg), pos);
 		EvalField.setField(ec, v, EvalNames.hGetMessage(), VFunction(function(_) return mkString(msg), false), pos);
 		EvalField.setField(ec, v, EvalNames.hPos(), posValue, pos);
 		EvalField.setField(ec, v, EvalNames.hChildErrors(), VNull, pos);
-		// The value Context.error raises through the native boundary; a haxe.macro.Error a macro throws
-		// itself is an uncaught exception like any other value Abort for the former and nothing
-		// distinguishes the latter from a string).
-		EvalField.setField(ec, v, EvalNames.h___hxcAbort(), VTrue, pos);
 		// haxe.Exception.toString() yields the message, so Std.string(err) is the message text.
 		EvalField.setField(ec, v, EvalNames.hToString(), VFunction(function(_) return mkString(msg), false), pos);
 		return v;
@@ -5326,15 +5314,6 @@ class EvalMacro {
 		var com = currentCom;
 		if (com != null && com.forwardWarningsTo != null) com = com.forwardWarningsTo;
 		if (com != null) com.addDiagnostic(msg, pos);
-	}
-
-	// The value hxc's own Context.error raises + Abort), as opposed to a haxe.macro.Error a macro throws
-	// itself.
-	static function isAbortValue(ec:EvalContext, v:EvalValue):Bool {
-		return switch (EvalValueTools.vresolve(v)) {
-			case VInstance(_): EvalField.field(ec, v, EvalNames.h___hxcAbort()) == VTrue;
-			case _: false;
-		};
 	}
 
 	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position}> {

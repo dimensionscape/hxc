@@ -95,13 +95,6 @@ class EvalNames {
 		return hXmlCache - 1;
 	}
 
-	static var hHxcAbortCache:Int = 0;
-
-	public static function h___hxcAbort():Int {
-		if (hHxcAbortCache == 0) hHxcAbortCache = EvalHash.hash("__hxcAbort") + 1;
-		return hHxcAbortCache - 1;
-	}
-
 	static var hRttiCache:Int = 0;
 
 	public static function h___rtti():Int {
