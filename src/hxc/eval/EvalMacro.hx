@@ -51,7 +51,6 @@ class EvalMacro {
 	static var currentCom:Null<Context> = null;
 	static var macroMessages:Array<EvalValue> = [];
 	static var builtClasses:Map<String, Bool> = new Map();
-	static var onAfterInitMacrosCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onAfterTypingCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onGenerateCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
 	static var onGenerateAfterSaveCallbacks:Array<{ec:EvalContext, fn:EvalValue}> = [];
@@ -860,8 +859,11 @@ class EvalMacro {
 			};
 			return VNull;
 		});
+		// Context.onAfterInitMacros: the prepared callback joins the compilation's own after-init list,
+		// behind the ones the arguments registered.
 		reg2("onAfterInitMacros", "on_after_init_macros", function(a) {
-			onAfterInitMacrosCallbacks.push({ec: ec, fn: prepareCallback(ec, a[0])});
+			var f = prepareCallback(ec, a[0]);
+			com.afterInitMacros.push(function() callPrepared(ec, f));
 			return VNull;
 		});
 		reg2("onAfterGenerate", "on_after_generate", function(a) {
@@ -984,19 +986,32 @@ class EvalMacro {
 		return result;
 	}
 
-	// Runs the callback under catch_exceptions: an Abort answers null, a thrown haxe.macro.Error is
-	// the typing error it names, anything else left uncaught is the compile's error with its chain
-	// none of them a macro try's. Only the RunTimeException puts back the environment the callback
-	// started from .
+	// prepareCallback runs the callback under the interpreter's exception catcher at the null position, in
+	// the interpreter it was registered in. An abort answers null and leaves the environment stack as it
+	// stands. A thrown value puts the stack back where the call found it and is the compile's error
+	// (catchExceptionsError) - none of them a macro try's.
 	static function callPrepared(ec:EvalContext, f:EvalValue):EvalValue {
+		var prev = try EvalContext.getCtx() catch (_:Dynamic) null;
+		EvalContext.setCtx(ec);
 		var eval = EvalContext.getEval(ec);
 		var env = eval.env;
-		return try applyFn(ec, f, [])
-			catch (_:hxc.eval.EvalExceptions.MacroAbort) VNull
-			catch (rte:EvalExceptions.EvalRunTimeException) {
-				eval.env = env;
-				throw catchExceptionsError(rte);
-			};
+		var v:EvalValue;
+		try {
+			v = applyFn(ec, f, []);
+		} catch (_:hxc.eval.EvalExceptions.MacroAbort) {
+			return VNull;
+		} catch (rte:EvalExceptions.EvalRunTimeException) {
+			if (env != null) eval.exceptionStack = EvalExceptions.buildExceptionStack(rte, env);
+			eval.env = env;
+			var te = catchExceptionsError(rte);
+			if (prev != null) EvalContext.setCtx(prev);
+			throw te;
+		} catch (e:Dynamic) {
+			if (prev != null) EvalContext.setCtx(prev);
+			throw e;
+		}
+		if (prev != null) EvalContext.setCtx(prev);
+		return v;
 	}
 
 	// The RunTimeException arm: a haxe.macro.Error is the error it names, at its own position; any
@@ -1879,32 +1894,6 @@ class EvalMacro {
 		}
 	}
 
-	public static function runAfterInitMacrosCallbacks():Void {
-		// The stage advances before the callbacks run, so an init-only API used inside one warns
-		// CInitMacrosDone precedes after_init_macros callbacks). The driver sets ctx.initMacrosDone just
-		// before calling this, which is that advance.
-		for (cb in onAfterInitMacrosCallbacks) {
-			EvalContext.setCtx(cb.ec);
-			// A Context.error inside one callback records and the remaining callbacks still
-			// run (the reference's callback runner catches per callback).
-			try switch (cb.fn) {
-				case VFunction(f, _): f([]);
-				case VFieldClosure(recv, f): f([recv]);
-				case _:
-			} catch (_:hxc.eval.EvalExceptions.MacroAbort) {
-				// An Abort answers None; the message is reported already.
-			} catch (te:hxc.core.TypingError) {
-				var mainCom = macroCom != null && macroCom.forwardWarningsTo != null ? macroCom.forwardWarningsTo : macroCom;
-				if (mainCom != null) mainCom.addDiagnostic(te.message, te.pos, te.depth);
-			} catch (re:hxc.eval.EvalExceptions.EvalRunTimeException) {
-				var mainCom = macroCom != null && macroCom.forwardWarningsTo != null ? macroCom.forwardWarningsTo : macroCom;
-				var info = runtimeMacroError(re);
-				if (mainCom != null && info != null) mainCom.addDiagnostic(info.message, info.pos);
-				else if (mainCom != null) mainCom.addDiagnostic(EvalStdLib.stringOf(re.value), Position.nullPos);
-			}
-		}
-	}
-
 	public static function runGenerateCallbacks(com:Context, afterSave:Bool = false):Void {
 		for (cb in (afterSave ? onGenerateAfterSaveCallbacks : onGenerateCallbacks)) {
 			EvalContext.setCtx(cb.ec);
@@ -2385,7 +2374,6 @@ class EvalMacro {
 		macroMonos = new Map();
 		// The callback registry belongs to the compilation, and the server builds a fresh one per
 		// request. Carrying the previous request's callbacks over would run every one of them twice.
-		onAfterInitMacrosCallbacks = [];
 		onAfterTypingCallbacks = [];
 		onGenerateCallbacks = [];
 		onGenerateAfterSaveCallbacks = [];

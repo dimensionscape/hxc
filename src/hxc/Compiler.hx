@@ -67,6 +67,11 @@ private class RequestAbort extends haxe.Exception {
 	public function new(code:Int) { super("request abort " + code); this.code = code; }
 }
 
+// Abort unwinds compilation without adding a diagnostic.
+private class CompileAbort extends haxe.Exception {
+	public function new() super("abort");
+}
+
 class Compiler {
 	// The aedifex program's entry constructs the class (ProgramMain), a plain build calls main(): both
 	// start where the runtime's thread setup leaves the main thread, holding the runtime lock.
@@ -522,8 +527,6 @@ class Compiler {
 		var noOutput = false;
 		var xmlOut:String = null;
 		var jsonOut:String = null;
-		var helpUserDefines = false;
-		var helpUserMetas = false;
 		var helpTables = false;
 		// An argument that has already DONE its job (--version, the help tables, --cwd) leaves nothing to
 		// compile without that being a mistake, so the compile exits quietly instead of printing the usage
@@ -752,11 +755,23 @@ class Compiler {
 					helpTables = true;
 					didSomething = true;
 				case "--help-user-defines":
+					// The user entries exist once the init macros have registered them, so the listing is
+					// an after-init callback, and its Abort ends the compile.
 					didSomething = true;
-					helpUserDefines = true;
+					ctx.afterInitMacros.push(function() {
+						printUserDocs([
+							for (k in ctx.userDefines.keys()) {name: k.split("_").join("-"), entry: ctx.userDefines.get(k), isMeta: false}
+						]);
+						throw new CompileAbort();
+					});
 				case "--help-user-metas":
 					didSomething = true;
-					helpUserMetas = true;
+					ctx.afterInitMacros.push(function() {
+						printUserDocs([
+							for (k in ctx.userMetas.keys()) {name: "@" + k, entry: ctx.userMetas.get(k), isMeta: true}
+						]);
+						throw new CompileAbort();
+					});
 				case "--no-output":
 					noOutput = true;
 				case "--times":
@@ -824,7 +839,7 @@ class Compiler {
 		// Nothing to compile, no macros to run, no commands: exit after argument handling, so `-version`
 		// works without a std. The accumulated messages (the -version info line) still print.
 		if (mainClass == null && extraClasses.length == 0 && ctx.initMacros.length == 0
-			&& cmds.length == 0 && !helpUserDefines && !helpUserMetas && !helpTables && !namedARoot
+			&& cmds.length == 0 && !helpTables && !namedARoot
 			&& ctx.displaySpec == null) {
 			// The gate is "the compile roots are only Std and typing is not forced", and it does not look at
 			// the target - a bare target flag prints the usage screen and never loads the std it just added.
@@ -1048,11 +1063,21 @@ class Compiler {
 			// The context re-registers under its post-macro signature (init macros can add defines); the
 			// last registration's desc wins.
 			hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "after_init_macros");
-			hxc.eval.EvalMacro.runAfterInitMacrosCallbacks();
-			// Run native after-init-macros callbacks at the same stage.
-			var aim = ctx.afterInitMacros;
-			ctx.afterInitMacros = [];
-			for (cb in aim) cb();
+			// The callbacks are one list in registration order, so the arguments' and the display request's
+			// callbacks run ahead of the init macros', and again for any added while it ran. What a callback
+			// raises ends the run and the compile.
+			while (ctx.afterInitMacros.length > 0) {
+				var aim = ctx.afterInitMacros;
+				ctx.afterInitMacros = [];
+				for (cb in aim) cb();
+			}
+		} catch (_:CompileAbort) {
+			// The compile ends quietly; the final flush prints what was queued and an error among it is the
+			// exit code.
+			var failed = ctx.hasError();
+			flushPendingMessages(ctx);
+			if (failed) exitRequest(1);
+			return;
 		} catch (ex:hxc.eval.EvalExceptions.EvalRunTimeException) {
 			printUncaughtException(ctx, ex, hxc.eval.EvalMacro.currentPosition());
 		} catch (e:hxc.eval.EvalExceptions.HostException) {
@@ -1095,19 +1120,6 @@ class Compiler {
 		} catch (e:hxc.parser.ParserError) {
 			if (isDisplay(ctx, "diagnostics")) return diagnosticsAbort(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos, 4);
 			abortWithMessage(ctx, hxc.parser.ParserError.errorMsg(e.msg), e.pos);
-		}
-
-		// The init-macro stage is complete; init-only APIs warn past this point (com.stage >=
-		// CInitMacrosDone). / -help-user-defines/--help-user-metas print after the init macros registered
-		// the entries, then stop. (add_after_init_macros + Abort).
-		if (helpUserDefines || helpUserMetas) {
-			if (helpUserDefines) printUserDocs([
-				for (k in ctx.userDefines.keys()) {name: k.split("_").join("-"), entry: ctx.userDefines.get(k), isMeta: false}
-			]);
-			if (helpUserMetas) printUserDocs([
-				for (k in ctx.userMetas.keys()) {name: "@" + k, entry: ctx.userMetas.get(k), isMeta: true}
-			]);
-			return;
 		}
 
 		// A compile without -main still loads its roots, runs macros and filters, and generates; it just
