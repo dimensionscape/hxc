@@ -302,7 +302,8 @@ class TypeFields {
 			var re:EvalRunTimeException = cast e;
 			var info = hxc.eval.EvalMacro.runtimeMacroError(re);
 			if (info != null) {
-				addDiagnosticOnce(ctx, info.message, info.pos);
+				if (info.stack != null) ctx.addDiagnosticStack(info.stack)
+				else addDiagnosticOnce(ctx, info.message, info.pos);
 				return;
 			}
 			ctx.addDiagnosticStack(hxc.eval.EvalMacro.uncaughtExceptionStack(re));

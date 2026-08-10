@@ -165,7 +165,11 @@ class EvalMacro {
 		// world.)
 		try EvalMain.addTypes(ec, types) catch (rte:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(rte);
-			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos, 0, true);
+			if (info != null) {
+				var fe = new hxc.core.TypingError.FatalError(info.message, info.pos, 0, true);
+				fe.callChain = info.stack;
+				throw fe;
+			}
 			var stack = uncaughtExceptionStack(rte);
 			var fe = new hxc.core.TypingError.FatalError(stack[0].message, stack[0].pos, 0, true);
 			fe.callChain = stack;
@@ -1014,11 +1018,16 @@ class EvalMacro {
 		return v;
 	}
 
-	// The RunTimeException arm: a haxe.macro.Error is the error it names, at its own position; any
-	// other value is "Uncaught exception" with its "Called from here" chain, one error.
+	// A runtime exception as the catcher reports it: a haxe.macro.Error is the error it names, at its
+	// own position, its child errors after it; any other value is "Uncaught exception" with its
+	// "Called from here" chain, one error.
 	static function catchExceptionsError(rte:EvalExceptions.EvalRunTimeException):TypingError {
 		var info = runtimeMacroError(rte);
-		if (info != null) return new TypingError(info.message, info.pos);
+		if (info != null) {
+			var te = new TypingError(info.message, info.pos);
+			te.callChain = info.stack;
+			return te;
+		}
 		var stack = uncaughtExceptionStack(rte);
 		var te = new TypingError(stack[0].message, stack[0].pos);
 		te.callChain = stack;
@@ -1916,7 +1925,11 @@ class EvalMacro {
 		try call() catch (ex:EvalExceptions.EvalRunTimeException) {
 			curPos = savedPos;
 			var info = runtimeMacroError(ex);
-			if (info != null) throw new hxc.core.TypingError.FatalError(info.message, info.pos);
+			if (info != null) {
+				var fe = new hxc.core.TypingError.FatalError(info.message, info.pos);
+				fe.callChain = info.stack;
+				throw fe;
+			}
 			throw ex;
 		} catch (a:hxc.eval.EvalExceptions.MacroAbort) {
 			// prepareCallback: an abort answers nothing; the message is already reported and the callback
@@ -5304,39 +5317,65 @@ class EvalMacro {
 		if (com != null) com.addDiagnostic(msg, pos);
 	}
 
-	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position}> {
+	static function isMacroErrorValue(ec:EvalContext, v:EvalValue):Bool {
+		return switch (EvalValueTools.vresolve(v)) {
+			case VInstance(vi): vi.iproto != null && (vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroError())
+				|| vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroExprError()));
+			case _: false;
+		};
+	}
+
+	// A user built haxe.macro.Error keeps message behind the Exception property whose backing
+	// slot is __exceptionMessage; the raw message slot is null.
+	static function macroErrorMessageValue(ec:EvalContext, v:EvalValue):EvalValue {
+		var msgRaw = EvalField.field(ec, v, EvalNames.hMessage());
+		if (EvalValueTools.vresolve(msgRaw).match(VNull))
+			msgRaw = EvalField.field(ec, v, EvalHash.keyExceptionMessage);
+		return msgRaw;
+	}
+
+	// The thrown value as it is reported: only a haxe.macro.Error is an error of its own, its message at
+	// its position, and its child errors follow it as one Stack (`stack`, null when there are none); any
+	// other thrown value is uncaught.
+	public static function runtimeMacroError(ex:EvalExceptions.EvalRunTimeException):Null<{message:String, pos:Position, ?stack:Array<{message:String, pos:Position, ?depth:Int}>}> {
 		var ec = try EvalContext.getCtx() catch (_:Dynamic) null;
 		if (ec == null) return null;
-		return switch (EvalValueTools.vresolve(ex.value)) {
-			// Only a haxe.macro.Error instance reads as an error of its own (its message at its position);
-			// any other thrown value is uncaught.
-			case VInstance(vi) if (vi.iproto != null && (vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroError())
-					|| vi.iproto == ec.instancePrototypes.get(EvalNames.hHaxeMacroExprError()))):
-				// A user built haxe.macro.Error keeps message behind the Exception property
-				// whose backing slot is __exceptionMessage; the raw message slot is null.
-				var msgRaw = EvalField.field(ec, ex.value, EvalNames.hMessage());
-				if (EvalValueTools.vresolve(msgRaw).match(VNull))
-					msgRaw = EvalField.field(ec, ex.value, EvalHash.keyExceptionMessage);
-				var msg = switch (EvalValueTools.vresolve(msgRaw)) {
-					case VNull: EvalStdLib.stringOf(ex.value);
-					case _: EvalStdLib.stringOf(msgRaw);
-				};
-					var pv = EvalField.field(ec, ex.value, EvalNames.hPos());
-				var pos = switch (EvalValueTools.vresolve(pv)) {
-					case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
-					case VObject(o): switch (o.oproto) {
-						case ODictionary(fields):
-							var file = EvalStdLib.stringOf(fields.get(EvalNames.hFile()));
-							var min = switch (fields.get(EvalNames.hMin())) { case VInt(i): i; case _: -1; };
-							var max = switch (fields.get(EvalNames.hMax())) { case VInt(i): i; case _: -1; };
-							new Position(file, min, max);
+		if (!isMacroErrorValue(ec, ex.value)) return null;
+		var msgRaw = macroErrorMessageValue(ec, ex.value);
+		var msg = switch (EvalValueTools.vresolve(msgRaw)) {
+			case VNull: EvalStdLib.stringOf(ex.value);
+			case _: EvalStdLib.stringOf(msgRaw);
+		};
+		var pv = EvalField.field(ec, ex.value, EvalNames.hPos());
+		var pos = switch (EvalValueTools.vresolve(pv)) {
+			case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
+			case VObject(o): switch (o.oproto) {
+				case ODictionary(fields):
+					var file = EvalStdLib.stringOf(fields.get(EvalNames.hFile()));
+					var min = switch (fields.get(EvalNames.hMin())) { case VInt(i): i; case _: -1; };
+					var max = switch (fields.get(EvalNames.hMax())) { case VInt(i): i; case _: -1; };
+					new Position(file, min, max);
+				case _: Position.nullPos;
+			};
+			case _: Position.nullPos;
+		};
+		// Each child is its message at its pos (a position instance, else the null position); a child that
+		// is no haxe.macro.Error is "Something went wrong" at the null position.
+		var stack:Array<{message:String, pos:Position, ?depth:Int}> = [{message: msg, pos: pos}];
+		switch (EvalValueTools.vresolve(EvalField.field(ec, ex.value, EvalNames.hChildErrors()))) {
+			case VArray(va):
+				for (i in 0...va.alength) {
+					var cv = va.avalues[i];
+					if (!isMacroErrorValue(ec, cv)) return {message: "Something went wrong", pos: Position.nullPos};
+					var cp = switch (EvalValueTools.vresolve(EvalField.field(ec, cv, EvalNames.hPos()))) {
+						case VInstance(pi): switch (pi.ikind) { case IPos(p): p; case _: Position.nullPos; };
 						case _: Position.nullPos;
 					};
-					case _: Position.nullPos;
-				};
-				{message: msg, pos: pos};
-			case _: null;
-		};
+					stack.push({message: EvalStdLib.stringOf(macroErrorMessageValue(ec, cv)), pos: cp});
+				}
+			case _:
+		}
+		return stack.length == 1 ? {message: msg, pos: pos} : {message: msg, pos: pos, stack: stack};
 	}
 
 	// haxe.macro.Type.MetaAccess: get/has/add/extract/remove over a mutable list.

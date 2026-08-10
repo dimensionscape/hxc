@@ -1839,7 +1839,10 @@ class Compiler {
 		// macro's has min -1); any other value is uncaught.
 		var info = hxc.eval.EvalMacro.runtimeMacroError(ex);
 		if (info != null) {
-			ctx.addDiagnostic(info.message, qualifyStdPosition(ctx, info.pos));
+			if (info.stack != null) {
+				var stack:Array<{message:String, pos:Position, ?depth:Int}> = [for (m in info.stack) {message: m.message, pos: qualifyStdPosition(ctx, m.pos)}];
+				ctx.addDiagnosticStack(stack);
+			} else ctx.addDiagnostic(info.message, qualifyStdPosition(ctx, info.pos));
 			flushPendingMessages(ctx);
 			exitRequest(1);
 		}
