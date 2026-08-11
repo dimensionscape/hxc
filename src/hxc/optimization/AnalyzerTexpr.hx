@@ -21,15 +21,29 @@ class AnalyzerTexpr {
 	// Apply f to each value-position leaf of a branching expression; returns the rewritten expression and
 	// the extracted single value if the expression was not branching.
 	public static function mapValues(f:TExpr->TExpr, e:TExpr, allowControlFlow:Bool = true):{e:TExpr, efinal:Null<TExpr>} {
+		var r = mapValuesOpt(f, e, allowControlFlow);
+		if (r == null) throw new Exit();
+		return r;
+	}
+
+	// mapValues answering null where it gives up, and stopping as soon as f answers null (f giving up):
+	// nothing runs past the point of giving up.
+	public static function mapValuesOpt(f:TExpr->Null<TExpr>, e:TExpr, allowControlFlow:Bool = true):Null<{e:TExpr, efinal:Null<TExpr>}> {
 		var branching = false;
 		var efinal:Null<TExpr> = null;
+		var exited = false;
 		function f2(e:TExpr):TExpr {
-			if (branching) return f(e);
+			if (branching) {
+				var r = f(e);
+				if (r == null) exited = true;
+				return r;
+			}
 			efinal = e;
 			return TypeFunctions.mk(TConst(TNull), e.type, e.pos);
 		}
 		var loop:(Bool, TExpr)->TExpr = null;
 		loop = function(complex:Bool, e:TExpr):TExpr {
+			if (exited) return e;
 			return switch (e.expr) {
 				case TIf(e1, e2, e3) if (e3 != null):
 					branching = true;
@@ -60,15 +74,17 @@ class AnalyzerTexpr {
 				case TParenthesis(e1):
 					TypeFunctions.mk(TParenthesis(loop(complex, e1)), e.type, e.pos);
 				case TBreak | TContinue | TThrow(_) | TReturn(_):
-					if (!allowControlFlow) throw new Exit();
+					if (!allowControlFlow) exited = true;
 					e;
 				case _:
-					if (!complex) throw new Exit();
-					f2(e);
+					if (!complex) {
+						exited = true;
+						e;
+					} else f2(e);
 			};
 		}
 		var e = loop(false, e);
-		return {e: e, efinal: efinal};
+		return exited ? null : {e: e, efinal: efinal};
 	}
 
 	// Whether mapValues raises Exit at its root, before calling f or building anything: the root,

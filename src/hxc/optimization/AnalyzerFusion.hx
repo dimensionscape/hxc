@@ -240,6 +240,9 @@ class Fusion {
 		function handleAssignedLocal(v1:TVar, e1:TExpr, el:Array<TExpr>):Null<Array<TExpr>> {
 			var found = false;
 			var blocked = false;
+			// Setting `exited` cancels the fusion: every step returns at once, so nothing past that point
+			// runs.
+			var exited = false;
 			var ir = InterferenceReport.fromTexpr(e1);
 			// fusionDebug prints the interference report and the
 			// substitution target block before the walk.
@@ -257,20 +260,28 @@ class Fusion {
 				var old = blocked;
 				blocked = true;
 				var e = replace(e);
+				if (exited) return e;
 				blocked = old;
 				return e;
 			}
 			function handleElUnordered(el:Array<TExpr>):Array<TExpr> {
 				// Undefined argument evaluation order: find interferences past a replacement
+				if (exited) return el;
 				var reallyFound = found;
-				var out = [for (e in el) {
+				var out:Array<TExpr> = [];
+				for (e in el) {
 					found = false;
 					var e = replace(e);
+					if (exited) return el;
 					if (found) reallyFound = true;
-					e;
-				}];
+					out.push(e);
+				}
 				found = reallyFound;
 				return out;
+			}
+			function exitWith(e:TExpr):TExpr {
+				exited = true;
+				return e;
 			}
 			function handleEl(el:Array<TExpr>):Array<TExpr> {
 				return AnalyzerTexpr.targetHandlesSideEffectOrder(com) ? [for (e in el) replace(e)] : handleElUnordered(el);
@@ -289,16 +300,16 @@ class Fusion {
 				};
 			}
 			replace = function(e:TExpr):TExpr {
-				if (found) return e;
+				if (found || exited) return e;
 				inline function remk(x:TExprExpr):TExpr return TypeFunctions.mk(x, e.type, e.pos);
 				return switch (e.expr) {
 					case TWhile(_, _, _) | TTry(_, _):
-						throw new Exit();
+						exitWith(e);
 					case TFunction(_):
 						e;
 					case TIf(x1, x2, xo):
 						var x1 = replace(x1);
-						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite() || ir.hasAnyVarWrite())) throw new Exit();
+						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite() || ir.hasAnyVarWrite())) return exitWith(e);
 						var x2 = replace(x2);
 						var xo = xo == null ? null : replace(xo);
 						remk(TIf(x1, x2, xo));
@@ -307,127 +318,128 @@ class Fusion {
 							case Lua | Python: explore(x1);
 							case _: replace(x1);
 						};
-						if (!found) throw new Exit();
+						if (!found) return exitWith(e);
 						remk(TSwitch(x1, cases, edef));
 					// Locals
 					case TLocal(v2) if (v1 == v2 && !blocked):
 						found = true;
 						AnalyzerTexpr.typeChangeOk(com, v1.type, e1.type) ? e1 : TypeFunctions.mk(TCast(e1, null), v1.type, e.pos);
 					case TLocal(v):
-						if (ir.hasVarWrite(v) || ((TypeFunctions.hasVarFlag(v, VCaptured) || ExtTypeSemantics.hasReferenceSemantics(v.type)) && ir.hasStateWrite())) throw new Exit();
+						if (ir.hasVarWrite(v) || ((TypeFunctions.hasVarFlag(v, VCaptured) || ExtTypeSemantics.hasReferenceSemantics(v.type)) && ir.hasStateWrite())) return exitWith(e);
 						e;
 					case TBinop(OpAssign, x1 = {expr: TLocal(v)}, x2):
 						var x2 = replace(x2);
-						if (!found && ir.hasVarRead(v)) throw new Exit();
+						if (!found && ir.hasVarRead(v)) return exitWith(e);
 						remk(TBinop(OpAssign, x1, x2));
 					// Never fuse into write positions (issue #7298)
-					case TBinop(OpAssignOp(_), {expr: TLocal(v2)}, _) if (v1 == v2): throw new Exit();
-					case TUnop(Increment | Decrement, _, {expr: TLocal(v2)}) if (v1 == v2): throw new Exit();
+					case TBinop(OpAssignOp(_), {expr: TLocal(v2)}, _) if (v1 == v2): exitWith(e);
+					case TUnop(Increment | Decrement, _, {expr: TLocal(v2)}) if (v1 == v2): exitWith(e);
 					case TBinop(op = OpAssignOp(_), x1 = {expr: TLocal(v)}, x2):
 						var x2 = replace(x2);
-						if (!found && (ir.hasVarRead(v) || ir.hasVarWrite(v))) throw new Exit();
+						if (!found && (ir.hasVarRead(v) || ir.hasVarWrite(v))) return exitWith(e);
 						remk(TBinop(op, x1, x2));
 					case TUnop(Increment | Decrement, _, {expr: TLocal(v)}) if (ir.hasVarRead(v) || ir.hasVarWrite(v)):
-						throw new Exit();
+						exitWith(e);
 					case TField(x1, fa):
 						var x1 = replace(x1);
-						if (!found && !OptimizerTexpr.isReadOnlyFieldAccess(x1, fa) && (ir.hasFieldWrite(TypeFunctions.fieldName(fa)) || ir.hasStateWrite())) throw new Exit();
+						if (!found && !OptimizerTexpr.isReadOnlyFieldAccess(x1, fa) && (ir.hasFieldWrite(TypeFunctions.fieldName(fa)) || ir.hasStateWrite())) return exitWith(e);
 						remk(TField(x1, fa));
 					case TBinop(OpAssign, ef = {expr: TField(x1, fa)}, x2):
 						var x1 = replace(x1);
 						var x2 = replace(x2);
-						if (!found && (ir.hasFieldRead(TypeFunctions.fieldName(fa)) || ir.hasStateRead())) throw new Exit();
+						if (!found && (ir.hasFieldRead(TypeFunctions.fieldName(fa)) || ir.hasStateRead())) return exitWith(e);
 						remk(TBinop(OpAssign, TypeFunctions.mk(TField(x1, fa), ef.type, ef.pos), x2));
 					case TBinop(op = OpAssignOp(_), ef = {expr: TField(x1, fa)}, x2):
 						var x1 = replace(x1);
 						var s = TypeFunctions.fieldName(fa);
-						if (!found && (ir.hasFieldWrite(s) || ir.hasStateWrite())) throw new Exit();
+						if (!found && (ir.hasFieldWrite(s) || ir.hasStateWrite())) return exitWith(e);
 						var x2 = replace(x2);
-						if (!found && (ir.hasFieldRead(s) || ir.hasStateRead())) throw new Exit();
+						if (!found && (ir.hasFieldRead(s) || ir.hasStateRead())) return exitWith(e);
 						remk(TBinop(op, TypeFunctions.mk(TField(x1, fa), ef.type, ef.pos), x2));
 					case TUnop(Increment | Decrement, _, {expr: TField(_, fa)})
 						if (ir.hasFieldRead(TypeFunctions.fieldName(fa)) || ir.hasStateRead()
 							|| ir.hasFieldWrite(TypeFunctions.fieldName(fa)) || ir.hasStateWrite()):
-						throw new Exit();
+						exitWith(e);
 					// Array
 					case TArray(x1, x2):
 						var x1 = replace(x1);
 						var x2 = replace(x2);
-						if (!found && ir.hasStateWrite()) throw new Exit();
+						if (!found && ir.hasStateWrite()) return exitWith(e);
 						remk(TArray(x1, x2));
 					case TBinop(OpAssign, ef = {expr: TArray(x1, x2)}, x3):
 						var x1 = replace(x1);
 						var x2 = replace(x2);
 						var x3 = replace(x3);
-						if (!found && ir.hasStateRead()) throw new Exit();
+						if (!found && ir.hasStateRead()) return exitWith(e);
 						remk(TBinop(OpAssign, TypeFunctions.mk(TArray(x1, x2), ef.type, ef.pos), x3));
 					case TBinop(op = OpAssignOp(_), ef = {expr: TArray(x1, x2)}, x3):
 						var x1 = replace(x1);
 						var x2 = replace(x2);
-						if (!found && ir.hasStateWrite()) throw new Exit();
+						if (!found && ir.hasStateWrite()) return exitWith(e);
 						var x3 = replace(x3);
-						if (!found && ir.hasStateRead()) throw new Exit();
+						if (!found && ir.hasStateRead()) return exitWith(e);
 						remk(TBinop(op, TypeFunctions.mk(TArray(x1, x2), ef.type, ef.pos), x3));
 					case TUnop(Increment | Decrement, _, {expr: TArray(_, _)}) if (ir.hasStateRead() || ir.hasStateWrite()):
-						throw new Exit();
+						exitWith(e);
 					case TCall({expr: TIdent(s)}, el2) if (!AnalyzerTexpr.isUnboundCallThatMightHaveSideEffects(s, el2)):
 						e;
 					case TNew(c, tl, el2) if (c.constructor != null && PurityState.isPure(c, c.constructor)):
 						var el2 = handleEl(el2);
-						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) throw new Exit();
+						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) return exitWith(e);
 						remk(TNew(c, tl, el2));
 					case TNew(c, tl, el2):
 						var el2 = handleEl(el2);
-						if (!found && (ir.hasStateWrite() || ir.hasStateRead() || ir.hasAnyFieldRead() || ir.hasAnyFieldWrite())) throw new Exit();
+						if (!found && (ir.hasStateWrite() || ir.hasStateRead() || ir.hasAnyFieldRead() || ir.hasAnyFieldWrite())) return exitWith(e);
 						remk(TNew(c, tl, el2));
 					case TCall(ef = {expr: TField(_, FEnum(_, _))}, el2):
 						var el2 = handleEl(el2);
 						remk(TCall(ef, el2));
 					case TCall(ef = {expr: TField(_, fa)}, el2) if (PurityState.isPureFieldAccess(fa)):
 						var r = handleCall(ef, el2);
-						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) throw new Exit();
+						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) return exitWith(e);
 						remk(TCall(r.e, r.el));
 					case TCall(x1, el2):
 						var r = switch (x1.expr) {
 							case TIdent(s) if (s != "`trace" && s != "__int__"): {e: x1, el: el2};
 							case _: handleCall(x1, el2);
 						};
-						if (!found && (ir.hasStateRead() || ir.hasAnyFieldRead() || ir.hasStateWrite() || ir.hasAnyFieldWrite())) throw new Exit();
+						if (!found && (ir.hasStateRead() || ir.hasAnyFieldRead() || ir.hasStateWrite() || ir.hasAnyFieldWrite())) return exitWith(e);
 						remk(TCall(r.e, r.el));
 					case TObjectDecl(fl):
 						var el2 = handleEl([for (f in fl) f.expr]);
-						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) throw new Exit();
+						if (exited) return e;
+						if (!found && (ir.hasStateWrite() || ir.hasAnyFieldWrite())) return exitWith(e);
 						remk(TObjectDecl([for (i in 0...fl.length) {key: fl[i].key, expr: el2[i]}]));
 					case TArrayDecl(el2):
 						var el2 = handleEl(el2);
 						remk(TArrayDecl(el2));
 					case TBinop(op, x1, x2) if (com.platform.match(Cpp)):
 						var x1 = replace(x1);
+						if (exited) return e;
 						var tempFound = found;
 						found = false;
 						var x2 = replace(x2);
+						if (exited) return e;
 						found = found || tempFound;
 						remk(TBinop(op, x1, x2));
 					case _:
 						TexprTools.mapExpr(replace, e);
 				};
 			}
-			return try {
-				var out = el.copy();
-				var idx = 0;
-				while (idx < out.length) {
-					out[idx] = replace(out[idx]);
-					if (found) break;
-					idx++;
-				}
-				if (!found) throw new Exit();
-				state.changed();
-				state.decReads(v1);
-				out;
-			} catch (_:Exit) {
-				if (config.fusionDebug) Sys.println("NO: fusion canceled (found=" + found + ")");
-				null;
+			var out = el.copy();
+			var idx = 0;
+			while (idx < out.length) {
+				out[idx] = replace(out[idx]);
+				if (exited || found) break;
+				idx++;
 			}
+			if (exited || !found) {
+				if (config.fusionDebug) Sys.println("NO: fusion canceled (found=" + found + ")");
+				return null;
+			}
+			state.changed();
+			state.decReads(v1);
+			return out;
 		}
 
 		// POLARITY: blockElement takes the reversed list and its prepend accumulation emits SOURCE order,
@@ -459,23 +471,23 @@ class Fusion {
 						}
 					case TIf(_, _, eelse) if (eelse != null && AnalyzerTexpr.canBeUsedAsValue(com, e1) && !isVoidT(e1.type)
 						&& !(com.platform.match(Cpp) && !com.defines.rawDefined("cppia"))):
-						// Common-assignment branches collapse into one valued assignment
-						var handled = try {
-							var i = 0;
-							var stored:Null<{e:TExpr, f:TExpr->TExpr}> = null;
-							function checkAssign(e:TExpr):TExpr {
-								return switch (e.expr) {
-									case TBinop(OpAssign, x1, x2):
-										i++;
-										if (stored == null) {
-											stored = {e: x1, f: function(e2) return TypeFunctions.mk(TBinop(OpAssign, x1, e2), e.type, e.pos)};
-											x2;
-										} else if (TexprTools.equal(stored.e, x1)) x2 else throw new Exit();
-									case _: throw new Exit();
-								};
-							}
-							var r = AnalyzerTexpr.mapValues(checkAssign, e1);
-							if (stored == null) throw new Exit();
+						// Common-assignment branches collapse into one valued assignment; checkAssign
+						// answers null to keep e1
+						var i = 0;
+						var stored:Null<{e:TExpr, f:TExpr->TExpr}> = null;
+						function checkAssign(e:TExpr):Null<TExpr> {
+							return switch (e.expr) {
+								case TBinop(OpAssign, x1, x2):
+									i++;
+									if (stored == null) {
+										stored = {e: x1, f: function(e2) return TypeFunctions.mk(TBinop(OpAssign, x1, e2), e.type, e.pos)};
+										x2;
+									} else if (TexprTools.equal(stored.e, x1)) x2 else null;
+								case _: null;
+							};
+						}
+						var r = AnalyzerTexpr.mapValuesOpt(checkAssign, e1);
+						if (r != null && stored != null) {
 							switch (stored.e.expr) {
 								case TLocal(v): state.changeWrites(v, -i + 1);
 								case _:
@@ -483,40 +495,44 @@ class Fusion {
 							var fused = stored.f(r.e);
 							state.changed();
 							el = [fused].concat(el.slice(1));
-							true;
-						} catch (_:Exit) false;
-						if (!handled) keep();
+						} else keep();
 					case TVarExpr(v1, einit) if (einit != null && config.optimize && config.localDce && state.getReads(v1) == 0 && state.getWrites(v1) == 0):
 						el = [einit].concat(el.slice(1));
 					case TVarExpr(v1, null) if (!TypeFunctions.hasVarFlag(v1, VCaptured)):
 						// `var v;` merged with a later single deep assignment
+						// Setting `exited` returns from the walk at once and e1 is kept
 						var found = false;
+						var exited = false;
 						var replace:(Bool, TExpr)->TExpr = null;
 						replace = function(deep:Bool, e:TExpr):TExpr {
+							if (exited) return e;
 							return switch (e.expr) {
 								case TBinop(OpAssign, {expr: TLocal(v2)}, e2) if (v1 == v2):
-									if (deep) throw new Exit();
-									found = true;
-									TypeFunctions.mk(TVarExpr(v1, e2), e1.type, e1.pos);
-								case TLocal(v2) if (v1 == v2): throw new Exit();
+									if (deep) {
+										exited = true;
+										e;
+									} else {
+										found = true;
+										TypeFunctions.mk(TVarExpr(v1, e2), e1.type, e1.pos);
+									}
+								case TLocal(v2) if (v1 == v2):
+									exited = true;
+									e;
 								case _: TexprTools.mapExpr(function(x) return replace(true, x), e);
 							};
 						}
-						var handled = try {
-							var rest = el.slice(1);
-							var idx = 0;
-							while (idx < rest.length) {
-								rest[idx] = replace(false, rest[idx]);
-								if (found) break;
-								idx++;
-							}
-							if (!found) throw new Exit();
+						var rest = el.slice(1);
+						var idx = 0;
+						while (idx < rest.length) {
+							rest[idx] = replace(false, rest[idx]);
+							if (exited || found) break;
+							idx++;
+						}
+						if (!exited && found) {
 							state.changed();
 							state.decWrites(v1);
 							el = rest;
-							true;
-						} catch (_:Exit) false;
-						if (!handled) keep();
+						} else keep();
 					case TVarExpr(v1, einit) if (einit != null && canBeFused(v1, einit)):
 						var handled = false;
 						// Match on `el` once: when the next element is a prefix increment of a local, the increment
@@ -529,27 +545,34 @@ class Fusion {
 							// branching constructs.
 							case TUnop(op = Increment | Decrement, Prefix, {expr: TLocal(v2)}):
 								tookIncrArm = true;
+								// Setting `exited` returns from the walk at once
 								var found = false;
+								var exited = false;
 								var replace:TExpr->TExpr = null;
 								replace = function(e:TExpr):TExpr {
+									if (exited) return e;
 									return switch (e.expr) {
 										case TLocal(v3) if (v2 == v3):
-											if (found) throw new Exit();
-											found = true;
-											TypeFunctions.mk(TUnop(op, Postfix, e), e.type, e.pos);
+											if (found) {
+												exited = true;
+												e;
+											} else {
+												found = true;
+												TypeFunctions.mk(TUnop(op, Postfix, e), e.type, e.pos);
+											}
 										case TIf(_, _, _) | TSwitch(_, _, _) | TTry(_, _) | TWhile(_, _, _) | TFor(_, _, _):
-											throw new Exit();
+											exited = true;
+											e;
 										case _:
 											TexprTools.mapExpr(replace, e);
 									};
 								}
-								try {
-									var ev = replace(e1);
-									if (!found) throw new Exit();
+								var ev = replace(e1);
+								if (!exited && found) {
 									state.changed();
 									el = [ev].concat(el.slice(2));
 									handled = true;
-								} catch (_:Exit) {}
+								}
 							case _:
 						}
 						if (!handled) {
@@ -560,37 +583,36 @@ class Fusion {
 							}
 						}
 					case TUnop(op = Increment | Decrement, Prefix, ev = {expr: TLocal(v)}) if (next != null):
-						// Restore prefix/postfix forms into a following return or var init
-						var handled = try {
-							var e2full = next;
-							var r:{e:TExpr, f:TExpr->TExpr} = switch (e2full.expr) {
-								// These are rebuilt from the INNER expression bound by the pattern - the returned value or
-								// the var's initialiser - not the enclosing statement. So the reconstructed return or
-								// declaration inherits its value's position (and type), which reports
-								// `var y = x++` at the `x++`.
-								case TReturn(x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TReturn(e), x2.type, x2.pos)};
-								case TVarExpr(v2, x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TVarExpr(v2, e), x2.type, x2.pos)};
-								case _: throw new Exit();
-							};
-							inline function opsMatch(op1:Unop, op2:Binop):Bool
-								return (op1.match(Increment) && op2.match(OpSub)) || (op1.match(Decrement) && op2.match(OpAdd));
-							switch (r.e.expr) {
-								case TBinop(op2, {expr: TLocal(v2)}, {expr: TConst(TInt(one))}) if (v == v2 && one == 1 && opsMatch(op, op2)):
-									state.changed();
-									state.decReads(v2);
-									acc.unshift(r.f(TypeFunctions.mk(TUnop(op, Postfix, ev), e1.type, e1.pos)));
-									el = el.slice(2);
-									true;
-								case TLocal(v2) if (v == v2):
-									state.changed();
-									state.decReads(v2);
-									acc.unshift(r.f(TypeFunctions.mk(TUnop(op, Prefix, ev), e1.type, e1.pos)));
-									el = el.slice(2);
-									true;
-								case _:
-									throw new Exit();
-							}
-						} catch (_:Exit) false;
+						// Restore prefix/postfix forms into a following return or var init;
+						// each early exit keeps e1
+						var handled = false;
+						var e2full = next;
+						var r:Null<{e:TExpr, f:TExpr->TExpr}> = switch (e2full.expr) {
+							// These are rebuilt from the INNER expression bound by the pattern - the returned value or
+							// the var's initialiser - not the enclosing statement. So the reconstructed return or
+							// declaration inherits its value's position (and type), which reports
+							// `var y = x++` at the `x++`.
+							case TReturn(x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TReturn(e), x2.type, x2.pos)};
+							case TVarExpr(v2, x2) if (x2 != null): {e: x2, f: function(e) return TypeFunctions.mk(TVarExpr(v2, e), x2.type, x2.pos)};
+							case _: null;
+						};
+						inline function opsMatch(op1:Unop, op2:Binop):Bool
+							return (op1.match(Increment) && op2.match(OpSub)) || (op1.match(Decrement) && op2.match(OpAdd));
+						if (r != null) switch (r.e.expr) {
+							case TBinop(op2, {expr: TLocal(v2)}, {expr: TConst(TInt(one))}) if (v == v2 && one == 1 && opsMatch(op, op2)):
+								state.changed();
+								state.decReads(v2);
+								acc.unshift(r.f(TypeFunctions.mk(TUnop(op, Postfix, ev), e1.type, e1.pos)));
+								el = el.slice(2);
+								handled = true;
+							case TLocal(v2) if (v == v2):
+								state.changed();
+								state.decReads(v2);
+								acc.unshift(r.f(TypeFunctions.mk(TUnop(op, Prefix, ev), e1.type, e1.pos)));
+								el = el.slice(2);
+								handled = true;
+							case _:
+						}
 						if (!handled) keep();
 					case TBinop(OpAssign, x1, {expr: TBinop(op, x2, x3)}) if (useAssignOp(com, op, x1, x2, x3)):
 						function decr(e:TExpr):Void {
