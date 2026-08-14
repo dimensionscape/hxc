@@ -350,13 +350,12 @@ class TypeResolve {
 				// Anything that is not a dot path is rejected, and that is reported at the argument.
 				if (parts == null || parts.length == 0)
 					throw new ContextError("dot path expected", param.pos);
-				// A Module.SubType path (second-to-last segment capitalized) names a single type; a plain
-				// module path brings in every non-private class of the module, like a using statement.
+				// A Module.SubType path (second-to-last segment not Ast.isLowerIdent) names a single type; a
+				// plain module path brings in every non-private class of the module, like a using statement.
 				var subOf:Null<{pack:Array<String>, moduleName:String, sub:String}> = null;
 				if (parts.length >= 2) {
 					var s2 = parts[parts.length - 2];
-					var c0 = s2.charCodeAt(0);
-					if (c0 >= "A".code && c0 <= "Z".code)
+					if (!hxc.ast.Ast.isLowerIdent(s2))
 						subOf = {pack: parts.slice(0, parts.length - 2), moduleName: s2, sub: parts[parts.length - 1]};
 				}
 				function classOf(used:Null<ModuleType>):Null<TClass> {

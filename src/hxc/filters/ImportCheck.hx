@@ -87,9 +87,9 @@ class ImportCheck {
 				var imp = w.imp;
 				var parts = imp.path;
 				var mi = -1;
-				for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
-				// Only a PACKAGE wildcard (no uppercase segment) skips the load; `import a.Module.*` reaches
-				// do_load_module like a plain import and reports the same way when the module does not exist.
+				for (k in 0...parts.length) if (!hxc.ast.Ast.isLowerIdent(parts[k].name)) { mi = k; break; }
+				// Only a PACKAGE wildcard (no module segment) skips the load; `import a.Module.*` loads its
+				// module like a plain import and reports the same way when the module does not exist.
 				if (mi < 0 && (imp.mode.match(IAll) || parts.length == 0)) continue;
 				// Each import declaration runs and reports: a second `import` of a module that failed to load
 				// fails again and is reported again. The sweep visits a module more than once, so its own
@@ -139,18 +139,19 @@ class ImportCheck {
 	    What it binds is ModuleLoader.bindImport's.
 	**/
 	public static function checkImport(ctx:Context, parts:Array<PlacedName>, mode:ImportMode):Void {
+		// The module is the first segment that is not a lowercase identifier.
 		var mi = -1;
-		for (k in 0...parts.length) if (isUpper(parts[k].name)) { mi = k; break; }
+		for (k in 0...parts.length) if (!hxc.ast.Ast.isLowerIdent(parts[k].name)) { mi = k; break; }
 		if (mi < 0) {
 			// A package wildcard; anything else is an error at the last element.
 			if (mode.match(IAll) || parts.length == 0) return;
 			throw new hxc.context.Context.ContextError("Module name must start with an uppercase letter", parts[parts.length - 1].pos);
 		}
-		// The module named by the first uppercase segment loads at the type path, the first pack segment
-		// through the module name. A sub-type or a static-field import loads its module exactly like a
-		// plain one: haxe.macro.PositionTools imports haxe.display.Position.Location for a `#if macro`
-		// signature, and the reference still loads that module and, through the typedef,
-		// haxe.display.FsPath - so under -dce no the FsPath abstract is generated.
+		// The module named by that segment loads at the type path, the first pack segment through the
+		// module name. A sub-type or a static-field import loads its module exactly like a plain one:
+		// haxe.macro.PositionTools imports haxe.display.Position.Location for a `#if macro` signature, and
+		// that module still loads and, through the typedef, so does haxe.display.FsPath - so under -dce no
+		// the FsPath abstract is generated.
 		var pType = Position.union(parts[0].pos, parts[mi].pos);
 		var md = ModuleLoader.loadModule(ctx, {pack: [for (k in 0...mi) parts[k].name], name: parts[mi].name}, pType);
 		// getType: failUsefully's message for a type the module does not have, the private-import error for
@@ -374,11 +375,6 @@ class ImportCheck {
 			return null;
 		}
 		return {msg: "Module " + Context.sTypePath(md.path) + " does not define type " + tname, pos: p, depth: 0};
-	}
-
-	static function isUpper(s:String):Bool {
-		var c = s.charCodeAt(0);
-		return c >= "A".code && c <= "Z".code;
 	}
 
 	// Another module's private type.

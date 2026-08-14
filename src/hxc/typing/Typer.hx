@@ -4283,7 +4283,7 @@ class Typer {
 				throw new TypingError("Cannot access " + i + " in static function", p);
 			// An existing module that defines no type of its own name reports the module error, not an
 			// unknown identifier.
-			if (i.charCodeAt(0) >= "A".code && i.charCodeAt(0) <= "Z".code) {
+			if (!hxc.ast.Ast.isLowerIdent(i)) {
 				var mod = findUnqualifiedModule(ctx, i, p);
 				if (mod != null && hxc.context.ModuleLoader.findTypeInModuleOpt(mod, i) == null)
 					throw new TypingError("Module " + hxc.core.Globals.sTypePath(mod.path) + " does not define type " + i, p);

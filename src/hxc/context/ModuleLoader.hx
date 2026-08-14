@@ -285,27 +285,26 @@ class ModuleLoader {
 		creatingModuleTypes--;
 	}
 
-	// The first uppercase segment is the module, the second a subtype. Empty and package-wildcard
-	// paths return null; fieldAt records the static segment index.
+	// Leading lowercase identifiers form the package; the first other segment is the module, followed
+	// by an optional subtype and static. Empty or package-wildcard paths return null; fieldAt
+	// identifies the static segment.
 	static function splitImportPath(parts:Array<String>):{modulePath:Path, sub:Null<String>, field:Null<String>, fieldAt:Int} {
 		var pack:Array<String> = [];
 		var i = 0;
 		while (i < parts.length) {
-			var c = parts[i].charCodeAt(0);
-			if (c >= "A".code && c <= "Z".code) break;
+			if (!hxc.ast.Ast.isLowerIdent(parts[i])) break;
 			pack.push(parts[i]);
 			i++;
 		}
-		if (i >= parts.length) return null;                                                    
+		if (i >= parts.length) return null;                                                         
 		var moduleName = parts[i];
 		i++;
 		var sub:Null<String> = null;
 		var field:Null<String> = null;
 		if (i < parts.length) {
-			// After a subtype, the next segment is its static or enum constructor regardless of case, as in
-			// Expr.ExprDef.EConst.
-			var c2 = parts[i].charCodeAt(0);
-			if (c2 >= "A".code && c2 <= "Z".code) {
+			// Lowercase segments name statics. Other segments first try a subtype, then fall back to
+			// statics; after a subtype, any case may name a static or enum constructor.
+			if (!hxc.ast.Ast.isLowerIdent(parts[i])) {
 				sub = parts[i];
 				i++;
 				if (i < parts.length) field = parts[i];
@@ -933,39 +932,16 @@ class ModuleLoader {
 		// Apply global metadata only to the host world; macro-world copies must not run host metadata
 		// builds again.
 		if (ctx.isMacro) return;
-		function isLower(s:String):Bool {
-			var c = s.charCodeAt(0);
-			return !(c >= "A".code && c <= "Z".code);
-		}
-		function matchPath(recursive:Bool, sl:Array<String>, pattern:Array<String>):Bool {
-			function loop(top:Bool, i1:Int, i2:Int):Bool {
-				var r1 = sl.length - i1, r2 = pattern.length - i2;
-				if (r1 == 0 && r2 == 0) return true;
-				// Package-path patterns also match types within that package.
-				if (r1 >= 2 && r2 == 1 && isLower(pattern[i2]) && !isLower(sl[i1 + 1]))
-					return sl[i1] == pattern[i2];
-				if (r1 == 1 && r2 == 0 && top) return true;
-				if (r2 == 0) return recursive;
-				if (r1 == 0) return false;
-				return sl[i1] == pattern[i2] && loop(false, i1 + 1, i2 + 1);
-			}
-			return loop(true, 0, 0);
-		}
-		function fullDotPath(tpath:Path):Array<String> {
-			return (m.path.pack.join(".") == tpath.pack.join(".") && m.path.name == tpath.name)
-				? tpath.pack.concat([tpath.name])
-				: m.path.pack.concat([m.path.name, tpath.name]);
-		}
 		for (mt in decls) {
 			var info = TypeFunctions.tInfos(mt);
-			var sl1 = fullDotPath(info.path);
+			var sl1 = hxc.ast.Ast.fullDotPath2(m.path, info.path);
 			for (g in ctx.globalMetadata)
-				if (g.toTypes && matchPath(g.recursive, sl1, g.filter)) info.meta.unshift(g.meta);
+				if (g.toTypes && hxc.ast.Ast.matchPath(g.recursive, sl1, g.filter)) info.meta.unshift(g.meta);
 			switch (mt) {
 				case TClassDecl(c):
 					function applyField(cf:TClassField):Void {
 						for (g in ctx.globalMetadata)
-							if (g.toFields && matchPath(g.recursive, sl1.concat([cf.name]), g.filter)) cf.meta.unshift(g.meta);
+							if (g.toFields && hxc.ast.Ast.matchPath(g.recursive, sl1.concat([cf.name]), g.filter)) cf.meta.unshift(g.meta);
 					}
 					for (cf in c.orderedFields) applyField(cf);
 					for (cf in c.orderedStatics) applyField(cf);

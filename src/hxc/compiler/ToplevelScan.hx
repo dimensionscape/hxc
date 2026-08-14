@@ -113,8 +113,6 @@ class ToplevelScan {
 					if (moduleName.substr(dot + 1) != platformStr) continue;
 					moduleName = moduleName.substr(0, dot);
 				}
-				var c0 = moduleName.charCodeAt(0);
-				if (!((c0 >= "A".code && c0 <= "Z".code))) continue;
 				var key = pack.join(".") + "." + moduleName;
 				if (seen.exists(key)) continue;
 				seen.set(key, true);

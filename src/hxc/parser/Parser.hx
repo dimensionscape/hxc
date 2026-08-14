@@ -1483,7 +1483,8 @@ class Parser {
 		var p2 = p1;
 		if (tokEq(peek(), Dot)) {
 			var dp = next().pos;
-			if (checkResume(dp)) raiseTypePath(pack.concat([name]), false);
+			// Past a name that is not a lowercase identifier, the name is the module
+			if (checkResume(dp)) throw new TypePathCompletion(pack.copy(), name, false);
 			switch (peek()) {
 				case Const(CIdent(sn)) if (!isLowerIdent(sn)):
 					p2 = next().pos;
