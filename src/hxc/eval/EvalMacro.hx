@@ -921,7 +921,7 @@ class EvalMacro {
 		var key = StringTools.replace(full, "\\", "/").toLowerCase();
 		var mdep = fakeModules.get(key);
 		if (mdep == null) {
-			var time = full == "" ? 0.0 : (try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0);
+			var time = hxc.core.FileTime.fileTime(full);
 			mdep = {
 				id: TypeFunctions.allocMid(),
 				path: {pack: ["$DEP"], name: full},

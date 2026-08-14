@@ -189,7 +189,8 @@ class Retyper {
 					case EImport(_) | EUsing(_) | EStatic(_):
 			}
 			m.extra.cacheState = MSGood;
-			m.extra.time = try sys.FileSystem.stat(m.extra.file).mtime.getTime() / 1000.0 catch (_:Dynamic) m.extra.time;
+			// The file's time, 0 for a file that cannot be opened.
+			m.extra.time = hxc.core.FileTime.fileTime(m.extra.file);
 			ctx.currentModule = savedMod;
 			return null;
 		} catch (e:RetyperFail) {

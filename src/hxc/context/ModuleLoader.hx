@@ -216,7 +216,7 @@ class ModuleLoader {
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
 		// Store full native path, signature and mtime for server/module reporting.
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
-		var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+		var time = hxc.core.FileTime.fileTime(full);
 		return {
 			id: TypeFunctions.allocMid(),
 			path: mpath,

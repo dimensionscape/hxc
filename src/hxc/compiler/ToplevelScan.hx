@@ -61,7 +61,7 @@ class ToplevelScan {
 				// Parsing caches the file again, allowing later invalidation to schedule another parse.
 				cc.files.set(k, {
 					path: path,
-					time: try sys.FileSystem.stat(path).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0,
+					time: hxc.core.FileTime.fileTime(path),
 					pack: pkg.pack,
 					moduleName: moduleName
 				});

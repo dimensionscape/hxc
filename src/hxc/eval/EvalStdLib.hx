@@ -2130,13 +2130,17 @@ class EvalStdLib {
 		proto.pinstanceFields.push(VNull);
 	}
 
-	static function mkFileStat(ctx:EvalContext, stat:sys.FileStat):EvalValue {
+	static function mkFileStat(ctx:EvalContext, stat:sys.FileStat, path:String):EvalValue {
+		// A file's stat times are sub-second (hxc.core.FileTime); a Date holds them as
+		// seconds times 1000, which is what getTime answers.
+		var t = hxc.core.FileTime.statTimes(path);
+		inline function date(s:Float, d:Date):EvalValue return mkDate(ctx, t == null ? d.getTime() : s * 1000.0);
 		return mkObject([
 			{name: "gid", value: VInt(stat.gid)},
 			{name: "uid", value: VInt(stat.uid)},
-			{name: "atime", value: mkDate(ctx, stat.atime.getTime())},
-			{name: "mtime", value: mkDate(ctx, stat.mtime.getTime())},
-			{name: "ctime", value: mkDate(ctx, stat.ctime.getTime())},
+			{name: "atime", value: date(t == null ? 0.0 : t.atime, stat.atime)},
+			{name: "mtime", value: date(t == null ? 0.0 : t.mtime, stat.mtime)},
+			{name: "ctime", value: date(t == null ? 0.0 : t.ctime, stat.ctime)},
 			{name: "dev", value: VInt(stat.dev)},
 			{name: "ino", value: VInt(stat.ino)},
 			{name: "nlink", value: VInt(stat.nlink)},
@@ -4546,7 +4550,7 @@ class EvalStdLib {
 		reg(s, "sys.FileSystem", "stat", vfn(a -> {
 			var path = decodeText(ctx, arg(a, 0));
 			if (!sys.FileSystem.exists(path)) EvalExceptions.excString(ctx, "No such file or directory(stat, " + fsPatchPath(path) + ")");
-			mkFileStat(ctx, sys.FileSystem.stat(path));
+			mkFileStat(ctx, sys.FileSystem.stat(path), fsPatchPath(path));
 		}));
 		reg(s, "sys.net.Host", "localhost", vfn(a -> mkStr(sys.net.Host.localhost())));
 		reg(s, "sys.net.Host", "resolve", vfn(a -> VInt(hostIpInt(stringOf(arg(a, 0))))));

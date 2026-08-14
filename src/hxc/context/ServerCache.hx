@@ -52,8 +52,10 @@ class ServerCache {
 		for (d in ds) d();
 	}
 
+	// The file's mtime, or null when it cannot be stat'ed.
 	static inline function statMtime(path:String):Null<Float> {
-		return try sys.FileSystem.stat(path).mtime.getTime() / 1000.0 catch (_:Dynamic) null;
+		var t = hxc.core.FileTime.statTimes(path);
+		return t == null ? null : t.mtime;
 	}
 
 	// Lowercase-starting subdirectories, skipping those named after a DIFFERENT platform (a js/ dir is

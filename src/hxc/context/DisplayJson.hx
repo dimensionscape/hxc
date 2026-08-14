@@ -72,7 +72,7 @@ class DisplayJson {
 				if (sys.FileSystem.isDirectory(full)) {
 					if (e.length > 0 && e.charCodeAt(0) != ".".code) walk(full);
 				} else if (StringTools.endsWith(e, ".hx")) {
-					var time = try sys.FileSystem.stat(full).mtime.getTime() / 1000.0 catch (_:Dynamic) 0.0;
+					var time = hxc.core.FileTime.fileTime(full);
 					// Key the registry by full unique file paths, matching invalidation and module caching.
 					full = try sys.FileSystem.fullPath(full) catch (_:Dynamic) full;
 					cc.files.set(fileKey(full), {
