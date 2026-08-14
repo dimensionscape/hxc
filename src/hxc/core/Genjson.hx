@@ -109,7 +109,7 @@ class Genjson {
 	public function generatePosAsLocation(p:Position):JsonValue {
 		if (p.min == -1) return JNull;
 		var file = p.file;
-		if (file != "?") file = try FileSystem.fullPath(file) catch (_:Dynamic) file;
+		if (file != "?") file = hxc.core.PathKey.realPath(file);
 		return jobject([
 			field("file", jstring(file)),
 			field("range", generatePosAsRange(p))

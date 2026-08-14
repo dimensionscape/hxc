@@ -1925,22 +1925,17 @@ class Compiler {
 	// The display file's module path is its path relative to the classpath that contains it, keeping the
 	// SHORTEST dot path across classpaths (a tie keeps the earlier classpath).
 	static function displayModulePath(ctx:Context, file:String):Null<Path> {
-		// The reference's get_real_path fixes the case of every component on Windows; the
-		// runtime here only absolutizes, so the prefix test compares case-insensitively
-		// instead and the extracted remainder keeps the path's own case.
-		var real = StringTools.replace(try FileSystem.fullPath(file) catch (_:Dynamic) file, "\\", "/");
-		var onWindows = Sys.systemName() == "Windows";
-		inline function norm(s:String):String {
-			return onWindows ? s.toLowerCase() : s;
-		}
-		var realN = norm(real);
+		// The display file is held by its unique key (lowercased on Windows) and read back through the
+		// real-path lookup, which spells each component that exists the way the file system does: a display
+		// file that does not exist names its module in lower case.
+		var real = StringTools.replace(hxc.core.PathKey.realPath(hxc.core.PathKey.key(file)), "\\", "/");
 		var cps = ctx.classPath.concat(ctx.stdPath);
 		function loop(i:Int):Null<Path> {
 			if (i >= cps.length) return null;
-			var cpReal = try FileSystem.fullPath(cps[i] == "" ? "." : cps[i]) catch (_:Dynamic) return loop(i + 1);
-			var c = StringTools.replace(cpReal, "\\", "/");
+			// The class path's real path with a trailing slash added, then an exact prefix
+			var c = StringTools.replace(hxc.core.PathKey.realPath(cps[i] == "" ? "./" : cps[i]), "\\", "/");
 			if (!StringTools.endsWith(c, "/")) c += "/";
-			if (c.length >= real.length || norm(c) != realN.substr(0, c.length)) return loop(i + 1);
+			if (c.length >= real.length || c != real.substr(0, c.length)) return loop(i + 1);
 			var parsed = parsePathParts(real.substr(c.length));
 			if (parsed == null) return loop(i + 1);
 			var other = loop(i + 1);
@@ -2924,7 +2919,7 @@ class Compiler {
 	// The lookup falls back to its own argument on failure, which is what the catch is.
 	static function diagnosticsFile(pfile:String):String {
 		if (pfile == "?") return pfile;
-		return try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
+		return hxc.core.PathKey.realPath(pfile);
 	}
 
 	// The report covers only the requested display file (plus fileless positions).
