@@ -41,6 +41,35 @@ class EvalMacro {
 	}
 	static var curModule:Null<ModuleDef> = null;
 	static var curTctx:Null<TyperContext> = null;
+	// The host typer the init macros run with: over nullModule, with no class, field or function, and its
+	// module scope persists from one init macro to the next. One per compilation, which hxc's com is.
+	static var initTyper:Null<TyperContext> = null;
+	// The interpreter takes the API of its first caller, and every call puts that API back afterwards:
+	// outside a call (a callback) the API types with the typer of the compilation's first macro call, in
+	// the module it was typing.
+	static var apiTyper:Null<TyperContext> = null;
+	static var apiModule:Null<ModuleDef> = null;
+
+	// The macro API closes over the typer of the call; see apiTyper.
+	static function apiTyperOrNull():Null<TyperContext> {
+		return curTctx != null ? curTctx : apiTyper;
+	}
+
+	// Runs f with the API's typer, that typer's module current while it types. Before any macro call
+	// (an --interp program's own API is not modelled) the macro world's fresh typer stands in.
+	static function withApiTyper<R>(f:TyperContext->R):R {
+		if (curTctx != null) return f(curTctx);
+		if (apiTyper == null) return f(new TyperContext(macroCom != null ? macroCom : hostCom));
+		var com = apiTyper.com;
+		var saved = com.currentModule;
+		com.currentModule = apiModule;
+		var r = try f(apiTyper) catch (e:Dynamic) {
+			com.currentModule = saved;
+			throw e;
+		};
+		com.currentModule = saved;
+		return r;
+	}
 	static var expectedTypeStack:Array<WithType> = [];
 	static var curBuildFields:Null<Array<ClassField>> = null;
 	static var curBuildClass:Null<TClass> = null;
@@ -301,7 +330,7 @@ class EvalMacro {
 			var inl = opt("allowInlining");
 			var tr = opt("allowTransform");
 			var f = prepareCallback(ec, a[1]);
-			var tctx = curTctx;
+			var tctx = apiTyperOrNull();
 			var oldInline = tctx != null ? tctx.allowInline : true;
 			var oldTransform = tctx != null ? tctx.allowTransform : true;
 			if (tctx != null) {
@@ -376,52 +405,58 @@ class EvalMacro {
 			function(a) return encodeExpr(ec, Typer.formatString(strOf(a[0]), posOf(ec, a[1], curPos), com.defines)));
 		// Context.typeof types the argument expression and returns its (resolved) macro Type; follow
 		// resolves a type (encodeType already collapses bound monomorphs, so it is the identity here).
+		// The typing API types with the API's typer (withApiTyper): an init macro's is the host typer,
+		// so what it types sees the main world's classes and its own module scope.
 		reg2("typeof", "typeof", function(a) {
-			// An init macro has no expression typer yet; type in the macro world like the reference's
-			// macro-context typer does API over mctx).
-			var tctx = curTctx != null ? curTctx : (macroCom != null ? new TyperContext(macroCom) : null);
-			if (tctx == null) throw new TypingError("typeof outside a macro", curPos);
-			var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
-			settleOpenReturns(te);
-			return encodeType(ec, te.type);
+			return withApiTyper(function(tctx) {
+				var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
+				settleOpenReturns(te);
+				return encodeType(ec, te.type);
+			});
 		});
 		reg2("typeExpr", "type_expr", function(a) {
-			var tctx = curTctx != null ? curTctx : (macroCom != null ? new TyperContext(macroCom) : null);
-			if (tctx == null) throw new TypingError("typeExpr outside a macro", curPos);
-			var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
-			settleOpenReturns(te);
-			return encodeTypedExpr(ec, te);
+			return withApiTyper(function(tctx) {
+				var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
+				settleOpenReturns(te);
+				return encodeTypedExpr(ec, te);
+			});
 		});
 		// store_expr(e): type a syntax expression and store the typed expression, returning the syntax
 		// marker `@:storedTypedExpr(id)` that re-types to it, so the macro gets the marker back and not its
 		// syntax again.
 		reg2("storeExpr", "store_expr", function(a) {
-			if (curTctx == null) throw new TypingError("storeExpr outside a macro", curPos);
-			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
-			return storedTypedExprMarker(ec, te);
+			return withApiTyper(function(tctx) {
+				var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
+				return storedTypedExprMarker(ec, tctx, te);
+			});
 		});
-		// Type the expression and retain its type.
+		// type_and_store_expr: the stored expression's marker, and the type as a Ref whose toString prints
+		// the type.
 		reg2("typeAndStoreExpr", "type_and_store_expr", function(a) {
-			if (curTctx == null) throw new TypingError("typeAndStoreExpr outside a macro", curPos);
-			var te = typeMacroExpr(curTctx, decodeExpr(ec, a[0], curPos));
-			var fields:Map<Int, EvalValue> = new Map();
-			fields.set(EvalNames.hExpr(), encodeExpr(ec, Calls.texprToSyntax(curTctx, te)));
-			fields.set(EvalNames.hType(), encodeType(ec, te.type));
-			return VObject(new VObject([], ODictionary(fields)));
+			return withApiTyper(function(tctx) {
+				var te = typeMacroExpr(tctx, decodeExpr(ec, a[0], curPos));
+				var fields:Map<Int, EvalValue> = new Map();
+				fields.set(EvalNames.hExpr(), storedTypedExprMarker(ec, tctx, te));
+				fields.set(EvalNames.hType(), makeRef(ec, function(_) return encodeType(ec, te.type),
+					function(_) return mkString(hxc.core.TPrinting.sType(hxc.core.TPrinting.printContext(), te.type)), 0));
+				return VObject(new VObject([], ODictionary(fields)));
+			});
 		});
 		// get_typed_expr(te): convert a typed expression back to a syntax expression. A value that is not a
 		// decodable typed expression raises "Invalid expression".
 		reg2("getTypedExpr", "get_typed_expr", function(a) {
-			if (curTctx == null) throw new TypingError("getTypedExpr outside a macro", curPos);
-			var te = decodeStoredTypedExpr(ec, a[0]);
-			return encodeExpr(ec, Calls.texprToSyntax(curTctx, te));
+			return withApiTyper(function(tctx) {
+				var te = decodeStoredTypedExpr(ec, a[0]);
+				return encodeExpr(ec, Calls.texprToSyntax(tctx, te));
+			});
 		});
 		// store_typed_expr(te): store the decoded typed expression and return the syntax marker
 		// `@:storedTypedExpr(id)` that re-types to it.
 		reg2("storeTypedExpr", "store_typed_expr", function(a) {
-			if (curTctx == null) throw new TypingError("storeTypedExpr outside a macro", curPos);
-			var te = decodeStoredTypedExpr(ec, a[0]);
-			return storedTypedExprMarker(ec, te);
+			return withApiTyper(function(tctx) {
+				var te = decodeStoredTypedExpr(ec, a[0]);
+				return storedTypedExprMarker(ec, tctx, te);
+			});
 		});
 		// map_anon_ref(a, fn): rebuild the anonymous structure with every field's type passed through fn,
 		// keeping each field's kind, metadata and flags.
@@ -492,6 +527,8 @@ class EvalMacro {
 			// invocation); the host com's own currentModule is whatever typing left behind.
 			var savedGetTypeMod = com.currentModule;
 			if (curModule != null) com.currentModule = curModule;
+			// Outside a call it is the API typer's module (see apiTyper)
+			else if (curTctx == null && apiTyper != null) com.currentModule = apiModule;
 			var modulesBefore = com.modules.length;
 			var t = try typingTimer(com, function() return Typeload.loadInstance(com, [], tpath, curPos, true)) catch (e:Dynamic) {
 				com.currentModule = savedGetTypeMod;
@@ -568,22 +605,24 @@ class EvalMacro {
 		});
 		reg2("makeMonomorph", "make_monomorph", function(a) return encodeType(ec, TypeFunctions.mkMono()));
 		reg2("unify", "unify", function(a) {
-			if (curTctx == null) throw new TypingError("unify outside a macro", curPos);
-			var t1 = decodeType(ec, a[0]);
-			var t2 = decodeType(ec, a[1]);
-			var e1 = TypeFunctions.mk(TObjectDecl([]), t1, Position.nullPos);
-			var ok = typingTimer(curTctx.com, function() return try {
-				Typer.castOrUnifyRaise(curTctx, t2, e1, Position.nullPos);
-				true;
-			} catch (_:hxc.core.TypingError.CastUnifyError) false, true);
-			return ok ? VTrue : VFalse;
+			return withApiTyper(function(tctx) {
+				var t1 = decodeType(ec, a[0]);
+				var t2 = decodeType(ec, a[1]);
+				var e1 = TypeFunctions.mk(TObjectDecl([]), t1, Position.nullPos);
+				var ok = typingTimer(tctx.com, function() return try {
+					Typer.castOrUnifyRaise(tctx, t2, e1, Position.nullPos);
+					true;
+				} catch (_:hxc.core.TypingError.CastUnifyError) false, true);
+				return ok ? VTrue : VFalse;
+			});
 		});
 		reg2("resolveType", "resolve_type", function(a) {
-			if (curTctx == null) throw new TypingError("resolveType outside a macro", curPos);
-			var p = posArg(ec, a, 1, curPos);
-			var ct = decodeComplexType(ec, a[0], p);
-			var t = typingTimer(curTctx.com, function() return Typeload.loadComplexType(curTctx.com, curTctx.typeParams, {ct: ct, pos: p}));
-			return encodeType(ec, t);
+			return withApiTyper(function(tctx) {
+				var p = posArg(ec, a, 1, curPos);
+				var ct = decodeComplexType(ec, a[0], p);
+				var t = typingTimer(tctx.com, function() return Typeload.loadComplexType(tctx.com, tctx.typeParams, {ct: ct, pos: p}));
+				return encodeType(ec, t);
+			});
 		});
 		// A type that cannot convert (ExitException) answers null.
 		reg2("toComplexType", "to_complex_type", function(a) {
@@ -767,9 +806,11 @@ class EvalMacro {
 			com.userMetas.set(name, entry);
 			return VNull;
 		});
-		// The name of the method the macro was called from.
+		// The name of the method the macro was called from: the API typer's current field name, "" for no
+		// field.
 		reg2("getLocalMethod", "get_local_method", function(a) {
-			return mkString(curTctx != null && curTctx.curfield != null ? curTctx.curfield.name : "null");
+			var t = apiTyperOrNull();
+			return mkString(t != null && t.curfield != null ? t.curfield.name : "");
 		});
 		// Context.load(name, nargs): the raw macro-API lookup that std helpers (Compiler.nullSafety,
 		// addGlobalMetadata, ...) route through. Every underscore-named Context builtin is a candidate;
@@ -1682,6 +1723,10 @@ class EvalMacro {
 	// the environment back for a runtime exception alone; an abort or an Error leaves the stack as it
 	// stood.
 	static function callPath(ec:EvalContext, fn:VFunc, values:Array<EvalValue>, p:Position):EvalValue {
+		if (apiTyper == null && curTctx != null) {
+			apiTyper = curTctx;
+			apiModule = curTctx.com.currentModule;
+		}
 		var eval = EvalContext.getEval(ec);
 		var env = EvalContext.pushEnvironment(ec, EvalContext.createEnvInfo(true, p, EKEntrypoint, 0, 0));
 		EvalExceptions.setLeavePosition(env, p);
@@ -1784,6 +1829,14 @@ class EvalMacro {
 
 	public static function runInitMacros(com:Context, exprs:Array<String>):Void {
 		if (exprs.length == 0) return;
+		if (initTyper == null || initTyper.com != com) {
+			initTyper = new TyperContext(com);
+			initTyper.inFunction = false;
+		}
+		if (apiTyper != null && apiTyper.com != com) {
+			apiTyper = null;
+			apiModule = null;
+		}
 		for (s in exprs) {
 			// Every position inside an init-macro expression is the one "--macro <expr>" position with min
 			// -1 (printed "(unknown)"): a non-inline parse flattens sub-positions to p.
@@ -1863,40 +1916,53 @@ class EvalMacro {
 						curPos = savedPos;
 						continue;
 					}
-					// The init macro loads at the --macro position, through the ordinary macro load.
-					loadMacro(com, {pack: t.pack, name: t.module}, t.method, null, null, e.pos, false, t.name != t.module ? t.name : null);
-					var ec = getContext(com);
-					var savedPos = curPos;
-					curPos = e.pos;
-					// A macro method receives its arguments as expressions; a plain function (like
-					// Compiler.nullSafety) receives constants: the arguments type against the function's
-					// signature (so a malformed object literal errors here) and the typed constants convert
-					// to values.
-					var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module}, t.moduleOnly);
-					var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
-					var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
-					var vargs = if (isMacroFn) {
-						[for (a in args) encodeExpr(ec, a)];
-					} else if (sig != null) {
-						var tctx = new hxc.typing.TyperContext(macroCom);
-						// The macro typer stays in nullModule until a load sets its module, and the init macro's
-						// arguments type there: a bare enum value resolves against the expected type by joining that
-						// module's types.
-						var savedMod = macroCom.currentModule;
-						if (savedMod == null) macroCom.currentModule = TypeFunctions.nullModule;
-						var r = try hxc.typing.Calls.unifyCallArgs(tctx, args, sig.args, sig.ret, e.pos)
-							catch (ex:Dynamic) { macroCom.currentModule = savedMod; throw ex; };
-						macroCom.currentModule = savedMod;
-						[for (te in r.el) makeConst(ec, te)];
-					} else {
-						[for (a in args) initMacroConstArg(ec, a)];
+					// The init macros are called with the host typer, over nullModule.
+					var savedTctx = curTctx, savedModule = com.currentModule;
+					curTctx = initTyper;
+					com.currentModule = TypeFunctions.nullModule;
+					try {
+						// The init macro loads at the --macro position, through the ordinary macro load.
+						loadMacro(com, {pack: t.pack, name: t.module}, t.method, null, null, e.pos, false, t.name != t.module ? t.name : null);
+						var ec = getContext(com);
+						var savedPos = curPos;
+						curPos = e.pos;
+						// A macro method receives its arguments as expressions; a plain function (like
+						// Compiler.nullSafety) receives constants: the arguments type against the
+						// function's signature (so a malformed object literal errors here) and the typed
+						// constants convert to values.
+						var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module}, t.moduleOnly);
+						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
+						var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
+						var vargs = if (isMacroFn) {
+							[for (a in args) encodeExpr(ec, a)];
+						} else if (sig != null) {
+							var tctx = new hxc.typing.TyperContext(macroCom);
+							// The macro typer stays in nullModule until a load sets its module, and the init macro's
+							// arguments type there: a bare enum value resolves against the expected type by joining that
+							// module's types.
+							var savedMod = macroCom.currentModule;
+							if (savedMod == null) macroCom.currentModule = TypeFunctions.nullModule;
+							var r = try hxc.typing.Calls.unifyCallArgs(tctx, args, sig.args, sig.ret, e.pos)
+								catch (ex:Dynamic) { macroCom.currentModule = savedMod; throw ex; };
+							macroCom.currentModule = savedMod;
+							[for (te in r.el) makeConst(ec, te)];
+						} else {
+							[for (a in args) initMacroConstArg(ec, a)];
+						}
+						if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
+						// An init macro runs through the interpreter's call path: its entry environment at
+						// the --macro position closes an uncaught exception's chain, and an abort from
+						// Context.error answers nothing: the message is reported and the compilation goes
+						// on.
+						try callMacroFn(com, ec, callee, e.pos, vargs, e.pos) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
+						curPos = savedPos;
+					} catch (ex:Dynamic) {
+						curTctx = savedTctx;
+						com.currentModule = savedModule;
+						throw ex;
 					}
-					if (sig != null) while (vargs.length < sig.args.length) vargs.push(VNull);
-					// An init macro runs through the interpreter's call path: its entry environment at the
-					// --macro position closes an uncaught exception's chain, and an abort from
-					// Context.error answers nothing: the message is reported and the compilation goes on.
-					try callMacroFn(com, ec, callee, e.pos, vargs, e.pos) catch (_:hxc.eval.EvalExceptions.MacroAbort) {}
-					curPos = savedPos;
+					curTctx = savedTctx;
+					com.currentModule = savedModule;
 				case _:
 					throw new TypingError("--macro expects a call expression", e.pos);
 			}
@@ -2368,6 +2434,9 @@ class EvalMacro {
 			macroCom.moduleToFile = new haxe.ds.StringMap();
 		}
 		macroCurModule = null;
+		initTyper = null;
+		apiTyper = null;
+		apiModule = null;
 		pendingDisplayEvict = true;
 		pendingStaleSweep = true;
 		pendingMacroReuse = true;
@@ -5142,9 +5211,9 @@ class EvalMacro {
 	// The string is padded with p.min spaces, so an error inside it carries the caller's file offsets
 	// when inlining; when not, the failure reports at p itself, the whole API call. The stored id, as
 	// the `@:storedTypedExpr(id)` marker that re-types to it.
-	static function storedTypedExprMarker(ec:EvalContext, te:TExpr):EvalValue {
+	static function storedTypedExprMarker(ec:EvalContext, tctx:TyperContext, te:TExpr):EvalValue {
 		var id = hxc.context.Context.allocStoredTypedExprId("api.storeTypedExpr");
-		curTctx.com.storedTypedExprs.set(id, te);
+		tctx.com.storedTypedExprs.set(id, te);
 		var eid = new Expr(EConst(CInt(Std.string(id), null)), curPos);
 		return encodeExpr(ec, new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos}, eid), curPos));
 	}

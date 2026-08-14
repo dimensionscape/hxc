@@ -1783,8 +1783,9 @@ class ModuleLoader {
 	 * `ContextError(ModuleNotFound)` when no source file exists.
 	 */
 	// Record mdep in m's deps (self and null-module loads record nothing).
+	// The null module, the host typer's module, records none.
 	public static function addDependency(m:Null<ModuleDef>, mdep:ModuleDef):Void {
-		if (m == null || m == mdep) return;
+		if (m == null || m == TypeFunctions.nullModule || m == mdep) return;
 		if (traceDeps)
 			Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
 		m.extra.deps.set(mdep.id, mdep);
