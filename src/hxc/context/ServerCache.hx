@@ -139,8 +139,9 @@ class ServerCache {
 			for (dir in paths) {
 				var file = dir.path + (StringTools.endsWith(dir.path, "/") || StringTools.endsWith(dir.path, "\\") ? "" : "/") + m.path.name + ".hx";
 				if (sys.FileSystem.exists(file)) {
-					var time = statMtime(file);
-					if (time != null && time > m.extra.time) return Shadowed(file);
+					// fileTime, the clock time was read from
+					var time = hxc.core.FileTime.fileTime(file);
+					if (time > m.extra.time) return Shadowed(file);
 				}
 			}
 			return null;
@@ -167,8 +168,9 @@ class ServerCache {
 			}
 			function checkFile():Null<ModuleSkipReason> {
 				var file = m.extra.file;
-				var time = statMtime(file);
-				if (time == null || time != m.extra.time) {
+				// fileTime against time, one clock (statMtime is a stat call's, for directories)
+				var time = hxc.core.FileTime.fileTime(file);
+				if (time != m.extra.time) {
 					// The CheckFileContentModification policy would re-parse and compare decls
 					// here; the policy is only installed via server/configure, which hxc does not
 					// accept yet, so a time change is always a content change.
@@ -317,8 +319,7 @@ class ServerCache {
 	public static function cacheParsedFile(com:Context, file:String, pack:Array<String>, ?decls:Array<hxc.ast.Ast.TypeDecl>):Void {
 		if (!enabled) return;
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
-		var time = statMtime(full);
-		if (time == null) return;
+		var time = hxc.core.FileTime.fileTime(full);
 		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
 		// Path.UniqueKey: the lowercased full path (matching DisplayJson.fileKey).
 		cc.files.set(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
@@ -330,8 +331,8 @@ class ServerCache {
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
 		if (cf == null || cf.decls == null) return null;
-		var time = statMtime(full);
-		return time != null && time == cf.time ? cf.decls : null;
+		var time = hxc.core.FileTime.fileTime(full);
+		return time == cf.time ? cf.decls : null;
 	}
 
 	// The module-load hook. Looks the module up in the cache; if it is still valid, re-adds it (with its
