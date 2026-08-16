@@ -170,6 +170,7 @@ class Compiler {
 	}
 
 	static function runWaitStdio():Void {
+		hxc.core.BinaryStdio.setStdin();
 		runWaitLoop(Sys.stdin(), Sys.stderr());
 	}
 

@@ -16,4 +16,12 @@ class BinaryStdio {
 		untyped __cpp__("_setmode(_fileno(stderr), _O_BINARY)");
 		#end
 	}
+
+	// The request channel is binary too. In text mode a length byte of 0x1A (a 26-byte request) reads as
+	// end of file, and a display file's CR LF loses its CR.
+	public static function setStdin():Void {
+		#if (cpp && windows)
+		untyped __cpp__("_setmode(_fileno(stdin), _O_BINARY)");
+		#end
+	}
 }
