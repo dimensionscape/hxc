@@ -243,6 +243,7 @@ class Compiler {
 	}
 
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
+		hxc.context.ServerCache.cacheMode = true;
 		while (true) {
 			// The connection is read with the interpreter lock released, so the interpreter's threads run
 			// while the server waits for a request.
@@ -2431,15 +2432,17 @@ class Compiler {
 		inline function push(f:Int->hxc.core.Json.JsonValue) { items.push(f(idx)); idx++; }
 		var fields:Array<{cf:TClassField, c:hxc.core.Type.TClass, stat:Bool}> = [];
 		var types:Array<hxc.core.Type.ModuleType> = [];
+		var listedPaths:Array<hxc.core.Globals.Path> = [];
 		for (e in entries) switch (e) {
 			case JTLocal(v): push(function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(v.type), i));
 			case JTField(cf, c, stat): fields.push({cf: cf, c: c, stat: stat});
 			case JTType(mt): types.push(mt);
+			case JTPath(p): listedPaths.push(p);
 			// An enum-abstract value serializes like a class field under the EnumAbstractField kind; an enum
-			// constructor has its own serializer.
+			// constructor has its own serializer. it with member scope.
 			case JTEnumAbstract(a, ec, cf):
 				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-				push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf,
+				push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf,
 					hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), true, ct(t), i, true));
 			case JTEnumCtor(en, ef):
 				push(function(i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
@@ -2462,6 +2465,8 @@ class Compiler {
 		var pathSeen = new haxe.ds.StringMap<Bool>();
 		inline function pathKey(pack:Array<String>, moduleName:String, typeName:String):String
 			return pack.join(".") + "." + moduleName + "." + typeName;
+		// An enum's own path (pack, Name) is the key a module's main type Name has.
+		for (p in listedPaths) pathSeen.set(pathKey(p.pack, p.name, p.name), true);
 		// CollectionContext.get_import_status an item whose name was already collected is Shadowed;
 		// otherwise a loaded type (is_import) or a toplevel path is Imported and anything else
 		// Unimported. Names register in collection order: locals and fields first, then loaded types,
@@ -2470,12 +2475,21 @@ class Compiler {
 		for (e in entries) switch (e) {
 			case JTLocal(v): namesSeen.set(v.name, true);
 			case JTField(cf, _, _): namesSeen.set(cf.name, true);
+			case JTEnumCtor(_, ef): namesSeen.set(ef.name, true);
+			case JTEnumAbstract(_, _, cf): namesSeen.set(cf.name, true);
 			case _:
 		}
 		// Only add_type'd items (the display module's own types and imports) register their name;
-		// file-sourced items pass shadowing_name = None and never shadow each other.
+		// file-sourced items pass shadowing_name = None and never shadow each other. check_wildcard: a
+		// path in a package that a wildcard import names is in scope as well.
+		var curImports = curMod == null ? null : ctx.moduleImports.get(Context.pathKey(curMod.path));
+		function inWildcard(statusPack:Array<String>):Bool {
+			if (curImports != null) for (w in curImports.wildcards)
+				if (w.pack.concat([w.name]).join(".") == statusPack.join(".")) return true;
+			return false;
+		}
 		inline function collectStatus(name:String, register:Bool, isImport:Bool, statusPack:Array<String>):Int {
-			var st = namesSeen.exists(name) ? 2 : (isImport || statusPack.length == 0 ? 0 : 1);
+			var st = namesSeen.exists(name) ? 2 : (isImport || statusPack.length == 0 || inWildcard(statusPack) ? 0 : 1);
 			if (register) namesSeen.set(name, true);
 			return st;
 		}
@@ -2485,15 +2499,10 @@ class Compiler {
 			var key = pathKey(path.pack, infos.module.path.name, path.name);
 			if (pathSeen.exists(key)) continue;
 			pathSeen.set(key, true);
-			// The reference's add_type runs only for the DISPLAY module's own types and
-			// its imports (collect:459-462, is_import=true); every other module's types
-			// arrive from the file cache with is_import=false. StdTypes is implicitly
-			// imported into every module (typeloadModule's implicit import), so its
-			// subtypes rank Imported.
-			var isCur = curMod != null && (infos.module == curMod
-				|| (infos.module.path.pack.length == 0 && infos.module.path.name == "StdTypes"));
+			// Collect:459-462 add_type: every collected type is the display module's own or one of its
+			// imports, so it is in scope (is_import) and registers its name.
 			var statusPack = path.name == infos.module.path.name ? path.pack : path.pack.concat([infos.module.path.name]);
-			var st = collectStatus(path.name, isCur, isCur, statusPack);
+			var st = collectStatus(path.name, true, true, statusPack);
 			var mtc = mt;
 			typeItems.push({rank: 31 + st, name: path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name,
 				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});

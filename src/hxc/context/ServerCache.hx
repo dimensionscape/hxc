@@ -14,6 +14,9 @@ typedef CachedDirectory = {path:String, mtime:Float};
 
 class ServerCache {
 	public static var enabled = false;
+	// The wait loop enables cache mode before the first request: from then on the parse hook keeps every
+	// parsed file in the context's cache. A one-shot compile keeps the default hook, which caches nothing.
+	public static var cacheMode = false;
 	// Incremented per request; the checked and added marks compare against it.
 	public static var compilationStep = 0;
 	// The per-request memo of changed directories, keyed by signature.

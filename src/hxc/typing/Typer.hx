@@ -27,6 +27,9 @@ enum JsonToplevelEntry {
 	// their own right.
 	JTEnumAbstract(a:hxc.core.Type.TAbstract, c:TClass, cf:TClassField);
 	JTEnumCtor(en:hxc.core.Type.TEnum, ef:hxc.core.Type.TEnumField);
+	// Registering enum constructors registers the enum's own path, which no type item of that path may then
+	// take, whether loaded or parsed from a file.
+	JTPath(path:hxc.core.Globals.Path);
 }
 
 // The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
@@ -2316,9 +2319,9 @@ class Typer {
 	// report time.
 	public static var displayToplevelJson = false;
 
-	// The one-shot subset: locals in scope, the enclosing class fields (statics always, members
-	// outside a static context), every type of every loaded module, the literal and keyword sets.
-	// Sorting happens at report time.
+	// Locals in scope, the enclosing class fields (statics always, members outside a static context),
+	// the module's types and its imports, the literal and keyword sets. The cache's files and the
+	// sorting are added at report time.
 	static function collectToplevelJson(ctx:TyperContext, ?withType:WithType):Array<JsonToplevelEntry> {
 		var out:Array<JsonToplevelEntry> = [];
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
@@ -2340,22 +2343,19 @@ class Typer {
 			}
 			for (cf in c.orderedStatics) if (!noCompletion(cf.meta)) out.push(JTField(cf, c, true));
 		}
-		for (m in ctx.com.modules) for (mt in m.types) {
-			var infos = TypeFunctions.tInfos(mt);
-			if (infos.isPrivate && m != (ctx.curclass == null ? null : ctx.curclass.module)) continue;
-			if (noCompletion(infos.meta)) continue;
-			out.push(JTType(mt));
-		}
+		// What enum_ctors and add_type have listed. enum_ctors registers an enum's own path, which keeps
+		// add_type from listing that enum's type as well.
+		var paths = new haxe.ds.StringMap<Bool>();
 		// Over the current module's types , the module's imports and the EXPECTED type - which is what
 		// puts an enum abstract's own values in front of an assignment to it.
-		var seenEnum = new haxe.ds.StringMap<Bool>();
 		function enumCtors(mt:Null<hxc.core.Type.ModuleType>):Void {
 			if (mt == null) return;
 			switch (mt) {
 				case TAbstractDecl(a) if (a.isEnum && a.impl != null && ctx.curclass != a.impl):
 					var key = hxc.core.Globals.sTypePath(a.path);
-					if (seenEnum.exists(key)) return;
-					seenEnum.set(key, true);
+					if (paths.exists(key)) return;
+					paths.set(key, true);
+					out.push(JTPath(a.path));
 					for (cf in a.impl.orderedStatics)
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
 							out.push(JTEnumAbstract(a, a.impl, cf));
@@ -2366,8 +2366,9 @@ class Typer {
 					}
 				case TEnumDecl(e):
 					var key = hxc.core.Globals.sTypePath(e.path);
-					if (seenEnum.exists(key)) return;
-					seenEnum.set(key, true);
+					if (paths.exists(key)) return;
+					paths.set(key, true);
+					out.push(JTPath(e.path));
 					for (n in namesInKeyOrder(e.names)) out.push(JTEnumCtor(e, e.constrs.get(n)));
 				case _:
 			}
@@ -2379,6 +2380,27 @@ class Typer {
 				enumCtors(try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(tt)) catch (_:Dynamic) null);
 			case _:
 		}
+		// The module's own types, then module_imports reversed, each under its path with the module
+		// segment for a sub-type . Any other type comes from the cache's files , which only a server has.
+		function addType(mt:ModuleType):Void {
+			switch (mt) {
+				case TClassDecl({kind: KAbstractImpl(_) | KModuleFields(_)}): return;
+				case _:
+			}
+			var inf = TypeFunctions.tInfos(mt);
+			var mname = inf.module.path.name;
+			var key = (inf.path.name == mname ? inf.path.pack.concat([mname]) : inf.path.pack.concat([mname, inf.path.name])).join(".");
+			if (paths.exists(key)) return;
+			CoreApi.mergeCoreDoc(ctx.com, mt);
+			if (noCompletion(inf.meta)) return;
+			paths.set(key, true);
+			out.push(JTType(mt));
+		}
+		var curmod = c == null ? null : c.module;
+		if (curmod != null) for (mt in curmod.types) addType(mt);
+		var imported = moduleImportTypes(ctx.com);
+		imported.reverse();
+		for (mt in imported) addType(mt);
 		return out;
 	}
 
@@ -2802,7 +2824,6 @@ class Typer {
 	// takes the ADVANCED branch here, not the legacy-completion one.
 	public static function addCachedFileTypes(com:hxc.context.Context, items:Array<hxc.compiler.DisplayXml.ToplevelItem>,
 			seenPaths:Map<String, Bool>):Void {
-		if (!hxc.context.ServerCache.enabled) return;
 		// A package with a `_`-prefixed segment is the private `_Module` container and is never offered.
 		function packVisible(pack:Array<String>):Bool {
 			for (s in pack) if (s.length > 0 && s.charCodeAt(0) == "_".code) return false;

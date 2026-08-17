@@ -23,6 +23,8 @@ class ToplevelScan {
 	public static function uninitialize(sign:String):Void scanned.remove(sign);
 
 	public static function get(ctx:Context):Array<ScannedFile> {
+		// One-shot exploration parses files but retains none, so it contributes no completion items.
+		if (!hxc.context.ServerCache.cacheMode) return [];
 		var sign = ctx.defines.getSignature();
 		var out = scanned.get(sign);
 		if (out == null) {
