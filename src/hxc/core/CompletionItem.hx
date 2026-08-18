@@ -319,9 +319,12 @@ class CompletionItem {
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
-	// The "type" field is present only when the item carries a ci_type. A toplevel Type item has none
-	// (make_ci_type ... None); a HOVER on a type path does Some (t,ct)).
-	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int, ?ct:CompletionType):JsonValue {
+	// The "type" field is present only when the item carries a type. A toplevel Type item has none; a HOVER
+	// on a type path does.
+	// `typedefUnloaded`: the typedef is described before its type is loaded, while type is still the
+	// monomorph module creation gave it, so it can only be called a TypeAlias.
+	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int, ?ct:CompletionType,
+			typedefUnloaded:Bool = false):JsonValue {
 		var infos = TypeFunctions.tInfos(mt);
 		var kind:Int;
 		var isExtern = false, isFinal = false, isAbstract = false;
@@ -335,7 +338,7 @@ class CompletionItem {
 				isExtern = en.isExtern;
 				kind = 2;
 			case TTypeDecl(td):
-				kind = switch (TypeFunctions.follow(td.type)) {
+				kind = typedefUnloaded ? 5 : switch (TypeFunctions.follow(td.type)) {
 					case TAnon(_): 6;
 					case _: 5;
 				};

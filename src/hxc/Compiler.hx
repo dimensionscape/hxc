@@ -2921,10 +2921,21 @@ class Compiler {
 			if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
 		} else {
 			var hf = hoverOnFieldName(ctx);
-			if (hf == null) return null;
-			rangePos = hf.p;
-			doc = hf.cf.doc;
-			item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, hf.scope, hf.cf, Self(classDecl(hf.c)), true, ct(hf.t));
+			if (hf != null) {
+				rangePos = hf.p;
+				doc = hf.cf.doc;
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, hf.scope, hf.cf, Self(classDecl(hf.c)), true, ct(hf.t));
+			} else {
+				// Under hover, a type declaration name answers with that type, Imported, typed as its module
+				// type, over the name; its doc is the type's own. A typedef answers before its type is loaded.
+				var mt = displayTypeAtName(ctx);
+				if (mt == null) return null;
+				var inf = TypeFunctions.tInfos(mt);
+				rangePos = inf.namePos;
+				doc = inf.doc;
+				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, null, ct(TypeFunctions.typeOfModuleType(mt)),
+					mt.match(TTypeDecl(_)));
+			}
 		}
 		var result = hxc.core.Json.JsonValue.JObject([
 			{name: "documentation", value: doc == null ? hxc.core.Json.JsonValue.JNull : hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(doc))},
