@@ -21,15 +21,21 @@ import hxc.typing.Typeload;
 // at report time.
 enum JsonToplevelEntry {
 	JTLocal(v:TVar);
-	JTField(cf:TClassField, c:TClass, isStatic:Bool);
+	// The field as LISTED (an inherited one under the class's arguments, a macro under its display
+	// type, an abstract member in its using form), with its scope and origin. An enum abstract's value
+	// is listed already qualified.
+	JTField(cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin, enumAbstract:Bool,
+		?qualified:Bool);
 	JTType(mt:hxc.core.Type.ModuleType);
-	// An enum's constructors and an enum abstract's values are part of the toplevel collection in
-	// their own right.
-	JTEnumAbstract(a:hxc.core.Type.TAbstract, c:TClass, cf:TClassField);
-	JTEnumCtor(en:hxc.core.Type.TEnum, ef:hxc.core.Type.TEnumField);
+	// An enum constructor, or an imported one, which registers `register` as its name.
+	JTEnumCtor(en:hxc.core.Type.TEnum, ef:hxc.core.Type.TEnumField, origin:hxc.core.CompletionItem.ClassFieldOrigin,
+		register:String);
 	// Registering enum constructors registers the enum's own path, which no type item of that path may then
 	// take, whether loaded or parsed from a file.
 	JTPath(path:hxc.core.Globals.Path);
+	JTLiteral(name:String, t:T);
+	JTKeyword(name:String);
+	JTTypeParam(c:TClass, t:T);
 }
 
 // The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
@@ -2319,9 +2325,11 @@ class Typer {
 	// report time.
 	public static var displayToplevelJson = false;
 
-	// Locals in scope, the enclosing class fields (statics always, members outside a static context),
-	// the module's types and its imports, the literal and keyword sets. The cache's files and the
-	// sorting are added at report time.
+	// The toplevel collection for an expression (TKExpr/TKPattern): the raw items in collection order
+	// - locals, member fields, statics, enum constructors, imported globals, literals, keywords and
+	// trace, type parameters, the module's types and its imports. Names, qualification, import status,
+	// the cache's files and the sort are the report's (each name is registered as its item is added,
+	// so they need this order).
 	static function collectToplevelJson(ctx:TyperContext, ?withType:WithType):Array<JsonToplevelEntry> {
 		var out:Array<JsonToplevelEntry> = [];
 		function noCompletion(meta:Metadata):Bool return TypeFunctions.hasMeta(":noCompletion", meta);
@@ -2330,24 +2338,66 @@ class Typer {
 			if (name.length > 0 && name.charCodeAt(0) != "`".code) out.push(JTLocal(v));
 		}
 		var c = ctx.curclass;
-		if (c != null) {
-			if (ctx.curfun != FunStatic) {
-				var cur = c;
-				while (cur != null) {
-					for (name in cur.fields.keys()) {
-						var cf = cur.fields.get(name);
-						if (!noCompletion(cf.meta)) out.push(JTField(cf, cur, false));
+		// addField: a class's own static or member resolves a macro's display type first.
+		function addField(scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin, cf:TClassField):Void {
+			if (noCompletion(cf.meta)) return;
+			switch (origin) {
+				case hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(oc)) | hxc.core.CompletionItem.ClassFieldOrigin.Parent(TClassDecl(oc)) | hxc.core.CompletionItem.ClassFieldOrigin.StaticImport(TClassDecl(oc)) | hxc.core.CompletionItem.ClassFieldOrigin.StaticExtension(TClassDecl(oc)):
+					var mt = hxc.eval.EvalMacro.macroFieldDisplayType(ctx.com, oc, cf);
+					if (mt != null) {
+						cf = TypeFunctions.copyField(cf);
+						cf.type = mt;
 					}
-					cur = cur.superClass == null ? null : cur.superClass.c;
+				case _:
+			}
+			out.push(JTField(cf, scope, origin, false));
+		}
+		if (c != null) {
+			// Member fields: walk the class and then each super (an interface's own interfaces), the most
+			// derived field winning, each inherited one under the class's arguments, and list them in name
+			// order.
+			if (ctx.curfun != FunStatic) {
+				var members = new haxe.ds.StringMap<{c:TClass, cf:TClassField}>();
+				function walk(cl:TClass, tl:TParams):Void {
+					for (cf in cl.orderedFields) if (!members.exists(cf.name)) {
+						var f = cf;
+						if (tl.length > 0) {
+							f = TypeFunctions.copyField(cf);
+							f.type = TypeFunctions.applyParams(cl.params, tl, cf.type);
+						}
+						members.set(cf.name, {c: cl, cf: f});
+					}
+					inline function apply(t:T):T return TypeFunctions.applyParams(cl.params, tl, t);
+					if (TypeFunctions.hasClassFlag(cl, CInterface)) {
+						for (i in cl.interfaces) walk(i.c, [for (t in i.params) apply(t)]);
+					} else if (cl.superClass != null) walk(cl.superClass.c, [for (t in cl.superClass.params) apply(t)]);
+				}
+				walk(c, TypeFunctions.extractParamTypes(c.params));
+				var names = [for (k in members.keys()) k];
+				hxc.core.StringSort.sort(names);
+				for (n in names) {
+					var m = members.get(n);
+					addField(CFSMember, m.c == c ? hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(m.c)) : hxc.core.CompletionItem.ClassFieldOrigin.Parent(TClassDecl(m.c)), m.cf);
 				}
 			}
-			for (cf in c.orderedStatics) if (!noCompletion(cf.meta)) out.push(JTField(cf, c, true));
+			// Statics; on an abstract implementation a CfImpl field is a member in its using form.
+			switch (c.kind) {
+				case KAbstractImpl(a) if (a.impl != null):
+					for (cf in a.impl.orderedStatics) {
+						if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
+							if (ctx.curfun != FunStatic) addField(CFSMember, hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), prepareUsingField(cf));
+						} else addField(CFSStatic, hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), cf);
+					}
+				case _:
+					for (cf in c.orderedStatics) addField(CFSStatic, hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c)), cf);
+			}
 		}
-		// What enum_ctors and add_type have listed. enum_ctors registers an enum's own path, which keeps
-		// add_type from listing that enum's type as well.
+		// Paths: what enumCtors and addType have listed. enumCtors registers an enum's own path, which
+		// keeps addType from listing that enum's type as well.
 		var paths = new haxe.ds.StringMap<Bool>();
-		// Over the current module's types , the module's imports and the EXPECTED type - which is what
-		// puts an enum abstract's own values in front of an assignment to it.
+		// enumCtors, over the current module's types, the module's imports and
+		// the EXPECTED type - which is what puts an enum abstract's own values in front of an
+		// assignment to it.
 		function enumCtors(mt:Null<hxc.core.Type.ModuleType>):Void {
 			if (mt == null) return;
 			switch (mt) {
@@ -2358,7 +2408,7 @@ class Typer {
 					out.push(JTPath(a.path));
 					for (cf in a.impl.orderedStatics)
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && !noCompletion(cf.meta))
-							out.push(JTEnumAbstract(a, a.impl, cf));
+							out.push(JTField(cf, CFSMember, hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), true));
 				case TTypeDecl(td):
 					switch (TypeFunctions.follow(td.type)) {
 						case TEnum(e, _): enumCtors(TEnumDecl(e));
@@ -2369,7 +2419,10 @@ class Typer {
 					if (paths.exists(key)) return;
 					paths.set(key, true);
 					out.push(JTPath(e.path));
-					for (n in namesInKeyOrder(e.names)) out.push(JTEnumCtor(e, e.constrs.get(n)));
+					for (n in namesInKeyOrder(e.names)) {
+						var ef = e.constrs.get(n);
+						out.push(JTEnumCtor(e, ef, hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(e)), ef.name));
+					}
 				case _:
 			}
 		}
@@ -2380,8 +2433,83 @@ class Typer {
 				enumCtors(try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(tt)) catch (_:Dynamic) null);
 			case _:
 		}
-		// The module's own types, then module_imports reversed, each under its path with the module
-		// segment for a sub-type . Any other type comes from the cache's files , which only a server has.
+		// Imported globals, in name order. A static is listed under the name it was imported as; an enum
+		// constructor under it too, but registers its own name.
+		{
+			var curMod = ctx.com.currentModule;
+			var imports = curMod == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(curMod.path));
+			if (imports != null) {
+				var gnames = [for (k in imports.globals.keys()) k];
+				hxc.core.StringSort.sort(gnames);
+				for (name in gnames) {
+					var g = imports.globals.get(name);
+					var mt = try hxc.context.ModuleLoader.importedTypeDef(ctx.com, g.ownerPath, Position.nullPos, g.ownerSub) catch (_:Dynamic) null;
+					if (mt == null) continue;
+					var s = g.field != null ? g.field : name;
+					// classImport, over the typedef's resolved type.
+					var resolved = switch (mt) {
+						case TTypeDecl(td): try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(td.type)) catch (_:Dynamic) null;
+						case _: mt;
+					};
+					function classImport(cl:TClass):Void {
+						try TypeResolve.resolveModule(ctx.com, cl.module) catch (_:Dynamic) {}
+						var cf = cl.statics.get(s);
+						if (cf == null) return;
+						if (name != cf.name) {
+							cf = TypeFunctions.copyField(cf);
+							cf.name = name;
+						}
+						if (!Fields.canAccess(ctx, cl, cf, true) || noCompletion(cf.meta)) return;
+						switch (cl.kind) {
+							case KAbstractImpl(a):
+								out.push(JTField(cf, CFSStatic, hxc.core.CompletionItem.ClassFieldOrigin.StaticImport(TAbstractDecl(a)), TypeFunctions.hasClassFieldFlag(cf, CfEnum)));
+							case _:
+								out.push(JTField(cf, CFSStatic, hxc.core.CompletionItem.ClassFieldOrigin.StaticImport(TClassDecl(cl)), false));
+						}
+					}
+					switch (resolved) {
+						case TClassDecl(cl): classImport(cl);
+						case TEnumDecl(en):
+							var ef = en.constrs.get(s);
+							if (ef != null) {
+								var named = ef;
+								if (name != ef.name)
+									named = new TEnumField(name, ef.type, ef.pos, ef.namePos, ef.doc, ef.index, ef.params, ef.meta);
+								out.push(JTEnumCtor(en, named, hxc.core.CompletionItem.ClassFieldOrigin.StaticImport(TEnumDecl(en)), s));
+							}
+						case TAbstractDecl(a) if (a.impl != null): classImport(a.impl);
+						case _:
+					}
+				}
+			}
+		}
+		var basic = ctx.com.basic;
+		out.push(JTLiteral("null", TypeFunctions.tDynamic));
+		out.push(JTLiteral("true", basic.tbool));
+		out.push(JTLiteral("false", basic.tbool));
+		if (c != null) switch (ctx.curfun) {
+			case FunMember | FunConstructor | FunMemberClassLocal:
+				out.push(JTLiteral("this", TInst(c, TypeFunctions.extractParamTypes(c.params))));
+				if (c.superClass != null) out.push(JTLiteral("super", TInst(c.superClass.c, c.superClass.params)));
+			case FunMemberAbstract:
+				out.push(JTLiteral("abstract", TInst(c, TypeFunctions.extractParamTypes(c.params))));
+			case _:
+		}
+		// Keywords and the trace builtin, unless the client asked for legacy completion.
+		if (!hxc.context.DisplayJson.legacyCompletion) {
+			for (kwd in ["function", "var", "final", "if", "else", "while", "do", "for", "break", "return", "continue",
+					"switch", "try", "new", "throw", "untyped", "cast", "inline"])
+				out.push(JTKeyword(kwd));
+			out.push(JTLiteral("trace", TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: basic.tvoid})));
+		}
+		// Type params
+		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
+			case TInst(pc, _): out.push(JTTypeParam(pc, tp.type));
+			case _:
+		}
+		// add_type: the module's own types, then module_imports reversed, each under its path with the
+		// module segment for a sub-type . Any other type comes from the cache's files , which only a
+		// server has.
 		function addType(mt:ModuleType):Void {
 			switch (mt) {
 				case TClassDecl({kind: KAbstractImpl(_) | KModuleFields(_)}): return;
@@ -2402,6 +2530,31 @@ class Typer {
 		imported.reverse();
 		for (mt in imported) addType(mt);
 		return out;
+	}
+
+	// An abstract's member as its users see it, without the leading `this` argument; an overload stays only
+	// when its first argument is the same type.
+	static function prepareUsingField(cf:TClassField):TClassField {
+		return switch (TypeFunctions.follow(cf.type)) {
+			case TFun(sig) if (sig.args.length > 0):
+				var tf = sig.args[0].t;
+				var acc:Array<TClassField> = [];
+				for (cfo in cf.overloads) switch (cfo.type) {
+					case TFun(osig) if (osig.args.length > 0):
+						var tfo = TypeFunctions.applyParams(cfo.params, TypeFunctions.extractParamTypes(cfo.params), osig.args[0].t);
+						if (TypeUnification.typeIseqDefault(tf, tfo)) {
+							var o = TypeFunctions.copyField(cfo);
+							o.type = TFun({args: osig.args.slice(1), ret: osig.ret});
+							acc.unshift(o);
+						}
+					case _:
+				}
+				var f = TypeFunctions.copyField(cf);
+				f.overloads = acc;
+				f.type = TFun({args: sig.args.slice(1), ret: sig.ret});
+				f;
+			case _: cf;
+		};
 	}
 
 	// An unresolved identifier where only types are wanted: a type name that did not resolve. A type
@@ -2506,12 +2659,7 @@ class Typer {
 		for (name in localNamesInKeyOrder(ctx)) {
 			var v = ctx.locals.get(name);
 			if (name.length > 0 && name.charCodeAt(0) != "`".code) {
-				// A local sorts by how far the cursor is PAST its declaration, so the nearest one comes first,
-				// behind a levenshtein distance to the name the position expects when there is one .
-				var d = displayOff - v.pos.min;
-				var key = StringTools.lpad(Std.string(d < 0 ? 0 : d), "0", 5);
-				var exp = expectedName(withType);
-				if (exp != null) key = StringTools.lpad(Std.string(levenshtein(exp, v.name)), "0", 5) + key;
+				var key = toplevelLocalKey(v, displayOff, withType);
 				items.push({kind: "local", name: name, type: sType(v.type), sortGroup: 0, sortKey: key, sortType: v.type});
 			}
 		}
@@ -2763,42 +2911,60 @@ class Typer {
 	// context is flagged here.
 	public static var patternDisplay:Bool = false;
 
-	// The reference sorts only when the completion subject is empty `sort = (name = "")`), so a
-	// partially typed identifier keeps the collection order and only a bare position gets ranked.
-	public static function sortToplevel(items:Array<hxc.compiler.DisplayXml.ToplevelItem>, withType:Null<WithType>):Array<hxc.compiler.DisplayXml.ToplevelItem> {
-		var expected:Null<T> = switch (withType) {
+	// Fields are sorted only when the completion subject is empty, so a partially typed identifier
+	// keeps the collection order and only a bare position gets ranked. The expected type a sort ranks
+	// against, none while it is still open.
+	public static function toplevelExpected(withType:Null<WithType>):Null<T> {
+		return switch (withType) {
 			case WithType(t, _) if (!TypeFunctions.follow(t).match(TMono(_))): t;
 			case _: null;
 		};
-		// Every type parameter in the item's type becomes a fresh monomorph first. Not strictly accurate,
-		// but it does not matter for ranking.
-		function dynamify(t:T):T {
-			return switch (TypeFunctions.follow(t)) {
-				case TInst({kind: KTypeParameter(_)}, _): TypeFunctions.mkMono();
-				case _: TypeFunctions.map(dynamify, t);
-			};
+	}
+
+	// Every type parameter in the item's type becomes a fresh monomorph first. Not strictly accurate, but
+	// it does not matter for ranking.
+	static function dynamifyTypeParams(t:T):T {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst({kind: KTypeParameter(_)}, _): TypeFunctions.mkMono();
+			case _: TypeFunctions.map(dynamifyTypeParams, t);
+		};
+	}
+
+	// How well an item's own type fits the expected one. An enum constructor is judged on what it
+	// returns, so an argument-less one ranks with it. It unifies as it ranks, so a monomorph in the
+	// item's type can end up bound to the expected type.
+	public static function toplevelComp(t:Null<T>, enumField:Bool, expected:T):Int {
+		if (t == null) return 9;
+		if (enumField) switch (TypeFunctions.follow(t)) {
+			case TFun(sig): t = sig.ret;
+			case _:
 		}
-		// How well the item's own type fits the expected one. An enum constructor is judged on what it
-		// returns, so an argument-less one ranks with it .
-		function comp(it:hxc.compiler.DisplayXml.ToplevelItem):Int {
-			if (expected == null) return 0;
-			var t = it.sortType;
-			if (t == null) return 9;
-			if (it.kind == "enum") switch (TypeFunctions.follow(t)) {
-				case TFun(sig): t = sig.ret;
-				case _:
-			}
-			t = dynamify(t);
-			if (TypeUnification.typeIseqDefault(t, expected)) return 0;
-			if (TypeFunctions.follow(t).match(TDynamic(_))) return 5;
-			try { TypeUnification.unifyDefault(t, expected); return 1; } catch (_:Dynamic) {}
-			return switch (TypeFunctions.follow(t)) {
-				case TFun(sig):
-					if (TypeUnification.typeIseqDefault(sig.ret, expected)) 2
-					else try { TypeUnification.unifyDefault(sig.ret, expected); 3; } catch (_:Dynamic) 7;
-				case _: 6;
-			};
-		}
+		t = dynamifyTypeParams(t);
+		if (TypeUnification.typeIseqDefault(t, expected)) return 0;
+		if (TypeFunctions.follow(t).match(TDynamic(_))) return 5;
+		try { TypeUnification.unifyDefault(t, expected); return 1; } catch (_:Dynamic) {}
+		return switch (TypeFunctions.follow(t)) {
+			case TFun(sig):
+				if (TypeUnification.typeIseqDefault(sig.ret, expected)) 2
+				else try { TypeUnification.unifyDefault(sig.ret, expected); 3; } catch (_:Dynamic) 7;
+			case _: 6;
+		};
+	}
+
+	// A local sorts by how far the cursor is PAST its declaration, so the nearest one comes first, behind a
+	// levenshtein distance to the name the position expects when there is one.
+	public static function toplevelLocalKey(v:TVar, displayOff:Int, withType:Null<WithType>):String {
+		var d = displayOff - v.pos.min;
+		var key = StringTools.lpad(Std.string(d < 0 ? 0 : d), "0", 5);
+		var exp = expectedName(withType);
+		if (exp != null) key = StringTools.lpad(Std.string(levenshtein(exp, v.name)), "0", 5) + key;
+		return key;
+	}
+
+	public static function sortToplevel(items:Array<hxc.compiler.DisplayXml.ToplevelItem>, withType:Null<WithType>):Array<hxc.compiler.DisplayXml.ToplevelItem> {
+		var expected = toplevelExpected(withType);
+		function comp(it:hxc.compiler.DisplayXml.ToplevelItem):Int
+			return expected == null ? 0 : toplevelComp(it.sortType, it.kind == "enum", expected);
 		var keyed = [for (i in 0...items.length) {
 			it: items[i], c: comp(items[i]),
 			g: items[i].sortGroup == null ? 500 : items[i].sortGroup,

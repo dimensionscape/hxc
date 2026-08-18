@@ -2426,88 +2426,86 @@ class Compiler {
 				case _: TClassDecl(c);
 			};
 		}
-		var locals:Array<hxc.core.Json.JsonValue->Void> = [];
-		var items:Array<hxc.core.Json.JsonValue> = [];
-		var idx = 0;
-		inline function push(f:Int->hxc.core.Json.JsonValue) { items.push(f(idx)); idx++; }
-		var fields:Array<{cf:TClassField, c:hxc.core.Type.TClass, stat:Bool}> = [];
-		var types:Array<hxc.core.Type.ModuleType> = [];
-		var listedPaths:Array<hxc.core.Globals.Path> = [];
-		for (e in entries) switch (e) {
-			case JTLocal(v): push(function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(v.type), i));
-			case JTField(cf, c, stat): fields.push({cf: cf, c: c, stat: stat});
-			case JTType(mt): types.push(mt);
-			case JTPath(p): listedPaths.push(p);
-			// An enum-abstract value serializes like a class field under the EnumAbstractField kind; an enum
-			// constructor has its own serializer. it with member scope.
-			case JTEnumAbstract(a, ec, cf):
-				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-				push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf,
-					hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a)), true, ct(t), i, true));
-			case JTEnumCtor(en, ef):
-				push(function(i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
-					hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), true, ct(ef.type), i));
-		}
-		for (f in fields) {
-			var scope:hxc.core.Type.ClassFieldScope = f.stat ? CFSStatic : CFSMember;
-			var t = switch (f.cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
-			push(function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, f.cf,
-				hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(f.c)), true, ct(t), i));
-		}
-		// Types merge from two sources like the reference collect: the loaded module types (ctx
-		// modules/imports, add_type) and the class-path exploration's parsed declarations
-		// (collect:465-495 iterates the cache's files; process_decls:255 adds one item per visible
-		// declaration). Loaded paths shadow scanned ones (path_exists), and the whole set sorts by type
-		// name. get_sort_index a Type item sorts by (31 imported / 32 unimported / 33 shadowed, full dot
-		// path); packages(40), literals(50) and keywords(60) follow, which the push order below already
-		// respects.
-		var typeItems:Array<{rank:Int, name:String, mk:Int->hxc.core.Json.JsonValue}> = [];
+		// The half of the collection that ADDS: each item registers its name as it is added, which is what
+		// decides a later item's qualification and a later type's import status. An item's type is read
+		// when it is added, before the sort can bind anything; the item is serialized after the sort.
+		var pending:Array<{group:Int, key:String, t:Null<T>, enumField:Bool, mk:Int->hxc.core.Json.JsonValue}> = [];
+		var namesSeen = new haxe.ds.StringMap<Bool>();
 		var pathSeen = new haxe.ds.StringMap<Bool>();
 		inline function pathKey(pack:Array<String>, moduleName:String, typeName:String):String
 			return pack.join(".") + "." + moduleName + "." + typeName;
-		// An enum's own path (pack, Name) is the key a module's main type Name has.
-		for (p in listedPaths) pathSeen.set(pathKey(p.pack, p.name, p.name), true);
-		// CollectionContext.get_import_status an item whose name was already collected is Shadowed;
-		// otherwise a loaded type (is_import) or a toplevel path is Imported and anything else
-		// Unimported. Names register in collection order: locals and fields first, then loaded types,
-		// then scanned files.
-		var namesSeen = new haxe.ds.StringMap<Bool>();
-		for (e in entries) switch (e) {
-			case JTLocal(v): namesSeen.set(v.name, true);
-			case JTField(cf, _, _): namesSeen.set(cf.name, true);
-			case JTEnumCtor(_, ef): namesSeen.set(ef.name, true);
-			case JTEnumAbstract(_, _, cf): namesSeen.set(cf.name, true);
-			case _:
+		function add(group:Int, key:String, t:Null<T>, enumField:Bool, name:Null<String>, mk:Int->hxc.core.Json.JsonValue):Void {
+			pending.push({group: group, key: key, t: t, enumField: enumField, mk: mk});
+			if (name != null) namesSeen.set(name, true);
 		}
-		// Only add_type'd items (the display module's own types and imports) register their name;
-		// file-sourced items pass shadowing_name = None and never shadow each other. check_wildcard: a
-		// path in a package that a wildcard import names is in scope as well.
+		inline function lazyResolved(t:T):T return switch (t) {
+			case TLazy(r): TypeFunctions.lazyType(r);
+			case t2: t2;
+		};
+		// A path in a package that a wildcard import names is in scope as well.
 		var curImports = curMod == null ? null : ctx.moduleImports.get(Context.pathKey(curMod.path));
 		function inWildcard(statusPack:Array<String>):Bool {
 			if (curImports != null) for (w in curImports.wildcards)
 				if (w.pack.concat([w.name]).join(".") == statusPack.join(".")) return true;
 			return false;
 		}
-		inline function collectStatus(name:String, register:Bool, isImport:Bool, statusPack:Array<String>):Int {
-			var st = namesSeen.exists(name) ? 2 : (isImport || statusPack.length == 0 || inWildcard(statusPack) ? 0 : 1);
-			if (register) namesSeen.set(name, true);
-			return st;
+		// An item whose name is already listed is Shadowed; otherwise an import, a root path or a
+		// wildcard-imported one is Imported, and anything else Unimported. The status path carries the
+		// module segment for a sub-type (its full dot path).
+		function importStatusOf(name:String, isImport:Bool, statusPack:Array<String>):Int
+			return namesSeen.exists(name) ? 2 : (isImport || statusPack.length == 0 || inWildcard(statusPack) ? 0 : 1);
+		// In a pattern an enum constructor or enum abstract value sorts first.
+		var inPattern = patternOutermost != null;
+		var displayOff = hxc.parser.Parser.displayOffset;
+		for (e in entries) switch (e) {
+			case JTLocal(v):
+				var c = ct(v.type);
+				add(0, hxc.typing.Typer.toplevelLocalKey(v, displayOff, wt), v.type, false, v.name,
+					function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, c, i));
+			case JTField(cf, scope, origin, enumAbstract, qualified):
+				// A class field's group comes from its origin and scope.
+				var group = enumAbstract ? (inPattern ? -1 : 21) : switch [origin, scope] {
+					case [Self(_), CFSMember | CFSConstructor]: 10;
+					case [Parent(_), CFSMember | CFSConstructor]: 11;
+					case [StaticExtension(_), _]: 12;
+					case [Self(_), CFSStatic]: 13;
+					case [StaticImport(_), _]: 14;
+					case _: 15;
+				};
+				var q = qualified != null ? qualified : !namesSeen.exists(cf.name);
+				var t = lazyResolved(cf.type);
+				var c = ct(t);
+				add(group, cf.name, t, false, cf.name,
+					function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, cf, origin, q, c, i, enumAbstract));
+			case JTEnumCtor(en, ef, origin, register):
+				var q = !namesSeen.exists(ef.name);
+				var c = ct(ef.type);
+				add(inPattern ? -1 : 20, StringTools.lpad(Std.string(ef.index), "0", 4), ef.type, true, register,
+					function(i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, origin, q, c, i));
+			// An enum's own path (pack, Name) is the key a module's main type Name has.
+			case JTPath(p): pathSeen.set(pathKey(p.pack, p.name, p.name), true);
+			case JTLiteral(name, t):
+				var c = ct(t);
+				add(50, name, t, false, name, function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, name, c, i));
+			case JTKeyword(name):
+				add(60, name, null, false, name, function(i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(name, i));
+			case JTTypeParam(pc, t):
+				var c = ct(t);
+				add(30, pc.path.name, t, false, pc.path.name,
+					function(i) return hxc.core.CompletionItem.CompletionItem.typeParamToJson(gen, pc, c, i));
+			// The display module's own types and its imports, in scope (isImport).
+			case JTType(mt):
+				var infos = TypeFunctions.tInfos(mt);
+				var path = infos.path;
+				var key = pathKey(path.pack, infos.module.path.name, path.name);
+				if (!pathSeen.exists(key)) {
+					pathSeen.set(key, true);
+					var statusPack = path.name == infos.module.path.name ? path.pack : path.pack.concat([infos.module.path.name]);
+					var st = importStatusOf(path.name, true, statusPack);
+					add(31 + st, path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name, null, false, path.name,
+						function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
+				}
 		}
-		for (mt in types) {
-			var infos = TypeFunctions.tInfos(mt);
-			var path = infos.path;
-			var key = pathKey(path.pack, infos.module.path.name, path.name);
-			if (pathSeen.exists(key)) continue;
-			pathSeen.set(key, true);
-			// Collect:459-462 add_type: every collected type is the display module's own or one of its
-			// imports, so it is in scope (is_import) and registers its name.
-			var statusPack = path.name == infos.module.path.name ? path.pack : path.pack.concat([infos.module.path.name]);
-			var st = collectStatus(path.name, true, true, statusPack);
-			var mtc = mt;
-			typeItems.push({rank: 31 + st, name: path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name,
-				mk: function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mtc, st, i)});
-		}
-		var packages = new haxe.ds.StringMap<Array<String>>();
 		var fileOrder = new hxc.core.NameHash.HashTableOrder();
 		var byKey = new haxe.ds.StringMap<hxc.compiler.ToplevelScan.ScannedFile>();
 		// The cache receives files as the COMPILE parses them (module load order) and read_class_paths adds
@@ -2579,7 +2577,20 @@ class Compiler {
 			for (i in 0...pack.length) if (pack[i] != target[i]) return false;
 			return true;
 		}
+		// Packages: a hash table keyed by the (pack, last segment) path, iterated in bucket order.
+		var packageOrder = new hxc.core.NameHash.HashTableOrder();
+		var packagePaths = new haxe.ds.StringMap<Array<String>>();
+		function addPackage(full:Array<String>):Void {
+			var key = full.join(".");
+			packageOrder.add(key, hxc.core.NameHash.NameHash.pathHash(full.slice(0, full.length - 1), full[full.length - 1]));
+			packagePaths.set(key, full);
+		}
 		for (sf in scannedFiles) {
+			// Legacy completion lists a packaged file only by its toplevel package.
+			if (hxc.context.DisplayJson.legacyCompletion && sf.pack.length > 0) {
+				if (sf.pack.length == 1) addPackage(sf.pack);
+				continue;
+			}
 			var contributed = false;
 			for (td in sf.decls) {
 				var name:Null<String> = null, isPrivate = false, meta:hxc.ast.Ast.Metadata = [];
@@ -2601,38 +2612,39 @@ class Compiler {
 				// std/Type precedes haxe/macro/Type (Shadowed) while haxe/ds/List precedes std/List
 				// (Unimported, never registered since its pack is not a prefix).
 				var isMain = name == sf.moduleName && packContains(sf.pack, curpack);
-				var st = collectStatus(name, isMain, isMain, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
+				var st = importStatusOf(name, isMain, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
 				var tdc = td;
 				var sfc = sf;
-				typeItems.push({rank: 31 + st, name: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,
-					mk: function(i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sfc.pack, sfc.moduleName, tdc.decl, tdc.pos, st, i)});
+				add(31 + st, sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name, null, false, isMain ? name : null,
+					function(i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sfc.pack, sfc.moduleName, tdc.decl, tdc.pos, st, i));
 				contributed = true;
 			}
-			// check_package a contributing module's package registers once; every distinct non-empty pack
-			// becomes a Package item.
-			if (contributed && sf.pack.length > 0) packages.set(sf.pack.join("."), sf.pack);
+			// A contributing module's package registers once.
+			if (contributed && sf.pack.length > 0) addPackage(sf.pack);
 		}
-		typeItems.sort(function(a, b) {
-			if (a.rank != b.rank) return a.rank - b.rank;
-			return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-		});
-		for (ti in typeItems) push(ti.mk);
-		var packList = [for (k in packages.keys()) packages.get(k)];
-		packList.sort(function(a, b) { var an = a.join("."), bn = b.join("."); return an < bn ? -1 : an > bn ? 1 : 0; });
-		for (pk in packList) {
-			var pkc = pk;
-			push(function(i) return hxc.core.CompletionItem.CompletionItem.packageToJson(pkc, i));
+		// A visible package is listed under its last segment's name.
+		for (key in packageOrder.visitOrder()) {
+			var full = packagePaths.get(key);
+			var visible = true;
+			for (s in full) if (s.length > 0 && s.charCodeAt(0) == "_".code) visible = false;
+			if (visible) add(40, key, null, false, full[full.length - 1],
+				function(i) return hxc.core.CompletionItem.CompletionItem.packageToJson(full, i));
 		}
-		// The literal set in alphabetical order; `trace` types as its magic single-argument signature.
-		var basic = ctx.basic;
-		var tTrace = TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: basic.tvoid});
-		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "false", ct(basic.tbool), i));
-		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "null", ct(TypeFunctions.tDynamic), i));
-		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "trace", ct(tTrace), i));
-		push(function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, "true", ct(basic.tbool), i));
-		for (kwd in ["break", "cast", "continue", "do", "else", "final", "for", "function", "if", "inline",
-				"new", "return", "switch", "throw", "try", "untyped", "var", "while"])
-			push(function(i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(kwd, i));
+		// Sort only when nothing has been typed yet (an empty name), with an expected type compared first,
+		// which runs over the items in collection order and binds what it unifies; the sort is stable.
+		var order = [for (i in 0...pending.length) i];
+		if (subjectName == null) {
+			var expected = hxc.typing.Typer.toplevelExpected(wt);
+			var comps = [for (p in pending) expected == null ? 0 : hxc.typing.Typer.toplevelComp(p.t, p.enumField, expected)];
+			order.sort(function(a, b) {
+				var x = pending[a], y = pending[b];
+				if (comps[a] != comps[b]) return comps[a] - comps[b];
+				if (x.group != y.group) return x.group - y.group;
+				if (x.key != y.key) return x.key < y.key ? -1 : 1;
+				return a - b;
+			});
+		}
+		var items = [for (k in 0...order.length) pending[order[k]].mk(k)];
 		var off = hxc.parser.Parser.displayOffset;
 		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
 		var subj = patchCompletionSubject(subjectName, subjectPos == null ? insertPos : subjectPos);

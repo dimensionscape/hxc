@@ -214,6 +214,23 @@ class CompletionItem {
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
+	// The TypeParameter item: {kind, args:{name, meta, constraints}, type}.
+	public static function typeParamToJson(gen:Genjson, c:TClass, ct:CompletionType, ?index:Int):JsonValue {
+		var constraints = switch (c.kind) {
+			case KTypeParameter(tl): tl;
+			case _: [];
+		};
+		return JObject(([
+			{name: "kind", value: JString("TypeParameter")},
+			{name: "args", value: JObject([
+				{name: "name", value: JString(c.path.name)},
+				{name: "meta", value: gen.generateMetadata(c.meta)},
+				{name: "constraints", value: JArray([for (t in constraints) gen.generateType(t)])}
+			])},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
 	// The Keyword item: {kind:"Keyword", args:{name}}.
 	public static function keywordToJson(name:String, ?index:Int):JsonValue {
 		return JObject(([
