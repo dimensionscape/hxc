@@ -1939,9 +1939,16 @@ class Typer {
 				break;
 			case _:
 		}
-		// An empty argument list counts as marked, so the parentheses on their own are enough to ask for
-		// the signature.
-		if (!marked && !(el.length == 0 && atDisplayPos(p))) return;
+		// The `new` whose span holds the cursor is the call, and an auto-triggered request takes it only
+		// when an argument is marked or there are none .
+		if (!atDisplayPos(p)) return;
+		if (hxc.parser.Parser.wasAutoTriggered && !marked && el.length > 0) return;
+		// Bottom-up, so the INNERMOST call holding the cursor wins; hxc types the outer call first, so
+		// this may only replace a record whose span strictly contains it.
+		if (signatureFound != null && signatureCallPos != null
+			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
+				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		signatureCallPos = p;
 		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx) catch (_:Dynamic) return;
 		// A type parameter is constructed through its Constructible constraint, and the function that
 		// constraint names is the signature.
@@ -2046,16 +2053,19 @@ class Typer {
 		// before anything is typed, since a display node has no typing of its own. Counting finished
 		// arguments instead would put the cursor on the next parameter as soon as it leaves the last one.
 		var active = 0;
+		var marked = false;
 		for (i in 0...params.length) switch (params[i].expr) {
 			case EDisplay(inner, DKMarked):
 				active = i;
 				params[i] = inner;
+				marked = true;
 				break;
 			case _:
 		}
-		// The display position must sit inside the argument span (after the callee).
-		var off = hxc.parser.Parser.displayOffset;
-		if (!atDisplayPos(p) || off <= e1.pos.max) return;
+		// Marks a call whose whole span holds the cursor, callee included; an auto-triggered request only
+		// one with a marked argument or none at all .
+		if (!atDisplayPos(p)) return;
+		if (hxc.parser.Parser.wasAutoTriggered && !marked && params.length > 0) return;
 		// Marks the INNERMOST call holding the cursor, and only that one. hxc types the outer call first,
 		// so a nested call may only replace a record whose span strictly contains its own.
 		if (signatureFound != null && signatureCallPos != null
@@ -6533,7 +6543,7 @@ class Typer {
 		}
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
-		if (displaySignature && signatureFound == null) checkNewSignatureDisplay(ctx, tp, el, p);
+		if (displaySignature) checkNewSignatureDisplay(ctx, tp, el, p);
 		var t:T;
 		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
 		// request is answered, then re-raise.
