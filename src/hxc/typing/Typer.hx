@@ -2101,6 +2101,23 @@ class Typer {
 				(te != null && TypeFunctions.follow(te.type).match(TFun(_))) ? te : null;
 			case _: null;
 		};
+		// The callee types with ctx.inDisplay set, so an unknown name raises there instead of recovering,
+		// and `trace` - no identifier at all - falls back to haxe.Log.trace, whose signature is the one
+		// shown.
+		if (callee == null && e1.expr.match(EConst(CIdent("trace")))) {
+			var saved = ctx.inDisplay;
+			ctx.inDisplay = true;
+			try callee = typeExpr(ctx, e1, WithTypeTools.value)
+			catch (u:hxc.core.TypingError.UnknownIdentError) {
+				if (u.ident == "trace") {
+					var haxePkg = new Expr(EConst(CIdent("haxe")), p);
+					var logTrace = new Expr(EField(new Expr(EField(haxePkg, "Log", EFNormal), p), "trace", EFNormal), p);
+					callee = try typeExpr(ctx, logTrace, WithTypeTools.value) catch (_:TypingError) null;
+				}
+			} catch (_:TypingError) {}
+			ctx.inDisplay = saved;
+			if (callee == null) return;
+		}
 		if (callee == null) callee = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
 		// Unwrap @:callable abstracts.
 		function followCallable(t:T):T {
