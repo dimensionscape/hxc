@@ -6436,11 +6436,10 @@ class Typer {
 	// The arguments against the constructor the class has, and its access once they have unified.
 	static function unifyConstructorCall(ctx:TyperContext, c:TClass, tl:TParams, el:Array<Expr>, p:Position):{r:Dynamic, chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>>} {
 		forceBuild(ctx, c);
-		// Force the constructor body so its unannotated param types are inferred from the body (e.g.
-		// `new(x) this.x = x` gives x the field type) before call args are unified against them; else the
-		// first call site binds those still-open param monos to its arg types, corrupting later
-		// constructions.
-		if (c.constructor != null) TypeFields.forceFieldBody(ctx.com, c, c.constructor);
+		// An unannotated argument (`new(x) this.x = x`) leaves the signature open, so the body sits behind
+		// the constructor's lazy type and following its type types the body before any argument unifies. A
+		// full signature is never typed here: under a display request only the cursor's field has its body
+		// typed.
 		var ctorTypes = findConstructorTypes(ctx, c, tl);
 		if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
 		// Try each constructor signature, first success wins (overload retry).
