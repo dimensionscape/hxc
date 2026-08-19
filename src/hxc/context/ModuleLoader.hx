@@ -1816,6 +1816,17 @@ class ModuleLoader {
 		return pkg.decls;
 	}
 
+	// The class-path exploration's parse: the file the module path resolves to, parsed through the
+	// parse hook - which keeps it in a server's cache - and the package that file declares. Null when
+	// it does not parse.
+	public static function parseForExploration(ctx:Context, m:Path):Null<{file:String, pack:Array<String>}> {
+		var file = resolveModuleFile(ctx, m, Position.nullPos);
+		parseHook(ctx, file, Position.nullPos);
+		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var cf = hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature()).files.get(full.toLowerCase());
+		return cf == null ? null : {file: full, pack: cf.pack};
+	}
+
 	// The first type declared (imports and usings skipped) and its metadata.
 	static function hasNoPackageRestrict(decls:Array<hxc.ast.Ast.TypeDecl>):Bool {
 		for (d in decls) {

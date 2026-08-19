@@ -51,46 +51,6 @@ class DisplayJson {
 		return full.toLowerCase();
 	}
 
-	// Class paths for the active request, supplied to server/readClassPaths by the wait loop.
-	public static var requestClassPaths:Array<String> = [];
-
-	// Register class-path source files with their modification time, package and module name.
-	static function readClassPathsInto(cc:hxc.context.CompilationCache.CacheContext):Void {
-		function packOf(file:String):Array<String> {
-			return try {
-				var fh = sys.io.File.read(file, false);
-				var head = try fh.readString(512) catch (_:Dynamic) { fh.close(); return []; };
-				fh.close();
-				var re = ~/package[ 	]+([A-Za-z0-9_.]+)[ 	]*;/;
-				re.match(head) ? re.matched(1).split(".") : [];
-			} catch (_:Dynamic) [];
-		}
-		function walk(dir:String):Void {
-			var entries = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) return;
-			for (e in entries) {
-				var full = dir + "/" + e;
-				if (sys.FileSystem.isDirectory(full)) {
-					if (e.length > 0 && e.charCodeAt(0) != ".".code) walk(full);
-				} else if (StringTools.endsWith(e, ".hx")) {
-					var time = hxc.core.FileTime.fileTime(full);
-					// Key the registry by full unique file paths, matching invalidation and module caching.
-					full = try sys.FileSystem.fullPath(full) catch (_:Dynamic) full;
-					cc.files.set(fileKey(full), {
-						path: full,
-						time: time,
-						pack: packOf(full),
-						moduleName: e.substr(0, e.length - 3)
-					});
-				}
-			}
-		}
-		for (cp in requestClassPaths) {
-			var dir = cp == "" ? "." : cp;
-			if (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\")) dir = dir.substr(0, dir.length - 1);
-			if (sys.FileSystem.exists(dir) && sys.FileSystem.isDirectory(dir)) walk(dir);
-		}
-	}
-
 	static function strings(l:Array<String>):Array<JsonValue> return [for (x in l) JString(x)];
 
 	// HasParam and Link registries prepend entries, so reverse them to restore registration order.
@@ -278,9 +238,9 @@ class DisplayJson {
 				function answer():Void {
 					var cc = cache.getContext(com.defines.getSignature());
 					cc.initialized = true;
-					readClassPathsInto(cc);
-					// Keep exploration parses under the same context signature as completion scans.
-					hxc.compiler.ToplevelScan.get(com);
+					// Class-path exploration runs after the stdio response. Report the current cached count;
+					// explored files appear on the next request.
+					hxc.context.ServerCache.addTask(function() hxc.compiler.ToplevelScan.explore(com));
 					hctx.sendResult(JObject([{name: "files", value: JInt(cache.getFiles().length)}]));
 				}
 				if (com == null) answer() else com.afterInitMacros.push(answer);

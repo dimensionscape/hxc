@@ -1,7 +1,7 @@
 package hxc.compiler;
 
-// Explore class paths once per server context and collect visible parsed declarations without
-// typing them.
+// Collect from the server context's cached parsed files. An uninitialized context first explores
+// its class paths; one-shot runs retain no files.
 
 import hxc.context.Context;
 import hxc.ast.Ast;
@@ -14,35 +14,40 @@ typedef ScannedFile = {
 };
 
 class ToplevelScan {
-	// Scan once per server context rather than once per process.
-	static var scanned:haxe.ds.StringMap<Array<ScannedFile>> = new haxe.ds.StringMap();
-
-	public static function reset():Void scanned = new haxe.ds.StringMap();
-
-	// Discard this signature's exploration so the next collection rescans class paths.
-	public static function uninitialize(sign:String):Void scanned.remove(sign);
+	public static function uninitialize(sign:String):Void
+		hxc.context.DisplayJson.cache.getContext(sign).initialized = false;
 
 	public static function get(ctx:Context):Array<ScannedFile> {
-		// One-shot exploration parses files but retains none, so it contributes no completion items.
+		// Only the server parse hook populates the files collected here.
 		if (!hxc.context.ServerCache.cacheMode) return [];
 		var sign = ctx.defines.getSignature();
-		var out = scanned.get(sign);
-		if (out == null) {
-			out = [];
-			// The first class path wins for each module path.
-			var seen = new haxe.ds.StringMap<Bool>();
-			for (cp in ctx.classPath) {
-				if (cp == "") continue;
-				walk(ctx, cp, [], out, seen);
-			}
-			scanned.set(sign, out);
+		var cc = hxc.context.DisplayJson.cache.getContext(sign);
+		if (!cc.initialized) {
+			cc.initialized = true;
+			explore(ctx);
 		}
-		consumeRemovedFiles(ctx, sign, out);
+		consumeRemovedFiles(ctx, sign);
+		var out:Array<ScannedFile> = [];
+		for (key in cc.fileSeq) {
+			var f = cc.files.get(key);
+			if (f == null || f.decls == null) continue;
+			out.push({file: f.path, pack: f.pack, moduleName: moduleNameOfFile(f.path), decls: f.decls});
+		}
 		return out;
 	}
 
+	static function moduleNameOfFile(file:String):String {
+		var base = StringTools.replace(file, "\\", "/").split("/").pop();
+		var parts = base.split(".");
+		return switch (parts.length) {
+			case 1: parts[0];
+			case 2: parts[0];
+			case _: parts.slice(0, parts.length - 2).join(".");
+		};
+	}
+
 	// Reparse removed files unless the context holds them again, then clear each removal entry.
-	static function consumeRemovedFiles(ctx:Context, sign:String, out:Array<ScannedFile>):Void {
+	static function consumeRemovedFiles(ctx:Context, sign:String):Void {
 		var cc = hxc.context.DisplayJson.cache.getContext(sign);
 		var keys = [for (k in cc.removedFiles.keys()) k];
 		if (keys.length == 0) return;
@@ -50,30 +55,21 @@ class ToplevelScan {
 			var path = cc.removedFiles.get(k);
 			cc.removedFiles.remove(k);
 			if (path == null || cc.files.exists(k)) continue;
-			var moduleName = path.split("/").pop().split("\\").pop();
-			if (!StringTools.endsWith(moduleName, ".hx")) continue;
-			moduleName = moduleName.substr(0, moduleName.length - 3);
-			var idx = -1;
-			for (i in 0...out.length) if (norm(out[i].file) == norm(path)) { idx = i; break; }
+			if (!StringTools.endsWith(path, ".hx")) continue;
 			try {
 				var src = sys.io.File.getContent(path);
 				var pkg:Package = hxc.parser.Parser.parseModuleString(src, path, ctx.defines);
-				var sf:ScannedFile = {file: path, pack: pkg.pack, moduleName: moduleName, decls: pkg.decls};
-				if (idx >= 0) out[idx] = sf else out.push(sf);
 				// Parsing caches the file again, allowing later invalidation to schedule another parse.
-				cc.files.set(k, {
+				cc.setFile(k, {
 					path: path,
 					time: hxc.core.FileTime.fileTime(path),
 					pack: pkg.pack,
-					moduleName: moduleName
+					moduleName: null,
+					decls: pkg.decls
 				});
-			} catch (_:Dynamic) {
-				if (idx >= 0) out.splice(idx, 1);
-			}
+			} catch (_:Dynamic) {}
 		}
 	}
-
-	static function norm(f:String):String return StringTools.replace(f, "\\", "/").toLowerCase();
 
 	// Cache package rules per platform because one server serves multiple targets. Forbid other target
 	// packages and sys on non-sys targets.
@@ -92,36 +88,48 @@ class ToplevelScan {
 		return m;
 	}
 
-	static function walk(ctx:Context, dir:String, pack:Array<String>, out:Array<ScannedFile>, seen:haxe.ds.StringMap<Bool>):Void {
+	// Explore each unique directory once and cache parsed module files. Exclude the display file and
+	// discard package-directory mismatches.
+	public static function explore(ctx:Context):Void {
+		var checked = new haxe.ds.StringMap<Bool>();
+		for (cp in ctx.classPath) {
+			if (cp == "") continue;
+			exploreDir(ctx, StringTools.endsWith(cp, "/") || StringTools.endsWith(cp, "\\") ? cp : cp + "/", [], checked);
+		}
+	}
+
+	static function exploreDir(ctx:Context, dir:String, pack:Array<String>, checked:haxe.ds.StringMap<Bool>):Void {
+		var unique = hxc.core.PathKey.key(dir);
+		if (checked.exists(unique)) return;
+		checked.set(unique, true);
 		var entries = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) return;
+		// Match NTFS's case-insensitive directory ordering because cache insertion affects completion
+		// order.
 		entries.sort(function(a, b) {
 			var al = a.toLowerCase(), bl = b.toLowerCase();
 			return al < bl ? -1 : al > bl ? 1 : (a < b ? -1 : a > b ? 1 : 0);
 		});
-		for (name in entries) {
-			if (name.length == 0 || name.charCodeAt(0) == ".".code) continue;
-			var full = (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/") + name;
-			if (try sys.FileSystem.isDirectory(full) catch (_:Dynamic) false) {
-				var c0 = name.charCodeAt(0);
-				if (c0 >= "a".code && c0 <= "z".code && !forbiddenPacks(ctx).exists(name))
-					walk(ctx, full, pack.concat([name]), out, seen);
-			} else if (StringTools.endsWith(name, ".hx")) {
-				var moduleName = name.substr(0, name.length - 3);
-				// Accept Name.platform.hx only when its suffix matches the current target.
-				var dot = moduleName.lastIndexOf(".");
-				if (dot >= 0) {
-					var platformStr = ctx.isMacro || ctx.defines.rawDefined("macro")
-						? "macro" : hxc.core.Globals.platformName(ctx.platform);
-					if (moduleName.substr(dot + 1) != platformStr) continue;
-					moduleName = moduleName.substr(0, dot);
-				}
-				var key = pack.join(".") + "." + moduleName;
-				if (seen.exists(key)) continue;
-				seen.set(key, true);
+		var displayFile = hxc.parser.Parser.displayFile;
+		var displayKey = displayFile == null ? null : hxc.core.PathKey.key(displayFile);
+		var cc = hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature());
+		for (file in entries) {
+			if (file == "." || file == "..") continue;
+			var full = dir + file;
+			var isDir = try sys.FileSystem.isDirectory(full) catch (_:Dynamic) false;
+			var c0 = file.charCodeAt(0);
+			if (isDir && c0 >= "a".code && c0 <= "z".code) {
+				// A directory with a package rule (another platform's tree, sys on a non-sys target)
+				if (forbiddenPacks(ctx).exists(file)) continue;
+				exploreDir(ctx, full + "/", pack.concat([file]), checked);
+			} else if (file.length > 3 && StringTools.endsWith(file, ".hx")) {
+				var name = file.substr(0, file.length - 3);
+				// The suffix slice includes its leading dot, so it never matches the platform name; dotted
+				// module files are skipped.
+				if (name.indexOf(".") >= 0) continue;
+				if (displayKey != null && hxc.core.PathKey.key(full) == displayKey) continue;
 				try {
-					var src = sys.io.File.getContent(full);
-					var pkg:Package = hxc.parser.Parser.parseModuleString(src, full, ctx.defines);
-					out.push({file: full, pack: pkg.pack, moduleName: moduleName, decls: pkg.decls});
+					var r = hxc.context.ModuleLoader.parseForExploration(ctx, {pack: pack, name: name});
+					if (r != null && r.pack.join(".") != pack.join(".")) cc.removeFileForReal(r.file.toLowerCase());
 				} catch (_:Dynamic) {}
 			}
 		}

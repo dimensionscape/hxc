@@ -299,13 +299,6 @@ class Compiler {
 				}
 			}
 			if (parentMethod) {
-				var cps:Array<String> = [];
-				for (i in 0...lines.length)
-					if ((lines[i] == "-cp" || lines[i] == "-p" || lines[i] == "--class-path") && i + 1 < lines.length)
-						cps.push(lines[i + 1]);
-				var std = Sys.getEnv("HAXE_STD_PATH");
-				if (std != null) for (part in std.split(";")) if (part != "") cps.push(part);
-				hxc.context.DisplayJson.requestClassPaths = cps;
 				try {
 					hxc.context.DisplayJson.parseInput(null, displayArg);
 				} catch (o:hxc.context.DisplayJson.JsonDisplayOutput) {

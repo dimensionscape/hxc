@@ -49,6 +49,9 @@ class ServerCache {
 			Sys.stdout().writeString("[server] request step=" + compilationStep + "\n");
 	}
 
+	// What a stdio server queued while it answered runs once the answer is out.
+	public static function addTask(f:Void->Void):Void delays.push(f);
+
 	public static function runDelays():Void {
 		var ds = delays;
 		delays = [];
@@ -320,17 +323,27 @@ class ServerCache {
 	// parser cache. The module name stays unset here; it is filled in lazily, which nothing on this path
 	// does, so server/files reports it as null.
 	public static function cacheParsedFile(com:Context, file:String, pack:Array<String>, ?decls:Array<hxc.ast.Ast.TypeDecl>):Void {
-		if (!enabled) return;
+		// The parse hook is the server's from its start, whether modules are reused or not.
+		if (!cacheMode) return;
+		// The DISPLAY file is cached only intact (no recovered parse errors) and only under a mode that
+		// reads files whole (diagnostics, statistics, module symbols). A file whose #if reads `display`
+		// gets no special treatment.
+		if (hxc.parser.Parser.matchesDisplayFile(file)) {
+			if (hxc.parser.Parser.syntaxErrors.length > 0) return;
+			var parts = com.displaySpec == null ? [] : com.displaySpec.split("@");
+			var mode = parts.length >= 3 ? parts[parts.length - 1] : "";
+			if (mode != "diagnostics" && mode != "statistics" && mode != "module-symbols") return;
+		}
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var time = hxc.core.FileTime.fileTime(full);
 		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
 		// Path.UniqueKey: the lowercased full path (matching DisplayJson.fileKey).
-		cc.files.set(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
+		cc.setFile(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
 	}
 
 	// The server's parse hook: a file the cache holds at the stamp it has on disk is not read again.
 	public static function cachedParse(com:Context, file:String):Null<Array<hxc.ast.Ast.TypeDecl>> {
-		if (!enabled) return null;
+		if (!cacheMode) return null;
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
 		if (cf == null || cf.decls == null) return null;

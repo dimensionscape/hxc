@@ -30,6 +30,19 @@ class CacheContext {
 		moduleOrder.add(key, hxc.core.NameHash.pathHash(m.path.pack, m.path.name));
 	}
 	public var removedFiles = new StringMap<String>();
+	// Replacing a cached file preserves its first insertion position.
+	public var fileSeq:Array<String> = [];
+
+	public function setFile(key:String, f:CachedFile):Void {
+		if (!files.exists(key)) fileSeq.push(key);
+		files.set(key, f);
+	}
+
+	public function removeFileForReal(key:String):Void {
+		if (!files.exists(key)) return;
+		files.remove(key);
+		fileSeq.remove(key);
+	}
 	public var json:JsonValue = JNull;
 
 	public function new(index:Int) {
@@ -44,6 +57,7 @@ class CacheContext {
 		var f = files.get(key);
 		if (f == null) return;
 		files.remove(key);
+		fileSeq.remove(key);
 		removedFiles.set(key, f.path);
 	}
 }
