@@ -366,6 +366,11 @@ class Typeload {
 		out.structExtensionIsIntersection = isIntersection;
 		out.subjectPos = tc.subjectPos;
 		out.subjectName = tc.subjectName;
+		out.jsonEntries = tc.jsonEntries;
+		out.jsonFilter = function(info) {
+			var cm = info.kind == "type" ? hxc.typing.Typer.completionModuleType(info) : null;
+			return cm != null && cm.kind == 6;
+		};
 		return out;
 	}
 

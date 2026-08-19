@@ -38,6 +38,17 @@ enum JsonToplevelEntry {
 	JTTypeParam(c:TClass, t:T);
 }
 
+// What a JSON completion item stands for, for a raise site's filter: a module type (loaded, or a
+// declaration parsed out of a file), a type parameter, a package, or anything else ("other").
+typedef JsonItemInfo = {
+	kind:String,
+	?mt:hxc.core.Type.ModuleType,
+	?pack:Array<String>,
+	?moduleName:String,
+	?decl:hxc.ast.Ast.TypeDef,
+	?tparam:TClass
+};
+
 // The toplevel collection aborts typing and answers at report time through the JSON completion serializer.
 class JsonToplevelCompletion extends haxe.Exception {
 	public var items:Array<JsonToplevelEntry>;
@@ -1132,6 +1143,8 @@ class Typer {
 					out.kind = 10;
 					out.subjectPos = tc.subjectPos;
 					out.subjectName = tc.subjectName;
+					out.jsonEntries = tc.jsonEntries;
+					out.jsonFilter = function(info) return newCompletionKeeps(ctx, info, p);
 					throw out;
 				}
 			case EFunction(kind, f):
@@ -2529,14 +2542,20 @@ class Typer {
 				out.push(JTKeyword(kwd));
 			out.push(JTLiteral("trace", TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: basic.tvoid})));
 		}
-		// Type params
-		for (tp in ctx.typeParams) switch (TypeFunctions.follow(tp.type)) {
+		addTypeEntries(ctx.com, out, paths, ctx.typeParams, c == null ? null : c.module);
+		return out;
+	}
+
+	// The type half of the collection: the type parameters in scope, then the module's own types and
+	// its imports reversed, each under its path with the module segment for a sub-type, skipping a
+	// path already listed (`paths`). Any other type comes from the cache's files, which only a server
+	// has.
+	static function addTypeEntries(com:hxc.context.Context, out:Array<JsonToplevelEntry>, paths:haxe.ds.StringMap<Bool>,
+			typeParams:Array<TypedTypeParam>, curmod:Null<ModuleDef>):Void {
+		for (tp in typeParams) switch (TypeFunctions.follow(tp.type)) {
 			case TInst(pc, _): out.push(JTTypeParam(pc, tp.type));
 			case _:
 		}
-		// add_type: the module's own types, then module_imports reversed, each under its path with the
-		// module segment for a sub-type . Any other type comes from the cache's files , which only a
-		// server has.
 		function addType(mt:ModuleType):Void {
 			switch (mt) {
 				case TClassDecl({kind: KAbstractImpl(_) | KModuleFields(_)}): return;
@@ -2546,17 +2565,175 @@ class Typer {
 			var mname = inf.module.path.name;
 			var key = (inf.path.name == mname ? inf.path.pack.concat([mname]) : inf.path.pack.concat([mname, inf.path.name])).join(".");
 			if (paths.exists(key)) return;
-			CoreApi.mergeCoreDoc(ctx.com, mt);
-			if (noCompletion(inf.meta)) return;
+			CoreApi.mergeCoreDoc(com, mt);
+			if (TypeFunctions.hasMeta(":noCompletion", inf.meta)) return;
 			paths.set(key, true);
 			out.push(JTType(mt));
 		}
-		var curmod = c == null ? null : c.module;
 		if (curmod != null) for (mt in curmod.types) addType(mt);
-		var imported = moduleImportTypes(ctx.com);
+		var imported = moduleImportTypes(com);
 		imported.reverse();
 		for (mt in imported) addType(mt);
+	}
+
+	// The collection for a type position lists none of the expression items, only the type half.
+	public static function collectTypesJson(com:hxc.context.Context, typeParams:Array<TypedTypeParam>):Array<JsonToplevelEntry> {
+		var out:Array<JsonToplevelEntry> = [];
+		addTypeEntries(com, out, new haxe.ds.StringMap(), typeParams, com.currentModule);
 		return out;
+	}
+
+	// The fields a raise site's filter reads: the path, privacy, extern and final, the kind
+	// (CompletionModuleKind: Class 0, Interface 1, Enum 2, Abstract 3, EnumAbstract 4, TypeAlias 5, Struct
+	// 6, Static 8) and hasConstructor (No 0, Yes 1, YesButPrivate 2, Maybe 3).
+	public static function completionModuleType(info:JsonItemInfo):Null<{pack:Array<String>, name:String, moduleName:String,
+			isPrivate:Bool, isExtern:Bool, isFinal:Bool, kind:Int, hasConstructor:Int}> {
+		if (info.mt != null) {
+			var mt = info.mt;
+			var inf = TypeFunctions.tInfos(mt);
+			// ctorOf: an abstract class has none, otherwise the constructor is looked up through the
+			// superclasses.
+			function ctorOf(c:TClass):Int {
+				if (TypeFunctions.hasClassFlag(c, CAbstract)) return 0;
+				var cur = c;
+				while (cur != null && cur.constructor == null) cur = cur.superClass == null ? null : cur.superClass.c;
+				if (cur == null) return 0;
+				return (TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cur.constructor, CfPublic)) ? 1 : 2;
+			}
+			function actorOf(a:TAbstract):Int {
+				if (a.impl == null) return 0;
+				var cf = a.impl.statics.get("_new");
+				if (cf == null) return 0;
+				return (TypeFunctions.hasClassFlag(a.impl, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfPublic)) ? 1 : 2;
+			}
+			var isExtern = false, isFinal = false, kind = 0, ctor = 0;
+			switch (mt) {
+				case TClassDecl(c):
+					isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+					isFinal = TypeFunctions.hasClassFlag(c, CFinal);
+					kind = TypeFunctions.hasClassFlag(c, CInterface) ? 1 : 0;
+					ctor = ctorOf(c);
+				case TEnumDecl(en):
+					isExtern = en.isExtern;
+					kind = 2;
+				case TTypeDecl(td):
+					switch (TypeFunctions.follow(td.type)) {
+						case TAnon(_): kind = 6;
+						case TInst(c, _): kind = 5; ctor = ctorOf(c);
+						case TAbstract(a, _): kind = 5; ctor = actorOf(a);
+						case _: kind = 5;
+					}
+				case TAbstractDecl(a):
+					kind = a.isEnum ? 4 : 3;
+					switch (followWithForwardCtor(TAbstract(a, TypeFunctions.extractParamTypes(a.params)))) {
+						case TInst(c, _):
+							isExtern = TypeFunctions.hasClassFlag(c, CExtern);
+							isFinal = TypeFunctions.hasClassFlag(c, CFinal);
+							ctor = ctorOf(c);
+						case TAbstract(a2, _): ctor = actorOf(a2);
+						case _:
+					}
+			}
+			return {pack: inf.path.pack, name: inf.path.name, moduleName: inf.module.path.name,
+				isPrivate: inf.isPrivate, isExtern: isExtern, isFinal: isFinal, kind: kind, hasConstructor: ctor};
+		}
+		if (info.decl == null) return null;
+		inline function hasNew(fields:Array<ClassField>):Null<ClassField> {
+			var found:Null<ClassField> = null;
+			for (f in fields) if (found == null && f.cffName.name == "new") found = f;
+			return found;
+		}
+		inline function isPublic(f:ClassField):Bool return Lambda.exists(f.cffAccess, function(a) return a.access == APublic);
+		return switch (info.decl) {
+			case EClass(d):
+				var n = hasNew(d.dData);
+				var ctor = n != null ? ((d.dFlags.contains(HExtern) || isPublic(n)) ? 1 : 2)
+					: (Lambda.exists(d.dFlags, function(f) return f.match(HExtends(_))) ? 3 : 0);
+				{pack: info.pack, name: d.dName.name, moduleName: info.moduleName, isPrivate: d.dFlags.contains(HPrivate),
+					isExtern: d.dFlags.contains(HExtern), isFinal: d.dFlags.contains(HFinal),
+					kind: d.dFlags.contains(HInterface) ? 1 : 0, hasConstructor: ctor};
+			case EEnum(d):
+				{pack: info.pack, name: d.dName.name, moduleName: info.moduleName, isPrivate: d.dFlags.contains(EPrivate),
+					isExtern: d.dFlags.contains(EExtern), isFinal: false, kind: 2, hasConstructor: 0};
+			case ETypedef(d):
+				var struct = d.dData.ct.match(CTAnonymous(_));
+				{pack: info.pack, name: d.dName.name, moduleName: info.moduleName, isPrivate: d.dFlags.contains(EPrivate),
+					isExtern: d.dFlags.contains(EExtern), isFinal: false, kind: struct ? 6 : 5, hasConstructor: struct ? 0 : 3};
+			case EAbstract(d):
+				var n = hasNew(d.dData);
+				{pack: info.pack, name: d.dName.name, moduleName: info.moduleName, isPrivate: d.dFlags.contains(AbPrivate),
+					isExtern: d.dFlags.contains(AbExtern), isFinal: false, kind: d.dFlags.contains(AbEnum) ? 4 : 3,
+					hasConstructor: n == null ? 0 : (isPublic(n) ? 1 : 2)};
+			case EStatic(d):
+				{pack: info.pack, name: d.dName.name, moduleName: info.moduleName,
+					isPrivate: Lambda.exists(d.dFlags, function(f) return f.access == APrivate),
+					isExtern: Lambda.exists(d.dFlags, function(f) return f.access == AExtern), isFinal: true, kind: 8, hasConstructor: 0};
+			case _: null;
+		};
+	}
+
+	// What `new <cursor>` keeps of a type-hint collection - a class, abstract or alias that is visible here
+	// and has a constructor this code may call, or a type parameter whose constraints make it
+	// constructible.
+	public static function newCompletionKeeps(ctx:TyperContext, info:JsonItemInfo, p:Position):Bool {
+		if (info.kind == "typeparam") return switch (info.tparam.kind) {
+			case KTypeParameter(tl): (try getConstructibleConstraint(ctx, tl, p) catch (_:Dynamic) null) != null;
+			case _: false;
+		};
+		if (info.kind != "type") return false;
+		var cm = completionModuleType(info);
+		if (cm == null || !(cm.kind == 0 || cm.kind == 3 || cm.kind == 5)) return false;
+		// A private type is visible only from its own module: the pack without its last segment
+		// (the `_Module` one).
+		if (cm.isPrivate) {
+			var curmod = ctx.com.currentModule;
+			var pack = cm.pack.slice(0, cm.pack.length - 1);
+			if (curmod == null || pack.join(".") != curmod.path.pack.join(".") || cm.moduleName != curmod.path.name) return false;
+		}
+		inline function samePath(pack:Array<String>, name:String):Bool return pack.join(".") == cm.pack.join(".") && name == cm.name;
+		return switch (cm.hasConstructor) {
+			case 1: true;
+			case 2:
+				if (ctx.privateAccess > 0) true
+				else {
+					var inImpl = switch (ctx.curclass.kind) {
+						case KAbstractImpl(a): samePath(a.path.pack, a.path.name);
+						case _: false;
+					};
+					var inChain = false;
+					var cur = ctx.curclass;
+					while (cur != null && !inChain) {
+						if (samePath(cur.path.pack, cur.path.name)) inChain = true;
+						cur = cur.superClass == null ? null : cur.superClass.c;
+					}
+					inImpl || inChain;
+				}
+			case 3:
+				// Maybe: load the type and ask the class (or what the abstract forwards to).
+				try {
+					var mt = hxc.context.ModuleLoader.importedTypeDef(ctx.com, {pack: cm.pack, name: cm.moduleName}, Position.nullPos, cm.name);
+					function hasCtor(c:TClass):Bool {
+						var cur = c;
+						while (cur != null && cur.constructor == null) cur = cur.superClass == null ? null : cur.superClass.c;
+						return cur != null;
+					}
+					var resolved = switch (mt) {
+						case TTypeDecl(td): try TypeFunctions.moduleTypeOfType(TypeFunctions.follow(td.type)) catch (_:Dynamic) null;
+						case _: mt;
+					};
+					switch (resolved) {
+						case TClassDecl(c): hasCtor(c);
+						case TAbstractDecl(a):
+							switch (followWithForwardCtor(TAbstract(a, TypeFunctions.extractParamTypes(a.params)))) {
+								case TInst(c, _): hasCtor(c);
+								case TAbstract(a2, _): a2.impl != null && a2.impl.statics.exists("_new");
+								case _: false;
+							}
+						case _: false;
+					}
+				} catch (_:Dynamic) false;
+			case _: false;
+		};
 	}
 
 	// An abstract's member as its users see it, without the leading `this` argument; an overload stays only

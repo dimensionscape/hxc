@@ -478,6 +478,27 @@ class TypeResolve {
 		tc.heritIsInterface = isInterface;
 		tc.heritSelf = hxc.core.Globals.sTypePath(c.path);
 		tc.heritHasHack = TypeFunctions.hasMeta(":hack", c.meta);
+		// An interface cannot implement, so answers nothing at all; any other heritage keeps an
+		// interface, or a class it may extend.
+		if (isExtends || !isInterface) {
+			tc.jsonEntries = hxc.typing.Typer.collectTypesJson(ctx, hxc.typing.Typeload.currentTypeParams);
+			var hack = TypeFunctions.hasMeta(":hack", c.meta);
+			var cExtern = TypeFunctions.hasClassFlag(c, CExtern);
+			tc.jsonFilter = function(info) {
+				var cm = info.kind == "type" ? hxc.typing.Typer.completionModuleType(info) : null;
+				if (cm == null) return false;
+				var self = cm.pack.join(".") == c.path.pack.join(".") && cm.name == c.path.name;
+				var basic = cm.pack.length == 0 && (cm.name == "Array" || cm.name == "String" || cm.name == "Date" || cm.name == "Xml");
+				return switch (cm.kind) {
+					case 1: (!isExtends || isInterface) && !self;
+					case 0: isExtends && !isInterface && !self && (!cm.isFinal || hack) && (!basic || (cExtern && cm.isExtern));
+					case _: false;
+				};
+			};
+		} else {
+			tc.jsonEntries = [];
+			tc.jsonFilter = function(_) return false;
+		}
 		throw tc;
 	}
 
@@ -540,6 +561,7 @@ class TypeResolve {
 		tc.subjectPos = p;
 		// The subject is keyed by the path the user was writing, which is what the client filters on.
 		tc.subjectName = subjectName;
+		tc.jsonEntries = hxc.typing.Typer.collectTypesJson(ctx, hxc.typing.Typeload.currentTypeParams);
 		throw tc;
 	}
 

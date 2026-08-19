@@ -73,6 +73,10 @@ class ToplevelCompletion {
 	public var heritHasHack:Bool = false;
 	public var subjectPos:Null<hxc.ast.Position>;
 	public var subjectName:Null<String>;
+	// JSON entries retain collection order and the raise-site filter; null means no separate JSON
+	// collection.
+	public var jsonEntries:Null<Array<hxc.typing.Typer.JsonToplevelEntry>> = null;
+	public var jsonFilter:Null<hxc.typing.Typer.JsonItemInfo->Bool> = null;
 
 	public function new(items:Array<ToplevelItem>, ?moduleTypes:Array<hxc.core.Type.ModuleType>) {
 		this.items = items;
