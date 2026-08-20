@@ -1893,8 +1893,26 @@ class Typer {
 	// keeps a copy in which what is unbound now stays unbound.
 	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool}>) {
 		if (v != null && v.t != null) v.t = freezeMonos(v.t);
+		// A field's bare name is retyped where the hovered expression was typed, which is where the hover
+		// is raised; printed later, the context has moved on (other locals, another field) and the retype
+		// fails. retypeIsQualified restores the record through this setter, hence the guard.
+		if (v != null && v.e != null && v.tctx != null && v.isQualified == null && !recordingQualified) {
+			var name = switch (v.e.expr) {
+				case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FClosure(_, cf) | FAnon(cf)): cf.name;
+				case TField(_, FEnum(_, ef)): ef.name;
+				case _: null;
+			};
+			if (name != null) {
+				recordingQualified = true;
+				var q = try retypeIsQualified(v.tctx, v.e, name, v.e.type) catch (_:Dynamic) false;
+				recordingQualified = false;
+				v.isQualified = q;
+			}
+		}
 		return hoverFound = v;
 	}
+
+	static var recordingQualified = false;
 
 	static function freezeMonos(t:T):T {
 		var fresh = new haxe.ds.ObjectMap<TMono, T>();
