@@ -3462,10 +3462,12 @@ class Typer {
 		}
 	}
 
-	// Runs on the ACCESS, before the assignment decides whether the write is legal at all. hxc only
-	// ever hands the display hooks a typed EXPRESSION, and a rejected write never becomes one, so an
-	// lvalue under the cursor answered nothing.
-	public static function checkDisplayOnAccess(ctx:TyperContext, acc:hxc.typing.AccessKind.AccessKind, p:Position):Void {
+	// Display runs on the ACCESS, before the assignment decides whether the write is legal at all. hxc only
+	// ever hands the display hooks a typed EXPRESSION, and a rejected write never becomes one, so without
+	// this an lvalue under the cursor would answer nothing.
+	// The hover item carries the expected type the accessed node was typed against.
+	public static function checkDisplayOnAccess(ctx:TyperContext, acc:hxc.typing.AccessKind.AccessKind, p:Position,
+			?withType:WithType):Void {
 		if (!atDisplayPos(p)) return;
 		if (!displayDefinition && !displayHover && !displayTypeDefinition && !displayUsage && !displayImplementation) return;
 		// The RECEIVER is its own node: `|e.toString()` is a question about e, not about the
@@ -3503,7 +3505,7 @@ class Typer {
 		if (te == null) return;
 		if (displayDefinition) checkDisplayDefinition(ctx, te);
 		if (displayHover || displayTypeDefinition) {
-			checkDisplayHover(ctx, te, null);
+			checkDisplayHover(ctx, te, withType);
 			// A macro field reports its MACRO-WORLD signature - resolved when the answer's item is built,
 			// after typing, which is the only point the macro world is loaded for it
 			// (resolveHoverMacroField).
@@ -5773,7 +5775,7 @@ class Typer {
 				case AKField(fa): fa.field.overloads.length > 0;
 				case _: false;
 			};
-			if ((displayHover || displayTypeDefinition) && !overloaded) checkDisplayOnAccess(ctx, acc, p);
+			if ((displayHover || displayTypeDefinition) && !overloaded) checkDisplayOnAccess(ctx, acc, p, withType);
 			return acc;
 		}
 		return typeAccessInner(ctx, edef, p, mode, withType);
@@ -5800,7 +5802,7 @@ class Typer {
 				// A `?.` chain desugars into a null check whose type is Null<T> and whose parts
 				// carry the whole chain's position, so the display has to answer from the ACCESS:
 				// the field itself, exactly as a plain `.` would report it.
-				checkDisplayOnAccess(ctx, snAcc, p);
+				checkDisplayOnAccess(ctx, snAcc, p, withType);
 				snAcc;
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
