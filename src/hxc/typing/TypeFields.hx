@@ -1449,11 +1449,10 @@ class TypeFields {
 		};
 	}
 
+	// The initializer types against the field's own type - its monomorph when there is no hint, which is
+	// what a display inside it reports as expected - and is cast or unified to it.
 	static function typeVarInitializer(tctx:TyperContext, sigType:T, eo:Expr, hasHint:Bool, p:Position):TExpr {
-		if (hasHint) return Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), p);
-		var te = Typer.typeExpr(tctx, eo, WithTypeTools.value);
-		TypeUnification.unifyDefault(te.type, sigType);
-		return te;
+		return Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), p);
 	}
 
 	// An Int literal bound to a Float field is rewritten to a Float literal; any other init whose type
