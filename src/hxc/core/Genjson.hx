@@ -22,6 +22,9 @@ enum GenerationMode {
 
 class Genjson {
 	public var mode:GenerationMode;
+	// An abstract's implementation class written out in full rather than by reference (set for a field
+	// completion's module types).
+	public var generateAbstractImpl = false;
 	// The `meta` names of the request being answered, read the first time a minimum-mode answer needs them;
 	// null outside a request.
 	public var requestedMeta:Null<Void->Null<Array<String>>> = null;
@@ -497,7 +500,7 @@ class Genjson {
 		}
 		return [
 			field("type", generateType(a.thisType)),
-			field("impl", a.impl == null ? JNull : classRef(a.impl)),
+			field("impl", a.impl == null ? JNull : generateAbstractImpl ? jobject(generateClass(a.impl)) : classRef(a.impl)),
 			field("binops", jarray([for (o in a.ops) jobject([
 				field("op", generateBinopJson(o.op)),
 				field("field", classfieldRef(o.cf))

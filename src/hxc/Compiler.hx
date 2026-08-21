@@ -2700,46 +2700,108 @@ class Compiler {
 			};
 		}
 		var entries = jc.entries.copy();
-		// Structure completion preserves declaration order.
-		if (jc.noSort != true)
-			entries.sort(function(a, b) return a.cf.name < b.cf.name ? -1 : a.cf.name > b.cf.name ? 1 : 0);
-		var items:Array<hxc.context.DisplayException.CompletionEntry> = [];
-		for (i in 0...entries.length) {
-			var e = entries[i];
-			var origin = jc.originModuleType != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(jc.originModuleType)
+		function originOf(e:{cf:hxc.core.Type.TClassField, originClass:Null<hxc.core.Type.TClass>, originAnon:Null<hxc.core.Type.TAnon>,
+				builtIn:Bool, ?fromParent:Bool, ?origin:hxc.core.CompletionItem.ClassFieldOrigin}):hxc.core.CompletionItem.ClassFieldOrigin {
+			return jc.originModuleType != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(jc.originModuleType)
+				: e.origin != null ? e.origin
 				: e.builtIn ? hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn
 				: e.originAnon != null ? hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(e.originAnon)
 				: e.originClass != null ? (e.fromParent == true
 					? hxc.core.CompletionItem.ClassFieldOrigin.Parent(classDecl(e.originClass))
 					: hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(e.originClass)))
 				: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
-			var t = switch (e.cf.type) {
+		}
+		// A structure completion is already ordered by declaration position; a field completion is sorted
+		// as a field with no expected type: the rank of the origin and scope and then the name - an enum
+		// constructor (by its index) or an enum abstract's member first of all.
+		if (jc.noSort != true) {
+			var keyed = [for (i in 0...entries.length) {
+				var e = entries[i];
+				var g:Int, k:String;
+				if (e.ef != null) {
+					g = -1;
+					k = StringTools.lpad(Std.string(e.ef.index), "0", 4);
+				} else if (e.enumAbstract == true) {
+					g = -1;
+					k = e.cf.name;
+				} else {
+					g = switch [originOf(e), e.scope] {
+						case [Self(_), CFSMember | CFSConstructor]: 10;
+						case [Parent(_), CFSMember | CFSConstructor]: 11;
+						case [StaticExtension(_), _]: 12;
+						case [Self(_), CFSStatic]: 13;
+						case [StaticImport(_), _]: 14;
+						case _: 15;
+					};
+					k = e.cf.name;
+				}
+				{e: e, g: g, k: k, i: i};
+			}];
+			keyed.sort(function(a, b) return a.g != b.g ? a.g - b.g : a.k < b.k ? -1 : a.k > b.k ? 1 : a.i - b.i);
+			entries = [for (x in keyed) x.e];
+		}
+		var items:Array<hxc.context.DisplayException.CompletionEntry> = [];
+		for (i in 0...entries.length) {
+			var e = entries[i];
+			var origin = originOf(e);
+			var t = e.itemType != null ? e.itemType : switch (e.cf.type) {
 				case TLazy(r): TypeFunctions.lazyType(r);
 				case t: t;
 			};
 			var c = ct(t);
-			items.push({filterName: e.cf.name, toJson: function(gen, idx) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, e.scope, e.cf, origin, true, c, idx)});
+			// An enum's statics answer as EnumField items, an enum abstract's members as EnumAbstractField
+			// ones.
+			if (e.ef != null) {
+				var ef = e.ef;
+				items.push({filterName: ef.name, toJson: function(gen, idx) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, origin, true, c, idx)});
+			} else
+				items.push({filterName: e.cf.name, toJson: function(gen, idx)
+					return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, e.scope, e.cf, origin, true, c, idx, e.enumAbstract == true)});
+		}
+		// A dotted receiver naming a loaded module adds the module's other public types, after the sort.
+		if (jc.submodules != null) for (mt in jc.submodules) {
+			var p = TypeFunctions.tInfos(mt).path;
+			items.push({filterName: hxc.core.Globals.sTypePath(p),
+				toJson: function(gen, idx) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, idx)});
 		}
 		// The Field completion mode: the receiver item, receiver range, iterator and keyValueIterator, plus
 		// the receiver's module-type block when its type names one.
 		var modeArgs:Array<hxc.core.Json.JsonField> = [];
 		if (jc.receiver != null) {
 			var recv = jc.receiver;
-			modeArgs.push({name: "item", value: itemForTypedExpr(ctx, gen, recv, recv.type)});
+			modeArgs.push({name: "item", value: itemForTypedExpr(ctx, gen, recv, recv.type, jc.receiverQualified)});
 			modeArgs.push({name: "range", value: gen.generatePosAsRange(recv.pos)});
-			modeArgs.push({name: "iterator", value: hxc.core.Json.JsonValue.JNull});
-			modeArgs.push({name: "keyValueIterator", value: hxc.core.Json.JsonValue.JNull});
-			var followed = TypeFunctions.follow(recv.type);
-			var mt:Null<hxc.core.Type.ModuleType> = switch (followed) {
-				case TInst(c, _): classDecl(c);
-				case TEnum(en, _): TEnumDecl(en);
-				case TAbstract(a, _): TAbstractDecl(a);
-				case _: null;
+			modeArgs.push({name: "iterator", value: jc.iterator == null ? hxc.core.Json.JsonValue.JNull
+				: hxc.core.Json.JsonValue.JObject([{name: "type", value: gen.generateType(jc.iterator)}])});
+			modeArgs.push({name: "keyValueIterator", value: jc.keyValueIterator == null ? hxc.core.Json.JsonValue.JNull
+				: hxc.core.Json.JsonValue.JObject([
+					{name: "key", value: gen.generateType(jc.keyValueIterator.key)},
+					{name: "value", value: gen.generateType(jc.keyValueIterator.value)}
+				])});
+			// The module type the item's type names (reading a statics structure as its type) and, when
+			// following changes the type, the one the followed type names - both with the abstract
+			// implementation written out - or nothing at all when either names none.
+			var t = recv.type;
+			var followChanges = switch (t) {
+				case TMono(r): r.type != null;
+				case TLazy(_) | TType(_, _): true;
+				case _: false;
 			};
-			if (mt != null) {
-				modeArgs.push({name: "type", value: hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, ct(recv.type))});
-				modeArgs.push({name: "moduleType", value: gen.generateModuleType(mt)});
-				modeArgs.push({name: "moduleTypeFollowed", value: recv.type == followed ? hxc.core.Json.JsonValue.JNull : gen.generateModuleType(mt)});
+			var mtJson = try {
+				var mt = TypeFunctions.moduleTypeOfType(t);
+				var mtf = followChanges ? TypeFunctions.moduleTypeOfType(TypeFunctions.follow(t)) : null;
+				gen.generateAbstractImpl = true;
+				var j = {mt: gen.generateModuleType(mt), mtf: mtf == null ? hxc.core.Json.JsonValue.JNull : gen.generateModuleType(mtf)};
+				gen.generateAbstractImpl = false;
+				j;
+			} catch (_:Dynamic) {
+				gen.generateAbstractImpl = false;
+				null;
+			};
+			if (mtJson != null) {
+				modeArgs.push({name: "type", value: hxc.core.CompletionItem.CompletionTypeTools.toJson(gen, ct(t))});
+				modeArgs.push({name: "moduleType", value: mtJson.mt});
+				modeArgs.push({name: "moduleTypeFollowed", value: mtJson.mtf});
 			}
 		}
 		var kind = jc.kind == null ? 0 : jc.kind;
@@ -2765,7 +2827,7 @@ class Compiler {
 
 	// The hover item built from a captured typed expression; shared by hover and the
 	// completion mode's receiver item.
-	static function itemForTypedExpr(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T):hxc.core.Json.JsonValue {
+	static function itemForTypedExpr(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T, ?isQualified:Bool):hxc.core.Json.JsonValue {
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
@@ -2782,7 +2844,7 @@ class Compiler {
 		// typed in (Typer.retypeIsQualified), not from a constant.
 		var hoverTctx = hxc.typing.Typer.hoverFound != null ? hxc.typing.Typer.hoverFound.tctx : null;
 		inline function qualified(name:String):Bool
-			return hxc.typing.Typer.retypeIsQualified(hoverTctx, e, name, e.type);
+			return isQualified != null ? isQualified : hxc.typing.Typer.retypeIsQualified(hoverTctx, e, name, e.type);
 		switch (e.expr) {
 			case TField(e1, fa):
 				switch (fa) {
@@ -2811,6 +2873,20 @@ class Compiler {
 				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t));
 			case TNew(c, _, _) if (c.constructor != null):
 				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(t));
+			// A type expression is a Type item, Imported, typed as the expression - an abstract's
+			// implementation class as the abstract itself .
+			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, TAbstractDecl(a));
+				var tl = TypeFunctions.extractParamTypes(a.params);
+				var name = "Abstract<" + hxc.core.Globals.sTypePath(a.path)
+					+ (tl.length == 0 ? "" : "<" + [for (x in tl) TPrinting.sTypeStr(x)].join(", ") + ">") + ">";
+				var td = TypeFunctions.mkTypedef(a.module, {pack: [], name: name}, a.pos, Position.nullPos,
+					TypeFunctions.mkAnon(new hxc.core.Ref(hxc.core.Type.AnonStatus.AbstractStatics(a))));
+				td.isPrivate = true;
+				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, TAbstractDecl(a), 0, null, ct(TType(td, [])));
+			case TTypeExpr(mt):
+				hxc.typing.CoreApi.mergeCoreDoc(ctx, mt);
+				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, null, ct(t));
 			case _:
 		}
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(t));

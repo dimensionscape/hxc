@@ -920,7 +920,8 @@ class Fields {
 	// listed with that argument dropped and with @:noUsing / @:noCompletion / an abstract impl member
 	// skipped. The acceptance test is the same resolution the call path runs, one name at a time, so
 	// nothing is offered that would not actually resolve.
-	public static function collectUsingFields(ctx:TyperContext, e:TExpr, p:Position, add:TClassField->T->Void):Void {
+	public static function collectUsingFields(ctx:TyperContext, e:TExpr, p:Position, add:TClass->TClassField->T->Void,
+			?has:String->Bool):Void {
 		if (TypeFunctions.follow(e.type).match(TMono(_))) return;
 		var seenClasses:Array<TClass> = [];
 		function tryClass(uc:Null<TClass>):Void {
@@ -929,13 +930,36 @@ class Fields {
 			for (cf in uc.orderedStatics) {
 				if (TypeFunctions.hasMeta(":noUsing", cf.meta) || TypeFunctions.hasMeta(":noCompletion", cf.meta)) continue;
 				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
+				// A name the receiver's type (or an earlier extension) already offers is skipped
+				// before anything is read; every other candidate's signature is read first - with
+				// returnPartialType set - whether it then accepts the receiver or not.
+				if (has != null && has(cf.name)) continue;
+				for (o in [cf].concat(cf.overloads)) switch (o.type) {
+					case TLazy(r):
+						TypeFields.returnPartialType = true;
+						try TypeFunctions.lazyType(r) catch (e:Dynamic) { TypeFields.returnPartialType = false; throw e; }
+						TypeFields.returnPartialType = false;
+					case _:
+				}
 				var ok = try tryUsingClass(ctx, uc, e, cf.name, p) != null catch (_:Dynamic) false;
 				if (!ok) continue;
-				// Over `f :: f.overloads` and handles each one: the candidate is whichever accepts the receiver
-				// as its first argument, which is not necessarily the main field. An overload set's main field
-				// can be the ZERO-argument one, and reading only that offered the field nowhere at all.
+				// The field and each of its overloads are handled: the candidate is whichever accepts the
+				// receiver as its first argument, which is not necessarily the main field. An overload
+				// set's
+				// main field can be the ZERO-argument one, and reading only that would offer the field
+				// nowhere at all. Every one that accepts is ADDED under the same name, so the last of them
+				// is the item.
+				var last:Null<{o:TClassField, t:T}> = null;
 				for (o in [cf].concat(cf.overloads)) {
-					var t = switch (o.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+					// A lazy signature is read with returnPartialType set.
+					var t = switch (o.type) {
+						case TLazy(r):
+							TypeFields.returnPartialType = true;
+							var t2 = try TypeFunctions.lazyType(r) catch (e:Dynamic) { TypeFields.returnPartialType = false; throw e; };
+							TypeFields.returnPartialType = false;
+							t2;
+						case t2: t2;
+					};
 					// The receiver is unified against the first argument of a copy whose own type
 					// parameters
 					// are fresh monos, so the reported signature carries the bindings that unification made
@@ -944,19 +968,16 @@ class Fields {
 						var monos = TypeUnification.spawnConstrainedMonos(function(x) return x, o.params);
 						t = TypeFunctions.applyParams(o.params, monos, t);
 					}
-					var matched = false;
 					switch (TypeFunctions.follow(t)) {
 						case TFun(sig) if (sig.args.length > 0):
 							// The same acceptance test the call path uses: a plain unify is stricter and drops the
 							// Map-receiver-against-StringMap-parameter cases.
-							if (usingAccepts(ctx, o, e, sig.args[0].t, p) != null) {
-								add(cf, TFun({args: sig.args.slice(1), ret: sig.ret}));
-								matched = true;
-							}
+							if (usingAccepts(ctx, o, e, sig.args[0].t, p) != null)
+								last = {o: o, t: TFun({args: sig.args.slice(1), ret: sig.ret})};
 						case _:
 					}
-					if (matched) break;
 				}
+				if (last != null) add(uc, last.o, last.t);
 			}
 		}
 		function tryModuleType(mt:ModuleType):Void switch (mt) {
@@ -969,12 +990,13 @@ class Fields {
 				}
 			case _:
 		}
-		// loop_module_using, the type's own @:using, then the module's, then global.
-		for (u in typeUsings(e.type, "")) tryClass(u.c);
+		// The module's usings, then the global ones, then the type's own @:using - the first
+		// to offer a name keeps it.
 		var m = ctx.com.currentModule;
 		var imports = m == null ? null : ctx.com.moduleImports.get(hxc.context.Context.pathKey(m.path));
 		if (imports != null) for (u in imports.usingClasses) tryClass(u.c);
 		for (c in ctx.com.globalUsing) tryClass(c);
+		for (u in typeUsings(e.type, "")) tryClass(u.c);
 	}
 
 	static function tryUsingModuleType(ctx:TyperContext, mt:ModuleType, e:TExpr, i:String, p:Position):Null<AccessKind> {

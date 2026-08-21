@@ -257,7 +257,8 @@ class ForLoopFaithful {
 
 	// Cast to Iterator<mono>, or call e.iterator(), with the array-access last resort threaded
 	// through.
-	static function checkIterator(ctx:TyperContext, s:String, e:TExpr, p:Position, ?lastResort:Void->TExpr):{e:TExpr, pt:T} {
+	public static function checkIterator(ctx:TyperContext, s:String, e:TExpr, p:Position, ?lastResort:Void->TExpr,
+			resume:Bool = false):{e:TExpr, pt:T} {
 		var it = tIterator(ctx);
 		var dynamicIterator:Null<TExpr> = null;
 		ForLoop.forceOpenIteratorFields(ctx, e.type);
@@ -288,6 +289,8 @@ class ForLoopFaithful {
 					// null, which ofTexpr then reports as a Dynamic iteration.
 					tryLastResort(function() {
 						if (dynamicIterator != null) return dynamicIterator;
+						// A display asking about the receiver (resume) gets no answer instead.
+						if (resume) throw new hxc.core.NotFound();
 						ctx.com.addDiagnostic("Field iterator has an invalid type", accExpr.pos, unifyErr.depth);
 						ctx.com.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), accExpr.pos, unifyErr.depth + 1);
 						return TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, accExpr.pos);
@@ -364,7 +367,7 @@ class ForLoopFaithful {
 		throw new hxc.core.NotFound();
 	}
 
-	public static function ofTexpr(ctx:TyperContext, e:TExpr, unrollWeight:Null<Int>, p:Position):{kind:IterationKindKind, e:TExpr, pt:T} {
+	public static function ofTexpr(ctx:TyperContext, e:TExpr, unrollWeight:Null<Int>, p:Position, resume:Bool = false):{kind:IterationKindKind, e:TExpr, pt:T} {
 		// Recorded, and the loop still lowers as a Dynamic iteration.
 		function dynamicIterator(e2:TExpr):{kind:IterationKindKind, e:TExpr, pt:T} {
 			ctx.com.addDiagnostic("You can" + "'" + "t iterate on a Dynamic value, please specify Iterator or Iterable", e2.pos);
@@ -376,7 +379,7 @@ class ForLoopFaithful {
 				arrayAccessResult = ofTexprByArrayAccess(ctx, e, p);
 				return TypeFunctions.mk(TConst(TNull), TypeFunctions.tDynamic, p);
 			}
-			var r = checkIterator(ctx, "iterator", e, p, lastResort);
+			var r = checkIterator(ctx, "iterator", e, p, lastResort, resume);
 			if (arrayAccessResult != null) return arrayAccessResult;
 			return switch (TypeFunctions.followWithAbstracts(r.e.type)) {
 				case TMono(_) | TDynamic(_): dynamicIterator(r.e);

@@ -1394,8 +1394,10 @@ class Typer {
 				}
 			case EObjectDecl(fields):
 				// The display position sits inside the literal on no field: complete the EXPECTED
-				// structure's fields. (CRStructureField via display_expr on an object declaration).
-				if (hxc.parser.Parser.displayFile != null && fieldCompletionFound == null && atDisplayPos(p)) {
+				// structure's fields (CRStructureField). That happens only under DMDefault, i.e. for a
+				// completion.
+				if (hxc.parser.Parser.displayFile != null && hxc.parser.Parser.displayCompletionMode
+						&& fieldCompletionFound == null && atDisplayPos(p)) {
 					// The cursor on a field name makes that field the completion SUBJECT; only a field it is not
 					// on hands the answer to its own value. Testing the values first would let the stand-in the
 					// parser leaves after a missing `:` swallow a cursor that is really sitting on the name.
@@ -3668,7 +3670,7 @@ class Typer {
 	// so CompletionItem.toJson can serialize faithfully (the legacy XML lane above stringifies).
 	// receiver/insertPos feed CRField and replaceRange.
 	public static var jsonFieldCompletion:Null<{
-		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}>,
+		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool, ?origin:hxc.core.CompletionItem.ClassFieldOrigin, ?ef:hxc.core.Type.TEnumField, ?enumAbstract:Bool, ?mt:hxc.core.Type.ModuleType, ?itemType:T}>,
 		receiver:Null<TExpr>,
 		insertPos:Position,
 		// The ORIGIN, which for a structure is the typedef or the @:structInit class the fields came from,
@@ -3681,7 +3683,15 @@ class Typer {
 		// somewhere else, like an `override` modifier (CROverride, 12).
 		?kind:Int,
 		?subjectName:String,
-		?subjectPos:Position
+		?subjectPos:Position,
+		// The other public types of the module the receiver names.
+		?submodules:Array<ModuleType>,
+		// After a parser resume, what the receiver iterates as and its keyValueIterator's key and value,
+		// when it has them.
+		?iterator:T,
+		?keyValueIterator:{key:T, value:T},
+		// The receiver item's isQualified, retyped where the receiver was typed.
+		?receiverQualified:Bool
 	}> = null;
 
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
@@ -3708,7 +3718,7 @@ class Typer {
 		ctx.inDisplay = oldInDisplay;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
-		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool}> = [];
+		var jsonEntries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool, ?origin:hxc.core.CompletionItem.ClassFieldOrigin, ?ef:hxc.core.Type.TEnumField, ?enumAbstract:Bool, ?mt:hxc.core.Type.ModuleType, ?itemType:T}> = [];
 		function pushJson(cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool):Void {
 			jsonEntries.push({cf: cf, scope: scope, originClass: originClass, originAnon: originAnon, builtIn: builtIn});
 		}
@@ -3719,13 +3729,22 @@ class Typer {
 		// reads as its element monomorph rather than as Array.T.
 		var pushParams:Null<TypeParams> = null;
 		var pushArgs:Null<TParams> = null;
+		// The origin the collection gives the next fields (Self/Parent and the like), when it is not the
+		// class or structure pushOriginClass/pushOriginAnon stand for.
+		var pushOrigin:Null<hxc.core.CompletionItem.ClassFieldOrigin> = null;
 		function push(cf:TClassField):Void {
 			if (seen.exists(cf.name)) return;
 			seen.set(cf.name, true);
 			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t: t; };
-			if (pushParams != null && pushArgs != null && pushParams.length > 0)
+			// Under type arguments the field is a COPY typed with them applied, and that copy is the item.
+			var shown = cf;
+			if (pushParams != null && pushArgs != null && pushArgs.length > 0) {
 				t = TypeFunctions.applyParams(pushParams, pushArgs, t);
-			pushJson(cf, pushScope, pushOriginClass, pushOriginAnon, false);
+				shown = TypeFunctions.copyField(cf);
+				shown.type = t;
+			}
+			jsonEntries.push({cf: shown, scope: pushScope, originClass: pushOriginClass, originAnon: pushOriginAnon, builtIn: false,
+				origin: pushOrigin});
 			fields.push({
 				kind: cf.kind.match(Method(_)) ? "method" : "var",
 				name: cf.name,
@@ -3776,6 +3795,9 @@ class Typer {
 					// written in terms of the level below's parameters, so they carry the substitution up.
 					function walkClass(cur:TClass, curArgs:TParams):Void {
 						pushOriginClass = cur;
+						// The receiver's own class is Self, an ancestor Parent.
+						pushOrigin = cur == c ? hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(cur))
+							: hxc.core.CompletionItem.ClassFieldOrigin.Parent(TClassDecl(cur));
 						pushParams = cur.params;
 						pushArgs = curArgs;
 						for (name in cur.fields.keys()) {
@@ -3795,6 +3817,7 @@ class Typer {
 					pushParams = null;
 					pushArgs = null;
 					pushOriginClass = null;
+					pushOrigin = null;
 					pushScope = savedScope;
 				// An abstract shows every @:impl field except its constructor, each read without the receiver
 				// its impl carries.
@@ -3808,13 +3831,13 @@ class Typer {
 						if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) continue;
 						if (TypeFunctions.hasClassFieldFlag(cf, CfEnum)) continue;
 						if (!shouldAccess(impl, cf, false)) continue;
-						var ct = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-						ct = switch (TypeFunctions.follow(ct)) {
-							case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
-							case t2: t2;
-						};
-						if (tl.length > 0) ct = TypeFunctions.applyParams(a.params, tl, ct);
-						push(withType(cf, ct));
+						// The using form of the field, then a copy under the abstract's arguments.
+						var shown = prepareUsingField(cf);
+						if (tl.length > 0) {
+							shown = TypeFunctions.copyField(shown);
+							shown.type = TypeFunctions.applyParams(a.params, tl, shown.type);
+						}
+						push(shown);
 					}
 					pushOriginClass = null;
 					// With @:forward the UNDERLYING type's fields are collected separately and merged in,
@@ -3845,7 +3868,9 @@ class Typer {
 					switch (ev) {
 						case TAbstractDecl(a) if (a.impl != null):
 							var cf = a.impl.statics.get("match");
+							pushOrigin = hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
 							if (cf != null) push(cf);
+							pushOrigin = null;
 						case _:
 					}
 				// An unbound monomorph offers what its STRUCTURAL constraints require. A closed structure
@@ -3888,23 +3913,60 @@ class Typer {
 								pushOriginClass = savedC;
 							case _:
 						}
+					// Every field of the structure, by name, each as its status says.
+					var names = [for (name in an.fields.keys()) name];
+					hxc.core.StringSort.sort(names);
+					var savedOrigin = pushOrigin;
 					switch (an.status.get()) {
 						case Statics(sc) if (sc.kind.match(KAbstractImpl(_))):
-							// Through the abstract's own type expression its implementation offers a static that is not
-							// an @:impl member, or an enum member, with the abstract as origin (classDecl maps the
-							// implementation class to it).
-							var savedC = pushOriginClass;
-							pushOriginAnon = savedAnon;
-							pushOriginClass = sc;
-							for (name in an.fields.keys()) {
+							// Static abstract access: through the abstract's own type expression its implementation
+							// offers a static that is not an @:impl member, or an enum member, with the abstract as
+							// origin; an enum member is an EnumAbstractField item.
+							var a = switch (sc.kind) { case KAbstractImpl(a): a; case _: null; };
+							pushOrigin = hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
+							for (name in names) {
 								var cf = an.fields.get(name);
-								if (shouldAccess(sc, cf, false) && (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || TypeFunctions.hasClassFieldFlag(cf, CfEnum)))
+								if (shouldAccess(sc, cf, false) && (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || TypeFunctions.hasClassFieldFlag(cf, CfEnum))) {
+									push(cf);
+									if (TypeFunctions.hasClassFieldFlag(cf, CfEnum) && jsonEntries.length > 0 && jsonEntries[jsonEntries.length - 1].cf == cf)
+										jsonEntries[jsonEntries.length - 1].enumAbstract = true;
+								}
+							}
+						// A class's statics: members of its Statics structure, the class's own.
+						case Statics(sc):
+							pushOrigin = hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(sc));
+							for (name in names) {
+								var cf = an.fields.get(name);
+								if (shouldAccess(sc, cf, true)) push(cf);
+							}
+						// An enum's statics are its constructors, EnumField items.
+						case EnumStatics(en):
+							for (name in names) {
+								if (seen.exists(name)) continue;
+								seen.set(name, true);
+								var cf = an.fields.get(name);
+								jsonEntries.push({cf: cf, scope: CFSMember, originClass: null, originAnon: null, builtIn: false,
+									origin: hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), ef: en.constrs.get(name)});
+								fields.push({kind: cf.kind.match(Method(_)) ? "method" : "var", name: cf.name,
+									type: hxc.core.TPrinting.sTypeStr(cf.type), doc: Ast.genDocTextOpt(cf.doc)});
+							}
+						case AbstractStatics(sa):
+							pushOrigin = hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(sa));
+							for (name in names) {
+								var cf = an.fields.get(name);
+								if (sa.impl == null || (shouldAccess(sa.impl, cf, false)
+										&& (!TypeFunctions.hasClassFieldFlag(cf, CfImpl) || TypeFunctions.hasClassFieldFlag(cf, CfEnum))))
 									push(cf);
 							}
-							pushOriginClass = savedC;
+						// Any other structure: a typedef's own (Self), else the structure.
 						case _:
-							for (name in an.fields.keys()) push(an.fields.get(name));
+							pushOrigin = switch (t) {
+								case TType(td, _): hxc.core.CompletionItem.ClassFieldOrigin.Self(TTypeDecl(td));
+								case _: hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
+							};
+							for (name in names) push(an.fields.get(name));
 					}
+					pushOrigin = savedOrigin;
 					pushOriginAnon = savedAnon;
 				// A function has no field except the magic bind, which takes and returns the same signature
 				// with every argument made optional.
@@ -3913,7 +3975,14 @@ class Typer {
 						var opt = TFun({args: [for (a2 in sig.args) {name: a2.name, opt: true, t: a2.t}], ret: sig.ret});
 						var cf = TypeFunctions.mkField("bind", TypeFunctions.tfun([opt], opt), p, Position.nullPos);
 						cf.kind = Method(MethNormal);
+						var savedScope = pushScope, savedOrigin = pushOrigin;
+						pushScope = CFSStatic;
+						pushOrigin = hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn;
 						push(cf);
+						// The item's type is the bound function itself, not the field's.
+						jsonEntries[jsonEntries.length - 1].itemType = opt;
+						pushScope = savedScope;
+						pushOrigin = savedOrigin;
 					}
 				case _:
 			}
@@ -3924,23 +3993,16 @@ class Typer {
 				seen.set("code", true);
 				fields.push({kind: "var", name: "code", type: "Int",
 					doc: "The character code of this character (inlined at compile-time)."});
+				var code = TypeFunctions.mkField("code", ctx.com.basic.tint, e1.pos, Position.nullPos);
+				code.doc = hxc.ast.Ast.docFromString("The character code of this character (inlined at compile-time).");
+				code.kind = Var({read: AccNormal, write: AccNever});
+				jsonEntries.push({cf: code, scope: CFSMember, originClass: null, originAnon: null, builtIn: true,
+					origin: hxc.core.CompletionItem.ClassFieldOrigin.BuiltIn});
 			case _:
 		}
-		if (typed != null) switch (typed.expr) {
-			// An abstract's implementation class the abstract's name as it) is listed through the anon arm
-			// below, under the abstract.
-			case TTypeExpr(TClassDecl(c)) if (!c.kind.match(KAbstractImpl(_))):
-				// A private static still completes from inside its own class. . the Statics arm merges the
-				// class's core docs.
-				CoreApi.mergeCoreDoc(ctx.com, TClassDecl(c));
-				pushScope = CFSStatic;
-				pushOriginClass = c;
-				for (cf in c.orderedStatics)
-					if (shouldAccess(c, cf, true)) push(cf);
-			case _:
-				// Fields of the value's type. (loop on e.type).
-				loopType(typed.type);
-		}
+		// The fields of the receiver's TYPE - a class's statics included, through the Statics structure its
+		// type expression has.
+		if (typed != null) loopType(typed.type);
 		// The static extensions in scope are part of a field completion. They come after the receiver's
 		// own fields, which is what the `seen` check in push already expresses (a name the type itself
 		// provides is skipped). The using loop runs on the receiver's type whatever the receiver is, so
@@ -3952,19 +4014,74 @@ class Typer {
 				pushOriginAnon = null;
 				pushParams = null;
 				pushArgs = null;
-				hxc.typing.Fields.collectUsingFields(ctx, typed, p, function(cf, t) {
+				hxc.typing.Fields.collectUsingFields(ctx, typed, p, function(uc, cf, t) {
 					if (seen.exists(cf.name)) return;
 					seen.set(cf.name, true);
-					pushJson(cf, CFSMember, null, null, false);
+					// The extension as the receiver sees it - prepared, public, without type parameters,
+					// typed as the unification left it - from StaticExtension.
+					var shown = TypeFunctions.copyField(prepareUsingField(cf));
+					shown.params = [];
+					shown.flags = hxc.core.Flags.setFlag(shown.flags, TypeFunctions.intOfClassFieldFlag(CfPublic));
+					shown.type = t;
+					jsonEntries.push({cf: shown, scope: CFSMember, originClass: null, originAnon: null, builtIn: false,
+						origin: hxc.core.CompletionItem.ClassFieldOrigin.StaticExtension(switch (uc.kind) {
+							case KAbstractImpl(a): TAbstractDecl(a);
+							case _: TClassDecl(uc);
+						})});
 					fields.push({
 						kind: cf.kind.match(Method(_)) ? "method" : "var",
 						name: cf.name,
 						type: hxc.core.TPrinting.sTypeStr(t),
 						doc: Ast.genDocTextOpt(cf.doc)
 					});
-				});
+				}, function(n) return seen.exists(n));
 		}
-		jsonFieldCompletion = {entries: jsonEntries, receiver: typed, insertPos: p};
+		// The receiver's dot path names a module through a path list that runs BACKWARDS - so the pack the
+		// module is looked up under is reversed - and only a module already loaded answers.
+		var submodules:Null<Array<ModuleType>> = null;
+		{
+			var sl:Array<String> = [];
+			function pathOf(e:Expr):Bool return switch (e.expr) {
+				case EConst(CIdent(s)): sl.push(s); true;
+				case EField(e2, f, _): sl.push(f); pathOf(e2);
+				case _: false;
+			};
+			if (pathOf(e1)) {
+				var m = ctx.com.moduleLut.get(hxc.context.Context.pathKey({pack: sl.slice(1), name: sl[0]}));
+				if (m != null) submodules = [for (mt in m.types) {
+					var inf = TypeFunctions.tInfos(mt);
+					if (inf.isPrivate || (inf.path.name == sl[0] && inf.path.pack.join(".") == sl.slice(1).join("."))) continue;
+					mt;
+				}];
+			}
+		}
+		// The DMDefault arm a parser resume reaches: CRField carries what the receiver iterates as, a
+		// Dynamic iteration counting as none, and its keyValueIterator's key and value - each of which a
+		// typing error or a missing field simply leaves out.
+		var iterator:Null<T> = null;
+		var keyValueIterator:Null<{key:T, value:T}> = null;
+		if (hxc.parser.Parser.hadResume && typed != null) {
+			iterator = try switch (TypeFunctions.follow(hxc.typing.ForLoop.ForLoopFaithful.ofTexpr(ctx, typed, null, typed.pos, true).pt)) {
+				case TDynamic(_): null;
+				case t: t;
+			} catch (_:TypingError) null catch (_:hxc.core.NotFound) null;
+			keyValueIterator = try switch (TypeFunctions.follow(hxc.typing.ForLoop.ForLoopFaithful.checkIterator(ctx, "keyValueIterator", typed, typed.pos, null, true).pt)) {
+				case TAnon(an) if (an.fields.exists("key") && an.fields.exists("value")):
+					{key: an.fields.get("key").type, value: an.fields.get("value").type};
+				case _: null;
+			} catch (_:TypingError) null catch (_:hxc.core.NotFound) null;
+		}
+		var receiverQualified:Null<Bool> = null;
+		if (typed != null) {
+			var rname = switch (typed.expr) {
+				case TField(_, FStatic(_, cf) | FInstance(_, _, cf) | FClosure(_, cf) | FAnon(cf)): cf.name;
+				case TField(_, FEnum(_, ef)): ef.name;
+				case _: null;
+			};
+			if (rname != null) receiverQualified = try retypeIsQualified(ctx, typed, rname, typed.type) catch (_:Dynamic) false;
+		}
+		jsonFieldCompletion = {entries: jsonEntries, receiver: typed, insertPos: p, submodules: submodules,
+			iterator: iterator, keyValueIterator: keyValueIterator, receiverQualified: receiverQualified};
 		// The statics list CONCATENATES the module's other types (the same-named main type
 		// excluded), whether or not any statics exist.
 		if (identName != null) {
@@ -5818,8 +5935,10 @@ class Typer {
 			case EField(e1, field, _):
 				if (StringTools.startsWith(field, "$")) throw new TypingError("Field names starting with $ are not allowed", p);
 				// The dangling display dot (EField with an empty name from parseField) asks for the legacy
-				// field-completion list. (display on dot paths).
-				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, p));
+				// field-completion list.
+				// The parser makes the RECEIVER the display node, so its position is the one completion
+				// answers at.
+				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, e1.pos));
 				if (field == "new") {
 					var cv = constructorValue(ctx, e1, mode, p);
 					if (cv != null) return cv;

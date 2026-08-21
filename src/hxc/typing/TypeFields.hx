@@ -861,6 +861,16 @@ class TypeFields {
 		var r = new Ref(LAvailable(sigType));
 		var force = function():T {
 			for (f in _forcing) if (f == cf) return sigType;
+			// While returnPartialType is set, a forced field answers its signature without typing its body
+			// - a method never, a variable unless its initializer is a constant - and the lazy keeps that
+			// answer.
+			if (returnPartialType && !(switch (cff == null ? null : cff.cffKind) {
+				case FVar(_, {expr: EConst(_)}) | FProp(_, _, _, {expr: EConst(_)}): true;
+				case _: false;
+			})) {
+				r.set(LAvailable(sigType));
+				return sigType;
+			}
 			// Re-entry while typing returns the resolved signature, breaking cycles.
 			r.set(LProcessing(function() return sigType));
 			cf.type = sigType;
@@ -965,6 +975,9 @@ class TypeFields {
 	}
 
 	static var _forcing:Array<TClassField> = [];
+
+	// Set while display collects static extensions, so a forced field answers its partial type.
+	public static var returnPartialType = false;
 
 	// A field whose body is currently being forced/typed: reading it returns the in-progress signature (its
 	// real, still-inferred return mono), as a lazy type still in progress does.
