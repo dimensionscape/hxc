@@ -14,6 +14,13 @@ typedef ScannedFile = {
 };
 
 class ToplevelScan {
+	public static var exclude:Array<String> = [];
+
+	public static function excluded(pack:Array<String>, moduleName:String):Bool {
+		var dotPath = pack.length == 0 ? moduleName : pack.join(".") + "." + moduleName;
+		for (e in exclude) if (StringTools.startsWith(dotPath, e + ".")) return true;
+		return false;
+	}
 	public static function uninitialize(sign:String):Void
 		hxc.context.DisplayJson.cache.getContext(sign).initialized = false;
 
@@ -100,7 +107,8 @@ class ToplevelScan {
 
 	static function exploreDir(ctx:Context, dir:String, pack:Array<String>, checked:haxe.ds.StringMap<Bool>):Void {
 		var unique = hxc.core.PathKey.key(dir);
-		if (checked.exists(unique)) return;
+		var dotPath = pack.join(".");
+		if (exclude.indexOf(dotPath) >= 0 || checked.exists(unique)) return;
 		checked.set(unique, true);
 		var entries = try sys.FileSystem.readDirectory(dir) catch (_:Dynamic) return;
 		// Match NTFS's case-insensitive directory ordering because cache insertion affects completion
@@ -127,6 +135,7 @@ class ToplevelScan {
 				// module files are skipped.
 				if (name.indexOf(".") >= 0) continue;
 				if (displayKey != null && hxc.core.PathKey.key(full) == displayKey) continue;
+				if (exclude.indexOf(dotPath == "" ? name : dotPath + "." + name) >= 0) continue;
 				try {
 					var r = hxc.context.ModuleLoader.parseForExploration(ctx, {pack: pack, name: name});
 					if (r != null && r.pack.join(".") != pack.join(".")) cc.removeFileForReal(r.file.toLowerCase());

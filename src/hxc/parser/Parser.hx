@@ -142,6 +142,8 @@ class Parser {
 	// The metadata entry the cursor sits on, whatever the mode. The entry's own name is what reads its
 	// documentation out of the registry.
 	public static var displayMetaName:Null<String> = null;
+	// The entry's position: the subject's span.
+	public static var displayMetaPos:Null<Position> = null;
 	// The field name already written after the dot, and its position. The completion's filter string and
 	// replace range come from it.
 	public static var displayDotName:Null<String> = null;
@@ -163,6 +165,7 @@ class Parser {
 		displayCompletionMode = false;
 		displayMetaFound = false;
 		displayMetaName = null;
+		displayMetaPos = null;
 		displaySuppressed = false;
 		commentAnswered = false;
 		displayModuleHasMacroDefines = false;
@@ -1030,6 +1033,8 @@ class Parser {
 			syntaxErrors.push({msg: er.msg, pos: er.pos});
 			// The marker exists only because the cursor is on this entry.
 			displayMetaFound = true;
+			displayMetaName = HX_COMPLETION_META;
+			displayMetaPos = p1;
 			return {name: HX_COMPLETION_META, params: [], pos: p1};
 		}
 		var pEnd = tokens[idx - 1].pos;
@@ -1056,6 +1061,7 @@ class Parser {
 		if (isDisplayFile() && displayOffset >= entry.pos.min && displayOffset <= entry.pos.max) {
 			if (displayCompletionMode) displayMetaFound = true;
 			displayMetaName = entry.name;
+			displayMetaPos = entry.pos;
 		}
 		return entry;
 	}

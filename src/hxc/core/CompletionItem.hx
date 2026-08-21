@@ -296,16 +296,30 @@ class CompletionItem {
 					{name: "typeName", value: JString(name)},
 					{name: "importStatus", value: JInt(importStatus)}
 				])},
-				{name: "kind", value: JInt(kind)},
-				{name: "meta", value: gen.generateMetadata(meta)},
-				{name: "pos", value: gen.generatePos(declPos)},
-				{name: "params", value: JArray([for (tp in params) astParam(tp)])},
-				{name: "isExtern", value: JBool(isExtern)},
-				{name: "isFinal", value: JBool(isFinal)},
-				{name: "isAbstract", value: JBool(isAbstract)},
-				{name: "doc", value: doc == null ? JNull : JString(hxc.ast.Ast.genDocText(doc))}
-			])}
+				{name: "kind", value: JInt(kind)}
+			].concat(moduleTypeTail(gen, meta, function() return gen.generatePos(declPos),
+				function() return [for (tp in params) astParam(tp)], isExtern, isFinal, isAbstract, doc)))}
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
+	}
+
+	// What a Type item carries after its path and kind - the declaration in full (the doc only in the full
+	// mode), or in the minimum mode the requested metadata alone.
+	static function moduleTypeTail(gen:Genjson, meta:hxc.ast.Ast.Metadata, pos:Void->JsonValue, params:Void->Array<JsonValue>,
+			isExtern:Bool, isFinal:Bool, isAbstract:Bool, doc:hxc.ast.Ast.Documentation):Array<JsonField> {
+		if (gen.mode == GMMinimum) {
+			var mm = gen.generateMinimumMetadata(meta);
+			return mm == null ? [] : [{name: "meta", value: mm}];
+		}
+		var l:Array<JsonField> = [
+			{name: "meta", value: gen.generateMetadata(meta)},
+			{name: "pos", value: pos()},
+			{name: "params", value: JArray(params())},
+			{name: "isExtern", value: JBool(isExtern)},
+			{name: "isFinal", value: JBool(isFinal)},
+			{name: "isAbstract", value: JBool(isAbstract)}
+		];
+		if (gen.mode == GMFull) l.push({name: "doc", value: doc == null ? JNull : JString(hxc.ast.Ast.genDocText(doc))});
+		return l;
 	}
 
 	// A package item: {path: {pack}, contents: []}.
@@ -366,15 +380,9 @@ class CompletionItem {
 					{name: "typeName", value: JString(infos.path.name)},
 					{name: "importStatus", value: JInt(importStatus)}
 				])},
-				{name: "kind", value: JInt(kind)},
-				{name: "meta", value: gen.generateMetadata(infos.meta)},
-				{name: "pos", value: gen.generatePos(infos.pos)},
-				{name: "params", value: JArray([for (tp in infos.params) astParam(tp)])},
-				{name: "isExtern", value: JBool(isExtern)},
-				{name: "isFinal", value: JBool(isFinal)},
-				{name: "isAbstract", value: JBool(isAbstract)},
-				{name: "doc", value: infos.doc == null ? JNull : JString(hxc.ast.Ast.genDocText(infos.doc))}
-			])}
+				{name: "kind", value: JInt(kind)}
+			].concat(moduleTypeTail(gen, infos.meta, function() return gen.generatePos(infos.pos),
+				function() return [for (tp in infos.params) astParam(tp)], isExtern, isFinal, isAbstract, infos.doc)))}
 		]:Array<JsonField>)
 			.concat(ct == null ? [] : ([{name: "type", value: CompletionTypeTools.toJson(gen, ct)}]:Array<JsonField>))
 			.concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));

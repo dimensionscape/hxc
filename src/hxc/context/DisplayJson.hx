@@ -27,6 +27,25 @@ typedef HandlerContext = {
 class DisplayJson {
 	// Client supports completion-item resolution, as declared during initialize.
 	static var supportsResolve = false;
+	// The JSON generator reads request metadata lazily.
+	static var currentRequest:Null<JsonRpcHandler> = null;
+
+	// Use minimum field generation when the client supports resolving completion items.
+	public static function createJsonContext(mayResolve:Bool):hxc.core.Genjson {
+		var gen = new hxc.core.Genjson(mayResolve && supportsResolve ? GMMinimum : GMFull);
+		var rpc = currentRequest;
+		if (rpc != null) {
+			var memo:Null<Array<String>> = null, done = false;
+			gen.requestedMeta = function() {
+				if (!done) {
+					memo = rpc.getOptParam(function() return [for (j in rpc.getArrayParam("meta")) rpc.getString("Metadata name", j)], null);
+					done = true;
+				}
+				return memo;
+			};
+		}
+		return gen;
+	}
 
 	// Process-lifetime compilation cache; a one-shot process starts fresh.
 	public static var cache = new hxc.context.CompilationCache.CompilationCache();
@@ -81,9 +100,102 @@ class DisplayJson {
 	// Register implemented methods only; initialize advertises this set.
 	static function handlers():Array<{name:String, f:HandlerContext->Void}> {
 		return [
-			{name: "typer/compiledTypes", f: function(hctx) {
-				hctx.com.displaySpec = "?@0@compiledTypes";
+			{name: "initialize", f: function(hctx) {
+				supportsResolve = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("supportsResolve"), false);
+				hxc.context.DisplayException.maxCompletionItems = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getIntParam("maxCompletionItems"), 0);
+				var exclude = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getArrayParam("exclude"), []);
+				hxc.compiler.ToplevelScan.exclude = [for (e in exclude) switch (e) {
+					case JString(x): x;
+					case _: throw "exclude entries are strings";
+				}];
+				// Visit handler hash buckets and prepend entries to preserve protocol method ordering.
+				var order = new hxc.core.NameHash.HashTableOrder();
+				for (h in handlers()) order.add(h.name, hxc.core.NameHash.NameHash.stringHash(h.name));
+				var visit = order.visitOrder();
+				visit.reverse();
+				var methods = [for (n in visit) JString(n)];
+				hctx.sendResult(JObject([
+					{name: "methods", value: JArray(methods)},
+					{name: "haxeVersion", value: JObject([
+						{name: "major", value: JInt(Globals.versionMajor)},
+						{name: "minor", value: JInt(Globals.versionMinor)},
+						{name: "patch", value: JInt(Globals.versionRevision)},
+						{name: "pre", value: Globals.versionPre == null ? JNull : JString(Globals.versionPre)},
+						{name: "build", value: JNull}
+					])},
+					{name: "protocolVersion", value: JObject([
+						{name: "major", value: JInt(0)},
+						{name: "minor", value: JInt(5)},
+						{name: "patch", value: JInt(0)}
+					])}
+				]));
+			}},
+			{name: "display/completionItem/resolve", f: function(hctx) {
+				// Resolve against the server's last completion list using full generation. One-shot processes
+				// have no prior items.
+				var i = hctx.jsonrpc.getIntParam("index");
+				var items = hxc.context.DisplayException.lastCompletionResult;
+				if (i < 0 || i >= items.length) hctx.sendError([JString("Invalid index: " + i)]);
+				else hctx.sendResult(JObject([
+					{name: "item", value: items[i].toJson(new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull), null)}
+				]));
+			}},
+			{name: "display/completion", f: function(hctx) {
+				// Completion answers at report time. wasAutoTriggered sets the parser's trigger flag.
+				setDisplayFile(hctx, "", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
+			}},
+			{name: "display/definition", f: function(hctx) {
+				setDisplayFile(hctx, "position");
+			}},
+			{name: "display/diagnostics", f: function(hctx) {
+				// Answer diagnostics only after compilation, using the stored request ID.
+				var file = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("file"), null);
+				if (file != null) {
+					var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+					hctx.com.displaySpec = full + "@0@diagnostics";
+					hctx.com.fileContents = [{file: full, contents: null}];
+				} else {
+					// Without file, fileContents supplies the complete diagnostics file set and any unsaved
+					// sources.
+					var entries = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getArrayParam("fileContents"), []);
+					var fcs:Array<{file:String, contents:Null<String>}> = [];
+					for (e in entries) switch (e) {
+						case JObject(fl):
+							var ef = hctx.jsonrpc.getStringField("fileContents", "file", fl);
+							var full = try sys.FileSystem.fullPath(ef) catch (_:Dynamic) ef;
+							var contents = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringField("fileContents", "contents", fl), null);
+							fcs.push({file: full, contents: contents});
+						case _: throw new hxc.core.JsonRpc.InvalidArgument("fileContents");
+					}
+					hctx.com.fileContents = fcs;
+					hctx.com.displaySpec = (fcs.length == 0 ? "?" : fcs[0].file) + "@0@diagnostics";
+				}
 				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
+			}},
+			{name: "display/implementation", f: function(hctx) {
+				setDisplayFile(hctx, "implementation");
+			}},
+			{name: "display/typeDefinition", f: function(hctx) {
+				setDisplayFile(hctx, "typeDefinition");
+			}},
+			{name: "display/references", f: function(hctx) {
+				// Reference-search kind selects whether to include base declarations and descendants.
+				setDisplayFile(hctx, "usage");
+				var kind = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("kind"), "normal");
+				switch (kind) {
+					case "withBaseAndDescendants": usageDescendants = true; usageBase = true;
+					case "withDescendants": usageDescendants = true; usageBase = false;
+					case _: usageDescendants = false; usageBase = false;
+				}
+			}},
+			{name: "display/hover", f: function(hctx) {
+				setDisplayFile(hctx, "type");
+			}},
+			{name: "display/package", f: function(hctx) {
+				setDisplayFile(hctx, "package", false);
+			}},
+			{name: "display/signatureHelp", f: function(hctx) {
+				setDisplayFile(hctx, "signature", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
 			}},
 			{name: "display/metadata", f: function(hctx) {
 				// Merge compiler and custom metadata by name after init macros register library documentation.
@@ -167,69 +279,6 @@ class DisplayJson {
 					hctx.sendResult(JArray([for (n in named) n.v]));
 				}
 				if (com == null) answer() else com.afterInitMacros.push(answer);
-			}},
-			{name: "display/signatureHelp", f: function(hctx) {
-				setDisplayFile(hctx, "signature", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
-			}},
-			{name: "display/completionItem/resolve", f: function(hctx) {
-				// Completion resolution requires a prior server result; every index is invalid in a one-shot
-				// process.
-				var i = hctx.jsonrpc.getIntParam("index");
-				hctx.sendError([JString("Invalid index: " + i)]);
-			}},
-			{name: "display/implementation", f: function(hctx) {
-				setDisplayFile(hctx, "implementation");
-			}},
-			{name: "display/typeDefinition", f: function(hctx) {
-				setDisplayFile(hctx, "typeDefinition");
-			}},
-			{name: "display/package", f: function(hctx) {
-				setDisplayFile(hctx, "package", false);
-			}},
-			{name: "display/completion", f: function(hctx) {
-				// Completion answers at report time. wasAutoTriggered sets the parser's trigger flag.
-				setDisplayFile(hctx, "", true, hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("wasAutoTriggered"), false));
-			}},
-			{name: "display/hover", f: function(hctx) {
-				setDisplayFile(hctx, "type");
-			}},
-			{name: "display/definition", f: function(hctx) {
-				setDisplayFile(hctx, "position");
-			}},
-			{name: "display/references", f: function(hctx) {
-				// Reference-search kind selects whether to include base declarations and descendants.
-				setDisplayFile(hctx, "usage");
-				var kind = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("kind"), "normal");
-				switch (kind) {
-					case "withBaseAndDescendants": usageDescendants = true; usageBase = true;
-					case "withDescendants": usageDescendants = true; usageBase = false;
-					case _: usageDescendants = false; usageBase = false;
-				}
-			}},
-			{name: "display/diagnostics", f: function(hctx) {
-				// Answer diagnostics only after compilation, using the stored request ID.
-				var file = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("file"), null);
-				if (file != null) {
-					var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
-					hctx.com.displaySpec = full + "@0@diagnostics";
-					hctx.com.fileContents = [{file: full, contents: null}];
-				} else {
-					// Without file, fileContents supplies the complete diagnostics file set and any unsaved
-					// sources.
-					var entries = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getArrayParam("fileContents"), []);
-					var fcs:Array<{file:String, contents:Null<String>}> = [];
-					for (e in entries) switch (e) {
-						case JObject(fl):
-							var ef = hctx.jsonrpc.getStringField("fileContents", "file", fl);
-							var full = try sys.FileSystem.fullPath(ef) catch (_:Dynamic) ef;
-							var contents = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringField("fileContents", "contents", fl), null);
-							fcs.push({file: full, contents: contents});
-						case _: throw new hxc.core.JsonRpc.InvalidArgument("fileContents");
-					}
-					hctx.com.fileContents = fcs;
-					hctx.com.displaySpec = (fcs.length == 0 ? "?" : fcs[0].file) + "@0@diagnostics";
-				}
-				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}},
 			{name: "server/readClassPaths", f: function(hctx) {
 				// Wait for init macros and key the context by request defines so later completions reuse the
@@ -391,24 +440,42 @@ class DisplayJson {
 					])}
 				]));
 			}},
-			{name: "initialize", f: function(hctx) {
-				supportsResolve = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getBoolParam("supportsResolve"), false);
-				var methods = [for (h in handlers()) JString(h.name)];
+			{name: "server/memory/module", f: function(hctx) {
+				// Report module types with prepended field and static lists. Zero heap sizes leave stable
+				// sorting in insertion order.
+				var sign = hxc.context.CompilationCache.CompilationCache.digestFromHex(hctx.jsonrpc.getStringParam("signature"));
+				var m = cache.getContext(sign).findModule(hctx.jsonrpc.getStringParam("path"));
+				if (m == null) throw new hxc.core.NotFound();
+				var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+				function sized(name:String, p:hxc.ast.Position, ?fields:Array<JsonValue>):JsonValue {
+					var l:Array<JsonField> = [
+						{name: "name", value: JString(name)},
+						{name: "size", value: JInt(0)},
+						{name: "pos", value: gen.generatePosAsLocation(p)}
+					];
+					if (fields != null) l.push({name: "fields", value: JArray(fields)});
+					return JObject(l);
+				}
+				var types:Array<JsonValue> = [];
+				for (mt in m.types) {
+					var fields:Array<JsonValue> = [];
+					switch (mt) {
+						case TClassDecl(c):
+							for (cf in c.orderedFields) fields.unshift(sized(cf.name, cf.namePos));
+							for (cf in c.orderedStatics) fields.unshift(sized(cf.name, cf.namePos));
+						case _:
+					}
+					var inf = hxc.core.TypeFunctions.tInfos(mt);
+					types.push(sized(hxc.core.Globals.sTypePath(inf.path), inf.namePos, fields));
+				}
 				hctx.sendResult(JObject([
-					{name: "methods", value: JArray(methods)},
-					{name: "haxeVersion", value: JObject([
-						{name: "major", value: JInt(Globals.versionMajor)},
-						{name: "minor", value: JInt(Globals.versionMinor)},
-						{name: "patch", value: JInt(Globals.versionRevision)},
-						{name: "pre", value: Globals.versionPre == null ? JNull : JString(Globals.versionPre)},
-						{name: "build", value: JNull}
-					])},
-					{name: "protocolVersion", value: JObject([
-						{name: "major", value: JInt(0)},
-						{name: "minor", value: JInt(5)},
-						{name: "patch", value: JInt(0)}
-					])}
+					{name: "moduleExtra", value: JInt(0)},
+					{name: "types", value: JArray(types)}
 				]));
+			}},
+			{name: "typer/compiledTypes", f: function(hctx) {
+				hctx.com.displaySpec = "?@0@compiledTypes";
+				hctx.com.jsonRpcId = Json.stringOfJson(hctx.jsonrpc.id);
 			}}
 		];
 	}
@@ -417,6 +484,7 @@ class DisplayJson {
 		JsonRpc.handleJsonRpcError(function() {
 			var request = JsonRpc.parseRequest(input);
 			var jsonrpc = new JsonRpcHandler(request.id, request.method, request.params);
+			currentRequest = jsonrpc;
 
 			function sendResult(json:JsonValue):Void {
 				var fields:Array<JsonField> = [

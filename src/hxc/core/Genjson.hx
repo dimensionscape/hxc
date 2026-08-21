@@ -22,6 +22,9 @@ enum GenerationMode {
 
 class Genjson {
 	public var mode:GenerationMode;
+	// The `meta` names of the request being answered, read the first time a minimum-mode answer needs them;
+	// null outside a request.
+	public var requestedMeta:Null<Void->Null<Array<String>>> = null;
 
 	public function new(mode:GenerationMode) {
 		this.mode = mode;
@@ -137,6 +140,14 @@ class Genjson {
 			if (hxc.context.MetaRegistry.boolField(entry, "internal"))
 				m.set(hxc.context.MetaRegistry.stringField(entry, "metadata", ""), true);
 		return m;
+	}
+
+	// None at all without a request naming metadata, and with one only the entries it names - internal ones
+	// included.
+	public function generateMinimumMetadata(ml:Metadata):Null<JsonValue> {
+		var requested = requestedMeta == null ? null : requestedMeta();
+		if (requested == null) return null;
+		return jarray([for (m in ml) if (requested.indexOf(m.name) >= 0) generateMetadataEntry(m)]);
 	}
 
 	public function generateMetadata(ml:Metadata):JsonValue {

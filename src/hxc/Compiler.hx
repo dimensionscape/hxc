@@ -1264,6 +1264,9 @@ class Compiler {
 			}
 			if (hxc.typing.Typer.displayHover) {
 				if (ctx.jsonRpcId != null) {
+					// Raises at the metadata ENTRY, so it answers before whatever the metadata is attached to.
+					var mh = jsonMetaHover(ctx);
+					if (mh != null) { answerOut(mh); return; }
 					var out = jsonHover(ctx);
 					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
 					return;
@@ -2409,9 +2412,7 @@ class Compiler {
 	// files and packages, the sort when nothing has been typed, the raise site's filter, and the items
 	// written last.
 	static function jsonCollectedItems(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>, subjectName:Null<String>,
-			wt:Null<hxc.core.WithType.WithType>, inPattern:Bool,
-			filter:Null<hxc.typing.Typer.JsonItemInfo->Bool>):Array<hxc.core.Json.JsonValue> {
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+			wt:Null<hxc.core.WithType.WithType>, inPattern:Bool):Array<hxc.context.DisplayException.CompletionEntry> {
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
@@ -2421,14 +2422,15 @@ class Compiler {
 		// decides a later item's qualification and a later type's import status. An item's type is read
 		// when it is added, before the sort can bind anything; the item is serialized after the sort.
 		var pending:Array<{info:hxc.typing.Typer.JsonItemInfo, group:Int, key:String, t:Null<T>, enumField:Bool,
-			mk:Int->hxc.core.Json.JsonValue}> = [];
+			filterName:String, mk:(hxc.core.Genjson, Null<Int>)->hxc.core.Json.JsonValue}> = [];
 		var namesSeen = new haxe.ds.StringMap<Bool>();
 		var pathSeen = new haxe.ds.StringMap<Bool>();
 		inline function pathKey(pack:Array<String>, moduleName:String, typeName:String):String
 			return pack.join(".") + "." + moduleName + "." + typeName;
+		// The filter name: what the completion filter scores the item by.
 		function add(info:hxc.typing.Typer.JsonItemInfo, group:Int, key:String, t:Null<T>, enumField:Bool, name:Null<String>,
-				mk:Int->hxc.core.Json.JsonValue):Void {
-			pending.push({info: info, group: group, key: key, t: t, enumField: enumField, mk: mk});
+				filterName:String, mk:(hxc.core.Genjson, Null<Int>)->hxc.core.Json.JsonValue):Void {
+			pending.push({info: info, group: group, key: key, t: t, enumField: enumField, filterName: filterName, mk: mk});
 			if (name != null) namesSeen.set(name, true);
 		}
 		inline function lazyResolved(t:T):T return switch (t) {
@@ -2451,8 +2453,8 @@ class Compiler {
 		for (e in entries) switch (e) {
 			case JTLocal(v):
 				var c = ct(v.type);
-				add({kind: "other"}, 0, hxc.typing.Typer.toplevelLocalKey(v, displayOff, wt), v.type, false, v.name,
-					function(i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, c, i));
+				add({kind: "other"}, 0, hxc.typing.Typer.toplevelLocalKey(v, displayOff, wt), v.type, false, v.name, v.name,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, c, i));
 			case JTField(cf, scope, origin, enumAbstract, qualified):
 				// A class field's group comes from its origin and scope.
 				var group = enumAbstract ? (inPattern ? -1 : 21) : switch [origin, scope] {
@@ -2466,24 +2468,26 @@ class Compiler {
 				var q = qualified != null ? qualified : !namesSeen.exists(cf.name);
 				var t = lazyResolved(cf.type);
 				var c = ct(t);
-				add({kind: "other"}, group, cf.name, t, false, cf.name,
-					function(i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, cf, origin, q, c, i, enumAbstract));
+				add({kind: "other"}, group, cf.name, t, false, cf.name, cf.name,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, scope, cf, origin, q, c, i, enumAbstract));
 			case JTEnumCtor(en, ef, origin, register):
 				var q = !namesSeen.exists(ef.name);
 				var c = ct(ef.type);
 				add({kind: "other"}, inPattern ? -1 : 20, StringTools.lpad(Std.string(ef.index), "0", 4), ef.type, true, register,
-					function(i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, origin, q, c, i));
+					ef.name, function(gen, i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, origin, q, c, i));
 			// An enum's own path (pack, Name) is the key a module's main type Name has.
 			case JTPath(p): pathSeen.set(pathKey(p.pack, p.name, p.name), true);
 			case JTLiteral(name, t):
 				var c = ct(t);
-				add({kind: "other"}, 50, name, t, false, name, function(i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, name, c, i));
+				add({kind: "other"}, 50, name, t, false, name, name,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.literalToJson(gen, name, c, i));
 			case JTKeyword(name):
-				add({kind: "other"}, 60, name, null, false, name, function(i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(name, i));
+				add({kind: "other"}, 60, name, null, false, name, name,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(name, i));
 			case JTTypeParam(pc, t):
 				var c = ct(t);
-				add({kind: "typeparam", tparam: pc}, 30, pc.path.name, t, false, pc.path.name,
-					function(i) return hxc.core.CompletionItem.CompletionItem.typeParamToJson(gen, pc, c, i));
+				add({kind: "typeparam", tparam: pc}, 30, pc.path.name, t, false, pc.path.name, pc.path.name,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.typeParamToJson(gen, pc, c, i));
 			// The display module's own types and its imports, in scope (isImport).
 			case JTType(mt):
 				var infos = TypeFunctions.tInfos(mt);
@@ -2493,8 +2497,9 @@ class Compiler {
 					pathSeen.set(key, true);
 					var statusPack = path.name == infos.module.path.name ? path.pack : path.pack.concat([infos.module.path.name]);
 					var st = importStatusOf(path.name, true, statusPack);
-					add({kind: "type", mt: mt}, 31 + st, path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name, null, false, path.name,
-						function(i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
+					var tkey = path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name;
+					add({kind: "type", mt: mt}, 31 + st, tkey, null, false, path.name, tkey,
+						function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
 				}
 		}
 		var fileOrder = new hxc.core.NameHash.HashTableOrder();
@@ -2582,6 +2587,7 @@ class Compiler {
 				if (sf.pack.length == 1) addPackage(sf.pack);
 				continue;
 			}
+			if (hxc.compiler.ToplevelScan.excluded(sf.pack, sf.moduleName)) continue;
 			var contributed = false;
 			for (td in sf.decls) {
 				var name:Null<String> = null, isPrivate = false, meta:hxc.ast.Ast.Metadata = [];
@@ -2606,8 +2612,9 @@ class Compiler {
 				var st = importStatusOf(name, isMain, name == sf.moduleName ? sf.pack : sf.pack.concat([sf.moduleName]));
 				var tdc = td;
 				var sfc = sf;
-				add({kind: "type", pack: sf.pack, moduleName: sf.moduleName, decl: td.decl}, 31 + st, sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name, null, false, isMain ? name : null,
-					function(i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sfc.pack, sfc.moduleName, tdc.decl, tdc.pos, st, i));
+				var tkey = sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name;
+				add({kind: "type", pack: sf.pack, moduleName: sf.moduleName, decl: td.decl}, 31 + st, tkey, null, false, isMain ? name : null, tkey,
+					function(gen, i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sfc.pack, sfc.moduleName, tdc.decl, tdc.pos, st, i));
 				contributed = true;
 			}
 			// A contributing module's package registers once.
@@ -2618,8 +2625,8 @@ class Compiler {
 			var full = packagePaths.get(key);
 			var visible = true;
 			for (s in full) if (s.length > 0 && s.charCodeAt(0) == "_".code) visible = false;
-			if (visible) add({kind: "package"}, 40, key, null, false, full[full.length - 1],
-				function(i) return hxc.core.CompletionItem.CompletionItem.packageToJson(full, i));
+			if (visible) add({kind: "package"}, 40, key, null, false, full[full.length - 1], key,
+				function(gen, i) return hxc.core.CompletionItem.CompletionItem.packageToJson(full, i));
 		}
 		// Sort only when nothing has been typed yet (an empty name), with an expected type compared first,
 		// which runs over the items in collection order and binds what it unifies; the sort is stable.
@@ -2635,30 +2642,35 @@ class Compiler {
 				return a - b;
 			});
 		}
-		// The raise site's filter keeps the order of what it filters; the items are written last, under
-		// their final index.
-		if (filter != null) order = [for (k in order) if (filter(pending[k].info)) k];
-		return [for (k in 0...order.length) pending[order[k]].mk(k)];
+		// The items are written as JSON, under their final index, once the raise site's filter ran.
+		return [for (k in order) {filterName: pending[k].filterName, info: pending[k].info, toJson: pending[k].mk}];
+	}
+
+	// An answer cut short at this same subject start is answered again from that list, without collecting
+	// anything; otherwise the collection runs. The raise site's filter then keeps the order of what it
+	// filters.
+	static function collectAndRaiseItems(startPos:Position, collect:Void->Array<hxc.context.DisplayException.CompletionEntry>,
+			filter:Null<hxc.typing.Typer.JsonItemInfo->Bool>):Array<hxc.context.DisplayException.CompletionEntry> {
+		var last = hxc.context.DisplayException.lastCompletionPos;
+		var items = last != null && startPos.min == last.min ? hxc.context.DisplayException.lastCompletionResult : collect();
+		if (filter != null) items = [for (e in items) if (e.info != null && filter(e.info)) e];
+		return items;
 	}
 
 	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>,
 			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType, ?patternOutermost:Bool):Null<String> {
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
 		function ct(t:T):hxc.core.CompletionItem.CompletionType
 			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t);
-		function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
-			return switch (c.kind) {
-				case KAbstractImpl(a): TAbstractDecl(a);
-				case _: TClassDecl(c);
-			};
-		}
-		var items = jsonCollectedItems(ctx, entries, subjectName, wt, patternOutermost != null, null);
 		var off = hxc.parser.Parser.displayOffset;
 		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
-		var subj = patchCompletionSubject(subjectName, subjectPos == null ? insertPos : subjectPos);
+		// The subject's position is both its start and its insert.
+		var startPos = subjectPos == null ? insertPos : subjectPos;
+		var items = collectAndRaiseItems(startPos, function() return jsonCollectedItems(ctx, entries, subjectName, wt, patternOutermost != null), null);
+		var subj = patchCompletionSubject(subjectName, startPos);
 		// The Pattern completion kind is 11 and carries isOutermostPattern ahead of the same expected-type
 		// fields; a pattern collection is re-raised as that.
 		var modeArgs = expectedTypeFields(gen, ct, wt);
@@ -2669,20 +2681,13 @@ class Compiler {
 			{name: "kind", value: hxc.core.Json.JsonValue.JInt(patternOutermost != null ? 11 : 2)},
 			{name: "args", value: hxc.core.Json.JsonValue.JObject(modeArgs)}
 		]);
-		var result = hxc.core.Json.JsonValue.JObject([
-			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
-			{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
-			{name: "mode", value: mode},
-			{name: "filterString", value: hxc.core.Json.JsonValue.JString(subj.name == null ? "" : subj.name)},
-			{name: "replaceRange", value: gen.generatePosAsRange(subj.pos)}
-		]);
-		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
+		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(hxc.context.DisplayException.fieldsToJson(gen, items, mode, subj.name, subj.pos, startPos)));
 	}
 
 	static function jsonCompletion(ctx:Context):Null<String> {
 		var jc = hxc.typing.Typer.jsonFieldCompletion;
 		if (jc == null) return null;
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
@@ -2698,7 +2703,7 @@ class Compiler {
 		// Structure completion preserves declaration order.
 		if (jc.noSort != true)
 			entries.sort(function(a, b) return a.cf.name < b.cf.name ? -1 : a.cf.name > b.cf.name ? 1 : 0);
-		var items:Array<hxc.core.Json.JsonValue> = [];
+		var items:Array<hxc.context.DisplayException.CompletionEntry> = [];
 		for (i in 0...entries.length) {
 			var e = entries[i];
 			var origin = jc.originModuleType != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(jc.originModuleType)
@@ -2712,7 +2717,8 @@ class Compiler {
 				case TLazy(r): TypeFunctions.lazyType(r);
 				case t: t;
 			};
-			items.push(hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, e.scope, e.cf, origin, true, ct(t), i));
+			var c = ct(t);
+			items.push({filterName: e.cf.name, toJson: function(gen, idx) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, e.scope, e.cf, origin, true, c, idx)});
 		}
 		// The Field completion mode: the receiver item, receiver range, iterator and keyValueIterator, plus
 		// the receiver's module-type block when its type names one.
@@ -2752,14 +2758,9 @@ class Compiler {
 				hxc.parser.Parser.displayDotPos != null
 					? hxc.parser.Parser.displayDotPos
 					: new Position(hxc.parser.Parser.displayFile, off, off));
-		var result = hxc.core.Json.JsonValue.JObject([
-			{name: "items", value: hxc.core.Json.JsonValue.JArray(items)},
-			{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
-			{name: "mode", value: mode},
-			{name: "filterString", value: hxc.core.Json.JsonValue.JString(subj.name == null ? "" : subj.name)},
-			{name: "replaceRange", value: gen.generatePosAsRange(subj.pos)}
-		]);
-		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
+		// The receiver is where the subject starts.
+		var startPos = jc.receiver != null ? jc.receiver.pos : subj.pos;
+		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(hxc.context.DisplayException.fieldsToJson(gen, items, mode, subj.name, subj.pos, startPos)));
 	}
 
 	// The hover item built from a captured typed expression; shared by hover and the
@@ -3077,18 +3078,12 @@ class Compiler {
 
 	static function jsonKeywordCompletion(ctx:Context, keywords:Array<String>, kind:Int,
 			?subjectName:String, ?subjectPos:Position):String {
-		var items = [for (i in 0...keywords.length) hxc.core.CompletionItem.CompletionItem.keywordToJson(keywords[i], i)];
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var items:Array<hxc.context.DisplayException.CompletionEntry> = [for (k in keywords) {filterName: k,
+			toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.keywordToJson(k, i)}];
+		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var subj = patchCompletionSubject(subjectName, subjectPos);
-		subjectName = subj.name;
-		subjectPos = subj.pos;
-		var range = subjectPos == null ? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
-			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subjectPos));
-		var filter = subjectName == null ? "" : subjectName;
-		return '{"items":[' + [for (it in items) hxc.core.Json.stringOfJson(it)].join(",")
-			+ '],"isIncomplete":false,"mode":{"kind":' + kind + '}'
-			+ ',"filterString":' + haxe.Json.stringify(filter)
-			+ ',"replaceRange":' + range + '}';
+		var mode = hxc.core.Json.JsonValue.JObject([{name: "kind", value: hxc.core.Json.JsonValue.JInt(kind)}]);
+		return hxc.core.Json.stringOfJson(hxc.context.DisplayException.fieldsToJson(gen, items, mode, subj.name, subj.pos, subjectPos));
 	}
 
 	// The completion JSON over a type collection: the module types the raise site carried, each as a
@@ -3120,22 +3115,25 @@ class Compiler {
 	}
 
 	static function jsonTypeCompletion(ctx:Context, tl:hxc.compiler.DisplayXml.ToplevelCompletion):String {
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var curMod = displayModule(ctx);
 		var mts = tl.moduleTypes;
-		var items:Array<String> = [];
+		var items:Array<hxc.context.DisplayException.CompletionEntry> = [];
+		var off = hxc.parser.Parser.displayOffset;
+		var startPos = tl.subjectPos != null ? tl.subjectPos : new Position(hxc.parser.Parser.displayFile, off, off);
 		// The type half of the collection, through the same pipeline as the toplevel, with the raise site's
 		// filter on top. An empty subject is what sorts.
 		if (tl.jsonEntries != null) {
-			for (j in jsonCollectedItems(ctx, tl.jsonEntries, tl.subjectName == "" ? null : tl.subjectName, null, false, tl.jsonFilter))
-				items.push(hxc.core.Json.stringOfJson(j));
+			var entries = tl.jsonEntries;
+			items = collectAndRaiseItems(startPos,
+				function() return jsonCollectedItems(ctx, entries, tl.subjectName == "" ? null : tl.subjectName, null, false), tl.jsonFilter);
 			mts = [];
 		}
-		if (tl.jsonEntries == null) for (i in 0...mts.length) {
-			var inf = TypeFunctions.tInfos(mts[i]);
-			var st = importStatusFor(ctx, curMod, inf.path);
-			items.push(hxc.core.Json.stringOfJson(
-				hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mts[i], hxc.core.CompletionItem.ImportStatusTools.toInt(st), i)));
+		if (tl.jsonEntries == null) for (mt in mts) {
+			var inf = TypeFunctions.tInfos(mt);
+			var st = hxc.core.CompletionItem.ImportStatusTools.toInt(importStatusFor(ctx, curMod, inf.path));
+			items.push({filterName: hxc.core.Globals.sTypePath(inf.path),
+				toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i)});
 		}
 		// The collection reaches the class-path exploration as well as the loaded types, so a type no
 		// compilation has touched is offered too - from its PARSED declaration, which is all there is for
@@ -3144,20 +3142,21 @@ class Compiler {
 			var seen = new haxe.ds.StringMap<Bool>();
 			for (mt in mts) seen.set(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)), true);
 			heritageScan(ctx, tl, seen, function(sf, td) {
-				items.push(hxc.core.Json.stringOfJson(hxc.core.CompletionItem.CompletionItem.declTypeToJson(
-					gen, sf.pack, sf.moduleName, td.decl, td.pos, 1, items.length)));
+				var name = switch (td.decl) {
+					case EClass(d): d.dName.name;
+					case _: null;
+				};
+				items.push({filterName: sf.pack.length == 0 ? name : sf.pack.join(".") + "." + name,
+					toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.declTypeToJson(gen, sf.pack, sf.moduleName, td.decl, td.pos, 1, i)});
 			});
 		}
 		var subj = patchCompletionSubject(tl.subjectName, tl.subjectPos);
-		var range = subj.pos == null
-			? '{"start":{"line":0,"character":0},"end":{"line":0,"character":0}}'
-			: hxc.core.Json.stringOfJson(gen.generatePosAsRange(subj.pos));
-		var filter = subj.name == null ? "" : subj.name;
 		// StructExtension is the only one of these kinds carrying args.
-		var modeArgs = tl.kind != 7 ? "" : ',"args":{"isIntersectionType":' + tl.structExtensionIsIntersection + '}';
-		return '{"items":[' + items.join(",") + '],"isIncomplete":false,"mode":{"kind":' + tl.kind + modeArgs + '}'
-			+ ',"filterString":' + haxe.Json.stringify(filter)
-			+ ',"replaceRange":' + range + '}';
+		var modeFields:Array<hxc.core.Json.JsonField> = [{name: "kind", value: hxc.core.Json.JsonValue.JInt(tl.kind)}];
+		if (tl.kind == 7) modeFields.push({name: "args", value: hxc.core.Json.JsonValue.JObject([
+			{name: "isIntersectionType", value: hxc.core.Json.JsonValue.JBool(tl.structExtensionIsIntersection == true)}
+		])});
+		return hxc.core.Json.stringOfJson(hxc.context.DisplayException.fieldsToJson(gen, items, hxc.core.Json.JsonValue.JObject(modeFields), subj.name, subj.pos, startPos));
 	}
 
 	static function jsonRpcAnswer(ctx:Context, resultJson:String):String {
@@ -3470,20 +3469,18 @@ class Compiler {
 		return paramIndex;
 	}
 
-	// List the module's public types, plus the main type's public statics when completing an import.
+	// A type-path completion is one list of items - the packages and modules under the path, or the
+	// enum constructors, sub-types and statics of the module it names - that the legacy lane prints
+	// and the json lane writes as completion JSON, in the full generation mode, under the Field mode
+	// over the module the path names.
 	static function handleTypePathCompletion(ctx:Context, tc:hxc.parser.Parser.TypePathCompletion):Void {
 		// Reset the display position so loading the module does not raise again. It is restored once the
 		// module is loaded, so the answer's replace range is still cut at the cursor.
 		var displayOff = hxc.parser.Parser.displayOffset;
 		hxc.parser.Parser.displayOffset = -1;
-		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
-		// The same collection answers as JSON when json_out is set, under CRField over the module the
-		// path names so far.
-		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
-		var jitems:Array<hxc.core.Json.JsonValue> = [];
+		var items:Array<{field:hxc.compiler.DisplayXml.DisplayField, entry:hxc.context.DisplayException.CompletionEntry}> = [];
 		if (tc.module != null) {
-			// An uppercase last pack segment names the module and tc.module a subtype of it
-			// sl_pack/s_module split).
+			// An uppercase last pack segment names the module and tc.module a sub-type of it.
 			var pack = tc.pack.copy();
 			var sModule = tc.module;
 			if (pack.length > 0) {
@@ -3499,36 +3496,67 @@ class Compiler {
 				return;
 			};
 			try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
+			// A type's import status is asked of a FRESH typer, so only what the bare name resolves to from
+			// nowhere is Imported.
+			function ct(t:T):hxc.core.CompletionItem.CompletionType
+				return hxc.core.CompletionItem.CompletionTypeTools.fromType(function(path) return importStatusFor(ctx, null, path), t);
+			var statics:Null<hxc.core.Type.TClass> = null;
+			var enumStatics:Null<hxc.core.Type.TEnum> = null;
+			var types = [];
 			for (mt in m.types) {
 				var info = hxc.core.TypeFunctions.tInfos(mt);
-				if (info.isPrivate) continue;
-				if (tc.module == sModule) {
-					fields.push({kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null});
-					jitems.push(hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, jitems.length));
-				}
+				// The module's main type is where an import finds its statics.
 				if (tc.isImport && info.path.name == tc.module) switch (mt) {
-					case TClassDecl(c):
-						for (cf in c.orderedStatics) {
-							if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
-							var kind = cf.kind.match(Method(_)) ? "method" : "var";
-							fields.push({kind: kind, name: cf.name, type: TPrinting.sTypeStr(cf.type), doc: cf.doc == null ? null : Ast.genDocText(cf.doc)});
-							jitems.push(hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf,
-								hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c)), true,
-								hxc.core.CompletionItem.CompletionTypeTools.fromType(function(_) return hxc.core.CompletionItem.ImportStatus.Imported, cf.type),
-								jitems.length));
-						}
-					case TEnumDecl(en):
-						for (name in en.constrs.keys()) {
-							var ef = en.constrs.get(name);
-							var kind = hxc.core.TypeFunctions.follow(ef.type).match(TFun(_)) ? "method" : "var";
-							fields.push({kind: kind, name: ef.name, type: TPrinting.sTypeStr(ef.type), doc: ef.doc == null ? null : Ast.genDocText(ef.doc)});
-						}
+					case TClassDecl(c): statics = c;
+					case TAbstractDecl({impl: c}) if (c != null): statics = c;
+					case TEnumDecl(en): enumStatics = en;
 					case _:
+				}
+				if (!info.isPrivate) types.push(mt);
+			}
+			// The sub-types are listed only when the path named the module itself.
+			if (tc.module == sModule) for (mt in types) {
+				var info = hxc.core.TypeFunctions.tInfos(mt);
+				items.push({field: {kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null},
+					entry: {filterName: hxc.core.Globals.sTypePath(info.path),
+						toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, i)}});
+			}
+			// A public static, in the class's own scope.
+			if (statics != null) {
+				var c = statics;
+				var origin = switch (c.kind) {
+					case KAbstractImpl(a): hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
+					case _: hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
+				};
+				for (cf in c.orderedStatics) {
+					if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
+					var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+					var c2 = ct(t);
+					items.push({field: {kind: cf.kind.match(Method(_)) ? "method" : "var", name: cf.name, type: TPrinting.sTypeStr(cf.type),
+							doc: cf.doc == null ? null : Ast.genDocText(cf.doc)},
+						entry: {filterName: cf.name,
+							toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, origin, true, c2, i)}});
+				}
+			}
+			// The enum's constructors go IN FRONT, folded over the constructor map (ascending by name) with
+			// a prepend - so they read descending.
+			if (enumStatics != null) {
+				var en = enumStatics;
+				var names = [for (n in en.constrs.keys()) n];
+				hxc.core.StringSort.sort(names);
+				for (n in names) {
+					var ef = en.constrs.get(n);
+					var c2 = ct(ef.type);
+					items.unshift({field: {kind: hxc.core.TypeFunctions.follow(ef.type).match(TFun(_)) ? "method" : "var", name: ef.name,
+							type: TPrinting.sTypeStr(ef.type), doc: ef.doc == null ? null : Ast.genDocText(ef.doc)},
+						entry: {filterName: ef.name,
+							toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
+								hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), true, c2, i)}});
 				}
 			}
 		} else {
-			// The packages and then the modules read_type_path finds across the class paths, each sorted and
-			// deduplicated.
+			// The packages and then the modules the type-path read finds across the class paths, each
+			// sorted and deduplicated.
 			var r = readTypePath(ctx, tc.pack);
 			// A package with neither modules nor sub-packages is an abort at the null position, "No modules
 			// found in <pack>", not an empty list. Reported the way an abort is - the bare message - rather
@@ -3539,15 +3567,18 @@ class Compiler {
 				return;
 			}
 			for (n in r.packs) {
-				fields.push({kind: "package", name: n, type: "", doc: null});
-				jitems.push(hxc.core.CompletionItem.CompletionItem.packageToJson(tc.pack.concat([n]), jitems.length));
+				var full = tc.pack.concat([n]);
+				items.push({field: {kind: "package", name: n, type: "", doc: null},
+					entry: {filterName: full.join("."), toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.packageToJson(full, i)}});
 			}
 			for (n in r.modules) {
-				fields.push({kind: "type", name: n, type: "", doc: null});
-				jitems.push(moduleRefToJson(tc.pack, n, jitems.length));
+				var pack = tc.pack;
+				items.push({field: {kind: "type", name: n, type: "", doc: null},
+					entry: {filterName: pack.length == 0 ? n : pack.join(".") + "." + n, toJson: function(gen, i) return moduleRefToJson(pack, n, i)}});
 			}
 		}
 		if (ctx.jsonRpcId != null) {
+			var gen = hxc.context.DisplayJson.createJsonContext(false);
 			// The mode's module path is the pack consumed so far, its last segment naming the module; an
 			// empty pack gives the empty path.
 			var mpack = tc.pack.copy();
@@ -3571,18 +3602,14 @@ class Compiler {
 					{name: "keyValueIterator", value: hxc.core.Json.JsonValue.JNull}
 				])}
 			]);
-			// None pos: the range is the path segment itself, and cuts the replace range at the cursor.
-			var result = hxc.core.Json.JsonValue.JObject([
-				{name: "items", value: hxc.core.Json.JsonValue.JArray(jitems)},
-				{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
-				{name: "mode", value: mode},
-				{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
-				{name: "replaceRange", value: gen.generatePosAsRange(new Position(tp.file, tp.min, displayOff))}
-			]);
+			// The subject is the path segment, the insert position cut at the cursor by the completion
+			// JSON.
+			var result = hxc.context.DisplayException.fieldsToJson(gen, [for (it in items) it.entry], mode, null,
+				new Position(tp.file, tp.min, displayOff), tp);
 			answerOut(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result)));
 			return;
 		}
-		answerOut(hxc.compiler.DisplayXml.printFields(fields));
+		answerOut(hxc.compiler.DisplayXml.printFields([for (it in items) it.field]));
 	}
 
 	// Every class path is read as `path + pack`, so the class path "" reads the bare pack; with no pack
@@ -3691,20 +3718,98 @@ class Compiler {
 		return null;
 	}
 
-	// Under DMDefault: completing a metadata name answers the whole registry as CRMetadata fields. The
-	// subject is null for the completion marker, which is why a bare @ lists everything rather than
-	// filtering.
+	// Completing a metadata name answers the whole registry as Metadata fields. The subject is null for the
+	// completion marker, which is why a bare @ lists everything rather than filtering.
+	// Every metadata, the compiler's and the user's, sorted by name together (plain string compare), each
+	// as a Metadata item; the written name is the subject, none for the bare `@` (Meta.HxCompletion).
+	// The Metadata item's args for a compiler metadata.
+	static function registryMetaItem(mv:Array<hxc.core.Json.JsonField>):hxc.core.Json.JsonValue {
+		var name = hxc.context.MetaRegistry.stringField(mv, "metadata", "");
+		// Reverse prepended HasParam entries to restore their order.
+		var params = hxc.context.MetaRegistry.arrayField(mv, "params").copy();
+		params.reverse();
+		return hxc.core.Json.JsonValue.JObject([
+			{name: "name", value: hxc.core.Json.JsonValue.JString("@" + name)},
+			{name: "doc", value: hxc.core.Json.JsonValue.JString(hxc.context.MetaRegistry.stringField(mv, "doc", ""))},
+			{name: "parameters", value: hxc.core.Json.JsonValue.JArray(params)},
+			{name: "platforms", value: hxc.core.Json.JsonValue.JArray(hxc.context.MetaRegistry.arrayField(mv, "platforms"))},
+			{name: "targets", value: hxc.core.Json.JsonValue.JArray(hxc.context.MetaRegistry.arrayField(mv, "targets"))},
+			{name: "internal", value: hxc.core.Json.JsonValue.JBool(hxc.context.MetaRegistry.boolField(mv, "internal"))},
+			{name: "origin", value: hxc.core.Json.JsonValue.JString("haxe compiler")},
+			{name: "links", value: hxc.core.Json.JsonValue.JArray(hxc.context.MetaRegistry.arrayField(mv, "links"))}
+		]);
+	}
+
+	// Under hover with json output, a compiler metadata's name answers with its own item, which
+	// documents nothing, over the entry; a custom one answers nothing here.
+	static function jsonMetaHover(ctx:Context):Null<String> {
+		var want = hxc.parser.Parser.displayMetaName;
+		if (want == null || hxc.parser.Parser.displayMetaPos == null) return null;
+		for (mv in hxc.context.MetaRegistry.metas())
+			if (hxc.context.MetaRegistry.stringField(mv, "metadata", "") == want) {
+				var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+				return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(hxc.core.Json.JsonValue.JObject([
+					{name: "documentation", value: hxc.core.Json.JsonValue.JNull},
+					{name: "range", value: gen.generatePosAsRange(hxc.parser.Parser.displayMetaPos)},
+					{name: "item", value: hxc.core.Json.JsonValue.JObject([
+						{name: "kind", value: hxc.core.Json.JsonValue.JString("Metadata")},
+						{name: "args", value: registryMetaItem(mv)}
+					])},
+					{name: "expected", value: hxc.core.Json.JsonValue.JNull}
+				])));
+			}
+		return null;
+	}
+
 	static function answerMetadataCompletion(ctx:Context):Void {
-		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
+		var metas:Array<{name:String, doc:String, json:hxc.core.Json.JsonValue}> = [];
 		for (mv in hxc.context.MetaRegistry.metas()) {
 			var name = hxc.context.MetaRegistry.stringField(mv, "metadata", "");
 			// The 4.3.7 binary's generated Meta list predates this meta.json entry.
 			if (name == ":inlineConstructorArgument") continue;
-			fields.push({kind: "metadata", name: "@" + name, type: "", doc: hxc.context.MetaRegistry.stringField(mv, "doc", "")});
+			metas.push({name: name, doc: hxc.context.MetaRegistry.stringField(mv, "doc", ""), json: registryMetaItem(mv)});
 		}
-		for (k in ctx.userMetas.keys())
-			fields.push({kind: "metadata", name: "@" + k, type: "", doc: ctx.userMetas.get(k).doc});
-		answerOut(hxc.compiler.DisplayXml.printFields(fields));
+		for (k in ctx.userMetas.keys()) {
+			var e = ctx.userMetas.get(k);
+			function strs(l:Array<String>):Array<hxc.core.Json.JsonValue> return [for (x in l) hxc.core.Json.JsonValue.JString(x)];
+			var params = e.params.copy();
+			params.reverse();
+			var links = e.links.copy();
+			links.reverse();
+			metas.push({name: k, doc: e.doc, json: hxc.core.Json.JsonValue.JObject([
+				{name: "name", value: hxc.core.Json.JsonValue.JString("@" + k)},
+				{name: "doc", value: hxc.core.Json.JsonValue.JString(e.doc)},
+				{name: "parameters", value: hxc.core.Json.JsonValue.JArray(strs(params))},
+				{name: "platforms", value: hxc.core.Json.JsonValue.JArray(strs(e.platforms))},
+				{name: "targets", value: hxc.core.Json.JsonValue.JArray(strs(e.targets))},
+				{name: "internal", value: hxc.core.Json.JsonValue.JBool(false)},
+				{name: "origin", value: hxc.core.Json.JsonValue.JString(e.source == null ? "user-defined" : e.source)},
+				{name: "links", value: hxc.core.Json.JsonValue.JArray(strs(links))}
+			])});
+		}
+		metas.sort(function(a, b) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+		if (ctx.jsonRpcId != null) {
+			var items:Array<hxc.context.DisplayException.CompletionEntry> = [for (m in metas) {
+				filterName: m.name,
+				toJson: function(gen, i) {
+					var fl:Array<hxc.core.Json.JsonField> = [
+						{name: "kind", value: hxc.core.Json.JsonValue.JString("Metadata")},
+						{name: "args", value: m.json}
+					];
+					if (i != null) fl.push({name: "index", value: hxc.core.Json.JsonValue.JInt(i)});
+					return hxc.core.Json.JsonValue.JObject(fl);
+				}
+			}];
+			var gen = hxc.context.DisplayJson.createJsonContext(true);
+			var name = hxc.parser.Parser.displayMetaName;
+			var mp = hxc.parser.Parser.displayMetaPos;
+			var subj = patchCompletionSubject(name == hxc.parser.Parser.HX_COMPLETION_META ? null : name, mp);
+			var mode = hxc.core.Json.JsonValue.JObject([{name: "kind", value: hxc.core.Json.JsonValue.JInt(3)}]);
+			answerOut(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(
+				hxc.context.DisplayException.fieldsToJson(gen, items, mode, subj.name, subj.pos, mp))));
+			return;
+		}
+		answerOut(hxc.compiler.DisplayXml.printFields([for (m in metas) {kind: "metadata", name: "@" + m.name, type: "", doc: m.doc}]));
 	}
 
 	// The display file is looked up in the cache, and a file it does not hold is removed and its
