@@ -629,7 +629,9 @@ class Typeload {
 		// typedef the module declares later) is forced once the module is initialised.
 		if (displayedField != null) {
 			var dcf = displayedField;
-			ctx.delay(Context.PBuildClass, function() hxc.typing.Typer.displayAnonField(dcf));
+			var an = switch (anon) { case TAnon(a): a; case _: null; };
+			ctx.delay(Context.PBuildClass, function() hxc.typing.Typer.displayField(
+				hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an), CFSMember, dcf, dcf.namePos));
 		}
 		return anon;
 	}

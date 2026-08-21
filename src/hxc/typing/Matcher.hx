@@ -445,10 +445,11 @@ class PatternMaker {
 		if (isFinal) TypeFunctions.addVarFlag(v, VFinal);
 		pctx.currentLocals.set(name, {v: v, p: p});
 		pctx.ctx.locals.set(name, v);
-		// The marked identifier after the pattern is made, so it resolves to the local the pattern just
-		// declared and answers exactly as a TLocal would. hxc has no EDisplay node in the matcher, so the
-		// local answers from where it is allocated.
-		if (Typer.atDisplayPos(p)) Typer.displayVariable(pctx.ctx, v, p);
+		// The marked identifier is typed after the pattern is made, so it resolves to the local the
+		// pattern just declared and answers exactly as a TLocal would - against the pattern's expected
+		// type, which its hover carries. hxc has no EDisplay node in the matcher, so the local answers
+		// from where it is allocated.
+		if (Typer.atDisplayPos(p)) Typer.displayVariable(pctx.ctx, v, p, WithTypeTools.withType(t));
 		return v;
 	}
 

@@ -486,8 +486,9 @@ class ModuleLoader {
 		// unresolved imports report the entire statement.
 		function checkPathDisplay(path:Array<PlacedName>, declPos:Position):Void {
 			// Hover resolves module and subtype segments as types; usage and implementation display fields
-			// or raise type paths.
-			var otherMode = hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation;
+			// or raise type paths. Signature-help field branches return no answer.
+			var otherMode = hxc.typing.Typer.displayUsage || hxc.typing.Typer.displayImplementation
+				|| hxc.typing.Typer.displaySignature;
 			if (hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition
 					|| hxc.typing.Typer.displayDefinition || otherMode) {
 				var pack:Array<String> = [];

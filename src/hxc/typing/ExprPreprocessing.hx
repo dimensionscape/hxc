@@ -182,7 +182,7 @@ class ExprPreprocessing {
 					}
 				];
 				var mdef = def == null ? null : {e: def.e == null ? null : m(def.e), pos: def.pos};
-				loop(changed ? new Expr(ESwitch(me1, mcases, mdef), e.pos) : e);
+				loop(changed ? new Expr(ESwitch(me1, mcases, mdef), e.pos) : e, e);
 			case _:
 				// Rebuild only along the path that actually changed. hxc keys several display
 				// mechanisms on node IDENTITY (markedNode, Typer.synthesizedNodes), so a
@@ -193,11 +193,13 @@ class ExprPreprocessing {
 					if (m != c) changed = true;
 					return m;
 				}, e);
-				loop(changed ? mapped : e);
+				loop(changed ? mapped : e, e);
 		}
 	}
 
-	static function loop(e:Expr):Expr {
+	// `orig` is the node of the tree hxc TYPES that `e` was mapped from (e itself when nothing under
+	// it changed): an arm that replaces the node has to replace that one.
+	static function loop(e:Expr, orig:Expr):Expr {
 		switch (e.expr) {
 			// The cursor on a local function's name answers nothing at all.
 			case EFunction(FKNamed(name, _), _) if (isAnnotated(name.pos) && isCompletion):
@@ -260,14 +262,15 @@ class ExprPreprocessing {
 			case EBlock([]) if (isAnnotated(e.pos)):
 				return annotate(e, DKStructure);
 
-			// A block holding exactly the marked identifier is a structure literal.
+			// A block holding exactly the marked identifier is a structure literal - typed where the block
+			// stood, so the literal replaces it in the tree being typed.
 			case EBlock([{expr: EDisplay({expr: EConst(CIdent(s)), pos: pn}, DKMarked)}]):
 				if (!isCompletion) {}
 				else {
-					var od = new Expr(EObjectDecl([
+					splice(orig, EObjectDecl([
 						{name: s, pos: pn, quotes: NoQuotes, expr: new Expr(EConst(CIdent("null")), Position.nullPos)}
-					]), e.pos);
-					return annotate(od, DKStructure);
+					]));
+					return annotate(orig, DKStructure);
 				}
 
 			case EBlock(el) if (isAnnotated(e.pos) && isCompletion):

@@ -1527,7 +1527,8 @@ class Typer {
 							for (f in fields) if (atDisplayPos(f.pos)) {
 								var arg = argByName.get(f.name);
 								var ap = argPos.get(f.name);
-								if (arg != null && ap != null) displayAnonField(TypeFunctions.mkField(f.name, arg.t, ap, ap));
+								if (arg != null && ap != null)
+									displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, TypeFunctions.mkField(f.name, arg.t, ap, ap), f.pos);
 							}
 						}
 					}
@@ -1634,14 +1635,15 @@ class Typer {
 						var ft:Null<T> = dynParam != null ? dynParam : (ef != null ? ef.type : null);
 						// The cursor on a field name answers with the field it matched in the EXPECTED structure, so
 						// it reports that field's declaration and its declared type rather than the literal's own.
-						if (ef != null && atDisplayPos(f.pos)) displayAnonField(ef);
+						if (ef != null && atDisplayPos(f.pos)) displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, ef, f.pos);
 						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name) : WithTypeTools.value;
 						var te = typeExpr(ctx, f.expr, fwt);
 						// With no expected structure the field answers with itself, typed from its value.
 						// The field is built (and displayed) whether or not the name is a valid identifier;
 						// only the anon entry below is guarded.
 						if (expected == null && dynParam == null && atDisplayPos(f.pos))
-							displayAnonField(TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
+							displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember,
+								TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos), f.pos);
 						// Against an expected field type, coerce the value to it so an implicit abstract cast
 						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
 						if (ft != null) {
@@ -1885,13 +1887,13 @@ class Typer {
 		hoverFound = {t: hoverItemType(e2), p: h.p, e: e2, wt: h.wt, tctx: h.tctx, mt: h.mt, fromWalk: h.fromWalk, isQualified: h.isQualified};
 	}
 
-	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool}> = null;
+	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool, ?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}}> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
 	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
 	// BoolLit(true))` hovers as E<Unknown<0>>. hxc records the answer and types on, so the record
 	// keeps a copy in which what is unbound now stays unbound.
-	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool}>) {
+	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool, ?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}}>) {
 		if (v != null && v.t != null) v.t = freezeMonos(v.t);
 		// A field's bare name is retyped where the hovered expression was typed, which is where the hover
 		// is raised; printed later, the context has moved on (other locals, another field) and the retype
@@ -3257,56 +3259,63 @@ class Typer {
 		}
 	}
 
-	// Reached an ANONYMOUS structure's field: the declaration answers by itself, exactly as a class
-	// field's does.
-	public static function displayAnonField(cf:TClassField):Void {
+	// A field the cursor NAMES answers by itself - its name for a definition, the field as the usage
+	// target, and for a hover the field's own item in the scope and origin the caller gives, over the range
+	// the caller gives. An abstract's member shows in its using form and a class constructor as the
+	// function that produces its class.
+	public static function displayField(origin:hxc.core.CompletionItem.ClassFieldOrigin, scope:ClassFieldScope,
+			cf:TClassField, p:Position):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [cf.namePos];
 		} else if (displayHover || displayTypeDefinition) {
-			if (hoverFound == null) {
-				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-				hoverFound = {t: t, p: cf.namePos};
+			// A field display raises, so the field always beats whatever else covers the cursor; recorded,
+			// that is the same narrowest-range rule checkDisplayHover applies.
+			if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)) {
+				var shown = TypeFunctions.hasClassFieldFlag(cf, CfImpl) ? prepareUsingField(cf) : cf;
+				switch (origin) {
+					case Self(TClassDecl(c)) if (scope == CFSConstructor):
+						switch (TypeFunctions.follow(shown.type)) {
+							case TFun(sig):
+								shown = TypeFunctions.copyField(shown);
+								shown.type = TFun({args: sig.args, ret: TInst(c, TypeFunctions.extractParamTypes(c.params))});
+							case _:
+						}
+					case _:
+				}
+				var t = switch (shown.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+				// A hover on the class field item, with no expected type and without merging the core
+				// type's doc: only the accesses of a displayed expression merge it.
+				hoverFound = {t: t, p: p, isQualified: true, displayField: true,
+					fieldItem: {cf: shown, scope: scope, origin: origin}};
 			}
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null) usageTargetField = cf;
 		}
 	}
 
-	// A DECLARED class field the cursor sits on answers by itself, without any expression referring to
-	// it. An abstract's own member drops the leading `this` its impl carries prepare_using_field), and
-	// a constructor reads as the function that produces its class , which is not what its stored
-	// signature says.
-	public static function displayClassField(c:Null<TClass>, isCtor:Bool, cf:TClassField, p:Position):Void {
-		if (displayDefinition) {
-			if (displayFound == null) displayFound = [cf.namePos];
-		} else if (displayHover || displayTypeDefinition) {
-			if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)) {
-				var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) t = switch (TypeFunctions.follow(t)) {
-					case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
-					case t2: t2;
-				};
-				if (isCtor && c != null) switch (TypeFunctions.follow(t)) {
-					case TFun(sig): t = TFun({args: sig.args, ret: TInst(c, TypeFunctions.extractParamTypes(c.params))});
-					case _:
-				}
-				// raise_hover (make_ci_class_field (CompletionClassField.make cf scope origin true)): the item
-				// is the field, in its scope and qualified - where its documentation and the json item come
-				// from.
-				var item:Null<TExpr> = null;
-				if (c != null) {
-					var params = TypeFunctions.extractParamTypes(c.params);
-					item = if (isCtor) TypeFunctions.mk(TNew(c, params, []), t, p)
-						else if (c.statics.get(cf.name) == cf && !TypeFunctions.hasClassFieldFlag(cf, CfImpl))
-							TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TClassDecl(c), p), FStatic(c, cf)), t, p)
-						else TypeFunctions.mk(TField(TypeFunctions.mk(TConst(TThis), TInst(c, params), p), FInstance(c, params, cf)), t, p);
-				}
-				// 's item, with no merge_core_doc: only display_expr's field accesses merge /:80).
-				hoverFound = {t: t, p: p, e: item, isQualified: true, displayField: true};
-			}
-		} else if (displayUsage || displayImplementation) {
-			if (usageTargetField == null) usageTargetField = cf;
-		}
+	// A DECLARED class field the cursor sits on answers through displayField by itself, without any
+	// expression referring to it.
+	public static function displayClassField(c:TClass, isCtor:Bool, cf:TClassField, p:Position):Void {
+		// An abstract's impl member is the abstract's, its `_new` the constructor named `new`, and any
+		// other impl static a static; a class field is a static, the constructor or a member by its
+		// declaration.
+		var isStatic = c.statics.get(cf.name) == cf;
+		var scope:ClassFieldScope = CFSMember;
+		var origin = switch (c.kind) {
+			case KAbstractImpl(a):
+				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)) {
+					if (cf.name == "_new") {
+						scope = CFSConstructor;
+						cf = TypeFunctions.copyField(cf);
+						cf.name = "new";
+					}
+				} else scope = CFSStatic;
+				hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
+			case _:
+				scope = isStatic ? CFSStatic : isCtor ? CFSConstructor : CFSMember;
+				hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
+		};
+		displayField(origin, scope, cf, p);
 	}
 
 	// A constructor's declaration answers by itself. The hover item is the enum field, which is where
@@ -3449,13 +3458,15 @@ class Typer {
 		}
 	}
 
-	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position):Void {
+	// `wt` is the expected type of a variable a typer rule answers as an expression rather than as a
+	// variable: a pattern capture raises its hover with it.
+	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position, ?wt:WithType):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [v.pos];
 		} else if (displayHover || displayTypeDefinition) {
 			// DMTypeDefinition resolves from the same captured type.
 			if (hoverFound == null)
-				hoverFound = {t: v.type, p: p, e: TypeFunctions.mk(TLocal(v), v.type, p), tctx: ctx};
+				hoverFound = {t: v.type, p: p, e: TypeFunctions.mk(TLocal(v), v.type, p), tctx: ctx, wt: wt};
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null && usageTargetVar == null && usageTargetEnumField == null)
 				usageTargetVar = v;
@@ -6807,7 +6818,8 @@ class Typer {
 				// the instance - not the instance type, which is all the typed node itself carries.
 				if ((displayHover || displayTypeDefinition) && chosenArgs != null && atExprHoverPos(p)
 						&& (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min)))
-					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p, e: TypeFunctions.mk(TNew(c, tl, []), t, p), isQualified: true};
+					hoverFound = {t: TFun({args: chosenArgs, ret: t}), p: p, e: TypeFunctions.mk(TNew(c, tl, []), t, p), isQualified: true,
+						wt: withType};
 				TypeFunctions.mk(TNew(c, tl, r.el), t, p);
 			case TAbstract(a, atl) if (TypeFunctions.hasMeta(":multiType", a.meta)):
 				// A @:multiType abstract (Map) picks a concrete implementation by unifying the key type

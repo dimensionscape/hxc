@@ -197,12 +197,13 @@ class Parser {
 		return displayOffset >= dotPos.max && displayOffset <= peekInfo().pos.max;
 	}
 
-	// An uppercase last segment names the module, the rest is the pack.
-	static function raiseTypePath(segments:Array<String>, isImport:Bool):Dynamic {
+	// An uppercase last segment names the module, the rest is the pack; `p` is the span every caller raises
+	// it with, the path so far up to the dot.
+	static function raiseTypePath(segments:Array<String>, isImport:Bool, p:Position):Dynamic {
 		var last = segments.length == 0 ? null : segments[segments.length - 1];
 		if (last != null && last.charCodeAt(0) >= "A".code && last.charCodeAt(0) <= "Z".code)
-			throw new TypePathCompletion(segments.slice(0, segments.length - 1), last, isImport);
-		throw new TypePathCompletion(segments.copy(), null, isImport);
+			throw new TypePathCompletion(segments.slice(0, segments.length - 1), last, isImport, p);
+		throw new TypePathCompletion(segments.copy(), null, isImport, p);
 	}
 
 	// The source text, for the on-demand markup scan. Null for the token-only entry points, which parse
@@ -1462,7 +1463,7 @@ class Parser {
 		if (isLowerIdent(name)) {
 			if (tokEq(peek(), Dot)) {
 				var dp = next().pos;
-				if (checkResume(dp)) raiseTypePath(pack.concat([name]), false);
+				if (checkResume(dp)) raiseTypePath(pack.concat([name]), false, Position.union(p0 == null ? p1 : p0, dp));
 				return parseTypePath1(p0 == null ? p1 : p0, pack.concat([name]));
 			} else {
 				var cd = checkDisplay();
@@ -1484,7 +1485,7 @@ class Parser {
 		if (tokEq(peek(), Dot)) {
 			var dp = next().pos;
 			// Past a name that is not a lowercase identifier, the name is the module
-			if (checkResume(dp)) throw new TypePathCompletion(pack.copy(), name, false);
+			if (checkResume(dp)) throw new TypePathCompletion(pack.copy(), name, false, Position.union(p0 == null ? p1 : p0, dp));
 			switch (peek()) {
 				case Const(CIdent(sn)) if (!isLowerIdent(sn)):
 					p2 = next().pos;
@@ -2183,14 +2184,15 @@ class Parser {
 		// what encloses the cursor, and Typer's marked-node branch answers from that.
 		var resumed = checkResume(p);
 		if (resumed) {
-			// The completion's SUBJECT is the field name already written, spanning back from the display
-			// expression's end by that name's length. The empty field name above is only how the request
-			// travels, so the name is kept here.
+			// The receiver alone is the display node, so the completion has no subject - a name written
+			// after the dot is not one (a cursor inside that name gets the marked EField as its subject,
+			// Typer's marked-node branch). The name only gives the node its span and the insert position its
+			// start.
 			displayDotName = null;
 			displayDotPos = null;
 			var np = peekInfo().pos;
 			if (np.min == p.max) switch (peek()) {
-				case Const(CIdent(n)): displayDotName = n; displayDotPos = np;
+				case Const(CIdent(_)): displayDotPos = np;
 				case _:
 			}
 			var eEnd = displayDotPos != null ? displayDotPos : p;
@@ -4147,7 +4149,7 @@ class Parser {
 					switch (peek()) {
 						case Dot:
 							var dp = next().pos;
-							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], true);
+							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], true, Position.union(path[0].pos, dp));
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});
@@ -4210,7 +4212,7 @@ class Parser {
 							var dp = next().pos;
 							// The cursor right after the dot completes on the path so far, the same rule
 							// the import path carries.
-							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], false);
+							if (checkResume(dp)) raiseTypePath([for (pn in path) pn.name], false, Position.union(path[0].pos, dp));
 							switch (peek()) {
 								case Const(CIdent(k)): var pk = next().pos; path.push({name: k, pos: pk});
 								case Kwd(KwdMacro): var pk = next().pos; path.push({name: "macro", pos: pk});

@@ -2790,18 +2790,13 @@ class Compiler {
 					case FInstance(c, _, cf):
 						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(t));
 					case FClosure(cwp, cf):
-						var origin = if (cwp != null) hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c))
-							else switch (TypeFunctions.follow(e1.type)) {
-								case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
-								case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
-							};
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
+						var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
+						if (origin != null)
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
 					case FAnon(cf):
-						var origin = switch (TypeFunctions.follow(e1.type)) {
-							case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
-							case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
-						};
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
+						var origin = anonFieldOrigin(e1);
+						if (origin != null)
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
 					case FEnum(en, ef):
 						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(t));
 					case FDynamic(_):
@@ -2856,6 +2851,18 @@ class Compiler {
 		}
 	}
 
+	// A field of a STRUCTURE is the structure's - or, reached through a typedef, that typedef's (Self) -
+	// and a receiver that is no structure answers as an expression (null).
+	static function anonFieldOrigin(e1:hxc.core.Type.TExpr):Null<hxc.core.CompletionItem.ClassFieldOrigin> {
+		return switch (TypeFunctions.follow(e1.type)) {
+			case TAnon(an): switch (e1.type) {
+					case TType(td, _): hxc.core.CompletionItem.ClassFieldOrigin.Self(TTypeDecl(td));
+					case _: hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
+				};
+			case _: null;
+		};
+	}
+
 	// Hover as JSON: {documentation, range, item, expected}.
 	static function jsonHover(ctx:Context):Null<String> {
 		hxc.typing.Typer.resolveHoverMacroField(ctx);
@@ -2883,9 +2890,14 @@ class Compiler {
 			// A declaration's own item is qualified outright.
 			inline function qualified(name:String):Bool
 				return h.isQualified != null ? h.isQualified : hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
+			// A field the cursor NAMES answers with that field's own item.
+			if (h.fieldItem != null) {
+				var fi = h.fieldItem;
+				doc = fi.cf.doc;
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, fi.scope, fi.cf, fi.origin, true, ct(h.t));
 			// A type path under the cursor answers with a Type item carrying its own type, not with the
 			// expression that path sits in.
-			if (h.mt != null) {
+			} else if (h.mt != null) {
 				doc = TypeFunctions.tInfos(h.mt).doc;
 				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, h.mt, 0, null, ct(h.t));
 			} else if (h.e != null) switch (h.e.expr) {
@@ -2898,20 +2910,17 @@ class Compiler {
 							doc = cf.doc;
 							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
 						case FClosure(cwp, cf):
-							doc = cf.doc;
-							var origin = if (cwp != null) hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c))
-								else switch (TypeFunctions.follow(e1.type)) {
-									case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
-									case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
-								};
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+							var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
+							if (origin != null) {
+								doc = cf.doc;
+								item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+							}
 						case FAnon(cf):
-							doc = cf.doc;
-							var origin = switch (TypeFunctions.follow(e1.type)) {
-								case TAnon(an): hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
-								case _: hxc.core.CompletionItem.ClassFieldOrigin.Unknown;
-							};
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+							var origin = anonFieldOrigin(e1);
+							if (origin != null) {
+								doc = cf.doc;
+								item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+							}
 						case FEnum(en, ef):
 							doc = ef.doc;
 							item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(h.t));
@@ -3005,8 +3014,13 @@ class Compiler {
 		}
 	}
 
-	static function hoverDocumentation(h:Null<{?e:hxc.core.Type.TExpr, ?mt:hxc.core.Type.ModuleType}>):Null<String> {
+	static function hoverDocumentation(h:Null<{?e:hxc.core.Type.TExpr, ?mt:hxc.core.Type.ModuleType,
+			?fieldItem:{cf:hxc.core.Type.TClassField, scope:hxc.core.Type.ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}}>):Null<String> {
 		if (h == null) return null;
+		if (h.fieldItem != null) {
+			var fdoc = h.fieldItem.cf.doc;
+			return fdoc == null ? null : hxc.ast.Ast.genDocText(fdoc);
+		}
 		if (h.mt != null) {
 			var mdoc = hxc.core.TypeFunctions.tInfos(h.mt).doc;
 			return mdoc == null ? null : hxc.ast.Ast.genDocText(mdoc);
@@ -3458,7 +3472,9 @@ class Compiler {
 
 	// List the module's public types, plus the main type's public statics when completing an import.
 	static function handleTypePathCompletion(ctx:Context, tc:hxc.parser.Parser.TypePathCompletion):Void {
-		// Reset the display position so loading the module does not raise again (#6558).
+		// Reset the display position so loading the module does not raise again. It is restored once the
+		// module is loaded, so the answer's replace range is still cut at the cursor.
+		var displayOff = hxc.parser.Parser.displayOffset;
 		hxc.parser.Parser.displayOffset = -1;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		// The same collection answers as JSON when json_out is set, under CRField over the module the
@@ -3541,8 +3557,8 @@ class Compiler {
 				{name: "kind", value: hxc.core.Json.JsonValue.JString("Module")},
 				{name: "args", value: hxc.core.Json.JsonValue.JObject([
 					{name: "path", value: hxc.core.Json.JsonValue.JObject([
-						{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in mpack) hxc.core.Json.JsonValue.JString(x)])},
-						{name: "moduleName", value: hxc.core.Json.JsonValue.JString(mname)}
+						{name: "moduleName", value: hxc.core.Json.JsonValue.JString(mname)},
+						{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in mpack) hxc.core.Json.JsonValue.JString(x)])}
 					])}
 				])}
 			]);
@@ -3555,13 +3571,13 @@ class Compiler {
 					{name: "keyValueIterator", value: hxc.core.Json.JsonValue.JNull}
 				])}
 			]);
-			// None pos: the range is the path segment itself.
+			// None pos: the range is the path segment itself, and cuts the replace range at the cursor.
 			var result = hxc.core.Json.JsonValue.JObject([
 				{name: "items", value: hxc.core.Json.JsonValue.JArray(jitems)},
 				{name: "isIncomplete", value: hxc.core.Json.JsonValue.JBool(false)},
 				{name: "mode", value: mode},
 				{name: "filterString", value: hxc.core.Json.JsonValue.JString("")},
-				{name: "replaceRange", value: gen.generatePosAsRange(tp)}
+				{name: "replaceRange", value: gen.generatePosAsRange(new Position(tp.file, tp.min, displayOff))}
 			]);
 			answerOut(jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result)));
 			return;
@@ -3613,8 +3629,8 @@ class Compiler {
 			{name: "kind", value: hxc.core.Json.JsonValue.JString("Module")},
 			{name: "args", value: hxc.core.Json.JsonValue.JObject([
 				{name: "path", value: hxc.core.Json.JsonValue.JObject([
-					{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in pack) hxc.core.Json.JsonValue.JString(x)])},
-					{name: "moduleName", value: hxc.core.Json.JsonValue.JString(name)}
+					{name: "moduleName", value: hxc.core.Json.JsonValue.JString(name)},
+					{name: "pack", value: hxc.core.Json.JsonValue.JArray([for (x in pack) hxc.core.Json.JsonValue.JString(x)])}
 				])}
 			])},
 			{name: "index", value: hxc.core.Json.JsonValue.JInt(index)}

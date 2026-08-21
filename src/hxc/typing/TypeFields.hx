@@ -1340,7 +1340,15 @@ class TypeFields {
 		var isInlineVar = false;
 		for (a in cff.cffAccess) if (a.access == AInline) isInlineVar = true;
 		hxc.typing.ExprPreprocessing.processDisplayFieldExpr(cff.cffPos, eo);
-		var te = typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos);
+		// The initializer types as a static's or a member's (FunStatic or FunMember), with the field state
+		// saved - an abstract's `var` is static there.
+		var oldFun = tctx.curfun;
+		tctx.curfun = isStatic ? FunStatic : FunMember;
+		var te = try typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos) catch (e:Dynamic) {
+			tctx.curfun = oldFun;
+			throw e;
+		};
+		tctx.curfun = oldFun;
 		tctx.inFunction = true;
 		// Run the analyzer, then require a constant expression: the analyzer (always optimizing) runs
 		// over anything but a constant, a local or a function, and what constant folding makes of that is
