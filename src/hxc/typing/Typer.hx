@@ -4628,7 +4628,7 @@ class Typer {
 			// captures-by-substitution). Reading or assigning the name is an error.
 			// The inline-closure emulation is gated on dmsInline, which is false for every display mode:
 			// hover on the callee must see the closure's function type, not the inlined body.
-			if (v.extra != null && v.extra.expr != null && ctx.com.displaySpec == null) switch (v.extra.expr.expr) {
+			if (v.extra != null && v.extra.expr != null && ctx.com.dmsInline) switch (v.extra.expr.expr) {
 				case TFunction(_):
 					switch (mode) {
 						case MCall(_):
@@ -5557,6 +5557,8 @@ class Typer {
 		var p = fa.pos;
 		// Reading an inline field forces its lazy type, which types its body there and then.
 		TypeFunctions.follow(cf.type);
+		// Where the display mode does not inline, the field is read as it stands.
+		if (!ctx.com.dmsInline) return FieldAccessTools.getFieldExpr(fa, FRead);
 		return switch (cf.kind) {
 			case Method(_):
 				var wrapClass = switch (TypeFunctions.follow(fa.on.type)) {

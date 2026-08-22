@@ -1024,6 +1024,10 @@ class TypeFields {
 				if (cf.expr != null || bodyTyped.exists(cf)) return;
 			case _:
 		}
+		// A display request that types selectively gives a body only to the display field and to a
+		// signature that is not a full type, and only forcing that lazy types it; any other field has no
+		// body to type, whoever asks for one.
+		if (!bodyBehindLazy(ctx, cf, cf.type)) return;
 		// Re-entry on the same field returns its current (still-open) signature, as a lazy type still in
 		// progress does. A different field is forced normally even when nested, so an inline callee's
 		// return type is inferred before its result is consumed by the caller.
@@ -1392,7 +1396,7 @@ class TypeFields {
 		} else if (!isStatic) {
 			checkThisInVarInit(tctx, te);
 		} else if (cf.kind.match(Var({read: AccInline}))
-				&& (!tctx.com.defines.rawDefined("no_inline") || hxc.typing.Inline.isForcedInline(tctx.curclass, cf))) {
+				&& (tctx.com.doInline() || hxc.typing.Inline.isForcedInline(tctx.curclass, cf))) {
 			te = requireConstantExpression(te, "Inline variable initialization must be a constant value");
 			// An enum abstract member's value: the member's declared type unifies with the
 			// abstract, at the field, then the value (a typeless cast unwrapped) with the

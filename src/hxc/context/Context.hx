@@ -89,6 +89,13 @@ class Context {
 	 * Position-specific display modes type only the cursor's field and bodies demanded by it.
 	 */
 	public var displayFullTyping:Bool = true;
+	/**
+	 * Disable inlining for display modes other than DMNone; keep it enabled in the macro world.
+	 */
+	public var dmsInline:Bool = true;
+
+	public function doInline():Bool
+		return dmsInline && !defines.rawDefined("no_inline");
 	// Suppress errors that would prevent an answer to a position-specific display request.
 	public var ignoreErrors:Bool = false;
 
@@ -434,6 +441,7 @@ class Context {
 		this.mainClass = null;
 		this.displaySpec = null;
 		this.displayFullTyping = true;
+		this.dmsInline = true;
 		this.moduleLut = new StringMap();
 		this.typeToModule = new StringMap();
 		this.typeToModuleEpoch = new StringMap();

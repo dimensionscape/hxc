@@ -227,8 +227,10 @@ class Fields {
 			case Method(m):
 				if (isSet && !m.match(MethDynamic) && !ctx.untypedMode)
 					throw new TypingError("Cannot rebind this method : please use 'dynamic' before method declaration", pfield);
+				// An inline method is accessed for inlining only where the typer inlines.
+				var inlineAccess = m.match(MethInline) && ctx.com.doInline() && ctx.allowInline;
 				function methodAccess() {
-					return makeAccess(m.match(MethInline));
+					return makeAccess(inlineAccess);
 				}
 				switch (fh) {
 					case FHAbstract(a, tl, c):
@@ -236,7 +238,7 @@ class Fields {
 					case _:
 						// A method READ rather than called. A macro cannot be a value at all, and neither can a
 						// @:generic function. Both are recorded and the access is built anyway.
-						if (mode.match(MGet) && !m.match(MethInline)) {
+						if (mode.match(MGet) && !inlineAccess) {
 							if (m.match(MethMacro))
 								ctx.com.addDiagnostic("Macro functions must be called immediately", pfield);
 							else if (TypeFunctions.hasClassFieldFlag(f, CfGeneric))

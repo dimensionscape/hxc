@@ -2502,11 +2502,36 @@ class TypeResolve {
 					}
 					if (fa.opt || (fa.value != null && fa.value.expr.match(EConst(CIdent("null"))))) at = ctx.basic.tnull(at); // A null default makes the argument nullable
 					var sigOpt = fa.opt || fa.value != null;
-					if (hxc.typing.Typer.atDisplayPos(fa.name.pos)) {
-						var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
-						hxc.typing.Typer.displayVariable(null, av, fa.name.pos);
-					}
 					args.push({name: fa.name.name, opt: sigOpt, t: at});
+				}
+				// Allocating the arguments also answers a display on an argument's own name. A method that
+				// is bound
+				// does it from its function typing, where hxc's body typing answers; one that is not bound
+				// (an
+				// extern, abstract or interface method) does it only when it holds the cursor, from a
+				// PTypeField
+				// delay - after the bodies delayed before it, which is what its argument ids count.
+				var isExternField = (owner != null && TypeFunctions.hasClassFlag(owner, CExtern))
+					|| Lambda.exists(cff.cffAccess, a -> a.access == AExtern) || TypeFunctions.hasMeta(":extern", cff.cffMeta);
+				var isInlineField = Lambda.exists(cff.cffAccess, a -> a.access == AInline);
+				var isAbstractField = Lambda.exists(cff.cffAccess, a -> a.access == AAbstract);
+				var isInterfaceField = owner != null && TypeFunctions.hasClassFlag(owner, CInterface);
+				var doBind = ((!isExternField || isInlineField) && !isAbstractField && !isInterfaceField)
+					|| (cf.name == "__init__" && isStaticField);
+				if (!doBind && hxc.typing.Typer.atDisplayPos(cff.cffPos)) {
+					var sigArgs = args.copy();
+					var off = sigArgs.length - fd.fArgs.length;
+					ctx.delay(Context.PTypeField, function() {
+						for (i in 0...sigArgs.length) {
+							if (i < off) {
+								TypeFunctions.allocVar(VAbstractThis, sigArgs[i].name, sigArgs[i].t, Position.nullPos);
+								continue;
+							}
+							var fa = fd.fArgs[i - off];
+							var av = TypeFunctions.allocVar(VUser(TVOArgument), fa.name.name, sigArgs[i].t, fa.name.pos);
+							if (hxc.typing.Typer.atDisplayPos(fa.name.pos)) hxc.typing.Typer.displayVariable(null, av, fa.name.pos);
+						}
+					});
 				}
 				cf.type = TFun({args: args, ret: ret});
 				cf.params = methodParams;

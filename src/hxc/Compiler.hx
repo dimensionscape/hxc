@@ -943,9 +943,21 @@ class Compiler {
 		// Every file the display request names becomes a compile root, so a file the program never
 		// reaches is still parsed and reported on.
 		var displayRoots:Array<Path> = [];
+		// Every mode that asks about a position, and a legacy @diagnostics, empties the compile roots and
+		// drops the main class: the display module is all that is compiled. Usage, implementation,
+		// statistics and JSON diagnostics keep them, workspace symbols too.
+		var displayFileOnly = false;
 		{
 			var dparts = displayParts(ctx);
 			var dmode = displayMode(ctx, dparts);
+			if (dparts.length >= 2 || ctx.jsonRpcId != null && ctx.displaySpec != null)
+				displayFileOnly = switch (dmode) {
+					case "usage" | "implementation" | "statistics" | "compiledTypes" | "workspace-symbols": false;
+					case "diagnostics": ctx.jsonRpcId == null;
+					case _: true;
+				};
+			// The display file is processed before the init macros, so they see no main class.
+			if (displayFileOnly) ctx.mainClass = null;
 			// `display` is defined as "1" for every JSON method but display/diagnostics;
 			// typer/compiledTypes is no display method.
 			if (ctx.jsonRpcId != null && dparts.length >= 2 && dmode != "diagnostics" && dmode != "compiledTypes")
@@ -1010,6 +1022,8 @@ class Compiler {
 					// under the cursor.
 					ctx.displayFullTyping = dmode == "diagnostics" || dmode == "statistics"
 						|| dmode == "usage" || dmode == "implementation";
+					// Only the report modes and a compile with no display at all inline.
+					ctx.dmsInline = dmode == "diagnostics" || dmode == "statistics" || dmode == "compiledTypes";
 					// The report mode is diagnostics only for a diagnostics request, so isDiagnosticsFile
 					// answers false everywhere else.
 					ctx.diagnosticsFileFilter = dmode != "diagnostics" ? null
@@ -1119,8 +1133,9 @@ class Compiler {
 
 		// A compile without -main still loads its roots, runs macros and filters, and generates; it just
 		// has no entry call (nothing is printed).
-		var path = mainClass == null ? null : parseTypePath(mainClass);
+		var path = mainClass == null || displayFileOnly ? null : parseTypePath(mainClass);
 		ctx.mainClass = path;
+		if (displayFileOnly) extraClasses = [];
 		try {
 			// A display answer raises: typing ends where one is raised, and nothing typed after it can
 			// answer instead. The answer is the one recorded.

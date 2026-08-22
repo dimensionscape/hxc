@@ -82,7 +82,7 @@ class Inline {
 				// the forced ones included.
 				if (!forceInline && !ctx.allowInline) return null;
 				var forced = isForcedInline(c, cf);
-				if (!forceInline && ctx.com.defines.rawDefined("no_inline") && !forced)
+				if (!forceInline && !ctx.com.doInline() && !forced)
 					return null;
 				// -D hxia narrows that to the callees that actually make an artifact
 				// platform-specific: a target's own std override (hxc.hxia.NeutralInline).
@@ -210,7 +210,7 @@ class Inline {
 	// reads it.
 	public static function needsInline(ctx:TyperContext, c:Null<TClass>, cf:TClassField):Bool {
 		return cf.kind.match(Method(MethInline)) && ctx.allowInline
-			&& (!ctx.com.defines.rawDefined("no_inline") || isForcedInline(c, cf));
+			&& (ctx.com.doInline() || isForcedInline(c, cf));
 	}
 
 	// The inliner entry with an explicit callee: class, field, function and receiver expression
