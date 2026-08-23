@@ -1135,10 +1135,6 @@ class ModuleLoader {
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, addAsStatic);
 			cf.doc = cff.cffDoc;
 			cf.meta = cff.cffMeta;
-			if (TypeFunctions.hasMeta(":inheritDoc", cff.cffMeta)) {
-				var cDoc = c, cfDoc = cf;
-				ctx.delay(Context.PTypeField, function() hxc.typing.InheritDoc.buildClassFieldDoc(ctx, cDoc, cfDoc));
-			}
 			// Every non-static abstract implementation member carries CfImpl, regardless of field kind.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);
 			// Set CfEnum on synthesized :enum fields so reads inline-fold and patterns participate in
@@ -2183,9 +2179,13 @@ class ModuleLoader {
 		// bringing in haxe.io.Path would shadow the module's own `import haxe.rtti.CType`, whose Path is
 		// the one that binds.
 		var named:Null<hxc.context.Context.ImportedName> = null;
+		// While a declaration's path is checked, only the declarations before it are in the module imports.
+		inline function committed(ni:hxc.context.Context.ImportedName):Bool
+			return imports.pathDisplayAt < 0 || ni.impIdx == null || ni.impIdx < imports.pathDisplayAt;
 		var k = imports.order.length - 1;
 		while (k >= 0) {
 			var ni = imports.order[k--];
+			if (!committed(ni)) continue;
 			// An ALIAS binds its alias name and nothing else; a SUB-import binds that sub name.
 			if (ni.aliased == true && ni.aliasName != null) {
 				if (ni.aliasName == name) { named = ni; break; }
@@ -2205,7 +2205,7 @@ class ModuleLoader {
 			if (rsub != null) { imports.markImport(ni.impIdx); return rsub; }
 		}
 		if (named == null) named = imports.names.get(name);
-		if (named != null) {
+		if (named != null && committed(named)) {
 			// Alias/sub or module-name exact binding. An aliased module import binds the module's
 			// main type, not a type named after the alias.
 			var sub = named.sub != null ? named.sub : named.modulePath.name;
@@ -2249,7 +2249,10 @@ class ModuleLoader {
 	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
 		if (imports == null) return null;
-		for (wp in imports.wildcards) {
+		for (i in 0...imports.wildcards.length) {
+			var wp = imports.wildcards[i];
+			// Only the declarations before it, as in resolveNamedImportType.
+			if (imports.pathDisplayAt >= 0 && i < imports.wildcardImp.length && imports.wildcardImp[i] >= imports.pathDisplayAt) continue;
 			var r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
 			if (r != null) { imports.markWildcard(wp); return r; }
 		}

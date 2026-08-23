@@ -998,6 +998,7 @@ class Compiler {
 					hxc.parser.Parser.displayOffset = doff;
 					hxc.typing.Typer.displayDefinition = dmode == "position";
 					hxc.typing.Typer.displayHover = dmode == "type";
+					if (dmode == "type" && ctx.jsonRpcId != null) hxc.typing.Typer.hoverSnapshot = h -> hoverSnapshot(ctx, h);
 					hxc.typing.Typer.displayUsage = dmode == "usage";
 					// "toplevel" and the empty mode are the same default mode, and both answer with a toplevel
 					// collection when the position is not a field access. Which printer runs follows the answer (a
@@ -2910,8 +2911,7 @@ class Compiler {
 
 	// The hover `expected` field encodes the with-type at the hover point: WithType(t, src) gives {type,
 	// name?}; a named Value gives {name}; anything else is null. ImplicitReturn never names itself.
-	static function hoverExpectedJson(gen:hxc.core.Genjson):hxc.core.Json.JsonValue {
-		var h = hxc.typing.Typer.hoverFound;
+	static function hoverExpectedJson(gen:hxc.core.Genjson, h:hxc.typing.Typer.HoverRecord):hxc.core.Json.JsonValue {
 		if (h == null || h.wt == null) return hxc.core.Json.JsonValue.JNull;
 		function nameJson(src:hxc.core.WithType.WithTypeSource):Null<hxc.core.Json.JsonValue> {
 			return switch (src) {
@@ -2955,6 +2955,15 @@ class Compiler {
 		};
 	}
 
+	// A hover answer raises and is serialized where it is caught, with nothing typed in between: a
+	// class whose fields are still being added, a return type not yet inferred, an import not yet in
+	// place all print as they stood at the raise. hxc records the answer and types on, so the record
+	// carries its serialized item from the moment it is made.
+	static function hoverSnapshot(ctx:Context, h:hxc.typing.Typer.HoverRecord):Dynamic {
+		mergeHoverCoreDoc(ctx, h);
+		return hoverItemOf(ctx, h);
+	}
+
 	// Hover as JSON: {documentation, range, item, expected}.
 	static function jsonHover(ctx:Context):Null<String> {
 		hxc.typing.Typer.resolveHoverMacroField(ctx);
@@ -2964,73 +2973,18 @@ class Compiler {
 			return importStatusFor(ctx, curMod, path);
 		function ct(t:T):hxc.core.CompletionItem.CompletionType
 			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t);
-		function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
-			return switch (c.kind) {
-				case KAbstractImpl(a): TAbstractDecl(a);
-				case _: TClassDecl(c);
-			};
-		}
 		var item:Null<hxc.core.Json.JsonValue> = null;
 		var rangePos:Null<Position> = null;
 		var doc:hxc.ast.Ast.Documentation = null;
+		var expected:hxc.core.Json.JsonValue = hxc.core.Json.JsonValue.JNull;
 		var h = hxc.typing.Typer.hoverFound;
-		mergeHoverCoreDoc(ctx, h);
 		if (h != null) {
 			rangePos = h.p;
-			// isQualified re-types the bare name in the scope the hovered expression was typed in; it is
-			// not a constant.
-			// A declaration's own item is qualified outright.
-			inline function qualified(name:String):Bool
-				return h.isQualified != null ? h.isQualified : hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
-			// A field the cursor NAMES answers with that field's own item.
-			if (h.fieldItem != null) {
-				var fi = h.fieldItem;
-				doc = fi.cf.doc;
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, fi.scope, fi.cf, fi.origin, true, ct(h.t));
-			// A type path under the cursor answers with a Type item carrying its own type, not with the
-			// expression that path sits in.
-			} else if (h.mt != null) {
-				doc = TypeFunctions.tInfos(h.mt).doc;
-				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, h.mt, 0, null, ct(h.t));
-			} else if (h.e != null) switch (h.e.expr) {
-				case TField(e1, fa):
-					switch (fa) {
-						case FStatic(c, cf):
-							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
-						case FInstance(c, _, cf):
-							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
-						case FClosure(cwp, cf):
-							var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
-							if (origin != null) {
-								doc = cf.doc;
-								item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
-							}
-						case FAnon(cf):
-							var origin = anonFieldOrigin(e1);
-							if (origin != null) {
-								doc = cf.doc;
-								item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
-							}
-						case FEnum(en, ef):
-							doc = ef.doc;
-							item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(h.t));
-						case FDynamic(_):
-					}
-				case TLocal(v):
-					item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(h.t));
-				// This/super hover stays an Expression; any other constant reports as a Literal named by its
-				// printed form.
-				case TConst(TThis | TSuper):
-				case TConst(c):
-					item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
-				case TNew(c, _, _) if (c.constructor != null):
-					doc = c.constructor.doc;
-					item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(h.t));
-				case _:
-			}
-			if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
+			var snap:{item:hxc.core.Json.JsonValue, doc:hxc.ast.Ast.Documentation, expected:hxc.core.Json.JsonValue} =
+				h.snap != null ? h.snap : hoverSnapshot(ctx, h);
+			item = snap.item;
+			doc = snap.doc;
+			expected = snap.expected;
 		} else {
 			var hf = hoverOnFieldName(ctx);
 			if (hf != null) {
@@ -3053,9 +3007,82 @@ class Compiler {
 			{name: "documentation", value: doc == null ? hxc.core.Json.JsonValue.JNull : hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(doc))},
 			{name: "range", value: gen.generatePosAsRange(rangePos)},
 			{name: "item", value: item},
-			{name: "expected", value: hoverExpectedJson(gen)}
+			{name: "expected", value: expected}
 		]);
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
+	}
+
+	static function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
+		return switch (c.kind) {
+			case KAbstractImpl(a): TAbstractDecl(a);
+			case _: TClassDecl(c);
+		};
+	}
+
+	static function hoverItemOf(ctx:Context, h:hxc.typing.Typer.HoverRecord):{item:hxc.core.Json.JsonValue, doc:hxc.ast.Ast.Documentation, expected:hxc.core.Json.JsonValue} {
+		var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+		var curMod = displayModule(ctx);
+		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
+			return importStatusFor(ctx, curMod, path);
+		function ct(t:T):hxc.core.CompletionItem.CompletionType
+			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t);
+		var item:Null<hxc.core.Json.JsonValue> = null;
+		var doc:hxc.ast.Ast.Documentation = null;
+		// isQualified re-types the bare name in the scope the hovered expression was typed in; it is not a
+		// constant.
+		// A declaration's own item is qualified outright.
+		inline function qualified(name:String):Bool
+			return h.isQualified != null ? h.isQualified : hxc.typing.Typer.retypeIsQualified(h.tctx, h.e, name, h.e.type);
+		// A field the cursor NAMES answers with that field's own item.
+		if (h.fieldItem != null) {
+			var fi = h.fieldItem;
+			doc = fi.cf.doc;
+			item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, fi.scope, fi.cf, fi.origin, true, ct(h.t));
+		// A type path under the cursor answers with a Type item carrying its own type, not with the
+		// expression that path sits in.
+		} else if (h.mt != null) {
+			doc = TypeFunctions.tInfos(h.mt).doc;
+			item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, h.mt, 0, null, ct(h.t));
+		} else if (h.e != null) switch (h.e.expr) {
+			case TField(e1, fa):
+				switch (fa) {
+					case FStatic(c, cf):
+						doc = cf.doc;
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
+					case FInstance(c, _, cf):
+						doc = cf.doc;
+						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
+					case FClosure(cwp, cf):
+						var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
+						if (origin != null) {
+							doc = cf.doc;
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+						}
+					case FAnon(cf):
+						var origin = anonFieldOrigin(e1);
+						if (origin != null) {
+							doc = cf.doc;
+							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
+						}
+					case FEnum(en, ef):
+						doc = ef.doc;
+						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(h.t));
+					case FDynamic(_):
+				}
+			case TLocal(v):
+				item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(h.t));
+			// This/super hover stays an Expression; any other constant reports as a Literal named by its
+			// printed form.
+			case TConst(TThis | TSuper):
+			case TConst(c):
+				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
+			case TNew(c, _, _) if (c.constructor != null):
+				doc = c.constructor.doc;
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(h.t));
+			case _:
+		}
+		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
+		return {item: item, doc: doc, expected: hoverExpectedJson(gen, h)};
 	}
 
 	// Every reported position goes through the real-path lookup, which on Windows canonicalizes

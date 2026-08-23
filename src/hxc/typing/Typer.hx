@@ -72,6 +72,10 @@ class JsonToplevelCompletion extends haxe.Exception {
 	}
 }
 
+typedef HoverRecord = {t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext,
+	?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool,
+	?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}, ?snap:Dynamic};
+
 // One part of a dotted path, with the span of the access it ends.
 typedef DotPathPart = {name:String, lower:Bool, pos:Position};
 
@@ -94,6 +98,7 @@ class Typer {
 		hxc.typing.Typeload.resetSynthesizedHints();
 		displayHover = false;
 		hoverFound = null;
+		hoverSnapshot = null;
 		hoverMacroField = null;
 		hoverWalked = new haxe.ds.ObjectMap();
 		definitionWalked = new haxe.ds.ObjectMap();
@@ -901,6 +906,13 @@ class Typer {
 					// The walk recorded this node's own expression: it is the display handler's answer.
 					var h = hoverFound;
 					hoverFound = {t: h.t, p: h.p, e: h.e, wt: h.wt, tctx: h.tctx, mt: h.mt, isQualified: h.isQualified};
+				} else if (hoverFound != null && hoverFound.p.file == te.pos.file && hoverFound.p.min == te.pos.min
+						&& hoverFound.p.max == te.pos.max) {
+					// A hook's answer over this node's own span (a construction's constructor) is this raise too,
+					// so it is serialized as the node stands now, unified.
+					var h = hoverFound;
+					h.snap = null;
+					hoverFound = h;
 				} else if (!atExprHoverPos(te.pos) && (hoverFound == null || hoverFound.fromWalk == true)) {
 					// The expression was put where no hook looks - a macro call's expansion.
 					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
@@ -1889,13 +1901,13 @@ class Typer {
 		hoverFound = {t: hoverItemType(e2), p: h.p, e: e2, wt: h.wt, tctx: h.tctx, mt: h.mt, fromWalk: h.fromWalk, isQualified: h.isQualified};
 	}
 
-	public static var hoverFound(default, set):Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool, ?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}}> = null;
+	public static var hoverFound(default, set):Null<HoverRecord> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
 	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
 	// BoolLit(true))` hovers as E<Unknown<0>>. hxc records the answer and types on, so the record
 	// keeps a copy in which what is unbound now stays unbound.
-	static function set_hoverFound(v:Null<{t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext, ?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool, ?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}}>) {
+	static function set_hoverFound(v:Null<HoverRecord>) {
 		if (v != null && v.t != null) v.t = freezeMonos(v.t);
 		// A field's bare name is retyped where the hovered expression was typed, which is where the hover
 		// is raised; printed later, the context has moved on (other locals, another field) and the retype
@@ -1913,10 +1925,14 @@ class Typer {
 				v.isQualified = q;
 			}
 		}
+		if (v != null && v.snap == null && hoverSnapshot != null && !recordingQualified) v.snap = hoverSnapshot(v);
 		return hoverFound = v;
 	}
 
 	static var recordingQualified = false;
+
+	// Serializes a JSON hover answer as it stands when it is recorded; set while one is requested.
+	public static var hoverSnapshot:Null<HoverRecord->Dynamic> = null;
 
 	static function freezeMonos(t:T):T {
 		var fresh = new haxe.ds.ObjectMap<TMono, T>();
@@ -3297,11 +3313,11 @@ class Typer {
 
 	// A DECLARED class field the cursor sits on answers through displayField by itself, without any
 	// expression referring to it.
-	public static function displayClassField(c:TClass, isCtor:Bool, cf:TClassField, p:Position):Void {
+	public static function displayClassField(c:TClass, isCtor:Bool, cf:TClassField, p:Position, ?isStatic:Bool):Void {
 		// An abstract's impl member is the abstract's, its `_new` the constructor named `new`, and any
 		// other impl static a static; a class field is a static, the constructor or a member by its
 		// declaration.
-		var isStatic = c.statics.get(cf.name) == cf;
+		if (isStatic == null) isStatic = c.statics.get(cf.name) == cf;
 		var scope:ClassFieldScope = CFSMember;
 		var origin = switch (c.kind) {
 			case KAbstractImpl(a):

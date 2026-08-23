@@ -79,6 +79,7 @@ class TypeFields {
 		finalizedModules = new haxe.ds.ObjectMap();
 		externDefaultsChecked = new haxe.ds.ObjectMap();
 		macroForced = new haxe.ds.ObjectMap();
+		inheritDocQueued = new haxe.ds.ObjectMap();
 		_forcing = [];
 	}
 
@@ -625,6 +626,8 @@ class TypeFields {
 		tctx.tthis = classContextThis(c);
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var nameSeen = new haxe.ds.StringMap<Int>();
+		// The fields the class init has added so far.
+		var added:Array<{cf:TClassField, isStatic:Bool}> = [];
 		var externChecks:Array<{cf:TClassField, fd:Func, isStatic:Bool, abstractMember:Bool}> = [];
 		for (cff in d.dData) {
 			// A field name validates like any identifier; "new" is the one allowed keyword. Runs here so
@@ -730,6 +733,15 @@ class TypeFields {
 			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
 			// name hands it the field it merely collided with.
 			if (ctx.droppedFieldDecls.exists(cff)) continue;
+			// An overload merges into the field of its name, and a static `__init__` is not added.
+			if (occ == 0 && !(isStatic && cff.cffName.name == "__init__")) added.push({cf: cf, isStatic: isStatic});
+			// The field init ends by queueing the docs a field carrying @:inheritDoc collects, once the
+			// supertypes' fields exist.
+			if (TypeFunctions.hasMeta(":inheritDoc", cf.meta) && !inheritDocQueued.exists(cf)) {
+				inheritDocQueued.set(cf, true);
+				var cfDoc = cf;
+				ctx.delay(Context.PTypeField, function() hxc.typing.InheritDoc.buildClassFieldDoc(ctx, c, cfDoc));
+			}
 			if (hasAbstract && !TypeFunctions.hasClassFlag(c, CAbstract)
 				&& !TypeFunctions.hasClassFlag(c, CInterface) && !hasStatic && !hasFinal && !hasInline) {
 				addDiagnosticOnce(ctx, "This class should be declared abstract because it has at least one abstract field", c.namePos);
@@ -759,9 +771,15 @@ class TypeFields {
 						abstractMember: isAbsImpl && cff.cffName.name != "new" && !Lambda.exists(cff.cffAccess, a -> a.access == AStatic)});
 					case _:
 				}
-				if (!externBinds) continue;
+				if (!externBinds) {
+					initFieldDisplay(c, cf, isStatic, added);
+					continue;
+				}
 			}
-			if (!hasFieldBody(cff)) continue;
+			if (!hasFieldBody(cff)) {
+				initFieldDisplay(c, cf, isStatic, added);
+				continue;
+			}
 			installField(ctx, tctx, m, cf, cff, isStatic);
 			pending.push(cf);
 		}
@@ -775,6 +793,39 @@ class TypeFields {
 			var xx = x;
 			ctx.delay(Context.PTypeField, () -> checkExternDefaults(ctx, tctx, xx.cf, xx.fd, xx.isStatic, xx.abstractMember));
 		}
+	}
+
+	// A class's fields may be installed again; the field init runs once per field.
+	static var inheritDocQueued:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
+
+	// A variable with no expression, or a method that does not bind, checks field display inside the field
+	// init, before the field is added: the class it shows holds the fields declared above it, newest first,
+	// as adding a field prepends it. hxc registered every field at load, so the answer is made over that
+	// state.
+	static function initFieldDisplay(c:TClass, cf:TClassField, isStatic:Bool, added:Array<{cf:TClassField, isStatic:Bool}>):Void {
+		if (!Typer.atDisplayPos(cf.namePos)) return;
+		var sFields = c.fields, sStatics = c.statics, sOrdered = c.orderedFields;
+		var sOrderedStatics = c.orderedStatics, sCtor = c.constructor;
+		var fields = new haxe.ds.StringMap<TClassField>(), statics = new haxe.ds.StringMap<TClassField>();
+		var ordered:Array<TClassField> = [], orderedStatics:Array<TClassField> = [], ctor:Null<TClassField> = null;
+		for (i in 0...added.length) {
+			var a = added[i];
+			if (a.cf == cf) continue;
+			if (!a.isStatic && a.cf == sCtor) ctor = a.cf;
+			else if (a.isStatic) { statics.set(a.cf.name, a.cf); orderedStatics.unshift(a.cf); }
+			else { fields.set(a.cf.name, a.cf); ordered.unshift(a.cf); }
+		}
+		function restore():Void {
+			c.fields = sFields; c.statics = sStatics; c.orderedFields = sOrdered;
+			c.orderedStatics = sOrderedStatics; c.constructor = sCtor;
+		}
+		c.fields = fields; c.statics = statics; c.orderedFields = ordered;
+		c.orderedStatics = orderedStatics; c.constructor = ctor;
+		try Typer.displayClassField(c, !isStatic && cf == sCtor, cf, cf.namePos, isStatic) catch (e:Dynamic) {
+			restore();
+			throw e;
+		}
+		restore();
 	}
 
 	/**
@@ -1286,11 +1337,10 @@ class TypeFields {
 	// checked once the class's bodies have all run.
 	static function checkModifierDisplayForClass(ctx:Context, c:TClass):Void {
 		if (hxc.parser.Parser.displayFile == null) return;
-		// A field with no expression to bind (an extern or interface method, an abstract declaration)
-		// still answers the display from its own name. maybe_display_field only fires when the cursor is
-		// on that name.
+		// Field display for a field whose body binds; one with no expression to bind answered from the
+		// field init (initFieldDisplay). The name answer only fires when the cursor is on the name.
 		inline function nameDisplay(cf:TClassField, isCtor:Bool):Void {
-			if (Typer.atDisplayPos(cf.namePos)) Typer.displayClassField(c, isCtor, cf, cf.namePos);
+			if (Typer.atDisplayPos(cf.namePos) && fieldHasSyntaxBody(ctx, c, cf)) Typer.displayClassField(c, isCtor, cf, cf.namePos);
 		}
 		for (cf in c.orderedFields) nameDisplay(cf, false);
 		for (cf in c.orderedStatics) nameDisplay(cf, false);
