@@ -142,6 +142,9 @@ class Compiler {
 	// protocol errors) collect here instead of the process stderr, so the wait server can frame them.
 	// Null outside in-process request execution.
 	public static var requestOutput:Null<hxc.compiler.RequestOutput> = null;
+	// The request's messages went out as its json-rpc error (Messages.display), which counts as a
+	// completion answer: no failure marker follows.
+	public static var jsonErrorSent:Bool = false;
 
 	// STDOUT content produced during a server request (macro trace/print) joins the response channel, each
 	// write encoded as "\x01" + s with every "\n" turned into an "\x01" continuation + a trailing "\n".
@@ -343,6 +346,7 @@ class Compiler {
 				// Only ever set here (the in-process wait server), so a one-shot compile is untouched.
 				hxc.context.ServerCache.enabled = Sys.getEnv("HXC_SERVER_NOREUSE") == null;
 				requestOutput = new hxc.compiler.RequestOutput();
+				jsonErrorSent = false;
 				var failed = false;
 				try {
 					run(lines);
@@ -352,7 +356,7 @@ class Compiler {
 					// is written as given.
 					requestOutput.add(mj.output);
 				} catch (_:RequestAbort) {
-					failed = true;
+					failed = !jsonErrorSent;
 				} catch (e:Dynamic) {
 					requestOutput.add("Error: " + Std.string(e) + "\n");
 					failed = true;
@@ -1283,46 +1287,39 @@ class Compiler {
 					// Raises at the metadata ENTRY, so it answers before whatever the metadata is attached to.
 					var mh = jsonMetaHover(ctx);
 					if (mh != null) { answerOut(mh); return; }
+					// Unanswered, the request falls through like the legacy one.
 					var out = jsonHover(ctx);
-					answerOut(out == null ? jsonRpcAnswer(ctx, "null") : out);
-					return;
-				}
-				// Under hover, the metadata name reports its own documentation, in its own element. Metadata
-				// display raises as soon as the entry is reached, so it wins over the expression the metadata
-				// is attached to; the parser only records the entry when the cursor is on the name. A name the
-				// registry does not know (a custom metadata) answers nothing.
-				var metaDoc = displayMetaDoc(ctx);
-				if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
-				// The answer is raised from the marked expression's typing, so if that typing raised instead
-				// there is no answer at all and the request aborts with the recorded errors. Answers are
-				// recorded by position, so an enclosing node that typed cleanly would still have a candidate.
-				// The preprocessor giving up vetoes the WALK's record only. A hook standing for a raise site
-				// still answers - a cursor on a type hint is picked up while LOADING the type, whatever the
-				// expression walk decided about it.
-				var hf = hxc.typing.Typer.hoverFound;
-				if (hf != null && hf.fromWalk == true && hxc.typing.ExprPreprocessing.gaveUpAtDisplay) hf = null;
-				if (hf != null && hf.fromWalk == true && hxc.typing.Typer.markedStatementFailed) hf = null;
-				var h:Null<{t:T, p:Position}> = hxc.typing.Typer.markedNodeFailed ? null : hf;
-				// The documentation comes from the hover's ITEM, and a type path answers with a type item,
-				// whose documentation is the type's own - there is no expression to read it off. Asking the
-				// expression only would print a type HINT's hover with no d attribute. The json lane builds the
-				// item and so already asks the module type.
-				if (h != null) mergeHoverCoreDoc(ctx, hxc.typing.Typer.hoverFound);
-				var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound);
-				if (h == null) h = hoverOnFieldName(ctx);
-				if (h == null) {
-					var mt = displayTypeAtName(ctx);
-					if (mt != null) {
-						var inf = TypeFunctions.tInfos(mt);
-						h = {t: TypeFunctions.typeOfModuleType(mt), p: inf.namePos};
-						hdoc = inf.doc == null ? null : hxc.ast.Ast.genDocText(inf.doc);
+					if (out != null) { answerOut(out); return; }
+				} else {
+					// Under hover, the metadata name reports its own documentation, in its own element. Metadata
+					// display raises as soon as the entry is reached, so it wins over the expression the metadata
+					// is attached to; the parser only records the entry when the cursor is on the name. A name the
+					// registry does not know (a custom metadata) answers nothing.
+					var metaDoc = displayMetaDoc(ctx);
+					if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
+					var h:Null<{t:T, p:Position}> = answeredHover();
+					// The documentation comes from the hover's ITEM, and a type path answers with a type item,
+					// whose documentation is the type's own - there is no expression to read it off. Asking the
+					// expression only would print a type HINT's hover with no d attribute. The json lane builds
+					// the item and so already asks the module type.
+					if (h != null) mergeHoverCoreDoc(ctx, hxc.typing.Typer.hoverFound);
+					var hdoc = h == null ? null : hoverDocumentation(hxc.typing.Typer.hoverFound);
+					if (h == null) h = hoverOnFieldName(ctx);
+					if (h == null) {
+						var mt = displayTypeAtName(ctx);
+						if (mt != null) {
+							var inf = TypeFunctions.tInfos(mt);
+							h = {t: TypeFunctions.typeOfModuleType(mt), p: inf.namePos};
+							hdoc = inf.doc == null ? null : hxc.ast.Ast.genDocText(inf.doc);
+						}
 					}
-				}
-				// An unanswered display request is not an empty answer. Falling through reports the compile
-				// error the body recorded, or the missing completion point, which is what the client relies on.
-				if (h != null) {
-					answerOut(hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
-					return;
+					// An unanswered display request is not an empty answer. Falling through reports the compile
+					// error the body recorded, or the missing completion point, which is what the client relies
+					// on.
+					if (h != null) {
+						answerOut(hxc.compiler.DisplayXml.printType(hxc.core.TPrinting.sTypeStr(h.t), h.p, hdoc));
+						return;
+					}
 				}
 			}
 			// A declaration error raises out of module type initialization and nothing on the way out
@@ -2955,6 +2952,19 @@ class Compiler {
 		};
 	}
 
+	// The answer is raised from the marked expression's typing, so if that typing raised instead there
+	// is no answer at all and the request aborts with the recorded errors. Answers are recorded by
+	// position, so an enclosing node that typed cleanly would still have a candidate. The preprocessor
+	// giving up vetoes the WALK's record only. A hook standing for a raise site still answers - a
+	// cursor on a type hint is picked up while LOADING the type, whatever the expression walk decided
+	// about it.
+	static function answeredHover():Null<hxc.typing.Typer.HoverRecord> {
+		var hf = hxc.typing.Typer.hoverFound;
+		if (hf != null && hf.fromWalk == true && hxc.typing.ExprPreprocessing.gaveUpAtDisplay) hf = null;
+		if (hf != null && hf.fromWalk == true && hxc.typing.Typer.markedStatementFailed) hf = null;
+		return hxc.typing.Typer.markedNodeFailed ? null : hf;
+	}
+
 	// A hover answer raises and is serialized where it is caught, with nothing typed in between: a
 	// class whose fields are still being added, a return type not yet inferred, an import not yet in
 	// place all print as they stood at the raise. hxc records the answer and types on, so the record
@@ -2977,7 +2987,7 @@ class Compiler {
 		var rangePos:Null<Position> = null;
 		var doc:hxc.ast.Ast.Documentation = null;
 		var expected:hxc.core.Json.JsonValue = hxc.core.Json.JsonValue.JNull;
-		var h = hxc.typing.Typer.hoverFound;
+		var h = answeredHover();
 		if (h != null) {
 			rangePos = h.p;
 			var snap:{item:hxc.core.Json.JsonValue, doc:hxc.ast.Ast.Documentation, expected:hxc.core.Json.JsonValue} =
@@ -3782,35 +3792,61 @@ class Compiler {
 		]);
 	}
 
-	// Each metadata argument whose span encloses the display position types as an expression; failures
-	// are ignored so a half-written path still reaches its completion raise.
+	// Each metadata argument whose span encloses the display position is processed and typed as a value.
+	// Nothing catches what that typing raises: the marked node raises its answer or its error.
 	static function checkDisplayMetadata(ctx:Context):Void {
 		for (key in ctx.moduleLut.keys()) {
 			var m = ctx.moduleLut.get(key);
 			for (mt in m.types) {
 				var inf = hxc.core.TypeFunctions.tInfos(mt);
+				// The global metadata check: a type's own metadata, and each class or abstract field's metadata
+				// as DECLARED (before an @:overload is consumed into overloads). A module the display check
+				// took from the cache checks its typed metadata instead: each field's, its overloads', and the
+				// module statics'.
 				var metas = [inf.meta];
-				switch (mt) {
-					case TClassDecl(c):
-						for (cf in c.orderedStatics) metas.push(cf.meta);
-						for (name in c.fields.keys()) metas.push(c.fields.get(name).meta);
-					case _:
-				}
-				for (ml in metas) for (entry in ml) for (arg in entry.params) {
-					if (!hxc.typing.Typer.atDisplayPos(arg.pos)) continue;
-					var tctx = new hxc.typing.TyperContext(ctx);
+				if (m == warmDisplayModule) {
 					switch (mt) {
 						case TClassDecl(c):
-							tctx.curclass = c;
-							tctx.typeParams = c.params;
+							var cfs = c.orderedStatics.copy();
+							if (!c.kind.match(KAbstractImpl(_))) {
+								cfs = cfs.concat(c.orderedFields);
+								if (c.constructor != null) cfs.push(c.constructor);
+							}
+							for (cf in cfs) {
+								metas.push(cf.meta);
+								for (o in cf.overloads) metas.push(o.meta);
+							}
 						case _:
+					}
+				} else {
+					var entryDecl = ctx.declOfType.get(Context.pathKey(inf.path));
+					if (entryDecl != null) switch (entryDecl.decl) {
+						// An abstract's fields are its impl class's (the check runs in that class's init).
+						case EClass(d): for (cff in d.dData) metas.push(cff.cffMeta);
+						case _:
+					}
+				}
+				var fieldClass:Null<hxc.core.Type.TClass> = switch (mt) {
+					case TClassDecl(c): c;
+					case _: null;
+				};
+				for (mi in 0...metas.length) for (entry in metas[mi]) for (arg in entry.params) {
+					if (!hxc.typing.Typer.atDisplayPos(arg.pos)) continue;
+					var tctx = new hxc.typing.TyperContext(ctx);
+					var c = mi == 0 ? (switch (mt) { case TClassDecl(c0): c0; case _: null; }) : fieldClass;
+					if (c != null) {
+						tctx.curclass = c;
+						tctx.typeParams = c.params;
 					}
 					// The argument is typed through the ENCLOSING module's typer context, so a bare name
 					// resolves against that module's own types and imports.
 					var savedMod = ctx.currentModule;
 					ctx.currentModule = m;
-					try hxc.typing.Typer.typeExpr(tctx, arg, hxc.core.WithType.WithTypeTools.value)
-					catch (_:hxc.core.TypingError) {} catch (_:hxc.context.Context.ContextError) {}
+					hxc.typing.ExprPreprocessing.process(arg);
+					try hxc.typing.Typer.typeExpr(tctx, arg, hxc.core.WithType.WithTypeTools.value) catch (e:Dynamic) {
+						ctx.currentModule = savedMod;
+						throw e;
+					}
 					ctx.currentModule = savedMod;
 				}
 			}
@@ -3935,6 +3971,7 @@ class Compiler {
 	// stale. hxc does not answer from a cached module, so a successful lookup only means "leave the
 	// cache alone".
 	static function checkDisplayFile(ctx:Context):Void {
+		warmDisplayModule = null;
 		if (ctx.displaySpec == null) return;
 		// The DMNone report modes (diagnostics, statistics, compiledTypes) are excluded at the call site,
 		// which runs only when the display kind is not DMNone.
@@ -3950,6 +3987,9 @@ class Compiler {
 		hxc.context.DisplayJson.cache.removeFiles(key);
 		hxc.context.DisplayJson.cache.taintModules(key, "check_display_file");
 	}
+
+	// The display module the display-module check took from the cache, which is not typed again.
+	static var warmDisplayModule:Null<ModuleDef> = null;
 
 	// The display file's module goes through the module-typing hook, and one that comes back is checked as
 	// a display module; anything that fails on the way is a lookup failure, which taints the file instead.
@@ -3972,6 +4012,24 @@ class Compiler {
 		// re-types the one field the cursor is in, so the display hooks fire on it. Its result is dropped:
 		// the cached module is shared with every later request.
 		for (mt in m.types) switch (mt) {
+			case TClassDecl(c) if (c.kind.match(KModuleFields(_))):
+				// The module's own statics, found by name position and made into fields as module typing
+				// does.
+				var fields:Array<hxc.ast.Ast.ClassField> = [];
+				for (dd in cfile.decls) switch (dd.decl) {
+					case EStatic(sd): fields.push({cffName: sd.dName, cffDoc: sd.dDoc, cffPos: dd.pos, cffMeta: sd.dMeta,
+						cffAccess: [{access: AStatic, pos: Position.nullPos}].concat(sd.dFlags), cffKind: sd.dData});
+					case _:
+				}
+				ctx.declOfType.set(Context.pathKey(c.path), {decl: EClass({dName: {name: c.path.name, pos: c.namePos},
+					dDoc: null, dParams: [], dMeta: [], dFlags: [HPrivate], dData: fields}), pos: c.pos});
+				for (cf in c.orderedStatics) {
+					if (!hxc.typing.Typer.atDisplayPos(cf.pos)) continue;
+					var saved = cf.expr;
+					cf.expr = null;
+					try hxc.typing.TypeFields.forceFieldBody(ctx, c, cf) catch (e:Dynamic) { cf.expr = saved; throw e; }
+					cf.expr = saved;
+				}
 			case TClassDecl(c):
 				// :22/:53: the syntax is found by name position - an abstract's impl class carries the
 				// abstract's own, so both kinds of declaration pair back the same way.
@@ -4002,7 +4060,13 @@ class Compiler {
 				}
 			case _:
 		}
+		warmDisplayModule = m;
 		return true;
+	}
+
+	// These report modes collect messages instead of printing them.
+	public static function isDiagnosticsRun(ctx:Context):Bool {
+		return isDisplay(ctx, "diagnostics");
 	}
 
 	static function isDisplay(ctx:Context, mode:String):Bool {

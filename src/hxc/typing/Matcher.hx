@@ -612,11 +612,22 @@ class PatternMaker {
 		return PatVariable(v);
 	}
 
+	static var markedPatternMade:Null<Expr> = null;
+
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
 		// The pattern is built from what is UNDER a display node and the request is answered separately.
 		// hxc answers by position, and the wrapper carries its inner node's position, so reading through it
 		// here is the whole of that: every check below then sees the pattern the user wrote.
 		while (true) switch (e.expr) { case EDisplay(inner, _): e = inner; case _: break; }
+		// The marked pattern is made, then answers as the expression it is handle_edisplay, typed with
+		// inDisplay) against the pattern's expected type. A marked identifier answers through the hooks
+		// below instead (:546/:560).
+		if (e == hxc.typing.ExprPreprocessing.markedNode && e != markedPatternMade && !e.expr.match(EConst(CIdent(_)))) {
+			markedPatternMade = e;
+			var pat = make(pctx, toplevel, t, e);
+			Typer.typeExpr(pctx.ctx, e, WithTypeTools.withType(t));
+			return pat;
+		}
 		var ctx = pctx.ctx;
 		var p = e.pos;
 		var basic = ctx.com.basic;

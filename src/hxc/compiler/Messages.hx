@@ -221,6 +221,18 @@ class Messages {
 		// Request messages retain order and a trailing newline regardless of severity.
 		var req = hxc.Compiler.requestOutput;
 		if (req != null) {
+			// Answer a failed JSON-RPC request with every message as a Compiler error completion.
+			if (ctx.jsonRpcId != null && !hxc.Compiler.isDiagnosticsRun(ctx) && ctx.hasError()) {
+				var gen = new hxc.core.Genjson(hxc.core.Genjson.GenerationMode.GMFull);
+				var data = hxc.core.Json.JsonValue.JArray([for (cm in msgs) hxc.core.Json.JsonValue.JObject([
+					{name: "severity", value: hxc.core.Json.JsonValue.JInt(severityInt(cm.severity))},
+					{name: "location", value: gen.generatePosAsLocation(cm.pos)},
+					{name: "message", value: hxc.core.Json.JsonValue.JString(cm.message)}
+				])]);
+				req.add(hxc.core.Json.stringOfJson(hxc.core.JsonRpc.error(hxc.core.Json.parse(ctx.jsonRpcId), 0, "Compiler error", data)));
+				hxc.Compiler.jsonErrorSent = true;
+				return;
+			}
 			for (l in lines) req.add(l.s + "\n");
 			return;
 		}
@@ -232,6 +244,15 @@ class Messages {
 				Sys.stdout().flush();
 			} else HostRuntime.stderrLine(l.s);
 		}
+	}
+
+	static function severityInt(s:MessageSeverity):Int {
+		return switch (s) {
+			case Error: 1;
+			case Warning: 2;
+			case Information: 3;
+			case Hint: 4;
+		};
 	}
 
 	// Report an unknown mode using its canonical define key, then use the default.

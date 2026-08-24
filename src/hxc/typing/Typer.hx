@@ -1738,6 +1738,7 @@ class Typer {
 					// Display on the catch variable's own name.
 					if (atDisplayPos(c.name.pos)) displayVariable(ctx, v, c.name.pos);
 					var cbody = typeExpr(ctx, c.expr, withType);
+					if (atDisplayPos(c.pos)) catchDisplay(ctx, c.expr, cbody, withType);
 					v.type = normalizedCatchType;
 					restore();
 					tcatches.push({v: v, expr: cbody});
@@ -2035,9 +2036,20 @@ class Typer {
 
 	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):Void {
 		var active = 0;
+		var index:Null<Expr> = null;
 		switch (e2.expr) {
-			case EDisplay(inner, DKMarked): active = 0;
+			case EDisplay(inner, DKMarked): active = 0; index = inner;
 			case _: return; // Only the marked index asks for a signature
+		}
+		// Marks an index in any file the offsets match, but only a display field's body goes through
+		// which makes the access the call. Anywhere else the marked index is handle_display's and an
+		// index that is not a call is :340's error.
+		if (!ExprPreprocessing.inDisplayFile(p)) {
+			if (signatureFound == null) switch (index.expr) {
+				case ECall(_, _) | ENew(_, _) | EArray(_, _):
+				case _: throw new TypingError("Call expected", index.pos);
+			}
+			return;
 		}
 		// Maps bottom-up under `not !found`, so the INNERMOST node holding the cursor wins whether it is
 		// a call or an array access. hxc types the outer call first, so this may only replace a record
@@ -3476,6 +3488,30 @@ class Typer {
 		}
 	}
 
+	// A cursor in a catch clause that no part of it answered (the keyword, the parentheses) answers from
+	// the typed body as a DKMarked node. A part that did answer raised first, so a recorded answer stands.
+	static function catchDisplay(ctx:TyperContext, eAst:Expr, te:TExpr, withType:WithType):Void {
+		if (displaySignature) {
+			// Signature display answers a call; anything else is a "Call expected" error.
+			if (signatureFound == null) switch (eAst.expr) {
+				case ECall(_, _) | ENew(_, _) | EArray(_, _):
+				case _: throw new TypingError("Call expected", eAst.pos);
+			}
+		} else if (displayHover || displayTypeDefinition) {
+			// A hover over the body; a type-definition request reads the same type.
+			if (hoverFound == null) hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+		} else if (displayDefinition) {
+			if (displayFound == null) {
+				checkDisplayDefinition(ctx, te);
+				if (displayFound == null) displayFound = [];
+			}
+		} else if (displayUsage || displayImplementation) {
+			captureUsageTarget(te, ctx);
+		} else if (displayToplevel || displayToplevelJson) {
+			raiseToplevelMarked(ctx, eAst, withType);
+		}
+	}
+
 	// `wt` is the expected type of a variable a typer rule answers as an expression rather than as a
 	// variable: a pattern capture raises its hover with it.
 	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position, ?wt:WithType):Void {
@@ -4857,17 +4893,17 @@ class Typer {
 			}
 			// Outside DMNone the name is REPORTED and recovers to a TIdent at a fresh monomorph, so
 			// everything after it in the expression still types and the request can still be answered from
-			// elsewhere in it. the raise for the display SUBJECT, which here is the identifier the cursor is
-			// on - there the raise is how the request gets answered. adds a fake local, but only behind
-			// ServerConfig.legacy_completion, a JSON-RPC initialize option that hxc has no way to set.
-			// ctx.inDisplay, which on for the marked node's own typing. Its span is no stand-in: a case body
-			// starts at the `case` keyword so its span holds the case's pattern, which the matcher types
-			// before the body and outside it.
-			if (ctx.com.displaySpec != null && !atDisplayPos(p) && !ctx.inDisplay) {
+			// elsewhere in it. The display SUBJECT keeps the raise - there the raise is how the request gets
+			// answered. A cursor on the name is no stand-in for it: signature help marks no identifier. No
+			// fake local is added: that only happens behind the legacy-completion server option, a JSON-RPC
+			// initialize option hxc has no way to set. The test is ctx.inDisplay, which is on for the marked
+			// node's own typing. Its span is no stand-in: a case body starts at the `case` keyword, so its
+			// span holds the case's pattern, which the matcher types before the body and outside it.
+			if (ctx.com.displaySpec != null && !ctx.inDisplay) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
-			if (ctx.com.displaySpec != null && (atDisplayPos(p) || ctx.inDisplay) && displaySubjectError == null)
+			if (ctx.com.displaySpec != null && ctx.inDisplay && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new hxc.core.TypingError.UnknownIdentError(i, p);
 		}
