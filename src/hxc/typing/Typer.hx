@@ -104,6 +104,7 @@ class Typer {
 		definitionWalked = new haxe.ds.ObjectMap();
 		exprDisplayOff = false;
 		hxc.typing.ExprPreprocessing.markedNode = null;
+		hxc.typing.ExprPreprocessing.markedCall = null;
 		hxc.typing.ExprPreprocessing.gaveUpAtDisplay = false;
 		displayTypeDefinition = false;
 		displaySignature = false;
@@ -1991,17 +1992,11 @@ class Typer {
 				break;
 			case _:
 		}
-		// The `new` whose span holds the cursor is the call, and an auto-triggered request takes it only
-		// when an argument is marked or there are none .
-		if (!atDisplayPos(p)) return;
-		if (hxc.parser.Parser.wasAutoTriggered && !marked && el.length > 0) return;
-		// Bottom-up, so the INNERMOST call holding the cursor wins; hxc types the outer call first, so
-		// this may only replace a record whose span strictly contains it.
-		if (signatureFound != null && signatureCallPos != null
-			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
-				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		// Only the marked call answers.
+		if (!isMarkedCall(e -> switch (e.expr) { case ENew(_, mel): mel == el; case _: false; })) return;
 		signatureCallPos = p;
-		var t = try Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx) catch (_:Dynamic) return;
+		// The instance is followed through @:forward.new before its constructor is looked for.
+		var t = try followWithForwardCtor(Typeload.loadInstance(ctx.com, ctx.typeParams, tp.path, tp.pos, true, true, false, ctx)) catch (_:Dynamic) return;
 		// A type parameter is constructed through its Constructible constraint, and the function that
 		// constraint names is the signature.
 		switch (TypeFunctions.follow(t)) {
@@ -2012,26 +2007,85 @@ class Typer {
 				return;
 			case _:
 		}
-		var c:Null<TClass> = switch (TypeFunctions.follow(t)) {
-			case TInst(cl, _): cl;
-			case TAbstract(a, _) if (a.impl != null): a.impl;
+		var ct:Null<{c:TClass, tl:TParams}> = switch (TypeFunctions.follow(t)) {
+			case TInst(cl, tl): {c: cl, tl: tl};
+			case TAbstract(a, tl) if (a.impl != null): {c: a.impl, tl: tl};
 			case _: null;
 		};
-		if (c == null) { signatureFound = {sigs: [], activeArg: active}; return; }
+		if (ct == null) { signatureFound = {sigs: [], activeArg: active}; return; }
+		var c = ct.c;
 		// The class (or the abstract's impl) merges its core docs first.
 		CoreApi.mergeCoreDoc(ctx.com, TClassDecl(c));
-		var ctor = c.constructor;
-		var cur = c;
-		while (ctor == null && cur.superClass != null) { cur = cur.superClass.c; ctor = cur.constructor; }
-		if (ctor == null) { signatureFound = {sigs: [], activeArg: active}; return; }
-		var sigs = [];
-		inline function add(cf:TClassField):Void switch (TypeFunctions.follow(cf.type)) {
-			case TFun(sig): sigs.push({args: sig.args, ret: sig.ret, doc: cf.doc});
+		// An abstract's constructor is its impl's `_new`, reached through @:forward.new; a class's is its
+		// own or the nearest inherited one.
+		var params:TypeParams = c.params;
+		var tl = ct.tl;
+		switch (c.kind) {
+			case KAbstractImpl(a):
+				switch (followWithForwardCtor(TAbstract(a, tl))) {
+					case TInst(c2, tl2): c = c2; tl = tl2; params = c2.params;
+					case TAbstract(a2, tl2) if (a2.impl != null): c = a2.impl; tl = tl2; params = a2.params;
+					case _: params = a.params;
+				}
 			case _:
 		}
-		add(ctor);
-		for (o in ctor.overloads) add(o);
-		signatureFound = {sigs: sigs, activeArg: active};
+		var ctor = switch (c.kind) {
+			case KAbstractImpl(_): c.statics.get("_new");
+			case _: superConstructor(c);
+		};
+		if (ctor == null) throw new TypingError(hxc.core.Globals.sTypePath(switch (c.kind) {
+			case KAbstractImpl(a): a.path;
+			case _: c.path;
+		}) + " does not have a constructor", p);
+		// Overloads, not static: the constructor's own type, then its overloads reversed under the access
+		// map, each one the calling scope can reach; a metadata overload documents itself from the main
+		// field.
+		var wacky = !TypeFunctions.hasClassFieldFlag(ctor, CfOverload);
+		var all = [{t: ctor.type, cf: ctor}];
+		var ovl = ctor.overloads.copy();
+		ovl.reverse();
+		for (o in ovl) all.push({t: TypeFunctions.applyParams(params, tl, o.type), cf: o});
+		var cands = [];
+		for (x in all) if (Fields.canAccess(ctx, c, x.cf, false))
+			cands.push({t: x.t, doc: wacky ? ctor.doc : x.cf.doc});
+		handleCallSignatures(ctx, cands, el, active, p);
+	}
+
+	// Each candidate follows through @:callable to a function (or is "Not a callable type"), and those the
+	// arguments written so far still unify with survive - reversed, as the accumulator prepends - or every
+	// candidate when none does.
+	static function handleCallSignatures(ctx:TyperContext, tl:Array<{t:T, doc:hxc.ast.Ast.Documentation}>, params:Array<Expr>,
+			active:Int, p:Position):Void {
+		function followCallable(t:T):T {
+			return switch (TypeFunctions.follow(t)) {
+				case TAbstract(a, atl) if (TypeFunctions.hasMeta(":callable", a.meta)):
+					followCallable(TypeFunctions.applyParams(a.params, atl, a.thisType));
+				case t2: t2;
+			};
+		}
+		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		for (x in tl) switch (followCallable(x.t)) {
+			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: x.doc});
+			case t2: throw new TypingError("Not a callable type: " + hxc.core.TPrinting.sTypeStr(t2), p);
+		}
+		// A display position past the last written argument gets a null appended so
+		// unifyCallArgsForSignature fails on arity instead of silently accepting.
+		var el = params.copy();
+		if (el.length > 0 && active >= el.length) el.push(new Expr(EConst(CIdent("null")), Position.nullPos));
+		var kept = [];
+		for (cand in cands) {
+			var ok = try { unifyCallArgsForSignature(ctx, el, cand.args, cand.ret, p); true; }
+				catch (err:TypingError) err.message.indexOf("Not enough arguments") >= 0
+				catch (_:Dynamic) false;
+			if (ok) kept.unshift(cand);
+		}
+		signatureFound = {sigs: kept.length == 0 ? cands : kept, activeArg: active};
+		signatureCallPos = p;
+	}
+
+	static function isMarkedCall(f:Expr->Bool):Bool {
+		var mc = ExprPreprocessing.markedCall;
+		return mc != null && f(mc);
 	}
 
 	static function checkArraySignatureDisplay(ctx:TyperContext, e1:Expr, e2:Expr, withType:WithType, p:Position):Void {
@@ -2041,22 +2095,16 @@ class Typer {
 			case EDisplay(inner, DKMarked): active = 0; index = inner;
 			case _: return; // Only the marked index asks for a signature
 		}
-		// Marks an index in any file the offsets match, but only a display field's body goes through
-		// which makes the access the call. Anywhere else the marked index is handle_display's and an
-		// index that is not a call is :340's error.
-		if (!ExprPreprocessing.inDisplayFile(p)) {
+		// The parser marks an index in any file the offsets match, but only a marked display call in a
+		// display field's body makes the access the call. An index it did not take is answered by
+		// ordinary display handling, and an index that is not a call is an error.
+		if (!isMarkedCall(e -> switch (e.expr) { case EArray(me1, _): me1 == e1; case _: false; })) {
 			if (signatureFound == null) switch (index.expr) {
 				case ECall(_, _) | ENew(_, _) | EArray(_, _):
 				case _: throw new TypingError("Call expected", index.pos);
 			}
 			return;
 		}
-		// Maps bottom-up under `not !found`, so the INNERMOST node holding the cursor wins whether it is
-		// a call or an array access. hxc types the outer call first, so this may only replace a record
-		// whose span strictly contains it.
-		if (signatureFound != null && signatureCallPos != null
-			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
-				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
 		var te1 = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
 		signatureCallPos = p;
 		switch (TypeFunctions.follow(te1.type)) {
@@ -2100,9 +2148,6 @@ class Typer {
 			case EDisplay(inner, DKMarked): active = i; params[i] = inner; break;
 			case _:
 		}
-		if (signatureFound != null && signatureCallPos != null
-			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
-				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
 		switch (TypeFunctions.follow(TypeFunctions.applyParams(en.params, tl, ef.type))) {
 			case TFun(sig):
 				signatureFound = {sigs: [{args: sig.args, ret: sig.ret, doc: ef.doc}], activeArg: active};
@@ -2111,7 +2156,17 @@ class Typer {
 		}
 	}
 
+	// Signature display types with ctx.inDisplay set throughout.
 	public static function checkSignatureDisplay(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
+		var saved = ctx.inDisplay;
+		try checkSignatureDisplayInner(ctx, e1, params, p) catch (e:Dynamic) {
+			ctx.inDisplay = saved;
+			throw e;
+		}
+		ctx.inDisplay = saved;
+	}
+
+	static function checkSignatureDisplayInner(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
 		// The active argument is the index of the one the PARSER marked, and the marker is stripped
 		// before anything is typed, since a display node has no typing of its own. Counting finished
 		// arguments instead would put the cursor on the next parameter as soon as it leaves the last one.
@@ -2125,15 +2180,9 @@ class Typer {
 				break;
 			case _:
 		}
-		// Marks a call whose whole span holds the cursor, callee included; an auto-triggered request only
-		// one with a marked argument or none at all .
-		if (!atDisplayPos(p)) return;
-		if (hxc.parser.Parser.wasAutoTriggered && !marked && params.length > 0) return;
-		// Marks the INNERMOST call holding the cursor, and only that one. hxc types the outer call first,
-		// so a nested call may only replace a record whose span strictly contains its own.
-		if (signatureFound != null && signatureCallPos != null
-			&& !(p.min >= signatureCallPos.min && p.max <= signatureCallPos.max
-				&& (p.min > signatureCallPos.min || p.max < signatureCallPos.max))) return;
+		// Only the marked call answers.
+		if (!isMarkedCall(e -> switch (e.expr) { case ECall(me1, _): me1 == e1; case _: false; })) return;
+		ctx.inDisplay = true;
 		// `$type` under DMSignature: one (expression : <mono>) signature carrying its own documentation.
 		switch (e1.expr) {
 			case EConst(CIdent("$type")):
@@ -2178,8 +2227,6 @@ class Typer {
 		// and `trace` - no identifier at all - falls back to haxe.Log.trace, whose signature is the one
 		// shown.
 		if (callee == null && e1.expr.match(EConst(CIdent("trace")))) {
-			var saved = ctx.inDisplay;
-			ctx.inDisplay = true;
 			try callee = typeExpr(ctx, e1, WithTypeTools.value)
 			catch (u:hxc.core.TypingError.UnknownIdentError) {
 				if (u.ident == "trace") {
@@ -2188,7 +2235,6 @@ class Typer {
 					callee = try typeExpr(ctx, logTrace, WithTypeTools.value) catch (_:TypingError) null;
 				}
 			} catch (_:TypingError) {}
-			ctx.inDisplay = saved;
 			if (callee == null) return;
 		}
 		if (callee == null) callee = try typeExpr(ctx, e1, WithTypeTools.value) catch (_:TypingError) return;
@@ -5691,6 +5737,20 @@ class Typer {
 		}
 		return switch (acc) {
 			case AKExpr(e): e;
+			// Under ctx.inDisplay a using access is the bare field, its receiver stored under
+			// @:staticExtension, typed without the receiver argument - nothing unifies the receiver with
+			// that argument.
+			case AKUsingAccessor(se) | AKUsingField(se) if (ctx.inDisplay):
+				var eField = FieldAccessTools.getFieldExpr(se.access, FGet);
+				var id = hxc.context.Context.allocStoredTypedExprId("acc_get.display");
+				ctx.com.storedTypedExprs.set(id, se.thisExpr);
+				var stored = new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos},
+					new Expr(EConst(CInt(Std.string(id), null)), eField.pos)), eField.pos);
+				var t = switch (TypeFunctions.follow(eField.type)) {
+					case TFun(sig) if (sig.args.length > 0): TFun({args: sig.args.slice(1), ret: sig.ret});
+					case t2: t2;
+				};
+				TypeFunctions.mk(TMeta({name: ":staticExtension", params: [stored], pos: Position.nullPos}, eField), t, eField.pos);
 			case AKField(fa):
 				// An inline read replaces the field access with its constant, losing the field;
 				// the definition position records here where the field is still known.

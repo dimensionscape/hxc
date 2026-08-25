@@ -36,6 +36,10 @@ class ExprPreprocessing {
 		answer the request; otherwise the annotated expression.
 	**/
 	public static function process(e:Expr):Null<Expr> {
+		if (hxc.typing.Typer.displaySignature) {
+			findDisplayCall(e);
+			return e;
+		}
 		// The pass runs the before-position search for the modes that ask about an expression, and the
 		// parser's signature mark for DMSignature. That is SIX modes, not two: DMDefinition and
 		// DMTypeDefinition are among them alongside completion and hover. That is what lets @position
@@ -86,6 +90,34 @@ class ExprPreprocessing {
 		e.expr = def;
 		spliced.push(function() e.expr = old);
 		return e;
+	}
+
+	// The DMSignature pass: bottom-up, the innermost call or `new` holding the cursor, or array
+	// access holding it in its index, is the call, and only that one. An auto-triggered request
+	// takes one only when an argument is marked or there are none. hxc keeps the node by identity,
+	// as markedNode; the signature hooks answer for it alone.
+	public static var markedCall:Null<Expr> = null;
+
+	static function findDisplayCall(e:Expr):Void {
+		if (markedCall != null) return;
+		var off = hxc.parser.Parser.displayOffset;
+		if (off < 0 || hxc.parser.Parser.displaySuppressed) return;
+		inline function enclosed(p:Position):Bool
+			return inDisplayFile(p) && p.min <= off && off <= p.max;
+		function handleEl(e:Expr, el:Array<Expr>):Void {
+			var argMarked = el.length == 0 || Lambda.exists(el, x -> x.expr.match(EDisplay(_, DKMarked)));
+			if (!hxc.parser.Parser.wasAutoTriggered || argMarked) markedCall = e;
+		}
+		function loop(e:Expr):Void {
+			Ast.iterExpr(loop, e);
+			if (markedCall != null) return;
+			switch (e.expr) {
+				case ECall(_, el) | ENew(_, el) if (enclosed(e.pos)): handleEl(e, el);
+				case EArray(_, e2) if (enclosed(e2.pos)): handleEl(e, [e2]);
+				case _:
+			}
+		}
+		loop(e);
 	}
 
 	public static function inDisplayFile(p:Position):Bool {

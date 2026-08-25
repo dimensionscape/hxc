@@ -656,7 +656,7 @@ class PatternMaker {
 		switch (e.expr) {
 			// A signature request inside a pattern answers the SIGNATURE of the constructor being matched,
 			// exactly as a call expression would.
-			case ECall(ce, cparams) if (Typer.displaySignature && Typer.atDisplayPos(e.pos)):
+			case ECall(ce, cparams) if (Typer.displaySignature && e == hxc.typing.ExprPreprocessing.markedCall):
 				var handled = false;
 				switch (ce.expr) {
 					case EConst(CIdent(cname)):
