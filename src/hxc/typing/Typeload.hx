@@ -866,14 +866,15 @@ class Typeload {
 		if (declPath.pack.length == 0 && declPath.name == "Dynamic") {
 			return switch (t.tparams) {
 				case []: TypeFunctions.tDynamic;
-				case [TPType(th)]: TDynamic(loadComplexType(ctx, typeParams, th));
+				case [TPType(th)]: TDynamic(loadComplexType(ctx, typeParams, th, true));
 				case _: throw new ContextError("Too many parameters for Dynamic", p);
 			}
 		}
 
 		var loadParam = function(tp:TypeParamOrConst):T {
 			return switch (tp) {
-				case TPType(th): loadComplexType(ctx, typeParams, th);
+				// A type parameter loads with display allowed.
+				case TPType(th): loadComplexType(ctx, typeParams, th, true);
 				case TPExpr(e):
 					// The synthetic const-parameter class is named from the CONSTANT only: "S" + s, "I" + const,
 					// "F" + const, and the literal "Expr" for everything else, the display marker included, so

@@ -224,6 +224,18 @@ class TypeUnification {
 		} catch (ex:haxe.Exception) {
 			monoJournal = outer;
 			monoJournalDepth = depth - 1;
+			// Bindings are taken back for a call error only: a display answer raised while the arguments
+			// type passes through with what it bound, as from a call that was never speculative.
+			if (isDisplayAnswer(ex)) {
+				for (e in frame) {
+					e.m.journal = e.prevJournal;
+					if (outer != null && e.prevJournal != depth - 1) {
+						outer.push(e);
+						e.m.journal = depth - 1;
+					}
+				}
+				throw ex;
+			}
 			// Restore in reverse touch order so the earliest recorded state wins per mono.
 			var i = frame.length - 1;
 			while (i >= 0) {
@@ -236,6 +248,14 @@ class TypeUnification {
 			}
 			throw ex;
 		}
+	}
+
+	// The answers a display request raises out of typing.
+	static function isDisplayAnswer(ex:haxe.Exception):Bool {
+		var v:Dynamic = Std.isOfType(ex, haxe.ValueException) ? (cast ex : haxe.ValueException).value : ex;
+		return Std.isOfType(v, hxc.typing.Typer.JsonToplevelCompletion) || Std.isOfType(v, hxc.compiler.DisplayXml.ToplevelCompletion)
+			|| Std.isOfType(v, hxc.compiler.DisplayXml.DisplayRaised) || Std.isOfType(v, hxc.parser.Parser.TypePathCompletion)
+			|| Std.isOfType(v, hxc.context.DisplayJson.JsonDisplayOutput);
 	}
 
 	public static function error(l:Array<UnifyErrorKind>):Dynamic {

@@ -72,6 +72,33 @@ class JsonToplevelCompletion extends haxe.Exception {
 	}
 }
 
+typedef FieldCompletionRecord = {
+	entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool, ?origin:hxc.core.CompletionItem.ClassFieldOrigin, ?ef:hxc.core.Type.TEnumField, ?enumAbstract:Bool, ?mt:hxc.core.Type.ModuleType, ?itemType:T}>,
+	receiver:Null<TExpr>,
+	insertPos:Position,
+	// The ORIGIN, which for a structure is the typedef or the @:structInit class the fields came from, not
+	// a class each entry declares.
+	?originModuleType:hxc.core.Type.ModuleType,
+	// Orders a structure's fields by declaration position, so the answer keeps the order it was built
+	// in rather than sorting by name the way a field completion does.
+	?noSort:Bool,
+	// Which CompletionResultKind the answer carries. CRField (0) unless the completion came from somewhere
+	// else, like an `override` modifier (CROverride, 12).
+	?kind:Int,
+	?subjectName:String,
+	?subjectPos:Position,
+	// The other public types of the module the receiver names.
+	?submodules:Array<ModuleType>,
+	// After a parser resume, what the receiver iterates as and its keyValueIterator's key and value, when
+	// it has them.
+	?iterator:T,
+	?keyValueIterator:{key:T, value:T},
+	// The receiver item's isQualified, retyped where the receiver was typed.
+	?receiverQualified:Bool,
+	// The answer serialized where it was recorded (Compiler.jsonCompletion).
+	?snap:String
+};
+
 typedef HoverRecord = {t:T, p:Position, ?e:TExpr, ?wt:hxc.core.WithType.WithType, ?tctx:TyperContext,
 	?mt:hxc.core.Type.ModuleType, ?fromWalk:Bool, ?isQualified:Bool, ?displayField:Bool,
 	?fieldItem:{cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin}, ?snap:Dynamic};
@@ -99,6 +126,8 @@ class Typer {
 		displayHover = false;
 		hoverFound = null;
 		hoverSnapshot = null;
+		jsonFieldCompletion = null;
+		fieldCompletionSnapshot = null;
 		hoverMacroField = null;
 		hoverWalked = new haxe.ds.ObjectMap();
 		definitionWalked = new haxe.ds.ObjectMap();
@@ -1349,7 +1378,9 @@ class Typer {
 					}
 			case EArrayDecl(el):
 				switch (el) {
-					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}]:
+					// A marked loop is an EDisplay, which the comprehension arm does not match: it types as
+					// an array of one element that answers the request.
+					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}] if (el[0] != hxc.typing.ExprPreprocessing.markedNode):
 						typeArrayComprehension(ctx, el[0], withType, p);
 					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
 						typeMapDeclaration(ctx, el, withType, p);
@@ -3767,30 +3798,19 @@ class Typer {
 	// The typed completion capture for the JSON protocol: each entry keeps the real field plus its origin
 	// so CompletionItem.toJson can serialize faithfully (the legacy XML lane above stringifies).
 	// receiver/insertPos feed CRField and replaceRange.
-	public static var jsonFieldCompletion:Null<{
-		entries:Array<{cf:TClassField, scope:hxc.core.Type.ClassFieldScope, originClass:Null<TClass>, originAnon:Null<TAnon>, builtIn:Bool, ?fromParent:Bool, ?origin:hxc.core.CompletionItem.ClassFieldOrigin, ?ef:hxc.core.Type.TEnumField, ?enumAbstract:Bool, ?mt:hxc.core.Type.ModuleType, ?itemType:T}>,
-		receiver:Null<TExpr>,
-		insertPos:Position,
-		// The ORIGIN, which for a structure is the typedef or the @:structInit class the fields came from,
-		// not a class each entry declares.
-		?originModuleType:hxc.core.Type.ModuleType,
-		// Orders a structure's fields by declaration position, so the answer keeps the order it was built
-		// in rather than sorting by name the way a field completion does.
-		?noSort:Bool,
-		// Which CompletionResultKind the answer carries. CRField (0) unless the completion came from
-		// somewhere else, like an `override` modifier (CROverride, 12).
-		?kind:Int,
-		?subjectName:String,
-		?subjectPos:Position,
-		// The other public types of the module the receiver names.
-		?submodules:Array<ModuleType>,
-		// After a parser resume, what the receiver iterates as and its keyValueIterator's key and value,
-		// when it has them.
-		?iterator:T,
-		?keyValueIterator:{key:T, value:T},
-		// The receiver item's isQualified, retyped where the receiver was typed.
-		?receiverQualified:Bool
-	}> = null;
+	public static var jsonFieldCompletion(default, set):Null<FieldCompletionRecord> = null;
+
+	// A field completion raises, and the answer is serialized where it is caught with nothing typed in
+	// between: a method being typed still has its open return. hxc records the answer and types on, so
+	// the record carries its serialized answer from the moment it is made.
+	static function set_jsonFieldCompletion(v:Null<FieldCompletionRecord>):Null<FieldCompletionRecord> {
+		jsonFieldCompletion = v;
+		if (v != null && v.snap == null && fieldCompletionSnapshot != null) v.snap = fieldCompletionSnapshot();
+		return v;
+	}
+
+	// Serializes a JSON field completion as it stands; set while one is requested.
+	public static var fieldCompletionSnapshot:Null<Void->Null<String>> = null;
 
 	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
@@ -4469,7 +4489,7 @@ class Typer {
 	}
 
 	// Desugar single-quote string interpolation ('$ident' / '${expr}') into concatenation.
-	public static function formatString(str:String, p:Position, ?defines:hxc.core.Define):Expr {
+	public static function formatString(str:String, p:Position, ?defines:hxc.core.Define, ?displayCtx:TyperContext):Expr {
 		function isIdentStart(c:Int):Bool return (c >= "a".code && c <= "z".code) || (c >= "A".code && c <= "Z".code) || c == "_".code;
 		function isIdentChar(c:Int):Bool return isIdentStart(c) || (c >= "0".code && c <= "9".code);
 		var parts:Array<Expr> = [];
@@ -4596,6 +4616,15 @@ class Typer {
 		flush();
 		// The first fragment stands alone; pairs union their spans (no leading empty literal).
 		if (parts.length == 0) return new Expr(EConst(CString("", SDoubleQuotes)), p);
+		// Typed in display, the part holding the cursor is preprocessed on its own; a part that gives up is
+		// left unmarked, and nothing else.
+		if (displayCtx != null && displayCtx.inDisplay) for (part in parts) {
+			var off = hxc.parser.Parser.displayOffset;
+			if (!ExprPreprocessing.inDisplayFile(part.pos) || off < part.pos.min || off > part.pos.max) continue;
+			var gave = ExprPreprocessing.gaveUpAtDisplay;
+			ExprPreprocessing.process(part);
+			ExprPreprocessing.gaveUpAtDisplay = gave;
+		}
 		var acc = parts[0];
 		for (k in 1...parts.length) acc = new Expr(EBinop(OpAdd, acc, parts[k]), Position.union(acc.pos, parts[k].pos));
 		return acc;
@@ -4642,7 +4671,7 @@ class Typer {
 			// $-containing ones: the resulting constant carries the CONTENT span (quotes excluded), which
 			// downstream errors report.
 			case CString(str, SSingleQuotes) if (str != ""):
-				var te = typeExpr(ctx, formatString(str, p), withType);
+				var te = typeExpr(ctx, formatString(str, p, null, ctx), withType);
 				// The parts start one past the literal and union their spans, so the CHAIN covers neither
 				// quote nor the gaps around an interpolation brace. Display marks the SOURCE literal and
 				// answers with what it typed to, so those positions still report String; hxc scans typed
@@ -5474,10 +5503,16 @@ class Typer {
 	}
 
 	static function typeArrayComprehension(ctx:TyperContext, e:Expr, withType:WithType, p:Position):TExpr {
-		// Uses a gen local; the syntactic name must stay unique for resolution, so the typed var is
-		// renamed to the backtick form afterwards (RenameVars then produces _g like the reference)
-		var acc = "_hx_comp";
-		var mapped = comprehensionPush(new Expr(EConst(CIdent(acc)), p), e);
+		// The accumulator is a gen local at a fresh monomorph, reached from the body only through its
+		// stored typed expression - it is never in scope, so nothing the body completes or resolves sees
+		// it.
+		var v = TypeFunctions.allocVar(VGenerated, "`", spawnMonomorph(ctx, p), p);
+		var ev = TypeFunctions.mk(TLocal(v), v.type, p);
+		var refId = hxc.context.Context.allocStoredTypedExprId("comprehension " + p.file + ":" + Position.getInfos(p).line);
+		ctx.com.storedTypedExprs.set(refId, ev);
+		var eRef = new Expr(EMeta({name: ":storedTypedExpr", params: [], pos: Position.nullPos},
+			new Expr(EConst(CInt(Std.string(refId), null)), p)), p);
+		var mapped = comprehensionPush(eRef, e);
 		var init = mapped.isMap
 			? new Expr(ENew({path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p}, []), p)
 			: new Expr(EArrayDecl([]), p);
@@ -5486,15 +5521,8 @@ class Typer {
 		// a whole-array unify). A map accumulator keeps the plain value context: the multiType Map
 		// constructor cannot take an expectation whose parameters are still open monomorphs.
 		var tea = typeExpr(ctx, init, mapped.isMap ? WithTypeTools.value : withType);
-		var v = TypeFunctions.allocVar(VGenerated, "`", tea.type, p);
-		// The reference stores the accumulator local and references it through the @:storedTypedExpr
-		// marker; the ID is consumed either way, which keeps the stored-expression id stream aligned. .
-		var refId = hxc.context.Context.allocStoredTypedExprId("comprehension " + p.file + ":" + Position.getInfos(p).line);
-		ctx.com.storedTypedExprs.set(refId, TypeFunctions.mk(TLocal(v), v.type, p));
-		var restore = saveLocals(ctx);
-		ctx.locals.set(acc, v);
+		TypeUnification.unifyDefault(v.type, tea.type);
 		var efor = typeExpr(ctx, mapped.expr, WithTypeTools.noValue);
-		restore();
 		return TypeFunctions.mk(TBlock([
 			TypeFunctions.mk(TVarExpr(v, tea), ctx.com.basic.tvoid, p),
 			efor,
@@ -5517,12 +5545,13 @@ class Typer {
 
 	static function comprehensionPush(acc:Expr, e:Expr):{expr:Expr, isMap:Bool} {
 		inline function same(expr:Expr, isMap:Bool) return {expr: expr, isMap: isMap};
-		// The accumulator local once and reuses that reference at every push site (`efield
-		// (e_ref,"push")`), so the receiver keeps the COMPREHENSION's position while the call and the
-		// field take the body position. Rebuilding the identifier at the body position collapsed the two,
-		// and the js source map lost the receiver's own segment.
+		// The accumulator local is stored once and that reference is reused at every push site, so the
+		// receiver keeps the COMPREHENSION's position while the call and the field take the body
+		// position. Rebuilding the identifier at the body position would collapse the two, and the js
+		// source map would lose the receiver's own segment. The callee on the stored reference is the
+		// compiler's: it answers no display request (synthesized); the arguments are the user's.
 		inline function call(name:String, args:Array<Expr>):Expr
-			return new Expr(ECall(new Expr(EField(acc, name, EFNormal), e.pos), args), e.pos);
+			return new Expr(ECall(synthesized(new Expr(EField(acc, name, EFNormal), e.pos)), args), e.pos);
 		return switch (e.expr) {
 			case EFor(it, body):
 				var b = comprehensionPush(acc, body);
@@ -6005,6 +6034,14 @@ class Typer {
 			switch (edef) {
 				case EConst(CIdent(_)) if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume
 						&& hxc.typing.ExprPreprocessing.markedKind == DKMarked):
+					// The typed node is unified with its expected type before the answer, which binds what
+					// the expectation still leaves open.
+					var te:Null<TExpr> = switch (acc) {
+						case AKExpr(e1): e1;
+						case AKField(fa) if (!fa.isInline): FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+						case _: null;
+					};
+					if (te != null) unifyForAnswer(ctx, te, withType);
 					raiseToplevelMarked(ctx, mn, withType);
 				case _:
 			}

@@ -750,7 +750,7 @@ class TypeResolve {
 					}
 				}
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, true, pt.pos);
-				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, true, true) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					if (heritageDropped(ctx, err)) null else throw err;
 				}
@@ -764,7 +764,7 @@ class TypeResolve {
 				if (t != null) checkHerit(ctx, c, t, true, pt.pos, p, hasInterf);
 			case HImplements(pt):
 				if (pt.path.tname == "") answerHeritCompletion(ctx, c, false, pt.pos);
-				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false) catch (err:ContextError) {
+				var t:Null<T> = try Typeload.loadInstance(ctx, c.params, pt.path, pt.pos, false, true, true) catch (err:ContextError) {
 					if (err.message == "Recursive class") throw new ContextError(err.message, pt.pos, err.kind);
 					if (heritageDropped(ctx, err)) null else throw err;
 				}
@@ -1558,13 +1558,13 @@ class TypeResolve {
 		var isCore = TypeFunctions.hasMeta(":coreType", a.meta);
 		var isType = false; // Set true once an underlying (AbOver) is seen
 
-		// Wraps each from/to in exc_protect and stores the result as TLazy, so the compatibility unify
-		// runs when the type is FORCED, not when it is declared. That deferral is what lets the reference
-		// build declarations in any order: an abstract declared before the type it converts to still
-		// checks out, because the check happens later. hxc used to unify eagerly in a loop after the
-		// flags, which fires while the underlying types may still be shells.
+		// Each from/to is loaded lazily, so the compatibility unify runs when the type is FORCED, not
+		// when it is declared. That deferral is what lets declarations build in any order: an abstract
+		// declared before the type it converts to still checks out, because the check happens later.
+		// Unifying eagerly after the flags fires while the underlying types may still be shells. Every
+		// from, to and underlying type loads with display allowed.
 		function loadType(th:TypeHint, ?from:Bool):T {
-			var t = Typeload.loadComplexType(ctx, a.params, th);
+			var t = Typeload.loadComplexType(ctx, a.params, th, true);
 			if (isCore || from == null) return t;
 			if (!isType)
 				throw new ContextError("Missing underlying type declaration or @:coreType declaration", p);
@@ -1607,7 +1607,7 @@ class TypeResolve {
 				if (a.impl == null)
 					throw new ContextError("Abstracts with underlying type must have an implementation", a.pos);
 				if (isCore) throw new ContextError("@:coreType abstracts cannot have an underlying type", p);
-				var at = Typeload.loadComplexType(ctx, a.params, th);
+				var at = Typeload.loadComplexType(ctx, a.params, th, true);
 				a.thisType = at;
 				isType = true;
 				// A recursive underlying chain reports once the involved abstracts have resolved (a PForce

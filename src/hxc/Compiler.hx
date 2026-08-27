@@ -1003,6 +1003,7 @@ class Compiler {
 					hxc.typing.Typer.displayDefinition = dmode == "position";
 					hxc.typing.Typer.displayHover = dmode == "type";
 					if (dmode == "type" && ctx.jsonRpcId != null) hxc.typing.Typer.hoverSnapshot = h -> hoverSnapshot(ctx, h);
+					if (ctx.jsonRpcId != null) hxc.typing.Typer.fieldCompletionSnapshot = () -> jsonCompletion(ctx);
 					hxc.typing.Typer.displayUsage = dmode == "usage";
 					// "toplevel" and the empty mode are the same default mode, and both answer with a toplevel
 					// collection when the position is not a field access. Which printer runs follows the answer (a
@@ -2700,6 +2701,7 @@ class Compiler {
 	static function jsonCompletion(ctx:Context):Null<String> {
 		var jc = hxc.typing.Typer.jsonFieldCompletion;
 		if (jc == null) return null;
+		if (jc.snap != null) return jc.snap;
 		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
