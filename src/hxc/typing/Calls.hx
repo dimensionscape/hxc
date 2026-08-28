@@ -709,7 +709,8 @@ class Calls {
 						? TypeFunctions.mk(matched.expr, ctx.com.basic.tbool, matched.pos)
 						: matched);
 				}
-			case EField(e1, "bind", _):
+			// A marked callee is a display node, which the builtin's pattern does not match.
+			case EField(e1, "bind", _) if (callee != hxc.typing.ExprPreprocessing.markedNode):
 				// `f.bind(args)` partial application: when f is a function, bind the given args and return
 				// a
 				// closure over the missing ones (`_` or omitted).
@@ -939,7 +940,7 @@ class Calls {
 		if (ctx.curfield != null && ctx.curfield.name != "")
 			fields.push(fld("methodName", strE(ctx.curfield.name)));
 		if (el.length > 1)
-			fields.push(fld("customParams", new Expr(EArrayDecl([for (e2 in el.slice(1)) mkToStringMeta(e2)]), p)));
+			fields.push(fld("customParams", new Expr(EArrayDecl([for (e2 in el.slice(1)) mkToStringMeta(Typer.userWritten(e2))]), p)));
 		var infos = new Expr(EObjectDecl(fields), p);
 		if ((ctx.com.platform.match(Js) || ctx.com.platform.match(Python)) && el.length <= 1 && ctx.com.hasDce()) {
 			var e = Typer.typeExpr(ctx, v, WithTypeTools.value);

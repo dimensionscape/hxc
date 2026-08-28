@@ -128,6 +128,8 @@ class Typer {
 		hoverSnapshot = null;
 		jsonFieldCompletion = null;
 		fieldCompletionSnapshot = null;
+		userWrittenNodes = [];
+		suppressedOutside = [];
 		hoverMacroField = null;
 		hoverWalked = new haxe.ds.ObjectMap();
 		definitionWalked = new haxe.ds.ObjectMap();
@@ -874,6 +876,18 @@ class Typer {
 		return e;
 	}
 
+	// What the user wrote inside such a subtree (a trace's extra arguments, which move into the infos
+	// object it builds): the marked node answers wherever it sits, so these type with display as it stood
+	// outside every window.
+	public static var userWrittenNodes:Array<Expr> = [];
+	// displaySuppressed as each open window found it, outermost first.
+	public static var suppressedOutside:Array<Bool> = [];
+
+	public static function userWritten(e:Expr):Expr {
+		userWrittenNodes.push(e);
+		return e;
+	}
+
 	/**
 	 * Typing the marked expression produces the answer. If typing that expression raises, no answer is
 	 * ever produced - even when a recovery site further out records the error and the compile carries
@@ -900,6 +914,14 @@ class Typer {
 	}
 
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
+		if (userWrittenNodes.length > 0 && suppressedOutside.length > 0 && userWrittenNodes.remove(e)) {
+			var saved = hxc.parser.Parser.displaySuppressed;
+			hxc.parser.Parser.displaySuppressed = suppressedOutside[0];
+			var r = try typeExpr(ctx, e, withType, mode)
+				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw ex; };
+			hxc.parser.Parser.displaySuppressed = saved;
+			return r;
+		}
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
 			var oldInDisplay = ctx.inDisplay;
 			ctx.inDisplay = true;
@@ -982,9 +1004,11 @@ class Typer {
 		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e)) {
 			var saved = hxc.parser.Parser.displaySuppressed;
 			hxc.parser.Parser.displaySuppressed = true;
+			suppressedOutside.push(saved);
 			var r = try typeExpr(ctx, e, withType, mode)
-				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw ex; };
+				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; suppressedOutside.pop(); throw ex; };
 			hxc.parser.Parser.displaySuppressed = saved;
+			suppressedOutside.pop();
 			return r;
 		}
 		if (mode == null) mode = MGet;
@@ -1663,7 +1687,8 @@ class Typer {
 						}
 					}
 					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
-					if (evars.length == 0) enew else TypeFunctions.mk(TBlock(evars.concat([enew])), scHit.t, p);
+					// The construction is the last expression of a block, temporaries or not.
+					TypeFunctions.mk(TBlock(evars.concat([enew])), enew.type, enew.pos);
 				} else {
 					var tfields:Array<TObjectField> = [];
 					var anonFields = new haxe.ds.StringMap<TClassField>();
@@ -4338,7 +4363,15 @@ class Typer {
 				var core = CoreApi.loadCoreClass(ctx.com, c);
 				core == null ? [c.namePos] : [c.namePos, core.namePos];
 			case TTypeExpr(mt): [TypeFunctions.tInfos(mt).namePos];
-			case TNew(c, _, _): c.constructor != null ? [c.constructor.namePos] : [];
+			// An abstract impl's constructor is its `_new`, a class's its own or the nearest inherited one;
+			// a @:coreApi class reports its core class's constructor as well.
+			case TNew(c, _, _):
+				var cf = c.kind.match(KAbstractImpl(_)) ? c.statics.get("_new") : superConstructor(c);
+				if (cf == null) [];
+				else if (TypeFunctions.hasMeta(":coreApi", c.meta)) {
+					var core = CoreApi.loadCoreClass(ctx.com, c);
+					core == null || core.constructor == null ? [cf.namePos] : [cf.namePos, core.constructor.namePos];
+				} else [cf.namePos];
 			// `super(...)` reports the SUPER constructor, and a bare `super` the super class.
 			case TCall({expr: TConst(TSuper)}, _):
 				var sup = ctx.curclass == null ? null : ctx.curclass.superClass;
@@ -6054,6 +6087,19 @@ class Typer {
 				case AKField(fa): fa.field.overloads.length > 0;
 				case _: false;
 			};
+			// A function's `bind` field is answered from the function.
+			switch (acc) {
+				case AKExpr({expr: TField(e1, FDynamic("bind"))}) if (TypeFunctions.follow(e1.type).match(TFun(_))):
+					// The answer is raised over the function's own span, which need not hold the cursor.
+					if (displayHover || displayTypeDefinition) hoverFound = {t: hoverItemType(e1), p: e1.pos, e: e1, wt: withType, tctx: ctx};
+					if (displayDefinition) {
+						checkDisplayDefinition(ctx, e1, true);
+						if (displayFound == null) displayFound = [];
+						displayFoundFromWalk = false;
+					}
+					return acc;
+				case _:
+			}
 			if ((displayHover || displayTypeDefinition) && !overloaded) checkDisplayOnAccess(ctx, acc, p, withType);
 			return acc;
 		}

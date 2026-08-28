@@ -2886,8 +2886,10 @@ class Compiler {
 			case TConst(TThis | TSuper):
 			case TConst(c):
 				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t));
-			case TNew(c, _, _) if (c.constructor != null):
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(t));
+			case TNew(c, tl, _) if (newConstructor(c) != null):
+				var ncf = newConstructor(c);
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, ncf, Self(classDecl(c)), true,
+					ct(ncf == c.constructor ? t : newItemType(c, tl, ncf)));
 			// A type expression is a Type item, Imported, typed as the expression - an abstract's
 			// implementation class as the abstract itself .
 			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
@@ -3024,6 +3026,30 @@ class Compiler {
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(result));
 	}
 
+	// The constructor access: an abstract impl's constructor is its `_new`, a class's its own or the
+	// nearest inherited one; its item is qualified.
+	static function newConstructor(c:hxc.core.Type.TClass):Null<hxc.core.Type.TClassField> {
+		if (c.kind.match(KAbstractImpl(_))) return c.statics.get("_new");
+		var cur = c;
+		while (cur != null) {
+			if (cur.constructor != null) return cur.constructor;
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	// The constructor's type under the access's map, returning the class constructed.
+	static function newItemType(c:hxc.core.Type.TClass, tl:Array<T>, cf:hxc.core.Type.TClassField):T {
+		var params = switch (c.kind) {
+			case KAbstractImpl(a): a.params;
+			case _: c.params;
+		};
+		return switch (TypeFunctions.follow(TypeFunctions.applyParams(params, tl, cf.type))) {
+			case TFun(sig): TFun({args: sig.args, ret: TInst(c, tl)});
+			case t: t;
+		};
+	}
+
 	static function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
 		return switch (c.kind) {
 			case KAbstractImpl(a): TAbstractDecl(a);
@@ -3088,9 +3114,11 @@ class Compiler {
 			case TConst(TThis | TSuper):
 			case TConst(c):
 				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
-			case TNew(c, _, _) if (c.constructor != null):
-				doc = c.constructor.doc;
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, c.constructor, Self(classDecl(c)), qualified(c.constructor.name), ct(h.t));
+			case TNew(c, tl, _) if (newConstructor(c) != null):
+				var ncf = newConstructor(c);
+				doc = ncf.doc;
+				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, ncf, Self(classDecl(c)), true,
+					ct(ncf == c.constructor ? h.t : newItemType(c, tl, ncf)));
 			case _:
 		}
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
@@ -3163,7 +3191,7 @@ class Compiler {
 			case TField(_, FEnum(_, ef)): ef.doc;
 			case TTypeExpr(mt): hxc.core.TypeFunctions.tInfos(mt).doc;
 			// A construction's item is its constructor field.
-			case TNew(c, _, _) if (c.constructor != null): c.constructor.doc;
+			case TNew(c, _, _) if (newConstructor(c) != null): newConstructor(c).doc;
 			case _: null;
 		};
 		return doc == null ? null : hxc.ast.Ast.genDocText(doc);
