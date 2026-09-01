@@ -2840,72 +2840,111 @@ class Compiler {
 		return jsonRpcAnswer(ctx, hxc.core.Json.Json.stringOfJson(hxc.context.DisplayException.fieldsToJson(gen, items, mode, subj.name, subj.pos, startPos)));
 	}
 
-	// The hover item built from a captured typed expression; shared by hover and the
-	// completion mode's receiver item.
+	// The hover item built from a captured typed expression; shared by hover and the completion mode's
+	// receiver item.
+	// The item an expression stands for, and the documentation a hover takes from it. `t` is the item's
+	// type as the caller computed it (Typer.hoverItemType for a hover).
+	static function exprItem(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T, qualified:String->Bool,
+			ct:T->hxc.core.CompletionItem.CompletionType):{item:hxc.core.Json.JsonValue, doc:hxc.ast.Ast.Documentation} {
+		var CI = hxc.core.CompletionItem.CompletionItem;
+		function loop(e:hxc.core.Type.TExpr):{item:hxc.core.Json.JsonValue, doc:hxc.ast.Ast.Documentation} {
+			return switch (e.expr) {
+				// `abstract` is typed as ((this : Underlying) : Abstract).
+				case TLocal(v) if (v.kind.match(VAbstractThis) && switch (TypeFunctions.follow(e.type)) {
+						case TAbstract(a, tl): hxc.core.TypeUnification.typeIseqDefault(TypeFunctions.getUnderlyingType(a, tl), v.type);
+						case _: false;
+					}):
+					{item: CI.literalToJson(gen, "abstract", ct(t)), doc: null};
+				case TLocal(v) | TVarExpr(v, _):
+					{item: CI.localToJson(gen, v, ct(t)), doc: null};
+				// An abstract's own member is Self, one reached through `using` a StaticExtension, and an
+				// enum abstract's value its own kind of item.
+				case TField(e1, FStatic(c, cf)):
+					hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
+					var decl = classDecl(c);
+					var origin = switch [c.kind, e1.expr] {
+						case [KAbstractImpl(_), _] if (TypeFunctions.hasClassFieldFlag(cf, CfImpl)): hxc.core.CompletionItem.ClassFieldOrigin.Self(decl);
+						case [_, TMeta({name: ":staticExtension"}, _)]: hxc.core.CompletionItem.ClassFieldOrigin.StaticExtension(decl);
+						case _: hxc.core.CompletionItem.ClassFieldOrigin.Self(decl);
+					};
+					var enumAbstract = c.kind.match(KAbstractImpl(_)) && TypeFunctions.hasClassFieldFlag(cf, CfEnum);
+					{item: CI.classFieldToJson(gen, CFSStatic, cf, origin, qualified(cf.name), ct(t), null, enumAbstract), doc: cf.doc};
+				// A member reached through a subclass is the declaring class's, as Parent.
+				case TField(e1, FInstance(c, _, cf) | FClosure({c: c}, cf)):
+					hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
+					var origin = switch (TypeFunctions.follow(e1.type)) {
+						case TInst(c2, _) if (c2 != c): hxc.core.CompletionItem.ClassFieldOrigin.Parent(TClassDecl(c));
+						case _: hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
+					};
+					{item: CI.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t)), doc: cf.doc};
+				case TField(_, FEnum(en, ef)):
+					{item: CI.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(t)), doc: ef.doc};
+				// A structure's field is the typedef's when it came through one.
+				case TField(e1, FAnon(cf) | FClosure(null, cf)):
+					switch (TypeFunctions.follow(e1.type)) {
+						case TAnon(an):
+							var origin = switch (e1.type) {
+								case TType(td, _): hxc.core.CompletionItem.ClassFieldOrigin.Self(TTypeDecl(td));
+								case _: hxc.core.CompletionItem.ClassFieldOrigin.AnonymousStructure(an);
+							};
+							{item: CI.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t)), doc: cf.doc};
+						case _:
+							{item: CI.expressionToJson(gen, ct(t)), doc: null};
+					}
+				// A type expression is a Type item, Imported, typed as the expression - an abstract's
+				// implementation class as the abstract itself.
+				case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
+					hxc.typing.CoreApi.mergeCoreDoc(ctx, TAbstractDecl(a));
+					var tl = TypeFunctions.extractParamTypes(a.params);
+					var name = "Abstract<" + hxc.core.Globals.sTypePath(a.path)
+						+ (tl.length == 0 ? "" : "<" + [for (x in tl) TPrinting.sTypeStr(x)].join(", ") + ">") + ">";
+					var td = TypeFunctions.mkTypedef(a.module, {pack: [], name: name}, a.pos, Position.nullPos,
+						TypeFunctions.mkAnon(new hxc.core.Ref(hxc.core.Type.AnonStatus.AbstractStatics(a))));
+					td.isPrivate = true;
+					{item: CI.moduleTypeToJson(gen, TAbstractDecl(a), 0, null, ct(TType(td, []))), doc: a.doc};
+				case TTypeExpr(mt):
+					hxc.typing.CoreApi.mergeCoreDoc(ctx, mt);
+					{item: CI.moduleTypeToJson(gen, mt, 0, null, ct(t)), doc: TypeFunctions.tInfos(mt).doc};
+				// This/super stays an Expression; any other constant is a Literal named by its printed form.
+				case TConst(TThis | TSuper):
+					{item: CI.expressionToJson(gen, ct(t)), doc: null};
+				case TConst(c):
+					{item: CI.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t)), doc: null};
+				// An object literal is its structure.
+				case TObjectDecl(_):
+					switch (TypeFunctions.follow(e.type)) {
+						case TAnon(an): {item: CI.anonToJson(gen, an, ct(t)), doc: null};
+						case _: {item: CI.expressionToJson(gen, ct(t)), doc: null};
+					}
+				// A construction is the constructor it resolved to, as the function producing the class.
+				case TNew(c, tl, _) if (newConstructor(c) != null):
+					hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
+					var ncf = newConstructor(c);
+					{item: CI.classFieldToJson(gen, CFSConstructor, ncf, Self(classDecl(c)), true,
+						ct(ncf == c.constructor ? t : newItemType(c, tl, ncf))), doc: ncf.doc};
+				// A cast is what it casts, a parenthesis or metadata what it wraps.
+				case TCast(e1, _): loop(e1);
+				case TParenthesis(e1) | TMeta(_, e1): loop(e1);
+				case _:
+					{item: CI.expressionToJson(gen, ct(t)), doc: null};
+			};
+		}
+		return loop(e);
+	}
+
 	static function itemForTypedExpr(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T, ?isQualified:Bool):hxc.core.Json.JsonValue {
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
 		function ct(t2:T):hxc.core.CompletionItem.CompletionType
 			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t2);
-		function classDecl(c:hxc.core.Type.TClass):hxc.core.Type.ModuleType {
-			return switch (c.kind) {
-				case KAbstractImpl(a): TAbstractDecl(a);
-				case _: TClassDecl(c);
-			};
-		}
 		var item:Null<hxc.core.Json.JsonValue> = null;
 		// A field item's isQualified comes from re-typing its bare name in the scope the expression was
 		// typed in (Typer.retypeIsQualified), not from a constant.
 		var hoverTctx = hxc.typing.Typer.hoverFound != null ? hxc.typing.Typer.hoverFound.tctx : null;
 		inline function qualified(name:String):Bool
 			return isQualified != null ? isQualified : hxc.typing.Typer.retypeIsQualified(hoverTctx, e, name, e.type);
-		switch (e.expr) {
-			case TField(e1, fa):
-				switch (fa) {
-					case FStatic(c, cf):
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(t));
-					case FInstance(c, _, cf):
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(t));
-					case FClosure(cwp, cf):
-						var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
-						if (origin != null)
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
-					case FAnon(cf):
-						var origin = anonFieldOrigin(e1);
-						if (origin != null)
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(t));
-					case FEnum(en, ef):
-						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(t));
-					case FDynamic(_):
-				}
-			case TLocal(v):
-				item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(t));
-			// This/super hover stays an Expression; any other constant reports as a Literal named by its
-			// printed form.
-			case TConst(TThis | TSuper):
-			case TConst(c):
-				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(t));
-			case TNew(c, tl, _) if (newConstructor(c) != null):
-				var ncf = newConstructor(c);
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, ncf, Self(classDecl(c)), true,
-					ct(ncf == c.constructor ? t : newItemType(c, tl, ncf)));
-			// A type expression is a Type item, Imported, typed as the expression - an abstract's
-			// implementation class as the abstract itself .
-			case TTypeExpr(TClassDecl({kind: KAbstractImpl(a)})):
-				hxc.typing.CoreApi.mergeCoreDoc(ctx, TAbstractDecl(a));
-				var tl = TypeFunctions.extractParamTypes(a.params);
-				var name = "Abstract<" + hxc.core.Globals.sTypePath(a.path)
-					+ (tl.length == 0 ? "" : "<" + [for (x in tl) TPrinting.sTypeStr(x)].join(", ") + ">") + ">";
-				var td = TypeFunctions.mkTypedef(a.module, {pack: [], name: name}, a.pos, Position.nullPos,
-					TypeFunctions.mkAnon(new hxc.core.Ref(hxc.core.Type.AnonStatus.AbstractStatics(a))));
-				td.isPrivate = true;
-				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, TAbstractDecl(a), 0, null, ct(TType(td, [])));
-			case TTypeExpr(mt):
-				hxc.typing.CoreApi.mergeCoreDoc(ctx, mt);
-				item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, null, ct(t));
-			case _:
-		}
+		item = exprItem(ctx, gen, e, t, n -> qualified(n), ct).item;
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(t));
 		return item;
 	}
@@ -3081,45 +3120,10 @@ class Compiler {
 		} else if (h.mt != null) {
 			doc = TypeFunctions.tInfos(h.mt).doc;
 			item = hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, h.mt, 0, null, ct(h.t));
-		} else if (h.e != null) switch (h.e.expr) {
-			case TField(e1, fa):
-				switch (fa) {
-					case FStatic(c, cf):
-						doc = cf.doc;
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
-					case FInstance(c, _, cf):
-						doc = cf.doc;
-						item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, Self(classDecl(c)), qualified(cf.name), ct(h.t));
-					case FClosure(cwp, cf):
-						var origin = cwp != null ? hxc.core.CompletionItem.ClassFieldOrigin.Self(classDecl(cwp.c)) : anonFieldOrigin(e1);
-						if (origin != null) {
-							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
-						}
-					case FAnon(cf):
-						var origin = anonFieldOrigin(e1);
-						if (origin != null) {
-							doc = cf.doc;
-							item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSMember, cf, origin, qualified(cf.name), ct(h.t));
-						}
-					case FEnum(en, ef):
-						doc = ef.doc;
-						item = hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef, Self(TEnumDecl(en)), qualified(ef.name), ct(h.t));
-					case FDynamic(_):
-				}
-			case TLocal(v):
-				item = hxc.core.CompletionItem.CompletionItem.localToJson(gen, v, ct(h.t));
-			// This/super hover stays an Expression; any other constant reports as a Literal named by its
-			// printed form.
-			case TConst(TThis | TSuper):
-			case TConst(c):
-				item = hxc.core.CompletionItem.CompletionItem.literalToJson(gen, hxc.core.TPrinting.sConst(c), ct(h.t));
-			case TNew(c, tl, _) if (newConstructor(c) != null):
-				var ncf = newConstructor(c);
-				doc = ncf.doc;
-				item = hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSConstructor, ncf, Self(classDecl(c)), true,
-					ct(ncf == c.constructor ? h.t : newItemType(c, tl, ncf)));
-			case _:
+		} else if (h.e != null) {
+			var r = exprItem(ctx, gen, h.e, h.t, n -> qualified(n), ct);
+			item = r.item;
+			doc = r.doc;
 		}
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(h.t));
 		return {item: item, doc: doc, expected: hoverExpectedJson(gen, h)};

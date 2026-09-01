@@ -436,6 +436,15 @@ class CompletionItem {
 		]:Array<JsonField>).concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));
 	}
 
+	// An object literal's structure, as generateAnon writes it.
+	public static function anonToJson(gen:Genjson, an:TAnon, ct:CompletionType):JsonValue {
+		return JObject([
+			{name: "kind", value: JString("AnonymousStructure")},
+			{name: "args", value: gen.generateAnonJson(an)},
+			{name: "type", value: CompletionTypeTools.toJson(gen, ct)}
+		]);
+	}
+
 	// The Expression item: args would be the typed expression, which is not serialized (null).
 	public static function expressionToJson(gen:Genjson, ct:CompletionType):JsonValue {
 		return JObject([

@@ -2306,6 +2306,8 @@ class TypeResolve {
 		// The enum self-type, with its declared params applied.
 		var et = TEnum(e, TypeFunctions.extractParamTypes(e.params));
 		var index = 0;
+		// The names are the enum's only once every constructor is in.
+		var names:Array<String> = [];
 		var isFlat = true;
 		// A ClassField is collected per constructor alongside the TEnumField; they become the fields of the
 		// enum's statics anon.
@@ -2375,10 +2377,11 @@ class TypeResolve {
 				var efDoc = ef;
 				ctx.delay(hxc.context.Context.PConnectField, function() hxc.typing.InheritDoc.buildEnumFieldDoc(ctx, efDoc));
 			}
-			e.names.push(c.ecName.name);
+			names.push(c.ecName.name);
 			if (c.ecArgs.length > 0) isFlat = false;
 			index++;
 		}
+		for (n in names) e.names.push(n);
 		// The enum's own module type is a PRIVATE typedef whose type is the anon of its constructors,
 		// tagged EnumStatics. An enum used as a value is typed as TType(type, params), so anon is what
 		// Context.typeof of an enum type expression follows to. Without its fields a macro reflecting

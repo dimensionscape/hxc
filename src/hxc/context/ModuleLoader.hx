@@ -1434,20 +1434,15 @@ class ModuleLoader {
 		};
 	}
 
-	// Report the accessor field the identifier names, exactly as a field access to it would.
+	// The accessor field the identifier names answers through the field display, as the class's own (Self),
+	// static or member as the property is.
 	static function delayAccessorDisplay(ctx:Context, c:TClass, name:String, p:Position, isStatic:Bool):Void {
 		if (ctx == null) return;
 		ctx.delay(Context.PConnectField, function() {
 			var cf = isStatic ? c.statics.get(name) : c.fields.get(name);
 			if (cf == null) return;
-			var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-			if (hxc.typing.Typer.displayDefinition && hxc.typing.Typer.displayFound == null)
-				hxc.typing.Typer.displayFound = [cf.namePos];
-			if ((hxc.typing.Typer.displayHover || hxc.typing.Typer.displayTypeDefinition)
-					&& hxc.typing.Typer.hoverFound == null)
-				hxc.typing.Typer.hoverFound = {t: t, p: p};
-			if (hxc.typing.Typer.displayUsage && hxc.typing.Typer.usageTargetField == null)
-				hxc.typing.Typer.usageTargetField = cf;
+			hxc.typing.Typer.displayField(hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c)),
+				isStatic ? hxc.core.Type.ClassFieldScope.CFSStatic : hxc.core.Type.ClassFieldScope.CFSMember, cf, p);
 		});
 	}
 
