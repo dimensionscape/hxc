@@ -604,7 +604,7 @@ class TypeFields {
 		// A @:coreApi class outside a -D core_api build queues its validation against the pristine core
 		// definition (delayed to PForce; display requests skip it).
 		if (Sys.getEnv("HXC_DBG_CORE") != null && TypeFunctions.hasMeta(":coreApi", c.meta)) Sys.println("[core] hook-check " + c.path.name + " core_api=" + ctx.defines.rawDefined("core_api") + " disp=" + (ctx.displaySpec != null));
-		if (TypeFunctions.hasMeta(":coreApi", c.meta) && !ctx.defines.rawDefined("core_api") && ctx.displaySpec == null)
+		if (TypeFunctions.hasMeta(":coreApi", c.meta) && !ctx.defines.rawDefined("core_api") && ctx.checkCoreApi())
 			ctx.delay(Context.PForce, function() try hxc.typing.CoreApi.initCoreApi(ctx, c) catch (e:Dynamic) recordFieldError(ctx, e));
 		// Unless the class is a lib type, its overloads are checked for duplicate signatures once the pass
 		// reaches PForce, and a concrete class extending an abstract one for the methods it leaves

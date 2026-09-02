@@ -78,6 +78,13 @@ class Context {
 	// True only in the macro-world context, including when macro is temporarily defined during host
 	// build-macro parsing.
 	public var isMacro:Bool = false;
+	// Host of a cloned macro context; display settings are inherited except for kind and typing flags.
+	public var hostCom:Null<Context> = null;
+
+	// Disable core API checks for display requests; macro contexts use the host's policy.
+	public function checkCoreApi():Bool {
+		return (hostCom != null ? hostCom : this).displaySpec == null;
+	}
 	// The macro com's error hook; the interpreter marks itself as having had an error.
 	public static var onMacroWorldError:Null<Void->Void> = null;
 
@@ -496,6 +503,7 @@ class Context {
 		// with a non-sys host target.
 		hxc.context.Setup.initPlatform(c, Eval);
 		c.isMacro = true;
+		c.hostCom = this;
 		// Share missing-path results with the host so later extern-loader hooks are not called again for
 		// known misses.
 		c.moduleNonexistentLut = this.moduleNonexistentLut;

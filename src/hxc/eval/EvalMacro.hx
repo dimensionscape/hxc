@@ -2356,6 +2356,8 @@ class EvalMacro {
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
 		if (macroCom == null) initMacroContext(com);
+		// The context is reused; its display settings are the requesting host's.
+		macroCom.hostCom = com;
 		doReuse(com);
 		if (!building && (macroCtx == null || lastModuleCount != macroCom.modules.length || macroWorldDirty)) {
 			building = true;
@@ -2669,6 +2671,7 @@ class EvalMacro {
 
 	static function loadDisplayModuleInMacroInner(host:Context, path:hxc.core.Globals.Path):Void {
 		if (macroCom == null) initMacroContext(host);
+		macroCom.hostCom = host;
 		var key = hxc.context.Context.pathKey(path);
 		var m = macroCom.moduleLut.get(key);
 		if (m != null) {
@@ -2700,6 +2703,7 @@ class EvalMacro {
 		evictDisplayModule();
 		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
+		macroCom.hostCom = host;
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
