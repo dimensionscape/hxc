@@ -16,12 +16,15 @@ class TypePathCompletion {
 	// The span the client replaces: the path segment the cursor is on. The JSON lane reports it both as
 	// replaceRange and inside CRField's own range.
 	public var pos:Null<Position>;
+	// A bare module name no import resolved is looked up from the file's package outwards.
+	public final curPackage:Bool;
 
-	public function new(pack:Array<String>, module:Null<String>, isImport:Bool, ?pos:Position) {
+	public function new(pack:Array<String>, module:Null<String>, isImport:Bool, ?pos:Position, curPackage:Bool = false) {
 		this.pack = pack;
 		this.module = module;
 		this.isImport = isImport;
 		this.pos = pos;
+		this.curPackage = curPackage;
 	}
 }
 
@@ -1045,7 +1048,7 @@ class Parser {
 		if (tokEq(peek(), POpen) && peekInfo().pos.min == tokens[idx - 1].pos.max) {
 			junk();
 			var pOpen = tokens[idx - 1].pos;
-			params = psepTrailing(expr);
+			params = psepTrailing(parseMetaArgumentExpr);
 			// An unfinished argument list containing the display position keeps the parsed prefix so typing
 			// can complete at the position; otherwise the missing close reports as usual.
 			if (tokEq(peek(), PClose)) junk();
@@ -1064,6 +1067,22 @@ class Parser {
 			displayMetaPos = entry.pos;
 		}
 		return entry;
+	}
+
+	// An argument that is a dot completion on a plain dot path (hxc's empty-named field) completes as a
+	// type path.
+	function parseMetaArgumentExpr():Expr {
+		var e = expr();
+		switch (e.expr) {
+			case EField(e1, "", _):
+				var sl = try Ast.stringListOfExprPathRaise(e1) catch (_:hxc.core.ExitException) null;
+				if (sl != null) {
+					sl.reverse();
+					raiseTypePath(sl, false, e1.pos);
+				}
+			case _:
+		}
+		return e;
 	}
 
 	// Every part must sit IMMEDIATELY after what precedes it (p.min = p1.max). A following '.' needs no
@@ -2201,8 +2220,10 @@ class Parser {
 				case Const(CIdent(_)): displayDotPos = np;
 				case _:
 			}
-			var eEnd = displayDotPos != null ? displayDotPos : p;
-			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, eEnd));
+			// The display node ends at the dot. checkResume fires only with the cursor exactly there, so
+			// the declaration around it still holds the cursor; a cursor inside the name is no resume (see
+			// above).
+			var e = new Expr(EField(e1, "", efk), Position.union(e1.pos, p));
 			// The resume arm returns the display node - it does not run exprNext, so whatever follows the
 			// dot stays in the stream and is parsed on its own. That is what ends the enclosing block at
 			// `this.` + `.resume`, which in turn lets a declaration after it belong to the class rather
@@ -3262,6 +3283,20 @@ class Parser {
 			var td:TypeDecl;
 			try {
 				td = parseTypeDecl(mode);
+			} catch (tc:TypePathCompletion) {
+				// A bare module name resolves through the imports so far, the latest first, and otherwise
+				// is looked up from this file's package outwards.
+				if (tc.pack.length > 0 || tc.module == null || tc.curPackage) throw tc;
+				var i = acc.length;
+				while (--i >= 0) switch (acc[i].decl) {
+					case EImport(imp):
+						var path = imp.path;
+						if (path[path.length - 1].name == tc.module
+							&& Lambda.foreach(path.slice(0, path.length - 1), n -> isLowerIdent(n.name)))
+							throw new TypePathCompletion([for (n in path.slice(0, path.length - 1)) n.name], tc.module, tc.isImport, tc.pos);
+					case _:
+				}
+				throw new TypePathCompletion(pack.copy(), tc.module, tc.isImport, tc.pos, true);
 			} catch (a:PreprocessorAbort) {
 				recordSoftPreprocessorFault(a);
 				break;
@@ -3805,10 +3840,13 @@ class Parser {
 						retriedAt = idx;
 						continue;
 					}
-					// `acc,last_pos s`: the body ends at the last token CONSUMED, after resume's
-					// junk_tokens - for a class (tdecl false) a stray `}` does not stop the scan, which
-					// runs on to the next declaration or Eof and takes the braces with it.
-					return {fields: acc, pos: tokens[idx > 0 ? idx - 1 : 0].pos};
+					// The body ends at the last token CONSUMED, after the resume scan's junkTokens - for a
+					// class (tdecl false) a stray `}` does not stop the scan, which runs on to the next
+					// declaration or Eof and takes the braces with it. Unlike the End arm it does not
+					// reverse the accumulator, so the fields come newest first.
+					var rev = acc.copy();
+					rev.reverse();
+					return {fields: rev, pos: tokens[idx > 0 ? idx - 1 : 0].pos};
 				};
 				acc.push(cff);
 				continue;

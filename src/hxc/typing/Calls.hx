@@ -464,8 +464,8 @@ class Calls {
 				// In the display file the surplus arguments are typed before the arity error, so a cursor
 				// sitting on one still answers. The argument the user has not written yet is exactly such a
 				// surplus. A diagnostics run is excluded there and reports the arity error itself.
-				if (hxc.parser.Parser.displayFile != null && ctx.com.displaySpec != null
-					&& ctx.com.displaySpec.indexOf("@diagnostics") < 0)
+				var dspec = ctx.com.activeDisplaySpec();
+				if (hxc.parser.Parser.displayFile != null && dspec != null && dspec.indexOf("@diagnostics") < 0)
 					for (k in ei...el.length) try Typer.typeExpr(ctx, el[k], WithTypeTools.value) catch (_:TypingError) {} catch (_:hxc.core.TypingError.WithTypeError) {};
 				throw new hxc.core.TypingError.CallError("Too many arguments", el[ei].pos);
 			} else {

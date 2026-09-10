@@ -815,12 +815,35 @@ class TypeFields {
 			else if (a.isStatic) { statics.set(a.cf.name, a.cf); orderedStatics.unshift(a.cf); }
 			else { fields.set(a.cf.name, a.cf); ordered.unshift(a.cf); }
 		}
+		// An abstract's operator and cast lists are built the same way (each prepended as its field
+		// initializes, the displayed one included) and only reversed once the loop is over.
+		var a = switch (c.kind) { case KAbstractImpl(a): a; case _: null; };
+		var sOps = a == null ? null : a.ops, sUnops = a == null ? null : a.unops;
+		var sFrom = a == null ? null : a.fromField, sTo = a == null ? null : a.toField;
+		var sArray = a == null ? null : a.array;
 		function restore():Void {
 			c.fields = sFields; c.statics = sStatics; c.orderedFields = sOrdered;
 			c.orderedStatics = sOrderedStatics; c.constructor = sCtor;
+			if (a != null) {
+				a.ops = sOps; a.unops = sUnops; a.fromField = sFrom; a.toField = sTo; a.array = sArray;
+			}
 		}
 		c.fields = fields; c.statics = statics; c.orderedFields = ordered;
 		c.orderedStatics = orderedStatics; c.constructor = ctor;
+		if (a != null) {
+			var seen = new haxe.ds.ObjectMap<TClassField, Bool>();
+			for (x in added) seen.set(x.cf, true);
+			a.ops = [for (o in sOps) if (seen.exists(o.cf)) o];
+			a.ops.reverse();
+			a.unops = [for (o in sUnops) if (seen.exists(o.cf)) o];
+			a.unops.reverse();
+			a.fromField = [for (o in sFrom) if (seen.exists(o.cf)) o];
+			a.fromField.reverse();
+			a.toField = [for (o in sTo) if (seen.exists(o.cf)) o];
+			a.toField.reverse();
+			a.array = [for (f in sArray) if (seen.exists(f)) f];
+			a.array.reverse();
+		}
 		try Typer.displayClassField(c, !isStatic && cf == sCtor, cf, cf.namePos, isStatic) catch (e:Dynamic) {
 			restore();
 			throw e;

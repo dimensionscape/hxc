@@ -85,6 +85,18 @@ class Context {
 	public function checkCoreApi():Bool {
 		return (hostCom != null ? hostCom : this).displaySpec == null;
 	}
+
+	// Macro contexts normally use DMNone, but inherit the host display record while loading a display
+	// module. Legacy completion uses the host's output settings.
+	public function isLegacyCompletion():Bool {
+		var id = hostCom != null ? hostCom.jsonRpcId : jsonRpcId;
+		return id == null || hxc.context.DisplayJson.legacyCompletion;
+	}
+
+	public function activeDisplaySpec():Null<String> {
+		if (hostCom != null) return hxc.typing.TypeFields.macroDisplayWindow ? hostCom.displaySpec : null;
+		return displaySpec;
+	}
 	// The macro com's error hook; the interpreter marks itself as having had an error.
 	public static var onMacroWorldError:Null<Void->Void> = null;
 

@@ -1285,8 +1285,10 @@ class Compiler {
 			}
 			if (hxc.typing.Typer.displayHover) {
 				if (ctx.jsonRpcId != null) {
-					// Raises at the metadata ENTRY, so it answers before whatever the metadata is attached to.
-					var mh = jsonMetaHover(ctx);
+					// Metadata display raises at the metadata ENTRY, so it answers before whatever the
+					// metadata is attached to - but not before a field declaration under the cursor, which
+					// raised while the class was built.
+					var mh = hxc.typing.Typer.fieldDeclHover != null ? null : jsonMetaHover(ctx);
 					if (mh != null) { answerOut(mh); return; }
 					// Unanswered, the request falls through like the legacy one.
 					var out = jsonHover(ctx);
@@ -1296,7 +1298,7 @@ class Compiler {
 					// display raises as soon as the entry is reached, so it wins over the expression the metadata
 					// is attached to; the parser only records the entry when the cursor is on the name. A name the
 					// registry does not know (a custom metadata) answers nothing.
-					var metaDoc = displayMetaDoc(ctx);
+					var metaDoc = hxc.typing.Typer.fieldDeclHover != null ? null : displayMetaDoc(ctx);
 					if (metaDoc != null) { answerOut("<metadata>" + metaDoc + "</metadata>"); return; }
 					var h:Null<{t:T, p:Position}> = answeredHover();
 					// The documentation comes from the hover's ITEM, and a type path answers with a type item,
@@ -2503,7 +2505,7 @@ class Compiler {
 				add({kind: "typeparam", tparam: pc}, 30, pc.path.name, t, false, pc.path.name, pc.path.name,
 					function(gen, i) return hxc.core.CompletionItem.CompletionItem.typeParamToJson(gen, pc, c, i));
 			// The display module's own types and its imports, in scope (isImport).
-			case JTType(mt):
+			case JTType(mt, params):
 				var infos = TypeFunctions.tInfos(mt);
 				var path = infos.path;
 				var key = pathKey(path.pack, infos.module.path.name, path.name);
@@ -2513,7 +2515,7 @@ class Compiler {
 					var st = importStatusOf(path.name, true, statusPack);
 					var tkey = path.pack.length == 0 ? path.name : path.pack.join(".") + "." + path.name;
 					add({kind: "type", mt: mt}, 31 + st, tkey, null, false, path.name, tkey,
-						function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i));
+						function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i, null, false, params));
 				}
 		}
 		var fileOrder = new hxc.core.NameHash.HashTableOrder();
@@ -2797,9 +2799,11 @@ class Compiler {
 			// following changes the type, the one the followed type names - both with the abstract
 			// implementation written out - or nothing at all when either names none.
 			var t = recv.type;
+			// `t == follow t`: follow also unwraps Null<T>.
 			var followChanges = switch (t) {
 				case TMono(r): r.type != null;
 				case TLazy(_) | TType(_, _): true;
+				case TAbstract({path: {pack: [], name: "Null"}}, [_]): true;
 				case _: false;
 			};
 			var mtJson = try {
@@ -2859,7 +2863,12 @@ class Compiler {
 					{item: CI.localToJson(gen, v, ct(t)), doc: null};
 				// An abstract's own member is Self, one reached through `using` a StaticExtension, and an
 				// enum abstract's value its own kind of item.
-				case TField(e1, FStatic(c, cf)):
+				case TField(e1, FStatic(c, cf0)):
+					// A macro field shows its macro-world signature.
+					var mt = hxc.eval.EvalMacro.macroFieldDisplayType(ctx, c, cf0);
+					var cf = cf0;
+					var t = t;
+					if (mt != null) { cf = TypeFunctions.copyField(cf0); cf.type = mt; t = mt; }
 					hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
 					var decl = classDecl(c);
 					var origin = switch [c.kind, e1.expr] {
@@ -2870,7 +2879,11 @@ class Compiler {
 					var enumAbstract = c.kind.match(KAbstractImpl(_)) && TypeFunctions.hasClassFieldFlag(cf, CfEnum);
 					{item: CI.classFieldToJson(gen, CFSStatic, cf, origin, qualified(cf.name), ct(t), null, enumAbstract), doc: cf.doc};
 				// A member reached through a subclass is the declaring class's, as Parent.
-				case TField(e1, FInstance(c, _, cf) | FClosure({c: c}, cf)):
+				case TField(e1, FInstance(c, _, cf0) | FClosure({c: c}, cf0)):
+					var mt = hxc.eval.EvalMacro.macroFieldDisplayType(ctx, c, cf0);
+					var cf = cf0;
+					var t = t;
+					if (mt != null) { cf = TypeFunctions.copyField(cf0); cf.type = mt; t = mt; }
 					hxc.typing.CoreApi.mergeCoreDoc(ctx, TClassDecl(c));
 					var origin = switch (TypeFunctions.follow(e1.type)) {
 						case TInst(c2, _) if (c2 != c): hxc.core.CompletionItem.ClassFieldOrigin.Parent(TClassDecl(c));
@@ -3652,68 +3665,80 @@ class Compiler {
 					pack = pack.slice(0, pack.length - 1);
 				}
 			}
-			var m = try ModuleLoader.loadModule(ctx, {pack: pack, name: sModule}, Position.nullPos) catch (e:Dynamic) {
-				printPositionMessage("Could not load module " + Context.sTypePath({pack: tc.pack, name: tc.module}), Position.nullPos);
-				exitRequest(1);
-				return;
-			};
-			try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
-			// A type's import status is asked of a FRESH typer, so only what the bare name resolves to from
-			// nowhere is Imported.
-			function ct(t:T):hxc.core.CompletionItem.CompletionType
-				return hxc.core.CompletionItem.CompletionTypeTools.fromType(function(path) return importStatusFor(ctx, null, path), t);
-			var statics:Null<hxc.core.Type.TClass> = null;
-			var enumStatics:Null<hxc.core.Type.TEnum> = null;
-			var types = [];
-			for (mt in m.types) {
-				var info = hxc.core.TypeFunctions.tInfos(mt);
-				// The module's main type is where an import finds its statics.
-				if (tc.isImport && info.path.name == tc.module) switch (mt) {
-					case TClassDecl(c): statics = c;
-					case TAbstractDecl({impl: c}) if (c != null): statics = c;
-					case TEnumDecl(en): enumStatics = en;
-					case _:
-				}
-				if (!info.isPrivate) types.push(mt);
-			}
-			// The sub-types are listed only when the path named the module itself.
-			if (tc.module == sModule) for (mt in types) {
-				var info = hxc.core.TypeFunctions.tInfos(mt);
-				items.push({field: {kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null},
-					entry: {filterName: hxc.core.Globals.sTypePath(info.path),
-						toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, i)}});
-			}
-			// A public static, in the class's own scope.
-			if (statics != null) {
-				var c = statics;
-				var origin = switch (c.kind) {
-					case KAbstractImpl(a): hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
-					case _: hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
-				};
-				for (cf in c.orderedStatics) {
-					if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
-					var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
-					var c2 = ct(t);
-					items.push({field: {kind: cf.kind.match(Method(_)) ? "method" : "var", name: cf.name, type: TPrinting.sTypeStr(cf.type),
-							doc: cf.doc == null ? null : Ast.genDocText(cf.doc)},
-						entry: {filterName: cf.name,
-							toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, origin, true, c2, i)}});
+			// Lookup: a bare name resolved from the file's package retries each enclosing package.
+			function lookup(pack:Array<String>):hxc.core.Type.ModuleDef {
+				return try ModuleLoader.loadModule(ctx, {pack: pack, name: sModule}, Position.nullPos) catch (e:Dynamic) {
+					if (!tc.curPackage || pack.length == 0) throw e;
+					lookup(pack.slice(0, pack.length - 1));
 				}
 			}
-			// The enum's constructors go IN FRONT, folded over the constructor map (ascending by name) with
-			// a prepend - so they read descending.
-			if (enumStatics != null) {
-				var en = enumStatics;
-				var names = [for (n in en.constrs.keys()) n];
-				hxc.core.StringSort.sort(names);
-				for (n in names) {
-					var ef = en.constrs.get(n);
-					var c2 = ct(ef.type);
-					items.unshift({field: {kind: hxc.core.TypeFunctions.follow(ef.type).match(TFun(_)) ? "method" : "var", name: ef.name,
-							type: TPrinting.sTypeStr(ef.type), doc: ef.doc == null ? null : Ast.genDocText(ef.doc)},
-						entry: {filterName: ef.name,
-							toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
-								hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), true, c2, i)}});
+			// A failure is an abort, which is reported as an error and answered with no fields: nothing on
+			// the legacy lane, an empty list over JSON.
+			var m = try lookup(pack) catch (e:Dynamic) null;
+			if (m == null) {
+				if (ctx.jsonRpcId == null) {
+					abortWithMessage(ctx, "Could not load module " + Context.sTypePath({pack: tc.pack, name: tc.module}), Position.nullPos);
+					return;
+				}
+			} else {
+				try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
+				// A type's import status is asked of a FRESH typer, so only what the bare name resolves to
+				// from nowhere is Imported.
+				function ct(t:T):hxc.core.CompletionItem.CompletionType
+					return hxc.core.CompletionItem.CompletionTypeTools.fromType(function(path) return importStatusFor(ctx, null, path), t);
+				var statics:Null<hxc.core.Type.TClass> = null;
+				var enumStatics:Null<hxc.core.Type.TEnum> = null;
+				var types = [];
+				for (mt in m.types) {
+					var info = hxc.core.TypeFunctions.tInfos(mt);
+					// The module's main type is where an import finds its statics.
+					if (tc.isImport && info.path.name == tc.module) switch (mt) {
+						case TClassDecl(c): statics = c;
+						case TAbstractDecl({impl: c}) if (c != null): statics = c;
+						case TEnumDecl(en): enumStatics = en;
+						case _:
+					}
+					if (!info.isPrivate) types.push(mt);
+				}
+				// The sub-types are listed only when the path named the module itself.
+				if (tc.module == sModule) for (mt in types) {
+					var info = hxc.core.TypeFunctions.tInfos(mt);
+					items.push({field: {kind: "type", name: info.path.name, type: Context.sTypePath(info.path), doc: null},
+						entry: {filterName: hxc.core.Globals.sTypePath(info.path),
+							toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, 0, i)}});
+				}
+				// A public static, in the class's own scope.
+				if (statics != null) {
+					var c = statics;
+					var origin = switch (c.kind) {
+						case KAbstractImpl(a): hxc.core.CompletionItem.ClassFieldOrigin.Self(TAbstractDecl(a));
+						case _: hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
+					};
+					for (cf in c.orderedStatics) {
+						if (!hxc.core.TypeFunctions.hasClassFieldFlag(cf, CfPublic)) continue;
+						var t = switch (cf.type) { case TLazy(r): TypeFunctions.lazyType(r); case t2: t2; };
+						var c2 = ct(t);
+						items.push({field: {kind: cf.kind.match(Method(_)) ? "method" : "var", name: cf.name, type: TPrinting.sTypeStr(cf.type),
+								doc: cf.doc == null ? null : Ast.genDocText(cf.doc)},
+							entry: {filterName: cf.name,
+								toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.classFieldToJson(gen, CFSStatic, cf, origin, true, c2, i, false, false)}});
+					}
+				}
+				// The enum's constructors go IN FRONT, folded over the constructor map (ascending by name)
+				// with a prepend - so they read descending.
+				if (enumStatics != null) {
+					var en = enumStatics;
+					var names = [for (n in en.constrs.keys()) n];
+					hxc.core.StringSort.sort(names);
+					for (n in names) {
+						var ef = en.constrs.get(n);
+						var c2 = ct(ef.type);
+						items.unshift({field: {kind: hxc.core.TypeFunctions.follow(ef.type).match(TFun(_)) ? "method" : "var", name: ef.name,
+								type: TPrinting.sTypeStr(ef.type), doc: ef.doc == null ? null : Ast.genDocText(ef.doc)},
+							entry: {filterName: ef.name,
+								toJson: function(gen, i) return hxc.core.CompletionItem.CompletionItem.enumFieldToJson(gen, ef,
+									hxc.core.CompletionItem.ClassFieldOrigin.Self(TEnumDecl(en)), true, c2, i)}});
+					}
 				}
 			}
 		} else {
@@ -3724,7 +3749,7 @@ class Compiler {
 			// found in <pack>", not an empty list. Reported the way an abort is - the bare message - rather
 			// than thrown from inside this completion handler, where only the request path's generic catch
 			// would see it.
-			if (r.packs.length == 0 && r.modules.length == 0) {
+			if (r.packs.length == 0 && r.modules.length == 0 && ctx.jsonRpcId == null) {
 				abortWithMessage(ctx, "No modules found in " + tc.pack.join("."), Position.nullPos);
 				return;
 			}

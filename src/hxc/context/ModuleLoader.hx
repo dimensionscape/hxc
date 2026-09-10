@@ -277,7 +277,7 @@ class ModuleLoader {
 
 	// Hold type-parameter display answers until typeModule finishes creating the module's types.
 	public static var creatingModuleTypes:Int = 0;
-	public static var typeParamDisplay:Null<{t:T, p:Position, scope:TypeParams}> = null;
+	public static var typeParamDisplay:Null<{t:T, p:Position, scope:TypeParams, owner:Path}> = null;
 
 	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false, queueBuilds:Bool = true):Void {
 		creatingModuleTypes++;
@@ -1627,10 +1627,36 @@ class ModuleLoader {
 		var tpd = typeParamDisplay;
 		if (tpd != null) {
 			typeParamDisplay = null;
+			// A type's parameters are assigned only once they are typed, and the declarations are walked in
+			// order: when one raises, its own type and every later one have none yet.
+			function setParams(mt:ModuleType, ps:TypeParams):Void {
+				switch (mt) {
+					case TClassDecl(c): c.params = ps;
+					case TEnumDecl(e): e.params = ps;
+					case TTypeDecl(t): t.params = ps;
+					case TAbstractDecl(a): a.params = ps;
+				}
+			}
+			var cleared:Array<{mt:ModuleType, ps:TypeParams}> = [];
+			for (mt in m.types) {
+				var inf = TypeFunctions.tInfos(mt);
+				if (cleared.length == 0 && Context.pathKey(inf.path) != Context.pathKey(tpd.owner)) continue;
+				cleared.push({mt: mt, ps: inf.params});
+				setParams(mt, []);
+			}
+			// ...and it runs before module typing has reached any import.
+			var imps = ctx.moduleImports.get(Context.pathKey(m.path));
+			var oldAt = imps == null ? -1 : imps.pathDisplayAt;
+			if (imps != null) imps.pathDisplayAt = 0;
+			function restore():Void {
+				for (x in cleared) setParams(x.mt, x.ps);
+				if (imps != null) imps.pathDisplayAt = oldAt;
+			}
 			var old = ctx.currentModule;
 			ctx.currentModule = m;
-			try hxc.typing.Typeload.displayTypeInScope(ctx, tpd.t, tpd.p, tpd.scope) catch (e:Dynamic) { ctx.currentModule = old; throw e; }
+			try hxc.typing.Typeload.displayTypeInScope(ctx, tpd.t, tpd.p, tpd.scope) catch (e:Dynamic) { ctx.currentModule = old; restore(); throw e; }
 			ctx.currentModule = old;
+			restore();
 		}
 		// Add the module, then initialize each declaration's type - which is where each imported module
 		// loads. Registering first is what stops a pair of mutually importing modules from recursing.

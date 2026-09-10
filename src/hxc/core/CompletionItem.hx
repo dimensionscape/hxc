@@ -54,10 +54,24 @@ typedef CtPathWithParams = {
 	importStatus:ImportStatus
 };
 
-typedef CtFunctionArgument = {name:String, opt:Bool, t:CompletionType};
+typedef CtFunctionArgument = {name:String, opt:Bool, t:CompletionType, ?value:hxc.ast.Ast.Expr};
 typedef CtAnonymousField = {field:TClassField, t:CompletionType};
 
 class CompletionTypeTools {
+	// A function type's arguments take their defaults from the values map, which every class-field and
+	// local item reads off its own @:value. Nothing below the top function carries them.
+	public static function withArgValues(ct:CompletionType, meta:Null<hxc.ast.Ast.Metadata>):CompletionType {
+		if (meta == null) return ct;
+		return switch (ct) {
+			case CTFunction(args, ret):
+				var values = hxc.ast.Ast.getValueMeta(meta);
+				if (!values.keys().hasNext()) ct;
+				else CTFunction([for (a in args) {name: a.name, opt: a.opt, t: a.t, value: values.get(a.name)}], ret);
+			case _: ct;
+		};
+	}
+
+	// Without a values map; withArgValues adds it.
 	public static function fromType(getImportStatus:Path->ImportStatus, t:T):CompletionType {
 		function ppath(mpath:Path, tpath:Path, tl:Array<T>):CtPathWithParams {
 			return {
@@ -136,7 +150,8 @@ class CompletionTypeTools {
 						field("name", JString(a.name)),
 						field("opt", JBool(a.opt)),
 						field("t", toJson(gen, a.t)),
-						field("value", JNull)
+						// The default as written (Ast.Printer.sExpr).
+						field("value", a.value == null ? JNull : JObject([field("string", JString(hxc.ast.Ast.Printer.sExpr(a.value)))]))
 					])])),
 					field("ret", toJson(gen, ret))
 				]));
@@ -175,10 +190,13 @@ class ClassFieldOriginTools {
 }
 
 class CompletionItem {
-	// The ClassField arm: item = {kind, args:{field, origin, resolution}, type}. ITEnumAbstractField
-	// serializes exactly like ITClassField, under a different kind name .
+	// The ClassField item: {kind, args:{field, origin, resolution}, type}.
+	// An enum abstract field serializes exactly like a class field, under a different kind name.
+	// `argValues` false is for a display path's field doc, the one class-field item made without the
+	// field's argument defaults.
 	public static function classFieldToJson(gen:Genjson, scope:ClassFieldScope, cf:TClassField, origin:ClassFieldOrigin,
-			isQualified:Bool, ct:CompletionType, ?index:Int, enumAbstract:Bool = false):JsonValue {
+			isQualified:Bool, ct:CompletionType, ?index:Int, enumAbstract:Bool = false, argValues:Bool = true):JsonValue {
+		if (argValues) ct = CompletionTypeTools.withArgValues(ct, cf.meta);
 		var qualifier:JsonValue = switch [scope, origin] {
 			case [CFSStatic, Self(mt) | Parent(mt) | StaticExtension(mt) | StaticImport(mt)]:
 				var infos = TypeFunctions.tInfos(mt);
@@ -207,6 +225,7 @@ class CompletionItem {
 
 	// The Local item: {kind:"Local", args:generateTVar, type}.
 	public static function localToJson(gen:Genjson, v:TVar, ct:CompletionType, ?index:Int):JsonValue {
+		ct = CompletionTypeTools.withArgValues(ct, v.meta);
 		return JObject(([
 			{name: "kind", value: JString("Local")},
 			{name: "args", value: gen.generateTVar(v)},
@@ -338,8 +357,9 @@ class CompletionItem {
 	// `typedefUnloaded`: the typedef is described before its type is loaded, while type is still the
 	// monomorph module creation gave it, so it can only be called a TypeAlias.
 	public static function moduleTypeToJson(gen:Genjson, mt:hxc.core.Type.ModuleType, importStatus:Int, ?index:Int, ?ct:CompletionType,
-			typedefUnloaded:Bool = false):JsonValue {
+			typedefUnloaded:Bool = false, ?params:hxc.core.Type.TypeParams):JsonValue {
 		var infos = TypeFunctions.tInfos(mt);
+		if (params == null) params = infos.params;
 		var kind:Int;
 		var isExtern = false, isFinal = false, isAbstract = false;
 		switch (mt) {
@@ -382,7 +402,7 @@ class CompletionItem {
 				])},
 				{name: "kind", value: JInt(kind)}
 			].concat(moduleTypeTail(gen, infos.meta, function() return gen.generatePos(infos.pos),
-				function() return [for (tp in infos.params) astParam(tp)], isExtern, isFinal, isAbstract, infos.doc)))}
+				function() return [for (tp in params) astParam(tp)], isExtern, isFinal, isAbstract, infos.doc)))}
 		]:Array<JsonField>)
 			.concat(ct == null ? [] : ([{name: "type", value: CompletionTypeTools.toJson(gen, ct)}]:Array<JsonField>))
 			.concat(index == null ? [] : ([{name: "index", value: JInt(index)}]:Array<JsonField>)));

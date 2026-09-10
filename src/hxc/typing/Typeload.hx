@@ -52,7 +52,7 @@ class Typeload {
 		// parameters in scope where this one is declared, not the list being declared.
 		if (hxc.typing.ExprPreprocessing.inDisplayFile(p) && hxc.typing.Typer.atDisplayPos(p)) {
 			var scope = scopeParams == null ? [] : scopeParams;
-			if (hxc.context.ModuleLoader.creatingModuleTypes > 0) hxc.context.ModuleLoader.typeParamDisplay = {t: t, p: p, scope: scope};
+			if (hxc.context.ModuleLoader.creatingModuleTypes > 0) hxc.context.ModuleLoader.typeParamDisplay = {t: t, p: p, scope: scope, owner: declPath};
 			else displayTypeInScope(ctx, t, p, scope);
 		}
 		var declModulePath:Path = {pack: declPath.pack, name: declPath.name};

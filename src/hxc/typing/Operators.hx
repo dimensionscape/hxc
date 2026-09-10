@@ -1345,7 +1345,11 @@ class Operators {
 					var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, au.cf.type))) { case TFun(s): s; case _: null; };
 					var ret = sig != null ? sig.ret : e.type;
 					if (au.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
-					if (au.cf.expr == null) return TypeFunctions.mk(TUnop(op, flag, e), ret, p);
+					// Only an @:op with no body is the plain unop. One whose body a display request leaves untyped
+					// still has an expression there - an @:op field is given a stand-in body because its presence
+					// matters - so it is called like any other.
+					if (au.cf.expr == null && !hxc.typing.TypeFields.fieldHasSyntaxBody(ctx.com, a.impl, au.cf))
+						return TypeFunctions.mk(TUnop(op, flag, e), ret, p);
 					var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
 					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, au.cf, FHStatic(a.impl), false, p), FCall);
 					return Calls.makeCall(ctx, fieldExpr, [e], ret, p);

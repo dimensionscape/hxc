@@ -26,7 +26,8 @@ enum JsonToplevelEntry {
 	// is listed already qualified.
 	JTField(cf:TClassField, scope:ClassFieldScope, origin:hxc.core.CompletionItem.ClassFieldOrigin, enumAbstract:Bool,
 		?qualified:Bool);
-	JTType(mt:hxc.core.Type.ModuleType);
+	// The type's parameters are copied as the item is made.
+	JTType(mt:hxc.core.Type.ModuleType, params:hxc.core.Type.TypeParams);
 	// An enum constructor, or an imported one, which registers `register` as its name.
 	JTEnumCtor(en:hxc.core.Type.TEnum, ef:hxc.core.Type.TEnumField, origin:hxc.core.CompletionItem.ClassFieldOrigin,
 		register:String);
@@ -125,6 +126,7 @@ class Typer {
 		hxc.typing.Typeload.resetSynthesizedHints();
 		displayHover = false;
 		hoverFound = null;
+		fieldDeclHover = null;
 		hoverSnapshot = null;
 		jsonFieldCompletion = null;
 		fieldCompletionSnapshot = null;
@@ -1532,8 +1534,10 @@ class Typer {
 						for (f in fields) if (atDisplayPos(f.pos)) { subjName = f.name; subjPos = f.pos; break; }
 						var doff = hxc.parser.Parser.displayOffset;
 						var insert = new Position(p.file, doff, doff);
+						// A bare structure is its own origin, AnonymousStructure.
+						var bare = anOrigin == null ? an : null;
 						jsonFieldCompletion = {
-							entries: [for (cf in cand) {cf: cf, scope: CFSMember, originClass: null, originAnon: null, builtIn: false}],
+							entries: [for (cf in cand) {cf: cf, scope: CFSMember, originClass: null, originAnon: bare, builtIn: false}],
 							receiver: null,
 							insertPos: insert,
 							originModuleType: anOrigin,
@@ -1885,7 +1889,13 @@ class Typer {
 				// name.
 				switch (dk) {
 					case DKDot: typeExpr(ctx, new Expr(EField(e1, "", EFNormal), p), withType);
-					case _: typeExpr(ctx, e1, withType);
+					case _:
+						// The wrapper's subject is the display node. A macro hands back new nodes
+						// (EvalMacro.withDisplayMark wrapped the mark it was given), so the subject is taken from the
+						// wrapper rather than by identity.
+						if (hxc.typing.ExprPreprocessing.markedNode != null && dk == hxc.typing.ExprPreprocessing.markedKind)
+							hxc.typing.ExprPreprocessing.markedNode = e1;
+						typeExpr(ctx, e1, withType);
 				}
 			case ECheckType(e1, th):
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
@@ -1960,6 +1970,11 @@ class Typer {
 	}
 
 	public static var hoverFound(default, set):Null<HoverRecord> = null;
+
+	// The hover a field declaration answered. It is raised while the class is built, before a type's
+	// own metadata is checked at PCheckConstraint, so a metadata entry under the same cursor never
+	// gets to answer.
+	public static var fieldDeclHover:Null<HoverRecord> = null;
 
 	// A hover raises, so typing stops with the answer's type as it stood: a monomorph the rest of the
 	// expression would bind is still unbound in it - `sameType` in `sameType(BoolLit(true),
@@ -2694,7 +2709,9 @@ class Typer {
 				out.push(JTKeyword(kwd));
 			out.push(JTLiteral("trace", TFun({args: [{name: "value", opt: false, t: TypeFunctions.tDynamic}], ret: basic.tvoid})));
 		}
-		addTypeEntries(ctx.com, out, paths, ctx.typeParams, c == null ? null : c.module);
+		// With no class (a type's own metadata), the module being typed.
+		addTypeEntries(ctx.com, out, paths, ctx.typeParams,
+			c == null || c == TypeFunctions.nullClass ? ctx.com.currentModule : c.module);
 		return out;
 	}
 
@@ -2720,7 +2737,7 @@ class Typer {
 			CoreApi.mergeCoreDoc(com, mt);
 			if (TypeFunctions.hasMeta(":noCompletion", inf.meta)) return;
 			paths.set(key, true);
-			out.push(JTType(mt));
+			out.push(JTType(mt, inf.params));
 		}
 		if (curmod != null) for (mt in curmod.types) addType(mt);
 		var imported = moduleImportTypes(com);
@@ -3447,7 +3464,9 @@ class Typer {
 				scope = isStatic ? CFSStatic : isCtor ? CFSConstructor : CFSMember;
 				hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
 		};
+		var before = hoverFound;
 		displayField(origin, scope, cf, p);
+		if (hoverFound != before) fieldDeclHover = hoverFound;
 	}
 
 	// A constructor's declaration answers by itself. The hover item is the enum field, which is where
@@ -3837,27 +3856,32 @@ class Typer {
 	// Serializes a JSON field completion as it stands; set while one is requested.
 	public static var fieldCompletionSnapshot:Null<Void->Null<String>> = null;
 
-	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position):TExpr {
+	// `resumeWithType` is the resumed dot's own expected type: the receiver types with it, and the two are
+	// then unified.
+	static function displayFieldCompletion(ctx:TyperContext, e1:Expr, p:Position, ?resumeWithType:WithType):TExpr {
 		var identName = switch (e1.expr) { case EConst(CIdent(s)): s; case _: null; };
 		// The subject types with inDisplay set, which is put back only on a normal return: a subject whose
 		// typing raised leaves it set for the rest of the block, which is how the statement after it
 		// reaches the package guess for an unknown identifier.
 		var oldInDisplay = ctx.inDisplay;
 		ctx.inDisplay = true;
-		var legacy = ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion;
-		var typed:Null<TExpr> = try typeExpr(ctx, e1, WithTypeTools.value) catch (err:TypingError) {
+		var legacy = ctx.com.isLegacyCompletion();
+		var typed:Null<TExpr> = try typeExpr(ctx, e1, resumeWithType != null ? resumeWithType : WithTypeTools.value) catch (err:TypingError) {
 			var unknownPrefix = "Unknown identifier : ";
 			// An unknown identifier under DMDefault is a package being written. A dot completion on it is
 			// the legacy protocol's TypePath; anything else is the toplevel.
 			if (StringTools.startsWith(err.message, unknownPrefix)) {
 				var n = err.message.substr(unknownPrefix.length).split(String.fromCharCode(10))[0];
 				if (legacy) throw new hxc.parser.Parser.TypePathCompletion([n], null, false, e1.pos);
-				if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx), n, e1.pos);
+				// The toplevel answer takes the resumed dot's own expected type.
+				if (displayToplevelJson)
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx, resumeWithType), n, e1.pos, resumeWithType);
 			}
 			// A type or module that is not there answers, in the legacy protocol, with the
 			// sub-types of a module already loaded under that path, and otherwise reports.
 			if (legacy && identName != null && moduleTypeList(ctx, identName) != null) null else throw err;
 		};
+		if (typed != null && resumeWithType != null) unifyForAnswer(ctx, typed, resumeWithType);
 		ctx.inDisplay = oldInDisplay;
 		var fields:Array<hxc.compiler.DisplayXml.DisplayField> = [];
 		var seen = new haxe.ds.StringMap<Bool>();
@@ -4710,8 +4734,16 @@ class Typer {
 				// answers with what it typed to, so those positions still report String; hxc scans typed
 				// nodes, and the literal has none of its own after the rewrite. Record one over its whole
 				// span.
-				if ((displayHover || displayTypeDefinition) && atExprHoverPos(p))
-					noteLiteralHover(ctx, te, p, withType);
+				if ((displayHover || displayTypeDefinition) && atExprHoverPos(p)) {
+					var mn = ExprPreprocessing.markedNode;
+					// When the literal is the marked node (no part of it was), its typed concatenation is the
+					// answer, at that expression's own span - whatever narrower node the walk saw inside it.
+					if (mn != null && mn.pos.file == p.file && mn.pos.min == p.min && mn.pos.max == p.max
+							&& mn.expr.match(EConst(CString(_, SSingleQuotes))))
+						hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+					else
+						noteLiteralHover(ctx, te, p, withType);
+				}
 				te;
 			case CString(_, _):
 				TexprTools.typeConstant(basic, c, p);
@@ -5007,11 +5039,11 @@ class Typer {
 			// initialize option hxc has no way to set. The test is ctx.inDisplay, which is on for the marked
 			// node's own typing. Its span is no stand-in: a case body starts at the `case` keyword, so its
 			// span holds the case's pattern, which the matcher types before the body and outside it.
-			if (ctx.com.displaySpec != null && !ctx.inDisplay) {
+			if (ctx.com.activeDisplaySpec() != null && !ctx.inDisplay) {
 				ctx.com.addDiagnostic("Unknown identifier : " + i, p, 0);
 				return AKExpr(TypeFunctions.mk(TIdent(i), TypeFunctions.mkMono(), p));
 			}
-			if (ctx.com.displaySpec != null && ctx.inDisplay && displaySubjectError == null)
+			if (ctx.com.activeDisplaySpec() != null && ctx.inDisplay && displaySubjectError == null)
 				displaySubjectError = {msg: "Unknown identifier : " + i, pos: p};
 			throw new hxc.core.TypingError.UnknownIdentError(i, p);
 		}
@@ -5398,7 +5430,7 @@ class Typer {
 		}
 		if (ctx.inDisplay) {
 			var sl = [for (part in path) part.name];
-			if (ctx.com.jsonRpcId == null || hxc.context.DisplayJson.legacyCompletion)
+			if (ctx.com.isLegacyCompletion())
 				throw new hxc.parser.Parser.TypePathCompletion(sl, null, false, first.pos);
 			hxc.typing.TypeResolve.answerTypeHintCompletion(ctx.com, p0, sl.join("."), 2);
 		}
@@ -6061,10 +6093,27 @@ class Typer {
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
-			// Under DMDefault: a marked identifier - a callee, an assignment's target - answers the toplevel
-			// collection with its name as the subject, once it has been typed. (A marked field access
-			// reached here is typeExpr's.)
+			// Under DMDefault a marked identifier - a callee, an assignment's target - answers the toplevel
+			// collection with its name as the subject, once it has been typed. A marked field access gets
+			// here as a CALLEE (typeCallTarget hands it straight to typeAccess); anywhere else it is
+			// typeExpr's.
 			switch (edef) {
+				case EField(e1, s, _) if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume
+						&& hxc.typing.ExprPreprocessing.markedKind == DKMarked):
+					var te:Null<TExpr> = switch (acc) {
+						case AKExpr(e1): e1;
+						case AKField(fa) if (!fa.isInline || fa.field.kind.match(Method(_))):
+							FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+						case _: null;
+					};
+					if (te != null) unifyForAnswer(ctx, te, withType);
+					// A field access that typed to a field lists its receiver's fields, the written
+					// name the subject; anything else answers the toplevel collection.
+					if (te != null && te.expr.match(TField(_, _))) {
+						hxc.parser.Parser.displayDotName = s;
+						hxc.parser.Parser.displayDotPos = new Position(te.pos.file, te.pos.max - s.length, te.pos.max);
+						displayFieldCompletion(ctx, e1, te.pos);
+					} else raiseToplevelMarked(ctx, mn, withType);
 				case EConst(CIdent(_)) if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume
 						&& hxc.typing.ExprPreprocessing.markedKind == DKMarked):
 					// The typed node is unified with its expected type before the answer, which binds what
@@ -6135,7 +6184,7 @@ class Typer {
 				// field-completion list.
 				// The parser makes the RECEIVER the display node, so its position is the one completion
 				// answers at.
-				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, e1.pos));
+				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, e1.pos, withType));
 				if (field == "new") {
 					var cv = constructorValue(ctx, e1, mode, p);
 					if (cv != null) return cv;

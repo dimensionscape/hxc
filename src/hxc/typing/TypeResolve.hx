@@ -2412,12 +2412,12 @@ class TypeResolve {
 				// copies its
 				// :value.
 				dropGeneratedMeta(cf);
-				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
+				if (eo != null) cf.meta = [{name: ":value", params: [valueExpr(eo)], pos: Position.nullPos}].concat(cf.meta);
 			case FProp(_, _, th, eo):
 				// A property's hint loads as a type hint as well.
 				if (th != null) cf.type = Typeload.loadTypeHint(ctx, typeParams, th);
 				dropGeneratedMeta(cf);
-				if (eo != null) cf.meta = [{name: ":value", params: [eo], pos: Position.nullPos}].concat(cf.meta);
+				if (eo != null) cf.meta = [{name: ":value", params: [valueExpr(eo)], pos: Position.nullPos}].concat(cf.meta);
 			case FFun(fd):
 				// Method -> TFun(args, ret). Faithful: optional arg -> Null<T>; missing hint
 				// > fresh mono (the typer infers it).
@@ -2550,16 +2550,24 @@ class TypeResolve {
 		}
 	}
 
-	// For each `@:overload(function
-	// (args):ret {})` meta on `cf`, load its args/ret into a TFun signature and push a cloned
-	// TClassField carrying that type onto overloads. The empty-body / no-name / not-inline
-	// checks are faithful but lenient here (the std/externs we load are well-formed). The
-	// `@:overload` (no-args, supportsOverload "proper" overloads) form is not applicable to the JS
-	// target (`supportsOverload = false` for js), so we only handle the meta-with-function form.
-	// An enum abstract's implementation fields are resolved twice here (buildEnumAbstractFields,
-	// then resolveClassFields) where the reference creates each field once. What the first pass
-	// generated is dropped before the second adds it again; it is the only metadata carrying the
-	// shared null position, so a user's own @:value survives.
+	// For each `@:overload(function(args):ret {})` meta on `cf`, load its args/ret into a TFun signature
+	// and push a cloned TClassField carrying that type onto overloads. The empty-body / no-name /
+	// not-inline checks are lenient here (the std/externs we load are well-formed). The `@:overload`
+	// (no-args, "proper" overloads) form is not applicable to the JS target, so we only handle the
+	// meta-with-function form.
+	// An enum abstract's implementation fields are resolved twice here (buildEnumAbstractFields, then
+	// resolveClassFields). What the first pass generated is dropped before the second adds it again; it
+	// is the only metadata carrying the shared null position, so a user's own @:value survives.
+	// The initializer is recorded as written, while typing works on the new tree the preprocessing
+	// returns. hxc's pass marks the original in place (ExprPreprocessing.splice), so an initializer
+	// holding the display position is recorded as a copy the pass never sees.
+	static function valueExpr(e:Expr):Expr {
+		if (!ExprPreprocessing.inDisplayFile(e.pos) || !Typer.atDisplayPos(e.pos)) return e;
+		function copy(e:Expr):Expr
+			return Ast.mapExpr(copy, e);
+		return copy(e);
+	}
+
 	static function dropGeneratedMeta(cf:TClassField):Void {
 		cf.meta = [for (m in cf.meta) if (m.pos != Position.nullPos || (m.name != ":value" && m.name != ":haxe.arguments")) m];
 	}

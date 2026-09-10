@@ -2413,6 +2413,9 @@ class EvalMacro {
 	// whole macro world each request.
 	static var pendingDisplayEvict:Bool = false;
 	static var pendingStaleSweep:Bool = false;
+	// The display file a request typed in the macro world under its display window: typed in display
+	// mode, it is no module a later compilation can inherit either, so the next request drops it.
+	static var priorDisplayFile:Null<String> = null;
 
 	// A compilation that finds a cached interpreter reuses it and resets the static prototypes - every
 	// non-persistent static initializer runs again. That is what puts a macro-world static back at its
@@ -2440,6 +2443,10 @@ class EvalMacro {
 		apiTyper = null;
 		apiModule = null;
 		pendingDisplayEvict = true;
+		if (priorDisplayFile != null) {
+			evictMacroModulesOfFile(priorDisplayFile);
+			priorDisplayFile = null;
+		}
 		pendingStaleSweep = true;
 		pendingMacroReuse = true;
 		survivors = new haxe.ds.ObjectMap();
@@ -2660,6 +2667,7 @@ class EvalMacro {
 	public static function loadDisplayModuleInMacro(host:Context, path:hxc.core.Globals.Path):Void {
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
 		hxc.typing.TypeFields.macroDisplayWindow = true;
+		if (hxc.parser.Parser.displayFile != null) priorDisplayFile = hxc.parser.Parser.displayFile;
 		// A display answer or a type path completion leaves; any other failure of the load or its finalize
 		// is dropped.
 		try loadDisplayModuleInMacroInner(host, path)
@@ -2708,6 +2716,7 @@ class EvalMacro {
 		macroCom.raiseTypingErrors = true;
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
 		if (displayWindow) hxc.typing.TypeFields.macroDisplayWindow = true;
+		if (displayWindow && hxc.parser.Parser.displayFile != null) priorDisplayFile = hxc.parser.Parser.displayFile;
 		// The macro com takes the host's whole display record for this load, the full-typing flag
 		// included: under a display request the macro module is typed selectively, and a sibling of the
 		// forced macro stays lazy. Carrying only the display position would type every field, so a caller
@@ -2861,11 +2870,15 @@ class EvalMacro {
 		macroCom.raiseTypingErrors = oldRaise;
 		hxc.typing.TypeFields.macroDisplayWindow = oldWindow;
 		macroCom.displayFullTyping = oldFullTyping;
-		// ': a host load flushes the macro context - finalize, generate, the filters built anew (the
-		// exception filter's loads count against the loaded macro module, curmod) and add_types for what
+		// A host load flushes the macro context - finalize, generate, the filters built anew (the exception
+		// filter's loads count against the loaded macro module, the current module) and adding the types
 		// the interpreter has not seen - whether or not anything is new. The first one creates the
-		// interpreter (getContext). The load_display_module_in_macro route (no method) finalizes only .
-		if (macroCtx != null && fieldName != null && !forceAll && !host.isMacro) {
+		// interpreter (getContext). Loading the display module in the macro context (no method) finalizes
+		// only.
+		// A field completion the load answered ends the macro load before any of this: it is recorded and
+		// the load returns.
+		var answered = displayWindow && hxc.typing.Typer.fieldCompletionFound != null;
+		if (!answered && macroCtx != null && fieldName != null && !forceAll && !host.isMacro) {
 			hxc.typing.TypeResolve.resolveAll(macroCom);
 			hxc.typing.TypeFields.typeAllModules(macroCom);
 			flushMacroWorld(macroCtx);
@@ -2883,6 +2896,8 @@ class EvalMacro {
 		var cacheKey = hxc.core.Globals.sTypePath(path) + (sub != null ? "." + sub : "") + "." + fieldName;
 		if (macroCom == null || !macroCom.cachedMacros.exists(cacheKey)) {
 			loadMacroClass(host, path, fieldName, false, modulePath, dependent, p, display, sub);
+			// The answer loadMacroClass stopped at leaves the macro load altogether.
+			if (display && hxc.typing.Typer.fieldCompletionFound != null) return;
 			getContext(host);
 			macroCom.cachedMacros.set(cacheKey, true);
 			macroCurModule = null;
@@ -2974,6 +2989,34 @@ class EvalMacro {
 			ec = getContext(tctx.com);
 			proto = macroPrototype(ec, path, fa.field.name, hostClass.module != null ? hostClass.module.path : null, false);
 			idx = proto == null ? null : proto.pnames.get(EvalHash.hash(fa.field.name));
+		}
+		// An expression macro: the macro's declared return is unified with haxe.macro.Expr, at the macro
+		// field's own position, in the macro context. A mismatch is recorded rather than raised, and the
+		// record marks the interpreter, so the call below is skipped.
+		{
+			// The macro's own field, in its own class: another class of the module may hold a static of the
+			// same name.
+			var rcf:Null<TClassField> = null;
+			var mm = macroCom == null ? null : macroCom.moduleLut.get(hxc.context.Context.pathKey(
+				hostClass.module != null ? hostClass.module.path : macroLoadPath(path)));
+			function own(c:TClass):Void {
+				if (c.path.name != path.name || c.path.pack.join(".") != path.pack.join(".")) return;
+				rcf = c.statics.get(fa.field.name);
+				if (rcf == null) rcf = c.fields.get(fa.field.name);
+			}
+			if (mm != null) for (mt in mm.types) switch (mt) {
+				case TClassDecl(c): own(c);
+				case TAbstractDecl({impl: c}) if (c != null): own(c);
+				case _:
+			}
+			var rsig = rcf == null ? null : switch (TypeFunctions.follow(rcf.type)) { case TFun(s): s; case _: null; };
+			if (rsig != null && macroCom != null) {
+				var exprT = try hxc.typing.Typeload.loadInstance(macroCom, [],
+					{tpackage: ["haxe", "macro"], tname: "Expr", tsub: null, tparams: []}, rcf.pos, false) catch (_:Dynamic) null;
+				if (exprT != null) try hxc.core.TypeUnification.unifyDefault(rsig.ret, exprT)
+					catch (ue:hxc.core.TypeUnification.UnifyError)
+						macroCom.addDiagnostic(hxc.core.TPrinting.betterErrorMessage(ue.errors), rcf.pos);
+			}
 		}
 		// Once the macro world has reported an error (the macro com's error hook marks the interpreter, and
 		// adding types then adds nothing), no macro is called: the call answers nothing and types as `null`
@@ -3281,9 +3324,24 @@ class EvalMacro {
 		return encodeExpr(ec, e);
 	}
 
+	// One node of the body is marked as the display SUBJECT, and a macro is handed the ANNOTATED tree
+	// - it can match on `EDisplay(macro null, DKMarked)` and return a display node of its own. hxc
+	// keeps the mark by IDENTITY rather than in the tree (see the note in TypeFields), so the wrapper
+	// is materialized here: the one boundary where the marked node reaches code the user wrote. The
+	// mark may sit anywhere inside the argument, so the path down to it is rebuilt around the wrapper.
 	static function withDisplayMark(e:Expr):Expr {
-		if (e == null || e != hxc.typing.ExprPreprocessing.markedNode) return e;
-		return new Expr(EDisplay(e, hxc.typing.ExprPreprocessing.markedKind), e.pos);
+		var marked = hxc.typing.ExprPreprocessing.markedNode;
+		if (e == null || marked == null) return e;
+		var found = false;
+		function find(x:Expr):Void {
+			if (found) return;
+			if (x == marked) found = true else Ast.iterExpr(find, x);
+		}
+		find(e);
+		if (!found) return e;
+		function wrap(x:Expr):Expr
+			return x == marked ? new Expr(EDisplay(x, hxc.typing.ExprPreprocessing.markedKind), x.pos) : Ast.mapExpr(wrap, x);
+		return wrap(e);
 	}
 
 	static function isFunctionExpr(e:Expr):Bool {
