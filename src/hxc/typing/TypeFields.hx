@@ -896,11 +896,15 @@ class TypeFields {
 		macroForced.set(cf, true);
 		if (c.module == null) return;
 		var isDisplay = !ctx.displayFullTyping;
-		// The declaring module's path, not the class's: a class whose name differs from its module file
-		// (common in display requests) is not loadable by its own path.
-		try hxc.eval.EvalMacro.loadMacro(ctx, c.path, cf.name, c.module.path, c.module, cf.pos, true)
-		catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
-		catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
+		// The load itself is a PTypeField delay, so every class build queued so far
+		// (PBuildClass) runs before it.
+		ctx.delay(Context.PTypeField, function() {
+			// The declaring module's path, not the class's: a class whose name differs from its module file
+			// (common in display requests) is not loadable by its own path.
+			try hxc.eval.EvalMacro.loadMacro(ctx, c.path, cf.name, c.module.path, c.module, cf.pos, true)
+			catch (e:hxc.core.TypingError) { if (!isDisplay) throw e; }
+			catch (e:hxc.context.Context.ContextError) { if (!isDisplay) throw e; }
+		});
 	}
 
 	static function installField(ctx:Context, tctx:TyperContext, m:ModuleDef, cf:TClassField, cff:ClassField, isStatic:Bool):Void {
@@ -919,10 +923,14 @@ class TypeFields {
 			if (hxc.parser.Parser.displayFile != null && cff != null && Typer.atDisplayPos(cff.cffPos)
 					&& tctx.curclass != null) {
 				// The declaring module's path, not the class's: a class whose name differs from its module file
-				// (common in display requests) is not loadable by its own path.
-				try hxc.eval.EvalMacro.loadMacro(ctx, tctx.curclass.path, cf.name, m.path, null, null, true)
-				catch (_:hxc.core.TypingError) {}
-				catch (_:hxc.context.Context.ContextError) {}
+				// is not loadable by its own path. Forcing the macro is a PTypeField delay, so every class
+				// build queued so far (PBuildClass) runs first.
+				var cpath = tctx.curclass.path, mpath = m.path, name = cf.name;
+				ctx.delay(Context.PTypeField, function() {
+					try hxc.eval.EvalMacro.loadMacro(ctx, cpath, name, mpath, null, null, true)
+					catch (_:hxc.core.TypingError) {}
+					catch (_:hxc.context.Context.ContextError) {}
+				});
 			}
 			return;
 		}
