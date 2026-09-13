@@ -1156,7 +1156,9 @@ class Compiler {
 				// completion point.
 				try {
 					checkDisplayFile(ctx);
-					ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
+					// A display-file-only request empties the compile roots, Std included, so Std loads
+					// only once something types against it.
+					if (!displayFileOnly) ModuleLoader.loadModule(ctx, {pack: [], name: "Std"}, Position.nullPos);
 				} catch (_:hxc.parser.Parser.DisplayInMacroBlock) {
 					if (displayRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayRoot);
 				}
@@ -2428,7 +2430,7 @@ class Compiler {
 	// files and packages, the sort when nothing has been typed, the raise site's filter, and the items
 	// written last.
 	static function jsonCollectedItems(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>, subjectName:Null<String>,
-			wt:Null<hxc.core.WithType.WithType>, inPattern:Bool):Array<hxc.context.DisplayException.CompletionEntry> {
+			wt:Null<hxc.core.WithType.WithType>, inPattern:Bool, noClass:Bool = false):Array<hxc.context.DisplayException.CompletionEntry> {
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
@@ -2456,8 +2458,14 @@ class Compiler {
 		// A path in a package that a wildcard import names is in scope as well.
 		var curImports = curMod == null ? null : ctx.moduleImports.get(Context.pathKey(curMod.path));
 		function inWildcard(statusPack:Array<String>):Bool {
-			if (curImports != null) for (w in curImports.wildcards)
+			if (curImports != null) for (i in 0...curImports.wildcards.length) {
+				// The wildcard packages are read at the raise: an answer raised from an import path sees
+				// only the wildcards declared before that import.
+				var at = curImports.answeredAt;
+				if (at >= 0 && i < curImports.wildcardImp.length && curImports.wildcardImp[i] >= at) continue;
+				var w = curImports.wildcards[i];
 				if (w.pack.concat([w.name]).join(".") == statusPack.join(".")) return true;
+			}
 			return false;
 		}
 		// An item whose name is already listed is Shadowed; otherwise an import, a root path or a
@@ -2565,7 +2573,9 @@ class Compiler {
 			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
 			byKey.set(key, sf);
 		}
-		var curpack = curMod == null ? [] : curMod.path.pack;
+		// The package of the class being typed, which is the module's - except where no class is, as at an
+		// import or using path.
+		var curpack = noClass || curMod == null ? [] : curMod.path.pack;
 		function packSimilarity(p1:Array<String>, p2:Array<String>):Int {
 			var n = 0;
 			while (n < p1.length && n < p2.length && p1[n] == p2[n]) n++;
@@ -3301,7 +3311,8 @@ class Compiler {
 		if (tl.jsonEntries != null) {
 			var entries = tl.jsonEntries;
 			items = collectAndRaiseItems(startPos,
-				function() return jsonCollectedItems(ctx, entries, tl.subjectName == "" ? null : tl.subjectName, null, false), tl.jsonFilter);
+				function() return jsonCollectedItems(ctx, entries, tl.subjectName == "" ? null : tl.subjectName, null, false,
+					tl.noClass), tl.jsonFilter);
 			mts = [];
 		}
 		if (tl.jsonEntries == null) for (mt in mts) {

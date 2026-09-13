@@ -1654,7 +1654,14 @@ class ModuleLoader {
 			}
 			var old = ctx.currentModule;
 			ctx.currentModule = m;
-			try hxc.typing.Typeload.displayTypeInScope(ctx, tpd.t, tpd.p, tpd.scope) catch (e:Dynamic) { ctx.currentModule = old; restore(); throw e; }
+			hxc.typing.TypeResolve.moduleLevelRaise++;
+			try hxc.typing.Typeload.displayTypeInScope(ctx, tpd.t, tpd.p, tpd.scope) catch (e:Dynamic) {
+				hxc.typing.TypeResolve.moduleLevelRaise--;
+				ctx.currentModule = old;
+				restore();
+				throw e;
+			}
+			hxc.typing.TypeResolve.moduleLevelRaise--;
 			ctx.currentModule = old;
 			restore();
 		}

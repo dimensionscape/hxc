@@ -77,6 +77,7 @@ class ToplevelCompletion {
 	// collection.
 	public var jsonEntries:Null<Array<hxc.typing.Typer.JsonToplevelEntry>> = null;
 	public var jsonFilter:Null<hxc.typing.Typer.JsonItemInfo->Bool> = null;
+	public var noClass:Bool = false;
 
 	public function new(items:Array<ToplevelItem>, ?moduleTypes:Array<hxc.core.Type.ModuleType>) {
 		this.items = items;

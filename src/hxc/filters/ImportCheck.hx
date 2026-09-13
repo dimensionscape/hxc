@@ -52,7 +52,7 @@ class ImportCheck {
 				while (imports.pathDisplay.length > 0 && imports.pathDisplay[0].seq <= upTo) {
 					var d = imports.pathDisplay.shift();
 					imports.pathDisplayAt = d.seq;
-					try d.run() catch (e:Dynamic) { imports.pathDisplayAt = -1; throw e; }
+					try d.run() catch (e:Dynamic) { imports.answeredAt = d.seq; imports.pathDisplayAt = -1; throw e; }
 					imports.pathDisplayAt = -1;
 				}
 			}

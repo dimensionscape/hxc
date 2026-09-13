@@ -502,9 +502,12 @@ class TypeResolve {
 		throw tc;
 	}
 
-	// The parser's magic type path reaching load_type_def means the cursor is in a type position, and
+	// The parser's magic type path reaching a type load means the cursor is in a type position, and
 	// every type in scope is the answer (CRTypeHint). The heritage answer above is the same collection
-	// with set_heritance's extra filtering on top.
+	// with the heritage's extra filtering on top. Set while a module-level display (no class being
+	// typed) runs: ModuleLoader's type parameter answer.
+	public static var moduleLevelRaise:Int = 0;
+
 	public static function answerTypeHintCompletion(ctx:Context, p:Position, ?subjectName:String, kind:Int = 4):Void {
 		var items:Array<hxc.compiler.DisplayXml.ToplevelItem> = [];
 		var mts:Array<ModuleType> = [];
@@ -558,6 +561,9 @@ class TypeResolve {
 		// CRTypeHint is 4.
 		var tc = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
 		tc.kind = kind;
+		// Import and using paths, and a type's own parameters, are typed during module initialisation,
+		// before any class.
+		tc.noClass = kind == 8 || kind == 9 || moduleLevelRaise > 0;
 		tc.subjectPos = p;
 		// The subject is keyed by the path the user was writing, which is what the client filters on.
 		tc.subjectName = subjectName;

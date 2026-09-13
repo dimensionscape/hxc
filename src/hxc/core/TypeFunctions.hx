@@ -132,6 +132,8 @@ class TypeFunctions {
 		return _mid;
 	}
 
+	public static function currentMid():Int return _mid;
+
 	public static function mk(e:TExprExpr, t:T, p:Position):TExpr {
 		return new TExpr(e, t, p);
 	}

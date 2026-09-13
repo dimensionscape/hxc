@@ -1212,7 +1212,10 @@ class Typer {
 					out.subjectPos = tc.subjectPos;
 					out.subjectName = tc.subjectName;
 					out.jsonEntries = tc.jsonEntries;
-					out.jsonFilter = function(info) return newCompletionKeeps(ctx, info, p);
+					// The filter runs where the collection was raised: a module it types from here on has
+					// not had its class builds run (see newCompletionKeeps).
+					var midAtRaise = TypeFunctions.currentMid();
+					out.jsonFilter = function(info) return newCompletionKeeps(ctx, info, p, midAtRaise);
 					throw out;
 				}
 			case EFunction(kind, f):
@@ -2844,7 +2847,7 @@ class Typer {
 	// What `new <cursor>` keeps of a type-hint collection - a class, abstract or alias that is visible here
 	// and has a constructor this code may call, or a type parameter whose constraints make it
 	// constructible.
-	public static function newCompletionKeeps(ctx:TyperContext, info:JsonItemInfo, p:Position):Bool {
+	public static function newCompletionKeeps(ctx:TyperContext, info:JsonItemInfo, p:Position, midAtRaise:Int = 0x3FFFFFFF):Bool {
 		if (info.kind == "typeparam") return switch (info.tparam.kind) {
 			case KTypeParameter(tl): (try getConstructibleConstraint(ctx, tl, p) catch (_:Dynamic) null) != null;
 			case _: false;
@@ -2882,6 +2885,10 @@ class Typer {
 				try {
 					var mt = hxc.context.ModuleLoader.importedTypeDef(ctx.com, {pack: cm.pack, name: cm.moduleName}, Position.nullPos, cm.name);
 					function hasCtor(c:TClass):Bool {
+						// The constructor test reads constructor without building the class. One whose
+						// module the filter had to type is not built yet (its build is a PBuildClass delay,
+						// and nothing flushes during the filter), so it has none.
+						if (c.module != null && c.module.id > midAtRaise) return false;
 						var cur = c;
 						while (cur != null && cur.constructor == null) cur = cur.superClass == null ? null : cur.superClass.c;
 						return cur != null;

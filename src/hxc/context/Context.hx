@@ -849,6 +849,8 @@ class ModuleImports {
 	public var pathDisplay:Array<{seq:Int, run:Void->Void}> = [];
 	// Current path-display declaration index; only earlier imports are committed.
 	public var pathDisplayAt:Int = -1;
+	// Retain the import cutoff from the raised answer until it is printed.
+	public var answeredAt:Int = -1;
 	public var wildcardImp:Array<Int> = [];
 	public var usingImp:Array<Int> = [];
 
