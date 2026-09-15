@@ -183,8 +183,12 @@ class ModuleLoader {
 		if (ctx.fileContents.length > 0) {
 			for (fc in ctx.fileContents) {
 				if (fc.contents == null) continue;
-				if (hxc.core.PathKey.same(fc.file, file))
+				if (hxc.core.PathKey.same(fc.file, file)) {
+					// Resolve reported positions against the request's supplied contents and file name, rather
+					// than the disk copy.
+					if (fc.file != file) Position.registerFileContent(fc.file, fc.contents);
 					return Position.registerFileContent(file, fc.contents);
+				}
 			}
 		}
 		var df = hxc.parser.Parser.displayFile;
