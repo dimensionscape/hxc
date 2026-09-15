@@ -110,6 +110,9 @@ class TypeResolve {
 				// A display completion is an answer, not a declaration error: it has to reach the responder
 				// rather than be recorded and swallowed here.
 				throw dc;
+			} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+				// So is any other raised display answer.
+				throw dr;
 			} catch (e:ContextError) {
 				declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);
 				break;
@@ -216,6 +219,9 @@ class TypeResolve {
 		} catch (dc:hxc.compiler.DisplayXml.ToplevelCompletion) {
 			slot.finish();
 			throw dc;
+		} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+			slot.finish();
+			throw dr;
 		} catch (e:ContextError) {
 			slot.finish();
 			declFailed(ctx, init, e, e.message, e.pos, e.depth, savedMod);

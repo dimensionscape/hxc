@@ -1337,6 +1337,8 @@ class EvalMacro {
 			// Whatever applying the macro raises is re-raised; "Build failure" is only the macro that
 			// answered nothing. A Sys.exit and a host exception out of a native go on up.
 			if (Std.isOfType(e, EvalExceptions.EvalSysExit) || Std.isOfType(e, EvalExceptions.HostException)) throw e;
+			// A display answer raised while the build ran is the request's answer, not a failure.
+			if (isDisplayResult(Std.isOfType(e, haxe.ValueException) ? (cast e : haxe.ValueException).value : e)) throw e;
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 	}
@@ -1653,6 +1655,7 @@ class EvalMacro {
 		} catch (ex:haxe.Exception) {
 			if (Sys.getEnv("HXC_DEBUG_FIELDERR") != null)
 				Sys.println("[buildfail:enum] " + Type.getClassName(Type.getClass(ex)) + ": " + ex.message);
+			if (isDisplayResult(Std.isOfType(ex, haxe.ValueException) ? (cast ex : haxe.ValueException).value : ex)) throw ex;
 			fail("Build failure", new Position(entry.pos.file, entry.pos.min, entry.pos.min + 7));
 		}
 	}

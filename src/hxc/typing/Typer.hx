@@ -929,6 +929,16 @@ class Typer {
 	}
 
 	static var markedAnswerRaised:Bool = false;
+
+	// Displaying a module type, a type or a variable raises the answer under DMHover, DMDefinition and
+	// DMTypeDefinition, wherever the typing reaches it.
+	static function raiseHookAnswer():Void {
+		if (overloadArgsDepth > 0 || markedAnswerRaised) return;
+		if (displayHover || displayDefinition || displayTypeDefinition) {
+			markedAnswerRaised = true;
+			throw new hxc.compiler.DisplayXml.DisplayRaised();
+		}
+	}
 	static var markedViaExpr:Null<Expr> = null;
 
 	static function noteStatementFailed(stmt:Expr):Void {
@@ -2271,6 +2281,15 @@ class Typer {
 			throw e;
 		}
 		ctx.inDisplay = saved;
+		raiseSignatureAnswer();
+	}
+
+	// Signature display ends by raising the signatures: once the marked call has its signatures, nothing
+	// more is typed.
+	public static function raiseSignatureAnswer():Void {
+		if (!displaySignature || signatureFound == null || overloadArgsDepth > 0 || markedAnswerRaised) return;
+		markedAnswerRaised = true;
+		throw new hxc.compiler.DisplayXml.DisplayRaised();
 	}
 
 	static function checkSignatureDisplayInner(ctx:TyperContext, e1:Expr, params:Array<Expr>, p:Position):Void {
@@ -3537,12 +3556,15 @@ class Typer {
 		};
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = corePos == null ? [inf.namePos] : [inf.namePos, corePos];
+			raiseHookAnswer();
 		} else if (displayTypeDefinition && corePos != null) {
 			if (displayFound == null) displayFound = [inf.namePos, corePos];
+			raiseHookAnswer();
 		} else if (displayHover || displayTypeDefinition) {
 			// A type path answers with a type item, not with an expression.
 			if (hoverFound == null)
 				hoverFound = {t: TypeFunctions.typeOfModuleType(mt), p: p, mt: mt};
+			raiseHookAnswer();
 		} else if (displayUsage || displayImplementation) {
 			usageTargetType = mt;
 		} else if (allowCompletion && hxc.parser.Parser.displayCompletionMode && fieldCompletionFound == null) {
@@ -3576,8 +3598,10 @@ class Typer {
 			case [TDynamic(_), _]:
 				displayType(com, TypeFunctions.tDynamicDef.value, p, allowCompletion);
 			case _:
-				if (displayHover && hoverFound == null)
+				if (displayHover && hoverFound == null) {
 					hoverFound = {t: t, p: p, e: TypeFunctions.mk(TConst(TNull), t, p)};
+					raiseHookAnswer();
+				}
 		}
 	}
 
@@ -3678,10 +3702,12 @@ class Typer {
 	public static function displayVariable(ctx:TyperContext, v:TVar, p:Position, ?wt:WithType):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [v.pos];
+			raiseHookAnswer();
 		} else if (displayHover || displayTypeDefinition) {
 			// DMTypeDefinition resolves from the same captured type.
 			if (hoverFound == null)
 				hoverFound = {t: v.type, p: p, e: TypeFunctions.mk(TLocal(v), v.type, p), tctx: ctx, wt: wt};
+			raiseHookAnswer();
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null && usageTargetVar == null && usageTargetEnumField == null)
 				usageTargetVar = v;
@@ -7183,7 +7209,10 @@ class Typer {
 		}
 		// ENew under signature display: the signatures are the constructor's, found on the instantiated
 		// type.
-		if (displaySignature) checkNewSignatureDisplay(ctx, tp, el, p);
+		if (displaySignature) {
+			checkNewSignatureDisplay(ctx, tp, el, p);
+			raiseSignatureAnswer();
+		}
 		var t:T;
 		// If the type fails to load and the display position is in the ARGUMENTS, type them anyway so the
 		// request is answered, then re-raise.
