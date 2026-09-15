@@ -544,10 +544,16 @@ class PatternMaker {
 			// against the expected type that the pattern check does, or the answer names an unbound
 			// monomorph where the pattern's own type is known.
 			// That unification is the display handler's own, made before it answers.
-			if (atDisplay) try {
-				var e2 = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
-				Typer.unifyForAnswer(pctx.ctx, e2, WithTypeTools.withType(t));
-			} catch (_:Dynamic) {}
+			if (atDisplay) {
+				try {
+					var e2 = Typer.typeExpr(pctx.ctx, new Expr(EConst(CIdent(i)), p), WithTypeTools.withType(t));
+					Typer.unifyForAnswer(pctx.ctx, e2, WithTypeTools.withType(t));
+				} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+					throw dr;
+				} catch (_:Dynamic) {}
+				// The display answer is delivered by raising.
+				Typer.raiseHookAnswer();
+			}
 			return pat;
 		}
 		hxc.parser.Parser.displaySuppressed = true;
@@ -673,7 +679,16 @@ class PatternMaker {
 					case _:
 				}
 				if (!handled) Typer.checkSignatureDisplay(ctx, ce, cparams, e.pos);
+				// Signature display ends by raising the signatures.
+				Typer.raiseSignatureAnswer();
 			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos)):
+				// Under a completion request the pattern is made first - a capture allocates its variable
+				// there - and the answer comes without that local in scope.
+				if (hxc.parser.Parser.displayCompletionMode && s != "_") {
+					var locals = ctx.locals.copy();
+					handleIdent(pctx, t, s, e.pos);
+					ctx.locals = locals;
+				}
 				Typer.raiseToplevelInPattern(ctx, t, s, toplevel, e.pos);
 			// Inside a pattern, an `if (cond)` whose body is the recovery's null stand-in is the display
 			// subject. `case <cursor> if (guard):` parses the guard as the pattern, because the pattern

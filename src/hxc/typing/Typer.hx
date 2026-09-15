@@ -932,7 +932,7 @@ class Typer {
 
 	// Displaying a module type, a type or a variable raises the answer under DMHover, DMDefinition and
 	// DMTypeDefinition, wherever the typing reaches it.
-	static function raiseHookAnswer():Void {
+	public static function raiseHookAnswer():Void {
 		if (overloadArgsDepth > 0 || markedAnswerRaised) return;
 		if (displayHover || displayDefinition || displayTypeDefinition) {
 			markedAnswerRaised = true;
@@ -3533,11 +3533,13 @@ class Typer {
 	public static function displayEnumField(en:TEnum, ef:TEnumField, p:Position):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [ef.namePos];
+			raiseHookAnswer();
 		} else if (displayHover || displayTypeDefinition) {
 			if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
 				hoverFound = {t: ef.type, p: p,
 					e: TypeFunctions.mk(TField(TexprTools.makeTypeExpr(TEnumDecl(en), p), FEnum(en, ef)), ef.type, p),
 					isQualified: true};
+			raiseHookAnswer();
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetEnumField == null) usageTargetEnumField = ef;
 		}
@@ -3652,6 +3654,7 @@ class Typer {
 					displayFound = [];
 				else
 					throw new TypingError("Unsupported method", p);
+				raiseHookAnswer();
 				return;
 			// "probably" a bind skip, typed as the expected type.
 			case [EConst(CIdent("_")), WithType(t, _)]:
@@ -3671,6 +3674,8 @@ class Typer {
 		} else if ((displayToplevel || displayToplevelJson) && dk != DKDot) {
 			raiseToplevelMarked(ctx, eAst, withType);
 		}
+		// The expression display raises what it answered.
+		raiseHookAnswer();
 	}
 
 	// A cursor in a catch clause that no part of it answered (the keyword, the parentheses) answers from
@@ -3695,6 +3700,7 @@ class Typer {
 		} else if (displayToplevel || displayToplevelJson) {
 			raiseToplevelMarked(ctx, eAst, withType);
 		}
+		raiseHookAnswer();
 	}
 
 	// `wt` is the expected type of a variable a typer rule answers as an expression rather than as a
@@ -6277,7 +6283,12 @@ class Typer {
 				// field-completion list.
 				// The parser makes the RECEIVER the display node, so its position is the one completion
 				// answers at.
-				if (field == "" && hxc.parser.Parser.displayFile != null) return AKExpr(displayFieldCompletion(ctx, e1, e1.pos, withType));
+				if (field == "" && hxc.parser.Parser.displayFile != null) {
+					var answered = displayFieldCompletion(ctx, e1, e1.pos, withType);
+					// The resumed dot's answer ends the typing.
+					if (fieldCompletionFound != null) raiseMarkedAnswer();
+					return AKExpr(answered);
+				}
 				if (field == "new") {
 					var cv = constructorValue(ctx, e1, mode, p);
 					if (cv != null) return cv;
