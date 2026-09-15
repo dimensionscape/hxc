@@ -2527,53 +2527,11 @@ class Compiler {
 						function(gen, i) return hxc.core.CompletionItem.CompletionItem.moduleTypeToJson(gen, mt, st, i, null, false, params));
 				}
 		}
-		var fileOrder = new hxc.core.NameHash.HashTableOrder();
+		// The cache's files. They order by pack similarity to the current package with a stable sort, so
+		// tied entries keep the order of the cache's own hash table, which is kept across the server's
+		// requests (CacheContext.fileOrder).
 		var byKey = new haxe.ds.StringMap<hxc.compiler.ToplevelScan.ScannedFile>();
-		// The cache receives files as the COMPILE parses them (module load order) and read_class_paths adds
-		// the remainder in explore order; the fold order derives from that combined insertion sequence.
-		// Keys are Path.UniqueKey: on Windows lowercase(get_full_path f) where get_full_path is
-		// GetFullPathName, absolutizing against the cwd, resolving . and .. segments and normalizing every
-		// separator to a backslash.
-		function fileKey(f:String):String {
-			var p = StringTools.replace(f, "/", "\\");
-			var isAbs = (p.length >= 2 && p.charCodeAt(1) == ":".code)
-				|| (p.length >= 1 && p.charCodeAt(0) == "\\".code);
-			if (!isAbs) {
-				var cwd = StringTools.replace(Sys.getCwd(), "/", "\\");
-				if (!StringTools.endsWith(cwd, "\\")) cwd += "\\";
-				p = cwd + p;
-			}
-			var parts = p.split("\\");
-			var out = [];
-			for (i in 0...parts.length) {
-				var s = parts[i];
-				if (i > 0 && s == "") continue;
-				if (s == ".") continue;
-				if (s == "..") { if (out.length > 1) out.pop(); continue; }
-				out.push(s);
-			}
-			return out.join("\\").toLowerCase();
-		}
-		var displayFile = hxc.parser.Parser.displayFile;
-		inline function addModuleFiles(mods:Array<hxc.core.Type.ModuleDef>):Void {
-			for (m in mods) {
-				var f = m.extra == null ? null : m.extra.file;
-				if (f == null || f == "" || (displayFile != null && fileKey(f) == fileKey(displayFile))) continue;
-				var key = fileKey(f);
-				fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
-			}
-		}
-		// The cache receives files as each context PARSES them: the main context's
-		// modules, the macro context's (its sys.* files sit in the reference's fold list),
-		// then the class-path exploration fills the remainder.
-		addModuleFiles(ctx.modules);
-		var macroCom = hxc.eval.EvalMacro.getMacroCom();
-		if (macroCom != null) addModuleFiles(macroCom.modules);
-		for (sf in hxc.compiler.ToplevelScan.get(ctx)) {
-			var key = fileKey(sf.file);
-			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
-			byKey.set(key, sf);
-		}
+		for (sf in hxc.compiler.ToplevelScan.get(ctx)) byKey.set(sf.key, sf);
 		// The package of the class being typed, which is the module's - except where no class is, as at an
 		// import or using path.
 		var curpack = noClass || curMod == null ? [] : curMod.path.pack;
@@ -2584,7 +2542,7 @@ class Compiler {
 		}
 		// The list is built by PREPENDING inside a hash-table fold, so the processed order is the REVERSE
 		// of the fold's ascending-bucket walk: non-ascending in stringHash(key) & 127.
-		var foldOrder = fileOrder.visitOrder();
+		var foldOrder = hxc.compiler.ToplevelScan.foldOrder(ctx);
 		foldOrder.reverse();
 		var scannedFiles = [for (k in foldOrder) if (byKey.get(k) != null) byKey.get(k)];
 		// Stable by construction: sort indices by -similarity keeping fold order on ties.

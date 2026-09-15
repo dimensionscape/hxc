@@ -117,6 +117,17 @@ class HashTableOrder {
 		if (size > cap << 1) resize();
 	}
 
+	// Remove: out of its bucket; the table never shrinks.
+	public function remove(key:String):Void {
+		if (!known.exists(key)) return;
+		known.remove(key);
+		for (b in buckets) for (i in 0...b.length) if (b[i].key == key) {
+			b.splice(i, 1);
+			size--;
+			return;
+		}
+	}
+
 	function resize():Void {
 		var ncap = cap << 1;
 		var nb:Array<Array<{hash:Int, key:String}>> = [for (_ in 0...ncap) []];

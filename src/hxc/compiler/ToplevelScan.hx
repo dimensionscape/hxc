@@ -7,6 +7,7 @@ import hxc.context.Context;
 import hxc.ast.Ast;
 
 typedef ScannedFile = {
+	key:String,
 	file:String,
 	pack:Array<String>,
 	moduleName:String,
@@ -38,9 +39,15 @@ class ToplevelScan {
 		for (key in cc.fileSeq) {
 			var f = cc.files.get(key);
 			if (f == null || f.decls == null) continue;
-			out.push({file: f.path, pack: f.pack, moduleName: moduleNameOfFile(f.path), decls: f.decls});
+			out.push({key: key, file: f.path, pack: f.pack, moduleName: moduleNameOfFile(f.path), decls: f.decls});
 		}
 		return out;
+	}
+
+	// Visit files in the context's hash-bucket order across all server requests.
+	public static function foldOrder(ctx:Context):Array<String> {
+		if (!hxc.context.ServerCache.cacheMode) return [];
+		return hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature()).fileOrder.visitOrder();
 	}
 
 	static function moduleNameOfFile(file:String):String {
@@ -66,14 +73,8 @@ class ToplevelScan {
 			try {
 				var src = sys.io.File.getContent(path);
 				var pkg:Package = hxc.parser.Parser.parseModuleString(src, path, ctx.defines);
-				// Parsing caches the file again, allowing later invalidation to schedule another parse.
-				cc.setFile(k, {
-					path: path,
-					time: hxc.core.FileTime.fileTime(path),
-					pack: pkg.pack,
-					moduleName: null,
-					decls: pkg.decls
-				});
+				// The server parse hook recaches files for later invalidation; display files remain excluded.
+				hxc.context.ServerCache.cacheParsedFile(ctx, path, pkg.pack, pkg.decls);
 			} catch (_:Dynamic) {}
 		}
 	}

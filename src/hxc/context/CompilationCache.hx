@@ -32,9 +32,14 @@ class CacheContext {
 	public var removedFiles = new StringMap<String>();
 	// Replacing a cached file preserves its first insertion position.
 	public var fileSeq:Array<String> = [];
+	// Retain the file hash-bucket order across all requests in this context.
+	public var fileOrder = new hxc.core.NameHash.HashTableOrder();
 
 	public function setFile(key:String, f:CachedFile):Void {
-		if (!files.exists(key)) fileSeq.push(key);
+		if (!files.exists(key)) {
+			fileSeq.push(key);
+			fileOrder.add(key, hxc.core.NameHash.NameHash.stringHash(key));
+		}
 		files.set(key, f);
 	}
 
@@ -42,6 +47,7 @@ class CacheContext {
 		if (!files.exists(key)) return;
 		files.remove(key);
 		fileSeq.remove(key);
+		fileOrder.remove(key);
 	}
 	public var json:JsonValue = JNull;
 
@@ -58,6 +64,7 @@ class CacheContext {
 		if (f == null) return;
 		files.remove(key);
 		fileSeq.remove(key);
+		fileOrder.remove(key);
 		removedFiles.set(key, f.path);
 	}
 }
