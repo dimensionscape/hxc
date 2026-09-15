@@ -3475,6 +3475,7 @@ class Typer {
 			cf:TClassField, p:Position):Void {
 		if (displayDefinition) {
 			if (displayFound == null) displayFound = [cf.namePos];
+			raiseHookAnswer();
 		} else if (displayHover || displayTypeDefinition) {
 			// A field display raises, so the field always beats whatever else covers the cursor; recorded,
 			// that is the same narrowest-range rule checkDisplayHover applies.
@@ -3496,6 +3497,7 @@ class Typer {
 				hoverFound = {t: t, p: p, isQualified: true, displayField: true,
 					fieldItem: {cf: shown, scope: scope, origin: origin}};
 			}
+			raiseHookAnswer();
 		} else if (displayUsage || displayImplementation) {
 			if (usageTargetField == null) usageTargetField = cf;
 		}
@@ -3524,7 +3526,11 @@ class Typer {
 				hxc.core.CompletionItem.ClassFieldOrigin.Self(TClassDecl(c));
 		};
 		var before = hoverFound;
-		displayField(origin, scope, cf, p);
+		// displayField raises what it recorded; the declaration's hover is noted either way.
+		try displayField(origin, scope, cf, p) catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+			if (hoverFound != before) fieldDeclHover = hoverFound;
+			throw dr;
+		}
 		if (hoverFound != before) fieldDeclHover = hoverFound;
 	}
 
@@ -3576,6 +3582,36 @@ class Typer {
 		}
 	}
 
+	// Metadata display, at the sites that run it as they load (a structure field's metadata): an entry
+	// whose name holds the cursor raises under DMDefault (every metadata) and under DMHover for a
+	// compiler metadata (json) or one with documentation (legacy) - a custom one answers nothing there
+	// - and an argument holding it types as a value, where the marked node raises. The answer is the
+	// one the parser recorded.
+	public static function checkDisplayMetadata(com:hxc.context.Context, meta:hxc.ast.Ast.Metadata):Void {
+		if (hxc.parser.Parser.displayFile == null) return;
+		for (entry in meta) {
+			if (atDisplayPos(entry.pos)) {
+				if (hxc.parser.Parser.displayCompletionMode) raiseMarkedAnswer();
+				else if (displayHover && metaHoverAnswers(com)) raiseHookAnswer();
+			}
+			for (arg in entry.params) if (atDisplayPos(arg.pos)) {
+				hxc.typing.ExprPreprocessing.process(arg);
+				typeExpr(new TyperContext(com), arg, hxc.core.WithType.WithTypeTools.value);
+			}
+		}
+	}
+
+	static function metaHoverAnswers(com:hxc.context.Context):Bool {
+		var want = hxc.parser.Parser.displayMetaName;
+		if (want == null) return false;
+		if (com.jsonRpcId != null) {
+			for (mv in hxc.context.MetaRegistry.metas())
+				if (hxc.context.MetaRegistry.stringField(mv, "metadata", "") == want) return true;
+			return false;
+		}
+		return @:privateAccess hxc.Compiler.displayMetaDoc(com) != null;
+	}
+
 	// The report uses the DOTTED name's own span, so `Array<Foo>` with the cursor on Foo answers Foo
 	// and not Array.
 	public static function checkDisplayType(com:hxc.context.Context, t:T, tp:PlacedTypePath):Void {
@@ -3617,7 +3653,10 @@ class Typer {
 	// position at all.
 	public static function displayTraceIdent(ctx:TyperContext, p:Position):Void {
 		if (displayDefinition || displayTypeDefinition) {
-			if (atDisplayPos(p) && displayFound == null) displayFound = [];
+			if (atDisplayPos(p)) {
+				if (displayFound == null) displayFound = [];
+				raiseHookAnswer();
+			}
 			return;
 		}
 		// A HOVER subject is picked with a strict upper bound, so the cursor sitting at the very end of
@@ -3627,6 +3666,8 @@ class Typer {
 		if (hoverFound == null || (p.max - p.min) < (hoverFound.p.max - hoverFound.p.min))
 			hoverFound = {t: t, p: p, e: TypeFunctions.mk(TIdent("trace"), t, p), tctx: ctx,
 				wt: hxc.core.WithType.WithTypeTools.namedArgument("value")};
+		// The display handler raises the answer it built.
+		raiseHookAnswer();
 	}
 
 	// Display handling for a subject a typer rule BUILDS instead of finding it under the cursor: the
@@ -6207,9 +6248,9 @@ class Typer {
 			// resolution records, so one is left to answer.
 			var overloaded = mode.match(MCall(_)) && switch (acc) {
 				case AKField(fa): fa.field.overloads.length > 0;
-				// A static extension's field is resolved the same way, its receiver the first argument; hxc
-				// picks among a using's candidates only when it builds the call, so answers it.
-				case AKUsingField(_): true;
+				// A static extension's field is resolved the same way, its receiver the first argument,
+				// and as there only when it has overloads.
+				case AKUsingField(se): se.access.field.overloads.length > 0;
 				case _: false;
 			};
 			// A function's `bind` field is answered from the function.
@@ -6240,6 +6281,8 @@ class Typer {
 				function answerExpr(a:AccessKind):Null<TExpr> return switch (a) {
 					case AKExpr(e1): e1;
 					case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+					// A static extension reads as its field, the receiver set aside.
+					case AKUsingField(se): FieldAccessTools.getFieldExpr(se.access, FRead, ctx.curfield);
 					case AKNo(inner, _): answerExpr(inner);
 					case _: null;
 				};

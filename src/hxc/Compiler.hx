@@ -3657,7 +3657,6 @@ class Compiler {
 					return;
 				}
 			} else {
-				try TypeFields.typeAllModules(ctx) catch (_:Dynamic) {}
 				// A type's import status is asked of a FRESH typer, so only what the bare name resolves to
 				// from nowhere is Imported.
 				function ct(t:T):hxc.core.CompletionItem.CompletionType
@@ -3667,10 +3666,15 @@ class Compiler {
 				var types = [];
 				for (mt in m.types) {
 					var info = hxc.core.TypeFunctions.tInfos(mt);
-					// The module's main type is where an import finds its statics.
+					// The module's main type is where an import finds its statics. Only that class is built;
+					// nothing else of the module types.
 					if (tc.isImport && info.path.name == tc.module) switch (mt) {
-						case TClassDecl(c): statics = c;
-						case TAbstractDecl({impl: c}) if (c != null): statics = c;
+						case TClassDecl(c):
+							c.build();
+							statics = c;
+						case TAbstractDecl({impl: c}) if (c != null):
+							c.build();
+							statics = c;
 						case TEnumDecl(en): enumStatics = en;
 						case _:
 					}

@@ -620,7 +620,9 @@ class Typeload {
 			cf.meta = f.cffMeta;
 			cf.params = params;
 			if (isFinal) cf.flags = Flags.setFlag(cf.flags, TypeFunctions.intOfClassFieldFlag(CfFinal));
-			// The cursor on a structure field's name answers with that field.
+			// Display metadata is checked first, then a cursor on a structure field's name answers with that
+			// field.
+			hxc.typing.Typer.checkDisplayMetadata(ctx, cf.meta);
 			if (hxc.typing.Typer.atDisplayPos(cf.namePos)) displayedField = cf;
 			fields.set(n, cf);
 		}

@@ -313,11 +313,11 @@ class TypeResolve {
 
 	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
-		// /474/556/608: init_class/init_enum/init_typedef/init_abstract make a type whose name holds the
-		// cursor the display subject (display_module_type; an abstract's impl class stands for the
-		// abstract). Definition and hover answer from it once typing ends (Compiler.displayTypeAtName); a
-		// completion request raises the type-hint collection here.
-		if (hxc.parser.Parser.displayCompletionMode) {
+		// Initialising a class, enum, typedef or abstract makes a type whose name holds the cursor the
+		// display subject (an abstract's impl class stands for the abstract), in every mode: a definition
+		// or a hover raises its answer here, before the type's own contents load, and a completion the
+		// type-hint collection.
+		if (hxc.parser.Parser.displayFile != null) {
 			var namePos:Null<Position> = switch (decl) {
 				case EClass(d): d.dName.pos;
 				case EAbstract(d): d.dName.pos;

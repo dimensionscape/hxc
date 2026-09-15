@@ -1362,6 +1362,10 @@ class TypeFields {
 			throw e;
 		}
 		cleanup();
+		// Field display, once this field's body has bound: a cursor on its name is answered first, then
+		// the modifier check.
+		if (hxc.parser.Parser.displayFile != null && Typer.atDisplayPos(cf.namePos))
+			Typer.displayClassField(tctx.curclass, !isStatic && cff.cffName.name == "new", cf, cf.namePos, isStatic);
 		checkFieldDisplay(tctx.com, tctx.curclass, cff);
 	}
 
