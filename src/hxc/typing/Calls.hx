@@ -1189,6 +1189,7 @@ class Calls {
 		// expected argument.
 		var outerHover = hxc.typing.Typer.hoverFound;
 		var firstFailHover:Null<Dynamic> = null;
+		if (multi) hxc.typing.Typer.overloadArgsDepth++;
 		for (cf in candidates) {
 			// A call attempt follows the candidate's type: its lazy - and the body behind it - runs as the
 			// candidate is tried.
@@ -1273,9 +1274,11 @@ class Calls {
 				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth, chain: e.callChain});
 			} catch (e:haxe.Exception) {
 				restore();
+				if (multi) hxc.typing.Typer.overloadArgsDepth--;
 				throw e;
 			}
 		}
+		if (multi) hxc.typing.Typer.overloadArgsDepth--;
 		if (chosen != null) return chosen();
 		// The chosen candidate's stored answer is the one that is committed.
 		inline function commit(h:Null<Dynamic>):Void if (multi) hxc.typing.Typer.hoverFound = h;

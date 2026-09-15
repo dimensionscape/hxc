@@ -121,6 +121,9 @@ class Typer {
 		displayFoundFromWalk = false;
 		markedNodeFailed = false;
 		markedNodeTyped = false;
+		overloadArgsDepth = 0;
+		markedAnswerRaised = false;
+		markedViaExpr = null;
 		markedStatementFailed = false;
 		displaySubjectError = null;
 		hxc.typing.Typeload.resetSynthesizedHints();
@@ -908,6 +911,26 @@ class Typer {
 	public static var markedNodeTyped:Bool = false;
 	public static var markedStatementFailed:Bool = false;
 
+	// While overload candidates are tried, the marked node's answer is stored per candidate instead of
+	// raised.
+	public static var overloadArgsDepth:Int = 0;
+
+	// The marked node's answer is RAISED under DMDefault, DMHover, DMDefinition and DMTypeDefinition, so
+	// the typing ends there; DMUsage and DMImplementation only record a subject and go on. hxc has already
+	// recorded the answer; this ends the typing.
+	static function raiseMarkedAnswer():Void {
+		// One raise per request: what hxc types again while it prints the answer (a field's name retyped
+		// for the item) is not part of the request's typing.
+		if (overloadArgsDepth > 0 || markedAnswerRaised) return;
+		if (hxc.parser.Parser.displayCompletionMode || displayHover || displayDefinition || displayTypeDefinition) {
+			markedAnswerRaised = true;
+			throw new hxc.compiler.DisplayXml.DisplayRaised();
+		}
+	}
+
+	static var markedAnswerRaised:Bool = false;
+	static var markedViaExpr:Null<Expr> = null;
+
 	static function noteStatementFailed(stmt:Expr):Void {
 		var mn = hxc.typing.ExprPreprocessing.markedNode;
 		if (markedNodeTyped || mn == null || mn.pos == null || stmt == null || stmt.pos == null) return;
@@ -927,6 +950,9 @@ class Typer {
 		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
 			var oldInDisplay = ctx.inDisplay;
 			ctx.inDisplay = true;
+			// typeExprInner hands this same node to typeAccess, whose marked branch answers for it too;
+			// the raise is this branch's, once it has made its own answer.
+			markedViaExpr = e;
 			var te = switch [e.expr, withType] {
 				// A marked `_` against a known type is "probably" a bind skip and stands for a null of that
 				// type.
@@ -948,6 +974,8 @@ class Typer {
 						markedNodeFailed = true;
 						throw ex;
 					}
+					// An answer raised inside it (an interpolated part marked within a marked literal) is no failure.
+					catch (ex:hxc.compiler.DisplayXml.DisplayRaised) throw ex
 					catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
 			};
 			unifyForAnswer(ctx, te, withType);
@@ -997,6 +1025,11 @@ class Typer {
 						raiseToplevelMarked(ctx, e, withType);
 				}
 			}
+			// DMHover (and DMTypeDefinition) raise the marked expression itself, at its own span, when
+			// nothing on the way answered for it.
+			if ((displayHover || displayTypeDefinition) && hoverFound == null && overloadArgsDepth == 0)
+				hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+			raiseMarkedAnswer();
 			return te;
 		}
 		return typeExprInner(ctx, e, withType, mode);
@@ -6097,6 +6130,7 @@ class Typer {
 				markedNodeFailed = true;
 				throw ex;
 			}
+			catch (ex:hxc.compiler.DisplayXml.DisplayRaised) throw ex
 			catch (ex:Dynamic) { markedNodeFailed = true; throw ex; }
 			markedNodeTyped = true;
 			ctx.inDisplay = oldInDisplay;
@@ -6141,6 +6175,9 @@ class Typer {
 			// resolution records, so one is left to answer.
 			var overloaded = mode.match(MCall(_)) && switch (acc) {
 				case AKField(fa): fa.field.overloads.length > 0;
+				// A static extension's field is resolved the same way, its receiver the first argument; hxc
+				// picks among a using's candidates only when it builds the call, so answers it.
+				case AKUsingField(_): true;
 				case _: false;
 			};
 			// A function's `bind` field is answered from the function.
@@ -6157,6 +6194,29 @@ class Typer {
 				case _:
 			}
 			if ((displayHover || displayTypeDefinition) && !overloaded) checkDisplayOnAccess(ctx, acc, p, withType);
+			// As typeExpr's marked branch: an access that typed to an expression answers with it when
+			// nothing on the way did.
+			var direct = markedViaExpr != mn;
+			if (direct && (displayHover || displayTypeDefinition) && !overloaded && hoverFound == null && overloadArgsDepth == 0)
+				switch (acc) {
+					case AKExpr(te): hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+					case _:
+				}
+			// DMDefinition raises the marked access's positions, an empty list when it names nothing.
+			if (direct && displayDefinition && !overloaded && overloadArgsDepth == 0) {
+				// In display (errors ignored) an AKNo reads as what it wraps.
+				function answerExpr(a:AccessKind):Null<TExpr> return switch (a) {
+					case AKExpr(e1): e1;
+					case AKField(fa): FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+					case AKNo(inner, _): answerExpr(inner);
+					case _: null;
+				};
+				var te = answerExpr(acc);
+				if (te != null) checkDisplayDefinition(ctx, te, true);
+				if (displayFound == null) displayFound = [];
+				displayFoundFromWalk = false;
+			}
+			if (direct && !overloaded) raiseMarkedAnswer();
 			return acc;
 		}
 		return typeAccessInner(ctx, edef, p, mode, withType);

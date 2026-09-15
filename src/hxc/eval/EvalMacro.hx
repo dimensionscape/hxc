@@ -2654,7 +2654,8 @@ class EvalMacro {
 			|| Std.isOfType(e, hxc.compiler.DisplayXml.ToplevelCompletion)
 			|| Std.isOfType(e, hxc.compiler.DisplayXml.SyntaxCompletion)
 			|| Std.isOfType(e, hxc.parser.Parser.TypePathCompletion)
-			|| Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion);
+			|| Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion)
+			|| Std.isOfType(e, hxc.compiler.DisplayXml.DisplayRaised);
 	}
 
 	// A display file whose module name is Name.macro is not a compile root, so nothing in the host

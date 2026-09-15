@@ -274,6 +274,7 @@ class TypeFields {
 		// A display result is the compile's answer, not a field error.
 		if (Std.isOfType(e, hxc.compiler.DisplayXml.DisplayPositions)) throw e;
 		if (Std.isOfType(e, hxc.typing.Typer.JsonToplevelCompletion)) throw e;
+		if (Std.isOfType(e, hxc.compiler.DisplayXml.DisplayRaised)) throw e;
 		// A fatal error is on its way to the driver; recording it here would swallow the abort. So is a
 		// runtime exception a native let escape (the driver reports it), and a macro's Sys.exit (re-raised,
 		// as EvalMacro's load path already does).

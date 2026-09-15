@@ -1200,7 +1200,8 @@ class Compiler {
 			} catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A metadata argument containing the display position types as an expression so completion can
 			// fire inside it (e.g. @:access(pack.| ). .
-			if (hxc.parser.Parser.displayFile != null) checkDisplayMetadata(ctx);
+			if (hxc.parser.Parser.displayFile != null)
+				try checkDisplayMetadata(ctx) catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A line comment holding the cursor ends the request as a comment completion, in every mode and
 			// in the json protocol alike: an empty keyword list (nothing) and the missing point. The lexer
 			// only flags it and typing goes on, but what it types answers nothing.
