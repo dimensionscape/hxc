@@ -1068,11 +1068,16 @@ class Compiler {
 		// afterArgParsing runs once the defines and the class path are final.
 		hxc.context.ServerCache.afterArgParsing(ctx);
 		hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
+		// A display answer may come out of the .macro.hx load, and that load runs outside the main typing:
+		// the answer ends the compile, so nothing after it types.
+		var answeredBeforeTyping = false;
 		try {
 			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
 			// A .macro.hx display file loads into the macro context once the init macros have run, which is
 			// where handle_display_file_before_typing does it.
-			if (displayMacroRoot != null) hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayMacroRoot);
+			if (displayMacroRoot != null)
+				try hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayMacroRoot)
+				catch (_:hxc.compiler.DisplayXml.DisplayRaised) answeredBeforeTyping = true;
 			// The init-macro callbacks run after the stage changes and before root modules type.
 			ctx.initMacrosDone = true;
 			// The context re-registers under its post-macro signature (init macros can add defines); the
@@ -1081,7 +1086,7 @@ class Compiler {
 			// The callbacks are one list in registration order, so the arguments' and the display request's
 			// callbacks run ahead of the init macros', and again for any added while it ran. What a callback
 			// raises ends the run and the compile.
-			while (ctx.afterInitMacros.length > 0) {
+			while (!answeredBeforeTyping && ctx.afterInitMacros.length > 0) {
 				var aim = ctx.afterInitMacros;
 				ctx.afterInitMacros = [];
 				for (cb in aim) cb();
@@ -1146,6 +1151,7 @@ class Compiler {
 			// A display answer raises: typing ends where one is raised, and nothing typed after it can
 			// answer instead. The answer is the one recorded.
 			try {
+				if (answeredBeforeTyping) throw new hxc.compiler.DisplayXml.DisplayRaised();
 				var tLoad = hxc.core.Timer.timer(["parsing"]);
 				// Std is always in the compile roots and loads before the main class. Every display mode that
 				// is not a report mode checks the display file against the cache before the compile roots load.
