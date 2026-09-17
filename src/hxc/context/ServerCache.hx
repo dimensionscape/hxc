@@ -343,12 +343,17 @@ class ServerCache {
 
 	// The server's parse hook: a file the cache holds at the stamp it has on disk is not read again.
 	public static function cachedParse(com:Context, file:String):Null<Array<hxc.ast.Ast.TypeDecl>> {
+		var cf = cachedFile(com, file);
+		return cf == null ? null : cf.decls;
+	}
+
+	public static function cachedFile(com:Context, file:String):Null<hxc.context.CompilationCache.CachedFile> {
 		if (!cacheMode) return null;
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
 		if (cf == null || cf.decls == null) return null;
 		var time = hxc.core.FileTime.fileTime(full);
-		return time == cf.time ? cf.decls : null;
+		return time == cf.time ? cf : null;
 	}
 
 	// The module-load hook. Looks the module up in the cache; if it is still valid, re-adds it (with its

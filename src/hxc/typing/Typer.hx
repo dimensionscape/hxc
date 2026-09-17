@@ -930,6 +930,10 @@ class Typer {
 
 	static var markedAnswerRaised:Bool = false;
 
+	// Whether a display answer has ended this request's typing.
+	public static function answerRaised():Bool
+		return markedAnswerRaised;
+
 	// Displaying a module type, a type or a variable raises the answer under DMHover, DMDefinition and
 	// DMTypeDefinition, wherever the typing reaches it.
 	public static function raiseHookAnswer():Void {
@@ -2255,6 +2259,8 @@ class Typer {
 			case _:
 				signatureFound = {sigs: [], activeArg: active};
 		}
+		// The index's signature ends the typing.
+		raiseSignatureAnswer();
 	}
 
 	// A constructor in a PATTERN resolves against the pattern's expected type, not as a free
@@ -6269,6 +6275,8 @@ class Typer {
 						if (displayFound == null) displayFound = [];
 						displayFoundFromWalk = false;
 					}
+					// The expression display raises over the function.
+					raiseHookAnswer();
 					return acc;
 				case _:
 			}

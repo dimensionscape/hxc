@@ -325,8 +325,9 @@ class Calls {
 		 * hxc's eager evaluation, not part of the rule.
 		 */
 		function argError(msg:String, name:String, opt:Bool, pos:Position, depth:Int, ?src:TypingError):TypingError {
-			if (src != null && (Std.isOfType(src, hxc.core.TypingError.CallError)
-				|| Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError)))
+			// A call error passes every enclosing call's arguments as it is, its Stack included.
+			if (src != null && Std.isOfType(src, hxc.core.TypingError.CallError)) return src;
+			if (src != null && Std.isOfType(src, hxc.core.TypingError.ModuleNotFoundError))
 				return new TypingError(msg, pos, depth);
 			// A Stack error (a macro's uncaught exception with its chain) keeps every line and takes the
 			// annotation as one more Stack element, at the error's own position and without the "..."
@@ -334,6 +335,15 @@ class Calls {
 			if (src != null && src.callChain != null) {
 				var te = new TypingError(src.message, src.pos, src.depth);
 				te.callChain = src.callChain.concat([{message: "For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: src.pos}]);
+				return te;
+			}
+			// An error that is not a Stack, a Unify list or a Custom message (an unknown identifier here)
+			// becomes a Stack, the annotation its own "..."-prefixed element - reported as a message of its
+			// own one level under the head.
+			if (src != null && Std.isOfType(src, hxc.core.TypingError.UnknownIdentError)) {
+				var te = new hxc.core.TypingError.CallError(msg, pos, depth);
+				te.callChain = [{message: msg, pos: pos},
+					{message: "... For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: pos}];
 				return te;
 			}
 			if (StringTools.startsWith(msg, "error: ")) return new TypingError(msg, pos, depth);

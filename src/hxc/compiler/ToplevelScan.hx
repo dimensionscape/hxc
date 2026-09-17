@@ -39,7 +39,9 @@ class ToplevelScan {
 		for (key in cc.fileSeq) {
 			var f = cc.files.get(key);
 			if (f == null || f.decls == null) continue;
-			out.push({key: key, file: f.path, pack: f.pack, moduleName: moduleNameOfFile(f.path), decls: f.decls});
+			// Cache the module name used by server/files.
+			if (f.moduleName == null) f.moduleName = moduleNameOfFile(f.path);
+			out.push({key: key, file: f.path, pack: f.pack, moduleName: f.moduleName, decls: f.decls});
 		}
 		return out;
 	}

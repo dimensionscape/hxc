@@ -2684,6 +2684,10 @@ class EvalMacro {
 	static function loadDisplayModuleInMacroInner(host:Context, path:hxc.core.Globals.Path):Void {
 		if (macroCom == null) initMacroContext(host);
 		macroCom.hostCom = host;
+		// The display module reaches the macro context through the macro-context getter, a fresh view of
+		// this compilation's com - with its file contents - which can come before any init macro has asked
+		// for it.
+		doReuse(host);
 		var key = hxc.context.Context.pathKey(path);
 		var m = macroCom.moduleLut.get(key);
 		if (m != null) {

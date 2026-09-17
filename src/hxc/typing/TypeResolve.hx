@@ -330,7 +330,13 @@ class TypeResolve {
 					case TClassDecl({kind: KAbstractImpl(a)}): TAbstractDecl(a);
 					case _: mt;
 				};
-				Typer.displayModuleType(ctx, subject, namePos, true);
+				// The init runs in the module's context, whose class is the null class.
+				moduleLevelRaise++;
+				try Typer.displayModuleType(ctx, subject, namePos, true) catch (e:Dynamic) {
+					moduleLevelRaise--;
+					throw e;
+				}
+				moduleLevelRaise--;
 			}
 		}
 		switch ([mt, decl]) {

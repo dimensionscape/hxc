@@ -1976,13 +1976,24 @@ class ModuleLoader {
 		// named is "macro".
 		if (m.pack.length > 0 && ctx.forbiddenPackages.exists(m.pack[0]) && !hasNoPackageRestrict(parseHook(ctx, file, p)))
 			throw new hxc.core.TypingError.ForbidPackage(m.pack[0], m, p, ctx.isMacro ? "macro" : hxc.core.Globals.platformName(ctx.platform));
-		// The file resolved, but open_in_bin failed - a directory named like a module, an unreadable
-		// file. Not a missing type.
-		var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
-		var pkg:Package = parseModuleFile(ctx, src, file, false);
-		reportDisplayParseError(ctx, file);
-		hxc.parser.Parser.runPendingPdi();
-		hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
+		// The file resolved, but opening it failed - a directory named like a module, an unreadable file.
+		// Not a missing type.
+		// Parsing runs through the parse hook, which a compilation server answers from its parser cache
+		// while the file keeps its stamp - so a file read under one request's display mode is not read
+		// again under another's. The display file is parsed afresh: hxc has no cached display module to
+		// answer from. Every file a request names in fileContents is a display file too.
+		var isDisplayFile = hxc.parser.Parser.matchesDisplayFile(file)
+			|| Lambda.exists(ctx.fileContents, fc -> hxc.core.PathKey.same(fc.file, file));
+		var cachedPkg = isDisplayFile ? null : hxc.context.ServerCache.cachedFile(ctx, file);
+		var pkg:Package;
+		if (cachedPkg != null) pkg = {pack: cachedPkg.pack, decls: cachedPkg.decls};
+		else {
+			var src = try moduleFileContent(ctx, file) catch (_:Dynamic) throw new ContextError("Could not open " + file, p);
+			pkg = parseModuleFile(ctx, src, file, false);
+			reportDisplayParseError(ctx, file);
+			hxc.parser.Parser.runPendingPdi();
+			hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
+		}
 		// Checks the declared `package` matches the requested pack.
 		if (!sameArray(pkg.pack, m.pack)) {
 			// Two messages, chosen by whether the module was asked for by position or from the command line

@@ -1067,29 +1067,31 @@ class Compiler {
 		// is what makes server/contexts list it.
 		// afterArgParsing runs once the defines and the class path are final.
 		hxc.context.ServerCache.afterArgParsing(ctx);
-		hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
 		// A display answer may come out of the .macro.hx load, and that load runs outside the main typing:
 		// the answer ends the compile, so nothing after it types.
 		var answeredBeforeTyping = false;
 		try {
-			hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
-			// A .macro.hx display file loads into the macro context once the init macros have run, which is
-			// where handle_display_file_before_typing does it.
+			// A .macro.hx display file loads into the macro context before the main typing, ahead of the
+			// context registration and the init macros, and an answer it raises skips all of them.
 			if (displayMacroRoot != null)
 				try hxc.eval.EvalMacro.loadDisplayModuleInMacro(ctx, displayMacroRoot)
 				catch (_:hxc.compiler.DisplayXml.DisplayRaised) answeredBeforeTyping = true;
-			// The init-macro callbacks run after the stage changes and before root modules type.
-			ctx.initMacrosDone = true;
-			// The context re-registers under its post-macro signature (init macros can add defines); the
-			// last registration's desc wins.
-			hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "after_init_macros");
-			// The callbacks are one list in registration order, so the arguments' and the display request's
-			// callbacks run ahead of the init macros', and again for any added while it ran. What a callback
-			// raises ends the run and the compile.
-			while (!answeredBeforeTyping && ctx.afterInitMacros.length > 0) {
-				var aim = ctx.afterInitMacros;
-				ctx.afterInitMacros = [];
-				for (cb in aim) cb();
+			if (!answeredBeforeTyping) {
+				hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
+				hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+				// The init-macro callbacks run after the stage changes and before root modules type.
+				ctx.initMacrosDone = true;
+				// The context re-registers under its post-macro signature (init macros can add defines);
+				// the last registration's desc wins.
+				hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "after_init_macros");
+				// The callbacks are one list in registration order, so the arguments' and the display request's
+				// callbacks run ahead of the init macros', and again for any added while it ran. What a
+				// callback raises ends the run and the compile.
+				while (ctx.afterInitMacros.length > 0) {
+					var aim = ctx.afterInitMacros;
+					ctx.afterInitMacros = [];
+					for (cb in aim) cb();
+				}
 			}
 		} catch (_:CompileAbort) {
 			// The compile ends quietly; the final flush prints what was queued and an error among it is the
@@ -1205,8 +1207,9 @@ class Compiler {
 				TypeFields.checkRecursiveAbstracts(ctx);
 			} catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A metadata argument containing the display position types as an expression so completion can
-			// fire inside it (e.g. @:access(pack.| ). .
-			if (hxc.parser.Parser.displayFile != null)
+			// fire inside it (e.g. @:access(pack.| ).
+			// It runs as a PCheckConstraint delay of the typing, which an answer raised before it ends.
+			if (hxc.parser.Parser.displayFile != null && !hxc.typing.Typer.answerRaised())
 				try checkDisplayMetadata(ctx) catch (_:hxc.compiler.DisplayXml.DisplayRaised) {}
 			// A line comment holding the cursor ends the request as a comment completion, in every mode and
 			// in the json protocol alike: an empty keyword list (nothing) and the missing point. The lexer
