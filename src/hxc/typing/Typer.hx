@@ -5391,14 +5391,20 @@ class Typer {
 	static function findBareEnumLike(ctx:TyperContext, i:String):Null<ModuleType> {
 		var m = ctx.com.currentModule;
 		if (m == null) return null;
+		// An enum abstract offers its VALUES only; any other static is skipped.
+		function enumValue(a:hxc.core.Type.TAbstract):Bool {
+			if (!a.isEnum || a.impl == null) return false;
+			var cf = a.impl.statics.get(i);
+			return cf != null && TypeFunctions.hasClassFieldFlag(cf, CfEnum);
+		}
 		function scan(types:Array<ModuleType>):Null<ModuleType> {
 			for (mt in types) switch (mt) {
 				case TEnumDecl(en) if (en.constrs.exists(i)): return mt;
-				case TAbstractDecl(a) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)): return mt;
+				case TAbstractDecl(a) if (enumValue(a)): return mt;
 				case TTypeDecl(td):
 					switch (TypeFunctions.follow(td.type)) {
 						case TEnum(en, _) if (en.constrs.exists(i)): return TEnumDecl(en);
-						case TAbstract(a, _) if (a.isEnum && a.impl != null && a.impl.statics.exists(i)): return TAbstractDecl(a);
+						case TAbstract(a, _) if (enumValue(a)): return TAbstractDecl(a);
 						case _:
 					}
 				case _:
