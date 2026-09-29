@@ -7221,8 +7221,12 @@ class Typer {
 			} catch (e:hxc.core.TypeUnification.UnifyError) {
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
-				if (StringTools.startsWith(e.message, "Unknown identifier :") && e.message.indexOf("\n") >= 0)
-					e = new TypingError(e.message.split("\n")[0], e.pos, e.depth);
+				// A constructor resolves like a field call, whose overload attempts raise a candidate's
+				// unknown identifier alone.
+				if (ctorTypes.length > 1 && Std.isOfType(e, hxc.core.TypingError.CallError)) {
+					var u = (cast e : hxc.core.TypingError.CallError).unknownIdent;
+					if (u != null) throw new TypingError(u.message, u.pos, u.depth);
+				}
 				var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
 				var prevMsg = prevError == null ? "" : prevError.message;
 				if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;

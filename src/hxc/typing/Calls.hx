@@ -342,6 +342,7 @@ class Calls {
 			// own one level under the head.
 			if (src != null && Std.isOfType(src, hxc.core.TypingError.UnknownIdentError)) {
 				var te = new hxc.core.TypingError.CallError(msg, pos, depth);
+				te.unknownIdent = src;
 				te.callChain = [{message: msg, pos: pos},
 					{message: "... For " + (opt ? "optional " : "") + "function argument '" + name + "'", pos: pos}];
 				return te;
@@ -1281,6 +1282,15 @@ class Calls {
 			} catch (e:TypingError) {
 				restore();
 				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
+				// A candidate that failed over an unknown identifier raises that error alone, ending the
+				// resolution.
+				if (multi && Std.isOfType(e, hxc.core.TypingError.CallError)) {
+					var u = (cast e : hxc.core.TypingError.CallError).unknownIdent;
+					if (u != null) {
+						hxc.typing.Typer.overloadArgsDepth--;
+						throw new TypingError(u.message, u.pos, u.depth);
+					}
+				}
 				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth, chain: e.callChain});
 			} catch (e:haxe.Exception) {
 				restore();

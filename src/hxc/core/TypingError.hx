@@ -51,7 +51,10 @@ class ModuleNotFoundError extends TypingError {}
     or a failed unification. Also exempt from the argument annotation: the call itself is what went wrong,
     not the argument being placed.
 */
-class CallError extends TypingError {}
+class CallError extends TypingError {
+	// The unknown-identifier error inside this error's Stack, which an overload resolution raises alone.
+	public var unknownIdent:Null<TypingError> = null;
+}
 
 /**
  * WithTypeError: what a raise-or-display inside call arguments raises. Its own class, not a
