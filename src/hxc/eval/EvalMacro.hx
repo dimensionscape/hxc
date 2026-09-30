@@ -27,6 +27,8 @@ class EvalMacro {
 	// A macro-world module was dropped (server eviction, the display file's re-load): the next flush
 	// has types to replace even when the module count came back to what it was.
 	static var macroWorldDirty:Bool = false;
+	// Whether the last flush skipped adding types because the interpreter had an error.
+	static var flushSkipped:Bool = false;
 	static var building:Bool = false;
 	static var curPos:Position = Position.nullPos;
 	static var macroCallDepth = 0;
@@ -187,11 +189,15 @@ class EvalMacro {
 		// The sorted list becomes the macro com's types (its dump walks them in this order). hxc's macro
 		// com keeps its own module list, which the extension slicing reads.
 		macroCom.types = types;
+		// Adding types does nothing once the interpreter has an error - the filters run in its `ready`
+		// callback, so they are skipped too, and the JIT never meets what the erroring typing left behind.
+		// hxc keeps its one interpreter across compilations, so the world stays dirty until a later flush
+		// adds the types.
+		flushSkipped = ec.hadError || interpHadError;
+		if (flushSkipped) return;
 		applyMacroWorldFilters(macroCom, types);
-		// What fails while adding (a static initializer's exception) is catch_exceptions' report, which
-		// as a Fatal_error: the compile ends there. (The had_error skip there is carried by the call's
-		// own skipCall: skipping the add here makes hxc's rebuild-on-missing-prototype start a clean
-		// world.)
+		// What fails while adding (a static initializer's exception) is raised as a fatal error: the
+		// compile ends there.
 		try EvalMain.addTypes(ec, types) catch (rte:EvalExceptions.EvalRunTimeException) {
 			var info = runtimeMacroError(rte);
 			if (info != null) {
@@ -2392,7 +2398,7 @@ class EvalMacro {
 					flushMacroWorld(macroCtx);
 				}
 				lastModuleCount = macroCom.modules.length;
-				macroWorldDirty = false;
+				macroWorldDirty = flushSkipped;
 			} catch (e:Dynamic) { building = false; throw e; }
 			building = false;
 		}
@@ -2433,6 +2439,11 @@ class EvalMacro {
 		// The cached macros belong to the compilation: every request loads its macros again - a module
 		// evicted since is re-typed and adding types replaces its prototypes.
 		if (macroCom != null) macroCom.cachedMacros = new haxe.ds.StringMap();
+		// The delay queue belongs to the typer context, and the macro one is per compilation: nothing a
+		// previous request queued runs in this one. A display answer that ends a request mid-typing would
+		// otherwise leave its macro-world delays queued, and the next request would type the retired module
+		// from them - the unsaved source included.
+		if (macroCom != null) macroCom.delayed = [];
 		hxc.eval.EvalJit.epoch++;
 		// A compilation has fresh file lookup, readdir and module-to-file caches too, so the reused macro
 		// com forgets what the previous request saw of the filesystem.
@@ -2477,23 +2488,12 @@ class EvalMacro {
 	// Resets the static prototypes for a new compilation.
 	static function doReuse(com:Context):Void {
 		if (!pendingMacroReuse) return;
-		// An error dropped the cached interpreter, so the next compilation began on a fresh one with
-		// had_error clear; hxc keeps its one interpreter and clears it.
-		if (macroCtx != null) macroCtx.hadError = false;
-		interpHadError = false;
-		// The com FRESH for every compilation, and file_contents with it, so a display request's unsaved
-		// source is what the macro world parses too. hxc keeps one macro com alive across requests, so it
-		// is re-synced here.
-		if (macroCom != null) {
-			macroCom.fileContents = com.fileContents.copy();
-			// Same reason for the error POLICY: the macro com has to decide whether an error is ignored the
-			// way the request in hand does. A world built by an earlier NON-display request would keep the
-			// normal policy, so a macro argument whose type does not resolve would fail there instead of
-			// recovering to Dynamic.
-			macroCom.ignoreErrors = com.ignoreErrors;
-			// And the memo of missing module paths: the macro com shares this compilation's.
-			macroCom.moduleNonexistentLut = com.moduleNonexistentLut;
-		}
+		// A compilation after an error begins with the interpreter's error flag clear; hxc keeps its one
+		// interpreter and clears the flag here. The compilation's own mark was cleared as the request
+		// began, and the reuse runs when the macro context is created - before the macro world types
+		// anything - so an error this compilation already marked stays marked.
+		if (macroCtx != null) macroCtx.hadError = interpHadError;
+		syncMacroCom(com);
 		// The reset needs an interpreter. When the sweep retired one, the flag has to SURVIVE this call:
 		// the rebuild below migrates the retired context's static values across, so without a reset
 		// afterwards a macro-world static keeps what the previous compilation left in it (a @:genericBuild
@@ -2509,6 +2509,26 @@ class EvalMacro {
 			var e = ec.staticInits.get(key);
 			for (d in e.delays) d(e.proto);
 		}
+	}
+
+	// A compilation's macro com carries the host's file contents, so a display request's unsaved source is
+	// what the macro world parses too. hxc keeps one macro com alive across requests, so it is re-synced -
+	// by the driver as soon as the request's com is configured, before anything can type in the macro world
+	// (the previous request's unsaved source would otherwise parse in its place), and again by doReuse.
+	public static function syncMacroCom(com:Context):Void {
+		if (macroCom == null || com == null || com.isMacro) return;
+		macroCom.fileContents = com.fileContents.copy();
+		// The fresh clone reports to this compilation (Context.cloneForMacro's forward): a macro com kept
+		// from an earlier request sent its errors to that request's dead context, and the request in hand
+		// answered as if nothing had failed.
+		macroCom.forwardWarningsTo = com;
+		// Same reason for the error POLICY: the macro com has to decide whether an error is ignored the
+		// way the request in hand does. A world built by an earlier NON-display request would keep the
+		// normal policy, so a macro argument whose type does not resolve would fail there instead of
+		// recovering to Dynamic.
+		macroCom.ignoreErrors = com.ignoreErrors;
+		// And the memo of missing module paths: the macro com shares this compilation's.
+		macroCom.moduleNonexistentLut = com.moduleNonexistentLut;
 	}
 
 	static function evictDisplayModule():Void {
@@ -2720,6 +2740,9 @@ class EvalMacro {
 		evictStaleMacroModules();
 		if (macroCom == null) initMacroContext(host);
 		macroCom.hostCom = host;
+		// The macro load starts from the macro-context getter, which has made this compilation's macro com
+		// - its error policy and file contents - before the module types.
+		doReuse(host);
 		var oldRaise = macroCom.raiseTypingErrors;
 		macroCom.raiseTypingErrors = true;
 		var oldWindow = hxc.typing.TypeFields.macroDisplayWindow;
@@ -2891,7 +2914,7 @@ class EvalMacro {
 			hxc.typing.TypeFields.typeAllModules(macroCom);
 			flushMacroWorld(macroCtx);
 			lastModuleCount = macroCom.modules.length;
-			macroWorldDirty = false;
+			macroWorldDirty = flushSkipped;
 		}
 	}
 

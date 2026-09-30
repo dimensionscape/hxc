@@ -1067,6 +1067,9 @@ class Compiler {
 		// is what makes server/contexts list it.
 		// afterArgParsing runs once the defines and the class path are final.
 		hxc.context.ServerCache.afterArgParsing(ctx);
+		// The reused macro com belongs to this compilation from here on (the macro com is cloned from each
+		// compilation's com).
+		hxc.eval.EvalMacro.syncMacroCom(ctx);
 		// A display answer may come out of the .macro.hx load, and that load runs outside the main typing:
 		// the answer ends the compile, so nothing after it types.
 		var answeredBeforeTyping = false;
