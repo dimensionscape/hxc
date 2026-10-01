@@ -1575,7 +1575,7 @@ class Compiler {
 			answerOut(mj.output);
 			return;
 		} catch (tl:hxc.typing.Typer.JsonToplevelCompletion) {
-			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt, tl.patternOutermost);
+			var answer = jsonToplevelCompletion(ctx, tl.items, tl.subjectName, tl.subjectPos, tl.wt, tl.patternOutermost, tl.noClass);
 			if (answer != null) answerOut(answer);
 			return;
 		} catch (tc:hxc.parser.Parser.TypePathCompletion) {
@@ -2655,7 +2655,7 @@ class Compiler {
 	}
 
 	static function jsonToplevelCompletion(ctx:Context, entries:Array<hxc.typing.Typer.JsonToplevelEntry>,
-			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType, ?patternOutermost:Bool):Null<String> {
+			?subjectName:String, ?subjectPos:Position, ?wt:hxc.core.WithType.WithType, ?patternOutermost:Bool, noClass:Bool = false):Null<String> {
 		var gen = hxc.context.DisplayJson.createJsonContext(true);
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
@@ -2666,7 +2666,7 @@ class Compiler {
 		var insertPos = new Position(hxc.parser.Parser.displayFile, off, off);
 		// The subject's position is both its start and its insert.
 		var startPos = subjectPos == null ? insertPos : subjectPos;
-		var items = collectAndRaiseItems(startPos, function() return jsonCollectedItems(ctx, entries, subjectName, wt, patternOutermost != null), null);
+		var items = collectAndRaiseItems(startPos, function() return jsonCollectedItems(ctx, entries, subjectName, wt, patternOutermost != null, noClass), null);
 		var subj = patchCompletionSubject(subjectName, startPos);
 		// The Pattern completion kind is 11 and carries isOutermostPattern ahead of the same expected-type
 		// fields; a pattern collection is re-raised as that.
@@ -3878,7 +3878,9 @@ class Compiler {
 				for (mi in 0...metas.length) for (entry in metas[mi]) for (arg in entry.params) {
 					if (!hxc.typing.Typer.atDisplayPos(arg.pos)) continue;
 					var tctx = new hxc.typing.TyperContext(ctx);
-					var c = mi == 0 ? (switch (mt) { case TClassDecl(c0): c0; case _: null; }) : fieldClass;
+					// A type's own metadata is checked from the module's context, whose class is the null class; a
+					// field's from its class's.
+					var c = mi == 0 ? null : fieldClass;
 					if (c != null) {
 						tctx.curclass = c;
 						tctx.typeParams = c.params;

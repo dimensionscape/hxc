@@ -62,9 +62,13 @@ class JsonToplevelCompletion extends haxe.Exception {
 	// A toplevel collection raised from inside a PATTERN is re-raised as CRPattern, carrying whether this
 	// is the outermost pattern.
 	public var patternOutermost:Null<Bool>;
-	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position, ?wt:hxc.core.WithType.WithType) {
+	// Raised where no class is, the cached files sort against package [] (the current class's package).
+	public var noClass:Bool;
+	public function new(items:Array<JsonToplevelEntry>, ?subjectName:String, ?subjectPos:hxc.ast.Position, ?wt:hxc.core.WithType.WithType,
+			noClass:Bool = false) {
 		super("json toplevel completion");
 		this.items = items;
+		this.noClass = noClass;
 		this.wt = wt;
 		if (subjectName != null && subjectName != "") {
 			this.subjectName = subjectName;
@@ -1534,7 +1538,7 @@ class Typer {
 						var decl = anRaw.fields.get(f.name);
 						var fwt = decl != null ? WithTypeTools.withType(decl.type) : WithTypeTools.value;
 						if (displayToplevelJson)
-							throw new JsonToplevelCompletion(collectToplevelJson(ctx, fwt), null, between, fwt);
+							throw new JsonToplevelCompletion(collectToplevelJson(ctx, fwt), null, between, fwt, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
 						if (displayToplevel)
 							throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, fwt, true));
 					}
@@ -1558,7 +1562,7 @@ class Typer {
 					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
 							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
 						// The field name is the subject.
-						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos, withType);
+						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos, withType, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
 						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
 					}
 					if (an != null) {
@@ -3294,7 +3298,7 @@ class Typer {
 			// The recovery stand-in `null` is not a subject the user wrote; the collection is sorted
 			// exactly when the subject is empty, which is what the legacy lane keys off too.
 			var subj = name == "null" ? null : name;
-			var ex = new JsonToplevelCompletion(collectToplevelJson(ctx, wt), subj, p, wt);
+			var ex = new JsonToplevelCompletion(collectToplevelJson(ctx, wt), subj, p, wt, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
 			ex.patternOutermost = outermost;
 			throw ex;
 		}
@@ -3315,7 +3319,7 @@ class Typer {
 	// The collection, sorted exactly when the subject is empty.
 	static function raiseToplevelSubject(ctx:TyperContext, name:String, p:Position, withType:WithType):Void {
 		if (fieldCompletionFound != null) return;
-		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, p, withType);
+		if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), name, p, withType, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
 		if (displayToplevel)
 			throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, name == ""));
 	}
@@ -3994,7 +3998,7 @@ class Typer {
 				if (legacy) throw new hxc.parser.Parser.TypePathCompletion([n], null, false, e1.pos);
 				// The toplevel answer takes the resumed dot's own expected type.
 				if (displayToplevelJson)
-					throw new JsonToplevelCompletion(collectToplevelJson(ctx, resumeWithType), n, e1.pos, resumeWithType);
+					throw new JsonToplevelCompletion(collectToplevelJson(ctx, resumeWithType), n, e1.pos, resumeWithType, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
 			}
 			// A type or module that is not there answers, in the legacy protocol, with the
 			// sub-types of a module already loaded under that path, and otherwise reports.

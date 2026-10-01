@@ -132,7 +132,16 @@ class Typeload {
 						case _: [loadComplexType(ctx, typeParams, h, true)];
 					}
 				}
-				var constr = loop(th);
+				// A declaration's own parameters (and an enum constructor's) are typed in the module's context,
+				// whose class is the null class, and the lazy keeps that context (the toplevel collection sorts
+				// against package []). A method's are its field's, inside the class.
+				var moduleLevel = host == TPHType || host == TPHEnumConstructor;
+				if (moduleLevel) TypeResolve.moduleLevelRaise++;
+				var constr = try loop(th) catch (e:Dynamic) {
+					if (moduleLevel) TypeResolve.moduleLevelRaise--;
+					throw e;
+				}
+				if (moduleLevel) TypeResolve.moduleLevelRaise--;
 				// Check against direct recursion
 				function checkRec(ty:T):Void {
 					switch (TypeFunctions.follow(ty)) {

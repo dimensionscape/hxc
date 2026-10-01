@@ -1615,7 +1615,9 @@ class TypeResolve {
 		}
 		var fromPos:Array<Position> = [];
 		var toPos:Array<Position> = [];
-		for (f in d.dFlags) switch (f) {
+		// The abstract's header loads these in the MODULE's context, whose class is the null class.
+		moduleLevelRaise++;
+		try for (f in d.dFlags) switch (f) {
 			case AbFrom(th): a.from.push(loadType(th, true)); requireUnderlying(); fromPos.push(th.pos);
 			case AbTo(th): a.to.push(loadType(th, false)); requireUnderlying(); toPos.push(th.pos);
 			case AbOver(th):
@@ -1652,7 +1654,11 @@ class TypeResolve {
 				// stays a real extern field rather than getting a synthesized ordinal value.
 				if (a.impl != null) TypeFunctions.addClassFlag(a.impl, CExtern);
 			case AbPrivate | AbEnum:
+		} catch (e:Dynamic) {
+			moduleLevelRaise--;
+			throw e;
 		}
+		moduleLevelRaise--;
 
 		// The check hangs off LOADING a from/to type hint: a core abstract with neither is fine with
 		// @:callable (cpp NativeThreadHandle).
