@@ -1075,7 +1075,7 @@ class Typeload {
 		// still open is left to the install path that builds it on the way.
 		var m = c.module;
 		if (m != null && m.extra.resolved == 0) hxc.typing.TypeResolve.resolveModule(ctx, m);
-		if (m != null && hxc.typing.TypeResolve.resolving.exists(m)) return;
+		if (m != null && m.hxcResolving) return;
 		try hxc.eval.EvalMacro.ensureBuilt(ctx, c)
 		catch (e:hxc.core.TypingError) {
 			// The kind survives the change of class: a macro module that did not load is

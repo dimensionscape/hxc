@@ -237,6 +237,10 @@ class TFunc {
 	@:noCompletion public var evalLayout:Null<FrameLayout> = null;
 	// The interpreter's compiled body (hxc.eval.EvalJit), made on the first call.
 	@:noCompletion public var evalJit:Dynamic = null;
+	// The closure's number in the JIT context of the function holding it (0: none).
+	@:noCompletion public var evalOrdinal:Int = 0;
+	// The variable ids its body reads from an enclosing scope (EvalEmitter.freeVarIds).
+	@:noCompletion public var evalFreeVars:Null<Array<Int>> = null;
 	public function new(args:Array<TFuncArg>, type:T, expr:TExpr) {
 		this.args = args;
 		this.type = type;
@@ -318,6 +322,10 @@ class TExpr {
 	public var expr:TExprExpr;
 	public var type:T;
 	public var pos:Position;
+	// Hxc state kept on the object: in a static table keyed by it, a compilation server would keep
+	// every request's objects - and the typed world behind them - alive for good. The interpreter's
+	// lowering of a TFor, made once: it allocates variables.
+	@:noCompletion public var evalForRemap:Null<TExpr> = null;
 	public function new(expr:TExprExpr, type:T, pos:Position) {
 		this.expr = expr;
 		this.type = type;
@@ -433,6 +441,8 @@ class TClass {
 	// server kept every request's classes - and each request's whole typed world behind them - alive
 	// for the life of the process.
 	public var hxcBuildState:Int = 0;
+	// The macro world's filters ran over this type (EvalMacro.applyMacroWorldFilters).
+	public var hxcMacroFiltered:Bool = false;
 	public var hxcInstallStarted:Bool = false;
 	public var hxcPropAccessorsChecked:Bool = false;
 	public var hxcFieldChecksDone:Bool = false;
@@ -501,6 +511,9 @@ class TEnumField {
 
 @:structInit
 class TEnum {
+	// Hxc state kept on the object: in a static table keyed by it, a compilation server kept every
+	// request's objects - and the typed world behind them - alive for good.
+	@:noCompletion public var hxcMacroFiltered:Bool = false;
 	public var path:Path;
 	public var module:ModuleDef;
 	public var pos:Position;
@@ -537,6 +550,9 @@ class TEnum {
 
 @:structInit
 class TDef {
+	// Hxc state kept on the object: in a static table keyed by it, a compilation server kept every
+	// request's objects - and the typed world behind them - alive for good.
+	@:noCompletion public var hxcMacroFiltered:Bool = false;
 	public var path:Path;
 	public var module:ModuleDef;
 	public var pos:Position;
@@ -570,6 +586,9 @@ typedef TAbstractCast = {t:T, cf:TClassField};
 
 @:structInit
 class TAbstract {
+	// Hxc state kept on the object: in a static table keyed by it, a compilation server kept every
+	// request's objects - and the typed world behind them - alive for good.
+	@:noCompletion public var hxcMacroFiltered:Bool = false;
 	public var path:Path;
 	public var module:ModuleDef;
 	public var pos:Position;
@@ -633,6 +652,10 @@ enum ModuleType {
 
 @:structInit
 class ModuleDef {
+	// Hxc state kept on the object: in a static table keyed by it, a compilation server kept every
+	// request's objects - and the typed world behind them - alive for good. Its resolution is open
+	// until its last class is built (TypeResolve).
+	@:noCompletion public var hxcResolving:Bool = false;
 	public var id:Int;
 	public var path:Path;
 	public var types:Array<ModuleType>;

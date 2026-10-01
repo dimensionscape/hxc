@@ -19,8 +19,7 @@ class TypeResolve {
 	// The modules whose resolution is OPEN right now. resolved is set at the start, so it
 	// cannot tell an in-progress module from a finished one; a build forced from a body
 	// (Typeload.forceBuildInBody) has to know, because a class's inherited @:autoBuild is read
-	// from a heritage that resolution is still setting.
-	public static var resolving:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
+	// from a heritage that resolution is still setting. Recorded on the module (ModuleDef.hxcResolving).
 
 	public static function resolveModule(ctx:Context, m:ModuleDef):Void {
 		// No display answers come from the macro world (see TypeFields).
@@ -31,7 +30,7 @@ class TypeResolve {
 
 	static function resolveModuleEntry(ctx:Context, m:ModuleDef):Void {
 		if (m.extra.resolved >= 1) return;
-		resolving.set(m, true);
+		m.hxcResolving = true;
 		// Module initialisation and the class build run under PBuildModule / PBuildClass, so a load
 		// made while resolving never flushes.
 		var savedPass = ctx.currentPass;
@@ -42,7 +41,7 @@ class TypeResolve {
 		} catch (e:Dynamic) {
 			ctx.resolveDepth--;
 			ctx.currentPass = savedPass;
-			resolving.remove(m);
+			m.hxcResolving = false;
 			throw e;
 		}
 		ctx.resolveDepth--;
@@ -2698,12 +2697,12 @@ private class ModuleInit {
 	// The module's resolution stays open (TypeResolve.resolving) until its last class is built.
 	public function close():Void {
 		open = false;
-		if (pending == 0) TypeResolve.resolving.remove(m);
+		if (pending == 0) m.hxcResolving = false;
 	}
 
 	public function slotDone():Void {
 		pending--;
-		if (!open && pending == 0) TypeResolve.resolving.remove(m);
+		if (!open && pending == 0) m.hxcResolving = false;
 	}
 }
 

@@ -234,7 +234,7 @@ class EvalJit {
 	// A closure captures its defining frame and runs its body in a child frame linked to it.
 	public static function makeClosure(ctx:EvalContext, tf:TFunc, captured:EvalEnv):VFunc {
 		var snap = EvalEmitter.snapshotCaptures(tf, captured);
-		var ordinal = EvalEmitter.closureOrdinals.exists(tf) ? EvalEmitter.closureOrdinals.get(tf) : 0;
+		var ordinal = tf.evalOrdinal;
 		// The closure's info is made with it, not per call.
 		var info = EvalContext.createEnvInfo(true, tf.expr.pos, EKLocalFunction(ordinal), 0, 0);
 		var cache:Null<JCompiled> = null;

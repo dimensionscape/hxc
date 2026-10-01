@@ -641,12 +641,8 @@ class EvalPrototype {
 				// new one. Rebuilding the interpreter over the same tree reuses the loop the first compile
 				// made.
 				case TFor(v, e1, e2):
-					var r = EvalEmitter.forRemapCache.get(e);
-					if (r == null) {
-						r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, e1, e2, e.pos);
-						EvalEmitter.forRemapCache.set(e, r);
-					}
-					loop(r);
+					if (e.evalForRemap == null) e.evalForRemap = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, e1, e2, e.pos);
+					loop(e.evalForRemap);
 				case TIdent(s):
 					throw new hxc.core.TypingError("Unknown identifier: " + s, e.pos);
 			}

@@ -16,7 +16,6 @@ import hxc.eval.EvalExceptions;
 // initializers, default arguments). A function's body runs compiled (EvalJit), node for node what
 // eval and evalStmt do here.
 class EvalEmitter {
-	public static var forRemapCache:haxe.ds.ObjectMap<TExpr, TExpr> = new haxe.ds.ObjectMap();
 
 	static function slot(env:EvalEnv, vid:Int):Int {
 		var s = env.slots.get(vid);
@@ -303,12 +302,8 @@ class EvalEmitter {
 	}
 
 	static function forRemapped(com:hxc.context.Context, e:TExpr, v:TVar, eiter:TExpr, body:TExpr):TExpr {
-		var r = forRemapCache.get(e);
-		if (r == null) {
-			r = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, eiter, body, e.pos);
-			forRemapCache.set(e, r);
-		}
-		return r;
+		if (e.evalForRemap == null) e.evalForRemap = hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(com.basic, v, eiter, body, e.pos);
+		return e.evalForRemap;
 	}
 
 	static function evalTry(ctx:EvalContext, e:TExpr, e1:TExpr, catches:Array<TCatch>, stmt:Bool):EvalValue {
@@ -1118,13 +1113,10 @@ class EvalEmitter {
 		return provided;
 	}
 
-	static var freeVarCache:haxe.ds.ObjectMap<TFunc, Array<Int>> = new haxe.ds.ObjectMap();
-
 	// The variable ids a closure body reads from an ENCLOSING scope: the closure's capture set. hxc walks
 	// the body and caches it, since a var id is unique per declaration.
 	static function freeVarIds(tf:TFunc):Array<Int> {
-		var cached = freeVarCache.get(tf);
-		if (cached != null) return cached;
+		if (tf.evalFreeVars != null) return tf.evalFreeVars;
 		var declared = new Map<Int, Bool>();
 		var seen = new Map<Int, Bool>();
 		var free:Array<Int> = [];
@@ -1145,7 +1137,7 @@ class EvalEmitter {
 			hxc.core.TexprTools.iter(walk, e);
 		}
 		walk(tf.expr);
-		freeVarCache.set(tf, free);
+		tf.evalFreeVars = free;
 		return free;
 	}
 
@@ -1173,22 +1165,19 @@ class EvalEmitter {
 		return snap;
 	}
 
-	// A closure is numbered in the JIT context of the function holding it, from 1, in the order the
-	// JIT compiles subexpressions (left to right, callee before arguments); the closure's own body
-	// starts a fresh count. A method body, a static initializer and an __init__ expression are each
-	// their own context.
-	static var closureOrdinals = new haxe.ds.ObjectMap<TFunc, Int>();
-	static var numberedRoots = new haxe.ds.ObjectMap<TExpr, Bool>();
-
+	// A closure is numbered in the JIT context of the function holding it, from 1, in the order the JIT
+	// compiles subexpressions (left to right, callee before arguments); the closure's own body starts a
+	// fresh count. A method body, a static initializer and an __init__ expression are each their own
+	// context.
+	// Numbering again gives the same numbers, so nothing records which roots were numbered.
 	public static function numberClosures(root:Null<TExpr>):Void {
-		if (root == null || numberedRoots.exists(root)) return;
-		numberedRoots.set(root, true);
+		if (root == null) return;
 		var n = 0;
 		function visit(e:TExpr):Void {
 			switch (e.expr) {
 				case TFunction(tf):
 					n++;
-					closureOrdinals.set(tf, n);
+					tf.evalOrdinal = n;
 					numberClosures(tf.expr);
 				case _:
 					hxc.core.TexprTools.iter(visit, e);

@@ -170,11 +170,10 @@ class EvalMacro {
 		list.push(entry);
 	}
 
-	// An expression-filter list to every macro-world type through Filters.apply_filters_once , so each
-	// type is filtered exactly once before the interpreter sees it. hxc ran none of them: without
-	// captured_vars a macro-world closure's mutable captures are never boxed, which is invisible while
-	// a closure reads a LIVE parent frame and fatal the moment one snapshots its captures.
-	static var macroFiltered:haxe.ds.ObjectMap<Dynamic, Bool> = new haxe.ds.ObjectMap();
+	// An expression-filter list is applied to every macro-world type, so each type is filtered exactly once
+	// before the interpreter sees it. Without captured_vars a macro-world closure's mutable captures are
+	// never boxed, which is invisible while a closure reads a LIVE parent frame and fatal the moment one
+	// snapshots its captures. Each type records that it was filtered (hxcMacroFiltered).
 
 	// The macro context's current module: loading a macro module makes it current, the flush that follows
 	// builds its filters under it (so the exceptions filter's setup records that module's dependencies),
@@ -231,9 +230,13 @@ class EvalMacro {
 		macroCurModule = null;
 		var renameLocals = hxc.filters.RenameVars.init(mcom.types, false, false);
 		for (t in types) {
-			var decl:Dynamic = switch (t) { case TClassDecl(c): c; case TEnumDecl(en): en; case TTypeDecl(td): td; case TAbstractDecl(a): a; };
-			if (macroFiltered.exists(decl)) continue;
-			macroFiltered.set(decl, true);
+			var filtered = switch (t) {
+				case TClassDecl(c): var f = c.hxcMacroFiltered; c.hxcMacroFiltered = true; f;
+				case TEnumDecl(en): var f = en.hxcMacroFiltered; en.hxcMacroFiltered = true; f;
+				case TTypeDecl(td): var f = td.hxcMacroFiltered; td.hxcMacroFiltered = true; f;
+				case TAbstractDecl(a): var f = a.hxcMacroFiltered; a.hxcMacroFiltered = true; f;
+			};
+			if (filtered) continue;
 			switch (t) { case TClassDecl(c): tctx.curclass = c; case _: }
 			// The expression filters: handle_abstract_casts, local_statics, VarLazifier, Exceptions and
 			// captured_vars.
