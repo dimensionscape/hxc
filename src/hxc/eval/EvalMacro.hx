@@ -2567,8 +2567,22 @@ class EvalMacro {
 		survivors = new haxe.ds.ObjectMap();
 		if (macroCom == null || !hxc.context.ServerCache.enabled) return;
 		var stale:Array<ModuleDef> = [];
+		// The server serves the macro com a module only out of the cache: one no error-free full
+		// compilation cached (a display request never caches) is typed again.
+		var cc = hxc.context.DisplayJson.cache.getContext(macroCom.defines.getSignature());
+		inline function cached(m:ModuleDef):Bool return cc.findModule(hxc.context.Context.sTypePath(m.path)) == m;
+		// The modules the context is created with carry the macro com's basic types, and a cached module
+		// was cached together with them. When THEY were not cached, nothing was: the compilation starts
+		// from a fresh macro com, which the next use makes.
+		for (m in coreMacroModules.keys()) if (!cached(m)) {
+			for (m2 in macroCom.modules.copy()) dropMacroModule(m2);
+			macroCom.releaseWorld();
+			macroCom = null;
+			lastModuleCount = -1;
+			return;
+		}
 		for (m in macroCom.modules)
-			if (hxc.context.ServerCache.checkModule(macroCom, m, Position.nullPos) != null) stale.push(m);
+			if (!cached(m) || hxc.context.ServerCache.checkModule(macroCom, m, Position.nullPos) != null) stale.push(m);
 			else survivors.set(m, true);
 		if (stale.length == 0) return;
 		for (m in stale) dropMacroModule(m);
@@ -2577,6 +2591,9 @@ class EvalMacro {
 	// The macro-world modules this compilation kept from the previous one: what a fresh macro com would
 	// have served back out of the cache (ServerCache.markMacroModuleReused).
 	static var survivors:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
+
+	// The modules initMacroContext loads to make the macro com (its basic types and the API's own).
+	static var coreMacroModules:haxe.ds.ObjectMap<ModuleDef, Bool> = new haxe.ds.ObjectMap();
 
 	public static function survivedIntoRequest(m:ModuleDef):Bool return survivors.exists(m);
 
@@ -2613,6 +2630,8 @@ class EvalMacro {
 		// Initializing the macro interpreter loads Expr and Type, nothing else.
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Expr"}, Position.nullPos);
 		hxc.context.ModuleLoader.loadModule(macroCom, {pack: ["haxe", "macro"], name: "Type"}, Position.nullPos);
+		coreMacroModules = new haxe.ds.ObjectMap();
+		for (m in macroCom.modules) coreMacroModules.set(m, true);
 	}
 
 	// The macro-world context, when one exists; the unification force-hook uses it to type a

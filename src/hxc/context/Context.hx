@@ -501,8 +501,49 @@ class Context {
 		};
 	}
 
-	// Clone configuration with separate module tables and macro defines so host modules remain
-	// unchanged.
+	// Empty retired macro contexts so references retained by the process do not retain their module
+	// graphs.
+	public function releaseWorld():Void {
+		moduleLut = new StringMap();
+		typeToModule = new StringMap();
+		typeToModuleEpoch = new StringMap();
+		contextInits = new haxe.ds.ObjectMap();
+		cachedMacros = new StringMap();
+		globalUsing = [];
+		parserCache = new StringMap();
+		modules = [];
+		types = [];
+		resources = new StringMap();
+		resourceOrder = [];
+		declOfType = new StringMap();
+		declErrored = new StringMap();
+		declBuiltBeforeError = new StringMap();
+		classSlots = [];
+		moduleAborted = new StringMap();
+		diagnostics = [];
+		unresolvedIdentifiers = [];
+		missingFields = [];
+		plainImportsTried = new StringMap();
+		readdirCache = new StringMap();
+		fileLookupCache = new StringMap();
+		moduleToFile = new StringMap();
+		overloadCache = new StringMap();
+		lazyInstalled = new StringMap();
+		fieldDeclCache = new haxe.ds.ObjectMap();
+		posInfosFiles = new StringMap();
+		droppedFieldDecls = new haxe.ds.ObjectMap();
+		fieldErrorReported = new haxe.ds.ObjectMap();
+		moduleImports = new StringMap();
+		storedTypedExprs = new Map();
+		pendingConstraintChecks = [];
+		delayed = [];
+		afterInitMacros = [];
+		fileContents = [];
+		hostCom = null;
+		forwardWarningsTo = null;
+		coreApiCtx = null;
+	}
+
 	public function cloneForMacro():Context {
 		// Remove target overlays and prepend eval/_std before user and library paths. Otherwise libraries
 		// such as hxnodejs can supply incompatible macro-world sys modules.
