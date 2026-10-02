@@ -22,9 +22,10 @@ class TypeFields {
 	// __init__ fields whose typed body was trivially empty, per field object.
 
 	static var lazyFieldTypes:haxe.ds.ObjectMap<TClassField, T> = new haxe.ds.ObjectMap();
-	// Field bodies whose typing has been attempted. A body that errors leaves expr null, so the
-	// expr idempotency guard alone would let a later installAndForce pass (re-run when a body loads
-	// modules on demand) re-type it and re-report its errors. Each body is typed at most once.
+	// Field bodies of the host whose typing has been attempted this request. hxc answers a display
+	// request in a module it reuses from the cache by typing that module's bodies again, so the host's
+	// mark is per request; the macro world, which answers nothing, keeps its mark on the field
+	// (TClassField.hxcBodyTyped).
 	static var bodyTyped:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
 	// A field's typing is queued once, when its class is built, so a finalize (Finalization.finalize,
 	// the flush of that queue) costs what is new. Re-walking every module on every call is too costly
@@ -916,7 +917,7 @@ class TypeFields {
 		if (lazyFieldTypes.exists(cf)) return;
 		if (cf.expr != null) return;
 		// A body that already ran (successfully or with an error) is not re-typed on later passes.
-		if (bodyTyped.exists(cf)) return;
+		if (bodyTypedYet(cf)) return;
 		if (skipMacroBodyInHost(ctx, cf)) {
 			// A macro field holding the display position is FORCED through the macro world, which is the
 			// only place its body can type (a display-mode macro load). A typing error there is swallowed;
@@ -1042,14 +1043,14 @@ class TypeFields {
 			// A body that already ran is not typed again: a member var whose initializer the field-init
 			// filter moved into the constructor has a null expr, and re-typing it would put back the raw
 			// initializer the filters took away.
-			if (bodyTyped.exists(cf)) continue;
+			if (bodyTypedYet(cf)) continue;
 			if (!hasFieldBody(cff)) continue;
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__"
 				&& (switch (cff.cffKind) { case FFun(_): !Lambda.exists(cff.cffAccess, a -> a.access == AInline); case _: false; })) continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			// Forcing the lazy is typing the body; it runs once.
-			if (bodyTyped.exists(cf)) continue;
+			if (bodyTypedYet(cf)) continue;
 			try {
 				typeFieldBody(tctx, cf, cff, isStatic, cf.type);
 			} catch (e:Dynamic) fatalFieldError(ctx, e);
@@ -1100,11 +1101,11 @@ class TypeFields {
 		// Same reason as installClassFields: the declaration never resolved, so there is no body to type
 		// here. The filters reach this path directly, so guarding the install site alone is not enough.
 		if (ctx.declErrored.exists(Context.pathKey(c.path))) return;
-		if (bodyTyped.exists(cf)) return;
+		if (bodyTypedYet(cf)) return;
 		switch (cf.type) {
 			case TLazy(r):
 				try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e);
-				if (cf.expr != null || bodyTyped.exists(cf)) return;
+				if (cf.expr != null || bodyTypedYet(cf)) return;
 			case _:
 		}
 		// A display request that types selectively gives a body only to the display field and to a
@@ -1259,8 +1260,13 @@ class TypeFields {
 		bodyDepth--;
 	}
 
+	static inline function bodyTypedYet(cf:TClassField):Bool return cf.hxcBodyTyped || bodyTyped.exists(cf);
+
 	static function typeFieldBodyInner(tctx:TyperContext, cf:TClassField, cff:ClassField, isStatic:Bool, sigType:T):Void {
-		bodyTyped.set(cf, true);
+		// A body that errors leaves expr null, so the expr idempotency guard alone would let a
+		// later installAndForce pass (re-run when a body loads modules on demand) re-type it and
+		// re-report its errors. Each body is typed at most once.
+		if (tctx.com.isMacro) cf.hxcBodyTyped = true else bodyTyped.set(cf, true);
 		var restore = Typer.saveLocals(tctx);
 		// A field body starts with no locals in scope. Lazy typing can force one body while another is
 		// still open (its type is queried from the first body), so start clean and let restore() give

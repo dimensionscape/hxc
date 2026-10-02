@@ -347,6 +347,10 @@ class TClassField {
 	public var exprUnoptimized:Null<TExpr>;
 	public var overloads:Array<TClassField>;
 	public var flags:Int;
+	// The body types when the field's lazy is forced, once. In the macro world the mark is the field's own,
+	// so a field a later compilation reuses from the cache is not typed again (a member var's initializer,
+	// which the field-init pass moved out, included).
+	public var hxcBodyTyped:Bool = false;
 	public function new(name:String, type:T, pos:Position, namePos:Position, doc:Documentation,
 			meta:Metadata, kind:FieldKind, params:TypeParams, expr:Null<TExpr>,
 			exprUnoptimized:Null<TExpr>, overloads:Array<TClassField>, flags:Int) {
