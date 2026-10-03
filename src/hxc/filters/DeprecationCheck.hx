@@ -15,6 +15,16 @@ class DeprecationCheck {
 	static var deprecatedEnums:Map<TEnum, Bool> = new Map();
 	static var pendingPropertyWarnings:Array<{com:Context, classMeta:Metadata, fieldMeta:Metadata, cf:TClassField, p:Position}> = [];
 
+	// Cleared for each compilation, so a warm server warns again. The rest belongs to the compilation
+	// as well: a property use queued by a request that ended before run() (a display answer) would
+	// otherwise keep that request's whole context alive for the life of the server.
+	public static function resetPerRequest():Void {
+		warnedPositions = new Map();
+		typedefTypePositions = new Map();
+		deprecatedEnums = new Map();
+		pendingPropertyWarnings = [];
+	}
+
 	static function warnDeprecation(com:Context, classMeta:Metadata, fieldMeta:Metadata, s:String, p:Position):Void {
 		var key = p.file + ":" + p.min;
 		if (warnedPositions.exists(key)) return;

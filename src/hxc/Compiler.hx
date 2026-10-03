@@ -164,6 +164,7 @@ class Compiler {
 		hxc.context.ModuleLoader.resetPerRequest();
 		hxc.eval.EvalMacro.resetPerRequest();
 		hxc.context.ServerCache.resetRequest();
+		hxc.filters.DeprecationCheck.resetPerRequest();
 		// The usage flags belong to one request (each json call sets them); the legacy @usage lane never
 		// sets them, so they must not survive a json one.
 		hxc.context.DisplayJson.usageDescendants = false;
@@ -218,6 +219,18 @@ class Compiler {
 		try sock.close() catch (_:Dynamic) {}
 	}
 
+
+	// HXC_DBG_LIVEMEM=<file>: after each request, a full collection and then the live heap in KB, appended
+	// to the file as `<request> <kb>`. The working set only ever grows, so the live heap is what shows a
+	// leak.
+	static var liveMemFile:Null<String> = Sys.getEnv("HXC_DBG_LIVEMEM");
+
+	static function recordLiveMem():Void {
+		cpp.vm.Gc.run(true);
+		var out = sys.io.File.append(liveMemFile, false);
+		out.writeString(censusCount + " " + Std.int(cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE) / 1024) + "\n");
+		out.close();
+	}
 
 	// HXC_DBG_STATICCENSUS=N: a static-root census every N requests (HeapCensus.staticCensus).
 	static var censusCount = 0;
@@ -384,6 +397,7 @@ class Compiler {
 				stderr.flush();
 				censusCount++;
 				if (censusEvery > 0 && censusCount % censusEvery == 0) hxc.debug.HeapCensus.staticCensus("after request " + censusCount, 20000000);
+				if (liveMemFile != null) recordLiveMem();
 				continue;
 			}
 			try {
