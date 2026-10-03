@@ -1050,29 +1050,40 @@ class Calls {
 						// receiver unifies as the applied underlying type, except _new. A @:multiType receiver goes
 						// through the abstract cast and replaces the receiver expression.
 						var recvThis = se.thisExpr;
-						function isMultiType(t:T):Bool
-							return switch (TypeFunctions.follow(t)) {
-								case TAbstract(a, _): TypeFunctions.hasMeta(":multiType", a.meta);
-								case _: false;
+						// The field is called with the receiver typed, so the call attempt covers the
+						// receiver and the
+						// arguments alike, and a single candidate's error is swallowed when errors are
+						// ignored.
+						var r = null;
+						try {
+							function isMultiType(t:T):Bool
+								return switch (TypeFunctions.follow(t)) {
+									case TAbstract(a, _): TypeFunctions.hasMeta(":multiType", a.meta);
+									case _: false;
+								}
+							switch (se.access.host) {
+								case FHAbstract(a, atl, _) if (se.access.field.name != "_new"):
+									try {
+										hxc.core.TypeUnification.unifyDefault(TypeFunctions.applyParams(a.params, atl, a.thisType), sig.args[0].t);
+									} catch (ue:hxc.core.TypeUnification.UnifyError) {
+										throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
+									}
+								case _ if (isMultiType(recvThis.type) || isMultiType(sig.args[0].t)):
+									// castOrUnifyRaise when a multi-type abstract is involved.
+									recvThis = Typer.castOrUnifyRaise(ctx, sig.args[0].t, recvThis, recvThis.pos);
+								case _:
+									try {
+										hxc.core.TypeUnification.unifyDefault(recvThis.type, sig.args[0].t);
+									} catch (ue:hxc.core.TypeUnification.UnifyError) {
+										throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
+									}
 							}
-						switch (se.access.host) {
-							case FHAbstract(a, atl, _) if (se.access.field.name != "_new"):
-								try {
-									hxc.core.TypeUnification.unifyDefault(TypeFunctions.applyParams(a.params, atl, a.thisType), sig.args[0].t);
-								} catch (ue:hxc.core.TypeUnification.UnifyError) {
-									throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
-								}
-							case _ if (isMultiType(recvThis.type) || isMultiType(sig.args[0].t)):
-								// castOrUnifyRaise when a multi-type abstract is involved.
-								recvThis = Typer.castOrUnifyRaise(ctx, sig.args[0].t, recvThis, recvThis.pos);
-							case _:
-								try {
-									hxc.core.TypeUnification.unifyDefault(recvThis.type, sig.args[0].t);
-								} catch (ue:hxc.core.TypeUnification.UnifyError) {
-									throw new TypingError(hxc.core.TPrinting.betterErrorMessage(ue.errors), recvThis.pos);
-								}
+							r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
+						} catch (e:haxe.Exception) {
+							if (!(Std.isOfType(e, TypingError) || Std.isOfType(e, UnifyError))
+								|| se.access.field.overloads.length > 0 || !ctx.com.ignoreError()) throw e;
+							return failFun(se.access, p);
 						}
-						var r = unifyCallArgs(ctx, el, sig.args.slice(1), sig.ret, p);
 						var faCall = genericFieldAccess(ctx, se.access, se.access.field, mono.monos, ce.type, p, withType);
 						if (faCall != se.access) ce = FieldAccessTools.getFieldExpr(faCall, FCall);
 						var ret = switch (TypeFunctions.follow(ce.type)) { case TFun(sig2): sig2.ret; case _: sig.ret; };
@@ -1146,6 +1157,16 @@ class Calls {
 			}
 		}
 		return FieldAccessTools.getFieldExpr(fa, FCall);
+	}
+
+	// The call that stands in for a single candidate's failure.
+	static function failFun(fa:FieldAccess, p:Position):TExpr {
+		// This TField keeps the field's own type, not the all-Dynamic signature just built: hxc RECORDS a
+		// display answer on the callee and carries on, so an all-Dynamic node would overwrite it and
+		// report the callee as (Dynamic...) -> Dynamic.
+		var ef = TypeFunctions.mk(TField(fa.on, FieldAccessTools.applyFa(fa.field, fa.host)),
+			fa.field.type, fa.pos);
+		return TypeFunctions.mk(TCall(ef, []), TypeFunctions.tDynamic, p);
 	}
 
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null):TExpr {
@@ -1335,15 +1356,7 @@ class Calls {
 		// call to the same field with no arguments, the field typed as (Dynamic...) -> Dynamic over the
 		// arguments written, and the call itself Dynamic at the call's own position. A display file
 		// holding one bad call still answers the request, and the block around it types Dynamic.
-		if (!multi && ctx.com.ignoreError()) {
-			// This TField keeps the field's own type, not the all-Dynamic signature just built: hxc RECORDS
-			// a
-			// display answer on the callee and carries on, so an all-Dynamic node would overwrite it and
-			// report the callee as (Dynamic...) -> Dynamic.
-			var ef = TypeFunctions.mk(TField(fa.on, FieldAccessTools.applyFa(fa.field, fa.host)),
-				fa.field.type, fa.pos);
-			return TypeFunctions.mk(TCall(ef, []), TypeFunctions.tDynamic, p);
-		}
+		if (!multi && ctx.com.ignoreError()) return failFun(fa, p);
 		if (distinct.length == 1) {
 			// The one candidate's error is raised as it came, chain included: a macro's uncaught exception
 			// in
