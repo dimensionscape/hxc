@@ -398,6 +398,7 @@ class Compiler {
 				censusCount++;
 				if (censusEvery > 0 && censusCount % censusEvery == 0) hxc.debug.HeapCensus.staticCensus("after request " + censusCount, 20000000);
 				if (liveMemFile != null) recordLiveMem();
+				hxc.debug.AllocTelemetry.afterRequest();
 				continue;
 			}
 			try {
