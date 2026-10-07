@@ -76,14 +76,16 @@ class Compiler {
 	// The aedifex program's entry constructs the class (ProgramMain), a plain build calls main(): both
 	// start where the runtime's thread setup leaves the main thread, holding the runtime lock.
 	public function new() {
+		applyGcSettings();
 		hxc.eval.EvalStdLib.gilEnter();
 		run(Sys.args());
 	}
-	public static function main() {
+	// HXC_DBG_GC: measure how much of the wall clock is collection. "off" disables the collector for
+	// the whole run (RSS grows unbounded, so one-shot compiles only); a number sets the target free
+	// space percentage. HXC_DBG_GCWM sets the minimum working memory in MB. DEBUG only. Both entry
+	// points run it: the aedifex exe starts in the constructor.
+	static function applyGcSettings():Void {
 		#if cpp
-		// HXC_DBG_GC: measure how much of the wall clock is collection. "off" disables the collector for
-		// the whole run (RSS grows unbounded, so one-shot compiles only); a number sets the target free
-		// space percentage. DEBUG only.
 		{
 			var g = Sys.getEnv("HXC_DBG_GC");
 			var wm = Sys.getEnv("HXC_DBG_GCWM");
@@ -98,6 +100,10 @@ class Compiler {
 			}
 		}
 		#end
+	}
+
+	public static function main() {
+		applyGcSettings();
 		// The main thread holds the runtime lock from the start, and lets it go only in a blocking section
 		// or at the tick's yield.
 		hxc.eval.EvalStdLib.gilEnter();
