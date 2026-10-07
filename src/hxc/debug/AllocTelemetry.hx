@@ -1,17 +1,16 @@
 package hxc.debug;
 
 // HXC_DBG_TELEMETRY=<report file>: where a warm server's allocations come from, by type, by allocating
-// function and by call stack. Needs a build with HXCPP_TELEMETRY and HXCPP_STACK_TRACE (hxcpp's
-// telemetry records every allocation with its call stack); in any other build every call is a no-op.
-// The report is rewritten after each request. The live heap says how much is KEPT
-// (HXC_DBG_LIVEMEM); this says what is ALLOCATED, which is what the collector spends its time on.
+// function and by call stack. Needs a build with HXCPP_TELEMETRY and HXCPP_STACK_TRACE (hxcpp's telemetry
+// records every allocation with its call stack); in any other build every call is a no-op. The report is
+// rewritten after each request. The live heap says how much is KEPT (HXC_DBG_LIVEMEM); this says what is
+// ALLOCATED, which is what the collector spends its time on.
 //
-// Building it: an aedifex build with HXCPP_TELEMETRY generates the sources but fails at the link (the
-// shared obj/ keeps objects compiled without stack traces), so copy obj/{src,include,Build.xml,
-// Options.txt,HxcppConfig*.h} to a scratch directory and run `haxelib run hxcpp Build.xml haxe` there with
-// Options.txt's defines; then clear obj/obj before the next normal build. hxcpp's telemetry itself
-// crashes on hxc (its deferred type lookup calls into an Array whose constructor has not run yet, and
-// into objects without a class); guard both in hxcpp's src/hx/Telemetry.cpp for that build only.
+// Building it: add .defineToken("HXCPP_TELEMETRY") to Aedifex.hx, build, keep the exe, take the line out
+// and build again. That needs an hxcpp whose Options.txt check sees upper-case defines and whose library
+// groups track it. An older hxcpp leaves the shared obj/ half compiled each way and fails at the link:
+// clear obj/obj then. It also needs an hxcpp whose telemetry does not crash looking up the type of an Array
+// whose constructor has not run yet.
 @:cppFileCode('
 #if defined(HXCPP_TELEMETRY) && defined(HXCPP_STACK_TRACE)
 #include <hx/Telemetry.h>
