@@ -2367,7 +2367,10 @@ class EvalMacro {
 		evictStaleMacroModules();
 		// A macro running mid-build (installAndForce types bodies that may contain macro calls) must
 		// not trigger another rebuild -- that recurses without bound. While building, reuse what we have.
-		if (macroCom == null) initMacroContext(com);
+		if (macroCom == null) {
+			initMacroContext(com);
+			hxc.debug.LiveMark.mark("macro world created");
+		}
 		// The context is reused; its display settings are the requesting host's.
 		macroCom.hostCom = com;
 		doReuse(com);
@@ -2384,6 +2387,7 @@ class EvalMacro {
 				// hook exists. Lazy typers would leave those bodies to whoever needed them first - the host,
 				// after the macro ran - and the hook would be asked about haxe.macro.Reflect and its kind.
 				hxc.typing.TypeFields.typeAllModules(macroCom);
+				hxc.debug.LiveMark.mark("macro world typed");
 				if (macroCtx == null) {
 					if (Sys.getEnv("HXC_DEBUG_MACROCTX") != null) Sys.println("[macroctx] FULL BUILD, modules=" + macroCom.modules.length);
 					var ec = EvalMain.create(true);
@@ -2724,7 +2728,10 @@ class EvalMacro {
 	}
 
 	static function loadDisplayModuleInMacroInner(host:Context, path:hxc.core.Globals.Path):Void {
-		if (macroCom == null) initMacroContext(host);
+		if (macroCom == null) {
+			initMacroContext(host);
+			hxc.debug.LiveMark.mark("macro world created");
+		}
 		macroCom.hostCom = host;
 		// The display module reaches the macro context through the macro-context getter, a fresh view of
 		// this compilation's com - with its file contents - which can come before any init macro has asked
@@ -2760,7 +2767,10 @@ class EvalMacro {
 	public static function loadMacroClass(host:Context, path:hxc.core.Globals.Path, ?fieldName:String, forceAll:Bool = false, ?modulePath:hxc.core.Globals.Path, ?dependent:ModuleDef, ?p:Position, displayWindow:Bool = false, ?sub:String):Void {
 		evictDisplayModule();
 		evictStaleMacroModules();
-		if (macroCom == null) initMacroContext(host);
+		if (macroCom == null) {
+			initMacroContext(host);
+			hxc.debug.LiveMark.mark("macro world created");
+		}
 		macroCom.hostCom = host;
 		// The macro load starts from the macro-context getter, which has made this compilation's macro com
 		// - its error policy and file contents - before the module types.
@@ -2810,6 +2820,7 @@ class EvalMacro {
 			// (class init in the macro context), which is where a @:build met inside a macro raises;
 			// typeAllModules runs those first.
 			hxc.typing.TypeFields.typeAllModules(macroCom);
+			hxc.debug.LiveMark.mark("macro world typed");
 			for (mt in m.types) switch (mt) {
 				// The named field may live on a secondary module type (Module.SubType.method), so any
 				// module class carrying it qualifies alongside the main one.

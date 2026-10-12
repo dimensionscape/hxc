@@ -99,6 +99,20 @@ void hxcTelReport(const char *path) {
 	hxcTelTable(o, "by type", hxcByType, 60, false);
 	hxcTelTable(o, "by allocating function", hxcBySite, 80, false);
 	hxcTelTable(o, "by creating function (constructor frames skipped)", hxcByCreator, 80, false);
+	// Count allocations inclusively for every function on the stack. Recursive occurrences of a
+	// function count once.
+	std::map<int, HxcTally> inclusive;
+	for (std::map<int, HxcTally>::iterator it = hxcByStack.begin(); it != hxcByStack.end(); ++it) {
+		if (it->first < 0 || it->first >= (int)hxcStacks.size()) continue;
+		std::vector<int> &frames = hxcStacks[it->first];
+		std::vector<int> seen;
+		for (size_t j = 0; j < frames.size(); j++) {
+			if (std::find(seen.begin(), seen.end(), frames[j]) != seen.end()) continue;
+			seen.push_back(frames[j]);
+			HxcTally &t = inclusive[frames[j]]; t.count += it->second.count; t.bytes += it->second.bytes;
+		}
+	}
+	hxcTelTable(o, "inclusive, by function on the stack", inclusive, 150, false);
 	hxcTelTable(o, "by call stack", hxcByStack, 40, true);
 	fclose(o);
 }

@@ -403,6 +403,7 @@ class Compiler {
 				stderr.flush();
 				censusCount++;
 				if (censusEvery > 0 && censusCount % censusEvery == 0) hxc.debug.HeapCensus.staticCensus("after request " + censusCount, 20000000);
+				hxc.debug.LiveMark.mark("request end");
 				if (liveMemFile != null) recordLiveMem();
 				hxc.debug.AllocTelemetry.afterRequest();
 				continue;
@@ -460,6 +461,7 @@ class Compiler {
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
 		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
 		hxc.core.TypeUnification.install();
+		hxc.debug.LiveMark.mark("request start");
 		// A --display given last moves to the front, and only that form marks the command line as a
 		// display one, which compiles its first section alone.
 		var hasDisplay = false;
@@ -1103,6 +1105,7 @@ class Compiler {
 			if (!answeredBeforeTyping) {
 				hxc.context.DisplayJson.cache.maybeAddContextSign(ctx, "before_init_macros");
 				hxc.eval.EvalMacro.runInitMacros(ctx, ctx.initMacros);
+				hxc.debug.LiveMark.mark("after init macros");
 				// The init-macro callbacks run after the stage changes and before root modules type.
 				ctx.initMacrosDone = true;
 				// The context re-registers under its post-macro signature (init macros can add defines);
@@ -1222,6 +1225,7 @@ class Compiler {
 				var tFields = hxc.core.Timer.timer(["typing", "fields"]);
 				TypeFields.typeAllModules(ctx);
 				tFields();
+				hxc.debug.LiveMark.mark("after host typing");
 				// Unused plain imports load once the build pipeline has run, so their declaration errors
 				// surface; the second typing pass covers them (an import always loads its module).
 				hxc.filters.ImportCheck.loadPlainImports(ctx);
