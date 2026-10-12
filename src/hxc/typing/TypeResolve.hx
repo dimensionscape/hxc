@@ -2538,9 +2538,9 @@ class TypeResolve {
 				// PTypeField
 				// delay - after the bodies delayed before it, which is what its argument ids count.
 				var isExternField = (owner != null && TypeFunctions.hasClassFlag(owner, CExtern))
-					|| Lambda.exists(cff.cffAccess, a -> a.access == AExtern) || TypeFunctions.hasMeta(":extern", cff.cffMeta);
-				var isInlineField = Lambda.exists(cff.cffAccess, a -> a.access == AInline);
-				var isAbstractField = Lambda.exists(cff.cffAccess, a -> a.access == AAbstract);
+					|| TypeFunctions.hasAccess(cff.cffAccess, AExtern) || TypeFunctions.hasMeta(":extern", cff.cffMeta);
+				var isInlineField = TypeFunctions.hasAccess(cff.cffAccess, AInline);
+				var isAbstractField = TypeFunctions.hasAccess(cff.cffAccess, AAbstract);
 				var isInterfaceField = owner != null && TypeFunctions.hasClassFlag(owner, CInterface);
 				var doBind = ((!isExternField || isInlineField) && !isAbstractField && !isInterfaceField)
 					|| (cf.name == "__init__" && isStaticField);

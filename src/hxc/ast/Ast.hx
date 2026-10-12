@@ -444,16 +444,15 @@ class Ast {
 	public static function isLowerIdent(i:String):Bool {
 		if (i.length == 0)
 			throw new haxe.Exception("Identifier name must not be empty");
-		function loop(p:Int):Bool {
+		// Use a loop to avoid allocating a recursive closure for each path segment.
+		var p = 0;
+		while (true) {
 			var c = i.charCodeAt(p);
-			if (c >= "a".code && c <= "z".code)
-				return true;
-			else if (c == "_".code)
-				return p + 1 >= i.length || loop(p + 1);
-			else
-				return false;
+			if (c >= "a".code && c <= "z".code) return true;
+			if (c != "_".code) return false;
+			if (p + 1 >= i.length) return true;
+			p++;
 		}
-		return loop(0);
 	}
 
 	public static inline function pos(e:Expr):Position {

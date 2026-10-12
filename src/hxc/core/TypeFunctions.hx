@@ -31,6 +31,13 @@ class TypeFunctions {
 		return CUnknown;
 	};
 
+	// Whether a field declaration carries an access modifier. Lambda.exists with a lambda allocates a
+	// closure and an iterator per call, and these run for every field of every class built.
+	public static function hasAccess(access:Array<hxc.ast.Ast.PlacedAccess>, a:hxc.ast.Ast.Access):Bool {
+		for (x in access) if (x.access == a) return true;
+		return false;
+	}
+
 	public static function hasMeta(m:String, ml:Metadata):Bool {
 		for (entry in ml) if (entry.name == m) return true;
 		return false;
@@ -378,6 +385,16 @@ class TypeFunctions {
 			case TEnumDecl(e): e.path;
 			case TTypeDecl(td): td.path;
 			case TAbstractDecl(a): a.path;
+		};
+	}
+
+	// tInfos(t).params without building the record.
+	public static function tParams(t:ModuleType):TypeParams {
+		return switch (t) {
+			case TClassDecl(c): c.params;
+			case TEnumDecl(e): e.params;
+			case TTypeDecl(td): td.params;
+			case TAbstractDecl(a): a.params;
 		};
 	}
 

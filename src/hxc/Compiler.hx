@@ -265,6 +265,13 @@ class Compiler {
 	}
 
 	static function runWaitLoop(stdin:haxe.io.Input, stderr:haxe.io.Output):Void {
+		// A server lives through many requests, each allocating ~150 MB that dies with it (PiratePig display
+		// requests), and hxcpp's default target free space of 100% lets the heap grow to twice what is live
+		// before it collects. At 50% the peak working set over 200 such requests is 1090 MB instead of 1555,
+		// for 7% more time; a one-shot compile keeps the default, where 50% costs 13%. HXC_DBG_GC overrides.
+		#if cpp
+		if (Sys.getEnv("HXC_DBG_GC") == null) cpp.vm.Gc.setTargetFreeSpacePercentage(50);
+		#end
 		hxc.context.ServerCache.cacheMode = true;
 		while (true) {
 			// The connection is read with the interpreter lock released, so the interpreter's threads run

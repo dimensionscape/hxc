@@ -821,21 +821,20 @@ class Typeload {
 				throw e;
 			}
 		else loadInstance_(ctx, typeParams, t, p, allowNoParams, specializeGeneric, tctx);
-		// Records every hint, whatever the request. The list only feeds the reference searches, so hxc
-		// keeps it for display requests - decided from the argument, since the core types' own hints
-		// resolve before the display mode is installed.
-		if (ctx.displaySpec != null)
+		// The hints only feed the usage searches (Compiler.collectUsages), so they are recorded for a
+		// usage request only - decided from the argument, since the core types' own hints resolve before
+		// the display mode is installed.
+		if (ctx.displaySpec != null && StringTools.endsWith(ctx.displaySpec, "@usage"))
 			typeHints.push({m: ctx.currentModule, p: p, t: r});
-		if (hxc.parser.Parser.displayFile != null) {
+		// The cursor test covers the whole path, parameters included, and narrows to the dotted name only
+		// for the answer, so `new H<Int>()` asked on the `(` answers `H`, not the whole new expression.
+		if (hxc.parser.Parser.displayFile != null && hxc.typing.Typer.atDisplayPos(p)) {
 			// The path's range is narrowed to the dotted name itself, so `Array<Foo>` with the cursor on
 			// Foo
 			// answers Foo and not Array.
 			var strings = t.tsub != null ? [t.tsub, t.tname].concat(t.tpackage) : [t.tname].concat(t.tpackage);
 			var pName = new Position(p.file, p.min, p.min + strings.join(".").length);
-			// The cursor test covers the whole path, parameters included, and narrows to the dotted name
-			// only for the answer, so `new H<Int>()` asked on the `(` answers `H`, not the whole new
-			// expression.
-			if (hxc.typing.Typer.atDisplayPos(p)) hxc.typing.Typer.displayType(ctx, r, pName, allowDisplay);
+			hxc.typing.Typer.displayType(ctx, r, pName, allowDisplay);
 		}
 		return r;
 	}
@@ -855,9 +854,9 @@ class Typeload {
 		var path:Path = {pack: t.tpackage, name: t.tname};
 		var mt = resolveTypePath(ctx, path, t.tsub, p);
 		ensureResolved(ctx, TypeFunctions.tModule(mt));
-		var types = TypeFunctions.tInfos(mt).params;
+		var types = TypeFunctions.tParams(mt);
 		var declPath = TypeFunctions.tPath(mt);
-		var build = function(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams, tctx);
+		inline function build(params:TParams):T return buildInstance(ctx, mt, params, p, specializeGeneric, typeParams, tctx);
 		var isGenericBuild = switch (mt) {
 			case TClassDecl(c): switch (c.kind) { case KGenericBuild(_): true; case _: false; }
 			case _: false;
@@ -882,7 +881,7 @@ class Typeload {
 			}
 		}
 
-		var loadParam = function(tp:TypeParamOrConst):T {
+		inline function loadParam(tp:TypeParamOrConst):T {
 			return switch (tp) {
 				// A type parameter loads with display allowed.
 				case TPType(th): loadComplexType(ctx, typeParams, th, true);
@@ -907,7 +906,7 @@ class Typeload {
 					c.kind = KExpr(e);
 					TInst(c, []);
 			}
-		};
+		}
 
 		// Loop tl1 tl2, pair syntactic params with declaration params (subset: no Rest,
 		// no java-rest, no generic-build). Faithful arity behaviour: too few -> default or
@@ -931,7 +930,7 @@ class Typeload {
 				// for one
 				// takes nothing else. Both report over the whole path, not the parameter.
 				var declName = types[i2].name;
-				var checkConst = function(c2:TClass):Void {
+				inline function checkConst(c2:TClass):Void {
 					var isExpression = switch (loaded) { case TInst({kind: KExpr(_)}, _): true; case _: false; };
 					var expectsExpression = declName == "Const" || TypeFunctions.hasMeta(":const", c2.meta);
 					if (isExpression) {
@@ -939,7 +938,7 @@ class Typeload {
 							throw new ContextError("Constant value unexpected here", p);
 					} else if (expectsExpression)
 						throw new ContextError("Type parameter is expected to be a constant value", p);
-				};
+				}
 				// Following the declaration param forces its constraint lazy; an unconstrained param of a
 				// non-generic type needs no check.
 				switch (TypeFunctions.follow(types[i2].type)) {
@@ -996,13 +995,15 @@ class Typeload {
 		return build(params);
 	}
 
+	static var debugConstraints:Bool = Sys.getEnv("HXC_DEBUG_CONSTRAINT") != null;
+
 	static function checkParamConstraints(ctx:Context, t:T, map:T->T, c:TClass, p:Position):Void {
 		switch (TypeFunctions.follow(t)) {
 			case TMono(_): return;
 			case _:
 		}
 		var ctl = switch (c.kind) { case KTypeParameter(l): l; case _: []; };
-		if (Sys.getEnv("HXC_DEBUG_CONSTRAINT") != null) {
+		if (debugConstraints) {
 			var info = switch (TypeFunctions.follow(t)) {
 				case TInst(ca, _): "applied=" + Context.sTypePath(ca.path) + " kind=" + Std.string(ca.kind);
 				case other: "applied follow=" + Std.string(other);

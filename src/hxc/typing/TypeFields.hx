@@ -762,7 +762,7 @@ class TypeFields {
 				switch (cff.cffKind) {
 					// The bind rule holds for an extern INLINE method, which binds like any other; only the
 					// rest take the extern-check delay.
-					case FFun(_) if (Lambda.exists(cff.cffAccess, a -> a.access == AInline)):
+					case FFun(_) if (TypeFunctions.hasAccess(cff.cffAccess, AInline)):
 						externBinds = true;
 					// A variable or property always binds, and an extern one's initializer is typed before
 					// the
@@ -770,7 +770,7 @@ class TypeFields {
 					case FVar(_, _) | FProp(_, _, _, _):
 						externBinds = true;
 					case FFun(fd): externChecks.push({cf: cf, fd: fd, isStatic: isStatic,
-						abstractMember: isAbsImpl && cff.cffName.name != "new" && !Lambda.exists(cff.cffAccess, a -> a.access == AStatic)});
+						abstractMember: isAbsImpl && cff.cffName.name != "new" && !TypeFunctions.hasAccess(cff.cffAccess, AStatic)});
 					case _:
 				}
 				if (!externBinds) {
@@ -1046,7 +1046,7 @@ class TypeFields {
 			if (bodyTypedYet(cf)) continue;
 			if (!hasFieldBody(cff)) continue;
 			if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) && cff.cffName.name != "__init__"
-				&& (switch (cff.cffKind) { case FFun(_): !Lambda.exists(cff.cffAccess, a -> a.access == AInline); case _: false; })) continue;
+				&& (switch (cff.cffKind) { case FFun(_): !TypeFunctions.hasAccess(cff.cffAccess, AInline); case _: false; })) continue;
 			if (skipMacroBodyInHost(ctx, cf)) continue;
 			switch (cf.type) { case TLazy(r): try cf.type = TypeFunctions.lazyType(r) catch (e:Dynamic) recordFieldError(ctx, e); case _: }
 			// Forcing the lazy is typing the body; it runs once.
@@ -1283,7 +1283,7 @@ class TypeFields {
 		// An abstract member is declared without static in the impl class. A static @:to is CfImpl as well
 		// but typed FunStatic.
 		var isAbstractMember = isAbsImpl && cff.cffName.name != "new"
-			&& !Lambda.exists(cff.cffAccess, a -> a.access == AStatic);
+			&& !TypeFunctions.hasAccess(cff.cffAccess, AStatic);
 		tctx.curfield = cf;
 		tctx.curfun = isAbstractMember ? FunMemberAbstract : (isStatic ? FunStatic : (cff.cffName.name == "new" ? FunConstructor : FunMember));
 		if (isAbstractMember) tctx.typeParams = abstractParams;

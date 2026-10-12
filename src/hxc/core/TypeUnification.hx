@@ -1423,21 +1423,32 @@ class TypeUnification {
 
 	static function unifiesAbstracts(uctx:UnificationContext, a:T, b:T, a1:TAbstract, tl1:Array<T>, a2:TAbstract, tl2:Array<T>):Bool {
 		return unifiesWithAbstract(uctx, a, b, function(uctx) {
-			return Lambda.exists(a1.to, unifiesToDirect.bind(uctx, a, b, a1, tl1))
-				|| Lambda.exists(a2.from, unifiesFromDirect.bind(uctx, a, b, a2, tl2));
+			return anyUnifiesTo(uctx, a, b, a1, tl1) || anyUnifiesFrom(uctx, a, b, a2, tl2);
 		});
 	}
 
 	static function unifiesFrom(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Bool {
 		return unifiesWithAbstract(uctx, a, b, function(uctx) {
-			return Lambda.exists(ab.from, unifiesFromDirect.bind(uctx, a, b, ab, tl));
+			return anyUnifiesFrom(uctx, a, b, ab, tl);
 		});
 	}
 
 	static function unifiesTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Bool {
 		return unifiesWithAbstract(uctx, a, b, function(uctx) {
-			return Lambda.exists(ab.to, unifiesToDirect.bind(uctx, a, b, ab, tl));
+			return anyUnifiesTo(uctx, a, b, ab, tl);
 		});
+	}
+
+	// Whether any of the abstract's from/to types unifies, tried in order, without a bound closure per
+	// attempt.
+	static function anyUnifiesFrom(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Bool {
+		for (t in ab.from) if (unifiesFromDirect(uctx, a, b, ab, tl, t)) return true;
+		return false;
+	}
+
+	static function anyUnifiesTo(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>):Bool {
+		for (t in ab.to) if (unifiesToDirect(uctx, a, b, ab, tl, t)) return true;
+		return false;
 	}
 
 	static function unifiesFromDirect(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, t:T):Bool {

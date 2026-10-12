@@ -2877,7 +2877,7 @@ class Typer {
 			for (f in fields) if (found == null && f.cffName.name == "new") found = f;
 			return found;
 		}
-		inline function isPublic(f:ClassField):Bool return Lambda.exists(f.cffAccess, function(a) return a.access == APublic);
+		inline function isPublic(f:ClassField):Bool return TypeFunctions.hasAccess(f.cffAccess, APublic);
 		return switch (info.decl) {
 			case EClass(d):
 				var n = hasNew(d.dData);

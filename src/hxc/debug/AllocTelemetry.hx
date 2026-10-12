@@ -24,6 +24,7 @@ struct HxcTally { long long count = 0; long long bytes = 0; };
 std::vector<std::string> hxcNames(1, std::string("1-indexed"));
 std::vector<std::vector<int> > hxcStacks;
 std::map<int, HxcTally> hxcByType, hxcBySite, hxcByStack, hxcByCreator;
+std::map<long long, HxcTally> hxcByCreatorType;
 long long hxcCount = 0, hxcBytes = 0;
 int hxcThread = -1;
 int hxcRequests = 0;
@@ -65,6 +66,7 @@ void hxcTelCollect() {
 						if (nm.size() < 4 || nm.compare(nm.size() - 4, 4, ".new") != 0) { creator = hxcStacks[stack][j]; break; }
 					}
 				HxcTally &c = hxcByCreator[creator]; c.count++; c.bytes += size;
+				HxcTally &ct = hxcByCreatorType[((long long)creator << 32) | (unsigned int)type]; ct.count++; ct.bytes += size;
 				i += 5;
 			} else if (flag == 1) i += 2;
 			else if (flag == 2) i += 4;
@@ -113,6 +115,14 @@ void hxcTelReport(const char *path) {
 		}
 	}
 	hxcTelTable(o, "inclusive, by function on the stack", inclusive, 150, false);
+	{
+		std::vector<std::pair<long long, HxcTally> > v(hxcByCreatorType.begin(), hxcByCreatorType.end());
+		std::sort(v.begin(), v.end(), [](const std::pair<long long, HxcTally> &a, const std::pair<long long, HxcTally> &b) { return a.second.bytes > b.second.bytes; });
+		fprintf(o, "\\n== by creating function and type (top 120 by bytes)\\n");
+		for (int i = 0; i < (int)v.size() && i < 120; i++)
+			fprintf(o, "%10lld KB %5.1f%% %10lld  %s  <-  %s\\n", v[i].second.bytes / 1024, hxcBytes ? 100.0 * v[i].second.bytes / hxcBytes : 0.0,
+				v[i].second.count, hxcName((int)(v[i].first & 0xffffffff)), hxcName((int)(v[i].first >> 32)));
+	}
 	hxcTelTable(o, "by call stack", hxcByStack, 40, true);
 	fclose(o);
 }
