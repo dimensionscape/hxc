@@ -27,8 +27,10 @@ package hxc.compiler;
 #include <sched.h>
 #include <pthread.h>
 #endif
-static std::mutex hxc_err_mutex;
-static std::vector<char> hxc_err_buf;
+// Never destroyed: a thread that writes to stderr while the process exits still finds them, where a
+// destroyed mutex makes the lock throw on macOS.
+static std::mutex &hxc_err_mutex = *new std::mutex();
+static std::vector<char> &hxc_err_buf = *new std::vector<char>();
 static bool hxc_err_atexit_set = false;
 static std::atomic<int> hxc_threads_alive(0);
 static std::atomic<int> hxc_exit_code(0);
