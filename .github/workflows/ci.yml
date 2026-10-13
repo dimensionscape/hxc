@@ -22,6 +22,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CONFORMANCE_COMMIT: fd2f10803f1d602284eec16eb9f267307864ef06
+
 jobs:
   build:
     name: Build (${{ matrix.name }})
@@ -64,3 +67,107 @@ jobs:
           name: hxc-${{ matrix.name }}
           path: ${{ steps.build.outputs.executable }}
           if-no-files-found: error
+
+  runs-haxe:
+    name: Runs Haxe (${{ matrix.name }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-2022, experimental: false, compare: "" }
+          - { name: linux-x64, os: ubuntu-24.04, experimental: true, compare: "--haxe haxe" }
+          - { name: macos-arm64, os: macos-14, experimental: true, compare: "--haxe haxe" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-${{ matrix.name }}
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - name: Parity with Haxe 4.3.7
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" ${{ matrix.compare }}             --divergences "$GITHUB_WORKSPACE/tests/divergences.json" -j 4             --junit "$RUNNER_TEMP/runs-haxe.xml" --title "Runs Haxe (${{ matrix.name }})"
+
+      - name: hxc's own tests
+        if: matrix.name == 'windows-x64'
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n run --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH"             --cases "$GITHUB_WORKSPACE/tests/cases" -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
+
+  jvm:
+    name: JVM
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install hxjava and utest
+        shell: bash
+        run: |
+          haxelib install hxjava 4.2.0 --always --quiet
+          haxelib git utest https://github.com/haxe-utest/utest.git a94f8812e8786f2b5fec52ce9f26927591d26327 --always --quiet
+
+      - name: Haxe's unit suite on the JVM
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}/tests/unit"
+          haxelib run hxjava native_java/hxjava_build.txt --out native_java/native
+          rm -f bin/unit.jar && haxe compile-jvm-only.hxml && cp bin/unit.jar "$RUNNER_TEMP/haxe.jar"
+          rm -f bin/unit.jar && "${{ steps.t.outputs.hxc }}" compile-jvm-only.hxml && cp bin/unit.jar "$RUNNER_TEMP/hxc.jar"
+          python - "$RUNNER_TEMP/haxe.jar" "$RUNNER_TEMP/hxc.jar" <<'EOF'
+          import sys, zipfile
+          a, b = zipfile.ZipFile(sys.argv[1]), zipfile.ZipFile(sys.argv[2])
+          na, nb = set(a.namelist()), set(b.namelist())
+          # TestMain_Fields_ holds the time the suite was compiled.
+          diff = sorted(n for n in na & nb if a.read(n) != b.read(n) and not n.endswith("TestMain_Fields_.class"))
+          print("classes:", len(na), "missing:", sorted(na - nb)[:10], "extra:", sorted(nb - na)[:10], "different:", diff[:10])
+          sys.exit(1 if na != nb or diff else 0)
+          EOF
+          cd bin && java -jar unit.jar | tee "$RUNNER_TEMP/jvm.log"
+          grep -q "ALL TESTS OK" "$RUNNER_TEMP/jvm.log"
+
+  haxe-suites:
+    name: Haxe's suites
+    needs: build
+    runs-on: windows-2022
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - name: Install utest
+        shell: bash
+        run: haxelib git utest https://github.com/haxe-utest/utest.git a94f8812e8786f2b5fec52ce9f26927591d26327 --always --quiet
+
+      - name: unit and misc
+        shell: bash
+        run: |
+          cd "${{ steps.t.outputs.conformance }}"
+          neko run.n corpus unit,misc --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH"             --junit "$RUNNER_TEMP/haxe-suites.xml"

@@ -1,0 +1,13 @@
+{
+	"name": "haxe-defects",
+	"oracle": "expected",
+	"kind": "compile-diff",
+	"cost": "quick",
+	"module": "P",
+	"args": [
+		"-cp",
+		".",
+		"$module",
+		"--no-output"
+	]
+}

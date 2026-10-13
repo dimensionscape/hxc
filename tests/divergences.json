@@ -1,0 +1,15 @@
+{
+	"cli-nothing-to-compile/bare-invocation": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/cpp-target-only": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/cppia-define-without-the-cpp-target": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/hxml-with-only-a-target": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/interp-target-only": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/js-target-only": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/jvm-target-only": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/neko-target-only": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/next-empty-then-full": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/next-full-then-empty": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/next-two-empty-batches": "The usage screen carries hxc's own copyright line.",
+	"cli-nothing-to-compile/target-without-no-output": "The usage screen carries hxc's own copyright line.",
+	"macro-api/eval-ssl-key-error-codes": "hxc builds against mbedTLS 3.6, which reports these key errors with different codes and text than mbedTLS 2.28."
+}

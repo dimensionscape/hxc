@@ -1,0 +1,14 @@
+{
+	"name": "determinism",
+	"oracle": "self",
+	"kind": "compile-twice",
+	"cost": "medium",
+	"module": "P",
+	"args": [
+		"-cp",
+		".",
+		"$module",
+		"-js",
+		"$out"
+	]
+}

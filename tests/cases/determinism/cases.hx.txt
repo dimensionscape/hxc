@@ -1,0 +1,45 @@
+--- many-static-fields
+class P {
+	public static var a1 = 1; public static var b2 = 2; public static var c3 = 3;
+	public static var d4 = 4; public static var e5 = 5; public static var f6 = 6;
+	public static var g7 = 7; public static var h8 = 8; public static var i9 = 9;
+	static function main() { Sys.println(a1 + b2 + c3 + d4 + e5 + f6 + g7 + h8 + i9); }
+}
+
+--- many-anonymous-structures
+class P {
+	static function main() {
+		var a = {zz: 1, aa: 2, mm: 3, bb: 4};
+		var b = {qq: "x", cc: "y", nn: "z"};
+		Sys.println(a.zz + a.aa + a.mm + a.bb);
+		Sys.println(b.qq + b.cc + b.nn);
+	}
+}
+
+--- many-types-in-one-module
+class P { static function main() { Sys.println(new Zeta().v + new Alpha().v + new Mu().v); } }
+class Zeta { public function new() {} public var v = 1; }
+class Alpha { public function new() {} public var v = 2; }
+class Mu { public function new() {} public var v = 3; }
+enum Omega { One; Two; }
+typedef Beta = { q:Int };
+
+--- map-with-many-keys
+class P {
+	static function main() {
+		var m = new Map<String, Int>();
+		for (k in ["zeta", "alpha", "mu", "beta", "gamma", "delta", "epsilon"]) m.set(k, k.length);
+		var ks = [for (k in m.keys()) k]; ks.sort(Reflect.compare);
+		Sys.println(ks.join(","));
+	}
+}
+
+--- closures-and-captures
+class P {
+	static function main() {
+		var acc = 0;
+		var fs = [for (i in 0...5) function(x:Int) { acc += x + i; return acc; }];
+		for (f in fs) f(1);
+		Sys.println(acc);
+	}
+}

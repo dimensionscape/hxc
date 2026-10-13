@@ -1,0 +1,63 @@
+name: Set up tests
+description: Installs Haxe, fetches the built hxc and the pinned haxe-conformance checkout.
+
+inputs:
+  artifact:
+    description: The hxc artifact to test.
+    required: true
+  conformance-commit:
+    description: The haxe-conformance commit the tests run against.
+    required: true
+  haxe-version:
+    default: "4.3.7"
+
+outputs:
+  hxc:
+    description: Absolute path of the hxc executable.
+    value: ${{ steps.paths.outputs.hxc }}
+  conformance:
+    description: Absolute path of the haxe-conformance checkout.
+    value: ${{ steps.paths.outputs.conformance }}
+
+runs:
+  using: composite
+  steps:
+    - if: runner.os != 'macOS'
+      uses: krdlab/setup-haxe@v1
+      with:
+        haxe-version: ${{ inputs.haxe-version }}
+
+    - name: Install Haxe from Homebrew
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install haxe neko
+        mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
+        echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
+
+    - uses: actions/checkout@v4
+      with:
+        repository: dimensionscape/haxe-conformance
+        ref: ${{ inputs.conformance-commit }}
+        path: .conformance
+
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: .hxc
+
+    - name: Resolve paths
+      id: paths
+      shell: bash
+      run: |
+        exe=$(ls .hxc/hxc .hxc/hxc.exe 2>/dev/null | head -1)
+        chmod +x "$exe"
+        root="$GITHUB_WORKSPACE"
+        if [ "$RUNNER_OS" = "Windows" ]; then root="$(cygpath -m "$root")"; fi
+        if [ -z "${HAXE_STD_PATH:-}" ]; then
+          std="$(dirname "$(command -v haxe)")/std"
+          [ "$RUNNER_OS" = "Windows" ] && std="$(cygpath -m "$std")"
+          echo "HAXE_STD_PATH=$std" >> "$GITHUB_ENV"
+        fi
+        echo "hxc=$root/$exe" >> "$GITHUB_OUTPUT"
+        echo "conformance=$root/.conformance" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,81 @@
+--- construct-a-generic-type-parameter
+class P { @:generic static function f<T:{function new():Void;}>():T { return new T(); } static function main() { f(); } }
+===
+P.hx:1: characters 42-62 : Warning : (WDeprecated) Structures with new are deprecated, use haxe.Constraints.Constructible instead
+P.hx:1: characters 78-85 : Cannot construct { new : () -> Void }
+
+--- display-request-on-an-unclosed-conditional + --display P.hx@40@position
+class P {
+	static function main() {
+#if js
+		var a = 1;
+===
+P.hx:3: characters 1-4 : Unclosed conditional compilation block
+
+--- brace-opens-an-if-condition
+#if ({
+class P { static function main() {} }
+#end
+===
+P.hx:2: characters 7-8 : Missing ;
+
+--- binop-without-right-operand-in-condition
+#if (a +)
+class P { static function main() {} }
+#end
+===
+P.hx:1: characters 9-10 : Expected expression
+
+--- brace-inside-parenthesised-condition
+class P {
+#if (a ||{ b)
+	static function main() {}
+#end
+}
+===
+P.hx:2: characters 13-14 : Missing ;
+
+--- with-imports-of-a-missing-module
+class P {
+	static macro function bad() { haxe.macro.Context.withImports(["nope.Nope"], [], function() return 1); return macro null; }
+	static function main() { bad(); }
+}
+===
+?:1: characters 1-10 : Type not found : nope.Nope
+
+--- with-imports-of-a-lowercase-path
+class P {
+	static macro function bad() { haxe.macro.Context.withImports(["haxe"], [], function() return 1); return macro null; }
+	static function main() { bad(); }
+}
+===
+?:1: characters 1-5 : Module name must start with an uppercase letter
+
+--- with-imports-of-a-lowercase-alias
+class P {
+	static macro function bad() { haxe.macro.Context.withImports(["haxe.ds.StringMap in sm"], [], function() return 1); return macro null; }
+	static function main() { bad(); }
+}
+===
+?:1: characters 22-24 : Type aliases must start with an uppercase letter
+
+--- with-imports-past-a-field
+class P {
+	static macro function bad() { haxe.macro.Context.withImports(["haxe.macro.Expr.ExprDef.x.y"], [], function() return 1); return macro null; }
+	static function main() { bad(); }
+}
+===
+?:1: characters 27-28 : Unexpected y
+
+--- type-getclass-on-an-api-ref
+class P {
+	static macro function refClass() {
+		var r:Dynamic = haxe.macro.Context.getLocalClass();
+		Sys.println(Type.getClassName(Type.getClass(r)));
+		return macro null;
+	}
+	static function main() { refClass(); }
+}
+===
+haxe.macro.Ref
+
