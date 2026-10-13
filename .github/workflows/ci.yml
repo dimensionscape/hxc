@@ -53,7 +53,6 @@ jobs:
         run: |
           exe="${{ steps.build.outputs.executable }}"
           hxc="$(cd "$(dirname "$exe")" && pwd)/$(basename "$exe")"
-          [ "$RUNNER_OS" = "Linux" ] && ulimit -s unlimited
           "$hxc" -version
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           printf 'class Main {\n\tstatic function main() {\n\t\tvar m = [for (i in 0...3) i => i * i];\n\t\ttrace(m[2]);\n\t}\n}\n' > Main.hx

@@ -125,8 +125,6 @@ runs:
         stage1="$RUNNER_TEMP/hxc-stage1${exe##*/hxc}"
         [ "$RUNNER_OS" = "Windows" ] && stage1="$(cygpath -m "$stage1")"
         cp "$exe" "$stage1"
-        # The executable reserves a large stack on Windows; elsewhere the shell's limit applies.
-        [ "$RUNNER_OS" != "Windows" ] && { ulimit -s unlimited 2>/dev/null || ulimit -s 65520 2>/dev/null || true; }
         rm -rf "$RUNNER_TEMP/stage1-gen" && mkdir -p "$RUNNER_TEMP/stage1-gen"
         cp -r "$gen/src" "$gen/include" "$RUNNER_TEMP/stage1-gen/"
         # Removed so the second stage has to generate every file itself.

@@ -72,6 +72,36 @@ private class CompileAbort extends haxe.Exception {
 	public function new() super("abort");
 }
 
+// Linux and macOS start the main thread with the stack the soft limit allows, 8 MB by default, where
+// Windows has the 1 GB the linker reserves. Before anything else runs, the limit is raised to 1 GB, or
+// to the hard limit when that is lower, and the process runs itself again to start under it.
+@:cppFileCode('
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#include <sys/resource.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+#if defined(__APPLE__) || defined(__GLIBC__)
+__attribute__((constructor)) static void hxc_raise_stack_limit(int argc, char **argv, char **envp) {
+	const rlim_t want = (rlim_t)1 << 30;
+	struct rlimit rl;
+	if (getrlimit(RLIMIT_STACK, &rl) != 0 || rl.rlim_cur == RLIM_INFINITY) return;
+	rlim_t target = rl.rlim_max != RLIM_INFINITY && rl.rlim_max < want ? rl.rlim_max : want;
+	if (rl.rlim_cur >= target) return;
+	rl.rlim_cur = target;
+	if (setrlimit(RLIMIT_STACK, &rl) != 0) return;
+#ifdef __APPLE__
+	char path[4096];
+	uint32_t size = sizeof(path);
+	if (_NSGetExecutablePath(path, &size) == 0) execve(path, argv, envp);
+#else
+	execve("/proc/self/exe", argv, envp);
+#endif
+}
+#endif
+#endif
+')
 class Compiler {
 	// The aedifex program's entry constructs the class (ProgramMain), a plain build calls main(): both
 	// start where the runtime's thread setup leaves the main thread, holding the runtime lock.
