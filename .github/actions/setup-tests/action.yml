@@ -35,6 +35,10 @@ runs:
         mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
         echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
 
+    - name: Install hxjava
+      shell: bash
+      run: haxelib install hxjava 4.2.0 --always --quiet
+
     - uses: actions/checkout@v4
       with:
         repository: dimensionscape/haxe-conformance

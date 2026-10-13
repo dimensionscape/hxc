@@ -56,7 +56,8 @@ jobs:
       - name: Zip the haxelib package
         run: |
           mkdir -p dist
-          zip -qr dist/hxc-haxelib.zip haxelib.json Run.hx README.md LICENSE Aedifex.hx src             thirdparty/libuv/include thirdparty/libuv/src thirdparty/libuv/LICENSE thirdparty/libuv/LICENSE-extra
+          zip -qr dist/hxc-haxelib.zip haxelib.json Run.hx README.md LICENSE Aedifex.hx src \
+            thirdparty/libuv/include thirdparty/libuv/src thirdparty/libuv/LICENSE thirdparty/libuv/LICENSE-extra
 
       - uses: actions/upload-artifact@v4
         with:
