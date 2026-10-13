@@ -45,7 +45,7 @@ runs:
         path: |
           ${{ runner.temp }}/hxcpp
           ${{ runner.temp }}/aedifex
-        key: tools-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ inputs.aedifex-commit }}
+        key: tools-v2-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ inputs.aedifex-commit }}
 
     - name: Fetch hxcpp and aedifex
       if: steps.tools-cache.outputs.cache-hit != 'true'
@@ -57,6 +57,9 @@ runs:
           git fetch -q --depth 1 origin "$2" && git checkout -q FETCH_HEAD
         }
         fetch "${{ inputs.hxcpp-repo }}" "${{ inputs.hxcpp-commit }}" "$RUNNER_TEMP/hxcpp"
+        # The compile cache keeps precompiled headers, which clang rejects once a header's mtime has
+        # changed, so every fetch of a commit gets the same mtimes.
+        find "$RUNNER_TEMP/hxcpp" -path "$RUNNER_TEMP/hxcpp/.git" -prune -o -exec touch -t 202001010000 {} +
         fetch "${{ inputs.aedifex-repo }}" "${{ inputs.aedifex-commit }}" "$RUNNER_TEMP/aedifex"
         cd "$RUNNER_TEMP/hxcpp/tools/hxcpp" && haxe compile.hxml
 
@@ -71,8 +74,8 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/hxcpp-cache
-        key: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ github.sha }}
-        restore-keys: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-
+        key: hxcpp-cache-v2-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ github.sha }}
+        restore-keys: hxcpp-cache-v2-${{ runner.os }}-${{ inputs.hxcpp-commit }}-
 
     - name: Configure the build
       shell: bash
