@@ -7145,11 +7145,7 @@ class Typer {
 		var rev = c.orderedFields.copy();
 		rev.reverse();
 		for (cf in rev) {
-			var physical = switch (cf.kind) {
-				case Var(k): switch (k.read) { case AccCall | AccInline | AccRequire(_, _): false; case _: switch (k.write) { case AccCall: false; case _: true; } };
-				case _: false;
-			};
-			if (!physical) continue;
+			if (!TypeFunctions.isPhysicalVarField(cf)) continue;
 			var dflt = hasDefault.exists(cf.name);
 			var opt = dflt || TypeFunctions.hasMeta(":optional", cf.meta);
 			var at = opt ? ctx.com.basic.tnull(cf.type) : cf.type;
