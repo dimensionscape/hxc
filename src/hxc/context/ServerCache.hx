@@ -343,8 +343,7 @@ class ServerCache {
 		var full = hxc.core.PathKey.fullPath(file);
 		var time = hxc.core.FileTime.fileTime(full);
 		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
-		// Path.UniqueKey: the lowercased full path (matching DisplayJson.fileKey).
-		cc.setFile(full.toLowerCase(), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
+		cc.setFile(hxc.core.PathKey.fileKey(full), {path: full, time: time, pack: pack, moduleName: null, decls: decls});
 	}
 
 	// The server's parse hook: a file the cache holds at the stamp it has on disk is not read again.
@@ -356,7 +355,7 @@ class ServerCache {
 	public static function cachedFile(com:Context, file:String):Null<hxc.context.CompilationCache.CachedFile> {
 		if (!cacheMode) return null;
 		var full = hxc.core.PathKey.fullPath(file);
-		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
+		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(hxc.core.PathKey.fileKey(full));
 		if (cf == null || cf.decls == null) return null;
 		var time = hxc.core.FileTime.fileTime(full);
 		return time == cf.time ? cf : null;

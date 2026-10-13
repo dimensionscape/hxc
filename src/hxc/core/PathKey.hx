@@ -88,6 +88,12 @@ class PathKey {
 		return a == b || key(a) == key(b);
 	}
 
+	// The server cache's key for a full path: lowercased on Windows, where file names ignore case, and
+	// the path itself elsewhere.
+	public static inline function fileKey(full:String):String {
+		return Globals.isWindows ? full.toLowerCase() : full;
+	}
+
 	// The absolute path of a file. On Windows GetFullPathName, or the path itself where that fails.
 	// Elsewhere it is worked out from the string and the current directory without touching the file
 	// system, so the file need not exist and symbolic links stay; `.`, `..`, doubled and trailing slashes

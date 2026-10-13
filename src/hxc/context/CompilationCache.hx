@@ -18,7 +18,7 @@ typedef CachedFile = {
 class CacheContext {
 	public var index(default, null):Int;
 	public var initialized = false;
-	// Keyed by lowercased full path.
+	// Keyed by PathKey.fileKey of the full path.
 	public var files = new StringMap<CachedFile>();
 	public var modules = new StringMap<hxc.core.Type.ModuleDef>();
 	// Module fold order follows hash buckets keyed by the path tuple.
@@ -108,11 +108,11 @@ class CompilationCache {
 		for (cc in contextList) cc.removeFile(key);
 	}
 
-	// Taint modules for this lowercased file key so the server refuses reuse.
+	// Taint modules for this file key so the server refuses reuse.
 	public function taintModules(key:String, reason:String):Void {
 		for (cc in contextList) for (path in cc.modules.keys()) {
 			var m = cc.modules.get(path);
-			if (m.extra.file != null && m.extra.file.toLowerCase() == key)
+			if (m.extra.file != null && hxc.core.PathKey.fileKey(m.extra.file) == key)
 				m.extra.cacheState = MSBad(Tainted(reason));
 		}
 	}

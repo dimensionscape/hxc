@@ -2462,8 +2462,7 @@ class Compiler {
 		var df = hxc.parser.Parser.displayFile;
 		if (df == null) return null;
 		function norm(f:String):String {
-			var full = hxc.core.PathKey.fullPath(f);
-			return StringTools.replace(full, "\\", "/").toLowerCase();
+			return hxc.core.PathKey.key(f);
 		}
 		var want = norm(df);
 		for (key in ctx.moduleLut.keys()) {
@@ -3286,14 +3285,14 @@ class Compiler {
 		// An empty file list reports on every file (a project-wide diagnostics request), a non-empty one
 		// only on its members - and a JSON request fills that list from the whole fileContents set.
 		if (ctx.fileContents.length > 0) {
-			var got = hxc.core.PathKey.fullPath(pfile).toLowerCase();
-			for (fc in ctx.fileContents) if (fc.file.toLowerCase() == got) return true;
+			var got = hxc.core.PathKey.fileKey(hxc.core.PathKey.fullPath(pfile));
+			for (fc in ctx.fileContents) if (hxc.core.PathKey.fileKey(fc.file) == got) return true;
 			return false;
 		}
 		if (parts[0] == "?") return true;
-		var want = hxc.core.PathKey.fullPath(parts[0]);
-		var got = hxc.core.PathKey.fullPath(pfile);
-		return want.toLowerCase() == got.toLowerCase();
+		var want = hxc.core.PathKey.fileKey(hxc.core.PathKey.fullPath(parts[0]));
+		var got = hxc.core.PathKey.fileKey(hxc.core.PathKey.fullPath(pfile));
+		return want == got;
 	}
 
 	// A position as a JSON location, through hxc's serializer.
@@ -4180,7 +4179,7 @@ class Compiler {
 		var file = parts[0];
 		if (file == null || file == "" || file == "?") return;
 		var full = hxc.core.PathKey.fullPath(file);
-		var key = full.toLowerCase();
+		var key = hxc.core.PathKey.fileKey(full);
 		var cfile = hxc.context.DisplayJson.cache.findFile(key);
 		if (cfile != null && checkDisplayModuleOf(ctx, full, cfile)) return;
 		hxc.context.DisplayJson.cache.removeFiles(key);

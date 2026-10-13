@@ -143,7 +143,7 @@ class ToplevelScan {
 				if (exclude.indexOf(dotPath == "" ? name : dotPath + "." + name) >= 0) continue;
 				try {
 					var r = hxc.context.ModuleLoader.parseForExploration(ctx, {pack: pack, name: name});
-					if (r != null && r.pack.join(".") != pack.join(".")) cc.removeFileForReal(r.file.toLowerCase());
+					if (r != null && r.pack.join(".") != pack.join(".")) cc.removeFileForReal(hxc.core.PathKey.fileKey(r.file));
 				} catch (_:Dynamic) {}
 			}
 		}

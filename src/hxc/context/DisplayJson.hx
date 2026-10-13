@@ -65,9 +65,8 @@ class DisplayJson {
 		"uncaughtError", "newContext"
 	];
 
-	// Use lowercased full paths for case-insensitive filesystem keys.
-	static function fileKey(full:String):String {
-		return full.toLowerCase();
+	static inline function fileKey(full:String):String {
+		return hxc.core.PathKey.fileKey(full);
 	}
 
 	static function strings(l:Array<String>):Array<JsonValue> return [for (x in l) JString(x)];

@@ -1982,7 +1982,7 @@ class ModuleLoader {
 		var file = resolveModuleFile(ctx, m, Position.nullPos);
 		parseHook(ctx, file, Position.nullPos);
 		var full = hxc.core.PathKey.fullPath(file);
-		var cf = hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature()).files.get(full.toLowerCase());
+		var cf = hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature()).files.get(hxc.core.PathKey.fileKey(full));
 		return cf == null ? null : {file: full, pack: cf.pack};
 	}
 
