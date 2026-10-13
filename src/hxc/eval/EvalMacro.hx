@@ -153,8 +153,8 @@ class EvalMacro {
 		// as a catchable eval exception so macro-level try/catch (e.g. Context.typeof in a try) handles it.
 		var wrapped:VFunc = function(a:Array<EvalValue>):EvalValue {
 			try return f(a)
-			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos)
-			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos)
+			catch (ce:hxc.context.Context.ContextError) return throwMacroError(ec, ce.message, ce.pos, ce.callChain)
+			catch (te:TypingError) return throwMacroError(ec, te.message, te.pos, te.callChain)
 			// typingTimer turns a WithTypeError - an error raised while the macro was called from inside
 			// call arguments - into the macro's Error the same way.
 			catch (we:hxc.core.TypingError.WithTypeError) return throwMacroError(ec, we.message, we.pos)
@@ -5472,9 +5472,18 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	static function throwMacroError(ec:EvalContext, msg:String, pos:Position):Dynamic {
-		var posValue = encPos(pos);
-		var err = macroErrorValue(ec, msg, posValue, pos);
+	// An error with a chain of messages, an uncaught exception's report among them, becomes the Error of
+	// its first message, and each message after it one of its child errors.
+	static function throwMacroError(ec:EvalContext, msg:String, pos:Position,
+			?chain:Array<{message:String, pos:Position, ?depth:Int}>):Dynamic {
+		if (chain != null && chain.length > 0) {
+			msg = chain[0].message;
+			pos = chain[0].pos;
+		}
+		var err = macroErrorValue(ec, msg, encPos(pos), pos);
+		if (chain != null && chain.length > 1)
+			EvalField.setField(ec, err, EvalNames.hChildErrors(),
+				encodeArray([for (i in 1...chain.length) macroErrorValue(ec, chain[i].message, encPos(chain[i].pos), chain[i].pos)]), pos);
 		return EvalExceptions.throwValue(ec, err, pos);
 	}
 
