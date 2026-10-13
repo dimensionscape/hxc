@@ -197,8 +197,9 @@ jobs:
       - name: PiratePig typed by Haxe and by hxc
         shell: bash
         run: |
-          samples="$(haxelib libpath openfl-samples | tr -d '\r')"
-          cp -r "${samples}demos/PiratePig" "$RUNNER_TEMP/PiratePig"
+          repo="$(haxelib config | tr -d '\r')"
+          echo "haxelib repository: $repo"
+          cp -r "${repo%/}/openfl-samples/8,7,0/demos/PiratePig" "$RUNNER_TEMP/PiratePig"
           cd "$RUNNER_TEMP/PiratePig"
           status=0
           for target in html5 windows; do
