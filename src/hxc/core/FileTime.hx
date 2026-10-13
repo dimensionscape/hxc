@@ -1,12 +1,12 @@
 package hxc.core;
 
 /**
-	A file's times, with sub-second precision on Windows where hxcpp's FileSystem.stat has whole seconds.
-	There are two sources and two formulas:
+	A file's times, with the sub-second precision hxcpp's FileSystem.stat drops. There are two sources and
+	two formulas:
 	- fileTime is the last write time of CreateFile(path) as ticks / 1e7 - EPOCH_DIFF, 0 when the file
 	  cannot be opened; elsewhere stat's whole-second st_mtime.
-	- statTimes gives each time as (ticks - 116444736000000000) / 1e7, which is at times one ulp off the
-	  first formula. Off Windows hxcpp's whole seconds stand in.
+	- statTimes gives each time as (ticks - 116444736000000000) / 1e7 on Windows, which is at times one
+	  ulp off the first formula, and elsewhere as stat's seconds plus nanoseconds / 1e9.
 **/
 #if cpp
 @:cppFileCode('
@@ -20,6 +20,7 @@ package hxc.core;
 #include <windows.h>
 #else
 #include <sys/stat.h>
+#include <math.h>
 #endif
 static double hxc_sys_filetime(::String file) {
 #ifdef _WIN32
@@ -47,6 +48,14 @@ static double hxc_unix_time(FILETIME t) {
 	ui.HighPart = t.dwHighDateTime;
 	return (double)(__int64)(ui.QuadPart - 116444736000000000ULL) / 10000000.0;
 }
+#else
+static double hxc_unix_time(time_t sec, long nsec) {
+	double s = (double)sec;
+	double t = s + (double)nsec / 1e9;
+	// A sum rounded up to the next second stays in the second it belongs to.
+	if (t == s + 1.0) t = nextafter(t, s);
+	return t;
+}
 #endif
 static bool hxc_unix_stat_times(::String file, Array<Float> out) {
 #ifdef _WIN32
@@ -57,7 +66,18 @@ static bool hxc_unix_stat_times(::String file, Array<Float> out) {
 	out[2] = hxc_unix_time(d.ftCreationTime);
 	return true;
 #else
-	return false;
+	struct stat st;
+	if (stat(file.utf8_str(), &st) < 0) return false;
+#ifdef __APPLE__
+	out[0] = hxc_unix_time(st.st_atimespec.tv_sec, st.st_atimespec.tv_nsec);
+	out[1] = hxc_unix_time(st.st_mtimespec.tv_sec, st.st_mtimespec.tv_nsec);
+	out[2] = hxc_unix_time(st.st_ctimespec.tv_sec, st.st_ctimespec.tv_nsec);
+#else
+	out[0] = hxc_unix_time(st.st_atim.tv_sec, st.st_atim.tv_nsec);
+	out[1] = hxc_unix_time(st.st_mtim.tv_sec, st.st_mtim.tv_nsec);
+	out[2] = hxc_unix_time(st.st_ctim.tv_sec, st.st_ctim.tv_nsec);
+#endif
+	return true;
 #endif
 }
 ')

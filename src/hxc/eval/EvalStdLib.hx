@@ -27,7 +27,7 @@ typedef ThreadConditionState = {
 // Native builtins for extern standard-library types. Each entry maps a type and field name to a
 // value (a function or a constant) that the prototype builder installs on the type's prototype.
 #if cpp
-@:cppFileCode('#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <io.h>\n#include <wchar.h>\n#include <windows.h>\n#else\n#include <unistd.h>\n#endif\n// Return null on success or strerror(errno) on failure. Operations: 0 unlink, 1 rmdir, 2 mkdir, 3\n// rename, 4 chdir, 5 stat, 6 open for reading, 7 open for writing. Windows rename uses MoveFileEx\n// and maps its error to errno.\nstatic ::String hxc_fs_call(int op, ::String a, ::String b) {\n	int r = 0;\n#ifdef _WIN32\n	const wchar_t *wa = a.wchar_str();\n	switch (op) {\n		case 0: r = _wunlink(wa); break;\n		case 1: r = _wrmdir(wa); break;\n		case 2: r = _wmkdir(wa); break;\n		case 3: {\n			if (MoveFileExW(wa, b.wchar_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) return ::String();\n			switch (GetLastError()) {\n				case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH: case ERROR_BAD_NET_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: errno = ENOENT; break;\n				case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: errno = EEXIST; break;\n				case ERROR_NOT_SAME_DEVICE: errno = EXDEV; break;\n				case ERROR_DIR_NOT_EMPTY: errno = ENOTEMPTY; break;\n				case ERROR_NOT_ENOUGH_MEMORY: errno = ENOMEM; break;\n				case ERROR_INVALID_HANDLE: errno = EBADF; break;\n				default: errno = EACCES; break;\n			}\n			r = -1;\n			break;\n		}\n		case 4: r = _wchdir(wa); break;\n		case 5: { struct _stat64 st; r = _wstat64(wa, &st); break; }\n		case 6: { int fd = _wopen(wa, _O_RDONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = _wopen(wa, _O_WRONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n	}\n#else\n	const char *ca = a.utf8_str();\n	switch (op) {\n		case 0: r = unlink(ca); break;\n		case 1: r = rmdir(ca); break;\n		case 2: r = mkdir(ca, 0755); break;\n		case 3: r = rename(ca, b.utf8_str()); break;\n		case 4: r = chdir(ca); break;\n		case 5: { struct stat st; r = stat(ca, &st); break; }\n		case 6: { int fd = open(ca, O_RDONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = open(ca, O_WRONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n	}\n#endif\n	if (r == 0) return ::String();\n	return ::String(strerror(errno));\n}\n// On Windows, read the process environment block used by libuv and chdir, including drive entries\n// such as "=C:". The C library copy used by hxcpp getenv can be stale. Elsewhere they are the same.\nstatic ::String hxc_env_get(::String name) {\n#ifdef _WIN32\n\tconst wchar_t *wn = name.wchar_str();\n\tDWORD n = GetEnvironmentVariableW(wn, NULL, 0);\n\tif (n == 0) return ::String();\n\twchar_t *buf = (wchar_t*)malloc(n * sizeof(wchar_t));\n\tDWORD m = GetEnvironmentVariableW(wn, buf, n);\n\t::String r = ::String::create(buf, (int)m);\n\tfree(buf);\n\treturn r;\n#else\n\tconst char *v = getenv(name.utf8_str());\n\treturn v ? ::String(v) : ::String();\n#endif\n}\n#ifndef _WIN32\nextern char **environ;\n#endif\nstatic Array< ::String> hxc_env_list() {\n\tArray< ::String> out = Array_obj< ::String>::__new(0, 0);\n#ifdef _WIN32\n\twchar_t *block = GetEnvironmentStringsW();\n\tif (!block) return out;\n\tfor (wchar_t *e = block; *e; e += wcslen(e) + 1) out->push(::String::create(e, (int)wcslen(e)));\n\tFreeEnvironmentStringsW(block);\n#else\n\tfor (char **e = environ; *e; e++) out->push(::String(*e));\n#endif\n\treturn out;\n}')
+@:cppFileCode('#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n#include <fcntl.h>\n#include <sys/stat.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <io.h>\n#include <wchar.h>\n#include <windows.h>\n#else\n#include <unistd.h>\n#endif\n// Return null on success or strerror(errno) on failure. Operations: 0 unlink, 1 rmdir, 2 mkdir, 3\n// rename, 4 chdir, 5 stat, 6 open for reading, 7 open for writing. Windows rename uses MoveFileEx\n// and maps its error to errno.\nstatic ::String hxc_fs_call(int op, ::String a, ::String b) {\n	int r = 0;\n#ifdef _WIN32\n	const wchar_t *wa = a.wchar_str();\n	switch (op) {\n		case 0: r = _wunlink(wa); break;\n		case 1: r = _wrmdir(wa); break;\n		case 2: r = _wmkdir(wa); break;\n		case 3: {\n			if (MoveFileExW(wa, b.wchar_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED)) return ::String();\n			switch (GetLastError()) {\n				case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH: case ERROR_BAD_NET_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: errno = ENOENT; break;\n				case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: errno = EEXIST; break;\n				case ERROR_NOT_SAME_DEVICE: errno = EXDEV; break;\n				case ERROR_DIR_NOT_EMPTY: errno = ENOTEMPTY; break;\n				case ERROR_NOT_ENOUGH_MEMORY: errno = ENOMEM; break;\n				case ERROR_INVALID_HANDLE: errno = EBADF; break;\n				default: errno = EACCES; break;\n			}\n			r = -1;\n			break;\n		}\n		case 4: r = _wchdir(wa); break;\n		case 5: { struct _stat64 st; r = _wstat64(wa, &st); break; }\n		case 6: { int fd = _wopen(wa, _O_RDONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = _wopen(wa, _O_WRONLY | _O_BINARY, 0); if (fd >= 0) { _close(fd); return ::String(); } r = -1; break; }\n	}\n#else\n	const char *ca = a.utf8_str();\n	switch (op) {\n		case 0: r = unlink(ca); break;\n		case 1: r = rmdir(ca); break;\n		case 2: r = mkdir(ca, 0755); break;\n		case 3: r = rename(ca, b.utf8_str()); break;\n		case 4: r = chdir(ca); break;\n		case 5: { struct stat st; r = stat(ca, &st); break; }\n		case 6: { int fd = open(ca, O_RDONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n		case 7: { int fd = open(ca, O_WRONLY); if (fd >= 0) { close(fd); return ::String(); } r = -1; break; }\n	}\n#endif\n	if (r == 0) return ::String();\n	return ::String(strerror(errno));\n}\n// On Windows, read the process environment block used by libuv and chdir, including drive entries\n// such as "=C:". The C library copy used by hxcpp getenv can be stale. Elsewhere they are the same.\nstatic ::String hxc_env_get(::String name) {\n#ifdef _WIN32\n\tconst wchar_t *wn = name.wchar_str();\n\tDWORD n = GetEnvironmentVariableW(wn, NULL, 0);\n\tif (n == 0) return ::String();\n\twchar_t *buf = (wchar_t*)malloc(n * sizeof(wchar_t));\n\tDWORD m = GetEnvironmentVariableW(wn, buf, n);\n\t::String r = ::String::create(buf, (int)m);\n\tfree(buf);\n\treturn r;\n#else\n\tconst char *v = getenv(name.utf8_str());\n\treturn v ? ::String(v) : ::String();\n#endif\n}\n#ifndef _WIN32\nextern char **environ;\n#endif\nstatic Array< ::String> hxc_env_list() {\n\tArray< ::String> out = Array_obj< ::String>::__new(0, 0);\n#ifdef _WIN32\n\twchar_t *block = GetEnvironmentStringsW();\n\tif (!block) return out;\n\tfor (wchar_t *e = block; *e; e += wcslen(e) + 1) out->push(::String::create(e, (int)wcslen(e)));\n\tFreeEnvironmentStringsW(block);\n#else\n\tfor (char **e = environ; *e; e++) out->push(::String(*e));\n#endif\n\treturn out;\n}\n// The float to 64-bit integer conversion of arm64 saturates.\n#if defined(__aarch64__) || defined(_M_ARM64)\n#define HXC_FLOAT_TO_INT_SATURATES 1\n#else\n#define HXC_FLOAT_TO_INT_SATURATES 0\n#endif')
 #end
 class EvalStdLib {
 	static function reg(map:Map<Int, Array<BuiltinField>>, typeName:String, fieldName:String, v:EvalValue):Void {
@@ -73,15 +73,15 @@ class EvalStdLib {
 		};
 	}
 
-	// An Int, or a float through a 63-bit integer conversion (NaN and anything past 63 bits come out 0
-	// on amd64, and bit 62 wraps the sign); anything else is unexpected. hxc's ints are 32 bits, so a
-	// float past them saturates, which keeps a bounds test on the side a wider int is on; a native
+	// An Int, or a float through a 63-bit integer conversion (NaN and anything past 63 bits come out as
+	// outOfRangeInt, and bit 62 wraps the sign); anything else is unexpected. hxc's ints are 32 bits, so
+	// a float past them saturates, which keeps a bounds test on the side a wider int is on; a native
 	// keeping only the low bits of such a float (Bytes.set, fill, setUInt16) would see different ones.
 	public static function decodeInt(ctx:EvalContext, v:EvalValue):Int {
 		return switch (v) {
 			case VInt(i): i;
 			case VFloat(f):
-				if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) 0;
+				if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) outOfRangeInt(f);
 				else {
 					var t = f < 0 ? Math.fceil(f) : Math.ffloor(f);
 					if (t >= 4611686018427387904.0) t -= 9223372036854775808.0;
@@ -90,6 +90,17 @@ class EvalStdLib {
 				}
 			case _: EvalExceptions.unexpectedValue(ctx, v, "int");
 		};
+	}
+
+	// The 64-bit conversion of NaN or of a float past 63 bits, in 63 bits. x86-64 answers
+	// 0x8000000000000000, which is 0 there. arm64 saturates: 0x7fffffffffffffff past the top, which is
+	// -1, and 0x8000000000000000 past the bottom; NaN is 0.
+	static function outOfRangeInt(f:Float):Int {
+		#if cpp
+		return untyped __cpp__('(HXC_FLOAT_TO_INT_SATURATES && {0} > 0 ? -1 : 0)', f);
+		#else
+		return 0;
+		#end
 	}
 
 	// Null is the default, anything else decodeInt.
@@ -202,16 +213,27 @@ class EvalStdLib {
 		};
 	}
 
-	// Mktime over a struct tm with tm_isdst -1; -1 from mktime is the error "Result too large(mktime,
-	// )". Answers the clock in seconds.
+	// Mktime over a struct tm with tm_isdst -1; -1 from mktime is an ERANGE error (mktimeError). Answers
+	// the clock in seconds.
 	static function unixMktime(ctx:EvalContext, y:Int, mo:Int, d:Int, h:Int, mi:Int, s:Int):Float {
 		#if cpp
 		var clock:Float = untyped __cpp__('([](int y, int mo, int d, int h, int mi, int s) { struct tm t; memset(&t, 0, sizeof(t)); t.tm_year = y - 1900; t.tm_mon = mo; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi; t.tm_sec = s; t.tm_isdst = -1; return (double)mktime(&t); })({0}, {1}, {2}, {3}, {4}, {5})', y, mo, d, h, mi, s);
 		#else
 		var clock = new Date(y, mo, d, h, mi, s).getTime() / 1000;
 		#end
-		if (clock == -1) EvalExceptions.excString(ctx, "Result too large(mktime, )");
+		if (clock == -1) mktimeError(ctx);
 		return clock;
+	}
+
+	// ERANGE in the C library's words: "Result too large(mktime, )" on Windows and macOS, "Numerical
+	// result out of range(mktime, )" with glibc.
+	static function mktimeError(ctx:EvalContext):Dynamic {
+		#if cpp
+		var err:String = untyped __cpp__('::String(strerror(ERANGE))');
+		#else
+		var err = "Result too large";
+		#end
+		return unixError(ctx, err, "mktime", "");
 	}
 
 	// Localtime/gmtime on a clock in seconds, one field of the result: 0 sec, 1 min, 2 hour, 3 mday, 4
@@ -248,7 +270,7 @@ class EvalStdLib {
 		var r:Float = untyped __cpp__('([](double s) { time_t c = (time_t)s; struct tm *l = localtime(&c); if (!l) return 1e300; struct tm lt = *l; struct tm *g = gmtime(&c); if (!g) return 2e300; struct tm gt = *g; lt.tm_isdst = -1; gt.tm_isdst = -1; time_t a = mktime(&lt); if (a == (time_t)-1) return 3e300; time_t b = mktime(&gt); if (b == (time_t)-1) return 3e300; return ((double)b - (double)a) / 60.0; })({0})', ms / 1000);
 		if (r == 1e300) EvalExceptions.excString(ctx, "Invalid argument(localtime, )");
 		if (r == 2e300) EvalExceptions.excString(ctx, "Invalid argument(gmtime, )");
-		if (r == 3e300) EvalExceptions.excString(ctx, "Result too large(mktime, )");
+		if (r == 3e300) mktimeError(ctx);
 		return decodeInt(ctx, VFloat(r));
 		#else
 		return Date.fromTime(ms).getTimezoneOffset();
@@ -2379,7 +2401,10 @@ class EvalStdLib {
 		return f == 0 && 1 / f == Math.NEGATIVE_INFINITY;
 	}
 
+	// The three-digit exponent of msvcrt's printf on Windows (see Numeric.msvcrtExponent); the C library's
+	// own form elsewhere.
 	static function normalizeFloatExponent(s:String):String {
+		if (!hxc.core.Globals.isWindows) return s;
 		var e = s.indexOf("e");
 		if (e < 0) e = s.indexOf("E");
 		if (e < 0) return s;
@@ -2443,15 +2468,15 @@ class EvalStdLib {
 	}
 
 	// Std.int: a value that is not a number is null. A float goes through a 63-bit integer
-	// conversion - on amd64 NaN, the infinities and anything at or past 2^63 come out 0 - and the low
-	// 32 bits are kept.
+	// conversion - NaN, the infinities and anything at or past 2^63 come out as outOfRangeInt - and the
+	// low 32 bits are kept.
 	static function stdInt(v:EvalValue):EvalValue {
 		var f = switch (v) {
 			case VInt(i): return VInt(i);
 			case VFloat(f): f;
 			case _: return VNull;
 		};
-		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return VInt(0);
+		if (Math.isNaN(f) || !(Math.abs(f) < 9223372036854775808.0)) return VInt(outOfRangeInt(f));
 		var m = (f < 0 ? Math.ceil(f) : Math.floor(f)) % 4294967296.0;
 		if (m < 0) m += 4294967296.0;
 		if (m >= 2147483648.0) m -= 4294967296.0;

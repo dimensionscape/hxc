@@ -31,8 +31,10 @@ class Numeric {
 	}
 
 	// Msvcrt's printf pads the %g exponent to at least three digits (1.5e+012); the UCRT snprintf hxc
-	// links pads to two. Normalize so folded float lexemes keep the three-digit form.
+	// links pads to two. Normalize so folded float lexemes keep the three-digit form on Windows. The C
+	// libraries elsewhere print two digits, and so does Haxe there.
 	static function msvcrtExponent(s:String):String {
+		if (!Globals.isWindows) return s;
 		var i = s.indexOf("e");
 		if (i < 0) return s;
 		var digits = s.substr(i + 2);
