@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 env:
-  CONFORMANCE_COMMIT: e015d6eef6e7c862770b74d503e40415640f0802
+  CONFORMANCE_COMMIT: 4c76968a13b4cac2c5ddf5c22e5e7a37e94502e7
 
 jobs:
   build:
@@ -151,7 +151,6 @@ jobs:
     name: Haxe's suites
     needs: build
     runs-on: windows-2022
-    continue-on-error: true
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -170,5 +169,5 @@ jobs:
         shell: bash
         run: |
           cd "${{ steps.t.outputs.conformance }}"
-          neko run.n corpus unit,misc --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" \
-            --junit "$RUNNER_TEMP/haxe-suites.xml"
+          neko run.n corpus unit,misc --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" --haxe haxe \
+            --divergences "$GITHUB_WORKSPACE/tests/corpus-divergences.json" --junit "$RUNNER_TEMP/haxe-suites.xml"

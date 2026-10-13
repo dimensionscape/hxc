@@ -1,0 +1,16 @@
+{
+	"misc/projects/Issue3102/keep-field-not-rec.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-field.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-field2.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-module.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-module2.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-pack1.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-pack2-not-rec.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-pack2.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-type-not-rec.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue3102/keep-type.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue4679/compile.hxml": "hxc does not generate Neko bytecode, which the project runs.",
+	"misc/projects/Issue2232/compile2-fail.hxml": "hxc has no Flash target.",
+	"misc/projects/Issue8241/compile-fail.hxml": "hxc has no Flash target.",
+	"misc/projects/Issue8219/compile-fail.hxml": "hxc has no PHP target."
+}
