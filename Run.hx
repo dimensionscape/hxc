@@ -78,6 +78,9 @@ class Run {
 		var raw = if (Sys.systemName() == "Windows") {
 			var w = Sys.getEnv("PROCESSOR_ARCHITEW6432");
 			w != null ? w : Sys.getEnv("PROCESSOR_ARCHITECTURE");
+		} else if (Sys.systemName() == "Mac" && output("sysctl", ["-n", "hw.optional.arm64"]) == "1") {
+			// Apple silicon, also when Neko runs under Rosetta and uname reports x86_64.
+			"arm64";
 		} else {
 			output("uname", ["-m"]);
 		}

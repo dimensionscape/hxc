@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 env:
-  CONFORMANCE_COMMIT: 4c76968a13b4cac2c5ddf5c22e5e7a37e94502e7
+  CONFORMANCE_COMMIT: a9ab37d56cbbc0a339654c7269aec6838a51b376
 
 jobs:
   build:
@@ -36,7 +36,7 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-2022, experimental: false }
-          - { name: linux-x64, os: ubuntu-24.04, experimental: true }
+          - { name: linux-x64, os: ubuntu-22.04, experimental: false }
           - { name: macos-arm64, os: macos-14, experimental: true }
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +78,8 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-2022, experimental: false, compare: "" }
-          - { name: linux-x64, os: ubuntu-24.04, experimental: true, compare: "--haxe haxe" }
-          - { name: macos-arm64, os: macos-14, experimental: true, compare: "--haxe haxe" }
+          - { name: linux-x64, os: ubuntu-24.04, experimental: false, compare: "--haxe haxe" }
+          - { name: macos-arm64, os: macos-14, experimental: true, compare: "--haxe haxe --divergences $GITHUB_WORKSPACE/tests/divergences-macos.json" }
     steps:
       - uses: actions/checkout@v4
 

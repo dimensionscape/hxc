@@ -1,0 +1,5 @@
+{
+	"eval-threads/thread-exit-in-pool-work-ends-the-pool-thread": "Haxe 4.3.7 for macOS stops at the uncaught Thread.Exit, where it ends the pool thread on Windows and Linux.",
+	"macro-api/api2-make-expr-cyclic": "Haxe 4.3.7 for macOS runs past the time limit instead of reporting the stack overflow it reports on Windows and Linux.",
+	"macro-api/eval-luv-file-sync": "Haxe 4.3.7 for macOS reads only the first buffer of a vectored read; hxc reads them all, as Haxe does on Windows and Linux."
+}

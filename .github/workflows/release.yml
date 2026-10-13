@@ -18,6 +18,8 @@ jobs:
       matrix:
         include:
           - { name: windows-x64, os: windows-2022, asset: hxc-windows-x64.exe }
+          # The oldest supported image, so the binary runs on systems with an older glibc.
+          - { name: linux-x64, os: ubuntu-22.04, asset: hxc-linux-x64 }
     steps:
       - uses: actions/checkout@v4
         with:
