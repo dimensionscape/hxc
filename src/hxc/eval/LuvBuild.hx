@@ -5,7 +5,7 @@ import haxe.macro.Context;
 import haxe.macro.Expr;
 
 /**
-	Adds the vendored libuv (thirdparty/libuv-1.48.0) to the hxcpp build of the class it is on.
+	Adds libuv (the thirdparty/libuv submodule, pinned at v1.48.0) to the hxcpp build of the class it is on.
 	Build.xml is written far from the source tree, so the paths are absolute, taken from where this
 	class's source file lives.
 
@@ -38,7 +38,9 @@ class LuvBuild {
 	public static function build():Array<Field> {
 		var file = Context.getPosInfos(Context.currentPos()).file;
 		var here = haxe.io.Path.directory(sys.FileSystem.fullPath(file));
-		var root = haxe.io.Path.normalize(here + "/../../../thirdparty/libuv-1.48.0");
+		var root = haxe.io.Path.normalize(here + "/../../../thirdparty/libuv");
+		if (!Context.defined("emscripten") && !sys.FileSystem.exists(root + "/include/uv.h"))
+			Context.fatalError("libuv is missing from thirdparty/libuv: run `git submodule update --init`", Context.currentPos());
 		var b = new StringBuf();
 		b.add('<files id="haxe" unless="emscripten">\n');
 		b.add('\t<compilerflag value="-I$root/include"/>\n');

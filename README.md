@@ -33,9 +33,16 @@ Requirements:
 - The Aedifex build tool (`haxelib run aedifex`)
 - A C++ toolchain (MSVC on Windows), 64-bit
 
+libuv comes in as a git submodule, so clone with `--recursive`:
+
 ```bash
+git clone --recursive https://github.com/dimensionscape/hxc.git
+cd hxc
 haxelib run aedifex build cpp .
 ```
+
+In a checkout made without it, run `git submodule update --init` first. GitHub's "Download ZIP"
+leaves submodules out, so build from a clone.
 
 The executable lands in `bin/`. Once you have an hxc build, it can rebuild itself in place of
 `haxe`. Build settings live in [`Aedifex.hx`](Aedifex.hx), including the 64-bit, large-block GC configuration the compiler needs for big jobs.
@@ -65,7 +72,7 @@ Run `hxc --help` for the full list of options.
 | `src/hxc/generators`, `codegen` | JavaScript, C++ and XML output |
 | `src/hxc/compiler` | Command line, messages, display output |
 | `src/hxia` | Embeddable cppia runtime, linker and `hxia` CLI |
-| `thirdparty` | Vendored libuv |
+| `thirdparty/libuv` | [libuv](https://github.com/libuv/libuv) v1.48.0, as a git submodule |
 
 ## Status
 
@@ -76,4 +83,4 @@ edges on targets beyond JavaScript and C++.
 ## License
 
 hxc is licensed under the [Mozilla Public License 2.0](LICENSE).
-Vendored third-party code under `thirdparty/` keeps its own license.
+libuv, under `thirdparty/libuv`, keeps its own license (MIT).
