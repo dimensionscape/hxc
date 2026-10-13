@@ -88,7 +88,7 @@ class DisplayJson {
 			autoTriggered:Bool = false):Void {
 		hxc.parser.Parser.wasAutoTriggered = autoTriggered;
 		var file = hctx.jsonrpc.getStringParam("file");
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var offset = requiresOffset ? hctx.jsonrpc.getIntParam("offset") : 0;
 		hctx.com.displaySpec = full + "@" + offset + "@" + mode;
 		// Prefer supplied unsaved contents over the file on disk.
@@ -151,7 +151,7 @@ class DisplayJson {
 				// Answer diagnostics only after compilation, using the stored request ID.
 				var file = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringParam("file"), null);
 				if (file != null) {
-					var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+					var full = hxc.core.PathKey.fullPath(file);
 					hctx.com.displaySpec = full + "@0@diagnostics";
 					hctx.com.fileContents = [{file: full, contents: null}];
 				} else {
@@ -162,7 +162,7 @@ class DisplayJson {
 					for (e in entries) switch (e) {
 						case JObject(fl):
 							var ef = hctx.jsonrpc.getStringField("fileContents", "file", fl);
-							var full = try sys.FileSystem.fullPath(ef) catch (_:Dynamic) ef;
+							var full = hxc.core.PathKey.fullPath(ef);
 							var contents = hctx.jsonrpc.getOptParam(function() return hctx.jsonrpc.getStringField("fileContents", "contents", fl), null);
 							fcs.push({file: full, contents: contents});
 						case _: throw new hxc.core.JsonRpc.InvalidArgument("fileContents");
@@ -347,7 +347,7 @@ class DisplayJson {
 			{name: "server/moduleCreated", f: function(hctx) {
 				// Mark the file removed in every context so the next compilation rereads it.
 				var file = hctx.jsonrpc.getStringParam("file");
-				var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+				var full = hxc.core.PathKey.fullPath(file);
 				var key = fileKey(full);
 				for (cc in cache.contextList) cc.removedFiles.set(key, full);
 				hctx.sendResult(JString(full));
@@ -370,7 +370,7 @@ class DisplayJson {
 			}},
 			{name: "server/invalidate", f: function(hctx) {
 				var file = hctx.jsonrpc.getStringParam("file");
-				var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+				var full = hxc.core.PathKey.fullPath(file);
 				var key = fileKey(full);
 				cache.taintModules(key, "server/invalidate");
 				hxc.eval.EvalMacro.evictMacroModulesOfFile(full, "server/invalidate");

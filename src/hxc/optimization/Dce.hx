@@ -1152,7 +1152,7 @@ class Dce {
 	// is gated on mode != DceNo).
 	public static function run(com:Context, mode:DceMode):Void {
 		var full = mode == DceFull;
-		var stdDirs = full ? [] : Dce.stdPath.map(function(p) return StringTools.replace(p, "\\", "/"));
+		var stdDirs = full ? [] : Dce.stdPath.map(function(p) return StringTools.replace(hxc.core.PathKey.fullPath(p), "\\", "/"));
 		var debug = com.defines.rawDefined("dce_debug");
 		var dce = new Dce(com, full, stdDirs, debug);
 

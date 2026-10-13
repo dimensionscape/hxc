@@ -340,7 +340,7 @@ class ServerCache {
 		else if (!com.isMacro && !com.displayFullTyping
 			&& hxc.parser.Preprocess.specialIdentifierFiles.exists(hxc.core.PathKey.key(file)))
 			return;
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var time = hxc.core.FileTime.fileTime(full);
 		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());
 		// Path.UniqueKey: the lowercased full path (matching DisplayJson.fileKey).
@@ -355,7 +355,7 @@ class ServerCache {
 
 	public static function cachedFile(com:Context, file:String):Null<hxc.context.CompilationCache.CachedFile> {
 		if (!cacheMode) return null;
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var cf = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature()).files.get(full.toLowerCase());
 		if (cf == null || cf.decls == null) return null;
 		var time = hxc.core.FileTime.fileTime(full);

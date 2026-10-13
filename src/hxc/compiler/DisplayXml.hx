@@ -151,7 +151,7 @@ class DisplayXml {
 	// Absolutize file names only while printing; changing position keys would make unsaved buffers use
 	// the disk file's line index.
 	static function fullPathPrinter(file:String, line:Int):String {
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		return '$full:$line:';
 	}
 

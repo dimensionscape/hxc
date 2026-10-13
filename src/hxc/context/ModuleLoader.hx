@@ -233,7 +233,7 @@ class ModuleLoader {
 
 	static function makeModule(ctx:Context, mpath:Path, file:String):ModuleDef {
 		// Store full native path, signature and mtime for server/module reporting.
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var time = hxc.core.FileTime.fileTime(full);
 		return {
 			id: TypeFunctions.allocMid(),
@@ -1691,7 +1691,7 @@ class ModuleLoader {
 		}
 		var acc = decls;
 		for (candidate in candidates) {
-			var path = try FileSystem.fullPath(candidate) catch (_:Dynamic) candidate;
+			var path = hxc.core.PathKey.fullPath(candidate);
 			var r = ctx.parserCache.get(path);
 			var mimport = r == null ? null : ctx.moduleLut.get(Context.pathKey({pack: [], name: path}));
 			if (r != null && mimport != null) {
@@ -1981,7 +1981,7 @@ class ModuleLoader {
 	public static function parseForExploration(ctx:Context, m:Path):Null<{file:String, pack:Array<String>}> {
 		var file = resolveModuleFile(ctx, m, Position.nullPos);
 		parseHook(ctx, file, Position.nullPos);
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var cf = hxc.context.DisplayJson.cache.getContext(ctx.defines.getSignature()).files.get(full.toLowerCase());
 		return cf == null ? null : {file: full, pack: cf.pack};
 	}

@@ -78,9 +78,7 @@ class PathKey {
 	public static function key(path:String):String {
 		var k = cache.get(path);
 		if (k != null) return k;
-		var full:Null<String> = try sys.FileSystem.fullPath(path) catch (_:Dynamic) null;
-		if (full == null) full = path;
-		full = StringTools.replace(full, "\\", "/");
+		var full = StringTools.replace(fullPath(path), "\\", "/");
 		if (Globals.isWindows) full = full.toLowerCase();
 		cache.set(path, full);
 		return full;
@@ -88,6 +86,60 @@ class PathKey {
 
 	public static inline function same(a:String, b:String):Bool {
 		return a == b || key(a) == key(b);
+	}
+
+	// The absolute path of a file. On Windows GetFullPathName, or the path itself where that fails.
+	// Elsewhere it is worked out from the string and the current directory without touching the file
+	// system, so the file need not exist and symbolic links stay; `.`, `..`, doubled and trailing slashes
+	// are folded only when the path has any.
+	public static function fullPath(f:String):String {
+		if (Globals.isWindows) return try sys.FileSystem.fullPath(f) catch (_:Dynamic) f;
+		var length = f.length;
+		function skipPastSlash(i:Int):Int {
+			while (i < length) {
+				if (f.charCodeAt(i) == "/".code) return i + 1;
+				i++;
+			}
+			return i;
+		}
+		function hasDotsOrDoubleSlash(i:Int):Bool {
+			while (i < length) {
+				var has = switch (f.charCodeAt(i)) {
+					case ".".code:
+						if (i + 2 < length) {
+							var a = f.charCodeAt(i + 1);
+							(a == ".".code && f.charCodeAt(i + 2) == "/".code) || a == "/".code;
+						} else if (i + 1 < length) {
+							var a = f.charCodeAt(i + 1);
+							a == "/".code || a == ".".code;
+						} else true;
+					case "/".code if (i > 0): true;
+					case _: false;
+				}
+				if (has) return true;
+				i = skipPastSlash(i);
+			}
+			return false;
+		}
+		var cwd = Sys.getCwd();
+		if (cwd.length > 1 && StringTools.endsWith(cwd, "/")) cwd = cwd.substr(0, cwd.length - 1);
+		var absolutePath = if (length > 0 && f.charCodeAt(0) == "/".code) f else if (length == 0) cwd else cwd + "/" + f;
+		var hasTrailingSlash = length > 0 && f.charCodeAt(length - 1) == "/".code;
+		if (!hasTrailingSlash && !hasDotsOrDoubleSlash(0)) return absolutePath;
+		// From the last component back, so that each `..` drops the component before it.
+		var parts = absolutePath.split("/");
+		var normalized:Array<String> = [];
+		var skip = 0;
+		var i = parts.length;
+		while (i-- > 0) {
+			var current = parts[i];
+			if (current == "..") skip++;
+			else if (current == "." || current == "") {}
+			else if (skip > 0) skip--;
+			else normalized.push(current);
+		}
+		normalized.reverse();
+		return "/" + normalized.join("/");
 	}
 
 	// On Windows the full path with the drive letter upper-cased and each component that exists spelled the

@@ -2429,7 +2429,7 @@ class Compiler {
 		var df = hxc.parser.Parser.displayFile;
 		if (df == null) return null;
 		function norm(f:String):String {
-			var full = try FileSystem.fullPath(f) catch (_:Dynamic) f;
+			var full = hxc.core.PathKey.fullPath(f);
 			return StringTools.replace(full, "\\", "/").toLowerCase();
 		}
 		var want = norm(df);
@@ -3253,13 +3253,13 @@ class Compiler {
 		// An empty file list reports on every file (a project-wide diagnostics request), a non-empty one
 		// only on its members - and a JSON request fills that list from the whole fileContents set.
 		if (ctx.fileContents.length > 0) {
-			var got = (try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile).toLowerCase();
+			var got = hxc.core.PathKey.fullPath(pfile).toLowerCase();
 			for (fc in ctx.fileContents) if (fc.file.toLowerCase() == got) return true;
 			return false;
 		}
 		if (parts[0] == "?") return true;
-		var want = try FileSystem.fullPath(parts[0]) catch (_:Dynamic) parts[0];
-		var got = try FileSystem.fullPath(pfile) catch (_:Dynamic) pfile;
+		var want = hxc.core.PathKey.fullPath(parts[0]);
+		var got = hxc.core.PathKey.fullPath(pfile);
 		return want.toLowerCase() == got.toLowerCase();
 	}
 
@@ -4146,7 +4146,7 @@ class Compiler {
 		if (parts.length == 0) return;
 		var file = parts[0];
 		if (file == null || file == "" || file == "?") return;
-		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
+		var full = hxc.core.PathKey.fullPath(file);
 		var key = full.toLowerCase();
 		var cfile = hxc.context.DisplayJson.cache.findFile(key);
 		if (cfile != null && checkDisplayModuleOf(ctx, full, cfile)) return;

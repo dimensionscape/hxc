@@ -287,7 +287,7 @@ class CppGen {
 				var candidate = (dir == "" ? "" : (StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") ? dir : dir + "/")) + k;
 				if (sys.FileSystem.exists(candidate) && !sys.FileSystem.isDirectory(candidate)) { resolved = candidate; break; }
 			}
-			var full = try sys.FileSystem.fullPath(resolved) catch (_:Dynamic) resolved;
+			var full = hxc.core.PathKey.fullPath(resolved);
 			b.add(CppGenClass.constCharStar(full) + ",\n");
 		}
 		b.add("#endif\n 0 };\n\n");
@@ -366,7 +366,7 @@ class CppGen {
 					}
 				}
 			}
-			return try sys.FileSystem.fullPath(resolved) catch (_:Dynamic) file;
+			return hxc.core.PathKey.fullPath(resolved);
 		}
 		var b = new StringBuf();
 		for (entry in exeClasses) switch (entry.mt) {
