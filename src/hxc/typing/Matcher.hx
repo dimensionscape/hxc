@@ -706,9 +706,10 @@ class PatternMaker {
 		var kind:PatKind = switch (e.expr) {
 			case EParenthesis(e1) | ECast(e1, null):
 				return make(pctx, toplevel, t, e1);
-			case ECheckType(e1, {ct: CTPath(tp)}) if (tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro" && tp.tname == "Expr" && tp.tsub == null):
+			case ECheckType(e1, {ct: CTPath(tp)}) if (tp.tpackage.length == 2 && tp.tpackage[0] == "haxe" && tp.tpackage[1] == "macro" && tp.tname == "Expr"):
 				// `case (macro EXPR : haxe.macro.Expr)`: a reification pattern matches against the reified
-				// AST. Position fields are ignored from here on.
+				// AST. Position fields are ignored from here on. Any type in the haxe.macro.Expr module
+				// counts, so the `macro :T` form, checked as haxe.macro.Expr.ComplexType, is one too.
 				var old = pctx.inReification;
 				pctx.inReification = true;
 				var r = make(pctx, toplevel, t, e1);

@@ -812,9 +812,10 @@ class Operators {
 						hxc.typing.Calls.accessorCallResult(fa, hxc.typing.Calls.buildCall(ctx, AKField(setterFa), [e2], WithTypeTools.value, p));
 					case AccessorAnon:
 						// No accessor field is available (anon structure or extern class): synthesize a
-						// dynamic set_<name>(v) call.
-						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.withType(fa.field.type));
-						var t = fa.field.type;
+						// dynamic set_<name>(v) call. The value types as a plain value, the call as the
+						// property's type as its host sees it.
+						var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
+						var t = FieldAccessTools.getMapFunction(fa)(fa.field.type);
 						var tf = TFun({args: [{name: "value", opt: false, t: te2.type}], ret: t});
 						hxc.typing.Calls.makeCall(ctx, TypeFunctions.mk(TField(fa.on, TypeFunctions.quickFieldDynamic(fa.on.type, "set_" + fa.field.name)), tf, p), [te2], t, p);
 					case AccessorNotFound | AccessorInvalid:
@@ -1184,10 +1185,10 @@ class Operators {
 		var name = fa.field.name;
 		var isCall = switch (fa.field.kind) { case Var(k): k.read.match(AccCall); case _: false; };
 		if (isCall) {
-			// An anonymous-structure host has no accessor field: synthesize a dynamic get_<name>() call
-			// resolved on the runtime object.
-			if (fa.host.match(FHAnon)) {
-				var t = fa.field.type;
+			// An anonymous structure, or an extern class that declares no accessor, has no accessor field:
+			// synthesize a dynamic get_<name>() call, typed as the property's type as its host sees it.
+			if (FieldAccessTools.resolveAccessor(FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos), MGet).match(AccessorAnon)) {
+				var t = FieldAccessTools.getMapFunction(fa)(fa.field.type);
 				var tf = TFun({args: [], ret: t});
 				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "get_" + name)), tf, fa.pos), [], t, fa.pos);
 			}
@@ -1212,10 +1213,9 @@ class Operators {
 		var name = fa.field.name;
 		var isCall = switch (fa.field.kind) { case Var(k): k.write.match(AccCall); case _: false; };
 		if (isCall) {
-			// An anonymous-structure host has no accessor field: synthesize a dynamic set_<name>(v) call
-			// resolved on the runtime object.
-			if (fa.host.match(FHAnon)) {
-				var t = fa.field.type;
+			// The same for a write: a dynamic set_<name>(v) call.
+			if (FieldAccessTools.resolveAccessor(FieldAccessTools.create(er, fa.field, fa.host, false, fa.pos), MSet(null)).match(AccessorAnon)) {
+				var t = FieldAccessTools.getMapFunction(fa)(fa.field.type);
 				var tf = TFun({args: [{name: "value", opt: false, t: value.type}], ret: t});
 				return Calls.makeCall(ctx, TypeFunctions.mk(TField(er, TypeFunctions.quickFieldDynamic(er.type, "set_" + name)), tf, p), [value], t, p);
 			}

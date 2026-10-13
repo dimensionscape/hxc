@@ -6062,8 +6062,8 @@ class Typer {
 						Calls.accessorCallResult(fa, Calls.buildCall(ctx, AKField(getterFa), [], WithTypeTools.value, fa.pos));
 					case AccessorAnon:
 						// No accessor field is available (anon structure or extern class): synthesize a
-						// dynamic get_<name>() call.
-						var t = fa.field.type;
+						// dynamic get_<name>() call, typed as the property's type as its host sees it.
+						var t = FieldAccessTools.getMapFunction(fa)(fa.field.type);
 						var tf = TFun({args: [], ret: t});
 						Calls.makeCall(ctx, TypeFunctions.mk(TField(fa.on, TypeFunctions.quickFieldDynamic(fa.on.type, "get_" + fa.field.name)), tf, fa.pos), [], t, fa.pos);
 					case AccessorNotFound | AccessorInvalid:
@@ -6077,8 +6077,9 @@ class Typer {
 				if (getterCf == null) {
 					// The abstract arm answers AccessorAnon when the accessor is missing, and the accessor
 					// call then synthesizes a dynamic get_<name>() call on the value; the missing method is
-					// the declaration's complaint, not the read's.
-					var t = fa.field.type;
+					// the declaration's complaint, not the read's. The property's type is mapped through the
+					// abstract host.
+					var t = FieldAccessTools.getMapFunction(fa)(fa.field.type);
 					var tf = TFun({args: [], ret: t});
 					Calls.makeCall(ctx, TypeFunctions.mk(TField(se.thisExpr, TypeFunctions.quickFieldDynamic(se.thisExpr.type, "get_" + fa.field.name)), tf, fa.pos), [], t, fa.pos);
 				} else {
