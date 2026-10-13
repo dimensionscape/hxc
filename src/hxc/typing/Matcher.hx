@@ -620,6 +620,9 @@ class PatternMaker {
 
 	static var markedPatternMade:Null<Expr> = null;
 
+	// The `_` patterns standing for a switch's default, by identity.
+	public static var defaultWildcards:Array<Expr> = [];
+
 	public static function make(pctx:PatternContext, toplevel:Bool, t:T, e:Expr):Pattern {
 		// The pattern is built from what is UNDER a display node and the request is answered separately.
 		// hxc answers by position, and the wrapper carries its inner node's position, so reading through it
@@ -681,7 +684,9 @@ class PatternMaker {
 				if (!handled) Typer.checkSignatureDisplay(ctx, ce, cparams, e.pos);
 				// Signature display ends by raising the signatures.
 				Typer.raiseSignatureAnswer();
-			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos)):
+			// A switch's default becomes a `_` over the default's whole span only after display, so it
+			// never answers a pattern request.
+			case EConst(CIdent(s)) if (Typer.atDisplayPos(e.pos) && defaultWildcards.indexOf(e) < 0):
 				// Under a completion request the pattern is made first - a capture allocates its variable
 				// there - and the answer comes without that local in scope.
 				if (hxc.parser.Parser.displayCompletionMode && s != "_") {
@@ -2336,9 +2341,14 @@ class Match {
 			case _:
 		}
 		var allCases = cases.copy();
-		if (def != null) allCases.push({values: [new Expr(EConst(CIdent("_")), def.pos)], guard: null, expr: def.e, pos: def.pos});
+		var wildcard:Null<Expr> = null;
+		if (def != null) {
+			wildcard = new Expr(EConst(CIdent("_")), def.pos);
+			PatternMaker.defaultWildcards.push(wildcard);
+			allCases.push({values: [wildcard], guard: null, expr: def.e, pos: def.pos});
+		}
 		var matchCases:Array<MatchCase> = [];
-		for (cas in allCases) {
+		try for (cas in allCases) {
 			// A case decoded without a position (Position.nullPos) takes its body's position
 			if (cas.pos == Position.nullPos && cas.expr != null) cas = {values: cas.values, guard: cas.guard, expr: cas.expr, pos: cas.expr.pos};
 			if (tupleEls != null) {
@@ -2350,7 +2360,11 @@ class Match {
 				var r = CaseMaker.make(ctx, subjectTypes[0], cas.values, cas.guard, cas.expr, withType, postfix, cas.pos);
 				matchCases.push({c: r.c, bindings: [], patterns: [r.pat]});
 			}
+		} catch (e:Dynamic) {
+			if (wildcard != null) PatternMaker.defaultWildcards.remove(wildcard);
+			throw e;
 		}
+		if (wildcard != null) PatternMaker.defaultWildcards.remove(wildcard);
 		UnusedPatternCheck.check(ctx, matchCases);
 		var tSwitch = inferSwitchType(ctx, withType, matchCases, allowMinVoid);
 		if (tmono != null) {
