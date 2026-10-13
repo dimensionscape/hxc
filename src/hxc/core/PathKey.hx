@@ -88,6 +88,15 @@ class PathKey {
 		return a == b || key(a) == key(b);
 	}
 
+	// Creates every directory on a path except its last component.
+	public static function mkdirFromPath(path:String):Void {
+		var parts = ~/[\\\/]+/g.split(path);
+		if (parts.length <= 1) return;
+		parts.pop();
+		var dir = parts.join("/");
+		if (dir != "" && !sys.FileSystem.exists(dir)) sys.FileSystem.createDirectory(dir);
+	}
+
 	// The server cache's key for a full path: lowercased on Windows, where file names ignore case, and
 	// the path itself elsewhere.
 	public static inline function fileKey(full:String):String {

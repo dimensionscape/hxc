@@ -1646,6 +1646,15 @@ class Compiler {
 				// the tree generation actually sees. It is part of Generate.generate, which --no-output skips.
 				if (!noOutput) {
 					hxc.debug.Dump.run(ctx);
+					// The output's directory is made before generation: the output path itself for cpp, cs, php
+					// and java without --jvm, the directory holding the output file otherwise.
+					if (ctx.file != null) switch (platform) {
+						case Eval:
+						case Cpp if (ctx.defines.rawDefined("cppia")):
+						case Cpp | Cs | Php: hxc.core.PathKey.mkdirFromPath(ctx.file + "/.");
+						case Java if (!ctx.jvmFlag): hxc.core.PathKey.mkdirFromPath(ctx.file + "/.");
+						case _: hxc.core.PathKey.mkdirFromPath(ctx.file);
+					}
 					// After the dump and before the generator runs; cppia is the cpp generator and logs as
 					// "cpp".
 					if (platform == Js) {
