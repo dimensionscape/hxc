@@ -50,7 +50,7 @@ runs:
       id: paths
       shell: bash
       run: |
-        exe=$(ls .hxc/hxc .hxc/hxc.exe 2>/dev/null | head -1)
+        if [ -f .hxc/hxc.exe ]; then exe=.hxc/hxc.exe; else exe=.hxc/hxc; fi
         chmod +x "$exe"
         root="$GITHUB_WORKSPACE"
         if [ "$RUNNER_OS" = "Windows" ]; then root="$(cygpath -m "$root")"; fi

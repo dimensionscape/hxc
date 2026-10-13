@@ -1,1 +1,1 @@
-*.cppia -text
+tests/** text eol=lf
