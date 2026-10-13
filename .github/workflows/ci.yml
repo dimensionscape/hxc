@@ -197,12 +197,12 @@ jobs:
       - name: PiratePig typed by Haxe and by hxc
         shell: bash
         run: |
-          cd "$RUNNER_TEMP"
-          haxelib run openfl create PiratePig PiratePig
-          cd PiratePig
+          samples="$(haxelib libpath openfl-samples | tr -d '\r')"
+          cp -r "${samples}demos/PiratePig" "$RUNNER_TEMP/PiratePig"
+          cd "$RUNNER_TEMP/PiratePig"
           status=0
           for target in html5 windows; do
-            haxelib run lime update $target
+            haxelib run lime update $target || { echo "::error::lime update $target failed"; exit 1; }
             haxe Export/$target/haxe/release.hxml --no-output > haxe-$target.txt 2>&1; echo "exit $?" >> haxe-$target.txt
             "${{ steps.t.outputs.hxc }}" Export/$target/haxe/release.hxml --no-output > hxc-$target.txt 2>&1; echo "exit $?" >> hxc-$target.txt
             if ! diff -u haxe-$target.txt hxc-$target.txt; then
