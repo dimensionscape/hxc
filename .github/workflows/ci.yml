@@ -189,7 +189,7 @@ jobs:
       - name: Install Lime and OpenFL
         shell: bash
         run: |
-          haxelib install lime 8.4.0 --always --quiet
+          haxelib install lime 8.3.2 --always --quiet
           haxelib install openfl 9.5.2 --always --quiet
           haxelib install openfl-samples 8.7.0 --always --quiet
           haxelib install actuate 1.9.0 --always --quiet
