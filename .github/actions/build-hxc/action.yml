@@ -17,7 +17,7 @@ inputs:
   aedifex-repo:
     default: https://github.com/DimensionscapeOrg/aedifex.git
   aedifex-commit:
-    default: 41604cd3e9cc3930473f6015608643a2fbb9ec56
+    default: ac2d6bc22473a02e21d61069b97af5e65aed7679
 
 outputs:
   executable:
@@ -32,20 +32,11 @@ runs:
       with:
         haxe-version: ${{ inputs.haxe-version }}
 
-    - name: Install Haxe from Homebrew
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        brew install haxe neko
-        mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
-        version=$(haxe -version 2>&1)
-        echo "haxe $version"
-        case "$version" in
-          "${{ inputs.haxe-version }}"*) ;;
-          4.3.*) echo "::warning::Homebrew has Haxe $version, not ${{ inputs.haxe-version }}" ;;
-          *) echo "::error::Homebrew has Haxe $version"; exit 1 ;;
-        esac
-        echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
+    # v2 on macOS: v1 leaves Neko where the macOS haxelib cannot load it.
+    - if: runner.os == 'macOS'
+      uses: krdlab/setup-haxe@v2
+      with:
+        haxe-version: ${{ inputs.haxe-version }}
 
     - name: Restore hxcpp and aedifex
       id: tools-cache
@@ -99,15 +90,13 @@ runs:
         else
           echo "HXCPP_COMPILE_CACHE=$RUNNER_TEMP/hxcpp-job-cache" >> "$GITHUB_ENV"
         fi
-        # Aedifex names the output directory after the architecture, which it does not detect on macOS.
-        if [ "$(uname -m)" = "arm64" ]; then echo "AEDIFEX_ARCH=-arm64" >> "$GITHUB_ENV"; fi
 
     - name: Build with Haxe
       shell: bash
       run: |
         mkdir -p "$HXCPP_COMPILE_CACHE"
         echo "HAXE_STD_PATH=$HAXE_STD_PATH"
-        haxelib run aedifex build cpp . ${AEDIFEX_ARCH:-}
+        haxelib run aedifex build cpp .
 
     - name: Locate the executable
       id: locate
@@ -131,7 +120,7 @@ runs:
         cp -r "$gen/src" "$gen/include" "$RUNNER_TEMP/stage1-gen/"
         # Removed so the second stage has to generate every file itself.
         rm -rf "$gen/src" "$gen/include"
-        AEDIFEX_HAXE="$stage1" haxelib run aedifex build cpp . ${AEDIFEX_ARCH:-}
+        AEDIFEX_HAXE="$stage1" haxelib run aedifex build cpp .
         [ -d "$gen/src" ] || { echo "::error::the second stage generated no C++"; exit 1; }
         # hxc must generate from its own source the C++ that Haxe generated. One file may differ:
         # EvalStdLib.cpp, where two internal counters can be numbered one apart.

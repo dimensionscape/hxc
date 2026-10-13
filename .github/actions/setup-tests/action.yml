@@ -27,13 +27,11 @@ runs:
       with:
         haxe-version: ${{ inputs.haxe-version }}
 
-    - name: Install Haxe from Homebrew
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        brew install haxe neko
-        mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
-        echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
+    # v2 on macOS: v1 leaves Neko where the macOS haxelib cannot load it.
+    - if: runner.os == 'macOS'
+      uses: krdlab/setup-haxe@v2
+      with:
+        haxe-version: ${{ inputs.haxe-version }}
 
     - name: Install hxjava
       shell: bash
