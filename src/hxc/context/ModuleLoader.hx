@@ -174,6 +174,11 @@ class ModuleLoader {
 
 	public static function parseModuleFile(ctx:Context, src:String, file:String, runPdi:Bool = true):Package {
 		var pkg = hxc.parser.Parser.parseModuleString(src, file, ctx.defines);
+		// A comment holding the cursor answers the request from the lexer, so the display file yields no
+		// module and nothing is typed after it. hxc lexes the whole file first, so the answer is raised
+		// once the parse is done.
+		if (hxc.parser.Parser.commentAnswered && hxc.parser.Parser.matchesDisplayFile(file))
+			throw new hxc.compiler.DisplayXml.DisplayRaised();
 		ctx.log("Parsed " + file);
 		if (runPdi) hxc.parser.Parser.runPendingPdi();
 		return pkg;
