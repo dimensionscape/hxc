@@ -50,13 +50,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Zip the haxelib package
         run: |
           mkdir -p dist
-          if [ -f haxelib.json ]; then
-            zip -qr dist/hxc-haxelib.zip haxelib.json Run.hx README.md LICENSE src
-          fi
+          zip -qr dist/hxc-haxelib.zip haxelib.json Run.hx README.md LICENSE Aedifex.hx src             thirdparty/libuv/include thirdparty/libuv/src thirdparty/libuv/LICENSE thirdparty/libuv/LICENSE-extra
 
       - uses: actions/upload-artifact@v4
         with:

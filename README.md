@@ -52,6 +52,16 @@ haxelib run hxc build.hxml
 The first run downloads the release binary for your platform. hxc compiles against the standard
 library of the Haxe you have installed.
 
+To build hxc from the library's own source instead, for a platform without a release binary or to
+use your own build, install the requirements under [Building from source](#building-from-source) and
+run:
+
+```bash
+haxelib run hxc rebuild
+```
+
+`haxelib run hxc` then uses that build.
+
 ### The standard library
 
 hxc uses the Haxe 4.3 standard library rather than shipping its own. If it is not found next to the
@@ -92,17 +102,20 @@ host:port` connects out to a client that is listening instead.
 Requirements:
 
 - [Haxe](https://haxe.org) 4.3, which includes Neko
-- hxcpp from [dimensionscape/hxcpp](https://github.com/dimensionscape/hxcpp), branch `production`
-- [Aedifex](https://github.com/DimensionscapeOrg/aedifex)
+- hxcpp from [dimensionscape/hxcpp, branch `production`](https://github.com/dimensionscape/hxcpp/tree/production)
+- [Aedifex](https://github.com/DimensionscapeOrg/aedifex) 1.0.0-rc.3 or later
 - A 64-bit C++ toolchain: MSVC on Windows, GCC or Clang on Linux
 
 ```bash
 haxelib git hxcpp https://github.com/dimensionscape/hxcpp.git production
-haxelib git aedifex https://github.com/DimensionscapeOrg/aedifex.git
+cd "$(haxelib libpath hxcpp)/tools/hxcpp" && haxe compile.hxml && cd -
+haxelib install aedifex 1.0.0-rc.3
 git clone --recursive https://github.com/dimensionscape/hxc.git
 cd hxc
 haxelib run aedifex build cpp .
 ```
+
+The second line builds hxcpp's command-line tool, which a git checkout of hxcpp does not include.
 
 The compiler lands in `bin/cpp/<platform>/<arch>/release/bin/`. hxc builds with the `haxe` on your
 `PATH`; to build hxc with hxc, set `AEDIFEX_HAXE` to an hxc binary.
