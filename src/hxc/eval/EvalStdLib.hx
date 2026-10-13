@@ -103,6 +103,16 @@ class EvalStdLib {
 		#end
 	}
 
+	// The 32-bit conversion of NaN or of a float outside the Int range. x86-64 answers the minimum
+	// Int; arm64 saturates, and answers 0 for NaN.
+	static function outOfRangeInt32(f:Float):Int {
+		#if cpp
+		return untyped __cpp__('(HXC_FLOAT_TO_INT_SATURATES ? ({0} != {0} ? 0 : {0} > 0 ? 0x7fffffff : (int)0x80000000) : (int)0x80000000)', f);
+		#else
+		return 0x80000000;
+		#end
+	}
+
 	// Null is the default, anything else decodeInt.
 	public static function defaultInt(ctx:EvalContext, v:EvalValue, d:Int):Int {
 		return v == VNull ? d : decodeInt(ctx, v);
@@ -1545,11 +1555,11 @@ class EvalStdLib {
 	}
 
 	// An Int, or a float through a C conversion to 32 bits (NaN and anything out of range come out
-	// as the minimum Int); anything else is unexpected.
+	// as outOfRangeInt32); anything else is unexpected.
 	public static function decodeI32(ctx:EvalContext, v:EvalValue):Int {
 		return switch (v) {
 			case VInt(i): i;
-			case VFloat(f): Math.isNaN(f) || !(f > -2147483649.0 && f < 2147483648.0) ? 0x80000000 : Std.int(f);
+			case VFloat(f): Math.isNaN(f) || !(f > -2147483649.0 && f < 2147483648.0) ? outOfRangeInt32(f) : Std.int(f);
 			case _: EvalExceptions.unexpectedValue(ctx, v, "int");
 		};
 	}
@@ -2389,8 +2399,9 @@ class EvalStdLib {
 		};
 	}
 
+	// The remainder by 2^31 through the 32-bit conversion: NaN and the infinities leave NaN.
 	static function evalMathInt(f:Float):Int {
-		if (Math.isNaN(f) || !Math.isFinite(f)) return 0x80000000;
+		if (Math.isNaN(f) || !Math.isFinite(f)) return outOfRangeInt32(Math.NaN);
 		var sign = f < 0 ? -1 : 1;
 		var r = Math.abs(f) % 2147483648.0;
 		var i = Std.int(r);
