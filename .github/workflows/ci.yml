@@ -204,8 +204,10 @@ jobs:
           status=0
           for target in html5 windows; do
             haxelib run lime update $target || { echo "::error::lime update $target failed"; exit 1; }
-            haxe Export/$target/haxe/release.hxml --no-output > haxe-$target.txt 2>&1; echo "exit $?" >> haxe-$target.txt
-            "${{ steps.t.outputs.hxc }}" Export/$target/haxe/release.hxml --no-output > hxc-$target.txt 2>&1; echo "exit $?" >> hxc-$target.txt
+            code=0; haxe Export/$target/haxe/release.hxml --no-output > haxe-$target.txt 2>&1 || code=$?
+            echo "exit $code" >> haxe-$target.txt
+            code=0; "${{ steps.t.outputs.hxc }}" Export/$target/haxe/release.hxml --no-output > hxc-$target.txt 2>&1 || code=$?
+            echo "exit $code" >> hxc-$target.txt
             if ! diff -u haxe-$target.txt hxc-$target.txt; then
               echo "::error::hxc types PiratePig for $target differently from Haxe"
               status=1
