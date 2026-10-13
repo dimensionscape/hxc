@@ -40,9 +40,23 @@ class RenameVars {
 		`types` = com.types, every module-type name is reserved (ReserveAllTypesFlat) so a local can never
 		shadow a type/global.
 	**/
-	public static function init(types:Array<ModuleType>, ?cpp:Bool = false, ?es6:Bool = false):RenameVars {
+	public static function init(types:Array<ModuleType>, ?cpp:Bool = false, ?es6:Bool = false,
+			?jvm:Bool = false):RenameVars {
 		var ri = new RenameVars();
-		ri.reserveInit("this"); // Init reserves "this" first.
+		ri.reserveInit("this"); // init reserves "this" first.
+		if (jvm) {
+			// The JVM target uses plain block scoping with no flags. Nothing is reserved and nothing is
+			// renamed,
+			// so sibling blocks each keep their own local of the same name; the JVM generator gives every
+			// local
+			// its own slot regardless of name.
+			ri.hoisting = false;
+			ri.noCatchVarShadowing = false;
+			ri.noShadowing = false;
+			ri.switchCasesNoBlocks = false;
+			ri.blockScope = true;
+			return ri;
+		}
 		if (cpp) {
 			// Cpp scoping: NoShadowing, FunctionScope. No ReserveAllTypes (types live in ::pack::Name
 			// namespaces, so a local cannot collide) and no hoisting; C++ keyword collisions are remapped

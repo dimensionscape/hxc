@@ -31,7 +31,7 @@ output.
 | `--xml`, `--json` type descriptions | Supported |
 | Compilation server | `--wait stdio` and `--server-connect`; listening on a TCP port is not yet supported |
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
-| `--jvm` | In progress |
+| `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--lua`, `--python`, `--php`, `--hl`, `--cs`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64. Linux x64 builds from source; macOS is in progress.
@@ -79,6 +79,7 @@ hxc accepts the same command line as `haxe`:
 hxc -p src -m Main --js bin/main.js           # JavaScript
 hxc -p src -m Main --cpp bin/cpp              # C++, built with hxcpp
 hxc -p src -m Main --cppia bin/main.cppia     # cppia
+hxc -p src -m Main --jvm bin/main.jar          # JVM bytecode
 hxc -p src --run Main arg1 arg2               # run in the interpreter
 hxc -p src -m Main --xml types.xml --no-output
 hxc build.hxml

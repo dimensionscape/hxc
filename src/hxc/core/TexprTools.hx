@@ -920,4 +920,44 @@ class TexprTools {
 		}
 		return TypeFunctions.mk(TObjectDecl(metaObj), TypeFunctions.tDynamic, p);
 	}
+
+	// the captured locals a closure body reads from outside itself, plus whether it touches `this`. The jvm
+	// generator turns each into a field of the closure class.
+	public static function collectCapturedVars(e:TExpr):{outside:Array<TVar>, accessesThis:Bool} {
+		var known = new Map<Int, Bool>();
+		var unknown = [];
+		var accessesThis = false;
+		inline function declare(v:TVar) known.set(v.id, true);
+		function loop(e:TExpr) {
+			switch (e.expr) {
+				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VCaptured) && !known.exists(v.id)):
+					known.set(v.id, true);
+					unknown.unshift(v);
+				case TConst(TThis) | TConst(TSuper):
+					accessesThis = true;
+				case TVarExpr(v, eo):
+					if (eo != null) loop(eo);
+					declare(v);
+				case TFor(v, e1, e2):
+					declare(v);
+					loop(e1);
+					loop(e2);
+				case TFunction(tf):
+					for (a in tf.args) declare(a.v);
+					loop(tf.expr);
+				case TTry(e1, catches):
+					loop(e1);
+					for (c in catches) {
+						declare(c.v);
+						loop(c.expr);
+					}
+				case _:
+					iter(loop, e);
+			}
+		}
+		loop(e);
+		// unknown was built by consing, so it is already reversed back into discovery order
+		unknown.reverse();
+		return {outside: unknown, accessesThis: accessesThis};
+	}
 }

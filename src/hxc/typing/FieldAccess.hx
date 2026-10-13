@@ -62,8 +62,10 @@ class FieldAccessTools {
 		};
 	}
 
+	// TypeFunctions.classMapFunction walks the super chain. There is no short-circuit on an empty `tl`:
+	// a class with no parameters of its own still has to apply the substitutions of the classes above it.
 	static function mapType(c:TClass, tl:TParams, t:T):T {
-		return tl.length == 0 ? t : TypeFunctions.applyParams(c.params, tl, t);
+		return TypeFunctions.classMapFunction(c, tl)(t);
 	}
 
 	static function declaredReturnIsOpen(cf:TClassField):Bool {

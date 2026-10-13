@@ -422,8 +422,8 @@ class EvalLuv {
 	}
 
 	static function encodeOption(v:Null<EvalValue>):EvalValue {
-		return v != null ? VEnumValue(new VEnumValue(0, [v], EvalHash.key_haxe_ds_Option, null))
-			: VEnumValue(new VEnumValue(1, [], EvalHash.key_haxe_ds_Option, null));
+		return v != null ? VEnumValue(new VEnumValue(0, [v], EvalHash.keyHaxeDsOption, null))
+			: VEnumValue(new VEnumValue(1, [], EvalHash.keyHaxeDsOption, null));
 	}
 
 	static function initSockets(ctx:EvalContext, s:Map<Int, Array<hxc.eval.EvalContext.BuiltinField>>):Void {
@@ -1490,7 +1490,7 @@ class EvalLuv {
 						switch (v) {
 							case VInstance(vi):
 								switch (vi.ikind) {
-									case IMap(_) if (vi.iproto.ppath == EvalHash.key_haxe_ds_StringMap):
+									case IMap(_) if (vi.iproto.ppath == EvalHash.keyHaxeDsStringMap):
 										env = [];
 										for (entry in EvalStdLib.orderedMapEntries(v))
 											env.unshift({name: bytesOf(entry.key), value: nativeBytesOf(entry.value)});

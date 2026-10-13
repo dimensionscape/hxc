@@ -87,12 +87,14 @@ class ToplevelScan {
 
 	static function forbiddenPacks(ctx:Context):haxe.ds.StringMap<Bool> {
 		var cur = hxc.core.Globals.platformName(ctx.platform);
-		var key = cur + (ctx.defines.rawDefined("sys") ? "|sys" : "");
+		// the jvm target (java platform + jvm define) drops the jvm rule.
+		var jvmOpen = cur == "java" && ctx.defines.rawDefined("jvm");
+		var key = cur + (ctx.defines.rawDefined("sys") ? "|sys" : "") + (jvmOpen ? "|jvm" : "");
 		var hit = forbidden.get(key);
 		if (hit != null) return hit;
 		var m = new haxe.ds.StringMap<Bool>();
 		for (p in ["js", "lua", "neko", "flash", "php", "cpp", "cs", "java", "python", "hl", "eval", "jvm"])
-			if (p != cur) m.set(p, true);
+			if (p != cur && !(p == "jvm" && jvmOpen)) m.set(p, true);
 		if (!ctx.defines.rawDefined("sys")) m.set("sys", true);
 		forbidden.set(key, m);
 		return m;

@@ -325,15 +325,21 @@ class ServerCache {
 	public static function cacheParsedFile(com:Context, file:String, pack:Array<String>, ?decls:Array<hxc.ast.Ast.TypeDecl>):Void {
 		// The parse hook is the server's from its start, whether modules are reused or not.
 		if (!cacheMode) return;
-		// The DISPLAY file is cached only intact (no recovered parse errors) and only under a mode that
-		// reads files whole (diagnostics, statistics, module symbols). A file whose #if reads `display`
-		// gets no special treatment.
+		// The display file is cached only intact (no recovered parse errors) and only under a mode that
+		// reads
+		// files whole: diagnostics, statistics, module symbols.
 		if (hxc.parser.Parser.matchesDisplayFile(file)) {
 			if (hxc.parser.Parser.syntaxErrors.length > 0) return;
 			var parts = com.displaySpec == null ? [] : com.displaySpec.split("@");
 			var mode = parts.length >= 3 ? parts[parts.length - 1] : "";
 			if (mode != "diagnostics" && mode != "statistics" && mode != "module-symbols") return;
 		}
+		// any other file whose conditions read `display` is not cached under a request without full typing,
+		// since display mode parses it differently; a compilation caches it. The macro com always types
+		// fully whatever hxc's display window borrows from the host.
+		else if (!com.isMacro && !com.displayFullTyping
+			&& hxc.parser.Preprocess.specialIdentifierFiles.exists(hxc.core.PathKey.key(file)))
+			return;
 		var full = try sys.FileSystem.fullPath(file) catch (_:Dynamic) file;
 		var time = hxc.core.FileTime.fileTime(full);
 		var cc = hxc.context.DisplayJson.cache.getContext(com.defines.getSignature());

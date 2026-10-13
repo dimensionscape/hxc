@@ -633,7 +633,7 @@ class Typer {
 		if (dynTypes.length > 0) commonTypes = commonTypes.concat(dynTypes);
 		var elTail = el.slice(1);
 		var tl = [for (e in elTail) e.type];
-		return switch (TypeUnification.unify_min_(TypeUnification.defaultUnificationContext, commonTypes, tl)) {
+		return switch (TypeUnification.unifyMinFrom(TypeUnification.defaultUnificationContext, commonTypes, tl)) {
 			case UnifyMinOk(t2): t2;
 			case UnifyMinError(l, index):
 				throw new hxc.core.TypingError.MinUnifyError(hxc.core.TPrinting.betterErrorMessage(l), elTail[index].pos);
@@ -697,7 +697,7 @@ class Typer {
 			}
 		}
 		var commonTypes = TypeUnification.collectBaseTypes(tr0);
-		return switch (TypeUnification.unify_min_(TypeUnification.defaultUnificationContext, commonTypes, rets)) {
+		return switch (TypeUnification.unifyMinFrom(TypeUnification.defaultUnificationContext, commonTypes, rets)) {
 			case UnifyMinOk(tr): TFun({args: args, ret: tr});
 			case UnifyMinError(_, _): null;
 		};
@@ -971,6 +971,17 @@ class Typer {
 			// typeExprInner hands this same node to typeAccess, whose marked branch answers for it too;
 			// the raise is this branch's, once it has made its own answer.
 			markedViaExpr = e;
+			// A DKStructure node is a structure completion only when the expected type follows to a
+			// structure (or a @:structInit class) BEFORE it is typed; anything else is handled like a
+			// marked node.
+			var structureExpected = hxc.typing.ExprPreprocessing.markedKind == DKStructure && switch (withType) {
+				case WithType(t, _): switch (TypeFunctions.follow(t)) {
+					case TAnon(_): true;
+					case TInst(c, _): TypeFunctions.hasMeta(":structInit", c.meta);
+					case _: false;
+				};
+				case _: false;
+			};
 			var te = switch [e.expr, withType] {
 				// A marked `_` against a known type is "probably" a bind skip and stands for a null of that
 				// type.
@@ -1002,8 +1013,12 @@ class Typer {
 			// back. hxc's position-keyed hooks answer the nodes they see as they type; two answers only this
 			// point can give:
 			if (displayHover || displayTypeDefinition) {
-				if (hoverFound != null && hoverFound.e == te) {
-					// The walk recorded this node's own expression: it is the display handler's answer.
+				// a marked `super` as its whole call, and the call as its `super` over the CALL's span; the
+				// hook that answered the `super` token while the call typed is not the marked node.
+				if (te.expr.match(TCall({expr: TConst(TSuper)}, _)))
+					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+				else if (hoverFound != null && hoverFound.e == te) {
+					// the walk recorded this node's own expression: it is the display handler's answer.
 					var h = hoverFound;
 					hoverFound = {t: h.t, p: h.p, e: h.e, wt: h.wt, tctx: h.tctx, mt: h.mt, isQualified: h.isQualified};
 				} else if (hoverFound != null && hoverFound.p.file == te.pos.file && hoverFound.p.min == te.pos.min
@@ -1033,7 +1048,8 @@ class Typer {
 			// spanning back from the node's end; anything else - a field access typed to something else (an
 			// inlined constant) included - answers the toplevel collection. Without this a marked binop,
 			// call or literal would answer nothing at all.
-			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked) {
+			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked
+					|| (hxc.typing.ExprPreprocessing.markedKind == DKStructure && !structureExpected && hxc.parser.Parser.displayCompletionMode)) {
 				switch [e.expr, te.expr] {
 					case [EField(e1, s, _), TField(_, _)] if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume):
 						hxc.parser.Parser.displayDotName = s;
@@ -1765,7 +1781,10 @@ class Typer {
 						// The cursor on a field name answers with the field it matched in the EXPECTED structure, so
 						// it reports that field's declaration and its declared type rather than the literal's own.
 						if (ef != null && atDisplayPos(f.pos)) displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, ef, f.pos);
-						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name) : WithTypeTools.value;
+						// an expected field, NotFound a plain value, and the plain typing (no expected
+						// structure) a value named by the field.
+						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name)
+							: expected == null && dynParam == null ? WithTypeTools.namedStructureField(f.name) : WithTypeTools.value;
 						var te = typeExpr(ctx, f.expr, fwt);
 						// With no expected structure the field answers with itself, typed from its value.
 						// The field is built (and displayed) whether or not the name is a valid identifier;
@@ -1949,7 +1968,18 @@ class Typer {
 						// wrapper rather than by identity.
 						if (hxc.typing.ExprPreprocessing.markedNode != null && dk == hxc.typing.ExprPreprocessing.markedKind)
 							hxc.typing.ExprPreprocessing.markedNode = e1;
-						typeExpr(ctx, e1, withType);
+						// Under signature display, a marked node (a call argument or array index the
+						// signature pass
+						// marked) answers a signature display of its own expression: a call, a `new` or an
+						// array access
+						// becomes the call to answer for; anything else is "Call expected".
+						if (dk == DKMarked && displaySignature) switch (e1.expr) {
+							case ECall(_, _) | ENew(_, _) | EArray(_, _): hxc.typing.ExprPreprocessing.markedCall = e1;
+							case _:
+						}
+						var te = typeExpr(ctx, e1, withType);
+						if (dk == DKMarked && displaySignature) throw new TypingError("Call expected", e1.pos);
+						te;
 				}
 			case ECheckType(e1, th):
 				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
@@ -2058,6 +2088,35 @@ class Typer {
 
 	static var recordingQualified = false;
 
+	// a hover answered from inside a field call's arguments, whose expected argument (or structure field)
+	// has no doc of its own, takes the called field's javadoc @param entry - when that field has a doc at
+	// all. Called as the answer leaves the candidate it came from (`outer` is the hover that was there
+	// before the call, which is not this call's to augment). Only the snapshot's expected doc changes; its
+	// type is as recorded.
+	public static function augmentHoverArgDoc(cf:TClassField, outer:Null<HoverRecord>):Void {
+		var h = hoverFound;
+		if (h == null || h == outer || h.wt == null || cf == null) return;
+		var text = Ast.genDocTextOpt(cf.doc);
+		if (text == null) return;
+		var si = switch (h.wt) {
+			case WithType(_, FunctionArgument(si) | StructureField(si)): si;
+			case _: null;
+		};
+		if (si == null || si.doc != null) return;
+		si.doc = new hxc.core.Javadoc(text).getParamInfo(si.name);
+		if (h.snap != null) h.snap.expected = expectedWithDoc(h.snap.expected, si.doc);
+	}
+
+	static function expectedWithDoc(expected:hxc.core.Json.JsonValue, doc:Null<String>):hxc.core.Json.JsonValue {
+		return switch (expected) {
+			case JObject(fields): JObject([for (f in fields) f.name != "name" ? f : {name: f.name, value: switch (f.value) {
+				case JObject(nf): JObject([for (g in nf) g.name != "doc" ? g : {name: "doc", value: doc == null ? JNull : JString(doc)}]);
+				case v: v;
+			}}]);
+			case v: v;
+		};
+	}
+
 	// Serializes a JSON hover answer as it stands when it is recorded; set while one is requested.
 	public static var hoverSnapshot:Null<HoverRecord->Dynamic> = null;
 
@@ -2099,7 +2158,9 @@ class Typer {
 	// The span of the call the signature was recorded from; a nested call replaces it only when its own
 	// span is strictly inside (the innermost call is the marked one).
 	public static var signatureCallPos:Null<Position> = null;
-	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}>, activeArg:Int}> = null;
+	// `meta` is where reads a candidate's argument defaults: the MAIN field's, for its overloads too; a
+	// local function's variable ; nothing for the rest.
+	public static var signatureFound:Null<{sigs:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation, ?meta:hxc.ast.Ast.Metadata}>, activeArg:Int}> = null;
 
 	// An EArray under signature display: an Array reports one (index:Int) signature returning its element,
 	// and an abstract reports its @:arrayAccess overloads with the `this` argument dropped. Anything else
@@ -2172,14 +2233,14 @@ class Typer {
 		for (o in ovl) all.push({t: TypeFunctions.applyParams(params, tl, o.type), cf: o});
 		var cands = [];
 		for (x in all) if (Fields.canAccess(ctx, c, x.cf, false))
-			cands.push({t: x.t, doc: wacky ? ctor.doc : x.cf.doc});
+			cands.push({t: x.t, doc: wacky ? ctor.doc : x.cf.doc, meta: ctor.meta});
 		handleCallSignatures(ctx, cands, el, active, p);
 	}
 
 	// Each candidate follows through @:callable to a function (or is "Not a callable type"), and those the
 	// arguments written so far still unify with survive - reversed, as the accumulator prepends - or every
 	// candidate when none does.
-	static function handleCallSignatures(ctx:TyperContext, tl:Array<{t:T, doc:hxc.ast.Ast.Documentation}>, params:Array<Expr>,
+	static function handleCallSignatures(ctx:TyperContext, tl:Array<{t:T, doc:hxc.ast.Ast.Documentation, ?meta:hxc.ast.Ast.Metadata}>, params:Array<Expr>,
 			active:Int, p:Position):Void {
 		function followCallable(t:T):T {
 			return switch (TypeFunctions.follow(t)) {
@@ -2188,9 +2249,9 @@ class Typer {
 				case t2: t2;
 			};
 		}
-		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation, ?meta:hxc.ast.Ast.Metadata}> = [];
 		for (x in tl) switch (followCallable(x.t)) {
-			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: x.doc});
+			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: x.doc, meta: x.meta});
 			case t2: throw new TypingError("Not a callable type: " + hxc.core.TPrinting.sTypeStr(t2), p);
 		}
 		// A display position past the last written argument gets a null appended so
@@ -2218,7 +2279,10 @@ class Typer {
 		var index:Null<Expr> = null;
 		switch (e2.expr) {
 			case EDisplay(inner, DKMarked): active = 0; index = inner;
-			case _: return; // Only the marked index asks for a signature
+			// no mark: an access that IS the call answers whatever its index.
+			case _ if (isMarkedCall(e -> e.expr.match(EArray(_, _)) && switch (e.expr) { case EArray(me1, _): me1 == e1; case _: false; })):
+				index = e2;
+			case _: return; // only the marked index asks for a signature
 		}
 		// The parser marks an index in any file the offsets match, but only a marked display call in a
 		// display field's body makes the access the call. An index it did not take is answered by
@@ -2340,7 +2404,7 @@ class Typer {
 				if (ctor != null) {
 					var sigs = [];
 					inline function addCtor(cf:TClassField) switch (TypeFunctions.follow(cf.type)) {
-						case TFun(sig): sigs.push({args: sig.args, ret: sig.ret, doc: cf.doc});
+						case TFun(sig): sigs.push({args: sig.args, ret: sig.ret, doc: cf.doc, meta: ctor.meta});
 						case _:
 					}
 					addCtor(ctor);
@@ -2384,9 +2448,9 @@ class Typer {
 		}
 		// The field's own type first, then its overloads reversed, and each one dropped when the calling
 		// scope cannot reach it. A "wacky" overload (the @:overload metadata kind, which carries no
-		// CfOverload flag) documents itself from the MAIN field, since the metadata form has no doc of
-		// its own.
-		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation}> = [];
+		// CfOverload flag) documents itself from the MAIN field, since the metadata form has no doc of its
+		// own.
+		var cands:Array<{args:Array<hxc.core.Type.TSignatureArg>, ret:T, doc:hxc.ast.Ast.Documentation, ?meta:hxc.ast.Ast.Metadata}> = [];
 		// A MACRO callee resolves to its macro-world signature first.
 		switch (callee.expr) {
 			case TField(_, FStatic(mc, mcf) | FInstance(mc, _, mcf)):
@@ -2394,10 +2458,10 @@ class Typer {
 				if (mt2 != null) callee = TypeFunctions.mk(callee.expr, mt2, callee.pos);
 			case _:
 		}
-		function addCand(t:T, doc:hxc.ast.Ast.Documentation):Void switch (followCallable(t)) {
-			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: doc});
-			// What is not a function after the @:callable unwrap is an error naming the type, not a silently
-			// empty signature list.
+		function addCand(t:T, doc:hxc.ast.Ast.Documentation, ?meta:hxc.ast.Ast.Metadata):Void switch (followCallable(t)) {
+			case TFun(sig): cands.push({args: sig.args, ret: sig.ret, doc: doc, meta: meta});
+			// What is not a function after the @:callable unwrap is an ERROR naming the type, not a
+			// silently empty signature list.
 			case t2: throw new TypingError("Not a callable type: " + hxc.core.TPrinting.sTypeStr(t2), p);
 		}
 		switch (callee.expr) {
@@ -2410,7 +2474,7 @@ class Typer {
 				for (o in ovl) all.push(o);
 				for (o in all)
 					if (hxc.typing.Fields.canAccess(ctx, c, o, stat))
-						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc);
+						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc, cf.meta);
 			// A closure over a known class goes through the same access filter; an anonymous one has no
 			// class to check against.
 			case TField(_, FClosure(cp, cf)) if (cp != null):
@@ -2421,13 +2485,16 @@ class Typer {
 				for (o in ovl) all.push(o);
 				for (o in all)
 					if (hxc.typing.Fields.canAccess(ctx, cp.c, o, false))
-						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc);
+						addCand(o == cf ? callee.type : o.type, wacky ? cf.doc : o.doc, cf.meta);
 			case TField(_, FAnon(cf) | FClosure(_, cf)):
 				var wacky = !TypeFunctions.hasClassFieldFlag(cf, CfOverload);
-				addCand(callee.type, cf.doc);
+				addCand(callee.type, cf.doc, cf.meta);
 				var ovl = cf.overloads.copy();
 				ovl.reverse();
-				for (o in ovl) addCand(o.type, wacky ? cf.doc : o.doc);
+				for (o in ovl) addCand(o.type, wacky ? cf.doc : o.doc, cf.meta);
+			// a local function's defaults are on its variable.
+			case TLocal(v):
+				addCand(callee.type, null, v.meta);
 			case _:
 				addCand(callee.type, null);
 		}
@@ -4435,7 +4502,7 @@ class Typer {
 	}
 
 	// Walks up until a class actually declares a constructor.
-	static function superConstructor(c:Null<TClass>):Null<TClassField> {
+	public static function superConstructor(c:Null<TClass>):Null<TClassField> {
 		var cur = c;
 		while (cur != null) {
 			if (cur.constructor != null) return cur.constructor;
@@ -6232,8 +6299,12 @@ class Typer {
 						&& hxc.typing.ExprPreprocessing.markedKind == DKMarked):
 					var te:Null<TExpr> = switch (acc) {
 						case AKExpr(e1): e1;
+						// An inline field reads through inlineRead, which under a display mode that does
+						// not inline
+						// (dmsInline off) is the plain field access.
 						case AKField(fa) if (!fa.isInline || fa.field.kind.match(Method(_))):
 							FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+						case AKField(fa): inlineRead(ctx, fa);
 						case _: null;
 					};
 					if (te != null) unifyForAnswer(ctx, te, withType);
@@ -6251,6 +6322,7 @@ class Typer {
 					var te:Null<TExpr> = switch (acc) {
 						case AKExpr(e1): e1;
 						case AKField(fa) if (!fa.isInline): FieldAccessTools.getFieldExpr(fa, FRead, ctx.curfield);
+						case AKField(fa): inlineRead(ctx, fa);
 						case _: null;
 					};
 					if (te != null) unifyForAnswer(ctx, te, withType);
@@ -6383,7 +6455,11 @@ class Typer {
 				handleEfield(ctx, new Expr(edef, p), mode, withType);
 			case EArray(e1, e2):
 				if (displaySignature) checkArraySignatureDisplay(ctx, e1, e2, withType, p);
-				var a1 = typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
+				// A marked receiver is typed with typeExpr, so it is the display subject there (typeAccess
+				// sees
+				// only its parts, not the node).
+				var a1 = e1 == hxc.typing.ExprPreprocessing.markedNode ? AKExpr(typeExpr(ctx, e1, WithTypeTools.value))
+					: typeAccess(ctx, e1.expr, e1.pos, MGet, WithTypeTools.value);
 				var te2 = typeExpr(ctx, e2, WithTypeTools.value);
 				switch (a1) {
 					case AKSafeNav(sn):
@@ -6743,15 +6819,14 @@ class Typer {
 		ctx.ret = ret;
 		ctx.inLoop = false;
 		for (a in args) ctx.locals.set(a.v.name, a.v);
-		function reset() {
+		function reset(close:Bool = true) {
 			restore();
 			if (!isLocalFn) ctx.vthis = oldVthis;
 			ctx.inFunction = oldInFunction;
 			ctx.curfun = oldCurfun;
 			ctx.ret = oldRet;
 			ctx.inLoop = oldLoop;
-			// Opened structures close at the END of the function, before the enclosing list is put back.
-			for (r in ctx.opened) r.set(Closed);
+			if (close) for (r in ctx.opened) r.set(Closed);
 			ctx.opened = oldOpened;
 			ctx.monoFunctionStart = oldMonoStart;
 		}
@@ -6784,7 +6859,7 @@ class Typer {
 		// whatever escapes; hxc restores the one it changed, for every escape - a WithTypeError leaving a
 		// failed overload attempt included.
 		var te = try typeExpr(ctx, bodyExpr, WithTypeTools.noValue) catch (e:Dynamic) {
-			reset();
+			reset(false);
 			throw e;
 		}
 		// An inferred return type with no value-return settles to Void; a resolved non-Void return requires
@@ -7212,6 +7287,13 @@ class Typer {
 		var firstError:Null<Dynamic> = null;
 		var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
 		var chosenIdx = -1;
+		// A constructor call resolves like a field call, so a hover answered from the arguments is
+		// augmented with the constructor candidate's @param doc.
+		var ctorField = superConstructor(c);
+		inline function candidate(i:Int):Null<TClassField>
+			return ctorField == null ? null : i == 0 ? ctorField : ctorField.overloads[i - 1];
+		var outerHover = hoverFound;
+		var firstFailCf:Null<TClassField> = null;
 		for (ctorType in ctorTypes) {
 			chosenIdx++;
 			var sig = switch (TypeFunctions.follow(ctorType)) {
@@ -7219,12 +7301,20 @@ class Typer {
 				case _: {args: [], ret: ctx.com.basic.tvoid};
 			};
 			try {
-				r = TypeUnification.withMonoRollback(function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+				// The constructor retry is a field-call overload attempt, so a failure restores only the
+				// registered monomorphs, not a full journal.
+				r = TypeUnification.withRegisteredMonoRollback(ctx.monomorphs, function() return Calls.unifyCallArgs(ctx, el, sig.args, sig.ret, p));
 				chosenArgs = sig.args;
+				augmentHoverArgDoc(candidate(chosenIdx), outerHover);
 				break;
+			} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+				augmentHoverArgDoc(candidate(chosenIdx), outerHover);
+				throw dr;
 			} catch (e:hxc.core.TypeUnification.UnifyError) {
+				if (firstFailCf == null && hoverFound != outerHover) firstFailCf = candidate(chosenIdx);
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
+				if (firstFailCf == null && hoverFound != outerHover) firstFailCf = candidate(chosenIdx);
 				// A constructor resolves like a field call, whose overload attempts raise a candidate's
 				// unknown identifier alone.
 				if (ctorTypes.length > 1 && Std.isOfType(e, hxc.core.TypingError.CallError)) {
@@ -7236,7 +7326,10 @@ class Typer {
 				if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
 			}
 		}
-		if (r == null) throw (firstError != null ? firstError : new TypingError("No matching overload", p));
+		if (r == null) {
+			if (firstFailCf != null) augmentHoverArgDoc(firstFailCf, outerHover);
+			throw (firstError != null ? firstError : new TypingError("No matching overload", p));
+		}
 		// Check the constructor the call resolved to, and only once the arguments have unified.
 		if (c.constructor != null)
 			Fields.checkConstructorAccess(ctx, c, chosenIdx <= 0 ? c.constructor : c.constructor.overloads[chosenIdx - 1], p);
@@ -7689,41 +7782,6 @@ class Typer {
 		}
 		if (a.params.length > 0) t = TypeFunctions.applyParams(a.params, atl, t);
 		return t;
-	}
-
-	static function selectMultiTypeByCtorArgs(ctx:TyperContext, a:TAbstract, atl:Array<T>, el:Array<Expr>, p:Position):Null<{castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>}> {
-		if (el.length == 0) return null;
-		var typedArgs = [for (e in el) typeExpr(ctx, e, WithTypeTools.value)];
-		function hasOpenParam(t:T):Bool return switch (TypeFunctions.follow(t)) {
-			case TMono(_): true;
-			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): true;
-			case TAbstract(_, tl) | TEnum(_, tl) | TInst(_, tl): [for (x in tl) if (hasOpenParam(x)) true].length > 0;
-			case TFun(sig): [for (x in sig.args) if (hasOpenParam(x.t)) true].length > 0 || hasOpenParam(sig.ret);
-			case _: false;
-		};
-		if ([for (e in typedArgs) if (hasOpenParam(e.type)) true].length > 0) return null;
-		for (toCast in a.toField) {
-			var savedSelectors:Array<{m:TMono, old:Null<T>}> = [for (t in atl) switch (t) { case TMono(m): {m: m, old: m.type}; case _: null; }].filter(function(x) return x != null);
-			var found = try TypeUnification.withMonoRollback(function() {
-				var castType = applyMultiTypeCastType(a, atl, toCast.cf);
-				return switch (TypeFunctions.follow(castType)) {
-					case TFun(sig) if (sig.args.length == typedArgs.length + 1):
-						var args:Array<TExpr> = [];
-						for (i in 0...typedArgs.length) {
-							// An attempt inside the @:to search: the failure moves it to the next candidate.
-							args.push(castOrUnifyRaise(ctx, sig.args[i + 1].t, typedArgs[i], typedArgs[i].pos));
-						}
-						var receiver = TypeFunctions.applyParams(a.params, atl, a.thisType);
-						TypeUnification.unifyDefault(receiver, sig.args[0].t);
-						{castField: toCast, castType: castType, ret: sig.ret, args: args};
-					case _:
-						throw new TypingError("No matching multi-type constructor", p);
-				}
-			}) catch (err:haxe.Exception) null;
-			if (found == null) for (s in savedSelectors) switch (s.old) { case null: TypeUnification.unbind(s.m); case old: TypeUnification.monoBind(s.m, old); }
-			if (found != null) return found;
-		}
-		return null;
 	}
 
 	public static function buildMultiTypeCastCall(ctx:TyperContext, a:TAbstract, atl:Array<T>, castField:TAbstractCast, castType:T, ret:T, args:Array<TExpr>, p:Position):TExpr {

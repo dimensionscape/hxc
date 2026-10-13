@@ -542,7 +542,26 @@ class TypeFields {
 	// An abstract class implementing an interface gets an implicit abstract field for each interface method
 	// it does not implement, so instances resolve the field through the class type.
 	public static function addImplicitInterfaceFields(c:TClass):Void {
-		if (!TypeFunctions.hasClassFlag(c, CAbstract) || TypeFunctions.hasClassFlag(c, CInterface)) return;
+		// TWO synthesis arms and only the first needs an abstract class: an abstract class gets a
+		// CfAbstract stand-in for any unimplemented method , and ANY class gets an extern+override stand-in
+		// for an interface method carrying CfDefault . Without the second, a concrete class never picks up
+		// a java interface's Java 8 default methods and calling one says "has no field".
+		if (TypeFunctions.hasClassFlag(c, CInterface)) return;
+		var isAbstractClass = TypeFunctions.hasClassFlag(c, CAbstract);
+		// A non-abstract class only has work here if some interface method actually carries CfDefault.
+		if (!isAbstractClass) {
+			var anyDefault = false;
+			function scan(i:TClass):Void {
+				if (anyDefault) return;
+				for (f in i.orderedFields)
+					if (TypeFunctions.hasClassFieldFlag(f, CfDefault)) { anyDefault = true; return; }
+				for (imp in i.interfaces) scan(imp.c);
+			}
+			for (imp in c.interfaces) scan(imp.c);
+			if (!anyDefault) return;
+		}
+		// 574: a @:libType class never runs the interface check at all, so it gets no implicit fields.
+		if (TypeFunctions.hasMeta(":libType", c.meta)) return;
 		function classHasField(c2:TClass, name:String):Bool {
 			if (c2.fields.exists(name)) return true;
 			return c2.superClass != null && classHasField(c2.superClass.c, name);
@@ -550,15 +569,53 @@ class TypeFields {
 		function walk(intf:TClass, params:TParams):Void {
 			for (imp in intf.interfaces)
 				walk(imp.c, [for (x in imp.params) TypeFunctions.applyParams(intf.params, params, x)]);
-			for (f in intf.orderedFields) {
-				switch (f.kind) { case Method(_): case _: continue; }
-				if (classHasField(c, f.name)) continue;
+			// empties overloads on the COPY, but runs the whole check once per overload and merges each
+			// result into the existing field's overloads. Synthesising only the primary dropped every
+			// other signature: an abstract class implementing an interface that declares toBeImplemented()
+			// and toBeImplemented(Int) got only the no-arg one, so a call passing an argument reported "Too
+			// many arguments".
+			function makeImplicit(f:TClassField):Void {
 				var cf = TypeFunctions.copyField(f);
 				cf.overloads = [];
 				cf.type = TypeFunctions.applyParams(intf.params, params, f.type);
-				TypeFunctions.addClassFieldFlag(cf, CfAbstract);
-				c.fields.set(cf.name, cf);
-				c.orderedFields.push(cf);
+				// vs - which stand-in this is
+				if (isAbstractClass) {
+					TypeFunctions.addClassFieldFlag(cf, CfAbstract);
+				} else {
+					cf.expr = null;
+					TypeFunctions.addClassFieldFlag(cf, CfExtern);
+					TypeFunctions.addClassFieldFlag(cf, CfOverride);
+				}
+				var existing = c.fields.get(cf.name);
+				if (existing != null) {
+					existing.overloads = [cf].concat(existing.overloads);
+				} else {
+					c.fields.set(cf.name, cf);
+					// These stand-ins are CfExtern so they are not emitted as methods, but they DO appear
+					// in orderedFields, which feeds the JVM generator's DynamicAccess.generate, so their
+					// position
+					// decides the case order of _hx_getField's string switch.
+					c.orderedFields.unshift(cf);
+				}
+			}
+			// The stand-ins are PREPENDED, so this order decides their relative position in
+			// orderedFields and therefore the case order of _hx_getField's string switch.
+			var names = [for (name in intf.fields.keys()) name];
+			names.sort(function(a2, b2) return a2 < b2 ? -1 : (a2 > b2 ? 1 : 0));
+			for (name in names) {
+				var f = intf.fields.get(name);
+				if (f == null) continue;
+				switch (f.kind) { case Method(_): case _: continue; }
+				if (classHasField(c, f.name)) continue;
+				// the abstract arm takes any method; the default arm only a CfDefault one
+				if (!isAbstractClass && !TypeFunctions.hasClassFieldFlag(f, CfDefault)) continue;
+				makeImplicit(f);
+				// the overload siblings are checked too, in reverse
+				if (TypeFunctions.hasClassFieldFlag(f, CfOverload)) {
+					var rev = f.overloads.copy();
+					rev.reverse();
+					for (o in rev) makeImplicit(o);
+				}
 			}
 		}
 		for (imp in c.interfaces) walk(imp.c, imp.params);
@@ -1030,14 +1087,28 @@ class TypeFields {
 		var isAbsImpl = switch (c.kind) { case KAbstractImpl(_): true; case _: false; };
 		var savedMod = ctx.currentModule;
 		ctx.currentModule = c.module;
+		var nameSeen = new haxe.ds.StringMap<Int>();
 		for (cff in d.dData) {
 			var isStatic = false;
 			for (a in cff.cffAccess) if (a.access == AStatic) isStatic = true;
 			if (isAbsImpl && !isStatic && cff.cffName.name != "new") isStatic = true;
 			var cf = if (!isStatic && cff.cffName.name == "new") c.constructor
 				else TypeFunctions.declaredField(c, cff.cffName.name, isStatic);
-			if (cf == null || cf.expr != null) continue;
-			// A duplicate declaration was reported and never added, so it declares no field; pairing it by
+			if (cf == null) continue;
+			// The k-th declaration of a name binds its own body, paired exactly as installClassFields
+			// pairs it. By name alone a second `new` resolves onto constructor - the FIRST
+			// constructor, already typed - and every later overload onto the first of its name, so the
+			// overload's own body is never typed at all.
+			var nameKey = (isStatic ? "s:" : "i:") + cff.cffName.name;
+			var occ = nameSeen.exists(nameKey) ? nameSeen.get(nameKey) : 0;
+			nameSeen.set(nameKey, occ + 1);
+			if (occ > 0) {
+				if (cff.cffName.name == "new" && cf.overloads.length < occ) continue;
+				cf = cf.overloads.length >= occ ? cf.overloads[cf.overloads.length - occ]
+					: TypeResolve.nthFieldNamed(isStatic ? c.orderedStatics : c.orderedFields, cff.cffName.name, occ, cf);
+			}
+			if (cf.expr != null) continue;
+			// A duplicate declaration was reported and never added, so it declares NO field; pairing it by
 			// name hands it the field it merely collided with.
 			if (ctx.droppedFieldDecls.exists(cff)) continue;
 			// A body that already ran is not typed again: a member var whose initializer the field-init
@@ -1453,7 +1524,7 @@ class TypeFields {
 		// saved - an abstract's `var` is static there.
 		var oldFun = tctx.curfun;
 		tctx.curfun = isStatic ? FunStatic : FunMember;
-		var te = try typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), cff.cffPos) catch (e:Dynamic) {
+		var te = try typeVarInitializer(tctx, sigType, eo, hasVarHint(cff.cffKind), isStatic, cff.cffPos) catch (e:Dynamic) {
 			tctx.curfun = oldFun;
 			throw e;
 		};
@@ -1568,8 +1639,20 @@ class TypeFields {
 
 	// The initializer types against the field's own type - its monomorph when there is no hint, which is
 	// what a display inside it reports as expected - and is cast or unified to it.
-	static function typeVarInitializer(tctx:TyperContext, sigType:T, eo:Expr, hasHint:Bool, p:Position):TExpr {
-		return Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), p);
+	static function typeVarInitializer(tctx:TyperContext, sigType:T, eo:Expr, hasHint:Bool, stat:Bool, p:Position):TExpr {
+		var e = Typer.castOrUnify(tctx, sigType, Typer.typeExpr(tctx, eo, WithTypeTools.withType(sigType)), p);
+		// A STATIC field hinted as the root UInt keeps the hint as its initializer's type, so the later
+		// checkCast sees them equal and stores no cast.
+		if (stat && isRootUInt(sigType)) return new TExpr(e.expr, sigType, e.pos);
+		return e;
+	}
+
+	static function isRootUInt(t:T):Bool {
+		return switch (t) {
+			case TType(td, []): td.path.pack.length == 0 && td.path.name == "UInt";
+			case TAbstract(a, []): a.path.pack.length == 0 && a.path.name == "UInt";
+			case _: false;
+		};
 	}
 
 	// An Int literal bound to a Float field is rewritten to a Float literal; any other init whose type

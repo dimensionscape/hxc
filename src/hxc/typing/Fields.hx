@@ -788,14 +788,17 @@ class Fields {
 		var a = e.type;
 		var b = t;
 		if (isMulti(a) || isMulti(b)) {
-			return try TypeUnification.withMonoRollback(function() {
-				return Typer.castOrUnifyRaise(ctx, b, e, p);
-			}) catch (_:hxc.core.TypeUnification.UnifyError) null
+			// A @:multiType abstract goes through Typer.castOrUnifyRaise, with no monomorph save/restore
+			// around
+			// it.
+			return try {
+				Typer.castOrUnifyRaise(ctx, b, e, p);
+			} catch (_:hxc.core.TypeUnification.UnifyError) null
 			catch (_:TypingError) null;
 		}
-		// The receiver never coerces through Dynamic to claim an extension (allowDynamicToCast =
-		// false).
-		return try TypeUnification.withMonoRollback(function() {
+		// The receiver never coerces through Dynamic to claim an extension. (allowDynamicToCast =
+		// false). directly, with no save/restore.
+		return try {
 			TypeUnification.unify({
 				allowTransitiveCast: true,
 				allowAbstractCast: true,
@@ -803,8 +806,8 @@ class Fields {
 				equalityKind: hxc.core.TypeUnification.EqKind.EqStrict,
 				equalityUnderlying: false
 			}, a, b);
-			return e;
-		}) catch (_:hxc.core.TypeUnification.UnifyError) null;
+			e;
+		} catch (_:hxc.core.TypeUnification.UnifyError) null;
 	}
 
 	static function exprOfParam(t:T):Null<T> {
@@ -908,12 +911,17 @@ class Fields {
 				var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
 				cft = TypeFunctions.applyParams(cf.params, monos, cf.type);
 			}
-			switch (TypeFunctions.follow(cft)) {
-				case TFun(sig) if (sig.args.length > 0):
-					var er = usingAccepts(ctx, cf, e, sig.args[0].t, p);
-					if (er != null) return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, er, false, p));
-				case _:
-			}
+			// The registered monomorph list is captured per candidate and put back whether or not the
+			// candidate
+			// accepts the receiver: its monomorphs are handled again when the actual call is made.
+			var currentMonos = ctx.monomorphs.copy();
+			var er = switch (TypeFunctions.follow(cft)) {
+				case TFun(sig) if (sig.args.length > 0): usingAccepts(ctx, cf, e, sig.args[0].t, p);
+				case _: null;
+			};
+			ctx.monomorphs.splice(0, ctx.monomorphs.length);
+			for (m in currentMonos) ctx.monomorphs.push(m);
+			if (er != null) return AKUsingField(FieldAccessTools.makeStaticExtensionAccess(uc, cf, er, false, p));
 		}
 		return null;
 	}

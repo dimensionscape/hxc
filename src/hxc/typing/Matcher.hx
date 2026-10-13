@@ -2118,16 +2118,23 @@ class TexprConverter {
 					case ConArray(_): arrayLengthExpr(ctx, subject);
 					case _: subject;
 				};
-				// A small switch is reduced before emitting TSwitch: a single unconditional finite case
+				// A small switch is reduced before a TSwitch is emitted: a single unconditional finite case
 				// becomes its own body; a single case with a default (or in a no-value context) becomes an
 				// if, fusing a nested if that shares the default with &&; two bool cases become an if on
 				// the subject.
+				//
+				// The single-case arm is skipped on Java. There a one-case switch stays a TSwitch, which
+				// lets
+				// the JVM generator recognize an all-constant-string switch and emit the hashCode-based
+				// JvmMethod.stringSwitch; lowered to an if, it would compare through TexprToJvm.doCompare
+				// and
+				// call Jvm.stringCompare.
 				var single = swCases.length == 1 && swCases[0].values.length == 1;
 				var reduced:Null<TExpr> = null;
 				if (swCases.length == 1 && defE == null && complete && runtimeFinite && !isNullableSubject) {
 					var b = swCases[0].expr;
 					reduced = TypeFunctions.mk(b.expr, tSwitch, b.pos);
-				} else if (single && (defE != null || withType.match(NoValue))) {
+				} else if (single && (defE != null || withType.match(NoValue)) && ctx.com.platform != Java) {
 					var e1 = swCases[0].values[0];
 					var e2 = swCases[0].expr;
 					var eOp = TypeFunctions.mk(TBinop(OpEq, swSubject, e1), basic.tbool, swSubject.pos);
@@ -2274,8 +2281,11 @@ class Match {
 		}
 		// `switch [a, b]` (a bracket literal, possibly parenthesized) is a tuple match: each element is its
 		// own subject with its own type, and the case patterns match column by column. A single
-		// comprehension element is a real array, not a tuple.
+		// comprehension element is a real array, not a tuple. the display subject is an EDisplay there,
+		// which neither loop unwraps.
+		var marked = hxc.typing.ExprPreprocessing.markedNode;
 		function tupleOf(ex:Expr):Null<Array<Expr>> {
+			if (ex == marked) return null;
 			return switch (ex.expr) {
 				case EParenthesis(e1): tupleOf(e1);
 				case EArrayDecl([{expr: EFor(_, _) | EWhile(_, _, _)}]): null;
@@ -2295,7 +2305,7 @@ class Match {
 			var unwrapped = e;
 			var stripping = true;
 			while (stripping) switch (unwrapped.expr) {
-				case EParenthesis(e1): unwrapped = e1;
+				case EParenthesis(e1) if (unwrapped != marked): unwrapped = e1;
 				case _: stripping = false;
 			}
 			var subjectE = Typer.typeExpr(ctx, unwrapped, WithTypeTools.value);

@@ -617,7 +617,7 @@ class EvalStdLib {
 			if (path == EvalNames.hHaxeSerializer() || path == EvalNames.hHaxeUnserializer()) return name == EvalNames.hRun();
 		} else {
 			if (path == EvalNames.hHaxeSerializer()) return name == EvalNames.hSerialize() || name == EvalNames.hSerializeException() || name == EvalNames.hSerializeFields()
-				|| name == EvalNames.hSerializeRef() || name == EvalNames.hSerializeString() || name == EvalHash.key_toString;
+				|| name == EvalNames.hSerializeRef() || name == EvalNames.hSerializeString() || name == EvalHash.keyToString;
 			if (path == EvalNames.hHaxeUnserializer()) return name == EvalNames.hUnserialize() || name == EvalNames.hGetResolver() || name == EvalNames.hSetResolver();
 			#if emscripten
 			if (path == EvalNames.hSysThreadSemaphore()) return name == EvalNames.hAcquire() || name == EvalNames.hTryAcquire() || name == EvalNames.hRelease();
@@ -895,8 +895,8 @@ class EvalStdLib {
 	}
 
 	static function isCoreClassPath(path:Int):Bool {
-		return path == EvalHash.key_Int || path == EvalHash.key_Float || path == EvalHash.key_Bool
-			|| path == EvalHash.key_Dynamic || path == EvalHash.key_Class || path == EvalHash.key_Enum;
+		return path == EvalHash.keyInt || path == EvalHash.keyFloat || path == EvalHash.keyBool
+			|| path == EvalHash.keyDynamic || path == EvalHash.keyClass || path == EvalHash.keyEnum;
 	}
 
 	// Type.createEnum: the constructor is the field of that name (none for a value without fields);
@@ -2637,7 +2637,7 @@ class EvalStdLib {
 	// one level deeper. An exception it raises is the caller's.
 	static function callToString(v:EvalValue, depth:Int):Null<VString> {
 		var ctx = EvalContext.getCtx();
-		var vf = try EvalField.fieldRaise(ctx, v, EvalHash.key_toString) catch (_:hxc.core.NotFound) return null;
+		var vf = try EvalField.fieldRaise(ctx, v, EvalHash.keyToString) catch (_:hxc.core.NotFound) return null;
 		return sValue(callValueOn(v, vf, []), depth + 1);
 	}
 
@@ -2807,7 +2807,7 @@ class EvalStdLib {
 					case "String": switch (v) { case VString(_): true; case _: false; };
 					case "Array": switch (v) { case VArray(_): true; case _: false; };
 					case "eval.Vector": switch (v) { case VVector(_): true; case _: false; };
-					case "Class": switch (v) { case VPrototype(p): switch (p.pkind) { case PClass(_): true; case _: false; }; case VInstance(vi): vi.iproto.ppath == EvalHash.key_Class; case _: false; };
+					case "Class": switch (v) { case VPrototype(p): switch (p.pkind) { case PClass(_): true; case _: false; }; case VInstance(vi): vi.iproto.ppath == EvalHash.keyClass; case _: false; };
 					case "Enum": switch (v) { case VPrototype(p): switch (p.pkind) { case PEnum(_): true; case _: false; }; case _: false; };
 					case "EnumValue": switch (v) { case VEnumValue(_): true; case _: false; };
 					case _: switch (v) {
@@ -3926,11 +3926,11 @@ class EvalStdLib {
 					case v: v;
 				}
 			case VString(_):
-				classValue(ctx, EvalHash.key_String);
+				classValue(ctx, EvalHash.keyString);
 			case VArray(_):
-				classValue(ctx, EvalHash.key_Array);
+				classValue(ctx, EvalHash.keyArray);
 			case VVector(_):
-				classValue(ctx, EvalHash.key_eval_Vector);
+				classValue(ctx, EvalHash.keyEvalVector);
 			case _: VNull;
 		}));
 		reg(s, "Type", "typeof", vfn(a -> typeofValue(ctx, arg(a, 0))));
@@ -3943,7 +3943,7 @@ class EvalStdLib {
 			case VPrototype(proto) if (proto.pkind.match(PClass(_))):
 				var args = decodeArray(ctx, arg(a, 1));
 				// The String special constructor: the argument as it is.
-				proto.ppath == EvalHash.key_String && args.length == 1 ? args[0] : EvalEmitter.constructPath(ctx, proto.ppath, args);
+				proto.ppath == EvalHash.keyString && args.length == 1 ? args[0] : EvalEmitter.constructPath(ctx, proto.ppath, args);
 			case v: EvalExceptions.unexpectedValue(ctx, v, "Class");
 		}));
 		reg(s, "Type", "createEmptyInstance", vfn(a -> switch (arg(a, 0)) {

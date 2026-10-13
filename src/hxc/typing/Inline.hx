@@ -336,7 +336,28 @@ class Inline {
 				case TAbstract(a, pl) if (a.params.length > 0 || cf.params.length > 0):
 					var aParams = a.params, cfParams = cf.params;
 					var monos:TParams = [for (_ in cfParams) TypeFunctions.mkMono()];
-					function(tt:T):T return TypeFunctions.applyParams(aParams, pl, TypeFunctions.applyParams(cfParams, monos, tt));
+					var map = function(tt:T):T return TypeFunctions.applyParams(aParams, pl, TypeFunctions.applyParams(cfParams, monos, tt));
+					// Building the substitution does not bind the fresh method monomorphs: they are bound
+					// by unifying
+					// the mapped signature against the ACTUAL arguments, done here when the method has type
+					// parameters.
+					// For an abstract implementation method the FIRST argument is replaced by
+					// `map(a.thisType)`, since
+					// the receiver is the abstract while the parameter is its underlying type. Without this
+					// an
+					// abstract's own generic method leaves its parameters as unbound monomorphs that close
+					// to Dynamic.
+					if (cfParams.length > 0 && cf.name != "_new") switch (TypeFunctions.follow(cf.type)) {
+						case TFun(sig) if (sig.args.length == params.length && params.length > 0):
+							var tl:Array<hxc.core.Type.TSignatureArg> = [
+								for (i in 0...params.length)
+									{name: "", opt: false, t: i == 0 ? map(a.thisType) : params[i].type}
+							];
+							try hxc.core.TypeUnification.unifyDefault(map(cf.type), TFun({args: tl, ret: tret}))
+							catch (_:haxe.Exception) {}
+						case _:
+					}
+					map;
 				case _: null;
 			}
 		}
@@ -393,7 +414,7 @@ class Inline {
 
 	// Substitute the callee's type parameters throughout an inlined tree; original call-argument
 	// expressions keep their caller-side types.
-	static function mapInlinedTypes(mt:T->T, skip:Array<TExpr>, root:TExpr):TExpr {
+	static function mapInlinedTypes(ctx:TyperContext, mt:T->T, skip:Array<TExpr>, root:TExpr):TExpr {
 		var mappedVars:Map<Int, Bool> = new Map();
 		var fRef:TExpr->TExpr = null;
 		function fv(v:TVar):TVar {
@@ -465,7 +486,10 @@ class Inline {
 				case TTry(e1, catches):
 					TTry(f(e1), [for (ct in catches) {v: fv(ct.v), expr: f(ct.expr)}]);
 			};
-			return TypeFunctions.mk(ne, et, e.pos);
+			// Every rebuilt node goes through maybeReapplyOverloadCall: the TField above was re-resolved BY
+			// NAME,
+			// which cannot pick an overload, so a call to one is resolved again.
+			return hxc.typing.Calls.maybeReapplyOverloadCall(ctx, TypeFunctions.mk(ne, et, e.pos));
 		}
 		fRef = f;
 		return f(root);
@@ -544,10 +568,12 @@ class Inline {
 			var directThis = !forceTempThis
 				&& (ethis.expr.match(TConst(TThis) | TLocal(_)) || thisReads <= 1);
 			if (!directThis) {
-				// The bound receiver behaves as compiler-generated in fusion, so
-				// a single-use receiver temp fuses back regardless of extern purity.
-				vthis = declThis != null ? declThis : TypeFunctions.allocVar(VGenerated, "_this", ethis.type, p);
-				vthis.kind = VGenerated;
+				// the receiver VInlined, and only reject() downgrades it to VGenerated, when it is read at
+				// most once and never written. The kind decides fusion: neither VUser nor VInlined as
+				// compiler generated, so a VInlined receiver survives.
+				var thisKind = thisReads <= 1 ? VGenerated : VInlined;
+				vthis = declThis != null ? declThis : TypeFunctions.allocVar(thisKind, "_this", ethis.type, p);
+				vthis.kind = thisKind;
 				vthis.type = ethis.type;
 				binds.push(TypeFunctions.mk(TVarExpr(vthis, ethis), tvoid, p));
 			}
@@ -725,12 +751,12 @@ class Inline {
 		// anonymous structures fresh identities, so unsafe-cast reduction preserves casts on an inlined
 		// method's receiver.
 		var skipExprs = params.copy();
-		result = mapInlinedTypes(mapType != null ? mapType : function(t:T):T return t, skipExprs, result);
-		// The finalize below (the retyped block, the wrap's cast) belongs before the type map, so those
-		// nodes' `tret` maps with the rest of the body - and applying params follows a bound monomorph,
-		// so a cast typed Null<V> with V bound to Int comes out Null<Int>, which unsafe-cast reduction
-		// then sees is the type it holds. Built after the mapping, they have to take the mapped type
-		// themselves.
+		result = mapInlinedTypes(ctx, mapType != null ? mapType : function(t:T):T return t, skipExprs, result);
+		// The finalize below (the retyped block, the wrap's cast) belongs BEFORE the type map, so
+		// those nodes' `tret` maps with the rest of the body - and applying params follows a bound
+		// monomorph, so a cast typed Null<V> with V bound to Int comes out Null<Int>, which
+		// unsafe-cast reduction then sees is the type it holds. Built after the mapping, they have
+		// to take the mapped type themselves.
 		var mappedTret = mapType != null ? mapType(tret) : tret;
 		// With no bindings the value stands alone: it keeps its own (substituted) type when that
 		// equals the expected return, and gets a cast otherwise.

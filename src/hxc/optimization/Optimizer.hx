@@ -476,6 +476,47 @@ class Optimizer {
 				case _:
 			}
 		}
+		// On cs/java, `Lib.nativeArray(<array literal>, _)` and `Vector_Impl_.fromArrayCopy(<array
+		// literal>)` collapse to a NATIVE ARRAY DECLARATION rather than inlining the copy loop in
+		// java.Lib.nativeArray. `__array__` and `java.NativeArray.make` through the same arm. Without this,
+		// every `haxe.ds.Vector.fromArrayCopy([...])` expanded to `new NativeArray(n)` plus a while loop.
+		var isCsJava = com.platform == Java || com.platform == Cs;
+		var nativeArrayCase = isCsJava && ((pathKey == "cs.Lib" || pathKey == "java.Lib") && field == "nativeArray" && params.length == 2)
+			|| isCsJava && pathKey == "haxe.ds._Vector.Vector_Impl_" && field == "fromArrayCopy" && params.length == 1;
+		if (nativeArrayCase) switch (params[0].expr) {
+			case TArrayDecl(args):
+				var edecl = params[0];
+				var platf = com.platform == Cs ? "cs" : "java";
+				var mpath:Path = field == "fromArrayCopy"
+					? {pack: ["haxe", "ds"], name: "Vector"}
+					: {pack: [platf], name: "NativeArray"};
+				var m = com.moduleLut.get(Context.pathKey(mpath));
+				if (m != null) {
+					// The first class or abstract of the module, not one looked up by name.
+					var main:Null<ModuleType> = null;
+					for (mt in m.types) switch (mt) {
+						case TClassDecl(_) | TAbstractDecl(_) if (main == null): main = mt;
+						case _:
+					}
+					var elem = switch (TypeFunctions.follow(edecl.type)) {
+						case TInst({path: {pack: [], name: "Array"}}, [te]): te;
+						case _: null;
+					};
+					if (main != null && elem != null) {
+						var t = switch (main) {
+							case TClassDecl(cl): TInst(cl, [elem]);
+							case TAbstractDecl(a): TAbstract(a, [elem]);
+							case _: null;
+						};
+						if (t != null) {
+							var dyn = TypeFunctions.tDynamic;
+							// then the result is retyped to the native array
+							return TypeFunctions.mk(TCall(TypeFunctions.mk(TIdent("__array__"), dyn, p), args), t, p);
+						}
+					}
+				}
+			case _:
+		}
 		return apiInline2(com, c, field, params, p);
 	}
 
@@ -532,8 +573,26 @@ class Optimizer {
 				if (Math.isNaN(f) || !Math.isFinite(f)) null;
 				else if (f <= -2147483648.0 || f >= 2147483647.0 + 1.0) null;
 				else intConst(Std.int(Math.ffloor(f)));
+			// These build the untyped intrinsic straight from the syntactic arguments, so the generic
+			// inliner
+			// never sees the call and never binds an argument to a temp. That matters for lock:
+			// Inline.typeInline
+			// binds any argument with a side effect to a temp, which would hoist the guarded body out of
+			// the
+			// monitor and run it before monitorenter. The block is the second argument and belongs inside
+			// the
+			// monitor.
+			case ["cs.Lib", "fixed" | "checked" | "unsafe", [e1]]:
+				untypedCall("__" + field + "__", p, [e1]);
+			case ["cs.Lib", "lock", [obj, block]] | ["java.Lib", "lock", [obj, block]]:
+				untypedCall("__lock__", p, [obj, TypeFunctions.mkBlock(block)]);
 			case _:
 				null;
 		};
+	}
+
+	static function untypedCall(name:String, p:Position, params:Array<TExpr>):TExpr {
+		var dyn = TypeFunctions.tDynamic;
+		return TypeFunctions.mk(TCall(TypeFunctions.mk(TIdent(name), dyn, p), params), dyn, p);
 	}
 }

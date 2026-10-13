@@ -32,7 +32,13 @@ class CoreApi {
 		// typing under -v like every other world.
 		c.verbose = ctx.verbose;
 		c.debug = ctx.debug;
-		// The clone keeps the memo of paths already known to be missing: it is the one map every world
+		// The display settings carry over: under a display request the core API context types its fields
+		// the
+		// way the request does, a body only where it must.
+		c.displaySpec = ctx.displaySpec;
+		c.displayFullTyping = ctx.displayFullTyping;
+		c.dmsInline = ctx.dmsInline;
+		// The clone keeps the memo of paths already known to be missing: it is the ONE map every world
 		// shares. A core context with its own map would memoize the same-package misses it met
 		// (haxe.exceptions.Exception from PosException) where the host could not see them, and the host
 		// would probe them again later - with a macro's Context.onTypeNotFound hook registered by then.

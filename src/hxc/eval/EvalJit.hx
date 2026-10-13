@@ -1495,7 +1495,7 @@ class JField extends JNode {
 						}
 					}
 				}
-				return (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, rv, EvalHash.key_haxe_Exception)) ? EvalField.field(ctx, rv, EvalHash.keyNativeStack) : v;
+				return (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, rv, EvalHash.keyHaxeException)) ? EvalField.field(ctx, rv, EvalHash.keyNativeStack) : v;
 			case _:
 				return EvalEmitter.evalField(ctx, e1, fa, e.pos, rv);
 		}

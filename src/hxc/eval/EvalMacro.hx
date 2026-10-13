@@ -2081,11 +2081,10 @@ class EvalMacro {
 				if (!hxc.parser.ParserError.isParseFailure(e)) throw e;
 				throw new TypingError("Malformed metadata string", apiCallPos());
 			};
+		var callPos = apiCallPos();
 		function collect(e:Expr):Void switch (e.expr) {
 			case EMeta(m, e1):
-				// Every entry parsed from the string is re-placed at the API call's position, which for a
-				// --macro call is null - "(unknown)" - rather than at the string's own offsets.
-				var placed:MetadataEntry = {name: m.name, params: m.params, pos: curPos};
+				var placed:MetadataEntry = {name: m.name, params: m.params, pos: callPos};
 				com.globalMetadata.unshift({filter: filter == "" ? [] : filter.split("."), meta: placed, recursive: recursive, toTypes: toTypes, toFields: toFields});
 				collect(e1);
 			case _:
@@ -2335,9 +2334,9 @@ class EvalMacro {
 				ev.eargs.length == 0 ? ctorExpr : mk(ECall(ctorExpr, [for (a in ev.eargs) valueToExpr(ec, a, p)]));
 			case VInstance(vi): switch (vi.ikind) {
 				// Each table folded, so in its keys' order.
-				case IMap(m) if (vi.iproto.ppath == EvalHash.key_haxe_ds_IntMap
-						|| vi.iproto.ppath == EvalHash.key_haxe_ds_StringMap
-						|| vi.iproto.ppath == EvalHash.key_haxe_ds_ObjectMap):
+				case IMap(m) if (vi.iproto.ppath == EvalHash.keyHaxeDsIntMap
+						|| vi.iproto.ppath == EvalHash.keyHaxeDsStringMap
+						|| vi.iproto.ppath == EvalHash.keyHaxeDsObjectMap):
 					mk(EArrayDecl([for (entry in EvalStdLib.orderedMapEntries(VInstance(vi))) mk(EBinop(OpArrow, valueToExpr(ec, entry.key, p), valueToExpr(ec, entry.value, p)))]));
 				case _:
 					EvalExceptions.excValues(ec, ["Cannot convert ", " to expr"], [v]);
@@ -4167,7 +4166,12 @@ class EvalMacro {
 			case "EFunction": EFunction(decodeFunctionKind(ec, a[0], dp), decodeFunc(ec, a[1], dp));
 			case "EFor": EFor(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp));
 			case "EWhile": EWhile(decodeExpr(ec, a[0], dp), decodeExpr(ec, a[1], dp), boolOf(a[2]) ? NormalWhile : DoWhile);
-			case "ESwitch": ESwitch(decodeExpr(ec, a[0], dp), [for (c in arrOf(a[1])) decodeCase(ec, c, dp)], a[2] == VNull ? null : {e: decodeExpr(ec, a[2], dp), pos: dp});
+			case "ESwitch": ESwitch(decodeExpr(ec, a[0], dp), [for (c in arrOf(a[1])) decodeCase(ec, c, dp)],
+				// a non-null default whose `expr` field is null is an EMPTY `default:`, which is NOT the
+				// same as having no default at all - the matcher turns the first into a `_` case with an
+				// empty body and the second into nothing.
+				a[2] == VNull ? null
+					: {e: EvalField.field(ec, a[2], EvalHash.hash("expr")) == VNull ? null : decodeExpr(ec, a[2], dp), pos: dp});
 			case "ETry": ETry(decodeExpr(ec, a[0], dp), [for (c in arrOf(a[1])) decodeCatch(ec, c, dp)]);
 			case "EBreak": EBreak;
 			case "EContinue": EContinue;
@@ -4202,7 +4206,7 @@ class EvalMacro {
 
 	static function decodeCatch(ec:EvalContext, v:EvalValue, dp:Position):Catch {
 		var tv = EvalField.field(ec, v, EvalNames.hType());
-		// name_pos and pos both fall back to the null position - not to the enclosing expression, which is
+		// namePos and pos both fall back to the null position - not to the enclosing expression, which is
 		// the separate default a field's pos uses. haxe.macro.Expr.Catch has neither field, so a reified
 		// catch always takes the fallback: hxparse builds every `switch stream` arm as `macro
 		// @:pos(pat.pos) { try ... catch (_:NoMatch) ... }`, and the catch variable carries a NULL position
@@ -4249,9 +4253,9 @@ class EvalMacro {
 			case VEnumValue(ev) if (ev.eindex == 1): DoubleQuotes;
 			case _: NoQuotes;
 		};
-		// The field's own name_pos; a macro that builds an object field by hand may omit it.
-		// A missing or undecodable name_pos yields the null position: a macro that builds an object field
-		// by hand has no name_pos, and the STRICT position decode would fail the whole Array<Field>.
+		// The field's own namePos; a macro that builds an object field by hand may omit it.
+		// A missing or undecodable namePos yields the null position: a macro that builds an object field
+		// by hand has no namePos, and the STRICT position decode would fail the whole Array<Field>.
 		// A null is what posOf rejects as an invalid expression.
 		var npv = EvalField.field(ec, v, EvalNames.hNameUnderscorePos());
 		var np = npv == VNull ? Position.nullPos : try posOf(ec, npv, dp) catch (_:Dynamic) Position.nullPos;
@@ -4260,7 +4264,7 @@ class EvalMacro {
 
 	static function decodeVar(ec:EvalContext, v:EvalValue, dp:Position):EVar {
 		return {
-			// A missing name_pos defaults to p.
+			// A missing namePos defaults to p.
 			evName: {name: strOf(EvalField.field(ec, v, EvalNames.hName())), pos: posDefault(ec, EvalField.field(ec, v, EvalNames.hNamePos()), dp)},
 			evFinal: boolOf(EvalField.field(ec, v, EvalNames.hIsFinal())),
 			evStatic: boolOf(EvalField.field(ec, v, EvalNames.hIsStatic())),
@@ -4272,7 +4276,7 @@ class EvalMacro {
 
 	static function decodeField(ec:EvalContext, v:EvalValue, dp:Position):ClassField {
 		var name = strOf(EvalField.field(ec, v, EvalNames.hName()));
-		// The field's own pos (used for the field position and, unless the field gives its own name_pos,
+		// The field's own pos (used for the field position and, unless the field gives its own namePos,
 		// the name position). A macro-built field carries its real source pos here; dp is only the fallback
 		// when the field omits pos.
 		var pos = posOf(ec, EvalField.field(ec, v, EvalNames.hPos()), dp);
@@ -4282,7 +4286,7 @@ class EvalMacro {
 			pos: switch (av) { case VEnumValue(ev) if (ev.enpos != null): ev.enpos; case _: Position.nullPos; }} : PlacedAccess)];
 		var kind = decodeFieldKind(ec, EvalField.field(ec, v, EvalNames.hKind()), pos);
 		var meta = decodeMetadata(ec, EvalField.field(ec, v, EvalNames.hMeta()), pos);
-		// `name_pos`, defaulting to the field's pos.
+		// `namePos`, defaulting to the field's pos.
 		var namePos = posDefault(ec, EvalField.field(ec, v, EvalNames.hNameUnderscorePos()), pos);
 		return new ClassField({name: name, pos: namePos}, decodeDoc(EvalField.field(ec, v, EvalNames.hDoc())), pos, meta, access, kind);
 	}
@@ -4361,7 +4365,7 @@ class EvalMacro {
 	static function decodeFunctionArg(ec:EvalContext, v:EvalValue, dp:Position):FunctionArg {
 		var typeV = EvalField.field(ec, v, EvalNames.hType());
 		return {
-			// haxe.macro.Expr.FunctionArg has no name_pos field, so the fallback is always taken: the
+			// haxe.macro.Expr.FunctionArg has no namePos field, so the fallback is always taken: the
 			// enclosing expression's position, the same rule the EVars arm spells out. A macro returning
 			// EFunction with an invalid argument name then reports at the macro call position, where a null
 			// fallback would print the error with no position at all.
@@ -4608,6 +4612,16 @@ class EvalMacro {
 		return hxc.eval.EvalString.EvalString.vOfText(s);
 	}
 
+	// `None` is an Expr OBJECT with both fields null, not vnull, so an empty `default:` survives a macro
+	// round trip as a default that is there but has no body.
+	public static function encodeNullExpr(ec:EvalContext, e:Null<Expr>):EvalValue {
+		if (e != null) return encodeExpr(ec, e);
+		var fields:Map<Int, EvalValue> = new Map();
+		fields.set(EvalHash.hash("pos"), VNull);
+		fields.set(EvalHash.hash("expr"), VNull);
+		return VObject(new VObject([], ODictionary(fields)));
+	}
+
 	public static function encodeExpr(ec:EvalContext, e:Expr):EvalValue {
 		var ed = encodeExprDef(ec, e.expr);
 		var fields:Map<Int, EvalValue> = new Map();
@@ -4636,7 +4650,7 @@ class EvalMacro {
 			case EFunction(kind, f): mkEnumValue(ec, "ExprDef", "EFunction", [encodeFunctionKind(ec, kind), encodeFunc(ec, f)]);
 			case EFor(it, e1): mkEnumValue(ec, "ExprDef", "EFor", [encodeExpr(ec, it), encodeExpr(ec, e1)]);
 			case EWhile(c, e1, flag): mkEnumValue(ec, "ExprDef", "EWhile", [encodeExpr(ec, c), encodeExpr(ec, e1), (switch (flag) { case NormalWhile: VTrue; case DoWhile: VFalse; })]);
-			case ESwitch(e1, cases, edef): mkEnumValue(ec, "ExprDef", "ESwitch", [encodeExpr(ec, e1), encodeArray([for (c in cases) encodeCase(ec, c)]), (edef == null || edef.e == null) ? VNull : encodeExpr(ec, edef.e)]);
+			case ESwitch(e1, cases, edef): mkEnumValue(ec, "ExprDef", "ESwitch", [encodeExpr(ec, e1), encodeArray([for (c in cases) encodeCase(ec, c)]), edef == null ? VNull : encodeNullExpr(ec, edef.e)]);
 			case ETry(e1, catches): mkEnumValue(ec, "ExprDef", "ETry", [encodeExpr(ec, e1), encodeArray([for (c in catches) encodeCatch(ec, c)])]);
 			case EBreak: mkEnumValue(ec, "ExprDef", "EBreak", []);
 			case EContinue: mkEnumValue(ec, "ExprDef", "EContinue", []);
@@ -4687,7 +4701,7 @@ class EvalMacro {
 	static function encodeField(ec:EvalContext, f:ClassField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalNames.hName(), mkString(f.cffName.name));
-		// `name_pos` carries the placed name's position, and decoding the field restores it, so a field a
+		// `namePos` carries the placed name's position, and decoding the field restores it, so a field a
 		// build macro hands back unchanged keeps its name where the parser put it - which the build's
 		// placed-name equality check relies on.
 		fields.set(EvalNames.hNameUnderscorePos(), encPos(f.cffName.pos));
@@ -4729,7 +4743,7 @@ class EvalMacro {
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
-	// Names follow hxc's simplified ABI (plain strings, no name_pos), matching encodeFunctionArg. Meta is
+	// Names follow hxc's simplified ABI (plain strings, no namePos), matching encodeFunctionArg. Meta is
 	// elided like the field/arg encoders.
 	static function encodeTparamDecl(ec:EvalContext, tp:TypeParam):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
@@ -4795,7 +4809,7 @@ class EvalMacro {
 	static function encodeObjField(ec:EvalContext, f:ObjectField):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalNames.hField(), mkString(f.name));
-		// The field name's own position is encoded as `name_pos` and decoded back. Without it every field
+		// The field name's own position is encoded as `namePos` and decoded back. Without it every field
 		// of a structure that went through a build macro would come back carrying the enclosing literal's
 		// position, which the typer then unions into pos - so --json would print `{x: x, y: y}` as the
 		// span of both x and y.
@@ -4846,7 +4860,7 @@ class EvalMacro {
 	static function encodeCatch(ec:EvalContext, c:Catch):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalNames.hName(), mkString(c.name.name));
-		// name_pos and pos travel with the catch, so a build-macro round trip keeps the var-name and clause
+		// namePos and pos travel with the catch, so a build-macro round trip keeps the var-name and clause
 		// positions instead of the decoder fallback.
 		fields.set(EvalNames.hNameUnderscorePos(), encPos(c.name.pos));
 		// Preserve the catch type hint so a build macro that reads and re-emits a try/catch keeps the
@@ -5686,7 +5700,7 @@ class EvalMacro {
 		if (refProtoCache != null) return refProtoCache;
 		var names:Map<Int, Int> = new Map();
 		names.set(EvalHash.keyGet, 0);
-		names.set(EvalHash.key_toString, 1);
+		names.set(EvalHash.keyToString, 1);
 		var proto = new VPrototype(EvalNames.hHaxeMacroRef(), [], new Map(), [VNull, VNull], names, null, PInstance, VNull);
 		proto.pvalue = VPrototype(proto);
 		refProtoCache = proto;

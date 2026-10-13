@@ -849,6 +849,8 @@ private class RetypeSession {
 		return countMatch != null ? countMatch : cf;
 	}
 
+	// Answers "do these unify" while picking a constructor overload, so a failed probe must not leave
+	// bindings behind: the rollback is part of the contract.
 	static function ctorArgUnifies(a:T, b:T):Bool {
 		return try hxc.core.TypeUnification.withMonoRollback(function() {
 			hxc.core.TypeUnification.unifyDefault(a, b);

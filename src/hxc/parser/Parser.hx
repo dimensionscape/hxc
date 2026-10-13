@@ -136,6 +136,11 @@ class Parser {
 	    typing continues.
 	**/
 	public static var commentAnswered:Bool = false;
+	// How many messages the compilation had recorded when the comment answered, read through the counter
+	// the compilation installs; messages recorded after that point are dropped from the answer. -1 when
+	// no comment answered.
+	public static var commentAnsweredMessages:Int = -1;
+	public static var messageCount:Null<Void->Int> = null;
 	// The display file has a conditional block that would be LIVE in the macro context.
 	public static var displayModuleHasMacroDefines:Bool = false;
 	// The display mode is a HOVER (it uses the enclosing-position test with a strict upper bound).
@@ -171,6 +176,7 @@ class Parser {
 		displayMetaPos = null;
 		displaySuppressed = false;
 		commentAnswered = false;
+		commentAnsweredMessages = -1;
 		displayModuleHasMacroDefines = false;
 		displayHoverMode = false;
 		wasAutoTriggered = false;
@@ -390,6 +396,7 @@ class Parser {
 						if (lo <= displayOffset && displayOffset <= t.pos.max) {
 							displaySuppressed = true;
 							if (commentAnsweredAt < 0) commentAnsweredAt = t.pos.min;
+							if (!commentAnswered) commentAnsweredMessages = messageCount == null ? -1 : messageCount();
 							commentAnswered = true;
 						}
 					}

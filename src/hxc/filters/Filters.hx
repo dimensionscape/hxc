@@ -637,18 +637,35 @@ class Filters {
 		}
 	}
 
-	public static function addMetaField(com:Context, t:ModuleType):Void {
+	public static function addMetaField(com:Context, t:ModuleType):Null<TClass> {
 		switch (t) {
 			case TClassDecl(c):
 				var e = TexprTools.buildMetadata(com.basic, t);
-				if (e == null) return;
+				if (e == null) return null;
 				com.addFeature("has_metadata");
 				var cf = TypeFunctions.mkField("__meta__", e.type, e.pos, Position.nullPos, true, true);
 				cf.expr = e;
+				// Java and Cs cannot, because an interface carries no fields there them), so the static is
+				// moved to a companion class named <Name>_HxMeta - which is exactly what
+				// haxe/rtti/Meta.hx:64 falls back to resolving. Without it @someMeta on an interface was
+				// simply dropped (Issue2042).
+				var canDeal = switch (com.platform) {
+					case Java | Cs: false;
+					case _: true;
+				};
+				if (TypeFunctions.hasClassFlag(c, CInterface) && !canDeal) {
+					var path = new hxc.core.Globals.Path(c.path.pack, c.path.name + "_HxMeta");
+					var ncls = TypeFunctions.mkClass(c.module, path, c.pos, Position.nullPos);
+					ncls.orderedStatics.unshift(cf);
+					ncls.statics.set(cf.name, cf);
+					c.meta.unshift({name: ":hasMetadata", params: [], pos: e.pos});
+					return ncls;
+				}
 				c.orderedStatics.unshift(cf);
 				c.statics.set(cf.name, cf);
 			case _:
 		}
+		return null;
 	}
 
 	public static function checkRemoveMetadata(t:ModuleType):Void {
@@ -986,7 +1003,25 @@ class Filters {
 		// is
 		// processed too.
 		for (t in newTypes) switch (t) {
-			case TClassDecl(cls): hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
+			// Two guards. A @:generic base class is marked CExtern by removeGenericBase only later, so the
+			// CExtern check in ensureInheritedCtor cannot see it yet and isRemovableClass rules it out
+			// here.
+			// Given a forwarding constructor, the base would still be preprocessed by the JVM generator,
+			// which
+			// then cannot resolve the super constructor that DCE removed: nothing constructs the super,
+			// only the
+			// generic instance does, and the instance keeps its own chain.
+			//
+			// A target with native overloads gets no synthesized constructor, so
+			// TclassToJvm.generateImplicitCtors
+			// emits the super call first and the delayed dynamic-method inits after it. A synthesized
+			// constructor
+			// would go through TclassToJvm.generateExpr, where the delayed inits precede the body that
+			// holds the
+			// super call: a putfield on an uninitialized `this`, which the verifier rejects.
+			case TClassDecl(cls) if (!tctx.com.platformConfig.supportsOverload
+				&& !hxc.filters.FiltersCommon.isRemovableClass(cls)):
+				hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
 			case _:
 		}
 		{
@@ -1033,11 +1068,16 @@ class Filters {
 		// the
 		// block on that read).
 		hxc.typing.UnusedPure.run(com);
+		// The pre-analyzer type filters. Only Java has one, and the JVM generator depends on it: without
+		// DefaultArguments an argument with a non-null default keeps its unboxed type on the local while
+		// the
+		// method descriptor boxes it, and the JVM verifier rejects the resulting stack map frame.
+		if (com.platform.match(Java)) for (t in newTypes) hxc.filters.DefaultArguments.run(com, t);
 		// The analyzer runs between the pre-analyzer type filters and RenameVars
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		stageMark("analyzer:done"); memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp),
-			com.platform.match(Js) && com.getEsVersion() >= 6);
+			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java));
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
 			// add_final_return: adds a trailing default-valued return to a non-Void function that can fall
@@ -1286,6 +1326,7 @@ class Filters {
 		// The type filters: patchConstructors is the first of them, applied type by
 		// type like the rest.
 		var patchConstructors = hxc.typing.ExceptionFilters.patcher(tctx);
+		var metaCompanions:Array<TClass> = [];
 		for (t in com.types) {
 			switch (t) {
 				case TClassDecl(c): tctx.curclass = c;
@@ -1295,13 +1336,20 @@ class Filters {
 			checkPrivatePath(tctx, t);
 			applyNativePaths(com, t);
 			addRtti(com, t);
-			addFieldInits(com, tctx, renameLocals, t);
-			addMetaField(com, t);
+			switch (com.platform) {
+				case Java | Cs:
+				case _: addFieldInits(com, tctx, renameLocals, t);
+			}
+			switch (addMetaField(com, t)) {
+				case null:
+				case ncls: metaCompanions.push(ncls);
+			}
 			checkVoidField(t);
 			if (com.platform == Cpp) promoteFirstInterfaceToSuper(t);
 			commitFeaturesOf(com, t);
 			checkReservedTypePaths(tctx, t);
 		}
+		for (nc in metaCompanions) com.types.push(TClassDecl(nc));
 		// After field inits have materialized the compiler-generated super constructors, insert an
 		// auto super() into any explicit constructor that omits it.
 		for (t in com.types) switch (t) {

@@ -206,13 +206,27 @@ class ModuleLoader {
 		return Position.getFileContent(file);
 	}
 
-	// Cache each module path's resolved file; directory caching selects platform overrides.
+	// The file a module path resolves to, remembered per module in moduleToFile. It composes pack/Name.hx
+	// and asks findFile once; the directory caching behind findFile is what answers with a
+	// platform-suffixed file instead. A remapped first package segment composes the remap's directory,
+	// leaving the module path itself unchanged.
 	public static function resolveModuleFile(ctx:Context, m:Path, p:Position):String {
 		var key = m.pack.length == 0 ? m.name : m.pack.join(".") + "." + m.name;
 		var cached = ctx.moduleToFile.get(key);
 		if (cached != null) return cached;
-		var prefix = m.pack.length == 0 ? m.name : m.pack.join("/") + "/" + m.name;
+		var rm = ctx.remapPath(m);
+		var prefix = rm.pack.length == 0 ? rm.name : rm.pack.join("/") + "/" + rm.name;
 		var file = findFile(ctx, prefix + ".hx", m, p);
+		// a std.xxxx path that lands on a real std file is not that file's package, so it does not resolve
+		// here at all and the caller retries without the prefix.
+		if (m.pack.length > 0 && m.pack[0] == "std") {
+			var norm = StringTools.replace(file, "\\", "/").toLowerCase();
+			for (sp in ctx.stdPath) {
+				var n = StringTools.replace(sp, "\\", "/").toLowerCase();
+				if (n != "" && StringTools.startsWith(norm, n))
+					throw new ContextError("Module not found : " + Context.sTypePath(m), p);
+			}
+		}
 		ctx.moduleToFile.set(key, file);
 		return file;
 	}
@@ -260,13 +274,17 @@ class ModuleLoader {
 					next.push(field);
 					continue;
 				}
-				field.cffMeta = field.cffMeta.concat(patch.meta);
-				if (patch.typeHint != null) switch (field.cffKind) {
-					case FVar(_, e): field.cffKind = FVar(patch.typeHint, e);
-					case FProp(get, set, _, e): field.cffKind = FProp(get, set, patch.typeHint, e);
-					case FFun(f): field.cffKind = FFun({fParams: f.fParams, fArgs: f.fArgs, fType: patch.typeHint, fExpr: f.fExpr});
+				// A patched field is a new field: the parsed one may be the server's cached declaration,
+				// which must
+				// stay unchanged.
+				var kind = field.cffKind;
+				if (patch.typeHint != null) switch (kind) {
+					case FVar(_, e): kind = FVar(patch.typeHint, e);
+					case FProp(get, set, _, e): kind = FProp(get, set, patch.typeHint, e);
+					case FFun(f): kind = FFun({fParams: f.fParams, fArgs: f.fArgs, fType: patch.typeHint, fExpr: f.fExpr});
 				}
-				if (!patch.remove) next.push(field);
+				if (!patch.remove) next.push(new ClassField(field.cffName, field.cffDoc, field.cffPos, field.cffMeta.concat(patch.meta),
+					field.cffAccess, kind));
 			}
 			result = next;
 		}
@@ -283,9 +301,10 @@ class ModuleLoader {
 	public static var creatingModuleTypes:Int = 0;
 	public static var typeParamDisplay:Null<{t:T, p:Position, scope:TypeParams, owner:Path}> = null;
 
-	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false, queueBuilds:Bool = true):Void {
+	static function createModuleTypes(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool = false, queueBuilds:Bool = true,
+			deferGlobalMeta:Bool = false):Void {
 		creatingModuleTypes++;
-		try createModuleTypes_(ctx, m, tdecls, keepTypes, queueBuilds) catch (e:Dynamic) { creatingModuleTypes--; throw e; }
+		try createModuleTypes_(ctx, m, tdecls, keepTypes, queueBuilds, deferGlobalMeta) catch (e:Dynamic) { creatingModuleTypes--; throw e; }
 		creatingModuleTypes--;
 	}
 
@@ -479,7 +498,8 @@ class ModuleLoader {
 		imports.usingImp.push(impIdx);
 	}
 
-	static function createModuleTypes_(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool, queueBuilds:Bool):Void {
+	static function createModuleTypes_(ctx:Context, m:ModuleDef, tdecls:Array<TypeDecl>, keepTypes:Bool, queueBuilds:Bool,
+			deferGlobalMeta:Bool = false):Void {
 		var decls:Array<ModuleType> = [];
 		var statics:Array<{d:Definition<PlacedAccess, ClassFieldKind>, p:Position}> = [];
 		var hasDeclaration = false;
@@ -720,8 +740,13 @@ class ModuleLoader {
 					var priv = hasClassFlag(d.dFlags, HPrivate);
 					var path = makePath(name, priv, d.dName.pos);
 					var patch = applyTypePatches(ctx, path, d.dMeta, d.dData);
-					d.dMeta = patch.meta;
-					d.dData = patch.fields;
+					// A patch makes a new declaration: the parsed one may be the server's cached copy,
+					// which must stay
+					// unchanged. Writing into it would leak the patch into the cache, where class-path
+					// completion reads
+					// it back and each load applies it again.
+					if (patch.meta != d.dMeta || patch.fields != d.dData)
+						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: patch.fields};
 					var c = TypeFunctions.mkClass(m, path, p, d.dName.pos);
 					// forceBuild initializes heritage and fields once, returning Building on reentry. Synthetic
 					// shells remain Built.
@@ -729,12 +754,29 @@ class ModuleLoader {
 					c.module = m;
 					c.isPrivate = priv;
 					c.doc = d.dDoc;
-					c.meta = d.dMeta;
+					c.meta = d.dMeta.copy();
+					// A class carrying @:inheritDoc collects the docs it inherits once its heritage is
+					// connected.
 					if (TypeFunctions.hasMeta(":inheritDoc", d.dMeta)) {
 						var cDoc = c;
 						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildClassDoc(ctx, cDoc));
 					}
-					// Register type parameters before resolving other modules so their arity is already available.
+					// On Java and C#, a non-extern type's @:strict entries are rewritten into the @:meta
+					// the generator
+					// emits annotations from. CExtern is read inside the delayed closure because the class
+					// flags are set
+					// just below this point.
+					switch (ctx.platform) {
+						case Java | Cs:
+							var cStrict = c;
+							ctx.delay(Context.PTypeField, function() {
+								if (!TypeFunctions.hasClassFlag(cStrict, CExtern))
+									hxc.typing.StrictMeta.checkClass(ctx, cStrict);
+							});
+						case _:
+					}
+					// PASS-1 structural type params: set
+					// here so any module referencing this type sees its arity immediately.
 					c.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m);
 					if (hasClassFlag(d.dFlags, HAbstract)) TypeFunctions.addClassFlag(c, CAbstract);
 					for (f in d.dFlags) switch (f) {
@@ -760,7 +802,7 @@ class ModuleLoader {
 					// Register field shells before resolving their types and bodies.
 					registerFields(c, d.dData, ctx);
 					decls.push(TClassDecl(c));
-					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
+					ctx.declOfType.set(Context.pathKey(path), {decl: EClass(d), pos: p});
 
 				case EEnum(d):
 					var name = d.dName.name;
@@ -773,14 +815,20 @@ class ModuleLoader {
 					var patch = applyTypePatches(ctx, path, d.dMeta);
 					for (p in ctx.typePatches) if (p.path.name == path.name && sameArray(p.path.pack, path.pack) && p.field != null)
 						throw new ContextError("Field type patch not supported for enums", d.dName.pos);
-					d.dMeta = patch.meta;
+					// A patch makes a new declaration: the parsed one may be the server's cached copy,
+					// which must stay
+					// unchanged. Writing into it would leak the patch into the cache, where class-path
+					// completion reads
+					// it back and each load applies it again.
+					if (patch.meta != d.dMeta)
+						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: d.dData};
 					var e:TEnum = {
 						path: path,
 						module: m,
 						pos: p,
 						namePos: d.dName.pos,
 						doc: d.dDoc,
-						meta: d.dMeta,
+						meta: d.dMeta.copy(),
 						params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m),
 						usings: [],
 						restore: function() {},
@@ -794,8 +842,17 @@ class ModuleLoader {
 						var eDoc = e;
 						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildEnumDoc(ctx, eDoc));
 					}
+					// the enum half of the same pass.
+					switch (ctx.platform) {
+						case Java | Cs:
+							var eStrict = e;
+							ctx.delay(Context.PTypeField, function() {
+								if (!eStrict.isExtern) hxc.typing.StrictMeta.checkEnum(ctx, eStrict);
+							});
+						case _:
+					}
 					decls.push(TEnumDecl(e));
-					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
+					ctx.declOfType.set(Context.pathKey(path), {decl: EEnum(d), pos: p});
 
 				case ETypedef(d):
 					var name = d.dName.name;
@@ -804,14 +861,20 @@ class ModuleLoader {
 					var priv = hasEnumFlag(d.dFlags, EPrivate); // ETypedef uses EnumFlag in the AST
 					var path = makePath(name, priv, p);
 					var patch = applyTypePatches(ctx, path, d.dMeta);
-					d.dMeta = patch.meta;
+					// A patch makes a new declaration: the parsed one may be the server's cached copy,
+					// which must stay
+					// unchanged. Writing into it would leak the patch into the cache, where class-path
+					// completion reads
+					// it back and each load applies it again.
+					if (patch.meta != d.dMeta)
+						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: d.dData};
 					var t = TypeFunctions.mkTypedef(m, path, p, d.dName.pos, TypeFunctions.mkMono());
 					t.doc = d.dDoc;
 					t.isPrivate = priv;
-					t.meta = d.dMeta;
+					t.meta = d.dMeta.copy();
 					t.params = hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m);
 					decls.push(TTypeDecl(t));
-					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
+					ctx.declOfType.set(Context.pathKey(path), {decl: ETypedef(d), pos: p});
 
 				case EAbstract(d):
 					var name = d.dName.name;
@@ -819,11 +882,16 @@ class ModuleLoader {
 					var priv = hasAbstractFlag(d.dFlags, AbPrivate);
 					var path = makePath(name, priv, p);
 					var patch = applyTypePatches(ctx, path, d.dMeta, d.dData);
-					d.dMeta = patch.meta;
-					d.dData = patch.fields;
+					// A patch makes a new declaration: the parsed one may be the server's cached copy,
+					// which must stay
+					// unchanged. Writing into it would leak the patch into the cache, where class-path
+					// completion reads
+					// it back and each load applies it again.
+					if (patch.meta != d.dMeta || patch.fields != d.dData)
+						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: patch.fields};
 					var a:TAbstract = {
 						path: path, module: m, pos: p, namePos: d.dName.pos,
-						isPrivate: priv, doc: d.dDoc, meta: d.dMeta, params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m), usings: [],
+						isPrivate: priv, doc: d.dDoc, meta: d.dMeta.copy(), params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m), usings: [],
 						restore: function() {}, ops: [], unops: [], impl: null,
 						thisType: TypeFunctions.mkMono(), from: [], fromField: [], to: [],
 						toField: [], array: [], read: null, write: null, call: null,
@@ -840,7 +908,7 @@ class ModuleLoader {
 						ctx.delay(Context.PConnectField, function() hxc.typing.InheritDoc.buildAbstractDoc(ctx, aDoc));
 					}
 					decls.push(TAbstractDecl(a));
-					ctx.declOfType.set(Context.pathKey(path), {decl: decl.decl, pos: p});
+					ctx.declOfType.set(Context.pathKey(path), {decl: EAbstract(d), pos: p});
 
 					var isCore = TypeFunctions.hasMeta(":coreType", a.meta);
 					if (!(d.dData.length == 0 && isCore)) {
@@ -909,6 +977,10 @@ class ModuleLoader {
 			TypeFunctions.addClassFlag(c, CFinal);
 			// The eagerly built module-fields shell is loadable; its build hook returns Built.
 			c.build = function():BuildState return Built;
+			// The module fields class registers its fields like any other class, so registerFields needs
+			// the
+			// context: without it platformConfig.supportsOverload is unreachable, and a module-level
+			// `overload function` is rejected on Java as if the target had no native overloads.
 			registerFields(c, fields, ctx);
 			decls.push(TClassDecl(c));
 			ctx.declOfType.set(Context.pathKey(fieldsPath), {decl: EClass({
@@ -919,7 +991,7 @@ class ModuleLoader {
 		}
 
 		if (keepTypes) m.types = m.types.concat(decls) else m.types = decls;
-		applyGlobalMetadata(ctx, m, decls);
+		if (!deferGlobalMeta) applyGlobalMetadata(ctx, m, decls);
 		if (queueBuilds) queueClassBuilds(ctx, decls);
 		ctx.moduleImports.set(Context.pathKey(m.path), imports);
 		// Build import alias typedefs before their first use so display requests on the alias name have
@@ -930,6 +1002,33 @@ class ModuleLoader {
 				try resolveNamedImportType(ctx, m, ni.aliasName, ni.aliasPos) catch (_:Dynamic) {}
 		// Share import records so later usage marks remain visible on the module.
 		m.extra.display.importPositions = imports.importPositions;
+	}
+
+	// Applies Compiler.addGlobalMetadata: every type (and field) whose dot path matches a registered
+	// filter gains the metadata. A type gets its global metadata when module resolution reaches its
+	// declaration, which is after every import and after the display check on the declaration's name, so
+	// neither of those answers sees it. A null [mt] applies whatever is still pending.
+	public static function applyPendingGlobalMeta(ctx:Context, m:ModuleDef, mt:Null<ModuleType>):Void {
+		var pending = m == null ? null : m.hxcGlobalMetaPending;
+		if (pending == null) return;
+		if (mt == null) {
+			m.hxcGlobalMetaPending = null;
+			applyGlobalMetadata(ctx, m, pending);
+			return;
+		}
+		for (i in 0...pending.length) {
+			var same = switch [pending[i], mt] {
+				case [TClassDecl(x), TClassDecl(y)]: x == y;
+				case [TEnumDecl(x), TEnumDecl(y)]: x == y;
+				case [TTypeDecl(x), TTypeDecl(y)]: x == y;
+				case [TAbstractDecl(x), TAbstractDecl(y)]: x == y;
+				case _: false;
+			};
+			if (!same) continue;
+			var one = pending.splice(i, 1);
+			applyGlobalMetadata(ctx, m, one);
+			return;
+		}
 	}
 
 	static function applyGlobalMetadata(ctx:Context, m:ModuleDef, decls:Array<ModuleType>):Void {
@@ -956,6 +1055,10 @@ class ModuleLoader {
 		}
 	}
 
+	// The context has to reach registerFields here for the same reason the module fields class needs it:
+	// without it platformConfig.supportsOverload is unreachable, and what allows `overload` on a non-extern
+	// method for a native-overload target. Registering a rewritten class without it THREW on any overload
+	// method, which surfaced as a bare "Build failure" on every test class that declares one.
 	public static function rebuildFields(c:TClass, fields:Array<ClassField>, ?ctx:Context):Void {
 		c.fields = new StringMap<TClassField>();
 		c.statics = new StringMap<TClassField>();
@@ -1138,8 +1241,10 @@ class ModuleLoader {
 			var addAsStatic = isStatic || (isMacroField && ctx != null && ctx.isMacro);
 			var cf = TypeFunctions.mkField(cff.cffName.name, TypeFunctions.mkMono(), cff.cffPos, cff.cffName.pos, isPublic, addAsStatic);
 			cf.doc = cff.cffDoc;
-			cf.meta = cff.cffMeta;
-			// Every non-static abstract implementation member carries CfImpl, regardless of field kind.
+			// Its own array, as the type's (createModuleTypes_): the declaration may be the cached parse.
+			cf.meta = cff.cffMeta.copy();
+			// Every abstract MEMBER (declared in the impl class and not static) is CfImpl, whatever its
+			// kind.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);
 			// Set CfEnum on synthesized :enum fields so reads inline-fold and patterns participate in
 			// exhaustiveness checks.
@@ -1208,6 +1313,19 @@ class ModuleLoader {
 					}
 				}
 			}
+			// A bare @:overload marks native overloading too, and the flag is set here as the field is
+			// created,
+			// so it is already in place when the duplicate check below runs. The rest of that metadata (the
+			// function form, the monomorph check) needs the resolved type and is handled where that is
+			// known.
+			if (ctx != null && ctx.platformConfig.supportsOverload && isMethod)
+				for (m in cf.meta)
+					if (m.name == ":overload" && m.params.length == 0) {
+						TypeFunctions.addClassFieldFlag(cf, CfOverload);
+						break;
+					}
+				// abstract is not a constructor modifier, and dynamic cannot apply to an abstract member
+				// method.
 				if (abstractPos != null) {
 					if (cf.name == "new")
 						throw new ContextError("Invalid modifier: abstract on constructor", abstractPos);
@@ -1215,6 +1333,15 @@ class ModuleLoader {
 					// null function field.
 					if (cf.kind.match(Method(_))) TypeFunctions.addClassFieldFlag(cf, CfAbstract);
 				}
+				// @:java.default off the field's metadata into fctx.default, and turns that into the
+				// CfDefault flag on the Java target. what puts the meta there: an interface method that
+				// carries a Code attribute in the jar is a default method. Without the flag every
+				// jar-loaded functional interface looks like it has several abstract methods, so registers
+				// it and no closure ever implements it.
+				if (TypeFunctions.hasMeta(":java.default", cf.meta)
+					&& ctx != null && ctx.platform == Java
+					&& TypeFunctions.hasClassFlag(c, CExtern) && TypeFunctions.hasClassFlag(c, CInterface))
+					TypeFunctions.addClassFieldFlag(cf, CfDefault);
 				if (TypeFunctions.hasClassFieldFlag(cf, CfImpl) && cf.kind.match(Method(MethDynamic)))
 					throw new ContextError("Invalid modifier: dynamic on method of abstract", cff.cffPos);
 			// Keep the first overload method as primary and prepend subsequent methods and their overloads.
@@ -1612,8 +1739,9 @@ class ModuleLoader {
 
 	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
-		// Register the module before creating its types; register those types after building.
-		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false);
+		// Here, before createModuleTypes. We add types after building.
+		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false, true);
+		m.hxcGlobalMetaPending = m.types.copy();
 		addModule(ctx, m);
 		// Every module depends on StdTypes, and loading the core type String loads String (and through it
 		// Array) and records the dependency, before the imports are reached. The std module is still the
@@ -1678,6 +1806,8 @@ class ModuleLoader {
 		// here at the load - a class queues its build, a typedef, enum or abstract initialises on the
 		// spot (a typedef loads its target).
 		hxc.typing.TypeResolve.resolveModule(ctx, m);
+		// Whatever the resolution did not reach still gets its global metadata before the builds.
+		applyPendingGlobalMeta(ctx, m, null);
 		queueClassBuilds(ctx, m.types);
 		ctx.delay(Context.PConnectField, function() ctx.contextInitRun(m));
 		return m;
@@ -1879,10 +2009,8 @@ class ModuleLoader {
 
 	public static function loadModule(ctx:Context, m:Path, p:Position):ModuleDef {
 		var r = loadModuleOpt(ctx, m, p);
-		if (r == null) {
-			m = ctx.remapPath(m);
+		if (r == null)
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
-		}
 		return r;
 	}
 
@@ -1891,10 +2019,8 @@ class ModuleLoader {
 	// load and must not flush.
 	public static function loadImportedModule(ctx:Context, m:Path, p:Position):ModuleDef {
 		var r = loadModuleOptInner(ctx, m, p);
-		if (r == null) {
-			m = ctx.remapPath(m);
+		if (r == null)
 			throw new ContextError("Type not found : " + Context.sTypePath(m), p, ModuleNotFound(m));
-		}
 		return r;
 	}
 
@@ -1918,7 +2044,6 @@ class ModuleLoader {
 	}
 
 	static function loadModuleOptInner(ctx:Context, m:Path, p:Position):Null<ModuleDef> {
-		m = ctx.remapPath(m);
 		var key = Context.pathKey(m);
 		var existing = ctx.moduleLut.get(key);
 		// Every module load records the loaded module as a dependency of the requesting module.
@@ -1994,10 +2119,11 @@ class ModuleLoader {
 			hxc.parser.Parser.runPendingPdi();
 			hxc.context.ServerCache.cacheParsedFile(ctx, file, pkg.pack, pkg.decls);
 		}
-		// Checks the declared `package` matches the requested pack.
-		if (!sameArray(pkg.pack, m.pack)) {
-			// Two messages, chosen by whether the module was asked for by position or from the command line
-			// (a null position), and both are recorded and let typing continue rather than aborting - the
+		// Checks the declared `package` matches the requested pack - the remapped one .
+		var remap = ctx.remapPath(m).pack;
+		if (!sameArray(pkg.pack, remap)) {
+			// TWO messages, chosen by whether the module was asked for by POSITION or from the command line
+			// (a null position), and both are RECORDED and let typing continue rather than aborting - the
 			// compile goes on to report what the mismatched module could not resolve.
 			if (p == null || (p.min < 0 && p.max < 0 && p.file == Position.nullPos.file)) {
 				ctx.addDiagnostic("Invalid commandline class : " + Context.sTypePath(m)
@@ -2012,14 +2138,42 @@ class ModuleLoader {
 		var requester = ctx.currentModule;
 		// A forbidden package met while typing this module adds the position this module was requested at
 		// ("referenced here"), unless that is the null position.
-		var loaded = try typeModule(ctx, m, file, pkg.decls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
+		var decls = sameArray(remap, m.pack) ? pkg.decls : remapDecls(pkg.decls, remap, m);
+		var loaded = try typeModule(ctx, m, file, decls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 		addDependency(requester, loaded);
 		return loaded;
 	}
 
-	// The first syntax error a DISPLAY file parse recorded is reported. A diagnostics run reports it
-	// as a parser-error diagnostic instead of aborting, which is how a file with a syntax error still
-	// gets a report.
+	// a module loaded through a remap is typedefs to the types of the real package - a private one to
+	// Dynamic - after an import of the real module.
+	static function remapDecls(decls:Array<hxc.ast.Ast.TypeDecl>, remap:Array<String>, m:Path):Array<hxc.ast.Ast.TypeDecl> {
+		var np = Position.nullPos;
+		var acc:Array<hxc.ast.Ast.TypeDecl> = [{decl: EImport({path: [for (s in remap.concat([m.name])) ({name: s, pos: np} : hxc.ast.Ast.PlacedName)], mode: INormal}), pos: np}];
+		function build<F, D>(priv:Bool, d:hxc.ast.Ast.Definition<F, D>, p:Position):Void {
+			var tp:hxc.ast.Ast.TypePath = priv ? {tpackage: [], tname: "Dynamic", tparams: [], tsub: null} : {
+				tpackage: remap,
+				tname: d.dName.name,
+				tparams: [for (tp in d.dParams) TPType({ct: CTPath({tpackage: [], tname: tp.tpName.name, tparams: [], tsub: null}), pos: np})],
+				tsub: null
+			};
+			acc.push({decl: ETypedef({dName: d.dName, dDoc: null, dMeta: [], dParams: d.dParams, dFlags: priv ? [EPrivate] : [],
+				dData: {ct: CTPath(tp), pos: np}}), pos: p});
+		}
+		for (td in decls) switch (td.decl) {
+			case EClass(d): build(Lambda.exists(d.dFlags, f -> f.match(HPrivate)), d, td.pos);
+			case EEnum(d): build(Lambda.exists(d.dFlags, f -> f.match(EPrivate)), d, td.pos);
+			case ETypedef(d): build(Lambda.exists(d.dFlags, f -> f.match(EPrivate)), d, td.pos);
+			case EAbstract(d): build(Lambda.exists(d.dFlags, f -> f.match(AbPrivate)), d, td.pos);
+			// Matches an AStatic access at the null position, compared by value.
+			case EStatic(d): build(Lambda.exists(d.dFlags, a -> a.access.match(AStatic) && a.pos.file == np.file && a.pos.min == np.min && a.pos.max == np.max), d, td.pos);
+			case EImport(_) | EUsing(_):
+		}
+		return acc;
+	}
+
+	// The FIRST syntax error a DISPLAY FILE parse recorded is reported. A diagnostics run reports it as a
+	// parser-error diagnostic instead of aborting, which is how a file with a syntax error still gets a
+	// report.
 	static function reportDisplayParseError(ctx:Context, file:String):Void {
 		if (hxc.parser.Parser.syntaxErrors.length == 0) return;
 		if (!hxc.parser.Parser.matchesDisplayFile(file)) return;

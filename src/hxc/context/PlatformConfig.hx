@@ -96,12 +96,31 @@ class PlatformConfig {
 		};
 	}
 
+	// Java: wrapped-ref captures, padded nulls, native overloads, threads, rest args, atomics, and `this`
+	// untouchable before super(). Local variable scoping is the default (see RenameVars.init).
+	public static function java():PlatformConfig {
+		var c:PlatformConfig = {
+			isStatic: true, sys: true, supportsOverload: true, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: true, usesUtf16: true, supportsUnicode: true,
+			supportsThreads: true, supportsAtomics: true,
+		};
+		c.thisBeforeSuper = false;
+		c.nativeThrows = ["java.lang.RuntimeException", "haxe.Exception"];
+		c.nativeCatches = ["java.lang.Throwable", "haxe.Exception"];
+		c.wildcardCatch = "java.lang.Throwable";
+		c.baseThrow = "java.lang.RuntimeException";
+		return c;
+	}
+
+	// Select the per-target config.
 	public static function get(p:Platform):PlatformConfig {
 		return switch (p) {
 			case Js: js();
 			case Cpp: cpp();
 			case Eval: eval();
 			case Neko: neko();
+			case Java: java();
 			// Cross + the not-yet-targeted platforms use the base config until their backend
 			case _: defaults();
 		}

@@ -165,6 +165,7 @@ class Compiler {
 	public static function resetForNextRequest():Void {
 		hxc.typing.Typer.resetPerRequest();
 		hxc.typing.TypeFields.resetPerRequest();
+		hxc.typing.TypeloadCheck.resetPerRequest();
 		hxc.typing.Typeload.resetPerRequest();
 		hxc.parser.Parser.resetPerRequest();
 		hxc.context.ModuleLoader.resetPerRequest();
@@ -517,6 +518,7 @@ class Compiler {
 		// appending to, so an argument failure reports through that list rather than past it. Recorded
 		// here so the top-level handler can reach it.
 		argFailureCtx = ctx;
+		hxc.parser.Parser.messageCount = () -> ctx.diagnostics.length;
 		ctx.args = args.copy();
 		// sysArgs starts as the parameters; --run replaces it with the arguments after the module name.
 		ctx.sysArgs = section.sysArgs != null ? section.sysArgs : args.copy();
@@ -568,13 +570,15 @@ class Compiler {
 		// a root of their own: --php and the cppia define.
 		var namedARoot = false;
 		var platform:Platform = Cross;
-		// The chosen platform's own package is exempt from the Forbidden rules, and --jvm lifts jvm; a
-		// target with no generator here leaves the platform Cross, so its exemption is applied by hand once
-		// the rules exist.
+		// the chosen platform's own package from the Forbidden rules; a target with no generator here
+		// leaves the platform Cross, so its exemption is applied by hand once the rules exist.
 		var ownPackages:Array<String> = [];
 		var targetDir:Null<String> = null; // The std overlay dir for the chosen target
 		var javaOutSeen = false;
-		// A target may be chosen once. The second one is a failure, which prints as `Error: <msg>` at a
+		var jvmFlag = false; // jvm was spelled directly, not --java + -D jvm
+		// collected while parsing, registered once the target is known.
+		var nativeLibs:Array<{file:String, isExtern:Bool}> = [];
+		// A target may be chosen ONCE. The second one is a failure, which prints as `Error: <msg>` at a
 		// null position.
 		inline function setPlatform(p:hxc.core.Globals.Platform):Void {
 			if (platform != Cross || targetTaken) throw new ArgFailure("Multiple targets");
@@ -701,15 +705,20 @@ class Compiler {
 					}
 					ctx.defines.rawDefineValue("dce", dceMode);
 				case "-java" | "--java":
-					// No generator, but the deprecated --java + -D jvm spelling still warns after the
-					// arguments are known.
+					// No java-source generator, but the platform is set for the same reason as -neko below.
+					// The deprecated --java + -D jvm spelling still warns after the arguments are known. .
 					javaOutSeen = true;
-					ownPackages = ["java"];
-					// No java generator here, but the flag still occupies the target slot, so a second
-					// target is the same "Multiple targets" error.
-					if (targetTaken || platform != Cross) throw new ArgFailure("Multiple targets");
-					targetTaken = true;
-					i++;
+					setPlatform(Java);
+					targetDir = "java";
+					ctx.file = argValue(args, i++, a);
+				case "--jvm":
+					// (no single-dash alias); jvm is the java platform with the jvm define, and the output
+					// value is a jar file rather than a directory.
+					ctx.defines.rawDefine("jvm");
+					jvmFlag = true;
+					setPlatform(Java);
+					targetDir = "java";
+					ctx.file = argValue(args, i++, a);
 				case "-neko" | "--neko":
 					// No neko GENERATOR here, but the platform must still be set: it is set for every
 					// target and only OUTPUT is gated on --no-output, so typing, the filter pipeline and
@@ -719,7 +728,7 @@ class Compiler {
 					targetDir = "neko";
 					ctx.file = argValue(args, i++, a);
 				case "-php" | "--php" | "-swf" | "--swf" | "-cs" | "--cs"
-					| "--jvm" | "-python" | "--python" | "-lua" | "--lua"
+					| "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed
 					// so it does not parse as a compilation root.
@@ -733,7 +742,6 @@ class Compiler {
 						case "-php" | "--php": ["php"];
 						case "-swf" | "--swf": ["flash"];
 						case "-cs" | "--cs": ["cs"];
-						case "--jvm": ["java", "jvm"];
 						case "-python" | "--python": ["python"];
 						case "-lua" | "--lua": ["lua"];
 						case _: ["hl"];
@@ -741,12 +749,19 @@ class Compiler {
 					i++;
 				case "--display":
 					ctx.displaySpec = argValue(args, i++, a);
+				case "-java-lib" | "--java-lib":
+					// The library is registered once the platform and class paths are known, since the file
+					// is resolved against them.
+					nativeLibs.push({file: argValue(args, i++, a), isExtern: false});
+				case "--java-lib-extern":
+					// type checking only, so nothing of it is generated.
+					nativeLibs.push({file: argValue(args, i++, a), isExtern: true});
 				case "-c-arg" | "--c-arg":
 					// The argument is prepended to cArgs.
 					ctx.cArgs.unshift(argValue(args, i++, a));
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
-					| "--swf-version" | "-swf-header" | "--swf-header" | "-java-lib" | "--java-lib"
-					| "--java-lib-extern" | "-net-lib" | "--net-lib" | "-net-std"
+					| "--swf-version" | "-swf-header" | "--swf-header"
+					| "-net-lib" | "--net-lib" | "-net-std"
 					| "--net-std" | "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
@@ -897,6 +912,33 @@ class Compiler {
 		}
 		Setup.initPlatform(ctx, platform);
 		for (pk in ownPackages) ctx.forbiddenPackages.remove(pk);
+		if (platform == Java) {
+			// D java-ver defaults to 7, versions below 5 are rejected, and every level down to java0 is
+			// defined for the std's #if guards.
+			var javaVer = 7;
+			if (ctx.defines.rawDefined("java_ver")) {
+				var s = ctx.defines.rawDefinedValueSafe("java_ver", "");
+				var ok = s.length > 0;
+				for (k in 0...s.length) {
+					var c = s.charCodeAt(k);
+					if (c < "0".code || c > "9".code) ok = false;
+				}
+				if (!ok) throw "int_of_string";
+				javaVer = Std.parseInt(s);
+			} else
+				ctx.defines.rawDefineValue("java_ver", "7");
+			if (javaVer < 5)
+				throw "Java version is defined to target Java " + javaVer
+					+ ", but the compiler can only output code to versions equal or superior to Java 5";
+			var v = javaVer;
+			while (v >= 0) ctx.defines.rawDefine("java" + v--);
+			// with the jvm define the jvm/_std overlay sits in front of the java one added below, and the
+			// jvm package rule.
+			if (ctx.defines.rawDefined("jvm")) {
+				Setup.addStd(ctx, "jvm");
+				ctx.forbiddenPackages.remove("jvm");
+			}
+		}
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		// Run while the arguments are processed: a --display request whose mode does not type the whole
 		// compile (usage, diagnostics and statistics do) defines `display` as that mode, "1" for the empty
@@ -908,6 +950,19 @@ class Compiler {
 			if (dp.length >= 2 && smode != "usage" && smode != "diagnostics" && smode != "statistics")
 				ctx.defines.rawDefineValue("display", smode != "" ? smode : "1");
 		}
+		ctx.jvmFlag = jvmFlag;
+		registerNativeLibs(ctx, platform, nativeLibs);
+		// the queued legacy-flag deprecations emit here, in the order they were seen, before the
+		// no-deprecation-warnings disable is installed below. They come before basic-type loading, like the
+		// reference, so a broken std cannot outrun them.
+		for (s in deprecations)
+			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], s, Position.nullPos);
+		// The --java target with -D jvm and no --jvm flag.
+		if (javaOutSeen && !jvmFlag && ctx.defines.rawDefined("jvm"))
+			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], "--java out.jar -D jvm is deprecated; use --jvm out.jar directly", Position.nullPos);
+		// -D no-deprecation-warnings disables WDeprecated globally.
+		if (ctx.defines.rawDefined("no_deprecation_warnings"))
+			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
 		// The class path and the defines are logged right before the core types load. The defines are
 		// walked in key order, and a define whose value is "1" prints as its bare name.
 		if (ctx.verbose) {
@@ -930,16 +985,6 @@ class Compiler {
 		// The startup class is known from -main during argument handling, so an init macro's
 		// Context.getMainExpr / Compiler.getConfiguration already sees it.
 		if (mainClass != null) ctx.mainClass = parseTypePath(mainClass);
-		// The queued legacy-flag deprecations emit here, in the order they were seen, before the
-		// no-deprecation-warnings disable is installed below.
-		for (s in deprecations)
-			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], s, Position.nullPos);
-		// The --java target with -D jvm and no --jvm flag.
-		if (javaOutSeen && ctx.defines.rawDefined("jvm"))
-			ctx.warning(hxc.core.WarningList.Warning.WDeprecated, [], "--java out.jar -D jvm is deprecated; use --jvm out.jar directly", Position.nullPos);
-		// -D no-deprecation-warnings disables WDeprecated globally.
-		if (ctx.defines.rawDefined("no_deprecation_warnings"))
-			ctx.warningOptions.unshift([{warning: hxc.core.WarningList.Warning.WDeprecated, mode: hxc.core.WarningList.WarningMode.WMDisable}]);
 		// A JSON payload on --display selects the JSON-RPC display protocol. An immediate response travels
 		// the Completion channel and ends the run; a handler that only configures state (diagnostics) lets
 		// compilation continue and answers at report time.
@@ -1250,7 +1295,15 @@ class Compiler {
 			// in the json protocol alike: an empty keyword list (nothing) and the missing point. The lexer
 			// only flags it and typing goes on, but what it types answers nothing.
 			if (hxc.parser.Parser.commentAnswered) {
-				answerOut("Error: No completion point was found\n");
+				// Reported as an ordinary message at Position.nullPos, which a json request answers as its
+				// compiler error.
+				// Messages recorded after the comment are discarded first: nothing typed past it belongs to
+				// the answer.
+				var kept = hxc.parser.Parser.commentAnsweredMessages;
+				if (kept >= 0 && kept < ctx.diagnostics.length) ctx.diagnostics = ctx.diagnostics.slice(0, kept);
+				ctx.addDiagnostic("Error: No completion point was found", Position.nullPos);
+				hxc.compiler.Messages.display(ctx);
+				ctx.diagnostics = [];
 				exitRequest(1);
 			}
 			// The typer raises when the unresolved name is the display subject, so the error answers the
@@ -1571,6 +1624,12 @@ class Compiler {
 						ctx.log("Generating cpp: " + ctx.file);
 						var tGen = hxc.core.Timer.timer(["generate", "cpp"]);
 						hxc.generators.GenCpp.generate(ctx);
+						tGen();
+					} else if (platform == Java && ctx.defines.rawDefined("jvm")) {
+						// There is no Java source generator: a Java build produces output only with the jvm
+						// define.
+						var tGen = hxc.core.Timer.timer(["generate", "java"]);
+						hxc.codegen.jvm.GenerateJvm.generate(ctx.jvmFlag, ctx);
 						tGen();
 					}
 				}
@@ -2252,8 +2311,10 @@ class Compiler {
 							if (cf != null && (cf2 == cf || cfTargets.indexOf(cf2) >= 0))
 								out.push(patchStringPos(e.pos, cf2.name));
 						case FAnon(cf2) | FStatic(_, cf2):
-							// A field reference is reported as the field name's width back from the end of the access,
-							// so a property read through its getter `get_x` reports two characters before the `x` the
+							// A use of a field is reported as the field name's width back from the end of
+							// the access,
+							// so a property read through its getter `get_x` reports two characters before
+							// the `x` the
 							// source wrote.
 							if (cf != null && cf2 == cf) out.push(patchStringPos(e.pos, cf2.name));
 						case FEnum(_, ef2):
@@ -2406,6 +2467,9 @@ class Compiler {
 				hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t));
 		var signatures:Array<hxc.core.Json.JsonValue> = [];
 		for (s in sf.sigs) {
+			// An argument's value is its default from the signature's :value metadata, printed as an
+			// expression.
+			var values = s.meta == null ? null : hxc.ast.Ast.getValueMeta(s.meta);
 			var fields:Array<hxc.core.Json.JsonField> = [];
 			if (s.doc != null) fields.push({name: "documentation", value: hxc.core.Json.JsonValue.JString(hxc.ast.Ast.genDocText(s.doc))});
 			fields.push({name: "args", value: hxc.core.Json.JsonValue.JArray([for (a in s.args)
@@ -2413,7 +2477,11 @@ class Compiler {
 					{name: "name", value: hxc.core.Json.JsonValue.JString(a.name)},
 					{name: "opt", value: hxc.core.Json.JsonValue.JBool(a.opt)},
 					{name: "t", value: ct(a.t)},
-					{name: "value", value: hxc.core.Json.JsonValue.JNull}
+					{name: "value", value: {
+						var v = values == null ? null : values.get(a.name);
+						v == null ? hxc.core.Json.JsonValue.JNull
+							: hxc.core.Json.JsonValue.JObject([{name: "string", value: hxc.core.Json.JsonValue.JString(hxc.ast.Ast.Printer.sExpr(v))}]);
+					}}
 				])])});
 			fields.push({name: "ret", value: ct(s.ret)});
 			signatures.push(hxc.core.Json.JsonValue.JObject(fields));
@@ -2617,6 +2685,10 @@ class Compiler {
 				continue;
 			}
 			if (hxc.compiler.ToplevelScan.excluded(sf.pack, sf.moduleName)) continue;
+			// A package with a `_`-prefixed segment contributes neither its types nor itself.
+			var visible = true;
+			for (s in sf.pack) if (s.length > 0 && s.charCodeAt(0) == "_".code) visible = false;
+			if (!visible) continue;
 			var contributed = false;
 			for (td in sf.decls) {
 				var name:Null<String> = null, isPrivate = false, meta:hxc.ast.Ast.Metadata = [];
@@ -2799,7 +2871,8 @@ class Compiler {
 		var modeArgs:Array<hxc.core.Json.JsonField> = [];
 		if (jc.receiver != null) {
 			var recv = jc.receiver;
-			modeArgs.push({name: "item", value: itemForTypedExpr(ctx, gen, recv, recv.type, jc.receiverQualified)});
+			var recvItem = itemForTypedExpr(ctx, gen, recv, recv.type, jc.receiverQualified);
+			modeArgs.push({name: "item", value: recvItem.item});
 			modeArgs.push({name: "range", value: gen.generatePosAsRange(recv.pos)});
 			modeArgs.push({name: "iterator", value: jc.iterator == null ? hxc.core.Json.JsonValue.JNull
 				: hxc.core.Json.JsonValue.JObject([{name: "type", value: gen.generateType(jc.iterator)}])});
@@ -2808,10 +2881,14 @@ class Compiler {
 					{name: "key", value: gen.generateType(jc.keyValueIterator.key)},
 					{name: "value", value: gen.generateType(jc.keyValueIterator.value)}
 				])});
-			// The module type the item's type names (reading a statics structure as its type) and, when
-			// following changes the type, the one the followed type names - both with the abstract
-			// implementation written out - or nothing at all when either names none.
-			var t = recv.type;
+			// The module type the item's type names (an abstract's implementation is typed as the abstract,
+			// and a
+			// statics structure counts as the type whose statics it holds) and, when following changes the
+			// type, the one
+			// the followed type names. Both are generated with the abstract implementation written out, and
+			// neither is
+			// reported when either type names none.
+			var t = recvItem.t;
 			// `t == follow t`: follow also unwraps Null<T>.
 			var followChanges = switch (t) {
 				case TMono(r): r.type != null;
@@ -2958,12 +3035,16 @@ class Compiler {
 		return loop(e);
 	}
 
-	static function itemForTypedExpr(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T, ?isQualified:Bool):hxc.core.Json.JsonValue {
+	static function itemForTypedExpr(ctx:Context, gen:hxc.core.Genjson, e:hxc.core.Type.TExpr, t:T, ?isQualified:Bool):{item:hxc.core.Json.JsonValue, t:T} {
 		var curMod = displayModule(ctx);
 		function importStatus(path:hxc.core.Globals.Path):hxc.core.CompletionItem.ImportStatus
 			return importStatusFor(ctx, curMod, path);
-		function ct(t2:T):hxc.core.CompletionItem.CompletionType
+		// The type the item is given .
+		var itemType = t;
+		function ct(t2:T):hxc.core.CompletionItem.CompletionType {
+			itemType = t2;
 			return hxc.core.CompletionItem.CompletionTypeTools.fromType(importStatus, t2);
+		}
 		var item:Null<hxc.core.Json.JsonValue> = null;
 		// A field item's isQualified comes from re-typing its bare name in the scope the expression was
 		// typed in (Typer.retypeIsQualified), not from a constant.
@@ -2972,7 +3053,7 @@ class Compiler {
 			return isQualified != null ? isQualified : hxc.typing.Typer.retypeIsQualified(hoverTctx, e, name, e.type);
 		item = exprItem(ctx, gen, e, t, n -> qualified(n), ct).item;
 		if (item == null) item = hxc.core.CompletionItem.CompletionItem.expressionToJson(gen, ct(t));
-		return item;
+		return {item: item, t: itemType};
 	}
 
 	// The hover `expected` field encodes the with-type at the hover point: WithType(t, src) gives {type,
@@ -3284,7 +3365,13 @@ class Compiler {
 			seen:haxe.ds.StringMap<Bool>, add:hxc.compiler.ToplevelScan.ScannedFile->hxc.ast.Ast.TypeDecl->Void):Void {
 		if (tl.heritIsExtends == null) return;
 		var isExtends = tl.heritIsExtends;
-		for (sf in hxc.compiler.ToplevelScan.get(ctx)) for (td in sf.decls) switch (td.decl) {
+		// A package with a `_`-prefixed segment is not visible.
+		inline function visible(pack:Array<String>):Bool {
+			var v = true;
+			for (s in pack) if (s.length > 0 && s.charCodeAt(0) == "_".code) v = false;
+			return v;
+		}
+		for (sf in hxc.compiler.ToplevelScan.get(ctx)) if (visible(sf.pack)) for (td in sf.decls) switch (td.decl) {
 			case EClass(d):
 				if (d.dFlags.contains(HPrivate) || TypeFunctions.hasMeta(":noCompletion", d.dMeta)) continue;
 				var nm = d.dName.name;
@@ -4110,8 +4197,9 @@ class Compiler {
 					cf.expr = saved;
 				}
 			case TClassDecl(c):
-				// :22/:53: the syntax is found by name position - an abstract's impl class carries the
-				// abstract's own, so both kinds of declaration pair back the same way.
+				// The syntax is found by name position. An abstract's implementation class carries the
+				// abstract's own name
+				// position, so both kinds of declaration pair back the same way.
 				var found = false;
 				for (dd in cfile.decls) switch (dd.decl) {
 					case EClass(cd) if (cd.dName.pos.min == c.namePos.min && cd.dName.pos.max == c.namePos.max):
@@ -4217,6 +4305,43 @@ class Compiler {
 		return null;
 	}
 
+	// Only the java target has a loader here; a directory contributes each .jar inside it .
+	static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
+		if (libs.length == 0) return;
+		if (platform != Java)
+			throw "Target " + hxc.core.Globals.platformName(platform)
+				+ " does not support native libraries (trying to load " + libs[0].file + ")";
+		for (lib in libs) {
+			var file = resolveLibFile(ctx, lib.file);
+			var files = if (FileSystem.exists(file) && FileSystem.isDirectory(file))
+				[for (f in FileSystem.readDirectory(file)) if (StringTools.endsWith(f, ".jar")) file + "/" + f]
+			else [file];
+			for (f in files) {
+				// the std flag is the literal path hxjava's extraParams pass.
+				var jl = new hxc.codegen.java.JavaLibrary(f, lib.file == "lib/hxjava-std.jar");
+				jl.isExtern = lib.isExtern;
+				jl.load();
+				ctx.javaLibs.push(jl);
+				ctx.loadExternType.push({
+					name: jl.filePath,
+					load: function(path:hxc.core.Globals.Path, p:Position) return jl.build(path, p)
+				});
+			}
+		}
+	}
+
+	// the name as given, else found on the class path, else with .jar appended.
+	static function resolveLibFile(ctx:Context, name:String):String {
+		if (FileSystem.exists(name)) return name;
+		for (n in [name, name + ".jar"]) {
+			for (dir in ctx.classPath) {
+				var full = (dir == "" ? "" : Setup.addTrailingSlash(dir)) + n;
+				if (FileSystem.exists(full)) return full;
+			}
+		}
+		throw "Java lib " + name + " not found";
+	}
+
 	// Expand one section of the command line before any argument is parsed. An hxml file's lines and a
 	// library's haxelib lines are spliced in place of the argument that named them, --cwd takes effect at
 	// once (a later hxml is read from the new directory), and --run ends the command line: what follows it
@@ -4284,7 +4409,17 @@ class Compiler {
 				i = 0;
 				continue;
 			}
-			// An hxml argument is not expanded when it follows -cmd, and one that cannot be read is pushed
+			// A Java target pulls in the hxjava support library (whose extra parameters add the std jar
+			// with -java-lib)
+			// as if -lib hxjava followed the output value. The rewrite only applies when a value follows.
+			if ((a == "--jvm" || a == "--java" || a == "-java") && hasValue) {
+				acc.push(a);
+				acc.push(l[i + 1]);
+				l = ["-lib", "hxjava"].concat(l.slice(i + 2));
+				i = 0;
+				continue;
+			}
+			// An hxml argument is NOT expanded when it follows -cmd, and one that cannot be read is pushed
 			// back as the literal `<arg> (file not found)`.
 			if (StringTools.endsWith(a, ".hxml") && !(acc.length > 0 && (acc[acc.length - 1] == "-cmd" || acc[acc.length - 1] == "--cmd"))) {
 				var lines = try parseHxml(a) catch (_:Dynamic) null;

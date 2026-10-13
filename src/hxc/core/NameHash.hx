@@ -59,6 +59,8 @@ class NameHash {
 		return finalMix(mixString(0, s));
 	}
 
+	// Key of and of the module table modelled by CompilationCache. A BLOCK header does not count towards
+	// num - see the note on innerKeyHash - so the tuple and each cons cell mix without spending the budget.
 	public static function pathHash(pack:Array<String>, name:String):Int {
 		// Breadth-first queue: 0 = tuple, 1 = list suffix (index into pack), 2 = string
 		var kinds:Array<Int> = [0];
@@ -74,22 +76,76 @@ class NameHash {
 			switch (kind) {
 				case 0:
 					h = mix(h, (2 << 10) | 0);
-					num--;
 					push(1, 0, null);
 					push(2, 0, name);
 				case 1:
 					if (li >= pack.length) {
-						// [] is the immediate 0, whose tagged representation hashes as 1
+						// [] is the immediate 0, whose tagged representation hashes as 1, and an
+						// immediate DOES count towards num
 						h = mix(h, 1);
 						num--;
 					} else {
 						h = mix(h, (2 << 10) | 0);
-						num--;
 						push(2, 0, pack[li]);
 						push(1, li + 1, null);
 					}
 				case _:
 					h = mixString(h, s);
+					num--;
+			}
+		}
+		return finalMix(h);
+	}
+
+	/**
+		Same breadth-first walk as pathHash with one more tuple level. The QUEUE order is what makes it
+		exact: the outer tuple pushes the inner tuple and name2, so name2 is mixed BEFORE the package list
+		and name1, which the nesting alone would not tell you.
+	**/
+	/**
+		Used for tables keyed on a constant pool offset.
+	**/
+	public static function intHash(n:Int):Int {
+		return finalMix(mix(0, (n << 1) | 1));
+	}
+
+	public static function innerKeyHash(pack:Array<String>, name1:String, name2:String):Int {
+		// 0 = outer tuple, 3 = inner tuple, 1 = list suffix (index into pack), 2 = string
+		var kinds:Array<Int> = [0];
+		var listIdx:Array<Int> = [0];
+		var strs:Array<String> = [null];
+		var h = 0, num = 10, rd = 0;
+		inline function push(kind:Int, li:Int, str:String):Void {
+			if (kinds.length < 100) { kinds.push(kind); listIdx.push(li); strs.push(str); }
+		}
+		while (rd < kinds.length && num > 0) {
+			var kind = kinds[rd], li = listIdx[rd], str = strs[rd];
+			rd++;
+			switch (kind) {
+				// A BLOCK mixes its header - (wosize << 10) | tag - and pushes its fields, and the
+				// runtime's own comment on that arm is "Mix in the tag and size, but do not count this
+				// towards [num]". Only an immediate, a string, a double or a custom block decrements it.
+				case 0:
+					h = mix(h, (2 << 10) | 0);
+					push(3, 0, null);
+					push(2, 0, name2);
+				case 3:
+					h = mix(h, (2 << 10) | 0);
+					push(1, 0, null);
+					push(2, 0, name1);
+				case 1:
+					if (li >= pack.length) {
+						// [] is the immediate Val_int(0), whose value representation is 1, and an
+						// immediate DOES count towards num.
+						h = mix(h, 1);
+						num--;
+					} else {
+						h = mix(h, (2 << 10) | 0);
+						push(2, 0, pack[li]);
+						push(1, li + 1, null);
+					}
+				case _:
+					h = mixString(h, str);
 					num--;
 			}
 		}
@@ -108,6 +164,11 @@ class HashTableOrder {
 	var known = new haxe.ds.StringMap<Bool>();
 
 	public function new() {}
+
+	// An int key, such as the constant pool offset of a class in JvmMethod.thrownExceptions.
+	public function addInt(key:Int):Void {
+		add(Std.string(key), NameHash.intHash(key));
+	}
 
 	public function add(key:String, hash:Int):Void {
 		if (known.exists(key)) return; // Replacing a key keeps its position
@@ -141,5 +202,9 @@ class HashTableOrder {
 		var out:Array<String> = [];
 		for (b in buckets) for (e in b) out.push(e.key);
 		return out;
+	}
+
+	public function visitOrderInt():Array<Int> {
+		return [for (k in visitOrder()) Std.parseInt(k)];
 	}
 }

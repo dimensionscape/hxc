@@ -104,18 +104,18 @@ class RenameVarsRun {
 		return switch (e.expr) { case TBlock(_) | TFunction(_): true; case _: false; };
 	}
 
-	// `in_block` is whether the PARENT is a block or a function, and only the BlockScope TBlock arm reads
+	// `inBlock` is whether the PARENT is a block or a function, and only the BlockScope TBlock arm reads
 	// it: a block under an if, a loop, a try or a catch opens its own scope.
-	function collectVars(scope:RenameScope, e:TExpr, in_block:Bool = false):Void {
+	function collectVars(scope:RenameScope, e:TExpr, inBlock:Bool = false):Void {
 		switch (e.expr) {
 			// TVar with hoisting or a function initializer: declare before collecting the init. With
 			// VarHoisting on (the JS config) this is the path every TVar takes.
-			case TVarExpr(v, e_opt) if (hoisting || (e_opt != null && (switch (e_opt.expr) { case TFunction(_): true; case _: false; }))):
+			case TVarExpr(v, eOpt) if (hoisting || (eOpt != null && (switch (eOpt.expr) { case TFunction(_): true; case _: false; }))):
 				declareVar(scope, v);
-				if (e_opt != null) collectVars(scope, e_opt, false);
+				if (eOpt != null) collectVars(scope, eOpt, false);
 			// TVar: collect init first, then declare.
-			case TVarExpr(v, e_opt):
-				if (e_opt != null) collectVars(scope, e_opt, false);
+			case TVarExpr(v, eOpt):
+				if (eOpt != null) collectVars(scope, eOpt, false);
 				declareVar(scope, v);
 			case TLocal(v):
 				useVar(scope, v);
@@ -131,13 +131,13 @@ class RenameVarsRun {
 			// TTry: the catch var is treated as a TVar declared at the head of the catch body. With
 			// NoCatchVarShadowing (the JS config) the catch var is ALSO `use`d so it is reserved against
 			// the surrounding scope.
-			case TTry(try_expr, catches):
-				collectVars(scope, try_expr, false);
+			case TTry(tryExpr, catches):
+				collectVars(scope, tryExpr, false);
 				for (c in catches) {
-					var v_expr = TypeFunctions.mk(TVarExpr(c.v, null), TypeFunctions.tDynamic, c.v.pos);
+					var vExpr = TypeFunctions.mk(TVarExpr(c.v, null), TypeFunctions.tDynamic, c.v.pos);
 					var wrapped = switch (c.expr.expr) {
-						case TBlock(exprs): TypeFunctions.mk(TBlock([v_expr].concat(exprs)), c.expr.type, c.expr.pos);
-						case _: TypeFunctions.mk(TBlock([v_expr, c.expr]), c.expr.type, c.expr.pos);
+						case TBlock(exprs): TypeFunctions.mk(TBlock([vExpr].concat(exprs)), c.expr.type, c.expr.pos);
+						case _: TypeFunctions.mk(TBlock([vExpr, c.expr]), c.expr.type, c.expr.pos);
 					};
 					collectVars(scope, wrapped, false);
 					if (noCatchVarShadowing) useVar(scope, c.v);
@@ -152,7 +152,7 @@ class RenameVarsRun {
 				}
 				if (edef != null) collectIgnoreBlock(scope, edef);
 			// TBlock under BlockScope: a bare block opens a scope.
-			case TBlock(exprs) if (blockScope && !in_block):
+			case TBlock(exprs) if (blockScope && !inBlock):
 				var child = new RenameScope(scope);
 				for (x in exprs) collectVars(child, x, true);
 			case TWhile(condition, body, flag):

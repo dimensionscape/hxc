@@ -202,6 +202,37 @@ class TypeUnification {
 	// prior state and the exception is rethrown. On success the recorded states are discarded (the
 	// bindings stand), and any monos recorded here are merged into an enclosing frame so an outer
 	// rollback still undoes them.
+	/**
+		Before trying the candidates it snapshots `(m, m.type, m.downConstraints)` for the monomorphs
+		REGISTERED on this typer context, and on failure resets exactly those, by identity:
+
+		What keeps that out of a callee is REGISTRATION, not the write site: gives every field a fresh
+		registry and it on entry, so a callee's own monomorphs are never in the caller's list. hxc mirrors
+		that - TypeFields builds a fresh TyperContext per field, and TyperContext's constructor gives it an
+		empty `monomorphs`.
+
+		Journalling every touched monomorph instead made a failing candidate unbind the CALLEE's own stored
+		signature. haxe.Int64.ofInt is `return cast x`, whose ECast monomorph the return unification binds
+		to Int64; an enclosing cast probe then rolled that binding back, so at body's type was an unbound
+		monomorph rather than Int64 and the inliner wrapped a second cast around one the body already
+		carried.
+	**/
+	public static function withRegisteredMonoRollback<R>(monos:Array<{m:TMono, p:hxc.ast.Position}>, f:Void->R):R {
+		var known = [for (e in monos) {m: e.m, ty: e.m.type, down: e.m.downConstraints}];
+		var current = monos.copy();
+		try {
+			return f();
+		} catch (ex:haxe.Exception) {
+			for (k in known) {
+				if (k.ty != k.m.type) k.m.type = k.ty;
+				if (k.down != k.m.downConstraints) k.m.downConstraints = k.down;
+			}
+			monos.splice(0, monos.length);
+			for (e in current) monos.push(e);
+			throw ex;
+		}
+	}
+
 	public static function withMonoRollback<R>(f:Void->R):R {
 		var outer = monoJournal;
 		var frame:Array<MonoState> = [];
@@ -351,10 +382,10 @@ class TypeUnification {
 	}
 
 	// Called by printing etc.; must not modify state.
-	static function classify_down_constraints_(m:TMono):{monos:Array<TMono>, kind:TMonoConstraintKind} {
+	static function classifyDownConstraintsWithMonos(m:TMono):{monos:Array<TMono>, kind:TMonoConstraintKind} {
 		var types:Array<TUpConstraint> = [];
 		var fields = new StringMap<TClassField>();
-		var is_open = false;
+		var isOpen = false;
 		var monos:Array<TMono> = [];
 
 		function check(constr:TMonoConstraint):Void {
@@ -362,7 +393,7 @@ class TypeUnification {
 				case MMono(m2, name):
 					switch (m2.type) {
 						case null:
-							var res = classify_down_constraints_(m2);
+							var res = classifyDownConstraintsWithMonos(m2);
 							monos = monos.concat(res.monos);
 							switch (res.kind) {
 								case CUnknown:
@@ -380,15 +411,15 @@ class TypeUnification {
 				case MType(t2, name):
 					types.push({t: t2, name: name});
 				case MOpenStructure | MEmptyStructure:
-					is_open = true;
+					isOpen = true;
 			}
 		}
 		for (c in m.downConstraints) check(c);
 
 		var k1:TMonoConstraintKind = types.length > 0 ? CTypes(types) : CUnknown;
 		var kind:TMonoConstraintKind =
-			if (!isEmptyMap(fields) || is_open) {
-				var k2 = CStructural(fields, is_open);
+			if (!isEmptyMap(fields) || isOpen) {
+				var k2 = CStructural(fields, isOpen);
 				switch (k1) {
 					case CTypes(_): CMixed([k1, k2]);
 					case _: k2;
@@ -400,7 +431,7 @@ class TypeUnification {
 	}
 
 	public static function classifyDownConstraints(m:TMono):TMonoConstraintKind {
-		return classify_down_constraints_(m).kind;
+		return classifyDownConstraintsWithMonos(m).kind;
 	}
 
 	static function checkDownConstraints(constr:TMonoConstraintKind, t:T):Void {
@@ -415,7 +446,7 @@ class TypeUnification {
 						case name: checkConstraint(name, f);
 					}
 				}
-			case CStructural(fields, _is_open):
+			case CStructural(fields, _):
 				var t2 = TypeFunctions.mkAnon(new Ref<AnonStatus>(Closed), fields);
 				unify(defaultUnificationContext, t, t2);
 			case CMixed(l):
@@ -629,21 +660,21 @@ class TypeUnification {
 		}
 	}
 
-	static function fastEqCheck(type_param_check:T->T->Bool, a:T, b:T):Bool {
+	static function fastEqCheck(typeParamCheck:T->T->Bool, a:T, b:T):Bool {
 		if (a == b) return true;
 		return switch [a, b] {
 			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
 				var ok = true;
-				for (i in 0...s1.args.length) if (!type_param_check(s1.args[i].t, s2.args[i].t)) { ok = false; break; }
-				ok && type_param_check(s1.ret, s2.ret);
+				for (i in 0...s1.args.length) if (!typeParamCheck(s1.args[i].t, s2.args[i].t)) { ok = false; break; }
+				ok && typeParamCheck(s1.ret, s2.ret);
 			case [TType(t1, l1), TType(t2, l2)]:
-				t1 == t2 && forAll2(type_param_check, l1, l2);
+				t1 == t2 && forAll2(typeParamCheck, l1, l2);
 			case [TEnum(e1, l1), TEnum(e2, l2)]:
-				e1 == e2 && forAll2(type_param_check, l1, l2);
+				e1 == e2 && forAll2(typeParamCheck, l1, l2);
 			case [TInst(c1, l1), TInst(c2, l2)]:
-				c1 == c2 && forAll2(type_param_check, l1, l2);
+				c1 == c2 && forAll2(typeParamCheck, l1, l2);
 			case [TAbstract(a1, l1), TAbstract(a2, l2)]:
-				a1 == a2 && forAll2(type_param_check, l1, l2);
+				a1 == a2 && forAll2(typeParamCheck, l1, l2);
 			case _:
 				false;
 		}
@@ -1101,7 +1132,7 @@ class TypeUnification {
 				}
 				if (!loop(c1, tl1)) error([cannotUnify(a, b)]);
 			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
-				var uctx2 = get_nested_context(uctx);
+				var uctx2 = getNestedContext(uctx);
 				var i = 0;
 				try {
 					switch (TypeFunctions.follow(s2.ret)) {
@@ -1168,22 +1199,22 @@ class TypeUnification {
 						switch (f2.kind) {
 							case Var(vk) if (switch (vk.read) { case AccNo | AccNever: true; case _: false; }):
 								// Write target: recursive unification with possible recursion check
-								var old_monos = unifyNewMonos.recStack;
+								var oldMonos = unifyNewMonos.recStack;
 								unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
 								recStack(unifyStack, {a: ft, b: f2.type},
 									function(p) return fastEq(p.b, f2.type) && fastEqMono(unifyNewMonos.recStack, ft, p.a),
-									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = old_monos; throw e; } return null; },
+									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
 									function(l) { error([invalidField(n)].concat(l)); return null; });
-								unifyNewMonos.recStack = old_monos;
+								unifyNewMonos.recStack = oldMonos;
 							case Method(MethNormal) | Method(MethInline) | Var({write: AccNo}) | Var({write: AccNever}):
 								// Read-only var: reversed unification
-								var old_monos = unifyNewMonos.recStack;
+								var oldMonos = unifyNewMonos.recStack;
 								unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
 								recStack(unifyStack, {a: f2.type, b: ft},
 									function(p) return fastEqMono(unifyNewMonos.recStack, p.b, ft) && fastEq(f2.type, p.a),
-									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = old_monos; throw e; } return null; },
+									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
 									function(l) { error([invalidField(n)].concat(l)); return null; });
-								unifyNewMonos.recStack = old_monos;
+								unifyNewMonos.recStack = oldMonos;
 							case _:
 								try unifyWithAccess(uctx, f1, ft, f2)
 								catch (e:UnifyError) error([invalidField(n)].concat(e.errors));
@@ -1345,8 +1376,8 @@ class TypeUnification {
 					if (TypeFunctions.hasClassFieldFlag(f2, CfPublic) && !TypeFunctions.hasClassFieldFlag(f1, CfPublic))
 						error([invalidVisibility(n)]);
 					try {
-						var f1_type = if (fastEq(f1.type, f2.type)) f1.type else TypeFunctions.fieldType(f1);
-						unifyWithAccess(uctx, f1, f1_type, f2);
+						var f1Type = if (fastEq(f1.type, f2.type)) f1.type else TypeFunctions.fieldType(f1);
+						unifyWithAccess(uctx, f1, f1Type, f2);
 						switch (a1.status.get()) {
 							case Statics(_) if (!TypeFunctions.hasMeta(Meta.MaybeUsed, f1.meta)):
 								f1.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(f1.meta);
@@ -1382,7 +1413,7 @@ class TypeUnification {
 		return try { f(arg); true; } catch (e:UnifyError) false;
 	}
 
-	static function get_abstract_context(uctx:UnificationContext, a:T, b:T, ab:TAbstract):UnificationContext {
+	static function getAbstractContext(uctx:UnificationContext, a:T, b:T, ab:TAbstract):UnificationContext {
 		if (TypeFunctions.hasMeta(Meta.CoreType, ab.meta) || TypeFunctions.hasMeta(Meta.Transitive, ab.meta))
 			return uctx;
 		else if (uctx.allowAbstractCast)
@@ -1393,7 +1424,7 @@ class TypeUnification {
 		}
 	}
 
-	static function get_nested_context(uctx:UnificationContext):UnificationContext {
+	static function getNestedContext(uctx:UnificationContext):UnificationContext {
 		return uctx.withAllowAbstractCast(true);
 	}
 
@@ -1404,9 +1435,9 @@ class TypeUnification {
 			false);
 	}
 
-	static function get_abstract_unify_func(uctx:UnificationContext, equality_kind:EqKind):T->T->Void {
+	static function getAbstractUnifyFunc(uctx:UnificationContext, equalityKind:EqKind):T->T->Void {
 		if (uctx.allowTransitiveCast) return function(x:T, y:T) unify(uctx, x, y);
-		else return function(x:T, y:T) typeEq(uctx.withEqualityKind(equality_kind), x, y);
+		else return function(x:T, y:T) typeEq(uctx.withEqualityKind(equalityKind), x, y);
 	}
 
 	static function unifyAbstracts(uctx:UnificationContext, a:T, b:T, a1:TAbstract, tl1:Array<T>, a2:TAbstract, tl2:Array<T>):Void {
@@ -1454,18 +1485,18 @@ class TypeUnification {
 	static function unifiesFromDirect(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, t:T):Bool {
 		return doesFuncUnify(function() {
 			var t2 = TypeFunctions.applyParams(ab.params, tl, t);
-			var uctx2 = get_abstract_context(uctx, a, b, ab);
-			var unify_func = get_abstract_unify_func(uctx2, EqRightDynamic);
-			unify_func(a, t2);
+			var uctx2 = getAbstractContext(uctx, a, b, ab);
+			var unifyFunc = getAbstractUnifyFunc(uctx2, EqRightDynamic);
+			unifyFunc(a, t2);
 		});
 	}
 
 	static function unifiesToDirect(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, t:T):Bool {
 		return doesFuncUnify(function() {
 			var t2 = TypeFunctions.applyParams(ab.params, tl, t);
-			var uctx2 = get_abstract_context(uctx, a, b, ab);
-			var unify_func = get_abstract_unify_func(uctx2, EqStrict);
-			unify_func(t2, b);
+			var uctx2 = getAbstractContext(uctx, a, b, ab);
+			var unifyFunc = getAbstractUnifyFunc(uctx2, EqStrict);
+			unifyFunc(t2, b);
 		});
 	}
 
@@ -1494,10 +1525,10 @@ class TypeUnification {
 					function map0(x:T):T return TypeFunctions.applyParams(ab.params, tl, x);
 					var monos = spawnConstrainedMonos(map0, params);
 					function map2(x:T):T return map0(TypeFunctions.applyParams(params, monos, x));
-					var uctx2 = get_abstract_context(uctx, a, b, ab);
-					var unify_func = get_abstract_unify_func(uctx2, EqStrict);
-					unify_func(a, map2(t2));
-					unify_func(map2(r), b);
+					var uctx2 = getAbstractContext(uctx, a, b, ab);
+					var unifyFunc = getAbstractUnifyFunc(uctx2, EqStrict);
+					unifyFunc(a, map2(t2));
+					unifyFunc(map2(r), b);
 				case _:
 					throw "unifies_from_field: expected TFun";
 			}
@@ -1527,13 +1558,13 @@ class TypeUnification {
 					function map0(x:T):T return TypeFunctions.applyParams(ab.params, tl, x);
 					var monos = spawnConstrainedMonos(map0, params);
 					function map2(x:T):T return map0(TypeFunctions.applyParams(params, monos, x));
-					var uctx2 = get_abstract_context(uctx, a, b, ab);
-					var unify_func = get_abstract_unify_func(uctx2, EqStrict);
+					var uctx2 = getAbstractContext(uctx, a, b, ab);
+					var unifyFunc = getAbstractUnifyFunc(uctx2, EqStrict);
 					var athis = map2(ab.thisType);
 					// Cannot allow implicit casts when the this type is not completely known yet
 					if (TypeFunctions.hasMeta(Meta.MultiType, ab.meta) && TypeFunctions.hasMono(athis)) throw new UnifyError([]);
 					withVariance(uctx2, function(x, y) typeEq(uctx2.withEqualityKind(EqStrict), x, y), athis, map2(ta2));
-					unify_func(map2(t2), b);
+					unifyFunc(map2(t2), b);
 				case _:
 					throw "unifies_to_field: expected TFun";
 			}
@@ -1548,14 +1579,14 @@ class TypeUnification {
 			recStack(varianceStack, {a: t1, b: t2}, function(p) return fastEqPair(t1, t2, p.a, p.b),
 				function() { fn(); return null; }, function(_) { fail(); return null; });
 		}
-		function unifyNested(x:T, y:T):Void withVariance(get_nested_context(uctx), f, x, y);
+		function unifyNested(x:T, y:T):Void withVariance(getNestedContext(uctx), f, x, y);
 		function unifyTls(tl1:Array<T>, tl2:Array<T>):Void { for (i in 0...tl1.length) unifyNested(tl1[i], tl2[i]); }
-		function get_this_type(ab:TAbstract, tl:Array<T>):T return TypeFunctions.followWithoutType(TypeFunctions.applyParams(ab.params, tl, ab.thisType));
-		function get_defined_type(td:TDef, tl:Array<T>):T return TypeFunctions.followWithoutType(TypeFunctions.applyTypedef(td, tl));
+		function getThisType(ab:TAbstract, tl:Array<T>):T return TypeFunctions.followWithoutType(TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+		function getDefinedType(td:TDef, tl:Array<T>):T return TypeFunctions.followWithoutType(TypeFunctions.applyTypedef(td, tl));
 		function compareUnderlying():Void typeEq(uctx.withUnderlyingBothDynamic(), t1, t2);
 		function unifiesAbstract(uctx:UnificationContext, a:T, b:T, ab:TAbstract, tl:Array<T>, ats:Array<T>):Bool {
 			return try {
-				var uctx2 = get_abstract_context(uctx, a, b, ab);
+				var uctx2 = getAbstractContext(uctx, a, b, ab);
 				recStackDefault(abstractCastStack, {a: a, b: b}, function(p) return fastEqPair(a, b, p.a, p.b),
 					function() return Lambda.exists(ats, function(at) return doesFuncUnifyArg(function(at) {
 						var at2 = TypeFunctions.applyParams(ab.params, tl, at);
@@ -1570,12 +1601,12 @@ class TypeUnification {
 			case [TEnum(en1, tl1), TEnum(en2, tl2)] if (en1 == en2): unifyTls(tl1, tl2);
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2): unifyTls(tl1, tl2);
 			case [TType(td1, tl1), TType(td2, tl2)] if (td1 == td2): unifyTls(tl1, tl2);
-			case [TType(td, tl), _]: unifyRec(function() unifyWithVariance(uctx, f, get_defined_type(td, tl), t2));
-			case [_, TType(td, tl)]: unifyRec(function() unifyWithVariance(uctx, f, t1, get_defined_type(td, tl)));
+			case [TType(td, tl), _]: unifyRec(function() unifyWithVariance(uctx, f, getDefinedType(td, tl), t2));
+			case [_, TType(td, tl)]: unifyRec(function() unifyWithVariance(uctx, f, t1, getDefinedType(td, tl)));
 			case [TAbstract(ab, tl), _] if (TypeFunctions.hasMeta(Meta.ForwardVariance, ab.meta)):
-				withVariance(uctx, f, get_this_type(ab, tl), t2);
+				withVariance(uctx, f, getThisType(ab, tl), t2);
 			case [_, TAbstract(ab, tl)] if (TypeFunctions.hasMeta(Meta.ForwardVariance, ab.meta)):
-				withVariance(uctx, f, t1, get_this_type(ab, tl));
+				withVariance(uctx, f, t1, getThisType(ab, tl));
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
 				if (!unifiesAbstract(uctx, t1, t2, a1, tl1, a1.to) && !unifiesAbstract(uctx, t1, t2, a2, tl2, a2.from)) fail();
 				compareUnderlying();
@@ -1596,7 +1627,7 @@ class TypeUnification {
 	}
 
 	static function unifyTypeParams(uctx:UnificationContext, a:T, b:T, tl1:Array<T>, tl2:Array<T>):Void {
-		var uctx2 = get_nested_context(uctx);
+		var uctx2 = getNestedContext(uctx);
 		var i = 0;
 		for (k in 0...tl1.length) {
 			i++;
@@ -1622,7 +1653,7 @@ class TypeUnification {
 	}
 
 	static function unifyWithAccess(uctx:UnificationContext, f1:TClassField, t1:T, f2:TClassField):Void {
-		var uctx2 = get_nested_context(uctx);
+		var uctx2 = getNestedContext(uctx);
 		switch (f2.kind) {
 			case Var(vk) if (switch (vk.read) { case AccNo | AccNever: true; case _: false; }):
 				unify(uctx2, f2.type, t1);
@@ -1797,42 +1828,42 @@ class TypeUnification {
 		return tl;
 	}
 
-	public static function unify_min_(uctx:UnificationContext, common_types:Array<T>, tl:Array<T>):UnifyMinResult {
-		var first_error:Null<{l:Array<UnifyErrorKind>, p:Int}> = null;
-		function loop(index:Int, common_types:Array<T>, tl:Array<T>):UnifyMinResult {
+	public static function unifyMinFrom(uctx:UnificationContext, commonTypes:Array<T>, tl:Array<T>):UnifyMinResult {
+		var firstError:Null<{l:Array<UnifyErrorKind>, p:Int}> = null;
+		function loop(index:Int, commonTypes:Array<T>, tl:Array<T>):UnifyMinResult {
 			if (tl.length == 0) {
-				if (common_types.length == 0) {
-					return switch (first_error) {
+				if (commonTypes.length == 0) {
+					return switch (firstError) {
 						case null: UnifyMinError([Unify_custom("Could not determine common type, please add a type-hint")], 0);
 						case fe: UnifyMinError(fe.l, fe.p);
 					}
 				} else {
-					return UnifyMinOk(common_types[0]);
+					return UnifyMinOk(commonTypes[0]);
 				}
 			} else {
 				var t = tl[0];
 				var rest = tl.slice(1);
-				var newCommon = common_types.filter(function(tp) {
+				var newCommon = commonTypes.filter(function(tp) {
 					return try {
 						unify(uctx, t, tp);
 						true;
 					} catch (e:UnifyError) {
-						if (first_error == null) first_error = {l: e.errors, p: index};
+						if (firstError == null) firstError = {l: e.errors, p: index};
 						false;
 					}
 				});
 				return loop(index + 1, newCommon, rest);
 			}
 		}
-		return loop(0, common_types, tl);
+		return loop(0, commonTypes, tl);
 	}
 
 	public static function unifyMin(uctx:UnificationContext, t0:T, tl:Array<T>):UnifyMinResult {
 		return switch (tl) {
 			case []: UnifyMinOk(t0);
 			case _:
-				var common_types = collectBaseTypes(t0);
-				unify_min_(uctx, common_types, tl);
+				var commonTypes = collectBaseTypes(t0);
+				unifyMinFrom(uctx, commonTypes, tl);
 		}
 	}
 

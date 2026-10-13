@@ -180,7 +180,7 @@ class Exceptions {
 		return checkParent && cls.superClass != null && isHaxeExceptionClass(cls.superClass.c, checkParent);
 	}
 
-	static function isHaxeException(t:T, checkParent:Bool = true):Bool {
+	public static function isHaxeException(t:T, checkParent:Bool = true):Bool {
 		return switch (TypeFunctions.followWithAbstracts(t)) {
 			case TInst(cls, _): isHaxeExceptionClass(cls, checkParent);
 			case _: false;
@@ -377,8 +377,11 @@ class Exceptions {
 
 	public static function filter(tctx:TyperContext):TExpr->TExpr {
 		var com = tctx.com;
+		// The exception filter runs on every target it is implemented for, Java among them. Without it on
+		// Java, catch(e:Dynamic) keeps its Dynamic type and the JVM generator emits a catch on
+		// java.lang.Object, which the verifier rejects.
 		switch (com.platform) {
-			case Js | Eval | Cpp:
+			case Js | Eval | Cpp | Java:
 			case _: return function(e) return e;
 		}
 		var cfg = com.platformConfig;

@@ -14,18 +14,54 @@ class CapturedVars {
 	public static function capturedVars(com:Context, e:TExpr):TExpr {
 		var basic = com.basic;
 
-		// The default implementation backs a captured var with a one-element haxe Array
-		function capturedType(t:T):T return basic.tarray(t);
+		// Java and C# back a captured var with a NATIVE array instead of a haxe one, which is what makes
+		// the boxed slot come out as `[I` rather than `Lhaxe/root/Array;`.
+		var cnativearray:TClass = null;
+		switch (com.platform) {
+			case Java | Cs:
+				for (mt in com.types) switch (mt) {
+					case TClassDecl(c) if (c.path.name == "NativeArray" && c.path.pack.length == 1
+						&& (c.path.pack[0] == "java" || c.path.pack[0] == "cs")):
+						cnativearray = c;
+						break;
+					case _:
+				}
+			case _:
+		}
+		function mkUntypedCall(name:String, p:Position, params:Array<TExpr>):TExpr {
+			var dyn = TypeFunctions.tDynamic;
+			return TypeFunctions.mk(TCall(TypeFunctions.mk(TIdent(name), dyn, p), params), dyn, p);
+		}
+		// the default implementation backs a captured var with a one-element haxe Array
+		function capturedType(t:T):T
+			return cnativearray != null ? TInst(cnativearray, [t]) : basic.tarray(t);
 		function mkRef(v:TVar, ve:Null<TExpr>, p:Position):TExpr {
+			if (cnativearray != null) {
+				if (ve == null) {
+					var eone = TypeFunctions.mk(TConst(TInt(1)), basic.tint, p);
+					var et = switch (v.type) {
+						case TInst(_, [t1]): t1;
+						case _: throw "die";
+					};
+					return TypeFunctions.mk(TNew(cnativearray, [et], [eone]), v.type, p);
+				}
+				var call = mkUntypedCall("__array__", p, [ve]);
+				return TypeFunctions.mk(call.expr, v.type, call.pos);
+			}
 			return TypeFunctions.mk(TArrayDecl(ve == null ? [] : [ve]), v.type, p);
 		}
+		// and are the SAME expression in both implementations
 		function mkRefAccess(e:TExpr, v:TVar):TExpr {
 			var inner = TypeFunctions.mk(e.expr, v.type, e.pos);
 			return TypeFunctions.mk(TArray(inner, TypeFunctions.mk(TConst(TInt(0)), basic.tint, e.pos)), e.type, e.pos);
 		}
 		function mkInit(av:TVar, v:TVar, pos:Position):TExpr {
 			var elocal = TypeFunctions.mk(TLocal(v), v.type, pos);
-			return TypeFunctions.mk(TVarExpr(av, TypeFunctions.mk(TArrayDecl([elocal]), av.type, pos)), basic.tvoid, pos);
+			var earray = if (cnativearray != null) {
+				var call = mkUntypedCall("__array__", pos, [elocal]);
+				TypeFunctions.mk(call.expr, av.type, call.pos);
+			} else TypeFunctions.mk(TArrayDecl([elocal]), av.type, pos);
+			return TypeFunctions.mk(TVarExpr(av, earray), basic.tvoid, pos);
 		}
 
 		// Fresh var carrying the original (pre-wrap) type

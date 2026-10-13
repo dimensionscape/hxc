@@ -534,9 +534,11 @@ class Operators {
 						var bt2 = sig.args[1].t;
 						var btret = sig.ret;
 						function check(ce1:TExpr, ce2:TExpr, swapped:Bool):BinopResult {
-							// Fresh monos per attempt so a failed probe cannot bind the method's own params, and
-							// wrap the whole attempt in a mono-rollback so a failure restores every touched mono.
-							return TypeUnification.withMonoRollback(function() {
+							// does NO save/restore: the only per-attempt isolation is the fresh
+							// spawnConstrainedMonos below, which keeps a failed probe off the method's
+							// OWN params. Whatever it binds in the operands stays bound, as in the
+							// reference.
+							{
 								// The op method's own params spawn CONSTRAINED, so a Float operand cannot
 								// bind a T:Int param (UInt.equalsInt vs equalsFloat selection).
 								var monos = TypeUnification.spawnConstrainedMonos(function(t) return t, cf.params);
@@ -565,13 +567,17 @@ class Operators {
 								}
 								var needsAssign = isAssignOp && Type.enumEq(aop.op, op);
 								return make(aop.op, cf, re1, re2, tret, needsAssign, swapped);
-							});
+							}
 						}
-						// Try direct order, then the commutative-swapped order. The search moves on only
-						// for a UNIFICATION failure (a unify error, or the one castOrUnifyRaise raises);
-						// any other error out of the attempt - such as the inliner's write check on the
-						// overload it picked - goes on up. The mono rollback inside check has already
-						// undone any speculative binding.
+						// Try the direct order, then the commutative-swapped order. The search moves on
+						// only after a
+						// UNIFICATION failure (UnifyError, or the CastUnifyError of castOrUnifyRaise); any
+						// other error
+						// out of the attempt, such as the inliner rejecting a write in the overload it
+						// picked, goes on up.
+						// Nothing is rolled back: whatever a failed attempt bound in the operands stays
+						// bound (see check
+						// above).
 						try {
 							return check(e1, e2, false);
 						} catch (_:UnifyError) {
@@ -1046,7 +1052,7 @@ class Operators {
 				var readCe = FieldAccessTools.getFieldExpr(readSe.access, FCall);
 				var read = switch (TypeFunctions.follow(readCe.type)) {
 					case TFun(rs) if (rs.args.length >= 2):
-						var nm = TexprTools.makeString(basic, name, se.access.pos);
+						var nm = TexprTools.makeString(basic, name, hxc.ast.Position.nullPos);
 						Calls.makeCall(ctx, readCe, Calls.padPosInfos(ctx, rs.args, [recv, Typer.castOrUnify(ctx, rs.args[1].t, nm, nm.pos)], p), rs.ret, p);
 					case _: throw new TypingError("Resolve target is not a function", se.access.pos);
 				};
@@ -1064,7 +1070,7 @@ class Operators {
 						var writeCe = FieldAccessTools.getFieldExpr(writeSe.access, FCall);
 						var write = switch (TypeFunctions.follow(writeCe.type)) {
 							case TFun(ws) if (ws.args.length >= 3):
-								var nm2 = TexprTools.makeString(basic, name, p);
+								var nm2 = TexprTools.makeString(basic, name, hxc.ast.Position.nullPos);
 								se.access.field.kind.match(Method(MethMacro))
 									? hxc.eval.EvalMacro.run(ctx, se.access, [Calls.typedExprToSyntax(ctx, se.thisExpr), new Expr(EConst(CString(name, SDoubleQuotes)), p), storedSyntax(ctx, opResult)], WithTypeTools.value, p)
 									: Calls.makeCall(ctx, writeCe, Calls.padPosInfos(ctx, ws.args, [se.thisExpr, Typer.castOrUnify(ctx, ws.args[1].t, nm2, p), Typer.castOrUnify(ctx, ws.args[2].t, opResult, p)], p), ws.ret, p);

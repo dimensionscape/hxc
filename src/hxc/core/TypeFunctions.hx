@@ -182,12 +182,12 @@ class TypeFunctions {
 		return [for (a in l) {name: a.name, opt: a.c != null, t: a.t}];
 	}
 
-	public static function mkClass(m:ModuleDef, path:Path, pos:Position, name_pos:Position):TClass {
+	public static function mkClass(m:ModuleDef, path:Path, pos:Position, namePos:Position):TClass {
 		return {
 			path: path,
 			module: m,
 			pos: pos,
-			namePos: name_pos,
+			namePos: namePos,
 			doc: null,
 			meta: [],
 			isPrivate: false,
@@ -211,12 +211,12 @@ class TypeFunctions {
 		};
 	}
 
-	public static function mkTypedef(m:ModuleDef, path:Path, pos:Position, name_pos:Position, t:T):TDef {
+	public static function mkTypedef(m:ModuleDef, path:Path, pos:Position, namePos:Position, t:T):TDef {
 		return {
 			path: path,
 			module: m,
 			pos: pos,
-			namePos: name_pos,
+			namePos: namePos,
 			isPrivate: false,
 			doc: null,
 			meta: [],
@@ -250,14 +250,14 @@ class TypeFunctions {
 		};
 	}
 
-	public static function mkField(name:String, t:T, p:Position, name_pos:Position, isPublic:Bool = true, isStatic:Bool = false):TClassField {
+	public static function mkField(name:String, t:T, p:Position, namePos:Position, isPublic:Bool = true, isStatic:Bool = false):TClassField {
 		var flags = isStatic ? setFlag(0, intOfClassFieldFlag(CfStatic)) : 0;
 		if (isPublic) flags = setFlag(flags, intOfClassFieldFlag(CfPublic));
 		return {
 			name: name,
 			type: t,
 			pos: p,
-			namePos: name_pos,
+			namePos: namePos,
 			doc: null,
 			meta: [],
 			kind: Var({read: AccNormal, write: AccNormal}),
@@ -335,7 +335,7 @@ class TypeFunctions {
 		return _nullAbstract;
 	}
 
-	public static function addDependency(m:ModuleDef, mdep:ModuleDef, skip_postprocess:Bool = false):Void {
+	public static function addDependency(m:ModuleDef, mdep:ModuleDef, skipPostprocess:Bool = false):Void {
 		if (m != nullModule && m != mdep) {
 			if (Sys.getEnv("HXC_TRACE_DEPS") != null)
 				Sys.println("[dep] " + m.path.pack.concat([m.path.name]).join(".") + " -> " + mdep.path.pack.concat([mdep.path.name]).join("."));
@@ -344,7 +344,7 @@ class TypeFunctions {
 			// from the cache runs through the filters again now that its dependency set changed - and its
 			// class-state snapshot is retaken, which keeps a @:generic specialization another module added
 			// to it. The declarations were initialised at the load and are not initialised again.
-			if (!skip_postprocess) m.extra.processed = 0;
+			if (!skipPostprocess) m.extra.processed = 0;
 		}
 	}
 
@@ -585,8 +585,19 @@ class TypeFunctions {
 				if (i2 != params.length) throw "apply_params: arity mismatch"; // Die on unequal lengths
 			}
 
+		// The substitution is looked up by identity on the whole type. A type parameter is `TInst(c, [])`
+		// with `c.kind = KTypeParameter`, and that class is shared, so comparing the class gives the same
+		// answer whichever copy of the TInst wrapper is at hand.
+		inline function paramClass(t:T):Null<TClass> {
+			return switch (t) {
+				case TInst(c, []) if (c.kind.match(KTypeParameter(_))): c;
+				case _: null;
+			};
+		}
 		function assq(x:T):Null<{from:T, to:T}> {
 			for (e in subst) if (e.from == x) return e;
+			var xc = paramClass(x);
+			if (xc != null) for (e in subst) if (paramClass(e.from) == xc) return e;
 			return null;
 		}
 
@@ -814,23 +825,23 @@ class TypeFunctions {
 		}
 	}
 
-	public static function isNullable(t:T, no_lazy:Bool = false):Bool {
+	public static function isNullable(t:T, noLazy:Bool = false):Bool {
 		return switch (t) {
 			case TMono(r):
 				switch (r.type) {
 					case null: false;
-					case some: isNullable(some, no_lazy);
+					case some: isNullable(some, noLazy);
 				}
 			case TAbstract(a, [_]) if (isNullPath(a.path)):
 				true;
 			case TLazy(f):
 				switch (f.get()) {
-					case LAvailable(t2): isNullable(t2, no_lazy);
-					case _ if (no_lazy): throw new ExitException();
-					case _: isNullable(lazyType(f), no_lazy);
+					case LAvailable(t2): isNullable(t2, noLazy);
+					case _ if (noLazy): throw new ExitException();
+					case _: isNullable(lazyType(f), noLazy);
 				}
 			case TType(td, tl):
-				isNullable(applyTypedef(td, tl), no_lazy);
+				isNullable(applyTypedef(td, tl), noLazy);
 			case TFun(_):
 				false;
 			case TAbstract(a, _) if (hasMeta(":coreType", a.meta)):
@@ -854,23 +865,23 @@ class TypeFunctions {
 
 	static var nullableDepth:Int = 0;
 
-	public static function isNull(t:T, no_lazy:Bool = false):Bool {
+	public static function isNull(t:T, noLazy:Bool = false):Bool {
 		return switch (t) {
 			case TMono(r):
 				switch (r.type) {
 					case null: false;
-					case some: isNull(some, no_lazy);
+					case some: isNull(some, noLazy);
 				}
 			case TAbstract(a, [t1]) if (isNullPath(a.path)):
-				!isNullable(follow(t1), no_lazy);
+				!isNullable(follow(t1), noLazy);
 			case TLazy(f):
 				switch (f.get()) {
-					case LAvailable(t2): isNull(t2, no_lazy);
-					case _ if (no_lazy): throw new ExitException();
-					case _: isNull(lazyType(f), no_lazy);
+					case LAvailable(t2): isNull(t2, noLazy);
+					case _ if (noLazy): throw new ExitException();
+					case _: isNull(lazyType(f), noLazy);
 				}
 			case TType(td, tl):
-				isNull(applyTypedef(td, tl), no_lazy);
+				isNull(applyTypedef(td, tl), noLazy);
 			case _:
 				false;
 		}

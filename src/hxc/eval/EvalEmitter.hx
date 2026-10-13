@@ -824,7 +824,7 @@ class EvalEmitter {
 								}
 							case Var(_):
 								var v = EvalField.field(ctx, recv, EvalHash.hash(cf.name));
-								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.key_haxe_Exception)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
+								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.keyHaxeException)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
 						}
 				}
 			case FAnon(cf):

@@ -866,6 +866,12 @@ class Typeload {
 			case _: false;
 		};
 		var isRestGenericBuild = isGenericBuild && types.length == 1 && types[0].name == "Rest";
+		// a java EXTERN takes its missing type parameters as rest, which is how a raw java type (a jar
+		// extern named with no parameters) loads at all.
+		var isJavaRest = ctx.platform == Java && switch (mt) {
+			case TClassDecl(c): TypeFunctions.hasClassFlag(c, CExtern);
+			case _: false;
+		};
 
 		// Allow_no_params && no syntactic params -> spawn constrained monos for each param.
 		if (allowNoParams && t.tparams.length == 0 && !isRestGenericBuild) {
@@ -954,7 +960,11 @@ class Typeload {
 			} else if (i1 >= t.tparams.length && i2 >= types.length) {
 				break;
 			} else if (i1 >= t.tparams.length) {
-				// A parameter past the given ones: its default, if it has one.
+				if (isJavaRest) {
+					params.push(TypeFunctions.tDynamic);
+					i2++;
+					continue;
+				}
 				var def = types[i2].defaultType;
 				if (def == null) {
 					// A display request fills the missing parameter with the declaration's own, so the path
@@ -978,7 +988,8 @@ class Typeload {
 				throw new ContextError("Too many type parameters for " + Context.sTypePath(declPath), pt);
 			}
 		}
-		if (checks.length > 0) {
+		// A Java extern takes its parameters as rest, and a rest application is never constraint-checked.
+		if (checks.length > 0 && !isJavaRest) {
 			// Substitute the declaration params with the applied ones; a KGeneric constraint is replaced by
 			// its
 			// actual generic instance before unifying.
@@ -1294,6 +1305,12 @@ class Typeload {
 		return nv;
 	}
 
+	// Every cloned node ends on Calls.maybeReapplyOverloadCall. The substitution rewrites a TField by
+	// NAME against the specialized receiver, which cannot pick an overload, so a call to one has to be
+	// resolved again against the arguments it now has. `genericReapplyCtx` is the typer to resolve with;
+	// without one the walker is a plain clone.
+	public static var genericReapplyCtx:Null<hxc.typing.TyperContext> = null;
+
 	public static function cloneExpr(e:TExpr, subst:T->T, vars:Map<Int, TVar>, ?gsubst:Array<GenericSubstEntry>):TExpr {
 		if (gsubst != null) switch (e.expr) {
 			case TTypeExpr(TClassDecl(c)):
@@ -1313,29 +1330,27 @@ class Typeload {
 				case FDynamic(s): FDynamic(s);
 			}
 		}
+		// Re-resolves the access against the MAPPED receiver with quickField, for every kind but a
+		// closure, and falls back to the ORIGINAL access when nothing is found. Substituting the owner's
+		// parameters in place would leave a call on a specialized @:generic instance naming the instance
+		// rather than the type the parameter was bound to.
 		function fieldAccessForReceiver(fa:TFieldAccess, recv:TExpr):TFieldAccess {
-			return switch (fa) {
-				case FAnon(cf):
-					switch (TypeFunctions.follow(recv.type)) {
-						case TInst(c, tl):
-							try {
-								var r = TypeFunctions.rawClassField(function(f) return f.type, c, tl, cf.name);
-								switch (r.c2) {
-									case null: FAnon(r.f);
-									case cwp: FInstance(cwp.c, cwp.params, r.f);
-								}
-							} catch (_:NotFound) {
-								FAnon(cf);
-							}
-						case _:
-							FAnon(cf);
-					}
-				case _:
-					fieldAccess(fa);
-			}
+			var name = switch (fa) {
+				case FClosure(_, _): null;
+				case FAnon(cf) | FInstance(_, _, cf) | FStatic(_, cf): cf.name;
+				case FEnum(_, ef): ef.name;
+				case FDynamic(s): s;
+			};
+			if (name == null) return fa;
+			return try TypeFunctions.quickField(recv.type, name) catch (_:NotFound) fa;
 		}
 		var et = subst(e.type);
-		return TypeFunctions.mk(switch (e.expr) {
+		var reapply = genericReapplyCtx;
+		inline function done(ne:TExprExpr):TExpr {
+			var r = TypeFunctions.mk(ne, et, e.pos);
+			return reapply == null ? r : hxc.typing.Calls.maybeReapplyOverloadCall(reapply, r);
+		}
+		return done(switch (e.expr) {
 			case TConst(c): TConst(c);
 			case TLocal(v): TLocal(cloneVar(v, subst, vars));
 			case TArray(e1, e2): TArray(cloneExpr(e1, subst, vars, gsubst), cloneExpr(e2, subst, vars, gsubst));
@@ -1383,8 +1398,13 @@ class Typeload {
 					TField(ce1, fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1));
 				} else {
 					var fa2 = try TypeFunctions.quickField(TInst(cg2, []), fcf.name)
-						catch (_:hxc.core.NotFound) fieldAccessForReceiver(FInstance(fc, ftl, fcf), ce1);
-					TField(ce1, fa2);
+						catch (_:hxc.core.NotFound) FInstance(fc, ftl, fcf);
+					// The access does not stop at the instance: the rebuilt TField is resolved again
+					// against the
+					// MAPPED receiver (fieldAccessForReceiver). The instance lookup above only forces the
+					// instance to
+					// exist and reports a field the specialization lost.
+					TField(ce1, fieldAccessForReceiver(fa2, ce1));
 				}
 			case TField(e1, fa):
 				var ce1 = cloneExpr(e1, subst, vars, gsubst);
@@ -1449,7 +1469,7 @@ class Typeload {
 			case TEnumParameter(e1, ef, index): TEnumParameter(cloneExpr(e1, subst, vars, gsubst), ef, index);
 			case TEnumIndex(e1): TEnumIndex(cloneExpr(e1, subst, vars, gsubst));
 			case TIdent(s): TIdent(s);
-		}, et, e.pos);
+		});
 	}
 
 	static function genericCheckConstExpr(ctx:Context, t:T):GenericSubstEntry {
@@ -1650,8 +1670,22 @@ class Typeload {
 				genericBuildCtx = ctx;
 				genericBuildModule = declModule;
 				genericInstanceModule = declInstModule;
+				// A generic class's cloned body re-resolves overloaded calls the same way a generic
+				// function's
+				// does (Calls.hx sets genericReapplyCtx for that path). The reapply wants a TyperContext,
+				// which is
+				// constructed here from the Context. It has to be set INSIDE this thunk, not around
+				// specializeGenericClass, because the body is cloned lazily and may be forced long after
+				// that call
+				// returned.
+				var savedReapply = genericReapplyCtx;
+				var rctx = new TyperContext(ctx);
+				rctx.curclass = baseCls;
+				rctx.curfield = cf;
+				genericReapplyCtx = rctx;
 				cf.expr = cloneExpr(f.expr, subst, new Map(), gsubst2);
 				cf.exprUnoptimized = f.exprUnoptimized == null ? null : cloneExpr(f.exprUnoptimized, subst, new Map(), gsubst2);
+				genericReapplyCtx = savedReapply;
 				genericBuildCtx = savedGCtx;
 				genericBuildModule = savedGMod;
 				genericInstanceModule = savedIMod;

@@ -32,6 +32,18 @@ class TypeloadCheck {
 		ctx.addDiagnostic("... Base field is defined here", basePos, 1);
 	}
 
+	// checkOverriding runs per DECLARATION and resolves by name, so for merged overloads the same
+	// field is checked more than once. The abstract-parent branch ADDS CfOverride when the child does
+	// not carry it, so a later check would see that flag and report it as if the user had written
+	// `override` ("declared 'override' but parent field is 'abstract'" on a class that says no such
+	// thing). The flags this synthesis added are remembered so they are never reported.
+	static var autoOverride:haxe.ds.ObjectMap<TClassField, Bool> = new haxe.ds.ObjectMap();
+
+	// Per-request reset for the wait server, matching TypeFields.resetPerRequest.
+	public static function resetPerRequest():Void {
+		autoOverride = new haxe.ds.ObjectMap();
+	}
+
 	// The final fields without an initializer of the class (and of each abstract superclass that has no
 	// constructor anywhere up its chain) must each be assigned in the constructor body.
 	public static function checkFinalVars(ctx:Context, curclass:TClass, e:TExpr):Void {
@@ -116,10 +128,12 @@ class TypeloadCheck {
 					case _:
 				}
 				if (TypeFunctions.hasClassFieldFlag(f2, CfAbstract)) {
-					if (fHasOverride)
+					if (fHasOverride && !autoOverride.exists(f))
 						ctx.addDiagnostic("Field " + i + " is declared 'override' but parent field " + i + " is 'abstract' and does not provide any implementation to override", p);
-					else
+					else if (!fHasOverride) {
 						TypeFunctions.addClassFieldFlag(f, CfOverride);
+						autoOverride.set(f, true);
+					}
 				}
 				if (TypeFunctions.hasClassFieldFlag(f2, CfOverload) && !TypeFunctions.hasClassFieldFlag(f, CfOverload))
 					ctx.addDiagnostic("Field " + i + " should be declared with overload since it was already declared as overload in superclass", p);

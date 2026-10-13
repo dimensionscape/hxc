@@ -41,6 +41,9 @@ private class CondStreamError extends haxe.Exception {
 }
 
 class Preprocess {
+	// the files whose conditions read `display`, keyed by PathKey.key, for the life of the process.
+	public static var specialIdentifierFiles:haxe.ds.StringMap<String> = new haxe.ds.StringMap();
+
 	final toks:Array<TokenInfo>;
 	final defines:Define;
 	var i:Int;
@@ -389,6 +392,10 @@ class Preprocess {
 			// Dot tokens), so it reconstructs the dotted path here, required for `#if target.unicode`.
 			case Const(CIdent(t)):
 				consume();
+				// a condition that reads `display` marks its file, which a display request's server then
+				// leaves out of its cache . Only this head form marks - a parenthesised condition goes
+				// through the expression parser. Never cleared.
+				if (t == "display") specialIdentifierFiles.set(hxc.core.PathKey.key(ti.pos.file), t);
 				return parseMacroCondFieldChain(new Expr(EConst(CIdent(t)), ti.pos));
 			case Kwd(k):
 				consume();

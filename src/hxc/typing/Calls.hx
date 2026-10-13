@@ -197,7 +197,11 @@ class Calls {
 		}
 		// The implementation class as a type expression (printed Abstract<A>).
 		var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
-		var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+		// builds the TField with `tf`, the MAPPED signature, not with cf.type. getFieldExpr returns an
+		// FHStatic field's type UNCHANGED so going through it hands the inliner the raw declaration with
+		// the method's own type parameters still symbolic, and every local the inliner clones from an
+		// argument keeps that parameter instead of the type the call bound it to.
+		var fieldExpr = TypeFunctions.mk(TField(implExpr, FStatic(c, cf)), TFun(acc.sig), p);
 		return makeCall(ctx, fieldExpr, padPosInfos(ctx, acc.sig.args, [ebase, acc.key], p), acc.sig.ret, p);
 	}
 
@@ -261,7 +265,9 @@ class Calls {
 						}
 						// The same receiver.
 						var implExpr = TexprTools.makeTypeExpr(TClassDecl(c), p);
-						var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, cf, FHStatic(c), false, p), FCall);
+						// same as the read path above: the TField carries the MAPPED signature so the
+						// inliner sees the bound monomorphs.
+						var fieldExpr = TypeFunctions.mk(TField(implExpr, FStatic(c, cf)), TFun(sig), p);
 						return makeCall(ctx, fieldExpr, padPosInfos(ctx, sig.args, [ebase, key, val], p), sig.ret, p);
 					} catch (_:TypingError) {} catch (_:hxc.core.TypeUnification.UnifyError) {}
 				case _:
@@ -282,6 +288,32 @@ class Calls {
 			case TAbstract(a, params) if (params.length == 1 && a.path.pack.length == 1 && a.path.pack[0] == "haxe" && a.path.name == "Rest"): params[0];
 			case _: null;
 		};
+	}
+
+	/**
+		Unifies the ALREADY TYPED arguments against the head of `args` and returns the two halves: the
+		parameters `elTyped` covered, and the ones left for the syntactic arguments.
+
+		`tmap` maps only the FIRST typed argument's type; continues the loop with the identity, so an
+		abstract receiver is mapped to the underlying type while the rest are taken as they are.
+	**/
+	static function unifyTypedArgs(ctx:TyperContext, tmap:Null<T->T>, args:Array<TSignatureArg>, elTyped:Array<TExpr>, callPos:Position):{typed:Array<TSignatureArg>, rest:Array<TSignatureArg>} {
+		var acc:Array<TSignatureArg> = [];
+		var map = tmap;
+		for (i in 0...elTyped.length) {
+			// args running out before el does is a call error, not a unification one.
+			if (i >= args.length) throw new hxc.core.TypingError.CallError("Too many arguments", callPos);
+			var arg = args[i];
+			var e = elTyped[i];
+			try hxc.core.TypeUnification.unifyDefault(map == null ? e.type : map(e.type), arg.t)
+			catch (ue:hxc.core.TypeUnification.UnifyError)
+				// 207 the failure is re-raised as Call_error(Could_not_unify msg), which renders the inner
+				// message unchanged but is the KIND overload resolution catches.
+				throw new hxc.core.TypingError.CallError(hxc.core.TPrinting.betterErrorMessage(ue.errors), e.pos);
+			acc.push(arg);
+			map = null;
+		}
+		return {typed: acc, rest: args.slice(elTyped.length)};
 	}
 
 	public static function unifyCallArgs(ctx:TyperContext, el:Array<Expr>, args:Array<TSignatureArg>, r:T, callp:Position):{el:Array<TExpr>, tfunc:T} {
@@ -689,6 +721,13 @@ class Calls {
 						ctx.com.warning(WInfo, hxc.core.WarningList.fromMeta(ctx.curfield.meta).concat(hxc.core.WarningList.fromMeta(ctx.curclass.meta)), hxc.core.TPrinting.sTypeStr(te.type), te.pos);
 						return AKExpr(te);
 				}
+			// A display mark on `super` in `super(...)` displays the whole call, so the call is what
+			// answers,
+			// over its own span.
+			case EConst(CIdent("super")) if (callee == hxc.typing.ExprPreprocessing.markedNode):
+				var call = new Expr(ECall(callee, el), p);
+				hxc.typing.ExprPreprocessing.markedNode = call;
+				return AKExpr(Typer.typeExpr(ctx, call, withType));
 			case EConst(CIdent("super")):
 				return AKExpr(typeSuperCall(ctx, el, p, callee.pos));
 			case EConst(CIdent("__unprotect__")) if (el.length == 1 && el[0].expr.match(EConst(CString(_, _)))):
@@ -814,21 +853,42 @@ class Calls {
 		if (ctorTypes.length == 0) ctorTypes = [TFun({args: [], ret: ctx.com.basic.tvoid})];
 		var r:Dynamic = null;
 		var firstError:Null<Dynamic> = null;
+		// A hover answered from the arguments takes the constructor candidate's @param doc.
+		var ctorField = Typer.superConstructor(c);
+		inline function candidate(i:Int):Null<TClassField>
+			return ctorField == null ? null : i == 0 ? ctorField : ctorField.overloads[i - 1];
+		var outerHover = Typer.hoverFound;
+		var firstFailCf:Null<TClassField> = null;
+		var idx = -1;
 		for (ctorType in ctorTypes) {
+			idx++;
 			var sig = switch (TypeFunctions.follow(ctorType)) {
 				case TFun(s): s;
 				case _: {args: [], ret: ctx.com.basic.tvoid};
 			};
 			try {
-				r = TypeUnification.withMonoRollback(function() return unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+				// restores ONLY the monomorphs registered in ctx.monomorphs.perfunction, by identity. A
+				// journal that rolls back every mono the attempt touched also undoes bindings made while
+				// typing a CALLEE's body: forcing an abstract's inline _new inside a failing
+				// super-constructor candidate left both of its synthetic casts on unbound monomorphs.
+				r = TypeUnification.withRegisteredMonoRollback(ctx.monomorphs, function() return unifyCallArgs(ctx, el, sig.args, sig.ret, p));
+				Typer.augmentHoverArgDoc(candidate(idx), outerHover);
 				break;
+			} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+				Typer.augmentHoverArgDoc(candidate(idx), outerHover);
+				throw dr;
 			} catch (e:hxc.core.TypeUnification.UnifyError) {
+				if (firstFailCf == null && Typer.hoverFound != outerHover) firstFailCf = candidate(idx);
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
+				if (firstFailCf == null && Typer.hoverFound != outerHover) firstFailCf = candidate(idx);
 				if (firstError == null) firstError = e;
 			}
 		}
-		if (r == null) throw (firstError != null ? firstError : new TypingError("No matching super constructor overload", p));
+		if (r == null) {
+			if (firstFailCf != null) Typer.augmentHoverArgDoc(firstFailCf, outerHover);
+			throw (firstError != null ? firstError : new TypingError("No matching super constructor overload", p));
+		}
 		// The TSuper node sits at the `super` identifier (sp), the call at p.
 		var superExpr = TypeFunctions.mk(TConst(TSuper), TInst(c, sup.params), sp);
 		return TypeFunctions.mk(TCall(superExpr, r.el), ctx.com.basic.tvoid, p);
@@ -1159,6 +1219,40 @@ class Calls {
 		return FieldAccessTools.getFieldExpr(fa, FCall);
 	}
 
+	/**
+		The inliner re-resolves a TField by name against the substituted receiver type, which always
+		answers with the primary declaration: it knows nothing about the overload set.
+
+		The arguments are already typed, so they go to callFieldAccess as elTyped with an empty syntactic
+		list.
+	**/
+	public static function maybeReapplyOverloadCall(ctx:TyperContext, e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TCall(ef, el):
+				switch (ef.expr) {
+					case TField(e1, fa):
+						function recall(fh:FieldHost, cf:TClassField):TExpr {
+							var fa2 = FieldAccessTools.create(e1, cf, fh, false, ef.pos);
+							var e2 = callFieldAccess(ctx, fa2, [], e.pos, null, false, null, el);
+							// the reapplied call must still produce what the tree expects there.
+							try hxc.core.TypeUnification.unifyDefault(e2.type, e.type)
+							catch (_:hxc.core.TypeUnification.UnifyError)
+								throw new TypingError("Failed to reapply overload call", e.pos);
+							return e2;
+						}
+						switch (fa) {
+							case FStatic(c, cf) if (TypeFunctions.hasClassFieldFlag(cf, CfOverload)):
+								recall(FHStatic(c), cf);
+							case FInstance(c, tl, cf) if (TypeFunctions.hasClassFieldFlag(cf, CfOverload)):
+								recall(FHInstance(c, tl), cf);
+							case _: e;
+						}
+					case _: e;
+				}
+			case _: e;
+		}
+	}
+
 	// The call that stands in for a single candidate's failure.
 	static function failFun(fa:FieldAccess, p:Position):TExpr {
 		// This TField keeps the field's own type, not the all-Dynamic signature just built: hxc RECORDS a
@@ -1169,21 +1263,25 @@ class Calls {
 		return TypeFunctions.mk(TCall(ef, []), TypeFunctions.tDynamic, p);
 	}
 
-	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null):TExpr {
-		// An unhinted parameter's type is inferred from the body; force it before argument unification
-		// so the signature is complete. Only an open signature forces, keeping diagnostic order.
-		if (fa.field.expr == null) switch (TypeFunctions.follow(fa.field.type)) {
-			case TFun(sig):
-				// An unhinted RETURN also forces the body: a no-return body links its return to Void, which
-				// must
-				// settle before an overloaded call reads it.
-				var hasOpenArg = TypeFunctions.follow(sig.ret).match(TMono(_));
-				for (a in sig.args) if (TypeFunctions.follow(a.t).match(TMono(_))) hasOpenArg = true;
-				if (hasOpenArg) switch (fa.host) {
-					case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c): TypeFields.forceFieldBody(ctx.com, c, fa.field);
-					case FHAnon:
+	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null, ?elTyped:Array<TExpr>):TExpr {
+		if (elTyped == null) elTyped = [];
+		// An unhinted parameter's type is inferred from the body; force the body before argument
+		// unification so the signature is complete. Only an open signature forces it, which keeps
+		// diagnostics in order, and only the primary candidate is forced: each overload attempt scopes its
+		// rollback to ctx.monomorphs, so a failed candidate does not undo the next one's signature.
+		switch (fa.host) {
+			case FHStatic(c) | FHInstance(c, _) | FHAbstract(_, _, c):
+				var cand = fa.field;
+				if (cand.expr == null) switch (TypeFunctions.follow(cand.type)) {
+					case TFun(sig):
+						// An unhinted RETURN also forces the body: a no-return body links its return to
+						// Void which must settle before a call reads it.
+						var hasOpenArg = TypeFunctions.follow(sig.ret).match(TMono(_));
+						for (a in sig.args) if (TypeFunctions.follow(a.t).match(TMono(_))) hasOpenArg = true;
+						if (hasOpenArg) TypeFields.forceFieldBody(ctx.com, c, cand);
+					case _:
 				}
-			case _:
+			case FHAnon:
 		}
 		// An instance's `overload` field stands for every overload of its name up the class hierarchy;
 		// any other field for itself and its own overloads.
@@ -1193,6 +1291,15 @@ class Calls {
 			case _:
 				[fa.field].concat(fa.field.overloads);
 		};
+		// tmap. Only an ABSTRACT receiver maps the typed arguments, and it maps them to the APPLIED
+		// UNDERLYING type rather than to their own; `_new` is excluded (the constructor's first parameter
+		// is a real one). Everything else passes them through untouched.
+		var tmap:Null<T->T> = if (elTyped.length == 0) null else switch (fa.host) {
+			case FHAbstract(a, tl, _) if (fa.field.name != "_new"):
+				var u = TypeFunctions.applyParams(a.params, tl, a.thisType);
+				(function(_) return u : T->T);
+			case _: null;
+		};
 		// Each failed candidate: the overload field, its rendered error, and the error position.
 		var failures:Array<{cf:TClassField, msg:String, pos:Position, depth:Int, ?chain:Array<{message:String, pos:Position, ?depth:Int}>}> = [];
 		// With several candidates an argument error must RAISE so the next overload is tried: a lambda
@@ -1201,7 +1308,7 @@ class Calls {
 		var multi = candidates.length > 1;
 		// A field declared `overload` is a proper overload, and every candidate is attempted before the
 		// compatible ones are reduced; @:overload metadata stops at the first that succeeds.
-		var allExtern = multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
+		var overloadProper = multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload);
 		// Field typing leaves an `overload` call's visibility to the resolution, which checks the
 		// candidate it settles on, at the call.
 		function maybeCheckAccess(cf:TClassField):Void {
@@ -1221,6 +1328,7 @@ class Calls {
 		// expected argument.
 		var outerHover = hxc.typing.Typer.hoverFound;
 		var firstFailHover:Null<Dynamic> = null;
+		var firstFailCf:Null<TClassField> = null;
 		if (multi) hxc.typing.Typer.overloadArgsDepth++;
 		for (cf in candidates) {
 			// A call attempt follows the candidate's type: its lazy - and the body behind it - runs as the
@@ -1244,38 +1352,29 @@ class Calls {
 				}
 			}
 			try {
-				// A call attempt unifies the arguments and returns the CANDIDATE; the call is made for the
-				// one
-				// the resolution keeps, once every candidate has been tried - so the bodies the attempts
-				// force
-				// type before the chosen one inlines.
-				// The candidate: the call's type with the candidate's parameters instantiated, its typed
-				// arguments, and the call to make.
-				var r = TypeUnification.withMonoRollback(function():{call:Void->TExpr, tf:T, args:Array<TExpr>} {
+				// unifies the arguments and returns the CANDIDATE; the call is made for the one the
+				// resolution keeps , once every candidate has been tried - so the bodies the attempts force
+				// type before the chosen one inlines. The candidate the call's type with the candidate's
+				// parameters instantiated, its typed arguments, and the call to make. scopes its rollback
+				// to the monomorphs REGISTERED on this context, not to everything the attempt touched.
+				var r = TypeUnification.withRegisteredMonoRollback(ctx.monomorphs, function():{call:Void->TExpr, tf:T, args:Array<TExpr>} {
 					var fa2 = FieldAccessTools.create(fa.on, cf, fa.host, fa.isInline, fa.pos);
 					var mono = monomorphizeParamsWith(ctx, cf, callFieldExpr(ctx, fa2), fa2);
 					var ce = mono.expr;
 					return switch (TypeFunctions.follow(ce.type)) {
 						case TFun(sig):
-							var r = unifyCallArgs(ctx, el, sig.args, sig.ret, p);
-							// A generic method with a return-only type parameter (e.g. cpp.Stdlib.malloc<T>
-							// : cpp.Pointer<T>, whose T is not in any argument) infers T from the expected
-							// type before
-							// makeCall inlines and closes the monomorphs; otherwise T defaults to Dynamic
-							// and the inlined
-							// cast is cpp.Pointer<Dynamic>. A @:generic method does the same inside
-							// genericFieldAccess
-							// (unifying the call's return with the with-type first); do the same for a
-							// plain generic method
-							// here.
-							if (cf.params.length > 0 && !TypeFunctions.hasClassFieldFlag(cf, CfGeneric) && withType != null)
-								switch (withType) {
-									case WithType(t, _): try TypeUnification.unifyDefault(sig.ret, t) catch (_:hxc.core.TypeUnification.UnifyError) {}
-									case _:
-								}
-							{tf: ce.type, args: r.el, call: function():TExpr {
+							// the typed arguments claim the head of the signature first, and only what is
+							// left is unified against the syntactic ones.
+							var split = unifyTypedArgs(ctx, tmap, sig.args, elTyped, p);
+							var r = unifyCallArgs(ctx, el, split.rest, sig.ret, p);
+							var tfunc = elTyped.length == 0 ? r.tfunc : switch (r.tfunc) {
+								case TFun(rs): TFun({args: split.typed.concat(rs.args), ret: rs.ret});
+								case t: t;
+							};
+							var callArgs = elTyped.length == 0 ? r.el : elTyped.concat(r.el);
+							{tf: ce.type, args: callArgs, call: function():TExpr {
 								var ce2 = ce;
-								var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, r.tfunc, p, withType);
+								var faCall = genericFieldAccess(ctx, fa2, cf, mono.monos, tfunc, p, withType);
 								if (faCall != fa2) ce2 = FieldAccessTools.getFieldExpr(faCall, FCall);
 								var ret = switch (TypeFunctions.follow(ce2.type)) {
 									case TFun(sig2): sig2.ret;
@@ -1283,26 +1382,43 @@ class Calls {
 								};
 								if (DebugDump.enabled("select", p))
 									DebugDump.selected("call", p, "field " + faCall.field.name + " -> " + DebugDump.typeString(ret));
-								return makeCall(ctx, ce2, r.el, ret, p, forceInline, forcePos);
+								return makeCall(ctx, ce2, callArgs, ret, p, forceInline, forcePos);
 							}};
+						case _ if (elTyped.length > 0):
+							// a non-function candidate cannot absorb the typed arguments, and dropping them
+							// silently would mis-type the call.
+							throw new TypingError(hxc.core.TPrinting.sTypeStr(ce.type) + " cannot be called", p);
 						case _:
 							var e = callExpr(ctx, ce, el, p);
 							{tf: ce.type, args: [], call: function():TExpr return e};
 					}
 				});
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
-				if (!allExtern) {
+				if (!overloadProper) {
+					hxc.typing.Typer.augmentHoverArgDoc(cf, outerHover);
 					chosen = r.call;
 					break;
 				}
 				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound}});
 			} catch (e:UnifyError) {
 				restore();
-				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
+				if (multi) {
+					if (firstFailHover == null) {
+						firstFailHover = hxc.typing.Typer.hoverFound;
+						if (firstFailHover != outerHover) firstFailCf = cf;
+					}
+					hxc.typing.Typer.hoverFound = outerHover;
+				}
 				failures.push({cf: cf, msg: hxc.core.TPrinting.betterErrorMessage(e.errors), pos: p, depth: 0});
 			} catch (e:TypingError) {
 				restore();
-				if (multi) { if (firstFailHover == null) firstFailHover = hxc.typing.Typer.hoverFound; hxc.typing.Typer.hoverFound = outerHover; }
+				if (multi) {
+					if (firstFailHover == null) {
+						firstFailHover = hxc.typing.Typer.hoverFound;
+						if (firstFailHover != outerHover) firstFailCf = cf;
+					}
+					hxc.typing.Typer.hoverFound = outerHover;
+				}
 				// A candidate that failed over an unknown identifier raises that error alone, ending the
 				// resolution.
 				if (multi && Std.isOfType(e, hxc.core.TypingError.CallError)) {
@@ -1313,6 +1429,12 @@ class Calls {
 					}
 				}
 				failures.push({cf: cf, msg: e.message, pos: e.pos == null ? p : e.pos, depth: e.depth, chain: e.callChain});
+			} catch (dr:hxc.compiler.DisplayXml.DisplayRaised) {
+				// A display answer raised from the arguments leaves augmented with this candidate.
+				restore();
+				if (multi) hxc.typing.Typer.overloadArgsDepth--;
+				hxc.typing.Typer.augmentHoverArgDoc(cf, outerHover);
+				throw dr;
 			} catch (e:haxe.Exception) {
 				restore();
 				if (multi) hxc.typing.Typer.overloadArgsDepth--;
@@ -1321,15 +1443,20 @@ class Calls {
 		}
 		if (multi) hxc.typing.Typer.overloadArgsDepth--;
 		if (chosen != null) return chosen();
-		// The chosen candidate's stored answer is the one that is committed.
-		inline function commit(h:Null<Dynamic>):Void if (multi) hxc.typing.Typer.hoverFound = h;
+		// The chosen candidate's stored answer is the one that is committed, augmented with the candidate
+		// it
+		// came from.
+		inline function commit(h:Null<Dynamic>, from:Null<TClassField>):Void if (multi) {
+			hxc.typing.Typer.hoverFound = h;
+			if (from != null) hxc.typing.Typer.augmentHoverArgDoc(from, outerHover);
+		}
 		// For a proper overload the candidates that accepted the call reduce to the best rated
 		// (Overloads.reduceCompatible); with several equally good, each is reported and the first is
 		// kept.
 		var reduced = Overloads.reduceCompatible(successes);
 		if (reduced.length == 1) {
 			maybeCheckAccess(reduced[0].cf);
-			commit(reduced[0].payload.hover);
+			commit(reduced[0].payload.hover, reduced[0].cf);
 			return reduced[0].payload.expr();
 		}
 		if (reduced.length > 1) {
@@ -1337,11 +1464,11 @@ class Calls {
 			var pctx = hxc.core.TPrinting.printContext();
 			for (s in reduced)
 				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sType(pctx, s.tf), s.cf.namePos, 1);
-			commit(reduced[0].payload.hover);
+			commit(reduced[0].payload.hover, reduced[0].cf);
 			return reduced[0].payload.expr();
 		}
 		// Nothing resolved: the answer a candidate reached is still the only one there is.
-		commit(firstFailHover);
+		commit(firstFailHover, firstFailCf);
 		// A single candidate (or several failing identically) raises the one error; distinct failures
 		// report each overload with its own reason (duplicates removed by message, then either the one
 		// located error or the "reasons follow" block).
@@ -1458,7 +1585,17 @@ class Calls {
 				ctx.com.addDiagnostic("Recursive @:generic function", callPos);
 				cf2.expr = null;
 			} else {
+				// The specialized body is cloned with genericReapplyCtx set, so cloneExpr ends every node
+				// on
+				// maybeReapplyOverloadCall. Without it a call inside the body keeps the overload it
+				// resolved to on
+				// the unspecialized parameter: in `genericMe<T>`, a call `test(t)` stays bound to
+				// test(Dynamic) even
+				// where T has become String.
+				var savedReapply = Typeload.genericReapplyCtx;
+				Typeload.genericReapplyCtx = ctx;
 				var e = Typeload.cloneExpr(cf.expr, subst, new Map());
+				Typeload.genericReapplyCtx = savedReapply;
 				function check(e:TExpr):Void {
 					switch (e.expr) {
 						case TNew(c, _, _) if (c.kind.match(KTypeParameter(_)) && !Typer.isGenericParameter(ctx, c)):

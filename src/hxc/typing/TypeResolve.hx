@@ -89,6 +89,7 @@ class TypeResolve {
 			if (entry == null) continue; // Synthetic types (e.g. _Fields_, enum module-type) have no decl
 			switch (mt) {
 				case TClassDecl(c):
+					declNameDisplay(ctx, mt, entry.decl);
 					var slot = new ClassSlot(init, mt, c, entry.decl, entry.pos);
 					c.hxcClassSlot = slot;
 					init.pending++;
@@ -310,9 +311,11 @@ class TypeResolve {
 		while (j < ctx.modules.length) { resolveModule(ctx, ctx.modules[j]); j++; }
 	}
 
-	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
-		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
-		// Initialising a class, enum, typedef or abstract makes a type whose name holds the cursor the
+	// Initialising a class, enum, typedef or abstract checks the declaration name for display, then adds
+	// the type's global metadata. Both happen where module resolution reaches the declaration, for a
+	// class too (only a class's build is delayed).
+	static function declNameDisplay(ctx:Context, mt:ModuleType, decl:TypeDef):Void {
+		// Initialising a class, enum, typedef or abstract makes a type whose NAME holds the cursor the
 		// display subject (an abstract's impl class stands for the abstract), in every mode: a definition
 		// or a hover raises its answer here, before the type's own contents load, and a completion the
 		// type-hint collection.
@@ -338,6 +341,14 @@ class TypeResolve {
 				moduleLevelRaise--;
 			}
 		}
+		// then adds its global metadata.
+		hxc.context.ModuleLoader.applyPendingGlobalMeta(ctx, TypeFunctions.tModule(mt), mt);
+	}
+
+	static function resolveType(ctx:Context, mt:ModuleType, decl:TypeDef, p:Position):Void {
+		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("resolveType");
+		// A class already did this in resolveModuleInner; only its build is delayed.
+		if (!mt.match(TClassDecl(_))) declNameDisplay(ctx, mt, decl);
 		switch ([mt, decl]) {
 			case [TClassDecl(c), EClass(d)]:
 				resolveClass(ctx, c, d, p);
@@ -2179,6 +2190,11 @@ class TypeResolve {
 			case _: null;
 		};
 		if (implFields == null) return;
+		// NOT ctx here: this rebuild re-registers an abstract impl's fields that were already
+		// registered once, so handing it a context makes it report every duplicate a second time
+		// (tests/misc Issue8258 printed "Duplicate abstract field declaration" twice). Only the
+		// build-macro rebuild in EvalMacro needs the context, and that one registers fields the
+		// macro just produced.
 		hxc.context.ModuleLoader.rebuildFields(c, implFields);
 		// Each field is added at the END of its iteration, as in resolveClass.
 		var created = new haxe.ds.StringMap<TClassField>();
@@ -2460,14 +2476,16 @@ class TypeResolve {
 				// The RETURN is typed before the arguments, so whatever the return type loads is loaded
 				// first.
 				if (isMacroField && fieldModule != null) ctx.currentModule = fieldModule;
-				// A constructor's return type is always Void regardless of any hint, so its signature reads
-				// TFun(args, Void). Visible in a cppia host's __script_construct signature.
-				// The hint is still loaded, for the display alone, so a cursor inside it has something to
-				// answer
-				// from; the resulting type is discarded either way.
-				if (cf.name == "new" && !isStaticField && fd.fType != null
-						&& hxc.typing.Typer.atDisplayPos(fd.fType.pos))
-					try Typeload.loadTypeHint(ctx, localParams, fd.fType, false) catch (_:Dynamic) {}
+				// constructor's return type is always Void regardless of any hint, so its signature reads
+				// TFun(args, Void). Visible in a cppia host's __script_construct signature. a constructor's
+				// hint may only be Void (anything else was reported when the field was registered), and
+				// with the cursor in it that Void is loaded with display allowed - which answers - and its
+				// type discarded.
+				if (cf.name == "new" && !isStaticField && fd.fType != null) switch (fd.fType.ct) {
+					case CTPath(tp) if (tp.tpackage.length == 0 && tp.tname == "Void" && hxc.typing.Typer.atDisplayPos(fd.fType.pos)):
+						Typeload.loadInstance(ctx, localParams, tp, fd.fType.pos, false, true, true);
+					case _:
+				}
 				// A `get_` method with no arguments is a getter and a `set_` method with one a setter; one
 				// without a hint takes the type of the property the rest of its name names, when that
 				// property reads (getter) or writes (setter) through a call.

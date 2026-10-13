@@ -101,6 +101,12 @@ class Context {
 	public static var onMacroWorldError:Null<Void->Void> = null;
 
 	public var mainClass:Null<Path>;
+	// The loaded Java libraries. The JVM generator copies every non-std, non-extern one next to the jar
+	// and names it on the manifest Class-Path.
+	public var javaLibs:Array<hxc.codegen.java.JavaLibrary> = [];
+	// jvm was spelled directly rather than --java plus -D jvm. it as its first argument and it decides
+	// whether the output path is a jar or a directory.
+	public var jvmFlag:Bool = false;
 
 	public var displaySpec:Null<String>;
 
@@ -203,6 +209,12 @@ class Context {
 	public function addResource(name:String, data:haxe.io.Bytes):Void {
 		if (!resources.exists(name)) resourceOrder.push(name);
 		resources.set(name, data);
+	}
+
+	public function resourceFoldOrder():Array<String> {
+		var h = new hxc.core.NameHash.HashTableOrder();
+		for (n in resourceOrder) h.add(n, hxc.core.NameHash.stringHash(n));
+		return h.visitOrder();
 	}
 
 	public var debug:Bool = false;

@@ -660,6 +660,9 @@ class ModuleDef {
 	// request's objects - and the typed world behind them - alive for good. Its resolution is open
 	// until its last class is built (TypeResolve).
 	@:noCompletion public var hxcResolving:Bool = false;
+	// The types whose global metadata module resolution has not applied yet
+	// (ModuleLoader.applyPendingGlobalMeta).
+	@:noCompletion public var hxcGlobalMetaPending:Null<Array<ModuleType>> = null;
 	public var id:Int;
 	public var path:Path;
 	public var types:Array<ModuleType>;
