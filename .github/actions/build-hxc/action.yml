@@ -21,11 +21,27 @@ runs:
         while IFS='=' read -r key value; do
           value="${value%$'\r'}"
           [ -n "$key" ] && [ "${key#\#}" = "$key" ] && echo "$key=$value" >> "$GITHUB_OUTPUT"
-        done < "$GITHUB_WORKSPACE/.github/pins.env"
+        done < "$GITHUB_WORKSPACE/toolchain.env"
 
-    - uses: krdlab/setup-haxe@v1
+    - if: runner.os != 'macOS'
+      uses: krdlab/setup-haxe@v1
       with:
         haxe-version: ${{ steps.pins.outputs.HAXE }}
+
+    - name: Install Haxe from Homebrew
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install haxe neko
+        mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
+        version=$(haxe -version 2>&1)
+        echo "haxe $version"
+        case "$version" in
+          "${{ steps.pins.outputs.HAXE }}"*) ;;
+          4.3.*) echo "::warning::Homebrew has Haxe $version, not ${{ steps.pins.outputs.HAXE }}" ;;
+          *) echo "::error::Homebrew has Haxe $version"; exit 1 ;;
+        esac
+        echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
 
     - name: Restore hxcpp and aedifex
       id: tools-cache
