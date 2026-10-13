@@ -860,14 +860,6 @@ class ModuleLoader {
 					hasDeclaration = true;
 					var priv = hasEnumFlag(d.dFlags, EPrivate); // ETypedef uses EnumFlag in the AST
 					var path = makePath(name, priv, p);
-					var patch = applyTypePatches(ctx, path, d.dMeta);
-					// A patch makes a new declaration: the parsed one may be the server's cached copy,
-					// which must stay
-					// unchanged. Writing into it would leak the patch into the cache, where class-path
-					// completion reads
-					// it back and each load applies it again.
-					if (patch.meta != d.dMeta)
-						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: d.dData};
 					var t = TypeFunctions.mkTypedef(m, path, p, d.dName.pos, TypeFunctions.mkMono());
 					t.doc = d.dDoc;
 					t.isPrivate = priv;
@@ -881,14 +873,17 @@ class ModuleLoader {
 					checkName(name, d.dName.pos);
 					var priv = hasAbstractFlag(d.dFlags, AbPrivate);
 					var path = makePath(name, priv, p);
+					// A type patch on an abstract reaches its fields and the metadata of its implementation
+					// class, not the abstract's own metadata.
 					var patch = applyTypePatches(ctx, path, d.dMeta, d.dData);
+					var patchMeta = patch.meta.slice(d.dMeta.length);
 					// A patch makes a new declaration: the parsed one may be the server's cached copy,
 					// which must stay
 					// unchanged. Writing into it would leak the patch into the cache, where class-path
 					// completion reads
 					// it back and each load applies it again.
-					if (patch.meta != d.dMeta || patch.fields != d.dData)
-						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: patch.fields};
+					if (patch.fields != d.dData)
+						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: patch.fields};
 					var a:TAbstract = {
 						path: path, module: m, pos: p, namePos: d.dName.pos,
 						isPrivate: priv, doc: d.dDoc, meta: d.dMeta.copy(), params: hxc.typing.Typeload.typeTypeParams(ctx, path, d.dParams, null, TPHType, m), usings: [],
@@ -934,6 +929,7 @@ class ModuleLoader {
 								|| mm.name == ":jsRequire" || mm.name == ":pythonImport" || mm.name == ":expose"
 								|| mm.name == ":deprecated" || mm.name == ":phpGlobal" || mm.name == ":publicFields") mm];
 						implMeta.reverse();
+						implMeta = implMeta.concat(patchMeta);
 						var implDef:Definition<ClassFlag, Array<ClassField>> = {
 							// Use the abstract name's position for the implementation class; a declaration-wide span
 							// would create false display matches on keywords and braces.
