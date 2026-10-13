@@ -16,6 +16,9 @@ import hxc.eval.EvalValue;
 @:build(hxc.eval.LuvBuild.build())
 @:cppFileCode('
 #include <uv.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>

@@ -8,11 +8,10 @@ class Aedifex {
 		.named("hxc")
 		.source("src")
 		.mainClass("hxc.Compiler")
-		.haxeCompiler("C:/HaxeToolkit/haxe/haxe.exe")
 		.identity("hxc", "hxc")
-		.version("0.4.0")
+		.version("0.6.6")
 		.description("A Haxe 4+ compiler written in Haxe.")
-		.license("GPL2")
+		.license("MPL-2.0")
 		.defineToken("HXCPP_GC_BIG_BLOCKS")
 		.defineToken("HXCPP_M64")
 		.done();

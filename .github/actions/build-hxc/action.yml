@@ -1,0 +1,98 @@
+name: Build hxc
+description: Installs the pinned toolchain and builds the hxc executable.
+
+inputs:
+  compile-cache:
+    description: Reuse hxcpp's content-addressed compile cache.
+    default: "true"
+  haxe-version:
+    default: "4.3.7"
+  hxcpp-repo:
+    default: https://github.com/dimensionscape/hxcpp.git
+  hxcpp-commit:
+    default: 8399945561eeffebb727aa35b02d939e06c07e58
+  aedifex-repo:
+    default: https://github.com/DimensionscapeOrg/aedifex.git
+  aedifex-commit:
+    default: 41604cd3e9cc3930473f6015608643a2fbb9ec56
+
+outputs:
+  executable:
+    description: Path of the built executable.
+    value: ${{ steps.locate.outputs.executable }}
+
+runs:
+  using: composite
+  steps:
+    - if: runner.os != 'macOS'
+      uses: krdlab/setup-haxe@v1
+      with:
+        haxe-version: ${{ inputs.haxe-version }}
+
+    - name: Install Haxe from Homebrew
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install haxe neko
+        mkdir -p "$HOME/haxelib" && haxelib setup "$HOME/haxelib"
+        version=$(haxe -version 2>&1)
+        echo "haxe $version"
+        case "$version" in
+          "${{ inputs.haxe-version }}"*) ;;
+          4.3.*) echo "::warning::Homebrew has Haxe $version, not ${{ inputs.haxe-version }}" ;;
+          *) echo "::error::Homebrew has Haxe $version"; exit 1 ;;
+        esac
+        echo "HAXE_STD_PATH=$(brew --prefix haxe)/lib/haxe/std" >> "$GITHUB_ENV"
+
+    - name: Restore hxcpp and aedifex
+      id: tools-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ runner.temp }}/hxcpp
+          ${{ runner.temp }}/aedifex
+        key: tools-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ inputs.aedifex-commit }}
+
+    - name: Fetch hxcpp and aedifex
+      if: steps.tools-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        fetch() {
+          mkdir -p "$3" && cd "$3"
+          git init -q && git remote add origin "$1"
+          git fetch -q --depth 1 origin "$2" && git checkout -q FETCH_HEAD
+        }
+        fetch "${{ inputs.hxcpp-repo }}" "${{ inputs.hxcpp-commit }}" "$RUNNER_TEMP/hxcpp"
+        fetch "${{ inputs.aedifex-repo }}" "${{ inputs.aedifex-commit }}" "$RUNNER_TEMP/aedifex"
+        cd "$RUNNER_TEMP/hxcpp/tools/hxcpp" && haxe compile.hxml
+
+    - name: Register hxcpp and aedifex
+      shell: bash
+      run: |
+        haxelib dev hxcpp "$RUNNER_TEMP/hxcpp"
+        haxelib dev aedifex "$RUNNER_TEMP/aedifex"
+
+    - name: Restore the compile cache
+      if: inputs.compile-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/hxcpp-cache
+        key: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ github.sha }}
+        restore-keys: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-
+
+    - name: Build
+      shell: bash
+      run: |
+        if [ "${{ inputs.compile-cache }}" = "true" ]; then
+          export HXCPP_COMPILE_CACHE="$RUNNER_TEMP/hxcpp-cache"
+          mkdir -p "$HXCPP_COMPILE_CACHE"
+        fi
+        haxelib run aedifex build cpp .
+
+    - name: Locate the executable
+      id: locate
+      shell: bash
+      run: |
+        exe=$(find bin/cpp -path '*/release/bin/hxc' -o -path '*/release/bin/hxc.exe' | head -1)
+        [ -n "$exe" ] || { echo "no executable under bin/cpp" >&2; exit 1; }
+        echo "executable=$exe" >> "$GITHUB_OUTPUT"
