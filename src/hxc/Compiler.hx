@@ -112,6 +112,7 @@ class Compiler {
 		applyGcSettings();
 		hxc.eval.EvalStdLib.gilEnter();
 		run(Sys.args());
+		hxc.compiler.HostRuntime.exit(0);
 	}
 	// HXC_DBG_GC: measure how much of the wall clock is collection. "off" disables the collector for
 	// the whole run (RSS grows unbounded, so one-shot compiles only); a number sets the target free
@@ -153,6 +154,7 @@ class Compiler {
 		catch (ra:RequestAbort) throw ra
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
+		hxc.compiler.HostRuntime.exit(0);
 	}
 
 	static var argFailureCtx:Null<Context> = null;

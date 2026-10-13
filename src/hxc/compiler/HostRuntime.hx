@@ -85,6 +85,16 @@ static void hxc_threads_atexit() {
 		_exit(hxc_exit_code.load());
 	}
 }
+// The end of the process: stdout, buffered stderr and every open stream are flushed, and the static
+// teardown is skipped, because a thread still running could lock a mutex it destroyed, which aborts
+// on macOS.
+static void hxc_exit_now(int code) {
+	hxc_exit_code.store(code);
+	fflush(stdout);
+	hxc_err_flush();
+	fflush(NULL);
+	_exit(code);
+}
 static void hxc_thread_started(int ident) {
 	std::call_once(hxc_threads_atexit_once, []() { atexit(hxc_threads_atexit); });
 	hxc_thread_ident = ident;
@@ -260,9 +270,10 @@ class HostRuntime {
 
 	public static function exit(code:Int):Void {
 		#if cpp
-		untyped __cpp__("hxc_exit_code = {0}", code);
-		#end
+		untyped __cpp__("hxc_exit_now({0})", code);
+		#else
 		Sys.exit(code);
+		#end
 	}
 }
 
