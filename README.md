@@ -105,7 +105,7 @@ Requirements:
 - [Haxe](https://haxe.org) 4.3, which includes Neko
 - hxcpp from [dimensionscape/hxcpp, branch `production`](https://github.com/dimensionscape/hxcpp/tree/production)
 - [Aedifex](https://github.com/DimensionscapeOrg/aedifex) 1.0.0-rc.3 or later
-- A 64-bit C++ toolchain: MSVC on Windows, GCC or Clang on Linux
+- A 64-bit C++ toolchain: MSVC on Windows, GCC or Clang on Linux, the Xcode command-line tools on macOS
 
 ```bash
 haxelib git hxcpp https://github.com/dimensionscape/hxcpp.git production
