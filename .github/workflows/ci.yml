@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 env:
-  CONFORMANCE_COMMIT: 4f6c712ed8bc4f4f08c4a4a42bed1b52d8955d51
+  CONFORMANCE_COMMIT: 298b9abf6dbdebb2b6a7b19da9affb6c33507381
 
 jobs:
   build:
