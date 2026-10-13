@@ -129,9 +129,12 @@ runs:
         [ "$RUNNER_OS" != "Windows" ] && { ulimit -s unlimited 2>/dev/null || ulimit -s 65520 2>/dev/null || true; }
         rm -rf "$RUNNER_TEMP/stage1-gen" && mkdir -p "$RUNNER_TEMP/stage1-gen"
         cp -r "$gen/src" "$gen/include" "$RUNNER_TEMP/stage1-gen/"
+        # Removed so the second stage has to generate every file itself.
+        rm -rf "$gen/src" "$gen/include"
         AEDIFEX_HAXE="$stage1" haxelib run aedifex build cpp .
-        # hxc must generate from its own source the C++ that Haxe generated. One file is known to
-        # differ: EvalStdLib.cpp numbers two internal counters one apart.
+        [ -d "$gen/src" ] || { echo "::error::the second stage generated no C++"; exit 1; }
+        # hxc must generate from its own source the C++ that Haxe generated. One file may differ:
+        # EvalStdLib.cpp, where two internal counters can be numbered one apart.
         diff -rq "$RUNNER_TEMP/stage1-gen/src" "$gen/src" > "$RUNNER_TEMP/selfhost.diff" || true
         diff -rq "$RUNNER_TEMP/stage1-gen/include" "$gen/include" >> "$RUNNER_TEMP/selfhost.diff" || true
         grep -v "EvalStdLib.cpp" "$RUNNER_TEMP/selfhost.diff" > "$RUNNER_TEMP/selfhost.unexpected" || true
