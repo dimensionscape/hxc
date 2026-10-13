@@ -23,7 +23,10 @@ import sys.FileSystem;
 import sys.io.File;
 import sys.io.Process;
 
+// macOS 11 is the oldest release on Apple silicon, and libuv reads and writes only the first buffer of a
+// vectored file operation when built for anything older.
 @:buildXml('
+<setenv name="MACOSX_DEPLOYMENT_TARGET" value="11.0" if="macos"/>
 <files id="pcre2-8">
 	<compilerflag value="-DMATCH_LIMIT=4294967295U"/>
 	<compilerflag value="-DMATCH_LIMIT_DEPTH=4294967295U"/>
