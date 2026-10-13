@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore: ["**.md", "LICENSE"]
+  pull_request:
+    paths-ignore: ["**.md", "LICENSE"]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      clean:
+        description: Build without the compile cache
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-2022, experimental: false }
+          - { name: linux-x64, os: ubuntu-24.04, experimental: true }
+          - { name: macos-arm64, os: macos-14, experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - id: build
+        uses: ./.github/actions/build-hxc
+        with:
+          compile-cache: ${{ github.event_name != 'schedule' && inputs.clean != true }}
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          exe="${{ steps.build.outputs.executable }}"
+          hxc="$(cd "$(dirname "$exe")" && pwd)/$(basename "$exe")"
+          [ "$RUNNER_OS" = "Linux" ] && ulimit -s unlimited
+          "$hxc" -version
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          printf 'class Main {\n\tstatic function main() {\n\t\tvar m = [for (i in 0...3) i => i * i];\n\t\ttrace(m[2]);\n\t}\n}\n' > Main.hx
+          "$hxc" -main Main --interp
+          "$hxc" -main Main -js main.js
+          node main.js
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: hxc-${{ matrix.name }}
+          path: ${{ steps.build.outputs.executable }}
+          if-no-files-found: error

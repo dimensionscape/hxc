@@ -1,0 +1,81 @@
+name: Build hxc
+description: Installs the pinned toolchain and builds the hxc executable.
+
+inputs:
+  compile-cache:
+    description: Reuse hxcpp's content-addressed compile cache.
+    default: "true"
+
+outputs:
+  executable:
+    description: Path of the built executable.
+    value: ${{ steps.locate.outputs.executable }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned versions
+      id: pins
+      shell: bash
+      run: |
+        while IFS='=' read -r key value; do
+          value="${value%$'\r'}"
+          [ -n "$key" ] && [ "${key#\#}" = "$key" ] && echo "$key=$value" >> "$GITHUB_OUTPUT"
+        done < "$GITHUB_WORKSPACE/.github/pins.env"
+
+    - uses: krdlab/setup-haxe@v1
+      with:
+        haxe-version: ${{ steps.pins.outputs.HAXE }}
+
+    - name: Restore hxcpp and aedifex
+      id: tools-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ runner.temp }}/hxcpp
+          ${{ runner.temp }}/aedifex
+        key: tools-${{ runner.os }}-${{ steps.pins.outputs.HXCPP_COMMIT }}-${{ steps.pins.outputs.AEDIFEX_COMMIT }}
+
+    - name: Fetch hxcpp and aedifex
+      if: steps.tools-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        fetch() {
+          mkdir -p "$3" && cd "$3"
+          git init -q && git remote add origin "$1"
+          git fetch -q --depth 1 origin "$2" && git checkout -q FETCH_HEAD
+        }
+        fetch "${{ steps.pins.outputs.HXCPP_REPO }}" "${{ steps.pins.outputs.HXCPP_COMMIT }}" "$RUNNER_TEMP/hxcpp"
+        fetch "${{ steps.pins.outputs.AEDIFEX_REPO }}" "${{ steps.pins.outputs.AEDIFEX_COMMIT }}" "$RUNNER_TEMP/aedifex"
+        cd "$RUNNER_TEMP/hxcpp/tools/hxcpp" && haxe compile.hxml
+
+    - name: Register hxcpp and aedifex
+      shell: bash
+      run: |
+        haxelib dev hxcpp "$RUNNER_TEMP/hxcpp"
+        haxelib dev aedifex "$RUNNER_TEMP/aedifex"
+
+    - name: Restore the compile cache
+      if: inputs.compile-cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/hxcpp-cache
+        key: hxcpp-cache-${{ runner.os }}-${{ steps.pins.outputs.HXCPP_COMMIT }}-${{ github.sha }}
+        restore-keys: hxcpp-cache-${{ runner.os }}-${{ steps.pins.outputs.HXCPP_COMMIT }}-
+
+    - name: Build
+      shell: bash
+      run: |
+        if [ "${{ inputs.compile-cache }}" = "true" ]; then
+          export HXCPP_COMPILE_CACHE="$RUNNER_TEMP/hxcpp-cache"
+          mkdir -p "$HXCPP_COMPILE_CACHE"
+        fi
+        haxelib run aedifex build cpp .
+
+    - name: Locate the executable
+      id: locate
+      shell: bash
+      run: |
+        exe=$(find bin/cpp -path '*/release/bin/hxc' -o -path '*/release/bin/hxc.exe' | head -1)
+        [ -n "$exe" ] || { echo "no executable under bin/cpp" >&2; exit 1; }
+        echo "executable=$exe" >> "$GITHUB_OUTPUT"
