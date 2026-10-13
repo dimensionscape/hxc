@@ -171,3 +171,43 @@ jobs:
           cd "${{ steps.t.outputs.conformance }}"
           neko run.n corpus unit,misc --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" --haxe haxe \
             --divergences "$GITHUB_WORKSPACE/tests/corpus-divergences.json" --junit "$RUNNER_TEMP/haxe-suites.xml"
+
+  openfl:
+    name: OpenFL
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - name: Install Lime and OpenFL
+        shell: bash
+        run: |
+          haxelib install lime 8.4.0 --always --quiet
+          haxelib install openfl 9.5.2 --always --quiet
+          haxelib install openfl-samples 8.7.0 --always --quiet
+          haxelib install actuate 1.9.0 --always --quiet
+
+      - name: PiratePig typed by Haxe and by hxc
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          haxelib run openfl create PiratePig PiratePig
+          cd PiratePig
+          status=0
+          for target in html5 windows; do
+            haxelib run lime update $target
+            haxe Export/$target/haxe/release.hxml --no-output > haxe-$target.txt 2>&1; echo "exit $?" >> haxe-$target.txt
+            "${{ steps.t.outputs.hxc }}" Export/$target/haxe/release.hxml --no-output > hxc-$target.txt 2>&1; echo "exit $?" >> hxc-$target.txt
+            if ! diff -u haxe-$target.txt hxc-$target.txt; then
+              echo "::error::hxc types PiratePig for $target differently from Haxe"
+              status=1
+            fi
+          done
+          exit $status
