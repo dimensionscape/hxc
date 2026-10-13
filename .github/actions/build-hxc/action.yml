@@ -3,7 +3,10 @@ description: Installs the pinned toolchain and builds the hxc executable.
 
 inputs:
   compile-cache:
-    description: Reuse hxcpp's content-addressed compile cache.
+    description: Reuse hxcpp's content-addressed compile cache across runs.
+    default: "true"
+  self-host:
+    description: Rebuild hxc with the hxc just built, and compare the C++ both generate.
     default: "true"
   haxe-version:
     default: "4.3.7"
@@ -80,13 +83,28 @@ runs:
         key: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-${{ github.sha }}
         restore-keys: hxcpp-cache-${{ runner.os }}-${{ inputs.hxcpp-commit }}-
 
-    - name: Build
+    - name: Pin the standard library path
       shell: bash
       run: |
-        if [ "${{ inputs.compile-cache }}" = "true" ]; then
-          export HXCPP_COMPILE_CACHE="$RUNNER_TEMP/hxcpp-cache"
-          mkdir -p "$HXCPP_COMPILE_CACHE"
+        # Both stages must see the same spelling of the path: it is written into the generated C++.
+        if [ -z "${HAXE_STD_PATH:-}" ]; then
+          std="$(dirname "$(command -v haxe)")/std"
+          [ "$RUNNER_OS" = "Windows" ] && std="$(cygpath -m "$std")"
+          echo "HAXE_STD_PATH=$std" >> "$GITHUB_ENV"
         fi
+        # Without a cache from earlier runs, the job still gets one of its own, so the second stage
+        # reuses the first stage's objects.
+        if [ "${{ inputs.compile-cache }}" = "true" ]; then
+          echo "HXCPP_COMPILE_CACHE=$RUNNER_TEMP/hxcpp-cache" >> "$GITHUB_ENV"
+        else
+          echo "HXCPP_COMPILE_CACHE=$RUNNER_TEMP/hxcpp-job-cache" >> "$GITHUB_ENV"
+        fi
+
+    - name: Build with Haxe
+      shell: bash
+      run: |
+        mkdir -p "$HXCPP_COMPILE_CACHE"
+        echo "HAXE_STD_PATH=$HAXE_STD_PATH"
         haxelib run aedifex build cpp .
 
     - name: Locate the executable
@@ -96,3 +114,30 @@ runs:
         exe=$(find bin/cpp -path '*/release/bin/hxc' -o -path '*/release/bin/hxc.exe' | head -1)
         [ -n "$exe" ] || { echo "no executable under bin/cpp" >&2; exit 1; }
         echo "executable=$exe" >> "$GITHUB_OUTPUT"
+        echo "generated=$(dirname "$(dirname "$exe")")/obj" >> "$GITHUB_OUTPUT"
+
+    - name: Build with hxc
+      if: inputs.self-host == 'true'
+      shell: bash
+      run: |
+        exe="${{ steps.locate.outputs.executable }}"
+        gen="${{ steps.locate.outputs.generated }}"
+        stage1="$RUNNER_TEMP/hxc-stage1${exe##*/hxc}"
+        [ "$RUNNER_OS" = "Windows" ] && stage1="$(cygpath -m "$stage1")"
+        cp "$exe" "$stage1"
+        # The executable reserves a large stack on Windows; elsewhere the shell's limit applies.
+        [ "$RUNNER_OS" != "Windows" ] && { ulimit -s unlimited 2>/dev/null || ulimit -s 65520 2>/dev/null || true; }
+        rm -rf "$RUNNER_TEMP/stage1-gen" && mkdir -p "$RUNNER_TEMP/stage1-gen"
+        cp -r "$gen/src" "$gen/include" "$RUNNER_TEMP/stage1-gen/"
+        AEDIFEX_HAXE="$stage1" haxelib run aedifex build cpp .
+        # hxc must generate from its own source the C++ that Haxe generated. One file is known to
+        # differ: EvalStdLib.cpp numbers two internal counters one apart.
+        diff -rq "$RUNNER_TEMP/stage1-gen/src" "$gen/src" > "$RUNNER_TEMP/selfhost.diff" || true
+        diff -rq "$RUNNER_TEMP/stage1-gen/include" "$gen/include" >> "$RUNNER_TEMP/selfhost.diff" || true
+        grep -v "EvalStdLib.cpp" "$RUNNER_TEMP/selfhost.diff" > "$RUNNER_TEMP/selfhost.unexpected" || true
+        echo "generated C++ files that differ: $(wc -l < "$RUNNER_TEMP/selfhost.diff")"
+        if [ -s "$RUNNER_TEMP/selfhost.unexpected" ]; then
+          echo "::error::hxc generated different C++ for its own source than Haxe did"
+          head -20 "$RUNNER_TEMP/selfhost.unexpected"
+          exit 1
+        fi
