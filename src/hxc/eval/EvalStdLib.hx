@@ -2445,10 +2445,9 @@ class EvalStdLib {
 		var s = cFormatFloat(f, 12);
 		if (Std.parseFloat(s) != f) {
 			s = cFormatFloat(f, 15);
-			if (Std.parseFloat(s) != f) {
-				s = cFormatFloat(f, 17);
-				if (Std.parseFloat(s) != f) s = cFormatFloat(f, 18);
-			}
+			// msvcrt's "%.18g" generates 17 significant digits and zero-fills the rest, which %g strips, so
+			// on Windows it reads as "%.17g" (see Numeric.formatG).
+			if (Std.parseFloat(s) != f) s = cFormatFloat(f, hxc.core.Globals.isWindows ? 17 : 18);
 		}
 		if (StringTools.endsWith(s, ".")) s = s.substr(0, s.length - 1);
 		return normalizeFloatExponent(s);

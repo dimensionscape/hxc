@@ -17,10 +17,11 @@ class Numeric {
 		var s = switch (precision) {
 			case 12: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.12g", v); return ::String(buf); })({0})', f);
 			case 15: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.15g", v); return ::String(buf); })({0})', f);
-			// The 18-digit form prints with "%.17g": msvcrt's printf only generates 17 significant digits
-			// for "%.18g" and zero-fills the rest, and %g then strips those trailing zeros, so the two
-			// agree there. No double needs more than 17 digits to round-trip, so the value is kept.
-			case 18: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.17g", v); return ::String(buf); })({0})', f);
+			// On Windows the 18-digit form prints with "%.17g": msvcrt's printf only generates 17
+			// significant digits for "%.18g" and zero-fills the rest, and %g then strips those trailing
+			// zeros, so the two agree there. The C libraries elsewhere print the 18th digit.
+			case 18 if (Globals.isWindows): untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.17g", v); return ::String(buf); })({0})', f);
+			case 18: untyped __cpp__('([](double v) { char buf[64]; snprintf(buf, sizeof(buf), "%.18g", v); return ::String(buf); })({0})', f);
 			case _: Std.string(f);
 		}
 		return msvcrtExponent(s);
