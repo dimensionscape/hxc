@@ -900,22 +900,61 @@ class TypeUnification {
 	static function typeEqTry(uctx:UnificationContext, a:T, b:T):Bool {
 		var param = uctx.equalityKind;
 		if (a == b) return true;
+		// The first arms look at one side only and have no guard: tried in order before the pair switch, they
+		// select what it would and keep its decision tree (and frame) small.
+		switch (a) {
+			case TLazy(f): return typeEqTry(uctx, TypeFunctions.lazyType(f), b);
+			case _:
+		}
+		switch (b) {
+			case TLazy(f): return typeEqTry(uctx, a, TypeFunctions.lazyType(f));
+			case _:
+		}
+		switch (a) {
+			case TMono(t): return typeEqFromMono(uctx, a, b, t);
+			case _:
+		}
+		switch (b) {
+			case TMono(t): return typeEqToMono(uctx, a, b, t);
+			case _:
+		}
+		switch (a) {
+			case TDynamic(_): return typeEqLeftDynamic(uctx, a, b);
+			case TAbstract(_, _): return typeEqLeftAbstract(uctx, a, b);
+			case TType(_, _): return typeEqLeftType(uctx, a, b);
+			case TEnum(_, _): return typeEqLeftEnum(uctx, a, b);
+			case TInst(_, _): return typeEqLeftInst(uctx, a, b);
+			case TFun(_): return typeEqLeftFun(uctx, a, b);
+			case TAnon(_): return typeEqLeftAnon(uctx, a, b);
+			case _: return eqFail([cannotUnify(a, b)]);
+		}
+	}
+
+	// typeEqTry's pair switch, split by a's constructor: each holds, in their order, the arms whose left pattern can
+	// match it, so it selects what the pair switch did with a decision tree of its own.
+	static function typeEqLeftDynamic(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
 		switch [a, b] {
-			case [TLazy(f), _]: return typeEqTry(uctx, TypeFunctions.lazyType(f), b);
-			case [_, TLazy(f)]: return typeEqTry(uctx, a, TypeFunctions.lazyType(f));
-			case [TMono(t), _]:
-				switch (t.type) {
-					case null: if (param == EqCoreType || !link(t, a, b)) return eqFail([cannotUnify(a, b)]);
-					case some: return typeEqTry(uctx, some, b);
-				}
-			case [_, TMono(t)]:
-				switch (t.type) {
-					case null: if (param == EqCoreType || !link(t, b, a)) return eqFail([cannotUnify(a, b)]);
-					case some: return typeEqTry(uctx, a, some);
-				}
 			case [TDynamic(null), TDynamic(null)]:
 			case [TDynamic(a2), TDynamic(b2)] if (a2 != null && b2 != null):
 				return typeEqTry(uctx, a2, b2);
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+	static function typeEqLeftAbstract(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
 			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
 			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
 			case [TAbstract(a1, [t1]), TAbstract(a2, [t2])] if (isNullPath(a1.path) && isNullPath(a2.path)):
@@ -924,74 +963,198 @@ class TypeUnification {
 				return typeEqTry(uctx, t1, b);
 			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
 				return typeEqTry(uctx, a, t2);
-			case [TType(t1, tl1), TType(t2, tl2)] if ((t1 == t2 || (param == EqCoreType && pathEq(t1.path, t2.path))) && tl1.length == tl2.length):
-				typeEqParams(uctx, a, b, tl1, tl2);
-			case [TType(t1, tl1), _] if (canFollow(param, a)):
-				return typeEqTypedef(uctx, a, b, t1, tl1, true);
 			case [_, TType(t2, tl2)] if (canFollow(param, b)):
 				return typeEqTypedef(uctx, a, b, t2, tl2, false);
-			case [TEnum(e1, tl1), TEnum(e2, tl2)]:
-				if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) return eqFail([cannotUnify(a, b)]);
-				typeEqParams(uctx, a, b, tl1, tl2);
-			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				if (c1 != c2 && !(param == EqCoreType && pathEq(c1.path, c2.path))
-					&& (switch [c1.kind, c2.kind] { case [KExpr(_), KExpr(_)]: false; case _: true; }))
-					return eqFail([cannotUnify(a, b)]);
-				typeEqParams(uctx, a, b, tl1, tl2);
-			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
-				var i = 0;
-				try {
-					typeEq(uctx, s1.ret, s2.ret);
-					for (k in 0...s1.args.length) {
-						i++;
-						var a1 = s1.args[k], a2 = s2.args[k];
-						if (a1.opt != a2.opt) error([Not_matching_optional(a1.name)]);
-						typeEq(uctx, a1.t, a2.t);
-					}
-				} catch (e:UnifyError) {
-					var msg:UnifyErrorKind = i == 0 ? Invalid_return_type : Invalid_function_argument(i, s1.args.length);
-					error([cannotUnify(a, b), msg].concat(e.errors));
-				}
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2 || (param == EqCoreType && pathEq(a1.path, a2.path))):
 				typeEqParams(uctx, a, b, tl1, tl2);
 			case [TAbstract(ab, tl), _] if (canFollowAbstract(uctx, ab)):
 				return typeEqTry(uctx, TypeFunctions.applyParams(ab.params, tl, ab.thisType), b);
 			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
 				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
-			case [TAnon(a1), TAnon(a2)]:
-				try {
-					switch (a2.status.get()) {
-						case Statics(c): switch (a1.status.get()) { case Statics(c2) if (c == c2): case _: error([]); }
-						case EnumStatics(e): switch (a1.status.get()) { case EnumStatics(e2) if (e == e2): case _: error([]); }
-						case AbstractStatics(ab): switch (a1.status.get()) { case AbstractStatics(ab2) if (ab == ab2): case _: error([]); }
-						case _:
-					}
-					for (n in sortedFieldNames(a1.fields)) {
-						var f1 = a1.fields.get(n);
-						if (!a2.fields.exists(n)) {
-							error([hasNoField(b, n)]);
-						}
-						var f2 = a2.fields.get(n);
-						if (!fieldKindEq(f1.kind, f2.kind) && (param == EqStrict || param == EqCoreType || !unifyKind(f1.kind, f2.kind)))
-							error([invalidKind(n, f1.kind, f2.kind)]);
-						try {
-							typeEq(uctx, f1.type, f2.type);
-						} catch (e:UnifyError) {
-							error([invalidField(n)].concat(e.errors));
-						}
-						if (TypeFunctions.hasClassFieldFlag(f1, CfPublic) != TypeFunctions.hasClassFieldFlag(f2, CfPublic))
-							error([invalidVisibility(n)]);
-					}
-					for (n in sortedFieldNames(a2.fields)) {
-						if (!a1.fields.exists(n)) error([hasNoField(a, n)]);
-					}
-				} catch (e:UnifyError) {
-					error([cannotUnify(a, b)].concat(e.errors));
-				}
 			case _:
 				return eqFail([cannotUnify(a, b)]);
 		}
 		return true;
+	}
+
+	static function typeEqLeftType(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [TType(t1, tl1), TType(t2, tl2)] if ((t1 == t2 || (param == EqCoreType && pathEq(t1.path, t2.path))) && tl1.length == tl2.length):
+				typeEqParams(uctx, a, b, tl1, tl2);
+			case [TType(t1, tl1), _] if (canFollow(param, a)):
+				return typeEqTypedef(uctx, a, b, t1, tl1, true);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+	static function typeEqLeftEnum(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [TEnum(e1, tl1), TEnum(e2, tl2)]:
+				return typeEqEnums(uctx, a, b, e1, tl1, e2, tl2);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+	static function typeEqLeftInst(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [TInst(c1, tl1), TInst(c2, tl2)]:
+				return typeEqInsts(uctx, a, b, c1, tl1, c2, tl2);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+	static function typeEqLeftFun(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
+				typeEqFuns(uctx, a, b, s1, s2);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+	static function typeEqLeftAnon(uctx:UnificationContext, a:T, b:T):Bool {
+		var param = uctx.equalityKind;
+		switch [a, b] {
+			case [_, _] if (a == TypeFunctions.tDynamic && param == EqBothDynamic):
+			case [_, _] if (b == TypeFunctions.tDynamic && (param == EqRightDynamic || param == EqBothDynamic)):
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path) && param != EqDoNotFollowNull):
+				return typeEqTry(uctx, a, t2);
+			case [_, TType(t2, tl2)] if (canFollow(param, b)):
+				return typeEqTypedef(uctx, a, b, t2, tl2, false);
+			case [_, TAbstract(ab, tl)] if (canFollowAbstract(uctx, ab)):
+				return typeEqTry(uctx, a, TypeFunctions.applyParams(ab.params, tl, ab.thisType));
+			case [TAnon(a1), TAnon(a2)]:
+				typeEqAnons(uctx, a, b, a1, a2);
+			case _:
+				return eqFail([cannotUnify(a, b)]);
+		}
+		return true;
+	}
+
+
+	// typeEqTry's arms, each a function of its own so the pair switch keeps a small frame.
+	static function typeEqFromMono(uctx:UnificationContext, a:T, b:T, t:TMono):Bool {
+		switch (t.type) {
+			case null: if (uctx.equalityKind == EqCoreType || !link(t, a, b)) return eqFail([cannotUnify(a, b)]);
+			case some: return typeEqTry(uctx, some, b);
+		}
+		return true;
+	}
+
+	static function typeEqToMono(uctx:UnificationContext, a:T, b:T, t:TMono):Bool {
+		switch (t.type) {
+			case null: if (uctx.equalityKind == EqCoreType || !link(t, b, a)) return eqFail([cannotUnify(a, b)]);
+			case some: return typeEqTry(uctx, a, some);
+		}
+		return true;
+	}
+
+	static function typeEqEnums(uctx:UnificationContext, a:T, b:T, e1:TEnum, tl1:TParams, e2:TEnum, tl2:TParams):Bool {
+		var param = uctx.equalityKind;
+		if (e1 != e2 && !(param == EqCoreType && pathEq(e1.path, e2.path))) return eqFail([cannotUnify(a, b)]);
+		typeEqParams(uctx, a, b, tl1, tl2);
+		return true;
+	}
+
+	static function typeEqInsts(uctx:UnificationContext, a:T, b:T, c1:TClass, tl1:TParams, c2:TClass, tl2:TParams):Bool {
+		var param = uctx.equalityKind;
+		if (c1 != c2 && !(param == EqCoreType && pathEq(c1.path, c2.path))
+			&& (switch [c1.kind, c2.kind] { case [KExpr(_), KExpr(_)]: false; case _: true; }))
+			return eqFail([cannotUnify(a, b)]);
+		typeEqParams(uctx, a, b, tl1, tl2);
+		return true;
+	}
+
+	static function typeEqFuns(uctx:UnificationContext, a:T, b:T, s1:TSignature, s2:TSignature):Void {
+		var i = 0;
+		try {
+			typeEq(uctx, s1.ret, s2.ret);
+			for (k in 0...s1.args.length) {
+				i++;
+				var a1 = s1.args[k], a2 = s2.args[k];
+				if (a1.opt != a2.opt) error([Not_matching_optional(a1.name)]);
+				typeEq(uctx, a1.t, a2.t);
+			}
+		} catch (e:UnifyError) {
+			var msg:UnifyErrorKind = i == 0 ? Invalid_return_type : Invalid_function_argument(i, s1.args.length);
+			error([cannotUnify(a, b), msg].concat(e.errors));
+		}
+	}
+
+	static function typeEqAnons(uctx:UnificationContext, a:T, b:T, a1:TAnon, a2:TAnon):Void {
+		var param = uctx.equalityKind;
+		try {
+			switch (a2.status.get()) {
+				case Statics(c): switch (a1.status.get()) { case Statics(c2) if (c == c2): case _: error([]); }
+				case EnumStatics(e): switch (a1.status.get()) { case EnumStatics(e2) if (e == e2): case _: error([]); }
+				case AbstractStatics(ab): switch (a1.status.get()) { case AbstractStatics(ab2) if (ab == ab2): case _: error([]); }
+				case _:
+			}
+			for (n in sortedFieldNames(a1.fields)) {
+				var f1 = a1.fields.get(n);
+				if (!a2.fields.exists(n)) {
+					error([hasNoField(b, n)]);
+				}
+				var f2 = a2.fields.get(n);
+				if (!fieldKindEq(f1.kind, f2.kind) && (param == EqStrict || param == EqCoreType || !unifyKind(f1.kind, f2.kind)))
+					error([invalidKind(n, f1.kind, f2.kind)]);
+				try {
+					typeEq(uctx, f1.type, f2.type);
+				} catch (e:UnifyError) {
+					error([invalidField(n)].concat(e.errors));
+				}
+				if (TypeFunctions.hasClassFieldFlag(f1, CfPublic) != TypeFunctions.hasClassFieldFlag(f2, CfPublic))
+					error([invalidVisibility(n)]);
+			}
+			for (n in sortedFieldNames(a2.fields)) {
+				if (!a1.fields.exists(n)) error([hasNoField(a, n)]);
+			}
+		} catch (e:UnifyError) {
+			error([cannotUnify(a, b)].concat(e.errors));
+		}
 	}
 
 	// typeEq's TType arms: recStack over eqStack (a,b), comparing the typedef's type with its parameters
@@ -1049,310 +1212,514 @@ class TypeUnification {
 	public static function unify(uctx:UnificationContext, a:T, b:T):Void {
 		if (hxc.core.PerfCount.on) hxc.core.PerfCount.bump("unify");
 		if (a == b) return;
+		// The first arms look at one side only and have no guard: tried in order before the pair switch,
+		// they select what the pair switch would, and keep its decision tree (and frame) small.
+		switch (a) {
+			case TLazy(f): unify(uctx, TypeFunctions.lazyType(f), b); return;
+			case _:
+		}
+		switch (b) {
+			case TLazy(f): unify(uctx, a, TypeFunctions.lazyType(f)); return;
+			case _:
+		}
+		switch (a) {
+			case TMono(t): unifyFromMono(uctx, a, b, t); return;
+			case _:
+		}
+		switch (b) {
+			case TMono(t): unifyToMono(uctx, a, b, t); return;
+			case _:
+		}
+		switch (a) {
+			case TType(t, tl): unifyFromTypedef(uctx, a, b, t, tl); return;
+			case _:
+		}
+		switch (b) {
+			case TType(t, tl): unifyToTypedef(uctx, a, b, t, tl); return;
+			case _:
+		}
+		switch (a) {
+			case TAbstract(_, _): unifyLeftAbstract(uctx, a, b);
+			case TEnum(_, _): unifyLeftEnum(uctx, a, b);
+			case TInst(_, _): unifyLeftInst(uctx, a, b);
+			case TFun(_): unifyLeftFun(uctx, a, b);
+			case TAnon(_): unifyLeftAnon(uctx, a, b);
+			case TDynamic(_): unifyLeftDynamic(uctx, a, b);
+			case _: throwCannotUnify(a, b);
+		}
+	}
+
+	// unify's pair switch, split by a's constructor: each holds, in their order, the arms whose left pattern
+	// can match it, so it selects what the pair switch did with a decision tree of its own.
+	static function unifyLeftAbstract(uctx:UnificationContext, a:T, b:T):Void {
 		switch [a, b] {
-			case [TLazy(f), _]: unify(uctx, TypeFunctions.lazyType(f), b);
-			case [_, TLazy(f)]: unify(uctx, a, TypeFunctions.lazyType(f));
-			case [TMono(t), _]:
-				switch (t.type) {
-					case null: if (!link(t, a, b)) error([cannotUnify(a, b)]);
-					case some: unify(uctx, some, b);
-				}
-			case [_, TMono(t)]:
-				switch (t.type) {
-					case null: if (!link(t, b, a)) error([cannotUnify(a, b)]);
-					case some: unify(uctx, a, some);
-				}
-			case [TType(t, tl), _]:
-				recStack(unifyStack, {a: a, b: b},
-					function(p) return fastEqUnboundMono(a, p.a) && fastEq(b, p.b),
-					function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(ax) unify(uctx, ax, b)); return null; },
-					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
-			case [_, TType(t, tl)]:
-				recStack(unifyStack, {a: a, b: b},
-					function(p) return fastEq(a, p.a) && fastEqUnboundMono(b, p.b),
-					function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(bx) unify(uctx, a, bx)); return null; },
-					function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
-			case [TEnum(ea, tl1), TEnum(eb, tl2)]:
-				if (ea != eb) error([cannotUnify(a, b)]);
-				unifyTypeParams(uctx, a, b, tl1, tl2);
 			case [TAbstract(a1, [t1]), _] if (isNullPath(a1.path)):
-				try unify(uctx, t1, b) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+				unifyFromNull(uctx, a, b, t1);
 			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
-				try unify(uctx, a, t2) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+				unifyToNull(uctx, a, b, t2);
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2):
-				try {
-					unifyTypeParams(uctx, a, b, tl1, tl2);
-				} catch (err:UnifyError) {
-					// The type could still have a from/to relation to itself (issue #3494)
-					try {
-						unifyAbstracts(uctx, a, b, a1, tl1, a2, tl2);
-					} catch (e2:UnifyError) {
-						throw err;
-					}
-				}
+				unifySameAbstract(uctx, a, b, a1, tl1, a2, tl2);
 			case [TAbstract(a1, _), _] if (isVoidPath(a1.path)):
-				error([cannotUnify(a, b)]);
+				throwCannotUnify(a, b);
 			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
-				error([cannotUnify(a, b)]);
+				throwCannotUnify(a, b);
 			case [TAbstract(a1, []), _] if (isHaxePath(a1.path, "NotVoid")):
 			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
 			case [TAbstract(ab, tl), TAbstract(a2, _)] if (isHaxePath(a2.path, "FlatEnum") || isHaxePath(a2.path, "Function") || isHaxePath(a2.path, "Constructible")):
 				unifyTo(uctx.withAllowTransitiveCast(false), a, b, ab, tl);
 			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
 				unifyAbstracts(uctx, a, b, a1, tl1, a2, tl2);
+			case [_, TDynamic(null)]:
+			case [_, TDynamic(t1)] if (t1 != null):
+				unifyToDynamicOf(uctx, a, b, t1);
+			case [TAbstract(aa, tl), _]:
+				unifyTo(uctx, a, b, aa, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
+
+	static function unifyLeftEnum(uctx:UnificationContext, a:T, b:T):Void {
+		switch [a, b] {
+			case [TEnum(ea, tl1), TEnum(eb, tl2)]:
+				unifyEnums(uctx, a, b, ea, tl1, eb, tl2);
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
+				unifyToNull(uctx, a, b, t2);
+			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
+				throwCannotUnify(a, b);
+			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
+			case [TEnum(_, _), TAbstract(ab, [])] if (isEmptyPath(ab.path, "EnumValue")):
+			case [TEnum(en, _), TAbstract(ab, [])] if (isHaxePath(ab.path, "FlatEnum") && TypeFunctions.hasMeta(Meta.FlatEnum, en.meta)):
+			case [_, TDynamic(null)]:
+			case [_, TDynamic(t1)] if (t1 != null):
+				unifyToDynamicOf(uctx, a, b, t1);
+			case [_, TAbstract(bb, tl)]:
+				unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
+
+	static function unifyLeftInst(uctx:UnificationContext, a:T, b:T):Void {
+		switch [a, b] {
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
+				unifyToNull(uctx, a, b, t2);
+			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
+				throwCannotUnify(a, b);
+			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
-				function loop(c:TClass, tl:Array<T>):Bool {
-					if (c == c2) {
-						unifyTypeParams(uctx, a, b, tl, tl2);
-						return true;
-					}
-					var bySuper = switch (c.superClass) {
-						case null: false;
-						case s: loop(s.c, [for (x in s.params) TypeFunctions.applyParams(c.params, tl, x)]);
-					}
-					if (bySuper) return true;
-					for (impl in c.interfaces) {
-						if (loop(impl.c, [for (x in impl.params) TypeFunctions.applyParams(c.params, tl, x)])) return true;
-					}
-					return switch (c.kind) {
-						case KTypeParameter(pl):
-							var found = false;
-							for (t in pl) {
-								switch (TypeFunctions.follow(t)) {
-									case TInst(cs, tls):
-										if (loop(cs, [for (x in tls) TypeFunctions.applyParams(c.params, tl, x)])) { found = true; break; }
-									case TAbstract(aa, tla):
-										if (unifiesTo(uctx, a, b, aa, tla)) { found = true; break; }
-									case _:
-								}
-							}
-							found;
-						case _: false;
-					}
-				}
-				if (!loop(c1, tl1)) error([cannotUnify(a, b)]);
-			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
-				var uctx2 = getNestedContext(uctx);
-				var i = 0;
-				try {
-					switch (TypeFunctions.follow(s2.ret)) {
-						case TAbstract(av, _) if (isVoidPath(av.path)): i++;
-						case _: unify(uctx2, s1.ret, s2.ret); i++;
-					}
-					// Contravariance: iterate l2,l1 zipped
-					for (k in 0...s2.args.length) {
-						var a2 = s2.args[k], a1 = s1.args[k];
-						if (a2.opt && !a1.opt) error([Cant_force_optional]);
-						unify(uctx2, a2.t, a1.t);
-						i++;
-					}
-				} catch (e:UnifyError) {
-					var msg:UnifyErrorKind = i == 0 ? Invalid_return_type : Invalid_function_argument(i, s1.args.length);
-					error([cannotUnify(a, b), msg].concat(e.errors));
-				}
+				unifyInstToInst(uctx, a, b, c1, tl1, c2, tl2);
 			case [TInst(c, tl), TAnon(an)]:
-				if (isEmptyMap(an.fields)) {
-					switch (c.kind) {
-						case KTypeParameter(pl):
-							// One of the constraints must unify with { }
-							if (!Lambda.exists(pl, function(t) return switch (TypeFunctions.follow(t)) { case TInst(_, _) | TAnon(_): true; case _: false; }))
-								error([cannotUnify(a, b)]);
-						case _:
-					}
-				}
-				c.build();
-				try {
-					for (n in sortedFieldNames(an.fields)) {
-						var f2 = an.fields.get(n);
-						// Introducing monomorphs while unifying might create infinite loops (#2315)
-						var monos:Array<T> = [];
-						function makeType(f:TClassField):T {
-							return switch (f.params) {
-								case []: f.type;
-								case l:
-									var ml = [for (_ in l) TypeFunctions.mkMono()];
-									monos = ml;
-									TypeFunctions.applyParams(f.params, ml, f.type);
-							}
-						}
-						var rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
-						var f1 = rcf.f;
-						// An unannotated method return is an open mono until its body types; close it before the
-						// signature is read (and re-read the signature so the param application sees the bound type).
-						if (forceOpenMethodHook != null && f1.expr == null && f1.kind.match(Method(_))) switch (TypeFunctions.follow(f1.type)) {
-							case TFun(sig1):
-								switch (TypeFunctions.follow(sig1.ret)) {
-									case TMono(r) if (r.type == null):
-										forceOpenMethodHook(rcf.c2 != null ? rcf.c2.c : c, f1);
-										monos = [];
-										rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
-										f1 = rcf.f;
-									case _:
-								}
-							case _:
-						}
-						var ft = TypeFunctions.applyParams(c.params, tl, rcf.t);
-						if (!unifyKind(f1.kind, f2.kind)) error([invalidKind(n, f1.kind, f2.kind)]);
-						if (TypeFunctions.hasClassFieldFlag(f2, CfPublic) && !TypeFunctions.hasClassFieldFlag(f1, CfPublic))
-							error([invalidVisibility(n)]);
+				unifyInstToAnon(uctx, a, b, c, tl, an);
+			case [TInst(c, tl), TAbstract(ab, [t1])] if (isHaxePath(ab.path, "Constructible")):
+				unifyToConstructible(uctx, a, b, c, tl, ab, t1);
+			case [_, TDynamic(null)]:
+			case [_, TDynamic(t1)] if (t1 != null):
+				unifyToDynamicOf(uctx, a, b, t1);
+			case [TInst(c, pl), TAbstract(bb, tl)] if (isTypeParam(c)):
+				unifyTypeParamToAbstract(uctx, a, b, c, pl, bb, tl);
+			case [_, TAbstract(bb, tl)]:
+				unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
 
-						switch (f2.kind) {
-							case Var(vk) if (switch (vk.read) { case AccNo | AccNever: true; case _: false; }):
-								// Write target: recursive unification with possible recursion check
-								var oldMonos = unifyNewMonos.recStack;
-								unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
-								recStack(unifyStack, {a: ft, b: f2.type},
-									function(p) return fastEq(p.b, f2.type) && fastEqMono(unifyNewMonos.recStack, ft, p.a),
-									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
-									function(l) { error([invalidField(n)].concat(l)); return null; });
-								unifyNewMonos.recStack = oldMonos;
-							case Method(MethNormal) | Method(MethInline) | Var({write: AccNo}) | Var({write: AccNever}):
-								// Read-only var: reversed unification
-								var oldMonos = unifyNewMonos.recStack;
-								unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
-								recStack(unifyStack, {a: f2.type, b: ft},
-									function(p) return fastEqMono(unifyNewMonos.recStack, p.b, ft) && fastEq(f2.type, p.a),
-									function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
-									function(l) { error([invalidField(n)].concat(l)); return null; });
-								unifyNewMonos.recStack = oldMonos;
-							case _:
-								try unifyWithAccess(uctx, f1, ft, f2)
-								catch (e:UnifyError) error([invalidField(n)].concat(e.errors));
-						}
+	static function unifyLeftFun(uctx:UnificationContext, a:T, b:T):Void {
+		switch [a, b] {
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
+				unifyToNull(uctx, a, b, t2);
+			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
+				throwCannotUnify(a, b);
+			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
+			case [TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length):
+				unifyFunToFun(uctx, a, b, s1, s2);
+			case [TFun(_), TAbstract(ab, [])] if (isHaxePath(ab.path, "Function")):
+			case [_, TDynamic(null)]:
+			case [_, TDynamic(t1)] if (t1 != null):
+				unifyToDynamicOf(uctx, a, b, t1);
+			case [_, TAbstract(bb, tl)]:
+				unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
 
-						for (f2o in f2.overloads) {
-							var matched = false;
-							var cands = [f1].concat(f1.overloads);
-							for (f1o in cands) if (typeIseq(uctx, f1o.type, f2o.type)) { matched = true; break; }
-							if (!matched) error([Missing_overload(f1, f2o.type)]);
-						}
-						if (!TypeFunctions.hasMeta(Meta.MaybeUsed, f1.meta)) {
-							f1.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(f1.meta);
-							switch (f2.kind) {
-								case Var(vk):
-									function checkAccessor(name:String):Void {
-										var r = TypeFunctions.rawClassFieldOpt(makeType, c, tl, name);
-										if (r == null) return;
-										var cf = r.f;
-										if (!TypeFunctions.hasMeta(Meta.MaybeUsed, cf.meta))
-											cf.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(cf.meta);
-									}
-									switch (vk.read) { case AccCall: checkAccessor("get_" + f1.name); case _: }
-									switch (vk.write) { case AccCall: checkAccessor("set_" + f1.name); case _: }
-								case _:
-							}
-						}
-						switch (f1.kind) {
-							case Method(MethInline):
-								if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(f1, CfExtern)) && !TypeFunctions.hasMeta(Meta.Runtime, f1.meta))
-									error([Has_no_runtime_field(a, n)]);
-							case _:
-						}
-					}
-					switch (an.status.get()) {
-						case Statics(_) | EnumStatics(_) | AbstractStatics(_): error([]);
-						case Closed | Extend(_) | Const:
-					}
-				} catch (e:UnifyError) {
-					error([cannotUnify(a, b)].concat(e.errors));
-				}
+	static function unifyLeftAnon(uctx:UnificationContext, a:T, b:T):Void {
+		switch [a, b] {
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
+				unifyToNull(uctx, a, b, t2);
+			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
+				throwCannotUnify(a, b);
+			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
 			case [TAnon(a1), TAnon(a2)]:
 				unifyAnons(uctx, a, b, a1, a2);
 			// A class value's type wraps every nested failure with cannotUnify(a, b), as a typedef on the
 			// left does. hxc's statics anons are not wrapped in a typedef, so the wrap sits on the case
 			// itself.
 			case [TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Class")):
-				switch (an.status.get()) {
-					case Statics(cl):
-						try unify(uctx, TInst(cl, [for (_ in cl.params) TypeFunctions.mkMono()]), pt)
-						catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
-					case _: error([cannotUnify(a, b)]);
-				}
+				unifyAnonToClass(uctx, a, b, an, ab, pt);
 			case [TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Enum")):
-				switch (an.status.get()) {
-					case EnumStatics(e):
-						try unify(uctx, TEnum(e, [for (_ in e.params) TypeFunctions.mkMono()]), pt)
-						catch (err:UnifyError) error([cannotUnify(a, b)].concat(err.errors));
-					case _: error([cannotUnify(a, b)]);
-				}
-			case [TEnum(_, _), TAbstract(ab, [])] if (isEmptyPath(ab.path, "EnumValue")):
-			case [TEnum(en, _), TAbstract(ab, [])] if (isHaxePath(ab.path, "FlatEnum") && TypeFunctions.hasMeta(Meta.FlatEnum, en.meta)):
-			case [TFun(_), TAbstract(ab, [])] if (isHaxePath(ab.path, "Function")):
-			case [TInst(c, tl), TAbstract(ab, [t1])] if (isHaxePath(ab.path, "Constructible")):
-				try {
-					switch (c.kind) {
-						case KTypeParameter(tlc):
-							// Type parameters require an equal Constructible constraint
-							if (!Lambda.exists(tlc, function(t) return switch (TypeFunctions.follow(t)) {
-								case TAbstract(ab2, [t2]) if (isHaxePath(ab2.path, "Constructible")): typeIseq(uctx, t1, t2);
-								case _: false;
-							})) error([cannotUnify(a, b)]);
-						case _:
-							var r = TypeFunctions.classField(c, tl, "new");
-							if (!TypeFunctions.hasClassFieldFlag(r.f, CfPublic)) error([invalidVisibility("new")]);
-							try unify(uctx, r.t, t1) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
-					}
-				} catch (e:NotFound) {
-					error([hasNoField(a, "new")]);
-				}
-			case [TDynamic(null), _]:
-				if (uctx.allowDynamicToCast) {
-				} else switch (b) {
-					case TDynamic(null):
-					case _: error([cannotUnify(a, b)]);
-				}
-			case [TDynamic(t1), _] if (t1 != null):
-				switch (b) {
-					case TDynamic(null):
-					case TDynamic(t2) if (t2 != null):
-						if (t2 != t1) {
-							try typeEq(uctx.withEqualityKind(EqRightDynamic), t1, t2)
-							catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
-						}
-					case TAbstract(bb, tl):
-						unifyFrom(uctx, a, b, bb, tl);
-					case _:
-						error([cannotUnify(a, b)]);
-				}
+				unifyAnonToEnum(uctx, a, b, an, ab, pt);
 			case [_, TDynamic(null)]:
 			case [_, TDynamic(t1)] if (t1 != null):
-				switch (a) {
-					case TAnon(an):
-						try {
-							switch (an.status.get()) {
-								case Statics(_) | EnumStatics(_): error([]);
-								case _:
-							}
-							for (f in an.fields) {
-								try typeEq(uctx.withEqualityKind(EqRightDynamic), TypeFunctions.fieldType(f), t1)
-								catch (e:UnifyError) error([invalidField(f.name)].concat(e.errors));
-							}
-						} catch (e:UnifyError) {
-							error([cannotUnify(a, b)].concat(e.errors));
-						}
-					case TAbstract(aa, tl):
-						unifyTo(uctx, a, b, aa, tl);
-					case _:
-						error([cannotUnify(a, b)]);
-				}
-			case [TAbstract(aa, tl), _]:
-				unifyTo(uctx, a, b, aa, tl);
-			case [TInst(c, pl), TAbstract(bb, tl)] if (isTypeParam(c)):
-				// One of the constraints must satisfy the abstract
-				switch (c.kind) {
-					case KTypeParameter(ctl):
-						if (!Lambda.exists(ctl, function(t) {
-							var t2 = TypeFunctions.applyParams(c.params, pl, t);
-							return try { unify(uctx, t2, b); true; } catch (e:UnifyError) false;
-						})) unifyFrom(uctx, a, b, bb, tl);
-					case _:
-						unifyFrom(uctx, a, b, bb, tl);
-				}
+				unifyToDynamicOf(uctx, a, b, t1);
 			case [_, TAbstract(bb, tl)]:
+				unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
+
+	static function unifyLeftDynamic(uctx:UnificationContext, a:T, b:T):Void {
+		switch [a, b] {
+			case [_, TAbstract(a2, [t2])] if (isNullPath(a2.path)):
+				unifyToNull(uctx, a, b, t2);
+			case [_, TAbstract(a2, _)] if (isVoidPath(a2.path)):
+				throwCannotUnify(a, b);
+			case [_, TAbstract(a2, [])] if (isHaxePath(a2.path, "NotVoid")):
+			case [TDynamic(null), _]:
+				unifyFromDynamic(uctx, a, b);
+			case [TDynamic(t1), _] if (t1 != null):
+				unifyFromDynamicOf(uctx, a, b, t1);
+			case [_, TDynamic(null)]:
+			case [_, TDynamic(t1)] if (t1 != null):
+				unifyToDynamicOf(uctx, a, b, t1);
+			case [_, TAbstract(bb, tl)]:
+				unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				throwCannotUnify(a, b);
+		}
+	}
+
+	// unify's arms below, each a function of its own: the pair switch's decision tree repeats an arm at many
+	// leaves, so an arm that is a single call keeps unify's frame small.
+	static function throwCannotUnify(a:T, b:T):Void {
+		error([cannotUnify(a, b)]);
+	}
+
+	static function unifyFromMono(uctx:UnificationContext, a:T, b:T, t:TMono):Void {
+		switch (t.type) {
+			case null: if (!link(t, a, b)) error([cannotUnify(a, b)]);
+			case some: unify(uctx, some, b);
+		}
+	}
+
+	static function unifyToMono(uctx:UnificationContext, a:T, b:T, t:TMono):Void {
+		switch (t.type) {
+			case null: if (!link(t, b, a)) error([cannotUnify(a, b)]);
+			case some: unify(uctx, a, some);
+		}
+	}
+
+	static function unifyEnums(uctx:UnificationContext, a:T, b:T, ea:TEnum, tl1:TParams, eb:TEnum, tl2:TParams):Void {
+		if (ea != eb) error([cannotUnify(a, b)]);
+		unifyTypeParams(uctx, a, b, tl1, tl2);
+	}
+
+	static function unifyFromNull(uctx:UnificationContext, a:T, b:T, t1:T):Void {
+		try unify(uctx, t1, b) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+	}
+
+	static function unifyToNull(uctx:UnificationContext, a:T, b:T, t2:T):Void {
+		try unify(uctx, a, t2) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+	}
+
+	// unify's `[TInst(c, tl), TAnon(an)]` arm, a function of its own so the switch keeps a small frame.
+	static function unifyInstToAnon(uctx:UnificationContext, a:T, b:T, c:TClass, tl:TParams, an:TAnon):Void {
+		if (isEmptyMap(an.fields)) {
+			switch (c.kind) {
+				case KTypeParameter(pl):
+					// One of the constraints must unify with { }
+					if (!Lambda.exists(pl, function(t) return switch (TypeFunctions.follow(t)) { case TInst(_, _) | TAnon(_): true; case _: false; }))
+						error([cannotUnify(a, b)]);
+				case _:
+			}
+		}
+		c.build();
+		try {
+			for (n in sortedFieldNames(an.fields)) {
+				var f2 = an.fields.get(n);
+				// Introducing monomorphs while unifying might create infinite loops (#2315)
+				var monos:Array<T> = [];
+				function makeType(f:TClassField):T {
+					return switch (f.params) {
+						case []: f.type;
+						case l:
+							var ml = [for (_ in l) TypeFunctions.mkMono()];
+							monos = ml;
+							TypeFunctions.applyParams(f.params, ml, f.type);
+					}
+				}
+				var rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
+				var f1 = rcf.f;
+				// An unannotated method return is an open mono until its body types; close it before the
+				// signature is read (and re-read the signature so the param application sees the bound type).
+				if (forceOpenMethodHook != null && f1.expr == null && f1.kind.match(Method(_))) switch (TypeFunctions.follow(f1.type)) {
+					case TFun(sig1):
+						switch (TypeFunctions.follow(sig1.ret)) {
+							case TMono(r) if (r.type == null):
+								forceOpenMethodHook(rcf.c2 != null ? rcf.c2.c : c, f1);
+								monos = [];
+								rcf = try TypeFunctions.rawClassField(makeType, c, tl, n) catch (e:NotFound) { error([hasNoField(a, n)]); null; }
+								f1 = rcf.f;
+							case _:
+						}
+					case _:
+				}
+				var ft = TypeFunctions.applyParams(c.params, tl, rcf.t);
+				if (!unifyKind(f1.kind, f2.kind)) error([invalidKind(n, f1.kind, f2.kind)]);
+				if (TypeFunctions.hasClassFieldFlag(f2, CfPublic) && !TypeFunctions.hasClassFieldFlag(f1, CfPublic))
+					error([invalidVisibility(n)]);
+
+				switch (f2.kind) {
+					case Var(vk) if (switch (vk.read) { case AccNo | AccNever: true; case _: false; }):
+						// Write target: recursive unification with possible recursion check
+						var oldMonos = unifyNewMonos.recStack;
+						unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
+						recStack(unifyStack, {a: ft, b: f2.type},
+							function(p) return fastEq(p.b, f2.type) && fastEqMono(unifyNewMonos.recStack, ft, p.a),
+							function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
+							function(l) { error([invalidField(n)].concat(l)); return null; });
+						unifyNewMonos.recStack = oldMonos;
+					case Method(MethNormal) | Method(MethInline) | Var({write: AccNo}) | Var({write: AccNever}):
+						// Read-only var: reversed unification
+						var oldMonos = unifyNewMonos.recStack;
+						unifyNewMonos.recStack = monos.concat(unifyNewMonos.recStack);
+						recStack(unifyStack, {a: f2.type, b: ft},
+							function(p) return fastEqMono(unifyNewMonos.recStack, p.b, ft) && fastEq(f2.type, p.a),
+							function() { try unifyWithAccess(uctx, f1, ft, f2) catch (e:haxe.Exception) { unifyNewMonos.recStack = oldMonos; throw e; } return null; },
+							function(l) { error([invalidField(n)].concat(l)); return null; });
+						unifyNewMonos.recStack = oldMonos;
+					case _:
+						try unifyWithAccess(uctx, f1, ft, f2)
+						catch (e:UnifyError) error([invalidField(n)].concat(e.errors));
+				}
+
+				for (f2o in f2.overloads) {
+					var matched = false;
+					var cands = [f1].concat(f1.overloads);
+					for (f1o in cands) if (typeIseq(uctx, f1o.type, f2o.type)) { matched = true; break; }
+					if (!matched) error([Missing_overload(f1, f2o.type)]);
+				}
+				if (!TypeFunctions.hasMeta(Meta.MaybeUsed, f1.meta)) {
+					f1.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(f1.meta);
+					switch (f2.kind) {
+						case Var(vk):
+							function checkAccessor(name:String):Void {
+								var r = TypeFunctions.rawClassFieldOpt(makeType, c, tl, name);
+								if (r == null) return;
+								var cf = r.f;
+								if (!TypeFunctions.hasMeta(Meta.MaybeUsed, cf.meta))
+									cf.meta = ([{name: Meta.MaybeUsed, params: [], pos: f1.pos}] : Metadata).concat(cf.meta);
+							}
+							switch (vk.read) { case AccCall: checkAccessor("get_" + f1.name); case _: }
+							switch (vk.write) { case AccCall: checkAccessor("set_" + f1.name); case _: }
+						case _:
+					}
+				}
+				switch (f1.kind) {
+					case Method(MethInline):
+						if ((TypeFunctions.hasClassFlag(c, CExtern) || TypeFunctions.hasClassFieldFlag(f1, CfExtern)) && !TypeFunctions.hasMeta(Meta.Runtime, f1.meta))
+							error([Has_no_runtime_field(a, n)]);
+					case _:
+				}
+			}
+			switch (an.status.get()) {
+				case Statics(_) | EnumStatics(_) | AbstractStatics(_): error([]);
+				case Closed | Extend(_) | Const:
+			}
+		} catch (e:UnifyError) {
+			error([cannotUnify(a, b)].concat(e.errors));
+		}
+	}
+
+	// unify's `[TInst(c1, tl1), TInst(c2, tl2)]` arm, a function of its own so the switch keeps a small frame.
+	static function unifyInstToInst(uctx:UnificationContext, a:T, b:T, c1:TClass, tl1:TParams, c2:TClass, tl2:TParams):Void {
+		function loop(c:TClass, tl:Array<T>):Bool {
+			if (c == c2) {
+				unifyTypeParams(uctx, a, b, tl, tl2);
+				return true;
+			}
+			var bySuper = switch (c.superClass) {
+				case null: false;
+				case s: loop(s.c, [for (x in s.params) TypeFunctions.applyParams(c.params, tl, x)]);
+			}
+			if (bySuper) return true;
+			for (impl in c.interfaces) {
+				if (loop(impl.c, [for (x in impl.params) TypeFunctions.applyParams(c.params, tl, x)])) return true;
+			}
+			return switch (c.kind) {
+				case KTypeParameter(pl):
+					var found = false;
+					for (t in pl) {
+						switch (TypeFunctions.follow(t)) {
+							case TInst(cs, tls):
+								if (loop(cs, [for (x in tls) TypeFunctions.applyParams(c.params, tl, x)])) { found = true; break; }
+							case TAbstract(aa, tla):
+								if (unifiesTo(uctx, a, b, aa, tla)) { found = true; break; }
+							case _:
+						}
+					}
+					found;
+				case _: false;
+			}
+		}
+		if (!loop(c1, tl1)) error([cannotUnify(a, b)]);
+	}
+
+	// unify's `[_, TDynamic(t1)] if (t1 != null)` arm, a function of its own so the switch keeps a small frame.
+	static function unifyToDynamicOf(uctx:UnificationContext, a:T, b:T, t1:T):Void {
+		switch (a) {
+			case TAnon(an):
+				try {
+					switch (an.status.get()) {
+						case Statics(_) | EnumStatics(_): error([]);
+						case _:
+					}
+					for (f in an.fields) {
+						try typeEq(uctx.withEqualityKind(EqRightDynamic), TypeFunctions.fieldType(f), t1)
+						catch (e:UnifyError) error([invalidField(f.name)].concat(e.errors));
+					}
+				} catch (e:UnifyError) {
+					error([cannotUnify(a, b)].concat(e.errors));
+				}
+			case TAbstract(aa, tl):
+				unifyTo(uctx, a, b, aa, tl);
+			case _:
+				error([cannotUnify(a, b)]);
+		}
+	}
+
+	// unify's `[TFun(s1), TFun(s2)] if (s1.args.length == s2.args.length)` arm, a function of its own so the switch keeps a small frame.
+	static function unifyFunToFun(uctx:UnificationContext, a:T, b:T, s1:TSignature, s2:TSignature):Void {
+		var uctx2 = getNestedContext(uctx);
+		var i = 0;
+		try {
+			switch (TypeFunctions.follow(s2.ret)) {
+				case TAbstract(av, _) if (isVoidPath(av.path)): i++;
+				case _: unify(uctx2, s1.ret, s2.ret); i++;
+			}
+			// Contravariance: iterate l2,l1 zipped
+			for (k in 0...s2.args.length) {
+				var a2 = s2.args[k], a1 = s1.args[k];
+				if (a2.opt && !a1.opt) error([Cant_force_optional]);
+				unify(uctx2, a2.t, a1.t);
+				i++;
+			}
+		} catch (e:UnifyError) {
+			var msg:UnifyErrorKind = i == 0 ? Invalid_return_type : Invalid_function_argument(i, s1.args.length);
+			error([cannotUnify(a, b), msg].concat(e.errors));
+		}
+	}
+
+	// unify's `[TInst(c, tl), TAbstract(ab, [t1])] if (isHaxePath(ab.path, "Constructible"))` arm, a function of its own so the switch keeps a small frame.
+	static function unifyToConstructible(uctx:UnificationContext, a:T, b:T, c:TClass, tl:TParams, ab:TAbstract, t1:T):Void {
+		try {
+			switch (c.kind) {
+				case KTypeParameter(tlc):
+					// Type parameters require an equal Constructible constraint
+					if (!Lambda.exists(tlc, function(t) return switch (TypeFunctions.follow(t)) {
+						case TAbstract(ab2, [t2]) if (isHaxePath(ab2.path, "Constructible")): typeIseq(uctx, t1, t2);
+						case _: false;
+					})) error([cannotUnify(a, b)]);
+				case _:
+					var r = TypeFunctions.classField(c, tl, "new");
+					if (!TypeFunctions.hasClassFieldFlag(r.f, CfPublic)) error([invalidVisibility("new")]);
+					try unify(uctx, r.t, t1) catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+			}
+		} catch (e:NotFound) {
+			error([hasNoField(a, "new")]);
+		}
+	}
+
+	// unify's `[TDynamic(t1), _] if (t1 != null)` arm, a function of its own so the switch keeps a small frame.
+	static function unifyFromDynamicOf(uctx:UnificationContext, a:T, b:T, t1:T):Void {
+		switch (b) {
+			case TDynamic(null):
+			case TDynamic(t2) if (t2 != null):
+				if (t2 != t1) {
+					try typeEq(uctx.withEqualityKind(EqRightDynamic), t1, t2)
+					catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+				}
+			case TAbstract(bb, tl):
 				unifyFrom(uctx, a, b, bb, tl);
 			case _:
 				error([cannotUnify(a, b)]);
 		}
+	}
+
+	// unify's `[TInst(c, pl), TAbstract(bb, tl)] if (isTypeParam(c))` arm, a function of its own so the switch keeps a small frame.
+	static function unifyTypeParamToAbstract(uctx:UnificationContext, a:T, b:T, c:TClass, pl:TParams, bb:TAbstract, tl:TParams):Void {
+		// One of the constraints must satisfy the abstract
+		switch (c.kind) {
+			case KTypeParameter(ctl):
+				if (!Lambda.exists(ctl, function(t) {
+					var t2 = TypeFunctions.applyParams(c.params, pl, t);
+					return try { unify(uctx, t2, b); true; } catch (e:UnifyError) false;
+				})) unifyFrom(uctx, a, b, bb, tl);
+			case _:
+				unifyFrom(uctx, a, b, bb, tl);
+		}
+	}
+
+	// unify's `[TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2)` arm, a function of its own so the switch keeps a small frame.
+	static function unifySameAbstract(uctx:UnificationContext, a:T, b:T, a1:TAbstract, tl1:TParams, a2:TAbstract, tl2:TParams):Void {
+		try {
+			unifyTypeParams(uctx, a, b, tl1, tl2);
+		} catch (err:UnifyError) {
+			// The type could still have a from/to relation to itself (issue #3494)
+			try {
+				unifyAbstracts(uctx, a, b, a1, tl1, a2, tl2);
+			} catch (e2:UnifyError) {
+				throw err;
+			}
+		}
+	}
+
+	// unify's `[TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Enum"))` arm, a function of its own so the switch keeps a small frame.
+	static function unifyAnonToEnum(uctx:UnificationContext, a:T, b:T, an:TAnon, ab:TAbstract, pt:T):Void {
+		switch (an.status.get()) {
+			case EnumStatics(e):
+				try unify(uctx, TEnum(e, [for (_ in e.params) TypeFunctions.mkMono()]), pt)
+				catch (err:UnifyError) error([cannotUnify(a, b)].concat(err.errors));
+			case _: error([cannotUnify(a, b)]);
+		}
+	}
+
+	// unify's `[TAnon(an), TAbstract(ab, [pt])] if (isEmptyPath(ab.path, "Class"))` arm, a function of its own so the switch keeps a small frame.
+	static function unifyAnonToClass(uctx:UnificationContext, a:T, b:T, an:TAnon, ab:TAbstract, pt:T):Void {
+		switch (an.status.get()) {
+			case Statics(cl):
+				try unify(uctx, TInst(cl, [for (_ in cl.params) TypeFunctions.mkMono()]), pt)
+				catch (e:UnifyError) error([cannotUnify(a, b)].concat(e.errors));
+			case _: error([cannotUnify(a, b)]);
+		}
+	}
+
+	// unify's `[TDynamic(null), _]` arm, a function of its own so the switch keeps a small frame.
+	static function unifyFromDynamic(uctx:UnificationContext, a:T, b:T):Void {
+		if (uctx.allowDynamicToCast) {
+		} else switch (b) {
+			case TDynamic(null):
+			case _: error([cannotUnify(a, b)]);
+		}
+	}
+
+	// unify's `[_, TType(t, tl)]` arm, a function of its own so the switch keeps a small frame.
+	static function unifyToTypedef(uctx:UnificationContext, a:T, b:T, t:TDef, tl:TParams):Void {
+		recStack(unifyStack, {a: a, b: b},
+			function(p) return fastEq(a, p.a) && fastEqUnboundMono(b, p.b),
+			function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(bx) unify(uctx, a, bx)); return null; },
+			function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
+	}
+
+	// unify's `[TType(t, tl), _]` arm, a function of its own so the switch keeps a small frame.
+	static function unifyFromTypedef(uctx:UnificationContext, a:T, b:T, t:TDef, tl:TParams):Void {
+		recStack(unifyStack, {a: a, b: b},
+			function(p) return fastEqUnboundMono(a, p.a) && fastEq(b, p.b),
+			function() { TypeFunctions.tryApplyParamsRec(t.params, tl, t.type, function(ax) unify(uctx, ax, b)); return null; },
+			function(l) { error([cannotUnify(a, b)].concat(l)); return null; });
 	}
 
 	// Anon fields are walked in ascending name order. That order is observable: the per-field walk

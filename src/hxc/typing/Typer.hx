@@ -957,129 +957,139 @@ class Typer {
 	}
 
 	public static function typeExpr(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
-		if (userWrittenNodes.length > 0 && suppressedOutside.length > 0 && userWrittenNodes.remove(e)) {
-			var saved = hxc.parser.Parser.displaySuppressed;
-			hxc.parser.Parser.displaySuppressed = suppressedOutside[0];
-			var r = try typeExpr(ctx, e, withType, mode)
-				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw ex; };
-			hxc.parser.Parser.displaySuppressed = saved;
-			return r;
-		}
-		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) {
-			var oldInDisplay = ctx.inDisplay;
-			ctx.inDisplay = true;
-			// typeExprInner hands this same node to typeAccess, whose marked branch answers for it too;
-			// the raise is this branch's, once it has made its own answer.
-			markedViaExpr = e;
-			// A DKStructure node is a structure completion only when the expected type follows to a
-			// structure (or a @:structInit class) BEFORE it is typed; anything else is handled like a
-			// marked node.
-			var structureExpected = hxc.typing.ExprPreprocessing.markedKind == DKStructure && switch (withType) {
-				case WithType(t, _): switch (TypeFunctions.follow(t)) {
-					case TAnon(_): true;
-					case TInst(c, _): TypeFunctions.hasMeta(":structInit", c.meta);
-					case _: false;
-				};
-				case _: false;
-			};
-			var te = switch [e.expr, withType] {
-				// A marked `_` against a known type is "probably" a bind skip and stands for a null of that
-				// type.
-				case [EConst(CIdent("_")), WithType(t, _)]:
-					var n = TypeFunctions.mk(TConst(TNull), t, e.pos);
-					if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, n, withType);
-					n;
-				// A marked `trace` answers from its builtin signature where a mode has an arm for it; under
-				// DMDefault it is "Unsupported method" at the identifier.
-				case [EConst(CIdent("trace")), _] if (hxc.parser.Parser.displayCompletionMode):
-					markedNodeFailed = true;
-					throw new TypingError("Unsupported method", e.pos);
-				case _:
-					try typeExprInner(ctx, e, withType, mode)
-					catch (ex:hxc.core.TypingError.UnknownIdentError) {
-						// Under DMDefault the identifier that does not resolve is the toplevel collection's
-						// subject, raised at the marked expression's position.
-						if (hxc.parser.Parser.displayCompletionMode) raiseToplevelSubject(ctx, ex.ident, e.pos, withType);
-						markedNodeFailed = true;
-						throw ex;
-					}
-					// An answer raised inside it (an interpolated part marked within a marked literal) is no failure.
-					catch (ex:hxc.compiler.DisplayXml.DisplayRaised) throw ex
-					catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
-			};
-			unifyForAnswer(ctx, te, withType);
-			// Under DMHover (and DMTypeDefinition, from the type) the marked node answers with its own typed
-			// expression, raised right here - nothing the enclosing statement does afterwards can take it
-			// back. hxc's position-keyed hooks answer the nodes they see as they type; two answers only this
-			// point can give:
-			if (displayHover || displayTypeDefinition) {
-				// a marked `super` as its whole call, and the call as its `super` over the CALL's span; the
-				// hook that answered the `super` token while the call typed is not the marked node.
-				if (te.expr.match(TCall({expr: TConst(TSuper)}, _)))
-					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
-				else if (hoverFound != null && hoverFound.e == te) {
-					// the walk recorded this node's own expression: it is the display handler's answer.
-					var h = hoverFound;
-					hoverFound = {t: h.t, p: h.p, e: h.e, wt: h.wt, tctx: h.tctx, mt: h.mt, isQualified: h.isQualified};
-				} else if (hoverFound != null && hoverFound.p.file == te.pos.file && hoverFound.p.min == te.pos.min
-						&& hoverFound.p.max == te.pos.max) {
-					// A hook's answer over this node's own span (a construction's constructor) is this raise too,
-					// so it is serialized as the node stands now, unified.
-					var h = hoverFound;
-					h.snap = null;
-					hoverFound = h;
-				} else if (!atExprHoverPos(te.pos) && (hoverFound == null || hoverFound.fromWalk == true)) {
-					// The expression was put where no hook looks - a macro call's expansion.
-					hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
-				}
-			}
-			// Under DMDefinition the marked node's positions are raised - an empty list for a node with no
-			// declaration - so the answer is settled here and no enclosing access can claim the request
-			// afterwards. What the walk found inside this node is that answer, not the walk's.
-			if (displayDefinition) {
-				checkDisplayDefinition(ctx, te, true);
-				if (displayFound == null) displayFound = [];
-				displayFoundFromWalk = false;
-			}
-			markedNodeTyped = true;
-			ctx.inDisplay = oldInDisplay;
-			// Under DMDefault, when the parser did not resume, the marked expression answers: a marked
-			// field access that typed to a field lists the receiver's fields, its subject the written name
-			// spanning back from the node's end; anything else - a field access typed to something else (an
-			// inlined constant) included - answers the toplevel collection. Without this a marked binop,
-			// call or literal would answer nothing at all.
-			if (hxc.typing.ExprPreprocessing.markedKind == DKMarked
-					|| (hxc.typing.ExprPreprocessing.markedKind == DKStructure && !structureExpected && hxc.parser.Parser.displayCompletionMode)) {
-				switch [e.expr, te.expr] {
-					case [EField(e1, s, _), TField(_, _)] if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume):
-						hxc.parser.Parser.displayDotName = s;
-						hxc.parser.Parser.displayDotPos = new Position(te.pos.file, te.pos.max - s.length, te.pos.max);
-						displayFieldCompletion(ctx, e1, te.pos);
-					case _:
-						raiseToplevelMarked(ctx, e, withType);
-				}
-			}
-			// DMHover (and DMTypeDefinition) raise the marked expression itself, at its own span, when
-			// nothing on the way answered for it.
-			if ((displayHover || displayTypeDefinition) && hoverFound == null && overloadArgsDepth == 0)
-				hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
-			raiseMarkedAnswer();
-			return te;
-		}
+		if (userWrittenNodes.length > 0 && suppressedOutside.length > 0 && userWrittenNodes.remove(e))
+			return typeUserWrittenNode(ctx, e, withType, mode);
+		if (e != null && e == hxc.typing.ExprPreprocessing.markedNode) return typeMarkedExpr(ctx, e, withType, mode);
 		return typeExprInner(ctx, e, withType, mode);
 	}
 
-	static function typeExprInner(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
-		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e)) {
-			var saved = hxc.parser.Parser.displaySuppressed;
-			hxc.parser.Parser.displaySuppressed = true;
-			suppressedOutside.push(saved);
-			var r = try typeExpr(ctx, e, withType, mode)
-				catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; suppressedOutside.pop(); throw ex; };
-			hxc.parser.Parser.displaySuppressed = saved;
-			suppressedOutside.pop();
-			return r;
+	// typeExpr on a user-written node inside a synthesized one: typed with the display suppression it had outside.
+	static function typeUserWrittenNode(ctx:TyperContext, e:Expr, withType:WithType, mode:Null<AccessMode>):TExpr {
+		var saved = hxc.parser.Parser.displaySuppressed;
+		hxc.parser.Parser.displaySuppressed = suppressedOutside[0];
+		var r = try typeExpr(ctx, e, withType, mode)
+			catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; throw ex; };
+		hxc.parser.Parser.displaySuppressed = saved;
+		return r;
+	}
+
+	// typeExprInner on a synthesized node: typed with display suppressed.
+	static function typeSynthesizedNode(ctx:TyperContext, e:Expr, withType:WithType, mode:Null<AccessMode>):TExpr {
+		var saved = hxc.parser.Parser.displaySuppressed;
+		hxc.parser.Parser.displaySuppressed = true;
+		suppressedOutside.push(saved);
+		var r = try typeExpr(ctx, e, withType, mode)
+			catch (ex:Dynamic) { hxc.parser.Parser.displaySuppressed = saved; suppressedOutside.pop(); throw ex; };
+		hxc.parser.Parser.displaySuppressed = saved;
+		suppressedOutside.pop();
+		return r;
+	}
+
+	// typeExpr on the display request's marked node, a function of its own so the common path keeps a small frame.
+	static function typeMarkedExpr(ctx:TyperContext, e:Expr, withType:WithType, mode:Null<AccessMode>):TExpr {
+		var oldInDisplay = ctx.inDisplay;
+		ctx.inDisplay = true;
+		// typeExprInner hands this same node to typeAccess, whose marked branch answers for it too;
+		// the raise is this branch's, once it has made its own answer.
+		markedViaExpr = e;
+		// A DKStructure node is a structure completion only when the expected type follows to a structure
+		// (or a @:structInit class) BEFORE it is typed; anything else is handled like a marked node.
+		var structureExpected = hxc.typing.ExprPreprocessing.markedKind == DKStructure && switch (withType) {
+			case WithType(t, _): switch (TypeFunctions.follow(t)) {
+				case TAnon(_): true;
+				case TInst(c, _): TypeFunctions.hasMeta(":structInit", c.meta);
+				case _: false;
+			};
+			case _: false;
+		};
+		var te = switch [e.expr, withType] {
+			// A marked `_` against a known type is "probably" a bind skip and stands for a null of that
+			// type.
+			case [EConst(CIdent("_")), WithType(t, _)]:
+				var n = TypeFunctions.mk(TConst(TNull), t, e.pos);
+				if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, n, withType);
+				n;
+			// A marked `trace` answers from its builtin signature where a mode has an arm for it; under
+			// DMDefault it is "Unsupported method" at the identifier.
+			case [EConst(CIdent("trace")), _] if (hxc.parser.Parser.displayCompletionMode):
+				markedNodeFailed = true;
+				throw new TypingError("Unsupported method", e.pos);
+			case _:
+				try typeExprInner(ctx, e, withType, mode)
+				catch (ex:hxc.core.TypingError.UnknownIdentError) {
+					// Under DMDefault the identifier that does not resolve is the toplevel collection's
+					// subject, raised at the marked expression's position.
+					if (hxc.parser.Parser.displayCompletionMode) raiseToplevelSubject(ctx, ex.ident, e.pos, withType);
+					markedNodeFailed = true;
+					throw ex;
+				}
+				// An answer raised inside it (an interpolated part marked within a marked literal) is no failure.
+				catch (ex:hxc.compiler.DisplayXml.DisplayRaised) throw ex
+				catch (ex:Dynamic) { markedNodeFailed = true; throw ex; };
+		};
+		unifyForAnswer(ctx, te, withType);
+		// Under DMHover (and DMTypeDefinition, from the type) the marked node answers with its own typed
+		// expression, raised right here - nothing the enclosing statement does afterwards can take it back.
+		// hxc's position-keyed hooks answer the nodes they see as they type; two answers only this point
+		// can give:
+		if (displayHover || displayTypeDefinition) {
+			// A marked `super` as its whole call, and the call as its `super` over the CALL's span; the
+			// hook that answered the `super` token while the call typed is not the marked node.
+			if (te.expr.match(TCall({expr: TConst(TSuper)}, _)))
+				hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+			else if (hoverFound != null && hoverFound.e == te) {
+				// The walk recorded this node's own expression: it is the display handler's answer.
+				var h = hoverFound;
+				hoverFound = {t: h.t, p: h.p, e: h.e, wt: h.wt, tctx: h.tctx, mt: h.mt, isQualified: h.isQualified};
+			} else if (hoverFound != null && hoverFound.p.file == te.pos.file && hoverFound.p.min == te.pos.min
+					&& hoverFound.p.max == te.pos.max) {
+				// A hook's answer over this node's own span (a construction's constructor) is this raise too,
+				// so it is serialized as the node stands now, unified.
+				var h = hoverFound;
+				h.snap = null;
+				hoverFound = h;
+			} else if (!atExprHoverPos(te.pos) && (hoverFound == null || hoverFound.fromWalk == true)) {
+				// The expression was put where no hook looks - a macro call's expansion.
+				hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+			}
 		}
+		// Under DMDefinition the marked node's positions are raised - an empty list for a node with no
+		// declaration - so the answer is settled here and no enclosing access can claim the request
+		// afterwards. What the walk found inside this node is that answer, not the walk's.
+		if (displayDefinition) {
+			checkDisplayDefinition(ctx, te, true);
+			if (displayFound == null) displayFound = [];
+			displayFoundFromWalk = false;
+		}
+		markedNodeTyped = true;
+		ctx.inDisplay = oldInDisplay;
+		// Under DMDefault, when the parser did not resume, the marked expression answers: a marked field
+		// access that typed to a field lists the receiver's fields, its subject the written name spanning
+		// back from the node's end; anything else - a field access typed to something else (an inlined
+		// constant) included - answers the toplevel collection. Without this a marked binop, call or
+		// literal would answer nothing at all.
+		if (hxc.typing.ExprPreprocessing.markedKind == DKMarked
+				|| (hxc.typing.ExprPreprocessing.markedKind == DKStructure && !structureExpected && hxc.parser.Parser.displayCompletionMode)) {
+			switch [e.expr, te.expr] {
+				case [EField(e1, s, _), TField(_, _)] if (hxc.parser.Parser.displayCompletionMode && !hxc.parser.Parser.hadResume):
+					hxc.parser.Parser.displayDotName = s;
+					hxc.parser.Parser.displayDotPos = new Position(te.pos.file, te.pos.max - s.length, te.pos.max);
+					displayFieldCompletion(ctx, e1, te.pos);
+				case _:
+					raiseToplevelMarked(ctx, e, withType);
+			}
+		}
+		// DMHover (and DMTypeDefinition) raise the marked expression itself, at its own span, when nothing
+		// on the way answered for it.
+		if ((displayHover || displayTypeDefinition) && hoverFound == null && overloadArgsDepth == 0)
+			hoverFound = {t: hoverItemType(te), p: te.pos, e: te, wt: withType, tctx: ctx};
+		raiseMarkedAnswer();
+		return te;
+	}
+
+	static function typeExprInner(ctx:TyperContext, e:Expr, withType:WithType, ?mode:AccessMode):TExpr {
+		if (synthesizedNodes.length > 0 && synthesizedNodes.remove(e))
+			return typeSynthesizedNode(ctx, e, withType, mode);
 		if (mode == null) mode = MGet;
 		var basic = ctx.com.basic;
 		var p = e.pos;
@@ -1105,27 +1115,13 @@ class Typer {
 			case EIf(econd, e1, e2): typeIf(ctx, econd, e1, e2, withType, false, p);
 			case ETernary(econd, e1, e2): typeIf(ctx, econd, e1, e2, withType, true, p);
 			case EWhile(cond, body, NormalWhile):
-				var oldLoop = ctx.inLoop;
-				var c = castOrUnify(ctx, basic.tbool, typeExpr(ctx, cond, WithTypeTools.value), p);
-				ctx.inLoop = true;
-				var b = typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
-				ctx.inLoop = oldLoop;
-				TypeFunctions.mk(TWhile(c, b, NormalWhile), basic.tvoid, p);
+				typeWhileExpr(ctx, p, cond, body);
 			case EWhile(cond, body, DoWhile):
-				var oldLoop = ctx.inLoop;
-				ctx.inLoop = true;
-				var b = typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
-				ctx.inLoop = oldLoop;
-				var c = typeExpr(ctx, cond, WithTypeTools.value);
-				c = castOrUnify(ctx, basic.tbool, c, c.pos);
-				TypeFunctions.mk(TWhile(c, b, DoWhile), basic.tvoid, p);
+				typeDoWhileExpr(ctx, p, cond, body);
 			case EReturn(re):
-				if (!ctx.inFunction) {
-					// Reported and RECOVERED as the returned value so the initializer still types (and its
-					// own mismatches still report).
-					ctx.com.addDiagnostic("Return outside function", p);
-					return re == null ? TypeFunctions.mk(TConst(TNull), spawnMonomorph(ctx, p), p) : typeExpr(ctx, re, withType);
-				}
+				// Reported and RECOVERED as the returned value so the initializer still types (and its own
+				// mismatches still report), past the display checks after the switch.
+				if (!ctx.inFunction) return typeReturnOutsideFunction(ctx, withType, p, re);
 				typeReturn(ctx, re, withType, p);
 			case EBreak:
 				if (!ctx.inLoop) throw new TypingError("Break outside loop", p);
@@ -1134,119 +1130,17 @@ class Typer {
 				if (!ctx.inLoop) throw new TypingError("Continue outside loop", p);
 				TypeFunctions.mk(TContinue, monoOrDynamic(ctx, withType, p), p);
 			case EThrow(e1):
-				// A throw whose value fails to type records the error and throws null instead, so the
-				// statements after it are still typed.
-				var te = try typeExpr(ctx, e1, WithTypeTools.value)
-					catch (err:TypingError) {
-						ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
-						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
-					}
-					catch (ce:hxc.context.Context.ContextError) {
-						ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
-						hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
-					};
-				TypeFunctions.mk(TThrow(te), monoOrDynamic(ctx, withType, p), p);
+				typeThrowExpr(ctx, withType, p, e1);
 			case EUntyped(e1):
-				var old = ctx.untypedMode;
-				ctx.untypedMode = true;
-				if (!TypeFunctions.hasMeta(":has_untyped", ctx.curfield.meta))
-					ctx.curfield.meta = ([{name: ":has_untyped", params: [], pos: p}] : Metadata).concat(ctx.curfield.meta);
-				var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
-				ctx.untypedMode = old;
-				TypeFunctions.mk(te.expr, spawnMonomorph(ctx, te.pos), te.pos);
-			case EMeta(m, e1) if (m.name == ":toString"):
-				// Every trace argument is wrapped in this meta. An abstract whose impl declares toString is
-				// converted here, so haxe.Log.trace receives the string rather than the abstract value;
-				// otherwise `trace(someMap)` would pass the Map straight through as Dynamic.
-				var teTs = typeExpr(ctx, e1, withType);
-				switch (TypeFunctions.follow(teTs.type)) {
-					case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
-						Calls.callToString(ctx, teTs);
-					case _: teTs;
-				}
-			case EMeta(m, _) if (m.name == ":markup"):
-				// A markup literal surviving to typing was not consumed.
-				throw new TypingError("Markup literals must be processed by a macro", p);
+				typeUntypedExpr(ctx, withType, p, e1);
+			// These two RETURN, past the display checks after the switch, so they stay here; every other
+			// metadata arm is typeMetaExpr's.
 			case EMeta(m, e1) if (m.name == ":privateAccess"):
-				ctx.privateAccess++;
-				var rPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess--; throw err; };
-				ctx.privateAccess--;
-				return rPriv;
+				return typePrivateAccessMeta(ctx, withType, e1);
 			case EMeta(m, e1) if (m.name == ":noPrivateAccess"):
-				// Strips any enclosing @:privateAccess for the subexpression.
-				var oldPa = ctx.privateAccess;
-				ctx.privateAccess = 0;
-				var rNoPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess = oldPa; throw err; };
-				ctx.privateAccess = oldPa;
-				return rNoPriv;
-			case EMeta(m, e1) if (m.name == ":bypassAccessor"):
-					// The next field access typed within e1 consumes this and becomes a raw access.
-					var oldBypass = ctx.bypassAccessor;
-					ctx.bypassAccessor = oldBypass + 1;
-					var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
-					function bypassDepth(x:Expr):Int return switch (x.expr) {
-						case EMeta(m2, inner) if (m2.name == ":bypassAccessor"): 1 + bypassDepth(inner);
-						case _: 0;
-					};
-					var nestedBypass = bypassDepth(e1);
-					if (ctx.bypassAccessor > oldBypass && nestedBypass != 1)
-						ctx.com.addDiagnostic("Field access expression expected after @:bypassAccessor metadata", m.pos);
-					ctx.bypassAccessor = oldBypass;
-					teBypass;
-			case EMeta(m, e1) if (m.name == ":mergeBlock"):
-					// A @:mergeBlock block opens no scope; its declarations merge into the enclosing block.
-					// Type the inner statements in the current scope and wrap them so the enclosing block
-					// splices them (see typeBlock).
-					switch (e1.expr) {
-						case EBlock(el):
-							var inner = typeBlock(ctx, el, withType, p);
-							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, inner), inner.type, inner.pos);
-						case _: typeExpr(ctx, e1, withType);
-					}
-				case EMeta(m, {expr: EReturn(re)}) if (m.name == ":implicitReturn"):
-					// An arrow function body's synthesized return.
-					if (!ctx.inFunction) throw new TypingError("Return outside function", p);
-					typeReturn(ctx, re, withType, p, true);
-				case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
-					var id = switch (e1.expr) {
-						case EConst(CInt(s, _)): Std.parseInt(s);
-						case _: null;
-					}
-					if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
-					// Fresh tvars on every retrieval so the expression does not share variable slots with
-					// its original (macro-time) context; this rebinds to the enclosing context.
-					TexprTools.duplicateTvars(function(te) {
-						return getThis(ctx, te.pos);
-					}, ctx.com.storedTypedExprs.get(id));
-				case EMeta(m, e1) if (m.name == ":fixed" && ctx.com.platform.match(Cpp)):
-					// @:fixed survives typing on cpp so the retyper builds the typed AnonStruct literal.
-					var te = typeExpr(ctx, e1, withType);
-					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
-				case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
-					// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
-					var te = typeExpr(ctx, e1, withType);
-					TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
-				case EMeta(m, {expr: ECall(callee, args)}) if (m.name == ":inline"):
-					accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, p, true, m.pos));
-				case EMeta(m, {expr: ENew(tp, el)}) if (m.name == ":inline"):
-					// A forced-inline construction keeps the marker for the inline-constructor filter.
-					var te = typeNew(ctx, tp, el, withType, p, true, true);
-					TypeFunctions.mk(TMeta({name: ":inline", params: [], pos: Position.nullPos}, te), te.type, te.pos);
-				case EMeta(m, e1) if (m.name == ":inline"):
-					// Only a call or constructor may follow the inline keyword; anything else (an anonymous
-					// function, a plain value) reports and types without inlining.
-					ctx.com.addDiagnostic("Call or function expected after inline keyword", p);
-					typeExpr(ctx, e1, withType);
-				case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
-					// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro
-					// expression (a macro body reifies these before typing).
-					var reificationMessage = "Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression";
-					// Reported once per world. A module that also holds a macro is compiled once per world, and
-					// each compilation reports it, so it prints twice for that shape and once for every other.
-					ctx.com.addDiagnostic(reificationMessage, m.pos);
-					typeExpr(ctx, e1, withType);
-				case EMeta(_, e1):
-				typeExpr(ctx, e1, withType);
+				return typeNoPrivateAccessMeta(ctx, withType, e1);
+			case EMeta(_, _):
+				typeMetaExpr(ctx, e, withType, mode, p);
 			case EField(_, _, _) | EArray(_, _) | ECall(_, _):
 				accGet(ctx, typeAccess(ctx, e.expr, p, mode, withType));
 			case EBinop(op, e1, e2):
@@ -1262,747 +1156,1019 @@ class Typer {
 			case EFor(it, body):
 				ForLoop.typeForLoop(ctx, it, body, p);
 			case ENew(tp, el):
-				// The type list a `new <cursor>` raises is re-raised filtered to what can actually be
-				// CONSTRUCTED - a class or abstract with a constructor, inherited ones included, or a type
-				// parameter whose constraints make it constructible. Nothing else survives.
-				try typeNew(ctx, tp, el, withType, p)
-				catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) {
-					var items = [for (it in tc.items) if (newCandidateSurvives(ctx, it, p)) it];
-					var keep = new haxe.ds.StringMap<Bool>();
-					for (it in items) if (it.path != null) keep.set(it.path, true);
-					var mts = tc.moduleTypes == null ? null
-						: [for (mt in tc.moduleTypes) if (keep.exists(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)))) mt];
-					var out = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
-					// The filtered collection answers as CRNew (10), carrying the subject the raise built -
-					// the JSON lane has nothing else to report with.
-					out.kind = 10;
-					out.subjectPos = tc.subjectPos;
-					out.subjectName = tc.subjectName;
-					out.jsonEntries = tc.jsonEntries;
-					// The filter runs where the collection was raised: a module it types from here on has
-					// not had its class builds run (see newCompletionKeeps).
-					var midAtRaise = TypeFunctions.currentMid();
-					out.jsonFilter = function(info) return newCompletionKeeps(ctx, info, p, midAtRaise);
-					throw out;
-				}
+				typeNewExpr(ctx, withType, p, tp, el);
 			case EFunction(kind, f):
-				// An anonymous function as a plain STATEMENT has no receiver for its value.
-				if (withType.match(NoValue)) switch (kind) {
-					case FKNamed(_, _):
-					case _: ctx.com.addDiagnostic("Unnamed lvalue functions are not supported", p);
-				}
-				var savedTypeParams = ctx.typeParams;
-				var localParams:TypeParams = [];
-				if (f.fParams.length > 0) {
-					// An unnamed local function has no name to specialise under, and a local function used as a
-					// value cannot carry parameters at all. The first is recorded, the second raises, so `var f =
-					// function<T>(v:T) ...` prints both.
-					if (!kind.match(FKNamed(_, _)))
-						ctx.com.addDiagnostic("Type parameters not supported in unnamed local functions", p);
-					if (!withType.match(NoValue))
-						throw new TypingError("Type parameters are not supported for rvalue functions", p);
-					// A local function's own type parameters (`function foo<T>(...)`) are in scope for its
-					// argument/return hints and body.
-					var declPath:hxc.core.Globals.Path = {pack: [], name: switch (kind) { case FKNamed(n, _): n.name; case _: "`localfun"; }};
-					for (tp in f.fParams) localParams.push(Typeload.typeTypeParam(ctx.com, declPath, () -> savedTypeParams.concat(localParams), tp));
-					ctx.typeParams = savedTypeParams.concat(localParams);
-				}
-				var args:Array<TFuncArg> = [];
-				for (fa in f.fArgs) {
-					var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
-					// Every function argument, local functions included, is allocated as
-					// VUser(TVOArgument). Tail-recursion elimination keys all three of its checks off that
-					// kind (captured arguments, the tail-recursion assign arm, the argument-local test), so
-					// treating a local function's arguments as local VARIABLES would make it reuse the
-					// parameters instead of redeclaring loop-scoped copies.
-					var av = TypeFunctions.allocVarNoId(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
-					args.push({v: av, c: null});
-				}
-				var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
-				// Top-down inference: bind unannotated (mono) arg/return types from an expected function
-				// type.
-				function expectVoid(t:T):Bool {
-					return switch (TypeFunctions.follow(t)) {
-						case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
-						case _: false;
-					}
-				}
-				function maybeUnifyArg(t1:T, t2:T):Void {
-					switch (TypeFunctions.follow(t1)) {
-						case TMono(_): try TypeUnification.unifyDefault(t2, t1) catch (_:Dynamic) {}
-						case _:
-					}
-				}
-				function maybeUnifyRet(t2:T):Void {
-					// A Void expected return is not forced onto a non-arrow function (its body infers the return),
-					// but an arrow does take Void so its body types in void context (its value is discarded, no
-					// value-return synthesized).
-					var isArrow = switch (kind) { case FKArrow: true; case _: false; };
-					if (!expectVoid(t2) || isArrow) switch (TypeFunctions.follow(ret)) {
-						case TMono(_): try TypeUnification.unifyDefault(ret, t2) catch (_:Dynamic) {}
-						case _:
-					}
-				}
-				function applyFunExpectation(t:T):Bool {
-					return switch (TypeFunctions.follow(t)) {
-						case TFun(sig) if (sig.args.length == args.length):
-							for (i in 0...args.length) maybeUnifyArg(args[i].v.type, sig.args[i].t);
-							maybeUnifyRet(sig.ret);
-							true;
-						case _:
-							false;
-					}
-				}
-				function flattenAbstractSources(t:T, seen:Array<T>):Array<T> {
-					t = TypeFunctions.follow(t);
-					return switch (t) {
-						case TAbstract(_, _):
-							for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return [];
-							var sources = abstractFromTypes(ctx, t);
-							if (sources.length == 1) flattenAbstractSources(sources[0], seen.concat([t])) else {
-								var out:Array<T> = [];
-								for (source in sources) switch (TypeFunctions.follow(source)) {
-									case TAbstract(_, _): out = out.concat(flattenAbstractSources(source, seen.concat([t])));
-									case _: out.push(source);
-								}
-								out;
-							}
-						case _:
-							[t];
-					}
-				}
-				function commonType(types:Array<T>):Null<T> {
-					if (types.length == 0) return null;
-					var first = types[0];
-					for (i in 1...types.length) if (!TypeUnification.typeIseqDefault(first, types[i])) return null;
-					return first;
-				}
-				function applyAbstractFunctionMatrix(t:T):Void {
-					var candidates = [for (source in flattenAbstractSources(t, [])) switch (TypeFunctions.follow(source)) {
-						case TFun(sig) if (sig.args.length == args.length): sig;
-						case _: null;
-					}].filter(x -> x != null);
-					if (candidates.length == 0) return;
-					for (i in 0...args.length) {
-						var t = commonType([for (sig in candidates) sig.args[i].t]);
-						if (t != null) maybeUnifyArg(args[i].v.type, t);
-					}
-					var rt = commonType([for (sig in candidates) sig.ret]);
-					if (rt != null) maybeUnifyRet(rt);
-				}
-				switch (withType) {
-					case WithType(wt, _):
-						if (!applyFunExpectation(wt)) applyAbstractFunctionMatrix(wt);
-					case _:
-				}
-				// An arg is optional in the function type when marked `?` or given a default value.
-				var ft = TFun({args: [for (i in 0...args.length) {name: args[i].v.name, opt: f.fArgs[i].opt || f.fArgs[i].value != null, t: args[i].v.type}], ret: ret});
-				// A named local function binds its name (in scope before the body, so it can recurse)
-				// and evaluates to a TVar assignment; an anonymous one is just the function value.
-				var namedVar:Null<TVar> = switch (kind) {
-					case FKNamed(n, _):
-						checkLocalVariableName(ctx, n.name, TVOLocalFunction, n.pos);
-						addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
-					case _: null;
-				};
-				// A named generic local function stores its type params so a later call can monomorphize
-				// them.
-				// An INLINE local function additionally stores its function expression on extra (set
-				// after the body types, below), which the identifier resolver turns into a fake inline
-				// field call.
-				if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
-				// Arguments are processed after the function's own variable and after the expected type has
-				// been unified in: per argument the name is checked, the default typed (against the argument
-				// type, Null-wrapped when optional), the variable allocated, and then a cursor on the name
-				// answers - with the type the expected function gave it.
-				for (i in 0...args.length) {
-					var fa = f.fArgs[i];
-					var at = args[i].v.type;
-					checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
-					args[i].c = TypeFields.typeFunctionArgValue(ctx, fa.opt ? ctx.com.basic.tnull(at) : at, TypeFields.functionArgDefault(fa));
-					TypeFunctions.giveVarId(args[i].v);
-					if (atDisplayPos(fa.name.pos)) displayVariable(ctx, args[i].v, fa.name.pos);
-				}
-				// A local function of a member types as FunMemberClassLocal (abstract members as
-				// FunMemberAbstractLocal) so `this` inside it resolves to the captured `this local.
-				var localMode:CurrentFun = switch (ctx.curfun) {
-					case FunStatic: FunStatic;
-					case FunMemberAbstract | FunMemberAbstractLocal: FunMemberAbstractLocal;
-					case _: FunMemberClassLocal;
-				};
-				var tf = typeFunction(ctx, args, ret, localMode, f.fExpr, p);
-				ctx.typeParams = savedTypeParams;
-				var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
-				if (namedVar != null)
-					Typeload.generateArgsMeta(f.fArgs, m -> namedVar.meta = [m].concat(namedVar.meta == null ? [] : namedVar.meta));
-				// The cursor on a named local function's name answers with the variable it binds, so the answer
-				// is the name's own range and not the whole function.
-				if (namedVar != null && ctx.inDisplay && atDisplayPos(namedVar.pos)) displayVariable(ctx, namedVar, namedVar.pos);
-				if (namedVar == null) fnExpr;
-					else {
-						// A recursive named local function is bound in two steps: `var f = null; f = <fn>`,
-						// so the closure captures the (mutable) slot and a self-call sees the assigned
-						// value rather than the null it was constructed with. In value position the
-						// declaration is followed by a TLocal read so the whole expression evaluates to the
-						// function.
-						var isRec = TexprTools.referencesLocal(fnExpr, namedVar);
-						var isInline = switch (kind) { case FKNamed(_, inl): inl; case _: false; };
-						// The inline local function's body is stored on extra so calls inline it through
-						// the fake-field machinery.
-						if (isInline || localParams.length > 0) namedVar.extra = new TVarExtra(localParams, isInline ? fnExpr : null);
-						var tvoid = ctx.com.basic.tvoid;
-						var exprs:Array<TExpr> = [];
-						var declFileIsDisplay = hxc.parser.Parser.matchesDisplayFile(p.file);
-						if (isRec) {
-							// An inline local function cannot be recursive.
-							if (isInline) ctx.com.addDiagnostic("Inline function cannot be recursive", fnExpr.pos);
-							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p));
-							exprs.push(TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p));
-						} else if (isInline && !declFileIsDisplay) {
-							// No variable is declared, since every call inlines.
-							exprs.push(TypeFunctions.mk(TBlock([]), tvoid, p));
-						} else {
-							exprs.push(TypeFunctions.mk(TVarExpr(namedVar, fnExpr), tvoid, p));
-						}
-						if (!withType.match(NoValue) && !isInline)
-							exprs.push(TypeFunctions.mk(TLocal(namedVar), namedVar.type, p));
-						if (exprs.length == 1) exprs[0];
-						else {
-							var block = TypeFunctions.mk(TBlock(exprs), namedVar.type, p);
-							TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, block), namedVar.type, p);
-						}
-					}
+				typeFunctionExpr(ctx, withType, p, kind, f);
 			case EArrayDecl(el):
-				switch (el) {
-					// A marked loop is an EDisplay, which the comprehension arm does not match: it types as
-					// an array of one element that answers the request.
-					case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}] if (el[0] != hxc.typing.ExprPreprocessing.markedNode):
-						typeArrayComprehension(ctx, el[0], withType, p);
-					case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
-						typeMapDeclaration(ctx, el, withType, p);
-					case _:
-						// With a Map<K,V> expected, an empty literal is `new Map()`, and a literal whose one element
-						// is the DISPLAY node types that element against the key type - that is what makes the first
-						// key of a map declaration complete against K. Anything else is an ordinary array
-						// declaration. hxc marks the gap with a null stand-in rather than an EDisplay node, so "is
-						// the display node" is the position test.
-						var mapKV:Null<{k:T, v:T}> = switch (withType) {
-							case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
-								case TAbstract(a, tl) if (a.path.name == "Map" && tl.length == 2): {k: tl[0], v: tl[1]};
-								case _: null;
-							};
-							case _: null;
-						};
-						var emptyMap:Null<TExpr> = null;
-						if (mapKV != null && el.length == 0) {
-							var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
-							emptyMap = typeNew(ctx, tp, [], withType, p, false);
-						}
-						if (mapKV != null && el.length == 1 && atDisplayPos(el[0].pos))
-							return typeExpr(ctx, el[0], WithTypeTools.withType(mapKV.k));
-						if (emptyMap != null) emptyMap else {
-							expectedArrayAllowDynamic = false;
-							var expectedEt:Null<T> = switch (withType) {
-								case WithType(wt, _): expectedArrayElement(ctx, wt);
-								case _: null;
-							};
-							var allowDyn = expectedArrayAllowDynamic;
-							var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
-							// An element that does not unify with the expected element type coerces through
-							// an implicit abstract cast.
-							var tl = [for (e in el) {
-								var te = typeExpr(ctx, e, ewt);
-								if (expectedEt != null) {
-									try hxc.core.TypeUnification.unifyDefault(te.type, expectedEt)
-									catch (_:hxc.core.TypeUnification.UnifyError) te = castOrUnify(ctx, expectedEt, te, e.pos);
-								}
-								te;
-							}];
-							// Without an expected element type the elements must share one; a mixed literal is an error
-							// unless forced to Array<Dynamic> or in untyped code.
-							var et = if (expectedEt != null) expectedEt
-								else if (tl.length == 0) spawnMonomorph(ctx, p)
-								else try unifyMinRaise(ctx, tl) catch (te:TypingError) {
-									if (allowDyn || ctx.untypedMode) TypeFunctions.tDynamic;
-									else {
-										ctx.com.addDiagnostic("Arrays of mixed types are only allowed if the type is forced to Array<Dynamic>", te.pos);
-										throw te;
-									}
-								};
-							TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
-						}
-				}
+				// A literal whose one element is the DISPLAY node types that element against the expected
+				// Map's key type (issue #9133), past the display checks after the switch.
+				var displayKey = arrayDeclDisplayKey(ctx, el, withType);
+				if (displayKey != null) return typeExpr(ctx, el[0], WithTypeTools.withType(displayKey));
+				typeArrayDeclAll(ctx, el, withType, p);
 			case EObjectDecl(fields):
-				// The display position sits inside the literal on no field: complete the EXPECTED
-				// structure's fields (CRStructureField). That happens only under DMDefault, i.e. for a
-				// completion.
-				if (hxc.parser.Parser.displayFile != null && hxc.parser.Parser.displayCompletionMode
-						&& fieldCompletionFound == null && atDisplayPos(p)) {
-					// The cursor on a field name makes that field the completion SUBJECT; only a field it is not
-					// on hands the answer to its own value. Testing the values first would let the stand-in the
-					// parser leaves after a missing `:` swallow a cursor that is really sitting on the name.
-					var covered = false;
-					for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
-					var anRaw = expectedAnonFromWithType(ctx, withType);
-					if (anRaw == null) anRaw = structInitAnonFields(ctx, withType);
-					// The cursor BETWEEN a field's `:` and its value completes against THAT field's type with an
-					// empty subject - the value already written must not become the filter string.
-					if (anRaw != null) for (f in fields) {
-						if (atDisplayPos(f.pos)) continue;
-						var between = new Position(f.pos.file, f.pos.max + 1, f.expr.pos.min - 1);
-						if (between.max < between.min || !atDisplayPos(between)) continue;
-						var decl = anRaw.fields.get(f.name);
-						var fwt = decl != null ? WithTypeTools.withType(decl.type) : WithTypeTools.value;
-						if (displayToplevelJson)
-							throw new JsonToplevelCompletion(collectToplevelJson(ctx, fwt), null, between, fwt, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
-						if (displayToplevel)
-							throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, fwt, true));
-					}
-					var an = covered ? null : anRaw;
-					// An anon that came from a typedef reports that typedef as the origin; a bare one reports
-					// itself.
-					var anOrigin:Null<hxc.core.Type.ModuleType> = if (an == null) null else switch (withType) {
-						case WithType(wt, _): switch (wt) { case TType(td, _): TTypeDecl(td); case _: null; };
-						case _: null;
-					}
-					// A @:structInit class completes like a structure, from the fields its constructor accepts,
-					// and reports the class as the origin.
-					if (an != null && anOrigin == null) anOrigin = switch (withType) {
-						case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TInst(c, _): TClassDecl(c); case _: null; };
-						case _: null;
-					}
-					// One field whose value is a null at a NULL position is what the parser leaves behind for `{
-					// ident`. With no structure expected that is not a structure completion at all - it is a
-					// toplevel one keyed by the name, which is how a function body of just `{ foo
-					// }` answers.
-					if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
-							&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
-						// The field name is the subject.
-						if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos, withType, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
-						if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
-					}
-					if (an != null) {
-						// A field already GIVEN in the literal is removed from the candidates, so only what is still
-						// missing is offered.
-						var given = new haxe.ds.StringMap<Bool>();
-						for (f in fields) if (!atDisplayPos(f.pos)) given.set(f.name, true);
-						var cand = [for (name in an.fields.keys()) if (!given.exists(name)) an.fields.get(name)];
-						// Sort by declaration position descending; for an empty literal the list is then built by
-						// prepending, which turns that back into ascending.
-						cand.sort(function(c1, c2) return c2.pos.min - c1.pos.min);
-						if (fields.length == 0) cand.reverse();
-						fieldCompletionFound = [for (cf in cand) {
-							kind: cf.kind.match(Method(_)) ? "method" : "var",
-							name: cf.name,
-							type: hxc.core.TPrinting.sTypeStr(cf.type),
-							doc: Ast.genDocTextOpt(cf.doc)
-						}];
-						// The JSON answer is the same collection under kind 1 (CRStructureField), keyed by the field
-						// name the cursor is on.
-						var subjName:Null<String> = null;
-						var subjPos:Null<Position> = null;
-						for (f in fields) if (atDisplayPos(f.pos)) { subjName = f.name; subjPos = f.pos; break; }
-						var doff = hxc.parser.Parser.displayOffset;
-						var insert = new Position(p.file, doff, doff);
-						// A bare structure is its own origin, AnonymousStructure.
-						var bare = anOrigin == null ? an : null;
-						jsonFieldCompletion = {
-							entries: [for (cf in cand) {cf: cf, scope: CFSMember, originClass: null, originAnon: bare, builtIn: false}],
-							receiver: null,
-							insertPos: insert,
-							originModuleType: anOrigin,
-							noSort: true,
-							kind: 1,
-							subjectName: subjName,
-							subjectPos: subjPos != null ? subjPos : insert
-						};
-					}
-				}
-				// A field may appear only once in an object literal.
-				{
-					var seen = new haxe.ds.StringMap<Bool>();
-					for (f in fields) {
-						if (seen.exists(f.name)) throw new TypingError("Duplicate field in object declaration : " + f.name, f.pos);
-						seen.set(f.name, true);
-					}
-				}
-				// A `{...}` literal against a @:structInit class types as a call to that class's
-				// constructor, matching fields to constructor arguments by name.
-				var scHit = switch (withType) {
-					case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
-						case TInst(c, tl) if (TypeFunctions.hasMeta(":structInit", c.meta)): {c: c, tl: tl, t: TypeFunctions.follow(wt)};
-						case _: null;
-					};
-					case _: null;
-				};
-				var scSig = scHit == null ? null : switch (try findConstructorType(ctx, scHit.c, scHit.tl) catch (_:Dynamic) null) {
-					case null: null;
-					case ct: switch (TypeFunctions.follow(ct)) { case TFun(sig): sig; case _: null; };
-				};
-				// A @:structInit target without a constructor (an interface carrying the meta) reports at
-				// the literal and types plainly.
-				// RAISED so the var-initializer recovery records it and no further unify runs.
-				if (scHit != null && scSig == null)
-					throw new TypingError(hxc.core.Globals.sTypePath(scHit.c.path) + " does not have a constructor", p);
-				if (scHit != null && scSig != null) {
-					// Type each provided field against its constructor-arg type in the object literal
-					// source order; build the call in the constructor declared arg order, hoisting a field
-					// into a temp when a later-source field has a side effect, so initializers still run in
-					// source order.
-					var argByName = new haxe.ds.StringMap<TSignatureArg>();
-					for (arg in scSig.args) argByName.set(arg.name, arg);
-					// Each constructor argument becomes a synthetic field positioned at that argument's own VAR,
-					// or at the constructor name when the constructor has no body, and a cursor on the field name
-					// is then answered with it. That is how a field of a @:structInit class reports its own
-					// declaration.
-					if (hxc.parser.Parser.displayFile != null && atDisplayPos(p)) {
-						if (scHit.c.constructor == null) try ensureStructInitCtor(ctx, scHit.c) catch (_:Dynamic) {}
-						var ctor = scHit.c.constructor;
-						if (ctor != null) {
-							var argPos = new haxe.ds.StringMap<Position>();
-							var tfArgs = ctor.expr == null ? null : switch (ctor.expr.expr) {
-								case TFunction(fn): fn.args;
-								case _: null;
-							}
-							for (i in 0...scSig.args.length) {
-								var nm = scSig.args[i].name;
-								argPos.set(nm, tfArgs != null && i < tfArgs.length ? tfArgs[i].v.pos : ctor.namePos);
-							}
-							for (f in fields) if (atDisplayPos(f.pos)) {
-								var arg = argByName.get(f.name);
-								var ap = argPos.get(f.name);
-								if (arg != null && ap != null)
-									displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, TypeFunctions.mkField(f.name, arg.t, ap, ap), f.pos);
-							}
-						}
-					}
-					// Field typing, over the constructor arguments as the field map.
-					var byName = new haxe.ds.StringMap<TExpr>();
-					var anonFields = new haxe.ds.StringMap<TClassField>();
-					var extraFields:Array<{name:String, pos:Position}> = [];
-					for (f in fields) {
-						var arg = argByName.get(f.name);
-						var te:TExpr;
-						if (arg != null) {
-							te = typeExpr(ctx, f.expr, WithTypeTools.withStructureField(arg.t, f.name));
-							te = castOrUnify(ctx, arg.t, te, te.pos);
-							// A non-null value for a nullable argument is cast to Null, and a value not
-							// strictly of the argument's type is cast to it.
-							if (TypeFunctions.isNull(arg.t) && !TypeFunctions.isNull(te.type))
-								te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
-							try TypeUnification.typeEqKind(EqStrict, te.type, arg.t)
-							catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), arg.t, te.pos);
-						} else {
-							// No argument takes it, so it is typed on its own and reported below, the last
-							// one first.
-							if (isValidIdentifier(f.name)) extraFields.unshift({name: f.name, pos: f.pos});
-							te = typeExpr(ctx, f.expr, WithTypeTools.value);
-						}
-						if (isValidIdentifier(f.name))
-							anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
-						byName.set(f.name, te);
-					}
-					if (!ctx.untypedMode) {
-						// Missing arguments, then each extra field at its own name.
-						inline function reportOrRaise(msg:String, pos:Position):Void
-							TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
-						var missing:Array<String> = [for (arg in scSig.args) if (!arg.opt && !byName.exists(arg.name)) arg.name];
-						// Missing fields are listed in descending name order.
-						hxc.core.StringSort.sortDescending(missing);
-						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
-						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
-						if (extraFields.length > 0) {
-							var tAnon = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
-							for (x in extraFields) reportOrRaise(hxc.core.TPrinting.sTypeStr(tAnon) + " has extra field " + x.name, x.pos);
-						}
-					}
-					var evars:Array<TExpr> = [];
-					var hadSideEffect = false;
-					var fi = fields.length - 1;
-					while (fi >= 0) {
-						var fname = fields[fi].name;
-						var te = byName.get(fname);
-						switch (te.expr) {
-							case TConst(_) | TTypeExpr(_) | TFunction(_):
-							case _:
-								if (hadSideEffect) {
-									var v = TypeFunctions.allocVar(VGenerated, "`", te.type, te.pos);
-									evars.unshift(TypeFunctions.mk(TVarExpr(v, te), te.type, te.pos));
-									byName.set(fname, TexprTools.makeLocal(v, te.pos));
-								} else if (hxc.optimization.OptimizerTexpr.hasSideEffect(te)) {
-									hadSideEffect = true;
-								}
-						}
-						fi--;
-					}
-					// A field the literal omits takes the constructor's declared default value for that
-					// argument; only an argument with no default falls back to null.
-					var ctorTf:Null<TFunc> = null;
-					{
-						var ctorCf = try TypeFunctions.getConstructorClass(scHit.c, scHit.tl).cf catch (_:Dynamic) null;
-						if (ctorCf != null) {
-							if (ctorCf.expr == null) try TypeFields.forceFieldBody(ctx.com, scHit.c, ctorCf) catch (_:Dynamic) {};
-							if (ctorCf.expr != null) switch (ctorCf.expr.expr) { case TFunction(tf): ctorTf = tf; case _: }
-						}
-					}
-					var el:Array<TExpr> = [];
-					for (arg in scSig.args) {
-						var te = byName.get(arg.name);
-						if (te != null) el.push(te);
-						else {
-							var dflt:Null<TExpr> = null;
-							if (ctorTf != null) for (a in ctorTf.args) if (a.v.name == arg.name && a.c != null) { dflt = a.c; break; }
-							if (dflt != null) el.push(dflt);
-							else {
-								// A @:notNull argument type is given a nullable null.
-								var nt = TypeFunctions.typeHasMeta(TypeFunctions.followWithAbstractsWithoutNull(arg.t), ":notNull") ? ctx.com.basic.tnull(arg.t) : arg.t;
-								el.push(TexprTools.makeNull(nt, p));
-							}
-						}
-					}
-					var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
-					// The construction is the last expression of a block, temporaries or not.
-					TypeFunctions.mk(TBlock(evars.concat([enew])), enew.type, enew.pos);
-				} else {
-					var tfields:Array<TObjectField> = [];
-					var anonFields = new haxe.ds.StringMap<TClassField>();
-					var expected = expectedAnonFromWithType(ctx, withType);
-					// A Dynamic<T> expectation types every field at T instead of a per-field lookup.
-					var dynParam:Null<T> = switch (withType) {
-						case WithType(wt, _): switch (expectedAnonFromType(ctx, wt, [])) {
-							case ODKDynamic(dt): dt;
-							case _: null;
-						};
-						case _: null;
-					};
-					for (f in fields) {
-						var ef = dynParam == null && expected != null ? expected.fields.get(f.name) : null;
-						var ft:Null<T> = dynParam != null ? dynParam : (ef != null ? ef.type : null);
-						// The cursor on a field name answers with the field it matched in the EXPECTED structure, so
-						// it reports that field's declaration and its declared type rather than the literal's own.
-						if (ef != null && atDisplayPos(f.pos)) displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, ef, f.pos);
-						// an expected field, NotFound a plain value, and the plain typing (no expected
-						// structure) a value named by the field.
-						var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name)
-							: expected == null && dynParam == null ? WithTypeTools.namedStructureField(f.name) : WithTypeTools.value;
-						var te = typeExpr(ctx, f.expr, fwt);
-						// With no expected structure the field answers with itself, typed from its value.
-						// The field is built (and displayed) whether or not the name is a valid identifier;
-						// only the anon entry below is guarded.
-						if (expected == null && dynParam == null && atDisplayPos(f.pos))
-							displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember,
-								TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos), f.pos);
-						// Against an expected field type, coerce the value to it so an implicit abstract cast
-						// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
-						if (ft != null) {
-							te = castOrUnify(ctx, ft, te, te.pos);
-							// A non-null value against a nullable expectation wraps so the runtime
-							// representation stays nullable.
-							if (TypeFunctions.isNull(ft) && !TypeFunctions.isNull(te.type))
-								te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
-							// The stored field expr carries the EXPECTED type: a loose unify that is not
-							// strictly equal wraps in a plain cast, so e.g. a String value behind a
-							// Dynamic<Dynamic> field reads as Dynamic downstream (inline constructors fold
-							// on that strict equality).
-							try TypeUnification.typeEqKind(EqStrict, te.type, ft)
-							catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), ft, te.pos);
-						}
-						tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
-						// Against an expected structure the field takes the expected type (the value was
-						// just coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not
-						// `{f:Int}`.
-						// A field whose name is not a valid identifier (a quoted key like "x-bar") is a
-						// reflection-only field: it stays in the runtime object but not in the structure
-						// type, and never counts as an "extra field".
-						if (isValidIdentifier(f.name)) {
-							// The anon field records the typed expr's type, which the strict-cast wrap
-							// above has already aligned to any expectation. pos spans the whole `name:
-							// expr` pair and only namePos is the name; --json prints pos as the
-							// structure field's span.
-							var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
-							if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
-							anonFields.set(f.name, anonField);
-						}
-					}
-					// The status ref is kept so the end of the enclosing function can close it.
-					var anonStatus = new hxc.core.Ref(Const);
-					ctx.opened.unshift(anonStatus);
-					var t = TypeFunctions.mkAnon(anonStatus, anonFields);
-					// A literal against an expected structure must provide every non-optional expected
-					// field and nothing more. Recorded, not raised, so every violation is reported (and a
-					// macro Context.typeof raises through the record).
-					if (expected != null && !ctx.untypedMode) {
-						// Inside call arguments the violation raises so the caller annotates it with the
-						// parameter name; outside it is recorded.
-						inline function reportOrRaise(msg:String, pos:Position):Void
-							TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
-						var missing:Array<String> = [];
-						for (n in expected.fields.keys()) {
-							var ef = expected.fields.get(n);
-							if (!TypeFunctions.hasMeta(":optional", ef.meta) && !anonFields.exists(n)) missing.push(n);
-						}
-						// Missing fields are listed in descending name order.
-						hxc.core.StringSort.sortDescending(missing);
-						if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
-						else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
-						// Extra fields accumulate by prepending, so they report in reverse source order.
-						var i = fields.length - 1;
-						while (i >= 0) {
-							var f = fields[i];
-							if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
-								reportOrRaise(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
-							i--;
-						}
-					}
-					TypeFunctions.mk(TObjectDecl(tfields), t, p);
-				}
+				typeObjectDeclExpr(ctx, withType, p, fields);
 			case ETry(e1, catches):
-				var te = typeExpr(ctx, e1, withType);
-				var tcatches:Array<TCatch> = [];
-				var bodies = [te];
-				for (c in catches) {
-					var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
-					var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
-					var normalizedCatchType = normalizeCatchType(ctx, catchType, p, th.pos, c.expr.pos);
-					checkCatchUnreachable(ctx, tcatches, normalizedCatchType, c.expr.pos);
-					var restore = saveLocals(ctx);
-					checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
-					// The catch var is declared at the var name's position, not the catch clause's.
-					var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.name.pos);
-					// Display on the catch variable's own name.
-					if (atDisplayPos(c.name.pos)) displayVariable(ctx, v, c.name.pos);
-					var cbody = typeExpr(ctx, c.expr, withType);
-					if (atDisplayPos(c.pos)) catchDisplay(ctx, c.expr, cbody, withType);
-					v.type = normalizedCatchType;
-					restore();
-					tcatches.push({v: v, expr: cbody});
-					bodies.push(cbody);
-				}
-				// The try's result type: a STATEMENT try is Void with no branch unification (a catch calling a
-				// not-yet-inferred method must not bind that method's open return mono); against an expected
-				// monomorph or Void the source decides; a CONCRETE expectation casts the body and every catch
-				// individually (the implicit-cast call lands inside each branch, so the analyzer can drop a
-				// pure unused branch value while keeping the try shell); otherwise the branches unify to a
-				// common type.
-				var tryT = switch (withType) {
-					case NoValue: ctx.com.basic.tvoid;
-					case WithType(wt, src) if (switch (TypeFunctions.follow(wt)) { case TMono(_): true; case wtf: isVoid(wtf); }):
-						unifyMinForTypeSource(ctx, bodies, src);
-					case WithType(wt, _):
-						te = castOrUnify(ctx, wt, te, te.pos);
-						for (tc in tcatches) tc.expr = castOrUnify(ctx, wt, tc.expr, tc.expr.pos);
-						wt;
-					case _: unifyMin(ctx, bodies);
-				};
-				TypeFunctions.mk(TTry(te, tcatches), tryT, p);
+				typeTryExpr(ctx, withType, p, e1, catches);
 			case ECast(e1, ct):
-				var te = typeExpr(ctx, e1, WithTypeTools.value);
-				if (ct == null) {
-					TypeFunctions.mk(TCast(te, null), spawnMonomorph(ctx, p), p);
-				} else {
-					var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, ct);
-					// The runtime-checked cast target: an abstract without @:runtimeValue resolves to its
-					// underlying type, so the eval safe-cast check sees the concrete class (or the @:runtimeValue
-					// basic). A runtime cast can only check a nominal type, so the target has to reduce to a class
-					// or an enum, its parameters have to be erased (they do not exist at runtime), and a type
-					// parameter is not a target at all. All three report at the type, not the cast expression.
-					function checkParam(pt:T):Void switch (TypeFunctions.follow(pt)) {
-						// An unbound monomorph means Dynamic was never bound (issue #4675).
-						case TMono(_):
-						case TDynamic(_):
-						case _: throw new TypingError("Cast type parameters must be Dynamic", ct.pos);
-					}
-					function loop(t:T):Null<ModuleType> return switch (TypeFunctions.follow(t)) {
-						case TInst(c, params):
-							for (pt in params) checkParam(pt);
-							if (c.kind.match(KTypeParameter(_)))
-								throw new TypingError("Can't cast to a type parameter", ct.pos);
-							TClassDecl(c);
-						case TEnum(en, params):
-							for (pt in params) checkParam(pt);
-							TEnumDecl(en);
-						case TAbstract(a, params) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)):
-							for (pt in params) checkParam(pt);
-							TAbstractDecl(a);
-						case TAbstract(a, params): loop(TypeFunctions.getUnderlyingType(a, params));
-						case _: throw new TypingError("Cast type must be a class or an enum", ct.pos);
-					};
-					TypeFunctions.mk(TCast(te, loop(t)), t, p);
-				}
+				typeCastExpr(ctx, p, e1, ct);
 			case EIs(e1, th):
-				// `x is T` is sugar for Std.isOfType(x, T); T must be a named type path (its type
-				// parameters are ignored at runtime).
-				switch (th.ct) {
-					case CTPath(tp):
-						if (tp.tparams.length > 0) ctx.com.addDiagnostic("Type parameters are not supported for the `is` operator", th.pos);
-						var e = typeExpr(ctx, e1, WithTypeTools.value);
-						var mt = Typeload.resolveTypePath(ctx.com, {pack: tp.tpackage, name: tp.tname}, tp.tsub, th.pos);
-						// The cursor on the type of an `is` answers with that type, not with the whole expression,
-						// and it answers the DECLARED type - the redirect below is only for codegen.
-						if (atDisplayPos(th.pos)) displayModuleType(ctx.com, mt, th.pos);
-						var eType = TexprTools.makeTypeExpr(mt, th.pos);
-						var std = switch (Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, p)) {
-							case TClassDecl(c): c;
-							case _: throw new TypingError("Std is not a class", p);
-						};
-						var cf = std.statics.get("isOfType");
-						if (cf == null) throw new TypingError("Field not found : isOfType", p);
-						// The Std.isOfType reference is built at a zero-range position (max equals min),
-						// not at the full expression range.
-						var stdIs = TexprTools.makeStaticField(std, cf, hxc.core.Globals.mkZeroRangePos(p));
-						TypeFunctions.mk(TCall(stdIs, [e, eType]), ctx.com.basic.tbool, p);
-					case _:
-						ctx.com.addDiagnostic("Unsupported type for `is` operator", th.pos);
-						TexprTools.makeBool(ctx.com.basic, false, p);
-				}
+				typeIsExpr(ctx, e, p, e1, th);
 			case EDisplay(e1, dk):
-				// The display SUBJECT is typed and answered from. hxc answers from POSITIONS, so a marked
-				// node only has to type through; a DKDot is a field completion on its inner expression,
-				// which is the one shape a MACRO can return - hxc carries that request as an empty field
-				// name.
-				switch (dk) {
-					case DKDot: typeExpr(ctx, new Expr(EField(e1, "", EFNormal), p), withType);
-					case _:
-						// The wrapper's subject is the display node. A macro hands back new nodes
-						// (EvalMacro.withDisplayMark wrapped the mark it was given), so the subject is taken from the
-						// wrapper rather than by identity.
-						if (hxc.typing.ExprPreprocessing.markedNode != null && dk == hxc.typing.ExprPreprocessing.markedKind)
-							hxc.typing.ExprPreprocessing.markedNode = e1;
-						// Under signature display, a marked node (a call argument or array index the
-						// signature pass
-						// marked) answers a signature display of its own expression: a call, a `new` or an
-						// array access
-						// becomes the call to answer for; anything else is "Call expected".
-						if (dk == DKMarked && displaySignature) switch (e1.expr) {
-							case ECall(_, _) | ENew(_, _) | EArray(_, _): hxc.typing.ExprPreprocessing.markedCall = e1;
-							case _:
-						}
-						var te = typeExpr(ctx, e1, withType);
-						if (dk == DKMarked && displaySignature) throw new TypingError("Call expected", e1.pos);
-						te;
-				}
+				typeDisplayExpr(ctx, withType, p, e1, dk);
 			case ECheckType(e1, th):
-				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
-				// A `(v : C)` hint in a body forces C's build macros like any class reference does
-				// (building an instance runs the class build past PBuildClass); expression typing is late
-				// enough.
-				switch (TypeFunctions.follow(t)) {
-					case TInst(hc, _): forceBuild(ctx, hc);
-					case _:
-				}
-				var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
-				// castOrUnify records the verdict and keeps the expression, whatever the target type.
-				var te2 = castOrUnify(ctx, t, te, p);
-				// PHYSICAL identity, not structural. A monomorph bound to t is still a distinct TMono
-				// object, so the reification cast is kept (matters on cpp where throwing (getNull():Int)
-				// must materialize the int).
-				(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
+				typeCheckTypeExpr(ctx, p, e1, th);
 		};
 		DebugDump.typed("typeExpr", typed);
 		if (displayDefinition && atDisplayPos(e.pos)) checkDisplayDefinition(ctx, typed);
 		if ((displayHover || displayTypeDefinition) && atExprHoverPos(e.pos)) checkDisplayHover(ctx, typed, withType);
 		if ((displayUsage || displayImplementation) && atDisplayPos(e.pos)) captureUsageTarget(typed, ctx);
 		return typed;
+	}
+
+	// typeExprInner's metadata arms, in their order, a function of their own so the expression switch keeps a
+	// small frame (the guarded arms make the largest decision tree in it).
+	static function typeMetaExpr(ctx:TyperContext, e:Expr, withType:WithType, mode:AccessMode, p:Position):TExpr {
+		return switch (e.expr) {
+			case EMeta(m, e1) if (m.name == ":toString"):
+				typeToStringMeta(ctx, withType, m, e1);
+			case EMeta(m, _) if (m.name == ":markup"):
+				// A markup literal surviving to typing was not consumed.
+				throw new TypingError("Markup literals must be processed by a macro", p);
+			case EMeta(m, e1) if (m.name == ":bypassAccessor"):
+				typeBypassAccessorMeta(ctx, withType, m, e1);
+			case EMeta(m, e1) if (m.name == ":mergeBlock"):
+				typeMergeBlockMeta(ctx, withType, p, m, e1);
+			case EMeta(m, {expr: EReturn(re)}) if (m.name == ":implicitReturn"):
+				// An arrow function body's synthesized return.
+				if (!ctx.inFunction) throw new TypingError("Return outside function", p);
+				typeReturn(ctx, re, withType, p, true);
+			case EMeta(m, e1) if (m.name == ":storedTypedExpr"):
+				typeStoredTypedExprMeta(ctx, p, m, e1);
+			case EMeta(m, e1) if (m.name == ":fixed" && ctx.com.platform.match(Cpp)):
+				// @:fixed survives typing on cpp so the retyper builds the typed AnonStruct literal.
+				var te = typeExpr(ctx, e1, withType);
+				TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
+			case EMeta(m, e1) if (m.name == ":nullSafety" && m.params.length == 1 && m.params[0].expr.match(EConst(CIdent("Off")))):
+				// @:nullSafety(Off) survives typing so the null-safety filter sees the opt-out.
+				var te = typeExpr(ctx, e1, withType);
+				TypeFunctions.mk(TMeta(m, te), te.type, te.pos);
+			case EMeta(m, {expr: ECall(callee, args)}) if (m.name == ":inline"):
+				accGet(ctx, Calls.typeCallAccess(ctx, callee, args, withType, p, true, m.pos));
+			case EMeta(m, {expr: ENew(tp, el)}) if (m.name == ":inline"):
+				// A forced-inline construction keeps the marker for the inline-constructor filter.
+				var te = typeNew(ctx, tp, el, withType, p, true, true);
+				TypeFunctions.mk(TMeta({name: ":inline", params: [], pos: Position.nullPos}, te), te.type, te.pos);
+			case EMeta(m, e1) if (m.name == ":inline"):
+				// Only a call or constructor may follow the inline keyword; anything else (an anonymous
+				// function, a plain value) reports and types without inlining.
+				ctx.com.addDiagnostic("Call or function expected after inline keyword", p);
+				typeExpr(ctx, e1, withType);
+			case EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code):
+				typeDollarMeta(ctx, withType, m, e1);
+			case EMeta(_, e1):
+				typeExpr(ctx, e1, withType);
+			case _: throw new TypingError("Expected metadata", p);
+		};
+	}
+
+	static function typeWhileExpr(ctx:TyperContext, p:Position, cond:Expr, body:Expr):TExpr {
+		var basic = ctx.com.basic;
+		var oldLoop = ctx.inLoop;
+		var c = castOrUnify(ctx, basic.tbool, typeExpr(ctx, cond, WithTypeTools.value), p);
+		ctx.inLoop = true;
+		var b = typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
+		ctx.inLoop = oldLoop;
+		return TypeFunctions.mk(TWhile(c, b, NormalWhile), basic.tvoid, p);
+	}
+
+	static function typeDoWhileExpr(ctx:TyperContext, p:Position, cond:Expr, body:Expr):TExpr {
+		var basic = ctx.com.basic;
+		var oldLoop = ctx.inLoop;
+		ctx.inLoop = true;
+		var b = typeExpr(ctx, Expr.ensureBlock(body), WithTypeTools.noValue);
+		ctx.inLoop = oldLoop;
+		var c = typeExpr(ctx, cond, WithTypeTools.value);
+		c = castOrUnify(ctx, basic.tbool, c, c.pos);
+		return TypeFunctions.mk(TWhile(c, b, DoWhile), basic.tvoid, p);
+	}
+
+	static function typeReturnOutsideFunction(ctx:TyperContext, withType:WithType, p:Position, re:Null<Expr>):TExpr {
+		ctx.com.addDiagnostic("Return outside function", p);
+		return re == null ? TypeFunctions.mk(TConst(TNull), spawnMonomorph(ctx, p), p) : typeExpr(ctx, re, withType);
+	}
+
+	static function typeUntypedExpr(ctx:TyperContext, withType:WithType, p:Position, e1:Expr):TExpr {
+		var old = ctx.untypedMode;
+		ctx.untypedMode = true;
+		if (!TypeFunctions.hasMeta(":has_untyped", ctx.curfield.meta))
+			ctx.curfield.meta = ([{name: ":has_untyped", params: [], pos: p}] : Metadata).concat(ctx.curfield.meta);
+		var te = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.untypedMode = old; throw err; }
+		ctx.untypedMode = old;
+		return TypeFunctions.mk(te.expr, spawnMonomorph(ctx, te.pos), te.pos);
+	}
+
+	static function typePrivateAccessMeta(ctx:TyperContext, withType:WithType, e1:Expr):TExpr {
+		ctx.privateAccess++;
+		var rPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess--; throw err; };
+		ctx.privateAccess--;
+		return rPriv;
+	}
+
+	// Strips any enclosing @:privateAccess for the subexpression.
+	static function typeNoPrivateAccessMeta(ctx:TyperContext, withType:WithType, e1:Expr):TExpr {
+		var oldPa = ctx.privateAccess;
+		ctx.privateAccess = 0;
+		var rNoPriv = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.privateAccess = oldPa; throw err; };
+		ctx.privateAccess = oldPa;
+		return rNoPriv;
+	}
+
+	// An array literal that is not a comprehension or a map literal (typeArrayDeclAll's last arm).
+	static inline function isPlainArrayDecl(el:Array<Expr>):Bool {
+		return switch (el) {
+			case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}] if (el[0] != hxc.typing.ExprPreprocessing.markedNode): false;
+			case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })): false;
+			case _: true;
+		}
+	}
+
+	// The expected Map<K,V> of an array literal, or null.
+	static function arrayDeclExpectedMap(withType:WithType):Null<{k:T, v:T}> {
+		return switch (withType) {
+			case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+				case TAbstract(a, tl) if (a.path.name == "Map" && tl.length == 2): {k: tl[0], v: tl[1]};
+				case _: null;
+			};
+			case _: null;
+		};
+	}
+
+	// The key type a one-element literal holding the display node is typed against, or null.
+	static function arrayDeclDisplayKey(ctx:TyperContext, el:Array<Expr>, withType:WithType):Null<T> {
+		if (el.length != 1 || !isPlainArrayDecl(el)) return null;
+		var mapKV = arrayDeclExpectedMap(withType);
+		return mapKV != null && atDisplayPos(el[0].pos) ? mapKV.k : null;
+	}
+
+	// typeExprInner's array literal: a comprehension, a map literal, `new Map()` for an empty literal
+	// against an expected Map, or an ordinary array declaration.
+	static function typeArrayDeclAll(ctx:TyperContext, el:Array<Expr>, withType:WithType, p:Position):TExpr {
+		return switch (el) {
+			// A marked loop is an EDisplay, which the comprehension arm does not match: it types as an
+			// array of one element that answers the request.
+			case [{expr: EFor(_, _)}] | [{expr: EWhile(_, _, _)}] if (el[0] != hxc.typing.ExprPreprocessing.markedNode):
+				typeArrayComprehension(ctx, el[0], withType, p);
+			case _ if (el.length > 0 && (switch (el[0].expr) { case EBinop(OpArrow, _, _): true; case _: false; })):
+				typeMapDeclaration(ctx, el, withType, p);
+			case _:
+				// With a Map<K,V> expected, an empty literal is `new Map()`; anything else is an ordinary
+				// array declaration. hxc marks the display gap with a null stand-in rather than an EDisplay
+				// node, so "is the display node" is the position test (arrayDeclDisplayKey).
+				var mapKV = arrayDeclExpectedMap(withType);
+				if (mapKV != null && el.length == 0) {
+					var tp:PlacedTypePath = {path: {tpackage: ["haxe", "ds"], tname: "Map", tparams: [], tsub: null}, pos: p};
+					typeNew(ctx, tp, [], withType, p, false);
+				} else typeArrayDeclExpr(ctx, withType, p, el);
+		};
+	}
+
+	// typeExprInner's plain array declaration, a function of its own so the switch keeps a small frame.
+	static function typeArrayDeclExpr(ctx:TyperContext, withType:WithType, p:Position, el:Array<Expr>):TExpr {
+		return {
+			expectedArrayAllowDynamic = false;
+			var expectedEt:Null<T> = switch (withType) {
+				case WithType(wt, _): expectedArrayElement(ctx, wt);
+				case _: null;
+			};
+			var allowDyn = expectedArrayAllowDynamic;
+			var ewt = expectedEt == null ? WithTypeTools.value : WithTypeTools.withType(expectedEt);
+			// An element that does not unify with the expected element type coerces through an implicit
+			// abstract cast.
+			var tl = [for (e in el) {
+				var te = typeExpr(ctx, e, ewt);
+				if (expectedEt != null) {
+					try hxc.core.TypeUnification.unifyDefault(te.type, expectedEt)
+					catch (_:hxc.core.TypeUnification.UnifyError) te = castOrUnify(ctx, expectedEt, te, e.pos);
+				}
+				te;
+			}];
+			// Without an expected element type the elements must share one; a mixed literal is an error
+			// unless forced to Array<Dynamic> or in untyped code.
+			var et = if (expectedEt != null) expectedEt
+				else if (tl.length == 0) spawnMonomorph(ctx, p)
+				else try unifyMinRaise(ctx, tl) catch (te:TypingError) {
+					if (allowDyn || ctx.untypedMode) TypeFunctions.tDynamic;
+					else {
+						ctx.com.addDiagnostic("Arrays of mixed types are only allowed if the type is forced to Array<Dynamic>", te.pos);
+						throw te;
+					}
+				};
+			TypeFunctions.mk(TArrayDecl(tl), ctx.com.basic.tarray(et), p);
+		};
+	}
+
+	// typeExprInner's `EObjectDecl(fields)` arm, a function of its own so the switch keeps a small frame.
+	static function typeObjectDeclExpr(ctx:TyperContext, withType:WithType, p:Position, fields:Array<ObjectField>):TExpr {
+		return {
+			// The display position sits inside the literal on no field: complete the EXPECTED structure's
+			// fields (CRStructureField). That happens only under DMDefault, i.e. for a completion.
+			if (hxc.parser.Parser.displayFile != null && hxc.parser.Parser.displayCompletionMode
+					&& fieldCompletionFound == null && atDisplayPos(p)) {
+				// The cursor on a field name makes that field the completion SUBJECT; only a field it is
+				// not on hands the answer to its own value. Testing the values first would let the stand-in
+				// the parser leaves after a missing `:` swallow a cursor that is really sitting on the
+				// name.
+				var covered = false;
+				for (f in fields) if (!atDisplayPos(f.pos) && atDisplayPos(f.expr.pos)) { covered = true; break; }
+				var anRaw = expectedAnonFromWithType(ctx, withType);
+				if (anRaw == null) anRaw = structInitAnonFields(ctx, withType);
+				// The cursor BETWEEN a field's `:` and its value completes against THAT field's type with
+				// an empty subject - the value already written must not become the filter string.
+				if (anRaw != null) for (f in fields) {
+					if (atDisplayPos(f.pos)) continue;
+					var between = new Position(f.pos.file, f.pos.max + 1, f.expr.pos.min - 1);
+					if (between.max < between.min || !atDisplayPos(between)) continue;
+					var decl = anRaw.fields.get(f.name);
+					var fwt = decl != null ? WithTypeTools.withType(decl.type) : WithTypeTools.value;
+					if (displayToplevelJson)
+						throw new JsonToplevelCompletion(collectToplevelJson(ctx, fwt), null, between, fwt, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
+					if (displayToplevel)
+						throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, fwt, true));
+				}
+				var an = covered ? null : anRaw;
+				// An anon that came from a typedef reports that typedef as the origin; a bare one reports
+				// itself.
+				var anOrigin:Null<hxc.core.Type.ModuleType> = if (an == null) null else switch (withType) {
+					case WithType(wt, _): switch (wt) { case TType(td, _): TTypeDecl(td); case _: null; };
+					case _: null;
+				}
+				// A @:structInit class completes like a structure, from the fields its constructor accepts,
+				// and reports the class as the origin.
+				if (an != null && anOrigin == null) anOrigin = switch (withType) {
+					case WithType(wt, _): switch (TypeFunctions.follow(wt)) { case TInst(c, _): TClassDecl(c); case _: null; };
+					case _: null;
+				}
+				// One field whose value is a null at a NULL position is what the parser leaves behind for
+				// `{ ident`. With no structure expected that is not a structure completion at all - it is a
+				// toplevel one keyed by the name, which is how a function body of just `{ foo }` answers.
+				if (an == null && !covered && fields.length == 1 && fields[0].expr.pos.min == -1
+						&& fields[0].expr.expr.match(EConst(CIdent("null")))) {
+					// The field name is the subject.
+					if (displayToplevelJson) throw new JsonToplevelCompletion(collectToplevelJson(ctx, withType), fields[0].name, fields[0].pos, withType, ctx.curclass == null || ctx.curclass == TypeFunctions.nullClass);
+					if (displayToplevel) throw new hxc.compiler.DisplayXml.ToplevelCompletion(collectToplevel(ctx, withType, false));
+				}
+				if (an != null) {
+					// A field already GIVEN in the literal is removed from the candidates, so only what is
+					// still missing is offered.
+					var given = new haxe.ds.StringMap<Bool>();
+					for (f in fields) if (!atDisplayPos(f.pos)) given.set(f.name, true);
+					var cand = [for (name in an.fields.keys()) if (!given.exists(name)) an.fields.get(name)];
+					// Sort by declaration position descending; for an empty literal the list is then built
+					// by
+					// prepending, which turns that back into ascending.
+					cand.sort(function(c1, c2) return c2.pos.min - c1.pos.min);
+					if (fields.length == 0) cand.reverse();
+					fieldCompletionFound = [for (cf in cand) {
+						kind: cf.kind.match(Method(_)) ? "method" : "var",
+						name: cf.name,
+						type: hxc.core.TPrinting.sTypeStr(cf.type),
+						doc: Ast.genDocTextOpt(cf.doc)
+					}];
+					// The JSON answer is the same collection under kind 1 (CRStructureField), keyed by the
+					// field name the cursor is on.
+					var subjName:Null<String> = null;
+					var subjPos:Null<Position> = null;
+					for (f in fields) if (atDisplayPos(f.pos)) { subjName = f.name; subjPos = f.pos; break; }
+					var doff = hxc.parser.Parser.displayOffset;
+					var insert = new Position(p.file, doff, doff);
+					// A bare structure is its own origin, AnonymousStructure.
+					var bare = anOrigin == null ? an : null;
+					jsonFieldCompletion = {
+						entries: [for (cf in cand) {cf: cf, scope: CFSMember, originClass: null, originAnon: bare, builtIn: false}],
+						receiver: null,
+						insertPos: insert,
+						originModuleType: anOrigin,
+						noSort: true,
+						kind: 1,
+						subjectName: subjName,
+						subjectPos: subjPos != null ? subjPos : insert
+					};
+				}
+			}
+			// A field may appear only once in an object literal.
+			{
+				var seen = new haxe.ds.StringMap<Bool>();
+				for (f in fields) {
+					if (seen.exists(f.name)) throw new TypingError("Duplicate field in object declaration : " + f.name, f.pos);
+					seen.set(f.name, true);
+				}
+			}
+			// A `{...}` literal against a @:structInit class types as a call to that class's constructor,
+			// matching fields to constructor arguments by name.
+			var scHit = switch (withType) {
+				case WithType(wt, _): switch (TypeFunctions.follow(wt)) {
+					case TInst(c, tl) if (TypeFunctions.hasMeta(":structInit", c.meta)): {c: c, tl: tl, t: TypeFunctions.follow(wt)};
+					case _: null;
+				};
+				case _: null;
+			};
+			var scSig = scHit == null ? null : switch (try findConstructorType(ctx, scHit.c, scHit.tl) catch (_:Dynamic) null) {
+				case null: null;
+				case ct: switch (TypeFunctions.follow(ct)) { case TFun(sig): sig; case _: null; };
+			};
+			// A @:structInit target without a constructor (an interface carrying the meta) reports at the
+			// literal and types plainly.
+			// RAISED so the var-initializer recovery records it and no further unify runs.
+			if (scHit != null && scSig == null)
+				throw new TypingError(hxc.core.Globals.sTypePath(scHit.c.path) + " does not have a constructor", p);
+			if (scHit != null && scSig != null) {
+				// Type each provided field against its constructor-arg type in the object literal source
+				// order; build the call in the constructor declared arg order, hoisting a field into a temp
+				// when a later-source field has a side effect, so initializers still run in source order.
+				var argByName = new haxe.ds.StringMap<TSignatureArg>();
+				for (arg in scSig.args) argByName.set(arg.name, arg);
+				// Each constructor argument becomes a synthetic field positioned at that argument's own
+				// VAR, or at the constructor name when the constructor has no body, and a cursor on the
+				// field name is then answered with it. That is how a field of a @:structInit class reports
+				// its own declaration.
+				if (hxc.parser.Parser.displayFile != null && atDisplayPos(p)) {
+					if (scHit.c.constructor == null) try ensureStructInitCtor(ctx, scHit.c) catch (_:Dynamic) {}
+					var ctor = scHit.c.constructor;
+					if (ctor != null) {
+						var argPos = new haxe.ds.StringMap<Position>();
+						var tfArgs = ctor.expr == null ? null : switch (ctor.expr.expr) {
+							case TFunction(fn): fn.args;
+							case _: null;
+						}
+						for (i in 0...scSig.args.length) {
+							var nm = scSig.args[i].name;
+							argPos.set(nm, tfArgs != null && i < tfArgs.length ? tfArgs[i].v.pos : ctor.namePos);
+						}
+						for (f in fields) if (atDisplayPos(f.pos)) {
+							var arg = argByName.get(f.name);
+							var ap = argPos.get(f.name);
+							if (arg != null && ap != null)
+								displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, TypeFunctions.mkField(f.name, arg.t, ap, ap), f.pos);
+						}
+					}
+				}
+				// Field typing, over the constructor arguments as the field map.
+				var byName = new haxe.ds.StringMap<TExpr>();
+				var anonFields = new haxe.ds.StringMap<TClassField>();
+				var extraFields:Array<{name:String, pos:Position}> = [];
+				for (f in fields) {
+					var arg = argByName.get(f.name);
+					var te:TExpr;
+					if (arg != null) {
+						te = typeExpr(ctx, f.expr, WithTypeTools.withStructureField(arg.t, f.name));
+						te = castOrUnify(ctx, arg.t, te, te.pos);
+						// A non-null value for a nullable argument is cast to Null, and a value not
+						// strictly of the argument's type is cast to it.
+						if (TypeFunctions.isNull(arg.t) && !TypeFunctions.isNull(te.type))
+							te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
+						try TypeUnification.typeEqKind(EqStrict, te.type, arg.t)
+						catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), arg.t, te.pos);
+					} else {
+						// No argument takes it, so it is typed on its own and reported below, the last one
+						// first.
+						if (isValidIdentifier(f.name)) extraFields.unshift({name: f.name, pos: f.pos});
+						te = typeExpr(ctx, f.expr, WithTypeTools.value);
+					}
+					if (isValidIdentifier(f.name))
+						anonFields.set(f.name, TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos));
+					byName.set(f.name, te);
+				}
+				if (!ctx.untypedMode) {
+					// Missing arguments, then each extra field at its own name.
+					inline function reportOrRaise(msg:String, pos:Position):Void
+						TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
+					var missing:Array<String> = [for (arg in scSig.args) if (!arg.opt && !byName.exists(arg.name)) arg.name];
+					// Missing fields are listed in descending name order.
+					hxc.core.StringSort.sortDescending(missing);
+					if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
+					else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
+					if (extraFields.length > 0) {
+						var tAnon = TypeFunctions.mkAnon(new hxc.core.Ref(Const), anonFields);
+						for (x in extraFields) reportOrRaise(hxc.core.TPrinting.sTypeStr(tAnon) + " has extra field " + x.name, x.pos);
+					}
+				}
+				var evars:Array<TExpr> = [];
+				var hadSideEffect = false;
+				var fi = fields.length - 1;
+				while (fi >= 0) {
+					var fname = fields[fi].name;
+					var te = byName.get(fname);
+					switch (te.expr) {
+						case TConst(_) | TTypeExpr(_) | TFunction(_):
+						case _:
+							if (hadSideEffect) {
+								var v = TypeFunctions.allocVar(VGenerated, "`", te.type, te.pos);
+								evars.unshift(TypeFunctions.mk(TVarExpr(v, te), te.type, te.pos));
+								byName.set(fname, TexprTools.makeLocal(v, te.pos));
+							} else if (hxc.optimization.OptimizerTexpr.hasSideEffect(te)) {
+								hadSideEffect = true;
+							}
+					}
+					fi--;
+				}
+				// A field the literal omits takes the constructor's declared default value for that
+				// argument; only an argument with no default falls back to null.
+				var ctorTf:Null<TFunc> = null;
+				{
+					var ctorCf = try TypeFunctions.getConstructorClass(scHit.c, scHit.tl).cf catch (_:Dynamic) null;
+					if (ctorCf != null) {
+						if (ctorCf.expr == null) try TypeFields.forceFieldBody(ctx.com, scHit.c, ctorCf) catch (_:Dynamic) {};
+						if (ctorCf.expr != null) switch (ctorCf.expr.expr) { case TFunction(tf): ctorTf = tf; case _: }
+					}
+				}
+				var el:Array<TExpr> = [];
+				for (arg in scSig.args) {
+					var te = byName.get(arg.name);
+					if (te != null) el.push(te);
+					else {
+						var dflt:Null<TExpr> = null;
+						if (ctorTf != null) for (a in ctorTf.args) if (a.v.name == arg.name && a.c != null) { dflt = a.c; break; }
+						if (dflt != null) el.push(dflt);
+						else {
+							// A @:notNull argument type is given a nullable null.
+							var nt = TypeFunctions.typeHasMeta(TypeFunctions.followWithAbstractsWithoutNull(arg.t), ":notNull") ? ctx.com.basic.tnull(arg.t) : arg.t;
+							el.push(TexprTools.makeNull(nt, p));
+						}
+					}
+				}
+				var enew = TypeFunctions.mk(TNew(scHit.c, scHit.tl, el), scHit.t, p);
+				// The construction is the last expression of a block, temporaries or not.
+				TypeFunctions.mk(TBlock(evars.concat([enew])), enew.type, enew.pos);
+			} else {
+				var tfields:Array<TObjectField> = [];
+				var anonFields = new haxe.ds.StringMap<TClassField>();
+				var expected = expectedAnonFromWithType(ctx, withType);
+				// A Dynamic<T> expectation types every field at T instead of a per-field lookup.
+				var dynParam:Null<T> = switch (withType) {
+					case WithType(wt, _): switch (expectedAnonFromType(ctx, wt, [])) {
+						case ODKDynamic(dt): dt;
+						case _: null;
+					};
+					case _: null;
+				};
+				for (f in fields) {
+					var ef = dynParam == null && expected != null ? expected.fields.get(f.name) : null;
+					var ft:Null<T> = dynParam != null ? dynParam : (ef != null ? ef.type : null);
+					// The cursor on a field name answers with the field it matched in the EXPECTED
+					// structure, so it reports that field's declaration and its declared type rather than
+					// the literal's own.
+					if (ef != null && atDisplayPos(f.pos)) displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember, ef, f.pos);
+					// an expected field, NotFound a plain value, and the plain typing (no expected
+					// structure) a value named by the field.
+					var fwt = ft != null ? WithTypeTools.withStructureField(ft, f.name)
+						: expected == null && dynParam == null ? WithTypeTools.namedStructureField(f.name) : WithTypeTools.value;
+					var te = typeExpr(ctx, f.expr, fwt);
+					// With no expected structure the field answers with itself, typed from its value. The
+					// field is built (and displayed) whether or not the name is a valid identifier; only
+					// the anon entry below is guarded.
+					if (expected == null && dynParam == null && atDisplayPos(f.pos))
+						displayField(hxc.core.CompletionItem.ClassFieldOrigin.Unknown, CFSMember,
+							TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos), f.pos);
+					// Against an expected field type, coerce the value to it so an implicit abstract cast
+					// (e.g. Int -> Int64 @:from) applies, matching the field's declared type.
+					if (ft != null) {
+						te = castOrUnify(ctx, ft, te, te.pos);
+						// A non-null value against a nullable expectation wraps so the runtime
+						// representation stays nullable.
+						if (TypeFunctions.isNull(ft) && !TypeFunctions.isNull(te.type))
+							te = TypeFunctions.mk(TCast(te, null), ctx.com.basic.tnull(te.type), te.pos);
+						// The stored field expr carries the EXPECTED type: a loose unify that is not
+						// strictly equal wraps in a plain cast, so e.g. a String value behind a
+						// Dynamic<Dynamic> field reads as Dynamic downstream (inline constructors fold on
+						// that strict equality).
+						try TypeUnification.typeEqKind(EqStrict, te.type, ft)
+						catch (_:UnifyError) te = TypeFunctions.mk(TCast(te, null), ft, te.pos);
+					}
+					tfields.push({key: {name: f.name, pos: f.pos, quotes: f.quotes}, expr: te});
+					// Against an expected structure the field takes the expected type (the value was just
+					// coerced to it), so e.g. `({f: -1} : {f:Float})` is `{f:Float}`, not `{f:Int}`.
+					// A field whose name is not a valid identifier (a quoted key like "x-bar") is a
+					// reflection-only field: it stays in the runtime object but not in the structure type,
+					// and never counts as an "extra field".
+					if (isValidIdentifier(f.name)) {
+						// The anon field records the typed expr's type, which the strict-cast wrap above
+						// has already aligned to any expectation. pos spans the whole `name: expr` pair
+						// and only namePos is the name; --json prints pos as the structure field's
+						// span.
+						var anonField = TypeFunctions.mkField(f.name, te.type, Ast.punion(f.pos, te.pos), f.pos);
+						if (ef != null && TypeFunctions.hasClassFieldFlag(ef, CfFinal)) TypeFunctions.addClassFieldFlag(anonField, CfFinal);
+						anonFields.set(f.name, anonField);
+					}
+				}
+				// The status ref is kept so the end of the enclosing function can close it.
+				var anonStatus = new hxc.core.Ref(Const);
+				ctx.opened.unshift(anonStatus);
+				var t = TypeFunctions.mkAnon(anonStatus, anonFields);
+				// A literal against an expected structure must provide every non-optional expected field
+				// and nothing more. Recorded, not raised, so every violation is reported (and a macro
+				// Context.typeof raises through the record).
+				if (expected != null && !ctx.untypedMode) {
+					// Inside call arguments the violation raises so the caller annotates it with the
+					// parameter name; outside it is recorded.
+					inline function reportOrRaise(msg:String, pos:Position):Void
+						TyperContext.raiseOrDisplayMessage(ctx, msg, pos);
+					var missing:Array<String> = [];
+					for (n in expected.fields.keys()) {
+						var ef = expected.fields.get(n);
+						if (!TypeFunctions.hasMeta(":optional", ef.meta) && !anonFields.exists(n)) missing.push(n);
+					}
+					// Missing fields are listed in descending name order.
+					hxc.core.StringSort.sortDescending(missing);
+					if (missing.length == 1) reportOrRaise("Object requires field " + missing[0], p);
+					else if (missing.length > 1) reportOrRaise("Object requires fields: " + missing.join(", "), p);
+					// Extra fields accumulate by prepending, so they report in reverse source order.
+					var i = fields.length - 1;
+					while (i >= 0) {
+						var f = fields[i];
+						if (!expected.fields.exists(f.name) && isValidIdentifier(f.name))
+							reportOrRaise(hxc.core.TPrinting.sTypeStr(t) + " has extra field " + f.name, f.pos);
+						i--;
+					}
+				}
+				TypeFunctions.mk(TObjectDecl(tfields), t, p);
+			}
+		};
+	}
+
+	// typeExprInner's `EFunction(kind, f)` arm, a function of its own so the switch keeps a small frame.
+	static function typeFunctionExpr(ctx:TyperContext, withType:WithType, p:Position, kind:FunctionKind, f:Func):TExpr {
+		return {
+			// An anonymous function as a plain STATEMENT has no receiver for its value.
+			if (withType.match(NoValue)) switch (kind) {
+				case FKNamed(_, _):
+				case _: ctx.com.addDiagnostic("Unnamed lvalue functions are not supported", p);
+			}
+			var savedTypeParams = ctx.typeParams;
+			var localParams:TypeParams = [];
+			if (f.fParams.length > 0) {
+				// An unnamed local function has no name to specialise under, and a local function used as a
+				// value cannot carry parameters at all. The first is recorded, the second raises, so `var f
+				// = function<T>(v:T) ...` prints both.
+				if (!kind.match(FKNamed(_, _)))
+					ctx.com.addDiagnostic("Type parameters not supported in unnamed local functions", p);
+				if (!withType.match(NoValue))
+					throw new TypingError("Type parameters are not supported for rvalue functions", p);
+				// A local function's own type parameters (`function foo<T>(...)`) are in scope for its
+				// argument/return hints and body.
+				var declPath:hxc.core.Globals.Path = {pack: [], name: switch (kind) { case FKNamed(n, _): n.name; case _: "`localfun"; }};
+				for (tp in f.fParams) localParams.push(Typeload.typeTypeParam(ctx.com, declPath, () -> savedTypeParams.concat(localParams), tp));
+				ctx.typeParams = savedTypeParams.concat(localParams);
+			}
+			var args:Array<TFuncArg> = [];
+			for (fa in f.fArgs) {
+				var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
+				// Every function argument, local functions included, is allocated as VUser(TVOArgument).
+				// Tail-recursion elimination keys all three of its checks off that kind (captured
+				// arguments, the tail-recursion assign arm, the argument-local test), so treating a local
+				// function's arguments as local VARIABLES would make it reuse the parameters instead of
+				// redeclaring loop-scoped copies.
+				var av = TypeFunctions.allocVarNoId(VUser(TVOArgument), fa.name.name, at, fa.name.pos);
+				args.push({v: av, c: null});
+			}
+			var ret = Typeload.loadTypeHint(ctx.com, ctx.typeParams, f.fType, false);
+			// Top-down inference: bind unannotated (mono) arg/return types from an expected function type.
+			function expectVoid(t:T):Bool {
+				return switch (TypeFunctions.follow(t)) {
+					case TAbstract(a, _): a.path.pack.length == 0 && a.path.name == "Void";
+					case _: false;
+				}
+			}
+			function maybeUnifyArg(t1:T, t2:T):Void {
+				switch (TypeFunctions.follow(t1)) {
+					case TMono(_): try TypeUnification.unifyDefault(t2, t1) catch (_:Dynamic) {}
+					case _:
+				}
+			}
+			function maybeUnifyRet(t2:T):Void {
+				// A Void expected return is not forced onto a non-arrow function (its body infers the return),
+				// but an arrow does take Void so its body types in void context (its value is discarded, no
+				// value-return synthesized).
+				var isArrow = switch (kind) { case FKArrow: true; case _: false; };
+				if (!expectVoid(t2) || isArrow) switch (TypeFunctions.follow(ret)) {
+					case TMono(_): try TypeUnification.unifyDefault(ret, t2) catch (_:Dynamic) {}
+					case _:
+				}
+			}
+			function applyFunExpectation(t:T):Bool {
+				return switch (TypeFunctions.follow(t)) {
+					case TFun(sig) if (sig.args.length == args.length):
+						for (i in 0...args.length) maybeUnifyArg(args[i].v.type, sig.args[i].t);
+						maybeUnifyRet(sig.ret);
+						true;
+					case _:
+						false;
+				}
+			}
+			function flattenAbstractSources(t:T, seen:Array<T>):Array<T> {
+				t = TypeFunctions.follow(t);
+				return switch (t) {
+					case TAbstract(_, _):
+						for (seenT in seen) if (TypeUnification.fastEq(seenT, t)) return [];
+						var sources = abstractFromTypes(ctx, t);
+						if (sources.length == 1) flattenAbstractSources(sources[0], seen.concat([t])) else {
+							var out:Array<T> = [];
+							for (source in sources) switch (TypeFunctions.follow(source)) {
+								case TAbstract(_, _): out = out.concat(flattenAbstractSources(source, seen.concat([t])));
+								case _: out.push(source);
+							}
+							out;
+						}
+					case _:
+						[t];
+				}
+			}
+			function commonType(types:Array<T>):Null<T> {
+				if (types.length == 0) return null;
+				var first = types[0];
+				for (i in 1...types.length) if (!TypeUnification.typeIseqDefault(first, types[i])) return null;
+				return first;
+			}
+			function applyAbstractFunctionMatrix(t:T):Void {
+				var candidates = [for (source in flattenAbstractSources(t, [])) switch (TypeFunctions.follow(source)) {
+					case TFun(sig) if (sig.args.length == args.length): sig;
+					case _: null;
+				}].filter(x -> x != null);
+				if (candidates.length == 0) return;
+				for (i in 0...args.length) {
+					var t = commonType([for (sig in candidates) sig.args[i].t]);
+					if (t != null) maybeUnifyArg(args[i].v.type, t);
+				}
+				var rt = commonType([for (sig in candidates) sig.ret]);
+				if (rt != null) maybeUnifyRet(rt);
+			}
+			switch (withType) {
+				case WithType(wt, _):
+					if (!applyFunExpectation(wt)) applyAbstractFunctionMatrix(wt);
+				case _:
+			}
+			// An arg is optional in the function type when marked `?` or given a default value.
+			var ft = TFun({args: [for (i in 0...args.length) {name: args[i].v.name, opt: f.fArgs[i].opt || f.fArgs[i].value != null, t: args[i].v.type}], ret: ret});
+			// A named local function binds its name (in scope before the body, so it can recurse)
+			// and evaluates to a TVar assignment; an anonymous one is just the function value.
+			var namedVar:Null<TVar> = switch (kind) {
+				case FKNamed(n, _):
+					checkLocalVariableName(ctx, n.name, TVOLocalFunction, n.pos);
+					addLocal(ctx, VUser(TVOLocalFunction), n.name, ft, n.pos);
+				case _: null;
+			};
+			// A named generic local function stores its type params so a later call can monomorphize them.
+			// An INLINE local function additionally stores its function expression on extra (set after
+			// the body types, below), which the identifier resolver turns into a fake inline field call.
+			if (namedVar != null && localParams.length > 0) namedVar.extra = new TVarExtra(localParams);
+			// Arguments are processed after the function's own variable and after the expected type has
+			// been unified in: per argument the name is checked, the default typed (against the argument
+			// type, Null-wrapped when optional), the variable allocated, and then a cursor on the name
+			// answers - with the type the expected function gave it.
+			for (i in 0...args.length) {
+				var fa = f.fArgs[i];
+				var at = args[i].v.type;
+				checkLocalVariableName(ctx, fa.name.name, TVOArgument, fa.name.pos);
+				args[i].c = TypeFields.typeFunctionArgValue(ctx, fa.opt ? ctx.com.basic.tnull(at) : at, TypeFields.functionArgDefault(fa));
+				TypeFunctions.giveVarId(args[i].v);
+				if (atDisplayPos(fa.name.pos)) displayVariable(ctx, args[i].v, fa.name.pos);
+			}
+			// A local function of a member types as FunMemberClassLocal (abstract members as
+			// FunMemberAbstractLocal) so `this` inside it resolves to the captured `this local.
+			var localMode:CurrentFun = switch (ctx.curfun) {
+				case FunStatic: FunStatic;
+				case FunMemberAbstract | FunMemberAbstractLocal: FunMemberAbstractLocal;
+				case _: FunMemberClassLocal;
+			};
+			var tf = typeFunction(ctx, args, ret, localMode, f.fExpr, p);
+			ctx.typeParams = savedTypeParams;
+			var fnExpr = TypeFunctions.mk(TFunction(tf), ft, p);
+			if (namedVar != null)
+				Typeload.generateArgsMeta(f.fArgs, m -> namedVar.meta = [m].concat(namedVar.meta == null ? [] : namedVar.meta));
+			// The cursor on a named local function's name answers with the variable it binds, so the answer
+			// is the name's own range and not the whole function.
+			if (namedVar != null && ctx.inDisplay && atDisplayPos(namedVar.pos)) displayVariable(ctx, namedVar, namedVar.pos);
+			if (namedVar == null) fnExpr;
+				else {
+					// A recursive named local function is bound in two steps: `var f = null; f = <fn>`, so
+					// the closure captures the (mutable) slot and a self-call sees the assigned value
+					// rather than the null it was constructed with. In value position the declaration is
+					// followed by a TLocal read so the whole expression evaluates to the function.
+					var isRec = TexprTools.referencesLocal(fnExpr, namedVar);
+					var isInline = switch (kind) { case FKNamed(_, inl): inl; case _: false; };
+					// The inline local function's body is stored on extra so calls inline it through the
+					// fake-field machinery.
+					if (isInline || localParams.length > 0) namedVar.extra = new TVarExtra(localParams, isInline ? fnExpr : null);
+					var tvoid = ctx.com.basic.tvoid;
+					var exprs:Array<TExpr> = [];
+					var declFileIsDisplay = hxc.parser.Parser.matchesDisplayFile(p.file);
+					if (isRec) {
+						// An inline local function cannot be recursive.
+						if (isInline) ctx.com.addDiagnostic("Inline function cannot be recursive", fnExpr.pos);
+						exprs.push(TypeFunctions.mk(TVarExpr(namedVar, TypeFunctions.mk(TConst(TNull), ft, p)), tvoid, p));
+						exprs.push(TypeFunctions.mk(TBinop(OpAssign, TypeFunctions.mk(TLocal(namedVar), ft, p), fnExpr), ft, p));
+					} else if (isInline && !declFileIsDisplay) {
+						// No variable is declared, since every call inlines.
+						exprs.push(TypeFunctions.mk(TBlock([]), tvoid, p));
+					} else {
+						exprs.push(TypeFunctions.mk(TVarExpr(namedVar, fnExpr), tvoid, p));
+					}
+					if (!withType.match(NoValue) && !isInline)
+						exprs.push(TypeFunctions.mk(TLocal(namedVar), namedVar.type, p));
+					if (exprs.length == 1) exprs[0];
+					else {
+						var block = TypeFunctions.mk(TBlock(exprs), namedVar.type, p);
+						TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, block), namedVar.type, p);
+					}
+				}
+		};
+	}
+
+	// typeExprInner's `ETry(e1, catches)` arm, a function of its own so the switch keeps a small frame.
+	static function typeTryExpr(ctx:TyperContext, withType:WithType, p:Position, e1:Expr, catches:Array<Catch>):TExpr {
+		return {
+			var te = typeExpr(ctx, e1, withType);
+			var tcatches:Array<TCatch> = [];
+			var bodies = [te];
+			for (c in catches) {
+				var th = c.type != null ? c.type : defaultCatchTypeHint(c.pos);
+				var catchType = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
+				var normalizedCatchType = normalizeCatchType(ctx, catchType, p, th.pos, c.expr.pos);
+				checkCatchUnreachable(ctx, tcatches, normalizedCatchType, c.expr.pos);
+				var restore = saveLocals(ctx);
+				checkLocalVariableName(ctx, c.name.name, TVOCatchVariable, c.name.pos);
+				// The catch var is declared at the var name's position, not the catch clause's.
+				var v = addLocal(ctx, VUser(TVOCatchVariable), c.name.name, catchType, c.name.pos);
+				// Display on the catch variable's own name.
+				if (atDisplayPos(c.name.pos)) displayVariable(ctx, v, c.name.pos);
+				var cbody = typeExpr(ctx, c.expr, withType);
+				if (atDisplayPos(c.pos)) catchDisplay(ctx, c.expr, cbody, withType);
+				v.type = normalizedCatchType;
+				restore();
+				tcatches.push({v: v, expr: cbody});
+				bodies.push(cbody);
+			}
+			// The try's result type: a STATEMENT try is Void with no branch unification (a catch calling a
+			// not-yet-inferred method must not bind that method's open return mono); against an expected
+			// monomorph or Void the source decides; a CONCRETE expectation casts the body and every catch
+			// individually (the implicit-cast call lands inside each branch, so the analyzer can drop a
+			// pure unused branch value while keeping the try shell); otherwise the branches unify to a
+			// common type.
+			var tryT = switch (withType) {
+				case NoValue: ctx.com.basic.tvoid;
+				case WithType(wt, src) if (switch (TypeFunctions.follow(wt)) { case TMono(_): true; case wtf: isVoid(wtf); }):
+					unifyMinForTypeSource(ctx, bodies, src);
+				case WithType(wt, _):
+					te = castOrUnify(ctx, wt, te, te.pos);
+					for (tc in tcatches) tc.expr = castOrUnify(ctx, wt, tc.expr, tc.expr.pos);
+					wt;
+				case _: unifyMin(ctx, bodies);
+			};
+			TypeFunctions.mk(TTry(te, tcatches), tryT, p);
+		};
+	}
+
+	// typeExprInner's `ECast(e1, ct)` arm, a function of its own so the switch keeps a small frame.
+	static function typeCastExpr(ctx:TyperContext, p:Position, e1:Expr, ct:Null<TypeHint>):TExpr {
+		return {
+			var te = typeExpr(ctx, e1, WithTypeTools.value);
+			if (ct == null) {
+				TypeFunctions.mk(TCast(te, null), spawnMonomorph(ctx, p), p);
+			} else {
+				var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, ct);
+				// The runtime-checked cast target: an abstract without @:runtimeValue resolves to its
+				// underlying type, so the eval safe-cast check sees the concrete class (or the
+				// @:runtimeValue basic). A runtime cast can only check a nominal type, so the target has to
+				// reduce to a class or an enum, its parameters have to be erased (they do not exist at
+				// runtime), and a type parameter is not a target at all. All three report at the type, not
+				// the cast expression.
+				function checkParam(pt:T):Void switch (TypeFunctions.follow(pt)) {
+					// An unbound monomorph means Dynamic was never bound (issue #4675).
+					case TMono(_):
+					case TDynamic(_):
+					case _: throw new TypingError("Cast type parameters must be Dynamic", ct.pos);
+				}
+				function loop(t:T):Null<ModuleType> return switch (TypeFunctions.follow(t)) {
+					case TInst(c, params):
+						for (pt in params) checkParam(pt);
+						if (c.kind.match(KTypeParameter(_)))
+							throw new TypingError("Can't cast to a type parameter", ct.pos);
+						TClassDecl(c);
+					case TEnum(en, params):
+						for (pt in params) checkParam(pt);
+						TEnumDecl(en);
+					case TAbstract(a, params) if (TypeFunctions.hasMeta(":runtimeValue", a.meta)):
+						for (pt in params) checkParam(pt);
+						TAbstractDecl(a);
+					case TAbstract(a, params): loop(TypeFunctions.getUnderlyingType(a, params));
+					case _: throw new TypingError("Cast type must be a class or an enum", ct.pos);
+				};
+				TypeFunctions.mk(TCast(te, loop(t)), t, p);
+			}
+		};
+	}
+
+	// typeExprInner's `EIs(e1, th)` arm, a function of its own so the switch keeps a small frame.
+	static function typeIsExpr(ctx:TyperContext, e:Expr, p:Position, e1:Expr, th:TypeHint):TExpr {
+		return {
+			// `x is T` is sugar for Std.isOfType(x, T); T must be a named type path (its type parameters
+			// are ignored at runtime).
+			switch (th.ct) {
+				case CTPath(tp):
+					if (tp.tparams.length > 0) ctx.com.addDiagnostic("Type parameters are not supported for the `is` operator", th.pos);
+					var e = typeExpr(ctx, e1, WithTypeTools.value);
+					var mt = Typeload.resolveTypePath(ctx.com, {pack: tp.tpackage, name: tp.tname}, tp.tsub, th.pos);
+					// The cursor on the type of an `is` answers with that type, not with the whole expression,
+					// and it answers the DECLARED type - the redirect below is only for codegen.
+					if (atDisplayPos(th.pos)) displayModuleType(ctx.com, mt, th.pos);
+					var eType = TexprTools.makeTypeExpr(mt, th.pos);
+					var std = switch (Typeload.resolveTypePath(ctx.com, {pack: [], name: "Std"}, null, p)) {
+						case TClassDecl(c): c;
+						case _: throw new TypingError("Std is not a class", p);
+					};
+					var cf = std.statics.get("isOfType");
+					if (cf == null) throw new TypingError("Field not found : isOfType", p);
+					// The Std.isOfType reference is built at a zero-range position (max equals min), not
+					// at the full expression range.
+					var stdIs = TexprTools.makeStaticField(std, cf, hxc.core.Globals.mkZeroRangePos(p));
+					TypeFunctions.mk(TCall(stdIs, [e, eType]), ctx.com.basic.tbool, p);
+				case _:
+					ctx.com.addDiagnostic("Unsupported type for `is` operator", th.pos);
+					TexprTools.makeBool(ctx.com.basic, false, p);
+			}
+		};
+	}
+
+	// typeExprInner's `EDisplay(e1, dk)` arm, a function of its own so the switch keeps a small frame.
+	static function typeDisplayExpr(ctx:TyperContext, withType:WithType, p:Position, e1:Expr, dk:DisplayKind):TExpr {
+		return {
+			// The display SUBJECT is typed and answered from. hxc answers from POSITIONS, so a marked node
+			// only has to type through; a DKDot is a field completion on its inner expression, which is the
+			// one shape a MACRO can return - hxc carries that request as an empty field name.
+			switch (dk) {
+				case DKDot: typeExpr(ctx, new Expr(EField(e1, "", EFNormal), p), withType);
+				case _:
+					// The wrapper's subject is the display node. A macro hands back new nodes
+					// (EvalMacro.withDisplayMark wrapped the mark it was given), so the subject is taken
+					// from the wrapper rather than by identity.
+					if (hxc.typing.ExprPreprocessing.markedNode != null && dk == hxc.typing.ExprPreprocessing.markedKind)
+						hxc.typing.ExprPreprocessing.markedNode = e1;
+					// Under signature display, a marked node (a call argument or array index the signature
+					// pass marked) answers a signature display of its own expression: a call, a `new` or an
+					// array access becomes the call to answer for; anything else is "Call expected".
+					if (dk == DKMarked && displaySignature) switch (e1.expr) {
+						case ECall(_, _) | ENew(_, _) | EArray(_, _): hxc.typing.ExprPreprocessing.markedCall = e1;
+						case _:
+					}
+					var te = typeExpr(ctx, e1, withType);
+					if (dk == DKMarked && displaySignature) throw new TypingError("Call expected", e1.pos);
+					te;
+			}
+		};
+	}
+
+	// typeExprInner's `ENew(tp, el)` arm, a function of its own so the switch keeps a small frame.
+	static function typeNewExpr(ctx:TyperContext, withType:WithType, p:Position, tp:PlacedTypePath, el:Array<Expr>):TExpr {
+		return {
+			// The type list a `new <cursor>` raises is re-raised filtered to what can actually be
+			// CONSTRUCTED - a class or abstract with a constructor, inherited ones included, or a type
+			// parameter whose constraints make it constructible. Nothing else survives.
+			try typeNew(ctx, tp, el, withType, p)
+			catch (tc:hxc.compiler.DisplayXml.ToplevelCompletion) {
+				var items = [for (it in tc.items) if (newCandidateSurvives(ctx, it, p)) it];
+				var keep = new haxe.ds.StringMap<Bool>();
+				for (it in items) if (it.path != null) keep.set(it.path, true);
+				var mts = tc.moduleTypes == null ? null
+					: [for (mt in tc.moduleTypes) if (keep.exists(hxc.core.Globals.sTypePath(TypeFunctions.tPath(mt)))) mt];
+				var out = new hxc.compiler.DisplayXml.ToplevelCompletion(items, mts);
+				// The filtered collection answers as CRNew (10), carrying the subject the raise built - the
+				// JSON lane has nothing else to report with.
+				out.kind = 10;
+				out.subjectPos = tc.subjectPos;
+				out.subjectName = tc.subjectName;
+				out.jsonEntries = tc.jsonEntries;
+				// The filter runs where the collection was raised: a module it types from here on has
+				// not had its class builds run (see newCompletionKeeps).
+				var midAtRaise = TypeFunctions.currentMid();
+				out.jsonFilter = function(info) return newCompletionKeeps(ctx, info, p, midAtRaise);
+				throw out;
+			}
+		};
+	}
+
+	// typeExprInner's `ECheckType(e1, th)` arm, a function of its own so the switch keeps a small frame.
+	static function typeCheckTypeExpr(ctx:TyperContext, p:Position, e1:Expr, th:TypeHint):TExpr {
+		return {
+			var t = Typeload.loadComplexType(ctx.com, ctx.typeParams, th);
+			// A `(v : C)` hint in a body forces C's build macros like any class reference does (building an
+			// instance runs the class build past PBuildClass); expression typing is late enough.
+			switch (TypeFunctions.follow(t)) {
+				case TInst(hc, _): forceBuild(ctx, hc);
+				case _:
+			}
+			var te = typeExpr(ctx, e1, WithTypeTools.withType(t));
+			// castOrUnify records the verdict and keeps the expression, whatever the target type.
+			var te2 = castOrUnify(ctx, t, te, p);
+			// PHYSICAL identity, not structural. A monomorph bound to t is still a distinct TMono object,
+			// so the reification cast is kept (matters on cpp where throwing (getNull():Int) must
+			// materialize the int).
+			(te2.type == t) ? te2 : TypeFunctions.mk(TCast(te2, null), t, p);
+		};
+	}
+
+	// typeExprInner's `EMeta(m, e1) if (m.name == ":bypassAccessor")` arm, a function of its own so the switch keeps a small frame.
+	static function typeBypassAccessorMeta(ctx:TyperContext, withType:WithType, m:MetadataEntry, e1:Expr):TExpr {
+		return {
+			// The next field access typed within e1 consumes this and becomes a raw access.
+			var oldBypass = ctx.bypassAccessor;
+			ctx.bypassAccessor = oldBypass + 1;
+			var teBypass = try typeExpr(ctx, e1, withType) catch (err:haxe.Exception) { ctx.bypassAccessor = oldBypass; throw err; }
+			function bypassDepth(x:Expr):Int return switch (x.expr) {
+				case EMeta(m2, inner) if (m2.name == ":bypassAccessor"): 1 + bypassDepth(inner);
+				case _: 0;
+			};
+			var nestedBypass = bypassDepth(e1);
+			if (ctx.bypassAccessor > oldBypass && nestedBypass != 1)
+				ctx.com.addDiagnostic("Field access expression expected after @:bypassAccessor metadata", m.pos);
+			ctx.bypassAccessor = oldBypass;
+			teBypass;
+		};
+	}
+
+	// typeExprInner's `EThrow(e1)` arm, a function of its own so the switch keeps a small frame.
+	static function typeThrowExpr(ctx:TyperContext, withType:WithType, p:Position, e1:Expr):TExpr {
+		return {
+			// A throw whose value fails to type records the error and throws null instead, so the
+			// statements after it are still typed.
+			var te = try typeExpr(ctx, e1, WithTypeTools.value)
+				catch (err:TypingError) {
+					ctx.com.addTypingError(err.message, err.pos, err.depth, err.callChain);
+					hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
+				}
+				catch (ce:hxc.context.Context.ContextError) {
+					ctx.com.addTypingError(ce.message, ce.pos, ce.depth, ce.callChain);
+					hxc.core.TexprTools.makeNull(TypeFunctions.tDynamic, p);
+				};
+			TypeFunctions.mk(TThrow(te), monoOrDynamic(ctx, withType, p), p);
+		};
+	}
+
+	// typeExprInner's `EMeta(m, e1) if (m.name == ":storedTypedExpr")` arm, a function of its own so the switch keeps a small frame.
+	static function typeStoredTypedExprMeta(ctx:TyperContext, p:Position, m:MetadataEntry, e1:Expr):TExpr {
+		return {
+			var id = switch (e1.expr) {
+				case EConst(CInt(s, _)): Std.parseInt(s);
+				case _: null;
+			}
+			if (id == null || !ctx.com.storedTypedExprs.exists(id)) throw new TypingError("Unknown stored typed expression", p);
+			// Fresh tvars on every retrieval so the expression does not share variable slots with its
+			// original (macro-time) context; this rebinds to the enclosing context.
+			TexprTools.duplicateTvars(function(te) {
+				return getThis(ctx, te.pos);
+			}, ctx.com.storedTypedExprs.get(id));
+		};
+	}
+
+	// typeExprInner's `EMeta(m, e1) if (m.name.length > 1 && m.name.charCodeAt(0) == "$".code)` arm, a function of its own so the switch keeps a small frame.
+	static function typeDollarMeta(ctx:TyperContext, withType:WithType, m:MetadataEntry, e1:Expr):TExpr {
+		return {
+			// A `$i{...}` / `$e{...}` reification meta reaching the typer is outside any macro expression
+			// (a macro body reifies these before typing).
+			var reificationMessage = "Reification $" + m.name.substr(1) + " is not allowed outside of `macro` expression";
+			// Reported once per world. A module that also holds a macro is compiled once per world, and
+			// each compilation reports it, so it prints twice for that shape and once for every other.
+			ctx.com.addDiagnostic(reificationMessage, m.pos);
+			typeExpr(ctx, e1, withType);
+		};
+	}
+
+	// typeExprInner's `EMeta(m, e1) if (m.name == ":toString")` arm, a function of its own so the switch keeps a small frame.
+	static function typeToStringMeta(ctx:TyperContext, withType:WithType, m:MetadataEntry, e1:Expr):TExpr {
+		return {
+			// Every trace argument is wrapped in this meta. An abstract whose impl declares toString is
+			// converted here, so haxe.Log.trace receives the string rather than the abstract value;
+			// otherwise `trace(someMap)` would pass the Map straight through as Dynamic.
+			var teTs = typeExpr(ctx, e1, withType);
+			switch (TypeFunctions.follow(teTs.type)) {
+				case TAbstract(a, _) if (a.impl != null && a.impl.statics.exists("toString")):
+					Calls.callToString(ctx, teTs);
+				case _: teTs;
+			}
+		};
+	}
+
+	// typeExprInner's `EMeta(m, e1) if (m.name == ":mergeBlock")` arm, a function of its own so the switch keeps a small frame.
+	static function typeMergeBlockMeta(ctx:TyperContext, withType:WithType, p:Position, m:MetadataEntry, e1:Expr):TExpr {
+		return {
+			// A @:mergeBlock block opens no scope; its declarations merge into the enclosing block. Type
+			// the inner statements in the current scope and wrap them so the enclosing block splices them
+			// (see typeBlock).
+			switch (e1.expr) {
+				case EBlock(el):
+					var inner = typeBlock(ctx, el, withType, p);
+					TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: p}, inner), inner.type, inner.pos);
+				case _: typeExpr(ctx, e1, withType);
+			}
+		};
 	}
 
 	// Legacy --display @position: the innermost typed expression enclosing the display offset yields its
