@@ -2022,7 +2022,8 @@ class EvalStdLib {
 		return out;
 	}
 
-	static inline function externalDefineKey(k:String):String {
+	// A define as macros name it: `-` stands for `_`.
+	public static inline function externalDefineKey(k:String):String {
 		return StringTools.replace(k, "-", "_");
 	}
 

@@ -268,7 +268,7 @@ class EvalMacro {
 			regBuiltinRaw(ec, "haxe.macro.Context", camel, f);
 			if (snake != camel) regBuiltinRaw(ec, "haxe.macro.Context", snake, f);
 		}
-		reg2("defined", "defined", function(a) return com.defines.rawDefined(strOf(a[0])) ? VTrue : VFalse);
+		reg2("defined", "defined", function(a) return com.defines.rawDefined(EvalStdLib.externalDefineKey(strOf(a[0]))) ? VTrue : VFalse);
 		// Resolve against cwd then the class path; the generator splices the raw contents at the requested
 		// position.
 		reg2("includeFile", "include_file", function(a) {
@@ -748,13 +748,13 @@ class EvalMacro {
 			return encPos(new Position(a.length > 2 ? strOf(a[2]) : "?", a.length > 0 ? intOf(a[0]) : 0, a.length > 1 ? intOf(a[1]) : 0));
 		});
 		reg2("definedValue", "defined_value", function(a) {
-			var k = strOf(a[0]);
+			var k = EvalStdLib.externalDefineKey(strOf(a[0]));
 			if (!com.defines.rawDefined(k)) return VNull;
 			var v = com.defines.rawDefinedValue(k);
 			return mkString(v);
 		});
 		regBuiltin(ec, "haxe.macro.Compiler", "getDefine", function(a) {
-			var k = strOf(a[0]);
+			var k = EvalStdLib.externalDefineKey(strOf(a[0]));
 			var v = com.defines.rawDefined(k) ? mkString(com.defines.rawDefinedValue(k)) : VNull;
 			return encodeExpr(ec, valueToExpr(ec, v, curPos));
 		});
