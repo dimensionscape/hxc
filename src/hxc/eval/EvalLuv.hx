@@ -1533,7 +1533,7 @@ class EvalLuv {
 	// the process. (A Haxe exception cannot reach here: prepareCallback's exception catch has already made
 	// it an Error, which goes on up.)
 	static function runOnThread(ctx:EvalContext, f:Void->Void):Void {
-		if (ctx.evalTls.value != null) {
+		if (hxc.eval.EvalContext.threadEval(ctx) != null) {
 			f();
 			return;
 		}

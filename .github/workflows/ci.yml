@@ -43,6 +43,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Generated sources are in step
+        if: matrix.name == 'linux-x64'
+        run: python3 tools/gen_processstate.py --check
+
       - id: build
         uses: ./.github/actions/build-hxc
         with:

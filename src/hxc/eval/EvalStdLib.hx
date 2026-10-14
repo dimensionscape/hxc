@@ -4825,7 +4825,7 @@ class EvalStdLib {
 		// fresh record each time.
 		reg(inst, "sys.thread.Tls", "get_value", vmethod(a -> {
 			var id = thisTls(ctx, arg(a, 0));
-			var e = ctx.evalTls.value;
+			var e = EvalContext.threadEval(ctx);
 			var v = e == null ? null : e.thread.storage.get(id);
 			v == null ? VNull : v;
 		}));

@@ -148,7 +148,7 @@ class EvalContext {
 	public var toplevel:EvalValue;
 	public var eval:Eval;
 	public var evalTls:sys.thread.Tls<Eval>;
-	// The OS thread that made this context (its thread serial), whose thread-local holds `eval` for good.
+	// The OS thread that made this context (its thread serial), whose eval is `eval`.
 	public var creatorThread:Int;
 	public var maxStackDepth:Int;
 	public var maxPrintDepth:Int;
@@ -172,10 +172,10 @@ class EvalContext {
 		this.vectorPrototype = null;
 		this.toplevel = VNull;
 		this.eval = new Eval();
-		// One eval per thread; the thread-local holds this thread's. Seed it with the creating thread's
-		// eval.
+		// One eval per thread; the thread-local holds every thread's but the creating one, whose eval is
+		// `eval` (threadEval). The creating thread outlives the context, and its thread-local would keep
+		// the whole compilation reachable after it ends.
 		this.evalTls = new sys.thread.Tls();
-		this.evalTls.value = this.eval;
 		this.creatorThread = hxc.compiler.HostRuntime.threadSerial();
 		this.defines = defines == null ? new Define() : defines;
 		// The interpreter's call depth limit, `-D eval-call-stack-depth` with a default of 1000; past it
@@ -204,9 +204,14 @@ class EvalContext {
 		current = ctx;
 	}
 
+	// The running thread's eval: `eval` on the thread that made the context, the thread-local elsewhere
+	// (null for a thread with none).
+	public static function threadEval(ctx:EvalContext):Null<Eval> {
+		if (hxc.compiler.HostRuntime.threadSerial() == ctx.creatorThread) return ctx.eval;
+		return ctx.evalTls.value;
+	}
+
 	public static function getEval(ctx:EvalContext):Eval {
-		// The thread that made the context: the constructor put `eval` in its thread-local, and only a
-		// thread holding null there is ever given another.
 		if (hxc.compiler.HostRuntime.threadSerial() == ctx.creatorThread) return ctx.eval;
 		// Each new thread gets a fresh eval; a thread touching the interpreter for the first time gets its
 		// own environment stack.

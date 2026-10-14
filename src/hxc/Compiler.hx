@@ -136,7 +136,14 @@ class Compiler {
 		#end
 	}
 
+	// Set once main has run. A host may run main again in the same process (a wasm instance re-entered with
+	// callMain): the static initializers run again, but a static without one keeps its value, so this flag
+	// has none, and on re-entry every such static goes back to its fresh-process value (ProcessState).
+	static var mainHasRun:Null<Bool>;
+
 	public static function main() {
+		if (mainHasRun == true) hxc.core.ProcessState.resetUninitializedStatics();
+		mainHasRun = true;
 		applyGcSettings();
 		// The main thread holds the runtime lock from the start, and lets it go only in a blocking section
 		// or at the tick's yield.
@@ -154,7 +161,13 @@ class Compiler {
 		catch (ra:RequestAbort) throw ra
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
+		// A wasm host calls main once per compilation on one instance: there main returns, after zeroing
+		// the stack below it where the compilation's frames lay, instead of ending the process.
+		#if emscripten
+		hxc.core.ProcessState.clearDeadStack();
+		#else
 		hxc.compiler.HostRuntime.exit(0);
+		#end
 	}
 
 	static var argFailureCtx:Null<Context> = null;
