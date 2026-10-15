@@ -41,6 +41,9 @@ import sys.io.Process;
 	<flag value="-LARGEADDRESSAWARE"/>
 	<flag value="-STACK:1073741824"/>
 </linker>
+<!-- The toolchain adds its own BINARYEN_EXTRA_PASSES (spill-pointers alone) after those of the project,
+     where it would win; HXCPP_NO_GC_LINK leaves it out, and the linker below passes that pass itself. -->
+<set name="HXCPP_NO_GC_LINK" value="1" if="emscripten"/>
 <linker id="exe" if="emscripten">
 	<flag value="-sALLOW_MEMORY_GROWTH=1"/>
 	<flag value="-sSTACK_SIZE=67108864"/>
@@ -51,6 +54,11 @@ import sys.io.Process;
 	<flag value="-sMODULARIZE=1"/>
 	<flag value="-sEXPORT_NAME=createHxc"/>
 	<flag value="-sINVOKE_RUN=0"/>
+	<!-- binaryen inlines every function with one caller, whatever its size, so the start-up code
+	     (the __boot and __register of every class, called once each) all landed in main: 500 KB and 12,000
+	     locals, which the ARM64 baseline compiler of V8 never finishes. The spill-pointers pass of the GC is kept. -->
+	<flag value="--Wno-limited-postlink-optimizations"/>
+	<flag name="-s" value="BINARYEN_EXTRA_PASSES=--spill-pointers,--one-caller-inline-max-function-size=50"/>
 	<flag value="--preload-file" if="HXC_WASM_PRELOAD_STD"/>
 	<flag value="${HXC_WASM_STD_DIR}@/std" if="HXC_WASM_PRELOAD_STD"/>
 	<flag value="--preload-file" if="HXC_WASM_PRELOAD_LIBS"/>
