@@ -9,7 +9,7 @@ class Aedifex {
 		.source("src")
 		.mainClass("hxc.Compiler")
 		.identity("hxc", "hxc")
-		.version("0.6.6")
+		.version("0.7.0")
 		.description("A Haxe 4+ compiler written in Haxe.")
 		.license("MPL-2.0")
 		.defineToken("HXCPP_GC_BIG_BLOCKS")

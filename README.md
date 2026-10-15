@@ -34,13 +34,14 @@ output.
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--lua`, `--python`, `--php`, `--hl`, `--cs`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
-Prebuilt binaries are available for Windows x64. Linux x64 builds from source; macOS is in progress.
+Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
 
 ## Install
 
 ### Download
 
-Download `hxc-windows-x64.exe` from the [latest release](https://github.com/dimensionscape/hxc/releases/latest).
+Download `hxc-windows-x64.exe`, `hxc-linux-x64` or `hxc-macos-arm64` from the
+[latest release](https://github.com/dimensionscape/hxc/releases/latest).
 
 ### From haxelib
 

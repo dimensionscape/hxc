@@ -4,8 +4,8 @@
 	"license": "LGPL",
 	"tags": ["compiler", "tool", "cross", "hxia", "scripting"],
 	"description": "The Haxe compiler, written in Haxe: a drop-in replacement for Haxe 4.3.7, and the hxia sandboxed scripting runtime. Licensed MPL-2.0.",
-	"version": "0.6.6",
-	"releasenote": "First haxelib release: `haxelib run hxc` and the hxia runtime.",
+	"version": "0.7.0",
+	"releasenote": "Linux x64 and macOS arm64 binaries, the JVM target, and fixes for Lime and OpenFL projects.",
 	"contributors": ["Dimensionscape"],
 	"classPath": "src",
 	"dependencies": {}
