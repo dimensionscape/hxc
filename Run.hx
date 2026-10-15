@@ -17,7 +17,7 @@ import sys.io.Process;
 **/
 class Run {
 	static inline var REPO = "dimensionscape/hxc";
-	static inline var HXCPP_REPO = "dimensionscape/hxcpp";
+	static inline var HXCPP_REPO = "openfl/libhxcpp";
 	static inline var AEDIFEX_INSTALL = "haxelib install aedifex 1.0.0-rc.3";
 
 	static function main() {
@@ -112,13 +112,13 @@ class Run {
 	/** Builds hxc from this library's own source, with hxcpp and Aedifex. **/
 	static function rebuild(libDir:String, target:String) {
 		var hxcpp = libPath("hxcpp");
-		var useFork = 'haxelib git hxcpp https://github.com/$HXCPP_REPO.git production';
+		var useLib = 'haxelib git hxcpp https://github.com/$HXCPP_REPO.git main';
 		if (hxcpp == null || !FileSystem.exists(hxcpp + "project/thirdparty/mbedtls-flags.xml"))
-			fail('building hxc needs hxcpp from https://github.com/$HXCPP_REPO/tree/production:\n  $useFork');
+			fail('building hxc needs hxcpp from https://github.com/$HXCPP_REPO:\n  $useLib');
 		var origin = try File.getContent(hxcpp + ".git/config") catch (_:Dynamic) "";
 		if (origin.indexOf(HXCPP_REPO) < 0)
 			Sys.stderr().writeString('Warning: the hxcpp in $hxcpp is not from $HXCPP_REPO. Builds may fail, '
-				+ 'and large compiles can stall on its garbage collector. To use the fork:\n  $useFork\n');
+				+ 'and large compiles can stall on its garbage collector. To switch to it:\n  $useLib\n');
 		if (!FileSystem.exists(hxcpp + "hxcpp.n")) {
 			Sys.println("Building the hxcpp command-line tool...");
 			Sys.setCwd(hxcpp + "tools/hxcpp");

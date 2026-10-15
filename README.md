@@ -104,12 +104,12 @@ host:port` connects out to a client that is listening instead.
 Requirements:
 
 - [Haxe](https://haxe.org) 4.3, which includes Neko
-- hxcpp from [dimensionscape/hxcpp, branch `production`](https://github.com/dimensionscape/hxcpp/tree/production)
+- hxcpp from [openfl/libhxcpp](https://github.com/openfl/libhxcpp), branch `main`
 - [Aedifex](https://github.com/DimensionscapeOrg/aedifex) 1.0.0-rc.3 or later
 - A 64-bit C++ toolchain: MSVC on Windows, GCC or Clang on Linux, the Xcode command-line tools on macOS
 
 ```bash
-haxelib git hxcpp https://github.com/dimensionscape/hxcpp.git production
+haxelib git hxcpp https://github.com/openfl/libhxcpp.git main
 cd "$(haxelib libpath hxcpp)/tools/hxcpp" && haxe compile.hxml && cd -
 haxelib install aedifex 1.0.0-rc.3
 git clone --recursive https://github.com/dimensionscape/hxc.git

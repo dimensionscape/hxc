@@ -11,9 +11,9 @@ inputs:
   haxe-version:
     default: "4.3.7"
   hxcpp-repo:
-    default: https://github.com/dimensionscape/hxcpp.git
+    default: https://github.com/openfl/libhxcpp.git
   hxcpp-commit:
-    default: 8399945561eeffebb727aa35b02d939e06c07e58
+    default: 1d90a2a86facf23ee3f9cee3abf33c704338988b
   aedifex-repo:
     default: https://github.com/DimensionscapeOrg/aedifex.git
   aedifex-commit:
