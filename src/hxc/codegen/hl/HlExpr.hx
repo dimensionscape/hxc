@@ -12,21 +12,9 @@ import hxc.codegen.hl.HlAccess;
 
 using hxc.codegen.hl.HlContext;
 
-// The expression generator: a port of genhl.ml's get_enum_index, eval_var and eval_expr (lines 1539-2939)
-// without the `$` intrinsics, TFor and TTry, which go through `unported` until Task 6 ports them.
+// The expression generator: a port of genhl.ml's get_enum_index, eval_var and eval_expr (lines 1539-2939),
+// with the `$` intrinsics in HlIntrinsics.
 class HlExpr {
-	// A placeholder for an expression kind not ported yet: throws "hl: unported <kind>" and records the
-	// function. The string is added to the table only after generation (HlGenerate.buildCode), so that
-	// the indexes of the strings the ported code allocates are not shifted by it.
-	static function unported(ctx:HlContext, kind:String, e:TExpr):Int {
-		var s = ctx.allocTmp(HBytes);
-		ctx.unportedKinds.push(kind);
-		ctx.op(OString(s, -ctx.unportedKinds.length));
-		ctx.op(OThrow(s));
-		if (ctx.unported.indexOf(ctx.curName) < 0) ctx.unported.push(ctx.curName);
-		return ctx.allocTmp(HlTypes.toType(ctx, e.type));
-	}
-
 	static function isCaughtLocal(e:TExpr):Bool {
 		return switch e.expr {
 			case TLocal(v): TypeFunctions.hasVarFlag(v, VCaught);
@@ -43,7 +31,7 @@ class HlExpr {
 	}
 
 	// genhl.ml: get_enum_index
-	static function getEnumIndex(ctx:HlContext, v:TExpr):Int {
+	public static function getEnumIndex(ctx:HlContext, v:TExpr):Int {
 		var r = ctx.allocTmp(HI32);
 		var re = evalExpr(ctx, v);
 		ctx.op(ONullCheck(re));
@@ -162,8 +150,8 @@ class HlExpr {
 					case _:
 						return HlContext.die();
 				}
-			case TCall({expr: TIdent(s)}, _) if (s.charAt(0) == "$"):
-				return unported(ctx, "intrinsic " + s, e);
+			case TCall({expr: TIdent(s)}, el) if (s.charAt(0) == "$"):
+				return HlIntrinsics.evalIntrinsic(ctx, s, el, e);
 			case TEnumIndex(v):
 				return getEnumIndex(ctx, v);
 			case TCall({expr: TField(_, FStatic(c, cf))}, [{expr: TCast(v, _)}]) if (isPath(c, [], "Type") && cf.name == "enumIndex" && isEnumType(v.type)):
@@ -171,7 +159,9 @@ class HlExpr {
 			case TCall({expr: TField(_, FStatic(c, cf))}, [v]) if (isPath(c, [], "Type") && cf.name == "enumIndex" && isEnumType(v.type)):
 				return getEnumIndex(ctx, v);
 			case TCall(e1 = {expr: TField(ef, FStatic(c, cf))}, [v]) if (isPath(c, [], "Reflect") && cf.name == "makeVarArgs"):
-				var ec = TypeFunctions.mk(TField(ef, FStatic(c, c.statics.get("_makeVarArgs"))), e1.type, e1.pos);
+				var cf = c.statics.get("_makeVarArgs");
+				if (cf == null) HlContext.die();
+				var ec = TypeFunctions.mk(TField(ef, FStatic(c, cf)), e1.type, e1.pos);
 				return evalExpr(ctx, TypeFunctions.mk(TCall(ec, [v]), e.type, e.pos));
 			case TCall({expr: TField(_, FStatic(c, cf))}, [v, vt]) if (isPath(c, [], "Std") && (cf.name == "instance" || cf.name == "downcast")):
 				var r = evalExpr(ctx, v);
@@ -352,8 +342,8 @@ class HlExpr {
 				}
 			case TMeta(_, e1):
 				return evalExpr(ctx, e1);
-			case TFor(_):
-				return unported(ctx, "TFor", e);
+			case TFor(v, it, loop):
+				return evalExpr(ctx, hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(ctx.com.basic, v, it, loop, e.pos));
 			case TSwitch(en, cases, def):
 				return evalSwitch(ctx, e, en, cases, def);
 			case TEnumParameter(ec, f, index):
@@ -382,8 +372,8 @@ class HlExpr {
 				ctx.op(OJAlways(-1)); // loop
 				ctx.m.mbreaks.push(target -> ctx.setOp(pos, OJAlways(target - (pos + 1))));
 				return ctx.allocTmp(HVoid);
-			case TTry(_):
-				return unported(ctx, "TTry", e);
+			case TTry(etry, catches):
+				return evalTry(ctx, e, etry, catches);
 			case TTypeExpr(t):
 				return HlTypes.typeValue(ctx, t, e.pos);
 			case TCast(ev, _):
@@ -415,6 +405,63 @@ class HlExpr {
 			case TIdent(s):
 				return HlContext.abort("Unbound identifier " + s, e.pos);
 		}
+	}
+
+	// eval_expr's TTry (etry, catches)
+	static function evalTry(ctx:HlContext, e:TExpr, etry:TExpr, catches:Array<TCatch>):Int {
+		var pos = ctx.currentPos();
+		var rtrap = ctx.allocTmp(HDyn);
+		ctx.op(OTrap(rtrap, -1)); // loop
+		ctx.m.mtrys++;
+		var tret = HlTypes.toType(ctx, e.type);
+		var result = ctx.allocTmp(tret);
+		var r = evalExpr(ctx, etry);
+		var isVoid = HlTypes.teq(tret, HVoid);
+		if (!isVoid) ctx.op(OMov(result, HlCasts.castTo(ctx, r, tret, etry.pos)));
+		ctx.m.mtrys--;
+		ctx.op(OEndTrap(true));
+		var j = ctx.jump(n -> OJAlways(n));
+		ctx.setOp(pos, OTrap(rtrap, ctx.currentPos() - (pos + 1)));
+		// `follow v.v_type == t_dynamic`
+		function isDynamic(v:TVar) return TypeFunctions.follow(v.type).match(TDynamic(null));
+		// OCaml's `loop`: the jumps to the end, the first catch's first
+		var jends = [];
+		var rethrow = true;
+		for (c in catches) {
+			var v = c.v, ec = c.expr;
+			var rv = ctx.allocVar(v, true);
+			var jnext = if (isDynamic(v)) {
+				ctx.op(OMov(rv, rtrap));
+				() -> {};
+			} else {
+				var ct = switch TypeFunctions.follow(v.type) {
+					case TInst(c, _): TClassDecl(c);
+					case TAbstract(a, _): TAbstractDecl(a);
+					case TEnum(en, _): TEnumDecl(en);
+					case _: HlContext.die();
+				}
+				ctx.hold(rtrap);
+				var r = HlTypes.typeValue(ctx, ct, ec.pos);
+				ctx.free(rtrap);
+				var rb = ctx.allocTmp(HBool);
+				ctx.op(OCall2(rb, HlTypes.allocFunPath(ctx, new Path(["hl"], "BaseType"), "check"), r, rtrap));
+				var jnext = ctx.jump(n -> OJFalse(rb, n));
+				ctx.op(OMov(rv, HlCasts.unsafeCastTo(ctx, rtrap, HlTypes.toType(ctx, v.type), ec.pos, false)));
+				jnext;
+			}
+			var r = evalExpr(ctx, ec);
+			if (!isVoid) ctx.op(OMov(result, HlCasts.castTo(ctx, r, tret, ec.pos)));
+			if (isDynamic(v)) {
+				rethrow = false;
+				break;
+			}
+			jends.push(ctx.jump(n -> OJAlways(n)));
+			jnext();
+		}
+		if (rethrow) ctx.op(ORethrow(rtrap));
+		for (j in jends) j();
+		j();
+		return result;
 	}
 
 	static function isValidMethod(ctx:HlContext, t:T):Bool {

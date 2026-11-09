@@ -77,7 +77,7 @@ class HlMethodContext {
 	}
 }
 
-// genhl.ml: context (the record), plus the functions that use the unported-expression placeholder.
+// genhl.ml: context (the record).
 class HlContext {
 	public var com:Context;
 	public var cglobals:HlLookup<HlType> = new HlLookup();
@@ -115,12 +115,6 @@ class HlContext {
 	// a prepended list in OCaml, run head first: here run from the last element
 	public var ctDelayed:Array<Void->Void> = [];
 	public var ctDepth = 0;
-	// The functions whose code reached an expression kind not ported yet, and the kinds their placeholders
-	// name (removed in Task 6).
-	public var unported:Array<String> = [];
-	public var unportedKinds:Array<String> = [];
-	// The label of the function being generated, for `unported`.
-	public var curName:String = "";
 
 	public function new(com:Context) {
 		this.com = com;

@@ -11,10 +11,34 @@ using hxc.codegen.hl.HlContext;
 // Functions: a port of genhl.ml's make_debug (lines 316-353), build_capture_vars, gen_method_wrapper and
 // make_fun (lines 3049-3303).
 class HlFunctions {
+	// OCaml's Filename.is_relative (Win32 or Unix)
+	static function isRelative(n:String):Bool {
+		if (Sys.systemName() != "Windows") return !StringTools.startsWith(n, "/");
+		return !StringTools.startsWith(n, "/") && !StringTools.startsWith(n, "\\") && !(n.length >= 2 && n.charAt(1) == ":");
+	}
+
+	// OCaml's Filename.concat: the platform separator only when the directory doesn't already end in one
+	static function filenameConcat(dir:String, file:String):String {
+		var win = Sys.systemName() == "Windows";
+		var last = dir.length == 0 ? "" : dir.charAt(dir.length - 1);
+		var isSep = last == "/" || (win && (last == "\\" || last == ":"));
+		return dir.length == 0 || isSep ? dir + file : dir + (win ? "\\" : "/") + file;
+	}
+
+	// OCaml's Sys.getcwd: hxcpp's Sys.getCwd adds a "/" when the directory doesn't end in a separator
+	static function ocamlGetcwd():String {
+		var d = Sys.getCwd();
+		if (d.length > 1 && StringTools.endsWith(d, "/")) {
+			var prev = d.charAt(d.length - 2);
+			if (prev != "/" && prev != "\\") d = d.substr(0, d.length - 1);
+		}
+		return d;
+	}
+
 	// genhl.ml: make_debug's get_relative_path
 	static function getRelativePath(ctx:HlContext, p:Position):String {
 		if (ctx.com.defines.rawDefined("absolute_path")) {
-			return haxe.io.Path.isAbsolute(p.file) ? p.file : haxe.io.Path.join([Sys.getCwd(), p.file]);
+			return isRelative(p.file) ? filenameConcat(ocamlGetcwd(), p.file) : p.file;
 		}
 		// lookup relative path
 		var len = p.file.length;
@@ -160,8 +184,6 @@ class HlFunctions {
 	public static function makeFun(ctx:HlContext, name:{cls:String, name:String}, fidx:Int, f:TFunc, cthis:Null<TClass>,
 			cparent:Null<HlMethodCapture>, ?genContent:Void->Void):HlMethodCapture {
 		var old = ctx.m;
-		var oldName = ctx.curName;
-		ctx.curName = name.name == "" ? "fun$" + fidx : name.cls + "." + name.name;
 		var capt = buildCaptureVars(ctx, f);
 		var hasCapturedVars = capt.cVars.length > 0;
 		if (cparent != null && hasCapturedVars && Lambda.foreach(capt.cVars, v -> cparent.cMap.exists(v.id))) capt = cparent;
@@ -314,7 +336,6 @@ class HlFunctions {
 			assigns: ctx.m.massign.copy()
 		};
 		ctx.m = old;
-		ctx.curName = oldName;
 		ctx.definedFuns.set(fidx, true);
 		// the optimiser (Hlopt) is Plan 2; HlGenerate.generate refuses to run without hl_no_opt
 		ctx.cfunctions.push(hlf);

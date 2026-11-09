@@ -69,24 +69,15 @@ class HlCompare {
 		var fa = na.functions, fb = nb.functions;
 		var total = 0, same = 0;
 		var firstBad:String = null;
-		// a function of the second that throws the generator's "hl: unported <kind>" placeholder (until the
-		// port is complete) can't match; the first differing function shown is one without a placeholder
-		var placeholders = 0, plainSame = 0;
 		for (label in fa.keys()) {
 			total++;
 			var x = fa.get(label), y = fb.get(label);
-			var placeholder = y != null && Lambda.exists(y, l -> l.indexOf("\"hl: unported ") >= 0);
-			if (placeholder) placeholders++;
-			if (y != null && x.join("\n") == y.join("\n")) {
-				same++;
-				if (!placeholder) plainSame++;
-			} else if (firstBad == null && y != null && !placeholder) firstBad = label;
+			if (y != null && x.join("\n") == y.join("\n")) same++;
+			else if (firstBad == null && y != null) firstBad = label;
 		}
 		var missing = [for (k in fa.keys()) if (!fb.exists(k)) k];
 		var extra = [for (k in fb.keys()) if (!fa.exists(k)) k];
 		Sys.println("functions: " + same + "/" + total + " identical");
-		if (placeholders > 0)
-			Sys.println("  without a placeholder: " + plainSame + "/" + (total - placeholders) + " identical (" + placeholders + " use \"hl: unported\")");
 		if (same != total || extra.length > 0) differs = true;
 		if (missing.length > 0) Sys.println("  only in the first (" + missing.length + "): " + missing.slice(0, 5).join(", ") + (missing.length > 5 ? ", ..." : ""));
 		if (extra.length > 0) Sys.println("  only in the second (" + extra.length + "): " + extra.slice(0, 5).join(", ") + (extra.length > 5 ? ", ..." : ""));

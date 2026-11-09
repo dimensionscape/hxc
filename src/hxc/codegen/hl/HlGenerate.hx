@@ -484,12 +484,6 @@ class HlGenerate {
 	// genhl.ml: build_code
 	static function buildCode(ctx:HlContext, types:Array<ModuleType>, main:Null<TExpr>):HlCodeData {
 		var ep = generateStaticInit(ctx, types, main);
-		// the placeholders' strings, after every string the ported code allocates (Task 4 only)
-		for (f in ctx.cfunctions) for (i in 0...f.code.length) switch f.code[i] {
-			case OString(r, s) if (s < 0):
-				f.code[i] = OString(r, ctx.allocString("hl: unported " + ctx.unportedKinds[-s - 1]));
-			case _:
-		}
 		var bytes = ctx.cbytes.arr.copy();
 		return {
 			version: bytes.length == 0 ? 4 : 5,
@@ -589,10 +583,16 @@ class HlGenerate {
 		return "\"" + b.toString() + "\"";
 	}
 
+	// path.ml: file_extension (the text after the last ".", or the whole name when there is none, lowercased)
+	static function fileExtension(file:String):String {
+		var parts = file.split(".");
+		return parts[parts.length - 1].toLowerCase();
+	}
+
 	// genhl.ml: generate (and generate.ml's part of it: the old output removed, fix_overrides, the log line
 	// and the timer)
 	public static function generate(com:Context):Void {
-		if (haxe.io.Path.extension(com.file) == "hl" && sys.FileSystem.exists(com.file)) try sys.FileSystem.deleteFile(com.file) catch (_:Dynamic) {}
+		if (fileExtension(com.file) == "hl" && sys.FileSystem.exists(com.file)) try sys.FileSystem.deleteFile(com.file) catch (_:Dynamic) {}
 		for (t in com.types) FixOverrides.fixOverrides(com, t);
 		com.log("Generating hl: " + com.file);
 		var tGen = hxc.core.Timer.timer(["generate", "hl"]);
@@ -626,10 +626,8 @@ class HlGenerate {
 			}, code);
 			sys.io.File.saveContent("dump/hlcode.txt", out.toString());
 		}
-		if (ctx.unported.length > 0)
-			com.warning(hxc.core.WarningList.Warning.WGenerator, [], "hl: " + ctx.unported.length + " functions use unported expressions", Position.nullPos);
 		var tWrite = hxc.core.Timer.timer(["generate", "hl", "write"]);
-		if (haxe.io.Path.extension(com.file) == "c") {
+		if (fileExtension(com.file) == "c") {
 			com.addDiagnostic("hl: HL/C output is not supported yet", Position.nullPos);
 			tWrite();
 			return;
