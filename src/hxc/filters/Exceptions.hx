@@ -386,7 +386,7 @@ class Exceptions {
 		// Java, catch(e:Dynamic) keeps its Dynamic type and the JVM generator emits a catch on
 		// java.lang.Object, which the verifier rejects.
 		switch (com.platform) {
-			case Js | Eval | Cpp | Java | Cs:
+			case Js | Eval | Cpp | Java | Cs | Hl:
 			case _: return function(e) return e;
 		}
 		var cfg = com.platformConfig;

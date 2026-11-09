@@ -1,0 +1,60 @@
+--- config + --hl out.hl --no-output --macro Probe.print()
+class P { static function main() {} }
+
+--- config-hlc + --hl out/main.c --no-output --macro Probe.print()
+class P { static function main() {} }
+
+--- hl-ver-set + --hl out.hl --no-output --macro Probe.print() -D hl-ver=1.13.0
+class P { static function main() {} }
+
+--- hl-types + --hl out.hl --no-output
+class P {
+	static function main() {
+		var b = new hl.Bytes(4);
+		var a = new hl.NativeArray<Int>(2);
+		var r = hl.Ref.make(1);
+		var i:hl.I64 = 1;
+		var t = untyped $new(Int);
+		trace(b);
+		trace(a);
+		trace(r);
+		trace(i);
+		trace(t);
+	}
+}
+
+--- hl-only-package-error + --hl out.hl --no-output
+class P { static function main() { cpp.Lib.println(1); } }
+
+--- typed-dump + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+enum E {
+	A;
+	B(n:Int);
+}
+
+class C {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function get():Int return x;
+}
+
+class P {
+	static function f(e:E):Int {
+		return switch (e) {
+			case A: 0;
+			case B(n): n;
+		}
+	}
+	static function main() {
+		var c = new C(3);
+		var g = function(y:Int) return y + c.get();
+		var r = 0;
+		try {
+			r = g(f(B(2)));
+			if (r > 100) throw "big";
+		} catch (s:String) {
+			r = -1;
+		}
+		trace(r);
+	}
+}

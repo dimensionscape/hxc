@@ -1381,7 +1381,7 @@ class Filters {
 				case Java | Cs:
 				case _: addFieldInits(com, tctx, renameLocals, t);
 			}
-			switch (addMetaField(com, t)) {
+			if (com.platform != Hl) switch (addMetaField(com, t)) {
 				case null:
 				case ncls: metaCompanions.push(ncls);
 			}
