@@ -1,0 +1,68 @@
+--- function-code-static + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("return 7;") static function f():Int return 0;
+	static function main() {
+		Sys.println(f());
+	}
+}
+
+--- function-code-instance-getter + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	var num:Int = 4;
+	public var x(get, never):Int;
+	@:functionCode("return num * 2;") function get_x():Int return 0;
+	function new() {}
+	static function main() {
+		Sys.println(new P().x);
+	}
+}
+
+--- function-code-then-body + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("if (a > 0) return a;") static function g(a:Int):Int {
+		return -a;
+	}
+	static function main() {
+		Sys.println(g(3));
+	}
+}
+
+--- function-tail-code + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionTailCode("// tail") static function h():Void {
+		Sys.println("h");
+	}
+	static function main() {
+		h();
+	}
+}
+
+--- function-code-void-with-args + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("::printf(\"%d\", (int)n);") static function p(n:Int):Void {}
+	static function main() {
+		p(1);
+	}
+}
+
+--- function-code-multiline-and-tail + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("int k = 1;\n\tk++;\nreturn k;")
+	@:functionTailCode("// t1\n// t2")
+	static function m(a:Int):Int {
+		return a;
+	}
+	static function main() {
+		Sys.println(m(3));
+	}
+}
+
+--- function-code-debugger + -D HXCPP_DEBUGGER --macro Dump.after('cppout/src/P.cpp')
+class P {
+	var z:Int = 1;
+	@:functionCode("return z + n;") function q(n:Int):Int return 0;
+	function new() {}
+	static function main() {
+		Sys.println(new P().q(2));
+	}
+}

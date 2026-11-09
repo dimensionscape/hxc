@@ -58,6 +58,17 @@ class CppGenClass {
 		return "";
 	}
 
+	// A field's meta string arg (@:functionCode, @:functionTailCode), CRLF-normalized; "" when absent.
+	static function getFieldCode(f:TClassField, metaName:String):String {
+		for (entry in f.meta) if (entry.name == metaName && entry.params.length > 0) {
+			switch (entry.params[0].expr) {
+				case EConst(CString(s, _)): return s.split("\r\n").join("\n");
+				case _:
+			}
+		}
+		return "";
+	}
+
 	static inline function getClassBuildXml(c:TClass):String {
 		return getClassCode(c, ":buildXml");
 	}
@@ -883,8 +894,16 @@ class CppGenClass {
 				var dbg = fieldDebugLevel(field);
 				var emit = new CppEmit(com, w, dbg, !isStatic, cppFileId);
 				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
+				// @:functionCode follows the frame (and debugger prologue), then a blank line, then the Haxe body;
+				// @:functionTailCode follows the body, before the closing brace.
+				var fnCode = getFieldCode(field, ":functionCode");
+				var fnTail = getFieldCode(field, ":functionTailCode");
+				if (fnTail != "") emit.topTail = fnTail + "\n";
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine); }, null, dotName, field.name);
+					function(gc) {
+						emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine);
+						if (fnCode != "") w.write("            \t" + fnCode + "\n\n");
+					}, null, dotName, field.name);
 				w.write("\n\n");
 				// doDynamic = (nonVirtual || !isOverride) && reflective. A @:nonVirtual override still gets
 				// its dynamic wrapper (matching the header decl at genMemberDefHeader).
