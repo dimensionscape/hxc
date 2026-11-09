@@ -11,8 +11,11 @@ import haxe.io.FPHelper;
 // and the result is rounded to 64 bits and then to a double. mingw first reduces an argument of 2^63 or more
 // exactly modulo 2 * FLDPI (pi to 64 bits) with FPREM1, as the instructions refuse such arguments.
 //
-// The same here, exactly: the reductions are exact, the sine or cosine of the reduced argument is computed
-// in double-double precision (about 104 bits), and that is rounded to 64 bits and then to 53. Haxe's other
+// The same here: the reductions are exact, the sine or cosine of the reduced argument is computed in
+// double-double precision (about 104 bits), and that is rounded to 64 bits and then to 53. This models FSIN
+// and FCOS as correctly rounded to 64 bits, which the hardware only promises to within an extended ulp, and
+// the microcode is vendor-specific: it matched Haxe 4.3.7 bit for bit on 55,064 arguments on the one host it
+// was tested on (an AMD Zen 5 CPU), and is unverified on Intel ones. Haxe's other
 // Math functions on Windows (exp, log, pow, atan2, and tan, atan, asin, acos from msvcrt) can differ from
 // the C library hxc links in the last bit for some arguments; that is not emulated.
 class X87Trig {
@@ -32,7 +35,9 @@ class X87Trig {
 
 	// 0 for sin, 1 for cos (cos t = sin(t + pi/2), one quadrant on).
 	static function trig(x:Float, shift:Int):Float {
-		if (Math.isNaN(x) || !Math.isFinite(x)) return Math.NaN;
+		// mingw returns a NaN argument itself (sign and payload kept) and the positive quiet NaN for an infinity.
+		if (Math.isNaN(x)) return x;
+		if (!Math.isFinite(x)) return FPHelper.i64ToDouble(0, 0x7FF80000);
 		if (x == 0) return shift == 0 ? x : 1.0;
 		var xh = x, xl = 0.0;
 		if (Math.abs(x) >= TWO_63) {

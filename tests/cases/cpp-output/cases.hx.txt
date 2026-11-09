@@ -326,6 +326,14 @@ class P {
 		for (x in xs) out.push(x + " " + Math.cos(x) + " " + Math.sin(x));
 		out.push("zero " + (1 / Math.sin(0.0)) + " " + (1 / Math.sin(-0.0)) + " " + Math.cos(-0.0));
 		out.push("special " + Math.sin(Math.NaN) + " " + Math.cos(Math.POSITIVE_INFINITY) + " " + Math.sin(Math.NEGATIVE_INFINITY));
+		// A NaN comes back as itself, sign and payload kept; an infinity gives the positive quiet NaN.
+		var bits = function(f:Float) {
+			var b = haxe.io.FPHelper.doubleToI64(f);
+			return StringTools.hex(b.high, 8) + StringTools.hex(b.low, 8);
+		};
+		for (n in [haxe.io.FPHelper.i64ToDouble(0x1234, 0x7FF80001), haxe.io.FPHelper.i64ToDouble(5, 0xFFFC0000)])
+			out.push("nan " + bits(n) + " " + bits(Math.sin(n)) + " " + bits(Math.cos(n)));
+		out.push("inf " + bits(Math.sin(Math.POSITIVE_INFINITY)) + " " + bits(Math.cos(Math.NEGATIVE_INFINITY)));
 		return macro $v{out};
 	}
 	static function main() {
