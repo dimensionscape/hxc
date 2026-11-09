@@ -7053,15 +7053,21 @@ class Typer {
 			ctx.com.delay(hxc.context.Context.PForce, function() TypeloadCheck.checkFinalVars(ctx.com, cls, body));
 		}
 		// A constructor whose class inherits a constructor has to call super(). When the inherited one is
-		// @:compilerGenerated the call is SYNTHESIZED instead of complaining (Filters.insertMissingSuper
-		// does that), so only a user-written inherited constructor makes the omission an error - and it
-		// is recorded, leaving the constructor otherwise typed.
+		// @:compilerGenerated the call is SYNTHESIZED instead of complaining: super() is put in front of
+		// the body, at the body's position, as Haxe does here (so the field initializers added later go
+		// before it). Only a user-written inherited constructor makes the omission an error - and it is
+		// recorded, leaving the constructor otherwise typed. The walk does not descend into a nested
+		// TFunction, so a super call made from a closure does not satisfy the constructor.
 		if (fmode.match(FunConstructor) && ctx.curclass != null && ctx.curclass.superClass != null) {
-			var sup = try TypeFunctions.getConstructorClass(ctx.curclass.superClass.c, ctx.curclass.superClass.params)
-				catch (_:hxc.core.NotFound) null;
-			if (sup != null && !TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)
-				&& !hxc.filters.Filters.bodyCallsSuper(te))
-				ctx.com.addDiagnostic("Missing super constructor call", p);
+			var csup = ctx.curclass.superClass;
+			var sup = try TypeFunctions.getConstructorClass(csup.c, csup.params) catch (_:hxc.core.NotFound) null;
+			if (sup != null && !bodyCallsSuper(te)) {
+				if (TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)) {
+					var eSuper = TypeFunctions.mk(TConst(TSuper), TInst(csup.c, csup.params), te.pos);
+					te = TypeFunctions.concat(TypeFunctions.mk(TCall(eSuper, []), ctx.com.basic.tvoid, te.pos), te);
+				} else
+					ctx.com.addDiagnostic("Missing super constructor call", p);
+			}
 		}
 		// A member whose local functions captured `this` declares the `this local, inserted before its
 		// first use so a constructor's super() call stays first when possible.
@@ -7115,6 +7121,18 @@ class Typer {
 			case _:
 		}
 		return false;
+	}
+
+	// Whether a constructor body calls super(), not looking into nested functions.
+	static function bodyCallsSuper(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TCall({expr: TConst(TSuper)}, _): true;
+			case TFunction(_): false;
+			case _:
+				var found = false;
+				TexprTools.iter(function(x) if (!found && bodyCallsSuper(x)) found = true, e);
+				found;
+		}
 	}
 
 	// Runs where class initialization ends. A class with no constructor of its own forwards to the nearest

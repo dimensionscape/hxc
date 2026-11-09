@@ -1391,53 +1391,6 @@ class Filters {
 			checkReservedTypePaths(tctx, t);
 		}
 		for (nc in metaCompanions) com.types.push(TClassDecl(nc));
-		// After field inits have materialized the compiler-generated super constructors, insert an
-		// auto super() into any explicit constructor that omits it.
-		for (t in com.types) switch (t) {
-			case TClassDecl(c): insertMissingSuper(com, c);
-			case _:
-		}
-	}
-
-	// A class with an explicit constructor whose body never calls super, when the superclass has a
-	// compiler-generated (no required argument) constructor, gets an auto super() prepended so the
-	// inherited field initializers run. The walk does not descend into a nested TFunction, so a super
-	// call made from a closure does not satisfy the constructor. Typer.typeFunction shares it for the
-	// missing-super report.
-	public static function bodyCallsSuper(e:TExpr):Bool {
-		return switch (e.expr) {
-			case TCall({expr: TConst(TSuper)}, _): true;
-			case TFunction(_): false;
-			case _:
-				var found = false;
-				TexprTools.iter(function(x) if (!found && bodyCallsSuper(x)) found = true, e);
-				found;
-		}
-	}
-
-	static function insertMissingSuper(com:Context, c:TClass):Void {
-		if (c.constructor == null || c.superClass == null) return;
-		var sup = try TypeFunctions.getConstructorClass(c.superClass.c, [for (x in c.superClass.params) x]) catch (_:hxc.core.NotFound) return;
-		if (!TypeFunctions.hasMeta(":compilerGenerated", sup.cf.meta)) return;
-		switch (TypeFunctions.follow(sup.cf.type)) {
-			case TFun(sig) if (Lambda.exists(sig.args, function(a) return !a.opt)): return;
-			case _:
-		}
-		var cf = c.constructor;
-		switch (cf.expr) {
-			case {expr: TFunction(f)} if (!bodyCallsSuper(f.expr)):
-				var tvoid = com.basic.tvoid;
-				// The injected super call sits at the constructor body position (e.pos), not the class
-				// declaration, so its stack frame line is the new line.
-				var superPos = f.expr.pos;
-				var superCall = TypeFunctions.mk(TCall(TypeFunctions.mk(TConst(TSuper), TInst(c.superClass.c, c.superClass.params), superPos), []), tvoid, superPos);
-				var body = TypeFunctions.concat(superCall, f.expr);
-				// The TFunction node keeps the body position it was typed at; rebuilding it here must not
-				// move it
-				// onto the field declaration.
-				cf.expr = TypeFunctions.mk(TFunction(new TFunc(f.args, f.type, body)), cf.type, cf.expr.pos);
-			case _:
-		}
 	}
 
 	static function commitFeaturesOf(com:Context, t:ModuleType):Void {

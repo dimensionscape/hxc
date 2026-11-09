@@ -153,3 +153,42 @@ class P {
 		if (cs[0] != -1) Sys.println("c");
 	}
 }
+
+--- implicit-super-after-field-inits + --macro Dump.after('cppout/src/P.cpp')
+class B {
+	public var items:Array<Int> = [];
+}
+
+class P extends B {
+	var a:Bool = false;
+
+	public function new() {
+		trace("x");
+	}
+
+	var b:Int = 3;
+
+	static function main() {
+		new P();
+	}
+}
+
+--- implicit-super-through-forwarding-ctor + --macro Dump.after('cppout/src/P.cpp')
+class A {
+	public var items:Array<Int> = [];
+}
+
+class B extends A {}
+
+class P extends B {
+	var a:Bool = false;
+
+	public function new()
+	{
+		var f = function() return 1;
+	}
+
+	static function main() {
+		new P();
+	}
+}
