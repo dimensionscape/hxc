@@ -102,3 +102,37 @@ class P {
 		Sys.println(new P().d(1) + sd(2));
 	}
 }
+
+--- include-prefix-main + -D include-prefix=hxinc --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/hxinc/P.h')
+class P {
+	static function main() {
+		Sys.println("x");
+	}
+}
+
+--- include-prefix-nested-package + -D include-prefix=hxinc --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/hxinc/a/b/Q.h')
+class P {
+	static function main() {
+		Sys.println(a.b.Q.v());
+	}
+}
+
+--- include-prefix-keeps-native-includes + -D include-prefix=hxinc --macro Dump.after('cppout/include/hxinc/P.h') --macro Dump.after('cppout/src/P.cpp')
+@:include("kinc/display.h")
+extern class D {
+	static function f():Int;
+}
+
+@:headerInclude("stdio.h")
+class P {
+	static function main() {
+		Sys.println(D.f());
+	}
+}
+
+--- include-prefix-files-list + -D include-prefix=hxinc --macro Dump.after('cppout/src/__files__.cpp') --macro Dump.after('cppout/src/__boot__.cpp')
+class P {
+	static function main() {
+		Sys.println(a.b.Q.v());
+	}
+}

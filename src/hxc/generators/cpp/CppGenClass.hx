@@ -29,6 +29,9 @@ class CppGenClass {
 		this.smartStrings = com.defines.rawDefined("hxcpp_smart_strings");
 	}
 
+	// The -D include-prefix value with a trailing slash ("" when unset), read once per generation by CppGen.
+	public static var includePrefix:String = "";
+
 	public static function joinPath(p:hxc.core.Globals.Path, sep:String):String {
 		return p.pack.length == 0 ? p.name : p.pack.join(sep) + sep + p.name;
 	}
@@ -440,6 +443,8 @@ class CppGenClass {
 		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
 		// One blank line, the @:headerCode, then the namespace, two blanks, @:headerNamespaceCode.
 		w.write("\n");
+		// @:headerInclude strings are quoted verbatim, whatever they contain.
+		for (inc in CppReferenced.getAllMetaStringPath(classDef.meta, ":headerInclude")) w.write("#include \"" + inc + "\"\n");
 		w.write(getClassCode(classDef, ":headerCode"));
 		genOpenNamespace(w);
 		w.write("\n\n");
@@ -1232,7 +1237,7 @@ class CppGenClass {
 			return;
 		}
 		var guard = joinPath(path, "_");
-		var incPath = joinPath(path, "/");
+		var incPath = includePrefix + joinPath(path, "/");
 		w.writeHUnique("#ifndef INCLUDED_" + guard + "\n#include <" + incPath + ".h>\n#endif\n");
 	}
 
