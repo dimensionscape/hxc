@@ -45,28 +45,22 @@ class CppGenClass {
 	// BuildCommon.xml (the std lib pulls in ${HXCPP}/src/hx/libs/std/Build.xml here).
 	public static var buildExtra:String = "";
 
-	// The class meta's string arg, \r\n-normalized, plus a "\n".
-	public static function getClassCode(c:TClass, metaName:String):String {
-		for (entry in c.meta) if (entry.name == metaName && entry.params.length > 0) {
+	// The meta's string arg, \r\n-normalized, plus a "\n" when trailingNewline.
+	static function getMetaCode(meta:hxc.ast.Ast.Metadata, metaName:String, trailingNewline:Bool):String {
+		for (entry in meta) if (entry.name == metaName && entry.params.length > 0) {
 			switch (entry.params[0].expr) {
 				case EConst(CString(s, _)):
 					var code = s.split("\r\n").join("\n");
-					return code == "" ? "" : code + "\n";
+					return code == "" ? "" : code + (trailingNewline ? "\n" : "");
 				case _:
 			}
 		}
 		return "";
 	}
 
-	// A field's meta string arg (@:functionCode, @:functionTailCode), CRLF-normalized; "" when absent.
-	static function getFieldCode(f:TClassField, metaName:String):String {
-		for (entry in f.meta) if (entry.name == metaName && entry.params.length > 0) {
-			switch (entry.params[0].expr) {
-				case EConst(CString(s, _)): return s.split("\r\n").join("\n");
-				case _:
-			}
-		}
-		return "";
+	// The class meta's string arg, normalized, plus a "\n".
+	public static function getClassCode(c:TClass, metaName:String):String {
+		return getMetaCode(c.meta, metaName, true);
 	}
 
 	static inline function getClassBuildXml(c:TClass):String {
@@ -896,8 +890,8 @@ class CppGenClass {
 				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
 				// @:functionCode follows the frame (and debugger prologue), then a blank line, then the Haxe body;
 				// @:functionTailCode follows the body, before the closing brace.
-				var fnCode = getFieldCode(field, ":functionCode");
-				var fnTail = getFieldCode(field, ":functionTailCode");
+				var fnCode = getMetaCode(field.meta, ":functionCode", false);
+				var fnTail = getMetaCode(field.meta, ":functionTailCode", false);
 				if (fnTail != "") emit.topTail = fnTail + "\n";
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
 					function(gc) {

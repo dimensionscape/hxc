@@ -66,3 +66,39 @@ class P {
 		Sys.println(new P().q(2));
 	}
 }
+
+--- function-code-constructor + --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/P.h')
+class P {
+	var v:Int;
+	@:functionCode("// ctor code") function new(a:Int) {
+		v = a;
+	}
+	static function main() {
+		Sys.println(new P(3).v);
+	}
+}
+
+--- function-tail-code-constructor + --macro Dump.after('cppout/src/P.cpp') --macro Dump.after('cppout/include/P.h')
+class P {
+	var v:Int;
+	@:functionTailCode("// ctor tail") function new(a:Int) {
+		v = a;
+	}
+	static function main() {
+		Sys.println(new P(3).v);
+	}
+}
+
+--- function-code-dynamic-function + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:functionCode("// dyn code") @:functionTailCode("// dyn tail") dynamic function d(a:Int):Int {
+		return a;
+	}
+	@:functionCode("// sdyn code") static dynamic function sd(a:Int):Int {
+		return a;
+	}
+	function new() {}
+	static function main() {
+		Sys.println(new P().d(1) + sd(2));
+	}
+}
