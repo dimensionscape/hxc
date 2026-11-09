@@ -1117,7 +1117,7 @@ class Filters {
 		if (!com.platform.match(Cross)) hxc.optimization.Analyzer.Run.runOnTypes(com, newTypes);
 		stageMark("analyzer:done"); memProbe("analyzer:done");
 		var renameLocals = hxc.filters.RenameVars.init(com.types, com.platform.match(Cpp),
-			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java));
+			com.platform.match(Js) && com.getEsVersion() >= 6, com.platform.match(Java | Hl));
 		for (t in newTypes) FiltersCommon.runExpressionFilters(tctx, [
 			{name: "sanitize", f: function(e) return Optimizer.sanitize(com, tctx, e)},
 			// add_final_return: adds a trailing default-valued return to a non-Void function that can fall

@@ -627,7 +627,7 @@ class HlGenerate {
 			sys.io.File.saveContent("dump/hlcode.txt", out.toString());
 		}
 		if (ctx.unported.length > 0)
-			com.addDiagnostic("hl: " + ctx.unported.length + " functions use unported expressions", Position.nullPos, 0, Warning);
+			com.warning(hxc.core.WarningList.Warning.WGenerator, [], "hl: " + ctx.unported.length + " functions use unported expressions", Position.nullPos);
 		var tWrite = hxc.core.Timer.timer(["generate", "hl", "write"]);
 		if (haxe.io.Path.extension(com.file) == "c") {
 			com.addDiagnostic("hl: HL/C output is not supported yet", Position.nullPos);

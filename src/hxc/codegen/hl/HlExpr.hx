@@ -23,8 +23,15 @@ class HlExpr {
 		ctx.unportedKinds.push(kind);
 		ctx.op(OString(s, -ctx.unportedKinds.length));
 		ctx.op(OThrow(s));
-		if (ctx.unported.length == 0 || ctx.unported[ctx.unported.length - 1] != ctx.curName) ctx.unported.push(ctx.curName);
+		if (ctx.unported.indexOf(ctx.curName) < 0) ctx.unported.push(ctx.curName);
 		return ctx.allocTmp(HlTypes.toType(ctx, e.type));
+	}
+
+	static function isCaughtLocal(e:TExpr):Bool {
+		return switch e.expr {
+			case TLocal(v): TypeFunctions.hasVarFlag(v, VCaught);
+			case _: false;
+		}
 	}
 
 	static inline function isPath(c:TClass, pack:Array<String>, name:String):Bool {
@@ -245,8 +252,14 @@ class HlExpr {
 				return evalIncrDecr(ctx, e, uop, fix, v);
 			case TFunction(_):
 				return unported(ctx, "TFunction", e);
-			case TThrow(_):
-				return unported(ctx, "TThrow", e);
+			case TThrow(e1) if (e1.expr.match(TLocal(_)) && isCaughtLocal(e1)):
+				// throwing a catch var means we want to rethrow an exception
+				var r = ctx.allocTmp(HVoid);
+				ctx.op(ORethrow(HlCasts.evalTo(ctx, e1, HDyn)));
+				return r;
+			case TThrow(v):
+				ctx.op(OThrow(HlCasts.evalTo(ctx, v, HDyn)));
+				return ctx.allocTmp(HDyn);
 			case TWhile(cond, eloop, NormalWhile):
 				var oldb = ctx.m.mbreaks, oldc = ctx.m.mcontinues, oldtrys = ctx.m.mloopTrys;
 				ctx.m.mbreaks = [];

@@ -26,7 +26,7 @@ class P {
 --- hl-only-package-error + --hl out.hl --no-output
 class P { static function main() { cpp.Lib.println(1); } }
 
---- typed-dump + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+--- typed-dump + --hl out.hl -D hl_no_opt -D dump -w -WGenerator --macro Probe.after('dump/hl/P.dump')
 enum E {
 	A;
 	B(n:Int);
