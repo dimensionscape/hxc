@@ -317,3 +317,19 @@ class P {
 		f(["x" => 1], "x", "y");
 	}
 }
+
+--- macro-sin-cos + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	macro static function trig() {
+		var xs = [Math.PI / 2, Math.PI, 3 * Math.PI / 2, 28.8, 0.5, -2.0, 1e-300, 1e10, -6.5e15, 1e18, 9.3e18, 1e22, -1e300];
+		var out = [];
+		for (x in xs) out.push(x + " " + Math.cos(x) + " " + Math.sin(x));
+		out.push("zero " + (1 / Math.sin(0.0)) + " " + (1 / Math.sin(-0.0)) + " " + Math.cos(-0.0));
+		out.push("special " + Math.sin(Math.NaN) + " " + Math.cos(Math.POSITIVE_INFINITY) + " " + Math.sin(Math.NEGATIVE_INFINITY));
+		return macro $v{out};
+	}
+	static function main() {
+		var lines:Array<String> = trig();
+		for (s in lines) Sys.println(s);
+	}
+}

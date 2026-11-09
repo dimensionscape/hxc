@@ -3090,8 +3090,9 @@ class EvalStdLib {
 		}));
 		reg(s, "Math", "log", vfn(a -> VFloat(Math.log(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "exp", vfn(a -> VFloat(Math.exp(num(ctx, arg(a, 0))))));
-		reg(s, "Math", "sin", vfn(a -> VFloat(Math.sin(num(ctx, arg(a, 0))))));
-		reg(s, "Math", "cos", vfn(a -> VFloat(Math.cos(num(ctx, arg(a, 0))))));
+		// Haxe's Windows binaries compute sin and cos with the x87 (X87Trig).
+		reg(s, "Math", "sin", vfn(a -> VFloat(hxc.core.Globals.isWindows ? X87Trig.sin(num(ctx, arg(a, 0))) : Math.sin(num(ctx, arg(a, 0))))));
+		reg(s, "Math", "cos", vfn(a -> VFloat(hxc.core.Globals.isWindows ? X87Trig.cos(num(ctx, arg(a, 0))) : Math.cos(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "tan", vfn(a -> VFloat(Math.tan(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "asin", vfn(a -> VFloat(Math.asin(num(ctx, arg(a, 0))))));
 		reg(s, "Math", "acos", vfn(a -> VFloat(Math.acos(num(ctx, arg(a, 0))))));
