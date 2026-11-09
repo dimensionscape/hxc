@@ -15,10 +15,10 @@
 	"interfaces-many": "== out.hl 57999 13d5981b5ced25df7d02bd41c6aba533",
 	"std-downcast": "== out.hl 57575 361f6f1dba74c60b99d0dd26121073ab\nP.hx:35: characters 12-32 : Warning : (WDeprecated) Std.instance() is deprecated. Use Std.downcast() instead.",
 	"exceptions": "== out.hl 60171 bc7540ee1b8c23c89f21dc3abffe5d5b",
-	"hl-natives": "== out.hl 56818 29c612a6cfb3d7c1ee7670f27aed586f",
+	"hl-natives": "== out.hl 57460 73d97a12d1d6f57b25f24cfee6c89da2",
 	"int64-maps": "== out.hl 60683 3d5f64c43cd083b8e57d77c252e33bbe",
 	"debug-assigns": "== out.hl 56955 f887166966d72b14b31103e24141a4fb",
 	"debug-paths": "== out.hl 56335 804314defa1c0ee82b596a16bee69c37",
 	"resources": "== out.hl 57346 46c12aad184f98d4d314fccb462ef2ac",
-	"absolute-path": "== out.hl 56447 23484856466ed22561ed4bc69eef0a5a"
+	"absolute-path": "== out.hl 55628 ba4620026015ec67a46d2d3f598b1e31"
 }

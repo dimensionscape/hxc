@@ -13,13 +13,13 @@ using hxc.codegen.hl.HlContext;
 class HlFunctions {
 	// OCaml's Filename.is_relative (Win32 or Unix)
 	static function isRelative(n:String):Bool {
-		if (Sys.systemName() != "Windows") return !StringTools.startsWith(n, "/");
+		if (!hxc.core.Globals.isWindows) return !StringTools.startsWith(n, "/");
 		return !StringTools.startsWith(n, "/") && !StringTools.startsWith(n, "\\") && !(n.length >= 2 && n.charAt(1) == ":");
 	}
 
 	// OCaml's Filename.concat: the platform separator only when the directory doesn't already end in one
 	static function filenameConcat(dir:String, file:String):String {
-		var win = Sys.systemName() == "Windows";
+		var win = hxc.core.Globals.isWindows;
 		var last = dir.length == 0 ? "" : dir.charAt(dir.length - 1);
 		var isSep = last == "/" || (win && (last == "\\" || last == ":"));
 		return dir.length == 0 || isSep ? dir + file : dir + (win ? "\\" : "/") + file;

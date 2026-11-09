@@ -812,6 +812,17 @@ class P {
 		var k = i * j * j + i - j;
 		Sys.println(Std.string(k));
 		Sys.println(k > j);
+		b.setF32(12, 1.5);
+		Sys.println(b.getF32(12));
+		var big:hl.I64 = 123456789;
+		untyped $bseti64(b, 0, big * big);
+		var back:hl.I64 = untyped $bgeti64(b, 0);
+		Sys.println(Std.string(back));
+		var ra:hl.Ref<Int> = a;
+		Sys.println(ra.offset(3).get());
+		var arr = [7, 8, 9];
+		var ab:hl.Bytes = untyped $abytes(arr);
+		Sys.println(ab.getI32(4));
 		var t:Thing = untyped $new(Thing);
 		Sys.println(t.n);
 		Sys.println(StdNatives.mathSqrt(16.) + " " + StdNatives.twice(4));
@@ -942,9 +953,11 @@ class P {
 ===
 
 --- absolute-path + -D absolute-path
+# The absolute path is only in the debug-files table, which HlDigest normalises: a PosInfos file name (trace)
+# would also put its length in the ints table, which would make the digest depend on the case directory.
 class P {
 	static function main() {
-		trace("where");
+		Sys.println("where");
 	}
 }
 ===
