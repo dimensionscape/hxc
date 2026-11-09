@@ -295,3 +295,25 @@ class P {
 		v(1);
 	}
 }
+
+--- inline-nullable-arg-value + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	static inline function either(name:String, other:String):String {
+		if (name == "a") return name;
+		return other;
+	}
+	static function f(m:Map<String, Int>, a:Null<String>, b:Null<String>) {
+		inline function resolve(name:String):String {
+			if (name == "a") return name;
+			if (m.exists(name)) return "q" + name;
+			throw "unknown " + name;
+		}
+		var id = resolve(a);
+		Sys.println(id);
+		var e = either(a, b);
+		Sys.println(e);
+	}
+	static function main() {
+		f(["x" => 1], "x", "y");
+	}
+}
