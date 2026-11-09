@@ -53,19 +53,6 @@ class Operators {
 		}
 	}
 
-	// The RAISING unify. Only OpEq/OpNotEq wants it, to pick the other direction when the first does not
-	// unify (castOrUnifyRaise inside a try whose fallback is the recording cast). Everywhere else uses the
-	// recording unify above, and raising there would swallow every later complaint.
-	static function unifyRaise(ctx:TyperContext, a:T, b:T, p:Position):Void {
-		DebugDump.unify("operator", a, b, p);
-		try {
-			TypeUnification.unifyDefault(a, b);
-		} catch (e:UnifyError) {
-			if (ctx.untypedMode) return;
-			throw new TypingError(hxc.core.TPrinting.betterErrorMessage(e.errors), p);
-		}
-	}
-
 	static function checkAssign(ctx:TyperContext, e:TExpr):Void {
 		switch (e.expr) {
 			// When errors are ignored, assigning to a final local is not rejected here either.
@@ -333,18 +320,13 @@ class Operators {
 					case TAbstract(a, _) if (isVoid(e2.type)): throw new TypingError("Cannot compare Void", p);
 					case _:
 				}
+				// As Haxe: cast the FIRST operand to the second's type (a @:to/@:from cast is searched before plain
+				// unification, so `color != -1` with `abstract Color(Int) from Int` and `@:to toInt` calls toInt
+				// although Int would unify with Color), and only when that fails cast the second to the first's
+				// type, which records its own verdict at the binop position without aborting.
 				var c1 = e1, c2 = e2;
-				try unifyRaise(ctx, c1.type, c2.type, p) catch (_:TypingError) {
-					try unifyRaise(ctx, c2.type, c1.type, p) catch (_:TypingError) {
-						// Neither operand unifies directly: follow an abstract @:to/@:from cast so an abstract
-						// compares against its underlying type (plain unify does not chase method casts); the failure
-						// reports at the BINOP position without aborting, so a boolean context around the comparison
-						// still checks. The first operand goes through castOrUnifyRaise, and on its failure the
-						// second through castOrUnify, which records its own verdict.
-						try c1 = Typer.castOrUnifyRaise(ctx, c2.type, c1, p) catch (_:TypingError) {
-							c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
-						}
-					}
+				try c1 = Typer.castOrUnifyRaise(ctx, c2.type, c1, p) catch (_:hxc.core.TypingError.CastUnifyError) {
+					c2 = Typer.castOrUnify(ctx, c1.type, c2, p);
 				}
 				switch [TypeFunctions.follow(c1.type), TypeFunctions.follow(c2.type)] {
 					case [TEnum(en, _), _] | [_, TEnum(en, _)]:

@@ -136,3 +136,20 @@ class P {
 		Sys.println(a.b.Q.v());
 	}
 }
+
+--- eq-abstract-to-cast-before-from + --macro Dump.after('cppout/src/P.cpp')
+abstract Color(Int) from Int {
+	@:to public function toInt():Int {
+		return this;
+	}
+}
+
+class P {
+	static function main() {
+		var c:Color = -1;
+		var cs:Array<Color> = [3];
+		if (c != -1) Sys.println("a");
+		if (-1 == c) Sys.println("b");
+		if (cs[0] != -1) Sys.println("c");
+	}
+}
