@@ -256,3 +256,42 @@ class P {
 		new P().cond(2);
 	}
 }
+
+--- function-code-native-gen + --macro Dump.after('cppout/src/NG.cpp') --macro Dump.after('cppout/include/NG.h')
+@:nativeGen
+@:headerInclude("stdio.h")
+@:headerCode("// ng header code")
+class NG {
+	@:functionCode("return 5;") @:functionTailCode("// ng tail") public static function f():Int return 0;
+	@:functionCode("// ng inst code") @:functionTailCode("// ng inst tail") public function g(a:Int):Int {
+		return a;
+	}
+	public function new() {}
+}
+
+class P {
+	static function main() {
+		Sys.println(NG.f() + new NG().g(1));
+	}
+}
+
+--- header-include-and-header-code + --macro Dump.after('cppout/include/P.h')
+@:headerInclude("stdio.h")
+@:headerCode("// header code")
+class P {
+	static function main() {
+		Sys.println("x");
+	}
+}
+
+--- function-code-no-debug + --macro Dump.after('cppout/src/P.cpp')
+class P {
+	@:noDebug @:functionCode("return 7;") @:functionTailCode("// nd tail") static function f():Int return 0;
+	@:noDebug @:functionCode("// nd code") static function v(a:Int):Void {
+		Sys.println(a);
+	}
+	static function main() {
+		Sys.println(f());
+		v(1);
+	}
+}

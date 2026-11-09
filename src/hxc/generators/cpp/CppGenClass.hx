@@ -422,6 +422,13 @@ class CppGenClass {
 		else addInclude(w, c.path);
 	}
 
+	// A class header's @:headerCode, then one `#include "<str>"` per @:headerInclude (quoted verbatim,
+	// whatever it contains), as gencpp writes them for normal and @:nativeGen classes alike.
+	function genHeaderCodeAndIncludes(w:CppWriter):Void {
+		w.write(getClassCode(classDef, ":headerCode"));
+		for (inc in CppReferenced.getAllMetaStringPath(classDef.meta, ":headerInclude")) w.write("#include \"" + inc + "\"\n");
+	}
+
 	public function genHeader():String {
 		cppFileId = {v: -1};
 		var w = new CppWriter();
@@ -441,11 +448,10 @@ class CppGenClass {
 		// includeSuperArgs so a cppia host also names the super methods' argument types.
 		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, isScriptable());
 		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
-		// One blank line, the @:headerCode, then the namespace, two blanks, @:headerNamespaceCode.
+		// One blank line, the @:headerCode and @:headerInclude lines, then the namespace, two blanks,
+		// @:headerNamespaceCode.
 		w.write("\n");
-		// @:headerInclude strings are quoted verbatim, whatever they contain.
-		for (inc in CppReferenced.getAllMetaStringPath(classDef.meta, ":headerInclude")) w.write("#include \"" + inc + "\"\n");
-		w.write(getClassCode(classDef, ":headerCode"));
+		genHeaderCodeAndIncludes(w);
 		genOpenNamespace(w);
 		w.write("\n\n");
 		w.write(getClassCode(classDef, ":headerNamespaceCode"));
@@ -892,17 +898,8 @@ class CppGenClass {
 				// The body prologue unpacks optional-argument defaults, then pushes the frame.
 				var dbg = fieldDebugLevel(field);
 				var emit = new CppEmit(com, w, dbg, !isStatic, cppFileId);
-				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
-				// @:functionCode follows the frame (and debugger prologue), then a blank line, then the Haxe body;
-				// @:functionTailCode follows the body, before the closing brace.
-				var fnCode = getMetaCode(field.meta, ":functionCode", false);
-				var fnTail = getMetaCode(field.meta, ":functionTailCode", false);
-				if (fnTail != "") emit.topTail = fnTail + "\n";
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-					function(gc) {
-						emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, field.name, frameFile, frameLine, gc, cppFileId, dbg); hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine);
-						if (fnCode != "") w.write("            \t" + fnCode + "\n\n");
-					}, null, dotName, field.name);
+					methodPrologue(emit, w, field, tf, isStatic, dotName, field.name, frameFile, frameLine, dbg), null, dotName, field.name);
 				w.write("\n\n");
 				// doDynamic = (nonVirtual || !isOverride) && reflective. A @:nonVirtual override still gets
 				// its dynamic wrapper (matching the header decl at genMemberDefHeader).
@@ -1088,6 +1085,23 @@ class CppGenClass {
 		return w.getHeader() + w.getBody();
 	}
 
+	// The top-block prologue of a method body (ordinary or @:nativeGen): the optional-argument defaults,
+	// the stack frame and debugger prologue, then @:functionCode and a blank line (behind the body's
+	// spacer, a single tab for a @:noDebug method). @:functionTailCode is handed to the emitter, which
+	// writes it after the body, before the closing brace.
+	function methodPrologue(emit:CppEmit, w:CppWriter, field:TClassField, tf:TFunc, isStatic:Bool, dotName:String, funcName:String, frameFile:String, frameLine:Int, dbg:Int):Bool->Void {
+		var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
+		var fnCode = getMetaCode(field.meta, ":functionCode", false);
+		var fnTail = getMetaCode(field.meta, ":functionTailCode", false);
+		if (fnTail != "") emit.topTail = fnTail + "\n";
+		return function(gc:Bool) {
+			emit.cppGenDefaultValues(defaults, "__o_");
+			hxStackPush(com, w, dotName, funcName, frameFile, frameLine, gc, cppFileId, dbg);
+			hxStackDebugVars(w, dbg, isStatic, true, [for (a in tf.args) a.v], frameLine);
+			if (fnCode != "") w.write((dbg <= 0 ? "\t" : "            \t") + fnCode + "\n\n");
+		};
+	}
+
 	// A @:nativeGen class is emitted as a plain C++ class (no _obj, no hx::Object base, no vtable /
 	// __register / __boot / reflection): just its members, and its constructor body.
 	public function genNativeGenHeader():String {
@@ -1113,6 +1127,7 @@ class CppGenClass {
 		var refs = CppReferenced.findReferencedTypesFlags(com, TClassDecl(classDef), "*", superDeps, constructorDeps, true, isScriptable());
 		for (i in 0...refs.deps.length) CppReferenced.genForwardDecl(w, refs.deps[i], refs.flags[i]);
 		w.write("\n");
+		genHeaderCodeAndIncludes(w);
 		genOpenNamespace(w);
 		w.write("\n\n");
 		w.write("class HXCPP_CLASS_ATTRIBUTES " + smartName + (superName == "" ? "" : " : public " + superName) + "\n{\n\tpublic:\n");
@@ -1120,8 +1135,9 @@ class CppGenClass {
 			var ctorTf = ctorFuncDef();
 			w.write("\t\t" + smartName + "(" + (ctorTf != null ? ctxArgList(ctorTf.args, "") : "") + ");\n\n");
 		}
-		for (f in classDef.orderedFields) genNativeGenMemberDecl(w, false, f);
+		// The statics are declared before the instance fields, as in a normal class header.
 		for (f in classDef.orderedStatics) genNativeGenMemberDecl(w, true, f);
+		for (f in classDef.orderedFields) genNativeGenMemberDecl(w, false, f);
 		w.write("};\n\n");
 		genCloseNamespace(w);
 		w.write("\n#endif /* INCLUDED_" + defString + " */ \n");
@@ -1212,9 +1228,8 @@ class CppGenClass {
 				w.write(ret + " " + smartName + "::" + name + "(" + ctxArgList(tf.args, "") + ")");
 				var ngDbg = fieldDebugLevel(f);
 				var emit = new CppEmit(com, w, ngDbg, !isStatic, cppFileId);
-				var defaults = [for (a in tf.args) {v: a.v, dflt: a.c}];
 				emit.genExpressionTree([for (a in tf.args) a.v], tf.type, tf.expr,
-					function(gc) { emit.cppGenDefaultValues(defaults, "__o_"); hxStackPush(com, w, dotName, name, tf.expr.pos.file, frameLine, gc, cppFileId, ngDbg); hxStackDebugVars(w, ngDbg, isStatic, true, [for (a in tf.args) a.v], frameLine); }, null, dotName, name);
+					methodPrologue(emit, w, f, tf, isStatic, dotName, name, tf.expr.pos.file, frameLine, ngDbg), null, dotName, name);
 				// Every field body is followed by a double newline.
 				w.write("\n\n");
 			case _:
