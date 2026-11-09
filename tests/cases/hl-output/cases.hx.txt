@@ -181,3 +181,491 @@ class P {
 	}
 }
 ===
+
+--- closures
+class Counter {
+	public var n:Int;
+
+	public function new(n:Int) {
+		this.n = n;
+	}
+
+	public function add(k:Int):Int {
+		n += k;
+		return n;
+	}
+}
+
+class P {
+	static function twice(x:Int):Int {
+		return x * 2;
+	}
+
+	static function apply(f:Int->Int, v:Int):Int {
+		return f(v);
+	}
+
+	static function main() {
+		var fs:Array<Void->Int> = [];
+		for (i in 0...3) {
+			var j = i;
+			fs.push(() -> j * 10 + i);
+		}
+		for (f in fs) Sys.println(f());
+		var total = 0;
+		var label = "t";
+		var addTo = function(k:Int) {
+			total += k;
+			label += k;
+		};
+		addTo(4);
+		addTo(5);
+		Sys.println(label + total);
+		var only = 7;
+		var one = () -> only + 1;
+		Sys.println(one());
+		var c = new Counter(1);
+		var m = c.add;
+		Sys.println(m(2));
+		Sys.println(apply(c.add, 3));
+		var g = twice;
+		Sys.println(g(21));
+		Sys.println(apply(twice, 4));
+		var d:Dynamic = function(a:Int, b:Int) return a - b;
+		Sys.println(d(10, 3));
+		var dd:Dynamic = twice;
+		Sys.println(dd(5));
+		var nested = function(x:Int) {
+			return function(y:Int) return x * y + total;
+		};
+		Sys.println(nested(3)(4));
+	}
+}
+===
+
+--- anon-dynamic
+typedef Point = {x:Int, y:Int};
+
+class P {
+	static function sum(p:Point):Int {
+		return p.x + p.y;
+	}
+
+	static function show(d:Dynamic):String {
+		return d.name + "=" + d.value;
+	}
+
+	static function main() {
+		var p = {x: 1, y: 2};
+		Sys.println(sum(p));
+		p.x = 10;
+		Sys.println(sum(p));
+		var d:Dynamic = {name: "a", value: 3};
+		Sys.println(show(d));
+		d.value = 4;
+		d.extra = "e";
+		Sys.println(d.value + 1);
+		Sys.println(Reflect.field(d, "name"));
+		Sys.println(Reflect.field(d, "extra"));
+		Sys.println(Reflect.hasField(d, "missing"));
+		var o:Dynamic = {f: function(x:Int) return x + 1};
+		Sys.println(o.f(4));
+		var anon:{name:String, ?opt:Int} = {name: "n"};
+		Sys.println(anon.opt == null);
+		var withStr = {v: 2, toString: function() return "custom"};
+		Sys.println(withStr.v);
+		var empty = {};
+		Sys.println(Reflect.fields(empty).length);
+	}
+}
+===
+
+--- arrays
+class Item {
+	public var v:Int;
+
+	public function new(v:Int) {
+		this.v = v;
+	}
+}
+
+class P {
+	static function main() {
+		var ai = [3, 1, 2];
+		ai.push(5);
+		ai[0] = 4;
+		ai[1] += 1;
+		Sys.println(ai[0] + ai[1]);
+		var sum = 0;
+		for (x in ai) sum += x;
+		Sys.println(sum);
+		ai.sort((a, b) -> a - b);
+		Sys.println(ai.join(","));
+		var af = [1.5, 2.5];
+		af.push(3.0);
+		af[2] *= 2;
+		Sys.println(af[2]);
+		var as = ["b", "a"];
+		as.push("c");
+		as[0] += "!";
+		as.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		Sys.println(as.join("|"));
+		var ad:Array<Dynamic> = [1, "two", 3.5];
+		ad.push(null);
+		ad[0] = ad[0] + 1;
+		Sys.println(ad.length);
+		Sys.println(ad[1]);
+		Sys.println(ad[0]);
+		var items = [new Item(2), new Item(1)];
+		items.push(new Item(3));
+		items[0].v += 10;
+		var vs = items.map(i -> i.v * 2);
+		Sys.println(vs.join(","));
+		items.sort((a, b) -> a.v - b.v);
+		Sys.println(items[0].v);
+		var strs = ai.map(i -> "#" + i);
+		Sys.println(strs);
+		var empty:Array<Int> = [];
+		Sys.println(empty.length);
+	}
+}
+===
+
+--- enums-switch
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+
+enum Shape {
+	Circle(r:Float);
+	Rect(w:Int, h:Int);
+	Named(name:String, inner:Shape);
+	Empty;
+}
+
+enum Solo {
+	Only(v:Int);
+}
+
+class P {
+	static function area(s:Shape):Float {
+		return switch s {
+			case Circle(r): r * r * 3;
+			case Rect(w, h) if (w == h): w * w;
+			case Rect(w, h): w * h;
+			case Named(_, inner): area(inner);
+			case Empty: 0;
+		}
+	}
+
+	static function colorName(c:Color):String {
+		return switch c {
+			case Red: "red";
+			case Green: "green";
+			case Blue: "blue";
+		}
+	}
+
+	static function bucket(i:Int):String {
+		return switch i {
+			case 0: "zero";
+			case 1 | 2: "small";
+			case 10: "ten";
+			default: "other";
+		}
+	}
+
+	static function code(s:String):Int {
+		return switch s {
+			case "a": 1;
+			case "bb": 2;
+			case "héllo": 3;
+			default: -1;
+		}
+	}
+
+	static function main() {
+		Sys.println(area(Circle(1.0)));
+		Sys.println(area(Rect(2, 2)));
+		Sys.println(area(Rect(2, 3)));
+		Sys.println(area(Named("n", Rect(1, 5))));
+		Sys.println(area(Empty));
+		Sys.println(colorName(Green));
+		Sys.println(Type.enumIndex(Blue));
+		Sys.println(Type.enumIndex(Rect(1, 1)));
+		for (i in [0, 2, 10, 99]) Sys.println(bucket(i));
+		for (s in ["a", "bb", "héllo", "z"]) Sys.println(code(s));
+		var c = Red;
+		Sys.println(c == Red);
+		var o = Only(5);
+		switch o {
+			case Only(v): Sys.println(v);
+		}
+		Sys.println(Type.enumConstructor(Rect(1, 2)));
+		Sys.println(Type.enumParameters(Named("x", Empty)).length);
+	}
+}
+===
+
+--- compound-assign
+class Box {
+	public var v:Int = 1;
+	public var f:Float = 1.5;
+	public var prop(get, set):Int;
+
+	var store:Int = 2;
+
+	public function new() {}
+
+	function get_prop() {
+		return store;
+	}
+
+	function set_prop(x:Int) {
+		return store = x;
+	}
+}
+
+class P {
+	static var s:Int = 5;
+	static var sp(default, set):Int = 3;
+
+	static function set_sp(x:Int) {
+		return sp = x;
+	}
+
+	static function main() {
+		var l = 3;
+		l += 2;
+		l -= 1;
+		l *= 3;
+		l |= 1;
+		l <<= 2;
+		Sys.println(l);
+		Sys.println(l++);
+		Sys.println(--l);
+		var b = new Box();
+		b.v += 2;
+		b.v -= 1;
+		b.v *= 3;
+		b.v |= 8;
+		b.v <<= 1;
+		Sys.println(b.v);
+		Sys.println(b.v++);
+		Sys.println(--b.v);
+		b.f += 0.25;
+		b.f *= 2;
+		Sys.println(b.f);
+		s += 2;
+		s -= 1;
+		s *= 3;
+		s |= 16;
+		s <<= 1;
+		Sys.println(s);
+		Sys.println(s++);
+		Sys.println(--s);
+		var a = [1, 2, 3];
+		a[1] += 2;
+		a[1] -= 1;
+		a[1] *= 3;
+		a[1] |= 32;
+		a[1] <<= 1;
+		Sys.println(a[1]);
+		Sys.println(a[2]++);
+		Sys.println(--a[2]);
+		b.prop += 2;
+		b.prop -= 1;
+		b.prop *= 3;
+		b.prop |= 64;
+		b.prop <<= 1;
+		Sys.println(b.prop);
+		Sys.println(b.prop++);
+		Sys.println(--b.prop);
+		sp += 1;
+		sp <<= 2;
+		Sys.println(sp);
+		Sys.println(sp++);
+		Sys.println(--sp);
+		var cap = 1;
+		var fcap = () -> {
+			cap += 5;
+			cap++;
+			return cap;
+		};
+		Sys.println(fcap());
+		var d:Dynamic = {n: 1};
+		d.n += 2;
+		d.n++;
+		Sys.println(d.n);
+		var nl:Null<Int> = 4;
+		nl += 1;
+		nl++;
+		Sys.println(nl);
+		var fa = [1.0];
+		fa[0] += 0.5;
+		Sys.println(fa[0]);
+	}
+}
+===
+
+--- interfaces-many
+interface IA {
+	function a():Int;
+}
+
+interface IB {
+	function b():Int;
+}
+
+interface IC {
+	function c():Int;
+}
+
+interface ID {
+	function d():Int;
+}
+
+class One implements IA implements IB implements IC implements ID {
+	public function new() {}
+
+	public function a():Int {
+		return 1;
+	}
+
+	public function b():Int {
+		return 2;
+	}
+
+	public function c():Int {
+		return 3;
+	}
+
+	public function d():Int {
+		return 4;
+	}
+}
+
+class Two implements ID implements IC implements IB implements IA {
+	public function new() {}
+
+	public function d():Int {
+		return 40;
+	}
+
+	public function c():Int {
+		return 30;
+	}
+
+	public function b():Int {
+		return 20;
+	}
+
+	public function a():Int {
+		return 10;
+	}
+}
+
+class Three implements IC implements IA implements ID implements IB {
+	public function new() {}
+
+	public function b():Int {
+		return 200;
+	}
+
+	public function d():Int {
+		return 400;
+	}
+
+	public function a():Int {
+		return 100;
+	}
+
+	public function c():Int {
+		return 300;
+	}
+}
+
+class P {
+	static function viaA(x:IA):Int {
+		return x.a();
+	}
+
+	static function viaB(x:IB):Int {
+		return x.b();
+	}
+
+	static function viaC(x:IC):Int {
+		return x.c();
+	}
+
+	static function viaD(x:ID):Int {
+		return x.d();
+	}
+
+	static function main() {
+		var one = new One();
+		var two = new Two();
+		var three = new Three();
+		Sys.println(viaA(one) + viaB(one) + viaC(one) + viaD(one));
+		Sys.println(viaA(two) + viaB(two) + viaC(two) + viaD(two));
+		Sys.println(viaA(three) + viaB(three) + viaC(three) + viaD(three));
+		var ds:Array<ID> = [one, two, three];
+		var total = 0;
+		for (x in ds) total += x.d();
+		Sys.println(total);
+	}
+}
+===
+
+--- std-downcast
+interface Named {
+	function name():String;
+}
+
+class Animal implements Named {
+	public function new() {}
+
+	public function name():String {
+		return "animal";
+	}
+}
+
+class Dog extends Animal {
+	override public function name():String {
+		return "dog";
+	}
+
+	public function bark():String {
+		return "woof";
+	}
+}
+
+class P {
+	static function main() {
+		var a:Animal = new Dog();
+		var b:Animal = new Animal();
+		Sys.println(Std.isOfType(a, Dog));
+		Sys.println(Std.isOfType(b, Dog));
+		Sys.println(Std.isOfType(1, Int));
+		Sys.println(Std.isOfType("s", String));
+		var d = Std.downcast(a, Dog);
+		Sys.println(d != null ? d.bark() : "null");
+		var d2 = Std.downcast(b, Dog);
+		Sys.println(d2 == null);
+		var d3 = Std.instance(a, Dog);
+		Sys.println(d3 != null);
+		var f = Reflect.makeVarArgs(args -> args.length);
+		Sys.println(f(1, 2, 3));
+		var dyn:Dynamic = new Dog();
+		var c = cast(dyn, Dog);
+		Sys.println(c.bark());
+		var n = cast(dyn, Named);
+		Sys.println(n.name());
+		var dd:Dynamic = "str";
+		var s = cast(dd, String);
+		Sys.println(s.length);
+	}
+}
+===

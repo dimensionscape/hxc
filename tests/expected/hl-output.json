@@ -6,5 +6,12 @@
 	"statics-strings": "== out.hl 56743 4af6b39a1c501c725a6e73e2dd0fee10",
 	"classes": "== out.hl 56260 b5dc5ed6f0757548768f944714498134",
 	"control-flow": "== out.hl 56292 c578c17ab76a10aed980e84cfa5b8f50",
-	"strings-unicode": "== out.hl 55712 94e4f2aea0d6d75ff3713fde4bc56161"
+	"strings-unicode": "== out.hl 55712 94e4f2aea0d6d75ff3713fde4bc56161",
+	"closures": "== out.hl 57660 7320ec0642470bb3aa51cc479c8db2b7",
+	"anon-dynamic": "== out.hl 57155 63132ce4ac02474a33160f25c373cb92",
+	"arrays": "== out.hl 58446 2e03a631694e17bb932f1495578cf5f3",
+	"enums-switch": "== out.hl 58180 d6514f0f6fdac6fb1ce9ff4115f80b68",
+	"compound-assign": "== out.hl 58129 6bab476f535537b3ef4cb3c92bdc6811",
+	"interfaces-many": "== out.hl 57999 13d5981b5ced25df7d02bd41c6aba533",
+	"std-downcast": "== out.hl 57575 361f6f1dba74c60b99d0dd26121073ab\nP.hx:35: characters 12-32 : Warning : (WDeprecated) Std.instance() is deprecated. Use Std.downcast() instead."
 }
