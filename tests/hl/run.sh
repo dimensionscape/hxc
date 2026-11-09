@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Runs the HashLink generator's cases in tests/cases/hl-output/cases.hx.txt.
 #   tests/hl/run.sh --compiler <hxc> [--haxe <haxe>] [--hl <hl.exe>] [--std <dir>] [--case <pattern>] [-j <jobs>]
-# A case is `--- name [+ extra compiler args]`, its source (module P), `===` and nothing after it (the
+# A case is `--- name [@ pack.Module] [+ extra compiler args]`, its source (module P unless `@` names another,
+# written at that module's path and given to --main), `===` and nothing after it (the
 # expected result is Haxe's own). Each case is compiled with the family's arguments (family.json, less the
-# digest macro) by Haxe into h/ and by hxc twice, into x/ and y/. x/out.hl must be byte-identical to y/out.hl
-# (else `nondeterministic`) and to h/out.hl (else `differs from Haxe; see tools/hl-compare.sh`), and hl must
-# print the same and exit the same running h/out.hl and x/out.hl (else `runs differently`).
+# digest macro) in one directory, src/, by Haxe and then by hxc twice (one directory, so that paths baked in
+# with -D absolute-path agree); each out.hl is moved to h.hl, x.hl and y.hl. x.hl must be byte-identical to
+# y.hl (else `nondeterministic`) and to h.hl (else `differs from Haxe; see tools/hl-compare.sh`), and hl must
+# print the same and exit the same running h.hl and x.hl in src/ (else `runs differently`).
 # --case runs the cases whose names match it, a shell pattern like `trace-*`. Cases run -j at a time
 # (default $HXC_TEST_JOBS, or 4) and report in case order. Case directories go under $HXC_TEST_TMP, by
 # default tests/hl/tmp (gitignored), and are kept for a failed case.
@@ -59,7 +61,7 @@ trap 'rm -rf "$resdir"' EXIT
 native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
 # The family's arguments without the digest macro: HlDigest is only for the conformance harness.
-cargs=(-cp . --main P --hl out.hl -D hl_no_opt)
+cargs=(-cp . --hl out.hl -D hl_no_opt)
 
 # Runs hl on $2 in directory $1 for at most 60 seconds; sets $ran to its output and `[exit N]`.
 run_hl() {
@@ -69,31 +71,34 @@ run_hl() {
 	ran="${ran//$'\r'/}"
 }
 
-# Runs case $1 (extra args $2, source $3) in directory $4 and prints its report line(s).
+# Runs case $1 (extra args $2, source $3, module $5) in directory $4 and prints its report line(s).
 run_case() {
-	local name="$1" extra="$2" source="$3" d="$4" problem="" hcode=0 xcode=0 ycode=0 hout xout
-	mkdir -p "$d/h" "$d/x" "$d/y"
-	local f
-	for f in h x y; do printf '%s\n' "$source" > "$d/$f/P.hx"; done
+	local name="$1" extra="$2" source="$3" d="$4" module="$5" problem="" hcode=0 xcode=0 ycode=0 hout xout
+	local file="$d/src/${module//.//}.hx" src="$(native "$d/src")"
+	mkdir -p "$(dirname "$file")"
+	printf '%s\n' "$source" > "$file"
 	set -f
-	hout="$("$haxe" --cwd "$(native "$d/h")" "${cargs[@]}" $extra 2>&1)" || hcode=$?
-	xout="$("$compiler" --cwd "$(native "$d/x")" "${cargs[@]}" $extra 2>&1)" || xcode=$?
-	"$compiler" --cwd "$(native "$d/y")" "${cargs[@]}" $extra > /dev/null 2>&1 || ycode=$?
+	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || hcode=$?
+	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/h.hl"
+	xout="$("$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
+	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/x.hl"
+	"$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
+	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/y.hl"
 	set +f
-	if [ $hcode != 0 ] || [ ! -f "$d/h/out.hl" ]; then
+	if [ $hcode != 0 ] || [ ! -f "$d/h.hl" ]; then
 		problem="Haxe could not compile the case (exit $hcode): $hout"
-	elif [ ! -f "$d/x/out.hl" ]; then
-		problem="x/out.hl missing (hxc exit $xcode)${xout:+: $xout}"
-	elif [ ! -f "$d/y/out.hl" ]; then
-		problem="y/out.hl missing (hxc exit $ycode on the second compile)"
-	elif ! cmp -s "$d/x/out.hl" "$d/y/out.hl"; then
-		problem="nondeterministic: x/out.hl differs from y/out.hl"
-	elif ! cmp -s "$d/x/out.hl" "$d/h/out.hl"; then
+	elif [ ! -f "$d/x.hl" ]; then
+		problem="x.hl missing (hxc exit $xcode)${xout:+: $xout}"
+	elif [ ! -f "$d/y.hl" ]; then
+		problem="y.hl missing (hxc exit $ycode on the second compile)"
+	elif ! cmp -s "$d/x.hl" "$d/y.hl"; then
+		problem="nondeterministic: x.hl differs from y.hl"
+	elif ! cmp -s "$d/x.hl" "$d/h.hl"; then
 		problem="differs from Haxe; see tools/hl-compare.sh"
 	else
-		run_hl "$d/h" out.hl
+		run_hl "$d/src" ../h.hl
 		hout="$ran"
-		run_hl "$d/x" out.hl
+		run_hl "$d/src" ../x.hl
 		if [ "$ran" != "$hout" ]; then
 			problem="runs differently: Haxe's build printed '$hout', hxc's '$ran'"
 		fi
@@ -110,12 +115,12 @@ run_case() {
 }
 
 # Reads the cases: `# ` lines are comments.
-c_name=(); c_extra=(); c_source=()
-name=""; extra=""; source=""; inexpect=0
+c_name=(); c_extra=(); c_source=(); c_module=()
+name=""; extra=""; source=""; module=P; inexpect=0
 flush() {
 	# shellcheck disable=SC2053 # --case is a pattern
 	if [ -n "$name" ] && { [ -z "$only" ] || [[ $name == $only ]]; }; then
-		c_name+=("$name"); c_extra+=("$extra"); c_source+=("$source")
+		c_name+=("$name"); c_extra+=("$extra"); c_source+=("$source"); c_module+=("$module")
 	fi
 	name=""
 }
@@ -127,6 +132,8 @@ while IFS= read -r line || [ -n "$line" ]; do
 		head="${line#---}"
 		extra=""
 		case "$head" in *" + "*) extra="${head#* + }"; head="${head%% + *}" ;; esac
+		module=P
+		case "$head" in *"@"*) module="${head#*@}"; module="${module// /}"; head="${head%%@*}" ;; esac
 		set -f; set -- $head; set +f
 		name="$1"
 		source=""
@@ -151,7 +158,7 @@ running=0
 for i in "${!c_name[@]}"; do
 	while [ $running -ge "$njobs" ]; do wait -n; running=$((running - 1)); done
 	(
-		run_case "${c_name[$i]}" "${c_extra[$i]}" "${c_source[$i]}" "$tmproot/c$i.$$" > "$resdir/$i.out" 2>&1
+		run_case "${c_name[$i]}" "${c_extra[$i]}" "${c_source[$i]}" "$tmproot/c$i.$$" "${c_module[$i]}" > "$resdir/$i.out" 2>&1
 		echo $? > "$resdir/$i.res"
 	) &
 	running=$((running + 1))

@@ -673,3 +673,278 @@ class P {
 	}
 }
 ===
+
+--- exceptions
+class MyException extends haxe.Exception {
+	public var code:Int;
+
+	public function new(msg:String, code:Int) {
+		super(msg);
+		this.code = code;
+	}
+}
+
+class P {
+	static function fail(kind:Int):Void {
+		switch kind {
+			case 0: throw "plain";
+			case 1: throw new MyException("mine", 7);
+			case 2: throw 42;
+			case -1: throw "negative";
+			case 1000: throw new haxe.Exception("big");
+			case _:
+		}
+	}
+
+	static function attempt(kind:Int):String {
+		try {
+			fail(kind);
+			return "none";
+		} catch (e:String) {
+			return "string " + e;
+		} catch (e:MyException) {
+			return "mine " + e.message + " " + e.code;
+		} catch (e:Dynamic) {
+			return "dynamic " + Std.string(e);
+		}
+	}
+
+	static function rethrow():Void {
+		try {
+			fail(1);
+		} catch (e:MyException) {
+			Sys.println("caught once: " + e.message);
+			throw e;
+		}
+	}
+
+	static function main() {
+		for (k in [0, 1, 2, 3, -1, 1000]) Sys.println(attempt(k));
+		try {
+			rethrow();
+		} catch (e:haxe.Exception) {
+			Sys.println("caught again: " + e.message + " " + (e.stack != null));
+		}
+		var count = 0;
+		for (i in 0...10) {
+			try {
+				if (i == 1) continue;
+				if (i == 5) break;
+				count += i;
+			} catch (e:Dynamic) {
+				count = -1;
+			}
+		}
+		Sys.println(count);
+		var v = try Std.parseInt("12") catch (e:Dynamic) -1;
+		Sys.println(v);
+		var w:Int = try {
+			fail(2);
+			0;
+		} catch (e:Dynamic) {
+			5;
+		}
+		Sys.println(w);
+	}
+}
+===
+
+--- hl-natives
+@:hlNative("std")
+class StdNatives {
+	public static function mathSqrt(v:Float):Float {
+		return 0.;
+	}
+
+	public static function gcMajor():Void {}
+
+	public static function twice(v:Int):Int {
+		return v * 2;
+	}
+}
+
+@:hlNative("std", "math_")
+class MathNatives {
+	public static function abs(v:Float):Float {
+		return 0.;
+	}
+
+	public static function fceil(v:Float):Float {
+		return 0.;
+	}
+}
+
+class Thing {
+	public var n:Int;
+
+	public function new() {
+		n = 3;
+	}
+}
+
+class P {
+	static function inc(r:hl.Ref<Int>):Void {
+		r.set(r.get() + 1);
+	}
+
+	static function main() {
+		var b = new hl.Bytes(16);
+		b.setI32(0, 42);
+		b.setI32(4, -7);
+		Sys.println(b.getI32(0) + b.getI32(4));
+		b.setF64(8, 2.5);
+		Sys.println(b.getF64(8));
+		b[1] = 255;
+		Sys.println(b[1]);
+		var a = new hl.NativeArray<Int>(4);
+		a[0] = 5;
+		a[3] = a[0] * 2;
+		Sys.println(a[3] + " " + a.length);
+		var x = 1;
+		inc(x);
+		inc(x);
+		Sys.println(x);
+		var r:hl.Ref<Int> = untyped $ref(x);
+		r.set(20);
+		Sys.println(x);
+		var i:hl.I64 = 5;
+		var j:hl.I64 = 1000000;
+		var k = i * j * j + i - j;
+		Sys.println(Std.string(k));
+		Sys.println(k > j);
+		var t:Thing = untyped $new(Thing);
+		Sys.println(t.n);
+		Sys.println(StdNatives.mathSqrt(16.) + " " + StdNatives.twice(4));
+		StdNatives.gcMajor();
+		Sys.println(MathNatives.abs(-3.5) + " " + MathNatives.fceil(1.2));
+	}
+}
+===
+
+--- int64-maps
+import haxe.Int64;
+
+class Key {
+	public var name:String;
+
+	public function new(name:String) {
+		this.name = name;
+	}
+}
+
+class P {
+	static function main() {
+		var a = Int64.make(1, 2);
+		var b = Int64.ofInt(1000000);
+		var c = a * b + Int64.ofInt(-3);
+		Sys.println(Int64.toStr(c));
+		Sys.println("" + c);
+		Sys.println(c > a);
+		Sys.println(Int64.div(c, b) + " " + Int64.mod(c, b));
+		Sys.println(Int64.toInt(Int64.ofInt(7) << 2) + " " + (c.high) + " " + (c.low));
+		var mi = new Map<Int, String>();
+		mi.set(3, "three");
+		mi[1] = "one";
+		mi.set(2, "two");
+		mi.remove(3);
+		for (k => v in mi) Sys.println(k + "=" + v);
+		var ms = new Map<String, Int>();
+		ms["x"] = 1;
+		ms["y"] = 2;
+		ms.set("z", 26);
+		Sys.println(ms.exists("y") + " " + ms.get("q"));
+		for (k in ms.keys()) Sys.println(k + ":" + ms[k]);
+		var om = new haxe.ds.ObjectMap<Key, Int>();
+		var k1 = new Key("k1");
+		om.set(k1, 10);
+		om.set(new Key("k2"), 20);
+		var total = 0;
+		for (v in om) total += v;
+		for (k in om.keys()) total += k.name.length;
+		Sys.println(total + " " + om.get(k1));
+	}
+}
+===
+
+--- debug-assigns + --debug
+class Box<T> {
+	public var value:T;
+
+	public function new(v:T) {
+		value = v;
+	}
+
+	public function get():T {
+		return value;
+	}
+}
+
+class P {
+	static function main() {
+		var total = 0;
+		var label = "start";
+		for (i in 0...4) {
+			total += i;
+			label = label + i;
+			var sq = i * i;
+			total = total + sq;
+		}
+		var captured = 10;
+		var add = function(x:Int) {
+			captured += x;
+			return captured;
+		};
+		Sys.println(add(5));
+		Sys.println(total + " " + label + " " + captured);
+		var box = new Box<String>("boxed");
+		var s:String = box.value;
+		Sys.println(s + " " + box.get().length);
+		var d:Dynamic = "dyn";
+		var s2:String = d;
+		Sys.println(s2);
+	}
+}
+===
+
+--- debug-paths @ sub.P + -cp sub
+package sub;
+
+class Helper {
+	public static function greet(n:String):String {
+		return "hi " + n;
+	}
+}
+
+class P {
+	static function main() {
+		Sys.println(Helper.greet("there"));
+		trace("traced");
+	}
+}
+===
+
+--- resources + --macro P.addResources()
+class P {
+	#if macro
+	static function addResources() {
+		haxe.macro.Context.addResource("b", haxe.io.Bytes.ofString("2"));
+		haxe.macro.Context.addResource("a", haxe.io.Bytes.ofString("1"));
+		haxe.macro.Context.addResource("nul", haxe.io.Bytes.ofHex("410042"));
+	}
+	#end
+
+	static function main() {
+		var names = haxe.Resource.listNames();
+		Sys.println(names.join(","));
+		for (n in names) Sys.println(n + "=" + haxe.Resource.getString(n).length + " " + haxe.Resource.getBytes(n).length);
+	}
+}
+===
+
+--- absolute-path + -D absolute-path
+class P {
+	static function main() {
+		trace("where");
+	}
+}
+===
