@@ -43,6 +43,12 @@ esac
 case "$compiler" in */*) compiler="$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")" ;; esac
 if [ -n "$std" ]; then export HAXE_STD_PATH="$std"; fi
 
+# hl must run: without it every `runs differently` check would compare two identical failures.
+if ! "$hl" --version > /dev/null 2>&1; then
+	echo "cannot run HashLink ('$hl'); give --hl <hl.exe> or set \$HL" >&2
+	exit 2
+fi
+
 tmproot="${HXC_TEST_TMP:-$here/tmp}"
 mkdir -p "$tmproot" || exit 1
 tmproot="$(cd "$tmproot" && pwd)"

@@ -1,6 +1,6 @@
 {
-	"empty-main": "== out.hl 54290 bb548f4ded15feeecf3a98d411e1cbff",
-	"empty-main-dce-full": "== out.hl 53968 2088ec184b5ac26ef74875eb510b233b",
-	"trace-hello": "== out.hl 56349 22d27892a788a507c4ccc302bab0537a",
+	"empty-main": "== out.hl 54338 d69deefed24323d3260d0f14ce18434e",
+	"empty-main-dce-full": "== out.hl 54016 f7cbcca062b1027b58a55c9cade33884",
+	"trace-hello": "== out.hl 56413 9a1c28ce808d36af0ef8192b69ca0fee",
 	"no-debug": "== out.hl 50001 d14d253cff2321ceb4e75c2b6d971264"
 }
