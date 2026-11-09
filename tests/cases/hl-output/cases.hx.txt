@@ -1,0 +1,24 @@
+# The .hl file Haxe writes, as its length and MD5 (HlDigest). All of these fail until the generator is complete.
+--- empty-main
+class P { static function main() {} }
+===
+
+--- empty-main-dce-full + -dce full
+class P { static function main() {} }
+===
+
+--- trace-hello
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===
+
+--- no-debug + -D hl_no_debug
+class P {
+	static function main() {
+		trace("hi");
+	}
+}
+===

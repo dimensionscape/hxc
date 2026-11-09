@@ -1,0 +1,6 @@
+{
+	"empty-main": "== out.hl 54290 bb548f4ded15feeecf3a98d411e1cbff",
+	"empty-main-dce-full": "== out.hl 53968 2088ec184b5ac26ef74875eb510b233b",
+	"trace-hello": "== out.hl 56349 22d27892a788a507c4ccc302bab0537a",
+	"no-debug": "== out.hl 50001 d14d253cff2321ceb4e75c2b6d971264"
+}
