@@ -58,3 +58,34 @@ class P {
 		trace(r);
 	}
 }
+
+--- typed-dump-postfix-property + --hl out.hl -D hl_no_opt -D dump -w -WGenerator --macro Probe.after('dump/hl/P.dump')
+class Box {
+	public var prop(get, set):Int;
+	public static var sprop(default, set):Int = 3;
+
+	var store:Int = 2;
+
+	public function new() {}
+
+	function get_prop() {
+		return store;
+	}
+
+	function set_prop(x:Int) {
+		return store = x;
+	}
+
+	static function set_sprop(x:Int) {
+		return sprop = x;
+	}
+}
+
+class P {
+	static function main() {
+		var b = new Box();
+		Sys.println(b.prop++);
+		Sys.println(Box.sprop++);
+		b.prop++;
+	}
+}

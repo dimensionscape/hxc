@@ -413,6 +413,7 @@ class P {
 class Box {
 	public var v:Int = 1;
 	public var f:Float = 1.5;
+	public var nf:Null<Int> = 1;
 	public var prop(get, set):Int;
 
 	var store:Int = 2;
@@ -458,6 +459,9 @@ class P {
 		b.f += 0.25;
 		b.f *= 2;
 		Sys.println(b.f);
+		b.nf += 2;
+		b.nf++;
+		Sys.println(b.nf);
 		s += 2;
 		s -= 1;
 		s *= 3;

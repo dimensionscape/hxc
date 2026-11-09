@@ -12,8 +12,8 @@ import hxc.codegen.hl.HlAccess;
 
 using hxc.codegen.hl.HlContext;
 
-// The expression generator: a port of genhl.ml's eval_expr (lines 1539-2939) without the `$` intrinsics.
-// The expression kinds not ported yet go through `unported` (removed in Task 6).
+// The expression generator: a port of genhl.ml's get_enum_index, eval_var and eval_expr (lines 1539-2939)
+// without the `$` intrinsics, TFor and TTry, which go through `unported` until Task 6 ports them.
 class HlExpr {
 	// A placeholder for an expression kind not ported yet: throws "hl: unported <kind>" and records the
 	// function. The string is added to the table only after generation (HlGenerate.buildCode), so that
@@ -40,6 +40,15 @@ class HlExpr {
 
 	static function isEnumType(t:T):Bool {
 		return TypeFunctions.follow(t).match(TEnum(_));
+	}
+
+	// genhl.ml: get_enum_index
+	static function getEnumIndex(ctx:HlContext, v:TExpr):Int {
+		var r = ctx.allocTmp(HI32);
+		var re = evalExpr(ctx, v);
+		ctx.op(ONullCheck(re));
+		ctx.op(OEnumIndex(r, re));
+		return r;
 	}
 
 	// genhl.ml: eval_var
@@ -155,16 +164,32 @@ class HlExpr {
 				}
 			case TCall({expr: TIdent(s)}, _) if (s.charAt(0) == "$"):
 				return unported(ctx, "intrinsic " + s, e);
-			case TEnumIndex(_):
-				return unported(ctx, "TEnumIndex", e);
+			case TEnumIndex(v):
+				return getEnumIndex(ctx, v);
 			case TCall({expr: TField(_, FStatic(c, cf))}, [{expr: TCast(v, _)}]) if (isPath(c, [], "Type") && cf.name == "enumIndex" && isEnumType(v.type)):
-				return unported(ctx, "Type.enumIndex", e);
+				return getEnumIndex(ctx, v);
 			case TCall({expr: TField(_, FStatic(c, cf))}, [v]) if (isPath(c, [], "Type") && cf.name == "enumIndex" && isEnumType(v.type)):
-				return unported(ctx, "Type.enumIndex", e);
-			case TCall({expr: TField(_, FStatic(c, cf))}, [_]) if (isPath(c, [], "Reflect") && cf.name == "makeVarArgs"):
-				return unported(ctx, "Reflect.makeVarArgs", e);
-			case TCall({expr: TField(_, FStatic(c, cf))}, [_, _]) if (isPath(c, [], "Std") && (cf.name == "instance" || cf.name == "downcast")):
-				return unported(ctx, "Std." + cf.name, e);
+				return getEnumIndex(ctx, v);
+			case TCall(e1 = {expr: TField(ef, FStatic(c, cf))}, [v]) if (isPath(c, [], "Reflect") && cf.name == "makeVarArgs"):
+				var ec = TypeFunctions.mk(TField(ef, FStatic(c, c.statics.get("_makeVarArgs"))), e1.type, e1.pos);
+				return evalExpr(ctx, TypeFunctions.mk(TCall(ec, [v]), e.type, e.pos));
+			case TCall({expr: TField(_, FStatic(c, cf))}, [v, vt]) if (isPath(c, [], "Std") && (cf.name == "instance" || cf.name == "downcast")):
+				var r = evalExpr(ctx, v);
+				ctx.hold(r);
+				var c = HlCasts.evalTo(ctx, vt, HlTypes.classType(ctx, ctx.baseType, [], false));
+				ctx.hold(c);
+				var rv = ctx.allocTmp(HlTypes.toType(ctx, e.type));
+				var rb = ctx.allocTmp(HBool);
+				ctx.op(OCall2(rb, HlTypes.allocFunPath(ctx, new Path(["hl"], "BaseType"), "check"), c, r));
+				var jnext = ctx.jump(n -> OJFalse(rb, n));
+				ctx.op(OMov(rv, HlCasts.unsafeCastTo(ctx, r, HlTypes.toType(ctx, e.type), e.pos, false)));
+				var jend = ctx.jump(n -> OJAlways(n));
+				jnext();
+				ctx.op(ONull(rv));
+				jend();
+				ctx.free(r);
+				ctx.free(c);
+				return rv;
 			case TCall(ec, args):
 				return evalCall(ctx, e, ec, args);
 			case TField(ec, FInstance(c, [t], cf)) if (isPath(c, [], "Array") && cf.name == "length" && HlTypes.toType(ctx, t) == HDyn):
@@ -174,8 +199,8 @@ class HlExpr {
 				return r;
 			case TField(_, a):
 				return evalField(ctx, e, a);
-			case TObjectDecl(_):
-				return unported(ctx, "TObjectDecl", e);
+			case TObjectDecl(fl):
+				return evalObjectDecl(ctx, e, fl);
 			case TNew(c, pl, el):
 				var c = HlTypes.resolveClass(ctx, c, pl, false);
 				var r = ctx.allocTmp(HlTypes.classType(ctx, c, pl, false));
@@ -250,8 +275,8 @@ class HlExpr {
 				return tmp;
 			case TUnop(uop, fix, v):
 				return evalIncrDecr(ctx, e, uop, fix, v);
-			case TFunction(_):
-				return unported(ctx, "TFunction", e);
+			case TFunction(f):
+				return evalFunction(ctx, e, f);
 			case TThrow(e1) if (e1.expr.match(TLocal(_)) && isCaughtLocal(e1)):
 				// throwing a catch var means we want to rethrow an exception
 				var r = ctx.allocTmp(HVoid);
@@ -316,18 +341,35 @@ class HlExpr {
 					case _:
 						return HlCasts.castTo(ctx, rv, t, e.pos, true);
 				}
-			case TArrayDecl(_):
-				return unported(ctx, "TArrayDecl", e);
+			case TArrayDecl(el):
+				return evalArrayDecl(ctx, e, el);
 			case TArray(_):
-				return unported(ctx, "TArray", e);
+				switch HlAccess.getAccess(ctx, e) {
+					case AArray(a, at, vt, idx):
+						return HlAccess.arrayRead(ctx, a, at, vt, idx, e.pos);
+					case _:
+						return HlContext.die();
+				}
 			case TMeta(_, e1):
 				return evalExpr(ctx, e1);
 			case TFor(_):
 				return unported(ctx, "TFor", e);
-			case TSwitch(_):
-				return unported(ctx, "TSwitch", e);
-			case TEnumParameter(_):
-				return unported(ctx, "TEnumParameter", e);
+			case TSwitch(en, cases, def):
+				return evalSwitch(ctx, e, en, cases, def);
+			case TEnumParameter(ec, f, index):
+				var pt, isSingle;
+				switch HlTypes.toType(ctx, ec.type) {
+					case HEnum(en):
+						pt = en.efields[f.index].t[index];
+						isSingle = en.efields.length == 1;
+					case _:
+						return HlContext.die();
+				}
+				var er = evalExpr(ctx, ec);
+				if (isSingle) ctx.op(ONullCheck(er)); // #7560
+				var r = ctx.allocTmp(pt);
+				ctx.op(OEnumField(r, er, f.index, index));
+				return HlCasts.castTo(ctx, r, HlTypes.toType(ctx, e.type), e.pos);
 			case TContinue:
 				ctx.beforeBreakContinue();
 				var pos = ctx.currentPos();
@@ -344,8 +386,32 @@ class HlExpr {
 				return unported(ctx, "TTry", e);
 			case TTypeExpr(t):
 				return HlTypes.typeValue(ctx, t, e.pos);
-			case TCast(_, _):
-				return unported(ctx, "TCast with a type", e);
+			case TCast(ev, _):
+				var t = HlTypes.toType(ctx, e.type);
+				var re = evalExpr(ctx, ev);
+				var rt = ctx.allocTmp(t);
+				if (HlTypes.safeCast(ctx.rtype(re), t)) {
+					ctx.op(OMov(rt, re));
+				} else switch TypeFunctions.followWithAbstracts(e.type) {
+					case TInst(c, _) if (TypeFunctions.hasClassFlag(c, CInterface)):
+						ctx.hold(re);
+						var c = HlCasts.evalTo(ctx, TypeFunctions.mk(TTypeExpr(TClassDecl(c)), TypeFunctions.tDynamic, e.pos),
+							HlTypes.classType(ctx, ctx.baseType, [], false));
+						ctx.hold(c);
+						var rb = ctx.allocTmp(HBool);
+						ctx.op(OCall2(rb, HlTypes.allocFunPath(ctx, new Path(["hl"], "BaseType"), "check"), c, re));
+						var jnext = ctx.jump(n -> OJTrue(rb, n));
+						var jnext2 = ctx.jump(n -> OJNull(re, n));
+						ctx.op(OThrow(HlCasts.makeString(ctx, "Cast error", e.pos)));
+						jnext();
+						jnext2();
+						ctx.op(OMov(rt, HlCasts.unsafeCastTo(ctx, re, HlTypes.toType(ctx, e.type), e.pos, false)));
+						ctx.free(c);
+						ctx.free(re);
+					case _:
+						ctx.op(OSafeCast(rt, re));
+				}
+				return rt;
 			case TIdent(s):
 				return HlContext.abort("Unbound identifier " + s, e.pos);
 		}
@@ -498,6 +564,251 @@ class HlExpr {
 			case HFun(_): HlCasts.castTo(ctx, r, toT, e.pos);
 			case _: HlCasts.unsafeCastTo(ctx, r, toT, e.pos);
 		}
+	}
+
+	// eval_expr's TObjectDecl fl
+	static function evalObjectDecl(ctx:HlContext, e:TExpr, fl:Array<TObjectField>):Int {
+		var t = HlTypes.toType(ctx, e.type);
+		switch t {
+			case HVirtual(vp) if (vp.vfields.length == fl.length
+				&& !Lambda.exists(fl, f -> f.key.name == "toString" && HlTypes.isToString(f.expr.type))):
+				var r = ctx.allocTmp(t);
+				ctx.op(ONew(r));
+				ctx.hold(r);
+				for (f in fl) {
+					var fidx = vp.vindex.get(f.key.name);
+					if (fidx == null) HlContext.die();
+					var ft = vp.vfields[fidx].t;
+					var v = HlCasts.evalTo(ctx, f.expr, ft);
+					ctx.op(OSetField(r, fidx, v));
+				}
+				ctx.free(r);
+				return r;
+			case _:
+				var r = ctx.allocTmp(HDynObj);
+				ctx.op(ONew(r));
+				ctx.hold(r);
+				var a = switch TypeFunctions.follow(e.type) {
+					case TAnon(a): a;
+					case TDynamic(null): null;
+					case _: HlContext.die();
+				}
+				for (f in fl) {
+					var s = f.key.name, ev = f.expr;
+					var cf = a == null ? null : a.fields.get(s);
+					var ft = cf == null ? ev.type : cf.type;
+					var v = HlCasts.evalTo(ctx, ev, HlTypes.toType(ctx, ft));
+					ctx.op(ODynSet(r, ctx.allocString(s), v));
+					if (s == "toString" && HlTypes.isToString(ev.type)) {
+						var f = ctx.allocTmp(HFun([], HBytes));
+						ctx.op(OInstanceClosure(f, HlTypes.allocFunPath(ctx, new Path([], "String"), "call_toString"), r));
+						ctx.op(ODynSet(r, ctx.allocString("__string"), f));
+					}
+				}
+				ctx.free(r);
+				return HlCasts.castTo(ctx, r, HlTypes.toType(ctx, e.type), e.pos);
+		}
+	}
+
+	// eval_expr's TFunction f
+	static function evalFunction(ctx:HlContext, e:TExpr, f:TFunc):Int {
+		var fid = HlTypes.allocFunctionName(ctx, "function#" + ctx.cfids.arr.length);
+		var capt = HlFunctions.makeFun(ctx, {cls: "", name: ""}, fid, f, null, ctx.m.mcaptured);
+		var r = ctx.allocTmp(HlTypes.toType(ctx, e.type));
+		if (capt == ctx.m.mcaptured) {
+			ctx.op(OInstanceClosure(r, fid, ctx.m.mcaptreg));
+		} else if (capt.cVars.length == 0) {
+			ctx.op(OStaticClosure(r, fid));
+		} else if (capt.cVars.length == 1 && !capt.cGroup) {
+			ctx.op(OInstanceClosure(r, fid, evalVar(ctx, capt.cVars[0])));
+		} else {
+			var env = ctx.allocTmp(capt.cType);
+			ctx.op(OEnumAlloc(env, 0));
+			ctx.hold(env);
+			for (i in 0...capt.cVars.length) ctx.op(OSetEnumField(env, i, evalVar(ctx, capt.cVars[i])));
+			ctx.free(env);
+			ctx.op(OInstanceClosure(r, fid, env));
+		}
+		return r;
+	}
+
+	// eval_expr's TArrayDecl el
+	static function evalArrayDecl(ctx:HlContext, e:TExpr, el:Array<TExpr>):Int {
+		var r = ctx.allocTmp(HlTypes.toType(ctx, e.type));
+		var et = switch TypeFunctions.follow(e.type) {
+			case TInst(_, [t]): HlTypes.toType(ctx, t);
+			case _: HlContext.die();
+		}
+		function arrayBytes(bits:Int, t:HlType, tname:String, getOp:(Int, Int, Int) -> HlOp) {
+			var b = ctx.allocTmp(HBytes);
+			var size = ctx.regInt(el.length << bits);
+			ctx.op(OCall1(b, HlTypes.allocStd(ctx, "alloc_bytes", [HI32], HBytes), size));
+			var idx = ctx.regInt(0);
+			ctx.hold(idx);
+			ctx.hold(b);
+			for (e in el) {
+				var r = HlCasts.evalTo(ctx, e, t);
+				ctx.hold(r);
+				ctx.op(getOp(b, ctx.shl(idx, bits), r));
+				ctx.free(r);
+				ctx.op(OIncr(idx));
+			}
+			ctx.free(b);
+			ctx.free(idx);
+			// the constructor's arguments right to left
+			var len = ctx.regInt(el.length);
+			ctx.op(OCall2(r, HlTypes.allocFunPath(ctx, new Path(["hl", "types"], "ArrayBase"), "alloc" + tname), b, len));
+		}
+		switch et {
+			case HI32:
+				arrayBytes(2, HI32, "I32", (b, i, r) -> OSetMem(b, i, r));
+			case HUI16:
+				arrayBytes(1, HI32, "UI16", (b, i, r) -> OSetUI16(b, i, r));
+			case HF32:
+				arrayBytes(2, HF32, "F32", (b, i, r) -> OSetMem(b, i, r));
+			case HF64:
+				arrayBytes(3, HF64, "F64", (b, i, r) -> OSetMem(b, i, r));
+			case _:
+				var at = HlTypes.isDynamic(et) ? et : HDyn;
+				var a = ctx.allocTmp(HArray);
+				var rt = ctx.allocTmp(HType);
+				ctx.op(OType(rt, at));
+				var size = ctx.regInt(el.length);
+				ctx.op(OCall2(a, HlTypes.allocStd(ctx, "alloc_array", [HType, HI32], HArray), rt, size));
+				ctx.hold(a);
+				for (i in 0...el.length) {
+					var r = HlCasts.evalTo(ctx, el[i], at);
+					ctx.op(OSetArray(a, ctx.regInt(i), r));
+				}
+				ctx.free(a);
+				var tmp = HlTypes.teq(et, HDyn) ? ctx.allocTmp(HlTypes.classType(ctx, ctx.arrayImpl.aobj, [], false)) : r;
+				ctx.op(OCall1(tmp, HlTypes.allocFunPath(ctx, new Path(["hl", "types"], "ArrayObj"), "alloc"), a));
+				if (tmp != r) {
+					var re = ctx.allocTmp(HBool);
+					ctx.op(OBool(re, true));
+					var ren = ctx.allocTmp(HRef(HBool));
+					ctx.op(ORef(ren, re));
+					ctx.op(OCall2(r, HlTypes.allocFunPath(ctx, new Path(["hl", "types"], "ArrayDyn"), "alloc"), tmp, ren));
+				}
+		}
+		return r;
+	}
+
+	// eval_expr's TSwitch's get_int: the case value as an Int, or null (OCaml raises Exit)
+	static function switchInt(e:TExpr):Null<Int> {
+		return switch e.expr {
+			case TConst(TInt(i)): i;
+			case _: null;
+		}
+	}
+
+	// eval_expr's TSwitch (en, cases, def)
+	static function evalSwitch(ctx:HlContext, e:TExpr, en:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Int {
+		var rt = HlTypes.toType(ctx, e.type);
+		var r = ctx.allocTmp(rt);
+		var isVoid = HlTypes.teq(rt, HVoid);
+		// the checks that raise Exit, made before anything is generated (they generate nothing)
+		var max = -1;
+		var ints = cases.length > 0;
+		for (c in cases) {
+			for (v in c.values) {
+				var i = switchInt(v);
+				if (i == null || i < 0) {
+					ints = false;
+					break;
+				}
+				if (i > max) max = i;
+			}
+			if (!ints) break;
+		}
+		if (max > 255) ints = false;
+		if (ints) {
+			var ridx = HlCasts.evalTo(ctx, en, HI32);
+			var indexes = [for (_ in 0...max + 1) 0];
+			ctx.op(OSwitch(ridx, indexes, 0));
+			var switchPos = ctx.currentPos();
+			if (def == null) {
+				if (!isVoid) ctx.setDefault(r);
+			} else {
+				var re = HlCasts.evalTo(ctx, def, rt);
+				if (!isVoid) ctx.op(OMov(r, re));
+			}
+			// a prepended list in OCaml: here the head is the last element
+			var jends = [ctx.jump(i -> OJAlways(i))];
+			for (c in cases) {
+				for (v in c.values) indexes[switchInt(v)] = ctx.currentPos() - switchPos;
+				var re = HlCasts.evalTo(ctx, c.expr, rt);
+				if (!isVoid) ctx.op(OMov(r, re));
+				jends.push(ctx.jump(i -> OJAlways(i)));
+			}
+			ctx.setOp(switchPos - 1, OSwitch(ridx, indexes, ctx.currentPos() - switchPos));
+			var i = jends.length;
+			while (i > 0) jends[--i]();
+		} else {
+			// a prepended list in OCaml: here the head is the last element
+			var jends:Array<Void->Void> = [];
+			var rvalue = evalExpr(ctx, en);
+			function loop(c:TSwitchCase):Void->Void {
+				ctx.hold(rvalue);
+				var ok = [for (v in c.values) {
+					var ct = HlTypes.commonType(ctx, en, v, true, v.pos);
+					switch [v.expr, ct] {
+						case [TConst(TString(str)), HObj({pname: "String"})]:
+							var jnull = ctx.jump(n -> OJNull(rvalue, n));
+
+							// compare len
+							var rlen = ctx.allocTmp(HI32);
+							ctx.op(OField(rlen, rvalue, 1));
+							ctx.hold(rlen);
+							var u = HlTypes.toUtf8(str, v.pos);
+							var rlen2 = ctx.regInt(u.count);
+							var jdiff = ctx.jump(n -> OJNotEq(rlen, rlen2, n));
+							ctx.free(rlen);
+
+							// compare data
+							var rbytes = ctx.allocTmp(HBytes);
+							ctx.op(OField(rbytes, rvalue, 0));
+							ctx.hold(rbytes);
+							var rbytes2 = ctx.allocTmp(HBytes);
+							ctx.op(OString(rbytes2, ctx.allocString(u.s)));
+							var result = ctx.allocTmp(HI32);
+							ctx.op(OCall3(result, HlTypes.allocStd(ctx, "string_compare", [HBytes, HBytes, HI32], HI32), rbytes, rbytes2, rlen));
+							ctx.free(rbytes);
+
+							ctx.hold(result);
+							var zero = ctx.regInt(0);
+							var jok = ctx.jump(n -> OJEq(result, zero, n));
+							ctx.free(result);
+
+							jnull();
+							jdiff();
+							jok;
+						case _:
+							var r = HlCasts.evalTo(ctx, v, ct);
+							ctx.jump(n -> OJEq(r, rvalue, n));
+					}
+				}];
+				ctx.free(rvalue);
+				return () -> {
+					for (f in ok) f();
+					var re = HlCasts.evalTo(ctx, c.expr, rt);
+					if (!isVoid) ctx.op(OMov(r, re));
+					jends.push(ctx.jump(n -> OJAlways(n)));
+				};
+			}
+			var all = [for (c in cases) loop(c)];
+			if (def == null) {
+				if (!isVoid) ctx.op(ONull(r));
+			} else {
+				var rdef = HlCasts.evalTo(ctx, def, rt);
+				if (!isVoid) ctx.op(OMov(r, rdef));
+			}
+			jends.push(ctx.jump(n -> OJAlways(n)));
+			for (f in all) f();
+			var i = jends.length;
+			while (i > 0) jends[--i]();
+		}
+		return r;
 	}
 
 	// eval_expr's TBinop's binop: the op itself, on registers already evaluated
@@ -732,8 +1043,18 @@ class HlExpr {
 						ctx.pushOp(OMov(l, r));
 						ctx.addAssign(v);
 						return r;
-					case _:
-						return unported(ctx, "compound assignment", e);
+					case acc:
+						return HlAssign.genAssignOp(ctx, acc, e1, function(r) {
+							ctx.hold(r);
+							var b = if (bop2 == OpAdd && HlTypes.isString(ctx.rtype(r))) {
+								HlCasts.toString(ctx, evalExpr(ctx, e2), e2.pos);
+							} else {
+								HlCasts.evalTo(ctx, e2, ctx.rtype(r));
+							}
+							ctx.free(r);
+							binop(ctx, e, bop, e1, e2, r, r, b);
+							return r;
+						});
 				}
 			case OpInterval | OpArrow | OpIn | OpNullCoal:
 				return HlContext.die();
@@ -753,8 +1074,36 @@ class HlExpr {
 				incrDecr(ctx, uop, r);
 				ctx.free(r2);
 				r2;
-			case _:
-				unported(ctx, "increment of a non-local", e);
+			case [acc, _]:
+				var ret = 0;
+				switch acc {
+					case AArray(a, _, _, idx):
+						ctx.hold(a);
+						ctx.hold(idx);
+					case _:
+				}
+				HlAssign.genAssignOp(ctx, acc, v, function(r) {
+					if (fix == Prefix) {
+						ret = r;
+					} else {
+						ctx.hold(r);
+						var tmp = ctx.allocTmp(ctx.rtype(r));
+						ctx.free(r);
+						ctx.op(OMov(tmp, r));
+						ret = tmp;
+					}
+					ctx.hold(ret);
+					incrDecr(ctx, uop, r);
+					return r;
+				});
+				ctx.free(ret);
+				switch acc {
+					case AArray(a, _, _, idx):
+						ctx.free(a);
+						ctx.free(idx);
+					case _:
+				}
+				ret;
 		}
 	}
 

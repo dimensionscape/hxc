@@ -1272,7 +1272,9 @@ class Operators {
 			Calls.forceFieldType(setterCf);
 			stmts.push(Calls.accessorCallResult(fa, Calls.makeCall(ctx, setExpr, [er, Typer.castOrUnify(ctx, retOf(getterCf), newv, p)], retOf(setterCf), p)));
 			stmts.push(epost);
-			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			// value_reference#to_texpr_el: the block is wrapped in a :mergeBlock meta
+			var block = TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
 		Calls.forceFieldType(setterCf);
@@ -1314,7 +1316,9 @@ class Operators {
 			var newv = toTexpr(makeBinop(ctx, binop, eLhs, one, false, withType, p));
 			stmts.push(accessorWriteOn(ctx, er, fa, newv, p));
 			stmts.push(epost);
-			return TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			// value_reference#to_texpr_el: the block is wrapped in a :mergeBlock meta
+			var block = TypeFunctions.mk(TBlock(stmts), epost.type, p);
+			return TypeFunctions.mk(TMeta({name: ":mergeBlock", params: [], pos: Position.nullPos}, block), block.type, p);
 		}
 		var newv = toTexpr(makeBinop(ctx, binop, readVal, one, false, withType, p));
 		var setCall = accessorWriteOn(ctx, er, fa, newv, p);

@@ -11,7 +11,7 @@
 	"anon-dynamic": "== out.hl 57155 63132ce4ac02474a33160f25c373cb92",
 	"arrays": "== out.hl 58446 2e03a631694e17bb932f1495578cf5f3",
 	"enums-switch": "== out.hl 58180 d6514f0f6fdac6fb1ce9ff4115f80b68",
-	"compound-assign": "== out.hl 58129 6bab476f535537b3ef4cb3c92bdc6811",
+	"compound-assign": "== out.hl 58261 c73c5986b78c406f96553a1297b32cb8",
 	"interfaces-many": "== out.hl 57999 13d5981b5ced25df7d02bd41c6aba533",
 	"std-downcast": "== out.hl 57575 361f6f1dba74c60b99d0dd26121073ab\nP.hx:35: characters 12-32 : Warning : (WDeprecated) Std.instance() is deprecated. Use Std.downcast() instead."
 }
