@@ -1746,6 +1746,9 @@ class Compiler {
 						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
 						tGen();
 						dotnetWritten = true;
+					} else if (platform == Hl) {
+						// The log line, the timer, the old output's removal and fix_overrides are in the generator.
+						hxc.codegen.hl.HlGenerate.generate(ctx);
 					}
 				}
 			}
