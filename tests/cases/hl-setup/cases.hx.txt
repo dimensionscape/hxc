@@ -89,3 +89,23 @@ class P {
 		b.prop++;
 	}
 }
+
+--- typed-dump-absolute-path + --hl out.hl -D hl_no_opt -D dump -D absolute-path --macro Probe.after('dump/hl/P.dump')
+class P {
+	static function main() {
+		trace("where");
+	}
+}
+
+--- typed-dump-return-untyped + --hl out.hl -D hl_no_opt -D dump --macro Probe.after('dump/hl/P.dump')
+class P {
+	static function store(b:hl.Bytes, v:Int):Void {
+		return untyped $bseti32(b, 0, v);
+	}
+
+	static function main() {
+		var b = new hl.Bytes(4);
+		store(b, 3);
+		Sys.println(b.getI32(0));
+	}
+}

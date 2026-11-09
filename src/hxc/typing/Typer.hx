@@ -6898,7 +6898,10 @@ class Typer {
 				// unannotated arrow whose return mono that branch binds), so re-check here, not only up
 				// front. `return null` is exempt: it stays a type error ("Cannot return null from
 				// Void-function"), handled by the value path below.
-				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))) {
+				// An open monomorph (`return untyped $setref(...)` in an inline Void function) is unified with
+				// Void below, as typer.ml's cast_or_unify does.
+				if (isVoid(TypeFunctions.follow(ctx.ret)) && !isVoid(TypeFunctions.follow(teRaw.type)) && !teRaw.expr.match(TConst(TNull))
+					&& !TypeFunctions.follow(teRaw.type).match(TMono(_))) {
 					var vt = monoOrDynamic(ctx, withType, p);
 					return TypeFunctions.mk(TBlock([teRaw, TypeFunctions.mk(TReturn(null), vt, p)]), vt, teRaw.pos);
 				}
