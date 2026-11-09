@@ -22,3 +22,162 @@ class P {
 	}
 }
 ===
+
+--- statics-strings
+class P {
+	static var count = 3;
+	static var ratio:Float = 1.5;
+	static var name = "hl";
+	static var flag:Bool;
+
+	static function twice(x:Int):Int {
+		return x * 2;
+	}
+
+	static function describe(i:Int, f:Float, b:Bool, s:String):String {
+		return s + ":" + i + "/" + f + "/" + b;
+	}
+
+	static function main() {
+		var a = 7;
+		var b = 3;
+		Sys.println(a + b);
+		Sys.println(a - b);
+		Sys.println(a * b);
+		Sys.println(a / b);
+		Sys.println(a % b);
+		Sys.println(a > b);
+		Sys.println(a <= b);
+		Sys.println(a == b);
+		Sys.println(a != b);
+		var f = 2.5;
+		Sys.println(f * ratio + a);
+		Sys.println(f < ratio);
+		flag = a > 5 && b < 5;
+		Sys.println(flag || false);
+		Sys.println(!flag);
+		Sys.println(-a);
+		Sys.println(twice(count));
+		Sys.println(Std.string(a) + Std.string(f));
+		Sys.println(name + " " + count + " " + ratio + " " + flag);
+		Sys.println(describe(a, f, flag, name));
+		var s = "x";
+		s += "y";
+		Sys.println(s == "xy");
+		Sys.println(s.length);
+	}
+}
+===
+
+--- classes
+class Base {
+	public var x:Int;
+	public var label(get, never):String;
+
+	public function new(x:Int) {
+		this.x = x;
+	}
+
+	function get_label():String {
+		return "base" + x;
+	}
+
+	public function value():Int {
+		return x;
+	}
+
+	public function add(n:Int):Int {
+		return value() + n;
+	}
+}
+
+class Child extends Base {
+	public var y:Float;
+
+	public function new(x:Int, y:Float) {
+		super(x + 1);
+		this.y = y;
+	}
+
+	override public function value():Int {
+		return super.value() * 10;
+	}
+}
+
+class P {
+	static function main() {
+		var b = new Base(2);
+		var c = new Child(3, 0.5);
+		Sys.println(b.value());
+		Sys.println(c.value());
+		Sys.println(c.add(5));
+		Sys.println(b.label);
+		Sys.println(c.label);
+		Sys.println(c.y + c.x);
+		var o:Base = c;
+		Sys.println(o.value());
+	}
+}
+===
+
+--- control-flow
+class P {
+	static function find(limit:Int):Int {
+		var i = 0;
+		while (true) {
+			if (i * i > limit) return i;
+			i++;
+		}
+		return -1;
+	}
+
+	static function main() {
+		var n = 10;
+		var total = 0;
+		for (i in 0...n) {
+			if (i % 2 == 0) continue;
+			if (i > 7) break;
+			total += i;
+		}
+		Sys.println(total);
+		var j = 0;
+		while (j < 5) {
+			j++;
+		}
+		Sys.println(j);
+		var k = 0;
+		do {
+			k += 3;
+		} while (k < 10);
+		Sys.println(k);
+		var count = 0;
+		for (a in 0...4) {
+			for (b in 0...a) {
+				count++;
+			}
+		}
+		Sys.println(count);
+		if (count > 5) {
+			Sys.println("big");
+		} else if (count > 2) {
+			Sys.println("medium");
+		} else {
+			Sys.println("small");
+		}
+		Sys.println(find(50));
+	}
+}
+===
+
+--- strings-unicode
+class P {
+	static function main() {
+		var s = "héllo €";
+		var e = "smile \u{1F600}!";
+		Sys.println(s);
+		Sys.println(e);
+		Sys.println(s.length);
+		Sys.println(e.length);
+	}
+}
+===
