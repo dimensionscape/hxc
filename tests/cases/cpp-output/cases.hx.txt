@@ -192,3 +192,67 @@ class P extends B {
 		new P();
 	}
 }
+
+--- property-compound-assign-only-statement + --macro Dump.after('cppout/src/P.cpp')
+class W {
+	public var left(get, set):Float;
+	var l:Float = 0;
+	function get_left() return l;
+	function set_left(v) return l = v;
+	public function new() {}
+}
+
+class P {
+	var w:W = new W();
+
+	function inc(d:Float) {
+		w.left += d;
+	}
+
+	function dec(d:Float)
+	{
+		w.left -= d;
+	}
+
+	public function new() {}
+
+	static function main() {
+		var p = new P();
+		p.inc(1);
+		p.dec(2);
+	}
+}
+
+--- property-compound-assign-in-branch + --macro Dump.after('cppout/src/P.cpp')
+class W {
+	public var left(get, set):Null<Float>;
+	var l:Float = 0;
+	function get_left():Null<Float> return l;
+	function set_left(v:Null<Float>):Null<Float> return l = v;
+	public var width(get, set):Null<Float>;
+	function get_width():Null<Float> return l;
+	function set_width(v:Null<Float>):Null<Float> return l = v;
+	public function new() {}
+}
+
+class P {
+	var w:W = new W();
+	var r:Bool = true;
+
+	function cond(d:Float) {
+		var prev = w.width;
+		if (r) {
+			w.width = 3;
+		} else if (d > 0) {
+			w.width = 4;
+			w.left += prev - w.width;
+			w.left += d;
+		}
+	}
+
+	public function new() {}
+
+	static function main() {
+		new P().cond(2);
+	}
+}

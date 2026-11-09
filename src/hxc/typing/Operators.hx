@@ -932,7 +932,6 @@ class Operators {
 			// `c.next.set_x(c.next.get_x() + 1)`, which would re-evaluate it once per accessor.
 			var recvVars:Array<TExpr> = [];
 			var er = vrGetExprAux(ctx, recvVars, 1, "fh", recv);
-			var tmp = {expr: er, init: recvVars.length > 0 ? recvVars[0] : null};
 			var readVal = accessorReadOn(ctx, er, fa);
 			var te2 = Typer.typeExpr(ctx, e2, WithTypeTools.value);
 			var br = makeBinop(ctx, sub, readVal, te2, true, withType, p);
@@ -942,7 +941,9 @@ class Operators {
 				case BinopSpecial(opCall, false): opCall;
 				case _: accessorWriteOn(ctx, er, fa, toTexpr(br), p);
 			};
-			return tmp.init == null ? tail : TypeFunctions.mk(TBlock([tmp.init, tail]), tail.type, p);
+			// The receiver bind and the write go out as a @:mergeBlock at the write's position, so in
+			// statement position they splice into the enclosing block like Haxe's value reference does.
+			return vrToTexpr(recvVars, tail);
 		}
 		// The target resolves with a write access so a (default, set) property dispatches through its
 		// setter for the write half.
