@@ -678,7 +678,7 @@ class Filters {
 
 	// Cpp only: interfaces have no super, so the first extended interface becomes superClass for
 	// efficiency and the remaining ones stay implemented. interfaces is prepend-built, so index 0 is
-	// the list head. Downstream cpp passes depend on the mutation: CppFixOverrides walks superClass,
+	// the list head. Downstream cpp passes depend on the mutation: FixOverrides walks superClass,
 	// which is how a sub-interface's redeclared method gets dropped.
 	public static function promoteFirstInterfaceToSuper(t:ModuleType):Void {
 		switch (t) {
