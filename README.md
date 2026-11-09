@@ -26,7 +26,7 @@ output.
 | Parser, typer, abstracts, `@:multiType`, static extensions, the Haxe 4 type system | Supported |
 | Macros: init, build and expression macros, `haxe.macro` APIs, `sys` in the macro world | Supported, in hxc's own eval interpreter |
 | `--js` | Supported |
-| `--cpp`, `--cppia` | Supported, using hxcpp to build |
+| `--cpp`, `--cppia` | Supported, using hxcpp to build. `--cpp` also works as khamake's `--haxe` (Kha): the generated C++ matches Kha's Haxe file for file, including `@:functionCode`/`@:functionTailCode`, `-D include-prefix` and `@:headerInclude`. `Build.xml`/`Options.txt` are still written, as Haxe 4.3.7 does (Kode's fork does not; kmake never reads them) |
 | `--interp`, `--run` | Supported |
 | `--xml`, `--json` type descriptions | Supported |
 | Compilation server | `--wait stdio` and `--server-connect`; listening on a TCP port is not yet supported |
