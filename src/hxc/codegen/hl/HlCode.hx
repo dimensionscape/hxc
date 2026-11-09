@@ -1,7 +1,5 @@
 package hxc.codegen.hl;
 
-import haxe.ds.ObjectMap;
-
 // The HashLink code model: a port of the types in Haxe 4.3.7's hlcode.ml (ttype and its protos, opcode,
 // fundecl, code). OCaml lists become arrays, tuples become anonymous structures, `string index` fields
 // keep their Int and (where hlcode.ml has the name too) the String beside it.
@@ -219,14 +217,16 @@ typedef HlCodeData = {
 }
 
 // The type table gather_types builds: every type once, in first-visit order, and the index of each. The
-// OCaml table compares types with polymorphic compare, which for protos, enums and virtuals is
-// physical equality first; here those three are keyed by object identity and everything else by shape.
+// OCaml table compares types with polymorphic compare: equal for the same physical value, otherwise field
+// by field. So an object or enum is its (pname, pid) / (ename, eid), a virtual is its fields compared
+// element by element (two separately built equal virtuals share one index), and everything else is
+// structural. The key string below encodes exactly that.
 class HlTypeTable {
 	public var types(default, null):Array<HlType> = [];
 
 	var index = new Map<String, Int>();
-	var ids = new ObjectMap<{}, Int>();
-	var nextId = 0;
+	var virtualStack:Array<HlVirtualProto> = [];
+	var enumStack:Array<HlEnumProto> = [];
 
 	// hlcode.ml: gather_types
 	public function new(code:HlCodeData) {
@@ -243,15 +243,6 @@ class HlTypeTable {
 		}
 	}
 
-	function id(o:{}):Int {
-		var i = ids.get(o);
-		if (i == null) {
-			i = nextId++;
-			ids.set(o, i);
-		}
-		return i;
-	}
-
 	function key(t:HlType):String {
 		return switch t {
 			case HVoid: "v";
@@ -266,15 +257,30 @@ class HlTypeTable {
 			case HDyn: "d";
 			case HFun(args, ret): "F(" + [for (a in args) key(a)].join(",") + ")" + key(ret);
 			case HMethod(args, ret): "M(" + [for (a in args) key(a)].join(",") + ")" + key(ret);
-			case HObj(p): "O" + id(p);
-			case HStruct(p): "S" + id(p);
+			case HObj(p): "O" + p.pid + ":" + p.pname;
+			case HStruct(p): "S" + p.pid + ":" + p.pname;
 			case HArray: "a";
 			case HType: "t";
 			case HRef(t): "R" + key(t);
-			case HVirtual(v): "V" + id(v);
+			case HVirtual(v):
+				// a virtual reaching itself is the same value, as with physical equality in OCaml
+				var depth = virtualStack.indexOf(v);
+				if (depth >= 0) return "V@" + depth;
+				virtualStack.push(v);
+				var k = "V(" + [for (f in v.vfields) f.name + ":" + f.nameIndex + ":" + key(f.t)].join(",") + ")";
+				virtualStack.pop();
+				k;
 			case HDynObj: "o";
 			case HAbstract(name, i): "A" + i + ":" + name;
-			case HEnum(e): "E" + id(e);
+			case HEnum(e) if (e.eid != 0): "E" + e.eid + ":" + e.ename;
+			case HEnum(e):
+				// eid 0 is not unique (the unnamed enums closures use), so compare the rest too
+				var depth = enumStack.indexOf(e);
+				if (depth >= 0) return "E@" + depth;
+				enumStack.push(e);
+				var k = "E0(" + e.eglobal + ":" + [for (f in e.efields) f.name + ":" + f.nameIndex + ":" + [for (t in f.t) key(t)].join("+")].join(",") + ")";
+				enumStack.pop();
+				k;
 			case HNull(t): "N" + key(t);
 			case HPacked(t): "P" + key(t);
 		}

@@ -1,5 +1,6 @@
 import hxc.codegen.hl.HlDump;
 import hxc.codegen.hl.HlWriter;
+import hxc.codegen.hl.HlCode;
 import sys.io.File;
 
 // Reads a .hl file Haxe wrote, writes it back with HlWriter and compares the bytes; with a -D dump text
@@ -22,7 +23,25 @@ class HlRoundTrip {
 		return names;
 	}
 
+	// Two separately built but equal virtuals get one type index, as with OCaml's structural compare.
+	static function checkEqualVirtualsShareIndex():Void {
+		function virt():HlType return HVirtual({vfields: [{name: "a", nameIndex: 0, t: HI32}], vindex: ["a" => 0]});
+		var other = HVirtual({vfields: [{name: "b", nameIndex: 1, t: HI32}], vindex: ["b" => 0]});
+		var code:HlCodeData = {
+			version: 4, entrypoint: 0, strings: [], ints: [], floats: [], bytes: [],
+			globals: [virt(), other, virt()], natives: [], functions: [], debugfiles: [], constants: []
+		};
+		var table = new HlTypeTable(code);
+		var i0 = table.indexOf(code.globals[0]), i1 = table.indexOf(code.globals[1]), i2 = table.indexOf(code.globals[2]);
+		if (i0 == null || i0 != i2 || i0 == i1) {
+			Sys.println("virtual check failed: " + i0 + " " + i1 + " " + i2);
+			Sys.exit(1);
+		}
+		Sys.println("virtual check ok");
+	}
+
 	static function main():Void {
+		checkEqualVirtualsShareIndex();
 		var args = Sys.args();
 		if (args.length < 1) {
 			Sys.println("usage: HlRoundTrip <file.hl> [<hlcode.txt>]");
