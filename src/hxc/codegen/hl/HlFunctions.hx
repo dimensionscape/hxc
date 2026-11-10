@@ -337,8 +337,17 @@ class HlFunctions {
 		};
 		ctx.m = old;
 		ctx.definedFuns.set(fidx, true);
-		// the optimiser (Hlopt) is Plan 2; HlGenerate.generate refuses to run without hl_no_opt
-		ctx.cfunctions.push(hlf);
+		var f = if (ctx.optimize && (genContent == null || name.cls != "" || name.name != "")) {
+			var t = hxc.core.Timer.timer(["generate", "hl", "opt"]);
+			var dumpOut = ctx.dumpOut;
+			var f = HlOpt.optimize(dumpOut == null ? null : line -> {
+				dumpOut.add(line);
+				dumpOut.add("\n");
+			}, i -> ctx.cstrings.arr[i], hlf);
+			t();
+			f;
+		} else hlf;
+		ctx.cfunctions.push(f);
 		return capt;
 	}
 }

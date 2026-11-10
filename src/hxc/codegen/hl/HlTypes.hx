@@ -61,11 +61,8 @@ class HlTypes {
 	}
 
 	// hlcode.ml: is_dynamic
-	public static function isDynamic(t:HlType):Bool {
-		return switch t {
-			case HDyn | HFun(_) | HObj(_) | HArray | HVirtual(_) | HDynObj | HNull(_) | HEnum(_): true;
-			case _: false;
-		}
+	public static inline function isDynamic(t:HlType):Bool {
+		return HlCodeUtils.isDynamic(t);
 	}
 
 	// hlcode.ml: tsame

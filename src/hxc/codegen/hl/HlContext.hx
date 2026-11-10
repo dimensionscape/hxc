@@ -55,8 +55,10 @@ class HlMethodContext {
 	public var mhasthis:Bool;
 	// a list in OCaml; only membership and iteration matter
 	public var mdeclared:Array<Int> = [];
-	// keyed by HlTypes.typeKey
-	public var mallocs:Map<String, HlAllocator> = new Map();
+	// A PMap under OCaml's polymorphic compare in genhl.ml: keyed as HlTypeTable keys the type table (the
+	// unfolding cut at a fixed depth), the types under one key told apart by HlTypeTable.same. So a
+	// recursive virtual finds the allocator of any other virtual it unfolds the same as.
+	public var mallocs:Map<String, Array<{t:HlType, a:HlAllocator}>> = new Map();
 	public var mcaptured:HlMethodCapture;
 	// prepended lists in OCaml, kept here in the order they were added
 	public var mcontinues:Array<Int->Void> = [];
@@ -90,6 +92,8 @@ class HlContext {
 	public var cfunctions:Array<HlFunction> = [];
 	public var cconstants:HlLookup<{global:Int, fields:Array<Int>}> = new HlLookup();
 	public var optimize:Bool;
+	// genhl.ml: dump_out, the text of dump/hlopt.txt; set when -D dump is
+	public var dumpOut:Null<StringBuf>;
 	// (name, path) of each overridden field
 	public var overrides:Map<String, Bool> = new Map();
 	public var definedFuns:Map<Int, Bool> = new Map();
@@ -211,15 +215,25 @@ class HlContext {
 		return rid;
 	}
 
+	// `PMap.find t ctx.m.mallocs`: null for Not_found; with `create`, adds an empty allocator for t then.
+	static function findAllocator(ctx:HlContext, t:HlType, create:Bool):Null<HlAllocator> {
+		var k = HlTypeTable.key(t, 0);
+		var bucket = ctx.m.mallocs.get(k);
+		if (bucket == null) {
+			if (!create) return null;
+			ctx.m.mallocs.set(k, bucket = []);
+		}
+		for (e in bucket) if (HlTypeTable.same(e.t, t, [])) return e.a;
+		if (!create) return null;
+		var a:HlAllocator = {aAll: [], aHold: []};
+		bucket.push({t: t, a: a});
+		return a;
+	}
+
 	// genhl.ml: alloc_tmp
 	public static function allocTmp(ctx:HlContext, t:HlType):Int {
 		if (!ctx.optimize) return allocFresh(ctx, t);
-		var k = HlTypes.typeKey(t);
-		var a = ctx.m.mallocs.get(k);
-		if (a == null) {
-			a = {aAll: [], aHold: []};
-			ctx.m.mallocs.set(k, a);
-		}
+		var a = findAllocator(ctx, t, true);
 		if (a.aAll.length == 0) {
 			var r = allocFresh(ctx, t);
 			a.aAll = [r];
@@ -241,7 +255,8 @@ class HlContext {
 	// genhl.ml: hold
 	public static function hold(ctx:HlContext, r:Int):Void {
 		if (!ctx.optimize) return;
-		var a = ctx.m.mallocs.get(HlTypes.typeKey(rtype(ctx, r)));
+		var a = findAllocator(ctx, rtype(ctx, r), false);
+		if (a == null) die();
 		var i = a.aAll.indexOf(r);
 		if (i >= 0) a.aAll.splice(i, 1) else if (a.aHold.indexOf(r) < 0) die();
 		a.aHold.unshift(r);
@@ -250,7 +265,8 @@ class HlContext {
 	// genhl.ml: free
 	public static function free(ctx:HlContext, r:Int):Void {
 		if (!ctx.optimize) return;
-		var a = ctx.m.mallocs.get(HlTypes.typeKey(rtype(ctx, r)));
+		var a = findAllocator(ctx, rtype(ctx, r), false);
+		if (a == null) die();
 		var i = a.aHold.indexOf(r);
 		if (i < 0) die();
 		a.aHold.splice(i, 1);
