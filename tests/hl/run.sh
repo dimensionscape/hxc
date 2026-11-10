@@ -12,6 +12,8 @@
 # h.hl and x.hl in src/: Haxe's build must exit 0 (else the case itself is broken), and both must print the
 # same and exit the same (else `runs differently`). With the bytes already identical, that last check can
 # only catch a crash or a program that does not run deterministically.
+# A case whose extra arguments have `-D dump` also compares dump/hlopt.txt (the first hxc compile's against
+# Haxe's, moved aside like the .hl): a difference, or either file missing, fails the case.
 # --case runs the cases whose names match it, a shell pattern like `trace-*`. Cases run -j at a time
 # (default $HXC_TEST_JOBS, or 4) and report in case order. Case directories go under $HXC_TEST_TMP, by
 # default tests/hl/tmp (gitignored), and are kept for a failed case.
@@ -85,6 +87,8 @@ run_hl() {
 # Runs case $1 (extra args $2, source $3, module $5) in directory $4 and prints its report line(s).
 run_case() {
 	local name="$1" extra="$2" source="$3" d="$4" module="$5" problem="" hcode=0 xcode=0 ycode=0 hout xout
+	local dumped=0
+	case " $extra " in *" -D dump "*) dumped=1 ;; esac
 	local file="$d/src/${module//.//}.hx" src="$(native "$d/src")"
 	mkdir -p "$d/src"
 	cp -R "$root/tests/cases/$family/fixture/." "$d/src/"
@@ -93,8 +97,10 @@ run_case() {
 	set -f
 	hout="$("$haxe" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || hcode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/h.hl"
+	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/h.opt.txt"
 	xout="$(timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra 2>&1)" || xcode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/x.hl"
+	[ $dumped = 1 ] && [ -f "$d/src/dump/hlopt.txt" ] && mv "$d/src/dump/hlopt.txt" "$d/x.opt.txt"
 	timeout -k 5 300 "$compiler" --cwd "$src" "${cargs[@]}" --main "$module" $extra > /dev/null 2>&1 || ycode=$?
 	[ -f "$d/src/out.hl" ] && mv "$d/src/out.hl" "$d/y.hl"
 	set +f
@@ -108,6 +114,10 @@ run_case() {
 		problem="nondeterministic: x.hl differs from y.hl"
 	elif ! cmp -s "$d/x.hl" "$d/h.hl"; then
 		problem="differs from Haxe; see tools/hl-compare.sh"
+	elif [ $dumped = 1 ] && { [ ! -f "$d/h.opt.txt" ] || [ ! -f "$d/x.opt.txt" ]; }; then
+		problem="-D dump did not write dump/hlopt.txt in both$([ -f "$d/h.opt.txt" ] || echo ' (Haxe missing)')$([ -f "$d/x.opt.txt" ] || echo ' (hxc missing)')"
+	elif [ $dumped = 1 ] && ! cmp -s "$d/x.opt.txt" "$d/h.opt.txt"; then
+		problem="dump/hlopt.txt differs from Haxe; see HL_OPT=1 tools/hl-compare.sh"
 	else
 		run_hl "$d/src" ../h.hl
 		hout="$ran"

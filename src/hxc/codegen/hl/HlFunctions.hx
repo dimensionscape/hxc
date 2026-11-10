@@ -341,8 +341,7 @@ class HlFunctions {
 			var t = hxc.core.Timer.timer(["generate", "hl", "opt"]);
 			var dumpOut = ctx.dumpOut;
 			var f = HlOpt.optimize(dumpOut == null ? null : line -> {
-				dumpOut.add(line);
-				dumpOut.add("\n");
+				dumpOut.writeString(line + "\n");
 			}, i -> ctx.cstrings.arr[i], hlf);
 			t();
 			f;

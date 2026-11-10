@@ -92,8 +92,9 @@ class HlContext {
 	public var cfunctions:Array<HlFunction> = [];
 	public var cconstants:HlLookup<{global:Int, fields:Array<Int>}> = new HlLookup();
 	public var optimize:Bool;
-	// genhl.ml: dump_out, the text of dump/hlopt.txt; set when -D dump is
-	public var dumpOut:Null<StringBuf>;
+	// genhl.ml: dump_out, dump/hlopt.txt opened in create_context and written as each function is optimised;
+	// set when -D dump is
+	public var dumpOut:Null<sys.io.FileOutput>;
 	// (name, path) of each overridden field
 	public var overrides:Map<String, Bool> = new Map();
 	public var definedFuns:Map<Int, Bool> = new Map();
