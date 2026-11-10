@@ -234,7 +234,7 @@ class EvalEmitter {
 			// The enum index: the value is decoded as an enum value.
 			case TEnumIndex(e1):
 				switch (eval(ctx, e1)) {
-					case VEnumValue(ev): VInt(ev.eindex);
+					case VEnumValue(ev): hxc.eval.EvalValue.EvalValueTools.vint(ev.eindex);
 					case v: EvalStdLib.unexpectedValueP(ctx, v, "enum value", e1.pos);
 				}
 			case _: EvalExceptions.excString(ctx, "Unsupported expression in eval: " + Std.string(e.expr).split("(")[0], e.pos);
@@ -358,7 +358,7 @@ class EvalEmitter {
 
 	static function evalConst(c:TConstant):EvalValue {
 		return switch (c) {
-			case TInt(i): VInt(i);
+			case TInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case TFloat(s): VFloat(hxc.core.Numeric.parseFloatLit(s));
 			// The compiler's string as the lexer left it, as UTF-8 bytes (EvalString.createUnknown).
 			case TString(s): hxc.eval.EvalString.EvalString.vOfText(s);
@@ -424,7 +424,7 @@ class EvalEmitter {
 
 	static function fieldKey(fa:TFieldAccess):Int {
 		return switch (fa) {
-			case FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf): EvalHash.hash(cf.name);
+			case FStatic(_, cf) | FInstance(_, _, cf) | FAnon(cf) | FClosure(_, cf): EvalHash.fieldHash(cf);
 			case FEnum(_, ef): EvalHash.hash(ef.name);
 			case FDynamic(s): EvalHash.hash(s);
 		};
@@ -516,7 +516,7 @@ class EvalEmitter {
 			case TField(_, FStatic(c, cf)):
 				var proto = ensureStaticProto(ctx, c, lhs.pos);
 				var value = eval(ctx, ve);
-				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = value;
+				proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), lhs.pos)] = value;
 				return value;
 			// A class's instance field write takes an instance, decoded before the value is evaluated.
 			// Bytes' length has its own write.
@@ -569,13 +569,13 @@ class EvalEmitter {
 			// Negation: anything but a number is "Invalid operation".
 			case Neg:
 				switch (eval(ctx, e1)) {
-					case VInt(i): VInt(-i);
+					case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(-i);
 					case VFloat(f): VFloat(-f);
 					case _: EvalExceptions.excString(ctx, "Invalid operation", p);
 				}
 			// ~x is -1 - x.
 			case NegBits:
-				binopValue(ctx, OpSub, VInt(-1), eval(ctx, e1), p);
+				binopValue(ctx, OpSub, hxc.eval.EvalValue.EvalValueTools.vint(-1), eval(ctx, e1), p);
 			// ++ on a local no closure captures increments in place; every other increment and every
 			// decrement is a compound assignment with 1.
 			case Increment | Decrement:
@@ -585,7 +585,7 @@ class EvalEmitter {
 						var s = localSlot(fe, v);
 						var old = fe.locals[s];
 						var next = switch (old) {
-							case VInt(i): VInt(i + 1);
+							case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i + 1);
 							case VFloat(f): VFloat(f + 1);
 							case _: EvalStdLib.unexpectedValueP(ctx, old, "number", e1.pos);
 						};
@@ -607,16 +607,16 @@ class EvalEmitter {
 				var fe = localFrame(EvalContext.getEval(ctx).env, v);
 				var s = localSlot(fe, v);
 				var v1 = fe.locals[s];
-				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, v1, v2, p);
 				fe.locals[s] = r;
 				return prefix ? r : v1;
 			// A read-modify-write of a static field, through its prototype slot.
 			case TField(_, FStatic(c, cf)):
 				var proto = ensureStaticProto(ctx, c, p);
-				var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+				var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), p);
 				var vf = proto.pfields[idx];
-				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, vf, v2, p);
 				proto.pfields[idx] = r;
 				return prefix ? r : vf;
@@ -629,7 +629,7 @@ class EvalEmitter {
 				}
 				var name = fieldKey(fa);
 				var vf = EvalField.field(ctx, obj, name);
-				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, vf, v2, p);
 				EvalField.setField(ctx, obj, name, r, p);
 				return prefix ? r : vf;
@@ -637,7 +637,7 @@ class EvalEmitter {
 				var obj = eval(ctx, fe);
 				var name = fieldKey(fa);
 				var vf = EvalField.field(ctx, obj, name);
-				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, vf, v2, p);
 				EvalField.setField(ctx, obj, name, r, p);
 				return prefix ? r : vf;
@@ -648,7 +648,7 @@ class EvalEmitter {
 					var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, idxE), idxE.pos);
 					if (idx < 0) EvalExceptions.excString(ctx, "Negative vector index: " + idx, idxE.pos);
 					var v = vecElemGet(vv, idx);
-					var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+					var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 					var r = binopValue(ctx, op, v, v2, p);
 					vecElemSet(vv, idx, r);
 					return prefix ? r : v;
@@ -657,7 +657,7 @@ class EvalEmitter {
 				var idx = EvalStdLib.decodeIntP(ctx, eval(ctx, idxE), idxE.pos);
 				if (idx < 0) EvalExceptions.excString(ctx, "Negative array index: " + idx, idxE.pos);
 				var v = arrayElemGet(va, idx);
-				var v2 = operand == null ? VInt(1) : eval(ctx, operand);
+				var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : eval(ctx, operand);
 				var r = binopValue(ctx, op, v, v2, p);
 				arrayElemSet(va, idx, r);
 				return prefix ? r : v;
@@ -768,10 +768,10 @@ class EvalEmitter {
 			case FStatic(c, cf):
 				// A static field missing from the prototype is a builtin's, or a gap that surfaces as a
 				// catchable interpreted exception rather than a host NotFound aborting the whole run.
-				try EvalField.protoFieldRaise(ensureStaticProto(ctx, c, p), EvalHash.hash(cf.name))
+				try EvalField.protoFieldRaise(ensureStaticProto(ctx, c, p), EvalHash.fieldHash(cf))
 				catch (_:hxc.core.NotFound) {
 					var builtins = ctx.builtins.staticBuiltins.get(EvalHash.pathHash(c.path));
-					if (builtins != null) for (b in builtins) if (b.name == EvalHash.hash(cf.name)) return b.v;
+					if (builtins != null) for (b in builtins) if (b.name == EvalHash.fieldHash(cf)) return b.v;
 					EvalExceptions.excString(ctx, "hxc: " + c.path.name + "." + cf.name + " is not available (compiler typing gap)", p);
 				}
 			case FEnum(en, ef):
@@ -783,14 +783,14 @@ class EvalEmitter {
 				switch (recv) {
 					case VNull: VNull;
 					case _:
-						EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+						EvalField.dynamicField(ctx, recv, EvalHash.fieldHash(cf));
 				}
 			// Array, eval.Vector and haxe.io.Bytes lengths are their own reads.
 			case FInstance(c, _, cf) if (cf.name == "length" && (isArrayClass(c) || isEvalVector(c) || isBytesClass(c))):
 				var recv = pre != null ? pre : eval(ctx, e1);
-				if (isArrayClass(c)) VInt(asArray(ctx, recv, e1.pos).alength)
-				else if (isEvalVector(c)) VInt(asVector(ctx, recv, e1.pos).length)
-				else VInt(asBytesLength(ctx, recv, e1.pos));
+				if (isArrayClass(c)) hxc.eval.EvalValue.EvalValueTools.vint(asArray(ctx, recv, e1.pos).alength)
+				else if (isEvalVector(c)) hxc.eval.EvalValue.EvalValueTools.vint(asVector(ctx, recv, e1.pos).length)
+				else hxc.eval.EvalValue.EvalValueTools.vint(asBytesLength(ctx, recv, e1.pos));
 			case FInstance(c, _, cf):
 				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
@@ -812,18 +812,18 @@ class EvalEmitter {
 					case _:
 						switch (cf.kind) {
 							case Method(_):
-								EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+								EvalField.dynamicField(ctx, recv, EvalHash.fieldHash(cf));
 							// A class's field reads as an instance field, which takes an instance, answers
 							// a string's length whatever the field, and finds anything else unexpected;
 							// `this` has its own read, whose decode is the plain unexpected-value error.
 							case Var(_) if (!TypeFunctions.hasClassFlag(c, CInterface) && !recv.match(VInstance(_))):
 								switch (recv) {
 									case _ if (e1.expr.match(TConst(TThis))): EvalExceptions.unexpectedValue(ctx, recv, "instance");
-									case VString(s): VInt(s.slength);
+									case VString(s): hxc.eval.EvalValue.EvalValueTools.vint(s.slength);
 									case _: EvalStdLib.unexpectedValueP(ctx, recv, "instance", e1.pos);
 								}
 							case Var(_):
-								var v = EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+								var v = EvalField.field(ctx, recv, EvalHash.fieldHash(cf));
 								if (v == VNull && cf.name == "stack" && EvalStdLib.isOfTypePath(ctx, recv, EvalHash.keyHaxeException)) EvalField.field(ctx, recv, EvalHash.keyNativeStack) else v;
 						}
 				}
@@ -832,11 +832,11 @@ class EvalEmitter {
 				// (e.g. iterator via Iterable); on a plain anonymous object the field is a raw value.
 				var recv = pre != null ? pre : eval(ctx, e1);
 				switch (recv) {
-					case VObject(_): EvalField.field(ctx, recv, EvalHash.hash(cf.name));
+					case VObject(_): EvalField.field(ctx, recv, EvalHash.fieldHash(cf));
 					// A structure's field read raises on a null receiver.
 					case VNull: EvalExceptions.excString(ctx, "field access on null", e1.pos);
 					case _:
-						EvalField.dynamicField(ctx, recv, EvalHash.hash(cf.name));
+						EvalField.dynamicField(ctx, recv, EvalHash.fieldHash(cf));
 				}
 			case FDynamic(s):
 				EvalField.dynamicField(ctx, pre != null ? pre : eval(ctx, e1), EvalHash.hash(s));
@@ -901,7 +901,7 @@ class EvalEmitter {
 				var cf = switch (fa) { case FInstance(_, _, f) | FClosure(_, f): f; case _: null; };
 				if (c != null && cf != null) {
 					var proto = ctx.instancePrototypes.get(EvalHash.pathHash(c.path));
-					var m = superProtoMethod(proto, EvalHash.hash(cf.name));
+					var m = superProtoMethod(proto, EvalHash.fieldHash(cf));
 					var vthis = EvalContext.getEval(ctx).env.vthis;
 					// A super field call: the depth check, the arguments, and the call with no leave position
 					// recorded.
@@ -922,8 +922,8 @@ class EvalEmitter {
 				var s = EvalStdLib.decodeVString(ctx, eval(ctx, argExprs[0]));
 				var index = EvalStdLib.decodeIntP(ctx, eval(ctx, argExprs[1]), p);
 				// unsafeCodeAt reads with EvalString.charAt, unchecked.
-				if (cf.name == "unsafeCodeAt") return VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
-				return index < 0 || index >= s.slength ? VNull : VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
+				if (cf.name == "unsafeCodeAt") return hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
+				return index < 0 || index >= s.slength ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
 			case _:
 		}
 		checkStackDepth(ctx);
@@ -948,7 +948,7 @@ class EvalEmitter {
 						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_)] if (isProperMethod(cf)):
 						if (isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
 							var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
-							switch (try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound) VNull) {
+							switch (try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound) VNull) {
 								case VFunction(f, _): VFieldClosure(recv, f);
 								case m: m;
 							}
@@ -962,7 +962,7 @@ class EvalEmitter {
 								case VVector(_): ctx.vectorPrototype;
 								case _: EvalStdLib.unexpectedValueP(ctx, recv, "instance", p);
 							};
-							var m = try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound)
+							var m = try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound)
 								EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
 							switch (m) {
 								case VFunction(f, _): VFieldClosure(recv, f);
@@ -1375,7 +1375,7 @@ class EvalEmitter {
 						env.vthis = instVal;
 						var v = eval(ctx, cf.expr);
 						EvalContext.popEnvironment(ctx, env);
-						EvalField.setField(ctx, instVal, EvalHash.hash(cf.name), v, cls.pos);
+						EvalField.setField(ctx, instVal, EvalHash.fieldHash(cf), v, cls.pos);
 					case _:
 				}
 			}

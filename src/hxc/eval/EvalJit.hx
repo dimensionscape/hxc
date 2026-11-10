@@ -647,7 +647,7 @@ class JAssignStatic extends JNode {
 		if (pos != null) ev.currentPos = pos;
 		var proto = EvalEmitter.ensureStaticProto(ctx, cl, lhs.pos);
 		var v = value.run(ctx, ev);
-		proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), lhs.pos)] = v;
+		proto.pfields[EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), lhs.pos)] = v;
 		ev.currentPos = old;
 		return v;
 	}
@@ -772,7 +772,7 @@ class JRWLocal extends JNode {
 		var fe = slot >= 0 ? ev.env : EvalEmitter.localFrame(ev.env, v);
 		var s = slot >= 0 ? slot : EvalEmitter.localSlot(fe, v);
 		var v1 = fe.locals[s];
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, v1, v2, e.pos);
 		fe.locals[s] = r;
 		ev.currentPos = old;
@@ -802,9 +802,9 @@ class JRWStatic extends JNode {
 		if (pos != null) ev.currentPos = pos;
 		var p = e.pos;
 		var proto = EvalEmitter.ensureStaticProto(ctx, cl, p);
-		var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.hash(cf.name), p);
+		var idx = EvalContext.getProtoFieldIndex(proto, EvalHash.fieldHash(cf), p);
 		var vf = proto.pfields[idx];
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, vf, v2, p);
 		proto.pfields[idx] = r;
 		ev.currentPos = old;
@@ -847,7 +847,7 @@ class JRWField extends JNode {
 		}
 		var name = EvalEmitter.fieldKey(fa);
 		var vf = EvalField.field(ctx, o, name);
-		var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+		var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 		var r = EvalEmitter.binopValue(ctx, op, vf, v2, p);
 		EvalField.setField(ctx, o, name, r, p);
 		ev.currentPos = old;
@@ -888,7 +888,7 @@ class JRWArray extends JNode {
 			var idx = EvalStdLib.decodeIntP(ctx, idxNode.run(ctx, ev), idxE.pos);
 			if (idx < 0) EvalExceptions.excString(ctx, "Negative vector index: " + idx, idxE.pos);
 			var v = EvalEmitter.vecElemGet(vv, idx);
-			var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+			var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 			var r = EvalEmitter.binopValue(ctx, op, v, v2, p);
 			EvalEmitter.vecElemSet(vv, idx, r);
 			result = prefix ? r : v;
@@ -897,7 +897,7 @@ class JRWArray extends JNode {
 			var idx = EvalStdLib.decodeIntP(ctx, idxNode.run(ctx, ev), idxE.pos);
 			if (idx < 0) EvalExceptions.excString(ctx, "Negative array index: " + idx, idxE.pos);
 			var v = EvalEmitter.arrayElemGet(va, idx);
-			var v2 = operand == null ? VInt(1) : operand.run(ctx, ev);
+			var v2 = operand == null ? hxc.eval.EvalValue.EvalValueTools.vint(1) : operand.run(ctx, ev);
 			var r = EvalEmitter.binopValue(ctx, op, v, v2, p);
 			EvalEmitter.arrayElemSet(va, idx, r);
 			result = prefix ? r : v;
@@ -940,7 +940,7 @@ class JNeg extends JNode {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		var r = switch (a.run(ctx, ev)) {
-			case VInt(i): VInt(-i);
+			case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(-i);
 			case VFloat(f): VFloat(-f);
 			case _: EvalExceptions.excString(ctx, "Invalid operation", e.pos);
 		};
@@ -962,7 +962,7 @@ class JNegBits extends JNode {
 	override public function run(ctx:EvalContext, ev:Eval):EvalValue {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
-		var r = EvalEmitter.binopValue(ctx, OpSub, VInt(-1), a.run(ctx, ev), e.pos);
+		var r = EvalEmitter.binopValue(ctx, OpSub, hxc.eval.EvalValue.EvalValueTools.vint(-1), a.run(ctx, ev), e.pos);
 		ev.currentPos = old;
 		return r;
 	}
@@ -991,7 +991,7 @@ class JIncLocal extends JNode {
 		var s = slot >= 0 ? slot : EvalEmitter.localSlot(fe, v);
 		var cur = fe.locals[s];
 		var next = switch (cur) {
-			case VInt(i): VInt(i + 1);
+			case VInt(i): hxc.eval.EvalValue.EvalValueTools.vint(i + 1);
 			case VFloat(f): VFloat(f + 1);
 			case _: EvalStdLib.unexpectedValueP(ctx, cur, "number", e1.pos);
 		};
@@ -1481,7 +1481,7 @@ class JField extends JNode {
 	function readVar(ctx:EvalContext, rv:EvalValue):EvalValue {
 		switch (rv) {
 			case VInstance(vi):
-				if (hash < 0) hash = EvalHash.hash(cf.name);
+				if (hash < 0) hash = EvalHash.fieldHash(cf);
 				var v:EvalValue;
 				if (vi.iproto == cacheProto) {
 					v = vi.ifields[cacheIdx];
@@ -1588,15 +1588,57 @@ class JCall extends JNode {
 	// The arguments' values from index `first` on, the array made at its size.
 	function evalArgsFrom(ctx:EvalContext, ev:Eval, first:Int):Array<EvalValue> {
 		var n = args.length;
+		// The small ones are made at their size in one go; the slots before `first` start null.
+		if (first == 0) switch (n) {
+			case 0: return [];
+			case 1: return [args[0].run(ctx, ev)];
+			case 2:
+				var a0 = args[0].run(ctx, ev);
+				return [a0, args[1].run(ctx, ev)];
+			case 3:
+				var a0 = args[0].run(ctx, ev);
+				var a1 = args[1].run(ctx, ev);
+				return [a0, a1, args[2].run(ctx, ev)];
+			case _:
+		} else if (first == 1) switch (n) {
+			case 0: return [null];
+			case 1: return [null, args[0].run(ctx, ev)];
+			case 2:
+				var a0 = args[0].run(ctx, ev);
+				return [null, a0, args[1].run(ctx, ev)];
+			case 3:
+				var a0 = args[0].run(ctx, ev);
+				var a1 = args[1].run(ctx, ev);
+				return [null, a0, a1, args[2].run(ctx, ev)];
+			case _:
+		}
 		var argv:Array<EvalValue> = [];
 		argv.resize(n + first);
 		for (i in 0...n) argv[i + first] = args[i].run(ctx, ev);
 		return argv;
 	}
 
+	// What the callee makes of the call, worked out on its first run: 0 a plain call, 1 `super(...)`, 2
+	// `super.f(...)`, 3 StringTools.fastCodeAt, 4 StringTools.unsafeCodeAt.
+	var site:Int = -1;
+	// Whether the leave position is recorded before the arguments (a callee that is not a proper method):
+	// 0 not yet known, 1 yes, 2 no.
+	var leaveFirstKnown:Int = 0;
+
+	function siteKind():Int {
+		return switch (callee.expr) {
+			case TConst(TSuper): 1;
+			case TField({expr: TConst(TSuper)}, _): 2;
+			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
+				cf.name == "unsafeCodeAt" ? 4 : 3;
+			case _: 0;
+		};
+	}
+
 	function call(ctx:EvalContext, ev:Eval):EvalValue {
 		var p = e.pos;
-		switch (callee.expr) {
+		if (site < 0) site = siteKind();
+		if (site == 1 || site == 2) switch (callee.expr) {
 			case TConst(TSuper):
 				// Super() checks the depth first; a native-backed parent's special super call records no leave
 				// position, an interpreted parent's is recorded after the arguments (callAt).
@@ -1640,7 +1682,7 @@ class JCall extends JNode {
 				};
 				if (c != null && cf != null) {
 					var proto = ctx.instancePrototypes.get(EvalHash.pathHash(c.path));
-					var m = EvalEmitter.superProtoMethod(proto, EvalHash.hash(cf.name));
+					var m = EvalEmitter.superProtoMethod(proto, EvalHash.fieldHash(cf));
 					var vthis = ev.env.vthis;
 					// A super field call: the depth check, the arguments, and the call with no leave position
 					// recorded.
@@ -1653,21 +1695,23 @@ class JCall extends JNode {
 				}
 			case _:
 		}
-		switch (callee.expr) {
-			// StringTools.fastCodeAt and unsafeCodeAt are intrinsics.
-			case TField(_, FStatic(c, cf)) if (argExprs.length == 2 && c.path.pack.length == 0 && c.path.name == "StringTools" && (cf.name == "fastCodeAt" || cf.name == "unsafeCodeAt")):
-				var s = EvalStdLib.decodeVString(ctx, args[0].run(ctx, ev));
-				var index = EvalStdLib.decodeIntP(ctx, args[1].run(ctx, ev), p);
-				if (cf.name == "unsafeCodeAt") return VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
-				return index < 0 || index >= s.slength ? VNull : VInt(hxc.eval.EvalString.EvalString.charAt(s, index));
-			case _:
+		// StringTools.fastCodeAt and unsafeCodeAt are intrinsics.
+		if (site >= 3) {
+			var s = EvalStdLib.decodeVString(ctx, args[0].run(ctx, ev));
+			var index = EvalStdLib.decodeIntP(ctx, args[1].run(ctx, ev), p);
+			if (site == 4) return hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
+			return index < 0 || index >= s.slength ? VNull : hxc.eval.EvalValue.EvalValueTools.vint(hxc.eval.EvalString.EvalString.charAt(s, index));
 		}
 		EvalJit.checkDepth(ctx, ev);
-		var leaveFirst = switch (callee.expr) {
-			case TField(_, FStatic(_, cf)): !EvalEmitter.isProperMethod(cf);
-			case TField(_, FInstance(_, _, cf)): !EvalEmitter.isProperMethod(cf);
-			case _: true;
-		};
+		if (leaveFirstKnown == 0) {
+			var lf = switch (callee.expr) {
+				case TField(_, FStatic(_, cf)): !EvalEmitter.isProperMethod(cf);
+				case TField(_, FInstance(_, _, cf)): !EvalEmitter.isProperMethod(cf);
+				case _: true;
+			};
+			leaveFirstKnown = lf ? 1 : 2;
+		}
+		var leaveFirst = leaveFirstKnown == 1;
 		// A method read off an instance is called with the receiver directly, without the bound-method
 		// value EvalField.dynamicField would make for it.
 		var direct:Null<VFunc> = null;
@@ -1682,7 +1726,7 @@ class JCall extends JNode {
 						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_)] if (EvalEmitter.isProperMethod(cf)):
 						if (EvalEmitter.isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
 							var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
-							switch (try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound) VNull) {
+							switch (try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound) VNull) {
 								case VFunction(f, _): VFieldClosure(recvValue, f);
 								case m: m;
 							}
@@ -1694,7 +1738,7 @@ class JCall extends JNode {
 								case VVector(_): ctx.vectorPrototype;
 								case _: EvalStdLib.unexpectedValueP(ctx, recvValue, "instance", p);
 							};
-							var m = try EvalField.protoFieldRaise(proto, EvalHash.hash(cf.name)) catch (_:hxc.core.NotFound)
+							var m = try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound)
 								EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
 							switch (m) {
 								case VFunction(f, _): VFieldClosure(recvValue, f);
@@ -1704,7 +1748,7 @@ class JCall extends JNode {
 					// EvalEmitter.evalField's read of a method on a receiver that is not null:
 					// EvalField.dynamicField.
 					case [FInstance(_, _, cf), _] if (cf.kind.match(Method(_))):
-						if (methodHash < 0) methodHash = EvalHash.hash(cf.name);
+						if (methodHash < 0) methodHash = EvalHash.fieldHash(cf);
 						var rv = EvalValueTools.vresolve(recvValue);
 						var cached:Null<VFunc> = null;
 						switch (rv) {
@@ -1754,13 +1798,15 @@ class JCall extends JNode {
 			argv[0] = directRecv;
 			return leaveFirst ? direct(argv) : EvalJit.callAt(ev, p, direct, argv);
 		}
-		var argv = evalArgs(ctx, ev);
 		if (trace == 0) {
 			trace = switch (callee.expr) {
 				case TField(_, FStatic(c, cf)) if (cf.name == "trace" && c.path.name == "Log" && c.path.pack.length == 1 && c.path.pack[0] == "haxe"): 1;
 				case _: 2;
 			};
 		}
+		// A bound method's arguments go in after a slot for its receiver.
+		var bound = trace != 1 && switch (fn) { case VFieldClosure(_, _): true; case _: false; };
+		var argv = evalArgsFrom(ctx, ev, bound ? 1 : 0);
 		if (trace == 1 && EvalEmitter.isEvalTarget(ctx)) {
 			if (argExprs.length > 0 && EvalEmitter.isUIntExpr(argExprs[0])) argv[0] = EvalEmitter.unsignedValue(argv[0]);
 			if (argExprs.length > 1) argv[1] = EvalEmitter.normalizeTraceValue(argExprs[1], argv[1]);
@@ -1768,7 +1814,7 @@ class JCall extends JNode {
 		return switch (fn) {
 			case VFunction(f, _): leaveFirst ? f(argv) : EvalJit.callAt(ev, p, f, argv);
 			case VFieldClosure(r, f):
-				argv.insert(0, r);
+				if (bound) argv[0] = r else argv.insert(0, r);
 				leaveFirst ? f(argv) : EvalJit.callAt(ev, p, f, argv);
 			// A macro's TLazy(f) is called to force the type.
 			case VInstance({ikind: ILazyType(_, get)}): get();
@@ -1907,7 +1953,7 @@ class JEnumIndex extends JNode {
 		var old = ev.currentPos;
 		if (pos != null) ev.currentPos = pos;
 		var r = switch (a.run(ctx, ev)) {
-			case VEnumValue(v): VInt(v.eindex);
+			case VEnumValue(v): hxc.eval.EvalValue.EvalValueTools.vint(v.eindex);
 			case v: EvalStdLib.unexpectedValueP(ctx, v, "enum value", e1.pos);
 		};
 		ev.currentPos = old;

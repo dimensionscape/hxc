@@ -62,7 +62,7 @@ class EvalMisc {
 
 	public static function opAdd(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
 		return switch [v1, v2] {
-			case [VInt(a), VInt(b)]: VInt(a + b);
+			case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a + b);
 			case [VFloat(a), VFloat(b)]: VFloat(a + b);
 			case [VInt(a), VFloat(b)]: VFloat(a + b);
 			case [VFloat(a), VInt(b)]: VFloat(a + b);
@@ -79,7 +79,7 @@ class EvalMisc {
 
 	public static function opSub(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
 		return switch [v1, v2] {
-			case [VInt(a), VInt(b)]: VInt(a - b);
+			case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a - b);
 			case [VFloat(a), VFloat(b)]: VFloat(a - b);
 			case [VInt(a), VFloat(b)]: VFloat(a - b);
 			case [VFloat(a), VInt(b)]: VFloat(a - b);
@@ -89,7 +89,7 @@ class EvalMisc {
 
 	public static function opMult(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
 		return switch [v1, v2] {
-			case [VInt(a), VInt(b)]: VInt(a * b);
+			case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a * b);
 			case [VFloat(a), VFloat(b)]: VFloat(a * b);
 			case [VInt(a), VFloat(b)]: VFloat(a * b);
 			case [VFloat(a), VInt(b)]: VFloat(a * b);
@@ -112,7 +112,7 @@ class EvalMisc {
 			// An Int remainder by zero is the interpreter's fixed NaN, and the minimum Int % -1 is 0 (a C++
 			// `%`
 			// there traps).
-			case [VInt(a), VInt(b)]: b == 0 ? VFloat(EvalStdLib.hostNan) : b == -1 ? VInt(0) : VInt(a % b);
+			case [VInt(a), VInt(b)]: b == 0 ? VFloat(EvalStdLib.hostNan) : b == -1 ? hxc.eval.EvalValue.EvalValueTools.vint(0) : hxc.eval.EvalValue.EvalValueTools.vint(a % b);
 			case [VFloat(a), VFloat(b)]: VFloat(a % b);
 			case [VInt(a), VFloat(b)]: VFloat(a % b);
 			case [VFloat(a), VInt(b)]: VFloat(a % b);
@@ -134,26 +134,26 @@ class EvalMisc {
 	}
 
 	public static function opAnd(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a & b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " & ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a & b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " & ", ""], [v1, v2], p); };
 	}
 
 	public static function opOr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a | b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " | ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a | b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " | ", ""], [v1, v2], p); };
 	}
 
 	public static function opXor(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a ^ b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " ^ ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a ^ b); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " ^ ", ""], [v1, v2], p); };
 	}
 
 	public static function opShl(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a << (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " << ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a << (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " << ", ""], [v1, v2], p); };
 	}
 
 	public static function opShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >> ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a >> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >> ", ""], [v1, v2], p); };
 	}
 
 	public static function opUShr(ctx:EvalContext, p:Position, v1:EvalValue, v2:EvalValue):EvalValue {
-		return switch [v1, v2] { case [VInt(a), VInt(b)]: VInt(a >>> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >>> ", ""], [v1, v2], p); };
+		return switch [v1, v2] { case [VInt(a), VInt(b)]: hxc.eval.EvalValue.EvalValueTools.vint(a >>> (b & 31)); case _: EvalExceptions.excValues(ctx, ["Invalid operation: ", " >>> ", ""], [v1, v2], p); };
 	}
 }

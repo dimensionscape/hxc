@@ -187,6 +187,8 @@ class TypeFields {
 		rows.sort(function(a, b) return a.t < b.t ? 1 : -1);
 		var o = Sys.stderr();
 		hxc.eval.EvalMacro.dumpRefStats();
+		hxc.eval.EvalMacro.dumpApiProf();
+		hxc.eval.EvalContext.dumpProf();
 		hxc.core.PerfCount.dump();
 		hxc.core.PerfCount.dumpExn();
 		hxc.core.NotFound.dumpSites();

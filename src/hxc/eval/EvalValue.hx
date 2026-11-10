@@ -102,6 +102,9 @@ class VString {
 	public var sstring:hxc.eval.EvalString.ByteString;
 	public var slength:Int;
 	public var soffsets:Null<Array<hxc.eval.EvalString.OffsetCursor>> = null;
+	// Whether every byte is below 0x80, worked out on first need (EvalString.isAscii): 0 not yet, 1 yes,
+	// 2 no. A string's bytes never change.
+	public var sascii:Int = 0;
 
 	public function new(sstring:hxc.eval.EvalString.ByteString, slength:Int) {
 		this.sstring = sstring;
@@ -267,7 +270,21 @@ class EvalValueTools {
 	public static final vfalse = VFalse;
 
 	public static inline function vbool(b:Bool):EvalValue return b ? VTrue : VFalse;
-	public static inline function vint(i:Int):EvalValue return VInt(i);
+	// An Int value. Each VInt is a heap object on hxcpp, so the small ones are made once and shared: values
+	// compare structurally (EvalValueTools.equals, hxcpp's enum ==) and nothing keys on a VInt's identity.
+	static inline var INT_CACHE_MIN = -1024;
+	static inline var INT_CACHE_SIZE = 33792;
+	static final intCache:haxe.ds.Vector<EvalValue> = {
+		var v = new haxe.ds.Vector<EvalValue>(INT_CACHE_SIZE);
+		for (i in 0...INT_CACHE_SIZE) v[i] = VInt(i + INT_CACHE_MIN);
+		v;
+	};
+
+	public static inline function vint(i:Int):EvalValue {
+		var k = i - INT_CACHE_MIN;
+		// A static initializer that runs before this class's has no cache yet.
+		return (k >= 0 && k < INT_CACHE_SIZE && intCache != null) ? intCache[k] : VInt(i);
+	}
 	public static inline function vfloat(f:Float):EvalValue return VFloat(f);
 	public static inline function vprototype(p:VPrototype):EvalValue return VPrototype(p);
 	public static inline function vinstance(i:VInstance):EvalValue return VInstance(i);

@@ -9,6 +9,9 @@ class FrameLayout {
 	public final body:TExpr;
 	public final slots:haxe.ds.IntMap<Int>;
 	public var size:Int;
+	// The interpreter's frame for this layout before any slot is set: `size` nulls, copied for each call
+	// (hxc.eval.EvalContext.pushEnvironment) and made again when the layout grew.
+	public var evalLocals:Null<Array<Dynamic>> = null;
 
 	public function new(id:Int, body:TExpr) {
 		this.id = id;

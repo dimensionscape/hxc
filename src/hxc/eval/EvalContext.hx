@@ -235,24 +235,94 @@ class EvalContext {
 		};
 	}
 
+	static final noCaptures:Array<EvalValue> = [];
+
 	public static function pushEnvironment(ctx:EvalContext, info:EvalEnvInfo, ?layout:hxc.core.FrameLayout):EvalEnv {
 		// A function's entry is one of the polls where the tick's preemption is taken.
 		if (hxc.compiler.HostRuntime.preemptPending()) EvalStdLib.preemptPoll();
 		var eval = getEval(ctx);
 		var locals:Array<EvalValue>;
 		if (layout != null) {
-			locals = [];
-			for (_ in 0...layout.size) locals.push(VNull);
+			var template:Array<EvalValue> = cast layout.evalLocals;
+			if (template == null || template.length != layout.size) {
+				template = [for (_ in 0...layout.size) VNull];
+				layout.evalLocals = cast template;
+			}
+			locals = template.copy();
 		} else locals = info.numLocals == 0 ? [] : [for (_ in 0...info.numLocals) VNull];
-		var captures = info.numCaptures == 0 ? [] : [for (_ in 0...info.numCaptures) VNull];
+		// No frame reads or writes its captures (a closure keeps its own snapshot), so the empty ones are
+		// shared.
+		var captures = info.numCaptures == 0 ? noCaptures : [for (_ in 0...info.numCaptures) VNull];
 		var stackDepth = eval.env == null ? 1 : eval.env.stackDepth + 1;
 		var env = new EvalEnv(info, locals, captures, eval.env, stackDepth, eval, layout);
 		eval.env = env;
+		if (profOn) profPush(env);
 		return env;
 	}
 
 	public static function popEnvironment(ctx:EvalContext, env:EvalEnv):Void {
+		if (profOn) profPop(env);
 		env.eval.env = env.parent;
+	}
+
+	// HXC_DBG_EVALPROF: calls, inclusive and self time per interpreted function, printed with
+	// HXC_DBG_TYPETIMES' report. A frame an exception unwinds is dropped when an outer frame pops.
+	public static var profOn:Bool = Sys.getEnv("HXC_DBG_EVALPROF") != null;
+	static var profEnvs:Array<EvalEnv> = [];
+	static var profStarts:Array<Float> = [];
+	static var profChild:Array<Float> = [];
+	static var profNames:haxe.ds.ObjectMap<EvalEnvInfo, String> = new haxe.ds.ObjectMap();
+	static var profStats:Map<String, Array<Float>> = new Map();
+
+	static function profPush(env:EvalEnv):Void {
+		profEnvs.push(env);
+		profChild.push(0.0);
+		profStarts.push(haxe.Timer.stamp());
+	}
+
+	static function profPop(env:EvalEnv):Void {
+		var now = haxe.Timer.stamp();
+		var i = profEnvs.lastIndexOf(env);
+		if (i < 0) return;
+		while (profEnvs.length > i + 1) { profEnvs.pop(); profStarts.pop(); profChild.pop(); }
+		profEnvs.pop();
+		var dt = now - profStarts.pop();
+		var child = profChild.pop();
+		if (profChild.length > 0) profChild[profChild.length - 1] += dt;
+		var info = env.info;
+		var name = profNames.get(info);
+		if (name == null) {
+			name = switch (info.kind) {
+				case EKMethod(t, f): EvalHash.revHash(t) + "." + EvalHash.revHash(f);
+				case EKLocalFunction(n): "local#" + n + " " + EvalHash.revHash(info.file) + ":" + info.min;
+				case EKEntrypoint: "entry " + EvalHash.revHash(info.file) + ":" + info.min;
+			};
+			profNames.set(info, name);
+		}
+		var st = profStats.get(name);
+		if (st == null) { st = [0.0, 0.0, 0.0]; profStats.set(name, st); }
+		st[0] += 1;
+		st[1] += dt;
+		st[2] += dt - child;
+	}
+
+	public static function dumpProf():Void {
+		if (!profOn) return;
+		var rows = [for (k in profStats.keys()) {name: k, s: profStats.get(k)}];
+		var o = Sys.stderr();
+		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
+		for (i in 0...(rows.length < 60 ? rows.length : 60)) { var r = rows[i];
+			o.writeString("[eprof self] " + StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms incl "
+			+ StringTools.lpad(Std.string(Math.round(r.s[1] * 1000)), " ", 7) + "ms "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 9) + "x  " + r.name + "
+"); }
+		rows.sort(function(a, b) return a.s[1] < b.s[1] ? 1 : (a.s[1] > b.s[1] ? -1 : 0));
+		for (i in 0...(rows.length < 60 ? rows.length : 60)) { var r = rows[i];
+			o.writeString("[eprof incl] " + StringTools.lpad(Std.string(Math.round(r.s[1] * 1000)), " ", 7) + "ms self "
+			+ StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 9) + "x  " + r.name + "
+"); }
+		o.flush();
 	}
 
 	public static function getStaticPrototypeRaise(ctx:EvalContext, path:Int):VPrototype {

@@ -193,9 +193,9 @@ class EvalIntegers {
 		}));
 		reg(u, "compare", vfn(a -> {
 			var x = decodeU64(ctx, arg(a, 0)), y = decodeU64(ctx, arg(a, 1));
-			VInt(compareUnsigned(x, y));
+			hxc.eval.EvalValue.EvalValueTools.vint(compareUnsigned(x, y));
 		}));
-		reg(u, "toInt", vfn(a -> VInt(decodeU64(ctx, arg(a, 0)).low)));
+		reg(u, "toInt", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeU64(ctx, arg(a, 0)).low)));
 		reg(u, "toInt64", vfn(a -> i64(decodeU64(ctx, arg(a, 0)))));
 		reg(u, "toString", vfn(a -> VString(EvalString.createAscii(ByteString.ofText(uint64ToString(decodeU64(ctx, arg(a, 0))))))));
 		reg(u, "successor", vfn(a -> u64(wrapAdd(decodeU64(ctx, arg(a, 0)), 1))));
@@ -245,9 +245,9 @@ class EvalIntegers {
 		}));
 		reg(i, "compare", vfn(a -> {
 			var x = decodeI64(ctx, arg(a, 0)), y = decodeI64(ctx, arg(a, 1));
-			VInt(compareSigned(x, y));
+			hxc.eval.EvalValue.EvalValueTools.vint(compareSigned(x, y));
 		}));
-		reg(i, "toInt", vfn(a -> VInt(decodeI64(ctx, arg(a, 0)).low)));
+		reg(i, "toInt", vfn(a -> hxc.eval.EvalValue.EvalValueTools.vint(decodeI64(ctx, arg(a, 0)).low)));
 		reg(i, "toUInt64", vfn(a -> u64(decodeI64(ctx, arg(a, 0)))));
 		reg(i, "toHxInt64", vfn(a -> {
 			var x = decodeI64(ctx, arg(a, 0));

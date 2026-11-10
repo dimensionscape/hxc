@@ -354,6 +354,9 @@ class TClassField {
 	// A bodiless method's (an interface's or an abstract one's) argument @:strict entries, which no
 	// argument variable keeps: the .NET generator refuses them, as it does a method argument's.
 	public var hxcArgStrict:Null<Array<MetadataEntry>> = null;
+	// The interpreter's id for `name` (hxc.eval.EvalHash.fieldHash), and the name it was taken for.
+	@:noCompletion public var evalHashName:Null<String> = null;
+	@:noCompletion public var evalHashId:Int = -1;
 	public function new(name:String, type:T, pos:Position, namePos:Position, doc:Documentation,
 			meta:Metadata, kind:FieldKind, params:TypeParams, expr:Null<TExpr>,
 			exprUnoptimized:Null<TExpr>, overloads:Array<TClassField>, flags:Int) {

@@ -19,6 +19,17 @@ class EvalHash {
 		return id;
 	}
 
+	// A class field's name id, kept on the field: ids never change once given, and a field renamed since
+	// is hashed again.
+	public static inline function fieldHash(cf:hxc.core.Type.TClassField):Int {
+		var n = cf.name;
+		if (cf.evalHashName != n) {
+			cf.evalHashId = hash(n);
+			cf.evalHashName = n;
+		}
+		return cf.evalHashId;
+	}
+
 	public static function revHash(i:Int):String {
 		return reverse.get(i);
 	}

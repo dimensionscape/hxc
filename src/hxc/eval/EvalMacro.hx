@@ -131,6 +131,51 @@ class EvalMacro {
 	// The API wrapper turns a decode failure into the macro's uncaught "Invalid expression"; a typing
 	// error a reporting native raises (under an outer API's typingTimer) is not its own to convert -
 	// it climbs to the API that ran the typer.
+	// HXC_DBG_MACROAPI: per-API call counts and times, printed with HXC_DBG_TYPETIMES' report. `self` is
+	// the API's time less the nested API calls it made (a typer an API runs can call macros, which call
+	// APIs); `top` is the time of the calls made with no other API running, the API's share of the macros.
+	public static var apiProfOn:Bool = Sys.getEnv("HXC_DBG_MACROAPI") != null;
+	static var apiProfStats:Map<String, Array<Float>> = new Map();
+	static var apiProfChild:Array<Float> = [];
+
+	static function apiProfWrap(name:String, f:VFunc):VFunc {
+		return function(a:Array<EvalValue>):EvalValue {
+			var st = apiProfStats.get(name);
+			if (st == null) { st = [0.0, 0.0, 0.0, 0.0]; apiProfStats.set(name, st); }
+			var top = apiProfChild.length == 0;
+			apiProfChild.push(0.0);
+			var t0 = haxe.Timer.stamp();
+			function done() {
+				var dt = haxe.Timer.stamp() - t0;
+				var child = apiProfChild.pop();
+				st[0] += 1;
+				st[1] += dt;
+				st[2] += dt - child;
+				if (top) st[3] += dt;
+				if (apiProfChild.length > 0) apiProfChild[apiProfChild.length - 1] += dt;
+			}
+			var r = try f(a) catch (e:Dynamic) { done(); throw e; };
+			done();
+			return r;
+		};
+	}
+
+	public static function dumpApiProf():Void {
+		if (!apiProfOn) return;
+		var rows = [for (k in apiProfStats.keys()) {name: k, s: apiProfStats.get(k)}];
+		rows.sort(function(a, b) return a.s[2] < b.s[2] ? 1 : (a.s[2] > b.s[2] ? -1 : 0));
+		var o = Sys.stderr();
+		var tot = 0.0, totTop = 0.0;
+		for (r in rows) { tot += r.s[2]; totTop += r.s[3]; }
+		o.writeString("[mapi] self total=" + Math.round(tot * 1000) + "ms top total=" + Math.round(totTop * 1000) + "ms
+");
+		for (r in rows) o.writeString("[mapi] " + StringTools.lpad(Std.string(Math.round(r.s[2] * 1000)), " ", 7) + "ms self "
+			+ StringTools.lpad(Std.string(Math.round(r.s[3] * 1000)), " ", 7) + "ms top "
+			+ StringTools.lpad(Std.string(Std.int(r.s[0])), " ", 8) + "x  " + r.name + "
+");
+		o.flush();
+	}
+
 	static function regBuiltinRaw(ec:EvalContext, typeName:String, fieldName:String, f:VFunc):Void {
 		var key = EvalHash.hash(typeName);
 		var list = ec.builtins.staticBuiltins.get(key);
@@ -139,6 +184,7 @@ class EvalMacro {
 			try return f(a)
 			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
+		if (apiProfOn) wrapped = apiProfWrap(typeName + "." + fieldName, wrapped);
 		var nameKey = EvalHash.hash(fieldName);
 		var entry = {name: nameKey, v: VFunction(wrapped, true)};
 		for (i in 0...list.length) if (list[i].name == nameKey) { list[i] = entry; return; }
@@ -160,6 +206,7 @@ class EvalMacro {
 			catch (we:hxc.core.TypingError.WithTypeError) return throwMacroError(ec, we.message, we.pos)
 			catch (d:DecodeFailure) return EvalExceptions.excString(ec, d.text);
 		};
+		if (apiProfOn) wrapped = apiProfWrap(typeName + "." + fieldName, wrapped);
 		// A new compilation swaps in its own API. Every closure here holds the com it was registered
 		// with, so a re-registration must REPLACE the entry: a lookup through load("<snake>") ->
 		// callMacroApi takes the first match, and a duplicate would keep answering from the previous
@@ -943,7 +990,7 @@ class EvalMacro {
 				return VObject(new VObject([], ODictionary(m)));
 			}
 			function mkP(line:Int, character:Int):EvalValue
-				return obj([{name: "line", value: VInt(line)}, {name: "character", value: VInt(character)}]);
+				return obj([{name: "line", value: hxc.eval.EvalValue.EvalValueTools.vint(line)}, {name: "character", value: hxc.eval.EvalValue.EvalValueTools.vint(character)}]);
 			return obj([
 				{name: "file", value: mkString(p.file)},
 				{name: "range", value: obj([
@@ -1731,8 +1778,36 @@ class EvalMacro {
 		com.log("Calling macro " + name + " (" + p.file + ":" + Position.lineNumber(p) + ")");
 	}
 
+	// `--times -D macro-times`: a `macro.typing.<class>.<method>` row for the first load of each macro and a
+	// `macro.execution.<class>.<method>` row for every call, as macroContext's macro_timer adds them.
+	static var macroTimesTyped:Map<String, Bool> = new Map();
+
+	static function macroTimer(com:Context, callee:Expr, kind:String, firstOnly:Bool):Void->Void {
+		if (!hxc.core.Timer.measureTimes || !com.defines.rawDefined("macro_times")) return null;
+		var t = macroTarget(callee);
+		if (t == null) return null;
+		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
+		if (firstOnly) {
+			if (macroTimesTyped.exists(name)) return null;
+			macroTimesTyped.set(name, true);
+		}
+		return hxc.core.Timer.timer(["macro", kind, name]);
+	}
+
 	static function callMacroFn(com:Context, ec:EvalContext, callee:Expr, errPos:Position, values:Array<EvalValue>, p:Position):EvalValue {
-		var fn = resolveMacroFn(ec, callee, errPos);
+		var tType = macroTimer(com, callee, "typing", true);
+		var fn = try resolveMacroFn(ec, callee, errPos) catch (e:Dynamic) { if (tType != null) tType(); throw e; };
+		if (tType != null) tType();
+		var tExec = macroTimer(com, callee, "execution", false);
+		if (tExec != null) {
+			var r = try callMacroFnResolved(com, ec, fn, callee, values, p) catch (e:Dynamic) { tExec(); throw e; };
+			tExec();
+			return r;
+		}
+		return callMacroFnResolved(com, ec, fn, callee, values, p);
+	}
+
+	static function callMacroFnResolved(com:Context, ec:EvalContext, fn:VFunc, callee:Expr, values:Array<EvalValue>, p:Position):EvalValue {
 		if (!com.verbose) return callPath(ec, fn, values, p);
 		var t = macroTarget(callee);
 		var name = hxc.core.Globals.sTypePath({pack: t.pack, name: t.name}) + "." + t.method;
@@ -1818,7 +1893,7 @@ class EvalMacro {
 	// A typed constant argument reduced to its runtime value.
 	static function makeConst(ec:EvalContext, e:TExpr):EvalValue {
 		return switch (e.expr) {
-			case TConst(TInt(i)): VInt(i);
+			case TConst(TInt(i)): hxc.eval.EvalValue.EvalValueTools.vint(i);
 			case TConst(TFloat(s)): VFloat(hxc.core.Numeric.parseFloatLit(s));
 			case TConst(TString(s)): mkString(s);
 			case TConst(TBool(b)): b ? VTrue : VFalse;
@@ -1840,7 +1915,7 @@ class EvalMacro {
 	static function initMacroConstArg(ec:EvalContext, e:Expr):EvalValue {
 		return switch (e.expr) {
 			case EConst(CString(v, _)): mkString(v);
-			case EConst(CInt(v, _)): VInt(Std.parseInt(v));
+			case EConst(CInt(v, _)): hxc.eval.EvalValue.EvalValueTools.vint(Std.parseInt(v));
 			case EConst(CFloat(v, _)): VFloat(Std.parseFloat(v));
 			case EConst(CIdent("true")): VTrue;
 			case EConst(CIdent("false")): VFalse;
@@ -2234,7 +2309,7 @@ class EvalMacro {
 			{name: "name", value: str(com.mainClass.name)},
 		]);
 		return obj([
-			{name: "version", value: VInt(4307)},
+			{name: "version", value: hxc.eval.EvalValue.EvalValueTools.vint(4307)},
 			{name: "args", value: strArray(com.args)},
 			{name: "debug", value: com.debug ? VTrue : VFalse},
 			{name: "verbose", value: com.verbose ? VTrue : VFalse},
@@ -3145,10 +3220,17 @@ class EvalMacro {
 			expectedTypeStack.push(withType);
 			var macroName = hxc.core.Globals.sTypePath(path) + "." + fa.field.name;
 			logMacroCall(tctx.com, macroName, p);
+			var tExec = hxc.core.Timer.measureTimes && tctx.com.defines.rawDefined("macro_times")
+				? hxc.core.Timer.timer(["macro", "execution", macroName]) : null;
 			var result = try callPath(ec, fn, args, p) catch (a:hxc.eval.EvalExceptions.MacroAbort) {
+				if (tExec != null) tExec();
 				tctx.com.log("Exiting macro " + macroName);
 				throw a;
+			} catch (e:Dynamic) {
+				if (tExec != null) tExec();
+				throw e;
 			};
+			if (tExec != null) tExec();
 			tctx.com.log("Exiting macro " + macroName);
 			expectedTypeStack.pop();
 			// The expression the macro answers with is decoded under the same guard as a build's fields -
@@ -3438,7 +3520,7 @@ class EvalMacro {
 				{ok: true, value: mkString(s)};
 			case EConst(CInt(s, _)):
 				var n = Std.parseInt(s);
-				{ok: true, value: VInt(n == null ? 0 : n)};
+				{ok: true, value: hxc.eval.EvalValue.EvalValueTools.vint(n == null ? 0 : n)};
 			case EConst(CFloat(s, _)):
 				{ok: true, value: VFloat(Std.parseFloat(s))};
 			case EConst(CIdent("true")):
@@ -5137,7 +5219,7 @@ class EvalMacro {
 			case TThrow(e1): mkEnumValue(ec, "TypedExprDef", "TThrow", [encodeTypedExpr(ec, e1)]);
 			case TCast(e1, mt): mkEnumValue(ec, "TypedExprDef", "TCast", [encodeTypedExpr(ec, e1), mt == null ? VNull : encodeModuleType(ec, mt)]);
 			case TMeta(m, e1): mkEnumValue(ec, "TypedExprDef", "TMeta", [encodeMetadataEntry(ec, m), encodeTypedExpr(ec, e1)]);
-			case TEnumParameter(e1, ef, index): mkEnumValue(ec, "TypedExprDef", "TEnumParameter", [encodeTypedExpr(ec, e1), encodeEnumField(ec, ef), VInt(index)]);
+			case TEnumParameter(e1, ef, index): mkEnumValue(ec, "TypedExprDef", "TEnumParameter", [encodeTypedExpr(ec, e1), encodeEnumField(ec, ef), hxc.eval.EvalValue.EvalValueTools.vint(index)]);
 			case TEnumIndex(e1): mkEnumValue(ec, "TypedExprDef", "TEnumIndex", [encodeTypedExpr(ec, e1)]);
 			case TIdent(s): mkEnumValue(ec, "TypedExprDef", "TIdent", [mkString(s)]);
 		};
@@ -5145,7 +5227,7 @@ class EvalMacro {
 
 	static function encodeTConstant(ec:EvalContext, c:TConstant):EvalValue {
 		return switch (c) {
-			case TInt(i): mkEnumValue(ec, "TConstant", "TInt", [VInt(i)]);
+			case TInt(i): mkEnumValue(ec, "TConstant", "TInt", [hxc.eval.EvalValue.EvalValueTools.vint(i)]);
 			case TFloat(s): mkEnumValue(ec, "TConstant", "TFloat", [mkString(s)]);
 			case TString(s): mkEnumValue(ec, "TConstant", "TString", [mkString(s)]);
 			case TBool(b): mkEnumValue(ec, "TConstant", "TBool", [b ? VTrue : VFalse]);
@@ -5161,7 +5243,7 @@ class EvalMacro {
 		tvarRefs.set(refId, v);
 		// The tvar object's handle is an Unsafe instance, not a number.
 		fields.set(EvalNames.hDollar(), unsafeValue(ec, refId));
-		fields.set(EvalNames.hId(), VInt(v.id));
+		fields.set(EvalNames.hId(), hxc.eval.EvalValue.EvalValueTools.vint(v.id));
 		fields.set(EvalNames.hName(), mkString(v.name));
 		fields.set(EvalNames.hT(), encodeType(ec, v.type));
 		// A local function's var reads as captured: the VFinal INDEX is stored as its flags.
@@ -5483,8 +5565,8 @@ class EvalMacro {
 	static function posInfosValue(ec:EvalContext, p:Position):EvalValue {
 		var fields:Map<Int, EvalValue> = new Map();
 		fields.set(EvalNames.hFile(), mkString(p.file));
-		fields.set(EvalNames.hMin(), VInt(p.min));
-		fields.set(EvalNames.hMax(), VInt(p.max));
+		fields.set(EvalNames.hMin(), hxc.eval.EvalValue.EvalValueTools.vint(p.min));
+		fields.set(EvalNames.hMax(), hxc.eval.EvalValue.EvalValueTools.vint(p.max));
 		return VObject(new VObject([], ODictionary(fields)));
 	}
 
@@ -5756,7 +5838,7 @@ class EvalMacro {
 			proto.pvalue = VPrototype(proto);
 			opaqueProtos.set(path, proto);
 		}
-		return VInstance(new VInstance([], proto, IRef(VInt(id))));
+		return VInstance(new VInstance([], proto, IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	static function unsafeValue(ec:EvalContext, id:Int):EvalValue {
@@ -5765,12 +5847,12 @@ class EvalMacro {
 			proto.pvalue = VPrototype(proto);
 			unsafeProtoCache = proto;
 		}
-		return VInstance(new VInstance([], unsafeProtoCache, IRef(VInt(id))));
+		return VInstance(new VInstance([], unsafeProtoCache, IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	// The Ref itself: get and toString in the prototype's slot order, the handle in the ikind.
 	static function makeRef(ec:EvalContext, getFn:VFunc, toStringFn:VFunc, id:Int):EvalValue {
-		return VInstance(new VInstance([VFunction(getFn, true), VFunction(toStringFn, true)], refProto(ec), IRef(VInt(id))));
+		return VInstance(new VInstance([VFunction(getFn, true), VFunction(toStringFn, true)], refProto(ec), IRef(hxc.eval.EvalValue.EvalValueTools.vint(id))));
 	}
 
 	// The handle a Ref (or a tvar object's `$`) carries, or null when the value is not one of ours.
@@ -5844,7 +5926,7 @@ class EvalMacro {
 		f.set(EvalNames.hPos(), encPos(ef.pos));
 		f.set(EvalNames.hNamePos(), encPos(ef.namePos));
 		f.set(EvalNames.hDoc(), encodeDoc(Ast.getOwnDocOpt(ef.doc)));
-		f.set(EvalNames.hIndex(), VInt(ef.index));
+		f.set(EvalNames.hIndex(), hxc.eval.EvalValue.EvalValueTools.vint(ef.index));
 		f.set(EvalNames.hParams(), encodeArray([for (tp in ef.params) encodeTypeParameterValue(ec, tp)]));
 		f.set(EvalNames.hMeta(), encodeMetaAccess(ec, function() return ef.meta, function(m) ef.meta = m));
 		return VObject(new VObject([], ODictionary(f)));
