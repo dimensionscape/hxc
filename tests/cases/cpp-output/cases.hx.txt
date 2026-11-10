@@ -340,4 +340,10 @@ class P {
 		var lines:Array<String> = trig();
 		for (s in lines) Sys.println(s);
 	}
+	// Host-dependent: this case's expected output holds only on a Windows host. Haxe's Windows binaries
+	// compute sin and cos with the x87 (FSIN/FCOS), and hxc's macro interpreter emulates that (X87Trig) only
+	// when hxc.core.Globals.isWindows. Elsewhere Haxe and hxc both call the C library, which differs from these
+	// recorded values in the last digits, and the recording also has Windows' three-digit exponents (e-017).
+	// hxc's own tests (tests/cases against tests/expected) run on windows-x64 only (.github/workflows/ci.yml).
+	// The note sits below main so that the line numbers in the recorded C++ stay as they are.
 }
