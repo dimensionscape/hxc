@@ -1625,6 +1625,35 @@ class JCall extends JNode {
 	// 0 not yet known, 1 yes, 2 no.
 	var leaveFirstKnown:Int = 0;
 
+	// The callee's shape, worked out on the first run: 0 a field read off a receiver (`calleeE1`.`calleeFa`),
+	// 1 a proper static method, 2 anything else. For an instance field, instKind is 1 for a proper method
+	// (instClass/instField), 2 for another method and 0 for a variable.
+	var calleeKind:Int = -1;
+	var calleeE1:Null<TExpr> = null;
+	var calleeFa:Null<TFieldAccess> = null;
+	var instKind:Int = 0;
+	var instClass:Null<TClass> = null;
+	var instField:Null<TClassField> = null;
+
+	function decodeCallee():Void {
+		instKind = 0;
+		calleeKind = switch (callee.expr) {
+			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
+				calleeE1 = e1;
+				calleeFa = fa;
+				switch (fa) {
+					case FInstance(c, _, cf):
+						instClass = c;
+						instField = cf;
+						instKind = EvalEmitter.isProperMethod(cf) ? 1 : cf.kind.match(Method(_)) ? 2 : 0;
+					case _:
+				}
+				0;
+			case TField(_, FStatic(_, cf)) if (EvalEmitter.isProperMethod(cf)): 1;
+			case _: 2;
+		};
+	}
+
 	function siteKind():Int {
 		return switch (callee.expr) {
 			case TConst(TSuper): 1;
@@ -1716,71 +1745,76 @@ class JCall extends JNode {
 		// value EvalField.dynamicField would make for it.
 		var direct:Null<VFunc> = null;
 		var directRecv:EvalValue = VNull;
-		var fn = switch (callee.expr) {
+		if (calleeKind < 0) decodeCallee();
+		var fn = switch (calleeKind) {
 			// The receiver first, null-checked at its position.
-			case TField(e1, fa) if (!fa.match(FStatic(_, _) | FEnum(_, _))):
+			case 0:
 				var recvValue = recv.run(ctx, ev);
-				if (recvValue == VNull) EvalExceptions.excString(ctx, "Null Access", e1.pos);
-				switch [fa, recvValue] {
-					case [FInstance(c, _, cf), VInt(_) | VFloat(_) | VTrue | VFalse | VObject(_) | VEnumValue(_) | VFunction(_, _) | VFieldClosure(_, _)
-						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_)] if (EvalEmitter.isProperMethod(cf)):
-						if (EvalEmitter.isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
-							var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
-							switch (try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound) VNull) {
-								case VFunction(f, _): VFieldClosure(recvValue, f);
-								case m: m;
-							}
-						} else {
-							var proto = switch (recvValue) {
-								case VPrototype(pr): pr;
-								case VString(_): ctx.stringPrototype;
-								case VArray(_): ctx.arrayPrototype;
-								case VVector(_): ctx.vectorPrototype;
-								case _: EvalStdLib.unexpectedValueP(ctx, recvValue, "instance", p);
-							};
-							var m = try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound)
-								EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
-							switch (m) {
-								case VFunction(f, _): VFieldClosure(recvValue, f);
-								case _: m;
-							}
+				if (recvValue == VNull) EvalExceptions.excString(ctx, "Null Access", calleeE1.pos);
+				var primitive = switch (recvValue) {
+					case VInt(_) | VFloat(_) | VTrue | VFalse | VObject(_) | VEnumValue(_) | VFunction(_, _) | VFieldClosure(_, _)
+						| VNativeString(_) | VString(_) | VArray(_) | VVector(_) | VPrototype(_): true;
+					case _: false;
+				};
+				if (instKind == 1 && primitive) {
+					var c = instClass;
+					var cf = instField;
+					if (EvalEmitter.isFinalMethod(ctx, c, cf) && !TypeFunctions.hasClassFlag(c, CInterface)) {
+						var proto = EvalContext.getInstancePrototype(ctx, EvalHash.pathHash(c.path), callee.pos);
+						switch (try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound) VNull) {
+							case VFunction(f, _): VFieldClosure(recvValue, f);
+							case m: m;
 						}
+					} else {
+						var proto = switch (recvValue) {
+							case VPrototype(pr): pr;
+							case VString(_): ctx.stringPrototype;
+							case VArray(_): ctx.arrayPrototype;
+							case VVector(_): ctx.vectorPrototype;
+							case _: EvalStdLib.unexpectedValueP(ctx, recvValue, "instance", p);
+						};
+						var m = try EvalField.protoFieldRaise(proto, EvalHash.fieldHash(cf)) catch (_:hxc.core.NotFound)
+							EvalExceptions.excString(ctx, "Field " + cf.name + " not found on prototype " + EvalHash.revHash(proto.ppath), p);
+						switch (m) {
+							case VFunction(f, _): VFieldClosure(recvValue, f);
+							case _: m;
+						}
+					}
+				} else if (instKind != 0) {
 					// EvalEmitter.evalField's read of a method on a receiver that is not null:
 					// EvalField.dynamicField.
-					case [FInstance(_, _, cf), _] if (cf.kind.match(Method(_))):
-						if (methodHash < 0) methodHash = EvalHash.fieldHash(cf);
-						var rv = EvalValueTools.vresolve(recvValue);
-						var cached:Null<VFunc> = null;
-						switch (rv) {
-							case VInstance(vi) if (vi.iproto == methodProto && vi.iproto.pinstanceFields.length == methodSlots):
-								cached = methodFn;
-							case _:
-						}
-						if (cached != null) {
-							direct = cached;
+					var cf = instField;
+					if (methodHash < 0) methodHash = EvalHash.fieldHash(cf);
+					var rv = EvalValueTools.vresolve(recvValue);
+					var cached:Null<VFunc> = null;
+					switch (rv) {
+						case VInstance(vi) if (vi.iproto == methodProto && vi.iproto.pinstanceFields.length == methodSlots):
+							cached = methodFn;
+						case _:
+					}
+					if (cached != null) {
+						direct = cached;
+						directRecv = rv;
+						VNull;
+					} else switch (EvalField.field(ctx, rv, methodHash)) {
+						case VFunction(f, false):
+							direct = f;
 							directRecv = rv;
+							// Field read it off the prototype chain when the instance has no slot of the name
+							switch (rv) {
+								case VInstance(vi) if (methodHash != EvalHash.keyLength && !vi.iproto.pinstanceNames.exists(methodHash)):
+									methodProto = vi.iproto;
+									methodSlots = vi.iproto.pinstanceFields.length;
+									methodFn = f;
+								case _:
+							}
 							VNull;
-						} else switch (EvalField.field(ctx, rv, methodHash)) {
-							case VFunction(f, false):
-								direct = f;
-								directRecv = rv;
-								// Field read it off the prototype chain when the instance has no slot of the name
-								switch (rv) {
-									case VInstance(vi) if (methodHash != EvalHash.keyLength && !vi.iproto.pinstanceNames.exists(methodHash)):
-										methodProto = vi.iproto;
-										methodSlots = vi.iproto.pinstanceFields.length;
-										methodFn = f;
-									case _:
-								}
-								VNull;
-							case _:
-								EvalValueTools.vresolve(EvalField.dynamicField(ctx, rv, methodHash));
-						}
-					case _:
-						EvalValueTools.vresolve(EvalEmitter.evalField(ctx, e1, fa, callee.pos, recvValue));
-				}
+						case _:
+							EvalValueTools.vresolve(EvalField.dynamicField(ctx, rv, methodHash));
+					}
+				} else EvalValueTools.vresolve(EvalEmitter.evalField(ctx, calleeE1, calleeFa, callee.pos, recvValue));
 			// A proper static method's slot is read before the arguments.
-			case TField(_, FStatic(_, cf)) if (EvalEmitter.isProperMethod(cf)):
+			case 1:
 				if (staticEpoch == EvalJit.epoch && staticFn != null) staticFn else {
 					var f = switch (EvalValueTools.vresolve(calleeNode.run(ctx, ev))) {
 						case v = VFunction(_, _): v;

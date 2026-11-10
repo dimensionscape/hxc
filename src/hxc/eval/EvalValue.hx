@@ -247,8 +247,18 @@ class EvalThreadRecord {
 
 // A native map entry keeps the original key alongside its value, so iteration over keys (and
 // key/value pairs) can recover keys that do not round-trip through the string storage key
-// (enum values, object identities).
-typedef MapEntry = {key:EvalValue, value:EvalValue};
+// (enum values, object identities). A class rather than an anonymous structure, so reading .value
+// is a slot load and not a dynamic field lookup.
+@:structInit
+class MapEntry {
+	public var key:EvalValue;
+	public var value:EvalValue;
+
+	public inline function new(key:EvalValue, value:EvalValue) {
+		this.key = key;
+		this.value = value;
+	}
+}
 
 @:structInit
 class VEnumValue {

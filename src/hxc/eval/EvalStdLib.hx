@@ -4435,8 +4435,8 @@ class EvalStdLib {
 			}));
 			reg(inst, mapPath, "get", vmethod(a -> {
 				var k = keyString(argKey(arg(a, 1)));
-				var m = thisMap(a);
-				m.exists(k) ? m.get(k).value : VNull;
+				var e = thisMap(a).get(k);
+				e != null ? e.value : VNull;
 			}));
 			reg(inst, mapPath, "exists", vmethod(a -> {
 				var k = keyString(argKey(arg(a, 1)));
@@ -4467,7 +4467,7 @@ class EvalStdLib {
 				var vi0 = thisInstance(a, mapPath);
 				var m = thisMap(a);
 				var proto = ctx.instancePrototypes.get(EvalHash.hash(mapPath));
-				var nm = new Map();
+				var nm:Map<String, MapEntry> = new Map();
 				var order0 = nativeMapOrders.get(vi0);
 				var order = order0 == null ? [for (k in m.keys()) k] : [for (k in order0) if (m.exists(k)) k];
 				for (k in order) nm.set(k, {key: m.get(k).key, value: m.get(k).value});
